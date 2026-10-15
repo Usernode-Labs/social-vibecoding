@@ -592,6 +592,7 @@ A new machine brings the same two layers:
 | `merge-followups` | `session:<id>`, for each merged proposal and each change that went live inside one | `delivering` → `live`, or `deploy_failed` → `live` | On everywhere; its old paths are deleted |
 | `app-delivery` | `app:<id>`, for each app a production deploy was asked for | `idle` ⇄ `deploying` | On everywhere; its old paths are deleted |
 | `preview` | `session:<id>`, for each proposal with a preview, a checks run or work recorded on it, and each App bench studio preview | `idle`, `preparing`, `checking`, `deferred`, `settled`, `failed`, `retiring` → `retired` | On everywhere; its old paths are deleted |
+| `shots` | `session:<id>`, for each proposal that declares visible changes or whose UI change owes a declaration | `undeclared`, `not_needed`, `waiting_for_preview`, `building_copies`, `waiting_for_agent`, `taking_shots`, `publishing`, `published`, `failed`, `waived`, `closed` | On everywhere; its old paths are deleted |
 
 ### governance-proposal
 
@@ -746,7 +747,8 @@ release built is known, and retired by identity once a newer attempt serves).
   the run's media (held under its run id until then, `check_run_media`) and the app's
   check history (`rules/check-store.ts`), with the pushes browsers hear (`checks_ready`,
   `staging_ready`, `visuals_ready`). A verdict about a head the row has left stores
-  nothing. Its follow-ups (the merge queue, the bot's note, shots) are one work item.
+  nothing. Its follow-ups (the merge queue, the bot's note) are one work item; the shots
+  machine hears the head by message.
 - **Liveness is the work lease;** nothing is judged stuck by clock. An `error` runs again
   on the instance's timer (2 minutes doubling to 30, at most `CHECK_MAX_AUTO_RETRIES`, or
   for a day for the platform's own fault; a release re-arms those platform faults at
@@ -777,11 +779,58 @@ release built is known, and retired by identity once a newer attempt serves).
   session it is building, checking or retrying alone. The reapers' teardown asks it to
   retire, which it refuses while it works.
 
+### shots
+
+A proposal's before & after shots (`src/workflow/shots/`): its declaration of visible
+changes, and the runs that shoot them. One instance per proposal, because what is decided
+is about the proposal's one slot: one run at a time, a new head or declaration supersedes
+the run under way, a Stop or a waiver applies to whatever is current, and an automatic
+retry is counted per head. `chat_sessions.shots_state`, `shots_run_id`, `shots_detail` and
+every `shot_runs` row are its projection and domain writes, guarded; their values and shape
+are what every reader (the vote and merge gate, the cards, the bot, the gallery) already
+read. A proposal it has never seen is adopted from its row by its first event; a run an
+earlier release was taking is ended as interrupted (its copies go) and taken again at the
+release (`platform.ts` `retryShotsCutOff`).
+
+- **Requests.** A declaration (`Declared`: the hosted worker's tool, `submit_work`, a
+  hand-off, PR import in its own transaction, the bot's own proposal) and a head move
+  (`HeadMoved`) are appended by `services/shots-state.js` where they were written before.
+  The preview machine says when a head is ready to be shot (`HeadReady`: its preview serves,
+  or its checks settled), when an imported proposal's preview will not start
+  (`PreviewStopped`), when a UI change declares nothing (`UiUndeclared`, from its checks
+  run) and when the proposal leaves review (`Closed`). People: Retry, Stop, waive
+  (`RetryRequested`, `StopRequested`, `WaiveRequested`, routes/shots.js). A head ready
+  before its declaration is shot as soon as the declaration arrives.
+- **A run is four steps, each a work item:** `shots.revision` (the exact before revision,
+  from GitHub), `shots.copies` (the two copies built, deployed and seeded, and the agent's
+  workspace written; resumable, its images in the checkpoint, so a restart does not build
+  them again), `shots.agent` (the shots agent's turn as a durable step over the item's
+  checkpoint, `services/durable-turn.js`: a restart follows the turn the worker still runs),
+  `shots.publish` (the outlines). Publication is the transition: the ready files become
+  `shot_artifacts` in the same transaction that writes `verified`. Whatever way a run
+  ends, `shots.cleanup` removes its copies (and its turn, and a temporary worker), and
+  `bot.shotsSettled` and `github.prShotsBlock` tell the Homeroom bot and the pull request.
+- **The agent's control plane is in Postgres** (`shot_run_control`, `shot_run_files`,
+  `services/shots-control.js`): any web process answers its calls, and nothing it saved
+  is lost to a restart. A call is answered only while its run is current and its agent at
+  work.
+- **The machine decides:** at most 4 copy builds and 32 agent turns at a time; it waits
+  for the proposal's agent (`waiting_for_agent`, rechecked every 20 seconds, within the
+  run's time) instead of taking it from a turn; another turn taking it is waited for again
+  twice, a dispatch whose process died is tried once more. Each step has a deadline: copies
+  that take over 45 minutes fail, an agent's turn 15 minutes past its own clock fails (its
+  process is stuck), a comparison past 15 minutes publishes without outlines. A platform
+  fault (the copies' database, a clone, the worker's bootstrap, GitHub's limit, the agent's
+  exit or a stuck turn, copies too slow) is taken again once. A run under way
+  holds the proposal's worker: `session-work.ts` `shotsRunningSql` is what the preview
+  machine and merge-followups (its `worker.retire`) read.
+- **Shots evals** (an admin's comparison of the agent's prompts) run the same steps one
+  after another in their own runner (`shots-eval-runner.js`), on their own tables.
+
 **Planned order:**
-1. **Before/after shots.** (App delivery and previews, above, came first.)
-2. **The proposal lifecycle.**
-3. **The merge itself:** the attempt, the queue, production delivery and conflicts.
-4. **Fleet campaigns.**
+1. **The proposal lifecycle.** (App delivery, previews and shots, above, came first.)
+2. **The merge itself:** the attempt, the queue, production delivery and conflicts.
+3. **Fleet campaigns.**
 
 Each one deletes the old paths it replaces in the same change, as governance, previews,
-merge follow-ups and app delivery have.
+merge follow-ups, app delivery and shots have.

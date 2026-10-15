@@ -598,16 +598,6 @@ async function handOffImported({ pool, session, head, trigger }) {
   }
 }
 
-// #2601/#2558: a preview environment that runs no builds (mock GitHub) gives
-// the proposal no run, so its 'planned' before & after shots are told why.
-// (A build that fails is told by the preview machine: preview.stopped.)
-function noteShotsNotStarted(pool, sessionId, reason) {
-  require('./shots-orchestrator').noteNotStarted(pool, Number(sessionId), reason)
-    .catch((err) => log.warn('pr-import-sync', 'could not record why the preview did not start', {
-      sessionId, reason, err: err.message,
-    }));
-}
-
 // #687 Slice 1 / #846 — the IMPORT-TIME checks kick. Called (un-awaited) by
 // POST /api/apps/:slug/pr-import once the proposal row exists, so the route
 // can answer immediately: the preview machine builds and checks the pinned
@@ -617,7 +607,6 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
   void config; void app;
   try {
     await handOffImported({ pool, session, head: headSha, trigger: 'pr-import' });
-    if (usesMockGithubForImports()) noteShotsNotStarted(pool, session.id, 'no_staging_preview');
   } catch (err) {
     log.warn('pr-import-sync', 'import checks hand-off failed', {
       sessionId: session.id, err: err.message,

@@ -1,0 +1,618 @@
+'use strict';
+
+// The shots machine (src/workflow/shots/) against the full PostgreSQL
+// schema: a proposal's declaration, its runs (revision, copies, the agent's
+// turn, publication, cleanup), the preview machine's messages, a person's
+// Retry, Stop and waiver, the automatic retries, the adoption of a run
+// [main] was taking, and the ownership guard on the slot and the runs. The
+// work is fake; the real steps are services/shots-orchestrator.js's.
+//
+// Run with: TEST_DATABASE_URL=postgres://… node --test tests/workflow-shots-postgres.test.js
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const { Pool } = require('pg');
+const { createRuntime } = require('../src/workflow/kernel/index.ts');
+const { shots, sessionKey, MACHINE, WORK } = require('../src/workflow/shots/machine.ts');
+
+const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
+const SHA = (c) => c.repeat(40).slice(0, 40);
+const RUN = /^[0-9a-f]{32}$/;
+
+const INTENT = (impact = 'ui', claim = 'The card shows the new badge') => ({
+  version: 1, impact, rationale: impact === 'none' ? 'Backend only.' : null,
+  stories: impact === 'none' ? [] : [{
+    id: 'c1', claim, persona: 'member',
+    viewports: [{ name: 'desktop', width: 1280, height: 800 }],
+    intent: { startPath: '/', steps: ['Open the home page'], baseState: 'present', animation: 'none' },
+  }],
+});
+
+test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, async (t) => {
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  admin.on('error', () => {});
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
+  }
+  const dbName = 'wf_shots_' + crypto.randomBytes(6).toString('hex');
+  await admin.query(`CREATE DATABASE ${dbName}`);
+  const url = new URL(DSN); url.pathname = '/' + dbName;
+  const pool = new Pool({ connectionString: String(url), max: 10 });
+  pool.on('error', () => {});
+  const runtimes = [];
+  t.after(async () => {
+    for (const r of runtimes) await r.stop();
+    await pool.end();
+    await admin.query(`DROP DATABASE ${dbName}`);
+    await admin.end();
+  });
+  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+  await pool.query(`INSERT INTO wf_settings (key, value) VALUES ('enabled:${MACHINE}', '1') ON CONFLICT DO NOTHING`);
+
+  // ── Fixture ─────────────────────────────────────────────────────────
+  let seq = 0;
+  async function user() {
+    const { rows: [u] } = await pool.query(
+      `INSERT INTO users (username, password) VALUES ($1, 'x') RETURNING id, username`, [`sh_${++seq}`]);
+    return u;
+  }
+  async function proposal({ status = 'promoted', source = null, head = SHA('a'), ready = false } = {}) {
+    const owner = await user();
+    const { rows: [a] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by, repo_url) VALUES ($1::text, $1::text, $2, 'https://github.com/acme/' || $1::text) RETURNING *`,
+      [`sh-app-${++seq}`, owner.id]);
+    const by = await user();
+    const { rows: [s] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, source, branch_name, pr_number, reviewed_head_sha, imported_pr_head_sha,
+                                  staging_commit_sha, staging_url)
+       VALUES ($1, $2, $3, $4, 'feature', $5, $6, $7, $8, $9) RETURNING *`,
+      [a.id, by.id, status, source, ++seq, source === 'imported' ? null : head, source === 'imported' ? head : null,
+        ready ? head : null, ready ? 'https://preview.test' : null]);
+    return { ...s, app: a };
+  }
+  const row = async (s) => (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [s.id])).rows[0];
+  const instance = async (s) => (await pool.query(
+    'SELECT * FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(s.id)])).rows[0];
+  const runs = async (s) => (await pool.query(
+    'SELECT * FROM shot_runs WHERE session_id = $1 ORDER BY created_at, id', [s.id])).rows;
+  const workOf = async (s, kind) => (await pool.query(
+    `SELECT kind, work_key, input, status, result FROM wf_work WHERE machine = $1 AND key = $2 AND ($3::text IS NULL OR kind = $3)
+      ORDER BY created_at, work_key`, [MACHINE, sessionKey(s.id), kind || null])).rows;
+  const asTransition = async (fn) => {
+    const c = await pool.connect();
+    try { await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`); await fn(c); await c.query('COMMIT'); } finally { c.release(); }
+  };
+  const due = (s) => asTransition((c) => c.query(
+    'UPDATE wf_instances SET deadline_at = now() WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(s.id)]));
+
+  // The agent's workspace, as the copies step writes it and the agent's
+  // calls fill it (services/shots-control.js).
+  async function workspace(runId, sessionId) {
+    await pool.query(
+      `INSERT INTO shot_run_control (run_id, session_id, intent, context, expires_at)
+       VALUES ($1, $2, $3::jsonb, '{}'::jsonb, NOW() + INTERVAL '1 hour') ON CONFLICT DO NOTHING`,
+      [runId, sessionId, JSON.stringify(INTENT())]);
+  }
+  const PNG = Buffer.from('fake-png');
+  async function saved(runId, side) {
+    await pool.query(
+      `INSERT INTO shot_run_files (run_id, slot, story_id, viewport, side, variant, media, content_type, data, bytes, sha256)
+       VALUES ($1, $2, 'c1', 'desktop', $3, 'context', 'png', 'image/png', $4, $5, $6)`,
+      [runId, `c1/desktop/${side}/context`, side, PNG, PNG.length, crypto.createHash('sha256').update(side).digest('hex')]);
+  }
+  const READY_VERDICT = { passed: true, mode: 'shots', runs: 1, stories: [{ id: 'c1', status: 'ready', files: 2 }] };
+  const passed = (input) => ({
+    agent: { outcome: 'completed' }, passed: true, readyCount: 1, failedCount: 0, verdict: READY_VERDICT,
+    manifestHash: 'f'.repeat(64), slots: ['base', 'head'].map((side) => `c1/desktop/${side}/context`),
+    skippedAny: false, trace: { runId: input.runId },
+  });
+
+  // Fake work: each call recorded; `answer` per kind (a value, or a
+  // function of the input).
+  const work = { calls: [], answer: new Map() };
+  const fake = (kind) => ({
+    maxAttempts: 2, backoffMs: () => 0, leaseMs: 600,
+    async run({ input, key }) {
+      work.calls.push({ kind, key, input });
+      const a = work.answer.get(kind);
+      return typeof a === 'function' ? await a(input) : (a ?? { ok: true });
+    },
+  });
+  const defaults = () => {
+    work.calls.length = 0;
+    work.answer.set(WORK.revision, () => ({ baseSha: SHA('0') }));
+    work.answer.set(WORK.copies, async (input) => {
+      await workspace(input.runId, input.sessionId);
+      return { fixtureFingerprint: 'fp', baseImageDigest: 'sha256:base', headImageDigest: 'sha256:head', afterOnly: false };
+    });
+    work.answer.set(WORK.agent, async (input) => {
+      await saved(input.runId, 'base');
+      await saved(input.runId, 'head');
+      return passed(input);
+    });
+    work.answer.set(WORK.publish, (input) => ({ verdict: { ...input.verdict, screens: [{ change: 'c1' }] } }));
+    work.answer.set(WORK.cleanup, async (input) => {
+      await pool.query('DELETE FROM shot_run_control WHERE run_id = $1', [input.runId]);
+      return { cleaned: true, version: 2 };
+    });
+  };
+  defaults();
+  const pushed = [];
+  const machine = shots({ execute: true, agentBudgetMs: 480000, runBudgetMs: 1440000 });
+  const rt = createRuntime({
+    pool, machines: [machine], pollMs: 50, publish: async (q, list) => { pushed.push(...list); },
+    services: Object.fromEntries(Object.values(WORK).map((k) => [k, fake(k)])),
+  });
+  runtimes.push(rt);
+
+  let rk = 0;
+  const send = (s, type, payload = {}, source = { kind: 'system' }) => rt.append(machine, sessionKey(s.id),
+    { type, payload: { sessionId: s.id, ...payload } }, { requestKey: `t-${++rk}`, source, appId: s.app_id });
+  const fromPreview = { kind: 'message', from: { machine: 'preview', key: 'x', eventId: 1 } };
+  const route = { kind: 'route' };
+  const settle = async () => {
+    for (let i = 0; i < 30; i++) {
+      await rt.drain();
+      if (!(await rt.runServices())) { await rt.drain(); return; }
+    }
+  };
+  const outcome = async (id) => (await pool.query('SELECT result, reason, state_after FROM wf_events WHERE id = $1', [id])).rows[0];
+  const declare = (s, intent = INTENT(), head = null) => send(s, 'Declared', { intent, head }, route);
+  const calls = (kind) => work.calls.filter((c) => c.kind === kind);
+
+  await t.test('S1 a declared head ready to be shot: revision, copies, the agent, publication, cleanup', async () => {
+    defaults();
+    const s = await proposal();
+    await declare(s);
+    await rt.drain();
+    let r = await row(s);
+    assert.equal((await instance(s)).state, 'waiting_for_preview');
+    assert.equal(r.shots_state, 'planned');
+    assert.equal(r.shots_run_id, null);
+    assert.equal(r.shots_detail.required, true);
+    assert.equal(r.shots_detail.headSha, SHA('a'));
+    await send(s, 'HeadReady', { head: SHA('a') }, fromPreview);
+    await settle();
+    const i = await instance(s);
+    assert.equal(i.state, 'published');
+    const [run] = await runs(s);
+    assert.match(run.id, RUN);
+    assert.equal(run.state, 'verified');
+    assert.equal(run.base_sha, SHA('0'));
+    assert.equal(run.fixture_fingerprint, 'fp');
+    assert.equal(run.plan_hash, 'f'.repeat(64));
+    assert.deepEqual(run.hard_verdict.screens, [{ change: 'c1' }], 'the comparison\'s outlines are published');
+    assert.equal(run.trace_summary.cleanupComplete, true, 'the cleanup is recorded on the run');
+    r = await row(s);
+    assert.equal(r.shots_state, 'verified');
+    assert.equal(r.shots_run_id, run.id);
+    assert.equal(r.shots_detail.artifactSummary.length, 2, 'the saved files became the run\'s shots');
+    const { rows: arts } = await pool.query('SELECT side, data FROM shot_artifacts WHERE run_id = $1 ORDER BY side', [run.id]);
+    assert.deepEqual(arts.map((a) => [a.side, a.data.toString()]), [['base', 'fake-png'], ['head', 'fake-png']]);
+    assert.equal((await pool.query('SELECT 1 FROM shot_run_control WHERE run_id = $1', [run.id])).rowCount, 0, 'workspace gone');
+    assert.deepEqual(calls(WORK.cleanup).map((c) => [c.input.runId, c.input.stopTurn, c.input.worker]), [[run.id, true, false]]);
+    assert.ok(calls(WORK.settled).length >= 1, 'the bot hears the slot settled');
+    assert.ok(calls(WORK.prBlock).length >= 2, 'the PR block at the run\'s start and when it settles');
+    assert.ok(pushed.some((p) => p.data.type === 'vote_update' && p.data.action === 'shots' && p.data.shotsState === 'verified'));
+    // The same head again stands: nothing is taken twice.
+    const before = work.calls.length;
+    await send(s, 'HeadReady', { head: SHA('a') }, fromPreview);
+    await settle();
+    assert.equal(work.calls.length, before);
+  });
+
+  await t.test('S2 a declaration on a head already ready starts at once; the same one again changes nothing', async () => {
+    defaults();
+    const s = await proposal({ ready: true });
+    const id = await declare(s);
+    await settle();
+    assert.equal((await outcome(id)).result, 'accepted');
+    assert.equal((await instance(s)).state, 'published');
+    const before = work.calls.length;
+    const again = await declare(s);
+    await settle();
+    assert.equal(work.calls.length, before, 'no new run');
+    const { rows: [answer] } = await pool.query('SELECT reply FROM wf_events WHERE id = $1', [again]);
+    assert.equal(answer.reply.unchanged, true, 'the declaring route hears it changed nothing');
+    assert.equal(answer.reply.state, 'verified');
+  });
+
+  await t.test('S3 nothing visible declared: not needed, and the bot hears it settled', async () => {
+    defaults();
+    const s = await proposal({ ready: true });
+    await declare(s, INTENT('none'));
+    await settle();
+    assert.equal((await instance(s)).state, 'not_needed');
+    assert.equal((await row(s)).shots_state, 'not_required');
+    assert.equal(calls(WORK.revision).length, 0);
+    assert.equal(calls(WORK.settled).length, 1);
+  });
+
+  await t.test('S4 the proposal\'s agent busy: the run waits, and goes on once it is free', async () => {
+    defaults();
+    const s = await proposal();
+    await declare(s);
+    await pool.query(`UPDATE chat_sessions SET active_turn = '{"mode":"build"}'::jsonb WHERE id = $1`, [s.id]);
+    await send(s, 'HeadReady', { head: SHA('a') }, fromPreview);
+    await settle();
+    let i = await instance(s);
+    assert.equal(i.state, 'waiting_for_agent');
+    assert.ok(i.deadline_at, 'it looks again on its timer');
+    assert.equal((await row(s)).shots_state, 'exploring');
+    await due(s);
+    await rt.fireTimers();
+    await settle();
+    assert.equal((await instance(s)).state, 'waiting_for_agent', 'still busy');
+    await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [s.id]);
+    await due(s);
+    await rt.fireTimers();
+    await settle();
+    i = await instance(s);
+    assert.equal(i.state, 'published');
+  });
+
+  await t.test('S5 an agent that keeps another turn from it twice, then still: the run fails as busy', async () => {
+    defaults();
+    work.answer.set(WORK.agent, () => ({ agent: { outcome: 'busy', code: 'TURN_IN_FLIGHT', busy: true }, passed: false, skippedAny: false }));
+    const s = await proposal({ ready: true });
+    await declare(s);
+    await settle();
+    // Busy answers send it back to waiting; the facts say the agent is free
+    // again on each recheck.
+    for (let n = 0; n < 4; n++) {
+      if ((await instance(s)).state !== 'waiting_for_agent') break;
+      await due(s);
+      await rt.fireTimers();
+      await settle();
+    }
+    const i = await instance(s);
+    assert.equal(i.state, 'failed');
+    assert.equal(calls(WORK.agent).length, 3, 'the first dispatch and two more');
+    const [run] = await runs(s);
+    assert.equal(run.failure_code, 'TURN_IN_FLIGHT');
+  });
+
+  await t.test('S6 the agent\'s process died: dispatched once more; died again, the platform fault is taken again once', async () => {
+    defaults();
+    work.answer.set(WORK.agent, () => ({ agent: { outcome: 'died', code: 'shots_agent_failed', died: true, message: 'oom' },
+      passed: false, skippedAny: false }));
+    const s = await proposal({ ready: true });
+    await declare(s);
+    await settle();
+    let i = await instance(s);
+    assert.equal(i.state, 'failed');
+    assert.equal(calls(WORK.agent).length, 2);
+    let [run] = await runs(s);
+    assert.equal(run.trace_summary.platformFault.kind, 'agent_exit');
+    assert.equal((await row(s)).shots_detail.automaticRetryPending, true, 'the card says it is trying again');
+    assert.ok(i.deadline_at);
+    await due(s);
+    await rt.fireTimers();
+    await settle();
+    i = await instance(s);
+    assert.equal(i.state, 'failed', 'the retry failed the same way');
+    const all = await runs(s);
+    assert.equal(all.length, 2);
+    assert.deepEqual(all.map((r) => [r.state, r.trigger]), [['stale', 'declared'], ['failed', 'platform-retry']]);
+    assert.equal(i.deadline_at, null, 'no third run');
+    assert.equal((await row(s)).shots_detail.automaticRetryPending, false);
+    [run] = all.slice(-1);
+    assert.equal(run.trace_summary.automaticRetry, undefined);
+  });
+
+  await t.test('S7 a new head while the agent works: the run is cancelled, its turn and copies go, the new head waits', async () => {
+    defaults();
+    const s = await proposal({ ready: true });
+    let state = null;
+    // The head moves while the agent's step runs: its result is refused.
+    work.answer.set(WORK.agent, async (input) => {
+      state = (await instance(s)).state;
+      await send(s, 'HeadMoved', { head: SHA('b') });
+      return passed(input);
+    });
+    await declare(s);
+    await settle();
+    assert.equal(state, 'taking_shots');
+    assert.equal((await instance(s)).state, 'waiting_for_preview');
+    const r = await row(s);
+    assert.deepEqual([r.shots_state, r.shots_run_id, r.shots_detail.headSha], ['planned', null, SHA('b')]);
+    const [run] = await runs(s);
+    assert.deepEqual([run.state, run.failure_code], ['cancelled', 'superseded']);
+    const cleanup = calls(WORK.cleanup).find((c) => c.input.runId === run.id);
+    assert.equal(cleanup.input.stopTurn, true, 'the agent\'s turn is stopped');
+    assert.equal(calls(WORK.publish).length, 0, 'the refused result published nothing');
+  });
+
+  await t.test('S8 Stop while the agent works, then a person\'s Retry; published shots are not waived', async () => {
+    defaults();
+    const s = await proposal({ ready: true });
+    work.answer.set(WORK.agent, async (input) => {
+      await send(s, 'StopRequested', {}, route);
+      return passed(input);
+    });
+    await declare(s);
+    await settle();
+    assert.equal((await instance(s)).state, 'failed');
+    let [run] = await runs(s);
+    assert.equal(run.failure_code, 'shots_stopped');
+    assert.equal((await row(s)).shots_detail.automaticRetryPending, false, 'a stop is not taken again on its own');
+    const again = await send(s, 'StopRequested', {}, route);
+    await rt.drain();
+    assert.deepEqual([(await outcome(again)).result, (await outcome(again)).reason], ['rejected', 'not_running']);
+    defaults();
+    await send(s, 'RetryRequested', {}, route);
+    await settle();
+    assert.equal((await instance(s)).state, 'published');
+    run = (await runs(s)).slice(-1)[0];
+    assert.equal(run.trigger, 'manual-rerun');
+    const waived = await send(s, 'WaiveRequested', { userId: s.user_id, reason: 'Visible on staging' }, route);
+    await rt.drain();
+    assert.deepEqual([(await outcome(waived)).result, (await outcome(waived)).reason], ['rejected', 'invalid_shots_override_state'],
+      'published shots are not waived');
+  });
+
+  await t.test('S9 a failed run is waived by an admin; the slot reads overridden', async () => {
+    defaults();
+    work.answer.set(WORK.copies, () => ({ failed: { code: 'shots_build_failed', message: 'The after build failed.', fault: null } }));
+    const s = await proposal({ ready: true });
+    await declare(s);
+    await settle();
+    assert.equal((await instance(s)).state, 'failed');
+    assert.equal((await instance(s)).deadline_at, null, 'the proposal\'s own fault is not taken again');
+    const admin = await user();
+    await send(s, 'WaiveRequested', { userId: admin.id, reason: 'Checked by hand' }, route);
+    await settle();
+    assert.equal((await instance(s)).state, 'waived');
+    const r = await row(s);
+    assert.equal(r.shots_state, 'overridden');
+    assert.equal(r.shots_detail.overrideReason, 'Checked by hand');
+  });
+
+  await t.test('S10 the proposal closes while the run builds: it ends, its copies and temporary worker go', async () => {
+    defaults();
+    const s = await proposal({ ready: true, source: 'imported' });
+    work.answer.set(WORK.copies, async () => {
+      await send(s, 'Closed', { reason: 'merged' }, fromPreview);
+      return { fixtureFingerprint: 'fp', baseImageDigest: 'b', headImageDigest: 'h' };
+    });
+    await declare(s);
+    await settle();
+    assert.equal((await instance(s)).state, 'closed');
+    const [run] = await runs(s);
+    assert.equal(run.failure_code, 'shots_closed');
+    const cleanup = calls(WORK.cleanup).find((c) => c.input.runId === run.id);
+    assert.equal(cleanup.input.worker, true, 'an imported proposal\'s temporary worker goes');
+    assert.equal(calls(WORK.agent).length, 0);
+  });
+
+  await t.test('S11 the platform\'s refusals are said on the slot: a revision GitHub cannot compare', async () => {
+    defaults();
+    work.answer.set(WORK.revision, () => ({ failed: { code: 'missing_shots_base', message: 'no merge base' } }));
+    const s = await proposal({ ready: true });
+    await declare(s);
+    await settle();
+    assert.equal((await instance(s)).state, 'waiting_for_preview');
+    const r = await row(s);
+    assert.equal(r.shots_state, 'planned');
+    assert.match(r.shots_detail.notStartedReason, /could not be resolved/);
+    assert.equal((await runs(s)).length, 0, 'no run row was made');
+  });
+
+  await t.test('S12 a deployment that takes no shots says so', async () => {
+    const off = shots({ execute: false, agentBudgetMs: 480000, runBudgetMs: 1440000 });
+    const rt2 = createRuntime({ pool, machines: [off], pollMs: 50, publish: async () => {} });
+    runtimes.push(rt2);
+    const s = await proposal({ ready: true });
+    await rt2.append(off, sessionKey(s.id), { type: 'Declared', payload: { sessionId: s.id, intent: INTENT() } },
+      { requestKey: `t-${++rk}`, source: route, appId: s.app_id });
+    await rt2.drain();
+    assert.match((await row(s)).shots_detail.notStartedReason, /not being taken on this deployment/);
+  });
+
+  await t.test('S13 a UI change with no declaration: the slot says one is needed; a declaration then stands', async () => {
+    defaults();
+    const s = await proposal();
+    await send(s, 'UiUndeclared', { head: SHA('a') }, fromPreview);
+    await rt.drain();
+    let r = await row(s);
+    assert.equal((await instance(s)).state, 'undeclared');
+    assert.deepEqual([r.shots_state, r.shots_detail.required, r.shots_detail.claims], ['planned', true, []]);
+    await send(s, 'HeadReady', { head: SHA('a') }, fromPreview);
+    await rt.drain();
+    assert.match((await row(s)).shots_detail.notStartedReason, /no declared change/);
+    await declare(s);
+    await rt.drain();
+    r = await row(s);
+    assert.equal(r.shots_detail.claims.length, 1);
+    await send(s, 'UiUndeclared', { head: SHA('a') }, fromPreview);
+    await rt.drain();
+    assert.equal((await row(s)).shots_detail.claims.length, 1, 'a declaration stands');
+  });
+
+  await t.test('S14 a run [main] was taking is adopted as interrupted, cleaned up, and taken again at the release', async () => {
+    defaults();
+    const s = await proposal({ ready: true });
+    const oldRun = crypto.randomBytes(16).toString('hex');
+    await pool.query(
+      `INSERT INTO shot_runs (id, session_id, base_sha, head_sha, intent, state, trigger)
+       VALUES ($1, $2, $3, $4, $5::jsonb, 'exploring', 'preview-ready')`, [oldRun, s.id, SHA('0'), SHA('a'), JSON.stringify(INTENT())]);
+    await pool.query(
+      `UPDATE chat_sessions SET shots_state = 'exploring', shots_run_id = $2, shots_detail = $3::jsonb WHERE id = $1`,
+      [s.id, oldRun, JSON.stringify({ state: 'exploring', headSha: SHA('a'), intent: INTENT() })]);
+    await send(s, 'RetryRequested', { reason: 'release' }, { kind: 'system', name: 'release' });
+    await settle();
+    assert.equal((await instance(s)).state, 'published');
+    const all = await runs(s);
+    assert.equal(all[0].id, oldRun);
+    assert.equal(all[0].failure_code, 'shots_run_interrupted');
+    assert.equal(all[0].state, 'stale');
+    assert.equal(all[1].trigger, 'release-retry');
+    assert.ok(calls(WORK.cleanup).some((c) => c.input.runId === oldRun && c.input.stopTurn), 'the interrupted run\'s copies go');
+  });
+
+  await t.test('S15 the copies take too long: the run fails, and is taken again once', async () => {
+    defaults();
+    const s = await proposal({ ready: true });
+    let first = true;
+    work.answer.set(WORK.copies, async (input) => {
+      if (first) {
+        first = false;
+        await due(s);
+        await rt.fireTimers();
+        return { fixtureFingerprint: 'fp', baseImageDigest: 'b', headImageDigest: 'h' };
+      }
+      await workspace(input.runId, input.sessionId);
+      return { fixtureFingerprint: 'fp', baseImageDigest: 'b', headImageDigest: 'h' };
+    });
+    await declare(s);
+    await settle();
+    let i = await instance(s);
+    assert.equal(i.state, 'failed');
+    assert.equal((await runs(s))[0].failure_code, 'shots_copies_timeout');
+    assert.ok(i.deadline_at, 'taken again once');
+    await due(s);
+    await rt.fireTimers();
+    await settle();
+    i = await instance(s);
+    assert.equal(i.state, 'published');
+  });
+
+  await t.test('S16 the slot and the runs are the machine\'s: a write from outside it is refused', async () => {
+    defaults();
+    const s = await proposal({ ready: true });
+    await declare(s);
+    await settle();
+    await assert.rejects(pool.query(`UPDATE chat_sessions SET shots_state = 'failed' WHERE id = $1`, [s.id]), /WF_OWNERSHIP_VIOLATION/);
+    await assert.rejects(pool.query(`UPDATE shot_runs SET state = 'failed' WHERE session_id = $1`, [s.id]), /WF_OWNERSHIP_VIOLATION/);
+    await assert.rejects(pool.query(
+      `INSERT INTO shot_runs (id, session_id, base_sha, head_sha, intent, state) VALUES ($1, $2, $3, $3, '{}'::jsonb, 'planned')`,
+      [crypto.randomBytes(16).toString('hex'), s.id, SHA('c')]), /WF_OWNERSHIP_VIOLATION/);
+    // A proposal the machine does not hold is anyone's (a seed).
+    const other = await proposal();
+    await pool.query(`UPDATE chat_sessions SET shots_state = 'verified' WHERE id = $1`, [other.id]);
+    // Retention deletes are not refused.
+    await pool.query(`DELETE FROM shot_runs WHERE session_id = $1`, [s.id]).catch((err) => assert.match(err.message, /foreign key/));
+  });
+
+  await t.test('S17 an imported proposal\'s preview will not start: the slot says why', async () => {
+    defaults();
+    const s = await proposal({ source: 'imported' });
+    await declare(s);
+    await send(s, 'PreviewStopped', { head: SHA('a') }, fromPreview);
+    await rt.drain();
+    assert.match((await row(s)).shots_detail.notStartedReason, /No staging preview was built/);
+  });
+
+  await t.test('S18 a closed proposal starts no automatic run; a person may take a merged one\'s again, and nothing to shoot settles at once', async () => {
+    defaults();
+    const s = await proposal({ status: 'merged' });
+    await declare(s);
+    await send(s, 'HeadReady', { head: SHA('a') }, fromPreview);
+    await settle();
+    assert.equal(calls(WORK.revision).length, 0, 'no automatic run on a merged change');
+    const system = await send(s, 'RetryRequested', {}, { kind: 'system' });
+    await rt.drain();
+    assert.deepEqual([(await outcome(system)).result, (await outcome(system)).reason], ['rejected', 'closed']);
+    await send(s, 'RetryRequested', {}, route);
+    await settle();
+    assert.equal((await instance(s)).state, 'published', 'a person\'s rerun to diagnose an old failure');
+    // A retry with a declaration that shows nothing: not needed, and GitHub
+    // is not asked.
+    const before = calls(WORK.revision).length;
+    await send(s, 'RetryRequested', { intent: INTENT('none') }, route);
+    await settle();
+    assert.equal((await instance(s)).state, 'not_needed');
+    assert.equal((await row(s)).shots_state, 'not_required');
+    assert.equal(calls(WORK.revision).length, before);
+  });
+
+  await t.test('S19 a declaration appended in its caller\'s transaction applies once it commits; a changed one cancels the run under way', async () => {
+    defaults();
+    const s = await proposal();
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      await rt.append(machine, sessionKey(s.id), { type: 'Declared', payload: { sessionId: s.id, intent: INTENT() } },
+        { requestKey: `t-${++rk}`, source: route, appId: s.app_id, db: c });
+      await c.query('ROLLBACK');
+    } finally { c.release(); }
+    await rt.drain();
+    assert.equal(await instance(s), undefined, 'rolled back: nothing was declared');
+    const c2 = await pool.connect();
+    try {
+      await c2.query('BEGIN');
+      await rt.append(machine, sessionKey(s.id), { type: 'Declared', payload: { sessionId: s.id, intent: INTENT() } },
+        { requestKey: `t-${++rk}`, source: route, appId: s.app_id, db: c2 });
+      await c2.query('COMMIT');
+    } finally { c2.release(); }
+    await rt.drain();
+    assert.equal((await row(s)).shots_detail.claims.length, 1);
+    // A run under way, then a changed declaration.
+    work.answer.set(WORK.agent, async (input) => {
+      await declare(s, INTENT('ui', 'The card shows the old badge too'));
+      return passed(input);
+    });
+    await send(s, 'HeadReady', { head: SHA('a') }, fromPreview);
+    await settle();
+    const [run] = await runs(s);
+    assert.deepEqual([run.state, run.failure_code], ['cancelled', 'intent_changed']);
+    assert.equal((await row(s)).shots_detail.claims[0].claim, 'The card shows the old badge too');
+  });
+
+  await t.test('S20 a step past its deadline: a stuck agent fails the run (taken again once), a stuck comparison publishes without outlines', async () => {
+    defaults();
+    const s = await proposal({ ready: true });
+    let first = true;
+    work.answer.set(WORK.agent, async (input) => {
+      if (first) {
+        first = false;
+        await due(s);
+        await rt.fireTimers();
+        return passed(input);   // a result after it was given up on: refused
+      }
+      await saved(input.runId, 'base');
+      await saved(input.runId, 'head');
+      return passed(input);
+    });
+    await declare(s);
+    await settle();
+    let i = await instance(s);
+    assert.equal(i.state, 'failed');
+    const [run] = await runs(s);
+    assert.equal(run.failure_code, 'shots_agent_timeout');
+    assert.equal(run.trace_summary.platformFault.kind, 'agent_exit');
+    assert.equal(calls(WORK.publish).length, 0);
+    // The one retry; its comparison never ends.
+    work.answer.set(WORK.publish, async () => {
+      await due(s);
+      await rt.fireTimers();
+      return { verdict: { screens: ['too late'] } };
+    });
+    await due(s);
+    await rt.fireTimers();
+    await settle();
+    i = await instance(s);
+    assert.equal(i.state, 'published');
+    const last = (await runs(s)).slice(-1)[0];
+    assert.equal(last.state, 'verified');
+    assert.equal(last.hard_verdict.screens, undefined, 'published as the agent left it, without outlines');
+  });
+
+  await t.test('S21 nothing on the slot yet (its revision is being resolved): Stop and waive have nothing to act on', async () => {
+    defaults();
+    const s = await proposal({ ready: true });
+    let stop = null;
+    work.answer.set(WORK.revision, async () => {
+      stop = await send(s, 'StopRequested', {}, route);
+      return { baseSha: SHA('0') };
+    });
+    await declare(s);
+    await settle();
+    assert.deepEqual([(await outcome(stop)).result, (await outcome(stop)).reason], ['rejected', 'not_running']);
+    assert.equal((await instance(s)).state, 'published');
+  });
+});

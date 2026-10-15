@@ -1,20 +1,24 @@
 'use strict';
 
-// A before/after run gets one purpose-bound JWT and this in-memory,
-// run-scoped control plane. The shots agent can read its brief, save shots
-// and clips, note what a change's shots leave out, skip a change with a
-// reason, note a few problems it saw on the after build, and record what it
-// did to both builds to reach a change (a request held or failed, a sample
-// file uploaded). It cannot address another run, obtain app auth material,
-// or invoke generic platform APIs. A platform restart drops the registry;
-// recovery retries the durable run rather than trusting an orphan model
-// process.
+// A before/after run gets one purpose-bound JWT and this run-scoped control
+// plane. The shots agent can read its brief, save shots and clips, note what
+// a change's shots leave out, skip a change with a reason, note a few
+// problems it saw on the after build, and record what it did to both builds
+// to reach a change (a request held or failed, a sample file uploaded). It
+// cannot address another run, obtain app auth material, or invoke generic
+// platform APIs.
+//
+// The control plane lives in Postgres (shot_run_control, shot_run_files), so
+// any web process serves the agent's calls and a restart loses nothing the
+// agent saved. Each call loads the run's workspace under a row lock, applies
+// the call with RunControl's rules, and writes back what it changed: the
+// agent's calls on one run are applied one at a time. The shots machine
+// (src/workflow/shots/) reads the workspace once the agent's turn has ended
+// (summaryFor), and publishes the saved files by copying them in SQL.
 
 const planContract = require('./visible-changes');
 const shots = require('./shots-files');
 const homeTile = require('./shots-home-tile');
-
-const controls = new Map();
 
 class ShotsControlError extends Error {
   constructor(code, message, status = 409) {
@@ -81,6 +85,8 @@ class RunControl {
     // The last refused tool call survives a normal model exit, for the
     // owner's diagnostics.
     this.lastToolFailure = null;
+    // The slots saved by the call being applied, written back after it.
+    this.dirty = new Set();
   }
 
   assertLive() {
@@ -124,7 +130,9 @@ class RunControl {
         this.declaredChange(target.storyId), target, info,
         this.saved.get(shots.slotKey({ ...target, variant: 'context' })),
       );
-      this.saved.set(shots.slotKey(target), shots.stored(target, buffer, info));
+      const slot = shots.slotKey(target);
+      this.saved.set(slot, shots.stored(target, buffer, info));
+      this.dirty.add(slot);
       this.skipped.delete(target.storyId);
       this.failed.delete(target.storyId);
       // The same image on the other side says the two sides were not shot
@@ -292,40 +300,254 @@ class RunControl {
   }
 }
 
-function registerRun(options) {
-  if (!/^[0-9a-f]{32}$/.test(String(options?.runId || ''))) {
-    throw new ShotsControlError('invalid_shots_run', 'A valid preview run id is required.', 400);
-  }
-  if (controls.has(options.runId)) throw new ShotsControlError('shots_control_exists', 'This preview run is already registered.');
-  const control = new RunControl(options);
-  controls.set(options.runId, control);
+// ── Persistence ─────────────────────────────────────────────────────────
+
+const RUN_ID = /^[0-9a-f]{32}$/;
+
+// A saved file's slot as Postgres keeps it (shot_run_files.slot, and the
+// slots a run publishes): its change, screen, side and kind. The in-memory
+// key (shots-files.slotKey) separates them with NUL, which neither text nor
+// jsonb holds.
+function dbSlot({ storyId, viewport, side, variant }) {
+  return [storyId, viewport, side, variant].join('/');
+}
+const mapOf = (value) => new Map(Object.entries(value && typeof value === 'object' ? value : {}));
+const objectOf = (map) => Object.fromEntries(map);
+
+// A saved file as RunControl keeps it: everything but its bytes, which stay
+// in the database (a retake replaces the row; publication copies it).
+function fileEntry(row) {
   return {
-    control,
-    unregister() {
-      if (controls.get(options.runId) === control) controls.delete(options.runId);
-    },
+    storyId: row.story_id, viewport: row.viewport, side: row.side, variant: row.variant, media: row.media,
+    contentType: row.content_type, width: row.width, height: row.height, bytes: row.bytes, sha256: row.sha256,
+    focusRect: null, stageLabels: null,
   };
 }
 
-function forRequest({ runId, sessionId }) {
-  const control = controls.get(String(runId || ''));
-  if (!control) throw new ShotsControlError('shots_control_not_found', 'This preview run is no longer active.', 410);
-  if (control.sessionId !== Number(sessionId)) {
-    throw new ShotsControlError('shots_scope_mismatch', 'This token does not own this preview run.', 403);
+function toolFailureOf(value) {
+  if (!value) return null;
+  const error = value.error || {};
+  return { operation: value.operation, error: { code: error.code || null, message: String(error.message || '').slice(0, 500) } };
+}
+
+function fromRow(row, files) {
+  const control = new RunControl({
+    runId: row.run_id, sessionId: row.session_id, intent: row.intent, context: row.context,
+    expiresAt: new Date(row.expires_at).getTime(), homeTiles: row.home_tiles, afterOnly: row.after_only,
+  });
+  for (const file of files) {
+    const entry = fileEntry(file);
+    control.saved.set(shots.slotKey(entry), entry);
   }
-  control.assertLive();
+  control.skipped = mapOf(row.skipped);
+  control.failed = new Set(Array.isArray(row.failed) ? row.failed : []);
+  control.notes = mapOf(row.notes);
+  control.notices = Array.isArray(row.notices) ? row.notices : [];
+  control.conditions = mapOf(row.conditions);
+  control.skippedAll = row.skipped_all || null;
+  control.skippedAllFailed = row.skipped_all_failed === true;
+  control.lastToolFailure = row.last_tool_failure || null;
+  control.kind = row.kind;
+  control.agent = row.agent || null;
   return control;
 }
 
-function clearForTests() {
-  controls.clear();
+async function inTransaction(pool, fn) {
+  const client = typeof pool.connect === 'function' ? await pool.connect() : null;
+  const db = client || pool;
+  try {
+    await db.query('BEGIN');
+    const out = await fn(db);
+    await db.query('COMMIT');
+    return out;
+  } catch (err) {
+    await db.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client?.release();
+  }
+}
+
+async function load(db, runId, { lock = false } = {}) {
+  const { rows: [row] } = await db.query(
+    `SELECT * FROM shot_run_control WHERE run_id = $1${lock ? ' FOR UPDATE' : ''}`, [runId]);
+  if (!row) return null;
+  const { rows: files } = await db.query(
+    `SELECT slot, story_id, viewport, side, variant, media, content_type, width, height, bytes, sha256
+       FROM shot_run_files WHERE run_id = $1`, [runId]);
+  return { row, control: fromRow(row, files) };
+}
+
+async function persist(db, control) {
+  await db.query(
+    `UPDATE shot_run_control
+        SET skipped = $2::jsonb, failed = $3::jsonb, notes = $4::jsonb, notices = $5::jsonb,
+            conditions = $6::jsonb, skipped_all = $7, skipped_all_failed = $8,
+            last_tool_failure = $9::jsonb, updated_at = NOW()
+      WHERE run_id = $1`,
+    [control.runId, JSON.stringify(objectOf(control.skipped)), JSON.stringify([...control.failed]),
+      JSON.stringify(objectOf(control.notes)), JSON.stringify(control.notices),
+      JSON.stringify(objectOf(control.conditions)), control.skippedAll, control.skippedAllFailed,
+      JSON.stringify(toolFailureOf(control.lastToolFailure))]);
+  for (const key of control.dirty) {
+    const f = control.saved.get(key);
+    const slot = dbSlot(f);
+    await db.query(
+      `INSERT INTO shot_run_files
+         (run_id, slot, story_id, viewport, side, variant, media, content_type, data, width, height, bytes, sha256)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       ON CONFLICT (run_id, slot) DO UPDATE
+         SET data = EXCLUDED.data, content_type = EXCLUDED.content_type, media = EXCLUDED.media,
+             width = EXCLUDED.width, height = EXCLUDED.height, bytes = EXCLUDED.bytes,
+             sha256 = EXCLUDED.sha256, saved_at = NOW()`,
+      [control.runId, slot, f.storyId, f.viewport, f.side, f.variant, f.media, f.contentType, f.data,
+        f.width, f.height, f.bytes, f.sha256]);
+  }
+  control.dirty.clear();
+}
+
+// A proposal's run is answered only while it is the proposal's current run
+// and its agent is at work (the shots machine's `taking_shots`, which the
+// slot shows as `exploring`): a call from a turn that outlived its run, or
+// that arrives once the run has moved on, changes nothing.
+async function assertCurrent(db, control) {
+  if (control.kind !== 'run') return;
+  const { rows: [s] } = await db.query(
+    'SELECT shots_run_id, shots_state FROM chat_sessions WHERE id = $1', [control.sessionId]);
+  if (!s || s.shots_run_id !== control.runId || s.shots_state !== 'exploring') {
+    throw new ShotsControlError('shots_control_not_found', 'This preview run is no longer active.', 410);
+  }
+}
+
+/**
+ * Apply one of the agent's calls to run `runId`, for the worker of
+ * `sessionId`: fn(control) runs RunControl's rule, and what it changed is
+ * written back in the same transaction. A refused call still records itself
+ * as the last refused call (the owner's diagnostics). Resolves fn's answer.
+ */
+async function withControl(pool, { runId, sessionId }, fn) {
+  if (!RUN_ID.test(String(runId || ''))) throw new ShotsControlError('shots_control_not_found', 'This preview run is no longer active.', 410);
+  let refused = null;
+  const out = await inTransaction(pool, async (db) => {
+    const loaded = await load(db, runId, { lock: true });
+    if (!loaded) throw new ShotsControlError('shots_control_not_found', 'This preview run is no longer active.', 410);
+    const { control } = loaded;
+    if (control.sessionId !== Number(sessionId)) {
+      throw new ShotsControlError('shots_scope_mismatch', 'This token does not own this preview run.', 403);
+    }
+    control.assertLive();
+    await assertCurrent(db, control);
+    try {
+      const answer = await fn(control);
+      await persist(db, control);
+      return { answer };
+    } catch (error) {
+      // Only the refusal is kept; whatever the call half did is not.
+      if (control.lastToolFailure?.error === error) {
+        await db.query('UPDATE shot_run_control SET last_tool_failure = $2::jsonb, updated_at = NOW() WHERE run_id = $1',
+          [runId, JSON.stringify(toolFailureOf(control.lastToolFailure))]);
+        refused = error;
+        return null;
+      }
+      throw error;
+    }
+  });
+  if (refused) throw refused;
+  return out.answer;
+}
+
+/**
+ * The run's workspace, made when its copies serve (a retry of the same
+ * step writes it again): the brief, the home tiles, what the dispatch
+ * needs. A workspace that exists keeps what the agent already saved.
+ */
+async function create(pool, {
+  runId, sessionId, kind = 'run', intent, context, homeTiles = null, afterOnly = false, agent = null, expiresAt,
+}) {
+  if (!RUN_ID.test(String(runId || ''))) {
+    throw new ShotsControlError('invalid_shots_run', 'A valid preview run id is required.', 400);
+  }
+  await pool.query(
+    `INSERT INTO shot_run_control (run_id, kind, session_id, intent, context, home_tiles, after_only, agent, expires_at)
+     VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8::jsonb, $9)
+     ON CONFLICT (run_id) DO UPDATE
+       SET context = EXCLUDED.context, home_tiles = EXCLUDED.home_tiles, after_only = EXCLUDED.after_only,
+           agent = EXCLUDED.agent, expires_at = EXCLUDED.expires_at, updated_at = NOW()`,
+    [runId, kind, Number(sessionId), JSON.stringify(planContract.parseIntent(intent)), JSON.stringify(context ?? {}),
+      homeTiles ? JSON.stringify(homeTiles) : null, afterOnly === true, agent ? JSON.stringify(agent) : null,
+      new Date(expiresAt)]);
+}
+
+// When the agent may write until: its dispatch sets it from its clock.
+async function extend(pool, runId, expiresAt) {
+  await pool.query('UPDATE shot_run_control SET expires_at = $2, updated_at = NOW() WHERE run_id = $1',
+    [runId, new Date(expiresAt)]);
+}
+
+// What the agent is doing now, for the owner's diagnostics (nothing decides
+// on it).
+async function noteProgress(pool, runId, progress) {
+  const json = JSON.stringify(progress ?? null);
+  if (json.length > 64_000) return;
+  await pool.query('UPDATE shot_run_control SET progress = $2::jsonb WHERE run_id = $1', [runId, json]);
+}
+
+// The run's workspace as RunControl, read without a lock (its summary once
+// the turn has ended, the dispatch's needs, diagnostics). Null when gone.
+async function read(pool, runId) {
+  const loaded = await load(pool, runId);
+  return loaded ? loaded.control : null;
+}
+
+// Every saved file with its bytes, for the slots named (the screen diff).
+async function filesFor(pool, runId, slots = null) {
+  const { rows } = await pool.query(
+    `SELECT slot, story_id, viewport, side, variant, media, content_type, data, width, height, bytes, sha256
+       FROM shot_run_files WHERE run_id = $1 ${slots ? 'AND slot = ANY($2::text[])' : ''}`,
+    slots ? [runId, slots] : [runId]);
+  return rows.map((row) => ({ ...fileEntry(row), data: row.data }));
+}
+
+async function remove(pool, runId) {
+  await pool.query('DELETE FROM shot_run_control WHERE run_id = $1', [runId]);
+}
+
+// What the run's workspace adds up to when the agent's turn has ended:
+// shots-files.summarize over what it saved and said, without the bytes.
+async function summaryFor(pool, runId) {
+  const control = await read(pool, runId);
+  if (!control) return null;
+  const summary = control.summary();
+  return {
+    summary,
+    counts: {
+      savedFiles: control.saved.size,
+      skippedChanges: control.skipped.size,
+      ...(control.failed.size ? { failedChanges: control.failed.size } : {}),
+      notedChanges: control.notes.size,
+      ...(control.notices.length ? { notedProblems: control.notices.length } : {}),
+      ...(control.conditions.size ? {
+        notedConditions: [...control.conditions.values()].reduce((sum, list) => sum + list.length, 0),
+      } : {}),
+      skippedAll: !!control.skippedAll,
+    },
+    skippedAny: control.skipped.size > 0 || !!control.skippedAll,
+    lastToolFailure: control.lastToolFailure,
+    agent: control.agent,
+  };
 }
 
 module.exports = {
   ShotsControlError,
   RunControl,
+  dbSlot,
   maskPhoneTestCode,
-  registerRun,
-  forRequest,
-  _clearForTests: clearForTests,
+  withControl,
+  create,
+  extend,
+  noteProgress,
+  read,
+  filesFor,
+  remove,
+  summaryFor,
 };

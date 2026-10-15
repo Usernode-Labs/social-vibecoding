@@ -249,50 +249,12 @@ test('cleanup is idempotent — SIGTERM then SIGINT must not tear down twice', a
   }
 });
 
-test('shutdown marks an unfinished visual replay with its actual interruption reason before closing the pool', async () => {
-  const { server, restore } = loadServer();
-  const orchestrator = require('../src/services/shots-orchestrator');
-  const shotsState = require('../src/services/shots-state');
-  const lifecycle = require('../src/services/lifecycle');
-  const saved = {
-    keys: orchestrator.inFlightSnapshot, ids: orchestrator.inFlightRunSnapshot,
-    transition: shotsState.transitionRun, waitFor: lifecycle.waitFor,
-  };
-  const runId = 'a'.repeat(32);
-  const order = [];
-  const marks = [];
-  orchestrator.inFlightSnapshot = () => ['42:head'];
-  orchestrator.inFlightRunSnapshot = () => [runId];
-  lifecycle.waitFor = async () => false;
-  // Recorded, not asserted, in here: the shutdown handler settles every mark
-  // with Promise.allSettled, so an assertion thrown inside this stub would be
-  // swallowed and could never fail the test.
-  shotsState.transitionRun = async (_pool, id, next, patch) => {
-    order.push('marked');
-    marks.push({ id, next, patch });
-  };
-  try {
-    const pool = fakePool({ endImpl: async () => { order.push('poolEnd'); } });
-    await runCleanup(server, { listener: fakeListener(), pool });
-    assert.deepEqual(order, ['marked', 'poolEnd']);
-    assert.equal(marks.length, 1);
-    const [{ id, next, patch }] = marks;
-    assert.equal(id, runId);
-    assert.equal(next, 'failed');
-    assert.equal(patch.failureCode, 'shots_run_interrupted');
-    assert.equal(patch.failureReason, shotsState.SHUTDOWN_INTERRUPTED_REASON);
-    assert.match(patch.failureReason, /Homeroom restarted/);
-    // Tagged as a rollout, merged into the trace rather than replacing the
-    // run's diagnostics, so the retry sweep spends only the ceiling on it.
-    assert.deepEqual(patch.traceMerge, { interruptedBy: shotsState.SHUTDOWN_INTERRUPTION });
-    assert.equal(patch.traceSummary, undefined);
-  } finally {
-    orchestrator.inFlightSnapshot = saved.keys;
-    orchestrator.inFlightRunSnapshot = saved.ids;
-    shotsState.transitionRun = saved.transition;
-    lifecycle.waitFor = saved.waitFor;
-    restore();
-  }
+test('shutdown marks no shots run: they are the shots machine\'s, carried on by the next process', () => {
+  // src/workflow/shots/: a run's steps are work items (the agent's turn a
+  // durable step), so a release interrupts none and a shutdown has none to
+  // fail.
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'server.js'), 'utf8');
+  assert.doesNotMatch(src, /inFlightRunSnapshot|SHUTDOWN_INTERRUPTED_REASON|shots-orchestrator'\)\.inFlightSnapshot/);
 });
 
 test('shutdown hands its checks runs to the next leader before closing the pool', async () => {
@@ -738,12 +700,11 @@ test('preStop, the drain and the rest of cleanup fit inside the platform Pod\'s 
   // Kubernetes counts the grace from the start of termination, preStop
   // included. After the drain, cleanup takes each of its bounded steps in
   // turn: the handler drain and the worker wait (together), the Mayor's
-  // turns ended, the shots mark, the build marks, the checks hand-over and
+  // turns ended, the build marks, the checks hand-over and
   // this process's row, the pool close; then the leader lock: a second is
   // allowed for that.
   const afterDrainMs = serverModule.DRAIN_TIMEOUT_MS
     + 3000
-    + serverModule.SHOTS_SHUTDOWN_MARK_TIMEOUT_MS
     + 3 * serverModule.BUILD_SHUTDOWN_MARK_TIMEOUT_MS
     + serverModule.POOL_CLOSE_TIMEOUT_MS
     + 1000;
@@ -790,7 +751,7 @@ test('the gate: once shutdown has begun the bot dispatches nothing, its build la
 
 // docs/plans/draining-releases.md: on the platform's own Kubernetes Pods a
 // release no longer cuts the work the Pod started. It stops leading at once,
-// keeps its listener open (a shots worker calls it by its own address) and
+// keeps its listener open (a request it still answers) and
 // finishes what it holds; only then does it close, hand over what is left and
 // exit.
 test('a Pod a release replaced resigns at once, keeps listening while it finishes what it holds, then exits', async () => {

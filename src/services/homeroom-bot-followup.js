@@ -911,7 +911,7 @@ function turnMarkOf(activeTurn) {
  * startCodexAttempt refuses a new turn on anyway). A read that fails says
  * no: the turn's own start refuses a busy session as before.
  */
-async function turnRunningOn({ pool, session, worker, activeWorkers, shotsRunFor = null }) {
+async function turnRunningOn({ pool, session, worker, activeWorkers, shotsRunning = null }) {
   const id = Number(session.id);
   if (activeWorkers.has(session.id) || activeWorkers.has(id)) return true;
   if (require('./active-workers').hasSessionOperation(id)) return true;
@@ -919,8 +919,7 @@ async function turnRunningOn({ pool, session, worker, activeWorkers, shotsRunFor
   // build to its agent's last word, but writes no turn record until it
   // dispatches, minutes in. A follow-up that started in that gap took the
   // session from under it, so it waits for the run as the Mayor's does.
-  const shotsRun = (shotsRunFor || require('./shots-orchestrator').inFlightRunFor)(id);
-  if (shotsRun) return true;
+  if (await Promise.resolve().then(() => (shotsRunning || require('./shots-state').shotsRunning)(id)).catch(() => false)) return true;
   if (typeof worker.isInFlight === 'function' && (worker.isInFlight(session.id) || worker.isInFlight(id))) return true;
   try {
     const { rows } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [id]);
@@ -947,7 +946,7 @@ async function runFollowUpTurn({
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const busy = { routed: { error: 'session_busy' }, result: {}, stopped: false, costUsd: null, pricing: null };
-  if (await turnRunningOn({ pool, session, worker, activeWorkers, shotsRunFor: deps.shotsRunFor })) {
+  if (await turnRunningOn({ pool, session, worker, activeWorkers, shotsRunning: deps.shotsRunning })) {
     log.info('homeroom-bot', 'Follow-up waits: a turn is running on its proposal', { sessionId: session.id, issueNumber });
     return busy;
   }

@@ -3612,22 +3612,15 @@ const SHOTS_WAIT_MS = 6 * 60_000;
  * there was none, 'finished' or 'timeout'; never throws.
  */
 async function waitOutShotsRun(sessionId, deps = {}) {
-  let run = null;
+  let waited = 'idle';
   try {
-    run = (deps.shotsRunFor || require('./shots-orchestrator').inFlightRunFor)(Number(sessionId));
-  } catch { run = null; }
-  if (!run) return 'idle';
-  log.info('homeroom-bot', 'Turn waits for the before & after shots running on its session', { sessionId });
-  let timer = null;
-  const finished = await Promise.race([
-    Promise.resolve(run).then(() => true, () => true),
-    new Promise((resolve) => {
-      timer = setTimeout(() => resolve(false), deps.shotsWaitMs ?? SHOTS_WAIT_MS);
-      if (typeof timer.unref === 'function') timer.unref();
-    }),
-  ]);
-  clearTimeout(timer);
-  return finished ? 'finished' : 'timeout';
+    const wait = deps.shotsWait || require('./shots-state').waitForShotsRun;
+    const running = deps.shotsRunning || require('./shots-state').shotsRunning;
+    if (!(await running(Number(sessionId)))) return 'idle';
+    log.info('homeroom-bot', 'Turn waits for the before & after shots running on its session', { sessionId });
+    waited = await wait(Number(sessionId), { timeoutMs: deps.shotsWaitMs ?? SHOTS_WAIT_MS });
+  } catch { waited = 'idle'; }
+  return waited;
 }
 
 function buildTurnRunner({

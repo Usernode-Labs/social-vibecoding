@@ -393,21 +393,18 @@ and that the statement may still be running, where it used to end at the
 command with nothing said (`db-manager.psqlFailure`). A password in the
 statement is masked.
 
-A run that a platform restart interrupted is retried automatically on the
-same commit (`shots-gc.retryInterrupted`): one a graceful shutdown cut off
-(a rollout, `interruptedBy: 'shutdown'`) up to 24 times, so a burst of
-rollouts cannot spend the retries, and one nothing explained (a crash, a
-lost heartbeat) up to twice, since the run itself may be what takes the
-process down. A sweep every 30 seconds starts the same commit again once the
-run has been marked interrupted for 30 seconds, and each further retry waits
-twice as long, up to five minutes. Until then the card says
-"Trying the shots again" rather than asking anyone to retry, and the view
-carries `automaticRetryPending: true`. A person can take the shots again,
-stop a running set, or (as an app manager) waive them.
+A platform restart does not interrupt a run. Its steps are the shots
+machine's work items (`src/workflow/shots/`): the copies keep their built
+images in their step's checkpoint, the shots agent's turn is followed through
+its journal by whichever process takes the step next (`durable-turn.js`), and
+everything the agent saved is already in Postgres. A run [main] was taking
+when this release replaced it is taken again once by the machine. A person
+can take the shots again, stop a running set, or (as an app manager) waive
+them.
 
 A run that a platform step failed, past that step's own retries, is taken
-again automatically ONCE on the same commit (`shots-gc.retryPlatformFaults`,
-trigger `platform-retry`). In the 200 proposals merged 2026-10-09 to 10-12,
+again automatically ONCE on the same commit (`RetryDue`, on the instance's timer,
+trigger `platform-retry`, by the shots machine). In the 200 proposals merged 2026-10-09 to 10-12,
 11 of 166 runs ended that way and none was retried, so each went to its vote
 with no shots. The run's trace names the kind (`platformFault`, read off the
 error by `shots-orchestrator.platformFault`, never off its wording):
@@ -415,8 +412,9 @@ error by `shots-orchestrator.platformFault`, never off its wording):
 such as a template copy cut off at psql's 90 seconds), `clone` (the
 revision's checkout), `worker_bootstrap` (the shots worker's own clone or
 warm start), `github_rate_limited`, and `agent_exit` (the shots agent's
-process ended with an error). The sweep starts it a minute after the
-failure, or for GitHub's hourly limit a minute after the limit resets. The
+process ended with an error), and `copies_timeout` (copies that took over 45
+minutes to build). It starts a minute after the failure, or for GitHub's
+hourly limit a minute after the limit resets. The
 card says "Trying the shots again" with the cause in plain words, and the
 admin export has the kind in `platform_fault`. A second failure stays
 failed, whatever it was. A revision that does not build, a change that
@@ -751,9 +749,11 @@ it gets `MAX_APPS=0`:
 It is safe because the copies are internal-only and torn down when the run
 ends, the numbers are fictional (no person answers one, and nothing is ever
 texted), an account one makes is a test account in that copy's throwaway
-database, and the code is good for one run. It is never stored: the brief
-lives only in the run's in-memory control, the agent's skip reasons, notes
-and final words are masked of it before they are kept, the copy's boot line
+database, and the code is good for one run. It is kept only as long as the
+run's copies: in the run's workspace (`shot_run_control`, its brief and what
+the agent's dispatch needs), removed with the copies when the run ends; the
+agent's skip reasons, notes and final words are masked of it before they are
+kept, the copy's boot line
 says only "(set)", and the runtime's env fingerprint label leaves it out. A
 shot can show it typed into the code field, but by the time a shot is
 published both copies are gone.

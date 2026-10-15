@@ -33,7 +33,6 @@ stub('../src/services/homeroom-bot-dm', {
 stub('../src/services/homeroom-bot', {
   async noteProposalChecks(_pool, o) { botCalls.push(['checks', o.sessionId]); },
 });
-stub('../src/services/shots-orchestrator', { async scheduleForSession() {} });
 
 const { previewServices } = require('../src/workflow/preview/services.ts');
 const { WORK } = require('../src/workflow/preview/machine.ts');

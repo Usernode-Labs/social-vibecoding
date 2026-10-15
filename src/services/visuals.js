@@ -1608,55 +1608,6 @@ function sessionGitRef(session, commitHash) {
   return (session && session.branch_name) || null;
 }
 
-// Launch revision-scoped shots for a preview that is ready. The orchestrator
-// reloads the row, deduplicates by session+head, and owns its own paired
-// application state, so no stale in-memory session metadata or mutable public
-// preview is reused.
-function scheduleShots(config, pool, sessionId, commitHash, trigger = 'preview-ready') {
-  const orchestrator = require('./shots-orchestrator');
-  // #2601/#2558: the `execute` guard used to live here as well, so a
-  // deployment with execution switched off never reached the orchestrator
-  // and the reason was never written anywhere. scheduleForSession owns that
-  // refusal now — it records it on the proposal and returns 'disabled' — so
-  // this only screens out a commit it could not schedule against at all.
-  if (!/^[0-9a-f]{40}$/.test(String(commitHash || ''))) {
-    orchestrator.noteNotStarted(pool, Number(sessionId), 'no_revision')
-      .catch(() => { /* best-effort: nothing else to do on a bad commit */ });
-    return;
-  }
-  Promise.resolve().then(() => orchestrator.scheduleForSession(config, {
-    pool,
-    sessionId: Number(sessionId),
-    headSha: String(commitHash).toLowerCase(),
-    trigger,
-  })).catch((err) => {
-    log.warn('visuals', 'Before & after shots scheduling failed', {
-      sessionId: Number(sessionId), headSha: commitHash, err: err.message,
-    });
-    // A throw here is still a run that never started, and the reviewer
-    // surfaces have nothing else to go on.
-    return orchestrator.noteNotStarted(pool, Number(sessionId), 'no_revision').catch(() => {});
-  });
-}
-
-// Only when nothing holds the session. A shots run first waits, for at most
-// two minutes, for the proposal's agent to be free, and a turn whose tail
-// submitted this revision may still be wrapping up; the preview machine
-// starts them again once its checks settle (preview services checks.publish).
-function startShotsIfIdle(config, pool, sessionId, commitHash) {
-  if (!/^[0-9a-f]{40}$/.test(String(commitHash || ''))) return Promise.resolve();
-  return Promise.resolve().then(async () => {
-    const { rows } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [sessionId]);
-    if (!rows[0] || rows[0].active_turn) return;
-    if (await require('./worker').isInFlight(sessionId)) return;
-    scheduleShots(config, pool, sessionId, commitHash, 'preview-ready');
-  }).catch((err) => {
-    log.warn('visuals', 'Could not start before & after shots beside the checks', {
-      sessionId: Number(sessionId), headSha: commitHash, err: err.message,
-    });
-  });
-}
-
 // Wait for the run's checks slot (services/checks-queue.js), saying so on
 // the card while it waits. A run admitted at its first ask says nothing and
 // goes straight on to 'testing'; one that has to wait is stamped 'queued',
@@ -1904,21 +1855,11 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     const captureRouteSource = capturePlan.routeSource;
     const visualScenarios = capturePlan.scenarios;
     const navigationPaths = capturePaths;
-    if (config.shots?.collect && uiAffecting) {
-      try {
-        await require('./shots-state').requireIntentForUiChange(
-          pool,
-          Number(session.id),
-          {
-            headSha: /^[0-9a-f]{40}$/.test(String(commitHash || ''))
-              ? String(commitHash).toLowerCase() : null,
-          }
-        );
-      } catch (err) {
-        log.warn('visuals', 'Could not persist the missing shots declaration', {
-          sessionId: session.id, commitHash, err: err.message,
-        });
-      }
+    // A UI change must declare its visible changes for before & after
+    // shots. The run reports it; the preview machine tells the shots machine,
+    // whose slot says a declaration is needed (src/workflow/shots/).
+    if (config.shots?.collect && uiAffecting && opts.workflow?.report) {
+      opts.workflow.report.uiAffecting = true;
     }
     // #381: the headless run ALWAYS happens so every proposal gets a
     // console-error check. Explicit routes and named scenarios are strong
@@ -3430,8 +3371,6 @@ module.exports = {
   kubernetesCaptureOrigin,
   sessionEventEnvelope,
   captureForSession,
-  scheduleShots,
-  startShotsIfIdle,
   // The settlement half of a run, for the retry of a machine's work item
   // (check-harvest.collectForWorkflow) reading a run whose launcher died.
   settleCaptureRun,

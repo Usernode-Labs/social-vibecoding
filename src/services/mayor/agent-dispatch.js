@@ -100,8 +100,10 @@ function defaults(deps = {}) {
     callPlatform: deps.callPlatform || require('../mcp-tools').callPlatform,
     loopbackBaseUrl: deps.loopbackBaseUrl || require('./mcp-shim').loopbackBaseUrl,
     attachments: deps.attachments || require('../attachments'),
-    shotsRunFor: deps.shotsRunFor
-      || ((id) => require('../shots-orchestrator').inFlightRunFor(id)),
+    // A run of the change's shots under way, and the wait for its end: read
+    // from the shots machine, so they answer for every process.
+    shotsRunning: deps.shotsRunning || ((id) => require('../shots-state').shotsRunning(id)),
+    shotsWait: deps.shotsWait || ((id, o) => require('../shots-state').waitForShotsRun(id, o)),
     shotsWaitMs: deps.shotsWaitMs ?? SHOTS_WAIT_MS,
   };
 }
@@ -112,19 +114,13 @@ function defaults(deps = {}) {
 async function waitOutShotsRun(d, changeId, sendAgent) {
   const heldByTurn = () => d.activeWorkers.hasSessionOperation(changeId) || d.activeWorkers.activeWorkers.has(changeId);
   if (heldByTurn()) return 'busy';
-  const run = d.shotsRunFor(changeId);
-  if (!run) return 'busy';
+  if (!(await d.shotsRunning(changeId))) return 'busy';
   sendAgent('status', {
     text: 'Before & after shots is being recorded on this change. The coding agent starts when it finishes.',
     changeId,
   });
-  let timer = null;
-  const finished = await Promise.race([
-    run.then(() => true),
-    new Promise((resolve) => { timer = setTimeout(() => resolve(false), d.shotsWaitMs); }),
-  ]);
-  clearTimeout(timer);
-  if (!finished) return 'timeout';
+  const waited = await d.shotsWait(changeId, { timeoutMs: d.shotsWaitMs });
+  if (waited === 'timeout') return 'timeout';
   return d.activeWorkers.isSessionBusy(changeId) ? 'busy' : 'idle';
 }
 
@@ -152,7 +148,7 @@ async function loadActiveChange(pool, { agentSessionId, userId }) {
 // Whether the active change can take a dispatch this turn. The tools are
 // offered only then, the same rule a classic session applies to a busy
 // worker.
-function canDispatch(change, deps = {}) {
+async function canDispatch(change, deps = {}) {
   const d = defaults(deps);
   if (!change) return false;
   if (!LIVE_STATUSES.has(change.status) && !RESUMABLE_STATUSES.has(change.status)) return false;
@@ -161,7 +157,7 @@ function canDispatch(change, deps = {}) {
   if (!d.activeWorkers.isSessionBusy(id)) return true;
   // Held only by a shots run: the dispatch waits it out.
   return !d.activeWorkers.hasSessionOperation(id) && !d.activeWorkers.activeWorkers.has(id)
-    && !!d.shotsRunFor(id);
+    && !!(await d.shotsRunning(id));
 }
 
 // Reopen a parked change through POST /api/sessions/:id/resume, as the user,

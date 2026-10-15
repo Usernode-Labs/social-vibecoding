@@ -90,13 +90,14 @@ function withRows(answer) {
 }
 const call = (h, kind, input) => h[kind].run({ input, key: kind, attempt: 1, resumeFrom: null, checkpoint: async () => {} });
 
-test('worker.retire waits for a shots run read from its own row, then deletes the worker', async () => {
+test('worker.retire waits for a shots run the shots machine has under way, then deletes the worker', async () => {
   retired.length = 0;
   let live = true;
-  const { asked, handlers: h } = withRows((sql) => (/FROM shot_runs/.test(sql) && live ? [{ id: 'b'.repeat(32) }] : []));
+  const { asked, handlers: h } = withRows((sql) => (/FROM wf_instances/.test(sql) && live ? [{ id: 'b'.repeat(32) }] : []));
   assert.deepEqual(await call(h, WORK.retire, { sessionId: 12 }), { waiting: 'b'.repeat(32) });
-  assert.deepEqual(retired, [], 'kept while the run is heard from');
-  assert.match(asked[0].sql, /r\.updated_at > NOW\(\)/, 'a run silent past its heartbeat holds nothing');
+  assert.deepEqual(retired, [], 'kept while the run is under way');
+  assert.match(asked[0].sql, /w\.machine = 'shots'/, 'read from the shots machine\'s instance, in any process');
+  assert.deepEqual(asked[0].params[0], 'session:12');
   live = false;
   assert.deepEqual(await call(h, WORK.retire, { sessionId: 12 }), { retired: true });
   assert.deepEqual(retired, [12]);

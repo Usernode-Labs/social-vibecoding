@@ -39,9 +39,6 @@ const fakeWorkflow = fakeModule('../src/services/preview-workflow', {
   revision: async () => {},
   skipped: async () => true,
 });
-const fakeShots = fakeModule('../src/services/shots-orchestrator', {
-  noteNotStarted: async () => {},
-});
 
 const prImportSync = require('../src/services/pr-import-sync');
 
@@ -60,7 +57,6 @@ function makeTrace({ revisionImpl } = {}) {
   const queries = [];
   fakeWorkflow.revision = revisionImpl || (async (args) => { trace.push(['revision', args]); });
   fakeWorkflow.skipped = async (args) => { trace.push(['skipped', args]); return true; };
-  fakeShots.noteNotStarted = async (pool, id, reason) => { trace.push(['noteNotStarted', id, reason]); };
   fakeWs.broadcastGlobal = (payload) => { trace.push(['broadcastGlobal', payload.event]); };
   fakeWs.pushSessionUpdate = (payload) => { trace.push(['pushSessionUpdate', payload.action]); };
   fakeWs.sendSystemMessage = async () => { trace.push(['note']); };
@@ -97,7 +93,7 @@ test('kickImportedChecks hands the pinned head to the preview machine', async ()
   assert.deepEqual(queries, [], 'no query from the kick itself');
 });
 
-test('kickImportedChecks (mock GitHub) records skipped checks and why the shots never started', async () => {
+test('kickImportedChecks (mock GitHub) records skipped checks; the shots machine hears the head from them', async () => {
   process.env.USERNODE_ENV = 'staging';
   try {
     const { trace, pool } = makeTrace();
@@ -106,12 +102,11 @@ test('kickImportedChecks (mock GitHub) records skipped checks and why the shots 
       config: {}, pool, session: { ...SESSION }, app: APP, headSha: HEAD,
     });
 
-    assert.deepEqual(names(trace), ['skipped', 'noteNotStarted'],
+    assert.deepEqual(names(trace), ['skipped'],
       'mock mode hands the machine a skipped verdict and builds nothing');
     const [, args] = trace[0];
     assert.equal(args.head, HEAD);
     assert.match(args.reason, /mock GitHub preview/i, 'skip reason recorded');
-    assert.deepEqual(trace[1].slice(1), [SESSION.id, 'no_staging_preview']);
   } finally {
     process.env.USERNODE_ENV = 'production';
   }

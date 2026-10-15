@@ -22,7 +22,7 @@
 import { createHash } from 'node:crypto';
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type {
-  Check, DomainWrite, Event, Json, Machine, Outcome, Push, TimerRequest, TransitionContext, Tx, WorkRef,
+  Check, DomainWrite, Event, Json, Machine, MessageRequest, Outcome, Push, TimerRequest, TransitionContext, Tx, WorkRef,
   WorkRequest, WorkResultPayload,
 } from '../kernel/index.ts';
 import { chatLine, sessionEvent, sessionUpdate, toUser } from '../pushes.ts';
@@ -47,8 +47,9 @@ export const WORK = Object.freeze({
   dropClaims: 'preview.dropClaims',
   retire: 'preview.retire',
   // Hand-offs to flows later steps migrate (the boundary list's "hand-off"
-  // entries): shots beside the checks, a verdict's merge kick, bot note and
-  // shots, and the bot's note that a change's preview will not start.
+  // entries): a verdict's merge kick and bot note, and the bot's note that a
+  // change's preview will not start. `preview.ready` is left only for the
+  // items an older release queued (it hands their head to the shots machine).
   ready: 'preview.ready',
   followUps: 'verdict.followUps',
   stopped: 'preview.stopped',
@@ -247,10 +248,20 @@ interface Step {
   work?: WorkRequest[];
   cancel?: WorkRef[];
   push?: Push[];
+  messages?: MessageRequest[];
   timer?: TimerRequest | null;
 }
 const step = (s: Step): Outcome<PState> =>
-  ({ next: { name: s.name, data: s.data }, writes: s.writes, work: s.work, cancel: s.cancel, push: s.push, timer: s.timer });
+  ({ next: { name: s.name, data: s.data }, writes: s.writes, work: s.work, cancel: s.cancel, push: s.push, messages: s.messages, timer: s.timer });
+
+// To the shots machine (src/workflow/shots/): a head is ready to be shot
+// (its preview serves, or its checks settled), an imported proposal's
+// preview will not start, a UI change has no declaration, the proposal left
+// review.
+const toShots = (d: Data, type: string, payload: Record<string, Json> = {}): MessageRequest =>
+  ({ to: { machine: 'shots', key: `session:${d.sessionId}` }, event: { type, payload: { sessionId: d.sessionId, ...payload } }, appId: d.appId });
+const told = (o: Outcome<PState>, ...messages: MessageRequest[]): Outcome<PState> =>
+  ({ ...o, messages: [...(o.messages || []), ...messages] });
 
 const prepareKey = (n: number) => `prepare:${n}`;
 // Unique per decision: attempt 0 (a preview [main] built) can be adopted
@@ -398,7 +409,7 @@ function errorTimer(d: Data, f: Facts, deps: Deps, ctx: TransitionContext, strea
 // shots. One item per run.
 const followUps = (d: Data, run: Run, state: string, deferred = false): WorkRequest => ({
   kind: WORK.followUps, key: `follow-ups:${run.key}`,
-  input: { sessionId: d.sessionId, appId: d.appId, head: run.head, state, deferred, trigger: d.trigger },
+  input: { sessionId: d.sessionId, appId: d.appId, head: run.head, state, deferred, trigger: d.trigger, shotsTold: true },
 });
 
 // ── Adoption ────────────────────────────────────────────────────────────
@@ -572,6 +583,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
         writes: [{ type: 'skipped', ...base, reason: e.payload.reason, expected: f.session!.checks.commitSha }],
         work: [followUps(d, run, 'skipped')],
         push: [checksReady(d, ctx, e.payload.head, 'skipped')],
+        messages: [toShots(d, 'HeadReady', { head: e.payload.head })],
         timer: null,
       });
     },
@@ -659,7 +671,8 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       // Nothing it can name serves: whatever the row still points at goes.
       return step({ name: e.payload.terminal ? 'retired' : 'idle',
         data: { ...d, ...(e.payload.terminal ? { closedAt: ctx.now.toISOString() } : {}) },
-        writes: [{ type: 'unpublished', sessionId: d.sessionId }], timer: null });
+        writes: [{ type: 'unpublished', sessionId: d.sessionId }], timer: null,
+        messages: e.payload.terminal ? [toShots(d, 'Closed', { reason: e.payload.reason })] : [] });
     },
   };
   const clearAdopting: Entry = {
@@ -828,7 +841,8 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       PreviewLost: notHere('retiring'),
       RetireRequested: {
         guard: (s, e) => (e.payload.terminal && !s.data.exit.terminal ? ok() : reject('already_retiring')),
-        to: (s, e) => step({ name: 'retiring', data: { ...s.data, exit: { ...s.data.exit, reason: e.payload.reason, terminal: true }, pending: null } }),
+        to: (s, e) => step({ name: 'retiring', data: { ...s.data, exit: { ...s.data.exit, reason: e.payload.reason, terminal: true }, pending: null },
+          messages: [toShots(s.data, 'Closed', { reason: e.payload.reason })] }),
       },
       AdminRetry: { guard: (s) => (s.data.exit.failed ? ok() : reject('in_progress')), to: adminRetry.to },
       AdminRetire: notHere('already_retiring'),
@@ -876,6 +890,7 @@ function toRetiring(s: Live, reason: string, terminal: boolean, ctx: TransitionC
     exit: { reason, terminal, key, attempts: [...attempts.values()] }, pending: null };
   return step({
     name: 'retiring', data: d,
+    messages: terminal ? [toShots(d, 'Closed', { reason })] : [],
     cancel: [...old.cancel, ...d0.retiring.map((a) => ({ kind: WORK.retireAttempt, key: a.key }))],
     writes: [{ type: 'unpublished', sessionId: d.sessionId }],
     work: [...old.work.filter((w) => w.kind !== WORK.retireAttempt), { kind: WORK.retire, key, input: {
@@ -910,6 +925,7 @@ export interface RunResult {
   capture?: { state: string; detail: Json } | null;
   visuals?: Json;               // the run's media, grouped as getForSession groups it (null: none)
   reason?: string;              // blocked
+  uiUndeclared?: string | null; // a head whose change touches the UI and declares no visible changes
 }
 
 function workResult(name: Name, outcome: 'succeeded' | 'failed' | 'exhausted', deps: Deps): Entry {
@@ -929,7 +945,12 @@ function workResult(name: Name, outcome: 'succeeded' | 'failed' | 'exhausted', d
       // Everything else only has to happen; a retired attempt leaves the list.
       const d = s.data;
       const retiring = p.kind === WORK.retireAttempt ? d.retiring.filter((a) => a.key !== p.workKey) : d.retiring;
-      return step({ name, data: { ...d, retiring } });
+      // An item an older release queued, before the shots machine was told
+      // by message: its handler hands its head over (services.ts).
+      const r = (outcome === 'succeeded' ? p.result : null) as { handOff?: string; stopped?: string | null } | null;
+      const messages = r?.handOff ? [toShots(d, 'HeadReady', { head: r.handOff })]
+        : r && 'stopped' in r ? [toShots(d, 'PreviewStopped', { head: r.stopped ?? null })] : [];
+      return step({ name, data: { ...d, retiring }, messages });
     },
   };
 }
@@ -969,15 +990,11 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
         timer: null,
       });
     }
-    return startRun({ name: 'preparing', data: d }, d0.trigger, ctx, {
+    return told(startRun({ name: 'preparing', data: d }, d0.trigger, ctx, {
       writes: [{ type: 'published', sessionId: d.sessionId, appId: d.appId, served: served as unknown as Json, note: true }],
-      work: [
-        ...(gone ? [gone.work] : []),
-        ...dropped,
-        { kind: WORK.ready, key: `ready:${served.n}`, input: { sessionId: d.sessionId, head: served.head } },
-      ],
+      work: [...(gone ? [gone.work] : []), ...dropped],
       push: up,
-    });
+    }), toShots(d, 'HeadReady', { head: served.head }));
   }
   // The attempt failed: what serves keeps serving (on Docker it was
   // removed first). The attempt's own resources are retired, and its early
@@ -1015,14 +1032,16 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
   }];
   if (servingRemoved && d0.serving) writes.push({ type: 'unpublished', sessionId: d.sessionId });
   const work: WorkRequest[] = [failedAttempt.work, ...(removed ? [removed.work] : [])];
+  const messages: MessageRequest[] = [];
   if (streakBefore === 0) {
     work.push({ kind: WORK.stopped, key: `stopped:${attempt.n}`,
-      input: { sessionId: d.sessionId, imported: f.session?.source === 'imported' } });
+      input: { sessionId: d.sessionId, imported: f.session?.source === 'imported', shotsTold: true } });
+    if (f.session?.source === 'imported') messages.push(toShots(d, 'PreviewStopped', { head: attempt.head }));
   }
   return step({
     name: 'failed', data: d,
     cancel: [...(ended ? [{ kind: WORK.prepare, key: prepareKey(attempt.n) }] : []), earlyOf(attempt)],
-    writes, work,
+    writes, work, messages,
     push: [
       checksReady(d, ctx, attempt.head, 'error'),
       sessionEvent(route(d), 'staging_failed', seq(ctx, 3),
@@ -1050,6 +1069,7 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
         followUps(d, run, 'pending', true),
       ],
       push: [checksPending(d, ctx, run.head, 'deferred', d0.trigger), ...visualsReady],
+      messages: [toShots(d, 'HeadReady', { head: run.head }), ...undeclared(d, r)],
       timer: null,
     });
   }
@@ -1096,9 +1116,15 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
       ] : []),
     ],
     push: stores ? [checksReady(d, ctx, run.head, state, results), ...visualsReady] : [],
+    messages: [...(stores ? [toShots(d, 'HeadReady', { head: run.head })] : []), ...undeclared(d, r)],
     timer: state === 'error' ? errorTimer(d, f, deps, ctx, streakBefore) : null,
   });
 }
+
+// A run that found a UI change with no declaration of visible changes
+// (visuals.captureForSession) tells the shots machine, whose slot says so.
+const undeclared = (d: Data, r: RunResult | null): MessageRequest[] =>
+  (r?.uiUndeclared ? [toShots(d, 'UiUndeclared', { head: r.uiUndeclared })] : []);
 
 function retired(s: Live, e: Event<WorkResultPayload>, outcome: string, ctx: TransitionContext, deps: Deps): Outcome<PState> {
   const d0 = s.data;
@@ -1131,9 +1157,11 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     // 2: the old preview paths are deleted. A retire or a clear adopts a
     // session from its row (create events), a preview-only request (the App
     // bench), a release retries the platform's faults (RetryDue from the
-    // system), no Detach. An older Pod leaves the instances this version
-    // wrote alone during the rollout.
-    version: 2,
+    // system), no Detach. 3: the shots machine is told by message (a head
+    // ready, a preview that will not start, a UI change undeclared, the
+    // proposal closed) instead of starting shots itself. An older Pod leaves
+    // the instances this version wrote alone during the rollout.
+    version: 3,
     events: EVENTS,
     create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted', 'RetireRequested', 'ChecksCleared'],
     terminal: ['retired'],
