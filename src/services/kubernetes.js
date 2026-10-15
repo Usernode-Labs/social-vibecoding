@@ -1752,14 +1752,26 @@ async function restartApplication(config, runtimeName) {
   return waitForDeployment(namespace, runtimeName, { generation: restarted?.metadata?.generation, uid: restarted?.metadata?.uid });
 }
 
-// `uid`: delete the Deployment only if it is still that one, and wait for
-// its Pods to go. `identity`: read every resource's UID first and delete
-// each with it as a precondition, plus the named `secrets` (the preview
-// machine's retirement, so a same-named successor keeps its resources).
-async function deleteApplication(config, runtimeName, { uid = null, identity = false, secrets = [] } = {}) {
+// The Deployment is deleted only if it is still the one read first (its UID,
+// or `uid` when given), and the call returns once its Pods are gone: a caller
+// that deploys the same name next (app heal, a shots environment) never races
+// a Deployment still terminating. (Production ran this way under the retired
+// PREVIEW_LIFECYCLE_ENABLED; it is the only way now.) `identity`: read every
+// resource's UID first and delete each with it as a precondition, plus the
+// named `secrets` (the preview machine's retirement, so a same-named
+// successor keeps its resources).
+async function deleteApplication(config, runtimeName, { uid: ownUid = null, identity = false, secrets = [] } = {}) {
   const namespace = config.kubernetes.appNamespace;
   const { apps, core, networking } = getClients();
   if (identity) return deleteByIdentity(config, runtimeName, secrets);
+  // A read that fails for another reason (a quota refusal after a failed
+  // rollout) must not keep the resources it would free: delete without the
+  // precondition and the wait, as for a Deployment that is gone.
+  let uid = ownUid;
+  if (!uid) {
+    try { uid = (await apps.readNamespacedDeployment({ name: runtimeName, namespace })).metadata.uid; }
+    catch { uid = null; }
+  }
   const deletions = await Promise.allSettled([
     deleteIfPresent(networking, 'deleteNamespacedIngress', runtimeName, namespace),
     deleteIfPresent(core, 'deleteNamespacedService', runtimeName, namespace),
