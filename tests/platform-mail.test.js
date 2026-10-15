@@ -1139,6 +1139,11 @@ test('the admin_test body carries nothing an attacker could use', () => {
   assert.doesNotMatch(m.text, /\b\d{6}\b/, 'no OTP-shaped value');
   assert.doesNotMatch(m.text, /https?:\/\//, 'no link to follow');
   assert.match(m.text, /no action is needed/i);
+  // #5068: the welcome hero's eyebrow and headline, and the details as rows
+  // of one box. Still nothing to act on: no anchor anywhere.
+  assert.doesNotMatch(m.html, /<a /, 'no link in the test mail either');
+  assert.match(m.html, /letter-spacing:0\.8px[^>]*>Test email</, 'the eyebrow');
+  assert.match(m.html, /<code>abcd1234<\/code>/);
 });
 
 test('admin_test has its own per-recipient throttle rule', () => {
@@ -1165,6 +1170,11 @@ test('a project invite names who sent it and where, and links only to the waitli
   assert.match(m.text, /Join the waitlist with this email address\. Once you are in, the invite will be waiting for you\./);
   assert.match(m.text, /https:\/\/onhomeroom\.test\/waitlist/, 'the link is in the text part too');
   assert.match(m.html, /Join the waitlist<\/a>/);
+  // #5068: the welcome hero. The invitee line is the headline, the round
+  // pill carries the waitlist link, and the eyebrow is the invite.
+  assert.match(m.html, /font-weight:800[^>]*>@ada invited you to Book club\.</, 'the headline');
+  assert.match(m.html, /letter-spacing:0\.8px[^>]*>You're invited</, 'the eyebrow');
+  assert.match(m.html, /border-radius:999px/, 'the round pill');
   const bare = templates.buildMessage('project_invite', {});
   assert.equal(bare.subject, 'Someone invited you to a project on Homeroom', 'renders with nothing to go on');
   assert.doesNotMatch(bare.html, /<a /, 'and no button without a link');
