@@ -468,8 +468,8 @@ test('a failed template build returns the shared role to NOLOGIN without the tem
 // An extension the app itself could have installed (a trusted one) is
 // recreated by the owner-authenticated restore and commented by its owner —
 // the comment pg_dump carries is evaluated as the copy's own owner, not the
-// administrator. An extension only a superuser could have installed fails
-// the restore loudly instead, which is the fail-closed posture, not a leak.
+// administrator. An extension only a superuser could have installed is the
+// next test's.
 test('a trusted extension is restored as the copy\'s own owner, comment and all', { timeout: 120000 }, async (t) => {
   if (!(await reachable(t))) return;
   const dbManager = harness(t);
@@ -504,4 +504,109 @@ test('a trusted extension is restored as the copy\'s own owner, comment and all'
   assert.ok(there, 'the trusted extension was restored into the copy');
   assert.equal(there.owner, `${target}_owner`, `the extension is owned by the copy's own role (${there.owner}), not the administrator`);
   assert.equal(there.commented, true, 'the extension\'s comment was restored too');
+});
+
+// The database operator installs pg_stat_statements, which only a superuser
+// may create, in every app database. The copy's own role cannot recreate it,
+// so the administrator creates it in the still-empty copy and the dump leaves
+// it out; everything else is still restored as the copy's own role. Without
+// that, every copy of a production database failed to restore.
+test('an extension only a superuser can create is made by the administrator, on every clone path', { timeout: 120000 }, async (t) => {
+  if (!(await reachable(t))) return;
+  const dbManager = harness(t);
+  const tok = crypto.randomBytes(4).toString('hex');
+  const source = `app_sux${tok}`;
+  const direct = `${source}_staging_s1_abcdef`;
+  const viaTmpl = `${source}_staging_s2_abcdef`;
+  const { admin, created } = await adminControl();
+  const wipe = async () => {
+    for (const { datname } of (await admin.query("SELECT datname FROM pg_database WHERE datname LIKE $1", [`%${tok}%`])).rows) {
+      await admin.query(`ALTER DATABASE ${datname} WITH ALLOW_CONNECTIONS true`).catch(() => {});
+      await admin.query(`DROP DATABASE IF EXISTS ${datname} WITH (FORCE)`).catch(() => {});
+    }
+    for (const { rolname } of (await admin.query("SELECT rolname FROM pg_roles WHERE rolname LIKE $1", [`%${tok}%`])).rows) {
+      await admin.query(`DROP ROLE IF EXISTS ${rolname}`).catch(() => {});
+    }
+  };
+  t.after(async () => {
+    await dbManager._templateIdleForTest(source).catch(() => {});
+    await wipe();
+    if (created) await admin.query('DROP DATABASE IF EXISTS usernode WITH (FORCE)').catch(() => {});
+    await admin.end();
+  });
+  const offered = (await admin.query(
+    "SELECT 1 FROM pg_available_extension_versions WHERE name = 'pg_stat_statements' AND superuser AND NOT trusted")).rowCount > 0;
+  if (!offered) { if (REQUIRED) assert.fail('this server does not offer pg_stat_statements'); t.skip('pg_stat_statements is not offered'); return; }
+  await admin.query(`CREATE DATABASE ${source}`);
+  const src = await connect(at(BASE, source));
+  await src.query(SEED);
+  await src.query('CREATE EXTENSION pg_stat_statements WITH SCHEMA public');
+  await src.query('CREATE EXTENSION pg_trgm WITH SCHEMA public');
+  await src.query('TRUNCATE public.redaction_probe');
+  await src.end();
+
+  await dbManager.cloneDatabase(source, direct);
+  const res = await dbManager.cloneDatabase(source, viaTmpl, { viaTemplate: true });
+  assert.equal(res.via, 'template', 'the template path made the second copy');
+  for (const db of [direct, viaTmpl]) {
+    const clone = await connect(at(BASE, db));
+    const exts = new Set((await clone.query('SELECT extname FROM pg_extension')).rows.map((r) => r.extname));
+    assert.ok(exts.has('pg_stat_statements'), `${db}: the administrator's extension is in the copy`);
+    assert.ok(exts.has('pg_trgm'), `${db}: the trusted extension is in the copy`);
+    // Its objects stay the administrator's: owning pg_stat_statements_reset()
+    // would let the preview's code wipe the statistics of the whole server.
+    const role = `${db}_owner`;
+    const members = (await clone.query(
+      `SELECT d.classid::regclass::text AS kind, d.objid,
+              COALESCE(pg_get_userbyid(p.proowner), pg_get_userbyid(c.relowner)) AS owner,
+              p.proname, CASE WHEN p.oid IS NULL THEN NULL ELSE has_function_privilege($1, p.oid, 'EXECUTE') END AS can_run
+         FROM pg_depend d JOIN pg_extension e ON e.oid = d.refobjid AND d.refclassid = 'pg_extension'::regclass
+         LEFT JOIN pg_proc p ON d.classid = 'pg_proc'::regclass AND p.oid = d.objid
+         LEFT JOIN pg_class c ON d.classid = 'pg_class'::regclass AND c.oid = d.objid
+        WHERE e.extname = 'pg_stat_statements' AND d.deptype = 'e'`, [role])).rows;
+    assert.ok(members.some((m) => m.proname === 'pg_stat_statements_reset'), `${db}: the extension's members were found`);
+    for (const m of members.filter((x) => x.owner)) {
+      assert.notEqual(m.owner, role, `${db}: the copy's role owns the extension's ${m.kind} ${m.proname || m.objid}`);
+    }
+    assert.equal(members.find((m) => m.proname === 'pg_stat_statements_reset').can_run, false,
+      `${db}: the copy's role can run pg_stat_statements_reset()`);
+    // The rest was still loaded, and redacted, as the copy's own role.
+    await assertRedacted(clone, db);
+    await clone.end();
+  }
+});
+
+// pg_restore can stop (--exit-on-error, or a refused login) while pg_dump is
+// still writing. The pipe between them then fails with EPIPE; unhandled, that
+// error took the whole process down (the conductor crash-looped on it). It
+// must come back as the restore's own failure.
+test('a restore that stops early fails the copy without taking the process down', { timeout: 120000 }, async (t) => {
+  if (!(await reachable(t))) return;
+  const dbManager = harness(t);
+  const tok = crypto.randomBytes(4).toString('hex');
+  const source = `app_epp${tok}`;
+  const target = `${source}_staging_s1_abcdef`;
+  const role = `${target}_owner`;
+  const { admin, created } = await adminControl();
+  t.after(async () => {
+    for (const db of [target, source]) await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`).catch(() => {});
+    await admin.query(`DROP ROLE IF EXISTS ${role}`).catch(() => {});
+    if (created) await admin.query('DROP DATABASE IF EXISTS usernode WITH (FORCE)').catch(() => {});
+    await admin.end();
+  });
+  await admin.query(`CREATE DATABASE ${source}`);
+  const src = await connect(at(BASE, source));
+  // Several megabytes that do not compress, far past what the pipe buffers.
+  await src.query(`CREATE TABLE public.bulk AS
+    SELECT g AS id, md5(random()::text) || md5(random()::text) || md5(random()::text) AS body
+      FROM generate_series(1, 100000) g`);
+  await src.end();
+  // A role that may not log in, refused whatever the server's
+  // authentication (a trust rule lets a wrong password in): pg_restore reads
+  // the archive's header, fails to connect and exits, with nearly all of the
+  // dump still to come.
+  await admin.query(`CREATE ROLE ${role} NOLOGIN PASSWORD 'unused'`);
+  await admin.query(`CREATE DATABASE ${target} TEMPLATE template0 OWNER ${role}`);
+  await assert.rejects(dbManager.dumpRestore(source, target, [], { as: { user: role, password: 'unused' } }),
+    /pg_restore=1/);
 });
