@@ -18,6 +18,8 @@ import type {
   HomeroomBotReadyNow,
   HomeroomBotWork,
   MessageAttachment,
+  DiscussionMessage,
+  DiscussionState,
   MessageReaction,
   MessageThreadSummary,
   SharedObjectCard,
@@ -638,20 +640,54 @@ export async function listMessagesAfter(id: number, after: number): Promise<{ me
   };
 }
 
+/** #5219: one discussion message the thread pane draws beside the DM replies. */
+function normalizeDiscussionMessage(input: unknown): DiscussionMessage | null {
+  const row = record(input);
+  const id = strictId(pick(row, 'id', 'message_id'));
+  if (!id) return null;
+  return {
+    id,
+    source: 'discussion',
+    sender: normalizeUser(record(pick(row, 'sender'))),
+    content: text(pick(row, 'content')),
+    createdAt: dateText(pick(row, 'createdAt', 'created_at')),
+    ...(text(pick(row, 'editedAt', 'edited_at')) ? { editedAt: text(pick(row, 'editedAt', 'edited_at')) } : {}),
+  };
+}
+
+/** #5219: a request's public discussion riding its bot-card thread, or null. */
+function normalizeDiscussion(input: unknown): DiscussionState | null {
+  const row = record(input);
+  const appSlug = text(pick(row, 'appSlug', 'app_slug'));
+  const issueNumber = strictId(pick(row, 'issueNumber', 'issue_number'));
+  if (!appSlug || !issueNumber) return null;
+  return {
+    appSlug,
+    issueNumber,
+    more: pick(row, 'more') === true,
+    messages: array(pick(row, 'messages')).map(normalizeDiscussionMessage).filter((m): m is DiscussionMessage => !!m),
+  };
+}
+
 /** A thread: the message it hangs off, and its replies oldest first (#2387). */
 export async function listThread(id: number, rootId: number, before?: number | null, options?: ReadOptions): Promise<{
   root: ConversationMessage | null;
   messages: ConversationMessage[];
   nextBefore: number | null;
+  discussion: DiscussionState | null;
 }> {
   const params = new URLSearchParams({ limit: '50' });
   if (before) params.set('before', String(before));
   const data = record(await request<unknown>(`/api/conversations/${id}/threads/${rootId}?${params}`, readInit(options)));
   const root = pick(data, 'root');
+  const discussion = pick(data, 'discussion') === undefined || pick(data, 'discussion') === null
+    ? null
+    : normalizeDiscussion(pick(data, 'discussion'));
   return {
     root: root ? normalizeMessage(root, id) : null,
     messages: array(pick(data, 'messages', 'items')).map((message) => normalizeMessage(message, id)),
     nextBefore: strictId(pick(data, 'nextBefore', 'next_before')),
+    discussion,
   };
 }
 

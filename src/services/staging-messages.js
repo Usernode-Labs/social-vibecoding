@@ -776,6 +776,8 @@ async function ensureBotDmFixture(pool, user) {
 const BOT_DM_STORY = Object.freeze({
   appName: 'Staging demo app', issueNumber: 18, issueTitle: 'Staging demo, a weekly dinner rota',
 });
+// #5219: the story card names its project (the platform's own app), so its
+// thread shows what people said on that request's public discussion.
 const BOT_DM_STORY_LINES = Object.freeze([
   { key: 'staging-hrbot-story-origin', step: 'origin', content: 'You suggested this on Staging demo app\'s page. It\'s request #18.' },
   { key: 'staging-hrbot-story-reading', step: 'reading', content: 'Reading it.' },
@@ -785,15 +787,60 @@ const BOT_DM_STORY_LINES = Object.freeze([
   },
   { key: 'staging-hrbot-story-built', step: 'built', content: 'Built. Testing it: its checks, and its before and after screens.' },
 ]);
+// The two people whose words the thread shows, on the request's discussion
+// (chat_messages, thread_type 'issue'). Obviously fake "Staging demo:" lines,
+// keyed on their content so each is inserted once.
+const BOT_DM_STORY_DISCUSSION = Object.freeze([
+  { userId: DEMO_ADA.id, content: 'Staging demo: could the reminder go out the evening before too?' },
+  { userId: DEMO_LIN.id, content: 'Staging demo: tried the rota, the dinner names overflow on a narrow screen.' },
+]);
 const BOT_DM_STORY_QUESTION_KEY = 'staging-hrbot-story-question';
 
 async function ensureBotDmStory(pool, { botId, conversationId, cardKey }) {
+  const story = BOT_DM_STORY;
+  // The platform's own app, found the way this file already finds it (the
+  // fixture at line 313): self_hosted marks it, not a slug read from config,
+  // whose export carries the loader and not the loaded object.
+  const selfApp = (await pool.query(
+    'SELECT id, slug FROM apps WHERE self_hosted = TRUE ORDER BY id LIMIT 1'
+  )).rows[0] || null;
+  // #5219: even on a staging copy whose story card was sent before it named
+  // its project, the card names it now, so its thread reads the discussion.
+  if (selfApp) {
+    await pool.query(
+      `UPDATE conversation_messages
+          SET metadata = jsonb_set(metadata, '{homeroomBot,appSlug}', to_jsonb($4::text), true)
+        WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3
+          AND metadata->'homeroomBot'->>'appSlug' IS NULL`,
+      [conversationId, botId, cardKey, selfApp.slug]
+    );
+    // And the seeded discussion those words come from — before the early
+    // return below, so a copy whose story card was already sent still gets
+    // the two people on the request's own thread. Staging only, like the
+    // rest of the fixture. The list route and the thread route both open
+    // the fixture, so the insert sits under the file's per-user advisory
+    // lock — its NOT EXISTS guard reads before either caller commits.
+    await conversations.transaction(pool, async db => {
+      await db.query('SELECT pg_advisory_xact_lock(4781, $1)', [conversationId]);
+      for (const line of BOT_DM_STORY_DISCUSSION) {
+        await db.query(
+          `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref)
+           SELECT $1, $2, $3, 'message', 'issue', $4
+            WHERE NOT EXISTS (
+              SELECT 1 FROM chat_messages other
+               WHERE other.app_id = $1 AND other.thread_type = 'issue' AND other.thread_ref = $4
+                 AND other.user_id = $2 AND other.content = $3
+            )`,
+          [selfApp.id, line.userId, line.content, story.issueNumber]
+        );
+      }
+    });
+  }
   const sent = await pool.query(
     `SELECT 1 FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3`,
     [conversationId, botId, cardKey]
   );
   if (sent.rows.length) return;
-  const story = BOT_DM_STORY;
   const card = await conversations.sendMessage(pool, { id: botId }, conversationId, {
     content: `**${story.appName}** · request #${story.issueNumber}: ${story.issueTitle}\n\n`
       + 'I\'m working on this now. This card updates as I go.',
@@ -804,6 +851,7 @@ async function ensureBotDmStory(pool, { botId, conversationId, cardKey }) {
       homeroomBot: {
         kind: 'activity', appName: story.appName, issueNumber: story.issueNumber,
         issueTitle: story.issueTitle, requestTitle: story.issueTitle, mirrors: true,
+        ...(selfApp ? { appSlug: selfApp.slug } : {}),
       },
     },
   });

@@ -2,6 +2,7 @@
 
 const sharedObjects = require('./shared-objects');
 const messageBookmarks = require('./message-bookmarks');
+const log = require('./logger');
 
 const MAX_ID = 2147483647;
 const MAX_MESSAGE_LENGTH = 8000;
@@ -686,10 +687,89 @@ async function listMessages(pool, user, conversationId, {
   };
 }
 
+// #5219: the request's public discussion behind a bot card's thread. The
+// same messages the request page shows (chat_messages, thread_type 'issue'),
+// people only — the bot's notes and Homeroom's status lines are left out,
+// because the thread already tells those — read only when the viewer can view
+// that project. The person's own DM answers that were copied to the request
+// ("… in a chat with Homeroom bot.") are left out too: their reply is shown
+// in the thread itself. Never throws: a discussion that cannot be read is
+// simply not shown.
+const REQUEST_DISCUSSION_LIMIT = 50;
+
+async function requestDiscussion(pool, user, root) {
+  try {
+    const meta = root?.sender?.bot ? root.metadata?.[BOT_METADATA_KEY] : null;
+    const appSlug = typeof meta?.appSlug === 'string' && meta.appSlug ? meta.appSlug : null;
+    const issueNumber = Number(meta?.issueNumber);
+    if (!appSlug || !Number.isInteger(issueNumber) || issueNumber <= 0) return null;
+    const access = require('./app-access');
+    // ACCESS_COLUMNS, not a trimmed projection: checkAppAccess reads the
+    // visibility column and throws without it — a throw this function's own
+    // catch would swallow and turn into "no discussion".
+    const app = await access.getAppForUser(pool, appSlug, user, 'view', access.ACCESS_COLUMNS);
+    if (!app) return null;
+    const fromChat = require('./homeroom-bot-dm').MIRRORED_FROM_DM;
+    const { rows } = await pool.query(
+      `SELECT m.id, m.user_id, m.content, m.created_at, m.edited_at,
+              u.username, ua.id AS avatar_id
+         FROM chat_messages m
+         JOIN users u ON u.id = m.user_id
+         LEFT JOIN user_avatars ua ON ua.user_id = u.id
+        WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = $2
+          AND m.msg_type = 'message'
+          AND m.deleted_at IS NULL AND m.moderation_hidden_at IS NULL
+          AND u.is_synthetic IS NOT TRUE
+          AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                           WHERE b.blocker_id = $3 AND b.blocked_user_id = m.user_id)
+          AND NOT (m.user_id = $3 AND m.content LIKE '%' || $4)
+        ORDER BY m.id DESC LIMIT $5`,
+      [app.id, issueNumber, user.id, fromChat, REQUEST_DISCUSSION_LIMIT + 1]
+    );
+    const more = rows.length > REQUEST_DISCUSSION_LIMIT;
+    const messages = rows.slice(0, REQUEST_DISCUSSION_LIMIT).reverse().map((row) => ({
+      id: row.id,
+      source: 'discussion',
+      sender: {
+        id: row.user_id,
+        username: row.username || 'Deleted user',
+        avatarUrl: row.avatar_id ? `/avatars/${row.avatar_id}` : null,
+      },
+      content: row.content,
+      createdAt: row.created_at,
+      editedAt: row.edited_at,
+    }));
+    return { appSlug: app.slug || appSlug, issueNumber, more, messages };
+  } catch (err) {
+    log.warn('conversations', 'Could not read a request\'s discussion for its thread', { err: err.message });
+    return null;
+  }
+}
+
+// The bot's "… replied on the request's discussion: …" note in the DM
+// (homeroom-bot-dm.js noteRequestReply) repeats a discussion message this
+// response now shows in full: drop it. One keyed read over the page.
+function dropMirroredReplies(pool, messages, pageIds, discussionIds) {
+  if (!discussionIds.size || !messages.length) return messages;
+  return pool.query(
+    `SELECT id, idempotency_key FROM conversation_messages
+      WHERE id = ANY($1::int[]) AND idempotency_key LIKE 'hrbot-replied-%'`,
+    [pageIds]
+  ).then(({ rows }) => {
+    const drop = new Set(rows.flatMap((row) => {
+      const m = /^hrbot-replied-(\d+)$/.exec(row.idempotency_key || '');
+      return m && discussionIds.has(Number(m[1])) ? [row.id] : [];
+    }));
+    return drop.size ? messages.filter((message) => !drop.has(message.id)) : messages;
+  });
+}
+
 // GET /api/conversations/:id/threads/:rootId (#2387). The root plus a page of
 // its replies, oldest first, paged backwards with `before` exactly like the
 // main stream. Direct conversations have no threads, apart from the chat
-// with the Homeroom bot (threadsAllowed).
+// with the Homeroom bot (threadsAllowed). On a thread rooted on one of the
+// bot's request cards (#5219), the request's public discussion rides along
+// (`discussion`); the client merges the two by time.
 async function listThread(pool, user, conversationId, rootId, { before = null, limit = 50 } = {}) {
   const membership = await loadMembership(pool, conversationId, user.id, { allowDeletedPeer: true });
   if (!membership || !(await canReadConversation(pool, membership, user.id))) return null;
@@ -717,10 +797,27 @@ async function listThread(pool, user, conversationId, rootId, { before = null, l
     hydrateMessages(pool, user, root.rows),
     hydrateMessages(pool, user, page),
   ]);
+  let discussion = null;
+  // #5219: when the discussion came back, the page may still hold the bot's
+  // quiet note about a reply it mirrored; the reply is shown in full here, so
+  // the note goes. The page itself is never touched — a later page carries
+  // no discussion and no keyed read.
+  let shown = messages;
+  if (before == null) {
+    discussion = await requestDiscussion(pool, user, hydratedRoot[0]);
+    if (discussion?.messages.length) {
+      shown = await dropMirroredReplies(pool,
+        messages,
+        page.map((row) => row.id),
+        new Set(discussion.messages.map((message) => message.id)),
+      );
+    }
+  }
   return {
     root: hydratedRoot[0],
-    messages,
+    messages: shown,
     nextBefore: rows.length > safeLimit && page.length ? page[0].id : null,
+    discussion,
   };
 }
 
