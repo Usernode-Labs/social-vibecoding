@@ -34,9 +34,6 @@ export interface Facts {
   gate: GateInputs | null;     // while the proposal is open
   voter: Voter | null;         // for VoteCast
   refusal: string | null;      // why applying now would fail
-  // Whether a secret change asks app-delivery for its redeploy (its flag in
-  // this process; the machine sets it after the read).
-  delivery?: boolean;
 }
 
 // The platform's own parser: https, ssh, a .git suffix, and dotted names.

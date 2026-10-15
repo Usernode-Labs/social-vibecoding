@@ -31,12 +31,10 @@ function eventRow(r: any) {
 export interface ProblemOptions { overdueMs?: number; longRunningMs?: number; limit?: number }
 
 // Everything that needs a person: faulted or stalled instances, held events,
-// deadlines that did not fire, exhausted or long-running work, and
-// ownership violations recorded in log mode: counted per column, and the
-// latest rows (which row, which application wrote it, when).
+// deadlines that did not fire, exhausted or long-running work.
 export async function problems(db: Queryable, opts: ProblemOptions = {}) {
   const limit = opts.limit ?? 100;
-  const [flagged, overdue, work, violations, latest] = await Promise.all([
+  const [flagged, overdue, work] = await Promise.all([
     db.query(
       `SELECT i.*, (SELECT count(*) FROM wf_events e
                      WHERE e.machine = i.machine AND e.key = i.key AND e.status = 'held') AS held
@@ -54,12 +52,6 @@ export async function problems(db: Queryable, opts: ProblemOptions = {}) {
                AND w.created_at > now() - interval '30 days')
            OR (w.status = 'running' AND a.started_at < now() - make_interval(secs => $1::float8 / 1000))
         ORDER BY w.created_at DESC LIMIT $2`, [opts.longRunningMs ?? 15 * 60000, limit]),
-    db.query(
-      `SELECT table_name, column_path, count(*)::int AS count, max(created_at) AS last_at
-         FROM wf_ownership_violations GROUP BY table_name, column_path ORDER BY last_at DESC LIMIT $1`, [limit]),
-    db.query(
-      `SELECT id, table_name, column_path, row_ref, application, left(query, 300) AS query, created_at
-         FROM wf_ownership_violations ORDER BY created_at DESC, id DESC LIMIT $1`, [Math.min(limit, 20)]),
   ]);
   return {
     flagged: flagged.rows.map((r) => ({ ...instanceRow(r), heldEvents: Number(r.held) })),
@@ -68,11 +60,6 @@ export async function problems(db: Queryable, opts: ProblemOptions = {}) {
       id: r.id, machine: r.machine, key: r.key, kind: r.kind, workKey: r.work_key,
       status: r.status, attempts: r.attempt_count, lastError: r.last_error, result: r.result,
       createdAt: r.created_at, startedAt: r.started_at, serviceId: r.service_id,
-    })),
-    ownershipViolations: violations.rows,
-    ownershipViolationRows: latest.rows.map((r) => ({
-      id: Number(r.id), table: r.table_name, column: r.column_path, row: r.row_ref,
-      application: r.application, query: r.query, createdAt: r.created_at,
     })),
   };
 }

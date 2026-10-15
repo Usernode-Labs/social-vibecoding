@@ -6,7 +6,7 @@
  *
  * Lives in the dapp repo root, alongside Dockerfile and package.json. The
  * platform reads it from the freshly-cloned working tree on every deploy
- * (createApp / buildAndDeployStaging / rebuildProduction) so the manifest
+ * (createApp / buildAndDeployStaging / deployProduction) so the manifest
  * is always the current code's source of truth. It is NEVER snapshotted
  * into the platform DB — staleness is a guaranteed pain we don't want.
  *
@@ -1374,7 +1374,7 @@ async function reconcileAppName(pool, app, manifest) {
 
 /**
  * #4417: reconcile dapp.json's `topics` into the app's category registry,
- * on the rebuild a merged topics PR triggers (staging.rebuildProduction),
+ * on the rebuild a merged topics PR triggers (staging.deployProduction),
  * on an import's first deploy, and at boot for the platform's own app.
  *
  * Each topic is the registry row whose category_key is its `id`, origin
@@ -1896,7 +1896,7 @@ function describeRulesColumn(v) {
  * the platform's own app is the primary consumer (its apply point is
  * boot: db/migrate.js seedSelfApp calls this next to the name/icon
  * reconciles, since the self-app deploys via GitHub Actions and never
- * runs rebuildProduction).
+ * runs deployProduction).
  *
  * Best-effort like its siblings: callers fire-and-log; a failure here
  * must never fail the deploy.

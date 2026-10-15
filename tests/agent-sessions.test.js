@@ -321,11 +321,11 @@ test('the create route links a Mayor\'s change to its session, and only then', (
 });
 
 test('the merge and archive paths tell the parent session', () => {
-  const votes = read('src/routes/votes.js');
-  const merge = votes.slice(votes.indexOf('async function finalizeMerge('));
-  const note = merge.indexOf("noteChangeClosed(pool, { change: session, outcome: 'merged' })");
-  assert.ok(note > 0 && note > merge.indexOf("SET status = 'merged'"), 'after the change is marked merged');
-  assert.match(merge.slice(note - 200, note + 300), /try \{[\s\S]*catch \(err\)/, 'and it can never fail the merge');
+  // The merge: the merge-followups machine's agentNote write, in the
+  // transaction that marks the change merged.
+  const machine = read('src/workflow/merge-followups/machine.ts');
+  assert.match(machine, /\{ type: 'agentNote', sessionId: d\.sessionId, agentSessionId: s\.agentSessionId, prNumber: d\.prNumber \}/);
+  assert.match(machine, /agentNote: async \(tx, w\) => \{[\s\S]*?changeClosed\(tx,[\s\S]*?outcome: 'merged' \}\);/);
   const lifecycle = read('src/services/session-lifecycle.js');
   const archive = lifecycle.slice(lifecycle.indexOf('async function finalizeArchivedSession('));
   assert.match(archive, /noteChangeClosed\(pool, \{\s*change: session,\s*outcome: require\('\.\/agent-sessions'\)\.outcomeForArchiveReason\(reason\)/);

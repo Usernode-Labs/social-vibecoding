@@ -13,7 +13,7 @@
 //
 // The response's `scope` picks the semantics, and they differ in the one
 // way a user has to know about:
-//   'app'      — applying triggers a fresh rebuildProduction; the version
+//   'app'      — applying triggers a fresh deployProduction; the version
 //                pill reflects deploy progress via the existing
 //                app_redeploy_status WS broadcast, and the footer offers
 //                "redeploy now".

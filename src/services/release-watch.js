@@ -2,9 +2,9 @@
  * Notice when a merged commit of the platform's own app has not become the
  * running release, and say so.
  *
- * A child app's merge deploys through staging.rebuildProduction, in this
- * process: a failure throws here, lands on apps.last_failure, and notifies
- * the app's admins. The platform's own merge does not. routes/votes.js merges
+ * A child app's merge deploys through the app-delivery workflow machine
+ * (staging.deployProduction): a failure lands on apps.last_failure, and
+ * notifies the app's admins. The platform's own merge does not. routes/votes.js merges
  * the PR and logs "GitHub Actions publishes the release for Argo CD", and
  * from there the path runs entirely outside the platform: the push-to-main
  * workflow builds the image, publishes a Helm release, Argo CD syncs it, the
@@ -21,7 +21,7 @@
  * five minutes and compares it to apps.main_sha for every running app; for
  * the self-hosted row, main_sha is the build that is serving, so a
  * difference means "merged, not released". The poller hands those here
- * rather than to rebuildProduction, which for the platform's own row can
+ * rather than to deployProduction, which for the platform's own row can
  * only fail (it did, three times, during the #2589 gap: "missing required
  * secrets", because the platform's dapp.json declares secrets a child app
  * would hold in app_secrets).

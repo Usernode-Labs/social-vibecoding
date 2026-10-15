@@ -4353,15 +4353,16 @@ const GroupChat = {
   },
 
   // True when a merge announcement's metadata says its release is still to
-  // come (routes/votes.js finalizeMerge sets `liveSoon` on a self-hosted
-  // merge); false on a row without it, whose wording then decides.
+  // come (`liveSoon`, which the old merge path set on a self-hosted merge;
+  // the merge-followups machine announces a merge once it is live); false on
+  // a row without it, whose wording then decides.
   _mergeLiveSoon(msg) {
     const meta = (msg.metadata || msg.meta || {}).merged;
     return !!(meta && typeof meta === 'object' && meta.liveSoon === true);
   },
 
-  // The names a merge announcement carries as metadata (routes/votes.js
-  // finalizeMerge), or null on a row without them.
+  // The names a merge announcement carries as metadata (the merge-followups
+  // machine's merged line), or null on a row without them.
   _mergeCredits(msg) {
     const meta = (msg.metadata || msg.meta || {}).merged;
     if (!meta || typeof meta !== 'object') return null;

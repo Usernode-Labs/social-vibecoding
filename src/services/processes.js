@@ -60,7 +60,6 @@ const KINDS = Object.freeze([
   'dm_defer',       // a DM answer this process will ask again, by message id: a MARKER (homeroom-bot-mayor.js)
   'dm_answer',      // that answer being asked again now, by message id (homeroom-bot-mayor.js)
   'app_heal',       // an app being healed, by slug (app-heal.js)
-  'drift_rebuild',  // an app being rebuilt from main, by app id (main-drift-poller.js)
   'warm',           // a session's worker this process keeps warm (worker.js): a MARKER
   'merge_pass',     // an app's merge queue pass, by app id (merge-queue.js)
   'merge_resolve',  // a proposal's conflict resolution in that pass, by session id (merge-queue.js)

@@ -114,7 +114,6 @@ test('a proposal\'s own notices that only ever went to the channel now go to its
   const thread = /'system', null, \{ type: 'session', ref: session\.id \}/;
   const votes = read('src/routes/votes.js');
   for (const lead of [
-    'merged on GitHub, but the production deploy failed',
     'is closed on GitHub and couldn\'t be reopened',
     'hit a conflict with main during a merge attempt',
     'Failed to merge PR #',
@@ -126,6 +125,12 @@ test('a proposal\'s own notices that only ever went to the channel now go to its
     assert.ok(at > 0, lead);
     assert.match(votes.slice(at, at + 700), thread, lead);
   }
+  // A merge whose deploy failed is the merge-followups machine's to say, and
+  // every chat line it writes names the proposal's thread.
+  const mf = read('src/workflow/merge-followups/machine.ts');
+  assert.match(mf, /function failureLine\(d: Data, message: string\): string \{\n {2}return `\$\{label\(d\)\} merged on GitHub, but the production deploy failed: /);
+  assert.match(mf, /writes\.push\(chat\(e, d\.appId, d\.sessionId, failureLine\(d, message\)\)\)/);
+  assert.match(mf, /const chat = \([^)]*\): DomainWrite =>\n {2}\(\{ type: 'chat', eventId: e\.id, appId, thread: \{ type: 'session', ref: sessionId \}, content, metadata \}\);/);
   const lifecycle = read('src/services/session-lifecycle.js');
   assert.match(lifecycle, /await sendSystemMessage\(pool, session\.app_id, content, 'system', null, \{ type: 'session', ref: session\.id \}\);\n {4}\} catch \(err\) \{\n {6}log\.warn\('session-lifecycle', 'Failed to post PR-withdrawn chat message'/);
   assert.match(read('src/services/merge-queue.js'), /sendSystemMessage\(pool, session\.app_id, content, 'conflict', null, \{ type: 'session', ref: session\.id \}\)/);

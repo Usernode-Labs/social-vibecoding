@@ -58,10 +58,8 @@ test('workflow machines in a process of their own, and through its crash', { tim
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
   await procs.prepare(pool);
 
-  // The flags, as config.js reads them; the child adds the database URL.
-  const flags = { dataEncryptionKey: DATA_KEY, wfMergeFollowupsEnabled: true, wfAppDeliveryEnabled: true,
-    wfPreviewsEnabled: true,
-    wfPoolMax: 4, wfSlots: 2, wfOwnershipMode: 'raise',
+  // The configuration, as config.js reads it; the child adds the database URL.
+  const flags = { dataEncryptionKey: DATA_KEY, wfPoolMax: 4, wfSlots: 2,
     // Phone push on, to a fake Firebase (the fixture fakes its library).
     mobilePushEnabled: true, mobilePushEnvironment: 'production', firebaseProjectId: 'social-test',
     firebaseServiceAccountJsonB64: Buffer.from(JSON.stringify({
@@ -185,6 +183,15 @@ test('workflow machines in a process of their own, and through its crash', { tim
 
   // ── Merge follow-ups: a merge goes live ─────────────────────────────
   const mergeKey = (s) => `session:${s.id}`;
+  // The platform's own release boots with build `sha` and serves people:
+  // the merges waiting for it hear it (platform.ts releaseServing).
+  const releaseBoots = async (sha) => {
+    const was = process.env.GIT_SHA;
+    process.env.GIT_SHA = sha;
+    try { await platform.releaseServing(pool); } finally {
+      if (was === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = was;
+    }
+  };
   async function mergeGoesLive({ crashAt } = {}) {
     const a = await app({ selfHosted: true });
     const s = await proposal(a);
@@ -194,7 +201,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
     await procs.until(async () => (await instance('merge-followups', mergeKey(s)))?.state === 'delivering', 'the merge recorded');
     if (crashAt) await procs.arm(pool, crashAt);
     // The platform's own release booted with a build containing it.
-    await platform.productionDeployed(a.id, SHA('b'));
+    await releaseBoots(SHA('b'));
     if (crashAt) {
       await procs.reached(pool, crashAt);
       await workflow.kill();
@@ -249,7 +256,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
     await procs.until(async () => (await instance('merge-followups', mergeKey(carried)))?.data?.followups?.['close-pr']?.status === 'done',
       'the carried change\'s pull request closed');
     // Its carrier's release boots with the merge commit: both go live.
-    await platform.productionDeployed(a.id, SHA('4'));
+    await releaseBoots(SHA('4'));
     await procs.until(async () => (await instance('merge-followups', mergeKey(carried)))?.state === 'live', 'the carried change live');
     return {
       row: (await pool.query('SELECT status, included_in_session_id = $2 AS carried, live_at IS NOT NULL AS live FROM chat_sessions WHERE id = $1',

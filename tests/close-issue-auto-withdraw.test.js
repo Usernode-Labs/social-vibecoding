@@ -7,9 +7,10 @@
 //   2. The issue-close-watcher hook — observed closes (and gone/skipped
 //      numbers) trigger the resolver when a pool is provided; without one
 //      the watcher behaves exactly as before.
-//   3. The merge-path hook — checkAndMerge resolves proposals for the
-//      issues a merged PR closes, and a resolver failure never fails the
-//      merge (mirrors the bounty-payout posture).
+//   3. The merge-path hook: the merge-followups machine's
+//      issues.closeAfterMerge work resolves proposals for the issues a
+//      merged PR closes, and a resolver failure fails that work item so the
+//      kernel retries it (the merge itself is already recorded).
 //
 // Run with: node --test tests/close-issue-auto-withdraw.test.js
 
@@ -226,76 +227,23 @@ test('watcher: a rejecting resolver never breaks the poll loop', async () => {
   } finally { restore(); }
 });
 
-// ── Part 3: the merge-path hook (checkAndMerge) ──────────────────────────
+// ── Part 3: the merge-path hook (the merge-followups machine) ───────────
+//
+// A merge's requests close in the machine's issues.closeAfterMerge work
+// (src/workflow/merge-followups/services.ts): it resolves the superseded
+// close proposals at once, then watches GitHub close them. The merge is
+// already recorded by then, so a resolver failure fails the work item, which
+// the kernel retries, rather than being swallowed.
 
-const Module = require('module');
-const _origLoad = Module._load;
-Module._load = function (request, ...rest) {
-  if (request === 'express') return { Router: () => ({}) };
-  return _origLoad.call(this, request, ...rest);
-};
-
-function loadVotes({ resolverCalls, resolverImpl }) {
-  const realActiveUsers = require('../src/services/active-users');
+function loadMergeWork({ resolverCalls, resolverImpl }) {
   const ids = {
-    logger: require.resolve('../src/services/logger'),
-    pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
-    staging: require.resolve('../src/services/staging'),
-    docker: require.resolve('../src/services/docker'),
-    resolver: require.resolve('../src/services/conflict-resolver'),
-    ws: require.resolve('../src/services/ws'),
-    activeUsers: require.resolve('../src/services/active-users'),
-    notifications: require.resolve('../src/services/notifications'),
-    adminApproval: require.resolve('../src/services/admin-approval'),
-    events: require.resolve('../src/services/events'),
-    appAccess: require.resolve('../src/services/app-access'),
-    worker: require.resolve('../src/services/worker'),
-    mergeDebug: require.resolve('../src/services/merge-debug'),
-    prMeta: require.resolve('../src/services/pr-metadata'),
     issues: require.resolve('../src/routes/issues'),
-    subject: require.resolve('../src/routes/votes'),
+    watcher: require.resolve('../src/services/issue-close-watcher'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
-
-  stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} }, orig.logger);
-  stub(ids.pool, { getPool: () => ({}) }, orig.pool);
-  stub(ids.github, {
-    isEnabled: () => false,
-    mergePR: async () => ({}),
-    noteIssuesClosed: () => {},
-    invalidateIssuesCache: () => {},
-  }, orig.github);
-  stub(ids.staging, { teardownStaging: async () => {}, rebuildProduction: async () => ({}) }, orig.staging);
-  stub(ids.docker, {}, orig.docker);
-  stub(ids.resolver, {
-    checkAndResolveConflicts: async () => {},
-    resolveAndMaybeRetry: async () => ({ ok: true }),
-    isResolving: () => false,
-  }, orig.resolver);
-  stub(ids.ws, {
-    sendSystemMessage: async () => {},
-    pushNotificationToUser() {},
-    pushVoteUpdate() {},
-    pushSessionUpdate() {},
-    pushIssueUpdate() {},
-    broadcastGlobalScoped() {},
-  }, orig.ws);
-  stub(ids.activeUsers, {
-    ...realActiveUsers,
-    getActiveUserStats: async () => ({ active: 2, majority: 2 }),
-    isUserActive: async () => true,
-  }, orig.activeUsers);
-  stub(ids.notifications, {}, orig.notifications);
-  stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminYesVote: async () => true }, orig.adminApproval);
-  stub(ids.events, { record() {}, EVENT_TYPES: { PR_MERGED: 'pr_merged', BOUNTY_AWARDED: 'bounty_awarded' } }, orig.events);
-  stub(ids.appAccess, { sessionCollabGuard: () => (_req, _res, next) => next() }, orig.appAccess);
-  stub(ids.worker, { destroyCcVolume: async () => {}, isInFlight: () => false }, orig.worker);
-  stub(ids.mergeDebug, {
-    startRun: async () => 1, step() {}, endRun() {}, pruneOldRuns: async () => {},
-  }, orig.mergeDebug);
-  // The merge hook lazy-requires routes/issues — hand it a spy.
+  stub(ids.github, { isEnabled: () => true }, orig.github);
   stub(ids.issues, {
     resolveSupersededCloseProposals: async (pool, args) => {
       resolverCalls.push({ pool, args });
@@ -303,86 +251,59 @@ function loadVotes({ resolverCalls, resolverImpl }) {
       return { resolved: [] };
     },
   }, orig.issues);
-
-  delete require.cache[ids.prMeta];
-  delete require.cache[ids.subject];
-  const subject = require(ids.subject);
+  stub(ids.watcher, {
+    async watchIssuesClosedAfterMerge({ linkedIssues }) { return { closed: linkedIssues, skipped: [], stillOpen: [] }; },
+  }, orig.watcher);
+  const { mergeFollowupsServices } = require('../src/workflow/merge-followups/services.ts');
+  const { WORK } = require('../src/workflow/merge-followups/machine.ts');
+  const pool = { async query() { return { rows: [] }; } };
+  const handler = mergeFollowupsServices({ config: {}, pool })[WORK.issues];
+  const run = (input) => handler.run({ input, key: 'issues', attempt: 1, resumeFrom: null, checkpoint: async () => {} });
   const restore = () => {
     for (const [k, id] of Object.entries(ids)) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
-    delete require.cache[ids.prMeta];
-    delete require.cache[ids.subject];
   };
-  return { subject, restore };
+  return { run, pool, restore };
 }
 
-function mergePool({ yes, no }) {
-  return {
-    async query(sql) {
-      if (/vote = 'yes'/.test(sql)) return { rows: [{ cnt: String(yes) }] };
-      if (/vote = 'no'/.test(sql)) return { rows: [{ cnt: String(no) }] };
-      if (/SET status = 'merging'/.test(sql)) return { rows: [{ id: 7 }] };
-      if (/SELECT \* FROM apps WHERE id/.test(sql)) {
-        return { rows: [{ id: 5, self_hosted: true, slug: 'widget' }] };
-      }
-      if (/SELECT check_state, test_results, checks_checked_at/.test(sql)) {
-        return { rows: [{ check_state: 'passing', test_results: [], checks_checked_at: new Date().toISOString() }] };
-      }
-      return { rows: [] };
-    },
-  };
-}
-
-const MERGE_SESSION = {
-  id: 7, app_id: 5, app_slug: 'widget', app_self_hosted: true,
-  repo_url: 'https://github.com/acme/widget', pr_number: 12, pr_title: 'Fix', user_id: 3,
-  behind_main: 0, linked_issues: [42, 43],
-  promoted_at: new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString(),
+const MERGE_INPUT = {
+  sessionId: 7, appId: 5, appSlug: 'widget', prNumber: 12, owner: 'acme', repo: 'widget',
+  linkedIssues: [42, 43], closeOnly: false,
 };
 
-test('merge hook: checkAndMerge resolves close proposals for the linked issues it closes', async () => {
+test('merge hook: the machine resolves close proposals for the linked issues the merge closes', async () => {
   const resolverCalls = [];
-  const { subject, restore } = loadVotes({ resolverCalls });
+  const { run, pool, restore } = loadMergeWork({ resolverCalls });
   try {
-    const pool = mergePool({ yes: 2, no: 0 });
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, { ...MERGE_SESSION }, {});
-    await new Promise((res) => setImmediate(res));
-    assert.equal(r.merged, true);
+    await run({ ...MERGE_INPUT });
     assert.equal(resolverCalls.length, 1);
-    assert.equal(resolverCalls[0].pool, pool, 'merge pool forwarded');
+    assert.equal(resolverCalls[0].pool, pool, 'the machine\'s pool forwarded');
     assert.equal(resolverCalls[0].args.appId, 5);
     assert.equal(resolverCalls[0].args.appSlug, 'widget');
     assert.deepEqual(resolverCalls[0].args.numbers, [42, 43]);
     assert.deepEqual(resolverCalls[0].args.cause, { kind: 'pr-merge', prNumber: 12 });
+    assert.equal(resolverCalls[0].args.strict, true, 'a failure is reported, not logged away');
   } finally { restore(); }
 });
 
-test('merge hook: a rejecting resolver never fails the merge', async () => {
+test('merge hook: a rejecting resolver fails the work item, so it is retried', async () => {
   const resolverCalls = [];
-  const { subject, restore } = loadVotes({
+  const { run, restore } = loadMergeWork({
     resolverCalls,
     resolverImpl: async () => { throw new Error('resolver boom'); },
   });
   try {
-    const pool = mergePool({ yes: 2, no: 0 });
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, { ...MERGE_SESSION }, {});
-    await new Promise((res) => setImmediate(res));
-    assert.equal(r.merged, true, 'merge unaffected by the failing hook');
+    await assert.rejects(run({ ...MERGE_INPUT }), /resolver boom/);
     assert.equal(resolverCalls.length, 1);
   } finally { restore(); }
 });
 
 test('merge hook: no linked issues → resolver never invoked', async () => {
   const resolverCalls = [];
-  const { subject, restore } = loadVotes({ resolverCalls });
+  const { run, restore } = loadMergeWork({ resolverCalls });
   try {
-    const pool = mergePool({ yes: 2, no: 0 });
-    const r = await subject.checkAndMerge(
-      { jwtSecret: 's' }, pool, { ...MERGE_SESSION, linked_issues: [] }, {}
-    );
-    await new Promise((res) => setImmediate(res));
-    assert.equal(r.merged, true);
+    await run({ ...MERGE_INPUT, linkedIssues: [] });
     assert.equal(resolverCalls.length, 0);
   } finally { restore(); }
 });

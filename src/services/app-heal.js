@@ -10,7 +10,7 @@
  *   - Periodic sweep (default every 60s): for every status='running',
  *     non-self-hosted app, check the container's docker state. A stopped
  *     container gets a fast `docker start` (image + env + container all
- *     still exist); a missing one gets a full `staging.rebuildProduction`
+ *     still exist); a missing one gets a deploy asked of app delivery
  *     (repo-backed apps) or a re-run of the already-built image via
  *     app-respawn's runExistingImage (repo-less apps).
  *
@@ -36,8 +36,8 @@
  * Like the drift poller, apps.status deliberately stays 'running'
  * throughout a heal (flipping it would drop the app's URL from the home
  * tile — see main-drift-poller.js for the full rationale), and rebuilds
- * go through rebuildProduction so they get the same per-slug
- * serialization + version-pill deploy status as every other deploy path.
+ * are asked of app delivery, so they get the same per-app ordering and
+ * version-pill deploy status as every other deploy.
  */
 
 const log = require('./logger');
@@ -89,44 +89,27 @@ function containerName(slug) {
 }
 
 // Rebuild-or-respawn for a container that is gone (or refused to start in
-// place). Repo-backed apps go through rebuildProduction — the same flow
-// every other deploy path uses (per-slug serialized, drives the version
-// pill); repo-less apps re-run their already-built image with a freshly
-// assembled env. Returns the result status string.
-// A recovery takes minutes, so an app can be deleted while one runs: the
-// teardown removes the runtime, then this puts it back. Whatever the recovery
-// did, an app that is gone or going by the end keeps no runtime. A lookup
-// that fails removes nothing.
+// place). Repo-backed apps ask app delivery for a deploy (the app-delivery
+// workflow machine, which every production deploy goes through); repo-less
+// apps re-run their already-built image with a freshly assembled env.
+// Returns the result status string.
+// A respawn takes minutes, so an app can be deleted while one runs: the
+// teardown removes the runtime, then this puts it back. Whatever the
+// recovery did, an app that is gone or going by the end keeps no runtime
+// (app-delivery's deploy asks the same once it has deployed).
 async function recoverFromScratch(config, pool, app) {
   try {
     return await rebuildOrRespawn(config, pool, app);
   } finally {
-    await removeRuntimeIfDeleted(config, pool, app);
+    await appTeardown.removeRuntimeIfDeleted(config, pool, app, { who: 'recovery' });
   }
 }
 
-async function removeRuntimeIfDeleted(config, pool, app) {
-  try {
-    if (!appTeardown.isTearingDown(app.slug)) {
-      const { rows } = await pool.query('SELECT 1 FROM apps WHERE id = $1', [app.id]);
-      if (rows.length) return;
-    }
-    const ref = applicationRuntime.productionRef(config, app);
-    await applicationRuntime.remove(config, { ...ref, appId: app.id }, {
-      deleteBuilds: ref.runtimeKind === 'kubernetes',
-    });
-    log.warn('app-heal', 'App was deleted during recovery; runtime removed', { slug: app.slug });
-  } catch (err) {
-    log.warn('app-heal', 'Could not check for a deleted app after recovery', { slug: app.slug, err: err.message });
-  }
-}
-
-async function requestedDeploy(app) {
-  const workflow = require('../workflow/platform.ts');
-  if (!workflow.deliveryEnabled()) return false;
-  await workflow.requestDeploy(app.id, 'heal');
+// The rebuild is a recorded request app delivery runs; the "deploying"
+// state it writes keeps this sweep off the app meanwhile.
+async function requestDeploy(app) {
+  await require('../workflow/platform.ts').requestDeploy(app.id, 'heal');
   log.info('app-heal', 'App rebuild asked of app delivery', { slug: app.slug });
-  return true;
 }
 
 async function rebuildOrRespawn(config, pool, app) {
@@ -134,28 +117,8 @@ async function rebuildOrRespawn(config, pool, app) {
   const name = containerName(app.slug);
 
   if (app.repo_url && github.isEnabled()) {
-    // With the app-delivery machine on, the rebuild is a recorded request
-    // it runs; the "deploying" state it writes keeps this sweep off the app
-    // meanwhile.
-    if (await requestedDeploy(app)) return 'deploy_requested';
-    const staging = require('./staging');
-    const { containerId, sha, runtimeKind = applicationRuntime.mode(config), runtimeName = containerId } = await staging.rebuildProduction(config, app);
-    await pool.query(
-      `UPDATE apps SET container_id = $1, main_sha = $2, last_deploy_at = NOW(), runtime_kind = $4, runtime_name = $5
-       WHERE id = $3`,
-      [runtimeKind === 'docker' ? containerId : null, sha || app.main_sha || null, app.id, runtimeKind, runtimeName]
-    );
-    try {
-      const { broadcastGlobal } = require('./ws');
-      broadcastGlobal({
-        type: 'app_version_changed',
-        appSlug: app.slug,
-        sha: sha || null,
-        prNumber: null,
-      });
-    } catch (_) { /* ws failures are non-fatal */ }
-    log.info('app-heal', 'App rebuilt from repo', { slug: app.slug, sha: (sha || '').slice(0, 7) });
-    return 'rebuilt';
+    await requestDeploy(app);
+    return 'deploy_requested';
   }
 
   // No repo (or no GitHub configured): the image built at create time is
@@ -186,7 +149,7 @@ async function rebuildOrRespawn(config, pool, app) {
 // healing). Provision the repo — create it under the bot account, push
 // the template (getTemplateFiles never embeds dbUrl or any key in file
 // contents, so nothing secret lands on GitHub), persist repo_url — then
-// rebuildProduction so prod converges with the new repo. A repo-less app
+// ask app delivery for a deploy so prod converges with the new repo. A repo-less app
 // can never have merged any change (no repo → no PRs), so the current
 // template is the best available source for its content.
 //
@@ -271,26 +234,7 @@ async function provisionMissingRepo(config, pool, app) {
     slug: app.slug, repoUrl,
   });
 
-  if (await requestedDeploy(app)) return;
-  const staging = require('./staging');
-  const { containerId, sha, runtimeKind = applicationRuntime.mode(config), runtimeName = containerId } = await staging.rebuildProduction(config, app);
-  await pool.query(
-    `UPDATE apps SET container_id = $1, main_sha = $2, last_deploy_at = NOW(), runtime_kind = $4, runtime_name = $5
-     WHERE id = $3`,
-    [runtimeKind === 'docker' ? containerId : null, sha || null, app.id, runtimeKind, runtimeName]
-  );
-  try {
-    const { broadcastGlobal } = require('./ws');
-    broadcastGlobal({
-      type: 'app_version_changed',
-      appSlug: app.slug,
-      sha: sha || null,
-      prNumber: null,
-    });
-  } catch (_) { /* ws failures are non-fatal */ }
-  log.info('app-heal', 'Production converged with provisioned repo', {
-    slug: app.slug, sha: (sha || '').slice(0, 7),
-  });
+  await requestDeploy(app);
 }
 
 // Check one app's production container and heal it if needed. Returns a
@@ -303,8 +247,7 @@ async function provisionMissingRepo(config, pool, app) {
 //   restart_grace   — 'restarting' seen once; give Docker's policy a tick
 //   cooldown        — a recent attempt failed; not retrying yet
 //   started         — stopped container brought back with `docker start`
-//   rebuilt         — full rebuildProduction succeeded
-//   deploy_requested — the rebuild was asked of app delivery (its flag on)
+//   deploy_requested — the rebuild was asked of app delivery
 //   respawned       — existing image re-run succeeded
 //   restarted       — hung-but-running container docker-restarted (probe path)
 //   repo_provisioned — missing GitHub repo created + prod converged
@@ -521,7 +464,7 @@ async function poll(config) {
     try {
       const result = await checkAndHealOne(config, pool, app, { background: true });
       appOutages.recordHealed(pool, app, result, 'sweep');
-      if (['started', 'rebuilt', 'deploy_requested', 'respawned', 'repo_provisioned', 'heal_failed'].includes(result.status)) {
+      if (['started', 'deploy_requested', 'respawned', 'repo_provisioned', 'heal_failed'].includes(result.status)) {
         attempts++;
       }
     } catch (err) {
