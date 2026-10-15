@@ -676,7 +676,7 @@ async function fetchProfileSeason(pool, preferredSeasonId = null) {
 // season has them (home-panels.js onboardingDoneExpr). A First challenge is
 // done from every credit on its TEMPLATE, an earlier season's included
 // (services/topochain/challenge-onboarding.js), so
-// Me's "N of M done" and Home's "N/M done in Season 2" cannot disagree about
+// Me's "N of M done" and Home's "N/M done in this season" cannot disagree about
 // one of them. `sql(n)` places the rule's two parameters at $n and $n+1 of
 // the statement it is spliced into; with no First challenges it is DONE_EXPR
 // and takes none.

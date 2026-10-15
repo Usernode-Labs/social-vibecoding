@@ -312,20 +312,20 @@
     "description": "Accessible name of the progress bar at the top of a list of challenges, on the Challenges tab and on Home. {{done}} is the number finished and {{count}} how many there are. Used while a new member's first challenges are unfinished; \"First challenges\" is that group's name."
   },
   "progress.season_one": {
-    "text": "<0>{{done}}/{{count}}</0><1>done in {{season}}</1>",
-    "description": "At the top of a list of challenges, on the Challenges tab and on Home: how many the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it. {{season}} is the season's name."
+    "text": "<0>{{done}}/{{count}}</0><1>done in this season</1>",
+    "description": "At the top of Home's Challenges block: how many the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it. The count is over the whole season's challenges. The season is not named here on purpose."
   },
   "progress.season_other": {
-    "text": "<0>{{done}}/{{count}}</0><1>done in {{season}}</1>",
-    "description": "At the top of a list of challenges, on the Challenges tab and on Home: how many the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it. {{season}} is the season's name."
+    "text": "<0>{{done}}/{{count}}</0><1>done in this season</1>",
+    "description": "At the top of Home's Challenges block: how many the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it. The count is over the whole season's challenges. The season is not named here on purpose."
   },
   "progress.seasonLabel_one": {
-    "text": "{{done}} of {{count}} done in {{season}}",
-    "description": "Accessible name of the progress bar at the top of a list of challenges, on the Challenges tab and on Home. {{done}} is the number finished and {{count}} how many there are. {{season}} is the season's name."
+    "text": "{{done}} of {{count}} done in this season",
+    "description": "Accessible name of the progress bar at the top of Home's Challenges block. {{done}} is the number finished and {{count}} how many there are, over the whole season's challenges. The season is not named."
   },
   "progress.seasonLabel_other": {
-    "text": "{{done}} of {{count}} done in {{season}}",
-    "description": "Accessible name of the progress bar at the top of a list of challenges, on the Challenges tab and on Home. {{done}} is the number finished and {{count}} how many there are. {{season}} is the season's name."
+    "text": "{{done}} of {{count}} done in this season",
+    "description": "Accessible name of the progress bar at the top of Home's Challenges block. {{done}} is the number finished and {{count}} how many there are, over the whole season's challenges. The season is not named."
   },
   "progress.event_one": {
     "text": "<0>{{done}}/{{count}}</0><1>done in this event</1>",

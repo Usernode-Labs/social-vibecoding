@@ -937,11 +937,17 @@ const HomePanels = {
 
   // ── The season progress ────────────────────────────────────────────
   //
-  // "3/9 done in Season 2" over one segment per challenge, drawn by
+  // "3/9 done in this season" over one segment per challenge, drawn by
   // features/leaderboard/season-progress.tsx: the component the Leaderboard
   // screen's Challenges tab opens on too, so the season reads the same on
   // both. It replaced a ring with a points lead and a count under it, which
   // took three lines to say what the segments say in one.
+  //
+  // THE SEASON IS NOT NAMED (#5169). The line said "done in Season 2", the
+  // running season's own name, and people read it as a stale reference to a
+  // season they thought was over. It says "this season" now, as the
+  // Challenges tab says "this event" (#4528). An older payload without a
+  // `season` object reads plain "done".
   //
   // The scope is the season, for everyone: a new account's First challenges
   // are part of it like any other (#4635), so there is no "done in First
@@ -970,13 +976,10 @@ const HomePanels = {
         total: pointsTotal,
       }
       : null;
-    const name = panel.season && typeof panel.season.name === 'string'
-      ? panel.season.name.trim() : '';
     return {
       done: Math.max(0, Math.min(total, Number(hasAll ? panel.all_done : panel.done) || 0)),
       total,
-      scope: name ? 'season' : null,
-      name: name || null,
+      scope: panel.season ? 'season' : null,
       ...(points ? { points } : {}),
     };
   },

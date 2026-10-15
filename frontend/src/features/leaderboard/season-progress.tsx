@@ -7,12 +7,13 @@
  * Challenges tab draw this one component, so the same season reads the same
  * figure, words and bar on both. The board's rule is that progress has a scope
  * ("First challenges is 2 steps; the season is 9"), so the caller names it in
- * `scope` (the season by its name, the event chosen above the grid, or First
- * challenges) and this file decides nothing about which challenges count. It
- * only says it: the figure and its words are one catalog message per scope
- * ("3/9" and "done in this event" as its two numbered tags), so a translator
- * sees the whole line. The event's line does not name the event (#4528): its
- * name can be the season's, and it added nothing the words did not say.
+ * `scope` (the season, the event chosen above the grid, or First challenges)
+ * and this file decides nothing about which challenges count. It only says
+ * it: the figure and its words are one catalog message per scope ("3/9" and
+ * "done in this event" as its two numbered tags), so a translator sees the
+ * whole line. Neither the event nor the season is named (#4528, #5169): "done
+ * in Season 2" read as a stale reference to a season people thought was
+ * over, and the name added nothing the words did not say.
  *
  * One segment per challenge is only legible while there are few. Past
  * SEGMENT_LIMIT they would shrink to slivers on a phone, so the bar becomes one
@@ -40,12 +41,10 @@ export interface SeasonProgressView {
   total: number;
   /**
    * What the figure is out of: `'first'` (the First challenges group),
-   * `'season'` (named by `name`), `'event'` (the event chosen above the
-   * grid, unnamed), or nothing, which reads "done".
+   * `'season'` (the whole season, unnamed), `'event'` (the event chosen above
+   * the grid, unnamed), or nothing, which reads "done".
    */
   scope?: 'first' | 'season' | 'event' | null;
-  /** The season's name, for that scope. */
-  name?: string | null;
   /** Points earned of points on offer, over the same scope. Optional. */
   points?: { earned: number; total: number } | null;
 }
@@ -79,11 +78,10 @@ export function SeasonProgress({
   const total = Math.max(0, Math.floor(Number(view.total) || 0));
   if (!total) return null;
   const done = Math.max(0, Math.min(total, Math.floor(Number(view.done) || 0)));
-  const name = view.name ? String(view.name) : '';
-  const scope = view.scope === 'first' || view.scope === 'event' ? view.scope
-    : view.scope === 'season' && name ? 'season' : 'plain';
+  const scope = view.scope === 'first' || view.scope === 'season' || view.scope === 'event'
+    ? view.scope : 'plain';
   const [line, label] = WORDS[scope];
-  const values = { done, count: total, season: name };
+  const values = { done, count: total };
   const pointsTotal = Math.max(0, Math.floor(Number(view.points && view.points.total) || 0));
   const points = pointsTotal > 0 ? view.points : null;
   const earned = points

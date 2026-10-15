@@ -16,10 +16,10 @@ const render = (view, extra = {}) => renderComponent(FILE, 'SeasonProgress', { v
 const count = (html, re) => (html.match(re) || []).length;
 
 test('the figure, the scope and one segment per challenge', () => {
-  const html = render({ done: 3, total: 9, scope: 'season', name: 'Season 2' }, { id: 'x' });
-  assert.match(html, /<p id="x"[^>]*><span[^>]*>3\/9<\/span><span[^>]*>done in Season 2<\/span><\/p>/);
+  const html = render({ done: 3, total: 9, scope: 'season' }, { id: 'x' });
+  assert.match(html, /<p id="x"[^>]*><span[^>]*>3\/9<\/span><span[^>]*>done in this season<\/span><\/p>/);
   assert.match(html,
-    /role="meter" aria-valuemin="0" aria-valuemax="9" aria-valuenow="3" aria-label="3 of 9 done in Season 2"/);
+    /role="meter" aria-valuemin="0" aria-valuemax="9" aria-valuenow="3" aria-label="3 of 9 done in this season"/);
   assert.equal(count(html, /h-\[5px\]/g), 9, 'nine segments');
   assert.equal(count(html, /bg-violet-700/g), 3, 'three of them filled');
   assert.doesNotMatch(html, /<svg/, 'divs, not a glyph outside icons.tsx');
@@ -44,15 +44,21 @@ test('the event scope says it is an event\'s, and does not name it (#4528)', () 
   assert.doesNotMatch(named, /Season 2/, 'a name handed along is still left out');
 });
 
+test('the season scope does not name the season (#5169)', () => {
+  const named = render({ done: 3, total: 9, scope: 'season', name: 'Season 2' });
+  assert.doesNotMatch(named, /Season 2/, 'a name handed along is left out, as the event\'s is');
+  assert.match(named, /done in this season/);
+});
+
 test('past the segment limit the bar is one continuous track', () => {
-  const html = render({ done: 10, total: 40, scope: 'season', name: 'Season 2' });
+  const html = render({ done: 10, total: 40, scope: 'season' });
   assert.equal(count(html, /h-\[5px\]/g), 1, 'one track, not forty slivers');
   assert.match(html, /style="width:25%"/);
 });
 
 test('no points in the view, the output is exactly what it was', () => {
-  const before = render({ done: 3, total: 9, scope: 'season', name: 'Season 2' }, { id: 'x' });
-  const after = render({ done: 3, total: 9, scope: 'season', name: 'Season 2', points: null }, { id: 'x' });
+  const before = render({ done: 3, total: 9, scope: 'season' }, { id: 'x' });
+  const after = render({ done: 3, total: 9, scope: 'season', points: null }, { id: 'x' });
   assert.equal(after, before, 'a null points field draws nothing new');
   assert.doesNotMatch(before, /pts/);
   const zero = render({ done: 3, total: 9, points: { earned: 0, total: 0 } });
@@ -60,7 +66,7 @@ test('no points in the view, the output is exactly what it was', () => {
 });
 
 test('the points line and its own continuous bar', () => {
-  const html = render({ done: 3, total: 9, scope: 'season', name: 'Season 2',
+  const html = render({ done: 3, total: 9, scope: 'season',
     points: { earned: 1000, total: 2000 } });
   assert.match(html, /<span[^>]*>1,000 of 2,000 pts<\/span><span[^>]*>earned<\/span><\/p>/);
   assert.equal(message('leaderboard:progress.points', { earned: '1,000', total: '2,000', count: 2000 }),
@@ -74,7 +80,7 @@ test('the points line and its own continuous bar', () => {
 });
 
 test('every point earned, the track is the cards\' green', () => {
-  const html = render({ done: 9, total: 9, scope: 'season', name: 'Season 2',
+  const html = render({ done: 9, total: 9, scope: 'season',
     points: { earned: 2000, total: 2000 } });
   assert.match(html, /style="width:100%"/);
   assert.match(html, /bg-emerald-500 dark:bg-emerald-400/);

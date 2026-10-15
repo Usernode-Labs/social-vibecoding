@@ -581,7 +581,7 @@ test('challengesView: a new account\'s First challenges are ordinary cards, neve
     for (const gone of ['locked', 'lockedCount', 'lockedNames', 'onboardingNote']) {
       assert.equal(gone in view, false, `${why}: no ${gone}`);
     }
-    assert.deepEqual({ ...view.season }, { done: 0, total: 3, scope: 'season', name: 'Season 1' }, why);
+    assert.deepEqual({ ...view.season }, { done: 0, total: 3, scope: 'season' }, why);
   }
   for (const gone of ['gettingStartedOnHome', 'lockedOnboarding']) {
     assert.equal(gone in makeHomePanels({ slots: [] }).HP, false, `HomePanels.${gone} went with the card`);
@@ -806,13 +806,13 @@ test('QA 2026-09-24 Q17: the season progress counts the whole season, as the pro
   const season = { id: 1, name: 'Season 1' };
   const whole = HP.challengesView(panel({ season, total: 6, done: 2, all_total: 15, all_done: 4 }));
   // The words are the shared SeasonProgress's (leaderboard:progress.*); the
-  // panel names the scope and the season.
-  assert.deepEqual({ ...whole.season }, { done: 4, total: 15, scope: 'season', name: 'Season 1' });
-  assert.equal(message('leaderboard:progress.seasonLabel', { done: 4, count: 15, season: 'Season 1' }), '4 of 15 done in Season 1');
+  // panel names the scope, never the season (#5169).
+  assert.deepEqual({ ...whole.season }, { done: 4, total: 15, scope: 'season' });
+  assert.equal(message('leaderboard:progress.seasonLabel', { done: 4, count: 15 }), '4 of 15 done in this season');
   const expanded = HP.seasonView(panel({ season, total: 15, done: 4, all_total: 15, all_done: 4 }));
   assert.deepEqual({ ...expanded }, { ...whole.season }, 'expanding the block does not change it');
   const older = HP.challengesView(panel({ season, total: 6, done: 2, all_total: 15 }));
-  assert.deepEqual({ ...older.season }, { done: 2, total: 6, scope: 'season', name: 'Season 1' },
+  assert.deepEqual({ ...older.season }, { done: 2, total: 6, scope: 'season' },
     'no all_done: the open counts, as before');
   // #4635: nothing gates the season, so an older server's gate summary no
   // longer narrows Home's progress to "done in First challenges".
@@ -820,7 +820,7 @@ test('QA 2026-09-24 Q17: the season progress counts the whole season, as the pro
     season, total: 6, done: 2, all_total: 15, all_done: 4,
     onboarding: { unlocked: false, total: 3, completed: 1 },
   }));
-  assert.deepEqual({ ...summary }, { done: 4, total: 15, scope: 'season', name: 'Season 1' },
+  assert.deepEqual({ ...summary }, { done: 4, total: 15, scope: 'season' },
     'the whole season, First challenges included');
 });
 
@@ -834,24 +834,24 @@ test('#4565: the season view carries the points figures, or nothing new', () => 
     points_total: 2000, points_earned: 1000 };
   const withPoints = HP.challengesView(panel({ season, ...figures }));
   assert.deepEqual({ ...withPoints.season, points: { ...withPoints.season.points } },
-    { done: 4, total: 15, scope: 'season', name: 'Season 1', points: { earned: 1000, total: 2000 } });
+    { done: 4, total: 15, scope: 'season', points: { earned: 1000, total: 2000 } });
   const expanded = HP.seasonView(panel({ season, ...figures }));
   assert.deepEqual({ ...expanded, points: { ...expanded.points } },
-    { done: 4, total: 15, scope: 'season', name: 'Season 1', points: { earned: 1000, total: 2000 } },
+    { done: 4, total: 15, scope: 'season', points: { earned: 1000, total: 2000 } },
     'expanding the block does not change it');
   const summary = HP.seasonView(panel({
     season, ...figures, onboarding: { unlocked: false, total: 3, completed: 1 },
   }));
   assert.deepEqual({ ...summary, points: { ...summary.points } }, {
-    done: 4, total: 15, scope: 'season', name: 'Season 1', points: { earned: 1000, total: 2000 },
+    done: 4, total: 15, scope: 'season', points: { earned: 1000, total: 2000 },
   }, 'the points ride the same scope the count does: the season (#4635)');
   const older = HP.challengesView(panel({ season, total: 6, done: 2, all_total: 15, all_done: 4 }));
-  assert.deepEqual({ ...older.season }, { done: 4, total: 15, scope: 'season', name: 'Season 1' },
+  assert.deepEqual({ ...older.season }, { done: 4, total: 15, scope: 'season' },
     'an older payload without the figures draws nothing new');
   const none = HP.challengesView(panel({
     season, total: 6, done: 2, all_total: 15, all_done: 4, points_total: null, points_earned: null,
   }));
-  assert.deepEqual({ ...none.season }, { done: 4, total: 15, scope: 'season', name: 'Season 1' },
+  assert.deepEqual({ ...none.season }, { done: 4, total: 15, scope: 'season' },
     'no numeric reward anywhere: no line, not "0 of 0 pts"');
   const over = HP.challengesView(panel({
     season, total: 6, done: 2, all_total: 15, all_done: 4, points_total: 2000, points_earned: 2500,
@@ -868,10 +868,11 @@ test('the season progress names its scope, and leaves deadlines to the cards and
     total: 1, done: 1,
     challenges: [challenge({ progress: { done: true, current: null, target: null } })],
   }));
-  assert.deepEqual({ ...allDone.season }, { done: 1, total: 1, scope: 'season', name: 'Season 1' },
+  assert.deepEqual({ ...allDone.season }, { done: 1, total: 1, scope: 'season' },
     'every card finished: still just the tally, no "3d left" moved onto it');
   const open = HP.challengesView(panel({ season: { id: 1, name: 'Season 1', ends_at: ends } }));
-  assert.deepEqual([open.season.scope, open.season.name], ['season', 'Season 1']);
+  assert.deepEqual([open.season.scope, 'name' in open.season], ['season', false],
+    'the season is the scope, unnamed (#5169)');
   assert.equal(open.groups[0].meta, '3d left', 'the group header says the deadline');
   assert.equal(open.rows[0].deadline, null, 'and its card leaves it to the header');
   const setup = HP.challengesView(panel({
@@ -880,7 +881,9 @@ test('the season progress names its scope, and leaves deadlines to the cards and
   }));
   assert.equal(setup.rows[0].deadline, '3d left', 'a First challenges card says its own');
   const unnamed = HP.challengesView(panel({ season: { id: 1, name: '' } }));
-  assert.deepEqual([unnamed.season.scope, unnamed.season.name], [null, null], 'no name, no scope words');
+  assert.equal(unnamed.season.scope, 'season', 'a season without a name is still the season: its name is never read (#5169)');
+  const older = HP.challengesView(panel({ season: null, total: 3 }));
+  assert.equal(older.season.scope, null, 'no season object at all: plain "done"');
   assert.equal(message('leaderboard:progress.plainLabel', { done: 1, count: 6 }), '1 of 6 done');
 });
 
@@ -1444,15 +1447,16 @@ test('render: the heading names its area — the counter is the season progress'
   // THE COUNTER IS NOT. "· 1 of 6 · 3,900 pts left" rode here at 12px —
   // shrunk from the label's own size because at 15px it ellipsised
   // "Challenges" on a phone, in a heading that also carries a link and the ⋮.
-  // It is the season progress inside the card now ("1/6 done in Season 1"
+  // It is the season progress inside the card now ("1/6 done in this season"
   // over six segments), the first thing in the block rather than a footnote
   // above it, and the same component the Challenges tab opens on.
   const heading = html.match(/<h2 class="home-area-label[\s\S]*?<\/h2>/)[0];
   assert.doesNotMatch(heading, /1 of 6/, 'no counter left in the heading');
   assert.doesNotMatch(heading, /3,900/);
   const progress = html.slice(html.indexOf('home-panel-season'), html.indexOf('home-panel-body'));
-  assert.match(progress, />1\/6<\/span><span[^>]*>done in Season 1</, 'the figure and its scope');
-  assert.match(progress, /role="meter"[^>]*aria-label="1 of 6 done in Season 1"/);
+  assert.match(progress, />1\/6<\/span><span[^>]*>done in this season</, 'the figure and its scope');
+  assert.match(progress, /role="meter"[^>]*aria-label="1 of 6 done in this season"/);
+  assert.doesNotMatch(progress, /Season 1/, 'the season is not named (#5169)');
   assert.equal((progress.match(/h-\[5px\]/g) || []).length, 6, 'one segment per challenge');
   assert.equal((progress.match(/bg-violet-700/g) || []).length, 1, 'one of them filled');
   // The ring and its two lines went with it: no points lead, no arc.
@@ -1475,7 +1479,7 @@ test('the season progress: nothing filled at zero, and never only First challeng
     registry: [], hidden: [],
     panels: [panel({ total: 3, done: 0, onboarding: { total: 3, completed: 1, unlocked: false, event_id: 1 } })],
   }).html;
-  assert.match(summary, />0\/3<\/span><span[^>]*>done in Season 1</);
+  assert.match(summary, />0\/3<\/span><span[^>]*>done in this season</);
   assert.doesNotMatch(summary, /done in First challenges|Getting started|unlock the rest/);
 });
 
@@ -1516,7 +1520,7 @@ test('a new account\'s First challenges are .home-challenge-card under the First
   assert.ok(rows.indexOf('>This week<') > rows.indexOf('data-challenge-id="4"'), 'the season follows');
   assert.match(html, /data-rows="4"/, 'real cards, counted as such');
   assert.match(html, /home-panel-season/, 'the season progress over them');
-  assert.match(html, />1\/6<\/span><span[^>]*>done in Season 1</);
+  assert.match(html, />1\/6<\/span><span[^>]*>done in this season</);
   assert.match(html, /home-panel-footer/, 'and the way to the rest of the season');
   // Tapping one opens it on the Challenges tab like any other card.
   assert.match(challengesSrc(), /onClick=\{\(\) => panels\(\)\?\.goToChallenge\?\.\(row\.eventId, row\.id\)\}/);
@@ -1784,7 +1788,7 @@ test('the title bar and the footer controls are single-line too', () => {
     'no counter appended to the area label');
   // The season progress says it instead, on one line that truncates rather
   // than wraps.
-  assert.match(html, /home-panel-season[\s\S]*?>2\/9<\/span><span class="min-w-0 truncate[^"]*">done in Season 1</);
+  assert.match(html, /home-panel-season[\s\S]*?>2\/9<\/span><span class="min-w-0 truncate[^"]*">done in this season</);
   // The bar carries the way out (#968, now the leaderboard link of #980).
   // Nothing competes with it for the row any more — the summary that used to
   // is one level up — but it stays shrink-0 and nowrap: the label used to

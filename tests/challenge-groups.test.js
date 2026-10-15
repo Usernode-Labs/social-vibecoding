@@ -483,7 +483,7 @@ test('while setup gates the rest the progress is the First challenges group’s 
   pane._renderGrid();
   grid = gridOf(store);
   // QA 2026-09-24 Q17: the tab's tally names its scope as an event, since
-  // Home's and the profile's "done in Season 2" count the whole season. The
+  // Home's "done in this season" and the profile count the whole season. The
   // event's own name stays out of the words (issue #4528).
   assert.equal(message('leaderboard:progress.eventLabel', { done: 2, count: 3 }), '2 of 3 done in this event');
   assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, scope: 'event' },
