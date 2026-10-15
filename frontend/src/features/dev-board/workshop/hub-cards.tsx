@@ -57,6 +57,7 @@ import { agoStamp } from '../../../lib/timestamp';
 import { changeHref } from '../../../lib/change-href';
 import { type BuildLineState, buildLineOf, phaseLine, useNow } from '../../first-session/build-line';
 import { useTourRunning } from '../../first-session/tour-running';
+import { DrawnLook, isDrawnLook, ownSrc, useLookSwap } from '../../first-session/drawn-look';
 import { firstLookSrc } from '../../first-session/first-look';
 import { countsDown, estimateOf, leftNote } from '../../app-frame/first-version-eta';
 import { madeAppUrl } from '../../first-session/made';
@@ -285,6 +286,10 @@ const FIRST_LOOK_ONLY: readonly string[] = ['first_look'];
  * Gone once it is ready to try or live (hubShowsFirstLook), and held back
  * while the first-session tour runs (../../first-session/tour-running.ts),
  * whose own last card is this picture.
+ *
+ * 15 Oct 2026 (newcomer run nine): until the picture is saved, its drawn
+ * screen (../../first-session/drawn-look.tsx), asked again until the
+ * picture is there and swapped for it once it is in.
  */
 export function FirstLookCard({ slug, data }: { slug: string; data: CommunityPayload | null }): ReactNode {
   const touring = useTourRunning();
@@ -293,7 +298,7 @@ export function FirstLookCard({ slug, data }: { slug: string; data: CommunityPay
   // A picture that would not load is asked for again, as one not there yet.
   const [broken, setBroken] = useState<string | null>(null);
   useEffect(() => {
-    if (!wanted || !slug || (src && src !== broken)) return undefined;
+    if (!wanted || !slug || (src && src !== broken && !isDrawnLook(src))) return undefined;
     let live = true;
     const read = () => fetch(madeAppUrl(slug), { credentials: 'same-origin', cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
@@ -308,7 +313,7 @@ export function FirstLookCard({ slug, data }: { slug: string; data: CommunityPay
     }, FIRST_VERSION_POLL_MS);
     return () => { live = false; window.clearInterval(timer); };
   }, [wanted, slug, src, broken]);
-  const shown = src && src !== broken ? src : null;
+  const shown = useLookSwap(src && src !== broken ? src : null, ownSrc);
   if (!wanted || touring || !shown) return null;
   return <FirstLookView slug={slug} name={data?.name || slug} src={shown} onBroken={() => setBroken(shown)} />;
 }
@@ -326,23 +331,31 @@ export function watchBuild(slug: string): void {
 export function FirstLookView({ slug, name, src, onBroken }: {
   slug: string;
   name: string;
-  /** The first look's own URL (../../first-session/first-look.tsx firstLookSrc). */
+  /** The first look's own URL (../../first-session/first-look.tsx firstLookSrc), or its drawn screen's. */
   src: string;
   /** The picture would not load: the card asks for it again. */
   onBroken?: () => void;
 }): ReactNode {
   const t = useMessages('project');
+  const alt = t('project:hub.firstLook.alt', { app: name });
   return (
     <section className="dev-ws-strip dev-ws-first-look" data-ws-first-look="">
-      <img
-        src={src}
-        alt={t('project:hub.firstLook.alt', { app: name })}
-        width={64}
-        height={138}
-        draggable={false}
-        onError={onBroken}
-        className="dev-ws-first-look-shot"
-      />
+      {isDrawnLook(src) ? (
+        // Its drawn screen, at the picture's size, until the picture is saved.
+        <div className="dev-ws-first-look-shot relative overflow-hidden">
+          <DrawnLook src={src} label={alt} width={64} />
+        </div>
+      ) : (
+        <img
+          src={src}
+          alt={alt}
+          width={64}
+          height={138}
+          draggable={false}
+          onError={onBroken}
+          className="dev-ws-first-look-shot"
+        />
+      )}
       <div className="dev-ws-first-look-body">
         <p className="dev-ws-first-look-kicker">{t('project:hub.firstLook.kicker')}</p>
         <p className="dev-ws-head-title">{t('project:hub.firstLook.title')}</p>

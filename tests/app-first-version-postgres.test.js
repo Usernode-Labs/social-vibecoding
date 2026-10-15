@@ -309,7 +309,7 @@ test('the first version being built, from the records the bot leaves', { timeout
     // Homeroom bot said it in the request's thread, with Try again under it.
     const card = await dm.sendDm(pool, { bot, userId: ada.id, content: 'Plant Pal, its first version' });
     const said = await dm.sendDm(pool, {
-      bot, userId: ada.id, content: 'I built Plant Pal but couldn\'t put it live yet. Tap Try again and I\'ll start over.',
+      bot, userId: ada.id, content: 'I built Plant Pal but couldn\'t put it live yet. Tap Try again and I\'ll finish it.',
       threadRootId: card.messageId,
     });
     await pool.query(

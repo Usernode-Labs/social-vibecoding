@@ -53,7 +53,10 @@ is one for its whole life, so what a follower could not do had to move:
 - **What one process learns about a repo's issues, the others hear**
   (`issues_cache`): a close, a reopen or an invalidation leaves every
   process's open-issues copy, so a list a web process serves is as fresh as
-  the merge or the heal the conductor made.
+  the merge or the heal the conductor made. An issue the platform files
+  reaches every copy too (15 Oct 2026), so the conductor's bot reads a
+  request a web process filed, a project's first version among them, at
+  once rather than once GitHub's own list has it.
 - **A DM answer the bot promised to ask again** is marked by the process
   that will ask it (`dm_defer`, a marker no drain waits for) and held while
   the try runs (`dm_answer`): the leader's resume leaves either alone, and its

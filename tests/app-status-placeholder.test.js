@@ -821,6 +821,24 @@ test('#4387: building, the first look in a phone frame and the caption as the li
   assert.doesNotMatch(out, /data-first-version-dots/, 'one picture, no dots');
 });
 
+test('15 Oct 2026: a first look only drawn so far is its drawn screen, framed in the same phone', () => {
+  // Newcomer run nine: its picture came 11 seconds after Submit, the screen
+  // it is drawn from long before (tests/first-look-drawn.test.js).
+  const { AppView } = makeAppView();
+  const v = view(AppView, firstVersionApp({}, { ...MEMBER, line: 'building', screens: { ...LOOK, drawn: true } }));
+  assert.deepEqual(v.screens, {
+    kind: 'first_look', at: LOOK.at, images: ['/api/apps/plant-pal/first-version/first-look/drawn?v=1791453600000'],
+  });
+  const out = html(v);
+  assert.match(out, /data-first-version-screens="first_look"/);
+  assert.match(out, /First look · drawn from the plan/);
+  assert.match(out, /<div role="img" aria-label="A first look at Plant Pal, drawn from the plan" data-first-look-drawn=""[^>]*><iframe src="\/api\/apps\/plant-pal\/first-version\/first-look\/drawn\?v=1791453600000"[^>]* sandbox=""/);
+  assert.doesNotMatch(out, /<img src="\/api\/apps\/plant-pal\/first-version/);
+  // A real screen is never "drawn", and a picture stays a picture.
+  const real = view(AppView, firstVersionApp({}, { ...MEMBER, step: 5, line: 'testing', screens: { kind: 'real', count: 1, at: null, v: '7', drawn: true } }));
+  assert.deepEqual(real.screens.images, ['/api/apps/plant-pal/first-version/screens/real/0?v=7']);
+});
+
 test('#4387: the maker gets the same, and keeps their way into the chat', () => {
   const { AppView } = makeAppView();
   const v = view(AppView, firstVersionApp({}, { mine: true, line: 'building', caption: 'Adding the tier rows', screens: LOOK }));
