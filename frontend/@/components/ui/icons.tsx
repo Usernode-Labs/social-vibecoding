@@ -52,11 +52,17 @@ import * as React from 'react';
  * enumerate them.
  */
 
-// Heroicons outline microphone, sharing the shell glyphs' grid and stroke.
-export const MicrophoneIcon = stroked("MicrophoneIcon", [
-  'M12 18.75a6 6 0 0 0 6-6v-1.5m-12 0v1.5a6 6 0 0 0 6 6Zm0 0v3m-3 0h6',
-  'M12 15.75a3 3 0 0 0 3-3v-7.5a3 3 0 0 0-6 0v7.5a3 3 0 0 0 3 3Z',
-]);
+// Heroicons v2 outline microphone, verbatim and on the shell glyphs' grid and
+// stroke: the capsule, the cradle under it, the stem and its base in one path.
+// #5070 shipped a copy whose `m-12 0` began the cradle's left half as a new
+// subpath, so its `Z` closed to the wrong point and the stem and base drew on
+// the left, a hook rather than a microphone. Its name stays in double quotes:
+// tests/shell-icon-set.test.js reads every single-quoted string that starts
+// with M as path data.
+export const MicrophoneIcon = stroked(
+  "MicrophoneIcon",
+  'M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z',
+);
 
 export type IconProps = Omit<
   React.SVGProps<SVGSVGElement>,

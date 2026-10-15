@@ -153,6 +153,12 @@ export type Made = {
   imported?: boolean;
   /** One of Homeroom's ready-made apps (examples.ts `readyMadeOf`): nothing is built, it is ready once it runs. */
   readyMade?: boolean;
+  /**
+   * A ready-made app's example picture, its main screen with sample entries
+   * (POST /api/apps `exampleScreen`, services/app-templates.js): the made
+   * screen's card shows it as the App side, tagged as an example.
+   */
+  exampleScreen?: string | null;
 };
 
 const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
@@ -488,7 +494,7 @@ export function MakeScreen({
         ...(timeZone ? { timeZone } : {}),
       });
       const data = (reply.ok ? reply.data : {}) as {
-        app?: { slug?: string; name?: string }; homeroomBot?: { conversationId?: unknown };
+        app?: { slug?: string; name?: string }; homeroomBot?: { conversationId?: unknown }; exampleScreen?: unknown;
       };
       if (!reply.ok || !data.app?.slug) {
         setError(reply.ok ? translate('onboarding:firstSession.make.error.notMade') : reply.error);
@@ -502,6 +508,7 @@ export function MakeScreen({
         example,
         conversationId: Number(data.homeroomBot?.conversationId) || null,
         ...(ready ? { readyMade: true } : {}),
+        ...(ready && typeof data.exampleScreen === 'string' && data.exampleScreen ? { exampleScreen: data.exampleScreen } : {}),
       });
     } finally {
       makingRef.current = false;

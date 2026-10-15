@@ -80,7 +80,7 @@ test('checking: the project, then one spinner over the checking line, and nothin
   assert.equal((html.match(/animate-spin/g) || []).length, 1, 'one spinner');
   assert.doesNotMatch(html, /data-progress-ring-spinning/, 'no setup ring');
   assert.doesNotMatch(html, /data-build-line=|Homeroom bot is planning it/, 'no planning line');
-  assert.doesNotMatch(html, /data-made-setup|Setting up its storage|This usually takes about a minute/, 'no setup card');
+  assert.doesNotMatch(html, /data-made-setup|Setting up its storage|Usually about a minute\./, 'no setup card');
   assert.doesNotMatch(html, /data-made-first-look/, 'no first look card yet');
   assert.doesNotMatch(html, /Share invite|Invite people later/);
   // Under the project, in the buttons' place.
@@ -129,7 +129,7 @@ test('questions: the project, then the questions and Submit, with no planning li
   assert.match(CODE, /const rowHidden = settingUp \|\| ranInPlace \|\| !ownLine;/);
   assert.match(CODE, /\{rowHidden \? null : \(\s+<div data-first-session-build-row=""/);
   // The first look card is the invite ask's, never over the questions.
-  assert.match(CODE, /\{firstLook \? <FirstLookCard src=\{lookShown\} name=\{made\.name\} progress=\{lookProgress\} onBroken=\{setBrokenLook\} \/> : null\}/);
+  assert.match(CODE, /\{firstLook \? <FirstLookCard src=\{lookShown\} name=\{made\.name\} progress=\{lookProgress\} onBroken=\{setBrokenLook\} phone=\{!lookInCard\} \/> : null\}/);
 });
 
 test('after Submit: one card carries the first look and the setup, under the project card, which stays as it is', () => {
@@ -137,8 +137,8 @@ test('after Submit: one card carries the first look and the setup, under the pro
   assert.equal(message(FIRST_LOOK_KICKER), 'First look');
   assert.equal(message(FIRST_LOOK_TITLE), 'Here\'s what Homeroom bot is making');
   assert.equal(firstLookEstimate(false, false), 'Usually about a minute');
-  assert.equal(firstLookEstimate(true, false), 'Taking longer than usual');
-  assert.equal(firstLookEstimate(true, true), 'Taking longer. You can go on.');
+  assert.equal(firstLookEstimate(true, false), 'Should be ready shortly…');
+  assert.equal(firstLookEstimate(true, true), 'Ready shortly. You can go on.');
   for (const words of [message(FIRST_LOOK_KICKER), message(FIRST_LOOK_TITLE), firstLookEstimate(false, false), firstLookEstimate(true, false), firstLookEstimate(true, true)]) {
     assert.doesNotMatch(words, /!|—/, words);
   }

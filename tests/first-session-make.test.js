@@ -601,10 +601,12 @@ test('after Make it: the build line, then one invite, and the second button says
   assert.equal(made.madeLine(null, true, true), 'live', 'gone once it was read as on its way: merged');
   assert.equal(made.madeLine({ line: 'building' }, false), null, 'nobody builds it: no line');
   const src = read(`${DIR}/made.tsx`);
-  // The first session's second button: on to the tour (continueLabel).
+  // The first session's second button: the app itself once an invite is
+  // out, or Home while Homeroom bot still builds it (continueLabel).
   assert.equal(made.continueLabel('first-session', false, 'Page Turners'), 'Invite people later');
-  assert.equal(made.continueLabel('first-session', true, 'Page Turners'), 'Start the tour');
-  assert.match(src, /\{continueLabel\(entry, true, made\.name\)\}/);
+  assert.equal(made.continueLabel('first-session', true, 'Page Turners'), 'Go to app');
+  assert.equal(made.continueLabel('first-session', true, 'Page Turners', true), 'Continue');
+  assert.match(src, /\{continueLabel\(entry, true, made\.name, stage !== null\)\}/);
   assert.match(src, /\{continueLabel\(entry, false, made\.name\)\}/);
   // The note is said to be the first message.
   assert.match(src, /body: JSON\.stringify\(\{ days: LINK_DAYS, maxUses: LINK_USES, note: note\.trim\(\) \|\| null \}\)/);
@@ -637,12 +639,6 @@ test('after Make it: the build line, then one invite, and the second button says
   assert.equal(invites.LIMITS.maxUses, 100);
 });
 
-// Evan, 10 Oct 2026: "let's just have them open the app in the last step on
-// the hub". The maker's tour meets Homeroom bot on Home and ends on the hub,
-// its last card asking for Open app, whether the bot builds the project or
-// it is ready-made. One still being built opens on its build, which takes
-// its maker to the bot's chat when a plan waits for them; that chat used to
-// be the tour's last two cards.
 test('Make it stays reachable: a pick brings it into view, and pressing it holds the form where it is (onboarding run two)', () => {
   const src = read(`${DIR}/make.tsx`);
   // A pick with the keys down reveals the description and Make it together,
@@ -661,46 +657,18 @@ test('Make it stays reachable: a pick brings it into view, and pressing it holds
   assert.match(src, /\{busy \? <div aria-hidden="true" data-make-hold="" className="h-\[60vh\] shrink-0" \/> : null\}/);
 });
 
-test('the maker\'s tour meets Homeroom bot on Home and ends on the hub, asking them to open their new app', () => {
-  const { makerSteps, OPEN_APP, BOTTOM_BARS, SCREEN_HEADER } = loadTsx(`${DIR}/tour-steps.ts`);
-  const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew' });
-  assert.deepEqual(steps.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'home', 'hub']);
-  // The bot, met on Home with its tab ringed, before the Communities tab.
-  assert.deepEqual(steps[5], {
-    screen: 'home',
-    target: '#platform-tab-messages',
-    ringed: true,
-    title: 'Meet Homeroom bot',
-    text: 'Tell it what Friday Film Crew should do next, and it starts building it. It\'s always here in Messages.',
-  });
-  assert.equal(steps[6].target, '#platform-tab-workshop');
-  // The hub whole, its Open app ringed and the only part a press reaches.
-  assert.equal(OPEN_APP, '[data-ws-community-open-app]');
-  assert.deepEqual(steps[7], {
-    screen: 'hub',
-    target: '#app-content',
-    alongside: SCREEN_HEADER,
-    endsAbove: BOTTOM_BARS,
-    waitsFor: 'hub',
-    title: 'The Friday Film Crew hub',
-    text: 'The discussion and the app\'s changes are here. Now open your new app.',
-    place: 'bottom',
-    press: OPEN_APP,
-    tap: 'Tap Open app',
-    last: true,
-  });
-  assert.equal(steps.filter((s) => s.last).length, 1);
-  assert.ok(!steps.some((s) => s.screen === 'bot'), 'no card in the bot\'s chat');
-  // A project the bot builds gets the same tour.
-  assert.deepEqual(makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 }), steps);
-  // Open app is the hub's own button, which opens the app.
-  assert.match(read('frontend/src/features/dev-board/workshop/community-card.tsx'),
-    /data-ws-community-open-app=""\s+onClick=\{\(\) => \{ \(window as any\)\.App\?\.openAppTab\?\.\(slug, 'app'\); \}\}/);
-  // Its press ends the tour and goes on to the button, and the card asks for
-  // it in the blue words every tap step has.
+// Evan, 10 Oct 2026: "let's just have them open the app". 15 Oct 2026: the
+// made screen's way on opens it, full screen, once it runs; the walk on Home
+// follows the first time Home shows after it. One still being built goes to
+// Home and its walk at once, and opens on its build later, which takes its
+// maker to the bot's chat when a plan waits for them.
+test('the maker\'s way on after Make it: the app itself once it runs, Home and the walk while it is built', () => {
   const index = read(`${DIR}/index.tsx`);
-  assert.match(index, /if \(!hit\) return;\s+(?:\/\/[^\n]*\n\s*)*if \(step\.last\) \{ window\.setTimeout\(onEnd, 0\); return; \}\s+window\.setTimeout\(\(\) => setIndex\(\(i\) => \(i === index \? i \+ 1 : i\)\), 0\);/);
-  assert.match(index, /\{step\.tap \? \(/);
+  assert.doesNotMatch(index, /makerSteps|path: 'maker'/);
+  assert.match(index, /setMode\(\{ kind: 'none' \}\);\s+enterScreen\('app', slug\);/);
+  assert.match(index, /setMode\(\{ kind: 'tour', info: \{ slug, name \}, path: 'walk', moments: true \}\);/);
+  // The app opens on its own screen, as a tap on its tile does.
+  assert.match(index, /else if \(screen === 'app'\) App\.navigateToApp\?\.\(slug, 'app'\);/);
   // A first version being built takes its maker to the chat from the App tab:
   // Review the plan while one waits, else a quiet Open Homeroom bot.
   assert.match(read('public/js/app-view.js'),

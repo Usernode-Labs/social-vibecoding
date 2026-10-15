@@ -586,6 +586,41 @@ test('rowSubtitle: one short fact, members for a community or group, recency for
   assert.equal(rowSubtitle({ slug: 'x', audience: 'solo', last_active_at: null, working: 0, needs: 0 }, now), '');
 });
 
+test('15 Oct 2026: a project with an invite link out and nobody in yet says "Invite link out", and stays under Just you', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const now = Date.parse('2026-09-25T12:00:00Z');
+  const row = (over = {}) => ({
+    slug: 'garden', name: 'Garden', audience: 'solo', member_count: 1, last_active_at: '2026-09-25T11:55:00Z',
+    working: 0, needs: 0, ...over,
+  });
+  assert.equal(mod.rowSubtitle(row({ invite_link_out: true }), now), 'Invite link out', 'in place of when it last moved');
+  assert.equal(mod.rowSubtitle(row({ invite_link_out: false }), now), '5m ago');
+  assert.equal(mod.rowSubtitle(row(), now), '5m ago', 'an older server without the field: as before');
+  assert.equal(message('communities:row.inviteOut'), 'Invite link out');
+  // Which section it sits in is its audience's: a link out is not a member.
+  mod.workshopStore.set({ open: true, error: false, tab: 'status', rows: [row({ invite_link_out: true }), row({ slug: 'club', name: 'Club', audience: 'invited', member_count: 3 })] });
+  const html = renderToHtml(createElement(mod.WorkshopScreen, {}));
+  assert.match(html, /data-workshop-section="solo"[\s\S]*?data-workshop-app="garden"[\s\S]*?Invite link out/,
+    'under Just you, saying so');
+  const invited = html.slice(html.indexOf('data-workshop-section="invited"'), html.indexOf('data-workshop-section="solo"'));
+  assert.ok(invited.includes('data-workshop-app="club"') && !invited.includes('data-workshop-app="garden"'), 'not among the groups');
+  assert.match(html, /data-workshop-app="garden" data-workshop-audience="solo"/);
+  mod.workshopStore.set({ open: false, rows: null });
+  // One read for the whole list (GET /api/apps), never one per project; the
+  // server says it only while nobody else is in it.
+  const route = read('src/routes/apps.js');
+  assert.match(route, /linksOut = await communityInvites\.linksOutFor\(pool, rows\.filter\(\(a\) => a\.is_member\)\.map\(\(a\) => a\.id\), userId\);/);
+  assert.match(route, /invite_link_out: inviteLinkOut\(linksOut\.get\(Number\(a\.id\)\), a\.member_count\),/);
+  const { inviteLinkOut } = require('../src/routes/apps');
+  assert.equal(inviteLinkOut({ links: 1, joined: 0 }, 1), true);
+  assert.equal(inviteLinkOut({ links: 2, joined: 1 }, 1), false, 'somebody came in through one');
+  assert.equal(inviteLinkOut({ links: 1, joined: 0 }, '2'), false, 'somebody else is in it');
+  assert.equal(inviteLinkOut(undefined, 1), false, 'no live link out');
+  assert.equal(inviteLinkOut({ links: 0, joined: 0 }, 1), false);
+  // It does not move the row: the audience is derived as it always was.
+  assert.doesNotMatch(read('src/services/communities.js').slice(0, read('src/services/communities.js').indexOf('async function isMember(')), /community_invites/);
+});
+
 test('a row says its status in words, leaves zeroes out, and keeps both numbers in the document', () => {
   const mod = loadTsx('frontend/src/features/workshop/index.tsx');
   const line = (working, needs) => renderToHtml(createElement(mod.StatusLine, { working, needs }));

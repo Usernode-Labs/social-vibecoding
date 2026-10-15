@@ -18,8 +18,11 @@
  *   hub-first-week-question  as the person who started it, Homeroom bot
  *                            waiting on their answer to a question
  *   hub-first-week-link      as the person who started it, nobody else in
- *                            yet, an invite link out: their face between
- *                            open seats
+ *                            yet, an invite link out: "Just you so far",
+ *                            and Share it saying the link is out
+ *
+ * The hub is drawn the same from a project's first day (15 Oct 2026); the
+ * shots keep their names.
  */
 
 import type { CommunityPayload } from './community-card';
@@ -59,14 +62,13 @@ export const SHOT_PLAN = Object.freeze({
 /** The made-up community a hub shot draws, for `slug`. Pure. */
 export function hubShotPayload(slug: string, kind: HubShot, now: number = Date.now()): CommunityPayload {
   const maker = kind !== 'member';
-  // A link out and nobody in yet: Just you, with the link's seats.
+  // A link out and nobody in yet: Just you so far, Share it saying so.
   const alone = kind === 'link';
   const ago = (min: number) => new Date(now - min * 60000).toISOString();
   return {
     slug,
     name: 'Sunday Run Club',
     description: 'Track your club’s weekly miles and see who keeps up',
-    first_week: true,
     first_version: {
       step: kind === 'question' ? 2 : 3,
       of: 7,
@@ -80,6 +82,10 @@ export function hubShotPayload(slug: string, kind: HubShot, now: number = Date.n
       plan: kind === 'member' ? { bullets: [...SHOT_PLAN.bullets], questions: SHOT_PLAN.questions.map((q) => ({ ...q })) } : null,
     },
     invite_link: alone,
+    // The link out: made a minute ago, for a week, nobody in through it yet.
+    invite_summary: alone
+      ? { links: 1, joined: 0, waiting: 0, expires_at: new Date(now + 7 * 24 * 60 * 60000 - 60000).toISOString() }
+      : null,
     member_count: alone ? 1 : 3,
     is_member: true,
     is_creator: maker,

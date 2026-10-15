@@ -173,16 +173,16 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "494303c8aea7b8fc16eb",
+      "fingerprint": "606267a1970143fe0d00",
       "count": 1,
-      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url, LEFT(manifest_snapshot->>'description', 280) AS description, (NOT self_hosted AND created_at > NOW() - INTE"
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`"
     },
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "606267a1970143fe0d00",
+      "fingerprint": "b6f5710ec85cd13574e9",
       "count": 1,
-      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`"
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url, LEFT(manifest_snapshot->>'description', 280) AS description, (NOT self_hosted AND created_at > NOW() - INTE"
     },
     {
       "source": "src/routes/apps.js",

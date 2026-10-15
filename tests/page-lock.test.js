@@ -172,7 +172,7 @@ test('app.css: in a phone browser on iOS the first-run screens\' ground runs on 
   const block = APP_CSS.slice(APP_CSS.indexOf('/* AND OVER THEIR TOP, UNDER THE STATUS BAR'));
   const rule = /^[^]*?\*\/\n@media \(max-width: 767px\) \{\n  (.+) \{\n    box-shadow: ([^;]+);\n  \}\n\}\n/.exec(block);
   assert.ok(rule, 'phone only');
-  // The make, made and "You're in" roots, not from Create (under the header).
+  // The make and made roots and the invite's held frame, not from Create (under the header).
   assert.equal(rule[1], 'html.un-ios.web-browser-chrome :is([data-first-session-make], [data-first-session-made], [data-first-session-welcome]):not(.platform-under-header)');
   // Straight up, 200px, the box's own size: nothing in the box moves.
   assert.equal(rule[2], '0 -200px 0 0 var(--home-ground, #f4f2e4)');
@@ -181,7 +181,7 @@ test('app.css: in a phone browser on iOS the first-run screens\' ground runs on 
   // Those are the roots the screens draw.
   assert.match(MAKE, /data-first-session-make=""/);
   assert.match(MADE, /data-first-session-made=""/);
-  assert.match(ISLAND, /data-first-session-welcome=\{held \? 'held' : ''\}/);
+  assert.match(ISLAND, /data-first-session-welcome="held"/);
 });
 
 test('the make and made screens hold the page: inert on the first session, scroll-locked only from Create', () => {
@@ -193,12 +193,15 @@ test('the make and made screens hold the page: inert on the first session, scrol
   }
 });
 
-test('"You\'re in" and its held frame hold the page too', () => {
-  const frame = ISLAND.slice(ISLAND.indexOf('function WelcomeFrame('), ISLAND.indexOf('export function WelcomeHeld('));
+test('the invite\'s held frame holds the page too', () => {
+  const frame = ISLAND.slice(ISLAND.indexOf('export function WelcomeHeld('), ISLAND.indexOf('export type Mode ='));
   assert.match(ISLAND, /import \{ usePageLock \} from '\.\.\/\.\.\/lib\/page-lock';/);
   assert.match(frame, /const rootRef = useRef<HTMLDivElement>\(null\);\s+usePageLock\(rootRef\);/);
   assert.match(frame, /<div\s+ref=\{rootRef\}\s+role="dialog"/);
-  // The tour runs over the live page, which it scrolls to its targets: never held.
-  const tour = ISLAND.slice(ISLAND.indexOf('export function Tour('), ISLAND.indexOf('function WelcomeFrame('));
+  // The tour runs over the live page, which it scrolls to its targets: never
+  // held. Nor is the app under the tip: it asks for nothing, and any tap
+  // closes it.
+  const tour = ISLAND.slice(ISLAND.indexOf('export function Tour('), ISLAND.indexOf('export function WelcomeHeld('));
   assert.doesNotMatch(tour, /usePageLock/);
+  assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/first-session/app-tip.tsx'), 'utf8'), /usePageLock/);
 });

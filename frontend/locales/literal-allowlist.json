@@ -387,18 +387,10 @@
     },
     "frontend/src/features/first-session/index.tsx": {
       "texts": [
-        "Sam",
-        "Jordan",
-        "Ada",
-        "Noor",
-        "Tom",
-        "Lena",
         "Maya",
-        "Sunday Run Club",
-        "Track your club's weekly miles and see who keeps up",
         "A tracker for my run club, so we can see who keeps up with their weekly miles"
       ],
-      "why": "shotWelcome(), the fixture for the ?shot=youre-in screenshot states: people's names, a community's name and its own description, standing in for server data. MAKE_SHOTS['make-waitlist'], the fixture for a person's own waitlist answer in the ?shot=make-waitlist screenshot state (not listed by --literals today, named here for completeness)."
+      "why": "SHOT_INVITER, who sent the invite in the ?shot=app-tip-invited screenshot state, a person's name standing in for server data. MAKE_SHOTS['make-waitlist'], the fixture for a person's own waitlist answer in the ?shot=make-waitlist screenshot state (not listed by --literals today, named here for completeness)."
     },
     "frontend/src/features/profile/profile-edit-sheet.tsx": {
       "texts": [

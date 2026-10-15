@@ -75,7 +75,7 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ChevronRightIcon, LockIcon, PersonSilhouetteIcon, PlayIcon, ShieldCheckIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
+import { ChevronRightIcon, LockIcon, PlayIcon, ShieldCheckIcon, UserGroupIcon, UserIcon, XIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../messages/format';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { listText, t as translate } from '../../../lib/i18n/runtime';
@@ -84,6 +84,7 @@ import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import { askToVerifyForPublic, identityNeededHere } from '../../auth/verify-identity';
 import { invitedByLine, joinByInvite, useInviteOffer, type InviteJoin, type InviteOffer } from './invite-offer';
 import { hubShot, hubShotPayload } from './hub-shot';
+import { useHubDismissed } from './hub-dismissed';
 import { changeHref } from '../../../lib/change-href';
 import type { ApprovalPayload } from '../../who-decides/model';
 
@@ -157,6 +158,18 @@ export interface PlaceChannel {
   figures?: string[];
 }
 
+/** The invite links out for a project, summed (community-invites.js summarizeLinks). */
+export interface InviteSummary {
+  /** How many links are live. */
+  links: number;
+  /** People who joined through them. */
+  joined: number;
+  /** People one of them queued, not let in yet. */
+  waiting: number;
+  /** When the soonest of them ends; null when none of them has an end. */
+  expires_at: string | null;
+}
+
 export interface PlacesPayload {
   /** Votes waiting on the viewer here, or null when not counted. */
   owed: number | null;
@@ -171,13 +184,19 @@ export type CommunityPayload = {
   /** dapp.json's one-line description, or the first sentence of the
       description it was made from when dapp.json has none yet. */
   description?: string | null;
-  /** #4045: made under seven days ago (never the platform's own): the hub
-      leaves out what is still empty (decision D). */
-  first_week?: boolean;
   /** #4045: the viewer has a live invite link for a project that is still
-      just theirs, so the hub draws open seats beside their face instead of
-      "Just you". Only ever true for a member, on a Just you project. */
+      just theirs. Only ever true for a member, on a Just you project. The
+      hub says "Just you so far" whatever it says (15 Oct 2026): a link out
+      is not a private community until somebody joins. */
   invite_link?: boolean;
+  /** The invite links out, summed (services/community-invites.js
+      inviteSummary): the viewer's own, or every one to someone who manages
+      the project. Share it says it in one line. Null when not read. */
+  invite_summary?: InviteSummary | null;
+  /** Since when the app itself has been live (routes/apps.js: when it
+      first ran), for Recently live's card of the app while none of its
+      changes has gone live yet. Null when it has never run. */
+  live_since?: string | null;
   first_version?: HubFirstVersion | null;
   member_count: number;
   is_member: boolean;
@@ -474,89 +493,6 @@ function HeroFaces({ members }: { members: CommunityPayload['members'] | null | 
         </span>
       ))}
     </span>
-  );
-}
-
-/** How many faces the first week's row shows: the count says the rest. */
-export const WEEK_FACES = 3;
-
-/**
- * The seats of a project nobody has joined yet, in the colours of the
- * canvas board People (set "you-open"): one on each side of your face, pale,
- * with a person's outline in them. They are not buttons; Invite is.
- */
-const SEATS = [
-  { bg: '#ebefed', ink: '#cedae0' },
-  { bg: '#fae5dc', ink: '#ebb199' },
-] as const;
-
-function Seat({ bg, ink }: { bg: string; ink: string }) {
-  return (
-    <span className="dev-ws-hero-face dev-ws-hero-seat" style={{ background: bg, color: ink }}>
-      <PersonSilhouetteIcon aria-hidden="true" />
-    </span>
-  );
-}
-
-/**
- * The people row of a project's first week (#4045, the owner, 8 Oct 2026;
- * canvas boards Hub and People): the faces at the left, then who it is for
- * as "Private community" with its lock, and "3 people" under it.
- *
- *   Just you              the label alone: nobody else is here, and no link is
- *                         out ("Just you so far" to its member, justYouSoFar)
- *   a link is out         your face between two open seats, "Private
- *                         community" and no count: the count of one person
- *                         is the seats' whole point
- *   anyone else in it     up to three faces, the audience and "N people"
- *
- * `seats` is `invite_link` on a Just you project (GET .../community): the
- * audience the server derives stays "Just you" until somebody accepts, so the
- * hub says "Private community" itself while the seats are shown.
- */
-export function WeekPeople({ members, count, audience, audienceLabel, seats }: {
-  members: CommunityPayload['members'] | null | undefined;
-  count: number;
-  audience?: Audience;
-  audienceLabel?: string;
-  seats?: boolean;
-}) {
-  const t = useMessages('project');
-  const solo = audience === 'solo';
-  const shown: Audience | undefined = seats ? 'invited' : audience;
-  const label = seats ? t('project:communityCard.week.privateCommunity') : audienceLabel;
-  const you = (members || [])[0];
-  const faces = seats ? [] : solo ? [] : (members || []).slice(0, WEEK_FACES);
-  const countLine = seats || solo ? '' : t('project:communityCard.week.people', { count });
-  return (
-    <div className="dev-ws-hero-week-people" data-ws-members="" data-ws-seats={seats ? '' : undefined}>
-      {seats && you ? (
-        <span className="dev-ws-hero-faces dev-ws-hero-seats" aria-hidden="true">
-          <Seat {...SEATS[0]} />
-          <span className="dev-ws-hero-face" style={{ background: swatchFor(you.username) }} title={`@${you.username}`}>
-            {(you.username || '?').charAt(0).toUpperCase()}
-          </span>
-          <Seat {...SEATS[1]} />
-        </span>
-      ) : faces.length ? (
-        <span className="dev-ws-hero-faces" aria-hidden="true">
-          {faces.map((m) => (
-            <span key={m.id} className="dev-ws-hero-face" style={{ background: swatchFor(m.username) }} title={`@${m.username}`}>
-              {(m.username || '?').charAt(0).toUpperCase()}
-            </span>
-          ))}
-        </span>
-      ) : null}
-      <span className="dev-ws-hero-week-who" data-ws-members-cell="members">
-        {label ? (
-          <span className="dev-ws-hero-audience" data-ws-community-audience="">
-            {shown ? <AudienceGlyph audience={shown} /> : null}
-            <b>{label}</b>
-          </span>
-        ) : null}
-        {countLine ? <span className="dev-ws-hero-week-count">{countLine}</span> : null}
-      </span>
-    </div>
   );
 }
 
@@ -1132,30 +1068,32 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
       {popup}
     </span>
   );
-  // #4045, DECISION D: IN ITS FIRST WEEK the hero leaves out what is still
-  // empty: no fortnight of activity. The people row is the week's own
-  // (WeekPeople): the faces, "Private community" over "3 people", then what
-  // you can do. A pending change to who it is for is not empty, so it stays.
-  const week = !!data.first_week;
-  // A link is out on a project that is still just theirs: their face and
-  // open seats, and the audience it is about to be (WeekPeople).
-  const seats = member && solo && !!data.invite_link;
+  // ONE HUB FROM THE FIRST DAY (15 Oct 2026). A project's first week had a
+  // hero of its own (#4045, decision D): no name or tile, which the First
+  // version card was to draw, the people row as "Private community" over
+  // "3 people", and the description under it. A project Homeroom bot was
+  // not building (a ready-made app) then had no name on its hub at all, and
+  // looked nothing like an older project's. Now every hub leads the same
+  // way: the tile and the name over who it is for, the description, who is
+  // around when anybody else is, then what you can do. A link out on a
+  // project that is just yours leaves it "Just you so far": it is not a
+  // private community until somebody joins (Share it says the link is out).
+  //
+  // WHO IS AROUND is for a project with other people in it: never one that
+  // is just yours, and not one nobody else has joined yet.
+  const others = !solo && (Number(data.member_count) || 0) > 1;
   // While its first version is on the way (or, in its first week, just
   // went live) the First version card is the way into the app: Open app
   // there, so not here too.
   const appButton = data.first_version ? null : openApp;
-  const descLine = (
-    <p className="dev-ws-hero-desc" data-ws-community-description="">{data.description}</p>
-  );
 
   return (
     <section
       ref={cardRef}
-      // THE HUB'S HEAD (the hub as the project's summary): out of its first
-      // week, the hero leads with what it is, then who is around, and on a
-      // wide window what you can do sits across from the name (app.css
-      // `.dev-ws-hero-summary`). The first week keeps its own row.
-      className={week ? 'dev-ws-hero' : 'dev-ws-hero dev-ws-hero-summary'}
+      // THE HUB'S HEAD (the hub as the project's summary): the hero leads
+      // with what it is, then who is around, and on a wide window what you
+      // can do sits across from the name (app.css `.dev-ws-hero-summary`).
+      className="dev-ws-hero dev-ws-hero-summary"
       data-ws-community=""
       data-audience={data.audience}
       // Lifted while the popup is open: the popup hangs below the hero, over
@@ -1164,16 +1102,16 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
     >
       {inviteHead}
       {/* WHAT IT IS AND WHO IT IS FOR: the tile and the name, the page's one
-          large heading, over "Public community · 266 members". In its first
-          week the First version card draws the tile and the name, and the
-          people row says who it is for (WeekPeople, below). */}
-      {week ? null : (
-        <HeroIdentity slug={slug} name={displayName} iconUrl={iconUrl} iconEmoji={iconEmoji} data={data} member={member} />
-      )}
-      {data.description && !week ? descLine : null}
-      {/* WHO IS AROUND: this week's faces, how many, and their names. Not on
-          a project that is just yours, which has nobody else to name. */}
-      {week || solo ? null : <HeroActive activity={data.activity} />}
+          large heading, over "Public community · 266 members", or "Just you
+          so far" to the one person in a project that is just theirs. */}
+      <HeroIdentity slug={slug} name={displayName} iconUrl={iconUrl} iconEmoji={iconEmoji} data={data} member={member} />
+      {data.description ? (
+        <p className="dev-ws-hero-desc" data-ws-community-description="">{data.description}</p>
+      ) : null}
+      {/* WHO IS AROUND: this week's faces, how many, and their names. Only
+          with other people in it: a project that is just yours, or one
+          nobody else has joined, has nobody else to name. */}
+      {others ? <HeroActive activity={data.activity} /> : null}
       {/* WHAT YOU CAN DO HERE, one row: Open app in the community's colour,
           Invite, the ⋯, and across from them Join. "Make it public" and
           "Make it private" are rows of the ⋯ (#4045), and so is Leave. A
@@ -1183,15 +1121,6 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
           nothing beside it. The ⋯ stays LAST among the actions; Join is the
           row's, pushed to the far end. */}
       <div className="dev-ws-hero-row">
-      {week ? (
-        <WeekPeople
-          members={data.members}
-          count={Number(data.member_count) || 0}
-          audience={data.audience}
-          audienceLabel={justYouSoFar(data, member) || data.audience_label}
-          seats={seats}
-        />
-      ) : null}
       <div className="dev-ws-hero-actions">
         {appButton}
         {member ? (
@@ -1211,8 +1140,6 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
       </div>
       {membership ? <span className="dev-ws-hero-member">{membership}</span> : null}
       </div>
-      {/* The app's one line sits under the week's people row (canvas board Hub). */}
-      {data.description && week ? descLine : null}
       {data.audience_change ? (
         <a
           className="dev-ws-hero-line dev-ws-hero-pending"
@@ -1228,17 +1155,25 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
 }
 
 /**
- * SHARE IT: how a project that is just yours grows, at the foot of its hub.
- * The same two levers the hero offers a community (Invite makes it a private
- * community; "Make it public" proposes making it public, voted in like any other
- * line of dapp.json), gathered under one line that says what they do, since
- * on a project of one they are the whole of what there is to do with people.
- * Offered to exactly whom the hero would offer them; nothing when neither
- * applies, and nothing until the shared read has answered.
+ * SHARE IT: how a project that is just yours grows, on its hub right under
+ * the hero (and the First version card while Homeroom bot builds it), ahead
+ * of what to change (15 Oct 2026). The same two levers the hero offers a
+ * community (Invite makes it a private community; "Make it public" proposes
+ * making it public, voted in like any other line of dapp.json), gathered
+ * under one line that says what they do, since on a project of one they are
+ * the whole of what there is to do with people. Offered to exactly whom the
+ * hero would offer them; nothing when neither applies, and nothing until
+ * the shared read has answered.
  *
  * While Homeroom bot builds its first version (the First version card above
  * it, ./hub-cards.tsx), the line says what an invite is for right now, in
  * the made screen's words: people can follow along while it is being built.
+ *
+ * WHAT INVITE IS OUT (inviteSentLine): once a live link is out, one line
+ * over that says so, who came in through it and how long it has left. And
+ * a ✕, which closes the card on this project for good (./hub-dismissed.ts):
+ * Invite is still in the hero's row, and Make it public in the ⋯'s Who can
+ * see & change it.
  */
 export function shareItLine(building: boolean): string {
   return building
@@ -1246,18 +1181,80 @@ export function shareItLine(building: boolean): string {
     : translate('project:communityCard.share.line');
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How long the soonest live link has left, in words: "7 days left", "1 day
+ * left", or "expires today" under a day. '' for a link with no end. Days
+ * are rounded, so a link made a minute ago for seven days says seven. Pure;
+ * `now` is the reader's clock.
+ */
+export function linkTimeLeft(expiresAt: string | null | undefined, now: number = Date.now()): string {
+  const at = expiresAt ? Date.parse(expiresAt) : NaN;
+  if (!Number.isFinite(at)) return '';
+  const left = at - now;
+  if (left < DAY_MS) return translate('project:communityCard.share.expiresToday');
+  return translate('project:communityCard.share.daysLeft', { count: Math.max(1, Math.round(left / DAY_MS)) });
+}
+
+/**
+ * Share it's line about the invite that is out (15 Oct 2026): "Invite link
+ * sent · nobody has joined yet · 7 days left", then "Invite link sent · 1
+ * joined · 6 days left" once somebody has come in through it. "2 invite
+ * links sent" for two, the soonest of them saying the time left, and no
+ * time at all when none of them ends. '' with no live link, which says
+ * nothing. Pure; the summary is the hub read's `invite_summary`.
+ */
+export function inviteSentLine(summary: InviteSummary | null | undefined, now: number = Date.now()): string {
+  const links = Math.max(0, Number(summary?.links) || 0);
+  if (!summary || !links) return '';
+  const joined = Math.max(0, Number(summary.joined) || 0);
+  const sent = translate('project:communityCard.share.sent', { count: links });
+  const who = joined
+    ? translate('project:communityCard.share.joined', { count: joined })
+    : translate('project:communityCard.share.nobodyJoined');
+  const line = translate('project:facts.pair', { first: sent, second: who });
+  const left = linkTimeLeft(summary.expires_at, now);
+  return left ? translate('project:facts.pair', { first: line, second: left }) : line;
+}
+
+/**
+ * The ✕ that closes a card on the hub for good (./hub-dismissed.ts): Share
+ * it's, and "What do you want to change?"'s (./workshop.tsx
+ * StartHereBanner). At the end of the card's head, quiet until pressed.
+ */
+export function HubCardClose({ onClose, card }: { onClose: () => void; card: string }) {
+  const t = useMessages('project');
+  return (
+    <button
+      type="button"
+      className="dev-ws-card-close un-touch-target"
+      data-ws-card-close={card}
+      aria-label={t('project:hub.card.close')}
+      title={t('project:hub.card.close')}
+      onClick={onClose}
+    >
+      <XIcon aria-hidden="true" />
+    </button>
+  );
+}
+
 export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
   const t = useMessages('project');
   const data = useCommunity(slug);
-  if (!data || data.audience !== 'solo') return null;
+  const [closed, close] = useHubDismissed(slug, 'share');
+  if (!data || data.audience !== 'solo' || closed) return null;
   const canInvite = !!data.is_member;
   const canOpenUp = !!data.can_manage && !data.audience_change;
   if (!canInvite && !canOpenUp) return null;
+  const sent = inviteSentLine(data.invite_summary);
   return (
     <section className="dev-ws-strip dev-ws-share" data-ws-share="">
       <div className="dev-ws-head">
         <span className="dev-ws-head-title">{t('project:communityCard.share.title')}</span>
+        <HubCardClose card="share" onClose={close} />
       </div>
+      {sent ? <p className="dev-ws-share-sent" data-ws-share-sent="">{sent}</p> : null}
       <p className="dev-ws-strip-text">{shareItLine(!!data.first_version && !data.first_version.ready)}</p>
       <div className="dev-ws-share-actions">
         {canInvite ? (

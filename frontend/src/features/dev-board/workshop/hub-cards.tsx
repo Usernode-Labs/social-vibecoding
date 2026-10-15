@@ -7,10 +7,12 @@
  *
  *   FOR YOU, one card of doors, a row each, each opening its place: Needs
  *   you (the first vote you owe "and 3 more", "4 to vote"), Your work (the
- *   first of yours in flight, "1 in progress") and the Discussion (#general
- *   and its last line). ForYouCard.
+ *   first of yours in flight, "1 in progress", or "No work in progress.")
+ *   and the Discussion (#general and its last line, or "No messages yet.").
+ *   ForYouCard.
  *   RECENTLY LIVE, the last three changes that went live, each as its after
- *   shot, its title, and who made it and when. RecentlyLive.
+ *   shot, its title, and who made it and when; before any has, the app
+ *   itself and since when it has been live. RecentlyLive.
  *
  * What landed since your last visit and your work in full are the Workshop
  * place's; how a change gets in is its Approval rules card. The hub points
@@ -19,25 +21,30 @@
  * A project Homeroom bot is still building gets its FIRST VERSION card
  * first, right under the hero: where the build stands, and the way to the
  * bot's chat when the bot waits on its maker (FirstVersionCard below). Its
- * maker also gets the FIRST LOOK at it, under Share it, once Homeroom bot
+ * maker also gets the FIRST LOOK at it, after For you, once Homeroom bot
  * has drawn it (FirstLookCard).
  *
- * ── A project nobody else is in ────────────────────────────────────────
+ * ── One hub from the first day ─────────────────────────────────────────
  *
  * Evan, 5 Oct 2026, on a brand-new project of his own: "The initial hub if
  * no one has joined is really sad." It read "Just you", "Nothing more to
  * vote on." and "Your work · No work in progress." Nobody else can put a
- * vote up there, so the vote line says nothing (`alone` in NothingToVote),
- * an empty Your work leaves the hub while something else on it already says
- * what is next (hubWorkEmpty). A project with people in it keeps both.
+ * vote up there, so on a project nobody else is in the vote line says
+ * nothing (`alone` in NothingToVote). For a while an empty Your work and
+ * the Discussion left a new project's hub too, and a ready-made app's hub
+ * then looked nothing like an older project's (15 Oct 2026). So For you is
+ * the same card from the first day: Your work and the Discussion always,
+ * each saying so when it is empty, and Needs you only when something needs
+ * you.
  *
  * ── The channel lives on the page ──────────────────────────────────────
  *
  * A project's channel was a row in Messages (#2718 review). Messages is
  * people and agents now, and the channel is the community's own room, its
  * Discussion (./project-discussion.tsx), so the hub's door to it says the
- * last thing said there. A viewer who may not talk here (a view-public,
- * collab-private app) gets no row: no door that refuses them.
+ * last thing said there, a project that is just yours too. A viewer who may
+ * not talk here (a view-public, collab-private app) gets no row: no door
+ * that refuses them.
  *
  * ── Island rules ───────────────────────────────────────────────────────
  *
@@ -53,6 +60,7 @@ import { SectionHeader, ListRow } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
 import { BallotIcon, BoardIcon, ChatIcon, CheckIcon, ChevronRightIcon, ClockIcon } from '@/components/ui/icons';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
 import { changeHref } from '../../../lib/change-href';
 import { type BuildLineState, buildLineOf, phaseLine, useNow } from '../../first-session/build-line';
@@ -60,6 +68,7 @@ import { useTourRunning } from '../../first-session/tour-running';
 import { DrawnLook, isDrawnLook, ownSrc, useLookSwap } from '../../first-session/drawn-look';
 import { firstLookSrc } from '../../first-session/first-look';
 import { countsDown, estimateOf, leftNote } from '../../app-frame/first-version-eta';
+import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import { madeAppUrl } from '../../first-session/made';
 import { ThumbRow } from '../../first-session/sketch-card';
 import { open as openConversation, openBot } from '../../messages/store';
@@ -274,7 +283,8 @@ const FIRST_LOOK_ONLY: readonly string[] = ['first_look'];
  * main screen Homeroom bot drew from the plan (services/first-version-
  * screens.js), was only on the App tab and on the tour's last card. While
  * their first version is built and that picture is there, it is a card
- * under Share it: the picture small and phone-shaped, "FIRST LOOK", "Here's
+ * after For you (under Share it until 15 Oct 2026, when Share it moved up
+ * the hub): the picture small and phone-shaped, "FIRST LOOK", "Here's
  * what you're making", one line, and "Watch Homeroom bot build it", which
  * opens the App tab, where the live picture of the build is.
  *
@@ -394,9 +404,8 @@ export function NothingToVote({ unclaimed, onOpen, alone = false }: {
   /** Open requests nobody has picked up. */
   unclaimed: number;
   onOpen: () => void;
-  /** Nobody but one person is in the project (hubAlone), or it is in its
-      first week (#4045), when nothing has been up for a vote yet: the
-      zero says nothing either way. */
+  /** Nobody but one person is in the project (hubAlone): nobody else
+      can put a vote up, so the zero says nothing. */
   alone?: boolean;
 }): ReactNode {
   const t = useMessages('project');
@@ -426,38 +435,6 @@ export function NothingToVote({ unclaimed, onOpen, alone = false }: {
  */
 export function hubAlone(data: Pick<CommunityPayload, 'audience' | 'member_count'> | null | undefined): boolean {
   return !!data && (data.audience === 'solo' || (Number(data.member_count) || 0) <= 1);
-}
-
-/**
- * What the hub's Your work says with nothing in progress, or null when it
- * leaves the hub.
- *
- *   'plain'  "No work in progress." (#3489): a project with people in it,
- *            where the place your work appears stays put
- *   null     a project in its first week (#4045), or one nobody else is
- *            in while something else on the hub already says what is
- *            next: its first version being built, the start-here banner,
- *            or nothing a read-only viewer can start
- *   'bot'    nobody else is in it and Homeroom bot builds here for you: to
- *            change something, tell it (`mine.bot`, AppView._botDoor)
- *   'menu'   nobody else is in it: the ⋯ is where a change is asked for
- */
-export type WorkEmpty = 'plain' | 'bot' | 'menu' | null;
-
-export function hubWorkEmpty({ alone, building, startHere, readOnly, bot, firstWeek = false }: {
-  alone: boolean;
-  building: boolean;
-  startHere: boolean;
-  readOnly: boolean;
-  bot: boolean;
-  /** #4045: in a project's first week an empty Your work is left out:
-      it shows once you have some. */
-  firstWeek?: boolean;
-}): WorkEmpty {
-  if (firstWeek) return null;
-  if (!alone) return 'plain';
-  if (building || startHere || readOnly) return null;
-  return bot ? 'bot' : 'menu';
 }
 
 /* ── For you ─────────────────────────────────────────────────────────── */
@@ -526,21 +503,18 @@ function NeedsRow({ queue, slug, canPost, onOpen }: {
  * YOUR WORK, as the card's second row: the first of your items in flight
  * (newest activity first, the Workshop's order) and how many there are,
  * opening the Workshop, where they are listed in full. With nothing in
- * progress it says so (#3489) in hubWorkEmpty's words: on a project nobody
- * else is in, how to change something instead, and its row then opens the
- * chat with Homeroom bot where the bot builds for you. No row for a visitor,
- * who has no work to have none of, nor when hubWorkEmpty leaves it out.
+ * progress it says so (#3489), "No work in progress.", on every project
+ * from its first day (15 Oct 2026). No row for a visitor, who has no work
+ * to have none of.
  */
-function WorkRow({ mine, empty, onOpen }: {
+function WorkRow({ mine, onOpen }: {
   mine: DevWorkshopView['mine'] | null | undefined;
-  empty: WorkEmpty;
   onOpen: () => void;
 }): ReactNode {
   const t = useMessages('project');
   const cards = (mine?.rows || []).filter((row): row is Extract<BoardRow, { t: 'card' }> => row.t === 'card');
-  if (!cards.length && !(mine?.viewer && empty)) return null;
+  if (!cards.length && !mine?.viewer) return null;
   const first = cards[0] || null;
-  const toBot = !first && empty === 'bot';
   const sub = first ? (
     <span
       data-ws-mine-first={first.key}
@@ -548,12 +522,6 @@ function WorkRow({ mine, empty, onOpen }: {
       data-ws-mine-session={first.card.attrs && first.card.attrs['data-session-chip'] ? '' : undefined}
     >
       {first.card.title.text || first.card.title.title}
-    </span>
-  ) : empty === 'bot' ? (
-    <span data-ws-mine-empty="bot">{t('project:hub.work.emptyBot')}</span>
-  ) : empty === 'menu' ? (
-    <span data-ws-mine-empty="menu">
-      <RichMessage id="project:hub.work.emptyMenu" components={[<span className="font-medium text-violet-700 dark:text-violet-400" />]} />
     </span>
   ) : (
     <span data-ws-mine-empty="">{t('project:hub.work.empty')}</span>
@@ -564,8 +532,8 @@ function WorkRow({ mine, empty, onOpen }: {
       inset="none"
       className="dev-ws-foryou-row"
       data-ws-mine-card=""
-      data-ws-mine-open={toBot ? 'bot' : 'workshop'}
-      onClick={toBot ? () => { void openBot(); } : onOpen}
+      data-ws-mine-open="workshop"
+      onClick={onOpen}
       leading={<IconTile size="xs"><BoardIcon aria-hidden="true" /></IconTile>}
       title={t('project:hub.work.title')}
       subtitle={sub}
@@ -581,18 +549,17 @@ function WorkRow({ mine, empty, onOpen }: {
  * thing said in it, "@kempis: enjoy the weekend guys · 4h ago", opening the
  * Discussion place (./project-discussion.tsx), where the room is whole. How
  * much there is new since you last read it is its one pill. With nothing
- * said yet it asks for the first word (#4045). No row without a channel
- * this viewer may talk in, or on a project that is just yours: nobody to
- * talk to yet (its Share it card is how it grows).
+ * said yet, "No messages yet." On a project that is just yours too (15 Oct
+ * 2026): the room is there from the first day, for the people an invite
+ * brings. No row without a channel this viewer may talk in.
  */
-function DiscussionRow({ name, data, onOpen }: {
-  name: string;
+function DiscussionRow({ data, onOpen }: {
   data: CommunityPayload | null;
   onOpen: () => void;
 }): ReactNode {
   const t = useMessages('project');
   const channel = data?.channel;
-  if (!data || !channel || data.audience === 'solo') return null;
+  if (!data || !channel) return null;
   // The newest line with words in it: a message that is only a picture or a
   // file has none to quote, so it is named by who sent it.
   const recent = (channel.recent || []).map((m) => ({ content: m.content, by: m.by, at: m.created_at }));
@@ -610,7 +577,7 @@ function DiscussionRow({ name, data, onOpen }: {
             : t('project:hub.forYou.discussion.posted', { ago })}
     </span>
   ) : (
-    <span data-ws-channel-empty="">{t('project:hub.channel.sayHi', { project: name })}</span>
+    <span data-ws-channel-empty="">{t('project:hub.channel.empty')}</span>
   );
   return (
     <ListRow
@@ -642,25 +609,24 @@ function DiscussionRow({ name, data, onOpen }: {
 /**
  * FOR YOU: what on this project is the viewer's, one card of doors under its
  * label — Needs you, Your work, the Discussion — each row a door to its
- * place, at most one pill on it, 15 over 13. With no vote owed, Needs you is
- * the quiet line that says so (NothingToVote, #3408), or nothing on a
- * project nobody else is in. Nothing at all when no row has anything to say.
+ * place, at most one pill on it, 15 over 13. The same card from a project's
+ * first day (15 Oct 2026): Your work and the Discussion are always there,
+ * saying so when they are empty, and Needs you only when a vote waits on
+ * you. With no vote owed, Needs you is the quiet line that says so
+ * (NothingToVote, #3408), or nothing on a project nobody else is in.
+ * Nothing at all when no row has anything to say.
  */
 export function ForYouCard({
-  slug, name, queue, unclaimed, mine, workEmpty, alone, data, canPost, onNeeds, onWork, onDiscussion,
+  slug, queue, unclaimed, mine, alone, data, canPost, onNeeds, onWork, onDiscussion,
 }: {
   slug: string;
-  /** The project's name, for the Discussion's first word. */
-  name: string;
   queue: DevWorkshopView['queue'];
   /** Open requests nobody has picked up (the view model's
       `dashboard.unclaimed`): Needs you is votes alone, so with no vote
       owed its quiet line names them and opens the Workshop. */
   unclaimed: number;
   mine: DevWorkshopView['mine'] | null | undefined;
-  /** What Your work says with nothing in progress (hubWorkEmpty). */
-  workEmpty: WorkEmpty;
-  /** Nobody else is in it, or it is in its first week: no zeros. */
+  /** Nobody else is in it (hubAlone): no zeros. */
   alone: boolean;
   data: CommunityPayload | null;
   canPost: boolean;
@@ -674,8 +640,8 @@ export function ForYouCard({
   const claims = Math.max(0, Number(unclaimed) || 0);
   const needs = owes || !alone || claims > 0;
   const cards = (mine?.rows || []).some((row) => row.t === 'card');
-  const work = cards || !!(mine?.viewer && workEmpty);
-  const talk = !!(data && data.channel && data.audience !== 'solo');
+  const work = cards || !!mine?.viewer;
+  const talk = !!(data && data.channel);
   if (!needs && !work && !talk) return null;
   return (
     <section className="dev-ws-hub-section" data-ws-hub-for-you="" aria-labelledby={headId}>
@@ -684,8 +650,8 @@ export function ForYouCard({
         {owes
           ? <NeedsRow queue={queue} slug={slug} canPost={canPost} onOpen={onNeeds} />
           : <NothingToVote unclaimed={claims} onOpen={onWork} alone={alone} />}
-        <WorkRow mine={mine} empty={workEmpty} onOpen={onWork} />
-        <DiscussionRow name={name} data={data} onOpen={onDiscussion} />
+        <WorkRow mine={mine} onOpen={onWork} />
+        <DiscussionRow data={data} onOpen={onDiscussion} />
       </div>
     </section>
   );
@@ -697,34 +663,107 @@ export function ForYouCard({
 export const RECENT_LIVE_SHOWN = 3;
 
 /**
+ * The app itself, for Recently live while none of its changes has gone live
+ * yet: its tile and name (the page's own record of it, the hero's), and
+ * since when it has been live (GET /api/apps/:slug/community `live_since`).
+ */
+export interface RecentOwn {
+  name: string;
+  iconUrl?: string | null;
+  iconEmoji?: string | null;
+  since: string | null | undefined;
+}
+
+const DAY_FORMATS = new Map<string, Intl.DateTimeFormat>();
+function dayWords(date: Date, withYear: boolean): string {
+  const key = withYear ? 'year' : 'day';
+  let format = DAY_FORMATS.get(key);
+  if (!format) {
+    format = new Intl.DateTimeFormat(undefined, withYear
+      ? { year: 'numeric', month: 'long', day: 'numeric' }
+      : { month: 'long', day: 'numeric' });
+    DAY_FORMATS.set(key, format);
+  }
+  return format.format(date);
+}
+
+/**
+ * "Live since today", or "Live since October 12" (the year too when it is
+ * not this one): the app's own card on Recently live. The day is the
+ * reader's. '' without a date. Pure; `now` is the reader's clock.
+ */
+export function liveSinceLine(value: string | null | undefined, now: number = Date.now()): string {
+  const at = value ? new Date(value) : null;
+  if (!at || Number.isNaN(at.getTime())) return '';
+  const today = new Date(now);
+  const sameDay = at.getFullYear() === today.getFullYear() && at.getMonth() === today.getMonth()
+    && at.getDate() === today.getDate();
+  if (sameDay || at.getTime() > now) return translate('project:hub.recent.own.today');
+  return translate('project:hub.recent.own.since', { date: dayWords(at, at.getFullYear() !== today.getFullYear()) });
+}
+
+/** The app's own card opens the app, as the First version card's Open app does. */
+function openApp(slug: string): void {
+  (window as any).App?.openAppTab?.(slug, 'app');
+}
+
+/**
  * RECENTLY LIVE: the last three changes that went live, newest first
  * (AppView._workshopRecentLive), each a door to its page: its after shot
  * when the checks took one (else a plain tile), its title, and who made it
  * and when it went live — "Homeroom bot · 1h ago" — or that it is going
  * live now. The label's door, "All in Workshop", opens the Workshop, where
  * what landed is listed week by week. Three across on a wide window; on a
- * phone a row that scrolls sideways. Nothing when nothing has merged.
+ * phone a row that scrolls sideways.
+ *
+ * NEVER EMPTY (15 Oct 2026). Before any change has gone live, the section
+ * is one card for the app itself (`own`): its tile and name, "Live since
+ * today" or "Live since October 12", opening the app. A new project's hub
+ * then ends the way an older one's does, on what is live. Nothing without
+ * that either: an app that has never run (`since` null), or one whose first
+ * version Homeroom bot is still building (the page leaves `own` out), is
+ * not live yet.
  */
-export function RecentlyLive({ slug, rows, onAll }: {
+export function RecentlyLive({ slug, rows, onAll, own = null }: {
   slug: string;
   rows: DevWorkshopView['recentLive'];
   onAll: () => void;
+  /** The app itself, drawn while `rows` is empty. */
+  own?: RecentOwn | null;
 }): ReactNode {
   const t = useMessages('project');
   const headId = useId();
   const list = (rows || []).slice(0, RECENT_LIVE_SHOWN);
-  if (!slug || !list.length) return null;
+  const self = !list.length && own && own.since ? liveSinceLine(own.since) : '';
+  if (!slug || (!list.length && !self)) return null;
+  const app = own ? { slug, name: own.name, icon_url: own.iconUrl || null, icon_emoji: own.iconEmoji || null } : null;
   return (
     <section className="dev-ws-hub-section" data-ws-hub-recent="" aria-labelledby={headId}>
       <div className="dev-ws-hub-sechead">
         <SectionHeader id={headId} className={HUB_HEAD}>{t('project:hub.recent.title')}</SectionHeader>
-        <button type="button" className="dev-ws-hub-open un-touch-target" data-ws-recent-all="" onClick={onAll}>
-          {t('project:hub.recent.all')}
-          <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
-        </button>
+        {/* The door to what landed: nothing has yet, while the app's own card shows. */}
+        {list.length ? (
+          <button type="button" className="dev-ws-hub-open un-touch-target" data-ws-recent-all="" onClick={onAll}>
+            {t('project:hub.recent.all')}
+            <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
       <div className="dev-ws-strip dev-ws-recent">
         <ul className="dev-ws-recent-list">
+          {self && own && app ? (
+            <li className="dev-ws-recent-item">
+              <button type="button" className="dev-ws-recent-card" data-ws-recent-own="" onClick={() => openApp(slug)}>
+                <span className="dev-ws-recent-pic" data-ws-recent-pic="app" aria-hidden="true">
+                  <span className="app-icon-tile dev-ws-recent-app" data-icon={appIconKind(app)}>
+                    <AppIconContent app={app} />
+                  </span>
+                </span>
+                <span className="dev-ws-recent-title">{own.name}</span>
+                <span className="dev-ws-recent-meta" data-ws-recent-since="">{self}</span>
+              </button>
+            </li>
+          ) : null}
           {list.map((r) => {
             const ago = r.at ? agoStamp(r.at) : null;
             const meta = r.going

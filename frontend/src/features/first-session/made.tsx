@@ -29,7 +29,10 @@
  *             first session (Evan's test, 6 October 2026). From Create, the
  *             card stays for a plan with nothing to ask (PlanWaitsCard). A
  *             project Homeroom bot does not build has no line, and one quiet
- *             note under the card says who builds it (NO_BOT_NOTE).
+ *             note under the card says who builds it (NO_BOT_NOTE). Once
+ *             there is a picture of the app (a ready-made app's example, or
+ *             the first look), a switch in its corner turns it between the
+ *             invite and the app, starting on the app (INVITE | APP).
  *   asks      QUICK QUESTIONS (newcomer run four, 13 October 2026): its plan
  *             is written at Make it, while the project is set up
  *             (services/first-version-plan.js), and when it has questions
@@ -38,14 +41,14 @@
  *             screen is as below, its line saying the bot builds it.
  *   invite    One quiet line, "Invite people to use it and help improve it
  *             together.", over Share invite and Invite people later. Once the
- *             link has gone out the line says so ("Invite shared. Next, a
- *             short tour.", or "Link copied. Next, a short tour."), and the
- *             buttons keep their places: Share again, grey, where Share
- *             invite was, and Start the tour, blue, where Invite people later
- *             was (owner, 8 October 2026). Invite people later and Start the
- *             tour both start the tour (./index.tsx). From Create there is no
- *             tour: the line says "Invite shared." or "Link copied." and the
- *             second button goes to the project (continueLabel).
+ *             link has gone out the line says so ("Invite shared." or "Link
+ *             copied."), and the buttons keep their places: Share again,
+ *             grey, where Share invite was, and Go to app, blue, where
+ *             Invite people later was (owner, 8 October 2026; Evan, 15 Oct
+ *             2026). Both open the app full screen once it runs; one
+ *             Homeroom bot is still building goes Home instead, "Continue"
+ *             (./index.tsx). From Create the second button goes to the
+ *             project (continueLabel).
  *
  * Nothing under the two buttons.
  *
@@ -106,13 +109,15 @@
  * that carries how far it has got (FirstLookCard, below).
  */
 
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { SpinnerRingIcon, XIcon } from '@/components/ui/icons';
 import { ProgressRing } from '@/components/ui/progress-ring';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Wordmark } from '@/components/ui/wordmark';
 
+import { useResolvedCommunityColor } from '../../lib/community-color';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { usePageLock } from '../../lib/page-lock';
@@ -269,10 +274,10 @@ export function checksForQuestions(fv: FirstVersion, { makesPlan, read, waited }
 }
 
 /**
- * N1: where a project's first version stands as the made screen hands on to
- * the tour: on its way ('building'), built and waiting to be tried
- * ('ready'), or none (null: Homeroom bot builds nothing, or it is live
- * already), which the tour's last card follows (./tour-steps.ts makerSteps).
+ * N1: where a project's first version stands as the made screen hands on:
+ * on its way ('building'), built and waiting to be tried ('ready'), or none
+ * (null: Homeroom bot builds nothing, or it is live already). Null opens the
+ * app itself; anything else goes to Home, and its walk (./index.tsx).
  */
 export function madeStage(fv: FirstVersion, botBuilds: boolean, live = false): FirstVersionStage {
   if (!botBuilds || live) return null;
@@ -357,10 +362,9 @@ export const PREVIEW_LABEL = 'onboarding:firstSession.invite.previewLabel';
  */
 export const NO_BOT_NOTE = 'onboarding:firstSession.made.noBotNote';
 
-/** The line over the buttons once the link has gone out. `tour`: the first session's, which goes on to the tour. */
-export function sharedLine(how: SentHow, tour = true): string {
-  if (how === 'copied') return tour ? translate('onboarding:firstSession.made.sent.copiedTour') : translate('onboarding:firstSession.made.sent.copied');
-  return tour ? translate('onboarding:firstSession.made.sent.sharedTour') : translate('onboarding:firstSession.made.sent.shared');
+/** The line over the buttons once the link has gone out: what went out, and nothing about what comes next. */
+export function sharedLine(how: SentHow): string {
+  return how === 'copied' ? translate('onboarding:firstSession.made.sent.copied') : translate('onboarding:firstSession.made.sent.shared');
 }
 
 /**
@@ -870,13 +874,17 @@ export function SetupStoppedCard({ stalled, busy, onRetry, onSetSecrets }: {
 }
 
 /**
- * The made screen's second button: on the first session, on to the tour
- * ("Invite people later", then "Start the tour" once an invite is out); from
- * Create, to the project itself.
+ * The made screen's second button: "Invite people later" until an invite is
+ * out, then the way on. From Create, to the project itself ("Go to <name>").
+ * On the first session, the app itself ("Go to app", Evan, 15 Oct 2026),
+ * which both buttons open full screen once it runs; while Homeroom bot is
+ * still building it (`building`: its stage, madeStage, is not null) there is
+ * no app to go to yet, and the way on is Home ("Continue").
  */
-export function continueLabel(entry: MakeEntry, sent: boolean, name: string): string {
+export function continueLabel(entry: MakeEntry, sent: boolean, name: string, building = false): string {
   if (!sent) return translate('onboarding:firstSession.made.inviteLater');
-  return entry === 'create' ? translate('onboarding:firstSession.made.goTo', { community: name }) : translate('onboarding:firstSession.made.startTour');
+  if (entry === 'create') return translate('onboarding:firstSession.made.goTo', { community: name });
+  return building ? translate('onboarding:firstSession.made.continue') : translate('onboarding:firstSession.made.goToApp');
 }
 
 /*
@@ -889,9 +897,10 @@ export function continueLabel(entry: MakeEntry, sent: boolean, name: string): st
  * then let them on before it ran, and the tour stood over its tile and over
  * the app's "Opening..." cover.
  *
- * So until the app runs, the way on ("Invite people later", or "Start the
- * tour" once the invite is out) is off: for every project on the first
- * session, whose tour opens it next, and for a ready-made app from Create
+ * So until the app runs, the way on ("Invite people later", or "Go to app"
+ * once the invite is out) is off: for every project on the first session,
+ * which opens it next (or Home, while its first version is built), and for
+ * a ready-made app from Create
  * (waitsToRun). A project the bot builds from Create goes to its hub, which
  * shows a setup as it goes. Share invite stays on: the wait is a good time
  * for it. A tile is tappable once its status is "running" (Home's appView
@@ -902,15 +911,15 @@ export function continueLabel(entry: MakeEntry, sent: boolean, name: string): st
  * the step the server reports (`creationPhase`, SETUP_STEPS), in words and
  * on a ring, and how long setting up usually takes. That is the estimate the
  * create dialog gave ("usually takes under a minute"), said as about a
- * minute; past SETUP_USUAL_MS the card says it is taking longer than usual.
+ * minute; past SETUP_USUAL_MS the card says it should be ready shortly.
  * The server does not time its steps (#4895 is to), so there is no countdown
  * and no time per step.
  *
  * It is never a wall. A setup that stopped lets them on at once (its card
  * says what happened, with Try again), and READY_WAIT_MS after the screen
  * opened (or after Try again) the way on comes back however far it has got,
- * and the card says so. The tour's steps on the app wait for it themselves
- * (./tour-steps.ts `waitsFor`). The server stops a setup after five minutes
+ * and the card says so. The tip in the app waits for it to open
+ * (./first-visit.ts tipDue). The server stops a setup after five minutes
  * (routes/apps.js CREATION_TIMEOUT_MS), which then reads as stopped here.
  */
 export const READY_POLL_MS = 2000;
@@ -955,7 +964,7 @@ export function setupStepOf(phase: unknown): number {
   return SETUP_STEPS.indexOf(phase as SetupStep) + 1;
 }
 
-/** The card's second line: how long it usually takes, that it is taking longer, then that they can go on. */
+/** The card's second line: how long it usually takes, that it should be ready shortly, then that they can go on. */
 export function setupEstimate(slow: boolean, waitedOut: boolean): string {
   if (waitedOut) return translate('onboarding:firstSession.made.setup.goOn');
   return slow ? translate('onboarding:firstSession.made.setup.slow') : translate('onboarding:firstSession.made.setup.usual');
@@ -1057,8 +1066,9 @@ export function SetupProgress({ step, slow, waitedOut, done = null }: {
  * The setup goes on underneath the whole time and is read as before (the way
  * on still waits for it); its progress is drawn only from the invite ask on.
  * The project's own card is the same in every state: its icon is what the
- * people invited see, so the first look goes in the card under it, never in
- * it. From Create the screen hands on to the hub, which shows the setup as it
+ * people invited see, so the first look goes in the card under it, and in the
+ * card only as its App side, switched in its corner (INVITE | APP, below).
+ * From Create the screen hands on to the hub, which shows the setup as it
  * goes: there the line under the project says where it is once the
  * questions are done, as before.
  */
@@ -1120,7 +1130,7 @@ export const FIRST_LOOK_TITLE = 'onboarding:firstSession.made.firstLook.title';
 
 /**
  * The first look card's second progress line while it is set up: how long it
- * usually takes, then that it is taking longer, then that they can go on.
+ * usually takes, then that it should be ready shortly, then that they can go on.
  * SetupProgress's own words (setupEstimate), said short enough for the
  * card's narrow column.
  */
@@ -1261,19 +1271,26 @@ function FirstLookStatus({ progress }: { progress: FirstLookProgress }) {
  * Homeroom bot is making", and how far it has got (FirstLookStatus). The
  * picture is swapped in where the outline was, whenever it comes: it can be
  * there already (drawn from the plan at Make it) or a minute after Submit.
+ *
+ * ONE PICTURE AT A TIME (15 Oct 2026): while the project's card above shows
+ * the same first look as its App side (INVITE | APP, below), this card
+ * leaves its phone out (`phone` false) and keeps its words and its progress
+ * at the same height; flipped back to Invite, the phone is here again.
  */
-export function FirstLookCard({ src, name, progress, onBroken = () => {} }: {
+export function FirstLookCard({ src, name, progress, onBroken = () => {}, phone = true }: {
   /** The first look's URL (./first-look.tsx firstLookSrc), or null while there is none. */
   src: string | null;
   name: string;
   progress: FirstLookProgress;
   onBroken?: (src: string) => void;
+  /** Whether the card draws the first look itself: not while the project's card above shows it. */
+  phone?: boolean;
 }) {
   const t = useMessages('onboarding');
   return (
-    <section data-made-first-look={src ? 'ready' : 'drawing'} aria-labelledby="made-first-look-title">
+    <section data-made-first-look={src ? 'ready' : 'drawing'} data-made-first-look-above={phone ? undefined : ''} aria-labelledby="made-first-look-title">
       <div className={FIRST_LOOK_ROW}>
-        <FirstLookPhone src={src} name={name} onBroken={onBroken} />
+        {phone ? <FirstLookPhone src={src} name={name} onBroken={onBroken} /> : null}
         <div className="flex min-w-0 flex-1 flex-col">
           <p className="text-[12px] font-bold uppercase leading-4 tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t(FIRST_LOOK_KICKER)}</p>
           <h2 id="made-first-look-title" className="mt-0.5 line-clamp-2 text-[15px] font-[650] leading-5">{t(FIRST_LOOK_TITLE)}</h2>
@@ -1295,6 +1312,211 @@ export function CheckingLine() {
     <div role="status" data-first-session-checking="" className="flex flex-col items-center gap-2.5 text-center text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">
       <SpinnerRingIcon className="h-5 w-5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />
       <p>{t(CHECKING_LINE)}</p>
+    </div>
+  );
+}
+
+/*
+ * INVITE | APP (Evan, 15 Oct 2026: "on the corner of the thumbnail, a
+ * toggle to switch between the share preview and what the app looks like;
+ * for templated apps have an example ready that shows this immediately").
+ * The project's card has two sides, switched in its top-right corner:
+ *
+ *   Invite  the card as it is, its icon, which is what the people invited
+ *           see (the invite sheet's "What they'll see" stays icon only);
+ *   App     what the app looks like, in the card's top area in place of the
+ *           icon: a phone with the app's main screen, as the App tab draws
+ *           its first look (../app-frame/first-version-screens.tsx), on the
+ *           project's colour. The plain card drops its name and description
+ *           there, since the picture shows the app; the note under them stays.
+ *
+ * The switch is there only when there is a picture (appPictureOf), and the
+ * card starts on App whenever there is one; a side somebody picks stays
+ * picked. A ready-made app has its example from the start
+ * (services/app-templates.js `exampleScreen`, POST /api/apps), tagged
+ * "Example" so nobody takes its sample entries for their own. A project
+ * Homeroom bot builds gets its first look once it is drawn (the same picture
+ * as the first look card under it, ./first-look.tsx firstLookSrc), with no
+ * tag: it is their app. Until then, and for an import, there is no picture
+ * and no switch.
+ *
+ * One picture at a time: while the App side shows the first look, the first
+ * look card under it keeps its words and progress and leaves its phone out
+ * (FirstLookCard `phone`). The switch never meets the icon: with it, the
+ * Invite side's icon starts below it (PLAIN_CARD_SWITCH, FeaturedCard
+ * `cornerRoom`), and the App side's phone stands below it too.
+ */
+
+/** Which side of the project's card shows. */
+export type CardView = 'invite' | 'app';
+
+/** The App side's picture: its URL, and whether it is a ready-made app's example rather than the project's own. */
+export type AppPicture = { src: string; example: boolean };
+
+/** The App side's picture for a project, or null for none (then the card has no switch). Pure. */
+export function appPictureOf({ imported, readyMade, botBuilds, exampleScreen, look }: {
+  imported: boolean;
+  readyMade: boolean;
+  botBuilds: boolean;
+  /** A ready-made app's example (made.exampleScreen). */
+  exampleScreen: string | null | undefined;
+  /** The first look, once there is one (./first-look.tsx firstLookSrc). */
+  look: string | null;
+}): AppPicture | null {
+  if (imported) return null;
+  if (readyMade) return exampleScreen ? { src: exampleScreen, example: true } : null;
+  return botBuilds && look ? { src: look, example: false } : null;
+}
+
+/** The side the card shows: the one picked, else App whenever there is a picture. Pure. */
+export function cardViewOf(picture: AppPicture | null, picked: CardView | null): CardView {
+  return picture ? picked || 'app' : 'invite';
+}
+
+/** The switch's two sides, each with its label's message id. */
+const CARD_VIEWS: ReadonlyArray<{ value: CardView; label: string }> = [
+  { value: 'invite', label: 'onboarding:firstSession.made.cardView.invite' },
+  { value: 'app', label: 'onboarding:firstSession.made.cardView.app' },
+];
+
+/*
+ * The App tab's "Preview | Live" switch, worn the same way (../app-frame/
+ * live-switch.tsx): a dark track that reads on a colour, a picture or the
+ * white card, and the side shown in white.
+ */
+export const CARD_SWITCH = 'flex rounded-full bg-black/55 p-0.5 text-[12px] font-semibold leading-4';
+const CARD_SWITCH_SIDE = 'min-h-[24px] rounded-full px-2.5 py-1';
+/** Where the switch sits: the card's top-right corner. */
+export const CARD_CORNER = 'absolute right-3 top-3 z-10';
+
+/** The switch in the card's corner. */
+export function CardViewSwitch({ value, onChange }: { value: CardView; onChange: (view: CardView) => void }) {
+  const t = useMessages('onboarding');
+  return (
+    <Tabs value={value} onValueChange={(v) => onChange(v === 'app' ? 'app' : 'invite')}>
+      <TabsList role="group" aria-label={t('onboarding:firstSession.made.cardView.label')} data-first-session-card-switch={value} className={CARD_SWITCH}>
+        {CARD_VIEWS.map((side) => (
+          <TabsTrigger
+            key={side.value}
+            type="button"
+            value={side.value}
+            data-card-view={side.value}
+            className={CARD_SWITCH_SIDE}
+            activeClassName="bg-white text-zinc-900"
+            inactiveClassName="text-white"
+          >
+            {t(side.label)}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+    </Tabs>
+  );
+}
+
+/**
+ * The App side's band: the card's top area at one height on both cards (the
+ * sketch's FeaturedCard band and the plain card's), with the phone standing
+ * in it as on the App tab, drawn smaller for this screen: its top clears the
+ * switch and the tag, and the screen still fits a 390 x 844 phone with the
+ * invite buttons in view. The card shows the band alone there, no name or
+ * description: the picture shows the app.
+ */
+export const APP_BAND = 'h-[264px]';
+export const APP_PHONE = 'relative h-[204px] w-[94px] shrink-0 overflow-hidden rounded-[18px] bg-white shadow-[0_10px_28px_rgba(0,0,0,0.22),0_0_0_4px_rgba(17,17,20,0.9)]';
+const APP_PHONE_WIDTH = 94;
+/** The "Example" tag: the App tab's pill over its band (first-version-screens.tsx). */
+const EXAMPLE_TAG = 'pointer-events-none absolute left-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-[12px] font-semibold leading-4 text-white';
+
+/**
+ * The App side: the phone with the picture (the drawn first look framed as
+ * ./drawn-look.tsx frames it, else the image), and "Example" over the
+ * band's top-left corner for a ready-made app's example. A picture that will
+ * not load is given back (`onBroken`), and the card goes back to its icon.
+ */
+export function AppScreen({ picture, name, onBroken = () => {} }: { picture: AppPicture; name: string; onBroken?: (src: string) => void }) {
+  const t = useMessages('onboarding');
+  const alt = picture.example
+    ? t('onboarding:firstSession.made.cardView.exampleAlt', { app: name })
+    : t('onboarding:firstSession.made.firstLook.alt', { app: name });
+  return (
+    <div data-first-session-app-screen={picture.example ? 'example' : 'own'} className="absolute inset-0 flex items-end justify-center pb-2.5">
+      <div className={APP_PHONE}>
+        {isDrawnLook(picture.src) ? (
+          <DrawnLook key={picture.src} src={picture.src} label={alt} width={APP_PHONE_WIDTH} />
+        ) : (
+          <img
+            key={picture.src}
+            src={picture.src}
+            alt={alt}
+            draggable={false}
+            onError={() => onBroken(picture.src)}
+            className="h-full w-full object-cover object-top"
+          />
+        )}
+      </div>
+      {picture.example ? <span data-first-session-example-tag="" className={EXAMPLE_TAG}>{t('onboarding:firstSession.made.cardView.example')}</span> : null}
+    </div>
+  );
+}
+
+/** The plain card's App side: the band on the project's colour, with the App side and the switch over it. */
+function PlainAppBand({ emoji, colorKey, children, corner }: { emoji: string | null; colorKey: string; children: ReactNode; corner: ReactNode }) {
+  const color = useResolvedCommunityColor({ iconEmoji: emoji, key: colorKey });
+  return (
+    <div
+      className={`relative -mx-6 self-stretch overflow-hidden bg-zinc-200 dark:bg-zinc-800 ${APP_BAND}`}
+      style={color ? { backgroundColor: color } : undefined}
+    >
+      {children}
+      <div className={CARD_CORNER}>{corner}</div>
+    </div>
+  );
+}
+
+/**
+ * The plain card (no sketch): on its Invite side, padded round its icon; on
+ * its App side, the band to its edges. With the switch, the Invite side's
+ * icon starts below it (PLAIN_CARD_SWITCH: 48px, the switch ends at 40px),
+ * so the two never meet, however narrow the phone or long the switch's
+ * words: at 320px wide they did.
+ */
+export const PLAIN_CARD = 'relative flex flex-col items-center rounded-[20px] bg-white px-6 py-7 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
+export const PLAIN_CARD_SWITCH = 'relative flex flex-col items-center rounded-[20px] bg-white px-6 pb-7 pt-12 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
+export const PLAIN_CARD_APP = 'relative flex flex-col items-center overflow-hidden rounded-[20px] bg-white px-6 pb-6 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900';
+
+/**
+ * The project's card when it has no sketch (a ready-made app, an import, a
+ * sketch that never came). Its Invite side is the card as it always was:
+ * the icon tile, the name and the description, with the switch in the
+ * corner once there is one. Its App side (`band`, the AppScreen) is the band
+ * in their place. `children` close it on either side: the build row and the
+ * note under them.
+ */
+export function PlainCard({ made, tile, emoji, band = null, corner = null, children }: {
+  made: Pick<Made, 'slug' | 'name' | 'description'>;
+  /** What the tile shows: the icon, else the name's first letter. */
+  tile: string;
+  /** The icon the band's colour is read from. */
+  emoji: string | null;
+  /** The App side, while it shows (AppScreen). */
+  band?: ReactNode;
+  /** The switch (CardViewSwitch), once there is a picture. */
+  corner?: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <div data-first-session-card={corner ? (band ? 'app' : 'invite') : undefined} className={band ? PLAIN_CARD_APP : corner ? PLAIN_CARD_SWITCH : PLAIN_CARD}>
+      {band ? (
+        <PlainAppBand emoji={emoji} colorKey={made.slug} corner={corner}>{band}</PlainAppBand>
+      ) : (
+        <>
+          {corner ? <div className={CARD_CORNER}>{corner}</div> : null}
+          <span className="app-icon-tile flex h-20 w-20 items-center justify-center rounded-[22px] text-5xl" aria-hidden="true">{tile}</span>
+          <p className="mt-3 text-[22px] font-extrabold leading-tight">{made.name}</p>
+          {made.description ? <p className="mt-1 text-[15px] text-zinc-500 dark:text-zinc-400">{made.description}</p> : null}
+        </>
+      )}
+      {children}
     </div>
   );
 }
@@ -1339,9 +1561,10 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   made: Made;
   me: string;
   /**
-   * "Invite people later" / "Start the tour" / "Go to …" (continueLabel):
-   * `skipped` when nothing went out; `firstVersion`, where its first
-   * version stands for the tour (madeStage).
+   * "Invite people later" / "Go to app" / "Continue" / "Go to …"
+   * (continueLabel): `skipped` when nothing went out; `firstVersion`, where
+   * its first version stands (madeStage): null once it runs, when the app
+   * itself opens, else Home and its walk (./index.tsx).
    */
   onContinue: (skipped: boolean, firstVersion: FirstVersionStage) => void;
   /** Go to chat, on the plan's card (from Create only): the chat with Homeroom bot, where the plan is answered. */
@@ -1476,7 +1699,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   }, [round]);
   // The way on is off until it runs (holdsContinue).
   const holds = holdsContinue(waits, appStatus, waitedOut);
-  // Home is read again once it runs, so the grid the tour opens on has the
+  // Home is read again once it runs, so the grid the app opens from has the
   // tile, tappable and with its icon (Create's own onMade does the same,
   // ./index.tsx).
   useEffect(() => {
@@ -1564,7 +1787,22 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   // Its setup's card, once it has run: in place, saying what the plain card would.
   const ranInPlace = setupShown && !settingUp && !stalled;
   const tile = sketch.card?.emoji || made.emoji || made.name.slice(0, 1);
-  // Where its first version stands, for the tour that follows (N1).
+  // INVITE | APP: the card's App side once there is a picture of the app,
+  // shown first; a side somebody picks stays picked. A ready-made app's
+  // example that will not load is none; the first look's is the first look
+  // card's too (brokenLook).
+  const [brokenExample, setBrokenExample] = useState(false);
+  const picture = appPictureOf({ imported, readyMade, botBuilds, exampleScreen: brokenExample ? null : made.exampleScreen, look: lookShown });
+  const [pickedView, setPickedView] = useState<CardView | null>(null);
+  const view = cardViewOf(picture, pickedView);
+  const viewSwitch = picture ? <CardViewSwitch value={view} onChange={setPickedView} /> : null;
+  const appScreen = picture && view === 'app'
+    ? <AppScreen picture={picture} name={made.name} onBroken={(src) => { if (picture.example) setBrokenExample(true); else setBrokenLook(src); }} />
+    : null;
+  // ONE PICTURE AT A TIME: the first look card leaves its phone out while
+  // the card above shows the same picture.
+  const lookInCard = !!appScreen && !!picture && !picture.example;
+  // Where its first version stands: the app opens once it is null (N1).
   const stage = madeStage(fv, botBuilds && !imported && !readyMade, !making);
   // ONE THING AT A TIME (run six): which of checking, the questions and the
   // invite ask is up, and what stands under the project with it (madeParts).
@@ -1644,12 +1882,9 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
             <h1 id="first-session-made-title" className="text-[15px] font-normal leading-5 text-zinc-600 dark:text-zinc-400">{t(COMMUNITY_LABEL)}</h1>
           </div>
           {card ? (
-            <SketchCard made={made} sketch={sketch} line={ownLine ? line : null} note={note} lineWords={named.words} lineNote={named.note} />
+            <SketchCard made={made} sketch={sketch} line={ownLine ? line : null} note={note} lineWords={named.words} lineNote={named.note} band={appScreen} bandClassName={APP_BAND} bandCorner={viewSwitch} />
           ) : (
-            <div className="flex flex-col items-center rounded-[20px] bg-white px-6 py-7 text-center shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
-              <span className="app-icon-tile flex h-20 w-20 items-center justify-center rounded-[22px] text-5xl" aria-hidden="true">{tile}</span>
-              <p className="mt-3 text-[22px] font-extrabold leading-tight">{made.name}</p>
-              {made.description ? <p className="mt-1 text-[15px] text-zinc-500 dark:text-zinc-400">{made.description}</p> : null}
+            <PlainCard made={made} tile={tile} emoji={sketch.card?.emoji || made.emoji || null} band={appScreen} corner={viewSwitch}>
               {/* While its setup's card or the first look card is up, that
                   card says where it is; while it checks or asks, nothing does. */}
               {rowHidden ? null : (
@@ -1659,18 +1894,17 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
                 </div>
               )}
               <p className={rowHidden ? 'mt-3 text-[13px] text-zinc-500 dark:text-zinc-400' : 'mt-1 text-[13px] text-zinc-500 dark:text-zinc-400'}>{note}</p>
-            </div>
+            </PlainCard>
           )}
           {/* Under the project, never above it: the thumbnail stays where it is. */}
           {settingUp && setupCard ? <SetupProgress step={setupStep} slow={slow} waitedOut={waitedOut} /> : null}
           {ranInPlace && setupCard ? <SetupProgress step={setupStep} slow={slow} waitedOut={waitedOut} done={{ line: card ? t(SETUP_SET_UP) : plainLine, busy }} /> : null}
-          {firstLook ? <FirstLookCard src={lookShown} name={made.name} progress={lookProgress} onBroken={setBrokenLook} /> : null}
+          {firstLook ? <FirstLookCard src={lookShown} name={made.name} progress={lookProgress} onBroken={setBrokenLook} phone={!lookInCard} /> : null}
           {stalled ? (
             <SetupStoppedCard stalled={stalled} busy={retrying} onRetry={() => { void retry(); }} onSetSecrets={() => onSetSecrets?.()} />
           ) : null}
-          {/* The first session asks for no answer yet: the plan waits until the
-              tour ends. From Create there is no tour, so its card is the way
-              to the chat where the plan is answered. */}
+          {/* The first session asks for no answer here. From Create, its
+              card is the way to the chat where the plan is answered. */}
           {plan && !stalled && fromCreate && !asked ? <PlanWaitsCard name={made.name} onOpenChat={() => onOpenChat(plan.conversationId ?? made.conversationId)} /> : null}
         </div>
         {/* QUICK QUESTIONS: in place of the invite line and its buttons
@@ -1685,7 +1919,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
         ) : (
         <>
         <p role="status" data-first-session-hint={sentHow || ''} className="text-center text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">
-          {sentHow ? sharedLine(sentHow, !fromCreate) : t(INVITE_HINT)}
+          {sentHow ? sharedLine(sentHow) : t(INVITE_HINT)}
         </p>
         <div className="mt-[18px] flex flex-col gap-2.5">
           {/* The buttons keep their places once the link is out: Share again,
@@ -1703,7 +1937,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
           )}
           {sent ? (
             <Button type="button" data-first-session-continue="" onClick={() => onContinue(false, stage)} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center disabled:opacity-60" disabled={holds}>
-              {continueLabel(entry, true, made.name)}
+              {continueLabel(entry, true, made.name, stage !== null)}
             </Button>
           ) : (
             <button type="button" data-first-session-continue="" onClick={() => onContinue(true, stage)} disabled={holds} className={SECONDARY}>

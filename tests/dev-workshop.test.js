@@ -1551,15 +1551,43 @@ test('#2573: the status tab offers to start an app with nothing open and nothing
   assert.match(html, /data-ws-start-here-btn=""[^>]*>Start a new change</,
     'and the action, labelled as the Homeroom menu labels it');
 
-  // AT THE TOP OF THE HUB, ahead of the no-items note and the hub's own
-  // cards. The note answers what the board HOLDS and points at the ⋯;
-  // this answers what to do about an app nobody has started.
-  const order = ['data-ws-band', 'data-ws-start-here', 'data-ws-empty'].map((k) => html.indexOf(k));
+  // NEAR THE TOP OF THE HUB, under the band, and with no no-items note after
+  // it (15 Oct 2026): the note said what the banner says, and offered to
+  // import a PR. A ✕ closes the banner on this project (hub-dismissed.ts).
+  const order = ['data-ws-band', 'data-ws-start-here'].map((k) => html.indexOf(k));
   assert.ok(order.every((i) => i >= 0), `each is drawn: ${JSON.stringify(order)}`);
-  assert.deepEqual(order.slice().sort((a, b) => a - b), order, 'and the prompt leads, under the tabs');
+  assert.deepEqual(order.slice().sort((a, b) => a - b), order, 'and the prompt comes under the band');
+  assert.ok(!html.includes('data-ws-empty'), 'no empty note under it');
+  assert.match(html, /data-ws-start-here=""><div class="dev-ws-head"><span class="dev-ws-head-title">Start working on this app<\/span><button type="button" class="dev-ws-card-close un-touch-target" data-ws-card-close="start" aria-label="Close this card" title="Close this card">/,
+    'its ✕ ends the head');
   // The hub's own last line is the same action (#852), and stands down under
   // the banner that already leads with it.
   assert.ok(!html.includes('data-ws-start-change'), 'one Start a new change, not two');
+});
+
+test('15 Oct 2026: the start-here banner\'s ✕ closes it on this project for good, and the note does not come back', () => {
+  const { hubDismissedStore } = devCardApi();
+  const AppView = makeAppView();
+  seedUntouched(AppView);
+  const slug = AppView._workshopView().slug;
+  assert.ok(slug, 'the page names its project');
+  assert.match(workshopHtml(AppView), /data-ws-start-here=""[\s\S]*data-ws-card-close="start"/);
+  const before = hubDismissedStore.get();
+  try {
+    hubDismissedStore.set({ read: true, closed: { [slug]: { start: Date.now() } } });
+    const closed = workshopHtml(AppView);
+    assert.ok(!closed.includes('data-ws-start-here'), 'closed on this project');
+    assert.ok(!closed.includes('data-ws-empty'), 'and the note it stood for stays away');
+    hubDismissedStore.set({ closed: { 'another-project': { start: Date.now() } } });
+    assert.match(workshopHtml(AppView), /data-ws-start-here=""/, 'closing it on another project leaves this one');
+  } finally {
+    hubDismissedStore.set(before);
+  }
+  // The ✕ is the card's; what it offered stays on the page: the hero's ⋯
+  // has Suggest an improvement and Build it now (actions-row.tsx).
+  assert.match(WORKSHOP, /const \[closed, close\] = useHubDismissed\(slug, 'start'\);\s*if \(closed\) return null;/);
+  assert.equal((WORKSHOP.match(/<HubCardClose card="start" onClose=\{close\} \/>/g) || []).length, 2, 'on both of its faces');
+  assert.match(read('frontend/src/features/dev-board/actions-row.tsx'), /data-plus="issue"/);
 });
 
 test('#2573: the prompt stands down for an app with open work, or with a history', () => {
@@ -1652,14 +1680,15 @@ test('#4896: an unstarted project the bot builds for asks what to change, and it
   AppView._ghIssuesMeta = { homeroomBot: { typicalMinutes: 8 } };
   assert.equal(AppView._workshopView().mine.bot, true, 'the bot builds here for this viewer (AppView._botDoor)');
   const html = workshopHtml(AppView);
-  assert.match(html, /<section class="dev-ws-strip" data-ws-start-here="bot"><div class="dev-ws-head"><span class="dev-ws-head-title">What do you want to change\?<\/span><\/div><p class="dev-ws-strip-text">Say it in your own words\. Homeroom bot makes the change for you\.<\/p><button[^>]*data-ws-start-here-bot=""[^>]*>Tell Homeroom bot what to change<\/button><\/section>/);
+  assert.match(html, /<section class="dev-ws-strip" data-ws-start-here="bot"><div class="dev-ws-head"><span class="dev-ws-head-title">What do you want to change\?<\/span><button type="button" class="dev-ws-card-close un-touch-target" data-ws-card-close="start" aria-label="Close this card" title="Close this card"><svg[^>]*>[\s\S]*?<\/svg><\/button><\/div><p class="dev-ws-strip-text">Say it in your own words\. Homeroom bot makes the change for you\.<\/p><button[^>]*data-ws-start-here-bot=""[^>]*>Tell Homeroom bot what to change<\/button><\/section>/,
+    'its ✕ ends the head (15 Oct 2026)');
   assert.match(html, /<button(?=[^>]*data-ws-start-here-bot="")[^>]*class="[^"]*bg-violet-600/, 'the accent: it is the one thing to do here');
   assert.doesNotMatch(html, /Start working on this app|The first change is yours|data-ws-start-here-btn|>Start a new change</,
     'not the developer\'s card, and no second button: building it yourself is the ⋯\'s Build it now');
-  // Same place on the hub, and the note under it still names the ⋯.
-  const order = ['data-ws-band', 'data-ws-start-here="bot"', 'data-ws-empty'].map((k) => html.indexOf(k));
-  assert.ok(order.every((i) => i >= 0), JSON.stringify(order));
-  assert.deepEqual(order.slice().sort((a, b) => a - b), order);
+  // Same place on the hub, and no note under it: it said the same thing
+  // again, and offered to import a PR (15 Oct 2026).
+  assert.ok(html.indexOf('data-ws-band') >= 0 && html.indexOf('data-ws-band') < html.indexOf('data-ws-start-here="bot"'));
+  assert.ok(!html.includes('data-ws-empty'), 'no empty note under it');
   // Where the bot does not build (no door: it is off, paused here, or not
   // this viewer's), the card is as it was, Start a new change and all.
   AppView._ghIssuesMeta = {};
@@ -4559,7 +4588,12 @@ test('an empty board still gets the All items pane, and the note names the ⋯ a
   assert.match(html, /data-ws-empty=""[^>]*>Nothing on the board yet\. Press <span[^>]*>⋯<\/span> on the hub /,
     'the ⋯ is the hub\'s, so the note says where');
   assert.doesNotMatch(html, /Nothing here matches/, 'no filter is on, so it does not blame one');
-  // The status tab keeps its own copy of the note, over the strips.
+  // The hub of an app nobody has started has the start-here banner in its
+  // place (15 Oct 2026); one that has shipped keeps its own copy of the note.
+  const unstarted = workshopHtml(AppView, 'status');
+  assert.match(unstarted, /data-ws-start-here=""/);
+  assert.ok(!unstarted.includes('data-ws-empty'), 'the banner says it, so no note');
+  AppView._mergedTotal = 2;
   const status = workshopHtml(AppView, 'status');
   assert.match(status, /data-ws-empty=""[^>]*>Nothing on the board yet\. Press /);
   assert.ok(!status.includes('data-ws-pane'), 'and no pane: that is the All items tab');
@@ -4608,12 +4642,12 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "make one y
       "a collaborator's ⋯ also imports a PR, so the note says so");
   });
 
-  // CURRENT STATUS on an app nobody has started: #2573's banner leads the tab
-  // with its own New change, so the note stops at the "+" rather than sending
-  // the reader to a menu for the button just above it.
+  // THE HUB of an app nobody has started: #2573's banner leads it with its
+  // own New change, and no note follows it (15 Oct 2026): it said the same
+  // thing again, and offered to import a PR.
   const status = workshopHtml(fresh, 'status');
   assert.match(status, /data-ws-start-here-btn=""[^>]*>Start a new change</, 'the banner offers Start a new change');
-  assert.match(status, NOTE(' to suggest an improvement\\.'), 'and the note under it names the ⋯ alone');
+  assert.ok(!status.includes('data-ws-empty'), 'and no note under it');
   assert.doesNotMatch(status, /propose a change/);
   // ...and "What you are working on", on the Workshop tab beside it, states
   // the fact alone too: the board has no open item to pick up, and New
@@ -4632,7 +4666,7 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "make one y
   // A read-only viewer's "+" holds Fork alone and their menu has no New
   // change, so there is nothing to press: the note states the fact.
   withDevActions({ readOnly: true }, () => {
-    for (const html of [workshopHtml(fresh, 'all'), workshopHtml(fresh, 'status'), workshopHtml(finished, 'status')]) {
+    for (const html of [workshopHtml(fresh, 'all'), workshopHtml(finished, 'status')]) {
       assert.match(html, /data-ws-empty=""[^>]*>Nothing on the board yet\.<\/div>/, 'the read-only note');
       assert.doesNotMatch(html, /Homeroom menu/, 'and no door the reader cannot open');
     }
@@ -4641,11 +4675,11 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "make one y
   // banner's condition is written once, for the banner and the note alike.
   // One component, whose sentence is one whole message picked from one table.
   assert.equal((WORKSHOP.match(/<RichMessage id=\{press\} /g) || []).length, 1);
-  assert.equal((WORKSHOP.match(/'project:boardEmpty\.press\./g) || []).length, 8, 'where the ⋯ is, what it holds, and whether "make one yourself" is said');
+  assert.equal((WORKSHOP.match(/'project:boardEmpty\.press\./g) || []).length, 4, 'where the ⋯ is, and what it holds');
   assert.equal(message('project:boardEmpty.press.hub.plain.full'),
     'Nothing on the board yet. Press <0>⋯</0> to suggest an improvement; to make one yourself, use Build it now there.');
   assert.match(WORKSHOP, /\{startHere \? <StartHereBanner slug=\{slug\} name=\{projectName\} bot=\{!!\(v\.mine && v\.mine\.bot\)\} \/> : null\}/);
-  assert.match(WORKSHOP, /<EmptyNote\s+filtered=\{!!v\.emptyNote\.filtered\}\s+loadFailed=\{v\.emptyNote\.loadFailed\}\s+underStartHere=\{startHere\}\s+onHub\s*\/>/);
+  assert.match(WORKSHOP, /\{v\.emptyNote && !building && !startHere \? \(\s*<EmptyNote\s+filtered=\{!!v\.emptyNote\.filtered\}\s+loadFailed=\{v\.emptyNote\.loadFailed\}\s+onHub\s*\/>/);
 });
 
 test('exactly one surface draws the toolbar, so its ids stay unique', () => {

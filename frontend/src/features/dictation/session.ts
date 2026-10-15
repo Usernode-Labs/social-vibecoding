@@ -1,6 +1,13 @@
 /** The production recording path, also used by the hardware test harness. */
 export type Phase = 'idle' | 'asking' | 'recording' | 'transcribing';
 export type DictationState = { phase: Phase; error: string | null };
+/**
+ * Which way a recording ended that the person did not end: the browser or the
+ * system ended the microphone's track (another app took the microphone, a
+ * headset went, a call came in), or MediaRecorder itself failed. Both say
+ * `interrupted` to the person.
+ */
+export type InterruptCause = 'track_ended' | 'recorder_error';
 const RATE = 16000;
 export const MAX_SECONDS = 60;
 let activeCancel: (() => void) | null = null;
@@ -46,9 +53,13 @@ export class DictationSession {
   private state: DictationState = { phase: 'idle', error: null };
   // Content-free evidence; the optional local blob belongs to the caller of
   // onRecording, never to telemetry or persistent application storage.
-  diagnostics: { mime: string; bytes: number; tracksEnded: boolean; requestId?: string } = { mime: '', bytes: 0, tracksEnded: true };
+  // `cause` is set when a recording is interrupted. It goes nowhere: the
+  // shell's one telemetry path (public/js/ui-telemetry.js) takes a fixed set
+  // of codes and no detail, so SpeakButton shows it on its control instead.
+  diagnostics: { mime: string; bytes: number; tracksEnded: boolean; requestId?: string; cause?: InterruptCause } = { mime: '', bytes: 0, tracksEnded: true };
   constructor(private callbacks: { onState: (state: DictationState) => void; onText: (text: string) => void; onRecording?: (blob: Blob) => void }) {}
   private publish(phase: Phase, error: string | null = null) { this.state = { phase, error }; this.callbacks.onState(this.state); }
+  private interrupted(cause: InterruptCause) { this.diagnostics.cause = cause; this.cancel(); this.publish('idle', 'interrupted'); }
   private release() {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
@@ -94,7 +105,7 @@ export class DictationSession {
       // Permission can arrive after Cancel, navigation, or another recorder.
       if (!live()) { stream.getTracks().forEach((track) => track.stop()); return; }
       this.stream = stream;
-      stream.getTracks().forEach((track) => { track.onended = () => { this.cancel(); this.publish('idle', 'interrupted'); }; });
+      stream.getTracks().forEach((track) => { track.onended = () => this.interrupted('track_ended'); });
       const mimeType = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus'].find((type) => MediaRecorder.isTypeSupported(type));
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       this.recorder = recorder;
@@ -105,7 +116,7 @@ export class DictationSession {
         chunks.push(event.data); this.diagnostics.bytes += event.data.size;
         if (this.diagnostics.bytes > 8 * 1024 * 1024) { this.cancel(); this.publish('idle', 'invalid_audio'); }
       };
-      recorder.onerror = () => { if (live()) { this.cancel(); this.publish('idle', 'interrupted'); } };
+      recorder.onerror = () => { if (live()) this.interrupted('recorder_error'); };
       recorder.onstop = async () => {
         this.recorder = null; this.release();
         if (!live()) return;
