@@ -1614,10 +1614,15 @@ const App = {
   _applyLaunchShot() {
     let shot = null;
     let settled = false;
+    let failed = false;
     try {
       const params = new URLSearchParams(location.search);
       shot = params.get('shot');
       settled = params.get('settle') === '1';
+      // #4813: the paired failed state. On the base commit `failed=1` is
+      // ignored and the spinner stays up; on this commit it synthesises the
+      // failed card, so the before/after capture observes the actual change.
+      failed = params.get('failed') === '1';
     } catch (err) { /* ignore */ }
     // #1945: `?shot=app-tone-dark` / `?shot=app-tone-light` — a running app
     // whose page is that tone, so the bar above it can be seen taking it.
@@ -1639,6 +1644,13 @@ const App = {
     if (settled) {
       setTimeout(() => {
         try { AppView.showSettledLaunchShot(); } catch (err) { /* ignore */ }
+      }, 50);
+      return;
+    }
+    // #4813: the failed launch card, same 50ms defer as the settled state.
+    if (failed) {
+      setTimeout(() => {
+        try { AppView.showLaunchFailedShot(); } catch (err) { /* ignore */ }
       }, 50);
       return;
     }
