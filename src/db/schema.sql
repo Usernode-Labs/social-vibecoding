@@ -14596,3 +14596,48 @@ ALTER TABLE security_bot_runs ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
 ALTER TABLE security_bot_runs ADD COLUMN IF NOT EXISTS lease_generation INTEGER NOT NULL DEFAULT 0;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_security_bot_runs_idempotency
   ON security_bot_runs(idempotency_key) WHERE idempotency_key IS NOT NULL;
+
+-- #4678: execution and teardown have separate leases. All additions are
+-- replayable on the companion schema, with no provisioning or activation.
+ALTER TABLE security_bot_runs ADD COLUMN IF NOT EXISTS phase TEXT NOT NULL DEFAULT 'queued'
+  CHECK (phase IN ('queued','preparing','probing','verifying','finished'));
+ALTER TABLE security_bot_runs ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ;
+ALTER TABLE security_bot_runs ADD COLUMN IF NOT EXISTS recovery_count INTEGER NOT NULL DEFAULT 0 CHECK (recovery_count >= 0);
+ALTER TABLE security_bot_runs ADD COLUMN IF NOT EXISTS capabilities_revoked_at TIMESTAMPTZ;
+ALTER TABLE security_bot_runs ADD COLUMN IF NOT EXISTS cleanup_status TEXT NOT NULL DEFAULT 'none'
+  CHECK (cleanup_status IN ('none','pending','running','retry','completed','failed'));
+ALTER TABLE security_bot_runs ADD COLUMN IF NOT EXISTS cleanup_owner TEXT;
+ALTER TABLE security_bot_runs ADD COLUMN IF NOT EXISTS cleanup_generation INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE security_bot_runs ADD COLUMN IF NOT EXISTS cleanup_target_generation INTEGER;
+ALTER TABLE security_bot_runs ADD COLUMN IF NOT EXISTS cleanup_expires_at TIMESTAMPTZ;
+ALTER TABLE security_bot_runs ADD COLUMN IF NOT EXISTS cleanup_next_at TIMESTAMPTZ;
+ALTER TABLE security_bot_runs ADD COLUMN IF NOT EXISTS cleanup_attempts INTEGER NOT NULL DEFAULT 0 CHECK (cleanup_attempts >= 0);
+ALTER TABLE security_bot_runs ADD COLUMN IF NOT EXISTS defender_calls INTEGER NOT NULL DEFAULT 0 CHECK (defender_calls >= 0);
+ALTER TABLE security_bot_runs ADD COLUMN IF NOT EXISTS coverage_counts JSONB NOT NULL DEFAULT '{}'::jsonb;
+CREATE INDEX IF NOT EXISTS idx_security_bot_runs_cleanup
+  ON security_bot_runs(cleanup_next_at, id) WHERE cleanup_status IN ('pending','running','retry');
+
+-- Calls start unreconciled with NULL cost. Dispatch and settlement are
+-- separate durable decisions; a timeout cannot erase a possible charge.
+ALTER TABLE security_bot_model_calls ADD COLUMN IF NOT EXISTS budget_day DATE;
+ALTER TABLE security_bot_model_calls ADD COLUMN IF NOT EXISTS lease_generation INTEGER;
+ALTER TABLE security_bot_model_calls ADD COLUMN IF NOT EXISTS logical_call_key TEXT;
+ALTER TABLE security_bot_model_calls ADD COLUMN IF NOT EXISTS model TEXT;
+ALTER TABLE security_bot_model_calls ADD COLUMN IF NOT EXISTS provider TEXT;
+ALTER TABLE security_bot_model_calls ADD COLUMN IF NOT EXISTS generation_id TEXT;
+ALTER TABLE security_bot_model_calls ADD COLUMN IF NOT EXISTS credential_revision TEXT;
+ALTER TABLE security_bot_model_calls ADD COLUMN IF NOT EXISTS max_prompt_tokens INTEGER;
+ALTER TABLE security_bot_model_calls ADD COLUMN IF NOT EXISTS max_output_tokens INTEGER;
+ALTER TABLE security_bot_model_calls ADD COLUMN IF NOT EXISTS prompt_tokens INTEGER;
+ALTER TABLE security_bot_model_calls ADD COLUMN IF NOT EXISTS output_tokens INTEGER;
+ALTER TABLE security_bot_model_calls ADD COLUMN IF NOT EXISTS reasoning_tokens INTEGER;
+ALTER TABLE security_bot_model_calls ADD COLUMN IF NOT EXISTS pricing_snapshot JSONB;
+ALTER TABLE security_bot_model_calls ADD COLUMN IF NOT EXISTS pricing_valid_until TIMESTAMPTZ;
+ALTER TABLE security_bot_model_calls ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ;
+ALTER TABLE security_bot_model_calls ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ;
+ALTER TABLE security_bot_model_calls ADD COLUMN IF NOT EXISTS error_code TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_security_bot_calls_physical_attempt
+  ON security_bot_model_calls(run_id, role, logical_call_key, attempt) WHERE logical_call_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_security_bot_calls_unsettled
+  ON security_bot_model_calls(budget_day) WHERE outcome = 'unreconciled' AND cost_usd IS NULL;
+COMMENT ON COLUMN security_bot_model_calls.pricing_snapshot IS 'staging:private';

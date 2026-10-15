@@ -198,6 +198,10 @@ const DENIED_COLUMNS = {
   security_bot_finding_occurrences: [
     'context',
   ],
+  security_bot_model_calls: [
+    'pricing_snapshot', // private provider quote, never an agent/debug read
+    'credential_revision', // private service credential lineage, even without key bytes
+  ],
 };
 
 // ── Container-log allowlist (used by the prod-debug logs endpoint) ─────

@@ -45,7 +45,10 @@ test('the security bot account against the full PostgreSQL schema', { timeout: 1
     if (server) await new Promise((resolve) => server.close(resolve));
     await routePool.end();
     await pool.end();
-    await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
+    // pool.end() resolves before its sockets finish closing. FORCE can cut
+    // an idle connection during shutdown and turn a passing suite into an
+    // uncaught pool error; a normal DROP waits for those sockets to close.
+    await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
