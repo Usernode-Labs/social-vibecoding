@@ -1,6 +1,8 @@
 'use strict';
 
 const appAccess = require('./app-access');
+const { PRODUCTION_ORIGIN } = require('./cli-auth-constants');
+const log = require('./logger');
 const REMOVED = 'Removed by moderation';
 const REASONS = new Set(['spam', 'scam', 'harassment', 'hate', 'threats', 'sexual_content', 'impersonation', 'unsafe_avatar', 'unsafe_content', 'other']);
 const TYPES = new Set(['app', 'user', 'app_message', 'conversation_message']);
@@ -132,11 +134,27 @@ async function notify(db, userId, kind, detail) {
   const { rows } = await db.query('INSERT INTO notifications (user_id, kind, detail) VALUES ($1, $2, $3) RETURNING id', [userId, kind, detail.slice(0, 1200)]);
   (db.moderationNotifications ||= []).push(rows[0].id);
 }
-async function submitReport(pool, user, input) {
+// Compliance mail (#5072). Sent AFTER the transaction commits, for every
+// newly inserted report row; a mail failure is logged and never reaches the
+// reporter's request. The recipient is the deployment's compliance inbox
+// (config.complianceEmail, defaulting to compliance@usernodelabs.org).
+function sendComplianceMail(config, sendMail, payload) {
+  const to = (config && config.complianceEmail) || 'compliance@usernodelabs.org';
+  const url = `${PRODUCTION_ORIGIN}/#admin/reports/${payload.caseId}`;
+  Promise.resolve()
+    .then(() => (sendMail || require('./mail').send)(config, { kind: 'content_report', to, ...payload, url }))
+    .catch((err) => log.warn('moderation', 'Compliance mail failed', { message: err.message }));
+}
+
+async function submitReport(pool, user, input, { config = null, sendMail = null } = {}) {
   if (!user?.id) fail(401, 'Sign in to report');
   if (!input || !REASONS.has(input.reason)) fail(400, 'Choose a report reason');
   const detail = details(input.detail, input.reason === 'other');
-  return transaction(pool, async (db) => {
+  // Set only when a report row was actually inserted; the duplicate path and
+  // every refusal leave it null, so nothing is mailed. Never added to the
+  // returned receipt, which goes to the client.
+  let mailPayload = null;
+  const result = await transaction(pool, async (db) => {
     // Per-user transactional rate guard includes all target types and devices.
     await db.query('SELECT pg_advisory_xact_lock(2721, $1)', [user.id]);
     let target = await resolveTarget(db, user, input.targetType, input.target);
@@ -174,8 +192,19 @@ async function submitReport(pool, user, input) {
     }
     await db.query('UPDATE moderation_cases SET revision = revision + 1, updated_at = NOW() WHERE id = $1', [c.id]);
     await notify(db, user.id, 'moderation_report', `Report #${rows[0].id} received. We’ll review it.`);
+    mailPayload = {
+      caseId: c.id,
+      reportId: rows[0].id,
+      reason: input.reason,
+      detail,
+      targetType: input.targetType,
+      targetLabel: target.label,
+      reporter: user.username,
+    };
     return { id: rows[0].id, received: true, duplicate: false, ...blockActions(input.targetType, target, user.id) };
   });
+  if (config && mailPayload) sendComplianceMail(config, sendMail, mailPayload);
+  return result;
 }
 
 async function moderate(pool, actor, caseId, input) {

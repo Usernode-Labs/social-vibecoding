@@ -3264,6 +3264,12 @@
       "expectSelector": "#admin-screen:not(.hidden) #admin-section-content"
     },
     {
+      "name": "Moderation deep link opens the linked case already selected (#5072)",
+      "path": "/#admin/reports/1",
+      "expectText": "Staging fixture: a fake report so the Moderation screens have a case to open.",
+      "allowConsoleErrors": false
+    },
+    {
       "name": "Admin console deep-links the Activation codes section (#818)",
       "path": "/#admin/codes",
       "expectSelector": "#admin-code-list"

@@ -17,8 +17,10 @@ const { PRODUCTION_ORIGIN } = require('../cli-auth-constants');
 const tracking = require('./tracking');
 
 // Minimal HTML escaping — these bodies interpolate an email address, a
-// six-digit code and platform-built URLs, never free user text, but
-// escaping is cheap and keeps that true if a payload field ever grows.
+// six-digit code and platform-built URLs, and, since content_report, free
+// reporter-written text; every interpolated field goes through this, so the
+// rule the comment once stated ("never free user text") is kept by the
+// call sites rather than by the payloads.
 function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;')
@@ -517,6 +519,58 @@ function adminTest(payload) {
   };
 }
 
+// A new content report, to the platform's compliance inbox
+// (services/moderation.js submitReport). Unlike every kind above, the text
+// here IS free reporter-written text (the reason's optional detail), so every
+// field goes through esc() and the html detail keeps its line breaks. It does
+// NOT quote the reported message itself or carry evidence files: the link
+// opens the case in the admin console, where that copy stays behind the
+// admin sign-in. Type labels match the Moderation section's own words.
+const REPORT_TYPE_LABELS = {
+  app: 'App',
+  user: 'User',
+  app_message: 'App message',
+  conversation_message: 'Private message',
+};
+
+function contentReport(payload) {
+  const reason = String(payload.reason || 'unknown').replace(/_/g, ' ');
+  const targetLabel = String(payload.targetLabel || 'Unknown target').slice(0, 120);
+  const typeLabel = REPORT_TYPE_LABELS[payload.targetType] || 'Unknown';
+  const reporter = payload.reporter ? `@${payload.reporter}` : 'Unknown';
+  const caseId = payload.caseId != null ? payload.caseId : '?';
+  const reportId = payload.reportId != null ? payload.reportId : '?';
+  const detail = String(payload.detail || '').trim();
+  const shownDetail = detail || 'None given';
+  const url = payload.url || PRODUCTION_ORIGIN;
+
+  const text = 'A new report was submitted on Homeroom.\n\n'
+    + `Reason: ${reason}\n`
+    + `Reported: ${typeLabel} · ${targetLabel}\n`
+    + `Reporter: ${reporter}\n`
+    + `Case #${caseId} · Report #${reportId}\n\n`
+    + `Details from the reporter:\n${shownDetail}\n\n`
+    + `Open in Moderation: ${url}`;
+
+  return {
+    why: 'You are receiving this because this address is Homeroom\'s '
+      + 'compliance inbox for content reports.',
+    preheader: `New ${reason} report on ${targetLabel}`,
+    subject: `New report: ${reason} · ${targetLabel}`.slice(0, 200),
+    text,
+    html: (
+      p('A new report was submitted on Homeroom.')
+      + `<p>Reason: <strong>${esc(reason)}</strong><br>`
+      + `Reported: ${esc(typeLabel)} · ${esc(targetLabel)}<br>`
+      + `Reporter: ${esc(reporter)}<br>`
+      + `Case #${esc(String(caseId))} · Report #${esc(String(reportId))}</p>`
+      + p('Details from the reporter:')
+      + `<p style="white-space:pre-wrap">${esc(shownDetail)}</p>`
+      + button(url, 'Open in Moderation')
+    ),
+  };
+}
+
 // A project invite, to an address that is not on Homeroom yet (the create
 // dialog's "Will invite" rows; services/email-invites.js). One link: the
 // waitlist, joined with this address. Nothing here grants access; the invite
@@ -629,6 +683,7 @@ const TEMPLATES = {
   waitlist_released: waitlistReleased,
   password_reset: passwordReset,
   admin_test: adminTest,
+  content_report: contentReport,
   project_invite: projectInvite,
   build_ready: buildReady,
   invite_activity: inviteActivity,

@@ -196,6 +196,7 @@ async function migrate(config) {
   await seedStagingAppCapApps(pool, config);
   await seedStagingSystemTokenUsage(pool);
   await seedStagingDashboardAdminSplit(pool);
+  await seedStagingModerationCase(pool);
   await seedStagingAnalyticsCharts(pool);
   await seedStagingTopicAttributes(pool, config);
   await seedStagingSubmittedFeatures(pool, config);
@@ -1868,6 +1869,47 @@ async function seedStagingAdminConsoleData(pool) {
     log.info('db', 'Admin-console staging fixtures seeded');
   } catch (err) {
     log.warn('db', 'Admin-console staging fixtures failed', { message: err.message });
+  }
+}
+
+// A moderation case for the console's Moderation section (#5072). The
+// moderation tables are staging:private, so a preview clone starts with an
+// empty queue and the section's deep link (#admin/reports/<id>) has nothing
+// to open. Two obviously-fake people of their own, never the viewer, and a
+// report that says it is a staging fixture. Idempotent: the case keys on its
+// UNIQUE(target_type, target_id), the report on an existence check scoped to
+// the fake target. Strictly a no-op outside staging.
+async function seedStagingModerationCase(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password, profile_published)
+       VALUES (900320, 'staging-demo-reported', 'staging-demo-not-a-login', TRUE),
+              (900321, 'staging-demo-reporter', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO moderation_cases (target_type, target_id, target_label, target_user_id, status)
+       VALUES ('user', 900320, '@staging-demo-reported', 900320, 'new')
+       ON CONFLICT (target_type, target_id) DO NOTHING`
+    );
+    const has = await pool.query(
+      `SELECT 1 FROM moderation_reports r JOIN moderation_cases c ON c.id = r.case_id
+        WHERE c.target_type = 'user' AND c.target_id = 900320 LIMIT 1`
+    );
+    if (!has.rowCount) {
+      await pool.query(
+        `INSERT INTO moderation_reports (case_id, cycle, reporter_user_id, reason, detail, evidence)
+         SELECT c.id, c.cycle, 900321, 'spam',
+                'Staging fixture: a fake report so the Moderation screens have a case to open.',
+                NULL
+           FROM moderation_cases c
+          WHERE c.target_type = 'user' AND c.target_id = 900320`
+      );
+    }
+    log.info('db', 'Staging moderation case seeded');
+  } catch (err) {
+    log.warn('db', 'Staging moderation case seeding failed', { message: err.message });
   }
 }
 
