@@ -36,7 +36,3 @@ test('this process\'s own legacy deploy answers first, as before', () => {
   assert.equal(status.read('app-three', row({ deploy_state: null })), null);
 });
 
-test('many apps at once, each with its row', () => {
-  const rows = new Map([['x', row()], ['y', row({ deploy_state: null })]]);
-  assert.deepEqual(Object.keys(status.readMany(['x', 'y', 'z'], rows)), ['x']);
-});

@@ -1,39 +1,23 @@
 'use strict';
 
 /**
- * Per-app redeploy tracker.
+ * Whether an app's production is deploying, for the version pills
+ * (`/api/apps/...`, `/api/apps/:slug/version`, then the
+ * `app_redeploy_status` pushes), heal, rollover and the merged-change list.
  *
- * Tiny in-memory map of `slug → { deploying, startedAt, fromSha, toSha }`
- * mirroring `services/deploy-status.js` (which tracks the *platform's*
- * own deploy via a file on disk) but for individual apps' production
- * rebuilds.
+ * Every deploy of an app is the app-delivery workflow machine's, and so is
+ * its state: apps.deploy_state, which every process reads and which
+ * outlives a restart (the deploy is retried). `read(slug, row)` answers
+ * from it, given the app's row.
  *
- * Used by `services/staging.js` to flip a slug into "deploying" before
- * `rebuildProduction` does its docker work and back out when it
- * finishes (or throws). Consumers:
+ * The one deploy-like thing outside it is rollover's respawn of an existing
+ * image (services/app-rollover.js), which marks itself here, in this
+ * process's memory and as this process's hold (services/processes.js), so
+ * another process reads it too. A restart drops it with the respawn.
  *
- *   - Frontend version pills (header + home-screen cards) read the
- *     state from `/api/apps/...` and `/api/apps/:slug/version`, then
- *     listen for the `app_redeploy_status` WS broadcasts to flip live.
- *
- * Why in-memory and not a DB column?
- *   The old `apps.status='redeploying'` approach was rejected on
- *   purpose (see comment block in `main-drift-poller.js`): toggling
- *   apps.status mid-rebuild also drops the URL from the home tile,
- *   because URL computation in routes/apps.js gates on
- *   status='running'. Keeping deploy-progress out-of-band preserves
- *   the existing UX while still letting the UI surface it.
- *
- * Why no persistence across restarts?
- *   If the platform restarts mid-deploy, the rebuild job dies with
- *   it — there's nothing to track. A fresh process should naturally
- *   show no in-flight deploys, exactly the same as if the deploy had
- *   never started.
- *
- * With the app-delivery workflow machine on (WF_APP_DELIVERY_ENABLED), a
- * deploy is the machine's, and so is its state: apps.deploy_state, which
- * every process reads and which outlives a restart (the deploy is retried).
- * `read(slug, row)` answers from either, given the app's row.
+ * Why not apps.status? Toggling apps.status mid-deploy also drops the URL
+ * from the home tile, because URL computation in routes/apps.js gates on
+ * status='running'.
  */
 
 const log = require('./logger');
@@ -51,9 +35,9 @@ const DEPLOY_STALE_AFTER_MS = 30 * 60 * 1000;
 const _state = require('./processes').heldMap('deploy');
 
 // Lazy-required to dodge a require-cycle: ws.js doesn't import this
-// module, but rebuildProduction (which calls into here) is reachable
-// from server.js's wiring through routes which themselves load ws —
-// so we keep the import lazy to be safe.
+// module, but rollover (which calls into here) is reachable from
+// server.js's wiring through routes which themselves load ws — so we keep
+// the import lazy to be safe.
 function broadcast(payload) {
   try {
     const { broadcastGlobal } = require('./ws');
@@ -84,8 +68,7 @@ function markEnd(slug, opts) {
   if (!prev) return;
   // `missingSecrets` is forwarded so the frontend can render a
   // tailored "set ECHO_APP_SECRET_KEY to deploy" toast instead of a
-  // generic "build failed" — staging.js sets it from the caught
-  // MissingSecretsError.
+  // generic "build failed".
   broadcast({
     type: 'app_redeploy_status',
     appSlug: slug,
@@ -117,22 +100,12 @@ function read(slug, row = null) {
     try { elsewhere = require('./processes').heldElsewhere('deploy', slug); } catch { /* none */ }
     return elsewhere ? { deploying: true, startedAt: null, fromSha: null } : null;
   }
-  // Stale-deploy gate. Don't auto-delete here — the caller of
-  // rebuildProduction owns the lifecycle, and pretending the entry
-  // doesn't exist anymore is enough to unstick the UI.
+  // Stale-deploy gate. Don't auto-delete here — the rollover that marked
+  // it owns the lifecycle, and pretending the entry doesn't exist anymore
+  // is enough to unstick the UI.
   const age = Date.now() - new Date(entry.startedAt).getTime();
   if (age > DEPLOY_STALE_AFTER_MS) return { ...entry, deploying: false, stale: true };
   return { ...entry };
 }
 
-// `rows`: the apps' rows by slug (a Map), when the caller has them.
-function readMany(slugs, rows = null) {
-  const out = {};
-  for (const slug of slugs || []) {
-    const entry = read(slug, rows ? rows.get(slug) || null : null);
-    if (entry) out[slug] = entry;
-  }
-  return out;
-}
-
-module.exports = { markStart, markEnd, read, readMany, fromRow };
+module.exports = { markStart, markEnd, read, fromRow };

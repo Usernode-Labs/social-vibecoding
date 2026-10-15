@@ -65,6 +65,10 @@ test('every WF_* variable config.js reads is declared in platform_env', () => {
     assert.ok(!entry.required, `${key} must not block merges`);
   }
   assert.equal(declared.get('WF_GOVERNANCE_ENABLED'), undefined);
-  assert.ok(read.has('WF_MERGE_FOLLOWUPS_ENABLED'));
-  assert.equal(declared.get('WF_MERGE_FOLLOWUPS_ENABLED').default, 'false', 'off unless someone turns it on');
+  // No machine has a flag: each is the only path for what it decides, and
+  // every guard refuses a write from outside its machine.
+  for (const gone of ['WF_MERGE_FOLLOWUPS_ENABLED', 'WF_APP_DELIVERY_ENABLED', 'WF_PREVIEWS_ENABLED', 'WF_OWNERSHIP_MODE']) {
+    assert.ok(!read.has(gone), `${gone} is not read`);
+    assert.equal(declared.get(gone), undefined, `${gone} is not declared`);
+  }
 });

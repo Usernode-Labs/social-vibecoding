@@ -104,6 +104,36 @@ test('announceLive says it on the request once, in both places, untagged', async
   assert.equal(await live.announceLive(other.pool, { session: null }), null);
 });
 
+test('the merge-followups machine asks for it once the change is live, strictly, so a failure is retried', async (t) => {
+  // machine.ts toLive asks for bot.announceLive with the dm; services.ts
+  // runs it with the change's row and GitHub.
+  const { WORK } = require('../src/workflow/merge-followups/machine.ts');
+  const { mergeFollowupsServices } = require('../src/workflow/merge-followups/services.ts');
+  assert.equal(WORK.live, 'bot.announceLive');
+  const machine = require('node:fs').readFileSync(require.resolve('../src/workflow/merge-followups/machine.ts'), 'utf8');
+  const toLive = machine.slice(machine.indexOf('function toLive('), machine.indexOf('function lineInput('));
+  assert.match(toLive, /\{ kind: WORK\.live, key: 'live', input: \{ sessionId: d\.sessionId \} \}/);
+  const row = { id: 51, app_id: 3, app_slug: 'plant-pal', pr_title: 'Dark mode' };
+  const pool = { async query(sql) { return { rows: /FROM chat_sessions cs JOIN apps a/.test(sql) ? [row] : [] }; } };
+  const asked = [];
+  t.mock.method(live, 'announceLive', async (p, args) => { asked.push([p, args]); return { github: {}, thread: {} }; });
+  const run = (input) => mergeFollowupsServices({ config: {}, pool })[WORK.live]
+    .run({ input, key: 'live', attempt: 1, resumeFrom: null, checkpoint: async () => {} });
+  assert.deepEqual(await run({ sessionId: 51 }), { posted: true });
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0][0], pool);
+  assert.equal(asked[0][1].session, row, 'the change as it reads now');
+  assert.equal(asked[0][1].strict, true);
+  assert.ok(asked[0][1].deps.github, 'and GitHub to comment with');
+  t.mock.restoreAll();
+
+  // Strict: a failure throws, for the work item to be retried; otherwise it
+  // is logged and reads as nothing said.
+  const broken = { async query() { throw new Error('db down'); } };
+  await assert.rejects(live.announceLive(broken, { session: { id: 51 }, strict: true }), /db down/);
+  assert.equal(await live.announceLive(broken, { session: { id: 51 } }), null);
+});
+
 test('only what asks people something tags them', () => {
   for (const kind of ['question', 'person', 'followup_ask']) assert.equal(live.tagsPoster(kind), true, kind);
   for (const kind of ['spec', 'plan', 'proposal', 'build_failed', 'blocked', 'empty', 'followup_answer',

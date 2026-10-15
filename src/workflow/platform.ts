@@ -29,130 +29,29 @@ const pg = createRequire(import.meta.url)('pg');
 
 let runtime: Runtime | null = null;
 let kernelPool: Pool & { end(): Promise<void> } | null = null;
-// The machines this process registered: governance always (its old paths
-// are deleted), the others each under its own flag (merge-followups also
-// while it has work left to finish with its flag off).
+// The machines this process registered: every one, in every process (their
+// old paths are deleted).
 let machine: ReturnType<typeof governanceProposal> | null = null;
 let merges: ReturnType<typeof mergeFollowups> | null = null;
-let mergesAdmitted = false;
 // The Homeroom bot's builds and the bench's trials: on in every process that
 // runs the workflow, which is every process (docs/plans/bot-build-workflow.md).
 const builds = botBuild();
 let deliveries: ReturnType<typeof appDelivery> | null = null;
-let deliveriesAdmitted = false;
 let previews: ReturnType<typeof preview> | null = null;
 let log: Logger | null = null;
 
-// What the ownership triggers read, synced on every boot:
-// - ownership_mode: 'raise' (tests, staging, local) or 'log' (production,
-//   until no legacy writer is left);
-// - enabled:<machine>: the machine's guard. Every boot sets it for a
-//   machine with no flag (ALWAYS_ON), and a boot with its flag on for the
-//   others. In 'log' mode (production) a boot with its flag off leaves it: the
-//   flag is per process and the guard is the cluster's, and an old Pod still
-//   running (a rollout, a rollback, a restart of a Pod from before) must not
-//   switch it off under the Pods that run the machine. It goes when an admin
-//   turns it off (turnGuardOff, Admin → Workflows) once no process runs the
-//   machine. In 'raise' mode a flag-off boot turns it off, as before.
-//   With it off, the triggers leave enrolled rows to the legacy writers
-//   again, and the machine closes any instance whose row they closed when
-//   it comes back.
-async function setSetting(pool: Pool, key: string, value: string | null): Promise<void> {
-  if (value === null) {
-    await pool.query('DELETE FROM wf_settings WHERE key = $1', [key]);
-  } else {
+// What the ownership triggers read, synced on every boot: enabled:<machine>
+// for every machine (wf_holds reads it). Every machine is the only path for
+// what it decides, so its guard is always on and always refuses a write
+// from outside it.
+const MACHINES = [MACHINE, MERGE, DELIVERY, PREVIEW];
+
+export async function syncSettings(pool: Pool): Promise<void> {
+  for (const name of MACHINES) {
     await pool.query(
-      `INSERT INTO wf_settings (key, value) VALUES ($1, $2)
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [key, value]);
+      `INSERT INTO wf_settings (key, value) VALUES ($1, '1')
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [`enabled:${name}`]);
   }
-}
-
-// Each machine's flag in this process's configuration.
-// App delivery runs only beside merge follow-ups: with merge follow-ups
-// off, the legacy merge tail deploys and marks a change live in one call,
-// and nothing else may deploy beside the machine.
-const FLAGS = new Map<string, { flag: string; on: (config: any) => boolean }>([
-  [MERGE, { flag: 'WF_MERGE_FOLLOWUPS_ENABLED', on: (c) => !!c.wfMergeFollowupsEnabled }],
-  [DELIVERY, { flag: 'WF_APP_DELIVERY_ENABLED', on: (c) => !!c.wfAppDeliveryEnabled && !!c.wfMergeFollowupsEnabled }],
-]);
-
-// Why a flag that is set does not run its machine here, for the boot log
-// and Admin → Workflows.
-export function flagBlocked(name: string, config: any): string | null {
-  if (name === DELIVERY && config.wfAppDeliveryEnabled && !config.wfMergeFollowupsEnabled) {
-    return 'WF_APP_DELIVERY_ENABLED needs WF_MERGE_FOLLOWUPS_ENABLED';
-  }
-  return null;
-}
-
-// Machines with no flag: their old paths are deleted, so their guard is on
-// in every process, and an admin cannot turn it off.
-const ALWAYS_ON = new Set([MACHINE, PREVIEW]);
-
-export async function syncSettings(pool: Pool, config: any): Promise<void> {
-  const logMode = config.wfOwnershipMode === 'log';
-  await setSetting(pool, 'ownership_mode', logMode ? 'log' : null);
-  for (const name of ALWAYS_ON) await setSetting(pool, `enabled:${name}`, '1');
-  for (const [name, f] of FLAGS) {
-    if (f.on(config)) { await setSetting(pool, `enabled:${name}`, '1'); continue; }
-    // In 'raise' mode (development, staging previews, tests: one process,
-    // where a guard left on refuses every legacy write to the rows it
-    // held), a flag-off boot turns it off as before. In 'log' mode
-    // (production, where Pods overlap) it stays until an admin turns it off.
-    if (!logMode) { await setSetting(pool, `enabled:${name}`, null); continue; }
-    const { rows } = await pool.query('SELECT 1 FROM wf_settings WHERE key = $1', [`enabled:${name}`]);
-    if (rows.length) {
-      (log || legacy('services/logger')).warn('workflow', 'A machine\'s ownership guard is on while its flag is off here; turn it off in Admin → Workflows once no process runs it',
-        { machine: name, flag: f.flag });
-    }
-  }
-}
-
-// Each machine's guard, and whether this process's flag runs it: the admin
-// view shows a guard on while the flag is off here (every process's flag
-// may be off by now, after a rollback).
-export async function guards(pool: Pool, config: any): Promise<{ machine: string; flag: string; on: boolean; flagHere: boolean; blocked: string | null }[]> {
-  const { rows } = await pool.query(`SELECT key FROM wf_settings WHERE key LIKE 'enabled:%'`);
-  const set = new Set(rows.map((r: { key: string }) => r.key));
-  return [...FLAGS].map(([name, f]) => ({
-    machine: name, flag: f.flag, on: set.has(`enabled:${name}`), flagHere: f.on(config), blocked: flagBlocked(name, config),
-  }));
-}
-
-// An admin turns a machine's guard off, once its flag is off everywhere
-// (here at least: a process whose flag is on would set it again at its
-// next boot, and runs the machine meanwhile).
-export async function turnGuardOff(pool: Pool, config: any, name: string, admin: { id: number }): Promise<void> {
-  if (ALWAYS_ON.has(name)) throw new AdminActionError(409, `${name} has no flag: it is the only path for what it decides`);
-  const f = FLAGS.get(name);
-  if (!f) throw new AdminActionError(400, `${name} is not a workflow machine`);
-  if (f.on(config)) throw new AdminActionError(409, `${f.flag} is on in this process: turn the flag off first`);
-  await setSetting(pool, `enabled:${name}`, null);
-  (log || legacy('services/logger')).warn('workflow', 'A machine\'s ownership guard was turned off', { machine: name, adminId: admin.id });
-}
-
-// Merges merge-followups accepted before its flag went off still finish
-// (K13): their queued work, the events waiting for them, and the merges
-// still waiting for a deploy that contains them (delivering, deploy_failed),
-// which only this runtime hears about (productionDeployed).
-async function mergesUnfinished(pool: Pool): Promise<boolean> {
-  const { rows } = await pool.query(
-    `SELECT EXISTS (SELECT 1 FROM wf_work WHERE machine = $1 AND status IN ('queued', 'running', 'reported'))
-         OR EXISTS (SELECT 1 FROM wf_events WHERE machine = $1 AND status = 'pending')
-         OR EXISTS (SELECT 1 FROM wf_instances WHERE machine = $1 AND state IN ('delivering', 'deploy_failed')) AS unfinished`,
-    [MERGE]);
-  return !!rows[0]?.unfinished;
-}
-
-// Deploys app-delivery accepted before its flag went off still finish:
-// requests waiting for it, its running deploys and their results.
-async function deliveriesUnfinished(pool: Pool): Promise<boolean> {
-  const { rows } = await pool.query(
-    `SELECT EXISTS (SELECT 1 FROM wf_work WHERE machine = $1 AND status IN ('queued', 'running', 'reported'))
-         OR EXISTS (SELECT 1 FROM wf_events WHERE machine = $1 AND status = 'pending')
-         OR EXISTS (SELECT 1 FROM wf_instances WHERE machine = $1 AND state = 'deploying') AS unfinished`,
-    [DELIVERY]);
-  return !!rows[0]?.unfinished;
 }
 
 // The build this process booted with, recorded on the platform's own row
@@ -161,8 +60,8 @@ async function deliveriesUnfinished(pool: Pool): Promise<boolean> {
 // release before the rollout. A history, so an older Pod booting after a
 // newer one (a rollout) does not erase that the newer build ran. One
 // statement: the row lock serialises two processes booting at once. Every
-// serving process records it, flags or not, so it is there when a flag is
-// turned on (releaseServing).
+// serving process records it (releaseServing): a merge recovery records late
+// reads it.
 async function recordBooted(pool: Pool): Promise<void> {
   const sha = String(process.env.GIT_SHA || '').toLowerCase();
   if (!/^[0-9a-f]{40}$/.test(sha)) return;
@@ -190,17 +89,8 @@ export async function publishPushes(q: Queryable, pushes: Push[]): Promise<void>
 export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {
   log = legacy('services/logger');
   const appPool = legacy('db/pool').getPool(config);
-  await syncSettings(appPool, config);
+  await syncSettings(appPool);
   if (runtime) return;
-  for (const name of FLAGS.keys()) {
-    const blocked = flagBlocked(name, config);
-    if (blocked) log!.warn('workflow', 'A workflow flag is set but its machine does not run', { machine: name, reason: blocked });
-  }
-  const deliveryOn = FLAGS.get(DELIVERY)!.on(config);
-  const withMerges = !!config.wfMergeFollowupsEnabled || await mergesUnfinished(appPool).catch(() => false);
-  const withDeliveries = deliveryOn || await deliveriesUnfinished(appPool).catch(() => false);
-  // The runtime always starts: bot builds have no other path. The other
-  // machines still come and go with their flags.
   const workflowPool = new pg.Pool({
     connectionString: config.databaseUrl, max: config.wfPoolMax, idleTimeoutMillis: 30000, application_name: 'homeroom-workflow',
   });
@@ -210,35 +100,18 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   workflowPool.on('error', (err: Error) => log!.warn('workflow', 'Idle workflow database connection lost', { message: err.message }));
   kernelPool = workflowPool;
   const deps = { config, pool: appPool };
-  const machines = [];
-  let services = {};
-  // Whether the other machines ask app-delivery for a deploy: its flag here
-  // (a request is recorded on the instance that made it, so one decided on
-  // the work path stays there).
-  const delivery = () => deliveriesAdmitted;
-  machine = governanceProposal({ dataKey: config.dataEncryptionKey, notifiers: governanceNotifiers(deps), delivery });
-  machines.push(machine);
-  services = { ...services, ...governanceServices(deps) };
-  if (withMerges) {
-    merges = mergeFollowups({ dataKey: config.dataEncryptionKey, notifiers: mergeFollowupsNotifiers(deps), delivery });
-    mergesAdmitted = !!config.wfMergeFollowupsEnabled;
-    machines.push(merges);
-    services = { ...services, ...mergeFollowupsServices(deps) };
-  }
-  machines.push(builds);
-  services = { ...services, ...botBuildServices(deps) };
-  if (withDeliveries) {
-    deliveries = appDelivery();
-    deliveriesAdmitted = deliveryOn;
-    machines.push(deliveries);
-    services = { ...services, ...appDeliveryServices(deps) };
-  }
+  machine = governanceProposal({ dataKey: config.dataEncryptionKey, notifiers: governanceNotifiers(deps) });
+  merges = mergeFollowups({ dataKey: config.dataEncryptionKey, notifiers: mergeFollowupsNotifiers(deps) });
+  deliveries = appDelivery();
   // A cancelled prepare learns it at its next checkpoint or lease renewal;
   // its attempt is retired, and a retirement runs, a lease and more later
   // (and never while it serves: services.ts).
   previews = preview({ maxRetries: config.checkMaxAutoRetries ?? 6, retireAfterMs: PREPARE_LEASE_MS + 30000 });
-  machines.push(previews);
-  services = { ...services, ...previewServices(deps) };
+  const machines = [machine, merges, builds, deliveries, previews];
+  const services = {
+    ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
+    ...appDeliveryServices(deps), ...previewServices(deps),
+  };
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, publish: publishPushes,
   });
@@ -251,9 +124,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     kernelPool = null;
     machine = null;
     merges = null;
-    mergesAdmitted = false;
     deliveries = null;
-    deliveriesAdmitted = false;
     previews = null;
     throw err;
   }
@@ -274,7 +145,7 @@ export async function releaseServing(pool: Pool): Promise<void> {
   const warn = (what: string) => (err: Error) =>
     (log ?? legacy('services/logger')).warn('workflow', what, { message: err.message });
   await recordBooted(pool).catch(warn('Could not record the booted build'));
-  if (merges) await releaseBooted(pool).catch(warn('Could not report the running release'));
+  if (runtime) await releaseBooted(pool).catch(warn('Could not report the running release'));
 }
 
 // The leader's part: timers and services, then enrolling every open
@@ -331,9 +202,7 @@ export async function stopWorkflow(): Promise<void> {
   runtime = null;
   machine = null;
   merges = null;
-  mergesAdmitted = false;
   deliveries = null;
-  deliveriesAdmitted = false;
   previews = null;
   await r?.stop();
   await kernelPool?.end();
@@ -367,7 +236,7 @@ export async function fileProposal(issueId: number, appId: number): Promise<void
 }
 
 // Append a route's event and wait for its outcome. An open row the machine
-// does not hold yet (one that predates the flag, if the boot backfill has
+// does not hold yet (one filed before the machine ran, if the boot backfill has
 // not reached it) answers `no_instance`: file it, then send the event again
 // under the same request key (a rejection leaves no receipt). Checking first
 // would cost every request a query for a case the backfill almost always
@@ -475,12 +344,6 @@ export async function targetsClosed(appId: number, numbers: number[], cause: { k
 
 // ── Merge follow-ups ────────────────────────────────────────────────────
 
-// Whether a merge hands its follow-ups to the machine. Off with the flag,
-// even while the machine finishes work it accepted before.
-export function mergeFollowupsEnabled(): boolean {
-  return runtime !== null && merges !== null && mergesAdmitted;
-}
-
 const count = (n: unknown) => (Number.isInteger(n) && (n as number) >= 0 ? n as number : null);
 
 // GitHub merged a proposal: the merge itself (routes/votes.js checkAndMerge)
@@ -515,11 +378,11 @@ export async function mergeObserved(m: { sessionId: number; appId: number; merge
   } }, { requestKey: `merged:${m.sessionId}:recovery`, source: { kind: 'system', name: 'recovery' }, appId: m.appId });
 }
 
-// Production of an app now runs `sha` (staging.rebuildProduction, whoever
-// called it): every merge of that app still waiting to go live hears it,
-// and checks whether that build contains it. Also while the flag is off, so
-// accepted merges still finish.
-export async function productionDeployed(appId: number, sha: string): Promise<void> {
+// The platform's own app now runs `sha` (its release booting): every merge
+// of it still waiting to go live hears it, and checks whether that build
+// contains it. (A child app's deploys are app-delivery's, which tells the
+// merges waiting on it.)
+async function productionDeployed(appId: number, sha: string): Promise<void> {
   if (!runtime || !merges || !/^[0-9a-f]{40}$/i.test(String(sha || ''))) return;
   const { rows } = await kernelPool!.query(
     `SELECT key FROM wf_instances
@@ -577,12 +440,6 @@ export async function buildsUnderWay(target?: BuildTarget): Promise<{ key: strin
 }
 
 // ── App delivery ────────────────────────────────────────────────────────
-
-// Whether a deploy is asked of app-delivery rather than run here. Off with
-// the flag, even while the machine finishes deploys it accepted before.
-export function deliveryEnabled(): boolean {
-  return runtime !== null && deliveries !== null && deliveriesAdmitted;
-}
 
 // Ask for a deploy of an app's production (the Redeploy route, the drift
 // poller, heal, rollover, a secret change, a demo reset): recorded at once,

@@ -51,7 +51,7 @@ stub(require.resolve('../src/services/github'), { parseGithubUrl: () => null, is
 stub(require.resolve('../src/services/main-drift-poller'), { checkAndRedeployOne: async () => ({}) });
 stub(require.resolve('../src/services/app-secrets'), {});
 stub(require.resolve('../src/services/rename-pr'), { findVisibilityPr: async () => null });
-stub(require.resolve('../src/services/staging'), { rebuildProduction: async () => ({}), MissingSecretsError: class extends Error {} });
+stub(require.resolve('../src/services/staging'), { MissingSecretsError: class extends Error {} });
 
 let pool = null;
 require('../src/db/pool').getPool = () => pool;
@@ -319,7 +319,9 @@ test('a just-you project\'s hub: what it is, and where its first version stands'
     }
 
     // #4045: live in its first week, the card stays as Live, with Open app.
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [proposal.id]);
+    // The merge-followups machine stamps live_at once production runs it,
+    // so the fixture writes both.
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [proposal.id]);
     assert.deepEqual((await get()).first_version, fv({ step: null, of: null, line: 'live', conversation_id: null }));
     // After its first week, the hub has no build to show, and still says what it is.
     await pool.query(`UPDATE apps SET created_at = NOW() - INTERVAL '8 days' WHERE id = $1`, [app.id]);

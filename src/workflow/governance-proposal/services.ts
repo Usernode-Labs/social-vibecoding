@@ -4,7 +4,7 @@
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import { backoff, closeAndComment, gone, missingSecrets, permanent } from '../github-work.ts';
+import { backoff, closeAndComment, gone, permanent } from '../github-work.ts';
 
 interface Deps { config: any; pool: Pool }
 
@@ -24,29 +24,14 @@ export function governanceServices({ config, pool }: Deps): Record<string, WorkH
       },
     },
 
-    // A secret change reaches the running app by a production rebuild.
+    // A secret change's own rebuild, as the machine recorded it before
+    // every deploy was app-delivery's. An item of it left from then deploys
+    // nothing: it hands the redeploy to app-delivery (machine.ts).
     'app.rebuildProduction': {
       maxAttempts: 3,
       backoffMs: backoff,
-      leaseMs: 120000,
-      async run({ input }): Promise<Json> {
-        const { rows: [app] } = await pool.query('SELECT * FROM apps WHERE id = $1', [input.appId]);
-        if (!app) return { skipped: 'no_app' };
-        if (app.self_hosted) return { skipped: 'self_hosted' };
-        let result;
-        try {
-          result = await legacy('services/staging').rebuildProduction(config, app);
-        } catch (err) {
-          if (missingSecrets(err)) throw permanent((err as Error).message);
-          throw err;
-        }
-        if (result) {
-          await pool.query(
-            `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running', last_deploy_at = NOW()
-              WHERE id = $3`,
-            [result.containerId, result.sha || null, input.appId]);
-        }
-        return { containerId: result?.containerId ?? null };
+      async run(): Promise<Json> {
+        return { handOff: true };
       },
     },
 

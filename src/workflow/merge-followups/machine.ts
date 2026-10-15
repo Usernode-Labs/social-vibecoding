@@ -25,9 +25,11 @@ import type { Facts } from './facts.ts';
 export const MACHINE = 'merge-followups';
 export const sessionKey = (sessionId: number) => `session:${sessionId}`;
 
-// Work kinds. app.deliver and delivery.verify decide `live`; the rest only
-// have to happen. With app delivery on, the deploy is app-delivery's: the
-// merge asks it by message, and its answer decides instead of app.deliver.
+// Work kinds. delivery.verify (and app-delivery's answer, a message) decide
+// `live`; the rest only have to happen. The deploy is app-delivery's: the
+// merge asks it by message. app.deliver is the deploy a merge recorded
+// before that ran itself: an item of it left from then hands the merge to
+// app-delivery instead (services.ts), and is removed once none can be left.
 export const WORK = Object.freeze({
   deliver: 'app.deliver',
   nudge: 'host.nudgeDeployer',
@@ -40,6 +42,7 @@ export const WORK = Object.freeze({
   mainCheck: 'main.check',
   bot: 'bot.requestMerged',
   dm: 'bot.dmMerged',
+  live: 'bot.announceLive',
   journey: 'journey.changeLive',
 });
 
@@ -48,7 +51,7 @@ export const WORK = Object.freeze({
 // version pill, the bell).
 export const NOTIFIERS = ['kickQueue', 'boardChange', 'badgeSync'] as const;
 
-const DELIVERY = 'app-delivery';
+const DELIVERY = 'app-delivery' as const;
 const deliveryKey = (appId: number) => `app:${appId}`;
 
 // ── States ──────────────────────────────────────────────────────────────
@@ -75,8 +78,8 @@ export interface Data {
   selfHosted: boolean;
   includedIn: CarrierRef | null;   // role 'included': the change that carried it
   included: number[];              // role 'merge': the changes it carried, as found
-  deliveries: number;              // app.deliver items or app-delivery requests so far (retries get new keys)
-  delivery?: typeof DELIVERY;      // the deploy is asked of app-delivery (absent: app.deliver work)
+  deliveries: number;              // app-delivery requests (or app.deliver items, before) so far
+  delivery?: typeof DELIVERY;      // the deploy is asked of app-delivery (absent: self-hosted, or app.deliver work from before)
   answered?: boolean;              // app-delivery has answered this merge's own request
   deliveredSha: string | null;
   liveAt: string | null;
@@ -222,6 +225,7 @@ function toLive(e: Event<any>, data: Data, deliveredSha: string | null, ctx: Tra
     mergedAt: d.mergedAt, includedIn: d.includedIn });
   const work: WorkRequest[] = [...(x.work || []),
     { kind: WORK.dm, key: 'dm', input: { sessionId: d.sessionId, sha: deliveredSha } },
+    { kind: WORK.live, key: 'live', input: { sessionId: d.sessionId } },
     { kind: WORK.journey, key: 'journey', input: { sessionId: d.sessionId, sha: deliveredSha, at: d.mergedAt } }];
   const messages = [...(x.messages || []), ...d.included.map((id) => ({
     to: { machine: MACHINE, key: sessionKey(id) }, event: { type: 'CarrierDelivered', payload: { sha: deliveredSha } },
@@ -247,28 +251,24 @@ function toFailed(e: Event<any>, data: Data, message: string, x: Extra = {}): Ou
 }
 
 // Demo mode deploys the image the checks ran against when its tree is the
-// merged tree (staging.rebuildProduction verifies it).
+// merged tree (staging.deployProduction verifies it).
 function reuseOf(f: Facts | null): Json {
   const s = f?.session?.staging;
   return f?.app?.demoMode && s && f.app.repo ? { ...s, ...f.app.repo } : null;
 }
 
-function deliverWork(d: Data, f: Facts | null): WorkRequest {
-  const key = d.deliveries > 1 ? `deliver~${d.deliveries}` : 'deliver';
-  return { kind: WORK.deliver, key, input: { appId: d.appId, sessionId: d.sessionId, mergeSha: d.mergeSha, prNumber: d.prNumber, reuse: reuseOf(f) } };
-}
-
-// The same deploy, asked of app-delivery: served by its first deploy that
-// starts after this, which reuses the merge commit when it already runs.
-function deliveryRequest(d: Data, f: Facts | null): NonNullable<Outcome['messages']>[number] {
+// The merge's deploy, asked of app-delivery: served by its first deploy
+// that starts after this, which reuses the merge commit when it already
+// runs.
+function deliveryRequest(d: Data, reuse: Json): NonNullable<Outcome['messages']>[number] {
   return { to: { machine: DELIVERY, key: deliveryKey(d.appId) }, event: { type: 'DeployRequested', payload: {
-    appId: d.appId, reason: 'merge', prNumber: d.prNumber, revision: d.mergeSha, reuse: reuseOf(f),
+    appId: d.appId, reason: 'merge', prNumber: d.prNumber, revision: d.mergeSha, reuse,
   } } };
 }
 
-// Its preview goes. For a merge that is delivered here, only once the
-// delivery has its result: in demo mode the delivery deploys the preview's
-// own build, and the teardown drops the preview's reference to it.
+// Its preview goes. For a merge that is delivered, only once app-delivery
+// has answered: in demo mode the deploy uses the preview's own build, and
+// the teardown drops the preview's reference to it.
 const teardownWork = (d: Data): WorkRequest => ({ kind: WORK.teardown, key: 'teardown', input: { sessionId: d.sessionId } });
 
 // What every merged change has to have done: its preview and worker go, the
@@ -301,7 +301,7 @@ function settleWrites(e: Event<any>, d: Data, s: NonNullable<Facts['session']>):
   ];
 }
 
-function merged(e: Event<any>, f: Facts, ctx: TransitionContext, viaDelivery: boolean, durableWork = false): Outcome<MFState> {
+function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFState> {
   const s = f.session!;
   const app = f.app!;
   const p = e.payload;
@@ -310,27 +310,29 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext, viaDelivery: bo
     authorId: s.userId, repo: app.repo, mergeSha: p.mergeSha, mergedAt: p.mergedAt, force: p.force, forcedBy: p.forcedBy,
     tally: p.tally, selfHosted: app.selfHosted, includedIn: null, included: [], deliveries: 1,
     deliveredSha: null, liveAt: null, failure: null, followups: {},
-    ...(viaDelivery && !app.selfHosted ? { delivery: DELIVERY } : {}),
+    ...(!app.selfHosted ? { delivery: DELIVERY } : {}),
   };
   // The platform's own app is released by its pipeline, not by this
   // process: its release booting appends Deployed. On Docker hosts the host
   // deployer is told to fetch at once rather than on its poll.
-  const work: WorkRequest[] = app.selfHosted ? [{ kind: WORK.nudge, key: 'nudge', input: { sha: d.mergeSha, prNumber: d.prNumber } }]
-    : d.delivery ? [] : [deliverWork(d, f)];
-  const messages = d.delivery ? [deliveryRequest(d, f)] : [];
+  const work: WorkRequest[] = app.selfHosted ? [{ kind: WORK.nudge, key: 'nudge', input: { sha: d.mergeSha, prNumber: d.prNumber } }] : [];
+  const messages = d.delivery ? [deliveryRequest(d, reuseOf(f))] : [];
   work.push(...settleWork(d, s.linkedIssues, false, { teardown: app.selfHosted }));
   if (d.repo && d.prNumber) {
-    work.push({ kind: WORK.find, key: 'included', input: { sessionId: d.sessionId, appId: d.appId, prNumber: d.prNumber, ...d.repo,
-      ...(durableWork ? { durableWork: true } : {}) } });
+    work.push({ kind: WORK.find, key: 'included', input: { sessionId: d.sessionId, appId: d.appId, prNumber: d.prNumber, ...d.repo } });
   }
   if (d.mergeSha) work.push({ kind: WORK.mainCheck, key: 'main-check', input: { appId: d.appId, sessionId: d.sessionId, prNumber: d.prNumber, mergeSha: d.mergeSha } });
   const notify: Notification[] = [{ type: 'kickQueue', appId: d.appId, excludeSessionId: d.sessionId },
     { type: 'badgeSync', sessionId: d.sessionId }];
   // The requests it closes stop showing as open in every web process at
-  // once, as [main]'s merge had its own process do (GitHub closes
-  // `Closes #N` late); issues.closeAfterMerge makes sure they close.
+  // once, and the lists re-read (GitHub closes `Closes #N` late);
+  // issues.closeAfterMerge makes sure they close.
   const push: Push[] = [voteUpdate(d, {})];
-  if (d.repo && s.linkedIssues.length) push.push(issuesClosed({ ...d.repo, numbers: s.linkedIssues }));
+  if (d.repo && s.linkedIssues.length) {
+    push.push(issuesClosed({ ...d.repo, numbers: s.linkedIssues }),
+      issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' }));
+    notify.push({ type: 'boardChange', appId: d.appId, appSlug: d.appSlug });
+  }
   const x: Extra = {
     writes: [{ type: 'secrets', eventId: e.id, sessionId: d.sessionId, appId: d.appId }, ...settleWrites(e, d, s)],
     work, messages, notify, push,
@@ -351,18 +353,15 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext, viaDelivery: bo
   return outcome('delivering', d, x);
 }
 
-// Why a carried change can no longer be included: [main]'s CANDIDATES_SQL
-// and MARK_SQL conditions, now read under the change's own lock. The
-// message is then refused and no instance is made, so the change can still
-// merge on its own, or be included by a later merge.
+// Why a carried change can no longer be included: CANDIDATES_SQL's
+// conditions (services/included-changes.js), read again under the change's
+// own lock. The message is then refused and no instance is made, so the
+// change can still merge on its own, or be included by a later merge.
 //
 // What is working on it is read from the durable record of each: the turn's
 // journal (active_turn), a live shots run, checks running, the operations
 // the preview machine records (session-work.ts), and the head the carrier
-// matched (a change revised since it was listed merges on its own). Without
-// the preview machine, the operations that keep no durable record while they
-// run are left out by the search before this (services.ts included.find,
-// isSessionBusy, in the process running the search).
+// matched (a change revised since it was listed merges on its own).
 function notIncludable(f: Facts, carrierAppId: number | null, head: string | null): string | null {
   const s = f.session;
   if (!s) return 'no_session';
@@ -419,9 +418,13 @@ function andWork(out: Outcome<MFState>, work: WorkRequest[]): Outcome<MFState> {
   return { ...out, next: { name: next.name, data: track(next.data, work) }, work: [...(out.work || []), ...work] };
 }
 
-// A work result updates its follow-up; app.deliver and delivery.verify can
-// also make the change live, and included.find hands the carried changes on.
-// Delivery's first result, whatever it is, lets the preview go.
+// A work result updates its follow-up; delivery.verify (and an app.deliver
+// that deployed before app-delivery ran every deploy) can also make the
+// change live, and included.find hands the carried changes on. An
+// app.deliver's first result, whatever it is, lets the preview go, unless
+// it handed the merge to app-delivery, whose answer does.
+const handedOff = (e: Event<WorkResultPayload>) => e.payload.kind === WORK.deliver
+  && !!(e.payload.result as { handOff?: boolean } | null)?.handOff;
 function workResult(status: Followup['status']) {
   const decide = resultOf(status);
   return {
@@ -429,7 +432,7 @@ function workResult(status: Followup['status']) {
       (s.data.followups[e.payload.workKey]?.status === 'pending' ? ok() : reject('stale_result')),
     to: (s: any, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext): Outcome<MFState> => {
       const out = decide(s, e, f, ctx);
-      return e.payload.kind === WORK.deliver && !s.data.followups.teardown ? andWork(out, [teardownWork(s.data)]) : out;
+      return e.payload.kind === WORK.deliver && !handedOff(e) && !s.data.followups.teardown ? andWork(out, [teardownWork(s.data)]) : out;
     },
   };
 }
@@ -442,6 +445,12 @@ function resultOf(status: Followup['status']) {
       [p.workKey]: { ...prev, status, ...(p.error ? { error: p.error.message } : {}) } } };
     const result = (p.result || {}) as { sha?: string; contains?: boolean; ids?: number[]; found?: { id: number; head: string }[] };
     if (p.kind === WORK.deliver && s.name !== 'live') {
+      // Recorded before every deploy was app-delivery's: the merge asks it
+      // now, as it would have, with the preview build the item offered.
+      if (status === 'done' && handedOff(e)) {
+        const asked = { ...d, delivery: DELIVERY, answered: false };
+        return outcome('delivering', asked, { messages: [deliveryRequest(asked, (prev.input as { reuse?: Json }).reuse ?? null)] });
+      }
       if (status === 'done') return deployedBuild(e, s.name, d, result.sha ? String(result.sha).toLowerCase() : null, ctx);
       if (s.name === 'delivering') return toFailed(e, d, p.error?.message || 'the deploy failed');
     }
@@ -570,9 +579,6 @@ const retryFollowup = {
 export interface MachineDeps {
   dataKey: string;   // config.dataEncryptionKey, for the declared secret values
   notifiers: Record<string, (n: any) => void | Promise<void>>;
-  // Whether a merge asks app-delivery for its deploy (its flag in this
-  // process). Recorded on the instance when it merges.
-  delivery?: () => boolean;
 }
 
 export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
@@ -580,7 +586,6 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
   const system = (e: Event<any>): Check => (e.source.kind === 'system' ? ok() : reject('internal_only'));
   const deliveryMessage = (e: Event<any>): Check =>
     (e.source.kind === 'message' && e.source.from.machine === DELIVERY ? ok() : reject('internal_only'));
-  const viaDelivery = () => !!deps.delivery?.();
   const ownMessage = (e: Event<any>): Check =>
     (e.source.kind === 'message' && e.source.from.machine === MACHINE ? ok() : reject('internal_only'));
   const admin = (e: Event<any>): Check => (e.source.kind === 'admin' ? ok() : reject('admin_only'));
@@ -595,8 +600,11 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
     // DeliveryFailed), the host deployer's nudge as work. 4: who works on a
     // carried change is read from the preview machine's record (worked_on,
     // and its build or run as checks running). During a rollout an older Pod
-    // leaves the instances a newer version wrote alone.
-    version: 4,
+    // leaves the instances a newer version wrote alone. 5: every merge asks
+    // app-delivery (an app.deliver item from before hands off to it), the
+    // request's "It's live" (bot.announceLive), the issue lists' push at the
+    // merge.
+    version: 5,
     events: EVENTS,
     create: ['Merged', 'Included'],
     terminal: ['live'],
@@ -608,8 +616,8 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
     authorize: {
       Merged: system,
       Included: ownMessage,
-      // A deploy anyone made: staging.rebuildProduction and the platform's
-      // release (system), or app-delivery's for merges that did not ask it.
+      // A deploy anyone made: the platform's release booting (system), or
+      // app-delivery's for merges whose own request it did not answer.
       Deployed: (e) => (e.source.kind === 'system' ? ok() : deliveryMessage(e)),
       Delivered: deliveryMessage,
       DeliveryFailed: deliveryMessage,
@@ -625,7 +633,7 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
             : !f.session || !f.app ? reject('no_session')
               : f.session.status === 'merged' ? reject('already_merged')
                 : !['promoted', 'merging'].includes(f.session.status) ? reject('not_merging') : ok()),
-          to: (s, e, f, ctx) => merged(e, f, ctx, viaDelivery(), true),
+          to: (s, e, f, ctx) => merged(e, f, ctx),
         },
         Included: {
           guard: (s, e, f, ctx) => {
@@ -657,14 +665,12 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
         CarrierDeployFailed: { ignore: 'already_failed' },
         RetryDelivery: {
           guard: (s) => ((s as Going).data.role === 'merge' && !(s as Going).data.selfHosted ? ok() : reject('carrier_delivers')),
+          // Asked of app-delivery again (also for a merge whose own deploy,
+          // from before, failed).
           to: (s) => {
-            const d = { ...(s as Going).data, deliveries: (s as Going).data.deliveries + 1, failure: null };
-            // Asked of app-delivery while it runs here; otherwise (its flag
-            // turned off since) the merge's own deploy again.
-            if (d.delivery && viaDelivery()) return outcome('delivering', d, { messages: [deliveryRequest(d, null)] });
-            const { delivery: _, ...own } = d;
-            void _;
-            return outcome('delivering', own, { work: [deliverWork(own, null)] });
+            const d = { ...(s as Going).data, deliveries: (s as Going).data.deliveries + 1, failure: null,
+              delivery: DELIVERY };
+            return outcome('delivering', d, { messages: [deliveryRequest(d, null)] });
           },
         },
         RetryFollowup: retryFollowup,

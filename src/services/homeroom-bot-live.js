@@ -1895,13 +1895,13 @@ async function postOnProposal({ pool, ws, app, issueNumber, runId = null, kind, 
  * request (a GitHub comment and the bot's bubble in its Homeroom thread):
  * "It's live. {title} is in {project} now." Untagged: whoever asked for it
  * hears it in their chat with the bot (homeroom-bot-dm.js
- * noteProposalMerged), and its voters by their own ping. Called beside that
- * DM wherever a merged change is told to whoever asked for it
- * (routes/votes.js finalizeMerge, included-changes.js), and said once per
- * change (its run's `live` post). Never throws; resolves what was posted,
- * or null.
+ * noteProposalMerged), and its voters by their own ping. Asked beside that
+ * DM once a merged or included change is live (the merge-followups workflow
+ * machine's bot.announceLive work), and said once per change (its run's
+ * `live` post). Resolves what was posted, or null; never throws unless
+ * `strict`.
  */
-async function announceLive(pool, { session, deps = {} } = {}) {
+async function announceLive(pool, { session, deps = {}, strict = false } = {}) {
   if (!session?.id) return null;
   try {
     const { rows } = await pool.query(
@@ -1946,6 +1946,9 @@ async function announceLive(pool, { session, deps = {} } = {}) {
       skipGithub: !repo,
     });
   } catch (err) {
+    // The merge-followups machine's work asks it strictly: a failure is
+    // retried there.
+    if (strict) throw err;
     log.warn('homeroom-bot', 'Could not say on its request that a change is live', { sessionId: session.id, err: err.message });
     return null;
   }

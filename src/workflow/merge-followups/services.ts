@@ -5,7 +5,7 @@
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import { backoff, closeAndComment, gone, missingSecrets, permanent } from '../github-work.ts';
+import { backoff, closeAndComment, gone, permanent } from '../github-work.ts';
 import { liveShotsRun } from './facts.ts';
 import { WORK } from './machine.ts';
 
@@ -19,39 +19,14 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
   const app = async (id: number) => (await pool.query('SELECT * FROM apps WHERE id = $1', [id])).rows[0] || null;
 
   return {
-    // Put the merge on production. A retry after a crash that had already
-    // deployed finds the merge commit running and healthy, and deploys
-    // nothing (reuseRunningRevision).
+    // The merge's own deploy, as merges recorded it before every deploy
+    // was app-delivery's. An item of it left from then deploys nothing: it
+    // hands the merge to app-delivery (machine.ts), which deploys it.
     [WORK.deliver]: {
       maxAttempts: 3,
-      backoffMs: (attempt) => 60 * 1000 * 2 ** (attempt - 1),
-      leaseMs: 120000,
-      concurrency: 2,
-      async run({ input }): Promise<Json> {
-        const row = await app(input.appId);
-        if (!row) throw permanent('the app no longer exists');
-        if (row.self_hosted) throw permanent('the platform is released by its own pipeline');
-        let reuseImage = null;
-        if (input.reuse) {
-          // Demo mode: the preview image, when its tree is the merged tree.
-          const treeSha = await github().getCommitTree(input.reuse.owner, input.reuse.repo, input.reuse.commitSha).catch(() => null);
-          if (treeSha) reuseImage = { imageRef: input.reuse.imageRef, buildRef: input.reuse.buildRef, treeSha, fromSha: input.reuse.commitSha };
-        }
-        const staging = legacy('services/staging');
-        let result;
-        try {
-          result = await staging.rebuildProduction(config, row, {
-            ...(input.mergeSha ? { reuseRunningRevision: input.mergeSha } : {}),
-            ...(reuseImage ? { reuseImage } : {}),
-          });
-        } catch (err) {
-          if (missingSecrets(err)) throw permanent((err as Error).message);
-          throw err;
-        }
-        await pool.query(
-          `UPDATE apps SET container_id = $1, main_sha = $2, main_pr_number = $3, last_deploy_at = NOW() WHERE id = $4`,
-          [result.containerId ?? null, result.sha || null, input.prNumber || null, row.id]);
-        return { sha: result.sha || null, imageReused: !!result.imageReused };
+      backoffMs: backoff,
+      async run(): Promise<Json> {
+        return { handOff: true };
       },
     },
 
@@ -118,14 +93,11 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
     // if that is still its head, and nothing is working on it, read under
     // its own lock (machine.ts notIncludable).
     //
-    // A change busy with an operation that keeps no durable record while it
-    // runs (a sync with main or a dispatch starting its worker, a hand-off's
-    // commit upload, a local agent run, a push not yet reconciled into its
-    // head) is left out too. The preview machine records those operations
-    // (`durableWork`, on every merge since its old paths went), and the
-    // guard reads them from its record, in whichever process runs it. An
-    // item from before that (no `durableWork`) asks isSessionBusy, which
-    // knows only this process's operations.
+    // A change busy with an operation (a sync with main or a dispatch
+    // starting its worker, a hand-off's commit upload, a local agent run, a
+    // push not yet reconciled into its head) is left out too: the preview
+    // machine records those operations, and the guard reads them from its
+    // record, in whichever process runs it.
     [WORK.find]: {
       maxAttempts: 6,
       backoffMs: backoff,
@@ -133,9 +105,7 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
         const gh = github();
         if (!gh.isEnabled()) return { ids: [], found: [] };
         const changes = legacy('services/included-changes');
-        const { rows: candidates } = await pool.query(changes.CANDIDATES_SQL, [input.appId, input.sessionId]);
-        const busy = input.durableWork ? () => false : legacy('services/active-workers').isSessionBusy;
-        const rows = candidates.filter((c: { id: number }) => !busy(Number(c.id)));
+        const { rows } = await pool.query(changes.CANDIDATES_SQL, [input.appId, input.sessionId]);
         if (!rows.length) return { ids: [], found: [] };
         const listed = await gh.listPullRequestCommitShas(input.owner, input.repo, input.prNumber);
         const head = (c: any) => String((c.source === 'imported' ? c.imported_pr_head_sha : c.reviewed_head_sha) || '').toLowerCase();
@@ -161,7 +131,7 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
           const row = { id: input.sessionId, app_id: input.appId, app_slug: input.appSlug, linked_issues: numbers };
           const { closed, failed } = await changes.closeRequests({
             pool, row, carrier: { pr_number: input.carrierPrNumber || null }, github: gh,
-            repo: { owner: input.owner, repo: input.repo }, d: changes.depsOf(), bounties: false, report: true, strict: true,
+            repo: { owner: input.owner, repo: input.repo }, d: changes.depsOf(), strict: true,
           });
           // A request that is gone (404, 410) is closed enough; any other
           // failure is retried (closing a closed request again is harmless).
@@ -234,8 +204,23 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
       backoffMs: backoff,
       async run({ input }): Promise<Json> {
         const sent = await legacy('services/homeroom-bot-dm').noteProposalMerged(pool, { id: input.sessionId },
-          { config, sha: input.sha, live: true, deps: { strict: true } });
+          { deps: { strict: true } });
         return { sent: !!sent };
+      },
+    },
+
+    // The request's "It's live" (a GitHub comment and the bot's bubble in
+    // its thread), for a change the bot built: said once per change.
+    [WORK.live]: {
+      maxAttempts: 5,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        const row = await session(input.sessionId);
+        if (!row) return { gone: true };
+        const posted = await legacy('services/homeroom-bot-live').announceLive(pool, {
+          session: row, deps: { github: github() }, strict: true,
+        });
+        return { posted: !!posted };
       },
     },
 
@@ -247,7 +232,7 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
         const row = await session(input.sessionId);
         if (!row) return { gone: true };
         await legacy('services/journey-events').recordChangeLive(pool, {
-          config, session: row, sha: input.sha, at: new Date(input.at), deps: { live: () => true }, strict: true,
+          session: row, sha: input.sha, at: new Date(input.at), strict: true,
         });
         return { recorded: true };
       },

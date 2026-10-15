@@ -809,10 +809,10 @@ test('leaderboard/users: a user who gave nothing gets an empty map', async () =>
 //
 // Regression coverage for the self-kudos loophole: a user could pledge a
 // bounty on an open issue and then author the PR that closes it, awarding
-// the bounty to themselves. resolveIssueBounty (extracted from votes.js
-// checkAndMerge) must VOID the pledger's own bounty rather than award it,
-// while still awarding everyone else's bounty on the same issue to the PR
-// author. Mirrors the direct PR-kudos 403 self-kudos check.
+// the bounty to themselves. resolveIssueBounty (src/workflow/rules/bounties.ts,
+// which the merge-followups machine runs) must VOID the pledger's own bounty
+// rather than award it, while still awarding everyone else's bounty on the
+// same issue to the PR author. Mirrors the direct PR-kudos 403 self-kudos check.
 
 // Minimal mock pool that faithfully implements the two UPDATE statements
 // resolveIssueBounty issues, over an in-memory `bounties` array. Each bounty
@@ -870,7 +870,7 @@ function makeBountyPool(bounties) {
 }
 
 test('resolveIssueBounty: self-pledged bounty is voided, not awarded', async () => {
-  const { resolveIssueBounty } = require('../src/routes/votes');
+  const { resolveIssueBounty } = require('../src/workflow/rules/bounties.ts');
   // Author U (id 1) pledged bounty #100 on issue 7; another user (id 2) also
   // pledged #200 on the same issue. U authors the closing PR (session 50).
   const pool = makeBountyPool([
@@ -893,7 +893,7 @@ test('resolveIssueBounty: self-pledged bounty is voided, not awarded', async () 
 });
 
 test('resolveIssueBounty: U gains no received-kudos credit from their own bounty', async () => {
-  const { resolveIssueBounty } = require('../src/routes/votes');
+  const { resolveIssueBounty } = require('../src/workflow/rules/bounties.ts');
   // Only a self-pledged bounty exists on the issue.
   const pool = makeBountyPool([
     { id: 100, app_id: 1, github_issue_number: 7, giver_user_id: 1, status: 'open', awarded_user_id: null, awarded_session_id: null },
@@ -912,7 +912,7 @@ test('resolveIssueBounty: U gains no received-kudos credit from their own bounty
 });
 
 test('resolveIssueBounty: deleted PR author (null awardee) still awards normally', async () => {
-  const { resolveIssueBounty } = require('../src/routes/votes');
+  const { resolveIssueBounty } = require('../src/workflow/rules/bounties.ts');
   const pool = makeBountyPool([
     { id: 100, app_id: 1, github_issue_number: 7, giver_user_id: 2, status: 'open', awarded_user_id: null, awarded_session_id: null },
   ]);
@@ -925,7 +925,7 @@ test('resolveIssueBounty: deleted PR author (null awardee) still awards normally
 });
 
 test('voiding a self-bounty refunds the weekly allowance slot', async () => {
-  const { resolveIssueBounty } = require('../src/routes/votes');
+  const { resolveIssueBounty } = require('../src/workflow/rules/bounties.ts');
   const { countWeeklyAllowanceUsed } = require('../src/routes/kudos');
   const week = '2026-05-18';
   // U (id 1) pledged a bounty on their own issue this week → 1 slot used.

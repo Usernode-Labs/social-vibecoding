@@ -1,12 +1,13 @@
 // Integration-style test: checkAndMerge() emits an ordered /debug run.
 //
 //   - A clean-merge path produces a 'merge' run whose steps narrate the
-//     gates → claim → GitHub merge → prod rebuild → teardown → merged, and
-//     whose terminal run status is 'merged'.
+//     gates → claim → GitHub merge → merged (the merge reported to the
+//     merge-followups workflow machine, which owns delivery and teardown),
+//     and whose terminal run status is 'merged'.
 //   - A GitHub 405 conflict path leaves a run ending in 'conflict_resolving'
 //     (the auto-resolver was queued) with a conflict-detected step.
 //
-// All collaborators (github, staging, ws, active-users, …) are stubbed via
+// All collaborators (github, platform.ts, ws, active-users, …) are stubbed via
 // require.cache so nothing real spins up. The merge-debug service is REAL —
 // it writes into the same mock pool, which records every row so we can
 // assert the captured steps.
@@ -34,11 +35,9 @@ stub('../src/services/github', {
   getInstallationOctokit: async () => ({ request: async () => ({ data: {} }) }),
   getOctokit: async () => ({ request: async () => ({ data: {} }) }),
 });
-stub('../src/services/staging', {
-  rebuildProduction: async () => ({ sha: 'def5678ab', containerId: 'c1' }),
-  teardownStaging: async () => {},
-  buildAndDeployStaging: async () => ({ containerId: 'c2', stagingUrl: 'u', hostname: 'h' }),
-  verifyStagingEdge: async () => {},
+const reports = [];
+stub('../src/workflow/platform.ts', {
+  mergeConfirmed: async (m) => { reports.push(m); return { status: 'accepted', eventId: 1 }; },
 });
 stub('../src/services/docker', {});
 stub('../src/services/conflict-resolver', {
@@ -111,7 +110,6 @@ function makePool({ checkState = 'passing', yes = 3, behind = 0 } = {}) {
         return { rows: [{ check_state: checkState, test_results: [], checks_checked_at: new Date().toISOString() }] };
       }
       if (/UPDATE chat_sessions SET status = 'merging'/.test(sql)) return { rows: [{ id: params[0] }] };
-      if (/SELECT \* FROM apps WHERE id/.test(sql)) return { rows: [{ id: 5, slug: 'app', self_hosted: false }] };
       if (/UPDATE chat_sessions[\s\S]*behind_main = GREATEST/.test(sql)) return { rows: [{ behind_main: 1 }] };
       return { rows: [], rowCount: 0 };
     },
@@ -131,19 +129,24 @@ function session(extra = {}) {
 test('clean merge records an ordered run ending in merged', async () => {
   mergePRImpl = async () => ({ sha: 'abc1234ef', merged: true });
   lockedImpl = async () => false;
+  reports.length = 0;
   const pool = makePool({ checkState: 'passing' });
   const res = await checkAndMerge({}, pool, session());
   assert.equal(res.merged, true);
+  assert.equal(reports.length, 1, 'the merge was reported to the merge-followups machine');
+  assert.equal(reports[0].sessionId, 100);
+  assert.equal(reports[0].mergeSha, 'abc1234ef');
 
   const phases = pool.steps.map((s) => s.phase);
-  // Gates → claim → github merge → prod rebuild → teardown → merged.
+  // Gates → claim → github merge → merged, which is the last step: the
+  // deploy and the teardown are the machine's, not this run's.
   assert.ok(phases.includes('gate:majority'), 'majority gate step');
   assert.ok(phases.includes('gate:checks'), 'checks gate step');
   assert.ok(phases.includes('claim'), 'claim step');
   assert.ok(phases.includes('github_merge'), 'github merge step');
-  assert.ok(phases.includes('prod_rebuild'), 'prod rebuild step');
-  assert.ok(phases.includes('staging_teardown'), 'teardown step');
-  assert.ok(phases.includes('merged'), 'merged step');
+  assert.equal(phases[phases.length - 1], 'merged', 'the run ends on the merged step');
+  assert.ok(!phases.includes('prod_rebuild') && !phases.includes('staging_teardown'),
+    'no deploy or teardown step in the merge run');
 
   // seq is monotonic and dense within the single run.
   const seqs = pool.steps.map((s) => s.seq);

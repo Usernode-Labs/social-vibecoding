@@ -724,10 +724,11 @@ async function teardownStaging(session, app) {
   return out.taken ? { removed: false, handedOff: true } : { removed: false, leaked: true, busy: true, refused: out.reason };
 }
 
-// Per-app rebuild serialization. Every prod-rebuild caller (dev-chat
-// merge, post-merge sibling sweep, drift poller, manual check-updates,
-// issues auto-fix) funnels through rebuildProduction. When two of them
-// fire for the SAME app close together — e.g. PR #25 and #26 both
+// Per-app rebuild serialization. Every production deploy is the
+// app-delivery machine's (deployProduction), which runs one deploy of an
+// app at a time; rollover's respawn of an existing image is the other
+// writer of an app's runtime. When two deploys of the SAME app ran close
+// together (before app delivery) — e.g. PR #25 and #26 both
 // merging within a minute, each kicking off its own rebuild — their
 // `stopAndRemove(name)` / `runContainer(name)` calls interleave and the
 // second `docker run` 405s with "container name is already in use"
@@ -766,37 +767,19 @@ function serializeRebuild(slug, fn) {
 // Job to schedule, a daemon to start and a push. What it costs is that the
 // image's baked GIT_SHA names `fromSha` (the commit whose code it is) rather
 // than the commit main now points at, so the caller has to be one for which
-// that is true and harmless. Today that is demo mode, and routes/votes.js
-// gates it there; a general "deploy the artifact the checks ran against"
+// that is true and harmless. Today that is demo mode, and the
+// merge-followups machine gates it there (machine.ts reuseOf); a general "deploy the artifact the checks ran against"
 // needs that difference resolved rather than tolerated.
-async function rebuildProduction(config, app, options = {}) {
-  const result = await serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug,
-    () => rebuildProductionInner(config, app, options)));
-  // Every deploy that succeeds, whoever asked for it (a merge, the drift
-  // poller, "Check for updates", a heal): merges of this app still waiting
-  // to go live hear which build now runs, and check whether it contains them
-  // (the merge-followups workflow machine). Never a reason the deploy fails.
-  if (result?.sha) {
-    try {
-      await require('../workflow/platform.ts').productionDeployed(app.id, result.sha);
-    } catch (err) {
-      log.warn('staging', 'Could not report the deploy to waiting merges', { app: app.slug, err: err.message });
-    }
-  }
-  return result;
-}
-
-// The same deploy for the app-delivery workflow machine
+//
+// Every production deploy, for the app-delivery workflow machine
 // (src/workflow/app-delivery/), which owns the "deploying" state
-// (apps.deploy_state, with its pushes) and who hears the result (its
-// replies): no in-memory status, no fan-out.
-async function deployProduction(config, app, options = {}) {
-  // The machine runs one deploy of an app at a time; the chain still orders
-  // it against the old flows that deploy in this process (rollover's
-  // respawn, a work item recorded before the flag), which is all that
-  // orders anything on Docker, where the lock is not taken.
+// (apps.deploy_state, with its pushes), writes the result columns and tells
+// whoever asked. The machine runs one deploy of an app at a time; the chain
+// still orders it against rollover's respawn in this process, which is all
+// that orders anything on Docker, where the lock is not taken.
+function deployProduction(config, app, options = {}) {
   return serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug,
-    () => rebuildProductionInner(config, app, { ...options, track: false })));
+    () => rebuildProductionInner(config, app, options)));
 }
 
 // Whether an offered image is of the tree that was just cloned, and so the
@@ -854,16 +837,6 @@ async function rebuildProductionInner(config, app, options = {}) {
 
   log.info('staging', 'Rebuilding production', { app: app.slug });
 
-  // Single chokepoint for "this app is being rebuilt right now": every
-  // caller (dev-chat merge, drift-poller, manual check-updates) ends up
-  // here, so wrapping the body once means the version-pill UI flips to
-  // its deploying state regardless of who triggered the rebuild.
-  // `track: false` (deployProduction): the workflow machine says it instead.
-  const appDeployStatus = options.track === false ? null : require('./app-deploy-status');
-  if (appDeployStatus) appDeployStatus.markStart(app.slug, { fromSha: app.main_sha || null });
-  let succeeded = false;
-  let resultSha = null;
-  let missingSecretsFromErr = null;
   // Hoisted out of the try so the catch can stamp the failed commit
   // onto the apps.last_failure record (#416).
   let mainSha = null;
@@ -1017,7 +990,7 @@ async function rebuildProductionInner(config, app, options = {}) {
     const appDbPassword = dbPwdRows[0]?.db_password;
     if (!appDbPassword) {
       throw new Error(
-        `rebuildProduction: app ${app.slug} has no db_password — ` +
+        `deployProduction: app ${app.slug} has no db_password — ` +
         `migrateAppDbsToPerRole should have populated it at platform boot.`
       );
     }
@@ -1066,8 +1039,6 @@ async function rebuildProductionInner(config, app, options = {}) {
     ).catch((e) => log.warn('staging', 'Failed to clear last_failure', { app: app.slug, err: e.message }));
 
     log.info('staging', 'Production rebuilt', { app: app.slug, sha: mainSha });
-    succeeded = true;
-    resultSha = mainSha;
     return {
       containerId: deployed.runtimeKind === 'docker' ? deployed.runtimeName : null,
       runtimeKind: deployed.runtimeKind,
@@ -1084,7 +1055,6 @@ async function rebuildProductionInner(config, app, options = {}) {
         app: app.slug, sha: err.sha,
       });
     } else if (err instanceof MissingSecretsError) {
-      missingSecretsFromErr = err.missingSecrets;
       log.warn('staging', 'Production rebuild blocked — missing required secrets', {
         app: app.slug, missing: err.missingSecrets,
       });
@@ -1163,12 +1133,6 @@ async function rebuildProductionInner(config, app, options = {}) {
       }
     }
     throw err;
-  } finally {
-    if (appDeployStatus) appDeployStatus.markEnd(app.slug, {
-      toSha: resultSha,
-      failed: !succeeded,
-      missingSecrets: missingSecretsFromErr,
-    });
   }
 }
 
@@ -1190,7 +1154,6 @@ module.exports = {
   previewDisplayState,
   verifyStagingEdge,
   teardownStaging,
-  rebuildProduction,
   deployProduction,
   // The image-reuse decision and the tree read behind it, unit-tested
   // directly: the decision IS the guarantee, and rebuildProductionInner
@@ -1199,12 +1162,11 @@ module.exports = {
   treeShaOf,
   // Exported for services/app-rollover.js: its cheap respawn path
   // (appRespawn.runExistingImage) does its own stopAndRemove +
-  // runContainer without going through rebuildProduction, so it has to
-  // take the same per-slug lock or it can interleave with a
-  // merge-triggered rebuild of the same app — the exact "container name is
-  // already in use" race the comment above documents. Do NOT call it from
-  // inside a function that rebuildProduction already wraps: the chain is
-  // not re-entrant.
+  // runContainer without going through deployProduction, so it has to
+  // take the same per-slug lock or it can interleave with a deploy of the
+  // same app — the exact "container name is already in use" race the
+  // comment above documents. Do NOT call it from inside a function that
+  // deployProduction already wraps: the chain is not re-entrant.
   serializeRebuild,
   MissingSecretsError,
   WaitsForNewCommitError,

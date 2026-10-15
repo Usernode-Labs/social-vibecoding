@@ -10,8 +10,6 @@ const contract = require('../src/services/visible-changes');
 const controlPlane = require('../src/services/shots-control');
 const shots = require('../src/services/shots-files');
 const orchestrator = require('../src/services/shots-orchestrator');
-const workerService = require('../src/services/worker');
-const kubernetes = require('../src/services/kubernetes');
 const logger = require('../src/services/logger');
 const fixtures = require('./fixtures/shots');
 
@@ -1339,69 +1337,12 @@ test('imported shots releases its temporary worker after the agent fails', async
   assert.equal(fixture.calls.workerReleased, 1);
 });
 
-// A merge retires the proposal's worker. Admin export 2026-10-02: a merge in
-// the middle of a run killed the shots agent about 30 seconds later
-// (container_gone). The run holds the worker, so the merge's retirement waits
-// for it and happens once, after the agent is done.
-function withWorkerHold(t, fixture) {
-  const prior = process.env.WORKER_RUNTIME;
-  process.env.WORKER_RUNTIME = 'kubernetes';
-  t.after(() => {
-    if (prior === undefined) delete process.env.WORKER_RUNTIME;
-    else process.env.WORKER_RUNTIME = prior;
-  });
-  const deleted = [];
-  t.mock.method(kubernetes, 'deleteWorker', async (_config, sessionId, options) => {
-    deleted.push([sessionId, options]);
-    fixture.order.push('worker:retired');
-  });
-  fixture.dependencies.worker.holdWorker = workerService.holdWorker;
-  return deleted;
-}
-
-test('a merge during the shots run retires the worker after the run, not under the agent', async (t) => {
-  let deleted = null;
-  const fixture = setup({
-    dispatch: async (options) => {
-      // The proposal merges while the agent is working.
-      assert.deepEqual(await workerService.retireWorker(42), { deferred: true });
-      assert.deepEqual(deleted, [], 'the agent keeps its worker');
-      const control = controlFor(options);
-      for (const story of control.intent.stories) saveStills(control, story.id);
-      return { backend: 'claude_code', threadId: 'thread-1' };
-    },
-  });
-  deleted = withWorkerHold(t, fixture);
-  const result = await execute(fixture);
-  assert.equal(result.state, 'verified');
-  assert.deepEqual(deleted, [[42, { deleteVolume: true }]], 'retired once the run was done');
-  assert.ok(fixture.order.indexOf('worker:retired') > fixture.order.indexOf('cleanup'));
-  assert.equal(fixture.calls.workerReleased, 0, 'the proposal\'s worker is not a temporary one');
-});
-
-test('a merge during a failed run still retires the worker, once, when the run ends', async (t) => {
-  const fixture = setup({
-    dispatch: async () => {
-      await workerService.retireWorker(42);
-      throw new Error('shots agent failed');
-    },
-  });
-  fixture.session.source = 'imported';
-  const deleted = withWorkerHold(t, fixture);
-  await assert.rejects(execute(fixture), /shots agent failed/);
-  assert.deepEqual(deleted, [[42, { deleteVolume: true }]]);
-  assert.equal(fixture.calls.workerReleased, 0, 'the retirement already removed the temporary worker');
-});
-
-test('a run with no merge leaves the proposal\'s worker in place, and a later merge retires it at once', async (t) => {
-  const fixture = setup();
-  const deleted = withWorkerHold(t, fixture);
-  const result = await execute(fixture);
-  assert.equal(result.state, 'verified');
-  assert.deepEqual(deleted, []);
-  assert.deepEqual(await workerService.retireWorker(42), { deferred: false });
-  assert.deepEqual(deleted, [[42, { deleteVolume: true }]]);
-});
+// A merge retires the proposal's worker only once no shots run is using it
+// (admin export 2026-10-02: a merge in the middle of a run killed the shots
+// agent about 30 seconds later). That wait is the merge-followups machine's
+// worker.retire work, which reads the run from its row: see
+// tests/workflow-merge-followups-services.test.js and
+// tests/workflow-merge-followups-postgres.test.js.
 
 test('a run that fails before dispatch does not tear down an imported worker it never used', async () => {
   const fixture = setup();

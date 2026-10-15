@@ -1000,19 +1000,27 @@ test('WP1: what the run has seen moves past its own plan comment as soon as it i
   ], 'right after the plan comment, from when the build read the request, and again once it is announced');
 });
 
-test('WP1: a merge stops the rest of the bot\'s work on its request, in a block of its own after the merged DM', () => {
-  const votes = read('src/routes/votes.js');
-  const fn = votes.slice(votes.indexOf('async function finalizeMerge('));
-  // The merged DM's call, whatever it is handed after the session (WP3 adds
-  // what the merge deployed).
-  const dmAt = fn.indexOf("require('../services/homeroom-bot-dm').noteProposalMerged(pool, session");
-  const netAt = fn.indexOf("require('../services/homeroom-bot').noteRequestMerged(pool, session)");
-  assert.ok(dmAt > -1 && netAt > dmAt, 'beside the merged DM, after it');
-  assert.ok(netAt > fn.indexOf("UPDATE chat_sessions SET status = 'merged', merged_at = NOW()"), 'once the session reads merged');
-  const between = fn.slice(dmAt, netAt);
-  assert.match(between, /\n    \}\n\n    \/\/ WP1 \(#2\)/, 'its own try block, apart from the DM\'s');
-  assert.match(fn.slice(netAt - 20, netAt + 300), /\?\.catch\?\.\(\(err\) => log\.warn\('votes', 'Homeroom bot merge note failed'/,
-    'never a reason the merge fails');
+test('WP1: a merge stops the rest of the bot\'s work on its request, in a work item of its own apart from the merged DM', () => {
+  // The merge-followups machine (src/workflow/merge-followups/) asks for
+  // each as its own durable work: bot.requestMerged when the merge is
+  // recorded, bot.dmMerged and bot.announceLive once the change is live.
+  // Each is retried on its own, and none is a reason the merge fails: the
+  // merge is already recorded when they run.
+  const machine = read('src/workflow/merge-followups/machine.ts');
+  assert.match(machine, /bot: 'bot\.requestMerged',\n\s*dm: 'bot\.dmMerged',\n\s*live: 'bot\.announceLive',/);
+  const settle = machine.slice(machine.indexOf('function settleWork('), machine.indexOf('function settleWrites('));
+  assert.match(settle, /\{ kind: WORK\.bot, key: 'bot', input: \{ sessionId: d\.sessionId, before: d\.mergedAt \} \}/,
+    'bounded to what had started before the merge');
+  const merged = machine.slice(machine.indexOf('function merged('), machine.indexOf('\n}\n', machine.indexOf('function merged(')));
+  assert.match(merged, /work\.push\(\.\.\.settleWork\(d, s\.linkedIssues, false/, 'asked for when the merge is recorded');
+  const toLive = machine.slice(machine.indexOf('function toLive('), machine.indexOf('function lineInput('));
+  assert.match(toLive, /\{ kind: WORK\.dm, key: 'dm'/, 'the merged DM waits for live');
+  assert.doesNotMatch(toLive, /WORK\.bot\b/, 'and is not the same item');
+
+  const services = read('src/workflow/merge-followups/services.ts');
+  const bot = services.slice(services.indexOf('[WORK.bot]: {'), services.indexOf('[WORK.dm]: {'));
+  assert.match(bot, /legacy\('services\/homeroom-bot'\)\.noteRequestMerged\(pool, \{ id: input\.sessionId \},\s*\{ before: input\.before, strict: true \}\)/,
+    'a failure is reported, so the item is retried');
 });
 
 test('a held issue is told once, not again on every retry that is held again (#3152)', async (t) => {

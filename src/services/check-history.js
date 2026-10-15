@@ -109,9 +109,8 @@ function proposalId(sessionId) {
 
 // Fold the passes of every merged proposal not yet folded into the app's
 // history: each check one of them earned now blocks everybody. Done here,
-// on the read, rather than by each of the merge's paths (routes/votes.js
-// finalizeMerge, the merge-followups machine, a stacked change included in
-// another), so no way of landing can forget it. Claims each merged row
+// on the read, rather than by each way a change lands (its own merge, or
+// included in another), so no way of landing can forget it. Claims each merged row
 // once (checks_earned_settled_at) in the same statement, and COALESCE keeps
 // the first merge's stamp. Never throws; a failure leaves the rows for the
 // next read.

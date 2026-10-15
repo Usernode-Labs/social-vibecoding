@@ -8,8 +8,8 @@
   },
   "takenOver": {
     "app-delivery": {
-      "services | uses src/services/staging.js:deployProduction": "the production deploy, taken over from merge-followups (app.deliver) and governance-proposal (app.rebuildProduction), each of which lists \"services | uses src/services/staging.js:rebuildProduction\" until its work path is deleted with the flag",
-      "services | uses src/services/github.js:getCommitTree": "demo mode's preview image, offered to the deploy when its tree is the merged tree: taken over from merge-followups (app.deliver), which lists the same call until its work path is deleted with the flag"
+      "services | uses src/services/staging.js:deployProduction": "the production deploy, taken over from merge-followups (app.deliver) and governance-proposal (app.rebuildProduction), whose work paths and their staging.rebuildProduction call were deleted with this machine's flag",
+      "services | uses src/services/github.js:getCommitTree": "demo mode's preview image, offered to the deploy when its tree is the merged tree: taken over from merge-followups (app.deliver), whose call went with its work path"
     }
   },
   "io": {
@@ -53,6 +53,11 @@
       "services | uses src/services/visuals.js:notifyChecks": "tells open Checks cards (session bus and WebSocket) the verdict again once checks.publish has refreshed the platform-variables check, which settles after the verdict's own push",
       "services | uses src/services/visuals.js:patchPrBody": "GitHub: the PR body's visuals block (checks.publish), outside the run that used to patch it inline",
       "services | uses src/services/visuals.js:summarizeBootFailure": "the card's wording of a failed build or boot, from the error (pure)"
+    },
+    "app-delivery": {
+      "services | uses src/services/app-teardown.js:removeRuntimeIfDeleted": "removes the runtime a deploy put back for an app deleted while it deployed (the row is gone, or its teardown holds it in any process): the deploy's own cleanup, moved out of heal's recovery",
+      "services | uses src/services/deploy-failure.js:isRootImageRefusal": "whether a failed deploy's image runs as root, from the error (pure): the same commit fails that way every time, so it is an answer, not a retry",
+      "services | uses src/services/deploy-failure.js:ROOT_IMAGE_FIX": "the words saying what to change in the Dockerfile (a constant), the answer a merge's thread shows"
     }
   },
   "handOff": {
@@ -68,10 +73,16 @@
     },
     "governance-proposal": {
       "services | uses src/services/homeroom-bot-closed-requests.js:noteRequestsClosed": "a close vote closed a request: the Homeroom bot's proposals for it are withdrawn and the bot is woken (bot.requestsClosed work, taken over from the deleted close-issue apply); goes when the last step migrates the bot's wake"
+    },
+    "merge-followups": {
+      "services | uses src/services/homeroom-bot-live.js:announceLive": "the request's \"It's live\" on GitHub and in its thread, once a change the bot built is live (bot.announceLive work, taken over from the deleted merge tail); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)"
     }
   },
   "machines": {
     "app-delivery": [
+      "services | uses src/services/app-teardown.js:removeRuntimeIfDeleted",
+      "services | uses src/services/deploy-failure.js:ROOT_IMAGE_FIX",
+      "services | uses src/services/deploy-failure.js:isRootImageRefusal",
       "services | uses src/services/github.js:getCommitTree",
       "services | uses src/services/staging.js:deployProduction"
     ],
@@ -86,8 +97,6 @@
       "services | uses src/services/github.js:getIssue",
       "services | uses src/services/github.js:isEnabled",
       "services | uses src/services/homeroom-bot-closed-requests.js:noteRequestsClosed",
-      "services | uses src/services/staging.js:rebuildProduction",
-      "services | writes apps",
       "shared | uses src/services/github.js (whole module)",
       "shared | uses src/services/github.js:createIssueComment",
       "shared | uses src/services/github.js:fetchIssueComments",
@@ -102,28 +111,14 @@
       "notifiers | uses src/services/mobile-push.js:scheduleBadgeSync",
       "notifiers | uses src/services/ws.js:noteBoardChange",
       "ownership | chat_sessions.included_in_session_id ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
-      "ownership | chat_sessions.included_in_session_id ← src/services/included-changes.js#MARK_SQL",
       "ownership | chat_sessions.included_in_session_id ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
-      "ownership | chat_sessions.live_at ← server.js#recoverStuckMerges",
       "ownership | chat_sessions.live_at ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
-      "ownership | chat_sessions.live_at ← src/routes/votes.js#checkAndMerge",
-      "ownership | chat_sessions.live_at ← src/routes/votes.js#finalizeMerge",
-      "ownership | chat_sessions.live_at ← src/services/included-changes.js#MARK_SQL",
       "ownership | chat_sessions.live_at ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
       "ownership | chat_sessions.live_at ← trigger chat_sessions_inserted_merged_live",
-      "ownership | chat_sessions.live_at ← trigger chat_sessions_merged_live",
-      "ownership | chat_sessions.merge_commit_sha ← server.js#recoverStuckMerges",
       "ownership | chat_sessions.merge_commit_sha ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
-      "ownership | chat_sessions.merge_commit_sha ← src/routes/votes.js#checkAndMerge",
       "ownership | chat_sessions.merge_commit_sha ← src/routes/votes.js#checkAndOpenRevert",
-      "ownership | chat_sessions.merge_commit_sha ← src/routes/votes.js#finalizeMerge",
-      "ownership | chat_sessions.merge_commit_sha ← src/services/included-changes.js#MARK_SQL",
       "ownership | chat_sessions.merge_commit_sha ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
-      "ownership | chat_sessions.merged_at ← server.js#recoverStuckMerges",
       "ownership | chat_sessions.merged_at ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
-      "ownership | chat_sessions.merged_at ← src/routes/votes.js#checkAndMerge",
-      "ownership | chat_sessions.merged_at ← src/routes/votes.js#finalizeMerge",
-      "ownership | chat_sessions.merged_at ← src/services/included-changes.js#MARK_SQL",
       "ownership | chat_sessions.merged_at ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
       "ownership | chat_sessions.status ← server.js#abandonOrphanBenchTurn",
       "ownership | chat_sessions.status ← server.js#recoverStuckMerges",
@@ -134,7 +129,6 @@
       "ownership | chat_sessions.status ← src/routes/sessions.js#resumePausedSession",
       "ownership | chat_sessions.status ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
       "ownership | chat_sessions.status ← src/routes/votes.js#checkAndMerge",
-      "ownership | chat_sessions.status ← src/routes/votes.js#finalizeMerge",
       "ownership | chat_sessions.status ← src/routes/votes.js#voteRoutes",
       "ownership | chat_sessions.status ← src/services/account-deletion.js#deleteAccount",
       "ownership | chat_sessions.status ← src/services/bench/lane.js#recordTrial",
@@ -146,23 +140,21 @@
       "ownership | chat_sessions.status ← src/services/homeroom-bot.js#pauseIdleSession",
       "ownership | chat_sessions.status ← src/services/homeroom-bot.js#putAwayRecoveredSession",
       "ownership | chat_sessions.status ← src/services/homeroom-bot.js#runTriage",
-      "ownership | chat_sessions.status ← src/services/included-changes.js#MARK_SQL",
       "ownership | chat_sessions.status ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
       "ownership | chat_sessions.status ← src/services/session-lifecycle.js#archiveSession",
       "ownership | chat_sessions.status ← src/services/session-lifecycle.js#pauseSession",
       "ownership | chat_sessions.status ← src/services/session-lifecycle.js#unarchiveSession",
       "ownership | chat_sessions.status ← src/services/session-lifecycle.js#unpromoteSession",
       "services | uses src/routes/issues.js:resolveSupersededCloseProposals",
-      "services | uses src/services/active-workers.js:isSessionBusy",
       "services | uses src/services/application-runtime.js:mode",
       "services | uses src/services/deploy-nudge.js:nudgeHostDeployer",
       "services | uses src/services/github.js (whole module)",
       "services | uses src/services/github.js:closePR",
       "services | uses src/services/github.js:compareCommitAncestry",
-      "services | uses src/services/github.js:getCommitTree",
       "services | uses src/services/github.js:isEnabled",
       "services | uses src/services/github.js:listPullRequestCommitShas",
       "services | uses src/services/homeroom-bot-dm.js:noteProposalMerged",
+      "services | uses src/services/homeroom-bot-live.js:announceLive",
       "services | uses src/services/homeroom-bot.js:noteRequestMerged",
       "services | uses src/services/included-changes.js:CANDIDATES_SQL",
       "services | uses src/services/included-changes.js:closeRequests",
@@ -172,10 +164,8 @@
       "services | uses src/services/journey-events.js:recordChangeLive",
       "services | uses src/services/main-watch.js:afterMerge",
       "services | uses src/services/pr-metadata.js:sanitizeIssueNumbers",
-      "services | uses src/services/staging.js:rebuildProduction",
       "services | uses src/services/staging.js:teardownStaging",
       "services | uses src/services/worker.js:destroyCcVolume",
-      "services | writes apps",
       "shared | uses src/services/github.js (whole module)",
       "shared | uses src/services/github.js:createIssueComment",
       "shared | uses src/services/github.js:fetchIssueComments",
@@ -183,12 +173,10 @@
     ],
     "platform": [
       "web | state src/workflow/platform.ts#deliveries",
-      "web | state src/workflow/platform.ts#deliveriesAdmitted",
       "web | state src/workflow/platform.ts#kernelPool",
       "web | state src/workflow/platform.ts#log",
       "web | state src/workflow/platform.ts#machine",
       "web | state src/workflow/platform.ts#merges",
-      "web | state src/workflow/platform.ts#mergesAdmitted",
       "web | state src/workflow/platform.ts#previews",
       "web | state src/workflow/platform.ts#runtime",
       "web | uses src/db/pool.js:getPool",

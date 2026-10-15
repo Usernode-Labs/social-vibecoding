@@ -1,10 +1,10 @@
 // The drift poller and the platform's own row.
 //
-// For a child app, main ahead of apps.main_sha means "rebuild it here". For
-// the self-hosted row it means "merged, not released": main_sha is the build
-// that is serving (seedSelfApp writes GIT_SHA at boot) and the release comes
-// from the repository's Actions workflow through Argo CD, never from
-// rebuildProduction — which on this row can only fail, and did, every tick,
+// For a child app, main ahead of apps.main_sha means "ask app delivery for a
+// deploy". For the self-hosted row it means "merged, not released": main_sha
+// is the build that is serving (seedSelfApp writes GIT_SHA at boot) and the
+// release comes from the repository's Actions workflow through Argo CD, never
+// from a deploy here, which on this row can only fail, and did, every tick,
 // during the #2589 gap ("missing required secrets"). So the poller hands that
 // row's drift to services/release-watch.js, with the head's date and subject
 // so a stall can be dated from the merge and name its PR, and hands its
@@ -23,10 +23,10 @@ const ids = {
   logger: require.resolve('../src/services/logger'),
   pool: require.resolve('../src/db/pool'),
   github: require.resolve('../src/services/github'),
-  staging: require.resolve('../src/services/staging'),
-  ws: require.resolve('../src/services/ws'),
   conflictResolver: require.resolve('../src/services/conflict-resolver'),
   releaseWatch: require.resolve('../src/services/release-watch'),
+  platform: require.resolve('../src/workflow/platform.ts'),
+  mainWatch: require.resolve('../src/services/main-watch'),
 };
 
 stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
@@ -61,13 +61,14 @@ stub(ids.github, {
   isEnabled: () => true,
 });
 
-const rebuilds = [];
-stub(ids.staging, {
-  rebuildProduction: async (config, app) => { rebuilds.push(app.slug); return { containerId: 'c-1', sha: remoteSha }; },
-  MissingSecretsError: class extends Error {},
+// The deploys asked of app delivery, by app id.
+const requested = [];
+stub(ids.platform, {
+  requestDeploy: async (appId, reason) => { requested.push([appId, reason]); return 1; },
 });
-stub(ids.ws, { broadcastGlobal: () => {} });
 stub(ids.conflictResolver, { checkAndResolveConflicts: async () => {} });
+// main's unit suite on a new main (services/main-watch.js) is its own concern.
+stub(ids.mainWatch, { afterMerge: async () => {} });
 
 const observed = [];
 const converged = [];
@@ -101,18 +102,18 @@ const CHILD = {
 };
 
 function reset() {
-  poller._forTest.resetBackoff();
-  rebuilds.length = 0; observed.length = 0; converged.length = 0; queries.length = 0;
+  poller._forTest.resetHeadCache();
+  requested.length = 0; observed.length = 0; converged.length = 0; queries.length = 0;
   remoteSha = MERGED; branchShape = 'full'; pollRows = [];
 }
 
-test('the self-hosted row ahead on main goes to the release watch, not to a rebuild', async () => {
+test('the self-hosted row ahead on main goes to the release watch, not to a deploy', async () => {
   reset();
   const result = await poller.checkAndRedeployOne({}, pool, SELF);
   assert.equal(result.status, 'release_pending');
   assert.equal(result.sha, MERGED);
   assert.equal(result.running, RUNNING);
-  assert.equal(rebuilds.length, 0, 'rebuildProduction is never called for the platform itself');
+  assert.equal(requested.length, 0, 'no deploy is ever asked for the platform itself');
   assert.equal(observed.length, 1);
   assert.equal(observed[0].app, SELF);
   assert.deepEqual({ ...observed[0].head, octokit: undefined }, {
@@ -133,11 +134,11 @@ test('the self-hosted row at main closes out a recorded stall', async () => {
   assert.equal(observed.length, 0);
 });
 
-test('a child app at the same drift is rebuilt as before, and never consults the watch', async () => {
+test('a child app at the same drift asks app delivery for a deploy, and never consults the watch', async () => {
   reset();
   const result = await poller.checkAndRedeployOne({}, pool, CHILD);
-  assert.equal(result.status, 'redeployed');
-  assert.deepEqual(rebuilds, ['echo']);
+  assert.equal(result.status, 'deploy_requested');
+  assert.deepEqual(requested, [[8, 'drift']]);
   assert.equal(observed.length, 0);
   remoteSha = RUNNING;
   assert.equal((await poller.checkAndRedeployOne({}, pool, CHILD)).status, 'no_drift');
@@ -162,5 +163,5 @@ test('the poll reads self_hosted and release_stall so the watch has what it need
   assert.match(select.sql, /SELECT id, slug, repo_url, main_sha, self_hosted, release_stall/);
   assert.equal(observed.length, 1);
   assert.equal(observed[0].app.slug, 'usernode-2d5619');
-  assert.deepEqual(rebuilds, ['echo']);
+  assert.deepEqual(requested, [[8, 'drift']]);
 });
