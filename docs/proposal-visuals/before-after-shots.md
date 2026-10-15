@@ -901,6 +901,14 @@ cell, so the card is as tall as its longest description on every screen.
   claim out, the note is shown as "Not in these shots: …", so a partial pair
   is never mistaken for the whole change. A change with no screen of its own
   is listed below the viewer instead.
+- **Side by side, cropped (#5063).** On the change page's card, side by side
+  (and the automatic side by side when there is room) crops both sides to
+  the screen's declared changes: the numbered outlines with a small margin,
+  drawn with CSS over the stills, so no new image is made. A crop wider than
+  it is tall stacks the two sides, before above after, with the divider and
+  After chip moved to suit. Picking Before or After keeps the whole screen,
+  and a screen with no outlines, a region that covers most of it, or a first
+  version's after-only shots show whole as they always did.
 
 The outlines are worked out once, when the run saves its shots
 (`src/services/shots-diff.js`), and stored in the verdict as `screens`. The

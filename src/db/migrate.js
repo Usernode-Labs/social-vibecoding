@@ -7493,6 +7493,18 @@ async function seedStagingShotsNoticed(pool) {
       passed: true, mode: 'shots', runs: 1,
       stories: [{ id: 'board-sort', status: 'ready', files: files.length }],
       notices,
+      // #5063: the card's side-by-side view crops to the declared changes,
+      // so the demo run carries where they differ: the accent bar the after
+      // image draws between the header and the rows.
+      screens: [['desktop', 1280, 800], ['phone', 390, 844]].map(([viewport, width, height]) => ({
+        viewport,
+        shot: 'board-sort',
+        stories: ['board-sort'],
+        width,
+        heightBefore: height,
+        heightAfter: height,
+        regions: [{ story: 'board-sort', b: [0, 96, width, 32], a: [0, 96, width, 32], bMark: null, aMark: null }],
+      })),
     };
     const planHash = crypto.createHash('sha256')
       .update(`staging-shots-noticed:${files.map((file) => file.sha256).join(':')}`).digest('hex');
