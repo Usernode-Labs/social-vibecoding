@@ -20,7 +20,8 @@
  * self-hosted app). So exactly two call sites choose between the two
  * DAOs, both keyed on `apps.self_hosted`:
  *   - routes/apps.js  — GET/PUT/DELETE /api/apps/:slug/secrets*
- *   - routes/issues.js — maybeApplySecretChangeProposal (the vote path)
+ *   - the governance machine's applySecret (src/workflow/governance-proposal/
+ *     machine.ts), the vote path
  * Everything else stays segregated: mergeForDeploy() never learns about
  * platform_env, and this module never learns about app_secrets. The
  * invariant to check when auditing is therefore "the branch picks the

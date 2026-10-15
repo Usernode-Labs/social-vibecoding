@@ -45,14 +45,26 @@ const repoOf = (url: unknown) => {
 };
 const cancelled = (ctx: WorkContext, err: unknown) => ctx.signal.aborted || err instanceof LeaseLost;
 
-// The id one claim of a checks run gives its Jobs and its check_runs row (a
-// UUID, as that table's key is): one per claim, so a claim that runs again
-// never meets the Jobs of the one before under the same names. The run
-// itself is known by the work item's key (`runKey`), which its manifest
-// carries and its media are held under.
-export function claimRunId(sessionId: number, runKey: string, claim: number): string {
-  const h = createHash('sha256').update(`preview-run:${sessionId}:${runKey}:${claim}`).digest('hex');
+// A UUID derived from `text` (version 4's layout, as check_runs' key and the
+// Jobs' run-id label take it).
+function uuidOf(text: string): string {
+  const h = createHash('sha256').update(text).digest('hex');
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${((parseInt(h[16]!, 16) & 3) | 8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
+// The id one claim of a checks run gives its Jobs and its check_runs row:
+// one per claim, so a claim that runs again never meets the Jobs of the one
+// before under the same names. The run itself is known by the work item's
+// key (`runKey`), which its manifest carries and its media are held under.
+export function claimRunId(sessionId: number, runKey: string, claim: number): string {
+  return uuidOf(`preview-run:${sessionId}:${runKey}:${claim}`);
+}
+
+// The run id of attempt n's early unit suite: known from the attempt alone to
+// the launcher, the checks run that reads it and the retirements that remove
+// it, so none of them has to be told.
+export function unitEarlyRunId(sessionId: number, n: number): string {
+  return uuidOf(`preview-unit-early:${sessionId}:${n}`);
 }
 
 export function previewServices({ config, pool }: Deps): Record<string, WorkHandler> {
@@ -84,6 +96,11 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
     // Any claim of attempt n (kubernetes.js attemptFence: `n.k`).
     const fence = kubernetes().attemptFence(c?.labels?.[kubernetes().PREVIEW_ATTEMPT_ANNOTATION]);
     return fence?.attempt === input.n;
+  };
+  // An attempt's early unit suite, running or finished: its Jobs go.
+  const dropUnitEarly = async (sessionId: number, n: number) => {
+    if (config.workerRuntime !== 'kubernetes') return;
+    await kubernetes().deleteRunCheckJobs(config, { sessionId, previewRunId: unitEarlyRunId(sessionId, n) });
   };
   // Every claim of a run (its check_runs rows, by the run's key): their Jobs
   // cancelled, finished or not, and their rows gone.
@@ -166,6 +183,51 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
       },
     },
 
+    // The repo's unit suite for attempt n, started with its build instead of
+    // after it: on the platform's own app the build, the boot and the wait
+    // for a checks slot came to about 70s in front of a 168s suite. Its Jobs
+    // carry the attempt's early run id; the checks run against the attempt
+    // reads them (unit-suite.collectUnitSuite), or runs its own suite when
+    // there is nothing to read. The item only launches the Jobs and follows
+    // them to their end; their outcome is the checks run's to read. Started
+    // only while fewer unit suites run than the checks queue lets runs go at
+    // once, so a burst of builds cannot fill the worker namespace's quota
+    // ahead of the runs the queue admits. EARLY_UNIT_SUITE=0 turns it off.
+    [WORK.unitEarly]: {
+      // Its Jobs outlive a lost claim, and a retry finds them.
+      maxAttempts: 2,
+      leaseMs: PREPARE_LEASE_MS,
+      concurrency: CONCURRENCY,
+      async run({ input, signal }): Promise<Json> {
+        const off = ['0', 'false', 'off'].includes(String(process.env.EARLY_UNIT_SUITE ?? '1').trim().toLowerCase());
+        const unitSuite = legacy('services/unit-suite');
+        if (off || config.workerRuntime !== 'kubernetes' || !unitSuite.isEnabled()) return { started: false, why: 'off' };
+        // Only while its attempt is still being built: once it serves, its
+        // checks run is under way and runs a suite of its own if it finds
+        // none; once it is superseded or failed, nothing will read one.
+        const { rows: [live] } = await pool.query(
+          `SELECT 1 FROM wf_instances WHERE machine = 'preview' AND key = $1 AND (data->'preparing'->>'n')::int = $2`,
+          [`session:${input.sessionId}`, Number(input.n)]);
+        if (!live) return { started: false, why: 'not_preparing' };
+        const runId = unitEarlyRunId(input.sessionId, input.n);
+        const k = kubernetes();
+        const jobs = await k.findCheckJobs(config, { sessionId: input.sessionId, previewRunId: runId });
+        if (jobs.unitSuites?.length || jobs.unitSuite) return { started: true, runId, joined: true };
+        const cap = legacy('services/checks-queue').maxConcurrentRuns();
+        const running = await k.countRunningUnitSuiteJobs(config);
+        if (running === null || (cap > 0 && running >= cap)) return { started: false, why: 'busy', running, cap };
+        const [row, a] = await Promise.all([session(input.sessionId), app(input.appId)]);
+        const repo = repoOf(a?.repo_url);
+        if (!row || !repo) return { started: false, why: 'gone' };
+        await unitSuite.maybeRunUnitSuite({
+          config, pool, appId: input.appId, sessionId: input.sessionId, repoOwner: repo.owner, repoName: repo.repo,
+          ref: input.head, prNumber: Number(row.pr_number) || null,
+          signal, previewRunId: runId, jobNamePrefix: 'sv-unit-early', strict: true,
+        }).catch(() => null);
+        return { started: true, runId };
+      },
+    },
+
     // The checks for the attempt that serves, from admission to the parsed
     // settlement; the machine stores it. The run's Jobs carry the work
     // item's key as their run id, so a retry after a lost claim collects
@@ -179,18 +241,28 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
         const { input, attempt, signal } = ctx;
         const [row, a] = await Promise.all([session(input.sessionId), app(input.appId)]);
         if (!row || !a) return { outcome: 'blocked', reason: 'The proposal or its app no longer exists' };
+        // The place in the checks queue an earlier claim had: the run asks
+        // for its slot as of then, not from the back of the line.
+        let queuedSince: string | null = null;
         if (attempt > 1) {
           const collected = await legacy('services/check-harvest')
             .collectForWorkflow(config, pool, { runKey: input.runId, session: row, app: a, signal });
           if (collected) return collected as Json;
+          const { rows: [placed] } = await pool.query(
+            `SELECT min(queued_at) AS at FROM check_runs WHERE session_id = $1 AND manifest->>'runKey' = $2`,
+            [input.sessionId, input.runId]);
+          queuedSince = placed?.at ? new Date(placed.at).toISOString() : null;
           // Nothing to read: what the earlier claims left goes, and the run
           // starts over under this claim's own id.
           await clearRun(input.sessionId, input.runId);
         }
         const stagingResult = { runtimeName: input.runtimeName, runtimeKind: input.runtimeKind, stagingUrl: input.url, timings: null };
         const result = await visuals().captureForSession(config, row, a, input.head, stagingResult, {
-          trigger: input.trigger, force: true,
-          workflow: { runId: claimRunId(input.sessionId, input.runId, attempt), runKey: input.runId, signal },
+          trigger: input.trigger,
+          workflow: {
+            runId: claimRunId(input.sessionId, input.runId, attempt), runKey: input.runId, signal,
+            unitRunId: unitEarlyRunId(input.sessionId, input.n), queuedSince,
+          },
         });
         return (result ?? { outcome: 'blocked', reason: 'The checks run produced no result' }) as Json;
       },
@@ -229,9 +301,15 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
         if (input.state) {
           const a = await app(row.app_id);
           if (a?.self_hosted) {
-            await legacy('services/platform-env-check').refreshPlatformEnvCheck({
+            const verdict = await legacy('services/platform-env-check').refreshPlatformEnvCheck({
               pool, app: a, session: row.source === 'cli_handoff' ? { ...row, checks_commit_sha: input.head } : row,
             });
+            // The settle's checks_ready went out before this refresh: say it
+            // again, so an open Checks card re-reads the platform variables.
+            if (verdict && row.checks_commit_sha === input.head) {
+              visuals().notifyChecks(input.sessionId,
+                { state: row.check_state, results: Array.isArray(row.test_results) ? row.test_results : [] }, input.head, null);
+            }
           }
         }
         return { published: true };
@@ -253,6 +331,7 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           const k = kubernetes();
           await k.deleteSecret(config, k.attemptSecretName(runtimeName(input.appId, input.sessionId), input.n));
         }
+        await dropUnitEarly(input.sessionId, input.n);
         const dirs = Array.from({ length: PREPARE_ATTEMPTS + 1 }, (_, claim) => `/tmp/usernode-preview-${input.sessionId}-a${input.n}-c${claim}`);
         await legacy('services/docker').execFileAsync('rm', ['-rf', ...dirs]).catch(() => {});
         return { dropped: input.db };
@@ -276,9 +355,17 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           await k.deleteApplication(config, name, { identity: true, secrets });
           if (config.captureRuntime === 'kubernetes') await k.cancelPreviewChecks(config, input.sessionId);
         } else {
-          await legacy('services/application-runtime').remove(config,
-            { runtimeKind: 'docker', runtimeName: input.runtimeName || `usernode-staging-${input.appSlug}--${input.sessionId}` });
+          // A preview's short stop grace (#767). A container that survives is
+          // a failed retirement, before any database it may still use goes
+          // (#851): the item is retried, and an admin sees it if it never
+          // goes.
+          const docker = legacy('services/docker');
+          const container = input.runtimeName || `usernode-staging-${input.appSlug}--${input.sessionId}`;
+          const removed = await legacy('services/application-runtime').remove(config,
+            { runtimeKind: 'docker', runtimeName: container }, { stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC });
+          if (removed && removed.removed === false) throw new Error(`Still present after retirement: ${container}`);
         }
+        for (const a of attempts) await dropUnitEarly(input.sessionId, a.n);
         const dbs = attempts.flatMap((a: { db: string; dbs?: string[] }) => a.dbs ?? [a.db]);
         for (const db of dbs) await dbManager().dropDatabase(db, { strict: true });
         const left = name ? await k.previewResourcesPresent(config, name, secrets) : [];
@@ -341,12 +428,15 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
       },
     },
 
-    // Hand-off: a Homeroom bot's change whose preview will not start, once
-    // per failure streak.
+    // Hand-offs once per failure streak, for a change whose preview will not
+    // start: the Homeroom bot's note on a change of its, and for an imported
+    // pull request, its before & after shots (planned when it was submitted)
+    // told there is nothing to take shots of.
     [WORK.stopped]: {
       maxAttempts: 3,
       async run({ input }): Promise<Json> {
         await legacy('services/homeroom-bot-dm').noteChangeStopped(pool, input.sessionId, { why: 'preview' });
+        if (input.imported) await legacy('services/shots-orchestrator').noteNotStarted(pool, Number(input.sessionId), 'no_staging_preview');
         return { noted: true };
       },
     },

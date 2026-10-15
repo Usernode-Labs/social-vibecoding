@@ -47,8 +47,6 @@ const WRITE_RETRY_MS = [500, 2000, 5000];
 
 const KINDS = Object.freeze([
   'session',        // a turn or an operation on a dev session (active-workers.js)
-  'staging_build',  // a preview build (staging.js)
-  'capture',        // a checks capture (visuals.js)
   'sync',           // a sync of a session's branch with main (sync-main.js)
   'handoff',        // a hand-off pipeline (handoff-pipeline.js)
   'shots',          // a before & after shots run, by session (shots-orchestrator.js)
@@ -56,7 +54,6 @@ const KINDS = Object.freeze([
   'deploy',         // a production deploy, by app slug (app-deploy-status.js)
   'agent_turn',     // the Mayor's turn in an agent session (mayor/agent-turn.js)
   'app_creation',   // an app being created (app-creation-owner.js)
-  'redeploy',       // an owed redeploy being given (owed-redeploy.js)
   'shots_eval',     // a shots eval trial (shots-eval-runner.js)
   'global_turn',    // a Global Chat turn (routes/global-chat.js)
   'bench_trial',    // a bench trial run here (bench/lane.js)

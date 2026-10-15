@@ -21,7 +21,8 @@
 //   - every observed close after a merge, the bot's or a person's
 //     (issue-close-watcher.js, and included-changes.js for a change that went
 //     live inside another);
-//   - a passed close-issue vote (routes/issues.js maybeApplyCloseIssueProposal);
+//   - a passed close-issue vote (the governance machine's bot.requestsClosed
+//     work, src/workflow/governance-proposal/services.ts);
 //   - the bot's own refresh, for a request closed on GitHub, where Homeroom
 //     gets no signal (homeroom-bot.js refreshApp, sweepClosedRequests).
 // Best effort everywhere: never a reason a merge, a vote or a refresh fails.

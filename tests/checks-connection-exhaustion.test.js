@@ -15,7 +15,8 @@
 //   - the CHECKS pipeline, when the app boots and then answers 500s;
 //   - the BOOT path, when the app cannot get a connection at startup and
 //     never becomes healthy at all;
-//   - the AUTHOR, who is told about neither, because neither is theirs.
+//   - the AUTHOR, who is told about neither, because neither is theirs
+//     (the preview machine's prepareFailed write).
 //
 // Run with: node --test tests/checks-connection-exhaustion.test.js
 
@@ -220,17 +221,21 @@ test('classify carries the marker without changing the persisted record', () => 
 // ── The author ───────────────────────────────────────────────────────────
 
 test('an infrastructure boot failure blocks the merge but does not nudge the author', () => {
-  const src = stripComments(read('src/services/staging-recovery.js'));
-  const fn = src.slice(src.indexOf('async function recordStagingBootFailure('));
-  const body = fn.slice(0, fn.indexOf('\n}\n') + 3);
+  // The prepare reports the failure with the marker; the preview machine's
+  // prepareFailed domain write records it.
+  const services = stripComments(read('src/workflow/preview/services.ts'));
+  assert.match(services, /const infrastructure = !!legacy\('services\/deploy-failure'\)\.bootFailureIsInfrastructure\(err\);/);
+  const src = stripComments(read('src/workflow/preview/machine.ts'));
+  const fn = src.slice(src.indexOf('async prepareFailed('));
+  const body = fn.slice(0, fn.indexOf('\n  },\n') + 5);
   // Still recorded as 'error' with the detail: the proposal stays blocked
   // and the card still says why. Only the nudge is skipped.
   assert.match(body, /state: 'error', results: \[\]/);
-  assert.match(body, /bootFailureIsInfrastructure\(err\)/);
-  const guard = body.indexOf('if (infrastructure) {');
+  const guard = body.indexOf('if (!stored || w.infrastructure) return;');
   assert.ok(guard > 0, 'the early return must exist');
-  assert.ok(guard > body.indexOf('check_error_notified_at = NOW()'),
-    'the stamp runs first, so the backoff retries stay quiet either way');
+  assert.ok(guard > body.indexOf('store.storeChecks('), 'the verdict is written first');
+  assert.ok(guard < body.indexOf('check_error_notified_at = NOW()'),
+    'nothing is stamped, so a later failure that is the author\'s still tells them once');
   assert.ok(guard < body.indexOf('createCheckFailedNotification'),
     'and the return lands before the notification the author cannot act on');
   assert.ok(guard < body.indexOf('Staging preview failed to start, so automated checks'),

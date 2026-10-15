@@ -3,8 +3,9 @@
 // The error lane's platform-fault rule against a real PostgreSQL
 // (tests/platform-fault-retry.test.js pins its shape): storeChecks writes
 // chat_sessions.check_error_platform, findStuckCheckSessions keeps such a row
-// past CHECK_MAX_AUTO_RETRIES for a day from its first failure, and
-// rearmPlatformFaults makes it due at boot.
+// past CHECK_MAX_AUTO_RETRIES for a day from its first failure, and leaves
+// a session the preview machine holds to the machine's own retry (which a
+// release re-arms at boot: tests/workflow-preview-postgres.test.js P25).
 //
 // Skips when no postgres is reachable (TEST_DATABASE_URL, else DATABASE_URL,
 // else localhost); a set TEST_DATABASE_URL that cannot be reached fails.
@@ -39,6 +40,8 @@ const DDL = [
      handoff_upload_checked_sha TEXT, promoted_at TIMESTAMPTZ, last_activity_at TIMESTAMPTZ,
      created_at TIMESTAMPTZ DEFAULT NOW())`,
   'CREATE TABLE check_runs (run_id TEXT PRIMARY KEY, session_id INTEGER, admitted_at TIMESTAMPTZ)',
+  'CREATE TABLE wf_instances (machine TEXT, key TEXT, state TEXT, deadline_at TIMESTAMPTZ, PRIMARY KEY (machine, key))',
+  'CREATE TABLE wf_work (machine TEXT, key TEXT, kind TEXT, status TEXT)',
   ...STREAK_COLUMNS,
 ].join(';\n');
 
@@ -59,7 +62,7 @@ test('every failure-streak column comes from schema.sql', () => {
   assert.equal(STREAK_COLUMNS.length, 7);
 });
 
-test('a platform fault is retried past the cap for a day, any other error is not, and a boot makes it due', async (t) => {
+test('a platform fault is retried past the cap for a day, any other error is not, and a held session is the machine\'s', async (t) => {
   const conn = await connect();
   if (!conn) { t.skip('the pg driver is not installed in this environment'); return; }
   if (conn.error) {
@@ -106,12 +109,16 @@ test('a platform fault is retried past the cap for a day, any other error is not
     assert.equal(stagingRecovery.errorWithinAutoRetries(await row(boot), { maxAutoRetries: 6 }), false);
     assert.equal(stagingRecovery.errorWithinAutoRetries(await row(old), { maxAutoRetries: 6 }), false);
 
-    // Waiting out its backoff, nothing picks it up, until a boot makes it due.
+    // A session the preview machine holds runs again on the machine's own
+    // timer while it is set; with none set (it was not up for approval when
+    // it failed) the lane here runs it, as for a verdict from before.
+    await client.query("INSERT INTO wf_instances (machine, key, state, deadline_at) VALUES ('preview', $1, 'failed', NOW() + INTERVAL '5 minutes')", [`session:${platform}`]);
+    assert.deepEqual(await stuckIds(), []);
+    await client.query('UPDATE wf_instances SET deadline_at = NULL');
+    assert.deepEqual(await stuckIds(), [platform], 'a failure the machine set no timer for is the lane\'s');
+    // Waiting out its backoff, nothing picks it up.
     await client.query("UPDATE chat_sessions SET check_next_retry_at = NOW() + INTERVAL '30 minutes'");
     assert.deepEqual(await stuckIds(), []);
-    assert.deepEqual(await stagingRecovery.rearmPlatformFaults(client), [platform], 'only the platform fault inside its day');
-    await new Promise((r) => setTimeout(r, 5));
-    assert.deepEqual(await stuckIds(), [platform]);
 
     // Another error on the same head is that error, and stops at the cap.
     await visuals.storeChecks(client, platform, 'sha-platform', { state: 'error', results: [] }, 'The staging preview did not start.');

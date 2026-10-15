@@ -1945,11 +1945,6 @@ async function deleteBenchBranch(owner, repo, branchName) {
   }
 }
 
-// Close an issue. Goes through getOctokit (PAT-preferred) so we get a
-// real @octokit/rest instance with `.rest.issues.update`. Used by the
-// rename-issue → rename-PR migration to retire the legacy issue once its
-// PR is open (mirrors how maybeApplyRenameProposal closes the issue when
-// a rename vote lands).
 // Retitle an existing issue. Used by the title-heal sweeper
 // (services/title-heal.js) when a feedback issue was filed with the
 // LLM-unavailable fallback title and a real title has now been generated.

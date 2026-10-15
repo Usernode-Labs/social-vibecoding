@@ -19058,8 +19058,9 @@ const AppView = {
   GOV_APPLY_SLOW_MS: 12000,
   GOV_APPLY_STALLED_MS: 60000,
   // How long past a merge window's end the DERIVED state still reads as
-  // "actively closing". The governance-apply ticker runs every ~60s, so a
-  // healthy apply lands well inside this; past it something is wrong
+  // "actively closing". The governance machine applies at the window's end
+  // (a timer, with a backstop every ten minutes), so a healthy apply lands
+  // well inside this; past it something is wrong
   // (GitHub unreachable) and the calmer "will retry automatically" copy is
   // the honest one.
   GOV_APPLY_DERIVED_GRACE_MS: 120000,
