@@ -173,13 +173,6 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "494303c8aea7b8fc16eb",
-      "count": 1,
-      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url, LEFT(manifest_snapshot->>'description', 280) AS description, (NOT self_hosted AND created_at > NOW() - INTE"
-    },
-    {
-      "source": "src/routes/apps.js",
-      "kind": "structural-template",
       "fingerprint": "606267a1970143fe0d00",
       "count": 1,
       "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`"
@@ -187,9 +180,16 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "c6b99ca4735605a08367",
+      "fingerprint": "b6f5710ec85cd13574e9",
       "count": 1,
-      "preview": "`SELECT ${appAccess.nonSecretAppColumnList()}, ${communities.audienceSql('apps', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = apps.communit"
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url, LEFT(manifest_snapshot->>'description', 280) AS description, (NOT self_hosted AND created_at > NOW() - INTE"
+    },
+    {
+      "source": "src/routes/apps.js",
+      "kind": "structural-template",
+      "fingerprint": "f8846f57b8bf055ee97d",
+      "count": 1,
+      "preview": "`SELECT ${appAccess.nonSecretAppColumnList()}, template, ${communities.audienceSql('apps', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = app"
     },
     {
       "source": "src/routes/chat.js",

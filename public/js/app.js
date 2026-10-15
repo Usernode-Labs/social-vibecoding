@@ -1614,10 +1614,15 @@ const App = {
   _applyLaunchShot() {
     let shot = null;
     let settled = false;
+    let failed = false;
     try {
       const params = new URLSearchParams(location.search);
       shot = params.get('shot');
       settled = params.get('settle') === '1';
+      // #4813: the paired failed state. On the base commit `failed=1` is
+      // ignored and the spinner stays up; on this commit it synthesises the
+      // failed card, so the before/after capture observes the actual change.
+      failed = params.get('failed') === '1';
     } catch (err) { /* ignore */ }
     // #1945: `?shot=app-tone-dark` / `?shot=app-tone-light` — a running app
     // whose page is that tone, so the bar above it can be seen taking it.
@@ -1639,6 +1644,13 @@ const App = {
     if (settled) {
       setTimeout(() => {
         try { AppView.showSettledLaunchShot(); } catch (err) { /* ignore */ }
+      }, 50);
+      return;
+    }
+    // #4813: the failed launch card, same 50ms defer as the settled state.
+    if (failed) {
+      setTimeout(() => {
+        try { AppView.showLaunchFailedShot(); } catch (err) { /* ignore */ }
       }, 50);
       return;
     }
@@ -2556,6 +2568,15 @@ const App = {
       // with the app view's own loader below.
       const messages = window.UsernodeReact?.messages;
       if (messages?.showing?.()) messages.resync?.();
+
+      // The Communities screen (#5164): its counts and Needs you feed are
+      // the workshop controller's own quiet reads. When the worker corrected
+      // one of them after a slow first answer, re-run it here — the same
+      // loader, so a correction can never diverge from what the screen
+      // shows on its own. `return`: the workshop screen holds no app view
+      // to fall through to.
+      const workshop = window.UsernodeReact?.workshop;
+      if (workshop?.isOpen?.()) { workshop.refreshNeeds?.(); return; }
 
       // The app record itself is in the service worker's zero-deadline boot
       // lane. If its cached `creating` snapshot is corrected after first

@@ -37,7 +37,7 @@ import { BASE_ALLOW } from './app-frame-policy.js';
  *
  * @typedef {{
  *   iconKind: string, iconHtml: string, name: string,
- *   note: string, spinner: boolean, out: boolean,
+ *   note: string, spinner: boolean, failed: boolean, out: boolean,
  * }} LaunchCoverState
  * @typedef {{
  *   slug: string, seq: number, background: string, sandboxReady: boolean,
@@ -175,6 +175,8 @@ export const COVER_DEFAULTS = {
   note: null,
   /** The 500ms rung of the reveal ladder. */
   spinner: false,
+  /** #4813: the launch failed — the cover shows the failed card, not the wait. */
+  failed: false,
   /** `.app-launch-cover--out` — the 160ms fade before the cover is dropped. */
   out: false,
 };

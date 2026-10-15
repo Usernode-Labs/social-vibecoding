@@ -17,12 +17,17 @@ function productionRef(config, app) {
 // `onProgress(image)` reports the image build as it goes, in the runtime's
 // own terms: kpack lifecycle phases with their times on kubernetes, the
 // builder's step counter on docker. See each module for the shape.
-async function build(config, { app, revision, environment, sessionId, sourceDir, dockerImage, onProgress = null }) {
+// `starterTree`: the revision is the app's starter exactly as the platform
+// just generated it (services/app-creator.js), so a BuildKit build may
+// write that starter's shared layer cache (services/kubernetes-buildkit.js).
+async function build(config, {
+  app, revision, environment, sessionId, sourceDir, dockerImage, starterTree = false, onProgress = null,
+}) {
   if (mode(config) === 'docker') {
     await docker.buildImage(sourceDir, dockerImage, { GIT_SHA: revision }, { onProgress });
     return { runtimeKind: 'docker', imageRef: dockerImage, buildRef: null };
   }
-  return kubernetes.createBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress });
+  return kubernetes.createBuild(config, { app, revision, environment, sessionId, sourceDir, starterTree, onProgress });
 }
 
 // Whether `build` needs every file of `sourceDir`. Docker builds FROM that

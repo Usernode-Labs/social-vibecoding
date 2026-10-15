@@ -717,6 +717,18 @@ const { ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY } = appActivity;
 const { activitySeconds } = appActivity;
 
 /**
+ * Whether the Communities list says "Invite link out" on a project's row
+ * (features/workshop/index.tsx rowSubtitle, 15 Oct 2026): the viewer has a
+ * live invite link out for it (`out`, community-invites.js linksOutFor) and
+ * nobody has joined yet, through those links or otherwise (`memberCount`,
+ * the viewer alone). Which section the row sits in is its audience's, and
+ * this does not move it: a project with only a link out is still Just you.
+ */
+function inviteLinkOut(out, memberCount) {
+  return !!out && out.links > 0 && out.joined === 0 && (parseInt(memberCount, 10) || 0) <= 1;
+}
+
+/**
  * #4053 (owner, 7 Oct 2026): the build line of every first version Homeroom
  * bot is still making among `apps`, for this viewer (homeroom-bot-dm.js
  * firstVersionState, the same answer GET /api/apps/:slug gives as
@@ -930,6 +942,17 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const firstVersionLines = await firstVersionLinesFor(
         pool, rows.filter((a) => !a.self_hosted && !stagingApps.isSample(a)), req.user?.id ?? null, firstVersionPhases
       );
+      // The viewer's live invite links, for the Communities list's "Invite
+      // link out" (inviteLinkOut): one query for every project they are in.
+      // Best-effort: a read that fails says nothing on any row.
+      let linksOut = new Map();
+      if (userId) {
+        try {
+          linksOut = await communityInvites.linksOutFor(pool, rows.filter((a) => a.is_member).map((a) => a.id), userId);
+        } catch (err) {
+          log.warn('apps', 'Could not read the invite links for the list', { message: err.message });
+        }
+      }
 
       let apps = await Promise.all(rows.map(async (a) => {
         // Per-app missing-required-secrets list. Cheap (one extra query
@@ -1063,6 +1086,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           member_count: parseInt(a.member_count, 10) || 0,
           audience: a.audience || 'open',
           last_active_at: a.last_active_at || null,
+          invite_link_out: inviteLinkOut(linksOut.get(Number(a.id)), a.member_count),
           ...accessFlags(a, req.user, a.is_collaborator, adminAppIds, contributorCount,
             config.selfAppSlug),
         };
@@ -1535,7 +1559,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           .catch((err) => log.warn('apps', 'Join screen not answered', { userId: req.user.id, err: err.message }));
       }
 
-      res.status(201).json({ app: appAccess.stripAppSecrets(appRow), invited, ...(homeroomBot ? { homeroomBot } : {}) });
+      // A ready-made app's example picture (services/app-templates.js
+      // `exampleScreen`): the made screen's card shows it at once, tagged
+      // as an example, before the project has anything of its own.
+      const exampleScreen = readyMade ? appTemplates.get(template).exampleScreen || null : null;
+      res.status(201).json({
+        app: appAccess.stripAppSecrets(appRow), invited,
+        ...(homeroomBot ? { homeroomBot } : {}),
+        ...(exampleScreen ? { exampleScreen } : {}),
+      });
       platformLimits.nudge(pool, config, 'apps');
     } catch (err) {
       if (err.code === '23505') {
@@ -1668,9 +1700,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // `audience` (services/communities.js) rides along, the same column
       // the /api/apps list carries, so the app's own screens can tell a
       // project that is just its creator's from a group's: the preview
-      // banner and the vote picker word themselves by it.
+      // banner and the vote picker word themselves by it. `template` is
+      // what it started from, for its `exampleChange` below.
       const { rows } = await pool.query(
-        `SELECT ${appAccess.nonSecretAppColumnList()},
+        `SELECT ${appAccess.nonSecretAppColumnList()}, template,
                 ${communities.audienceSql('apps', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = apps.community_id)')}
                   AS audience
            FROM apps WHERE slug = $1`,
@@ -1862,6 +1895,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         staging_sample: stagingSample,
         creationPhase: phaseEntry ? phaseEntry.phase : null,
         first_version: firstVersion,
+        // A change somebody could ask Homeroom bot for in this app, from
+        // its ready-made starter (services/app-templates.js exampleChange),
+        // or null: the first-session walk's Homeroom bot card offers it.
+        exampleChange: appTemplates.exampleChangeOf(appRow.template),
         missingSecrets,
         // Reviewer copy needs to distinguish an advisory shots run from
         // a real vote/merge gate. This is a platform rollout flag, not an app
@@ -4075,7 +4112,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const { rows: appRows } = await pool.query(
         `SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url,
                 LEFT(manifest_snapshot->>'description', 280) AS description,
-                (NOT self_hosted AND created_at > NOW() - INTERVAL '7 days') AS first_week
+                (NOT self_hosted AND created_at > NOW() - INTERVAL '7 days') AS first_week,
+                -- Since when the app has been live, for Recently live's card
+                -- of the app while none of its changes has gone live yet
+                -- (hub-cards.tsx RecentlyLive): when it first ran, set once
+                -- by its first deploy, or, for an app from before that
+                -- column that is up now, when it was made. NULL for an app
+                -- that has never run.
+                COALESCE(first_running_at, CASE WHEN status = 'running' THEN created_at END) AS live_since
            FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`,
         [req.params.slug, showSelfHosted]
       );
@@ -4194,9 +4238,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // Best-effort: a read that fails is no state, never a failed hub.
       //
       // #4045: IN ITS FIRST WEEK (`first_week`: made under seven days ago,
-      // never the platform's own project) the hub leaves out what is still
-      // empty, and a first version that went live stays on it as Live with
-      // Open app (liveFirstVersion). #4074: a member who did not start it
+      // never the platform's own project) a first version that went live
+      // stays on the hub as Live with Open app (liveFirstVersion). The hub
+      // itself is drawn the same from its first day (15 Oct 2026), so the
+      // week is not in the payload. #4074: a member who did not start it
       // reads the plan while it waits (hubFirstVersion `plan`), on the
       // membership read above.
       const firstWeek = !!app.first_week;
@@ -4222,6 +4267,20 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // see hasLiveLink for what the records can and cannot say.
       const inviteLink = membership?.is_member && membership.audience === 'solo' && req.user?.id
         ? await communityInvites.hasLiveLink(pool, app.id, req.user.id) : false;
+      // WHAT INVITE IS OUT, for Share it's line (15 Oct 2026): "Invite link
+      // sent · nobody has joined yet · 7 days left". The links listInvites
+      // shows this viewer (their own, or every link to someone who manages
+      // the project), summed: how many are live, who joined through them,
+      // who still waits, and when the soonest ends. For a member or someone
+      // who manages it; best-effort, so a read that fails is no line.
+      let inviteSummary = null;
+      if (req.user?.id && (membership?.is_member || canManage)) {
+        try {
+          inviteSummary = await communityInvites.inviteSummary(pool, { app, user: req.user });
+        } catch (err) {
+          log.warn('apps', 'Could not sum the invite links for the hub', { slug: app.slug, message: err.message });
+        }
+      }
       // #4417: THE PLACES. The page is navigated by one list — Hub, Needs
       // you, Workshop, then #general and the project's topics — and this is
       // what the list says beside each: the votes owed, and per channel its
@@ -4244,8 +4303,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         name: app.name,
         // What the app is, for the page's hero (above).
         description,
-        first_week: firstWeek,
         invite_link: inviteLink,
+        invite_summary: inviteSummary,
+        // Since when the app itself has been live, for Recently live's card
+        // of the app while no change has gone live yet (the query above).
+        live_since: app.self_hosted || !app.live_since ? null : new Date(app.live_since).toISOString(),
         first_version: firstVersion,
         ...membership,
         members,
@@ -4537,7 +4599,7 @@ module.exports = {
   attachForkLineage,
   appRoutes, accessFlags, canDeleteApp, compactGlobalChatApp,
   deleteBlockReason, isCoreApp, hubFirstVersion, firstVersionLinesFor, sharedPlan, waitingMemberFields, firstVersionShowcaseFields,
-  firstVersionLiveFields, stoppedThread,
+  firstVersionLiveFields, stoppedThread, inviteLinkOut,
   // #2524: the activity guard and its two bounds, so the contract is
   // unit-testable without standing up the whole app router.
   activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,

@@ -36,13 +36,13 @@ test('the words: the community first, one quiet line, buttons that say what come
   assert.equal(message(made.COMMUNITY_LABEL), 'Your new community');
   assert.equal(message(made.INVITE_HINT), 'Invite people to use it and help improve it together.');
   assert.equal(message(made.PREVIEW_LABEL), 'What they\'ll see');
-  assert.equal(made.sharedLine('shared'), 'Invite shared. Next, a short tour.');
+  // What went out, and nothing about what comes next (Evan, 15 Oct 2026:
+  // "Next, a short tour." is gone with the tour).
+  assert.equal(made.sharedLine('shared'), 'Invite shared.');
   // Where there is no share sheet, the link is copied (decided 6 October 2026).
-  assert.equal(made.sharedLine('copied'), 'Link copied. Next, a short tour.');
-  // From Create there is no tour to be next.
-  assert.equal(made.sharedLine('shared', false), 'Invite shared.');
-  assert.equal(made.sharedLine('copied', false), 'Link copied.');
-  assert.equal(made.continueLabel('first-session', true, 'Plant Pal'), 'Start the tour');
+  assert.equal(made.sharedLine('copied'), 'Link copied.');
+  assert.equal(made.continueLabel('first-session', true, 'Plant Pal'), 'Go to app');
+  assert.equal(made.continueLabel('first-session', true, 'Plant Pal', true), 'Continue');
   assert.equal(made.continueLabel('first-session', false, 'Plant Pal'), 'Invite people later');
   for (const words of [message(made.COMMUNITY_LABEL), message(made.INVITE_HINT), message(made.PREVIEW_LABEL), made.sharedLine('shared'), made.sharedLine('copied'), message(made.NO_BOT_NOTE)]) {
     assert.doesNotMatch(words, /!|—|\bgroup\b/, words);
@@ -87,8 +87,8 @@ test('C3: who, then the community, then the app, then one line over two buttons'
   assert.equal((html.match(/>Plant Pal</g) || []).length, 1, 'the name once, on the thumbnail');
   assert.match(html, /role="dialog" aria-labelledby="first-session-made-title" data-first-session-made=""/);
   // Nothing else: no note under the card, no plan, no old invite heading.
-  assert.doesNotMatch(html, /Homeroom is making|Needs you|Go to chat|Invite people to Plant Pal|They can follow along|data-first-session-note|Share again|Start the tour/);
-  // Invite people later starts the tour with nothing sent, once the app runs.
+  assert.doesNotMatch(html, /Homeroom is making|Needs you|Go to chat|Invite people to Plant Pal|They can follow along|data-first-session-note|Share again|Start the tour|Go to app/);
+  // Invite people later goes on with nothing sent, once the app runs.
   assert.match(CODE, /data-first-session-continue="" onClick=\{\(\) => onContinue\(true, stage\)\} disabled=\{holds\} className=\{SECONDARY\}>\s*\{continueLabel\(entry, false, made\.name\)\}/);
 });
 
@@ -100,7 +100,7 @@ test('C3: who, then the community, then the app, then one line over two buttons'
 // the app runs, and a card under the project says how far it has got.
 test('#4900: the way on is off until the app runs, for every first-session project and a ready-made one from Create', () => {
   const { holdsContinue, waitsToRun, READY_POLL_MS, SETUP_USUAL_MS, READY_WAIT_MS } = made;
-  assert.equal(waitsToRun('first-session', false), true, 'the tour opens it next, whoever builds it');
+  assert.equal(waitsToRun('first-session', false), true, 'it opens next (or Home, while it is built), whoever builds it');
   assert.equal(waitsToRun('first-session', true), true);
   assert.equal(waitsToRun('create', true), true, 'a ready-made app from Create, as before');
   assert.equal(waitsToRun('create', false), false, 'Create\'s way on is the hub, which shows a setup as it goes');
@@ -131,7 +131,7 @@ test('#4900: the way on is off until the app runs, for every first-session proje
   assert.match(CODE, /data-first-session-continue="" onClick=\{\(\) => onContinue\(false, stage\)\} layout="full"[^>]*className="flex items-center justify-center disabled:opacity-60" disabled=\{holds\}>/);
   assert.match(CODE, /data-first-session-continue="" onClick=\{\(\) => onContinue\(true, stage\)\} disabled=\{holds\}/);
   assert.doesNotMatch(CODE, /setWaiting|onLabel|aria-busy/, 'no press held any more');
-  // Once it runs Home is read again, so the tour's tile can be tapped.
+  // Once it runs Home is read again, so its tile can be tapped.
   assert.match(CODE, /if \(waits && appStatus === 'running'\) \(window as \{ Home\?: \{ load\?: \(\) => void \} \}\)\.Home\?\.load\?\.\(\);/);
 
   // Drawn as it opens, nothing read yet: on the first session the way on is
@@ -163,10 +163,10 @@ test('#4900: a card under the project says how far its setup has got, in words, 
   assert.deepEqual(SETUP_STEPS.map((step) => message(SETUP_WORDS[step])),
     ['Setting up its storage…', 'Saving its code…', 'Preparing it to run…', 'Starting it up…']);
   assert.equal(message(GETTING_READY), 'Getting it ready…');
-  // How long: the create dialog's "usually under a minute", then honest about a slow one.
-  assert.equal(setupEstimate(false, false), 'This usually takes about a minute.');
-  assert.equal(setupEstimate(true, false), 'It’s taking longer than usual.');
-  assert.equal(setupEstimate(true, true), 'It’s taking longer than usual. You can go on, and open it once it’s ready.');
+  // How long: the create dialog's "usually under a minute", then calm about a slow one.
+  assert.equal(setupEstimate(false, false), 'Usually about a minute.');
+  assert.equal(setupEstimate(true, false), 'Should be ready shortly…');
+  assert.equal(setupEstimate(true, true), 'Should be ready shortly. You can go on, and open it once it’s ready.');
   for (const words of [...SETUP_STEPS.map((step) => message(SETUP_WORDS[step])), setupEstimate(false, false), setupEstimate(true, true)]) {
     assert.doesNotMatch(words, /!|—|\d/, words);
   }
@@ -176,14 +176,14 @@ test('#4900: a card under the project says how far its setup has got, in words, 
   assert.match(started, /data-made-setup="started"/);
   assert.match(started, /aria-label="Getting it ready…"[^>]*data-progress-ring-spinning=""/);
   assert.doesNotMatch(started, /<text/);
-  assert.match(started, /<div role="status" class="min-w-0 flex-1"><p class="truncate text-\[15px\] font-\[650\] leading-5">Getting it ready…<\/p><p class="line-clamp-2 text-\[13px\] leading-\[18px\] text-zinc-500 dark:text-zinc-400">This usually takes about a minute\.<\/p><\/div>/);
+  assert.match(started, /<div role="status" class="min-w-0 flex-1"><p class="truncate text-\[15px\] font-\[650\] leading-5">Getting it ready…<\/p><p class="line-clamp-2 text-\[13px\] leading-\[18px\] text-zinc-500 dark:text-zinc-400">Usually about a minute\.<\/p><\/div>/);
   // On the third step: its words, and 3/4 on the ring, said in words to a screen reader.
   const third = renderToHtml(createElement(SetupProgress, { step: 3, slow: true, waitedOut: false }));
   assert.match(third, /data-made-setup="build"/);
   assert.match(third, /aria-label="Step 3 of 4"/);
   assert.match(third, />3\/4<\/text>/);
   assert.match(third, />Preparing it to run…<\/p>/);
-  assert.match(third, />It’s taking longer than usual\.<\/p>/);
+  assert.match(third, />Should be ready shortly…<\/p>/);
   // The plane's card, 20px, one hairline, as the other cards under the project.
   assert.match(third, /class="flex h-\[84px\] items-center gap-3 rounded-\[20px\] bg-white py-3 pl-3 pr-4 shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] dark:bg-zinc-900"/);
 
@@ -235,15 +235,16 @@ test('C4: the sheet is titled with the community, a small caps label over the in
   assert.match(html, /data-first-session-invite-action="copy"[^>]*>Copy link<\/button>/);
 });
 
-test('C5: after sharing, the line says so, and the buttons keep their places: Share again, then Start the tour', () => {
-  // Share again is grey where Share invite was; Start the tour is blue where
+test('C5: after sharing, the line says so, and the buttons keep their places: Share again, then Go to app', () => {
+  // Share again is grey where Share invite was; Go to app is blue where
   // Invite people later was.
   const shared = CODE.slice(CODE.indexOf('{sent ? ('), CODE.indexOf('{inviting ? ('));
   assert.ok(shared.indexOf('data-first-session-share-again=""') < shared.indexOf('data-first-session-continue=""'));
   assert.match(CODE, /<button type="button" data-first-session-share-again="" onClick=\{\(\) => setInviting\(true\)\} className=\{SECONDARY\}>\s*\{t\('onboarding:firstSession\.made\.shareAgain'\)\}/);
   assert.equal(message('onboarding:firstSession.made.shareAgain'), 'Share again');
   assert.match(CODE, /<Button type="button" data-first-session-continue="" onClick=\{\(\) => onContinue\(false, stage\)\} layout="full" variant="pillAccent"/);
-  assert.match(CODE, /\{sentHow \? sharedLine\(sentHow, !fromCreate\) : t\(INVITE_HINT\)\}/);
+  assert.match(CODE, /\{sentHow \? sharedLine\(sentHow\) : t\(INVITE_HINT\)\}/);
+  assert.match(CODE, /\{continueLabel\(entry, true, made\.name, stage !== null\)\}/);
   assert.match(CODE, /onSent=\{\(how\) => setSentHow\(how\)\}/);
   // The logo bar stays behind the sheet and after sharing; Share invite is gone.
   assert.doesNotMatch(draw(), /Go to the Homeroom app|Invite sent|joined\./);

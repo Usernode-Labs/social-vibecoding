@@ -79,9 +79,10 @@ test('the trace reader names the steps that ran and the steps the cache served',
 // stand-ins on PATH and its two absolute paths moved into a scratch
 // directory. The stand-in buildctl records each call, writes the metadata
 // file and the trace for the build, and succeeds or fails the cache upload
-// as told.
+// as told. `argv` is each buildctl build call's arguments, one by one.
 function runScript({
   settled = [], cacheUpload, trace = TRACE, buildFails = false, uploadFails = false,
+  starterRef, starterExport, registryAttrs = '',
 } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bk-script-'));
   const bin = path.join(dir, 'bin');
@@ -90,6 +91,7 @@ function runScript({
   fs.writeFileSync(path.join(bin, 'buildctl-daemonless.sh'), [
     '#!/bin/sh',
     'printf \'%s\\n\' "$*" >> "$STUB_DIR/calls.log"',
+    'if [ "$1" = build ]; then for arg in "$@"; do printf \'%s\\037\' "$arg"; done >> "$STUB_DIR/argv.log"; echo >> "$STUB_DIR/argv.log"; fi',
     '[ "$1" = build ] || exit 0',
     'output=no; export=no; trace=; metadata=',
     'while [ $# -gt 0 ]; do',
@@ -111,18 +113,22 @@ function runScript({
   const env = {
     PATH: `${bin}:${process.env.PATH}`,
     REPO_URL: 'https://example.test/secret-clone-url', GIT_SHA: TRACE_SHA, DOCKERFILE: 'Dockerfile.kubernetes',
-    IMAGE_TAG: 'registry.test/apps/demo:git-x', CACHE_REF: 'registry.test/cache/demo:buildkit-cache', REGISTRY_ATTRS: '',
+    IMAGE_TAG: 'registry.test/apps/demo:git-x', CACHE_REF: 'registry.test/cache/demo:buildkit-cache', REGISTRY_ATTRS: registryAttrs,
     CACHE_SETTLED_STEPS: settled.join(' '),
     STUB_DIR: dir, STUB_DIGEST: DIGEST, STUB_TRACE: trace || '',
     STUB_BUILD_FAILS: buildFails ? '1' : '0', STUB_UPLOAD_FAILS: uploadFails ? '1' : '0',
   };
   if (cacheUpload) env.CACHE_UPLOAD = cacheUpload;
+  if (starterRef !== undefined) env.STARTER_CACHE_REF = starterRef;
+  if (starterExport !== undefined) env.STARTER_CACHE_EXPORT = starterExport;
   const run = spawnSync('sh', ['-c', script], { encoding: 'utf8', env });
   const calls = fs.existsSync(path.join(dir, 'calls.log'))
     ? fs.readFileSync(path.join(dir, 'calls.log'), 'utf8').trimEnd().split('\n') : [];
   const message = fs.existsSync(termination) ? fs.readFileSync(termination, 'utf8') : null;
+  const argv = fs.existsSync(path.join(dir, 'argv.log'))
+    ? fs.readFileSync(path.join(dir, 'argv.log'), 'utf8').trimEnd().split('\n').map((line) => line.split('\x1f').slice(0, -1)) : [];
   return {
-    status: run.status, log: run.stdout + run.stderr, message,
+    status: run.status, log: run.stdout + run.stderr, message, argv, workspace: path.join(dir, 'workspace'),
     builds: calls.filter((call) => call.startsWith('build ')),
     uploads: calls.filter((call) => call.startsWith('build ') && !call.includes('--output')),
   };
@@ -217,6 +223,75 @@ test('the script: a build that fails is still a failed build, with no upload and
   assert.equal(run.builds.length, 1);
   assert.equal(run.message, null);
   assert.doesNotMatch(run.log, /layer cache/);
+});
+
+// The starter's shared cache (src/services/kubernetes-buildkit.js, "The
+// starter's shared cache"): STARTER_CACHE_REF adds a second import to both
+// runs, STARTER_CACHE_EXPORT=yes a second export to the upload, and without
+// them every argument is what it was before the starter cache existed.
+const APP_IMPORT = 'type=registry,ref=registry.test/cache/demo:buildkit-cache';
+const APP_EXPORT = 'type=registry,ref=registry.test/cache/demo:buildkit-cache,mode=max,image-manifest=true,oci-mediatypes=true';
+const STARTER_REF = 'registry.test/cache/starter-grocery-list:buildkit-cache';
+const STARTER_IMPORT = `type=registry,ref=${STARTER_REF}`;
+const STARTER_EXPORT = `type=registry,ref=${STARTER_REF},mode=max,image-manifest=true,oci-mediatypes=true`;
+// A flag's values, in order, from one call's arguments.
+const values = (argv, flag) => argv.flatMap((arg, i) => (arg === flag ? [argv[i + 1]] : []));
+
+test('the script: with no starter cache, both buildctl runs get exactly the arguments they always had', { skip }, () => {
+  for (const starter of [{}, { starterRef: '' }, { starterRef: '', starterExport: 'yes' }]) {
+    const run = runScript(starter);
+    assert.equal(run.status, 0, run.log);
+    const ws = run.workspace;
+    const solve = ['--frontend', 'dockerfile.v0', '--local', `context=${ws}/src`, '--local', `dockerfile=${ws}/src`,
+      '--opt', 'filename=Dockerfile.kubernetes', '--opt', `build-arg:GIT_SHA=${TRACE_SHA}`];
+    assert.deepEqual(run.argv, [
+      ['build', ...solve, '--output', 'type=image,name=registry.test/apps/demo:git-x,push=true',
+        '--import-cache', APP_IMPORT, '--progress', 'plain', '--trace', `${ws}/trace.json`, '--metadata-file', `${ws}/metadata.json`],
+      ['build', ...solve, '--import-cache', APP_IMPORT, '--export-cache', APP_EXPORT, '--progress', 'plain'],
+    ], JSON.stringify(starter));
+    assert.doesNotMatch(run.log, /starter/);
+  }
+});
+
+test('the script: a starter\'s cache is read by the build and the upload, after the app\'s own, and written by neither', { skip }, () => {
+  const run = runScript({ starterRef: STARTER_REF });
+  assert.equal(run.status, 0, run.log);
+  const [build, upload] = run.argv;
+  assert.deepEqual(values(build, '--import-cache'), [APP_IMPORT, STARTER_IMPORT]);
+  assert.deepEqual(values(build, '--export-cache'), []);
+  assert.deepEqual(values(upload, '--import-cache'), [APP_IMPORT, STARTER_IMPORT], 'layers it served are lazy references to it');
+  assert.deepEqual(values(upload, '--export-cache'), [APP_EXPORT], 'only the app\'s own cache is written');
+  assert.equal(cacheReport(run.message).upload, 'done');
+  // Reading it changes nothing about whether the app's cache is uploaded.
+  const settled = runScript({ starterRef: STARTER_REF, settled: RAN });
+  assert.equal(settled.argv.length, 1, 'nothing reusable was rebuilt: no upload');
+  assert.deepEqual(values(settled.argv[0], '--import-cache'), [APP_IMPORT, STARTER_IMPORT]);
+});
+
+test('the script: the starter\'s first build uploads to the app\'s cache and the starter\'s in one run, whatever the history says', { skip }, () => {
+  for (const settled of [[], RAN]) {
+    const run = runScript({ starterRef: STARTER_REF, starterExport: 'yes', settled });
+    assert.equal(run.status, 0, run.log);
+    assert.equal(run.argv.length, 2, `${settled.length}: the build, then the upload`);
+    const [build, upload] = run.argv;
+    assert.deepEqual(values(build, '--export-cache'), [], 'the image does not wait for either cache');
+    assert.deepEqual(values(build, '--import-cache'), [APP_IMPORT, STARTER_IMPORT]);
+    assert.deepEqual(values(upload, '--import-cache'), [APP_IMPORT, STARTER_IMPORT]);
+    assert.deepEqual(values(upload, '--export-cache'), [APP_EXPORT, STARTER_EXPORT]);
+    assert.equal(run.message, `cache-upload=done\ncache-ran=${RAN.join(' ')}\ncache-served=${SERVED.join(' ')}\n${DIGEST}`);
+    assert.match(run.log, /\[buildkit\] uploading the layer cache\n\[buildkit\] and the starter's shared cache, registry\.test\/cache\/starter-grocery-list:buildkit-cache\n/);
+  }
+  // A plain-HTTP registry is plain HTTP for the starter's cache too.
+  const insecure = runScript({ starterRef: STARTER_REF, starterExport: 'yes', registryAttrs: ',registry.insecure=true' });
+  assert.deepEqual(values(insecure.argv[1], '--import-cache'), [`${APP_IMPORT},registry.insecure=true`, `${STARTER_IMPORT},registry.insecure=true`]);
+  assert.deepEqual(values(insecure.argv[1], '--export-cache'), [`${APP_EXPORT},registry.insecure=true`, `${STARTER_EXPORT},registry.insecure=true`]);
+});
+
+test('the script: an upload to the starter\'s cache that fails does not fail the build', { skip }, () => {
+  const run = runScript({ starterRef: STARTER_REF, starterExport: 'yes', uploadFails: true });
+  assert.equal(run.status, 0, run.log);
+  assert.equal(run.message, `cache-upload=failed\ncache-ran=${RAN.join(' ')}\ncache-served=${SERVED.join(' ')}\n${DIGEST}`);
+  assert.match(run.log, /\[buildkit\] pushed /);
 });
 
 test('cacheReport: reads the termination message and the copy on the Job, and nothing else', () => {

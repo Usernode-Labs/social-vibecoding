@@ -1556,9 +1556,9 @@
       "expectText": "STAGING_DEMO_PROPOSED"
     },
     {
-      "name": "Create opens \"What do you want to make?\", the first session's own screen, as the one front door for a new project: a close, the examples, and a small \"Import from a GitHub repo\" (#748's route; the New project dialog is retired)",
+      "name": "Create opens \"What do you want to make?\", the first session's own screen, as the one front door for a new project: a close, the front three examples and \"Something else…\", and a small \"Import from a GitHub repo\" (#748's route; the New project dialog is retired)",
       "path": "/#create",
-      "expectSelector": "[data-first-session-make][data-make-entry=\"create\"]:has([data-make-close]):has([data-first-session-example=\"tier\"]) [data-make-import-link]",
+      "expectSelector": "[data-first-session-make][data-make-entry=\"create\"]:has([data-make-close]):has([data-first-session-example=\"tier\"]):has([data-first-session-example=\"organizer\"]):has([data-first-session-example=\"more\"]) [data-make-import-link]",
       "expectText": "What do you want to make?"
     },
     {
@@ -3262,6 +3262,12 @@
       "name": "Admin & moderation console page renders at #admin (#818)",
       "path": "/#admin",
       "expectSelector": "#admin-screen:not(.hidden) #admin-section-content"
+    },
+    {
+      "name": "Moderation deep link opens the linked case already selected (#5072)",
+      "path": "/#admin/reports/1",
+      "expectText": "Staging fixture: a fake report so the Moderation screens have a case to open.",
+      "allowConsoleErrors": false
     },
     {
       "name": "Admin console deep-links the Activation codes section (#818)",

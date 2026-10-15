@@ -42,6 +42,7 @@ const grader = require('./challenge-grader');
 const { ONBOARDING_LIMIT } = require('./challenge-onboarding');
 
 const { MEASURES, TRY_APPS_MIN_SECONDS } = rules;
+const { appUsageTimes } = require('./app-usage-time');
 
 // Ceilings for one run. The first run of a season is the big one — every
 // account that already has GitHub linked is a credit waiting to be written —
@@ -475,23 +476,36 @@ async function loadCandidates(pool, measure, window, { target, ownApps = false }
     case 'TRY_APPS': {
       const { rows } = await pool.query(TRY_APPS_SQL,
         [startIso, endIso, TRY_APPS_MIN_SECONDS, CANDIDATE_LIMIT, own]);
-      return rows.map((r) => ({
+      const times = await appUsageTimes(pool, rows, window,
+        { seconds: TRY_APPS_MIN_SECONDS, perApp: true, ownApps: own });
+      return rows.filter((r) => {
+        const time = times.get(`${r.user_id}:${r.app_id}`);
+        return !time || time.activity_at !== null;
+      }).map((r) => ({
         userId: r.user_id,
         sourceKey: `app:${r.app_id}`,
-        activityAt: dateToIso(r.last_date),
+        activityAt: isoOf(times.get(`${r.user_id}:${r.app_id}`)?.activity_at) || dateToIso(r.last_date),
+        timestampPrecision: times.get(`${r.user_id}:${r.app_id}`)?.timestamp_precision || 'day',
         description: `Tried ${r.app_name || `app #${r.app_id}`}`,
-      }));
+      })).sort((a, b) => Number(a.userId) - Number(b.userId)
+        || Date.parse(a.activityAt) - Date.parse(b.activityAt)
+        || a.sourceKey.localeCompare(b.sourceKey));
     }
     case 'USE_APPS_MINUTES': {
       const seconds = Math.round(Number(target) * 60);
       const { rows } = await pool.query(USE_APPS_MINUTES_SQL,
         [startIso, endIso, seconds, CANDIDATE_LIMIT]);
-      return rows.map((r) => ({
+      const times = await appUsageTimes(pool, rows, window, { seconds, perApp: false });
+      return rows.filter((r) => {
+        const time = times.get(`${r.user_id}:0`);
+        return !time || time.activity_at !== null;
+      }).map((r) => ({
         userId: r.user_id,
         // One credit for the whole window, so the key names the window by
         // the day it starts: a weekly challenge's windows are its weeks.
         sourceKey: `window:${startIso.slice(0, 10)}`,
-        activityAt: dateToIso(r.last_date),
+        activityAt: isoOf(times.get(`${r.user_id}:0`)?.activity_at) || dateToIso(r.last_date),
+        timestampPrecision: times.get(`${r.user_id}:0`)?.timestamp_precision || 'day',
         description: `${Math.floor(Number(r.seconds) / 60)} minutes in apps`,
       }));
     }
@@ -642,6 +656,7 @@ async function writeCredits(pool, { challenge, activityType, credits }) {
         source_key: credit.sourceKey,
         rule_id: credit.ruleId,
         measure: credit.measure,
+        timestamp_precision: credit.timestampPrecision || 'instant',
         ...(credit.completion ? { kind: 'challenge_completion' } : {}),
         ...(credit.grade ? { grade: credit.grade } : {}),
       };

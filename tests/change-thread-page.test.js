@@ -242,3 +242,38 @@ test('a moving bar is the lit ink, a finished one green with its check, and AGEN
   assert.match(css, /\.dev-change-shots \.shots-stage \{ margin: 0 8px; aspect-ratio: 4 \/ 5; \}/, 'a taller frame on a phone');
   assert.match(read('AGENTS.md'), /A finished progress bar may be green \(`--state-ok`/);
 });
+
+// Issue #5178: the sheet's header shows the change's status pill beside
+// "Change #N", in the board card's own words and capsule form — so the page
+// answers "is it live?" where the reader first looks. The thread view
+// carries the card's own state (tests/needs-you-change-page.test.js); this
+// is the drawing of it.
+const view = (status) => ({
+  number: 81, category: null, author: 'snait', at: null, time: '10:03', timeTitle: '',
+  via: 'via Claude Code', status, votes: {}, testing: {}, shots: null, thanks: false,
+});
+
+test('the header shows the status pill beside "Change #N", in the card\'s capsule form', () => {
+  const head = 'frontend/src/features/dev-board/topic/change-head.tsx';
+  const failed = renderComponent(head, 'ChangeBar', {
+    v: view({ tier: 0, key: 'delivery_failed', label: message('changes:badge.pill.failed'), tone: 'blocked',
+      title: message('changes:badge.pill.failedTitle') }),
+    menuKey: '',
+  });
+  assert.match(failed, /<div class="messages-thread-name min-w-0">Change #81<\/div>/);
+  assert.match(failed, /<span class="shrink-0" data-change-status="delivery_failed"><span class="gc-vote-count gc-vote-count-blocked dev-status-pill"/);
+  assert.doesNotMatch(failed, /dev-status-pill-block|dev-status-pill-vote/, 'the capsule form, not the board card\'s bar');
+  assert.match(failed, new RegExp(`>${message('changes:badge.pill.failed')}<`));
+  assert.match(failed, /title="This change was approved, but the app failed to rebuild with it\."/);
+  // A live change reads "✓ Live" in the ok tone; no pill, no attribute.
+  const live = renderComponent(head, 'ChangeBar', {
+    v: view({ tier: 0, key: 'deployed', label: message('changes:badge.pill.live'), tone: 'ok' }),
+    menuKey: '',
+  });
+  assert.match(live, /data-change-status="deployed"[^>]*><span class="gc-vote-count gc-vote-count-ok dev-status-pill"/);
+  assert.match(live, new RegExp(`>${message('changes:badge.pill.live')}<`));
+  // Being built or closed: the header is as it was.
+  const none = renderComponent(head, 'ChangeBar', { v: view(null), menuKey: '' });
+  assert.doesNotMatch(none, /data-change-status|gc-vote-count/);
+  assert.match(none, /<div class="messages-thread-name min-w-0">Change #81<\/div>/);
+});

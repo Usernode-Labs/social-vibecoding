@@ -116,6 +116,13 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
       # (docs/plans/draining-releases.md). The 60 seconds on top are the
       # preStop sleep and the bounded steps after the drain.
       terminationGracePeriodSeconds: {{ add (mul (int .Values.platform.drainMinutes) 60) 60 }}
+      # The pause container is PID 1 and reaps zombies, as `--init` does on
+      # Docker (src/services/docker.js). Node as PID 1 never reaped the
+      # orphaned `git` processes it spawns: the conductor held 824 zombies
+      # after 14 minutes and the platform reached 61,783 PIDs (Oct 2026),
+      # all counted against the kubelet's per-Pod PID limit. SIGTERM still
+      # reaches Node, whose handler starts the drain.
+      shareProcessNamespace: true
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

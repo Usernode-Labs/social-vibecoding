@@ -3,8 +3,10 @@
 // Real services with bounded provider doubles; hardware runs are separate.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
 const express = require('express');
-const { loadTsx } = require('./lib/render-tsx');
+const { loadTsx, renderToHtml } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 const { pcmWav, appendTranscript, DictationSession } = loadTsx('frontend/src/features/dictation/session.ts');
 const { validateWav, transcribe, MAX_BYTES } = require('../src/services/dictation');
 const { dictationRoutes } = require('../src/routes/dictation');
@@ -266,4 +268,136 @@ test('starting another composer cancels the earlier microphone owner', async t =
   const second = new DictationSession({ onState() {}, onText() {} });
   await first.start(); await second.start(); assert.equal(firstPhase, 'idle');
   second.cancel(); assert.equal(track.readyState, 'ended');
+});
+
+// "Recording stopped unexpectedly" said nothing about why, to anyone. The
+// person still reads `interrupted`; the session keeps which way it ended.
+for (const [cause, interrupt] of [
+  ['track_ended', ({ track }) => track.onended()],
+  ['recorder_error', ({ session }) => session.recorder.onerror()],
+]) {
+  test(`an interrupted recording keeps why it stopped (${cause}) and releases the microphone`, async t => {
+    const { track } = browser(t); let state;
+    const session = new DictationSession({ onState: next => { state = next; }, onText() { assert.fail('nothing was transcribed'); } });
+    await session.start(); assert.equal(state.phase, 'recording');
+    interrupt({ track, session });
+    assert.deepEqual(state, { phase: 'idle', error: 'interrupted' });
+    assert.equal(session.diagnostics.cause, cause);
+    assert.equal(track.readyState, 'ended');
+    track.readyState = 'live';
+    await session.start(); assert.equal(session.diagnostics.cause, undefined, 'a new recording starts without the last one\'s cause');
+    session.cancel();
+  });
+}
+
+// SpeakButton against a React small enough to step through (effects
+// included), a document that only keeps listeners, and timers the test fires.
+function speakButtonHarness(t) {
+  const React = require(require.resolve('react', { paths: [path.join(__dirname, '..', 'frontend')] }));
+  const slots = []; let cursor = 0; let effects = [];
+  const slot = (init) => { const i = cursor++; if (!(i in slots)) slots[i] = init(); return slots[i]; };
+  const changed = (a, b) => a.length !== b.length || a.some((v, i) => !Object.is(v, b[i]));
+  const react = { ...React,
+    useRef: (current) => slot(() => ({ current })),
+    useState(initial) {
+      const s = slot(() => { const box = { value: initial }; box.set = next => { box.value = typeof next === 'function' ? next(box.value) : next; }; return box; });
+      return [s.value, s.set];
+    },
+    useEffect(effect, deps) {
+      const s = slot(() => ({ deps: null, cleanup: null }));
+      if (s.deps && !changed(s.deps, deps)) return;
+      s.deps = deps;
+      effects.push(() => { if (typeof s.cleanup === 'function') s.cleanup(); s.cleanup = effect(); });
+    },
+  };
+  // Unmounted while the fake document is still there: hooks run in the order added.
+  const unmount = () => { for (const s of slots) if (typeof s?.cleanup === 'function') s.cleanup(); };
+  t.after(unmount);
+  const listeners = [];
+  const target = name => ({
+    addEventListener(type, fn, capture) { listeners.push({ name, type, fn, capture: !!capture }); },
+    removeEventListener(type, fn, capture) {
+      const i = listeners.findIndex(l => l.name === name && l.type === type && l.fn === fn && l.capture === !!capture);
+      if (i >= 0) listeners.splice(i, 1);
+    },
+  });
+  const timers = new Map(); let nextTimer = 1;
+  const fakes = {
+    document: { hidden: false, ...target('document') },
+    window: { ...target('window'), setTimeout(fn, ms) { timers.set(nextTimer, { fn, ms }); return nextTimer++; }, clearTimeout(id) { timers.delete(id); } },
+  };
+  const originals = new Map(Object.keys(fakes).map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+  for (const [k, value] of Object.entries(fakes)) Object.defineProperty(globalThis, k, { configurable: true, writable: true, value });
+  t.after(() => { for (const [k, descriptor] of originals) { if (descriptor) Object.defineProperty(globalThis, k, descriptor); else delete globalThis[k]; } });
+  const { SpeakButton, ERROR_SHOWN_MS } = loadTsx('frontend/src/features/dictation/speak-button.tsx', { stubs: {
+    react, '../../lib/i18n/react': { useMessages: () => message },
+  } });
+  let tree = null;
+  const render = () => {
+    cursor = 0; effects = [];
+    tree = SpeakButton({ scope: 'test', getText: () => '', onText() {}, maxLength: 100 });
+    for (const run of effects) run();
+    return tree;
+  };
+  const find = (node, predicate) => {
+    if (!node || typeof node !== 'object') return null;
+    if (Array.isArray(node)) return node.map(child => find(child, predicate)).find(Boolean) || null;
+    return predicate(node) ? node : find(node.props?.children, predicate);
+  };
+  return { ERROR_SHOWN_MS, render, find, timers,
+    root: () => find(tree, node => node.props?.['data-dictation'] !== undefined),
+    alert: () => find(tree, node => node.props?.role === 'alert'),
+    on: (type) => listeners.filter(l => l.name === 'document' && l.type === type),
+    fire: (type, event) => { for (const l of listeners.filter(x => x.name === 'document' && x.type === type)) l.fn(event); },
+  };
+}
+
+test('a dictation error says why, has a close button, and clears on Escape, a press elsewhere or after eight seconds', async t => {
+  const { track } = browser(t);
+  const h = speakButtonHarness(t);
+  assert.equal(h.ERROR_SHOWN_MS, 8000);
+  const inside = {};
+  async function interrupted() {
+    h.render();
+    const mic = h.find(h.root(), node => node.type === 'button' && 'aria-pressed' in node.props);
+    track.readyState = 'live';
+    mic.props.onClick(); await settle(); h.render();
+    assert.equal(h.root().props['data-dictation'], 'recording');
+    track.onended(); h.render();
+    h.root().props.ref.current = { contains: node => node === inside };
+    assert.equal(h.alert()?.props.children, message('core:dictation.error.interrupted'));
+    assert.equal(h.root().props['data-dictation-cause'], 'track_ended', 'why it stopped is on the control');
+    assert.equal(h.on('pointerdown').length, 1); assert.equal(h.on('keydown').filter(l => !l.capture).length, 1);
+  }
+  const cleared = (why) => {
+    h.render();
+    assert.equal(h.alert(), null, why);
+    assert.equal(h.root().props['data-dictation'], 'idle');
+    assert.equal(h.root().props['data-dictation-cause'], undefined);
+    assert.equal(h.on('pointerdown').length, 0, `${why}: the outside-press listener goes with it`);
+    assert.equal([...h.timers.values()].filter(x => x.ms === h.ERROR_SHOWN_MS).length, 0, `${why}: and its timer`);
+  };
+
+  await interrupted();
+  const close = h.find(h.root(), node => node.type === 'button' && node.props['aria-label'] === message('core:common.close'));
+  assert.ok(close, 'the error has its own close button');
+  const html = renderToHtml(h.root());
+  assert.match(html, /<span role="alert" class="min-w-0 flex-1">Recording stopped unexpectedly\./);
+  assert.match(html, /<button type="button" aria-label="Close"/);
+  close.props.onClick(); cleared('the close button');
+
+  await interrupted();
+  h.fire('pointerdown', { target: inside }); h.render();
+  assert.ok(h.alert(), 'a press on the control or its note keeps the note');
+  h.fire('pointerdown', { target: {} }); cleared('a press anywhere else');
+
+  await interrupted();
+  h.fire('keydown', { key: 'a', target: {} }); h.render();
+  assert.ok(h.alert(), 'another key keeps the note');
+  h.fire('keydown', { key: 'Escape', target: {} }); cleared('Escape');
+
+  await interrupted();
+  const [timer] = [...h.timers.values()].filter(x => x.ms === h.ERROR_SHOWN_MS);
+  assert.ok(timer, 'an error sets its own timer');
+  timer.fn(); cleared('eight seconds');
 });

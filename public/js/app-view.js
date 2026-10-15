@@ -1911,9 +1911,14 @@ const AppView = {
   //            already painting.
   //   20000ms  swap the cover note to a "taking longer" line. Only reachable
   //            when the cap was skipped because the mint hadn't settled.
+  //   45000ms  fail the launch (#4813): the cover becomes the failed card —
+  //            "Couldn't open this app" with a Try again that re-points the
+  //            same frame. Only reachable while a cover is still up, which
+  //            after the 2s cap means a frame whose src never went out.
   LAUNCH_SPINNER_MS: 500,
   LAUNCH_REVEAL_CAP_MS: 2000,
   LAUNCH_SLOW_MS: 20000,
+  LAUNCH_FAIL_MS: 45000,
   // Keep in sync with `.app-launch-cover` / `#app-iframe` transition
   // durations in public/css/app.css.
   LAUNCH_FADE_MS: 160,
@@ -1927,6 +1932,11 @@ const AppView = {
   // Set by beginLaunch to the exact (launchId, slug, src) it mounted, read
   // ONCE by renderAppTab to decide adopt-vs-rebuild.
   _launchAdopt: null,
+  // Set by beginLaunch to the (launchId, slug) a Try again (#4813) may
+  // re-run. Never cleared by the teardowns — a retry is honoured only while
+  // its launchId is still the current one, so a superseded launch's retry
+  // goes inert on its own.
+  _launchRetry: null,
 
   _reduceMotion() {
     try {
@@ -2209,10 +2219,13 @@ const AppView = {
       <div class="app-launch-host w-full h-full">
         ${AppView._appIframeHtml({ hidden: faded })}${cover ? AppView._coverHtml(cover) : ''}
       </div>`;
+      // #4813: the twin remembers what it mounted — retryLaunch must be able
+      // to tell the frame it is pointing at is still the failed launch's app.
+      dom._slug = slug;
       return !!dom._el('app-iframe');
     },
     keeps() { return false; },
-    slug() { return ''; },
+    slug() { return AppView._appFrameDom._slug || ''; },
     activate() { return !!AppView._appFrameDom._el('app-iframe'); },
     // No-ops: in a DOM-only shell the next #app-content write is what removes
     // the frame, exactly as it always was.
@@ -2263,6 +2276,24 @@ const AppView = {
     coverNote(text) {
       const note = AppView._appFrameDom._el('app-launch-cover-note');
       if (note) note.textContent = text || '';
+    },
+    // #4813: the failed launch card, as the React store's `failed` field
+    // renders it — the spinner hides, the note carries the failure title,
+    // and the cover is marked so the reveal cap's readers can see it. With
+    // `false` the card goes away and "Opening…" comes back.
+    coverFailed(failed) {
+      const cover = AppView._appFrameDom._el('app-launch-cover');
+      if (!cover || !cover.dataset) return;
+      const note = AppView._appFrameDom._el('app-launch-cover-note');
+      const spinner = AppView._appFrameDom._el('app-launch-cover-spinner');
+      if (failed) {
+        cover.dataset.launchFailed = 'true';
+        spinner?.classList.add('hidden');
+        if (note) note.textContent = PlatformI18n.t('agent:appFrame.cover.failed.title');
+      } else {
+        delete cover.dataset.launchFailed;
+        if (note) note.textContent = PlatformI18n.t('agent:appFrame.cover.opening');
+      }
     },
     reveal({ reduceMotion = false } = {}) {
       const dom = AppView._appFrameDom;
@@ -2490,6 +2521,19 @@ const AppView = {
     const iframe = frame.frame();
     if (!iframe) return false;
 
+    // A Try again (#4813) may re-run this launch while it is still the one
+    // on screen — superseded by nothing.
+    AppView._launchRetry = { launchId, slug };
+    AppView._pointLaunch(slug, frame, iframe, launchId);
+    return true;
+  },
+
+  // The token/src tail of beginLaunch, shared with retryLaunch (#4813):
+  // resolve or reuse the mint, then point the frame at the app. On retry the
+  // frame is the element already there — assigning `src` again is a
+  // navigation of the same element, not a remount and not a reload of the
+  // shell.
+  _pointLaunch(slug, frame, iframe, launchId) {
     const proceed = (src) => {
       if (launchId !== AppView._launchId) return;
       if (!src || !iframe.isConnected) return;
@@ -2528,6 +2572,38 @@ const AppView = {
       // cap deliberately does not (see _watchLaunchLoad).
       AppView._watchLaunchLoad(iframe, launchId);
     }
+  },
+
+  // The launch failed (#4813): keep the cover up and turn it into the failed
+  // card. The timers go first, so the 2s reveal cap cannot strip the failed
+  // cover; the frame's load handler stays installed, so an app that does
+  // finish loading after all still reveals as usual.
+  _failLaunch() {
+    AppView._clearLaunchTimers();
+    AppView._appFrame().coverFailed(true);
+  },
+
+  // Try again (#4813): re-run the pointing half of the launch on the SAME
+  // frame, in place. The failed card drops, the cover returns to
+  // "Opening…", and the ladder re-arms off the fresh src assignment. No
+  // remount, no page reload — the user stays exactly where they are.
+  //
+  // Honoured only while the failed launch is still the one on screen: a
+  // superseded launch's retry goes inert through the launchId check, and the
+  // screenshot state never sets _launchRetry at all.
+  retryLaunch() {
+    const retry = AppView._launchRetry;
+    if (!retry || retry.launchId !== AppView._launchId) return false;
+    const frame = AppView._appFrame();
+    const iframe = frame.frame();
+    if (!iframe || frame.slug() !== retry.slug || !frame.hasCover()) return false;
+    AppView._launchId += 1;
+    const launchId = AppView._launchId;
+    AppView._clearLaunchTimers();
+    AppView._launchAdopt = null;
+    AppView._launchRetry = { launchId, slug: retry.slug };
+    frame.coverFailed(false);
+    AppView._pointLaunch(retry.slug, frame, iframe, launchId);
     return true;
   },
 
@@ -2556,8 +2632,11 @@ const AppView = {
     iframe.onerror = () => {
       if (!iframe.getAttribute('src')) return;
       if (!current()) return;
-      // Nothing better to show than the app's own frame: it will render
-      // whatever the origin returned (its own error page, usually).
+      // #4813: the App tab's cover keeps its failed card up instead — a
+      // frame the browser reports as errored is the one case where
+      // "nothing better to show" is no longer the honest answer. The
+      // landing viewer keeps the old reveal.
+      if (isReactCover) { AppView._failLaunch(); return; }
       reveal();
     };
 
@@ -2588,6 +2667,13 @@ const AppView = {
       if (isReactCover) { AppView._appFrame().coverNote(text); return; }
       const note = document.getElementById(`${coverId}-note`);
       if (note) note.textContent = text;
+    });
+    // #4813: past the 20s "taking longer" note, a launch whose src still
+    // never went out fails into the "Couldn't open this app" card. Only a
+    // cover still up qualifies — the 2s cap has long since revealed a frame
+    // whose src went out, and this rung is a no-op for it.
+    at(AppView.LAUNCH_FAIL_MS, () => {
+      if (isReactCover && AppView._appFrame().hasCover()) AppView._failLaunch();
     });
   },
 
@@ -2758,6 +2844,36 @@ const AppView = {
     AppView._setSurface('app');
     App._setScreenVisible('home-screen', false);
     App._setScreenVisible('app-view', true);
+  },
+
+  // #4813: the resolved half of `?shot=app-launching&failed=1`. The launch
+  // surface with the failed card up — icon and name, then "Couldn't open
+  // this app" with its Try again. Synthesised like the tone shots above and
+  // for the same reason: the state is what the shell paints, so no project
+  // has to fail to open on the database the shot runs against. The frame is
+  // mounted with its cover and NO src, so no origin loads, and
+  // `_launchRetry` is deliberately never set: Try again has nothing behind
+  // it here, and the test pins that it does nothing.
+  showLaunchFailedShot() {
+    const slug = 'staging-demo-launch';
+    AppView.appData = {
+      slug,
+      name: 'Staging demo app',
+      icon_emoji: '🚀',
+      status: 'running',
+      url: location.origin,
+      self_hosted: false,
+    };
+    AppView._teardownDevRoots();
+    AppView._teardownLaunch();
+    AppView._issueStateSource = null;
+    const frame = AppView._appFrame();
+    frame.mount({ slug, cover: AppView._coverDescriptor(AppView.appData), faded: true });
+    frame.coverFailed(true);
+    AppView._setSurface('app');
+    App._setScreenVisible('home-screen', false);
+    App._setScreenVisible('app-view', true);
+    window.UsernodeReact?.nav?.setScreen?.('app-view');
   },
 
   // #1945: `?shot=app-tone-dark` / `?shot=app-tone-light`. A running app whose
@@ -6845,6 +6961,15 @@ const AppView = {
     const via = agent ? PlatformI18n.t('changes:page.thread.via', { agent })
       : item.external_agent ? PlatformI18n.t('changes:page.thread.viaExternal')
         : (item.source === 'imported' ? PlatformI18n.t('changes:page.thread.viaGitHub') : null);
+    // Issue #5178: the header repeats the status pill the board card shows,
+    // beside "Change #N" — "✓ Live", "Going live…", or the vote's own words.
+    // A change still being built or closed has no pill worth repeating: its
+    // card pill would read as a bare tally, and the Votes card under the
+    // title already says where those stand. The card's own state wins, so
+    // the kind (proposal or gov) and majority stay the card's.
+    const statusState = ['active', 'paused', 'closed'].includes(item.status)
+      ? null
+      : ((card && card.pill && card.pill.state) || AppView.statusPillState(item, kind === 'gov' ? { kind: 'gov' } : {}) || null);
     return {
       number: n || null,
       category,
@@ -6853,6 +6978,7 @@ const AppView = {
       time: stamp.text,
       timeTitle: stamp.title,
       via,
+      status: statusState && statusState.label ? statusState : null,
       votes: AppView._changeVotesView(item, card),
       testing: AppView._changeTestingView(item),
       shots: AppView._changeShotsView(kind, item),
@@ -8961,6 +9087,28 @@ const AppView = {
     // A fresh run started first is the one the feed's own load then joins.
     if (opts) AppView._loadDevData(opts);
     return AppView._loadDevFeed();
+  },
+
+  // (#5164) The project hub's quiet refresh: the For you card (the votes
+  // owed) and Recently live, re-read while one of the hub's own places is
+  // showing. A timed tick and a return to the tab call it; a socket burst
+  // still goes through refreshDevData, and a tick landing beside one joins
+  // the same run (_loadDevData's in-flight join / queue).
+  //
+  // `whole` widens the read to the whole board (a return to the tab, where
+  // the missed time can have moved anything); a tick reads only the parts
+  // the hub's two cards draw from — the proposals' tallies and the merged
+  // list — so it stays light. Nothing here runs off the board or under a
+  // hidden tab, and a board that has not loaded whole once is not partly
+  // refreshed.
+  refreshHubLive({ whole = false } = {}) {
+    if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') return undefined;
+    if (App.currentSubTab !== 'forum') return undefined;
+    if (document.hidden) return undefined;
+    if (!AppView._devDataReady) return undefined;
+    App._announceRefreshIntent?.();
+    const parts = whole ? null : new Set(['promoted', 'merged']);
+    return AppView._loadDevFeed(parts ? { parts } : null);
   },
 
   // What a live burst moved, as board parts: a vote moves the proposals'

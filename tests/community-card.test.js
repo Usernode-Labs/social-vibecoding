@@ -100,9 +100,11 @@ test('#4896: the hero says "Just you so far" to the one person in a project nobo
   assert.match(read('frontend/src/features/dialogs/who-decides.tsx'), /audience: audienceLine\(community\)/);
   const src = read(CARD);
   assert.match(src, /data-ws-community-audience="">\{justYouSoFar\(data, member\) \|\| audienceLine\(data\)\}<\/span>/,
-    'under the name, out of the first week');
-  assert.match(src, /audienceLabel=\{justYouSoFar\(data, member\) \|\| data\.audience_label\}/,
-    'and on the first week\'s people row');
+    'under the name, from the first day');
+  // 15 Oct 2026: one hub from the first day, and a link out is still Just
+  // you: no first week's people row, and no "Private community" said for a
+  // project nobody has joined.
+  assert.doesNotMatch(src, /audienceLabel=\{justYouSoFar|WeekPeople|week\.privateCommunity|data-ws-seats/);
 });
 
 test('before the read the hero draws only what needs none: Open app and the ⋯', () => {

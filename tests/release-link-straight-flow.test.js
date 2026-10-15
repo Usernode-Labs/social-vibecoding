@@ -218,7 +218,7 @@ test('a used link\'s Get started sends the code, says why, and the right code le
 
 // ─── the full-page Welcome ──────────────────────────────────────────────
 
-test('the Welcome is a page in the make screen\'s frame: picture, eyebrow, heading, address, username, note, Continue, terms', () => {
+test('the Welcome is a page in the make screen\'s frame: picture, eyebrow, heading, what Homeroom is, address, username, note, Continue, terms', () => {
   const html = renderComponent(WELCOME, 'WelcomePage', {
     account: { email: 'ada@example.com', needsUsername: true, suggestedUsername: 'ada' },
     beforeFinish() { return true; },
@@ -231,14 +231,20 @@ test('the Welcome is a page in the make screen\'s frame: picture, eyebrow, headi
   assert.match(html, /<form class="mx-auto flex w-full max-w-sm grow flex-col px-4 pb-\[max\(34px,env\(safe-area-inset-bottom\)\)\] /);
   // Top to bottom, in this order.
   const order = [
-    /<img src="\/brand\/people\.png" alt="" width="816" height="612" draggable="false" class="mx-auto mt-4 block h-auto w-\[200px\] max-w-full"\/>/,
+    /<img src="\/brand\/people\.png" alt="" width="816" height="612" draggable="false" class="mx-auto mt-2 block h-auto w-\[140px\] max-w-full [^"]*"\/>/,
     /<p class="mt-4 text-\[13px\] font-semibold uppercase tracking-\[0\.8px\] text-zinc-500 dark:text-zinc-400">You(?:&#x27;|')re in<\/p>/,
     /<h1 id="welcome-page-title" class="mt-2\.5 text-balance text-\[30px\] font-extrabold leading-\[34px\]">Welcome to Homeroom<\/h1>/,
+    // What Homeroom is: the line, then one grouped card of three rows.
+    /<p class="mt-2\.5 text-pretty text-\[16px\] leading-\[22px\] text-zinc-500 dark:text-zinc-400 text-center">Where groups make their own apps\.<\/p>/,
+    /<div class="[^"]*" role="list" data-welcome-page-points="">/,
+    /data-welcome-page-point="make">.*?>Make an app for your group<\/div><div [^>]*>Pick an idea or describe your own\.<\/div>/,
+    /data-welcome-page-point="ask">.*?>Change it by asking<\/div><div [^>]*>Homeroom bot builds what anyone suggests\.<\/div>/,
+    /data-welcome-page-point="decide">.*?>Decide together<\/div><div [^>]*>Your group votes on what changes\.<\/div>/,
     /<p data-welcome-page-email="" class="mt-2 max-w-full text-\[15px\] leading-5 font-semibold text-zinc-700 dark:text-zinc-300 \[overflow-wrap:anywhere\]">ada@example\.com<\/p>/,
     /<p class="mt-6 pb-2 text-\[13px\] text-zinc-500 dark:text-zinc-400">Pick a username\. It is public on Homeroom\.<\/p>/,
     /<div class="overflow-hidden rounded-2xl bg-white shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] dark:bg-zinc-900">/,
     /<input id="welcome-page-username" autoComplete="username" enterKeyHint="go" class="[^"]*" placeholder="[^"]*" autoCapitalize="none" autoCorrect="off" spellCheck="false" value="ada"\/>/,
-    /<p data-welcome-page-code-note="" class="mt-3 text-\[13px\] text-zinc-500 dark:text-zinc-400">You sign in with a code we email you\. You can add a password later in Settings\.<\/p>/,
+    /<p data-welcome-page-code-note="" class="mt-2 text-\[13px\] text-zinc-500 dark:text-zinc-400">You sign in with a code we email you\. You can add a password later in Settings\.<\/p>/,
     /<div class="grow"><\/div>/,
     /<div data-welcome-page-continue=""><button[^>]*type="submit"[^>]*>Continue<\/button>/,
     /<p class="text-center text-\[13px\] text-zinc-500 dark:text-zinc-400 mt-3">By continuing, you agree to Homeroom(?:&#x27;|')s terms\.<\/p><\/div><\/form>/,
@@ -251,10 +257,22 @@ test('the Welcome is a page in the make screen\'s frame: picture, eyebrow, headi
   }
   // No sheet: no handle, no ✕, no dim. No password field (#4891).
   assert.doesNotMatch(html, /data-sign-in-sheet|aria-label="Close"|bg-black\/40|type="password"/);
-  // The Continue pill is the make screen's.
-  assert.match(html, /<button type="submit" class="[^"]*mt-6 flex items-center justify-center disabled:opacity-50">Continue<\/button>/);
+  // The Continue pill is the make screen's, 16px under the note rather
+  // than 24 so it is on screen in Safari's visible area.
+  assert.match(html, /<button type="submit" class="[^"]*mt-4 flex items-center justify-center disabled:opacity-50">Continue<\/button>/);
   // Nothing on the page is a dash.
   assert.doesNotMatch(html, /—/);
+
+  // The card is the shell's grouped list on the plane colour: 20px corners,
+  // one hairline, hairlines between its rows.
+  const card = html.slice(html.indexOf('data-welcome-page-points=""') - 200, html.indexOf('data-welcome-page-email'));
+  assert.match(card, /<div class="overflow-hidden rounded-\[20px\] shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] bg-\[color:var\(--dc-sheet-solid\)\] mx-0 mb-1 mt-3" role="list" data-welcome-page-points="">/);
+  assert.equal((card.match(/role="listitem"/g) || []).length, 3, 'three rows');
+  assert.equal((card.match(/\[&amp;:not\(:last-child\)\]:after:h-px/g) || []).length, 3, 'each row carries the hairline the last one drops');
+  // Rows to read: no button, no link, no chevron, nothing in the accent.
+  assert.doesNotMatch(card, /<button|<a |M9 5l7 7-7 7|cursor-pointer|violet|--accent/);
+  // Each a glyph on the shell's one neutral tile, in the muted ink.
+  assert.equal((card.match(/<div class="flex shrink-0 items-center justify-center h-8 w-8 rounded-lg \[&amp;&gt;svg\]:h-5 \[&amp;&gt;svg\]:w-5 bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"><svg [^>]*aria-hidden="true">/g) || []).length, 3);
 
   // An account with its username chosen asks for none.
   const named = renderComponent(WELCOME, 'WelcomePage', {
@@ -265,14 +283,25 @@ test('the Welcome is a page in the make screen\'s frame: picture, eyebrow, headi
   assert.match(named, /data-welcome-page-code-note=""/);
 });
 
-test('with the keys up the page moves once: the picture folds, the spacer goes, Continue rides (onboarding run two)', () => {
+test('with the keys up the page moves once: the picture and what Homeroom is fold, the spacer goes, Continue rides (onboarding run two)', () => {
   const html = renderComponent(WELCOME, 'WelcomePage', {
     account: { email: 'ada@example.com', needsUsername: true, suggestedUsername: 'ada' },
     beforeFinish() { return true; },
   });
   // First drawn as it always was: the picture shown, the spacer in place.
-  assert.match(html, /<div data-welcome-page-picture="shown" class="max-h-\[180px\] overflow-hidden opacity-100 transition-\[max-height,opacity\] duration-300 ease-out motion-reduce:transition-none"><img src="\/brand\/people\.png"/);
+  assert.match(html, /<div data-welcome-page-picture="shown" class="max-h-\[120px\] overflow-hidden opacity-100 transition-\[max-height,opacity\] duration-300 ease-out motion-reduce:transition-none \[@media\(max-height:699px\)\]:max-h-0 \[@media\(max-height:699px\)\]:opacity-0"><img src="\/brand\/people\.png"/);
+  // What Homeroom is, shown, in a grid row that folds to nothing.
+  assert.match(html, /<div data-welcome-page-about="shown" class="grid grid-rows-\[1fr\] opacity-100 transition-\[grid-template-rows,opacity\] duration-300 ease-out motion-reduce:transition-none"><div class="min-h-0 overflow-hidden"><p [^>]*>Where groups make their own apps\.<\/p><div [^>]*data-welcome-page-points="">/);
   const src = read(WELCOME);
+  // The fold takes the card with the picture, by the same `typing`, over the
+  // same 300ms, and hides it from a screen reader while it is folded.
+  assert.match(src, /data-welcome-page-about=\{typing \? 'folded' : 'shown'\}\s+aria-hidden=\{typing \|\| undefined\}\s+className=\{typing \? ABOUT_FOLDED : ABOUT_SHOWN\}/);
+  assert.match(src, /const ABOUT_FOLDED = 'grid grid-rows-\[0fr\] opacity-0 transition-\[grid-template-rows,opacity\] duration-300 ease-out motion-reduce:transition-none';/);
+  assert.match(src, /className=\{typing \? PICTURE_FOLDED : PICTURE_SHOWN\}/);
+  // The card (the line and its rows) is inside the fold; the address is not.
+  const about = src.slice(src.indexOf('data-welcome-page-about='), src.indexOf('data-welcome-page-email'));
+  assert.match(about, /t\('auth:welcomePage\.lead'\)/);
+  assert.match(about, /<GroupedList tone="plane"/);
   // Only on a touch screen, and never while it hands off to the make screen.
   assert.match(src, /if \(\(next && !touchScreen\(\)\) \|\| handingOff\.current\) return;/);
   assert.match(src, /onFocus=\{\(\) => fold\(true\)\}\s+onBlur=\{\(\) => fold\(false\)\}/);
@@ -283,10 +312,67 @@ test('with the keys up the page moves once: the picture folds, the spacer goes, 
   assert.match(src, /handingOff\.current = true;\s+const active = document\.activeElement;/);
 });
 
+test('the card that says what Homeroom is is the shell\'s grouped list, its rows information rather than buttons (Evan, 15 Oct 2026)', () => {
+  const src = read(WELCOME);
+  // The primitives, not a hand-written card.
+  assert.match(src, /import \{ GroupedList, ListRow \} from '@\/components\/ui\/grouped-list';/);
+  assert.match(src, /import \{ IconTile \} from '@\/components\/ui\/icon-tile';/);
+  assert.match(src, /import \{ ChatIcon, CheckIcon, SparklesIcon \} from '@\/components\/ui\/icons';/);
+  assert.match(src, /<GroupedList tone="plane" role="list" className="mx-0 mb-1 mt-3" data-welcome-page-points="">/);
+  // A sparkle, a bubble, and a tick on the tile that is its box.
+  assert.match(src, /const POINT_ICONS = \{ make: SparklesIcon, ask: ChatIcon, decide: CheckIcon \} as const;/);
+  // Rows to read: a div (the default), no chevron, no handler.
+  const rows = src.slice(src.indexOf('<ListRow'), src.indexOf('</GroupedList>'));
+  assert.match(rows, /chevron=\{false\}/);
+  assert.doesNotMatch(rows, /\bas=|onClick|href=/);
+  // The muted ink, never the accent (AGENTS.md, "Type and colour").
+  assert.match(src, /const POINT_TILE = 'text-zinc-500 dark:text-zinc-400';/);
+  assert.match(rows, /leading=\{<IconTile size="xs" className=\{POINT_TILE\}><Icon aria-hidden="true" \/><\/IconTile>\}/);
+});
+
+test('in Safari\'s visible area Continue is on screen: under 800px a 96px picture and title-only rows, under 700px no picture', () => {
+  const html = renderComponent(WELCOME, 'WelcomePage', {
+    account: { email: 'ada@example.com', needsUsername: true, suggestedUsername: 'ada' },
+    beforeFinish() { return true; },
+  });
+  const src = read(WELCOME);
+  // 800px tall and up: all of it, drawn as above (the 140px picture, the
+  // rows with their second lines).
+  assert.match(html, /<img src="\/brand\/people\.png" alt="" width="816" height="612" draggable="false" class="mx-auto mt-2 block h-auto w-\[140px\] max-w-full \[@media\(max-height:799px\)\]:w-\[96px\]"\/>/);
+  // Under 800px (about 402x717 on an iPhone 17): the picture at 96px, still
+  // shown, and each row keeps its title and drops its second line, in a
+  // 44px row. Every row is still drawn.
+  assert.match(src, /const SHORT_PICTURE_WIDTH = '\[@media\(max-height:799px\)\]:w-\[96px\]';/);
+  assert.match(src, /className=\{`mx-auto mt-2 block h-auto w-\[140px\] max-w-full \$\{SHORT_PICTURE_WIDTH\}`\}/);
+  assert.match(src, /const SHORTER_LINE = 'whitespace-normal \[@media\(max-height:799px\)\]:hidden';/);
+  assert.match(src, /subtitleClassName=\{SHORTER_LINE\}/);
+  assert.match(src, /const POINT_ROW = 'gap-3 py-2 \[&:not\(:last-child\)\]:after:left-\[3\.75rem\] \[@media\(max-height:799px\)\]:py-1\.5';/);
+  assert.equal((html.match(/\[@media\(max-height:799px\)\]:hidden">/g) || []).length, 3, 'the three second lines, and nothing else');
+  for (const title of ['Make an app for your group', 'Change it by asking', 'Decide together']) {
+    assert.match(html, new RegExp(`whitespace-normal">${title}</div>`), title);
+  }
+  // Under 700px (about 390x664 on a smaller iPhone): the picture folded as
+  // well, the typing fold's own max-height and opacity by a media query,
+  // from the first frame. The typing fold itself is unchanged.
+  assert.match(src, /const SHORT_PICTURE = '\[@media\(max-height:699px\)\]:max-h-0 \[@media\(max-height:699px\)\]:opacity-0';/);
+  assert.match(src, /const PICTURE_SHOWN = `max-h-\[120px\] overflow-hidden opacity-100 transition-\[max-height,opacity\] duration-300 ease-out motion-reduce:transition-none \$\{SHORT_PICTURE\}`;/);
+  assert.match(src, /const PICTURE_FOLDED = 'max-h-0 overflow-hidden opacity-0 transition-\[max-height,opacity\] duration-300 ease-out motion-reduce:transition-none';/);
+  // Only the picture and the second lines answer to the height: the line,
+  // the card, the address and the account card never do.
+  const heightRules = src.match(/\[@media\(max-height:\d+px\)\]:[\w.\-[\]]+/g) || [];
+  assert.deepEqual([...new Set(heightRules)].sort(), [
+    '[@media(max-height:699px)]:max-h-0',
+    '[@media(max-height:699px)]:opacity-0',
+    '[@media(max-height:799px)]:hidden',
+    '[@media(max-height:799px)]:py-1.5',
+    '[@media(max-height:799px)]:w-[96px]',
+  ]);
+});
+
 test('its frame is the make screen\'s own literals', () => {
   const welcome = loadTsx(WELCOME);
   const make = read(MAKE);
-  for (const name of ['WELCOME_BAR', 'WELCOME_COLUMN', 'WELCOME_EYEBROW', 'WELCOME_TITLE', 'WELCOME_LABEL', 'WELCOME_CARD']) {
+  for (const name of ['WELCOME_BAR', 'WELCOME_COLUMN', 'WELCOME_EYEBROW', 'WELCOME_TITLE', 'WELCOME_LEAD', 'WELCOME_LABEL', 'WELCOME_CARD']) {
     assert.ok(make.includes(welcome[name]), `${name} is the make screen's: ${welcome[name]}`);
   }
   // The make screen's root, at the landing's own layer.
@@ -318,8 +404,16 @@ test('Continue saves the username with the sheet\'s request, then hands off to t
   assert.match(src, /<p role="alert" className="mt-3 text-\[14px\] text-red-700 dark:text-red-400">\{error\}<\/p>/);
 });
 
-test('the copy: one new line, the rest the sheet\'s and the story\'s own', () => {
+test('the copy: the page\'s own lines, the rest the sheet\'s and the story\'s own', () => {
   assert.equal(message('auth:welcomePage.eyebrow'), 'You\'re in');
+  // What Homeroom is (Evan, 15 Oct 2026).
+  assert.equal(message('auth:welcomePage.lead'), 'Where groups make their own apps.');
+  assert.equal(message('auth:welcomePage.make.title'), 'Make an app for your group');
+  assert.equal(message('auth:welcomePage.make.line'), 'Pick an idea or describe your own.');
+  assert.equal(message('auth:welcomePage.ask.title'), 'Change it by asking');
+  assert.equal(message('auth:welcomePage.ask.line'), 'Homeroom bot builds what anyone suggests.');
+  assert.equal(message('auth:welcomePage.decide.title'), 'Decide together');
+  assert.equal(message('auth:welcomePage.decide.line'), 'Your group votes on what changes.');
   assert.equal(message('auth:story.welcome'), 'Welcome to Homeroom');
   assert.equal(message('auth:signInSheet.account.leadWithUsername'), 'Pick a username. It is public on Homeroom.');
   assert.equal(message('auth:signInSheet.account.codeNote'), 'You sign in with a code we email you. You can add a password later in Settings.');
@@ -327,10 +421,18 @@ test('the copy: one new line, the rest the sheet\'s and the story\'s own', () =>
   assert.equal(message('auth:signInSheet.account.finishing'), 'Finishing…');
   assert.equal(message('auth:landing.signingIn'), 'Signing you in…');
   const src = read(WELCOME);
-  for (const id of ['auth:welcomePage.eyebrow', 'auth:story.welcome', 'auth:signInSheet.account.leadWithUsername',
+  for (const id of ['auth:welcomePage.eyebrow', 'auth:story.welcome', 'auth:welcomePage.lead', 'auth:signInSheet.account.leadWithUsername',
     'auth:signInSheet.account.usernameLabel', 'auth:signInSheet.account.codeNote']) {
     assert.ok(src.includes(`t('${id}')`), id);
   }
+  // The three rows, in order, read through their ids.
+  const { WELCOME_POINTS } = loadTsx(WELCOME);
+  assert.deepEqual(WELCOME_POINTS.map((p) => [p.key, p.title, p.line]), [
+    ['make', 'auth:welcomePage.make.title', 'auth:welcomePage.make.line'],
+    ['ask', 'auth:welcomePage.ask.title', 'auth:welcomePage.ask.line'],
+    ['decide', 'auth:welcomePage.decide.title', 'auth:welcomePage.decide.line'],
+  ]);
+  assert.match(src, /title=\{t\(point\.title\)\}\s+subtitle=\{t\(point\.line\)\}/);
 });
 
 // ─── the server holds the line too ──────────────────────────────────────

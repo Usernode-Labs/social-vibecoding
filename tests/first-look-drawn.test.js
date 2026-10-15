@@ -301,7 +301,7 @@ test('the Global Chat inventory lists the route as a read', () => {
 const DIR = 'frontend/src/features/first-session';
 const drawnLook = loadTsx(`${DIR}/drawn-look.tsx`);
 
-test('a drawn first look has its own URL, spelled alike by the made screen, the hub, the tour and the App tab', () => {
+test('a drawn first look has its own URL, spelled alike by the made screen, the hub and the App tab', () => {
   const { drawnLookUrl, isDrawnLook } = drawnLook;
   const { firstLookSrc } = loadTsx(`${DIR}/first-look.tsx`);
   const body = (screens) => ({ app: { first_version: { line: 'building', screens } } });
@@ -368,16 +368,6 @@ test('the made screen\'s first look card: the drawn screen faded in over the out
   assert.match(src, /const src = useLookSwap\(next, ownSrc\);/);
   assert.match(src, /const cut = !!src && !!loaded && loaded !== src && isDrawnLook\(loaded\) && !isDrawnLook\(src\);/);
   assert.match(src, /const lookWaits = firstLookHere && \(!lookShown \|\| isDrawnLook\(lookShown\)\);/, 'asked for every 5 s until the picture');
-});
-
-test('the tour\'s last card: the drawn screen over its words, in the picture\'s own shape', () => {
-  const src = read(`${DIR}/first-look.tsx`);
-  assert.match(src, /if \(src && src !== broken && !isDrawnLook\(src\)\) return undefined;/, 'asked again until the picture');
-  assert.match(src, /const shown = useLookSwap\(src && src !== broken \? src : null, ownSrc\);/);
-  assert.match(src, /'relative flex h-\[min\(44vh,340px\)\] aspect-\[390\/844\] /, 'the box is the picture\'s width at its height');
-  assert.match(src, /className="h-\[min\(44vh,340px\)\] w-auto /);
-  const { TourFirstLook } = loadTsx(`${DIR}/first-look.tsx`);
-  assert.match(renderToHtml(createElement(TourFirstLook, { slug: 'club-votes', name: 'Club Votes' })), /data-first-session-first-look="drawing"[\s\S]*aspect-\[390\/844\][\s\S]*Drawing your screens…/);
 });
 
 test('the hub\'s first look card: the drawn screen in the picture\'s box', () => {

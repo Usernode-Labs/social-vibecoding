@@ -26,13 +26,18 @@ const DSN = process.env.TEST_DATABASE_URL
   || 'postgres://postgres:postgres@localhost:5432/postgres';
 
 // The smallest chat_sessions the statements read, with the claim columns
-// taken from schema.sql so a rename there fails here.
+// taken from schema.sql so a rename there fails here. apps is what
+// mainWatchVerdict reads (syncBeforeFix asks it), and loadRow joins for the
+// proposal's identity.
 const DDL = [
   `CREATE TABLE chat_sessions (
      id INTEGER PRIMARY KEY, app_id INTEGER NOT NULL, status TEXT NOT NULL,
      source TEXT, merged_at TIMESTAMPTZ, check_state TEXT, checks_checked_at TIMESTAMPTZ,
      checks_commit_sha TEXT, reviewed_head_sha TEXT,
      test_results JSONB NOT NULL DEFAULT '[]')`,
+  `CREATE TABLE apps (
+     id INTEGER PRIMARY KEY, slug TEXT, name TEXT, repo_url TEXT,
+     main_check_state TEXT, main_check_at TIMESTAMPTZ, main_check_sha TEXT, main_sha TEXT)`,
   ...(SCHEMA_SQL.match(/^ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS fixed_check_sync_[^;]*;/gm) || []),
 ].join(';\n');
 
@@ -66,6 +71,7 @@ async function withSchema(client, fn) {
 const DOMAIN = { name: 'Custom domain row', path: '/#app/staging-demo-custom-domain/dev' };
 const OTHER = { name: 'Another check', path: '/#app/x' };
 const HEAD = 'a'.repeat(40);
+const NEW_HEAD = 'b'.repeat(40);
 const key = (c) => appManifest.checkKey(c.name, c.path);
 const result = (c, status, extra = {}) => ({ ...c, status, ...extra });
 
@@ -122,6 +128,65 @@ test('main passes what the newest merged run of it passed, and a stuck proposal 
       const again = subject.select(await subject.openVerdicts(client, 12), passes);
       assert.deepEqual(again.candidates.map((c) => c.id), [11]);
       assert.equal(again.skipped[10], 'already_tried');
+    });
+  } finally {
+    await client.end().catch(() => {});
+  }
+});
+
+// #5220: syncBeforeFix reads one proposal (ownVerdict), decides it alone
+// (selectOwn), and its claim is the sweep's claim, so a following sweep
+// finds nothing left on the same head.
+test('ownVerdict returns what decideRow reads, and a syncBeforeFix claim blocks a following sweep on the same head', async (t) => {
+  const conn = await connect();
+  if (!conn) return t.skip('the pg driver is not installed in this environment');
+  if (conn.error) return t.skip(`no postgres reachable at ${DSN}: ${conn.error}`);
+  const { client } = conn;
+  try {
+    await withSchema(client, async () => {
+      await client.query(
+        `INSERT INTO chat_sessions (id, app_id, status, source, merged_at, check_state, checks_commit_sha,
+                                    reviewed_head_sha, test_results)
+         VALUES ($1, 12, $2, 'cli_handoff', $3, $4, $5, $5, $6::jsonb)`,
+        [1, 'merged', '2026-10-09T17:00:00Z', null, null, JSON.stringify([result(DOMAIN, 'pass')])]
+      );
+      await client.query(
+        `INSERT INTO chat_sessions (id, app_id, status, source, check_state, checks_commit_sha,
+                                    reviewed_head_sha, test_results)
+         VALUES ($1, 12, 'promoted', 'cli_handoff', 'failing', $2, $2, $3::jsonb)`,
+        [10, HEAD, JSON.stringify([result(DOMAIN, 'fail'), result(OTHER, 'pass')])]
+      );
+      await client.query(
+        `INSERT INTO apps (id, slug, name, repo_url)
+         VALUES (12, 'staging-demo', 'Staging demo', 'https://github.com/usernode-bot/staging-demo')`
+      );
+
+      const row = await subject.ownVerdict(client, 10);
+      assert.equal(row.app_id, 12, 'the app, so the bot reads what main passes for it');
+      assert.equal(row.check_state, 'failing');
+      assert.deepEqual(row.failing,
+        [{ name: DOMAIN.name, path: DOMAIN.path, index: null, advisory: false }]);
+
+      const picked = subject.selectOwn(row, await subject.mainPasses(client, 12),
+        await subject.mainWatchVerdict(client, 12));
+      assert.deepEqual(picked.candidate, { id: 10, head: HEAD, keys: [key(DOMAIN)] },
+        'judged alone: one proposal failing a check main passes is enough');
+
+      const deps = {
+        integration: { measure: async () => ({ headSha: HEAD, behindBy: 3, mergesClean: true }) },
+        syncMain: { runSyncMain: async () => ({ ok: true, syncResult: 'clean', pushOk: true, sha: NEW_HEAD }) },
+        activeWorkers: { isSessionBusy: () => false },
+        mergeQueue: { isIntegratingSession: () => false },
+        votes: () => ({ reconcileNativeReviewedHead: async () => ({}) }),
+      };
+      const out = await subject.syncBeforeFix({ config: {}, pool: client, sessionId: 10, head: HEAD }, deps);
+      assert.deepEqual(out, { synced: true, why: null, sha: NEW_HEAD });
+
+      const swept = subject.select(await subject.openVerdicts(client, 12),
+        await subject.mainPasses(client, 12));
+      assert.deepEqual(swept.candidates.map((c) => c.id), [],
+        'the sweep finds the head already tried: the bot\'s claim is the sweep\'s');
+      assert.equal(swept.skipped[10], 'already_tried');
     });
   } finally {
     await client.end().catch(() => {});

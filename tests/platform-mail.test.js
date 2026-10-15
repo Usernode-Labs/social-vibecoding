@@ -678,6 +678,12 @@ test('every kind renders subject, text and html with no leaked undefined', () =>
       provider: 'gmail', from: 'Homeroom <no-reply@x.invalid>',
       sentAt: '2026-01-01T00:00:00.000Z', reference: 'abcd1234',
     },
+    content_report: {
+      caseId: 312, reportId: 977, reason: 'harassment',
+      detail: 'Keeps posting the same insult under my requests.',
+      targetType: 'app_message', targetLabel: 'App message #48213',
+      reporter: 'sam', url: 'https://x.invalid/#admin/reports/312',
+    },
     project_invite: { inviter: 'ada', project: 'Book club', url: 'https://x.invalid/waitlist' },
   };
   for (const kind of templates.KINDS) {

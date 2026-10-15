@@ -101,6 +101,7 @@ async function migrate(config) {
   await seedStagingRestartEligibleMerge(pool, config);
   await seedStagingOtherUserProposal(pool, config);
   await seedStagingTopicScrollThreads(pool, config);
+  await seedStagingGroupedFollowOns(pool, config);
   await seedStagingArchiveProposalFixtures(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingStartScreenSession(pool, config);
@@ -196,6 +197,7 @@ async function migrate(config) {
   await seedStagingAppCapApps(pool, config);
   await seedStagingSystemTokenUsage(pool);
   await seedStagingDashboardAdminSplit(pool);
+  await seedStagingModerationCase(pool);
   await seedStagingAnalyticsCharts(pool);
   await seedStagingTopicAttributes(pool, config);
   await seedStagingSubmittedFeatures(pool, config);
@@ -1868,6 +1870,47 @@ async function seedStagingAdminConsoleData(pool) {
     log.info('db', 'Admin-console staging fixtures seeded');
   } catch (err) {
     log.warn('db', 'Admin-console staging fixtures failed', { message: err.message });
+  }
+}
+
+// A moderation case for the console's Moderation section (#5072). The
+// moderation tables are staging:private, so a preview clone starts with an
+// empty queue and the section's deep link (#admin/reports/<id>) has nothing
+// to open. Two obviously-fake people of their own, never the viewer, and a
+// report that says it is a staging fixture. Idempotent: the case keys on its
+// UNIQUE(target_type, target_id), the report on an existence check scoped to
+// the fake target. Strictly a no-op outside staging.
+async function seedStagingModerationCase(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password, profile_published)
+       VALUES (900320, 'staging-demo-reported', 'staging-demo-not-a-login', TRUE),
+              (900321, 'staging-demo-reporter', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO moderation_cases (target_type, target_id, target_label, target_user_id, status)
+       VALUES ('user', 900320, '@staging-demo-reported', 900320, 'new')
+       ON CONFLICT (target_type, target_id) DO NOTHING`
+    );
+    const has = await pool.query(
+      `SELECT 1 FROM moderation_reports r JOIN moderation_cases c ON c.id = r.case_id
+        WHERE c.target_type = 'user' AND c.target_id = 900320 LIMIT 1`
+    );
+    if (!has.rowCount) {
+      await pool.query(
+        `INSERT INTO moderation_reports (case_id, cycle, reporter_user_id, reason, detail, evidence)
+         SELECT c.id, c.cycle, 900321, 'spam',
+                'Staging fixture: a fake report so the Moderation screens have a case to open.',
+                NULL
+           FROM moderation_cases c
+          WHERE c.target_type = 'user' AND c.target_id = 900320`
+      );
+    }
+    log.info('db', 'Staging moderation case seeded');
+  } catch (err) {
+    log.warn('db', 'Staging moderation case seeding failed', { message: err.message });
   }
 }
 
@@ -11879,6 +11922,47 @@ async function seedStagingTopicScrollThreads(pool, config) {
 
 // #5007: a change built for a request points its reply thread at that
 // request — "Conversation lives on #N" where "No replies yet" used to be,
+// #5165: the grouped-gutter fix shows only where ONE author posted two
+// messages in a row, and every thread fixture above hands each turn to a
+// different voice so every row draws a header. Two consecutive follow-on
+// messages from staging-demo-user at the tail of the mock issue's thread,
+// inside the seven-minute window so the second groups under the first and
+// its text lines up with the first message's. Idempotent on content, like
+// seedStagingTopicScrollThreads; strictly a no-op outside staging.
+async function seedStagingGroupedFollowOns(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) return;
+
+  const { rows: demoRows } = await pool.query(
+    'SELECT id FROM users WHERE username = $1', ['staging-demo-user']
+  );
+  const authorId = demoRows[0]?.id;
+  if (!authorId) return;
+
+  const bodies = [
+    '[Staging demo] grouped follow-on #1: The narrow-phone layout is the part I would keep as it is.',
+    '[Staging demo] grouped follow-on #2: And the dark-mode contrast holds up on my screen too.',
+  ];
+  await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+     SELECT $1::int, $2::int, m.content, 'message', 'issue', 900001::int,
+            NOW() - (m.minutes_ago * INTERVAL '1 minute')
+       FROM jsonb_to_recordset($3::jsonb) AS m(content text, minutes_ago float8)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM chat_messages existing
+         WHERE existing.app_id = $1 AND existing.content = m.content
+      )`,
+    [appId, authorId, JSON.stringify(bodies.map((content, i) => ({ content, minutes_ago: bodies.length - i - 0.5 })))]
+  );
+  log.info('db', 'Staging grouped follow-on messages seeded', { appId, threadRef: 900001 });
+}
+
 // "More of the conversation is on #N" above the count, and the closed
 // notes say the conversation is on the request. Every session fixture
 // above has linked_issues = {}, so a fresh staging copy has no state that

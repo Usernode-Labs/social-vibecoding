@@ -20,9 +20,10 @@
 //   invite_sent          the link went out from the sheet. { how: shared |
 //                        copied }
 //   invite_later_tapped  Invite people later (nothing went out)
-//   continue_tapped      the way on once the link was out (Start the tour, or
-//                        Go to from Create)
-//   tour_started         the maker's tour. { steps }
+//   continue_tapped      the way on once the link was out (Go to app, or
+//                        Continue while it is built, or Go to from Create)
+//   tour_started         the maker's tour: the walk on Home since 15 Oct
+//                        2026, earlier the tour through the app. { steps }
 //   tour_step_shown      each of its cards. { step, steps }
 //   tour_ended           { step, steps, how: done | skipped }
 //

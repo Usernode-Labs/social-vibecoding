@@ -98,38 +98,42 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   assert.equal(message('project:page.backToWorkshop'), 'Workshop');
   assert.match(LANDER, /<div className="dev-ws-allbar" data-ws-allbar="">\s*<PageBack\s+label=\{t\('project:page\.backToWorkshop'\)\}\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}\s+eyebrow=\{false\}/);
   assert.match(LANDER, /\{band\}\s*\{tray\}/);
-  // The hub's order, as agreed (the hub as the project's summary): the hero
-  // (what it is, who is around, what you can do), the first version while
-  // Homeroom bot builds it (tests/hub-just-you.test.js), For you (Needs you,
-  // Your work, the Discussion), Share it for a project that is just yours,
-  // and Recently live. One column at every width, and no metrics card or
-  // chart anywhere on it. Start a
-  // new change ended it until #852's review moved it into the hero's ⋯
-  // (tests/improve-action-deduplication.test.js).
+  // The hub's order, as agreed (the hub as the project's summary; 15 Oct
+  // 2026): the hero (what it is, who is around, what you can do), the first
+  // version while Homeroom bot builds it (tests/hub-just-you.test.js), Share
+  // it for a project that is just yours, "What do you want to change?" for
+  // one nobody has started on, For you (Needs you, Your work, the
+  // Discussion), the first look while it is built, and Recently live. One
+  // column at every width, and no metrics card or chart anywhere on it.
+  // Start a new change ended it until #852's review moved it into the
+  // hero's ⋯ (tests/improve-action-deduplication.test.js).
   const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{isChannelPlace(tab) ? ("));
-  const order = ['<CommunityCard', '<FirstVersionCard', '<ForYouCard', '<ShareItCard', '<RecentlyLive'].map((x) => hub.indexOf(x));
-  assert.ok(order.every((n) => n >= 0), `all five on the hub: ${JSON.stringify(order)}`);
-  assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, first version, for you, Share it, recently live');
+  const order = ['<CommunityCard', '<FirstVersionCard', '<ShareItCard', '<StartHereBanner', '<ForYouCard', '<FirstLookCard', '<RecentlyLive']
+    .map((x) => hub.indexOf(x));
+  assert.ok(order.every((n) => n >= 0), `all seven on the hub: ${JSON.stringify(order)}`);
+  assert.deepEqual([...order].sort((a, b) => a - b), order,
+    'hero, first version, Share it, what to change, for you, first look, recently live');
   assert.doesNotMatch(hub, /<SinceSummaryCard|<YourWorkCard|<NeedsCard|<ChannelCard|<GoingCard|ApprovalRules/,
     'what landed since your last visit, your work in full and the approval rule are the Workshop\'s');
   assert.doesNotMatch(hub, /data-ws-start-change/, 'no Start a new change at its foot');
   // Needs you's quiet line when no vote is owed (#3408), and none on a
-  // project nobody else is in or in its first week (#4045).
-  assert.match(hub, /queue=\{v\.queue\}\s+unclaimed=\{v\.dashboard \? v\.dashboard\.unclaimed : 0\}\s+mine=\{v\.mine\}\s+workEmpty=\{workEmpty\}\s+alone=\{alone \|\| weekOne\}/);
+  // project nobody else is in; the same from a project's first day.
+  assert.match(hub, /queue=\{v\.queue\}\s+unclaimed=\{v\.dashboard \? v\.dashboard\.unclaimed : 0\}\s+mine=\{v\.mine\}\s+alone=\{alone\}/);
+  assert.doesNotMatch(LANDER, /first_week|weekOne|hubWorkEmpty|workEmpty/, 'no first week of its own');
   assert.match(read(HUB), /\{owes\s*\? <NeedsRow queue=\{queue\} slug=\{slug\} canPost=\{canPost\} onOpen=\{onNeeds\} \/>\s*: <NothingToVote unclaimed=\{claims\} onOpen=\{onWork\} alone=\{alone\} \/>\}/,
     'Needs you only while a vote is owed; one quiet line in its place otherwise, naming the open requests nobody has picked up as the way to the Workshop (Needs you is votes alone)');
   assert.match(read(HUB), /const claims = Math\.max\(0, Number\(unclaimed\) \|\| 0\);/, 'the requests are the view model\'s unclaimed count, not queue rows');
   // Each row is a door to its place.
   assert.match(hub, /onNeeds=\{\(\) => openTab\('needs'\)\}\s+onWork=\{\(\) => openTab\('workshop'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}/);
-  assert.match(hub, /<RecentlyLive slug=\{slug\} rows=\{v\.recentLive\} onAll=\{\(\) => openTab\('workshop'\)\} \/>/, 'All in Workshop is the Workshop place');
+  assert.match(hub, /<RecentlyLive slug=\{slug\} rows=\{v\.recentLive\} onAll=\{\(\) => openTab\('workshop'\)\} own=\{ownLive\} \/>/, 'All in Workshop is the Workshop place');
   const { ForYouCard } = loadTsx(HUB);
   const quiet = renderToHtml(createElement(ForYouCard, {
-    slug: 'garden', name: 'Garden', queue: [], mine: null, workEmpty: null, alone: true,
+    slug: 'garden', queue: [], mine: null, alone: true,
     onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, canPost: true,
     data: community({ channel: { recent: [], unread_count: 0, href: '#messages/app/garden', handle: null } }),
   }));
-  assert.match(quiet, /<span data-ws-channel-empty="">Say hi to Garden<\/span>/,
-    'with nothing said yet the Discussion row asks for the first word, and opens the Discussion place');
+  assert.match(quiet, /<span data-ws-channel-empty="">No messages yet\.<\/span>/,
+    'with nothing said yet the Discussion row says so, and opens the Discussion place');
   assert.doesNotMatch(hub, /<WorkshopDoor|dev-ws-hub-side|data-ws-since=""/, 'no Workshop door, no second column, and the since list is the Workshop\'s');
   assert.doesNotMatch(read('public/css/app.css'), /dev-ws-hub-side/);
   // Discussion is the channel whole; #4417: and so is each topic's channel.
@@ -181,7 +185,7 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
 test('For you\'s Discussion row: the channel\'s name, its last line, what is new, and the way in', () => {
   const { ForYouCard } = loadTsx(HUB);
   const card = (data, over = {}) => renderToHtml(createElement(ForYouCard, {
-    slug: 'garden', name: 'Garden', queue: [], mine: null, workEmpty: null, alone: false, canPost: true,
+    slug: 'garden', queue: [], mine: null, alone: false, canPost: true,
     onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, data, ...over,
   }));
   const html = card(community());
@@ -199,10 +203,14 @@ test('For you\'s Discussion row: the channel\'s name, its last line, what is new
   // A multi-line message is one line in the row.
   const long = card(community({ channel: { ...community().channel, recent: [{ id: 3, content: 'one\n\ntwo', created_at: '2026-09-20T10:00:00Z', by: null }] } }));
   assert.match(long, /<span data-ws-channel-last="">one two · /);
-  // Nothing to draw for a viewer who may not talk here, nor on a project
-  // that is just yours, which has nobody to talk to yet.
+  // Nothing to draw for a viewer who may not talk here. A project that is
+  // just yours has its room from the first day (15 Oct 2026), saying so
+  // while nothing is said in it.
   assert.doesNotMatch(card(community({ channel: null })), /data-ws-channel/);
-  assert.doesNotMatch(card(community({ audience: 'solo', audience_label: 'Just you' })), /data-ws-channel/);
+  const solo = card(community({ audience: 'solo', audience_label: 'Just you', member_count: 1,
+    channel: { recent: [], unread_count: 0, last_at: null, href: '#messages/app/garden', handle: null } }), { alone: true });
+  assert.match(solo, /data-ws-channel="preview" data-ws-channel-open=""[\s\S]*<span data-ws-channel-empty="">No messages yet\.<\/span>/);
+  assert.equal(message('project:hub.channel.empty'), 'No messages yet.');
   assert.equal(card(null, { alone: true }), '', 'nothing before the read on a project nobody else is in');
 });
 
@@ -265,6 +273,36 @@ test('Recently live: the last three changes that went live, as pictures that ope
   assert.match(html, /data-ws-recent-pic="plain" aria-hidden="true"><svg[^>]*class="dev-ws-recent-glyph"/, 'without a shot, a plain tile');
   assert.match(html, /data-ws-recent-item="live:3" data-ws-recent-going="">[\s\S]*?<span class="dev-ws-recent-meta dev-ws-recent-going">Homeroom bot · going live now<\/span>/);
   assert.equal(renderToHtml(createElement(RecentlyLive, { slug: 'garden', rows: [], onAll: () => {} })), '', 'nothing merged, no section');
+
+  // NEVER EMPTY (15 Oct 2026): before any change has gone live, one card
+  // for the app itself, its tile and name and since when it has been live,
+  // opening the app. Its label has no door: nothing has landed to list.
+  const { liveSinceLine } = loadTsx(HUB);
+  const own = (since, rows = []) => renderToHtml(createElement(RecentlyLive, {
+    slug: 'garden', rows, onAll: () => {}, own: { name: 'Garden', iconUrl: null, iconEmoji: '🌱', since },
+  }));
+  const today = own(new Date().toISOString());
+  assert.match(today, /^<section class="dev-ws-hub-section" data-ws-hub-recent="" aria-labelledby="([^"]+)"><div class="dev-ws-hub-sechead"><h2 class="[^"]*" id="\1">Recently live<\/h2><\/div><div class="dev-ws-strip dev-ws-recent"><ul class="dev-ws-recent-list"><li class="dev-ws-recent-item"><button type="button" class="dev-ws-recent-card" data-ws-recent-own="">/,
+    'the label, then the app\'s own card, a button');
+  assert.match(today, /<span class="dev-ws-recent-pic" data-ws-recent-pic="app" aria-hidden="true"><span class="app-icon-tile dev-ws-recent-app" data-icon="emoji">[\s\S]*?🌱[\s\S]*?<\/span><\/span><span class="dev-ws-recent-title">Garden<\/span><span class="dev-ws-recent-meta" data-ws-recent-since="">Live since today<\/span><\/button><\/li><\/ul>/,
+    'its tile where a change\'s picture would be, its name, and since when');
+  assert.doesNotMatch(today, /data-ws-recent-all|data-ws-recent-item=/);
+  assert.match(read(HUB), /function openApp\(slug: string\): void \{\s*\(window as any\)\.App\?\.openAppTab\?\.\(slug, 'app'\);\s*\}/, 'it opens the app');
+  assert.match(read(HUB), /data-ws-recent-own="" onClick=\{\(\) => openApp\(slug\)\}/);
+  assert.doesNotMatch(own(new Date().toISOString(), [r(1)]), /data-ws-recent-own/, 'once a change is live, the changes alone');
+  assert.equal(own(null), '', 'an app that has never run is not live: no section');
+  // In words, the reader's day: today, or the day it went live.
+  const at = (iso) => new Date(iso).getTime();
+  assert.equal(liveSinceLine('2026-10-15T08:00:00', at('2026-10-15T20:00:00')), 'Live since today');
+  assert.match(liveSinceLine('2026-10-12T08:00:00', at('2026-10-15T20:00:00')), /^Live since (October 12|12 October)$/);
+  assert.match(liveSinceLine('2025-12-30T08:00:00', at('2026-10-15T20:00:00')), /^Live since .*December.*2025$/, 'with the year when it is not this one');
+  assert.equal(liveSinceLine('2026-10-16T08:00:00', at('2026-10-15T20:00:00')), 'Live since today', 'a clock ahead of the reader\'s says today');
+  assert.equal(liveSinceLine(null), '');
+  assert.equal(message('project:hub.recent.own.since'), 'Live since {{date}}');
+  // The page draws the app's card only once the app is live: never while
+  // Homeroom bot still builds its first version, and not on Homeroom's own
+  // page, which has no App tab.
+  assert.match(LANDER, /const firstLive = !community\?\.first_version \|\| community\.first_version\.line === 'live';\s*const ownLive = !actions\.selfHosted && community && community\.live_since && firstLive \? \{/);
 
   // The rows: the newest merged changes from the loaded Completed stream,
   // with the after still the Needs-you feed reads from their shots.
