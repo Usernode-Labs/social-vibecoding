@@ -14,7 +14,9 @@
 // Every step before the row delete is best-effort, as it always was: a
 // runtime or database that is already gone must not stop the row going, and a
 // failed object-store sweep leaves orphans under app/<id>/ for manual cleanup
-// rather than a half-deleted app. The row delete is the one step that throws.
+// rather than a half-deleted app. Two steps throw: the previews' retirement,
+// first (the preview machine must have applied it before the rows go, or a
+// preview it adopts from its row is never retired), and the row delete.
 
 const log = require('./logger');
 const appAccess = require('./app-access');
@@ -45,6 +47,7 @@ async function teardownApp(pool, config, app) {
 }
 
 async function removeApp(pool, config, app) {
+  await retirePreviews(pool, app);
   // Teardown through the backend that owns this app. Historical rows
   // without runtime_kind/runtime_name remain Docker-compatible.
   if (app.runtime_name || app.container_id) {
@@ -102,25 +105,34 @@ async function removeApp(pool, config, app) {
     });
   }
 
-  // The app's previews are retired by the preview machine, by identity: the
-  // ones it holds, and any a row still points at (adopted from the row). Its
-  // work needs only the names it recorded, so the rows can go below.
-  try {
-    const previewWorkflow = require('./preview-workflow');
-    const { rows } = await pool.query(
-      `SELECT cs.id FROM chat_sessions cs
-         LEFT JOIN wf_instances w ON w.machine = 'preview' AND w.key = 'session:' || cs.id
-        WHERE cs.app_id = $1
-          AND ((w.key IS NOT NULL AND w.state NOT IN ('retired', 'detached'))
-               OR cs.staging_url IS NOT NULL OR cs.staging_runtime_name IS NOT NULL)`, [app.id]);
-    for (const r of rows) await previewWorkflow.retire({ session: { id: r.id, app_id: app.id }, reason: 'app_deleted', terminal: true });
-  } catch (err) {
-    log.warn('apps', 'Could not hand the app\'s previews to the preview machine', { appId: app.id, err: err.message });
-  }
-
   // Delete from DB (cascades to chat_messages, sessions, etc.)
   await pool.query('DELETE FROM apps WHERE id = $1', [app.id]);
   appAccess.invalidateVisibility(app.id, app.slug);
+}
+
+// The app's previews are retired by the preview machine, by identity: the
+// ones it holds, and any a row still points at, which it adopts from the row
+// when it applies the request. Its work needs only the names it recorded, so
+// the rows can go afterwards, but only once each request is APPLIED: one the
+// machine has only recorded would find the row gone and never retire what it
+// named. First, so a refusal leaves the app as it was; a delete asked again
+// finishes it.
+const RETIRE_WAIT_MS = 30_000;
+async function retirePreviews(pool, app) {
+  const previewWorkflow = require('./preview-workflow');
+  const { rows } = await pool.query(
+    `SELECT cs.id FROM chat_sessions cs
+       LEFT JOIN wf_instances w ON w.machine = 'preview' AND w.key = 'session:' || cs.id
+      WHERE cs.app_id = $1
+        AND ((w.key IS NOT NULL AND w.state NOT IN ('retired', 'detached'))
+             OR cs.staging_url IS NOT NULL OR cs.staging_runtime_name IS NOT NULL)`, [app.id]);
+  for (const r of rows) {
+    const out = await previewWorkflow.retire({ session: { id: r.id, app_id: app.id }, reason: 'app_deleted', terminal: true,
+      waitMs: RETIRE_WAIT_MS });
+    if (!out.applied) {
+      throw new Error(`The preview of proposal ${r.id} is not retired yet; delete the app again in a minute`);
+    }
+  }
 }
 
 module.exports = { teardownApp, isTearingDown };

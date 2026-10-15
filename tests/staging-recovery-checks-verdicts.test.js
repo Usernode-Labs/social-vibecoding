@@ -326,6 +326,20 @@ test('a heal or a boot leaves a preview the machine is preparing, retiring or fa
   } finally { restore(); }
 }));
 
+test('a preview the machine is retrying is not reported lost by a heal or a boot, though its runtime is gone', withToken(async () => {
+  // A failed rebuild keeps the older attempt's receipt: reporting that
+  // runtime lost would start another build inside the backoff, past the cap.
+  for (const reason of ['heal', 'startup']) {
+    const { subject, handed, handoffs, restore } = loadRecovery({ held: true, lost: true, working: true, compare: AHEAD });
+    try {
+      assert.equal(await subject.rebuildSessionStaging({ config: {}, pool: makeRecordingPool(), session: NATIVE, reason }),
+        'left_to_machine', reason);
+      assert.ok(!handed.some(([name]) => name === 'lost'), `${reason}: not reported lost`);
+      assert.deepEqual(handoffs(), []);
+    } finally { restore(); }
+  }
+}));
+
 test('a runtime observed gone, on a session the machine serves, is reported lost and nothing else', withToken(async () => {
   for (const reason of ['heal', 'startup', 'preview-click']) {
     const { subject, handed, handoffs, compares, restore } = loadRecovery({ held: true, lost: true, compare: AHEAD });

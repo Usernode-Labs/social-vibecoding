@@ -100,12 +100,16 @@ async function clear({ session, reason }) {
 // Answers whether the machine took it ('accepted' or 'pending'; a refusal
 // says why). A preview already retired, already retiring for good, or with
 // nothing serving is taken too: a second teardown of it has nothing to do.
+// `applied` says the machine has decided it, not just recorded it: a caller
+// about to delete the session row waits for that (`waitMs`), because a
+// preview the machine does not hold yet is adopted from the row when the
+// request is applied.
 const ALREADY = new Set(['retired', 'already_retiring', 'already_idle']);
-async function retire({ session, reason, terminal }) {
-  const out = await platform().retirePreview(Number(session.id), Number(session.app_id), reason, !!terminal);
+async function retire({ session, reason, terminal, waitMs = undefined }) {
+  const out = await platform().retirePreview(Number(session.id), Number(session.app_id), reason, !!terminal, waitMs);
   const taken = out.status === 'accepted' || out.status === 'pending' || out.status === 'replayed'
     || (out.status === 'rejected' && ALREADY.has(out.reason));
-  return { taken, reason: out.reason || null };
+  return { taken, applied: out.status !== 'pending', reason: out.reason || null };
 }
 
 // An observer found the serving runtime gone: the machine rebuilds it.

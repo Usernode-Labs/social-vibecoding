@@ -436,15 +436,18 @@ const workflow = () => require('./preview-workflow');
 // a no-op for them.
 async function rebuildSessionStaging({ config, pool, session, reason, headSha = null }) {
   const { broadcastGlobal } = require('./ws');
+  // A preview the machine is building has nothing to heal yet, and one that
+  // keeps failing waits out the machine's retry: a boot or a heal pass is not
+  // a reason to try it again (on 10 Oct 2026 a restart rebuilt one to twelve
+  // of them, one had failed 860 times). Asked before a lost runtime is
+  // reported: a failed rebuild keeps the older attempt's receipt, and its
+  // loss would start another build inside the backoff and past the cap. A
+  // Preview click still asks.
+  if (reason !== 'preview-click' && await workflow().working(session.id)) return 'left_to_machine';
   if (OBSERVED_REASONS.has(reason) && await workflow().held(session.id)
       && await workflow().lost({ session, detail: reason })) {
     return 'handed_off';
   }
-  // A preview the machine is building has nothing to heal yet, and one that
-  // keeps failing waits out the machine's retry: a boot or a heal pass is not
-  // a reason to try it again (on 10 Oct 2026 a restart rebuilt one to twelve
-  // of them, one had failed 860 times). A Preview click still asks.
-  if (reason !== 'preview-click' && await workflow().working(session.id)) return 'left_to_machine';
 
   const [, owner, repo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
   if (!owner || !repo) {

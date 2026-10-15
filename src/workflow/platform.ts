@@ -676,9 +676,10 @@ export async function previewLost(sessionId: number, appId: number, attempt: num
 // from its row first). A non-terminal retirement is refused while someone
 // works on the session, while it is under review, or while it builds or
 // checks.
-export async function retirePreview(sessionId: number, appId: number, reason: string, terminal: boolean): Promise<EventOutcome> {
+export async function retirePreview(sessionId: number, appId: number, reason: string, terminal: boolean,
+  waitMs = 2000): Promise<EventOutcome> {
   return runtime!.appendAndWait(previews!, previewKey(sessionId), { type: 'RetireRequested', payload: { reason, terminal, sessionId } },
-    { requestKey: await versioned(sessionId, `retire:${reason}`), source: sys(reason), appId, waitMs: 2000 });
+    { requestKey: await versioned(sessionId, `retire:${reason}`), source: sys(reason), appId, waitMs });
 }
 
 // Who is working on a session: an old flow's operation starts or ends
