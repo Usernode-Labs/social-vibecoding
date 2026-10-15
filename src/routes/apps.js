@@ -2830,8 +2830,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.json({ ok: true });
       }
       // Fire-and-forget: same fan-out as the drift-poller and dev-chat
-      // merge paths use. Errors land on the deploy-status broadcast.
-      staging.rebuildProduction(config, app)
+      // merge paths use. Errors land on the deploy-status broadcast. Asked
+      // for by hand, so it retries even a commit the automatic paths have
+      // stopped retrying (deploy-failure.js waitsForNewCommit).
+      staging.rebuildProduction(config, app, { retrySameCommit: true })
         .then(async ({ containerId, sha }) => {
           await pool.query(
             `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running',

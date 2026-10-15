@@ -169,3 +169,25 @@ test('post-merge rebuild failure marks session merged (not promoted) and broadca
     restore();
   }
 });
+
+// An image refused for running as root (Goalio, 15 Oct 2026: three merges
+// told "an operator can retry the deploy", which could never work). The
+// person who merged is told what to change instead.
+test('a merge whose image runs as root says what to change in the Dockerfile', async () => {
+  const err = new Error('Deployment social-apps/sv-app-5-whiteboard cannot start: app: CreateContainerConfigError: '
+    + 'container has runAsNonRoot and image will run as root (pod: "sv-app-5-x", container: app)');
+  err.healthcheckFailed = true;
+  const { subject, systemMessages, restore } = loadVotesWithFailingRebuild(err);
+  try {
+    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool(), { ...session }, { force: true });
+    assert.equal(r.merged, true);
+    assert.equal(r.deployFailed, true);
+    const said = systemMessages.find((m) => /merged on GitHub/.test(m));
+    assert.match(said, /cannot go live/);
+    assert.match(said, /USER 1000:1000/);
+    assert.match(said, /previous version/);
+    assert.doesNotMatch(said, /an operator can retry/);
+  } finally {
+    restore();
+  }
+});
