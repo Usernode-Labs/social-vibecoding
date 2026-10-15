@@ -230,7 +230,7 @@ async function admitTargetRequest(pool, lease) {
 
 // All control mutations lock the current row and CAS the generation. Revoking
 // it invalidates both broker capabilities and every outstanding worker token.
-async function fence(client, run, status, errorCode = null, actorId = null, outcome = null) {
+async function fence(client, run, status, errorCode = null, actorId = null, outcome = null, requireLive = false) {
   return (await client.query(
     `UPDATE security_bot_runs SET status = $3,
        phase = CASE WHEN $3 IN ('interrupted','cancelling') THEN phase ELSE 'finished' END,
@@ -242,8 +242,9 @@ async function fence(client, run, status, errorCode = null, actorId = null, outc
        cleanup_status = CASE WHEN cleanup_status = 'completed' THEN 'completed' ELSE 'pending' END,
        cleanup_target_generation = CASE WHEN cleanup_status IN ('none','completed') THEN lease_generation ELSE cleanup_target_generation END,
        cleanup_next_at = clock_timestamp(), outcome = $6, error_message = $4
-     WHERE id = $1 AND lease_generation = $2 RETURNING *`,
-    [run.id, run.lease_generation, status, errorCode, actorId, outcome],
+     WHERE id = $1 AND lease_generation = $2
+       AND (NOT $7::boolean OR (lease_expires_at > clock_timestamp() AND deadline_at > clock_timestamp())) RETURNING *`,
+    [run.id, run.lease_generation, status, errorCode, actorId, outcome, requireLive],
   )).rows[0];
 }
 
@@ -292,7 +293,9 @@ async function finishRun(pool, lease, { outcome = 'completed' } = {}) {
       'UPDATE security_bot_runs SET coverage_counts = $3::jsonb WHERE id = $1 AND lease_generation = $2',
       [run.id, lease.generation, JSON.stringify(coverage)],
     );
-    return fence(client, run, outcome === 'failed' ? 'failed' : 'completed', null, null, outcome);
+    const finished = await fence(client, run, outcome === 'failed' ? 'failed' : 'completed', null, null, outcome, true);
+    if (!finished) throw new RunError('lease_lost');
+    return finished;
   });
 }
 

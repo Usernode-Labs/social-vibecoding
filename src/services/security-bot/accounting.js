@@ -205,7 +205,10 @@ async function reserveInvocation(pool, lease, {
         credentialRevision, promptTokens, outputTokens,
         JSON.stringify({ scale: PRICE_SCALE, rates: estimate.pricing }), estimate.validUntil, reason],
     );
-    if (reason) return { admitted: false, reason, call };
+    if (reason) {
+      await runs.lockLease(client, lease);
+      return { admitted: false, reason, call };
+    }
     await client.query(
       `INSERT INTO security_bot_daily_budgets (day, reserved_usd) VALUES ($1, $2)
        ON CONFLICT (day) DO UPDATE SET reserved_usd = security_bot_daily_budgets.reserved_usd + EXCLUDED.reserved_usd,
