@@ -50,14 +50,33 @@ function host(id: string): Element | null {
   return typeof document === 'undefined' ? null : document.getElementById(id);
 }
 
-/** The sheet's header: what this is, its status, its category, and everything else behind ⋯. */
-export function ChangeBar({ v, menuKey }: { v: ChangeThreadView; menuKey: string }): ReactNode {
+/**
+ * The sheet's header: what this is, its status, its category, and everything
+ * else behind ⋯. When the change has a technical half (`detailsId`, the same
+ * gate the ⋯ Details row uses), the title itself opens the Details sheet
+ * (#5329): it looks as it always did, and underlines on hover.
+ */
+export function ChangeBar({ v, menuKey, detailsId = null }: { v: ChangeThreadView; menuKey: string; detailsId?: number | null }): ReactNode {
   const t = useMessages('project');
+  const title = v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title');
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
-          <div className="messages-thread-name min-w-0">{v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title')}</div>
+          <div className="messages-thread-name min-w-0">
+            {detailsId ? (
+              <button
+                type="button"
+                className="messages-thread-name-link"
+                data-change-details-open=""
+                onClick={() => (window as any).AppView?.openTechnicalDetails?.(detailsId)}
+                aria-label={t('project:topic.change.bar.openDetails', { title })}
+                title={t('project:topic.change.bar.openDetailsTitle')}
+              >
+                {title}
+              </button>
+            ) : title}
+          </div>
           {v.status ? (
             <span className="shrink-0" data-change-status={v.status.key}>
               <StatusPill s={v.status} inline />
@@ -211,7 +230,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
-      {bar ? createPortal(<ChangeBar v={v} menuKey={card.rail?.menuKey || ''} />, bar) : null}
+      {bar ? createPortal(<ChangeBar v={v} menuKey={card.rail?.menuKey || ''} detailsId={id && body.changeId ? id : null} />, bar) : null}
       {images.viewer}
       <article className="messages-message dev-request-root dev-change-root" data-change-root={id ?? ''}>
         <Avatar shape="square" size="sm" color={swatchFor(v.author)} aria-hidden="true">
