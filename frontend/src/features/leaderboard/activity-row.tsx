@@ -17,7 +17,9 @@ import { t as translate } from '../../lib/i18n/runtime';
  *
  * The API explicitly distinguishes old day-only records from precise
  * occurrence times. A real noon or midnight action keeps its hour. The noon
- * sentinel is only a fallback for responses from an older server.
+ * sentinel is only a fallback for responses from an older server. A day-only
+ * credit has no moment behind it, so its date line says so instead of
+ * showing a time: "Fri, Oct 2 (counted for the whole day)".
  *
  * Kept out of ./topochain-leaderboard.js on purpose: that view module must
  * stay import-free (tests evaluate it in a bare vm), so it passes
@@ -68,7 +70,7 @@ export function activityWhen(
     ? format(date, `day-${z}`, { ...zone, weekday: 'short', month: 'short', day: 'numeric' })
     : format(date, `day-year-${z}`, { ...zone, weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   const fullDay = format(date, `full-${z}`, { ...zone, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-  if (dateOnly) return { text: day, title: fullDay, iso: date.toISOString() };
+  if (dateOnly) return { text: translate('leaderboard:activity.dayWhole', { day }), title: fullDay, iso: date.toISOString() };
   const time = format(date, 'time', { hour: '2-digit', minute: '2-digit' });
   return {
     text: translate('leaderboard:activity.dayTime', { day, time }),
@@ -85,7 +87,7 @@ export function activityWhen(
 export function ActivityRow({ text, points, at, precision }: {
   text: string; points: string; at?: string | null; precision?: ActivityTimePrecision | null;
 }): ReactNode {
-  // Subscribed: the date line's separator is read by activityWhen.
+  // Subscribed: the date line's text and separator are read by activityWhen.
   useMessages('leaderboard');
   const when = activityWhen(at, { precision });
   return (

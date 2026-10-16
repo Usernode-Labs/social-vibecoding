@@ -15,6 +15,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROW = 'frontend/src/features/leaderboard/activity-row.tsx';
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
@@ -53,8 +54,11 @@ test('explicit occurrence precision shows genuine noon and midnight times in the
 });
 
 test('explicit old day precision is honored without guessing from the timestamp hour', () => {
+  const d = new Date('2026-10-02T00:00:00.000Z');
+  const day = new Intl.DateTimeFormat(undefined, { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }).format(d);
   const when = mod.activityWhen('2026-10-02T00:00:00.000Z', { now: NOW, precision: 'day' });
   assert.doesNotMatch(when.text, / · /);
+  assert.equal(when.text, message('leaderboard:activity.dayWhole', { day }), 'the day alone, with the whole-day note');
 });
 
 test('a date-only credit (pinned to noon UTC by the scorer) shows no time', () => {
@@ -62,10 +66,20 @@ test('a date-only credit (pinned to noon UTC by the scorer) shows no time', () =
   const day = new Intl.DateTimeFormat(undefined, { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }).format(d);
   const noon = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(d);
   const when = mod.activityWhen('2026-10-02T12:00:00.000Z', { now: NOW });
-  assert.equal(when.text, day, 'the calendar day alone, read in UTC');
+  assert.equal(when.text, message('leaderboard:activity.dayWhole', { day }),
+    'the calendar day alone, read in UTC, with the whole-day note');
   assert.ok(!when.title.includes(noon), 'and no invented time in the title either');
+  const fullDay = new Intl.DateTimeFormat(undefined, { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(d);
+  assert.equal(when.title, fullDay, 'the tooltip stays the full day on its own');
   // One millisecond off noon is a real time.
   assert.match(mod.activityWhen('2026-10-02T12:00:00.001Z', { now: NOW }).text, / · /);
+});
+
+test('timed rows carry no whole-day note', () => {
+  const timed = mod.activityWhen('2026-10-02T16:32:00.000Z', { now: NOW });
+  assert.ok(!timed.text.includes('(counted for the whole day)'));
+  const noon = mod.activityWhen('2026-10-02T12:00:00.000Z', { now: NOW, precision: 'instant' });
+  assert.ok(!noon.text.includes('(counted for the whole day)'), 'an instant at noon keeps its time, no note');
 });
 
 test('a missing or bad timestamp draws no date line', () => {
@@ -86,6 +100,15 @@ test('the row renders the reason, the date and the points', () => {
   assert.match(html, /<time[^>]*dateTime="2026-10-02T16:32:00.000Z"|<time[^>]*datetime="2026-10-02T16:32:00.000Z"/);
   assert.match(html, /data-activity-when/);
   assert.match(html, /\+250/);
+});
+
+test('the row renders the whole-day note on a day-counted credit', () => {
+  const html = renderToHtml(createElement(mod.ActivityRow, {
+    text: 'Tried Chess', points: '+10', at: '2026-10-02T12:00:00.000Z', precision: 'day',
+  }));
+  const timeEl = html.match(/<time[^>]*data-activity-when[^>]*>[^<]*<\/time>/);
+  assert.ok(timeEl, 'the date line renders');
+  assert.match(timeEl[0], /counted for the whole day/, 'the note is part of the visible date line');
 });
 
 test('the standings drill-down draws the shared row and passes activity_at through', () => {

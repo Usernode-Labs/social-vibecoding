@@ -619,6 +619,10 @@
     "text": "{{day}}, {{time}}",
     "description": "Tooltip of an activity's date in a participant's list. {{day}} is a full date such as \"Monday, October 12, 2026\" and {{time}} a time of day. Only the separator is translated."
   },
+  "activity.dayWhole": {
+    "text": "{{day}} (counted for the whole day)",
+    "description": "Under an activity in a participant's list, for a credit recorded per day rather than at a moment (for example daily app use): its date and a note that it counts for the whole day, so no time is shown. {{day}} is a date such as \"Mon, Oct 12\"."
+  },
   "kudos.loading": {
     "text": "Loading the leaderboard",
     "description": "Accessible name of the grey placeholder shown on the Kudos tab while a list is being fetched."

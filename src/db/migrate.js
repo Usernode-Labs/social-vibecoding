@@ -13547,7 +13547,16 @@ async function seedStagingTopochain(pool, config) {
            (${base + 12}, $1, $2, 'COMMUNITY', 180, 'Voted on a proposal (4 of 5).',
             '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '28 hours', 900514),
            (${base + 13}, $1, $2, 'COMMUNITY', 180, 'Voted on a proposal (5 of 5).',
-            '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '5 hours', 900514)
+            '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '5 hours', 900514),
+           -- A day-grained credit, as the app-use scorer writes them (#3570):
+           -- noon-UTC pinned and USE_APPS_MINUTES, so the standings drill-down
+           -- shows the "(counted for the whole day)" date line. On 900500,
+           -- a binary challenge whose done state one row already fixed, so no
+           -- other seeded state moves.
+           (${base + 14}, $1, $2, 'COMMUNITY', 10,
+            '[staging demo] Used apps across a day (counted as a daily total).',
+            '{"source_key": "staging-demo-app-use-1", "rule_id": 900571, "measure": "USE_APPS_MINUTES", "timestamp_precision": "day"}'::jsonb,
+            date_trunc('day', NOW() - INTERVAL '3 days', 'UTC') + INTERVAL '12 hours', 900500)
          ON CONFLICT (id) DO NOTHING`,
         [viewerId, EVENT_REGULAR_ID]
       );
