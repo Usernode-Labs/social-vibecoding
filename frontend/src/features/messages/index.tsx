@@ -1,6 +1,6 @@
 import { openReport } from '../dialogs/report';
 import {
-  Fragment, memo, useDeferredValue, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode,
+  Fragment, memo, useDeferredValue, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -8,13 +8,14 @@ import {
   JumpToLatestButton, NewMessagesBanner, NewMessagesDivider, TranscriptOverlay, groupsWithPrevious,
 } from '@/components/ui/chat';
 import {
-  ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronDownIcon, DraftTrashIcon, EllipsisHorizontalIcon, PlusIcon,
-  SearchIcon, SparklesIcon, UserGroupIcon, XIcon,
+  ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronDownIcon, DraftTrashIcon, EllipsisHorizontalIcon, PencilSparklesIcon,
+  PlusIcon, SearchIcon, SparklesIcon, UserGroupIcon, XIcon,
 } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
+import { useCommunityColor } from '../../lib/community-color';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -79,6 +80,7 @@ import {
   selectConversation,
   setListCollapsed,
   setSectionFolded,
+  FOLDABLE,
   syncChrome,
   followPlatformSlug,
   typingUsers,
@@ -121,7 +123,7 @@ import {
 import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
-import { AGENTS_SHOWN, INBOX_SECTIONS, buildInbox, shownInSection, type AgentChat, type AppDiscussion, type InboxSection } from './inbox';
+import { INBOX_SECTIONS, buildInbox, shownInSection, type AgentChat, type AppDiscussion, type InboxSection } from './inbox';
 import type { ConversationMessage, ConversationSummary, DiscussionMessage, MessagesAgentThread } from './types';
 
 /*
@@ -539,10 +541,30 @@ const AgentSessionRow = memo(function AgentSessionRow({ session, active }: { ses
       data-inbox-session={session.key}
       aria-current={active ? 'page' : undefined}
     >
-      <SessionRow session={session} showApp onNavigate={() => {}} />
+      <SessionRow session={session} showApp onNavigate={() => {}} tile={<ChangeTile session={session} />} />
     </div>
   );
 });
+
+/**
+ * A change in flight's tile in Agents (16 Oct 2026): an agent's pencil in
+ * its project's colour, not the project's own icon. Homeroom's icon is the
+ * bot's face, so a change to Homeroom drawn with it read as a second bot
+ * beside the bot's own row. The row still names the project on a phone.
+ */
+function ChangeTile({ session }: { session: SessionRowView }) {
+  const { icon } = session;
+  const color = useCommunityColor({
+    key: session.appSlug || session.appName,
+    iconUrl: icon.kind === 'image' ? icon.src : null,
+    iconEmoji: icon.kind === 'emoji' ? icon.emoji : null,
+  });
+  return (
+    <span className="messages-inbox-change-tile" style={{ '--change-ink': color } as CSSProperties} aria-hidden="true">
+      <PencilSparklesIcon />
+    </span>
+  );
+}
 
 /**
  * What the "+" can start, in the order the popover lists them. B8: Homeroom
@@ -680,16 +702,16 @@ function NewMessageButton() {
 
 /** The heading over each section of the list (16 Oct 2026). */
 const SECTION_LABELS: Record<InboxSection, string> = {
-  bot: 'messages:inbox.section.bot',
   agents: 'messages:inbox.section.agents',
   people: 'messages:inbox.section.people',
 };
 
 /**
- * A section's heading (16 Oct 2026): its name in small caps, and for Agents
- * and People what in it asks for you ("1 working", "3 unread"), which stays
- * when it is folded. Agents and People fold from the heading itself, a
- * button the width of the list; the Homeroom bot's never folds.
+ * A section's heading (16 Oct 2026): its name in small caps, and what in it
+ * asks for you ("1 working", "3 unread"), which stays when it is folded.
+ * Agents folds from the heading itself, a button the width of the list, and
+ * keeps the Homeroom bot's row folded. People does not fold: it is the
+ * list's last section, so folding it saved no scrolling.
  */
 function SectionHead({ section, folded, aside, ask = false }: {
   section: InboxSection;
@@ -704,7 +726,7 @@ function SectionHead({ section, folded, aside, ask = false }: {
       {aside ? <span className={`messages-section-aside ${ask ? 'messages-section-aside-ask' : ''}`}>{aside}</span> : null}
     </>
   );
-  if (section === 'bot') {
+  if (!FOLDABLE.includes(section)) {
     return <h3 className="messages-section-head" data-inbox-section={section}>{words}</h3>;
   }
   return (
@@ -952,16 +974,15 @@ function ConversationList() {
     .filter((item) => !item.homeroomBot && item.kind !== 'channel')
     .reduce((sum, item) => sum + Math.max(0, Number(item.unreadCount) || 0), 0);
   const asides: Record<InboxSection, { text: string | null; ask: boolean }> = {
-    bot: { text: null, ask: false },
     agents: { text: working ? t('messages:inbox.section.working', { count: working }) : null, ask: false },
     people: { text: unreadFromPeople ? t('messages:inbox.section.unread', { count: unreadFromPeople }) : null, ask: true },
   };
-  // Agents shows its newest few until "Show N more" (./inbox.ts
-  // shownInSection). Not remembered: the next visit starts on the newest.
+  // Agents shows its week until "N older chats" (./inbox.ts
+  // shownInSection). Not remembered: the next visit starts on the week.
   const [agentsExpanded, setAgentsExpanded] = useState(false);
 
-  // #4729: the archived agent chats fold behind a toggle at the Agents
-  // section's foot, in the "Show N more" shape. Opening it re-reads the
+  // #4729: the archived agent chats fold behind a link at the Agents
+  // section's foot, in the "N older chats" shape. Opening it re-reads the
   // archived list each time, so a session archived or unarchived since the
   // last look shows where it now belongs; a query hides the toggle, because
   // search covers the open chats only.
@@ -971,14 +992,11 @@ function ConversationList() {
       key="show-archived"
       type="button"
       id="messages-show-archived"
-      className="messages-more-channels"
+      className="messages-inbox-older"
       aria-expanded={archivedOpen}
       onClick={() => setArchivedOpen(!archivedOpen)}
     >
-      <span className="messages-more-channels-glyph" aria-hidden="true">
-        <ChevronDownIcon className={archivedOpen ? 'rotate-180' : ''} />
-      </span>
-      <span>{archivedOpen ? t('messages:inbox.archived.hide') : t('messages:inbox.archived.show')}</span>
+      {archivedOpen ? t('messages:inbox.archived.hide') : t('messages:inbox.archived.show')}
     </button>
   ) : null;
 
@@ -1034,78 +1052,74 @@ function ConversationList() {
         {!snap.loadingList && !snap.error && snap.listLoaded && inbox.length && !found.length
           ? <div id="messages-search-empty" className="messages-state"><p>{t('messages:inbox.searchEmpty', { query: deferredQuery.trim() })}</p></div>
           : null}
-        {/* THREE SECTIONS, EACH HEADED (16 Oct 2026): the Homeroom bot's
-            chat, Agents, People, in that order (./inbox.ts). Each section's
-            rows sit in a card under its heading, the grouped list's label-
-            over-card shape; on a desktop the column draws them as the
-            Communities column draws its places (app.css). Agents and People
-            fold from their headings, which keep their counts folded; a
-            search opens every section. Agents shows its newest few until
-            "Show N more". */}
+        {/* TWO SECTIONS, EACH HEADED (16 Oct 2026): Agents, the Homeroom
+            bot's chat first, then People (./inbox.ts). Each section's rows
+            sit in a card under its heading, the grouped list's label-over-
+            card shape; on a desktop the column draws them as the Communities
+            column draws its places (app.css). Agents folds from its heading,
+            which keeps its count folded, and keeps the bot's row; a search
+            opens it. Agents shows at most five from its week, and the rest
+            behind "N older chats": a quiet link in the titles' column,
+            not a chevron, so it never reads as a third heading. Pressed, it
+            stays where it is and the older chats open below it. */}
         {INBOX_SECTIONS.map((section) => {
           const entries = found.filter((entry) => entry.section === section);
-          const { shown, hidden } = shownInSection(section, entries, {
-            expanded: agentsExpanded, searching, openKey, keep: asksForYou,
+          const folded = !searching && FOLDABLE.includes(section) && snap.folded.includes(section);
+          const { shown, older, olderShown } = shownInSection(section, entries, {
+            expanded: agentsExpanded, searching, folded, openKey, keep: asksForYou,
           });
           // The archived chats are reached past the open ones: under all of
-          // them, once "Show N more" has shown the rest.
-          const archive = section === 'agents' && showArchivedToggle && !hidden;
+          // them, once "N older chats" has shown the rest below it.
+          const archive = section === 'agents' && showArchivedToggle && (!older || agentsExpanded);
           if (!entries.length && !archive) return null;
-          const folded = !searching && snap.folded.includes(section);
-          const more = section === 'agents' && !searching && (hidden > 0 || (agentsExpanded && entries.length > AGENTS_SHOWN)) ? (
+          const more = older > 0 ? (
             <button
-              key="agents-more"
+              key="agents-older"
               type="button"
-              className="messages-more-channels"
+              className="messages-inbox-older"
               data-inbox-more="agents"
               aria-expanded={agentsExpanded}
               onClick={() => setAgentsExpanded(!agentsExpanded)}
             >
-              <span className="messages-more-channels-glyph" aria-hidden="true">
-                <ChevronDownIcon className={agentsExpanded ? 'rotate-180' : ''} />
-              </span>
-              <span>{agentsExpanded ? t('messages:inbox.showLess') : t('messages:inbox.showMore', { count: hidden })}</span>
+              {agentsExpanded ? t('messages:inbox.older.hide') : t('messages:inbox.older.show', { count: older })}
             </button>
           ) : null;
           return (
             <Fragment key={section}>
               <SectionHead section={section} folded={folded} aside={asides[section].text} ask={asides[section].ask} />
-              {folded ? null : (
-                <>
-                  {shown.length ? (
-                    <div className="messages-section-card" data-inbox-card={section}>
-                      {shown.map(inboxRow)}
-                      {more}
-                    </div>
-                  ) : null}
+              {shown.length || more || archive ? (
+                <div className="messages-section-card" data-inbox-card={section}>
+                  {shown.map(inboxRow)}
+                  {more}
+                  {olderShown.map(inboxRow)}
                   {archive ? archivedToggle : null}
-                  {archive && archivedOpen ? (
-                    <>
-                      <h3 className="messages-section-head" data-inbox-section="archived">{t('messages:inbox.archived.heading')}</h3>
-                      {archivedError ? (
-                        <div className="messages-state messages-state-error">
-                          <p>{archivedError}</p>
-                          <button type="button" onClick={readArchived}>{t('core:common.tryAgain')}</button>
-                        </div>
-                      ) : !archived ? (
-                        <div className="messages-state"><span className="messages-spinner" aria-hidden="true" /></div>
-                      ) : !archived.length ? (
-                        <div className="messages-state"><p>{t('messages:inbox.archived.empty')}</p></div>
-                      ) : (
-                        <div className="messages-section-card" data-inbox-card="archived">
-                          {archived.map((session) => (
-                            <MayorSessionRow
-                              key={session.id}
-                              session={session}
-                              active={open?.kind === 'agent' && open.id === session.id}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  ) : null}
+                </div>
+              ) : null}
+              {archive && archivedOpen ? (
+                <>
+                  <h3 className="messages-section-head" data-inbox-section="archived">{t('messages:inbox.archived.heading')}</h3>
+                  {archivedError ? (
+                    <div className="messages-state messages-state-error">
+                      <p>{archivedError}</p>
+                      <button type="button" onClick={readArchived}>{t('core:common.tryAgain')}</button>
+                    </div>
+                  ) : !archived ? (
+                    <div className="messages-state"><span className="messages-spinner" aria-hidden="true" /></div>
+                  ) : !archived.length ? (
+                    <div className="messages-state"><p>{t('messages:inbox.archived.empty')}</p></div>
+                  ) : (
+                    <div className="messages-section-card" data-inbox-card="archived">
+                      {archived.map((session) => (
+                        <MayorSessionRow
+                          key={session.id}
+                          session={session}
+                          active={open?.kind === 'agent' && open.id === session.id}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </>
-              )}
+              ) : null}
             </Fragment>
           );
         })}

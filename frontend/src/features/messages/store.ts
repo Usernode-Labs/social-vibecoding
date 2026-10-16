@@ -267,7 +267,11 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 /** The sections that can fold from their headings: the bot's never does. */
-const FOLDABLE: ReadonlyArray<InboxSection> = ['agents', 'people'];
+/**
+ * The sections that fold from their heading: Agents alone. People is the
+ * list's last section, so folding it saved no scrolling (16 Oct 2026).
+ */
+export const FOLDABLE: ReadonlyArray<InboxSection> = ['agents'];
 
 /** Pure: the folded sections a saved value names, ignoring anything else. */
 export function savedFolded(raw: string | null | undefined): InboxSection[] {

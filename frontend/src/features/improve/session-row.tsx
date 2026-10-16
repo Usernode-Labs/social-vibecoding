@@ -44,6 +44,7 @@
  */
 
 
+import type { ReactNode } from 'react';
 import { useMessages } from '../../lib/i18n/react';
 import { t } from '../../lib/i18n/runtime';
 import { agoStamp } from '../../lib/timestamp';
@@ -247,10 +248,13 @@ export function SessionRow({
   session,
   showApp,
   onNavigate,
+  tile = null,
 }: {
   session: SessionRowView;
   showApp: boolean;
   onNavigate: () => void;
+  /** What stands in the app tile's place: Messages draws a change's own. */
+  tile?: ReactNode;
 }) {
   const t = useMessages('agent');
   const { sessionUnreadIds } = useStoreState(notificationsStore) as {
@@ -279,7 +283,7 @@ export function SessionRow({
       className="flex items-center gap-3 px-3 min-h-[60px] text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
       onClick={onNavigate}
     >
-      <AppTile session={session} />
+      {tile || <AppTile session={session} />}
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
           {session.title}

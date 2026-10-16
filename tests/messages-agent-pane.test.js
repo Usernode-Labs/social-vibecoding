@@ -93,15 +93,17 @@ test('the rows link to the inbox addresses and mark the open one', () => {
 });
 
 test('#4729: the Agents list folds its archived chats behind Show archived at its foot', () => {
-  // The toggle, in the channels' "Show N more" shape, shows for somebody who
+  // The toggle, a quiet link like "N older chats", shows for somebody who
   // has had an agent session on the Agents list with no query — search does
   // not cover the archived — and after mount only, so the hydrating render
   // matches the prerender.
   assert.match(SCREEN, /id="messages-show-archived"/);
-  assert.match(SCREEN, /className="messages-more-channels"\s*aria-expanded=\{archivedOpen\}/);
+  assert.match(SCREEN, /className="messages-inbox-older"\s*aria-expanded=\{archivedOpen\}/);
   assert.match(SCREEN, /const showArchivedToggle = mounted && !!agentChatsShown && !snap\.folded\.includes\('agents'\) && !searching;/);
-  // Under all of the open ones: once "Show N more" has shown the rest.
-  assert.match(SCREEN, /const archive = section === 'agents' && showArchivedToggle && !hidden;/);
+  // Under all of the open ones: once "N older chats" has shown the rest,
+  // at the foot of the Agents card.
+  assert.match(SCREEN, /const archive = section === 'agents' && showArchivedToggle && \(!older \|\| agentsExpanded\);/);
+  assert.match(SCREEN, /\{olderShown\.map\(inboxRow\)\}\s*\{archive \? archivedToggle : null\}\s*<\/div>/);
   assert.match(SCREEN, /\{archivedOpen \? t\('messages:inbox\.archived\.hide'\) : t\('messages:inbox\.archived\.show'\)\}/);
   // Opening it reads the archived list from the same route the open list
   // reads, ?status=archived, and reads it again on EVERY open, so a session
