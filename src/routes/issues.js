@@ -2525,10 +2525,13 @@ function issueRoutes(config) {
   // viewer's own building time. Reading it is read-only, so view-level.
   router.get('/api/apps/:slug/homeroom-bot/slots', async (req, res) => {
     try {
-      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, name`);
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, name, repo_url`);
       if (!app) return res.status(404).json({ error: 'App not found' });
       const trackSvc = require('../services/homeroom-bot-track');
-      if (IS_STAGING && req.query.demo === '1') return res.json({ slots: trackSvc.demoSlots(app) });
+      // The demo's rows are staging's own mock requests, so a tap opens one.
+      if (IS_STAGING && req.query.demo === '1') {
+        return res.json({ slots: trackSvc.demoSlots(app, Date.now(), stagingMockIssues(app.repo_url)) });
+      }
       return res.json({ slots: await trackSvc.slotsView(pool, { app, user: req.user }) });
     } catch (err) {
       log.error('issues', 'Failed to read the bot\'s slots', { message: err.message, slug: req.params.slug });

@@ -366,7 +366,8 @@ export interface BotTrack {
   /** The session its plan and change live in. */
   sessionId: number | null;
   links: HomeroomBotLinks;
-  held?: { limit: string; position: number | null; until: string | null };
+  /** `by`: who has it, for a request a person took (limit 'taken'). */
+  held?: { limit: string; position: number | null; until: string | null; by?: string | null };
   queue?: { ahead: number };
   doneBy?: { username: string | null; prNumber: number | null };
   release?: ReleaseOutlook;
@@ -377,6 +378,12 @@ export interface BotSlotEntry {
   kind?: 'proposal' | 'build';
   issueNumber: number | null;
   title: string | null;
+  /** Who asked for it, when the bot knows. */
+  askedBy?: string | null;
+  /** A line of what it asks, in the person's own words. */
+  excerpt?: string | null;
+  /** Who has it, for one a person took (BotSlotsView.taken). */
+  by?: string | null;
   position?: number | null;
   limit?: string | null;
   since?: string | null;
@@ -394,6 +401,8 @@ export interface BotSlotsView {
   buildsAtOnce: number | null;
   slots: BotSlotEntry[];
   waiting: BotSlotEntry[];
+  /** Held requests a person has now: the bot leaves them alone. */
+  taken: BotSlotEntry[];
   onHold: BotSlotEntry[];
   reading: number;
   week: { limited: boolean; usedShare: number | null; usedUp: boolean; resetsAt: string | null } | null;

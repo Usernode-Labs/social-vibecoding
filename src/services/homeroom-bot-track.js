@@ -193,7 +193,9 @@ function iso(value) {
  *   entry    progress.progressFor's entry for it, when it has one: the
  *            stage of work in hand, including a change up for a vote
  *   runs     its live runs, newest first (tray pastRuns rows)
- *   held     its place among the project's held requests ({ position })
+ *   held     its place among the project's held requests ({ position }),
+ *            or who has the request when a person does ({ limit: 'taken',
+ *            by }): the bot leaves a request somebody claimed alone
  *   doneBy   who shipped it, when somebody else's change closed it
  *            ({ username, prNumber, sessionId })
  *   until    when an allowance hold lifts (limits.weeklyResetAt)
@@ -205,6 +207,9 @@ function trackOf({ job, entry = null, runs = [], held = null, doneBy = null, unt
   // A stage that says nothing waits (a change up for a vote) is read off the
   // outcome when the work ended in something sharper.
   if (!base) base = fromOutcome(job.outcome, lead);
+  // 16 Oct 2026: held, but a person has the request now (a claim, their own
+  // change): it waits on them, not on a slot (heldQueue's `takenBy`).
+  if (base?.state === 'held' && held?.limit === 'taken') base = { ...base, why: 'taken' };
   if (!base) {
     base = job.inHand
       ? { state: 'building', step: 'build', why: null }
@@ -264,6 +269,7 @@ function trackOf({ job, entry = null, runs = [], held = null, doneBy = null, unt
       limit: base.why,
       position: held?.position || null,
       until: base.why === 'allowance' ? iso(until) : null,
+      ...(base.why === 'taken' ? { by: held?.by || null } : {}),
     };
   }
   if (base.state === 'queued' && entry?.waitingFor?.ahead != null) {
@@ -293,25 +299,67 @@ const HELD_QUEUE_SQL = `
      AND COALESCE((SELECT i.status <> 'closed' FROM issues i
                     WHERE i.app_id = h.app_id AND i.github_issue_number = h.issue_number
                     ORDER BY i.id DESC LIMIT 1), TRUE)
+     -- 16 Oct 2026: nor one the bot has recorded closed, which a request
+     -- with no row of ours can only be (homeroom-bot-closed-requests.js).
+     AND NOT EXISTS (SELECT 1 FROM homeroom_bot_closed_requests c
+                      WHERE c.app_id = h.app_id AND c.issue_number = h.issue_number
+                        AND c.closed_at IS NOT NULL)
    ORDER BY h.app_id, h.cap_suppressed, h.created_at, h.issue_number`;
 
-/** Each held request's place in its project's line: Map `${appId}#${n}` → { position, limit, since }. */
-async function heldQueue(pool, appIds) {
+/**
+ * Each held request's place in its project's line: Map `${appId}#${n}` →
+ * { position, limit, since } (`since`: when it was held). 16 Oct 2026: the
+ * line counts only what really waits for the bot. `open` (Map appId → Set of open numbers, from a whole
+ * fresh list where the caller has one) drops a request that closed since it
+ * was held; `takenBy` (Map appId → issueHolders' Map) answers a request a
+ * person has now as { limit: 'taken', by } with no place, since the bot
+ * leaves it alone (homeroom-bot.js classifyIssue: in_progress). On 16
+ * October the platform's slots page listed 25 held requests "waiting for a
+ * slot" with no slot in use: all but one had closed, and that one was
+ * claimed.
+ */
+async function heldQueue(pool, appIds, { open = null, takenBy = null } = {}) {
   const ids = [...new Set((appIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
   const out = new Map();
   if (!ids.length) return out;
   const { rows } = await pool.query(HELD_QUEUE_SQL, [ids]);
   const counts = new Map();
   for (const row of rows) {
-    const line = `${row.app_id}:${row.cap_suppressed}`;
+    const appId = Number(row.app_id);
+    const n = Number(row.issue_number);
+    const openHere = open?.get(appId);
+    if (openHere && !openHere.has(n)) continue;
+    const base = { since: iso(row.created_at), appId, issueNumber: n };
+    const holds = takenBy?.get(appId)?.get(n);
+    if (holds && holds.length) {
+      // `since`, for one a person has: when they took it.
+      const who = holds.find((h) => h.username) || holds[0];
+      out.set(`${appId}#${n}`, { ...base, since: iso(who.since) || base.since, position: null, limit: 'taken', by: who.username || null });
+      continue;
+    }
+    const line = `${appId}:${row.cap_suppressed}`;
     const position = (counts.get(line) || 0) + 1;
     counts.set(line, position);
-    out.set(`${row.app_id}#${row.issue_number}`, {
-      position, limit: CAP_LIMITS[row.cap_suppressed] || 'slots', since: iso(row.created_at),
-      appId: Number(row.app_id), issueNumber: Number(row.issue_number),
-    });
+    out.set(`${appId}#${n}`, { ...base, position, limit: CAP_LIMITS[row.cap_suppressed] || 'slots' });
   }
   return out;
+}
+
+/**
+ * Pure: one line of what a request asks, from its body, for a row that has
+ * room for little more than its title: the first line that is the person's
+ * own words, not the lines Homeroom writes around them (**Source:**, the
+ * screenshot, where a comment pin was made). Null when there is none.
+ */
+function requestExcerpt(body, max = 140) {
+  for (const raw of String(body || '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || /^(\*\*[^*]+:\*\*|!\[|<|---|Pinned with |```)/.test(line)) continue;
+    const plain = line.replace(/^#+\s*|^[-*>]\s+/, '').replace(/[`*_]/g, '').replace(/\s+/g, ' ').trim();
+    if (!plain) continue;
+    return plain.length > max ? `${plain.slice(0, max - 1).trimEnd()}\u2026` : plain;
+  }
+  return null;
 }
 
 // Who shipped a closed request: the newest merged change linked to it that
@@ -358,8 +406,16 @@ async function withTracks(pool, work, { entries = [], rows = [], keyOf, deps = {
   let doneBy = new Map();
   let until = null;
   try {
-    const heldApps = jobs.filter((job) => job.outcome === 'held' || job.stage === 'held').map((job) => appIdOf.get(job.appSlug));
-    if (heldApps.some(Boolean)) held = await heldQueue(pool, heldApps.filter(Boolean));
+    const heldApps = [...new Set(jobs.filter((job) => job.outcome === 'held' || job.stage === 'held')
+      .map((job) => appIdOf.get(job.appSlug)).filter(Boolean))];
+    if (heldApps.length) {
+      // Who has a held request now, so it reads as theirs, not as a wait.
+      const botSvc = deps.botSvc || require('./homeroom-bot');
+      const takenBy = typeof botSvc.issueHolders === 'function'
+        ? new Map(await Promise.all(heldApps.map(async (appId) => [appId, await botSvc.issueHolders(pool, appId)])))
+        : null;
+      held = await heldQueue(pool, heldApps, { takenBy });
+    }
     const closed = jobs.filter((job) => job.requestClosed === true && appIdOf.get(job.appSlug) && job.issueNumber)
       .map((job) => ({ appId: appIdOf.get(job.appSlug), n: Number(job.issueNumber) }));
     if (closed.length) doneBy = await doneByFor(pool, closed);
@@ -500,9 +556,10 @@ function jobOfRow(row, { now = new Date(), stageOf, outcomeOf, linksFor = null }
 /**
  * The tracks of one project's requests `numbers`, whoever asked for them:
  * Map n → track, only for requests the bot has had anything to do with.
- * What the request page and the slots view draw. Never throws.
+ * What the request page and the slots view draw. Never throws. `people`:
+ * issueHolders' Map for the project, when the caller has read it already.
  */
-async function tracksForRequests(pool, { appId, numbers, now = new Date(), deps = {} }) {
+async function tracksForRequests(pool, { appId, numbers, now = new Date(), deps = {}, people = null }) {
   const out = new Map();
   const asked = [...new Set((numbers || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
   if (!appId || !asked.length) return out;
@@ -528,8 +585,12 @@ async function tracksForRequests(pool, { appId, numbers, now = new Date(), deps 
       runsOf.get(n).push(run);
     }
     const jobs = bot.map((row) => [row, jobOfRow(row, { now, stageOf: progress.stageOf, outcomeOf: tray.outcomeOf, linksFor: tray.linksFor })]);
-    const held = jobs.some(([, job]) => job.outcome === 'held' || job.stage === 'held')
-      ? await heldQueue(pool, [appId]) : new Map();
+    let held = new Map();
+    if (jobs.some(([, job]) => job.outcome === 'held' || job.stage === 'held')) {
+      // A held request a person has taken since reads as theirs (heldQueue).
+      const holders = people || await (deps.botSvc || require('./homeroom-bot')).issueHolders(pool, appId);
+      held = await heldQueue(pool, [appId], { takenBy: new Map([[Number(appId), holders]]) });
+    }
     const closed = jobs.filter(([, job]) => job.requestClosed).map(([, job]) => ({ appId: Number(appId), n: job.issueNumber }));
     const doneBy = closed.length ? await doneByFor(pool, closed) : new Map();
     const until = jobs.some(([, job]) => job.stage === 'on_hold') ? (deps.limits || require('./limits')).weeklyResetAt() : null;
@@ -549,6 +610,48 @@ async function tracksForRequests(pool, { appId, numbers, now = new Date(), deps 
     log.warn('homeroom-bot-track', 'Could not read a project\'s request tracks', { appId, err: err.message });
   }
   return out;
+}
+
+// Who asked for each of `$2` on project `$1`, and the title the bot kept
+// when it was filed (a request with no row of ours has no other).
+const ASKERS_SQL = `
+  SELECT q.issue_number, q.issue_title, u.username
+    FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
+   WHERE q.app_id = $1 AND q.issue_number = ANY($2::int[])`;
+
+async function askersFor(pool, appId, numbers) {
+  const out = new Map();
+  const list = [...new Set(numbers.map(Number).filter((n) => n > 0))];
+  if (!list.length) return out;
+  try {
+    const { rows } = await pool.query(ASKERS_SQL, [Number(appId), list]);
+    for (const row of rows) out.set(Number(row.issue_number), { username: row.username || null, title: row.issue_title || null });
+  } catch (err) {
+    log.warn('homeroom-bot-track', 'Could not read who asked for the slots page', { appId, err: err.message });
+  }
+  return out;
+}
+
+/**
+ * A project's open requests as GitHub lists them, from the shared cache
+ * (services/github.js fetchPublicIssues): by number, and whether the list
+ * is whole and fresh, the only kind that may say a request is not open.
+ * Never throws; a project with no repository has none.
+ */
+async function openRequestsOf(app, deps = {}) {
+  const m = /github\.com[/:]([^/]+)\/([^/.]+?)(?:\.git)?\/?$/.exec(String(app?.repo_url || ''));
+  if (!m) return { byNumber: new Map(), whole: false };
+  try {
+    const fetched = await (deps.github || require('./github')).fetchPublicIssues(m[1], m[2]);
+    const issues = Array.isArray(fetched?.issues) ? fetched.issues : [];
+    return {
+      byNumber: new Map(issues.map((issue) => [Number(issue.number), issue])),
+      whole: !fetched?.note && !fetched?.stale && !fetched?.truncatedList,
+    };
+  } catch (err) {
+    log.warn('homeroom-bot-track', 'Could not read the open requests for the slots page', { app: app?.slug, err: err.message });
+    return { byNumber: new Map(), whole: false };
+  }
 }
 
 /**
@@ -575,36 +678,63 @@ async function slotsView(pool, { app, user = null, settings = null, deps = {} })
     buildsAtOnce: botSvc.BUILDS_PER_PROJECT || null,
     slots: [],
     waiting: [],
+    taken: [],
     onHold: [],
     reading: 0,
     week: null,
   };
   if (!bot) return view;
-  const [holders, held, { rows: queue }] = await Promise.all([
+  // The project's open requests as GitHub lists them (cached, as the board
+  // reads them): each row's title and a line of what it asks, and, from a
+  // whole fresh list, which held requests are still open at all.
+  const open = await openRequestsOf(app, deps);
+  const [holders, people, { rows: queue }] = await Promise.all([
     botSvc.slotHolders(pool, bot, app.id),
-    heldQueue(pool, [app.id]),
+    botSvc.issueHolders(pool, app.id),
     pool.query(QUEUE_SQL, [app.id]),
   ]);
-  const waiting = [...held.values()].filter((h) => h.appId === Number(app.id)).sort((a, b) => a.position - b.position
+  const held = await heldQueue(pool, [app.id], {
+    open: open.whole ? new Map([[Number(app.id), new Set(open.byNumber.keys())]]) : null,
+    takenBy: new Map([[Number(app.id), people]]),
+  });
+  const mine = [...held.values()].filter((h) => h.appId === Number(app.id));
+  const waiting = mine.filter((h) => h.position).sort((a, b) => a.position - b.position
     || Date.parse(a.since || 0) - Date.parse(b.since || 0));
+  const taken = mine.filter((h) => h.limit === 'taken').sort((a, b) => Date.parse(a.since || 0) - Date.parse(b.since || 0));
   const onHold = queue.filter((q) => q.held_until && Date.parse(q.held_until) > Date.now());
   const numbers = [...holders.map((h) => Number(h.issue_number)), ...waiting.map((w) => w.issueNumber),
-    ...onHold.map((q) => Number(q.issue_number))].filter((n) => n > 0);
-  const tracks = await tracksForRequests(pool, { appId: app.id, numbers, deps });
-  const titled = (n) => tracks.get(n)?.title || null;
+    ...taken.map((w) => w.issueNumber), ...onHold.map((q) => Number(q.issue_number))].filter((n) => n > 0);
+  const [tracks, asked] = await Promise.all([
+    tracksForRequests(pool, { appId: app.id, numbers, deps, people }),
+    askersFor(pool, app.id, numbers),
+  ]);
+  // Who asked, its title and a line of it: GitHub's list first, then what
+  // the bot kept when it was filed, then Homeroom's own row.
+  const about = (n) => {
+    const issue = open.byNumber.get(n);
+    return {
+      title: (issue?.title || asked.get(n)?.title || tracks.get(n)?.title || null),
+      askedBy: asked.get(n)?.username || null,
+      excerpt: requestExcerpt(issue?.body),
+    };
+  };
   view.slots = holders.map((h) => ({
     kind: h.kind,
     issueNumber: Number(h.issue_number) || null,
-    title: titled(Number(h.issue_number)),
+    ...about(Number(h.issue_number)),
     since: iso(h.since),
     track: tracks.get(Number(h.issue_number)) || null,
   }));
   view.waiting = waiting.map((w) => ({
-    issueNumber: w.issueNumber, title: titled(w.issueNumber), position: w.position, limit: w.limit, since: w.since,
+    issueNumber: w.issueNumber, ...about(w.issueNumber), position: w.position, limit: w.limit, since: w.since,
+    track: tracks.get(w.issueNumber) || null,
+  }));
+  view.taken = taken.map((w) => ({
+    issueNumber: w.issueNumber, ...about(w.issueNumber), by: w.by, since: w.since,
     track: tracks.get(w.issueNumber) || null,
   }));
   view.onHold = onHold.map((q) => ({
-    issueNumber: Number(q.issue_number), title: titled(Number(q.issue_number)), until: iso(q.held_until),
+    issueNumber: Number(q.issue_number), ...about(Number(q.issue_number)), until: iso(q.held_until),
     track: tracks.get(Number(q.issue_number)) || null,
   }));
   view.reading = queue.filter((q) => !q.started_at && !(q.held_until && Date.parse(q.held_until) > Date.now())).length;
@@ -629,13 +759,33 @@ const BOT_USERNAME = 'homeroom_bot';
 /**
  * Staging's demo slots, for `?demo=1`: a staging copy never runs the bot,
  * so the page could not be seen there. Obviously fake, written nowhere,
- * drawn with real tracks (trackOf) so it reads as the real page does.
+ * drawn with real tracks (trackOf) so it reads as the real page does. Its
+ * rows are staging's own mock requests (`mocks`, routes/issues.js
+ * stagingMockIssues), so a tap opens a request that is there; without them
+ * the rows keep their numbers and titles.
  */
-function demoSlots(app, now = Date.now()) {
+function demoSlots(app, now = Date.now(), mocks = []) {
   const ago = (minutes) => new Date(now - minutes * 60 * 1000).toISOString();
+  const mock = new Map((mocks || []).map((issue) => [Number(issue.number), issue]));
+  const about = (n, fallback, askedBy) => ({
+    title: mock.get(n)?.title || fallback, askedBy, excerpt: requestExcerpt(mock.get(n)?.body) || null,
+  });
   const job = (n, title, fields) => ({ key: `demo#${n}`, appSlug: app.slug, appName: app.name || app.slug, issueNumber: n, title, ...fields });
   const track = (n, title, fields, extra = {}) => trackOf({ job: job(n, title, fields), ...extra });
-  const slot = (kind, n, title, fields, extra) => ({ kind, issueNumber: n, title, since: ago(60), track: track(n, title, fields, extra) });
+  const slot = (kind, n, title, askedBy, fields, extra) => {
+    const a = about(n, title, askedBy);
+    return { kind, issueNumber: n, ...a, since: ago(60), track: track(n, a.title, fields, extra) };
+  };
+  const wait = (n, title, askedBy, position, minutes) => {
+    const a = about(n, title, askedBy);
+    return { issueNumber: n, ...a, position, limit: 'slots', since: ago(minutes),
+      track: track(n, a.title, { outcome: 'held' }, { held: { position, limit: 'slots' } }) };
+  };
+  const taken = (n, title, askedBy, by, minutes) => {
+    const a = about(n, title, askedBy);
+    return { issueNumber: n, ...a, by, since: ago(minutes),
+      track: track(n, a.title, { outcome: 'held' }, { held: { position: null, limit: 'taken', by } }) };
+  };
   return {
     app: { slug: app.slug, name: app.name || app.slug },
     botOn: true,
@@ -644,17 +794,20 @@ function demoSlots(app, now = Date.now()) {
     cap: 5,
     buildsAtOnce: 3,
     slots: [
-      slot('build', 901, 'Staging demo: a total under the list', { stage: 'building', since: ago(15) }),
-      slot('build', 902, 'Staging demo: darker buttons', { stage: 'fixing', since: ago(4) }, {
+      slot('build', 900001, 'Staging demo: a total under the list', 'staging-demo-ana', { stage: 'building', since: ago(15) }),
+      slot('build', 900003, 'Staging demo: darker buttons', 'staging-demo-ben', { stage: 'fixing', since: ago(4) }, {
         runs: [{ verdict: 'ready', created_at: ago(120) }],
       }),
-      slot('proposal', 903, 'Staging demo: a name for the bot', { stage: 'vote', since: ago(300) }),
-      slot('proposal', 904, 'Staging demo: smaller app names', { stage: 'checks', since: ago(20) }),
-      slot('proposal', 905, 'Staging demo: keep kudos history', { stage: 'question', since: ago(10) }),
+      slot('proposal', 900006, 'Staging demo: a name for the bot', 'staging-demo-ana', { stage: 'vote', since: ago(300) }),
+      slot('proposal', 900002, 'Staging demo: smaller app names', 'staging-demo-cy', { stage: 'checks', since: ago(20) }),
+      slot('proposal', 900015, 'Staging demo: keep kudos history', 'staging-demo-ben', { stage: 'question', since: ago(10) }),
     ],
     waiting: [
-      { issueNumber: 906, title: 'Staging demo: rethink challenges', position: 1, limit: 'slots', since: ago(200),
-        track: track(906, 'Staging demo: rethink challenges', { outcome: 'held' }, { held: { position: 1 } }) },
+      wait(900009, 'Staging demo: rethink challenges', 'staging-demo-cy', 1, 200),
+      wait(900010, 'Staging demo: a screenshot in the request', 'staging-demo-ana', 2, 90),
+    ],
+    taken: [
+      taken(900014, 'Staging demo: somebody started this', 'staging-demo-ben', 'maya-builder', 60 * 26),
     ],
     onHold: [],
     reading: 1,
@@ -702,5 +855,8 @@ module.exports = {
   tracksForRequests,
   slotsView,
   demoSlots,
+  requestExcerpt,
+  openRequestsOf,
+  ASKERS_SQL,
   demoRequestTrack,
 };

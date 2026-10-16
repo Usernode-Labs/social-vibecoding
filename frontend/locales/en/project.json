@@ -55,6 +55,10 @@
     "text": "Waiting for a slot",
     "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Heading over the requests that are ready but wait for a slot, in the order the bot will take them up."
   },
+  "botSlots.taken.title": {
+    "text": "Taken by a person",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Heading over the requests the bot had found ready but that a person has taken since: the bot leaves them alone, so they do not wait for a slot."
+  },
   "botSlots.onHold.title": {
     "text": "On hold until the week resets",
     "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Heading over the requests on hold because whoever pays for them has used up this week's building time."
@@ -114,6 +118,18 @@
   "botSlots.untitled": {
     "text": "Request #{{number}}",
     "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. A request's row when it has no title. {{number}} is its number."
+  },
+  "botSlots.meta.asked": {
+    "text": "Asked by @{{username}}",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Part of the line under a request's title naming who asked for it. {{username}} is their username."
+  },
+  "botSlots.meta.waiting": {
+    "text": "waiting {{span}}",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Part of the line under the title of a request waiting for a slot: how long it has waited. {{span}} is a short span of time such as \"3h 20m\" or \"2d 4h\"."
+  },
+  "botSlots.meta.taken": {
+    "text": "taken {{span}} ago",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Part of the line under the title of a request a person has taken: how long ago they took it (claimed it, or started a change of their own for it). {{span}} is a short span of time such as \"3h 20m\" or \"2d 4h\"."
   },
   "page.title.workshop": {
     "text": "Workshop",

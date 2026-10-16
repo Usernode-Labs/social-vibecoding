@@ -2944,10 +2944,10 @@ test('#4457: a row opens its page beside the list on a wide window, and that pag
   // steps aside for it under 1296px (section-column.test.js), told by the
   // page through the place store.
   assert.match(WORKSHOP, /const SIDE_QUERY = '\(min-width: 1180px\)';/);
-  assert.match(WORKSHOP, /const sideOpen = !!sideItem && \(tab === 'workshop' \|\| tab === 'all'\);\s*useEffect\(\(\) => \{\s*if \(v\.slug\) publishSide\(v\.slug, sideOpen\);/);
+  assert.match(WORKSHOP, /const sideOpen = !!sideItem && \(tab === 'workshop' \|\| tab === 'all' \|\| tab === 'bot'\);\s*useEffect\(\(\) => \{\s*if \(v\.slug\) publishSide\(v\.slug, sideOpen\);/);
   assert.match(WORKSHOP, /if \(!sideWide\) return;\s*event\.preventDefault\(\);/);
-  assert.match(WORKSHOP, /\{\(tab === 'workshop' \|\| tab === 'all'\) && sideItem \? <TopicSidePanel item=\{sideItem\} onClose=\{closeSide\} \/> : null\}/,
-    'from the Workshop tab\u2019s lists, and from All items (#4486)');
+  assert.match(WORKSHOP, /\{sideOpen && sideItem \? <TopicSidePanel item=\{sideItem\} onClose=\{closeSide\} \/> : null\}/,
+    'from the Workshop tab\u2019s lists, from All items (#4486) and from the bot\u2019s slots page (16 Oct 2026)');
   // The list makes room and keeps its place; the open row is lit.
   assert.match(CSS, /#dev-workshop:has\(> \.dev-ws\[data-ws-side-open\]\) \{/);
   assert.match(CSS, /\.dev-ws-wrow\[data-on\] \{ background: var\(--lit-tint\); \}/);
