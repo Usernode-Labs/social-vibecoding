@@ -1369,11 +1369,23 @@ function readVerdict(text) {
       // "person decides" with nothing to decide. A person or empty verdict
       // carries it; one about Homeroom itself is offered the move instead.
       done: (verdict === 'person' || verdict === 'empty') && obj.done === true && obj.platform !== true,
+      // 16 Oct 2026: a request that says a named person will build it (on
+      // Homeroom's own board, a dozen in a morning read "assigned to @snait,
+      // not for the bot"). Only a person verdict carries it, and its news
+      // rings nobody: they said so themselves (actOnVerdict).
+      builder: verdict === 'person' ? builderName(obj.builder) : null,
       stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
       resumeMentioning: live.parseStopMentioning(obj.resume_mentioning),
     };
   }
   return null;
+}
+
+/** Pure: the `builder` a verdict named, as a bare username, or null. */
+function builderName(value) {
+  if (typeof value !== 'string') return null;
+  const name = value.trim().replace(/^@+/, '').trim();
+  return /^[A-Za-z0-9_.-]{1,64}$/.test(name) ? name : null;
 }
 
 // ── Eligibility (pure) ──────────────────────────────────────────────────
@@ -4339,6 +4351,9 @@ async function runTriage(pool, config, {
         firstVersion: !!requester?.firstVersion,
         // Who a person hand-off waits on, for the requester's DM.
         decider,
+        // 16 Oct 2026: an older request's first read rings only when it is
+        // ready to try; what else it finds is said quietly (actOnVerdict).
+        backlog: item.reason === BACKLOG_REASON,
         deps: {
           github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
           activeWorkers, ...liveD,
@@ -7308,9 +7323,15 @@ async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
   seed, seedReadAt, postedAt, turnBudgetMs, model, specModel = null, botLogin = null, quietHold = false,
   proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, relook = false, askedLook = false, comments = [],
-  decider = null, deps,
+  decider = null, backlog = false, deps,
 }) {
   const { github, ws } = deps;
+  // 16 Oct 2026: news that asks nothing new of its requester is said in
+  // their chat with the bot and rings nothing (homeroom-bot-dm.js
+  // relayIssuePost): an older request's first read that is not ready (going
+  // on for everyone queued 43 of Homeroom's, and every question or hand-off
+  // among them rang its requester), and a request that names who builds it.
+  const quiet = backlog ? { quiet: true } : {};
   const say = liveSayer({
     pool, github, ws, app, repo, issueNumber, issue, runId, bot, botLogin,
     notifications: deps.notifications || null, postedAt,
@@ -7372,6 +7393,7 @@ async function actOnVerdict({
         question: parsed.question, answers: parsed.questionAnswers || [],
         // B6: a read that asks two questions asks both at once.
         ...(parsed.plan?.questions?.length > 1 ? { questions: parsed.plan.questions } : {}),
+        ...quiet,
       },
     });
   } else if (parsed.verdict === 'person') {
@@ -7392,10 +7414,11 @@ async function actOnVerdict({
       dm: {
         reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
         ...(parsed.done ? { done: true } : {}),
+        ...(parsed.builder ? { builder: parsed.builder, quiet: true } : quiet),
       },
     });
   } else if (parsed.verdict === 'empty') {
-    await say('empty', live.emptyText(parsed), { dm: { reason: parsed.reason, ...(parsed.done ? { done: true } : {}) } });
+    await say('empty', live.emptyText(parsed), { dm: { reason: parsed.reason, ...(parsed.done ? { done: true } : {}), ...quiet } });
   } else if (parsed.verdict === 'ready') {
     // B6: a first version waits for its creator's Build it, under the plan
     // they are sent first. #4175: it is never built without it. A plan that
