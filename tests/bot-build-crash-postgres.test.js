@@ -158,6 +158,7 @@ test('bot builds and bench trials carried on through a crash at every step they 
     HOMEROOM_BOT_SPEC_SCREENS: '0',
     LOG_LEVEL: process.env.BOT_BUILD_CRASH_DEBUG ? 'INFO' : 'ERROR',
     NODE_COMPILE_CACHE: compileCache,
+    BOT_BUILD_CRASH_TS_CACHE: path.join(compileCache, 'stripped'),
   };
   t.after(async () => {
     await Promise.all(lanes.map((lane) => lane.close().catch(() => {})));
@@ -385,6 +386,14 @@ test('bot builds and bench trials carried on through a crash at every step they 
     t.diagnostic(`a worker made sure (worker.ensureWorker) while a turn of its session ran in it: ${ensuredUnderTurn.join(', ')}`);
   }
   t.diagnostic(`${chosen.length - skipped} of ${chosen.length} kill points run in ${Math.round((Date.now() - started) / 1000)} s on ${LANES} lanes`);
+  // A skip is not a failure: what ran out is the machine's time, not the
+  // code's correctness, and a red suite on a busy node would be the
+  // platform's fault. But a run that skipped proves less than one that did
+  // not, so it says so in a line of its own, where a reader of the log (or
+  // a search for "kill points were NOT run") finds it.
+  if (skipped) {
+    t.diagnostic(`WARNING: ${skipped} of ${chosen.length} kill points were NOT run: the ${Math.round(BUDGET_MS / 1000)} s time budget ran out first (a busy machine). They are the skipped tests above; this run proves less than a whole one.`);
+  }
 });
 
 /**

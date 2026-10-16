@@ -899,9 +899,14 @@ if node -e "const p=require('./package.json');process.exit(p.scripts?.['lint:sql
   trap 'pg_ctl -D /home/node/pgdata -m fast stop >/dev/null 2>&1 || true' EXIT
   export SQL_CHECK_CONNECTION_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres
   # A suite split across Jobs (TEST_SHARD=k/n) validates the SQL once, in
-  # its first shard; every shard keeps the server for its own tests.
+  # its first shard; every shard keeps the server for its own tests. It runs
+  # beside the tests rather than before them: its ~7 s were the first
+  # shard's alone, ahead of its tests, and the same CPU now overlaps them.
+  # Its output is printed after the tests, and its failure fails the suite.
   if [ -z "\${TEST_SHARD:-}" ] || [ "\${TEST_SHARD%%/*}" = "1" ]; then
-    npm run lint:sql
+    rm -f "$WS/.unit-suite-lint.status"
+    ( set +e; npm run lint:sql > "$WS/.unit-suite-lint.log" 2>&1; echo $? > "$WS/.unit-suite-lint.status" ) &
+    LINT_PID=$!
   fi
 fi
 # One shard of a split suite runs the repo's own \`test:shard\` script, after
@@ -920,6 +925,15 @@ set +e
 $TEST_CMD | tee "$TEST_LOG"
 TEST_STATUS=\${PIPESTATUS[0]}
 set -e
+if [ -n "\${LINT_PID:-}" ]; then
+  wait "$LINT_PID" || true
+  cat "$WS/.unit-suite-lint.log" 2>/dev/null || true
+  LINT_STATUS=$(cat "$WS/.unit-suite-lint.status" 2>/dev/null || echo 1)
+  if [ "$LINT_STATUS" -ne 0 ]; then
+    echo "unit-suite: npm run lint:sql failed (exit $LINT_STATUS)" >&2
+    if [ "$TEST_STATUS" -eq 0 ]; then TEST_STATUS=$LINT_STATUS; fi
+  fi
+fi
 if [ "$TEST_STATUS" -ne 0 ]; then
   echo "${ROOT_SENTINEL}=$(pwd -P)"
   awk -v max=${RECAP_MAX_TESTS} -v block=${RECAP_MAX_BLOCK_LINES} '
@@ -942,6 +956,42 @@ exit "$TEST_STATUS"
 // shard's, the rest add up.
 const SUMMARY_LINE = /^# (tests|suites|pass|fail|cancelled|skipped|todo|duration_ms) (\d+(?:\.\d+)?)\s*$/;
 
+// The line a shard of a time-balanced suite ends with (the repository's
+// scripts/test-shard.js): which shard, how many of its planned files ran,
+// how many test files there are in all, and which plan it followed.
+const SHARD_FILES_LINE = /^# shard (\d+)\/(\d+): ran (\d+) of (\d+) planned files \((\d+) in all, plan ([0-9a-f]+)\)\s*$/;
+
+/**
+ * Did the shards together run every test file once? Read from their
+ * SHARD_FILES_LINE: `{ ok: true }` when no shard printed one (a repository
+ * that splits its suite another way), else ok only when every shard printed
+ * one for the same plan and file count, each ran all it was given, and
+ * their files add up to the whole. `reason` says what did not hold.
+ */
+function shardCoverage(parts) {
+  const seen = (parts || []).map((part) => {
+    let found = null;
+    for (const l of String((part && part.stdout) || '').split('\n')) {
+      const m = SHARD_FILES_LINE.exec(l);
+      if (m) found = { k: Number(m[1]), n: Number(m[2]), ran: Number(m[3]), planned: Number(m[4]), total: Number(m[5]), plan: m[6] };
+    }
+    return found;
+  });
+  if (!seen.some(Boolean)) return { ok: true, checked: false };
+  const fail = (reason) => ({ ok: false, checked: true, reason: `The unit suite's shards did not run every test file: ${reason}.` });
+  if (seen.some((x) => !x)) return fail(`${seen.filter((x) => !x).length} of ${seen.length} shards did not say which files they ran`);
+  const [first] = seen;
+  if (seen.some((x) => x.plan !== first.plan || x.total !== first.total || x.n !== seen.length)) {
+    return fail('the shards followed different plans');
+  }
+  if (new Set(seen.map((x) => x.k)).size !== seen.length) return fail('two shards ran the same part');
+  const short = seen.filter((x) => x.ran !== x.planned);
+  if (short.length) return fail(`shard ${short[0].k} ran ${short[0].ran} of its ${short[0].planned} files`);
+  const ran = seen.reduce((n, x) => n + x.ran, 0);
+  if (ran !== first.total) return fail(`${ran} of ${first.total} files ran`);
+  return { ok: true, checked: true, files: ran };
+}
+
 /**
  * Join the outputs of one suite's shards into the output one Job would have
  * printed: each shard's lines with its workspace path rewritten to the
@@ -957,6 +1007,10 @@ function joinUnitShardOutputs(parts) {
   let recapTotal = 0;
   let anyRecap = false;
   const totals = new Map();
+  // How many shards printed their own `# tests`. A shard whose log lost its
+  // end lost its counts with it (16 Oct 2026: about half of all runs, read
+  // as ~17,000 tests where ~26,000 ran); a sum without it is not the suite.
+  let counted = 0;
   for (const part of parts || []) {
     let lines = String((part && part.stdout) || '').split('\n');
     const rootLine = lines.find((l) => l.startsWith(`${ROOT_SENTINEL}=`));
@@ -972,6 +1026,7 @@ function joinUnitShardOutputs(parts) {
       recapTotal += count || 0;
       recapEntries.push(...lines.slice(at + 1).filter((l) => l !== ''));
     }
+    if (lines.some((l) => /^# tests \d+\s*$/.test(l))) counted += 1;
     for (const l of at === -1 ? lines : lines.slice(0, at)) {
       const m = SUMMARY_LINE.exec(l);
       if (!m) { bodies.push(l); continue; }
@@ -981,9 +1036,15 @@ function joinUnitShardOutputs(parts) {
     }
   }
   const out = bodies.filter((l, i, all) => l !== '' || (i > 0 && all[i - 1] !== ''));
+  // The size of the suite (`tests`, `pass`) only when every shard counted:
+  // a part of it would be stored as the next run's progress denominator.
+  const complete = counted === (parts || []).length;
   for (const key of ['tests', 'suites', 'pass', 'fail', 'cancelled', 'skipped', 'todo', 'duration_ms']) {
+    if (!complete && (key === 'tests' || key === 'pass')) continue;
     if (totals.has(key)) out.push(`# ${key} ${totals.get(key)}`);
   }
+  const coverage = shardCoverage(parts);
+  if (!coverage.ok) out.push(`unit-suite: ${coverage.reason}`);
   if (anyRecap) {
     if (root) out.push(`${ROOT_SENTINEL}=${root}`);
     out.push(`${RECAP_SENTINEL}=${recapTotal}`, ...recapEntries);
@@ -991,6 +1052,7 @@ function joinUnitShardOutputs(parts) {
   return {
     stdout: out.join('\n'),
     stderr: (parts || []).map((p) => String((p && p.stderr) || '')).filter(Boolean).join('\n'),
+    coverage,
   };
 }
 
@@ -1433,7 +1495,15 @@ async function runUnitSuiteShards(config, {
   if (signal?.aborted) throw signal.reason;
   const parts = settled.map((r) => (r.status === 'fulfilled' ? (r.value || {}) : (r.reason || {})));
   const failed = settled.filter((r) => r.status === 'rejected').map((r) => r.reason || new Error('unit-suite shard failed'));
-  if (!failed.length) return joinUnitShardOutputs(parts);
+  if (!failed.length) {
+    const joined = joinUnitShardOutputs(parts);
+    // Every shard passed, but together they did not run every test file:
+    // a failed suite, whatever the tests said.
+    if (!joined.coverage.ok) {
+      throw Object.assign(new Error(joined.coverage.reason), { stdout: joined.stdout, stderr: joined.stderr, code: 1 });
+    }
+    return joined;
+  }
   // A shard that never reached its tests (its Job refused, its setup gone):
   // the suite did not run, whatever the others say.
   for (const err of failed) {
@@ -1632,6 +1702,7 @@ module.exports = {
   CLONED_SENTINEL,
   ROOT_SENTINEL,
   joinUnitShardOutputs,
+  shardCoverage,
   combineUnitSnapshots,
   runUnitSuiteShards,
   unitSuiteShardCount,
