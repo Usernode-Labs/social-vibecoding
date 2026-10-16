@@ -9,11 +9,16 @@
 //      BEFORE the terminal headless_status='ready' write) while still
 //      opening NO pull request. The machine writes the preview's outcome
 //      rows itself (src/workflow/preview/machine.ts), tested elsewhere.
-//   2. /promote route tests: headless rows are rejected outright; a
-//      PR-less clone gets its PR created lazily on its own branch at
-//      promote time (and the response carries the PR info); a failed PR
-//      creation 502s without promoting; promote hands a clone that has no
-//      preview of its own to the preview machine.
+//   2. /promote: headless rows are rejected outright by the route; a clone
+//      is handed to the proposal machine (src/workflow/platform.ts
+//      promoteProposal) and the route answers with what it reports. The
+//      lazy PR creation on the clone's own branch is the machine's
+//      review.open work (src/workflow/proposal/services.ts), tested here
+//      directly: it opens the PR (and the answer carries the PR info), a
+//      failed creation refuses the promote with the code the route answers
+//      502 for, and an existing PR is not re-created. The preview of the
+//      reviewed head is the machine's message to the preview machine, sent
+//      once the proposal is in review (tests/workflow-proposal-postgres).
 //   3. /deploy-staging guard: headless rows 404.
 //
 // Like headless-clarify.test.js, the pool is an in-memory mock that
@@ -416,6 +421,16 @@ function loadVotes(mockPool, overrides = {}) {
     prMetadata: require.resolve('../src/services/pr-metadata'),
     votes: require.resolve('../src/routes/votes'),
     previewWorkflow: require.resolve('../src/services/preview-workflow'),
+    platform: require.resolve('../src/workflow/platform.ts'),
+  };
+
+  // The proposal machine: what the route asks it, and what it answers.
+  const promoteCalls = [];
+  const platformStub = {
+    async promoteProposal(args) {
+      promoteCalls.push(args);
+      return overrides.promote ? overrides.promote(args) : { status: 200, body: { ok: true, prNumber: null, prUrl: null, prTitle: null } };
+    },
   };
 
   const stagingStub = {
@@ -477,6 +492,7 @@ function loadVotes(mockPool, overrides = {}) {
       sessionCollabGuard: () => (_req, _res, next) => next(),
     })],
     [paths.prMetadata, stubModule(paths.prMetadata, prMetadataStub)],
+    [paths.platform, stubModule(paths.platform, platformStub)],
   ];
   delete require.cache[paths.votes];
 
@@ -488,7 +504,7 @@ function loadVotes(mockPool, overrides = {}) {
     }
     delete require.cache[paths.votes];
   };
-  return { subject, previewCalls, restore };
+  return { subject, previewCalls, promoteCalls, restore };
 }
 
 // Mock pool for /promote: holds one session row and answers the route's
@@ -554,67 +570,59 @@ test('POST /promote rejects headless sessions with 404', async () => {
     const res = await fetch(`${srv.baseUrl}/api/sessions/99/promote`, { method: 'POST' });
     assert.equal(res.status, 404);
     assert.equal(pool.state.promoted, false);
+    assert.equal(loaded.promoteCalls.length, 0, 'the machine is never asked');
   } finally {
     await srv.close();
     loaded.restore();
   }
 });
 
-test('POST /promote on a PR-less clone creates the PR lazily on the clone branch and returns it', async () => {
+test('POST /promote on a PR-less clone hands it to the proposal machine and answers with the PR it opened', async () => {
   const prCalls = [];
   const pool = makePromotePool({ ...CLONE_ROW });
   const loaded = loadVotes(pool, {
-    prMetadata: {
-      applyPrMetadata: async ({ session, userMessage, username, userId }) => {
-        prCalls.push({ branch: session.branch_name, userMessage, username, userId });
-        session.pr_number = 77;
-        session.pr_url = 'https://github.com/owner/repo/pull/77';
-        session.pr_title = 'Ship the bot change';
-        return { prNumber: 77, prUrl: session.pr_url, prTitle: session.pr_title };
-      },
-    },
+    prMetadata: { applyPrMetadata: async (args) => { prCalls.push(args); return null; } },
+    promote: async () => ({
+      status: 200,
+      body: { ok: true, prNumber: 77, prUrl: 'https://github.com/owner/repo/pull/77', prTitle: 'Ship the bot change' },
+    }),
   });
   const srv = await startVotesServer(loaded);
   try {
     const res = await fetch(`${srv.baseUrl}/api/sessions/99/promote`, { method: 'POST' });
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.equal(body.ok, true);
-    assert.equal(body.prNumber, 77);
-    assert.equal(body.prUrl, 'https://github.com/owner/repo/pull/77');
-    assert.equal(body.prTitle, 'Ship the bot change');
+    assert.deepEqual(body, { ok: true, prNumber: 77, prUrl: 'https://github.com/owner/repo/pull/77', prTitle: 'Ship the bot change' });
 
-    // The PR was created on the CLONE's branch, attributed + debited to
-    // the proposing user, with the latest user message as context.
-    assert.equal(prCalls.length, 1);
-    assert.equal(prCalls[0].branch, 'dev/alice-1700000000000');
-    assert.equal(prCalls[0].username, 'alice');
-    assert.equal(prCalls[0].userId, 1);
-    assert.equal(prCalls[0].userMessage, 'please ship the bot change');
-
-    assert.equal(pool.state.promoted, true);
-
-    // The clone had no staging of its own — promote handed its head to the
-    // preview machine (fire-and-forget). GitHub is off here, so no exact
-    // head is named and the machine resolves the branch's own.
-    await waitFor(() => loaded.previewCalls.length > 0);
-    assert.deepEqual(loaded.previewCalls, [{ sessionId: 99, head: null, source: 'promote', trigger: 'promote-kick' }]);
+    // One ask, from the status the route read, by the proposing user. With
+    // GitHub off there is no pull request to read first.
+    assert.equal(loaded.promoteCalls.length, 1);
+    const asked = loaded.promoteCalls[0];
+    assert.deepEqual(
+      { sessionId: asked.sessionId, appId: asked.appId, userId: asked.userId, username: asked.username, from: asked.from, pr: asked.pr },
+      { sessionId: 99, appId: 1, userId: 1, username: 'alice', from: 'active', pr: null },
+    );
+    // Opening the PR, the status move and the preview are the machine's.
+    assert.equal(prCalls.length, 0, 'the route opens no pull request itself');
+    assert.equal(pool.state.promoted, false, 'the route writes no status');
+    await new Promise((r) => setTimeout(r, 50));
+    assert.deepEqual(loaded.previewCalls, [], 'and kicks no preview after answering');
   } finally {
     await srv.close();
     loaded.restore();
   }
 });
 
-test('POST /promote 502s (and does not promote) when lazy PR creation fails', async () => {
+test('POST /promote answers the machine\'s refusal as it reports it', async () => {
   const pool = makePromotePool({ ...CLONE_ROW });
   const loaded = loadVotes(pool, {
-    prMetadata: { applyPrMetadata: async () => null },
+    promote: async () => ({ status: 502, body: { error: 'Could not create the pull request for this change.' } }),
   });
   const srv = await startVotesServer(loaded);
   try {
     const res = await fetch(`${srv.baseUrl}/api/sessions/99/promote`, { method: 'POST' });
     assert.equal(res.status, 502);
-    assert.equal(pool.state.promoted, false);
+    assert.match((await res.json()).error, /Could not create the pull request/);
     assert.equal(loaded.previewCalls.length, 0);
   } finally {
     await srv.close();
@@ -622,29 +630,90 @@ test('POST /promote 502s (and does not promote) when lazy PR creation fails', as
   }
 });
 
-test('POST /promote with an existing PR does not re-create it and skips the staging kick when staging exists', async () => {
+// ── review.open: the lazy PR creation, now the proposal machine's work ──
+
+const { proposalServices } = require('../src/workflow/proposal/services.ts');
+const { WORK: PROPOSAL_WORK } = require('../src/workflow/proposal/machine.ts');
+
+// Runs review.open for `row` with the legacy modules it reaches (through
+// src/workflow/legacy.ts, the shared require cache) stubbed: GitHub off, no
+// model key, no explicit-approval read, and `applyPrMetadata` as given.
+async function reviewOpen(row, applyPrMetadata) {
+  const ids = {
+    github: require.resolve('../src/services/github'),
+    prMetadata: require.resolve('../src/services/pr-metadata'),
+    limits: require.resolve('../src/services/limits'),
+    appAdmins: require.resolve('../src/services/app-admins'),
+  };
+  const originals = [
+    [ids.github, stubModule(ids.github, { isEnabled: () => false })],
+    [ids.prMetadata, stubModule(ids.prMetadata, { applyPrMetadata })],
+    [ids.limits, stubModule(ids.limits, { resolveBillingPath: async () => ({ error: 'no key in tests' }) })],
+    [ids.appAdmins, stubModule(ids.appAdmins, { refreshExplicitApproval: async () => {} })],
+  ];
+  const pool = {
+    async query(sql) {
+      const q = String(sql);
+      if (/FROM chat_sessions cs JOIN apps a/i.test(q)) return { rows: [{ ...row }] };
+      if (/SELECT content FROM chat_session_messages/i.test(q)) return { rows: [{ content: 'please ship the bot change' }] };
+      if (/SELECT username FROM users WHERE id = \$1/i.test(q)) return { rows: [{ username: 'alice' }] };
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  try {
+    const handler = proposalServices({ config: {}, pool })[PROPOSAL_WORK.open];
+    try {
+      return { result: await handler.run({ input: { sessionId: row.id, n: 1, userId: 1, expectedHead: null, imported: false } }), error: null };
+    } catch (error) {
+      return { result: null, error };
+    }
+  } finally {
+    for (const [id, original] of originals) {
+      if (original) require.cache[id] = original; else delete require.cache[id];
+    }
+  }
+}
+
+test('review.open on a PR-less clone creates the PR lazily on the clone branch and reports it', async () => {
   const prCalls = [];
-  const pool = makePromotePool({
+  const { result, error } = await reviewOpen({ ...CLONE_ROW }, async ({ session, userMessage, username, userId }) => {
+    prCalls.push({ branch: session.branch_name, userMessage, username, userId });
+    session.pr_number = 77;
+    session.pr_url = 'https://github.com/owner/repo/pull/77';
+    session.pr_title = 'Ship the bot change';
+    return { prNumber: 77, prUrl: session.pr_url, prTitle: session.pr_title };
+  });
+  assert.equal(error, null);
+  assert.deepEqual(result, {
+    head: null, prNumber: 77, prUrl: 'https://github.com/owner/repo/pull/77', prTitle: 'Ship the bot change', issueLinkSeeded: false,
+  });
+  // The PR was created on the CLONE's branch, attributed + debited to the
+  // proposing user, with the latest user message as context.
+  assert.equal(prCalls.length, 1);
+  assert.equal(prCalls[0].branch, 'dev/alice-1700000000000');
+  assert.equal(prCalls[0].username, 'alice');
+  assert.equal(prCalls[0].userId, 1);
+  assert.equal(prCalls[0].userMessage, 'please ship the bot change');
+});
+
+test('review.open refuses the promote (502 at the route) when lazy PR creation fails', async () => {
+  const { result, error } = await reviewOpen({ ...CLONE_ROW }, async () => null);
+  assert.equal(result, null);
+  assert.equal(error.code, 'pr_create_failed');
+  assert.equal(error.permanent, true, 'a refusal, not a retry: the proposal goes back to Underway');
+  // The route answers that code 502 (src/workflow/platform.ts promoteAnswer).
+  const platformSrc = require('node:fs').readFileSync(require.resolve('../src/workflow/platform.ts'), 'utf8');
+  assert.match(platformSrc, /\['pr_create_failed', 502\]/);
+});
+
+test('review.open with an existing PR does not re-create it', async () => {
+  const prCalls = [];
+  const { result, error } = await reviewOpen({
     ...CLONE_ROW,
     pr_number: 12, pr_url: 'https://github.com/owner/repo/pull/12', pr_title: 'Existing',
     staging_url: 'https://already.example', staging_container_id: 'c1',
-  });
-  const loaded = loadVotes(pool, {
-    prMetadata: { applyPrMetadata: async (args) => { prCalls.push(args); return null; } },
-  });
-  const srv = await startVotesServer(loaded);
-  try {
-    const res = await fetch(`${srv.baseUrl}/api/sessions/99/promote`, { method: 'POST' });
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.prNumber, 12);
-    assert.equal(pool.state.promoted, true);
-    assert.equal(prCalls.length, 0, 'no lazy PR creation when a PR exists');
-    // Settle briefly — the (absent) preview hand-off would fire post-response.
-    await new Promise((r) => setTimeout(r, 100));
-    assert.equal(loaded.previewCalls.length, 0);
-  } finally {
-    await srv.close();
-    loaded.restore();
-  }
+  }, async (args) => { prCalls.push(args); return null; });
+  assert.equal(error, null);
+  assert.equal(result.prNumber, 12);
+  assert.equal(prCalls.length, 0, 'no lazy PR creation when a PR exists');
 });

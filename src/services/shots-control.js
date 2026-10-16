@@ -126,6 +126,24 @@ class RunControl {
           + 'takes after shots only. Save the after side of each change and leave the before address alone.', 400);
       }
       const info = target.media === 'webm' ? shots.inspectClip(buffer) : shots.inspectImage(buffer);
+      // A dark shot identical to its light one is not kept (#4459): there
+      // would be nothing to switch to, and the answer tells the agent this
+      // app does not change with the mode, so it can stop taking dark shots.
+      if (target.theme === 'dark') {
+        const light = this.saved.get(shots.slotKey({ ...target, theme: 'light' }));
+        if (light && light.sha256 === info.sha256) {
+          return {
+            saved: false,
+            change: target.storyId,
+            screen: target.viewport,
+            side: target.side === 'base' ? 'before' : 'after',
+            kind: 'screen',
+            sameAsLight: true,
+            hint: 'This screen looks the same in dark mode as in light, so the dark shot was not kept. '
+              + 'This app does not change with the mode: leave out the rest of the dark shots.',
+          };
+        }
+      }
       shots.checkElementSize(
         this.declaredChange(target.storyId), target, info,
         this.saved.get(shots.slotKey({ ...target, variant: 'context' })),
@@ -308,8 +326,10 @@ const RUN_ID = /^[0-9a-f]{32}$/;
 // slots a run publishes): its change, screen, side and kind. The in-memory
 // key (shots-files.slotKey) separates them with NUL, which neither text nor
 // jsonb holds.
-function dbSlot({ storyId, viewport, side, variant }) {
-  return [storyId, viewport, side, variant].join('/');
+function dbSlot({ storyId, viewport, side, variant, theme }) {
+  // A dark file's slot extends the light one only when it is dark, so light
+  // slots stay exactly as they are now.
+  return [storyId, viewport, side, variant, ...(theme === 'dark' ? ['dark'] : [])].join('/');
 }
 const mapOf = (value) => new Map(Object.entries(value && typeof value === 'object' ? value : {}));
 const objectOf = (map) => Object.fromEntries(map);
@@ -319,6 +339,8 @@ const objectOf = (map) => Object.fromEntries(map);
 function fileEntry(row) {
   return {
     storyId: row.story_id, viewport: row.viewport, side: row.side, variant: row.variant, media: row.media,
+    // Rows written before the column existed read as light.
+    theme: row.theme === 'dark' ? 'dark' : 'light',
     contentType: row.content_type, width: row.width, height: row.height, bytes: row.bytes, sha256: row.sha256,
     focusRect: null, stageLabels: null,
   };
@@ -373,7 +395,7 @@ async function load(db, runId, { lock = false } = {}) {
     `SELECT * FROM shot_run_control WHERE run_id = $1${lock ? ' FOR UPDATE' : ''}`, [runId]);
   if (!row) return null;
   const { rows: files } = await db.query(
-    `SELECT slot, story_id, viewport, side, variant, media, content_type, width, height, bytes, sha256
+    `SELECT slot, story_id, viewport, side, variant, media, theme, content_type, width, height, bytes, sha256
        FROM shot_run_files WHERE run_id = $1`, [runId]);
   return { row, control: fromRow(row, files) };
 }
@@ -394,13 +416,13 @@ async function persist(db, control) {
     const slot = dbSlot(f);
     await db.query(
       `INSERT INTO shot_run_files
-         (run_id, slot, story_id, viewport, side, variant, media, content_type, data, width, height, bytes, sha256)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         (run_id, slot, story_id, viewport, side, variant, media, theme, content_type, data, width, height, bytes, sha256)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        ON CONFLICT (run_id, slot) DO UPDATE
          SET data = EXCLUDED.data, content_type = EXCLUDED.content_type, media = EXCLUDED.media,
-             width = EXCLUDED.width, height = EXCLUDED.height, bytes = EXCLUDED.bytes,
+             theme = EXCLUDED.theme, width = EXCLUDED.width, height = EXCLUDED.height, bytes = EXCLUDED.bytes,
              sha256 = EXCLUDED.sha256, saved_at = NOW()`,
-      [control.runId, slot, f.storyId, f.viewport, f.side, f.variant, f.media, f.contentType, f.data,
+      [control.runId, slot, f.storyId, f.viewport, f.side, f.variant, f.media, f.theme || 'light', f.contentType, f.data,
         f.width, f.height, f.bytes, f.sha256]);
   }
   control.dirty.clear();
@@ -505,7 +527,7 @@ async function read(pool, runId) {
 // Every saved file with its bytes, for the slots named (the screen diff).
 async function filesFor(pool, runId, slots = null) {
   const { rows } = await pool.query(
-    `SELECT slot, story_id, viewport, side, variant, media, content_type, data, width, height, bytes, sha256
+    `SELECT slot, story_id, viewport, side, variant, media, theme, content_type, data, width, height, bytes, sha256
        FROM shot_run_files WHERE run_id = $1 ${slots ? 'AND slot = ANY($2::text[])' : ''}`,
     slots ? [runId, slots] : [runId]);
   return rows.map((row) => ({ ...fileEntry(row), data: row.data }));

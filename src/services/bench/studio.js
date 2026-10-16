@@ -1377,14 +1377,11 @@ async function sweepPreviews(pool, deps = {}, now = Date.now()) {
     const lifecycle = deps.sessionLifecycle || require('../session-lifecycle');
     for (const r of rows) {
       if (r.session_id) {
+        // Closed the way every close goes: its preview retired for good
+        // with it (and its worker).
         // eslint-disable-next-line no-await-in-loop
-        await lifecycle.teardownStagingForSession({ pool, sessionId: r.session_id, reason: 'bench-preview-expired' })
+        await lifecycle.closeOwnSession({ pool, sessionId: r.session_id, reason: 'bench-preview-expired' })
           .catch((err) => log.warn('bench', 'Could not take a studio preview down', { previewId: r.id, err: err.message }));
-        // eslint-disable-next-line no-await-in-loop
-        await pool.query(
-          `UPDATE chat_sessions SET status = 'archived', archived_at = NOW() WHERE id = $1 AND status IN ('active', 'paused')`,
-          [r.session_id],
-        ).catch(() => {});
       }
       // eslint-disable-next-line no-await-in-loop
       await pool.query("UPDATE bench_previews SET status = 'ended', ended_at = NOW() WHERE id = $1", [r.id]);

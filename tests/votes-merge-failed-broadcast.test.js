@@ -51,6 +51,7 @@ function loadVotesWithFailingMerge(mergeError) {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     staging: require.resolve('../src/services/staging'),
     docker: require.resolve('../src/services/docker'),
     resolver: require.resolve('../src/services/conflict-resolver'),
@@ -68,12 +69,20 @@ function loadVotesWithFailingMerge(mergeError) {
   const voteUpdates = [];
   const resolverCalls = [];
   const retryCalls = [];
+  const releases = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => makePool([]) });
   stub(ids.github, {
     isEnabled: () => true,
     mergePR: async () => { throw mergeError; },
+  });
+  // The promoted→merging claim and its release are the proposal machine's.
+  stub(ids.platform, {
+    mergeConfirmed: async () => ({ status: 'accepted', eventId: 1 }),
+    claimMerge: async () => ({ status: 'accepted', eventId: 2, reply: { claim: 1 } }),
+    releaseMerge: async (r) => { releases.push(r); return { status: 'accepted', eventId: 3 }; },
+    abandonMerge: async () => ({ status: 'accepted', eventId: 4 }),
   });
   stub(ids.staging, {});
   stub(ids.docker, {});
@@ -114,7 +123,7 @@ function loadVotesWithFailingMerge(mergeError) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, voteUpdates, resolverCalls, retryCalls, restore };
+  return { subject, voteUpdates, resolverCalls, retryCalls, releases, restore };
 }
 
 const session = {
@@ -127,18 +136,19 @@ const session = {
 const pool = () => makePool([
   [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '1' }]],
   [/SELECT check_state, test_results/, [{ check_state: 'passing', test_results: [] }]],
-  [/SET status = 'merging'/, [{ id: 7 }]],
   [/SET behind_main = GREATEST/, [{ behind_main: 1 }]],
 ]);
 
 test('checkAndMerge catch: forced 405 conflict fires the per-session resolver with force preserved', async () => {
   const err = Object.assign(new Error('Pull Request is not mergeable'), { status: 405 });
-  const { subject, voteUpdates, resolverCalls, retryCalls, restore } = loadVotesWithFailingMerge(err);
+  const { subject, voteUpdates, resolverCalls, retryCalls, releases, restore } = loadVotesWithFailingMerge(err);
   try {
     const forceBy = { id: 1, username: 'admin' };
     const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool(), { ...session }, { force: true, forceBy });
     assert.equal(r.merged, false);
     assert.equal(r.conflict, true);
+    // Nothing merged, so the claim goes back to the proposal machine.
+    assert.deepEqual(releases, [{ sessionId: 7, appId: 5, claim: 1, reason: 'merge_failed' }]);
 
     const failed = voteUpdates.filter((u) => u.mergeFailed);
     assert.equal(failed.length, 1, 'exactly one mergeFailed broadcast');
@@ -198,7 +208,6 @@ test('#384: checkAndMerge catch persists merge_conflict_state=conflict on a 405 
       async query(sql, params) {
         calls.push({ sql, params });
         if (/SET behind_main = GREATEST/.test(sql)) return { rows: [{ behind_main: 1 }] };
-        if (/SET status = 'merging'/.test(sql)) return { rows: [{ id: 7 }] };
         if (/SELECT COUNT\(\*\) as cnt FROM pr_votes/.test(sql)) return { rows: [{ cnt: '1' }] };
         return { rows: [] };
       },

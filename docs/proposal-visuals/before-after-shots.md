@@ -920,6 +920,21 @@ element shot sits inside it, and widened to that element. A run from before
 this has no `screens`: its card flips a screen per change and size, with
 nothing outlined. The Workshop feed's picture still leads with the element
 shot when it is big enough to read (at least 120×40 px on both sides).
+
+The whole screens are also taken in dark mode (#4459): a run opens each page
+again with the mode parameter (`un-theme=dark` for an app built on Homeroom,
+`theme=dark` for Homeroom itself) and saves one dark screen shot per side and
+size, after all the light shots, so a run cut short loses only dark ones.
+Element shots and clips stay light, and the dark versions are optional: a
+change with none is still ready, a run whose app looks the same in both modes
+keeps none (the agent is told when a dark shot comes out identical to its
+light one), and runs taken before this are light only. The viewer shows the
+mode the card is drawn in and a small round button at the toolbar's right end
+(a moon, or a sun) switches the whole card to the other mode, remembered
+while the page stays open. A side with no dark shot keeps its light one in
+both modes; the outlines and the side-by-side crop come from the light
+screens and fit the dark ones, because the layout does not change with the
+mode. Other places that show a single shot keep the light one.
 - **Skipped.** The change, a "Skipped" badge and the reason.
 - **Failed.** The change, a red "Didn’t work" badge and what the agent saw.
   A run whose only changes failed reads "Something didn’t work". The change

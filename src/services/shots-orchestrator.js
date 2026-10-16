@@ -635,6 +635,16 @@ function shotsBrief({
     // Only Homeroom's own copies have the strip, and only a phone shows it.
     ...(selfApp && phones.size ? { installStrip: { ...INSTALL_STRIP } } : {}),
     ...(selfApp ? { makeProject: { ...MAKE_PROJECT } } : {}),
+    // Every screen is also shot in dark mode (#4459), by the mode parameter
+    // each copy answers: an app built on Homeroom reads un-theme, Homeroom
+    // itself reads theme.
+    darkMode: {
+      param: selfApp ? 'theme' : 'un-theme',
+      value: 'dark',
+      note: selfApp
+        ? 'Add theme=dark to the start path\'s query to open a page in dark mode.'
+        : 'Add un-theme=dark to the start path\'s query to open a page in dark mode.',
+    },
     ...(moment ? {
       previewAt: {
         at: moment.at,

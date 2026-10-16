@@ -31,10 +31,12 @@ function stub(id, exports) {
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
 }
 
+let lastPool = null;
 function makeRecordingPool(handlers) {
   const queries = [];
-  return {
+  lastPool = {
     queries,
+    claims: [],
     async query(sql, params) {
       queries.push({ sql: String(sql), params });
       for (const [re, rows] of handlers) {
@@ -46,6 +48,7 @@ function makeRecordingPool(handlers) {
       return { rows: [], rowCount: 0 };
     },
   };
+  return lastPool;
 }
 
 const HEAD = 'a'.repeat(40);
@@ -88,8 +91,14 @@ function loadVotes({ measured }) {
     mergePR: async () => ({ sha: 'deadbeefcafe', merged: true }),
   });
   // A merge is reported to the merge-followups workflow machine, which
-  // owns everything after GitHub's merge.
-  stub(ids.platform, { mergeConfirmed: async () => ({ status: 'accepted', eventId: 1 }) });
+  // owns everything after GitHub's merge. The promoted→merging claim is the
+  // proposal machine's (claimMerge), recorded on the pool made last.
+  stub(ids.platform, {
+    mergeConfirmed: async () => ({ status: 'accepted', eventId: 1 }),
+    claimMerge: async (c) => { lastPool.claims.push(c); return { status: 'accepted', eventId: 2, reply: { claim: 1 } }; },
+    releaseMerge: async () => ({ status: 'accepted', eventId: 3 }),
+    abandonMerge: async () => ({ status: 'accepted', eventId: 4 }),
+  });
   stub(ids.docker, {});
   stub(ids.resolver, {
     checkAndResolveConflicts: async () => {},
@@ -164,13 +173,14 @@ function poolWith({ checks = {}, main = null } = {}) {
   };
   return makeRecordingPool([
     [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '1' }]],
+    // What the claim names: the head and epoch the gate read.
+    [/SELECT approval_epoch, CASE WHEN source = 'imported'/, [{ approval_epoch: 3, head: HEAD }]],
     [/SELECT check_state, test_results[\s\S]*FROM chat_sessions/, [checkRow]],
     [/SELECT main_check_state[\s\S]*FROM apps WHERE id/, main ? [main] : []],
-    [/SET status = 'merging'/, [{ id: 7 }]],
   ]);
 }
 
-const claimed = (p) => p.queries.some((q) => /SET status = 'merging'/.test(q.sql));
+const claimed = (p) => p.claims.length > 0;
 
 // ── the integration gate ─────────────────────────────────────────────────
 
@@ -183,8 +193,13 @@ test('a clean head 12 commits behind main merges as it stands: no sync, no queue
     const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
     assert.equal(r.merged, true);
     assert.ok(claimed(p), 'claimed the merge');
-    assert.deepEqual(blockReasonWrites, [{ sessionId: 7, reasons: [] }],
-      'the claim clears whatever the lane had written: nothing blocks it any more');
+    // The claim clears whatever the lane had written (nothing blocks it any
+    // more), but that is the proposal machine's claim transition now
+    // (its 'claimed' write empties integration_block_reasons), not a
+    // setBlockReasons call from checkAndMerge.
+    assert.deepEqual(blockReasonWrites, [], 'checkAndMerge writes no block reasons on a clean claim');
+    assert.deepEqual(p.claims.map(({ sessionId, head, epoch, force }) => ({ sessionId, head, epoch, force })),
+      [{ sessionId: 7, head: HEAD, epoch: 3, force: false }], 'claimed at the head and epoch the gate read');
     assert.equal(syncCalls.length, 0, 'the gate does not bring the head up to date first');
     assert.equal(enqueued.length, 0, 'nothing is queued for integration');
     assert.ok(!systemMessages.some((m) => /syncing|bringing .* up to date/i.test(m)),

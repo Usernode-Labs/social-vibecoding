@@ -374,16 +374,16 @@ export { phoneE164 } from './phone-input';
 
 /**
  * What sits under the first step's button (#4037, the owner's ruling of
- * 7 October). Where the sheet makes an account (the story's Make an account,
- * an invite's Join) it is the terms line alone, since continuing is agreeing
- * (tests/terms-first-run.test.js); somebody with an account signs in from
- * the story's own Sign in, or with the same email code. The story's Sign in,
- * and the other ways after an invite's phone step, are for an account
- * somebody has: "Sign in with a password" right under the button, then the
- * terms line.
+ * 7 October). Where the sheet only makes an account (an invite's Join) it is
+ * the terms line alone, since continuing is agreeing
+ * (tests/terms-first-run.test.js). Where it may be for an account somebody
+ * has, it is "Sign in with a password" right under the button, then the
+ * terms line: Sign in, the story's Continue (#5251: one button for new and
+ * returning people, so the password way in is here now that the story has
+ * no Sign in of its own), and the other ways after an invite's phone step.
  */
 export function firstStepLine(from: 'invite' | 'story' | 'signin', phone = false): 'terms' | 'password' {
-  return from === 'signin' || phone ? 'password' : 'terms';
+  return from === 'invite' && !phone ? 'terms' : 'password';
 }
 
 /** The line Google asks for where its reCAPTCHA badge is not shown (./recaptcha.ts). */

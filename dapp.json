@@ -1931,10 +1931,10 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Landing's story signs an existing account in from the same sheet (first session)",
+      "name": "Landing's one Continue button is for new and returning people, and says we let new people in in waves (first session)",
       "path": "/?shot=anon#landing",
-      "expectSelector": "#auth-landing-screen:not(.hidden) [data-landing-story] a[data-landing-story-signin][href=\"#login\"]",
-      "expectText": "Already have an account?",
+      "expectSelector": "#auth-landing-screen:not(.hidden) [data-landing-story] a[data-landing-story-start][href=\"#signup\"] + p[data-landing-story-how] + div [data-landing-story-waves]",
+      "expectText": "We let new people in in waves.",
       "allowConsoleErrors": true
     },
     {
@@ -3029,9 +3029,9 @@
     },
     {
       "id": "messages.inbox",
-      "name": "Messages is people and agents: one list, with no Channels section — a community's channel is on its hub",
+      "name": "Messages is two headed sections, Agents with Homeroom bot first and Direct messages, with no Channels: a community's channel is on its hub",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll:not(:has([data-inbox-card=\"channels\"])):not(:has(h3.messages-section-head)) > .messages-section-card[data-inbox-card=\"chats\"]",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll:not(:has([data-inbox-card=\"channels\"])) > h3.messages-section-head[data-inbox-section=\"people\"] + .messages-section-card[data-inbox-card=\"people\"]",
       "visual": true,
       "impact": [
         "frontend/src/features/messages/**",
@@ -3041,15 +3041,14 @@
       ]
     },
     {
-      "name": "The filter strip reads All, People, Agents — the Channels filter left with the channels",
+      "name": "Agents' heading is the button that folds its section, open to start; Direct messages, the last section, does not fold; and there is no filter strip",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-filters .messages-filter-track:not(:has(#messages-filter-channels)) > #messages-filter-all + #messages-filter-people + #messages-filter-agents",
-      "expectText": "Agents"
+      "expectSelector": "#messages-screen:not(.hidden):not(:has(#messages-filters)):not(:has([data-inbox-fold=\"people\"])) h3.messages-section-head[data-inbox-section=\"agents\"] > button.messages-section-toggle[data-inbox-fold=\"agents\"][aria-expanded=\"true\"]"
     },
     {
-      "name": "#2778: new message is a plus to the right of the filters, and it opens a menu rather than a dialog",
+      "name": "#2778: new message is a plus beside the search, and it opens a menu rather than a dialog",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) #messages-filters > .messages-filter-track + button#messages-new[aria-haspopup=\"menu\"][aria-label=\"New message\"]"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-toolbar > .messages-search + button#messages-new[aria-haspopup=\"menu\"][aria-label=\"New message\"]"
     },
     {
       "name": "QA 2026-09-24 Q18: a Skip to navigation link is the first thing Tab reaches, ahead of the header, and the rail it skips to is there",

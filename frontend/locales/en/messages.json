@@ -1879,18 +1879,6 @@
     "text": "by {{author}}",
     "description": "One fact in the dot-separated detail line of a card for a shared item, complete on its own: who created the item. It is joined to the other facts (the project, the item's status) by a middle dot. {{author}} is a username."
   },
-  "inbox.filter.all": {
-    "text": "All",
-    "description": "Filter chip above the conversation list in Messages: shows every conversation."
-  },
-  "inbox.filter.people": {
-    "text": "People",
-    "description": "Filter chip above the conversation list in Messages: shows only conversations with people."
-  },
-  "inbox.filter.agents": {
-    "text": "Agents",
-    "description": "Filter chip above the conversation list in Messages: shows only conversations with AI agents."
-  },
   "channel.backCommunities": {
     "text": "Communities",
     "description": "Label of the back control on the #general channel when it leads to the Communities screen."
@@ -2787,10 +2775,6 @@
     "text": "Delete this chat",
     "description": "Accessible name of the bin button on a conversation with an AI agent that has no title, in the conversation list."
   },
-  "inbox.filterGroup": {
-    "text": "Show",
-    "description": "Accessible name of the row of filter chips above the conversation list (All, People, Agents). A verb: which conversations to show."
-  },
   "inbox.new.bot.label": {
     "text": "Homeroom bot",
     "description": "Choice in the \"New message\" menu: opens the conversation with Homeroom bot, the assistant that builds apps and changes on request. It is the assistant's name; keep \"Homeroom\"."
@@ -2831,29 +2815,45 @@
     "text": "Start a new conversation",
     "description": "Accessible name of the menu opened by the + button above the conversation list."
   },
-  "inbox.section.chats": {
-    "text": "Chats",
-    "description": "Heading over the part of the conversation list that holds conversations with people and agents."
+  "inbox.section.agents": {
+    "text": "Agents",
+    "description": "Small-caps heading over the Messages list section that holds the viewer's conversations with AI agents and their changes in flight. It is a button that folds the section away and opens it again."
   },
-  "inbox.section.channels": {
-    "text": "Channels",
-    "description": "Heading over the part of the conversation list that holds channels."
+  "inbox.section.people": {
+    "text": "Direct messages",
+    "description": "Small-caps heading over the last section of the Messages list, under Agents: the viewer's direct messages and group chats with people. It does not fold."
+  },
+  "inbox.section.working_one": {
+    "text": "{{count}} working",
+    "description": "Beside the Agents heading in the Messages list, also while the section is folded: how many of the viewer's agent conversations are working right now. {{count}} is that number."
+  },
+  "inbox.section.working_other": {
+    "text": "{{count}} working",
+    "description": "Beside the Agents heading in the Messages list, also while the section is folded: how many of the viewer's agent conversations are working right now. {{count}} is that number."
+  },
+  "inbox.section.unread_one": {
+    "text": "{{count}} unread",
+    "description": "Beside the People heading in the Messages list, in the accent colour, also while the section is folded: how many messages from people the viewer has not read. {{count}} is that number."
+  },
+  "inbox.section.unread_other": {
+    "text": "{{count}} unread",
+    "description": "Beside the People heading in the Messages list, in the accent colour, also while the section is folded: how many messages from people the viewer has not read. {{count}} is that number."
   },
   "inbox.loading": {
     "text": "Loading conversations",
     "description": "Accessible label of the placeholder rows shown while the conversation list loads."
   },
-  "inbox.showLess": {
-    "text": "Show less",
-    "description": "Button in the conversation list: folds the extra channels away again."
+  "inbox.older.show_one": {
+    "text": "{{count}} older chat",
+    "description": "Quiet link at the foot of the Agents section in Messages: shows the agent chat nobody has used in the last seven days. {{count}} is how many there are."
   },
-  "inbox.showMore_one": {
-    "text": "Show {{count}} more",
-    "description": "Button in the conversation list: unfolds the channels that are hidden by default. {{count}} is how many are hidden."
+  "inbox.older.show_other": {
+    "text": "{{count}} older chats",
+    "description": "Quiet link at the foot of the Agents section in Messages: shows the agent chats nobody has used in the last seven days. {{count}} is how many there are."
   },
-  "inbox.showMore_other": {
-    "text": "Show {{count}} more",
-    "description": "Button in the conversation list: unfolds the channels that are hidden by default. {{count}} is how many are hidden."
+  "inbox.older.hide": {
+    "text": "Hide older chats",
+    "description": "Quiet link at the foot of the Agents section in Messages, once the older agent chats are shown: folds them away again."
   },
   "inbox.archived.show": {
     "text": "Show archived",
@@ -2876,7 +2876,7 @@
     "description": "Accessible name of the pane that holds the conversation list."
   },
   "inbox.searchPlaceholder": {
-    "text": "Search messages…",
+    "text": "Search",
     "description": "Placeholder of the search field above the conversation list; it filters the list by name."
   },
   "inbox.searchLabel": {
@@ -2898,10 +2898,6 @@
   "inbox.empty.action": {
     "text": "New conversation",
     "description": "Button under the empty conversation list: opens the dialog for starting a conversation."
-  },
-  "inbox.filterEmpty": {
-    "text": "Nothing here under this filter.",
-    "description": "Shown in place of the conversation list when the chosen filter (People or Agents) matches no conversation."
   },
   "inbox.searchEmpty": {
     "text": "No messages match “{{query}}”.",

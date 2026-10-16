@@ -171,7 +171,6 @@ export interface Deps {
   execute: boolean;          // config.shots.execute: this deployment takes shots
   agentBudgetMs: number;     // config.shots.maxAgentMs
   runBudgetMs: number;       // config.shots.maxRunMs
-  buildSha?: string | null;  // GIT_SHA: this release (facts.ts olderServing)
 }
 
 // How long a step may take before it is overdue: the copies (a platform
@@ -379,12 +378,10 @@ function fail(s: Live, f: Facts, ctx: TransitionContext, failure: {
 
 // The agent's turn on the run's copies, when the proposal's agent is free;
 // otherwise wait for it, until what is left of the run's time from the
-// moment its copies served. While a process of a release from before this
-// machine still serves (a rollout), the agent's calls could reach it, and it
-// keeps the agent's control plane in its memory: that is waited out too.
+// moment its copies served.
 function dispatchOrWait(s: Live, f: Facts, ctx: TransitionContext, deps: Deps, writes: DomainWrite[] = []): Outcome<SState> {
   const r = s.data.run!;
-  if (f.session?.agentBusy || f.session?.olderServing) {
+  if (f.session?.agentBusy) {
     const from = r.copiesAt || r.startedAt;
     const until = r.agentWaitUntil || new Date(Date.parse(from) + deps.runBudgetMs).toISOString();
     if (Date.parse(until) <= ctx.now.getTime()) {
@@ -853,6 +850,10 @@ const PRODUCERS: ReadonlySet<string> = new Set(['route', 'system']);
 
 export function shots(deps: Deps): Machine<SState, Facts> {
   const produced = (e: Event<any>): Check => (PRODUCERS.has(e.source.kind) ? ok() : reject('not_a_producer'));
+  // The proposal machine moves the reviewed or imported head, and says so in
+  // the move's own transaction.
+  const movedByProposal = (e: Event<any>): Check =>
+    (PRODUCERS.has(e.source.kind) || (e.source.kind === 'message' && e.source.from.machine === 'proposal') ? ok() : reject('not_a_producer'));
   const fromPreview = (e: Event<any>): Check =>
     ((e.source.kind === 'message' && e.source.from.machine === 'preview') || e.source.kind === 'system' ? ok() : reject('internal_only'));
   const person = (e: Event<any>): Check => (e.source.kind === 'route' || e.source.kind === 'system' ? ok() : reject('not_a_producer'));
@@ -866,11 +867,11 @@ export function shots(deps: Deps): Machine<SState, Facts> {
     facts: (tx, state, event) => {
       const id = state.name === NONE ? Number((event.payload as any)?.sessionId) : (state.data as Data).sessionId;
       if (!Number.isInteger(id) || id <= 0) return Promise.resolve({ session: null });
-      return readFacts(tx, id, { buildSha: deps.buildSha ?? null });
+      return readFacts(tx, id);
     },
     authorize: {
       Declared: produced,
-      HeadMoved: produced,
+      HeadMoved: movedByProposal,
       HeadReady: fromPreview,
       PreviewStopped: fromPreview,
       UiUndeclared: fromPreview,
@@ -925,9 +926,9 @@ async function showRun(tx: Tx, ctx: any, runIdOf: string) {
   let artifacts: unknown[] = [];
   if (run.state === 'verified') {
     ({ rows: artifacts } = await tx.query(
-      `SELECT id, story_id AS "storyId", viewport, side, variant, media, content_type AS "contentType",
+      `SELECT id, story_id AS "storyId", viewport, side, variant, media, theme, content_type AS "contentType",
               width, height, bytes, sha256, focus_rect AS "focusRect", stage_labels AS "stageLabels"
-         FROM shot_artifacts WHERE run_id = $1 ORDER BY story_id, viewport, side, variant`, [runIdOf]));
+         FROM shot_artifacts WHERE run_id = $1 ORDER BY story_id, viewport, side, variant, theme`, [runIdOf]));
   }
   const detail = { ...runSummary(run, artifacts), intent: run.intent };
   const { rowCount } = await tx.query(
@@ -1004,9 +1005,9 @@ const WRITES = {
   // published, in one transaction.
   published: async (tx: Tx, w: any, ctx: any) => {
     await tx.query(
-      `INSERT INTO shot_artifacts (id, run_id, story_id, viewport, side, variant, media, content_type,
+      `INSERT INTO shot_artifacts (id, run_id, story_id, viewport, side, variant, media, theme, content_type,
                                    data, width, height, bytes, sha256)
-       SELECT md5(f.run_id || ':' || f.slot), f.run_id, f.story_id, f.viewport, f.side, f.variant, f.media,
+       SELECT md5(f.run_id || ':' || f.slot), f.run_id, f.story_id, f.viewport, f.side, f.variant, f.media, f.theme,
               f.content_type, f.data, f.width, f.height, f.bytes, f.sha256
          FROM shot_run_files f WHERE f.run_id = $1 AND f.slot = ANY($2::text[])
        ON CONFLICT DO NOTHING`, [w.runId, w.slots]);

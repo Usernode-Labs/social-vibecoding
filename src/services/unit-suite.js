@@ -159,6 +159,12 @@ const RECAP_SENTINEL = '__UNIT_SUITE_RECAP__';
 // says which file the test is in.
 const RECAP_MAX_TESTS = 50;
 const RECAP_MAX_BLOCK_LINES = 60;
+// The failing subtests printed under each of those tests come before it, as
+// they did in the log: this many, each with this many lines of its block.
+// Every block keeps its closing `...` past the cap, so a reader knows where
+// it ends and the next test's subtests begin.
+const RECAP_MAX_SUBTESTS = 8;
+const RECAP_MAX_SUBTEST_BLOCK_LINES = 16;
 
 function isEnabled() {
   const v = String(process.env.UNIT_SUITE_CHECK_ENABLED ?? '1').trim().toLowerCase();
@@ -214,26 +220,51 @@ const TAP_STRUCTURE = /^\s*(?:not ok\b|ok\b|\.\.\.|#\s|1\.\.\d+)/;
 // A test it names that was seen before it is the same failure and is not
 // counted twice; one it alone names is a failure whose line the log lost,
 // and it carries no stdout of its own (the recap prints none).
+//
+// A test that failed because its subtests did says only "2 subtests
+// failed" in its own block. The failing subtests printed above it ride
+// along as `subtests`, each `{ name, blockLines }`: the excerpt names them
+// and shows their errors, so a fix turn is not left to re-run the file to
+// learn which assertion broke. The reason and the names main-watch reads
+// stay the top-level test's.
 function failingTestsWithExcerpts(lines) {
   const rootLine = lines.find((l) => l.startsWith(`${ROOT_SENTINEL}=`));
   const root = rootLine ? rootLine.slice(ROOT_SENTINEL.length + 1).trim().replace(/\/+$/, '') : null;
   const recapAt = recapIndex(lines);
   const seen = new Map();
   const out = [];
+  // The failing subtests printed since the current top-level test began.
+  let nested = [];
   for (let i = 0; i < lines.length; i += 1) {
+    if (i === recapAt || /^(?:# Subtest:|ok\b)/.test(lines[i])) { nested = []; continue; }
+    const sub = /^( +)not ok\b\s*\d*\s*(?:-\s*)?(.*)$/.exec(lines[i]);
+    if (sub) {
+      const indent = sub[1].length;
+      const { block, end } = blockAfter(lines, i, indent);
+      if (!/\s#\s*(SKIP|TODO)\b/i.test(` ${sub[2]}`)) {
+        const own = block.map((l) => l.slice(Math.min(indent, indentOf(l))));
+        const failureType = own.map((l) => /^ {2}failureType:\s*['"]?(\w+)/.exec(l)).find(Boolean);
+        nested.push({
+          name: sub[2].trim() || '(unnamed test)',
+          indent,
+          failureType: failureType ? failureType[1] : null,
+          blockLines: root ? own.map((l) => l.split(`${root}/`).join('')) : own,
+        });
+      }
+      i = end;
+      continue;
+    }
     const m = /^not ok\b\s*\d*\s*(?:-\s*)?(.*)$/.exec(lines[i]);
     if (!m) continue;
+    const subtests = failingSubtests(nested);
+    nested = [];
     if (/\s#\s*(SKIP|TODO)\b/i.test(` ${m[1]}`)) continue;
     const inRecap = recapAt !== -1 && i > recapAt;
     let file = null;
-    const blockLines = [];
-    if (i + 1 < lines.length && lines[i + 1].trim() === '---') {
-      for (let j = i + 2; j < lines.length && /^\s/.test(lines[j]); j += 1) {
-        if (lines[j].trim() === '...') break;
-        blockLines.push(lines[j]);
-        const loc = /^ {2}location:\s*['"]?(.*?)['"]?\s*$/.exec(lines[j]);
-        if (loc && file === null) file = relativeFile(loc[1], root);
-      }
+    const { block: blockLines, end } = blockAfter(lines, i, 0);
+    for (const l of blockLines) {
+      const loc = /^ {2}location:\s*['"]?(.*?)['"]?\s*$/.exec(l);
+      if (loc && file === null) file = relativeFile(loc[1], root);
     }
     // Up to MAX_EXCERPT_PRECEDING_LINES lines of the suite's own stdout
     // printed just before the failure, oldest first. Empty lines are
@@ -249,14 +280,56 @@ function failingTestsWithExcerpts(lines) {
     }
     const name = m[1].trim() || '(unnamed test)';
     const key = `${file || ''}\u0000${name}`;
+    i = end;
     if (inRecap && seen.get(key) > 0) {
       seen.set(key, seen.get(key) - 1);
       continue;
     }
     if (!inRecap) seen.set(key, (seen.get(key) || 0) + 1);
-    out.push({ name, file, blockLines, before });
+    out.push({ name, file, blockLines, before, subtests });
   }
   return out;
+}
+
+const indentOf = (l) => l.length - l.trimStart().length;
+
+// The YAML block under the result line at `at`, indented `indent`: its
+// lines, and the index of the last line it took (its `...` when it has
+// one), so the caller resumes after it and never reads an error message
+// that quotes TAP as a test of its own. An empty line, or one no deeper
+// than the result line, ends a block that lost its `...`.
+function blockAfter(lines, at, indent) {
+  const block = [];
+  if (at + 1 >= lines.length || lines[at + 1].trim() !== '---') return { block, end: at };
+  let end = at + 1;
+  for (let j = at + 2; j < lines.length; j += 1) {
+    const l = lines[j];
+    if (!l || indentOf(l) <= indent) break;
+    end = j;
+    if (l.trim() === '...') break;
+    block.push(l);
+  }
+  return { block, end };
+}
+
+// The failing subtests worth naming, out of every one printed under a
+// top-level test, in order. node:test prints a subtest before the test it
+// runs in, so a subtest's parents are the failing ones printed after it,
+// less indented: its name is their names and its own, `group › case`. A
+// parent that failed only because its subtests did adds nothing of its own
+// and is left out, unless the leaves were (a recap holds only the first
+// few).
+function failingSubtests(entries) {
+  const named = entries.map((e, k) => {
+    const path = [e.name];
+    let depth = e.indent;
+    for (let p = k + 1; p < entries.length; p += 1) {
+      if (entries[p].indent < depth) { path.unshift(entries[p].name); depth = entries[p].indent; }
+    }
+    return { name: path.join(' › '), failureType: e.failureType, blockLines: e.blockLines };
+  });
+  const leaves = named.filter((e) => e.failureType !== 'subtestsFailed');
+  return (leaves.length ? leaves : named).map(({ name, blockLines }) => ({ name, blockLines }));
 }
 
 // The line the recap opens with, or -1 when the output has none (a green
@@ -367,7 +440,7 @@ function groupedFailures(failures, budget) {
 // A test's YAML diagnostic block, with the stack folded to its first lines:
 // `error`, `code`, `expected`/`actual` and `failureType` are the diagnosis;
 // the rest of a stack is volume. Everything else in the block passes through.
-function diagnosticsFromBlock(blockLines) {
+function diagnosticsFromBlock(blockLines, maxStack = MAX_STACK_LINES) {
   const out = [];
   for (let i = 0; i < blockLines.length; i += 1) {
     const line = blockLines[i];
@@ -379,7 +452,7 @@ function diagnosticsFromBlock(blockLines) {
     for (; j < blockLines.length; j += 1) {
       const l = blockLines[j];
       if (l.length - l.trimStart().length <= keyIndent) break;
-      if (kept < MAX_STACK_LINES) { out.push(l); kept += 1; }
+      if (kept < maxStack) { out.push(l); kept += 1; }
     }
     if (j - (i + 1) > kept) out.push(`  … ${j - (i + 1) - kept} more stack lines`);
     i = j - 1;
@@ -389,15 +462,37 @@ function diagnosticsFromBlock(blockLines) {
 
 const clipChars = (s, max) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
 
+// A test whose subtests failed: how many of their names its excerpt's first
+// line holds, and the stack lines each one's block keeps, so the first few
+// errors fit beside the names.
+const MAX_NAMED_SUBTESTS = 10;
+const MAX_SUBTEST_STACK_LINES = 3;
+
+const tidyLines = (ls) => ls.map((l) => l.replace(/\t/g, '  ').trimEnd()).filter((l) => l.trim());
+
 // One failing test's excerpt: its YAML diagnostics, then the stdout printed
 // just before it. Redacted like the check logs (the same scrubbing plus
 // token-like query parameters — an excerpt is persisted and read back by
 // agents), clipped to MAX_TEST_EXCERPT_CHARS. Empty when the block and the
 // preceding stdout are both empty: the test's name is already in the reason.
-function excerptOfTest({ blockLines, before }) {
-  const diagnostics = diagnosticsFromBlock(blockLines)
-    .map((l) => l.replace(/\t/g, '  ').trimEnd())
-    .filter((l) => l.trim());
+//
+// A test that failed because its subtests did opens with their names
+// ("Failing subtests (2): a; group › b"), then each one's block, without
+// its timing and with its stack shorter, then the test's own block. The
+// names come first because get_proposal previews only an excerpt's start.
+function excerptOfTest({ blockLines, before, subtests = [] }) {
+  let diagnostics = tidyLines(diagnosticsFromBlock(blockLines));
+  if (subtests.length) {
+    const names = subtests.slice(0, MAX_NAMED_SUBTESTS).map((s) => clipName(s.name));
+    const more = subtests.length - names.length;
+    const parts = [`Failing subtests (${subtests.length}): ${names.join('; ')}${more ? `; +${more} more` : ''}`];
+    for (const s of subtests) {
+      parts.push(`— ${clipName(s.name)} —`, ...tidyLines(diagnosticsFromBlock(s.blockLines, MAX_SUBTEST_STACK_LINES))
+        .filter((l) => !/^ {2}(?:duration_ms|type):/.test(l)));
+    }
+    if (diagnostics.length) parts.push('— the test itself —', ...diagnostics);
+    diagnostics = parts;
+  }
   const stdout = before.map((l) => clipChars(l, MAX_EXCERPT_LINE_CHARS));
   if (!diagnostics.length && !stdout.length) return '';
   let text = diagnostics.join('\n');
@@ -922,16 +1017,42 @@ TEST_STATUS=\${PIPESTATUS[0]}
 set -e
 if [ "$TEST_STATUS" -ne 0 ]; then
   echo "${ROOT_SENTINEL}=$(pwd -P)"
-  awk -v max=${RECAP_MAX_TESTS} -v block=${RECAP_MAX_BLOCK_LINES} '
+  # A failing test's subtests (indented, printed before it) are held in sb
+  # until its own line comes, and dropped when a passing test or the next
+  # test's "# Subtest:" line comes first.
+  awk -v max=${RECAP_MAX_TESTS} -v block=${RECAP_MAX_BLOCK_LINES} -v subs=${RECAP_MAX_SUBTESTS} -v subblock=${RECAP_MAX_SUBTEST_BLOCK_LINES} '
+    function skipped(s) { return toupper(s) ~ /[ \\t]#[ \\t]*(SKIP|TODO)/ }
     /^not ok / {
-      inblk = 0
-      if (toupper($0) ~ /[ \\t]#[ \\t]*(SKIP|TODO)/) next
+      inblk = 0; insub = 0
+      if (skipped($0)) { ns = 0; nsub = 0; next }
       n++; keep = (n <= max); inblk = 1; blk = 0
-      if (keep) out[++k] = $0
+      if (keep) { for (i = 1; i <= ns; i++) out[++k] = sb[i]; out[++k] = $0 }
+      ns = 0; nsub = 0
       next
     }
-    inblk && /^[ \\t]/ { if (keep && blk < block) { out[++k] = $0; blk++ } next }
-    { inblk = 0 }
+    /^(ok |# Subtest:)/ { inblk = 0; insub = 0; ns = 0; nsub = 0; next }
+    inblk && /^[ \\t]/ {
+      end = ($0 ~ /^  \\.\\.\\.[ \\t]*$/)
+      if (keep && (blk < block || end)) { out[++k] = $0; blk++ }
+      if (end) inblk = 0
+      next
+    }
+    /^[ \\t]+not ok / {
+      insub = 0
+      if (skipped($0)) next
+      nsub++
+      if (nsub <= subs) { sb[++ns] = $0; insub = 1; sblk = 0; match($0, /^[ \\t]*/); sind = RLENGTH }
+      next
+    }
+    insub && /^[ \\t]/ {
+      match($0, /^[ \\t]*/)
+      if (RLENGTH <= sind) { insub = 0; next }
+      end = ($0 ~ /^[ \\t]*\\.\\.\\.[ \\t]*$/)
+      if (sblk < subblock || end) { sb[++ns] = $0; sblk++ }
+      if (end) insub = 0
+      next
+    }
+    { inblk = 0; insub = 0 }
     END { print "${RECAP_SENTINEL}=" n + 0; for (i = 1; i <= k; i++) print out[i] }
   ' "$TEST_LOG" || true
 fi
@@ -1638,6 +1759,7 @@ module.exports = {
   hasShardScript,
   RECAP_SENTINEL,
   RECAP_MAX_TESTS,
+  RECAP_MAX_SUBTESTS,
   FAILURE_DETAIL_MAX,
   RUN_SCRIPT,
   HEAD_SENTINEL,

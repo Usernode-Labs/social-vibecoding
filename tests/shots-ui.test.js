@@ -761,6 +761,101 @@ test('a screen with no declared outline, or a crop that covers it, keeps the who
   assert.doesNotMatch(AppView.shotsHtml(newApp, { sessionId: 42, thread: true }), /shots-crop|data-shots-stack/, 'after only: no crop');
 });
 
+// The dark shots (#4459) reach the card as one more image beside each
+// light one, with a round moon/sun label and a pair of hidden radios: no
+// script, like the side and screen switches.
+test('a run with no dark shots draws no theme switch at all', () => {
+  const html = AppView.shotsHtml(shots(), { sessionId: 42 });
+  assert.doesNotMatch(html, /shots-theme-pick|shots-theme-flip|shots-img-dark/);
+  // Older runs' artifacts, with no theme on them, read as light.
+  assert.doesNotMatch(AppView.shotsHtml(shots({
+    artifacts: shots().artifacts.map((artifact) => ({ ...artifact, theme: undefined })),
+  }), { sessionId: 42 }), /shots-theme/);
+});
+
+test('with dark shots, both images and the flip switch render, and the pick follows the page and the remembered mode', () => {
+  const value = shots({
+    artifacts: [
+      ...shots().artifacts,
+      { id: id('9'), storyId: 'dialog', viewport: 'desktop', side: 'base', variant: 'context', media: 'png', url: url('9'), theme: 'dark' },
+      { id: id('0'), storyId: 'dialog', viewport: 'desktop', side: 'head', variant: 'context', media: 'png', url: url('0'), theme: 'dark' },
+    ],
+  });
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
+  // Each side of the screen carries its light image and its dark one.
+  const after = /<span class="shots-flip-side shots-flip-after"[^>]*>([\s\S]*?)<\/span>\s*<span class="shots-flip-side shots-flip-before"/.exec(html)[1];
+  const before = /<span class="shots-flip-side shots-flip-before"[^>]*>([\s\S]*?)<label /.exec(html)[1];
+  for (const [span, lightId, darkId] of [[after, '4', '0'], [before, '3', '9']]) {
+    assert.match(span, new RegExp(`<img src="${url(lightId)}" [^>]*class="shots-img-light"`));
+    assert.match(span, new RegExp(`<img src="${url(darkId)}" [^>]*class="shots-img-dark"`));
+  }
+  // The flip is two round labels at the bar's right end; the one naming the
+  // mode already showing is hidden by the pick.
+  assert.match(html, /<label for="shots-42-theme-dark" class="shots-theme-flip shots-theme-to-dark" title="Show in dark mode"><svg/);
+  assert.match(html, /<label for="shots-42-theme-light" class="shots-theme-flip shots-theme-to-light" title="Show in light mode"><svg/);
+  // One pair of radios holds the mode for every screen. With no page and no
+  // remembered pick, it starts in light (the tests have no document).
+  const picks = html.match(/<input type="radio" class="shots-theme-pick[^>]*>/g) || [];
+  assert.equal(picks.length, 2);
+  assert.match(picks[0], /class="shots-theme-pick shots-theme-light" name="shots-42-theme" id="shots-42-theme-light" aria-label="Show in light mode" checked onchange="AppView\._shotsThemePick\('42', this\)">$/);
+  assert.match(picks[1], /class="shots-theme-pick shots-theme-dark" name="shots-42-theme" id="shots-42-theme-dark" aria-label="Show in dark mode" onchange="AppView\._shotsThemePick\('42', this\)">$/);
+  // The catalog entry is what the switch says, in English here.
+  assert.equal(PlatformI18n.t('changes:shots.viewer.showDark'), 'Show in dark mode');
+  assert.equal(PlatformI18n.t('changes:shots.viewer.showLight'), 'Show in light mode');
+
+  // A pick is remembered for the viewer while the page is open.
+  AppView._shotsThemePicks.clear();
+  AppView._shotsThemePicks.set('42', 'dark');
+  const remembered = AppView.shotsHtml(value, { sessionId: 42 });
+  assert.match(remembered, /class="shots-theme-pick shots-theme-dark" name="shots-42-theme" id="shots-42-theme-dark" aria-label="Show in dark mode" checked/);
+  assert.doesNotMatch(remembered, /shots-theme-light"[^>]*checked/);
+  // Another viewer starts in light still.
+  assert.match(AppView.shotsHtml(value, {}), /shots-theme-light"[^>]*checked/);
+  AppView._shotsThemePicks.clear();
+
+  // The checked one follows the mode the page is drawn in.
+  const hadDocument = Object.hasOwn(globalThis, 'document');
+  globalThis.document = { documentElement: { classList: { contains: (name) => name === 'dark' } } };
+  try {
+    const darkPage = AppView.shotsHtml(value, { sessionId: 42 });
+    assert.match(darkPage, /class="shots-theme-pick shots-theme-dark" name="shots-42-theme" id="shots-42-theme-dark" aria-label="Show in dark mode" checked/);
+    assert.doesNotMatch(darkPage, /shots-theme-light"[^>]*checked/, 'only one radio starts checked');
+  } finally {
+    if (!hadDocument) delete globalThis.document;
+  }
+});
+
+test('a side with no dark shot keeps its light one in both modes', () => {
+  const value = shots({
+    artifacts: [
+      ...shots().artifacts,
+      { id: id('0'), storyId: 'dialog', viewport: 'desktop', side: 'head', variant: 'context', media: 'png', url: url('0'), theme: 'dark' },
+    ],
+  });
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
+  const after = /<span class="shots-flip-side shots-flip-after"[^>]*>([\s\S]*?)<\/span>\s*<span class="shots-flip-side shots-flip-before"/.exec(html)[1];
+  const before = /<span class="shots-flip-side shots-flip-before"[^>]*>([\s\S]*?)<label /.exec(html)[1];
+  assert.match(after, /class="shots-img-dark"/);
+  assert.doesNotMatch(before, /class="shots-img-dark"/);
+  // The switch is still there: the after side has a dark shot to show.
+  assert.match(html, /shots-theme-flip/);
+});
+
+test('the theme switch is CSS: the pick swaps the images and keeps the arrows beside the button', () => {
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
+  const rule = (selector) => new RegExp(`\\n${selector.replace(/[.]/g, '\\.')} \\{([^}]*)\\}`).exec(css)?.[1] || '';
+  const flip = rule('.shots-theme-flip');
+  for (const part of ['width: 30px', 'height: 30px', 'border-radius: 999px', 'margin-left: auto']) {
+    assert.ok(flip.includes(part), `the switch is a small round disc at the bar's end: ${part}`);
+  }
+  assert.match(css, /\.shots-theme-flip ~ \.shots-screen-nav \{ margin-left: 0; \}/,
+    'the stepping arrows sit beside the switch, not the bar\'s far end');
+  assert.match(css, /\.shots-viewer:has\(\.shots-theme-dark:checked\) \.shots-theme-to-dark,\n\.shots-viewer:has\(\.shots-theme-light:checked\) \.shots-theme-to-light \{ display: none; \}/,
+    'the label naming the mode already showing is hidden');
+  assert.match(css, /\.shots-viewer:has\(\.shots-theme-dark:checked\) \.shots-flip-side:has\(\.shots-img-dark\) \.shots-img-light,\n\.shots-viewer:has\(\.shots-theme-light:checked\) \.shots-img-dark \{ display: none; \}/,
+    'a dark pick swaps the image on the sides that have one');
+});
+
 test('the crop is CSS: it applies while both sides show, stacked or beside each other', () => {
   const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
   assert.match(css, /\.shots-crop \{ position: absolute; inset: 0; display: block; \}/,

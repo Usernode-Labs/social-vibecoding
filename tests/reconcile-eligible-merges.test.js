@@ -62,6 +62,7 @@ try {
 const poolId = require.resolve('../src/db/pool');
 const githubId = require.resolve('../src/services/github');
 const conflictId = require.resolve('../src/services/conflict-resolver');
+const platformId = require.resolve('../src/workflow/platform.ts');
 
 function stub(id, exports) {
   const prev = require.cache[id];
@@ -168,11 +169,6 @@ test('a crash-stuck merging row is demoted, then picked up by the reconcile swee
       if (/SELECT cs\.id[\s\S]*FROM chat_sessions cs/i.test(s) && /status IN \('promoted', 'merging'\)/.test(s)) {
         return { rows: [{ ...session }], rowCount: 1 };
       }
-      // recoverStuckMerges: per-row demote of a 'merging' row GitHub never merged.
-      if (/SET status = 'promoted'/.test(s) && /WHERE id = \$1/.test(s)) {
-        if (session.id === params[0] && session.status === 'merging') session.status = 'promoted';
-        return { rows: [], rowCount: 1 };
-      }
       // reconcile: distinct apps with a promoted session.
       if (/SELECT DISTINCT app_id FROM chat_sessions WHERE status = 'promoted'/.test(s)) {
         const rows = session.status === 'promoted' ? [{ app_id: session.app_id }] : [];
@@ -187,6 +183,15 @@ test('a crash-stuck merging row is demoted, then picked up by the reconcile swee
     [githubId, { isEnabled: () => true, getPR: async () => ({ merged: false }) }],
     [poolId, { getPool: () => sharedPool }],
     [conflictId, { checkAndResolveConflicts: async (_cfg, t) => { drained.push(t.app_id); } }],
+    // recoverStuckMerges' demote of a 'merging' row GitHub never merged is
+    // the proposal machine's release of the stuck claim; the stub applies
+    // it to the shared fixture as the machine would.
+    [platformId, {
+      releaseMerge: async ({ sessionId, claim }) => {
+        if (session.id === sessionId && session.status === 'merging' && claim === null) session.status = 'promoted';
+        return { status: 'accepted', eventId: 1 };
+      },
+    }],
   ], async () => {
     // Sweep alone, BEFORE recovery, would see nothing (row still 'merging').
     await reconcileEligibleMerges({});

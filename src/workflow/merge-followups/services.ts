@@ -76,7 +76,8 @@ export function mergeFollowupsServices({ config, pool, requestDeploy }: Deps): R
       async run({ input }): Promise<Json> {
         const row = await session(input.sessionId);
         if (!row) return { gone: true };
-        const result = await legacy('services/staging').teardownStaging(row, await app(row.app_id) || { slug: row.app_slug });
+        const result = await legacy('services/staging').teardownStaging(row, await app(row.app_id) || { slug: row.app_slug },
+          { terminal: true, reason: 'merged' });
         if (result?.leaked) throw new Error(result.busy ? 'a preview operation is still running' : 'the preview could not be removed');
         return { removed: !!result?.removed };
       },

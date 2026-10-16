@@ -372,11 +372,12 @@ async function getForSession(pool, sessionId, { headSha = null } = {}) {
               SELECT jsonb_agg(jsonb_build_object(
                 'id', a.id, 'storyId', a.story_id, 'viewport', a.viewport,
                 'side', a.side, 'variant', a.variant, 'media', a.media,
+                'theme', a.theme,
                 'contentType', a.content_type, 'width', a.width,
                 'height', a.height, 'bytes', a.bytes,
                 'sha256', a.sha256,
                 'focusRect', a.focus_rect, 'stageLabels', a.stage_labels
-              ) ORDER BY a.story_id, a.viewport, a.side, a.variant)
+              ) ORDER BY a.story_id, a.viewport, a.side, a.variant, a.theme)
                 FROM shot_artifacts a WHERE a.run_id = r.id
             ), '[]'::jsonb) AS artifact_summary
        FROM shot_runs r

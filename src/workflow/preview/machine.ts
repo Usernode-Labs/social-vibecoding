@@ -1232,6 +1232,10 @@ const PRODUCERS: ReadonlySet<string> = new Set(['route', 'system']);
 
 export function preview(deps: Deps): Machine<PState, Facts> {
   const produced = (e: Event<any>): Check => (PRODUCERS.has(e.source.kind) ? ok() : reject('not_a_producer'));
+  // A head the proposal machine asks to have checked: the reviewed head, as
+  // the proposal goes up for a vote.
+  const producedOrProposal = (e: Event<any>): Check =>
+    (PRODUCERS.has(e.source.kind) || (e.source.kind === 'message' && e.source.from.machine === 'proposal') ? ok() : reject('not_a_producer'));
   const system = (e: Event<any>): Check => (e.source.kind === 'system' || e.source.kind === 'message' ? ok() : reject('internal_only'));
   const admin = (e: Event<any>): Check => (e.source.kind === 'admin' ? ok() : reject('admin_only'));
   // RetryDue: the error lane's own timer, or a release (platform.ts
@@ -1267,7 +1271,7 @@ export function preview(deps: Deps): Machine<PState, Facts> {
       return readFacts(tx, id, { lock: !operation, holders: [...new Set(holders)] });
     },
     authorize: {
-      RevisionSubmitted: produced,
+      RevisionSubmitted: producedOrProposal,
       PreviewRequested: produced,
       ChecksSkipped: produced,
       RecheckRequested: (e) => (PRODUCERS.has(e.source.kind) || e.source.kind === 'admin' ? ok() : reject('not_a_producer')),

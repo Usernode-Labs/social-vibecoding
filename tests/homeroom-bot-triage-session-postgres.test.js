@@ -38,12 +38,19 @@ test('triage runs in its own session on main, never a build\'s, and rests only a
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
+  // Resting a session is the proposal machine's move (session-lifecycle's
+  // restSession): the workflow runtime runs here, on this database, its
+  // pipeline only (no timers, no work).
+  const platform = require('../src/workflow/platform.ts');
+  require('../src/db/pool').getPool = () => pool;
   t.after(async () => {
+    await platform.stopWorkflow();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+  await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
 
   const botUser = (await pool.query(
     `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE) RETURNING id, username`,
@@ -101,7 +108,7 @@ test('triage runs in its own session on main, never a build\'s, and rests only a
   await bot.pauseIdleSession(pool, made.id);
   assert.equal(await status(made.id), 'paused', 'the triage session rests after its turn');
   await bot.pauseIdleSession(pool, newer);
-  assert.equal(await status(newer), 'active', 'a build in flight is never paused under its turn');
+  assert.equal(await status(newer), 'active', 'a build in flight is never paused under its turn (the machine refuses it: busy)');
   const archived = await session('dev/homeroom_bot-1', 'archived');
   await bot.pauseIdleSession(pool, archived);
   assert.equal(await status(archived), 'archived');

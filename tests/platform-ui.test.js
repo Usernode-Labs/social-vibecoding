@@ -515,6 +515,23 @@ test('the right group is the bell and the mark, in that order, after the title',
     header.indexOf('id="header-menu-btn"') < header.indexOf('id="header-title"'),
     'the hamburger leads the bar, before the title'
   );
+  // #3702: the running app's two doors lead the group — Suggest and "N to
+  // vote", then the bell, then the mark. They ship nothing in the prerendered
+  // document (the component is null until mounted), so this is read from the
+  // component's place in the header's source, where the ordering lives.
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'header', 'platform-header.tsx'), 'utf8'
+  );
+  const group = source.slice(
+    source.indexOf('ref={rightGroupRef}'),
+    source.indexOf('<PlatformMark />') + '<PlatformMark />'.length,
+  );
+  assert.ok(
+    group.indexOf('<InAppActions />') !== -1
+    && group.indexOf('<InAppActions />') < group.indexOf('id="notifications-btn"')
+    && group.indexOf('id="notifications-btn"') < group.indexOf('<PlatformMark />'),
+    'InAppActions, then the bell, then the mark — the two app doors first',
+  );
 });
 
 test('the Improve row is retired; what it led to is in the menu', () => {

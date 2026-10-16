@@ -1369,11 +1369,23 @@ function readVerdict(text) {
       // "person decides" with nothing to decide. A person or empty verdict
       // carries it; one about Homeroom itself is offered the move instead.
       done: (verdict === 'person' || verdict === 'empty') && obj.done === true && obj.platform !== true,
+      // 16 Oct 2026: a request that says a named person will build it (on
+      // Homeroom's own board, a dozen in a morning read "assigned to @snait,
+      // not for the bot"). Only a person verdict carries it, and its news
+      // rings nobody: they said so themselves (actOnVerdict).
+      builder: verdict === 'person' ? builderName(obj.builder) : null,
       stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
       resumeMentioning: live.parseStopMentioning(obj.resume_mentioning),
     };
   }
   return null;
+}
+
+/** Pure: the `builder` a verdict named, as a bare username, or null. */
+function builderName(value) {
+  if (typeof value !== 'string') return null;
+  const name = value.trim().replace(/^@+/, '').trim();
+  return /^[A-Za-z0-9_.-]{1,64}$/.test(name) ? name : null;
 }
 
 // ── Eligibility (pure) ──────────────────────────────────────────────────
@@ -2408,11 +2420,7 @@ async function headShaOf(github, repo, branch = 'main') {
  * running turn gets lost (#1006).
  */
 async function pauseIdleSession(pool, sessionId) {
-  await pool.query(
-    `UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW()
-      WHERE id = $1 AND status = 'active' AND active_turn IS NULL`,
-    [sessionId],
-  ).catch(() => {});
+  await require('./session-lifecycle').restSession({ pool, sessionId }).catch(() => {});
 }
 
 /**
@@ -3026,10 +3034,9 @@ async function askForVerdictBlock(pool, config, {
 }) {
   const { worker, agentTurn, sessions, activeWorkers } = deps;
   if (!threadId || activeWorkers.has(session.id)) return null;
-  await pool.query(
-    "UPDATE chat_sessions SET status = 'active', last_activity_at = NOW() WHERE id = $1",
-    [session.id],
-  );
+  // The session takes its slot for the turn (the proposal machine; never a
+  // closed one).
+  await require('./session-lifecycle').takeSlot({ pool, sessionId: session.id, source: 'homeroom-bot' });
   activeWorkers.add(session.id);
   let stopped = false;
   let stopping = null;
@@ -3900,10 +3907,8 @@ async function runTriage(pool, config, {
   // context, its usage a running total that passed 2.7 billion tokens.
   // Clearing the saved thread here, in the row and in the object the
   // runtime is resolved from, is what makes every path resolve to none.
-  await pool.query(
-    "UPDATE chat_sessions SET status = 'active', agent_thread_id = NULL, last_activity_at = NOW() WHERE id = $1",
-    [session.id],
-  );
+  await require('./session-lifecycle').takeSlot({ pool, sessionId: session.id, source: 'homeroom-bot' });
+  await pool.query('UPDATE chat_sessions SET agent_thread_id = NULL WHERE id = $1', [session.id]);
   session.agent_thread_id = null;
   activeWorkers.add(session.id);
   // A stop stays pending on the session after the turn it stopped has
@@ -4339,6 +4344,9 @@ async function runTriage(pool, config, {
         firstVersion: !!requester?.firstVersion,
         // Who a person hand-off waits on, for the requester's DM.
         decider,
+        // 16 Oct 2026: an older request's first read rings only when it is
+        // ready to try; what else it finds is said quietly (actOnVerdict).
+        backlog: item.reason === BACKLOG_REASON,
         deps: {
           github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
           activeWorkers, ...liveD,
@@ -5075,18 +5083,17 @@ const ABANDONED_LIVE_REASON = 'the platform restarted while it was building, and
 
 /** A build session is archived once its run is recorded; the triage session rests paused. */
 async function putAwayRecoveredSession(pool, session, { archive }) {
+  const lifecycle = require('./session-lifecycle');
+  // Closed the way every close goes (its worker destroyed, its preview
+  // retired, its pull request closed: bug 15), or put back at rest.
   if (archive) {
-    await pool.query(
-      `UPDATE chat_sessions SET status = 'archived', archived_at = NOW()
-        WHERE id = $1 AND status IN ('active', 'paused')`,
-      [session.id],
-    ).catch(() => {});
+    const { rows: [now] = [] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [session.id]);
+    if (now && ['active', 'paused'].includes(now.status)) {
+      await lifecycle.archiveSession({ pool, sessionId: session.id, reason: 'bot-recovered', from: now.status }).catch(() => {});
+    }
     return;
   }
-  await pool.query(
-    "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1 AND status = 'active'",
-    [session.id],
-  ).catch(() => {});
+  await lifecycle.restSession({ pool, sessionId: session.id }).catch(() => {});
 }
 
 /**
@@ -7308,9 +7315,15 @@ async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
   seed, seedReadAt, postedAt, turnBudgetMs, model, specModel = null, botLogin = null, quietHold = false,
   proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, relook = false, askedLook = false, comments = [],
-  decider = null, deps,
+  decider = null, backlog = false, deps,
 }) {
   const { github, ws } = deps;
+  // 16 Oct 2026: news that asks nothing new of its requester is said in
+  // their chat with the bot and rings nothing (homeroom-bot-dm.js
+  // relayIssuePost): an older request's first read that is not ready (going
+  // on for everyone queued 43 of Homeroom's, and every question or hand-off
+  // among them rang its requester), and a request that names who builds it.
+  const quiet = backlog ? { quiet: true } : {};
   const say = liveSayer({
     pool, github, ws, app, repo, issueNumber, issue, runId, bot, botLogin,
     notifications: deps.notifications || null, postedAt,
@@ -7372,6 +7385,7 @@ async function actOnVerdict({
         question: parsed.question, answers: parsed.questionAnswers || [],
         // B6: a read that asks two questions asks both at once.
         ...(parsed.plan?.questions?.length > 1 ? { questions: parsed.plan.questions } : {}),
+        ...quiet,
       },
     });
   } else if (parsed.verdict === 'person') {
@@ -7392,10 +7406,11 @@ async function actOnVerdict({
       dm: {
         reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
         ...(parsed.done ? { done: true } : {}),
+        ...(parsed.builder ? { builder: parsed.builder, quiet: true } : quiet),
       },
     });
   } else if (parsed.verdict === 'empty') {
-    await say('empty', live.emptyText(parsed), { dm: { reason: parsed.reason, ...(parsed.done ? { done: true } : {}) } });
+    await say('empty', live.emptyText(parsed), { dm: { reason: parsed.reason, ...(parsed.done ? { done: true } : {}), ...quiet } });
   } else if (parsed.verdict === 'ready') {
     // B6: a first version waits for its creator's Build it, under the plan
     // they are sent first. #4175: it is never built without it. A plan that
@@ -9361,7 +9376,7 @@ async function noteRequestMerged(pool, session, deps = {}) {
     const sessionLifecycle = deps.sessionLifecycle || require('./session-lifecycle');
     for (const other of others) {
       try {
-        const done = await sessionLifecycle.archiveSession({ pool, sessionId: Number(other.id), reason: 'superseded' });
+        const done = await sessionLifecycle.archiveSession({ pool, sessionId: Number(other.id), reason: 'superseded', from: 'promoted' });
         if (done?.archived) out.withdrawn += 1;
       } catch (err) {
         if (deps.strict) throw err;

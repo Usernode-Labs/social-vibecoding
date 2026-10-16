@@ -221,13 +221,56 @@ test('the change_started event carries the name the change started with', async 
 
 // ── 3. Submission refreshes it ─────────────────────────────────────────
 
-test('putting an agent-chat change up for the vote writes its title and description again, best-effort', () => {
-  const votes = read('src/routes/votes.js');
-  assert.match(votes, /const refreshAtSubmission = session\.agent_session_id != null && !!session\.pr_number;/);
-  assert.match(votes, /if \(!session\.pr_number \|\| !session\.pr_title \|\| refreshAtSubmission\) \{/);
-  const block = votes.slice(votes.indexOf('const refreshAtSubmission'));
-  assert.match(block, /const isBackfill = !!session\.pr_number;/, 'an existing PR: a failure never blocks the promotion');
-  assert.match(block, /preferredTitle: session\.proposed_pr_title \|\| null/, 'and a person\'s title is kept');
+// The proposal machine's review.open (src/workflow/proposal/services.ts) is
+// what a promote runs on GitHub now; it is driven here with GitHub and the
+// legacy modules it reaches (through src/workflow/legacy.ts, the shared
+// require cache) stubbed.
+async function openForReview(row, applyPrMetadata) {
+  const stubbed = ['../src/services/github', '../src/services/limits', '../src/services/pr-metadata', '../src/services/app-admins'];
+  const ids = stubbed.map((p) => require.resolve(p));
+  const orig = ids.map((id) => require.cache[id]);
+  const put = (id, exports) => { require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] }; };
+  const calls = [];
+  put(ids[0], { isEnabled: () => false });
+  put(ids[1], { resolveBillingPath: async () => ({ error: 'no key' }) });
+  put(ids[2], { applyPrMetadata: async (args) => { calls.push(args); return applyPrMetadata(args); } });
+  put(ids[3], { refreshExplicitApproval: async () => {} });
+  const pool = {
+    async query(sql) {
+      const q = String(sql);
+      if (/FROM chat_sessions cs JOIN apps a/.test(q)) return { rows: [{ ...row }] };
+      if (/FROM chat_session_messages/.test(q)) return { rows: [{ content: 'make it nicer' }] };
+      if (/FROM users/.test(q)) return { rows: [{ username: 'ana' }] };
+      return { rows: [] };
+    },
+  };
+  try {
+    const { proposalServices } = require('../src/workflow/proposal/services.ts');
+    const { WORK } = require('../src/workflow/proposal/machine.ts');
+    let result = null;
+    let error = null;
+    try {
+      result = await proposalServices({ config: {}, pool })[WORK.open].run({ input: { sessionId: row.id, n: 1, userId: 7 } });
+    } catch (err) { error = err; }
+    return { calls, result, error };
+  } finally {
+    ids.forEach((id, i) => { if (orig[i]) require.cache[id] = orig[i]; else delete require.cache[id]; });
+  }
+}
+
+test('putting an agent-chat change up for the vote writes its title and description again, best-effort', async () => {
+  const change = {
+    id: 42, user_id: 7, agent_session_id: 5, pr_number: 77, pr_title: 'Old title', pr_url: 'https://github.com/acme/x/pull/77',
+    proposed_pr_title: 'The title Ana chose', repo_url: 'https://github.com/acme/x', source: null, reviewed_head_sha: 'a'.repeat(40),
+  };
+  const { calls, result, error } = await openForReview(change, async () => { throw new Error('GitHub is having a moment'); });
+  assert.equal(calls.length, 1, 'an agent-chat change with its PR and title already is rewritten from the change as it stands');
+  assert.equal(calls[0].preferredTitle, 'The title Ana chose', 'and a person\'s title is kept');
+  assert.equal(error, null, 'an existing PR: a failure never blocks the promotion');
+  assert.equal(result.prNumber, 77);
+
+  const plain = await openForReview({ ...change, agent_session_id: null }, async () => ({}));
+  assert.equal(plain.calls.length, 0, 'a change no agent chat started keeps the text it has');
 });
 
 // ── 4. The markers a model actually writes ─────────────────────────────

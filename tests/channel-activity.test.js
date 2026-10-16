@@ -114,7 +114,6 @@ test('a proposal\'s own notices that only ever went to the channel now go to its
   const thread = /'system', null, \{ type: 'session', ref: session\.id \}/;
   const votes = read('src/routes/votes.js');
   for (const lead of [
-    'is closed on GitHub and couldn\'t be reopened',
     'hit a conflict with main during a merge attempt',
     'Failed to merge PR #',
     'Please open the revert PR manually.`,\n        \'system\'',
@@ -131,8 +130,13 @@ test('a proposal\'s own notices that only ever went to the channel now go to its
   assert.match(mf, /function failureLine\(d: Data, message: string\): string \{\n {2}return `\$\{label\(d\)\} merged on GitHub, but the production deploy failed: /);
   assert.match(mf, /writes\.push\(chat\(e, d\.appId, d\.sessionId, failureLine\(d, message\)\)\)/);
   assert.match(mf, /const chat = \([^)]*\): DomainWrite =>\n {2}\(\{ type: 'chat', eventId: e\.id, appId, thread: \{ type: 'session', ref: sessionId \}, content, metadata \}\);/);
-  const lifecycle = read('src/services/session-lifecycle.js');
-  assert.match(lifecycle, /await sendSystemMessage\(pool, session\.app_id, content, 'system', null, \{ type: 'session', ref: session\.id \}\);\n {4}\} catch \(err\) \{\n {6}log\.warn\('session-lifecycle', 'Failed to post PR-withdrawn chat message'/);
+  // A closed PR taken off the vote, and a withdrawn proposal, are the
+  // proposal machine's lines now (MergeAbandoned, Close), and every line it
+  // writes goes into the proposal's thread.
+  const pm = read('src/workflow/proposal/machine.ts');
+  assert.match(pm, /const abandoned: Handler = [\s\S]{0,400}line\(e, s\.data, `\$\{prLabel\(f\.row!\)\} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel\./);
+  assert.match(pm, /if \(row\.prNumber\) writes\.push\(line\(e, d, closedLine\(row, reason, !!more\.byOwner\)\)\);/);
+  assert.match(pm, /async function writeLine\(tx: Tx, w: any, ctx: WriteContext\) \{\n {2}const \{ rows: \[row\] \} = await tx\.query\(\n {4}`INSERT INTO chat_messages \(app_id, content, msg_type, metadata, thread_type, thread_ref\)\n {5}VALUES \(\$1, \$2, \$3, \$4, 'session', \$5\)/);
   assert.match(read('src/services/merge-queue.js'), /sendSystemMessage\(pool, session\.app_id, content, 'conflict', null, \{ type: 'session', ref: session\.id \}\)/);
   assert.match(read('src/services/rename-pr.js'), /\{ vote: \{ sessionId, prNumber: prData\.number \} \},\n {4}\{ type: 'session', ref: sessionId \}/);
   const fleet = read('src/services/fleet-maintenance.js');

@@ -24091,9 +24091,18 @@ const AppView = {
     return id ? PlatformI18n.t(id) : value;
   },
 
+  // #4459: which mode a viewer's shots show, remembered by viewer key (the
+  // session id) while the page stays open. Unset means follow the theme the
+  // card is drawn in.
+  _shotsThemePicks: new Map(),
+
+  _shotsThemePick(key, input) {
+    AppView._shotsThemePicks.set(String(key || ''), input?.classList.contains('shots-theme-dark') ? 'dark' : 'light');
+  },
+
   // `barLead` (#4455): markup at the start of each screen's toolbar — a
   // change page's card puts its title there, beside the switch.
-  _shotsViewerHtml({ key, screens, sideBySide = false, autoSide = false, zoom = false, className = '', barLead = '' } = {}) {
+  _shotsViewerHtml({ key, screens, sideBySide = false, autoSide = false, zoom = false, themes = false, className = '', barLead = '' } = {}) {
     const esc = escapeHtml;
     const attr = escapeAttr;
     const list = Array.isArray(screens) ? screens.slice(0, 6) : [];
@@ -24102,6 +24111,7 @@ const AppView = {
     const sideId = (side) => `shots-${key}-side-${side}`;
     const pickId = (index) => `shots-${key}-screen-${index}`;
     const zoomId = (which) => `shots-${key}-zoom-${which}`;
+    const themeId = (which) => `shots-${key}-theme-${which}`;
     const shownSizes = [...new Set(list.map((screen) => screen.viewport))];
     const indexesOf = (size) => list.map((screen, index) => (screen.viewport === size ? index : -1)).filter((index) => index >= 0);
     const stepping = shownSizes.some((size) => indexesOf(size).length > 1);
@@ -24111,6 +24121,8 @@ const AppView = {
       phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>',
     };
     const bothIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="7.5" height="14" rx="1.5"/><rect x="13.5" y="5" width="7.5" height="14" rx="1.5"/></svg>';
+    const moonIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>';
+    const sunIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
     const closeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2M11 8.5v5M8.5 11h5"/></svg>';
     const wholeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/></svg>';
     const stepper = (index) => {
@@ -24135,8 +24147,14 @@ const AppView = {
       const zoomSwitch = zooming && screen.zoomable
         ? `<span class="shots-seg shots-seg-zoom" aria-hidden="true"><label for="${zoomId('close')}" class="shots-seg-btn shots-seg-close" title="${PlatformI18n.htmlText('changes:shots.viewer.closeUp')}">${closeIcon}<span class="shots-seg-label">${PlatformI18n.htmlText('changes:shots.viewer.closeUp')}</span></label><label for="${zoomId('whole')}" class="shots-seg-btn shots-seg-whole" title="${PlatformI18n.htmlText('changes:shots.viewer.wholeScreen')}">${wholeIcon}<span class="shots-seg-label">${PlatformI18n.htmlText('changes:shots.viewer.wholeScreen')}</span></label></span>`
         : '';
+      // The mode flip (#4459), when the run took dark shots: two round
+      // labels at the bar's right end, before the arrows; the one that
+      // names the mode already showing is hidden by the theme pick.
+      const themeFlips = themes
+        ? `<label for="${themeId('dark')}" class="shots-theme-flip shots-theme-to-dark" title="${PlatformI18n.htmlText('changes:shots.viewer.showDark')}">${moonIcon}</label><label for="${themeId('light')}" class="shots-theme-flip shots-theme-to-light" title="${PlatformI18n.htmlText('changes:shots.viewer.showLight')}">${sunIcon}</label>`
+        : '';
       return `<figure class="shots-view" data-shots-screen="${attr(screen.viewport)}" data-shots-viewport="${attr(screen.viewport)}">
-        <div class="shots-bar">${barLead}<span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">${PlatformI18n.htmlText('changes:shots.viewer.before')}</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">${PlatformI18n.htmlText('changes:shots.viewer.after')}</label>${both}</span>${sizeSwitch}${zoomSwitch}${stepping ? stepper(screenIndex) : ''}</div>
+        <div class="shots-bar">${barLead}<span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">${PlatformI18n.htmlText('changes:shots.viewer.before')}</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">${PlatformI18n.htmlText('changes:shots.viewer.after')}</label>${both}</span>${sizeSwitch}${zoomSwitch}${themeFlips}${stepping ? stepper(screenIndex) : ''}</div>
         <div class="shots-stage"${screen.stacked ? ' data-shots-stack="1"' : ''}>
           ${screen.afterHtml || ''}
           ${screen.beforeHtml || ''}
@@ -24155,7 +24173,17 @@ const AppView = {
           ? PlatformI18n.t(AppView.SHOTS_SCREEN_PICK_IDS[String(screen.viewport)], { index: index + 1, total: list.length })
           : PlatformI18n.t('changes:shots.viewer.pickOther', { index: index + 1, total: list.length, size: screen.viewport }))}"${index === 0 ? ' checked' : ''}>`).join('')}</span>`
       : '';
-    return `<div class="shots-viewer${className ? ` ${attr(className)}` : ''}">${sidePicks}${zoomPicks}${screenPicks}<div class="shots-views${list.length === 1 ? ' shots-views-one' : ''}">${views.join('')}</div></div>`;
+    // The theme pick (#4459), when the run took dark shots: the checked one
+    // is the pick remembered for this viewer, else the theme the page is
+    // drawn in.
+    const rememberedTheme = AppView._shotsThemePicks.get(String(key));
+    const themePick = rememberedTheme === 'dark' || rememberedTheme === 'light'
+      ? rememberedTheme
+      : (typeof document !== 'undefined' && document.documentElement?.classList?.contains('dark') ? 'dark' : 'light');
+    const themePicks = themes
+      ? `<span class="shots-picks"><input type="radio" class="shots-theme-pick shots-theme-light" name="shots-${key}-theme" id="${themeId('light')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showLight')}"${themePick === 'light' ? ' checked' : ''} onchange="AppView._shotsThemePick('${key}', this)"><input type="radio" class="shots-theme-pick shots-theme-dark" name="shots-${key}-theme" id="${themeId('dark')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showDark')}"${themePick === 'dark' ? ' checked' : ''} onchange="AppView._shotsThemePick('${key}', this)"></span>`
+      : '';
+    return `<div class="shots-viewer${className ? ` ${attr(className)}` : ''}">${sidePicks}${zoomPicks}${screenPicks}${themePicks}<div class="shots-views${list.length === 1 ? ' shots-views-one' : ''}">${views.join('')}</div></div>`;
   },
 
   // #4455: two more readings for a change's page. `thread` is its Before
@@ -24222,9 +24250,9 @@ const AppView = {
       </section>`;
     }
 
-    const by = (storyId, viewport, side, variant, media = null) => artifacts.find((a) => (
+    const by = (storyId, viewport, side, variant, media = null, theme = 'light') => artifacts.find((a) => (
       a && a.storyId === storyId && a.viewport === viewport && a.side === side
-      && a.variant === variant && (!media || a.media === media) && shotsUrl(a.url)
+      && a.variant === variant && (!media || a.media === media) && (a.theme || 'light') === theme && shotsUrl(a.url)
     ));
     // One result per declared change; runs from before shots have none.
     const shotResults = Array.isArray(shots.shotResults) ? shots.shotResults : [];
@@ -24417,6 +24445,10 @@ const AppView = {
       return '';
     }).join('');
 
+    // The run took dark shots (#4459) when any artifact is one: the viewer
+    // then shows them and offers the other mode. Every artifact above is a
+    // light shot, so callers from before the column read as light.
+    const themes = artifacts.some((artifact) => (artifact?.theme || 'light') === 'dark');
     const screenParts = screens.map((screen) => {
       const onScreen = onScreenOf(screen);
       const before = by(screen.shot, screen.viewport, 'base', 'context');
@@ -24435,7 +24467,14 @@ const AppView = {
         const cls = which === 'base' ? 'shots-flip-before' : 'shots-flip-after';
         if (!artifact) return `<span class="shots-flip-side ${cls} shots-flip-missing">${PlatformI18n.htmlText(which === 'base' && afterOnly ? 'changes:shots.screen.nothingBefore' : 'changes:shots.screen.noShot')}</span>`;
         const shape = shapeOf(artifact, screen.width, which === 'base' ? screen.heightBefore : screen.heightAfter, narrow);
-        const inner = `<img src="${attr(shotsUrl(artifact.url))}" alt="${attr(PlatformI18n.t(altId, { changes: described }))}" loading="lazy">${drawn[which]}`;
+        const alt = `alt="${attr(PlatformI18n.t(altId, { changes: described }))}"`;
+        // The same screen in the other mode (#4459), beside the light one;
+        // the theme pick and the stylesheet decide which shows. A side with
+        // no dark shot keeps its light one in both modes.
+        const dark = themes
+          ? by(screen.shot, screen.viewport, which === 'base' ? 'base' : 'head', 'context', null, 'dark')
+          : null;
+        const inner = `<img src="${attr(shotsUrl(artifact.url))}" ${alt} class="shots-img-light" loading="lazy">${dark ? `<img src="${attr(shotsUrl(dark.url))}" ${alt} class="shots-img-dark" loading="lazy">` : ''}${drawn[which]}`;
         if (!crop) return `<span class="shots-flip-side ${cls}" style="--shots-shape:${shape}">${inner}</span>`;
         const at = which === 'base' ? crop.before : crop.after;
         const pct = (value, total) => `${(value / total * 100).toFixed(3)}%`;
@@ -24525,8 +24564,8 @@ const AppView = {
       return `${rows ? `<ol class="dev-shot-details-claims">${rows}</ol>` : ''}<p class="dev-shot-details-builds">${PlatformI18n.htmlText('changes:shots.details.builds')} ${provenance}<span>${PlatformI18n.htmlRich('changes:shots.card.planHash', { hash: String(shots.planHash || '').slice(0, 12) || PlatformI18n.t('changes:shots.card.unknownPlan') }, [code])}</span></p>`;
     }
     const viewer = AppView._shotsViewerHtml(thread
-      ? { key, screens: screenParts, sideBySide: true, autoSide: true, className: 'shots-viewer-spec dev-change-viewer', barLead: `<span class="dev-change-card-name">${PlatformI18n.htmlText('changes:shots.thread.title')}</span>` }
-      : { key, screens: screenParts });
+      ? { key, screens: screenParts, sideBySide: true, autoSide: true, themes, className: 'shots-viewer-spec dev-change-viewer', barLead: `<span class="dev-change-card-name">${PlatformI18n.htmlText('changes:shots.thread.title')}</span>` }
+      : { key, screens: screenParts, themes });
     // What the shots agent noticed broken on the after build besides the
     // declared changes (note_problem): quiet lines under a small-caps label,
     // each saying where it shows and whether the before build has it too.

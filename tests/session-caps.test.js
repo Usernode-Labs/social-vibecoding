@@ -136,7 +136,9 @@ test('the Homeroom bot\'s in-process promote carries its own proposal ceiling, a
   for (const bad of [0, -1, 2.5, '20', null]) {
     assert.equal(effectiveSessionCaps(cfg, { id: 77, [BOT_PROMOTED_CEILING]: bad }).promotedSessions, 5, String(bad));
   }
-  // The route reads the requester's caps, so the bot's promote meets its ceiling there.
+  // The route reads the requester's caps and hands the ceiling to the
+  // proposal machine, which counts it under a lock on the owner, so the
+  // bot's promote meets its ceiling there.
   const votes = require('node:fs').readFileSync(require.resolve('../src/routes/votes.js'), 'utf8');
-  assert.match(votes, /const caps = effectiveSessionCaps\(config, req\.user\);\n\s+const \{ rows: promotedRows \} = await pool\.query\(/);
+  assert.match(votes, /const caps = effectiveSessionCaps\(config, req\.user\);\n\s+const reply = await require\('\.\.\/workflow\/platform\.ts'\)\.promoteProposal\(\{[\s\S]*?cap: caps\.promotedSessions,/);
 });

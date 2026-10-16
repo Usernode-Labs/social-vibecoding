@@ -572,7 +572,8 @@ function ArtworkWell({ slug, tone }: { slug: string | null; tone: string | null 
 
 // The page, below the platform header that carries the way back: the title,
 // its points ("500 pts", "320 pts so far", emerald once earned) and what the
-// rule counts, the artwork well, the clean rail, the action, then "What
+// rule counts, then a line on what points are for whenever points show, the
+// artwork well, the clean rail, the action, then "What
 // counts". The Semi design (2026-10-16) left out the category eyebrow, the
 // deadline and the time of the next count, the task line, the description,
 // Scoring and the participants list (with the profile overlay it opened):
@@ -591,6 +592,7 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
           earned={!!view.amount?.earned}
         />
         {view.countNote ? <p className={NOTE}>{view.countNote}</p> : null}
+        {view.amount ? <p className={NOTE}>{t('leaderboard:challenges.detail.pointsNote')}</p> : null}
       </div>
       <ArtworkWell slug={view.illustration} tone={view.illustrationTone} />
       <ProgressRail

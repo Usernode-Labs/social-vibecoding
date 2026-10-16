@@ -4,20 +4,18 @@
 //      thread scope (threadType / threadRef) so the client drawer can
 //      route a mention/reply/reaction click to the topic view instead
 //      of general chat.
-//   2. POST /api/sessions/:id/promote posts its announcement into the
-//      proposal's own thread ({ type: 'session', ref }) only, carrying the
-//      vote metadata for the inline vote buttons. A channel carries no
-//      activity, so there is no general-chat line beside it.
+//   2. A promote's announcement goes into the proposal's own thread
+//      ({ type: 'session', ref }) only, carrying the vote metadata for the
+//      inline vote buttons. A channel carries no activity, so there is no
+//      general-chat line beside it. The line is the proposal machine's.
 //
 // Like session-done-notifications.test.js, the pool is an in-memory
-// mock that pattern-matches SQL, and side-effect modules (ws,
-// app-access, github) are stubbed via require.cache.
+// mock that pattern-matches SQL.
 //
 // Run with: node --test tests/thread-activity.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const express = require('express');
 
 // ── 1. notifications: thread fields ─────────────────────────────────────
 
@@ -71,137 +69,52 @@ test('serialize exposes threadType/threadRef (null when unscoped)', () => {
   assert.equal(general.threadRef, null);
 });
 
-// ── 2. promote dual-post ────────────────────────────────────────────────
+// ── 2. the promote's announcement ────────────────────────────────────────
+// The line is the proposal machine's (src/workflow/proposal/machine.ts):
+// written in the transition that puts the proposal in review once GitHub
+// has opened or readied its pull request (review.open reported), not by the
+// promote route. Driven here through the machine's transition table, with
+// no database or runtime.
 
-function stubModule(id, exports) {
-  const original = require.cache[id];
-  require.cache[id] = {
-    id, filename: id, loaded: true, exports,
-    paths: original ? original.paths : [],
+test('promote announces in the proposal thread, and nowhere thread-less', () => {
+  const { proposal, sessionKey, WORK } = require('../src/workflow/proposal/machine.ts');
+  const m = proposal({ idleMs: 0, exemptFixtures: false, reviewCheckMs: 0, staleNotifyMs: 0, staleGraceMs: 0 });
+  const row = {
+    id: 10, appId: 5, appSlug: 'demo', selfHosted: false, repo: { owner: 'o', repo: 'r' }, userId: 1,
+    ownerName: 'alice', ownerSynthetic: false, status: 'active', imported: false, headless: false, prNumber: 7,
+    prTitle: 'Add feature', branch: 'dev/alice-1', head: null, reviewedHead: null, importedHead: null, epoch: 0,
+    promotedAt: null, createdAt: '2026-10-01T00:00:00Z', staleNotifiedAt: null, lastActivityAt: null,
+    linkedIssues: [], agentSessionId: null, explicitApproval: false, explicitReason: null, mergeAttemptAt: null,
+    shots: false, fixture: false, activeTurn: false, workedOn: false, moving: false, shotsRunning: false,
+    buildHold: false, pendingSecret: false,
   };
-  return original;
-}
-
-// Load ../src/routes/votes fresh against a mock pool + recording ws +
-// pass-through app-access guard + disabled github.
-function loadVotes(mockPool) {
-  const poolPath = require.resolve('../src/db/pool');
-  const wsPath = require.resolve('../src/services/ws');
-  const appAccessPath = require.resolve('../src/services/app-access');
-  const githubPath = require.resolve('../src/services/github');
-  const votesPath = require.resolve('../src/routes/votes');
-
-  const systemMessages = [];
-  const origPool = stubModule(poolPath, { getPool: () => mockPool });
-  const origWs = stubModule(wsPath, {
-    sendSystemMessage: async (_pool, appId, content, msgType, metadata, thread) => {
-      systemMessages.push({ appId, content, msgType, metadata: metadata || null, thread: thread || null });
-    },
-    pushNotificationToUser: () => 1,
-    pushSessionUpdate: () => {},
-    pushVoteUpdate: () => {},
-    pushKudosUpdate: () => {},
-    pushAppUpdate: () => {},
-    pushIssueUpdate: () => {},
-    pushAppStatusUpdate: () => {},
-    broadcast: () => {},
-    broadcastGlobal: () => {},
-    broadcastGlobalScoped: () => {},
-    getOnlineUsers: () => [],
-    getReactionsForMessages: async () => new Map(),
-    attach: () => {},
-  });
-  const origAppAccess = stubModule(appAccessPath, {
-    sessionCollabGuard: () => (_req, _res, next) => next(),
-    getAppForUser: async () => null,
-  });
-  const origGithub = stubModule(githubPath, {
-    isEnabled: () => false,
-    getInstallationOctokit: async () => { throw new Error('github disabled in test'); },
-  });
-  delete require.cache[votesPath];
-
-  const subject = require('../src/routes/votes');
-
-  const restore = () => {
-    if (origPool) require.cache[poolPath] = origPool; else delete require.cache[poolPath];
-    if (origWs) require.cache[wsPath] = origWs; else delete require.cache[wsPath];
-    if (origAppAccess) require.cache[appAccessPath] = origAppAccess; else delete require.cache[appAccessPath];
-    if (origGithub) require.cache[githubPath] = origGithub; else delete require.cache[githubPath];
-    delete require.cache[votesPath];
+  const state = {
+    name: 'proposing',
+    data: { sessionId: 10, appId: 5, imported: false, slot: 'held', answer: null, reason: null, claim: null,
+      promoting: { n: 1, by: 1, byName: 'alice', prior: 'active', expectedHead: null, viaAgent: false },
+      pr: { running: 'open:1', next: [] }, doomed: [], n: 1 },
   };
-  return { subject, systemMessages, restore };
-}
-
-// Minimal pool for the happy-path promote: an active session with a PR
-// and staging already in place (skips lazy PR creation and the
-// fire-and-forget staging build).
-function makePromotePool(session) {
-  const calls = [];
-  async function query(sql, params = []) {
-    const s = String(sql);
-    calls.push({ sql: s, params });
-    if (/WHERE cs\.id = \$1 AND cs\.user_id = \$2 AND cs\.status IN \('active', 'paused'\)/.test(s)) {
-      return Number(params[0]) === session.id && params[1] === session.user_id
-        ? { rows: [session] } : { rows: [] };
-    }
-    if (/SELECT COUNT\(\*\) AS cnt FROM chat_sessions/.test(s)) {
-      return { rows: [{ cnt: '0' }] };
-    }
-    if (/SET status = 'promoted', promoted_at = NOW\(\)/.test(s)) {
-      return { rows: [], rowCount: 1 };
-    }
-    return { rows: [], rowCount: 0 };
-  }
-  return { query, calls };
-}
-
-async function startVotesServer(loaded, user) {
-  const app = express();
-  app.use(express.json());
-  app.use((req, _res, next) => { req.user = user; next(); });
-  app.use(loaded.subject.voteRoutes({ maxUserPromotedSessions: 3 }));
-  return new Promise((resolve) => {
-    const server = app.listen(0, () => {
-      resolve({
-        baseUrl: `http://127.0.0.1:${server.address().port}`,
-        close: () => new Promise((r) => server.close(r)),
-      });
-    });
-  });
-}
-
-test('promote announces in the proposal thread, and nowhere thread-less', async () => {
-  const session = {
-    id: 10, user_id: 1, app_id: 5, app_slug: 'demo', app_name: 'Demo',
-    repo_url: 'https://github.com/o/r', status: 'active', is_headless: false,
-    pr_number: 7, pr_title: 'Add feature', pr_url: 'https://github.com/o/r/pull/7',
-    branch_name: 'dev/alice-1', staging_url: 'https://pr7.example',
+  const event = {
+    id: 51, type: 'WorkSucceeded',
+    payload: { workId: 'w1', workKey: 'open:1', kind: WORK.open, result: { prNumber: 7, prTitle: 'Add feature', head: 'a'.repeat(40) } },
+    source: { kind: 'service', workId: 'w1' },
   };
-  const pool = makePromotePool(session);
-  const loaded = loadVotes(pool);
-  const srv = await startVotesServer(loaded, { id: 1, username: 'alice' });
-  try {
-    const res = await fetch(`${srv.baseUrl}/api/sessions/10/promote`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.ok, true);
-    assert.equal(body.prNumber, 7);
+  const facts = { row, caps: null, gate: null, interestAt: null, electorate: null };
+  const ctx = { now: new Date('2026-10-02T00:00:00Z'), key: sessionKey(10) };
+  const entry = m.entryFor('proposing', 'WorkSucceeded');
+  assert.equal(entry.guard(state, event, facts, ctx), true);
+  const out = entry.to(state, event, facts, ctx);
+  assert.equal(out.next.name, 'in_review');
 
-    const promos = loaded.systemMessages.filter((m) => /promoted PR #7/.test(m.content));
-    assert.equal(promos.length, 1, 'one thread post, no channel line');
+  const promos = out.writes.filter((w) => w.type === 'line' && /promoted PR #7/.test(w.content));
+  assert.equal(promos.length, 1, 'one thread post, no channel line');
+  const [threaded] = promos;
+  assert.equal(threaded.sessionId, 10, 'the proposal\'s own thread');
+  assert.equal(threaded.msgType, 'vote');
+  assert.deepEqual(threaded.metadata, { vote: { sessionId: 10, prNumber: 7 } });
+  assert.match(threaded.content, /^alice promoted PR #7/);
 
-    const [threaded] = promos;
-    assert.deepEqual(threaded.thread, { type: 'session', ref: 10 });
-    assert.equal(threaded.msgType, 'vote');
-    assert.deepEqual(threaded.metadata, { vote: { sessionId: 10, prNumber: 7 } });
-    assert.match(threaded.content, /^alice promoted PR #7/);
-  } finally {
-    await srv.close();
-    loaded.restore();
-  }
+  // Every line the machine writes is a session-thread row.
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/workflow/proposal/machine.ts'), 'utf8');
+  assert.match(src, /INSERT INTO chat_messages \(app_id, content, msg_type, metadata, thread_type, thread_ref\)\n\s+VALUES \(\$1, \$2, \$3, \$4, 'session', \$5\)/);
 });

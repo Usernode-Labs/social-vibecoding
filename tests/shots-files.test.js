@@ -103,17 +103,22 @@ test('a shot is addressed to a declared change, one of its screens, a side and a
   const intent = motionIntent();
   const target = (raw) => shots.shotTarget(intent, raw);
   // People and the agent say before/after; the stored sides stay base/head.
+  // Light is the theme every shot keeps unless it says dark.
   assert.deepEqual(target({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }), {
     storyId: 'invite-suggestions', viewport: 'desktop', side: 'base', variant: 'context', media: 'png',
+    theme: 'light',
   });
   assert.deepEqual(target({ change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen' }), {
     storyId: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'context', media: 'png',
+    theme: 'light',
   });
   assert.deepEqual(target({ change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'element' }), {
     storyId: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'focus', media: 'png',
+    theme: 'light',
   });
   assert.deepEqual(target({ change: 'saved-toast', screen: 'desktop', side: 'before', kind: 'clip' }), {
     storyId: 'saved-toast', viewport: 'desktop', side: 'base', variant: 'animation', media: 'webm',
+    theme: 'light',
   });
 
   assert.throws(() => target({ change: 'someone-elses-change', screen: 'desktop', side: 'after' }),
@@ -151,6 +156,71 @@ test('a slot is one change, screen, side and kind', () => {
   );
 });
 
+// A dark slot is a whole-screen shot taken with the page in dark mode
+// (#4459): its key extends the light one, so every light key and every
+// reader of one is untouched, and the light and dark copies of one slot
+// live side by side.
+test('a dark shot is the whole screen only, beside its light slot', () => {
+  const intent = motionIntent();
+  const target = (raw) => shots.shotTarget(intent, raw);
+  assert.deepEqual(target({ change: 'saved-toast', screen: 'desktop', side: 'after', theme: 'dark' }), {
+    storyId: 'saved-toast', viewport: 'desktop', side: 'head', variant: 'context', media: 'png',
+    theme: 'dark',
+  });
+  assert.deepEqual(target({ change: 'saved-toast', screen: 'desktop', side: 'after', theme: '' }), {
+    storyId: 'saved-toast', viewport: 'desktop', side: 'head', variant: 'context', media: 'png',
+    theme: 'light',
+  }, 'an empty theme is light, as every older caller sent');
+  // Element shots and clips stay light.
+  assert.throws(() => target({ change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'element', theme: 'dark' }),
+    refusal('dark_screen_only'));
+  assert.throws(() => target({ change: 'saved-toast', screen: 'desktop', side: 'after', kind: 'clip', theme: 'dark' }),
+    refusal('dark_screen_only'));
+  assert.throws(() => target({ change: 'saved-toast', screen: 'desktop', side: 'after', theme: 'midnight' }),
+    refusal('invalid_theme'));
+
+  // The light keys are byte for byte what they were before dark existed.
+  const light = shots.slotKey(target({ change: 'saved-toast', screen: 'desktop', side: 'after' }));
+  const dark = shots.slotKey(target({ change: 'saved-toast', screen: 'desktop', side: 'after', theme: 'dark' }));
+  assert.ok(!light.includes('dark'), 'a light key says nothing about themes');
+  assert.equal(dark, `${light}\u0000dark`);
+  assert.equal(dark !== light, true);
+});
+
+test('a missing dark shot never holds a change back, and a dark one is published with it', () => {
+  const intent = motionIntent();
+  const saved = new Map();
+  for (const side of ['before', 'after']) {
+    save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side }, sideShot(side));
+  }
+  const lightOnly = shots.summarize(intent, saved);
+  assert.deepEqual(lightOnly.stories.find((story) => story.id === 'invite-suggestions'),
+    { id: 'invite-suggestions', status: 'ready', files: 2 },
+    'no dark shot, and the change is as ready as ever');
+  assert.ok(lightOnly.files.every((file) => file.theme === 'light'));
+
+  // A dark copy of each side is saved beside them.
+  for (const side of ['before', 'after']) {
+    save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side, theme: 'dark' },
+      fixtures.png({ shade: side === 'after' ? 210 : 10 }));
+  }
+  const summary = shots.summarize(intent, saved);
+  assert.equal(summary.stories[0].files, 2, 'dark shots do not count toward a change\'s files');
+  assert.equal(summary.files.length, 4, 'the ready change publishes its dark shots too');
+  assert.deepEqual(summary.files.map((file) => [file.side, file.theme]), [
+    ['base', 'light'], ['head', 'light'], ['base', 'dark'], ['head', 'dark'],
+  ]);
+  assert.ok(summary.manifestHash !== lightOnly.manifestHash, 'a published dark shot is part of the manifest');
+
+  // A skipped change's dark shots publish nothing, as its light ones do not.
+  const darkOnly = new Map();
+  for (const side of ['before', 'after']) {
+    save(darkOnly, intent, { change: 'saved-toast', screen: 'desktop', side, theme: 'dark' }, fixtures.png());
+  }
+  const mixed = shots.summarize(intent, new Map([...saved, ...darkOnly]));
+  assert.equal(mixed.files.filter((file) => file.storyId === 'saved-toast').length, 0);
+});
+
 test('a skip reason is trimmed, bounded and required', () => {
   assert.equal(shots.reason('  The list needs an owner.  '), 'The list needs an owner.');
   assert.equal(shots.reason('x'.repeat(1500)).length, 1000);
@@ -167,6 +237,7 @@ test('a stored file carries its slot, type, bytes and digest', () => {
     image, shots.inspectImage(image));
   assert.deepEqual({ ...shot, data: shot.data === image }, {
     storyId: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'context', media: 'png',
+    theme: 'light',
     contentType: 'image/png', data: true, width: 5, height: 2, bytes: image.length, sha256: sha256(image),
     focusRect: null, stageLabels: null,
   });

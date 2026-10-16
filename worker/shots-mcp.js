@@ -243,13 +243,15 @@ server.registerTool('get_brief', {
 });
 
 server.registerTool('save_shot', {
-  description: 'Save screenshots for declared changes, several in one call. First call browser_take_screenshot with a filename for each (the visible screen, or one element with kind "element"), then list them here: for each, the change id, the screen name, side "before" or "after", the kind, and the filename. One screenshot can serve several changes: list it once for each. Every screen of a change needs a before and an after screen shot, or only an after one when the brief has afterOnly. A before shot must be taken on the before address and an after shot on the after address; a screenshot of any other site is refused. Saving the same change, screen, side and kind again replaces it. The answer says which saved and why any did not.',
+  description: 'Save screenshots for declared changes, several in one call. First call browser_take_screenshot with a filename for each (the visible screen, or one element with kind "element"), then list them here: for each, the change id, the screen name, side "before" or "after", the kind, and the filename. One screenshot can serve several changes: list it once for each. Every screen of a change needs a before and an after screen shot, or only an after one when the brief has afterOnly. A before shot must be taken on the before address and an after shot on the after address; a screenshot of any other site is refused. Saving the same change, screen, side and kind again replaces it. For a whole-screen shot taken with the page in dark mode (the brief\'s darkMode), also pass theme "dark"; element shots and clips are always light. The answer says which saved and why any did not.',
   inputSchema: {
     shots: z.array(z.object({
       change: z.string().min(1).max(96),
       screen: z.string().min(1).max(32),
       side: z.enum(['before', 'after']),
       kind: z.enum(['screen', 'element']).optional(),
+      theme: z.enum(['light', 'dark']).optional()
+        .describe('Set "dark" only for a whole-screen shot taken with the page in dark mode.'),
       file: z.string().min(1).max(512),
     })).min(1).max(24),
   },
@@ -259,12 +261,12 @@ server.registerTool('save_shot', {
   // not these requests. A refused file does not stop the others.
   const results = [];
   let pair = null;
-  for (const { change, screen, side, kind = 'screen', file } of shots) {
+  for (const { change, screen, side, kind = 'screen', theme, file } of shots) {
     try {
       const { image, origin } = savedScreenshot(file);
       pair = pair || await pairOrigins();
       requireOnApp(side, [origin], pair);
-      const query = new URLSearchParams({ change, screen, side, kind });
+      const query = new URLSearchParams({ change, screen, side, kind, ...(theme === 'dark' ? { theme } : {}) });
       const result = (await request(`/shot?${query}`, { method: 'POST', binary: image })).result;
       results.push({ change, screen, side, kind, file, saved: true, result });
     } catch (error) {

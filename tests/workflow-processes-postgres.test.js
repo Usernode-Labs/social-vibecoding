@@ -458,6 +458,95 @@ test('workflow machines in a process of their own, and through its crash', { tim
     assert.deepEqual([i.data.streak, i.data.last], [1, 1], 'one attempt, failed once: as without the crash');
   });
 
+  // ── The proposal lifecycle ──────────────────────────────────────────
+  // A promote and a close appended by the web side, decided and done in the
+  // workflow process; and each killed in the middle.
+  const underway = async (a, owner) => (await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, status, branch_name, pr_number, pr_title, reviewed_head_sha)
+     VALUES ($1, $2, 'active', 'feature', $3, 'A change', $4) RETURNING *`, [a.id, owner.id, ++seq, SHA('a')])).rows[0];
+  const proposalOf = (s) => instance('proposal', `session:${s.id}`);
+  const statusOf = async (s) => (await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [s.id])).rows[0].status;
+  async function promoteThrough({ crash } = {}) {
+    const a = await app();
+    const owner = await user();
+    const s = await underway(a, owner);
+    if (crash) await procs.arm(pool, 'github.ready.done');
+    const reply = await platform.promoteProposal({ sessionId: s.id, appId: a.id, userId: owner.id, username: owner.username,
+      from: 'active', cap: 5, pr: null, waitMs: crash ? 200 : 20000 });
+    if (crash) {
+      assert.equal(reply.status, 202, 'still going up for a vote when GitHub has not answered');
+      await procs.reached(pool, 'github.ready.done');
+      assert.equal(await statusOf(s), 'active', 'never promoted while its pull request is still a draft');
+      await workflow.kill();
+      await procs.expireLeases(pool);
+      await startWorkflow();
+    } else {
+      assert.equal(reply.status, 200, JSON.stringify(reply.body));
+    }
+    await procs.until(async () => (await proposalOf(s))?.state === 'in_review', 'the proposal to be in review');
+    return {
+      status: await statusOf(s),
+      readied: (await procs.effects(pool, 'github.ready')).filter((e) => e.data.number === s.pr_number).length,
+      line: (await pool.query(`SELECT content FROM chat_messages WHERE thread_type = 'session' AND thread_ref = $1`, [s.id]))
+        .rows.map((r) => r.content.replace(/proc_\d+/, 'someone').replace(/#\d+/, '#N')),
+      checked: (await pool.query(`SELECT count(*)::int AS n FROM wf_events WHERE machine = 'preview' AND key = $1 AND type = 'RevisionSubmitted'`,
+        [`session:${s.id}`])).rows[0].n,
+      processes: await ranIn('proposal', `session:${s.id}`, 'review.open'),
+    };
+  }
+
+  await t.test('proposal: a promote from the web side goes up for a vote, GitHub moved and the review opened in the workflow process', async () => {
+    const r = await promoteThrough();
+    assert.deepEqual({ ...r, processes: undefined }, {
+      status: 'promoted', readied: 1, line: ['someone promoted PR #N: A change for voting'], checked: 1, processes: undefined,
+    });
+    assert.equal(r.processes, 1);
+  });
+
+  await t.test('proposal, restarted: killed while going up for a vote, after GitHub readied the PR; the next process ends it as an uninterrupted one', async () => {
+    const r = await promoteThrough({ crash: true });
+    assert.equal(r.processes, 2, 'the review the crash interrupted, opened by the next process');
+    assert.deepEqual({ ...r, processes: undefined }, {
+      status: 'promoted', readied: 1, line: ['someone promoted PR #N: A change for voting'], checked: 1, processes: undefined,
+    }, 'readied once, opened once: as without the crash');
+  });
+
+  async function closeThrough({ crash } = {}) {
+    const a = await app();
+    const s = await underway(a, author);
+    if (crash) await procs.arm(pool, 'github.closePR');
+    const out = await platform.closeProposal({ sessionId: s.id, appId: a.id, reason: 'manual', from: 'active', userId: author.id,
+      username: author.username, source: { kind: 'route', name: 'archive' } });
+    assert.equal(out.status, 'accepted');
+    assert.equal(await statusOf(s), 'archived', 'closed in the move\'s own transaction');
+    if (crash) {
+      await procs.reached(pool, 'github.closePR');
+      await workflow.kill();
+      await procs.expireLeases(pool);
+      await startWorkflow();
+    }
+    await procs.until(async () => await settled('proposal', `session:${s.id}`, 'pr.close')
+      && await settled('proposal', `session:${s.id}`, 'worker.destroy')
+      && (await instance('preview', `session:${s.id}`))?.state === 'retired', 'everything the close owes');
+    return {
+      status: await statusOf(s),
+      closed: (await procs.effects(pool, 'github.closePR')).filter((e) => e.data.number === s.pr_number).length,
+      destroyed: (await procs.effects(pool, 'worker.destroy')).some((e) => e.data.name === `usernode-worker-${s.id}`),
+      preview: (await instance('preview', `session:${s.id}`)).state,
+      processes: await ranIn('proposal', `session:${s.id}`, 'pr.close'),
+    };
+  }
+
+  await t.test('proposal: a close from the web side, its PR, worker and preview done in the workflow process', async () => {
+    const r = await closeThrough();
+    assert.deepEqual(r, { status: 'archived', closed: 1, destroyed: true, preview: 'retired', processes: 1 });
+  });
+
+  await t.test('proposal, restarted: killed right after a close committed; the next process closes the PR, destroys the worker, retires the preview (bug 14)', async () => {
+    const r = await closeThrough({ crash: true });
+    assert.deepEqual(r, { status: 'archived', closed: 1, destroyed: true, preview: 'retired', processes: 2 });
+  });
+
   // ── What the workflow process's boot gives it (src/workflow/setup.ts) ─
 
   await t.test('a merge decided in the workflow process syncs the phone badge of everyone with a bell row about it', async () => {

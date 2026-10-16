@@ -3,6 +3,9 @@
 // extra triggers rely on:
 //   - the atomic 'promoted'→'merging' claim makes concurrent triggers safe:
 //     two callers racing on one ready PR produce exactly ONE GitHub merge.
+//     The claim is the proposal machine's (platform.ts claimMerge): the
+//     stub below grants it once and answers the second 'in_progress', as
+//     the machine does for a proposal already merging.
 //   - a locked app with a winning vote + passing checks but NO admin yes
 //     still does not auto-merge.
 // Same require.cache stubbing pattern as votes-checks-gate.test.js — nothing
@@ -81,8 +84,16 @@ function loadVotes(opts = {}) {
     invalidateIssuesCache() {},
   });
   const reports = [];
+  const claims = [];
   stub(ids.platform, {
     mergeConfirmed: async (m) => { reports.push(m); return { status: 'accepted', eventId: 1 }; },
+    claimMerge: async (c) => {
+      claims.push(c);
+      if (claims.length > 1) return { status: 'rejected', eventId: 2, reason: 'in_progress' };
+      return { status: 'accepted', eventId: 2, reply: { claim: 1 } };
+    },
+    releaseMerge: async () => ({ status: 'accepted', eventId: 3 }),
+    abandonMerge: async () => ({ status: 'accepted', eventId: 4 }),
   });
   stub(ids.docker, {});
   stub(ids.resolver, {
@@ -115,7 +126,7 @@ function loadVotes(opts = {}) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, mergeCalls, systemMessages, reports, restore };
+  return { subject, mergeCalls, systemMessages, reports, claims, restore };
 }
 
 const session = {
@@ -125,19 +136,12 @@ const session = {
   reviewed_head_sha: 'a'.repeat(40),
 };
 
-// Pool with a winning vote (1 yes, majority 1) and passing checks, whose
-// 'promoted'→'merging' claim succeeds only ONCE (the atomic guard). A second
-// concurrent caller sees the row already claimed and finds no row to update.
+// Pool with a winning vote (1 yes, majority 1) and passing checks. The
+// 'promoted'→'merging' claim (the platform stub above) succeeds only ONCE.
 function poolReadyToMerge() {
-  let claimed = false;
   return makeRecordingPool([
     [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '1' }]],
     [/SELECT check_state, test_results/, [{ check_state: 'passing', test_results: [{ status: 'pass' }] }]],
-    [/SET status = 'merging'/, () => {
-      if (claimed) return [];
-      claimed = true;
-      return [{ id: 7 }];
-    }],
   ]);
 }
 
@@ -181,14 +185,14 @@ test('two concurrent triggers on one ready PR produce exactly ONE GitHub merge',
 });
 
 test('locked app: winning vote + passing checks but no admin yes does NOT auto-merge', async () => {
-  const { subject, mergeCalls, restore } = loadVotes({ locked: true, adminYes: false });
+  const { subject, mergeCalls, claims, restore } = loadVotes({ locked: true, adminYes: false });
   const p = poolReadyToMerge();
   try {
     const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
     assert.equal(r.merged, false);
     assert.equal(r.awaitingAdmin, true);
     assert.equal(mergeCalls.count, 0, 'never merged');
-    assert.ok(!p.queries.some((q) => /SET status = 'merging'/.test(q.sql)), 'never claimed the merge');
+    assert.equal(claims.length, 0, 'never claimed the merge');
   } finally {
     restore();
   }

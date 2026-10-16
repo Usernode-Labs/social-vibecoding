@@ -84,7 +84,7 @@ test('a staging preview has a published run whose card lists what the shots agen
               (SELECT COUNT(*) FROM shot_artifacts a JOIN shot_runs r ON r.id = a.run_id WHERE r.session_id = $1)::int AS files`,
       [SESSION_ID]
     )).rows[0];
-    assert.deepEqual(counts, { sessions: 1, runs: 1, files: 4 }, 'a second boot adds nothing');
+    assert.deepEqual(counts, { sessions: 1, runs: 1, files: 8 }, 'a second boot adds nothing');
 
     const row = (await pool.query(
       `SELECT cs.*, a.slug AS app_slug FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
@@ -103,7 +103,14 @@ test('a staging preview has a published run whose card lists what the shots agen
     assert.deepEqual(shots.shotNotices.map((entry) => [entry.screen, entry.shot, entry.alsoBefore]),
       [['desktop', 'screen', true], ['phone', 'screen', false]]);
     for (const entry of shots.shotNotices) assert.match(entry.text, /^Staging demo: /);
-    assert.equal(shots.artifacts.length, 4);
+    assert.equal(shots.artifacts.length, 8);
+    // #4459: every screen also has a dark copy beside its light one, so the
+    // card's theme flip is reachable on a preview.
+    assert.deepEqual(
+      shots.artifacts.filter((a) => a.theme === 'dark').map((a) => [a.viewport, a.side]).sort(),
+      [['desktop', 'base'], ['desktop', 'head'], ['phone', 'base'], ['phone', 'head']],
+    );
+    assert.equal(shots.artifacts.filter((a) => a.theme === 'light').length, 4);
     assert.deepEqual(shotsState.brokenOnHead(row, row.reviewed_head_sha), [],
       'the notices never read as the change not working');
 
@@ -112,7 +119,12 @@ test('a staging preview has a published run whose card lists what the shots agen
     assert.match(card, /<h3 class="shots-noticed-head">Also noticed<\/h3>/);
     assert.match(card, /Desktop · Also on the before build/);
     assert.match(card, /Phone · Not on the before build/);
-    assert.equal((card.match(/<img src="\/api\/apps\/staging-demo-gallery-app\/proposals\/900108\/shots\/[0-9a-f]{32}"/g) || []).length, 4);
+    assert.equal((card.match(/<img src="\/api\/apps\/staging-demo-gallery-app\/proposals\/900108\/shots\/[0-9a-f]{32}"/g) || []).length, 8);
+    // The theme switch renders because the run has dark shots, and the flip
+    // control carries both labels.
+    assert.match(card, /shots-theme-pick/);
+    assert.match(card, /Show in dark mode/);
+    assert.match(card, /Show in light mode/);
 
     // Its images are served by the proposal's own route to any member.
     testPool = pool;
@@ -136,7 +148,7 @@ test('a staging preview has a published run whose card lists what the shots agen
     const recent = await require('../src/services/bench/connector-data').recentShots(pool, {});
     const shown = recent.proposals.find((proposal) => proposal.sessionId === SESSION_ID);
     assert.deepEqual(shown.shots.shotNotices.map((entry) => entry.alsoBefore), [true, false]);
-    assert.equal(shown.shots.images, 4);
+    assert.equal(shown.shots.images, 8);
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     if (pool) await pool.end().catch(() => {});

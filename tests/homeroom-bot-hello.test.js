@@ -66,19 +66,20 @@ test('B5: every place Messages names the bot names it, with an AI badge beside i
   assert.match(read('frontend/src/features/messages/store.ts'), /state\.active\.peer\.displayName/, 'the typing line');
 });
 
-test('B5: the bot\'s DM is the first row, and a search lists results as they happened', () => {
-  const { buildInbox, inClockOrder } = loadTsx('frontend/src/features/messages/inbox.ts');
+test('B5: the bot\'s DM is the first row, pinned first in Agents, and a search keeps the sections', () => {
+  const { buildInbox } = loadTsx('frontend/src/features/messages/inbox.ts');
   const conversations = [
     { id: 1, lastActivityAt: '2026-10-04T10:00:00Z', kind: 'direct' },
     { id: 2, lastActivityAt: '2026-10-01T10:00:00Z', kind: 'direct', homeroomBot: true },
     { id: 3, lastActivityAt: '2026-10-03T10:00:00Z', kind: 'direct' },
   ];
-  const base = { conversations, discussions: [], agents: [] };
-  assert.deepEqual(buildInbox({ ...base, filter: 'all' }).map((e) => e.key), ['person:2', 'person:1', 'person:3']);
-  assert.deepEqual(buildInbox({ ...base, filter: 'agents' }).map((e) => e.key), ['person:2']);
-  assert.deepEqual(buildInbox({ ...base, filter: 'people' }).map((e) => e.key), ['person:1', 'person:3']);
-  assert.deepEqual(inClockOrder(buildInbox({ ...base, filter: 'all' })).map((e) => e.key), ['person:1', 'person:3', 'person:2']);
-  assert.match(read('frontend/src/features/messages/index.tsx'), /const shown = q \? inClockOrder\(found\) : found;/);
+  const merged = buildInbox({ conversations, agents: [] });
+  assert.deepEqual(merged.map((e) => e.key), ['person:2', 'person:1', 'person:3']);
+  assert.deepEqual(merged.map((e) => e.section), ['agents', 'people', 'people']);
+  assert.equal(merged[0].pinned, true);
+  // 16 Oct 2026: a search narrows each section rather than mixing them on
+  // one clock, so the bot's chat is still first under Agents.
+  assert.match(read('frontend/src/features/messages/index.tsx'), /const found = inbox\.filter\(matches\);/);
 });
 
 test('B5: prompts to tap keep the suggestion look, and read back as asked', () => {
