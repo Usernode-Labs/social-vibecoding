@@ -372,7 +372,11 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
         break;
       case 'conflict':
       default:
-        message = 'Tried to sync with main but Claude couldn\'t resolve the conflicts. The branch is unchanged; try again or resolve locally.';
+        // A reason (the resolver's refusal, or the harness's boundary)
+        // says what the owner has to do, so it is shown, not dropped.
+        message = result.syncReason
+          ? `Tried to sync with main, but the merge was not pushed: ${result.syncReason} The branch is unchanged; resolve it locally.`
+          : 'Tried to sync with main but Claude couldn\'t resolve the conflicts. The branch is unchanged; try again or resolve locally.';
         break;
     }
 
@@ -383,7 +387,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
     // branch now merges → 'clean' with an empty file list.
     if (syncResult === 'conflict') {
       await persistConflictState(pool, session, { state: 'failed', files: result.conflictFiles || [] });
-      dstep({ phase: 'sync_result', level: 'error', message: 'Worker sync: Claude could not resolve the conflicts.', detail: { syncResult, conflictFiles: result.conflictFiles || [], costUsd: result.costUsd || 0, pushOk: !!result.pushOk } });
+      dstep({ phase: 'sync_result', level: 'error', message: 'Worker sync: Claude could not resolve the conflicts.', detail: { syncResult, conflictFiles: result.conflictFiles || [], reason: result.syncReason || null, costUsd: result.costUsd || 0, pushOk: !!result.pushOk } });
     } else {
       await persistConflictState(pool, session, { state: 'clean', files: [] });
       dstep({ phase: 'sync_result', message: `Worker sync ${syncResult}${result.sha ? `, pushed ${String(result.sha).slice(0, 9)}` : ''}.`, detail: { syncResult, sha: result.sha || null, behind: result.behind || 0, conflictFiles: result.conflictFiles || [], costUsd: result.costUsd || 0, pushOk: !!result.pushOk } });
@@ -414,7 +418,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
     // timeline keys on. Only emitted when we opened an activity entry (a
     // real merge); a behind==0 short-circuit leaves no row, matching the
     // banner-only behaviour callers had before this change.
-    const syncMeta = { syncMain: { syncResult, behind: result.behind || 0, sha: result.sha || null, pushOk: !!result.pushOk } };
+    const syncMeta = { syncMain: { syncResult, behind: result.behind || 0, sha: result.sha || null, pushOk: !!result.pushOk, ...(result.syncReason ? { reason: result.syncReason } : {}) } };
 
     // The worker owns the Git merge/push, but a CLI-handoff proposal also
     // has immutable head pins that own its preview and check verdict. Adopt
@@ -480,6 +484,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
       sha: result.sha || null,
       pushOk: !!result.pushOk,
       conflictFiles: result.conflictFiles || [],
+      ...(result.syncReason ? { reason: result.syncReason } : {}),
       ...(managedRevision ? { managedRevision } : {}),
       message,
     };

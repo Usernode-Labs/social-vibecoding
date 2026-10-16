@@ -684,3 +684,49 @@ test('GET /status: exposes the merge lifecycle status of the session', async () 
     server.close();
   }
 });
+
+// Review of proposal 8758: a resolver that refused ("the merge also needs
+// consumer.js, which did not conflict") reached the owner as a bare
+// "couldn't resolve". The reason now rides on the worker's result line
+// (run-cc.sh sync_reason, decoded by worker.decodeSyncReason) and is shown
+// in the persisted row, the live status event, the banner and the response.
+test('activity: a refused or out-of-bounds resolution shows its reason to the owner', async () => {
+  const reason = 'The merge also needs a change to consumer.js, which did not conflict.';
+  const { subject, updates, globals, restore } = loadSyncMain({
+    execImpl: async (opts) => {
+      opts.onProgress('[sync_conflict_cc]');
+      return { syncResult: 'conflict', syncReason: reason, behind: 2, sha: '', pushOk: false, exitCode: 0 };
+    },
+  });
+  try {
+    const pool = activityPool();
+    const res = await subject.runSyncMain({ jwtSecret: 's' }, pool, 7, { sessionRow: ownerRow() });
+    assert.equal(res.ok, false);
+    assert.equal(res.reason, reason);
+    assert.equal(res.message,
+      `Tried to sync with main, but the merge was not pushed: ${reason} The branch is unchanged; resolve it locally.`);
+    const terminal = statusContents(pool).at(-1);
+    assert.equal(terminal, res.message, 'the persisted row carries the reason');
+    const meta = JSON.parse(pool.calls.filter((c) => /INSERT INTO chat_session_messages/.test(c.sql)).at(-1).params[2]);
+    assert.equal(meta.syncMain.reason, reason);
+    assert.ok(globals.some((g) => g.event === 'status' && g.text === res.message), 'the live status event carries it');
+    const banner = syncEvents(updates);
+    assert.equal(banner.at(-1).state, 'failed');
+    assert.equal(banner.at(-1).message, res.message, 'the banner carries it');
+  } finally {
+    restore();
+  }
+});
+
+test('worker: sync_reason is decoded to one bounded plain line', () => {
+  const enc = (s) => Buffer.from(s, 'utf8').toString('base64url');
+  const state = { conflictFiles: [] };
+  worker.parseLine(`__USERNODE_RESULT__ cc_exit=0 ahead=0 behind=2 sha=abc push_ok=0 mode=sync sync_result=conflict conflict_files=a.js sync_reason=${enc('needs\nconsumer.js\u0007 too')}`, () => {}, state);
+  assert.equal(state.syncReason, 'needs consumer.js too');
+  assert.equal(worker.decodeSyncReason(enc('x'.repeat(400))).length, 300);
+  assert.equal(worker.decodeSyncReason('not base64!'), null);
+  assert.equal(worker.decodeSyncReason(''), null);
+  const none = { conflictFiles: [] };
+  worker.parseLine('__USERNODE_RESULT__ cc_exit=0 ahead=0 behind=2 sha=abc push_ok=0 mode=sync sync_result=conflict conflict_files=a.js', () => {}, none);
+  assert.equal(none.syncReason, undefined, 'no reason, nothing set');
+});

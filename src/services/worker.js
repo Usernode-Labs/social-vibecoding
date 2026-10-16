@@ -1506,6 +1506,22 @@ function noteRequestSize(state, size) {
   state.lastRequestSize = kept;
 }
 
+// Why a MODE=sync turn abandoned its merge (run-cc.sh sync_reason): the
+// resolver's own UNRESOLVED line, or the harness's (markers left, files
+// changed outside the conflicts). base64url on the wire so it survives the
+// space-delimited result line; decoded to one plain line of at most 300
+// characters, since it is shown to the project's owner.
+const SYNC_REASON_MAX = 300;
+function decodeSyncReason(value) {
+  if (!value || !/^[A-Za-z0-9_-]+$/.test(value)) return null;
+  let text;
+  try { text = Buffer.from(value, 'base64url').toString('utf8'); } catch { return null; }
+  // eslint-disable-next-line no-control-regex
+  text = text.replace(/[\u0000-\u001f\u007f\ufffd]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  return text.length > SYNC_REASON_MAX ? `${text.slice(0, SYNC_REASON_MAX - 3)}...` : text;
+}
+
 function parseLine(line, onProgress, state) {
   if (!line || !line.trim()) return;
   if (line.startsWith('__USERNODE_CODING_PROVIDER__ ')) {
@@ -1562,6 +1578,7 @@ function parseLine(line, onProgress, state) {
       // string → no conflicts. Threaded out as result.conflictFiles so
       // sync-main.js can persist the merge-conflict snapshot.
       else if (k === 'conflict_files') state.conflictFiles = v ? v.split(',').filter(Boolean) : [];
+      else if (k === 'sync_reason') state.syncReason = decodeSyncReason(v);
       // The agent ended on a line that does not build on the session branch
       // (worker/session-branch.sh): nothing was committed or pushed.
       else if (k === 'branch_mismatch') state.branchMismatch = v === '1';
@@ -1903,6 +1920,8 @@ function newWatchState() {
     // #361: conflicted file paths from a MODE=sync turn's
     // __USERNODE_RESULT__ line. Defaults empty.
     conflictFiles: [],
+    // Why a MODE=sync turn abandoned its merge (decodeSyncReason), or null.
+    syncReason: null,
     phase: null,
     fatalError: null,
     resultSeen: false,
@@ -5955,6 +5974,7 @@ module.exports = {
   _registryUpsertForTests: _registryUpsert,
   _mintHomeroomReadGrantForTests: mintHomeroomReadGrant,
   parseLine,
+  decodeSyncReason,
   newWatchdogCounters,
   recordWatchdogProbe,
   WORKER_JWT_TTL_MS,

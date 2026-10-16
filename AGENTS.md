@@ -170,20 +170,11 @@ selects a skill.
 
 ## Mistakes that already broke main or a screen
 
-- **Opening a screen by changing the address draws what a fresh load of it
-  draws.** A route handler handles in-place changes, not only boot, and a
-  "the route changed, so close" listener ignores its own navigation. Fix
-  the screen, not the check: see the app's declared boot parameters in
-  `src/prompts/app-conventions.md`.
-- **A timeout, network failure or 5xx decides nothing.** Never turn one into
-  a lasting "signed out", "empty" or "gone"; only a real "no" does.
-- **A test's stand-in for a module starts from the real module's exports**
-  and overrides only what it needs, so a function added later exists. A fake
-  never does what the real code does not; drive real routes and state where
-  the suite can.
-- **Measure what the platform actually runs.** Rebuild inputs the way it
-  builds them (a check's path goes through `selfAppHashPath`) and confirm a
-  hypothesis against raw evidence before acting on it.
+- Opening a screen by address draws what a fresh load draws, and a "route changed, so close"
+  listener ignores its own navigation. Fix the screen, not the check (`src/prompts/app-conventions.md`).
+- A timeout, network failure or 5xx is shown or retried, never read as signed out, empty or gone.
+- A test's stand-in keeps the real module's exports and never does what the real code does not.
+- Measure what the platform actually builds (`selfAppHashPath`) and confirm with raw evidence.
 
 ## Declare visible changes for before/after shots
 

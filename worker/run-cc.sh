@@ -98,7 +98,9 @@
 #        no CC invocation, no LLM spend
 #      - conflict → leave conflict markers in working tree, invoke CC
 #        with a resolution-only prompt, then sanity-check no markers
-#        remain; commit + push if clean, abort if not
+#        remain; commit + push if clean, abort if not. Also abort when the
+#        resolver refuses (UNRESOLVED) or changed anything outside the
+#        conflicted files; the reason rides on the result as sync_reason
 #         - resolved   = CC fixed it, push succeeded
 #         - conflict   = CC failed; merge aborted, branch unchanged
 #   Sync turns intentionally don't refresh CC's --resume session id —
@@ -309,16 +311,25 @@ if [ "$MODE" = "sync" ]; then
     CONFLICT_FILES_CSV=$(git diff --name-only --diff-filter=U 2>/dev/null | paste -sd, - | sed 's/,$//')
     # The resolver writes how it resolved each file here, and the harness
     # puts that in the merge commit's message. Outside the repository, so
-    # neither `git add -A` nor the marker scan below ever sees it.
+    # neither the staging nor the marker scan below ever sees it.
     SYNC_NOTES_FILE=$(mktemp "${TMPDIR:-/tmp}/usernode-sync-resolution.XXXXXX") \
       || SYNC_NOTES_FILE=""
+    # The paths the resolver may change (the conflicted ones), and the index
+    # entries git already merged cleanly, recorded before it runs: anything
+    # else it changes is refused below, never staged.
+    SYNC_ALLOWED_FILE=$(mktemp "${TMPDIR:-/tmp}/usernode-sync-allowed.XXXXXX") || SYNC_ALLOWED_FILE=""
+    SYNC_INDEX_BEFORE=$(mktemp "${TMPDIR:-/tmp}/usernode-sync-index.XXXXXX") || SYNC_INDEX_BEFORE=""
+    if [ -n "$SYNC_ALLOWED_FILE" ] && [ -n "$SYNC_INDEX_BEFORE" ]; then
+      git diff --name-only --diff-filter=U > "$SYNC_ALLOWED_FILE" 2>/dev/null
+      git ls-files -s | awk '$3 == 0' | LC_ALL=C sort > "$SYNC_INDEX_BEFORE"
+    fi
     # Proposal 8465 (Oct 2026): a resolution kept main's deletions and this
     # branch's export of a function whose definition it dropped, so the
     # module threw on load, and a later one dropped a line from a baseline.
     # Both merged commits had no conflict markers left, which is all this
-    # script could check. So the resolver now loads what it touched, runs the
-    # suites for the conflicted files, says how it resolved each one, and can
-    # refuse (UNRESOLVED) instead of pushing a resolution it could not prove.
+    # script could check. So the resolver now checks its result with the
+    # repository's own tools, says how it resolved each file, and can refuse
+    # (UNRESOLVED) instead of pushing a resolution it could not stand behind.
     SYNC_PROMPT="A merge of origin/main into branch '$BRANCH' produced conflicts. The conflict markers (<<<<<<<, =======, >>>>>>>) are in the working tree.
 
 Conflicted files: $CONFLICT_FILES
@@ -327,14 +338,15 @@ Resolve every conflict marker. Preserve the intent of both sides — keep the ch
 
 Never keep half of a change. Where one side deleted or moved code that the other side changed, extended or still uses, keep both sides coherently or port this branch's change onto main's new code: an export, a call, a test or a baseline entry you keep needs the definition it names, and a line either side added to a list or baseline stays unless the other side's change removes its reason.
 
-Before you finish, prove the result:
-- Load every module you touched (for JavaScript, node -e \"require('./path/to/file')\"; for TypeScript, add --experimental-strip-types). A module that throws on load breaks everything that imports it.
+Before you finish, check the result with the repository's own tools. Bound every command you run (for example: timeout 600 npm test), so nothing you start can hang the merge.
 - Run the tests that cover the conflicted files, the way the repository's own agent instructions (AGENTS.md, CLAUDE.md) say to. Where package.json has a test:changed script, run: npm run test:changed -- --files <the conflicted files, comma-separated>
-- Fix what your resolution broke. A failure your resolution did not cause is not yours to fix, and tests that cannot run here (no dependencies installed, no database) are not a reason to refuse: name either in the notes below.
+- Run the lint or type check the repository declares in package.json, if it has one for these files.
+- Never start the app, a server or a script to check a merge. Load a file directly (node -e \"require('./path/to/file')\") only when it is a plain library module that does nothing when it loads: not an entry point, a server, a script, or browser code such as a .tsx or .jsx file.
+- Fix what your resolution broke. Do not change code that is valid where it runs (browser code, for example) because Node cannot load it. A failure your resolution did not cause, and a check that cannot run here (no dependencies installed, no database, a command that timed out), are not reasons to refuse: say so in the notes.
 
-Change only the conflicted files: a resolution that touches any other file counts as a new change by the author, and the group's approvals no longer cover it. Delete anything your checks wrote into the working tree. If a coherent resolution needs a change to another file, do not make it: refuse as below and say which change.
+Change only the conflicted files. Leave every other file as it is, and delete anything your checks wrote into the working tree: a change to any other file, or a new file, is refused and the merge is abandoned. If a coherent resolution needs a change to another file, do not make it: refuse as below and say which change.
 
-Then write the notes file ${SYNC_NOTES_FILE:-(none)}: one line per conflicted file, saying what each side changed there and how you resolved it, then one line saying what you loaded and ran and how it went. It becomes the merge commit's message. If you could not resolve the conflicts so that everything you touched loads and its tests pass, make the first line of that file UNRESOLVED: followed by why, and the merge is abandoned instead of pushed.
+Then write the notes file ${SYNC_NOTES_FILE:-(none)}: one line per conflicted file, saying what each side changed there and how you resolved it, then one line saying what you ran and how it went. It becomes the merge commit's message, so write it in plain words about the code: never credentials, tokens, environment values, user data or raw command output. If you could not resolve the conflicts so that the result holds together, make the first line of that file UNRESOLVED: followed by why, in one sentence the project's owner will read, and the merge is abandoned instead of pushed.
 
 Do not run git commands. I will commit and push for you after you finish editing files."
 
@@ -343,55 +355,111 @@ Do not run git commands. I will commit and push for you after you finish editing
       --model "$MODEL" --output-format stream-json -p "$SYNC_PROMPT"
     CC_EXIT=$?
 
+    # Why the merge is abandoned, when it is: the resolver's own UNRESOLVED
+    # line, or the harness's. It rides on the result line base64url-encoded
+    # (one line, at most 300 characters before encoding), so sync-main.js can
+    # show it to the owner instead of a bare "couldn't resolve".
+    SYNC_REASON=""
+    if [ -n "$SYNC_NOTES_FILE" ] && head -n 1 "$SYNC_NOTES_FILE" 2>/dev/null | grep -q '^UNRESOLVED'; then
+      SYNC_REASON=$(head -n 1 "$SYNC_NOTES_FILE" | sed 's/^UNRESOLVED:* *//')
+      [ -n "$SYNC_REASON" ] || SYNC_REASON="The resolver refused without saying why."
+      echo "__USERNODE_WARN__ resolver refused: $(printf '%s' "$SYNC_REASON" | cut -c1-300)"
+    fi
+
     # Sanity check: any conflict markers left? If yes, the merge is
     # not resolvable — abort cleanly so the next attempt starts from
     # a sane state. We deliberately only check for `<<<<<<<` and
     # `>>>>>>>` (not `=======`); `=======` on its own line is a
     # legitimate markdown setext h2 underline and would false-positive
-    # any spec/README that uses that style. The resolver's own refusal
-    # (an UNRESOLVED first line in its notes) aborts the same way.
-    SYNC_REFUSED=""
-    if [ -n "$SYNC_NOTES_FILE" ] && head -n 1 "$SYNC_NOTES_FILE" 2>/dev/null | grep -q '^UNRESOLVED'; then
-      SYNC_REFUSED=1
-      echo "__USERNODE_WARN__ resolver refused: $(head -n 1 "$SYNC_NOTES_FILE" | cut -c1-300)"
+    # any spec/README that uses that style.
+    if [ -z "$SYNC_REASON" ] && grep -rlE --exclude-dir='.git' '^(<<<<<<<|>>>>>>>)( |$)' . 2>/dev/null | grep -q .; then
+      echo "__USERNODE_WARN__ CC left conflict markers; aborting merge"
+      SYNC_REASON="Conflict markers were left in the working tree."
     fi
-    if [ -n "$SYNC_REFUSED" ] || grep -rlE --exclude-dir='.git' '^(<<<<<<<|>>>>>>>)( |$)' . 2>/dev/null | grep -q .; then
-      [ -n "$SYNC_REFUSED" ] || echo "__USERNODE_WARN__ CC left conflict markers; aborting merge"
-      git merge --abort 2>&1 || echo "__USERNODE_WARN__ merge --abort failed"
-      [ -n "$SYNC_NOTES_FILE" ] && rm -f "$SYNC_NOTES_FILE"
+
+    # The boundary. integration.classifyHeadMove counts a resolution that
+    # touched any path outside the conflicts as a change by the author, and
+    # what the resolver's checks leave behind (a report, a log) must not be
+    # published. So: a tracked file outside the conflicts changed in the
+    # working tree, a new file that is not ignored, or an index entry git had
+    # already merged that is now different, and the merge is abandoned.
+    if [ -z "$SYNC_REASON" ]; then
+      if [ -z "$SYNC_ALLOWED_FILE" ] || [ -z "$SYNC_INDEX_BEFORE" ]; then
+        SYNC_REASON="The harness could not record which files the resolver may change."
+      else
+        SYNC_INDEX_AFTER=$(mktemp "${TMPDIR:-/tmp}/usernode-sync-index.XXXXXX") || SYNC_INDEX_AFTER=/dev/null
+        git ls-files -s | awk '$3 == 0' | LC_ALL=C sort > "$SYNC_INDEX_AFTER"
+        OUTSIDE=$( {
+            git diff --name-only 2>/dev/null
+            git ls-files --others --exclude-standard 2>/dev/null
+            LC_ALL=C comm -3 "$SYNC_INDEX_BEFORE" "$SYNC_INDEX_AFTER" | sed 's/^\t//' | cut -f2
+          } | sed '/^$/d' | LC_ALL=C sort -u | grep -vxF -f "$SYNC_ALLOWED_FILE" )
+        [ "$SYNC_INDEX_AFTER" = /dev/null ] || rm -f "$SYNC_INDEX_AFTER"
+        if [ -n "$OUTSIDE" ]; then
+          COUNT=$(printf '%s\n' "$OUTSIDE" | wc -l | tr -d ' ')
+          FIRST=$(printf '%s\n' "$OUTSIDE" | head -n 3 | paste -sd, - | sed 's/,/, /g')
+          SYNC_REASON="The resolution changed $COUNT file(s) outside the conflicts ($FIRST), so it was not pushed."
+          echo "__USERNODE_WARN__ resolver changed files outside the conflicts: $(printf '%s' "$FIRST" | cut -c1-300)"
+        fi
+      fi
+    fi
+
+    sync_cleanup() {
+      for f in "$SYNC_NOTES_FILE" "$SYNC_ALLOWED_FILE" "$SYNC_INDEX_BEFORE"; do
+        [ -n "$f" ] && rm -f "$f"
+      done
+    }
+    sync_abandon() {
+      # An edit to a file the merge touched makes `merge --abort` refuse;
+      # the turn owns this checkout (it began with a hard reset), so a hard
+      # reset to the branch's own head is the same abort.
+      if ! git merge --abort 2>&1; then
+        echo "__USERNODE_WARN__ merge --abort failed; resetting to the branch head"
+        git reset --hard --quiet HEAD 2>&1 || echo "__USERNODE_WARN__ reset after a failed abort failed"
+      fi
+      sync_cleanup
+      REASON_B64=$(printf '%s' "$SYNC_REASON" | tr -d '\000-\037' | cut -c1-300 | base64 | tr -d '\n=' | tr '+/' '-_')
       AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
       BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
       SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-      echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=0 mode=sync sync_result=conflict conflict_files=$CONFLICT_FILES_CSV"
+      echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=0 mode=sync sync_result=conflict conflict_files=$CONFLICT_FILES_CSV sync_reason=$REASON_B64"
       exit 0
+    }
+    [ -z "$SYNC_REASON" ] || sync_abandon
+
+    # Stage the conflicted paths alone (a deleted one as a deletion). The
+    # entries git merged cleanly are already staged and stay as they were.
+    while IFS= read -r f; do
+      [ -n "$f" ] && git add -A -- "$f" 2>&1
+    done < "$SYNC_ALLOWED_FILE"
+    if git diff --name-only --diff-filter=U 2>/dev/null | grep -q .; then
+      SYNC_REASON="Some conflicted files could not be staged."
+      sync_abandon
     fi
 
     # The merge commit says which files conflicted and how each was
     # resolved, so a reviewer (and the next agent) can audit it without
     # re-running the merge. The subject stays the one people search for.
+    # The whole message is capped at 8,000 bytes.
     SYNC_MSG_FILE=$(mktemp "${TMPDIR:-/tmp}/usernode-sync-msg.XXXXXX") || SYNC_MSG_FILE=""
     if [ -n "$SYNC_MSG_FILE" ]; then
       {
         echo "Merge origin/main via Homeroom sync (Claude-resolved)"
         echo
         echo "Conflicted files:"
-        printf '%s\n' "$CONFLICT_FILES_CSV" | tr ',' '\n' | sed '/^$/d; s/^/- /'
+        sed 's/^/- /' "$SYNC_ALLOWED_FILE"
         if [ -n "$SYNC_NOTES_FILE" ] && [ -s "$SYNC_NOTES_FILE" ]; then
           echo
           echo "How they were resolved:"
-          head -c 8000 "$SYNC_NOTES_FILE"
+          cat "$SYNC_NOTES_FILE"
         else
           echo
           echo "The resolver left no notes on how it resolved them."
         fi
-      } > "$SYNC_MSG_FILE"
+      } | head -c 8000 > "$SYNC_MSG_FILE"
     fi
-    [ -n "$SYNC_NOTES_FILE" ] && rm -f "$SYNC_NOTES_FILE"
+    sync_cleanup
 
-    # CC resolved cleanly — stage everything (CC may have edited files
-    # outside the conflict set as a side effect; we want them all in
-    # the merge commit) and commit.
-    git add -A
     if [ -n "$SYNC_MSG_FILE" ]; then
       git commit -F "$SYNC_MSG_FILE" 2>&1
       COMMIT_RC=$?

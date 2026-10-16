@@ -33,7 +33,7 @@ Treat the request ID and returned session ID as the permanent identity of this w
 
 ## Carry what another open proposal needs
 
-Two proposals that each pass their own checks can still break main together: nothing tests them as a pair, and one once merged six minutes after the other. When a review says that whichever of two open proposals merges second must carry a change, either include that change now, or write it into the spec as a merge condition and check main for the other proposal before every upload, adding the change as soon as it has merged.
+Two proposals that each pass their own checks can still break main together: nothing tests them as a pair, and one once merged six minutes after the other. When a review says that whichever of two open proposals merges second must carry a change, prefer including that change now. Otherwise write it into the spec as a merge condition, check main for the other proposal before every upload, and add the change as soon as it has merged. Know the limits of the second way: nothing in Homeroom enforces a merge condition written in a spec, and once your last upload is made, nothing checks main again before your proposal merges. Say both in the spec, so voters and the other author know.
 
 ## Link the originating issues
 
