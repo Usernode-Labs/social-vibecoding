@@ -89,7 +89,9 @@ test('the island puts the door under the header only from Create, and only when 
 
 test('using the header, or any route change, leaves the door by its own leave path', () => {
   const src = read(ISLAND);
-  assert.match(src, /const onRoute = \(\) => leaveDoor\(true\);/);
+  // A route to the door's own address is the router opening or turning it
+  // (a typed #create, Back to it), never a way out (tests/create-front-door).
+  assert.match(src, /const onRoute = \(\) => \{ if \(!isDoorRoute\(window\.location\.hash\)\) leaveDoor\(true\); \};/);
   assert.match(src, /const onPress = \(e: Event\) => \{ if \(leavesDoor\(e\.target\)\) leaveDoor\(true\); \};/);
   assert.match(src, /window\.addEventListener\('hashchange', onRoute\);\s+document\.addEventListener\('click', onPress, true\);/);
   assert.match(src, /window\.removeEventListener\('hashchange', onRoute\);\s+document\.removeEventListener\('click', onPress, true\);/);

@@ -357,6 +357,31 @@ function assertMaxMs(env) {
   return (Number.isFinite(raw) && raw >= 0) ? raw : ASSERT_MAX_MS;
 }
 
+// …but a HASH SWITCH that has a cold load behind it is asked for less.
+//
+// After a hash switch an unmet assertion is not the verdict: the cohort is
+// loaded cold and judged again (#1146, in runTestGroup), and the cold load
+// gets the whole window above, rolling included. So the window after the
+// switch only decides whether the reload is needed, and every second of it
+// spent on a screen that is not coming is a second the lane waits for
+// nothing. It was the full window, and it rolled: a page that fetches in
+// the background (the version poll, a lazy chunk) stretched it to 15s on
+// screens a switch never draws. In three Homeroom runs of 16 Oct 2026 every
+// switch that passed did so within 2.9s of the hash write, settle included
+// (435 switches, none between 3s and 6s), while the twelve that fell back
+// waited 5-17s each before reloading, about 160s of lane time a run.
+//
+// A screen slower than this on a switch still passes: it pays the cold load
+// instead of the wait, and the verdict is the same one. Without the
+// fallback (TEST_COHORT_RELOAD_FALLBACK=0) the switch's verdict stands, so
+// it keeps the full window.
+const ASSERT_SWITCH_MAX_MS = 3000;
+
+function assertSwitchMaxMs(env) {
+  const raw = parseInt((env || {}).TEST_ASSERT_SWITCH_MAX_MS, 10);
+  return (Number.isFinite(raw) && raw >= 0) ? raw : ASSERT_SWITCH_MAX_MS;
+}
+
 // …and the window ROLLS while the page is still fetching.
 //
 // The fixed window above answers "is this screen mid-render", which is a
@@ -1817,13 +1842,15 @@ async function runTestGroup(browser, group, opts) {
     // Initial navigation and a cold-cohort fallback must judge hydration
     // with the same window. Network quiet alone does not mean timers/rAF
     // have finished rendering the expected UI.
-    const pollPresence = async (cohortTests) => {
+    // `windowMs` set and `roll` false is the short, fixed window a hash
+    // switch gets when a cold load stands behind it (ASSERT_SWITCH_MAX_MS).
+    const pollPresence = async (cohortTests, { windowMs = assertMax, roll = true } = {}) => {
       const presence = new Map();
-      const floorAt = Date.now() + assertMax;
+      const floorAt = Date.now() + windowMs;
       // How far request traffic may roll the window at most (see
       // ASSERT_ROLL_MAX_FACTOR): a page that never stops fetching is judged
       // here, not at the group ceiling.
-      const rollCeilingAt = floorAt + assertMax * (rollMaxFactor - 1);
+      const rollCeilingAt = roll ? floorAt + assertMax * (rollMaxFactor - 1) : floorAt;
       let assertDeadlineAt = floorAt;
       let seenNetAt = netActivity.lastAt;
       let pending = cohortTests;
@@ -1910,6 +1937,7 @@ async function runTestGroup(browser, group, opts) {
     for (let ci = 0; ci < cohorts.length; ci += 1) {
       const cohort = cohorts[ci];
       let cohortFrom = 0;
+      const cohortStartedAt = Date.now();
       if (ci === 0) {
         // Stamp the clock so the cold load always gets a listening window,
         // then wait it out.
@@ -1954,7 +1982,16 @@ async function runTestGroup(browser, group, opts) {
       // still failing keeps waiting, and never past its one shared ceiling.
       // Evaluated BEFORE the console errors are frozen so the cold-load
       // fallback below can re-run them on a reloaded document.
-      let presence = loadFailure ? new Map() : await pollPresence(cohort.tests);
+      //
+      // A switch with that fallback behind it is only asking whether the
+      // reload is needed, so it gets the short fixed window
+      // (ASSERT_SWITCH_MAX_MS); the cold load and the reload get the full
+      // one.
+      const fallbackOn = ci > 0 && cohortReloadFallback(o.env);
+      const switchWindow = fallbackOn
+        ? { windowMs: Math.min(assertMax, Number.isFinite(o.assertSwitchMaxMs) ? o.assertSwitchMaxMs : ASSERT_SWITCH_MAX_MS), roll: false }
+        : {};
+      let presence = loadFailure ? new Map() : await pollPresence(cohort.tests, switchWindow);
 
       // ── A hash switch is not always equivalent to a cold load (#1146) ──
       //
@@ -1978,16 +2015,20 @@ async function runTestGroup(browser, group, opts) {
       //     opened for them.
       //
       // Waiting longer fixes none of it — the render is not late, it is not
-      // coming. So an unmet assertion after a hash switch is not taken as a
-      // verdict: the cohort is re-run as the real cold navigation the
+      // coming, which is why the switch's own window is the short one
+      // (ASSERT_SWITCH_MAX_MS). So an unmet assertion after a hash switch is
+      // not taken as a verdict: the cohort is re-run as the real cold navigation the
       // ungrouped runner would have made, and judged on that. Cost is paid
       // only where grouping was NOT equivalent, which keeps the whole win on
       // a green suite while making the verdict independent of how the checks
       // happened to be batched. `about:blank` first because a goto that
       // differs only in the fragment is a same-document navigation and would
       // not reload anything.
-      if (ci > 0 && !loadFailure && cohortReloadFallback(o.env)
-        && [...presence.values()].some(Boolean)) {
+      if (fallbackOn && !loadFailure && [...presence.values()].some(Boolean)) {
+        // Counted for the run's checks-timing line: how many cohorts a hash
+        // switch could not reach, and the lane time they took from the
+        // switch to their verdict. A count and a sum, never a URL.
+        if (o.timing) o.timing.fallbacks = (o.timing.fallbacks || 0) + 1;
         try {
           await page.goto('about:blank', { timeout: NAV_TIMEOUT_MS });
           const resp = await gotoTestDocument(page, cohort.tests[0].url);
@@ -2005,6 +2046,7 @@ async function runTestGroup(browser, group, opts) {
           // must not turn a real assertion failure into a load error.
           pushErr('load', `cohort reload of ${cohort.hash} failed: ${err.message}`, cohort.tests[0].url);
         }
+        if (o.timing) o.timing.fallbackMs = (o.timing.fallbackMs || 0) + (Date.now() - cohortStartedAt);
       }
 
       // Frozen per cohort, for the same reason it used to be frozen per group:
@@ -2159,6 +2201,7 @@ async function runTests(browser, tests, opts) {
     settleQuietMs: Number.isFinite(o.settleQuietMs) ? o.settleQuietMs : settleQuietMs(env),
     settleMaxMs: Number.isFinite(o.settleMaxMs) ? o.settleMaxMs : settleMaxMs(env),
     assertMaxMs: Number.isFinite(o.assertMaxMs) ? o.assertMaxMs : assertMaxMs(env),
+    assertSwitchMaxMs: Number.isFinite(o.assertSwitchMaxMs) ? o.assertSwitchMaxMs : assertSwitchMaxMs(env),
     assertPollMs: Number.isFinite(o.assertPollMs) ? o.assertPollMs : ASSERT_POLL_MS,
     // Carried so the cohort fallback reads the same env the grouping did.
     env,
@@ -2172,6 +2215,8 @@ async function runTests(browser, tests, opts) {
   const groupTimes = [];
   const retryTimes = [];
   const loadTimes = [];
+  // Hash cohorts that needed the cold-load fallback, and their lane time.
+  const fallbacks = { n: 0, ms: 0 };
 
   const runOne = async (group, { counts = true } = {}) => {
     const groupStartedAt = Date.now();
@@ -2222,6 +2267,10 @@ async function runTests(browser, tests, opts) {
     if (counts) ran += group.length;
     (counts ? groupTimes : retryTimes).push(Date.now() - groupStartedAt);
     if (counts && Number.isFinite(timing.loadMs)) loadTimes.push(timing.loadMs);
+    if (timing.fallbacks) {
+      fallbacks.n += timing.fallbacks;
+      fallbacks.ms += Math.round(timing.fallbackMs || 0);
+    }
   };
 
   // Every group straight through the pool — with per-group contexts there
@@ -2309,6 +2358,8 @@ async function runTests(browser, tests, opts) {
   // How long this run's groups took, in one line the platform logs
   // (visuals.js parseDiagnostics). Wall clock, not CPU: it is what a check
   // run waits on. No verdict reads it. Nothing in it names a URL.
+  // `fallbacks` counts the hash cohorts that had to be loaded cold (#1146)
+  // and the lane time they took: the cost grouping did not save.
   emitDiag('checks-timing', {
     shard: shard ? `${shard.index}/${shard.count}` : null,
     lanes: Math.min(concurrency, groups.length),
@@ -2316,6 +2367,7 @@ async function runTests(browser, tests, opts) {
     groups: timingSummary(groupTimes),
     loads: timingSummary(loadTimes),
     retries: timingSummary(retryTimes),
+    fallbacks,
   }, { uncapped: true });
 
   // `ran` and `expected` still count DECLARED checks only. A retry is a
@@ -2423,4 +2475,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, assertSwitchMaxMs, ASSERT_SWITCH_MAX_MS, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
