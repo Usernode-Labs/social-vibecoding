@@ -1,4 +1,4 @@
-// Route test for POST /api/sessions/:id/promote (src/routes/votes.js) —
+// Putting a change up for a vote (POST /api/sessions/:id/promote):
 // #2500 / #2537, the originating-issue backfill.
 //
 // Starting a dev chat from an issue card recorded the number in
@@ -24,37 +24,21 @@
 //   4. The backfill is best-effort — a failure inside it never stops the
 //      proposal going up for a vote.
 //
-// Same require.cache + Router-recorder stubbing as
-// tests/promote-cap-enforcement.test.js. Nothing real spins up.
+// Since the proposal machine, the backfill is the first thing its
+// review.open work does (src/workflow/proposal/services.ts) once a promote
+// is claimed for review; it reports `issueLinkSeeded`, and the move into
+// review marks the row seeded in its transaction (machine.ts `promoted`
+// write). Pinned here against review.open with the legacy modules it
+// reaches (through src/workflow/legacy.ts, the shared require cache)
+// stubbed. Nothing real spins up.
 //
 // Run with: node --test tests/promote-issue-backfill.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { mergeGate } = require('../src/services/active-users');
-
-const routes = new Map();
-function makeRouterStub() {
-  const router = {};
-  for (const method of ['use', 'get', 'post', 'put', 'delete', 'patch']) {
-    router[method] = (path, ...handlers) => {
-      if (typeof path === 'string' && handlers.length) {
-        routes.set(`${method.toUpperCase()} ${path}`, handlers[handlers.length - 1]);
-      }
-      return router;
-    };
-  }
-  return router;
-}
-
-const Module = require('module');
-Module._load = (function (orig) {
-  return function (request, ...rest) {
-    if (request === 'express') return { Router: makeRouterStub };
-    return orig.call(this, request, ...rest);
-  };
-})(Module._load);
+const { proposalServices } = require('../src/workflow/proposal/services.ts');
+const { WORK } = require('../src/workflow/proposal/machine.ts');
 
 function stub(id, exports) {
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
@@ -80,74 +64,33 @@ function sessionRow(overrides = {}) {
   };
 }
 
-// `row` is the session the promote reads. `onUpdateLinkedIssues` lets a
+// `row` is the session review.open reads. `onUpdateLinkedIssues` lets a
 // test make the backfill blow up.
-function loadPromote({ row, onUpdateLinkedIssues }) {
+async function reviewOpen({ row, onUpdateLinkedIssues }) {
   const ids = {
-    logger: require.resolve('../src/services/logger'),
-    pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
-    staging: require.resolve('../src/services/staging'),
-    docker: require.resolve('../src/services/docker'),
-    resolver: require.resolve('../src/services/conflict-resolver'),
-    ws: require.resolve('../src/services/ws'),
-    activeUsers: require.resolve('../src/services/active-users'),
-    notifications: require.resolve('../src/services/notifications'),
-    adminApproval: require.resolve('../src/services/admin-approval'),
-    events: require.resolve('../src/services/events'),
-    appAccess: require.resolve('../src/services/app-access'),
-    stagingRecovery: require.resolve('../src/services/staging-recovery'),
+    limits: require.resolve('../src/services/limits'),
     prMetadata: require.resolve('../src/services/pr-metadata'),
     proposalUpdate: require.resolve('../src/services/proposal-update'),
-    subject: require.resolve('../src/routes/votes'),
+    appAdmins: require.resolve('../src/services/app-admins'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
-  const seen = { linkCalls: [], seededWrites: [], prCreated: false };
+  const seen = { linkCalls: [], prCreated: false, linkedAtCreation: null };
   const pool = {
-    async query(sql, params) {
+    async query(sql) {
       const s = String(sql);
       if (/FROM chat_sessions cs JOIN apps a/.test(s)) return { rows: [row], rowCount: 1 };
-      if (/SELECT COUNT\(\*\) AS cnt FROM chat_sessions/.test(s)) return { rows: [{ cnt: '0' }], rowCount: 1 };
-      if (/UPDATE chat_sessions SET issue_link_seeded/.test(s)) {
-        seen.seededWrites.push(params);
-        return { rows: [], rowCount: 1 };
-      }
       if (/FROM chat_session_messages/.test(s)) return { rows: [{ content: 'add a thing' }], rowCount: 1 };
-      return { rows: [], rowCount: 0, params };
+      if (/FROM users/.test(s)) return { rows: [{ username: 'evan' }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
     },
   };
 
-  stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
-  stub(ids.pool, { getPool: () => pool });
-  stub(ids.github, {
-    isEnabled: () => false,
-    describeGithubError: (err) => ({
-      status: null, requestId: null, message: (err && err.message) || 'unknown error', data: null,
-    }),
-  });
-  stub(ids.staging, {});
-  stub(ids.docker, {});
-  stub(ids.resolver, { checkAndResolveConflicts: async () => {}, isResolving: () => false });
-  stub(ids.ws, {
-    sendSystemMessage: async () => {}, pushNotificationToUser() {},
-    pushVoteUpdate() {}, pushSessionUpdate() {},
-  });
-  stub(ids.activeUsers, {
-    getActiveUserStats: async () => ({ active: 1, majority: 1 }),
-    isUserActive: async () => true,
-    mergeGate,
-  });
-  stub(ids.notifications, {});
-  stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminYesVote: async () => false });
-  stub(ids.events, { record: () => {}, EVENT_TYPES: { PR_PROMOTED: 'pr_promoted', PR_MERGED: 'pr_merged' } });
-  stub(ids.appAccess, { sessionCollabGuard: () => (_req, _res, next) => next() });
-  stub(ids.stagingRecovery, {
-    recheckSessionChecks: async () => 'rechecked',
-    rebuildSessionStaging: async () => 'skipped',
-    stagingNeedsRebuild: async () => false,
-  });
+  stub(ids.github, { isEnabled: () => false });
+  stub(ids.limits, { resolveBillingPath: async () => ({ error: 'no key' }) });
+  stub(ids.appAdmins, { refreshExplicitApproval: async () => {} });
   stub(ids.proposalUpdate, {
     async updateLinkedIssues(args) {
       seen.linkCalls.push(args);
@@ -155,96 +98,83 @@ function loadPromote({ row, onUpdateLinkedIssues }) {
       args.session.linked_issues = args.addIssues.slice();
       return { changed: true, linkedIssues: args.addIssues.slice() };
     },
-    repoNameFromUrl: () => 'acme/whiteboard',
   });
   stub(ids.prMetadata, {
-    applyPrMetadata: async () => {
+    applyPrMetadata: async ({ session }) => {
       seen.prCreated = true;
+      seen.linkedAtCreation = session.linked_issues;
       // Stop the promote at the next gate: we only care that the backfill
       // ran first, not that a whole promote succeeds under stubs.
       const err = new Error('stubbed: no GitHub in this test');
       err.code = 'no_commits';
       throw err;
     },
-    sanitizeIssueNumbers: (a) => (Array.isArray(a) ? a.filter((n) => Number.isInteger(n) && n > 0) : []),
   });
 
-  routes.clear();
-  delete require.cache[ids.subject];
-  const subject = require(ids.subject);
-  subject.voteRoutes({});
-  const promote = routes.get('POST /api/sessions/:id/promote');
-
-  const restore = () => {
+  try {
+    let result = null;
+    let error = null;
+    try {
+      result = await proposalServices({ config: {}, pool })[WORK.open].run({ input: { sessionId: row.id, n: 1, userId: 3 } });
+    } catch (err) {
+      error = err;
+    }
+    return { result, error, seen };
+  } finally {
     for (const [k, id] of Object.entries(ids)) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
-  };
-  return { promote, seen, restore };
-}
-
-function makeRes() {
-  const res = { statusCode: 200, body: null };
-  res.status = (c) => { res.statusCode = c; return res; };
-  res.json = (b) => { res.body = b; return res; };
-  return res;
-}
-
-const USER = { id: 3, username: 'evan' };
-
-async function promoteWith(opts) {
-  const ctx = loadPromote(opts);
-  try {
-    const res = makeRes();
-    await ctx.promote({ params: { id: '7' }, user: USER, body: {} }, res);
-    return { status: res.statusCode, body: res.body, seen: ctx.seen, row: opts.row };
-  } finally {
-    ctx.restore();
   }
 }
 
 test('an unseeded issue-started proposal gets its originating issue linked at promote', async () => {
   const row = sessionRow();
-  const { seen } = await promoteWith({ row });
+  const { seen, error } = await reviewOpen({ row });
   assert.equal(seen.linkCalls.length, 1, 'the backfill ran');
   assert.deepEqual(seen.linkCalls[0].addIssues, [2496]);
   assert.deepEqual(seen.linkCalls[0].removeIssues, []);
   assert.equal(seen.linkCalls[0].owner, 'acme');
   assert.equal(seen.linkCalls[0].repo, 'whiteboard');
-  assert.deepEqual(row.linked_issues, [2496], 'the row carries the link into PR creation');
-  assert.equal(seen.seededWrites.length, 1, 'and is marked seeded');
-  assert.deepEqual(seen.seededWrites[0], [7]);
   assert.ok(seen.prCreated, 'the backfill runs BEFORE the pull request is opened');
+  assert.deepEqual(seen.linkedAtCreation, [2496], 'the row carries the link into PR creation');
+  assert.equal(error.code, 'no_commits', 'the stubbed creation stopped it at the next gate');
+});
+
+test('a linked backfill is reported, so the move into review marks the row seeded', async () => {
+  // A row that already has its pull request: review.open goes all the way.
+  const row = sessionRow({ pr_number: 41, pr_title: 'Add a thing' });
+  const { result, error, seen } = await reviewOpen({ row });
+  assert.equal(error, null);
+  assert.equal(seen.prCreated, false);
+  assert.equal(result.issueLinkSeeded, true);
 });
 
 test('a seeded proposal with no linked issues is left alone (a deliberate removal stays removed)', async () => {
   const row = sessionRow({ issue_link_seeded: true });
-  const { seen } = await promoteWith({ row });
+  const { seen } = await reviewOpen({ row });
   assert.equal(seen.linkCalls.length, 0);
-  assert.equal(seen.seededWrites.length, 0);
-  assert.deepEqual(row.linked_issues, []);
+  assert.deepEqual(seen.linkedAtCreation, []);
 });
 
 test('a proposal that already links issues is left alone', async () => {
   const row = sessionRow({ linked_issues: [900] });
-  const { seen } = await promoteWith({ row });
+  const { seen } = await reviewOpen({ row });
   assert.equal(seen.linkCalls.length, 0);
-  assert.deepEqual(row.linked_issues, [900]);
+  assert.deepEqual(seen.linkedAtCreation, [900]);
 });
 
 test('a proposal with no originating issue has nothing to backfill', async () => {
   const row = sessionRow({ created_from_issue_number: null });
-  const { seen } = await promoteWith({ row });
+  const { seen } = await reviewOpen({ row });
   assert.equal(seen.linkCalls.length, 0);
 });
 
 test('a failing backfill never stops the proposal going up for a vote', async () => {
-  const row = sessionRow();
-  const { seen } = await promoteWith({
-    row,
-    onUpdateLinkedIssues: () => { throw new Error('GitHub is down'); },
-  });
+  const failing = () => { throw new Error('GitHub is down'); };
+  const { seen } = await reviewOpen({ row: sessionRow(), onUpdateLinkedIssues: failing });
   assert.equal(seen.linkCalls.length, 1, 'it was attempted');
-  assert.equal(seen.seededWrites.length, 0, 'and not marked seeded, so it retries next time');
   assert.ok(seen.prCreated, 'the promote carried on regardless');
+  const { result, error } = await reviewOpen({ row: sessionRow({ pr_number: 41, pr_title: 'Add a thing' }), onUpdateLinkedIssues: failing });
+  assert.equal(error, null);
+  assert.equal(result.issueLinkSeeded, false, 'and is not marked seeded, so it retries next time');
 });

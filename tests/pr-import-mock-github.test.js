@@ -35,6 +35,13 @@ const fakeWorkflow = fakeModule('../src/services/preview-workflow', {
   revision: async () => { throw new Error('mock mode must not ask for a build'); },
   skipped: async () => true,
 });
+// The proposal machine moves the revision the group votes on (Q3): the
+// head installed and, for an author push, the epoch moved on, in one
+// transition. Recorded, and answered as an accepted move.
+const headMoves = [];
+fakeModule('../src/workflow/platform.ts', {
+  moveReviewHead: async (p) => { headMoves.push(p); return { status: 'accepted', reply: { epoch: 1, prSummaryStale: false } }; },
+});
 fakeModule('../src/services/sync-main', {
   persistBehindMain: async () => {},
   persistConflictState: async () => {},
@@ -56,20 +63,14 @@ function withStagingEnv(fn) {
   })();
 }
 
-// Records every statement. The head install is a compare-and-swap on the
-// row's pin (RETURNING the epoch), so it is answered the way Postgres would
-// for a pin that still matches; everything else returns no rows.
+// Records every statement; everything returns no rows. The head install is
+// the proposal machine's (moveReviewHead, faked above), not a statement here.
 function recordingPool() {
   const calls = [];
-  let epoch = 0;
   return {
     calls,
     query: async (sql, params) => {
       calls.push({ sql, params });
-      if (/SET imported_pr_head_sha = \$1[\s\S]*RETURNING approval_epoch/.test(sql)) {
-        if (params[2]) epoch += 1;
-        return { rows: [{ approval_epoch: epoch }] };
-      }
       return { rows: [] };
     },
   };
@@ -164,6 +165,7 @@ test('pr-import-sync (mock): a simulated push resets the tally + records skipped
   await withStagingEnv(async () => {
     const session = importedSession();
     session.imported_pr_head_sha = githubMock.currentHead(PR); // rev 0
+    const rev0 = session.imported_pr_head_sha;
 
     // Simulate the external author pushing a new commit.
     const newHead = githubMock.bumpHead(PR);
@@ -181,12 +183,14 @@ test('pr-import-sync (mock): a simulated push resets the tally + records skipped
       const res = await prImportSync.syncImportedProposal({ config: {}, pool, session });
       assert.equal(res, 'updated');
 
-      const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
-      assert.ok(headUpdate, 'stored head advanced');
-      assert.equal(headUpdate.params[0], newHead);
-      assert.match(headUpdate.sql, /approval_epoch = approval_epoch \+ CASE WHEN \$3::boolean THEN 1 ELSE 0 END/);
-      assert.equal(headUpdate.params[2], true,
-        'tally cleared by moving the epoch on (#2038) rather than deleting rows — a mock push is an author push');
+      assert.equal(headMoves.length, 1, 'stored head advanced, by the proposal machine');
+      assert.equal(headMoves[0].sessionId, 55);
+      assert.equal(headMoves[0].column, 'imported');
+      assert.equal(headMoves[0].from, rev0, 'from the pin it read, so a pass that got there first is refused');
+      assert.equal(headMoves[0].to, newHead);
+      assert.equal(headMoves[0].keepVotes, false,
+        'tally cleared by moving the epoch on (#2038) rather than deleting rows: a mock push is an author push');
+      assert.equal(session.approval_epoch, 1, 'the epoch the move answered with');
 
       assert.equal(sysMessages.length, 1, 'one re-review note');
       assert.match(sysMessages[0].content, /updated on GitHub/i);

@@ -48,6 +48,7 @@ const { KIND_TO_CATEGORY } = require('../src/services/mobile-push-preferences');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const TASKS_SRC = read('src/services/external-agent-tasks.js');
 const NOTIF_SRC = read('src/services/notifications.js');
+const RULES_SRC = read('src/workflow/rules/proposal-notifications.ts');
 const SCHEMA = read('src/db/schema.sql');
 const FE_SRC = read('frontend/src/features/notifications/notifications.js');
 
@@ -103,8 +104,12 @@ test('it aims at the task owner — the inverse of the pr_proposed rule', () => 
   // assumption: the proposer is an agent, and the human may be anywhere.
   assert.match(NOTIF_SRC, /The proposer is always excluded/,
     'the rule this inverts is still stated where it applies');
-  const fn = NOTIF_SRC.match(
-    /async function createConnectorSubmittedNotification[\s\S]*?\n\}/
+  // The one copy is the proposal machine's rule (it writes the row in the
+  // move into review); notifications.js delegates to it.
+  assert.match(NOTIF_SRC, /function createConnectorSubmittedNotification\(pool, \{ userId, appId, sessionId, detail \}\) \{\n  return proposalNotifications\.createConnectorSubmittedNotification\(/,
+    'notifications.js delegates to the rule');
+  const fn = RULES_SRC.match(
+    /export async function createConnectorSubmittedNotification[\s\S]*?\n\}/
   );
   assert.ok(fn, 'the creator exists');
   assert.match(fn[0], /\$1, \$2, \$3, NULL, 'connector_submitted'/,

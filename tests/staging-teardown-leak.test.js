@@ -26,15 +26,21 @@
 // the preview to services/preview-workflow.retire and reports a refusal as a
 // leak; and its callers (session-lifecycle's teardownStagingForSession and
 // archiveSession) never null the columns themselves and do not announce a
-// teardown that was refused.
+// teardown that was refused. A close (archiveSession) is the proposal
+// machine's (src/workflow/proposal/machine.ts): it retires the preview for
+// good by a RetireRequested message to the preview machine, so the archive
+// path neither tears anything down itself nor calls teardownStaging.
 //
-// All docker / db-manager / events / pool / preview-workflow work is stubbed
-// via require.cache — no real docker, DB, socket or workflow runtime.
+// All docker / db-manager / events / pool / preview-workflow / workflow
+// platform work is stubbed via require.cache: no real docker, DB, socket or
+// workflow runtime.
 //
 // Run with: node --test tests/staging-teardown-leak.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 function stub(id, exports) {
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
@@ -58,6 +64,7 @@ const ids = {
   pendingSecrets: require.resolve('../src/services/pending-secrets'),
   pool: require.resolve('../src/db/pool'),
   previewWorkflow: require.resolve('../src/services/preview-workflow'),
+  platform: require.resolve('../src/workflow/platform.ts'),
   staging: require.resolve('../src/services/staging'),
   lifecycle: require.resolve('../src/services/session-lifecycle'),
 };
@@ -76,6 +83,9 @@ function freshFixtures() {
     dropCalls: [],
     // events
     eventRecords: [],
+    // the proposal machine (workflow platform): what a close answers
+    closeOut: { status: 'accepted', reply: { state: 'closed', status: 'archived' } },
+    closes: [],
     // pool
     queries: [],
     // ws
@@ -86,6 +96,9 @@ function freshFixtures() {
 const fakePool = {
   async query(sql, params = []) {
     fx.queries.push({ sql: String(sql), params });
+    if (/SELECT a\.slug FROM chat_sessions cs JOIN apps a/i.test(String(sql))) {
+      return { rows: fx.sessionRow ? [{ slug: fx.sessionRow.app_slug }] : [] };
+    }
     if (/FROM chat_sessions cs JOIN apps a/i.test(String(sql))) {
       return { rows: [fx.sessionRow].filter(Boolean) };
     }
@@ -96,10 +109,10 @@ const fakePool = {
     if (/SELECT cs\.\*, a\.slug as app_slug, a\.repo_url/i.test(String(sql))) {
       return { rows: [fx.sessionRow].filter(Boolean) };
     }
-    // teardownStaging re-reads the row to decide whether the retirement is
-    // for good.
-    if (/SELECT app_id, status FROM chat_sessions WHERE id = \$1/i.test(String(sql))) {
-      return { rows: fx.sessionRow ? [{ app_id: fx.sessionRow.app_id, status: fx.sessionRow.status }] : [] };
+    // teardownStaging re-reads the row for its app, and to know whether it
+    // is gone (then the retirement is for good).
+    if (/SELECT app_id FROM chat_sessions WHERE id = \$1/i.test(String(sql))) {
+      return { rows: fx.sessionRow ? [{ app_id: fx.sessionRow.app_id }] : [] };
     }
     return { rows: [], rowCount: 1 };
   },
@@ -162,6 +175,13 @@ function installStubs() {
   stub(ids.workerProgress, { clear() {} });
   stub(ids.pendingSecrets, { async discardForSession() {} });
   stub(ids.pool, { getPool: () => fakePool });
+  stub(ids.platform, {
+    async closeProposal(args) {
+      fx.closes.push(args);
+      if (fx.closeOut.status === 'accepted' && fx.sessionRow) fx.sessionRow.status = 'archived';
+      return fx.closeOut;
+    },
+  });
   stub(ids.previewWorkflow, {
     async held() { return fx.held; },
     async retire(args) {
@@ -208,7 +228,9 @@ function assertNothingInline() {
 test('teardownStaging: a merged session is retired for good, and the hand-off is all it does', async () => {
   const staging = setup();
 
-  const result = await staging.teardownStaging(SESSION(), APP);
+  // The caller says it is for good (merge-followups' teardown work); the
+  // row's status no longer decides it.
+  const result = await staging.teardownStaging(SESSION(), APP, { terminal: true, reason: 'merged' });
 
   assert.deepEqual(result, { removed: false, handedOff: true });
   assert.deepEqual(fx.retires, [{ session: { id: 4242, app_id: 10 }, reason: 'merged', terminal: true }]);
@@ -218,6 +240,15 @@ test('teardownStaging: a merged session is retired for good, and the hand-off is
 test('teardownStaging: a session still open is retired as idle, not for good', async () => {
   const staging = setup();
   fx.sessionRow.status = 'paused';
+
+  await staging.teardownStaging(SESSION(), APP);
+
+  assert.deepEqual(fx.retires, [{ session: { id: 4242, app_id: 10 }, reason: 'idle', terminal: false }]);
+});
+
+test('teardownStaging: a row being merged is not read as an ending; only the caller says so', async () => {
+  const staging = setup();
+  fx.sessionRow.status = 'merging';
 
   await staging.teardownStaging(SESSION(), APP);
 
@@ -310,51 +341,51 @@ test('teardownStagingForSession: a row naming no preview asks for nothing', asyn
   assert.deepEqual(fx.pushes, []);
 });
 
-test('archiveSession: still archives when the retirement is refused, and nulls nothing', async () => {
-  setup();
-  const lifecycle = loadLifecycle();
-  fx.sessionRow.status = 'promoted';
-  fx.retireOut = { taken: false, reason: 'under_review' };
+// ── archiveSession: the close is the proposal machine's ────────────────
 
-  const result = await lifecycle.archiveSession({
-    pool: fakePool, sessionId: 4242, reason: 'manual',
-  });
-
-  // Closing the PR and flipping status must not hinge on the cluster.
-  assert.equal(result.archived, true);
-  assert.equal(fx.retires.length, 1);
-  assertNothingInline();
-});
-
-test('archiveSession: retires the archived preview for good, nulling nothing itself', async () => {
+test('archiveSession: the close is handed to the proposal machine, which retires the preview; nothing here tears down', async () => {
   setup();
   const lifecycle = loadLifecycle();
   fx.sessionRow.status = 'promoted';
 
   const result = await lifecycle.archiveSession({
-    pool: fakePool, sessionId: 4242, reason: 'manual',
+    pool: fakePool, sessionId: 4242, reason: 'manual', from: 'promoted',
   });
 
-  assert.equal(result.archived, true);
-  assert.deepEqual(fx.retires, [{ session: { id: 4242, app_id: 10 }, reason: 'archived', terminal: true }]);
-  assertNothingInline();
-});
-
-test('archiveSession: a preview the machine still builds is retired though no column names it yet', async () => {
-  setup();
-  const lifecycle = loadLifecycle();
-  Object.assign(fx.sessionRow, { status: 'active', staging_container_id: null, staging_url: null });
-  fx.held = true;
-
-  assert.equal((await lifecycle.archiveSession({ pool: fakePool, sessionId: 4242 })).archived, true);
-  assert.deepEqual(fx.retires.map((r) => [r.reason, r.terminal]), [['archived', true]]);
-});
-
-test('archiveSession: no preview and nothing held asks the machine for nothing', async () => {
-  setup();
-  const lifecycle = loadLifecycle();
-  Object.assign(fx.sessionRow, { status: 'active', staging_container_id: null, staging_url: null });
-
-  assert.equal((await lifecycle.archiveSession({ pool: fakePool, sessionId: 4242 })).archived, true);
+  assert.deepEqual(result, { archived: true, appSlug: 'tier-lists-abc123' });
+  assert.equal(fx.closes.length, 1);
+  assert.equal(fx.closes[0].sessionId, 4242);
+  assert.equal(fx.closes[0].from, 'promoted', 'fenced on the status the caller read');
+  assert.equal(fx.closes[0].reason, 'manual');
+  // The machine's close messages the preview machine (below); archiveSession
+  // asks for no retirement of its own, so a refusal there cannot block the
+  // close, and nothing is removed or nulled inline.
   assert.deepEqual(fx.retires, []);
+  assertNothingInline();
+});
+
+test('archiveSession: a close the machine refuses archives nothing and tears nothing down', async () => {
+  setup();
+  const lifecycle = loadLifecycle();
+  fx.sessionRow.status = 'promoted';
+  fx.closeOut = { status: 'rejected', reason: 'session_state_changed' };
+
+  const result = await lifecycle.archiveSession({ pool: fakePool, sessionId: 4242, from: 'active' });
+
+  assert.deepEqual(result, { archived: false, reason: 'session_state_changed' });
+  assert.deepEqual(fx.retires, []);
+  assertNothingInline();
+});
+
+test('the proposal machine\'s close retires the preview for good, whether or not a column names it yet', () => {
+  // The retirement is a message to the preview machine, sent on every close:
+  // that machine retires by identity, so a preview it still builds (no
+  // staging_* column names it yet) goes too, and one it does not hold is
+  // nothing to retire.
+  const src = fs.readFileSync(path.join(__dirname, '../src/workflow/proposal/machine.ts'), 'utf8');
+  const start = src.indexOf('function close(s: Live');
+  assert.notEqual(start, -1, 'the machine\'s close');
+  const close = src.slice(start, src.indexOf('\n}\n', start));
+  assert.match(close, /messages: \[toPreview\(d, 'RetireRequested', \{ reason: 'archived', terminal: true \}\)\]/);
+  assert.doesNotMatch(close, /staging_(container_id|runtime_name|url)/, 'the close reads no staging column to decide it');
 });

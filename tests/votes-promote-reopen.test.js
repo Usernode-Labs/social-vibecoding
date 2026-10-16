@@ -1,19 +1,28 @@
-// POST /api/sessions/:id/promote must reconcile the PR's GitHub state
-// before flipping the session to 'promoted'. A withdrawn (archived)
-// session carries a CLOSED PR; promoting it without a reopen creates a
-// proposal that can never merge (session 2398 / PR #26). Now:
-//   - closed-unmerged PR → reopened, promote proceeds;
-//   - reopen refused → 409 with an actionable error, session NOT promoted;
-//   - already-merged PR → 409 (nothing left to vote on);
-//   - open PR → its immutable head is captured and promotion proceeds;
-//   - imported active PR → current head is captured without mutating GitHub;
-//   - imported closed PR → refused without reopening someone else's PR;
-//   - transient GET failure → promotion fails closed (nothing can be reviewed
-//     or checked against an unknown revision).
+// Putting a change up for a vote must reconcile its pull request's GitHub
+// state first. A withdrawn (archived) session carries a CLOSED PR; promoting
+// it without a reopen creates a proposal that can never merge (session 2398 /
+// PR #26).
 //
-// Drives the real Express router over HTTP with all collaborators stubbed
-// via require.cache (same pattern as debug-route.test.js for the HTTP
-// side, votes-checks-gate.test.js for the stub set).
+// Since the proposal machine (src/workflow/proposal/), the work is split in
+// three, and each part is pinned here where it now lives:
+//   1. POST /api/sessions/:id/promote (src/routes/votes.js) reads the
+//      session (owned, not headless, Underway), refuses a hand-off whose
+//      status moved since its preflight, READS the pull request from GitHub
+//      (a failed read fails closed, 503), and hands what it read to
+//      platform.promoteProposal, answering with its reply.
+//   2. The machine's `review.open` work (src/workflow/proposal/services.ts)
+//      does everything GitHub is asked to do once the proposal is claimed
+//      for review: a closed native PR is reopened (refused: 409), a merged
+//      one refused, a closed or draft imported one refused without touching
+//      it, the head read and checked against the hand-off's preflight, and a
+//      native draft marked ready for review (refused: the change stays
+//      Underway).
+//   3. The machine's move into review (machine.ts `opened`) stamps the head,
+//      the electorate the vote opened with, and hands the head to the
+//      preview machine. Its database effects (votes on other heads removed,
+//      promoted_at, the line, the CAS against a concurrent pause or close)
+//      are pinned against PostgreSQL by tests/workflow-proposal-postgres.test.js
+//      (P2, P3, P5, P6).
 //
 // Run with: node --test tests/votes-promote-reopen.test.js
 
@@ -48,7 +57,7 @@ function makeRecordingPool(handlers) {
 }
 
 // One promotable session: active, owned by user 3, PR + title + staging
-// already in place (so no lazy PR creation and no staging rebuild fires).
+// already in place.
 const sessionRow = {
   id: 7, app_id: 5, app_slug: 'widget', app_name: 'Widget',
   repo_url: 'https://github.com/acme/widget', branch_name: 'dev/x-1',
@@ -57,27 +66,17 @@ const sessionRow = {
   checks_commit_sha: HEAD,
 };
 
-function promotePool(session = sessionRow, { promotionMatches = true } = {}) {
+// ── 1. The route ─────────────────────────────────────────────────────────
+
+function promotePool(session = sessionRow) {
   return makeRecordingPool([
     [/cs\.status IN \('active', 'paused'\)/, (params) =>
       ['active', 'paused'].includes(session.status) && session.user_id === params[1]
         && !session.is_headless ? [{ ...session }] : []],
-    [/COUNT\(\*\) AS cnt FROM chat_sessions/i, [{ cnt: '0' }]],
-    [/SET status = 'promoted', promoted_at = NOW\(\),[\s\S]*reviewed_head_sha/,
-      (params) => {
-        const matches = promotionMatches && params[2] === session.status;
-        if (matches) session = { ...session, status: 'promoted' };
-        return { rows: [], rowCount: matches ? 1 : 0 };
-      }],
-    [/SET status = \$1, promoted_at = \$2,[\s\S]*reviewed_head_sha = \$4/,
-      (params) => {
-        session = { ...session, status: params[0] };
-        return { rows: [], rowCount: 1 };
-      }],
   ]);
 }
 
-function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, activeCount = 1 } = {}) {
+function loadVotesRouter({ getPRImpl, pool, reply }) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
@@ -92,19 +91,15 @@ function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, activeCou
     events: require.resolve('../src/services/events'),
     appAccess: require.resolve('../src/services/app-access'),
     topicAttrs: require.resolve('../src/services/topic-attributes'),
-    previewWorkflow: require.resolve('../src/services/preview-workflow'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     subject: require.resolve('../src/routes/votes'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
   const getPRCalls = [];
-  const reopenCalls = [];
-  const systemMessages = [];
-  const octokitRequests = [];
-  // What the route hands the preview machine (services/preview-workflow.js):
-  // it builds and checks a revision; nothing here builds or stamps a verdict.
-  const revisionCalls = [];
+  const githubWrites = [];
+  const promoteCalls = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => pool });
@@ -112,56 +107,28 @@ function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, activeCou
     isEnabled: () => true,
     getPR: async (owner, repo, pr) => {
       getPRCalls.push({ owner, repo, pr });
-      if (!getPRImpl) return { state: 'open', merged: false, draft: true,
-        node_id: 'PR_26', head: { sha: HEAD } };
-      return { draft: true, node_id: 'PR_26', ...(await getPRImpl(owner, repo, pr)) };
+      if (!getPRImpl) return { state: 'open', merged: false, draft: true, node_id: 'PR_26', head: { sha: HEAD } };
+      return getPRImpl(owner, repo, pr);
     },
-    reopenPR: async (owner, repo, pr) => {
-      reopenCalls.push({ owner, repo, pr });
-      if (reopenImpl) return reopenImpl(owner, repo, pr);
-      return {};
-    },
-    markPrReadyForReview: async (owner, repo, pr, existing) => {
-      octokitRequests.push({ owner, repo, pr, existing });
-      if (markReadyImpl) return markReadyImpl(owner, repo, pr, existing);
-      return { ...existing, draft: false };
-    },
+    // The route only reads: anything GitHub is asked to do is review.open's.
+    reopenPR: async (...a) => { githubWrites.push(['reopen', ...a]); },
+    markPrReadyForReview: async (...a) => { githubWrites.push(['ready', ...a]); },
   });
-  stub(ids.staging, {
-    rebuildProduction: async () => ({ ok: true }),
-    teardownStaging: async () => {},
-    verifyStagingEdge: async () => {},
-  });
+  stub(ids.staging, {});
   stub(ids.docker, {});
-  stub(ids.resolver, {
-    checkAndResolveConflicts: async () => {},
-    resolveAndMaybeRetry: async () => ({ ok: true }),
-    isResolving: () => false,
-  });
-  stub(ids.ws, {
-    sendSystemMessage: async (_pool, _appId, content) => { systemMessages.push(content); },
-    pushNotificationToUser() {},
-    pushVoteUpdate() {},
-    pushSessionUpdate() {},
-  });
-  stub(ids.activeUsers, {
-    getActiveUserStats: async () => ({ active: activeCount, majority: Math.floor(activeCount / 2) + 1 }),
-    isUserActive: async () => true,
-    mergeGate,
-  });
-  stub(ids.notifications, {
-    createPrProposedNotifications: async () => [],
-    serialize: (x) => x,
-  });
+  stub(ids.resolver, { checkAndResolveConflicts: async () => {}, isResolving: () => false });
+  stub(ids.ws, { sendSystemMessage: async () => {}, pushNotificationToUser() {}, pushVoteUpdate() {}, pushSessionUpdate() {} });
+  stub(ids.activeUsers, { getActiveUserStats: async () => ({ active: 1, majority: 1 }), isUserActive: async () => true, mergeGate });
+  stub(ids.notifications, {});
   stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminYesVote: async () => true });
   stub(ids.events, { record: () => {}, EVENT_TYPES: { PR_PROMOTED: 'pr_promoted', PR_MERGED: 'pr_merged' } });
   stub(ids.appAccess, { sessionCollabGuard: () => (_req, _res, next) => next() });
   stub(ids.topicAttrs, {});
-  stub(ids.previewWorkflow, {
-    revision: async ({ session, head, source, trigger }) => {
-      revisionCalls.push({ sessionId: session.id, head, source, trigger });
+  stub(ids.platform, {
+    async promoteProposal(p) {
+      promoteCalls.push(p);
+      return reply || { status: 200, body: { ok: true, prNumber: 26, prUrl: sessionRow.pr_url, prTitle: sessionRow.pr_title } };
     },
-    recheck: async () => ({ status: 'accepted' }),
   });
 
   delete require.cache[ids.subject];
@@ -172,24 +139,19 @@ function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, activeCou
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return {
-    voteRoutes, getPRCalls, reopenCalls, systemMessages, octokitRequests,
-    revisionCalls, restore,
-  };
+  return { voteRoutes, getPRCalls, githubWrites, promoteCalls, restore };
 }
 
-async function withServer({
-  getPRImpl, reopenImpl, markReadyImpl, session, expectedHandoffHead, expectedHandoffStatus, promotionMatches,
-  activeCount,
-} = {}, fn) {
-  const pool = promotePool(session, { promotionMatches });
-  const ctx = loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, activeCount });
+async function withServer({ getPRImpl, session, reply, handoff = null } = {}, fn) {
+  const pool = promotePool(session);
+  const ctx = loadVotesRouter({ getPRImpl, pool, reply });
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     req.user = { id: 3, username: 'evan' };
-    if (expectedHandoffHead) req.cliHandoffCheckedHead = expectedHandoffHead;
-    if (expectedHandoffStatus) req.cliHandoffStatus = expectedHandoffStatus;
+    if (handoff?.head) req.cliHandoffCheckedHead = handoff.head;
+    if (handoff?.status) req.cliHandoffStatus = handoff.status;
+    if (handoff?.operation) req.cliHandoffOperation = handoff.operation;
     next();
   });
   app.use(ctx.voteRoutes({ jwtSecret: 's', maxUserPromotedSessions: 3 }));
@@ -204,43 +166,50 @@ async function withServer({
   }
 }
 
-test('paused promotion goes directly to review and duplicate submissions do not repeat it', async () => {
-  await withServer({ session: { ...sessionRow, status: 'paused' } }, async ctx => {
-    const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+const promote = (ctx) => fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+
+test('the route hands the proposal machine the status it read, the cap, and the pull request as GitHub shows it', async () => {
+  await withServer({ session: { ...sessionRow, status: 'paused' } }, async (ctx) => {
+    const response = await promote(ctx);
     assert.equal(response.status, 200);
-    const update = ctx.pool.queries.find(q => /SET status = 'promoted'/.test(q.sql));
-    assert.match(update.sql, /WHERE id = \$1 AND status = \$3/);
-    assert.equal(update.params[2], 'paused');
-    assert.equal(update.params[1], HEAD);
-    assert.equal(ctx.pool.issued(/SET status = 'active'/), false);
-    assert.equal(ctx.pool.issued(/COUNT[\s\S]+status = 'active'/), false);
-    const duplicate = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
-    assert.equal(duplicate.status, 404);
+    assert.deepEqual(await response.json(), { ok: true, prNumber: 26, prUrl: sessionRow.pr_url, prTitle: sessionRow.pr_title });
     assert.equal(ctx.getPRCalls.length, 1);
-    assert.equal(ctx.revisionCalls.length, 0, 'the head its preview describes needs no new revision');
+    assert.deepEqual(ctx.getPRCalls[0], { owner: 'acme', repo: 'widget', pr: 26 });
+    assert.deepEqual(ctx.promoteCalls, [{
+      sessionId: 7, appId: 5, userId: 3, username: 'evan',
+      from: 'paused', cap: 3,
+      pr: { state: 'open', draft: true, merged: false, head: HEAD },
+      expectedHead: null, viaAgent: false, ownOperation: null,
+    }]);
+    assert.deepEqual(ctx.githubWrites, [], 'the route reads GitHub; it changes nothing there');
+    assert.equal(ctx.pool.issued(/UPDATE chat_sessions/), false, 'the status move is the machine\'s');
   });
 });
 
-// #3234: the vote's threshold counts active members live, so it can move
-// while voting is open. Promote stamps the electorate it opened with — the
-// same count the gate is handed — for the "was N when voting opened" note.
-test('promote stamps the active-member count the vote opened with', async () => {
-  await withServer({ session: { ...sessionRow, status: 'paused' }, activeCount: 7 }, async ctx => {
-    const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
-    assert.equal(response.status, 200);
-    const update = ctx.pool.queries.find(q => /SET status = 'promoted'/.test(q.sql));
-    assert.match(update.sql, /active_users_at_promote = \$4/);
-    assert.equal(update.params[3], 7);
+test('a merged or closed pull request is passed as read, for the machine to refuse', async () => {
+  await withServer({ getPRImpl: async () => ({ state: 'closed', merged: true, draft: false, head: { sha: 'not-a-sha' } }) }, async (ctx) => {
+    await promote(ctx);
+    assert.deepEqual(ctx.promoteCalls[0].pr, { state: 'closed', draft: false, merged: true, head: null },
+      'a head that is not a commit sha is passed as none');
+  });
+});
+
+test('a session without a pull request is promoted with none (review.open opens it)', async () => {
+  await withServer({ session: { ...sessionRow, pr_number: null, pr_title: null, pr_url: null } }, async (ctx) => {
+    assert.equal((await promote(ctx)).status, 200);
+    assert.equal(ctx.getPRCalls.length, 0);
+    assert.equal(ctx.promoteCalls[0].pr, null);
   });
 });
 
 test('paused promotion preserves ownership, headless, and terminal status exclusions', async () => {
   for (const patch of [{ user_id: 99 }, { is_headless: true }, { status: 'archived' },
     { status: 'promoted' }, { status: 'merging' }, { status: 'merged' }]) {
-    await withServer({ session: { ...sessionRow, status: 'paused', ...patch } }, async ctx => {
-      const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+    await withServer({ session: { ...sessionRow, status: 'paused', ...patch } }, async (ctx) => {
+      const response = await promote(ctx);
       assert.equal(response.status, 404);
       assert.equal(ctx.getPRCalls.length, 0);
+      assert.equal(ctx.promoteCalls.length, 0);
       // The promote route's own lookup, found by what it selects rather than
       // by position: the community membership gate (services/communities.js)
       // runs its read ahead of it on the same pool.
@@ -253,214 +222,242 @@ test('paused promotion preserves ownership, headless, and terminal status exclus
 
 test('a lifecycle change after native preflight requires a fresh submission', async () => {
   await withServer({ session: { ...sessionRow, source: 'cli_handoff', status: 'paused' },
-    expectedHandoffHead: HEAD, expectedHandoffStatus: 'active' }, async ctx => {
-    const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+    handoff: { head: HEAD, status: 'active' } }, async (ctx) => {
+    const response = await promote(ctx);
     assert.equal(response.status, 409);
     assert.equal((await response.json()).error, 'session_state_changed');
     assert.equal(ctx.getPRCalls.length, 0);
+    assert.equal(ctx.promoteCalls.length, 0);
   });
 });
 
-// #3173 / #3043: a managed change can now be submitted with its preview
-// gone (the idle sweep reclaimed it). It must get its preview back and its
-// checks re-run on the reviewed commit: the route hands that exact head to
-// the preview machine, which builds it (or joins a run of it already going).
-const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
-
-test('promote hands a reclaimed preview\'s reviewed head to the preview machine', async () => {
-  await withServer({ session: { ...sessionRow, source: 'cli_handoff', status: 'paused',
-    staging_url: null, check_state: 'passing' },
-  expectedHandoffHead: HEAD, expectedHandoffStatus: 'paused' }, async (ctx) => {
-    const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
-    assert.equal(response.status, 200);
-    await settle();
-    assert.deepEqual(ctx.revisionCalls, [{ sessionId: 7, head: HEAD, source: 'promote', trigger: 'promote-kick' }]);
+test('a CLI hand-off names the head its preflight checked and its own operation', async () => {
+  await withServer({ session: { ...sessionRow, source: 'cli_handoff', status: 'paused' },
+    handoff: { head: HEAD, status: 'paused', operation: 'op-17' } }, async (ctx) => {
+    assert.equal((await promote(ctx)).status, 200);
+    assert.equal(ctx.promoteCalls[0].expectedHead, HEAD, 'review.open refuses a head that moved since');
+    assert.equal(ctx.promoteCalls[0].ownOperation, 'op-17', 'the hand-off does not count as somebody working on it');
+    assert.equal(ctx.promoteCalls[0].from, 'paused');
   });
 });
 
-test('a concurrent lifecycle change prevents committing a paused submission', async () => {
-  await withServer({ session: { ...sessionRow, status: 'paused' }, promotionMatches: false }, async ctx => {
-    const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
-    assert.equal(response.status, 409);
-    assert.equal((await response.json()).error, 'session_state_changed');
-    assert.equal(ctx.systemMessages.length, 0);
-  });
-});
-
-test('promote: an open PR captures its head and promotes (no reopen call)', async () => {
-  await withServer({ getPRImpl: async () => ({ state: 'open', merged: false, head: { sha: HEAD } }) }, async (ctx) => {
-    const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
-    assert.equal(r.status, 200);
-    const body = await r.json();
-    assert.equal(body.ok, true);
-    assert.equal(body.prNumber, 26);
-    assert.equal(ctx.reopenCalls.length, 0);
-    assert.ok(ctx.pool.issued(/SET status = 'promoted', promoted_at = NOW\(\),[\s\S]*reviewed_head_sha/),
-      'session promoted with a reviewed head');
-    const update = ctx.pool.queries.find((q) => /reviewed_head_sha/.test(q.sql));
-    assert.equal(update.params[1], HEAD, 'live PR head persisted as the reviewed revision');
-    assert.equal(ctx.octokitRequests.length, 1, 'a native draft is marked ready at promotion');
-    assert.equal(ctx.octokitRequests[0].pr, 26);
-  });
-});
-
-test('promote: GitHub refusal to mark a draft ready leaves the session Underway', async () => {
-  await withServer({
-    getPRImpl: async () => ({ state: 'open', merged: false, draft: true,
-      node_id: 'PR_26', head: { sha: HEAD } }),
-    markReadyImpl: async () => { throw new Error('GraphQL unavailable'); },
-  }, async (ctx) => {
-    const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
-    assert.equal(response.status, 503);
-    assert.match((await response.json()).error, /ready for review/);
-    assert.equal(ctx.pool.issued(/SET status = 'promoted'/), true);
-    assert.equal(ctx.pool.issued(/SET status = \$1, promoted_at = \$2/), true,
-      'GitHub failure restores the pre-review session');
-  });
-});
-
-test('promote: a CLI handoff refuses a PR head that moved after its ready preflight', async () => {
-  const moved = 'c'.repeat(40);
-  await withServer({
-    session: { ...sessionRow, source: 'cli_handoff' },
-    expectedHandoffHead: HEAD,
-    getPRImpl: async () => ({ state: 'open', merged: false, head: { sha: moved } }),
-  }, async (ctx) => {
-    const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
-    assert.equal(r.status, 409);
-    const body = await r.json();
-    assert.equal(body.error, 'branch_head_changed');
-    assert.ok(!ctx.pool.issued(/SET status = 'promoted', promoted_at = NOW\(\)/),
-      'the raced, unchecked PR revision never enters voting');
-    assert.ok(!ctx.pool.issued(/SET check_state/),
-      'the verdict is the preview machine\'s; the 409 is what tells the author');
-  });
-});
-
-test('promote: a concurrent pause/archive cannot be overwritten by the final promotion write', async () => {
-  await withServer({
-    getPRImpl: async () => ({ state: 'open', merged: false, head: { sha: HEAD } }),
-    promotionMatches: false,
-  }, async (ctx) => {
-    const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
-    assert.equal(r.status, 409);
-    assert.deepEqual(await r.json(), { error: 'session_state_changed' });
-    assert.equal(ctx.octokitRequests.length, 0, 'no GitHub transition after a lost status CAS');
-    assert.equal(ctx.systemMessages.length, 0,
-      'a promotion that lost the active-state CAS emits no proposal announcement');
-  });
-});
-
-test('promote: retained votes are limited to the newly reviewed revision', async () => {
-  await withServer({
-    session: { ...sessionRow, reviewed_head_sha: OLD_HEAD },
-    getPRImpl: async () => ({ state: 'open', merged: false, head: { sha: HEAD } }),
-  }, async (ctx) => {
-    const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
-    assert.equal(r.status, 200);
-    const deletion = ctx.pool.queries.find((q) => /DELETE FROM pr_votes/.test(q.sql));
-    assert.ok(deletion, 'stale or unbound votes are cleared on re-promotion');
-    assert.match(deletion.sql, /head_sha IS DISTINCT FROM \$2/);
-    assert.deepEqual(deletion.params, [sessionRow.id, HEAD]);
-  });
-});
-
-test('promote: a closed-unmerged PR is reopened, then promoted', async () => {
-  await withServer({ getPRImpl: async () => ({ state: 'closed', merged: false, head: { sha: HEAD } }) }, async (ctx) => {
-    const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
-    assert.equal(r.status, 200);
-    assert.deepEqual(ctx.reopenCalls, [{ owner: 'acme', repo: 'widget', pr: 26 }]);
-    assert.ok(ctx.pool.issued(/SET status = 'promoted', promoted_at = NOW\(\),[\s\S]*reviewed_head_sha/), 'session promoted');
-  });
-});
-
-test('promote: an active imported PR captures its head without publishing its draft', async () => {
-  const imported = {
-    ...sessionRow,
-    source: 'imported',
-    imported_pr_head_sha: OLD_HEAD,
-    checks_commit_sha: HEAD,
-  };
-  await withServer({
-    session: imported,
-    getPRImpl: async () => ({ state: 'open', merged: false, head: { sha: HEAD } }),
-  }, async (ctx) => {
-    const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
-    assert.equal(r.status, 200);
-    assert.equal(ctx.reopenCalls.length, 0);
-    const update = ctx.pool.queries.find((q) => /SET status = 'promoted'/.test(q.sql));
-    assert.ok(update);
-    assert.match(update.sql, /imported_pr_head_sha = CASE WHEN source = 'imported'/);
-    assert.equal(update.params[1], HEAD, 'the live imported head is the reviewed revision');
-    assert.equal(ctx.octokitRequests.length, 0,
-      'local promotion must not change an externally owned PR on GitHub');
-  });
-});
-
-test('promote: an imported head change goes to the preview machine before voting opens', async () => {
-  const imported = {
-    ...sessionRow,
-    source: 'imported',
-    imported_pr_head_sha: OLD_HEAD,
-    checks_commit_sha: OLD_HEAD,
-  };
-  await withServer({
-    session: imported,
-    getPRImpl: async () => ({ state: 'open', merged: false, head: { sha: HEAD } }),
-  }, async (ctx) => {
-    const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
-    assert.equal(r.status, 200);
-    assert.deepEqual(ctx.revisionCalls, [{ sessionId: imported.id, head: HEAD, source: 'imported', trigger: 'pr-import' }],
-      'the new head is handed off before the promote response; the machine re-pends its verdict');
-  });
-});
-
-test('promote: a closed imported PR is refused without reopening it', async () => {
-  await withServer({
-    session: { ...sessionRow, source: 'imported', imported_pr_head_sha: OLD_HEAD },
-    getPRImpl: async () => ({ state: 'closed', merged: false, head: { sha: HEAD } }),
-  }, async (ctx) => {
-    const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
-    assert.equal(r.status, 409);
-    assert.match((await r.json()).error, /closed on GitHub/i);
-    assert.equal(ctx.reopenCalls.length, 0, 'the platform does not reopen an external PR');
-    assert.ok(!ctx.pool.issued(/SET status = 'promoted'/));
-  });
-});
-
-test('promote: a closed PR whose reopen is refused → 409, session NOT promoted', async () => {
-  await withServer({
-    getPRImpl: async () => ({ state: 'closed', merged: false, head: { sha: HEAD } }),
-    reopenImpl: async () => { throw new Error('head branch was deleted'); },
-  }, async (ctx) => {
-    const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
-    assert.equal(r.status, 409);
-    const body = await r.json();
-    assert.match(body.error, /couldn't be reopened/i, 'error explains the reopen failure');
-    assert.ok(!ctx.pool.issued(/SET status = 'promoted', promoted_at = NOW\(\)/),
-      'a doomed proposal is never promoted');
-  });
-});
-
-test('promote: an already-merged PR → 409 (nothing left to vote on)', async () => {
-  await withServer({ getPRImpl: async () => ({ state: 'closed', merged: true }) }, async (ctx) => {
-    const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
-    assert.equal(r.status, 409);
-    const body = await r.json();
-    assert.match(body.error, /already merged/i);
-    assert.equal(ctx.reopenCalls.length, 0, 'a merged PR is never reopened');
-    assert.ok(!ctx.pool.issued(/SET status = 'promoted', promoted_at = NOW\(\)/));
-  });
+test('the route answers with what the machine answered', async () => {
+  const replies = [
+    { status: 409, body: { error: 'session_state_changed' } },
+    { status: 409, body: { error: 'branch_head_changed', message: 'The proposal branch changed after checks.' } },
+    { status: 503, body: { error: 'GitHub could not mark the draft pull request ready for review.' } },
+    { status: 202, body: { ok: true, pending: true, message: 'Being put up for a vote.' } },
+  ];
+  for (const reply of replies) {
+    await withServer({ reply }, async (ctx) => {
+      const r = await promote(ctx);
+      assert.equal(r.status, reply.status);
+      assert.deepEqual(await r.json(), reply.body);
+    });
+  }
 });
 
 test('promote: a transient PR-state GET failure fails closed before voting', async () => {
   await withServer({ getPRImpl: async () => { throw new Error('api hiccup'); } }, async (ctx) => {
-    const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+    const r = await promote(ctx);
     assert.equal(r.status, 503);
-    const body = await r.json();
-    assert.match(body.error, /could not verify/i);
-    assert.equal(ctx.reopenCalls.length, 0);
-    assert.ok(!ctx.pool.issued(/SET status = 'promoted', promoted_at = NOW\(\)/),
-      'an unverified revision never enters voting');
+    assert.match((await r.json()).error, /could not verify/i);
+    assert.equal(ctx.promoteCalls.length, 0, 'an unverified revision never enters voting');
   });
+});
+
+// ── 2. review.open ───────────────────────────────────────────────────────
+
+const servicesPath = require.resolve('../src/workflow/proposal/services.ts');
+const { proposalServices } = require(servicesPath);
+const { WORK } = require('../src/workflow/proposal/machine.ts');
+
+// Runs the machine's review.open for `row` with GitHub and the legacy
+// modules it reaches (through src/workflow/legacy.ts, the shared require
+// cache) stubbed.
+async function reviewOpen(row, { getPRImpl, reopenImpl, markReadyImpl, expectedHead = null } = {}) {
+  const ids = {
+    github: require.resolve('../src/services/github'),
+    appAdmins: require.resolve('../src/services/app-admins'),
+  };
+  const orig = {};
+  for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
+  const calls = { getPR: [], reopen: [], ready: [], explicit: [] };
+  stub(ids.github, {
+    isEnabled: () => true,
+    getPR: async (owner, repo, pr) => {
+      calls.getPR.push({ owner, repo, pr });
+      return { draft: true, node_id: 'PR_26', ...(getPRImpl ? await getPRImpl() : { state: 'open', merged: false, head: { sha: HEAD } }) };
+    },
+    reopenPR: async (owner, repo, pr) => {
+      calls.reopen.push({ owner, repo, pr });
+      return reopenImpl ? reopenImpl() : {};
+    },
+    markPrReadyForReview: async (owner, repo, pr, existing) => {
+      calls.ready.push({ owner, repo, pr, existing });
+      return markReadyImpl ? markReadyImpl() : { ...existing, draft: false };
+    },
+  });
+  stub(ids.appAdmins, { refreshExplicitApproval: async (_pool, _row, next) => { calls.explicit.push(next.reviewed_head_sha); } });
+  const pool = {
+    async query(sql) {
+      if (/FROM chat_sessions cs JOIN apps a/.test(String(sql))) return { rows: [{ ...row }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  try {
+    const handler = proposalServices({ config: {}, pool })[WORK.open];
+    let result = null;
+    let error = null;
+    try {
+      result = await handler.run({ input: { sessionId: row.id, n: 1, userId: 3, expectedHead, imported: row.source === 'imported' } });
+    } catch (err) {
+      error = err;
+    }
+    return { result, error, calls };
+  } finally {
+    for (const [k, id] of Object.entries(ids)) {
+      if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
+    }
+  }
+}
+
+const reviewRow = { ...sessionRow, app_slug: 'widget', source: null };
+
+test('review.open: an open PR captures its head, is marked ready for review, and is not reopened', async () => {
+  const { result, error, calls } = await reviewOpen(reviewRow);
+  assert.equal(error, null);
+  assert.deepEqual(result, { head: HEAD, prNumber: 26, prUrl: sessionRow.pr_url, prTitle: sessionRow.pr_title, issueLinkSeeded: false });
+  assert.equal(calls.reopen.length, 0);
+  assert.equal(calls.ready.length, 1, 'a native draft is marked ready before the vote opens (bug 9)');
+  assert.equal(calls.ready[0].pr, 26);
+  assert.equal(calls.ready[0].existing.head.sha, HEAD, 'the PR it read is handed on, so no second read');
+  assert.deepEqual(calls.explicit, [HEAD], 'the explicit-approval stamp reads the head about to be reviewed');
+});
+
+test('review.open: GitHub refusing to mark a draft ready fails the move, and it is retried', async () => {
+  const { error } = await reviewOpen(reviewRow, { markReadyImpl: async () => { throw new Error('GraphQL unavailable'); } });
+  assert.equal(error.code, 'ready_failed', 'platform answers ready_failed 503 and the change stays Underway');
+  assert.match(error.message, /ready for review/);
+  assert.notEqual(error.permanent, true, 'a GitHub hiccup is retried before the promote is refused');
+});
+
+test('review.open: a CLI hand-off refuses a PR head that moved after its ready preflight', async () => {
+  const moved = 'c'.repeat(40);
+  const { error, calls } = await reviewOpen({ ...reviewRow, source: 'cli_handoff' }, {
+    expectedHead: HEAD, getPRImpl: async () => ({ state: 'open', merged: false, head: { sha: moved } }),
+  });
+  assert.equal(error.code, 'branch_head_changed');
+  assert.equal(error.permanent, true);
+  assert.equal(calls.ready.length, 0, 'the raced, unchecked PR revision is never readied for the vote');
+});
+
+test('review.open: a closed-unmerged native PR is reopened, then readied', async () => {
+  const { result, error, calls } = await reviewOpen(reviewRow, { getPRImpl: async () => ({ state: 'closed', merged: false, head: { sha: HEAD } }) });
+  assert.equal(error, null);
+  assert.deepEqual(calls.reopen, [{ owner: 'acme', repo: 'widget', pr: 26 }]);
+  assert.equal(calls.ready.length, 1);
+  assert.equal(result.head, HEAD);
+});
+
+test('review.open: a closed PR whose reopen is refused is refused, with an actionable message', async () => {
+  const { error } = await reviewOpen(reviewRow, {
+    getPRImpl: async () => ({ state: 'closed', merged: false, head: { sha: HEAD } }),
+    reopenImpl: async () => { throw new Error('head branch was deleted'); },
+  });
+  assert.equal(error.code, 'reopen_failed', 'platform answers reopen_failed 409');
+  assert.equal(error.permanent, true);
+  assert.match(error.message, /couldn't be reopened/i);
+});
+
+test('review.open: an already-merged PR is refused (nothing left to vote on), never reopened', async () => {
+  const { error, calls } = await reviewOpen(reviewRow, { getPRImpl: async () => ({ state: 'closed', merged: true }) });
+  assert.equal(error.code, 'pr_merged');
+  assert.match(error.message, /already merged/i);
+  assert.equal(calls.reopen.length, 0);
+});
+
+test('review.open: an active imported PR captures its head without publishing its draft', async () => {
+  const imported = { ...reviewRow, source: 'imported', imported_pr_head_sha: OLD_HEAD };
+  const { result, error, calls } = await reviewOpen(imported, { getPRImpl: async () => ({ state: 'open', merged: false, draft: false, head: { sha: HEAD } }) });
+  assert.equal(error, null);
+  assert.equal(result.head, HEAD, 'the live imported head is the reviewed revision');
+  assert.equal(calls.reopen.length, 0);
+  assert.equal(calls.ready.length, 0, 'local promotion must not change an externally owned PR on GitHub');
+});
+
+test('review.open: a closed or draft imported PR is refused without touching it', async () => {
+  const imported = { ...reviewRow, source: 'imported', imported_pr_head_sha: OLD_HEAD };
+  const closed = await reviewOpen(imported, { getPRImpl: async () => ({ state: 'closed', merged: false, head: { sha: HEAD } }) });
+  assert.equal(closed.error.code, 'pr_closed');
+  assert.match(closed.error.message, /closed on GitHub/i);
+  assert.equal(closed.calls.reopen.length, 0, 'the platform does not reopen an external PR');
+  const draft = await reviewOpen(imported, { getPRImpl: async () => ({ state: 'open', merged: false, draft: true, head: { sha: HEAD } }) });
+  assert.equal(draft.error.code, 'pr_draft');
+  assert.equal(draft.calls.ready.length, 0);
+});
+
+test('review.open: a failed PR read is retried as GitHub being unavailable; a PR gone is refused', async () => {
+  const hiccup = await reviewOpen(reviewRow, { getPRImpl: async () => { throw new Error('api hiccup'); } });
+  assert.equal(hiccup.error.code, 'github_unavailable');
+  assert.notEqual(hiccup.error.permanent, true);
+  assert.match(hiccup.error.message, /could not verify/i);
+  const gone = await reviewOpen(reviewRow, { getPRImpl: async () => { throw Object.assign(new Error('Not Found'), { status: 404 }); } });
+  assert.equal(gone.error.code, 'pr_create_failed');
+  assert.equal(gone.error.permanent, true);
+  const bad = await reviewOpen(reviewRow, { getPRImpl: async () => ({ state: 'open', merged: false, head: { sha: 'nope' } }) });
+  assert.equal(bad.error.code, 'bad_head');
+});
+
+// ── 3. The move into review ──────────────────────────────────────────────
+
+const { proposal } = require('../src/workflow/proposal/machine.ts');
+const DEPS = { idleMs: 0, exemptFixtures: false, reviewCheckMs: 0, staleNotifyMs: 0, staleGraceMs: 0 };
+
+function opened({ imported = false, result, failed = null, electorate = 1 }) {
+  const m = proposal(DEPS);
+  const state = { name: 'proposing', data: {
+    sessionId: 7, appId: 5, imported, slot: imported ? 'none' : 'released', reason: null, claim: null, n: 1,
+    promoting: { n: 1, by: 3, byName: 'evan', prior: 'paused', expectedHead: null, viaAgent: false },
+    answer: null, pr: { running: 'open:1', next: null },
+  } };
+  const payload = { kind: WORK.open, workKey: 'open:1', workId: 9, attempt: 1,
+    ...(failed ? { error: failed } : { result }) };
+  const event = { id: 11, type: failed ? 'WorkFailed' : 'WorkSucceeded', payload, source: { kind: 'service', workId: 9 } };
+  const facts = { row: { id: 7, appId: 5, appSlug: 'widget', prNumber: 26, prTitle: 'Native iOS look', ownerName: 'evan',
+    ownerSynthetic: false, linkedIssues: [] }, electorate, caps: null, gate: null };
+  return m.entryFor('proposing', event.type).to(state, event, facts, { now: new Date(), key: 'session:7' });
+}
+
+test('in review: the head GitHub read and the active-member count the vote opened with are stamped', async () => {
+  // #3234: the vote's threshold counts active members live, so it can move
+  // while voting is open; the electorate it opened with is kept for the
+  // "was N when voting opened" note.
+  const out = opened({ result: { head: HEAD, prNumber: 26, prUrl: null, prTitle: 'Native iOS look' }, electorate: 7 });
+  assert.equal(out.next.name, 'in_review');
+  const w = out.writes.find((x) => x.type === 'promoted');
+  assert.equal(w.head, HEAD);
+  assert.equal(w.electorate, 7);
+  assert.equal(w.imported, false);
+});
+
+test('in review: the reviewed head goes to the preview machine, a native one as a promote, an imported one as an import', async () => {
+  // #3173 / #3043: a change submitted with its preview gone gets it back
+  // and its checks re-run on the reviewed commit; the preview machine joins
+  // a build or a verdict it already has for that head.
+  const native = opened({ result: { head: HEAD } });
+  assert.deepEqual(native.messages.map((m) => [m.to.machine, m.event.type, m.event.payload.head, m.event.payload.source]),
+    [['preview', 'RevisionSubmitted', HEAD, 'promote']]);
+  const imported = opened({ imported: true, result: { head: HEAD } });
+  assert.deepEqual(imported.messages.map((m) => [m.to.machine, m.event.type, m.event.payload.head, m.event.payload.source]),
+    [['preview', 'RevisionSubmitted', HEAD, 'imported']]);
+});
+
+test('a refused review.open sends the change back to Underway, with the answer the route gives', async () => {
+  const out = opened({ failed: { code: 'reopen_failed', message: 'This proposal\'s pull request (#26) was closed on GitHub and couldn\'t be reopened.' } });
+  assert.equal(out.next.name, 'underway');
+  assert.equal(out.next.data.slot, 'released', 'a paused change gets back no slot it gave up');
+  assert.deepEqual(out.next.data.answer, { n: 1, ok: false, code: 'reopen_failed',
+    message: 'This proposal\'s pull request (#26) was closed on GitHub and couldn\'t be reopened.' });
+  assert.equal((out.writes || []).some((w) => w.type === 'promoted' || w.type === 'line'), false, 'a doomed proposal is never promoted');
 });

@@ -83,8 +83,14 @@ function loadVotesWithFailingReport(reportError) {
     mergePR: async () => ({ sha: 'deadbeefcafe', merged: true }),
   });
   const reports = [];
+  // The promoted→merging claim and its release are the proposal machine's;
+  // a release after GitHub merged would put a merged PR back up for a vote.
+  const releases = [];
   stub(ids.platform, {
     mergeConfirmed: async (m) => { reports.push(m); throw reportError; },
+    claimMerge: async () => ({ status: 'accepted', eventId: 2, reply: { claim: 1 } }),
+    releaseMerge: async (r) => { releases.push(r); return { status: 'accepted', eventId: 3 }; },
+    abandonMerge: async () => ({ status: 'accepted', eventId: 4 }),
   });
   stub(ids.docker, {});
   stub(ids.resolver, {
@@ -116,7 +122,7 @@ function loadVotesWithFailingReport(reportError) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, voteUpdates, systemMessages, reports, restore };
+  return { subject, voteUpdates, systemMessages, reports, releases, restore };
 }
 
 const session = {
@@ -128,11 +134,10 @@ const session = {
 
 const pool = () => makeRecordingPool([
   [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '1' }]],
-  [/SET status = 'merging'/, [{ id: 7 }]],
 ]);
 
 test('a merge whose report to the machine fails stays merging for recovery, never promoted', async () => {
-  const { subject, voteUpdates, reports, restore } = loadVotesWithFailingReport(new Error('the workflow runtime is not running'));
+  const { subject, voteUpdates, reports, releases, restore } = loadVotesWithFailingReport(new Error('the workflow runtime is not running'));
   const p = pool();
   try {
     const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session }, { force: true });
@@ -146,6 +151,7 @@ test('a merge whose report to the machine fails stays merging for recovery, neve
     // Neither moved into 'merged' here nor rolled back to 'promoted'.
     assert.ok(!p.queries.some((q) => /SET\s+status = 'merged'/.test(q.sql)), 'only the machine moves a row into merged');
     assert.ok(!p.queries.some((q) => /SET status = 'promoted'\s+WHERE id/.test(q.sql)), 'never rolled back to promoted');
+    assert.deepEqual(releases, [], 'the merge claim is never given back');
     assert.ok(!voteUpdates.some((u) => u.mergeFailed), 'no mergeFailed broadcast on a merged PR');
   } finally {
     restore();

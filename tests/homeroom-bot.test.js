@@ -690,8 +690,9 @@ test('every issue starts a fresh model thread, through the platform\'s own readi
   assert.equal(out.verdict, 'question');
   assert.equal(calls.exec[0].opts.resumeSessionId, null, 'the dispatch resumes nothing');
   assert.equal(calls.exec[0].opts.resumeThreadId, null);
-  const start = calls.queries.find((q) => /SET status = 'active'/.test(q.s));
-  assert.match(start.s, /agent_thread_id = NULL/, 'and the saved thread is cleared in the row, for every later reader');
+  assert.deepEqual(calls.moves[0], ['takeSlot', 878, 0], 'the session takes its slot for the turn');
+  assert.ok(calls.queries.some((q) => /UPDATE chat_sessions SET agent_thread_id = NULL WHERE id = \$1/.test(q.s) && q.params[0] === 878),
+    'and the saved thread is cleared in the row, for every later reader');
 
   // The imitation is only worth something while it matches the platform.
   // (#3296 added a harness check after this read; it can only drop a thread,
@@ -1603,7 +1604,12 @@ test('the triage turn is a read-only scout: no build mode, no push, no posting, 
 test('the bot session is not work on any issue: is_headless FALSE, empty linked_issues, paused at rest', () => {
   const insert = SRC.slice(SRC.indexOf('INSERT INTO chat_sessions'), SRC.indexOf('RETURNING *', SRC.indexOf('INSERT INTO chat_sessions')));
   assert.match(insert, /'paused', FALSE, '\{\}'/);
-  assert.match(SRC, /SET status = 'paused', last_activity_at = NOW\(\)/, 'back to paused after every turn');
+  // Back to paused after every turn, through the proposal machine (its
+  // 'rest' pause), which refuses a session somebody works on.
+  const rest = SRC.slice(SRC.indexOf('async function pauseIdleSession'), SRC.indexOf('\n}\n', SRC.indexOf('async function pauseIdleSession')));
+  assert.match(rest, /require\('\.\/session-lifecycle'\)\.restSession\(\{ pool, sessionId \}\)/, 'back to paused after every turn');
+  assert.match(read('src/services/session-lifecycle.js'),
+    /async function restSession[\s\S]*?if \(!now \|\| now\.status !== 'active'\) return false;[\s\S]*?pauseProposal\(\{ sessionId: Number\(sessionId\), reason: 'rest', from: 'active' \}\)/);
   // Defence in depth on the board's two derivations, and the global cap.
   const issues = read('src/routes/issues.js');
   assert.equal((issues.match(/AND u\.is_synthetic IS NOT TRUE/g) || []).length, 2,
@@ -1617,7 +1623,11 @@ test('the bot session is not work on any issue: is_headless FALSE, empty linked_
   assert.ok(!require('../src/services/session-caps').GLOBAL_SESSIONS_SQL.includes(capClause),
     'the global-cap count includes synthetic sessions');
   assert.ok(!read('src/services/session-lifecycle.js').includes(capClause));
-  assert.equal((read('src/routes/sessions.js').match(/sessionLifecycle\.claimGlobalSlot\(/g) || []).length, 4);
+  assert.equal((read('src/routes/sessions.js').match(/sessionLifecycle\.claimGlobalSlot\(/g) || []).length, 3);
+  // The resume is the proposal machine's, which counts the platform-wide cap
+  // itself under its lock (its count includes synthetic sessions too).
+  assert.match(read('src/routes/sessions.js'), /platform\.resumeProposal\(\{[\s\S]*?caps: cap,/);
+  assert.ok(!read('src/workflow/proposal/facts.ts').includes('is_synthetic = TRUE'));
   assert.match(read('src/routes/proposal-handoff.js'), /sessionLifecycle\.claimGlobalSlot\(/);
 });
 
@@ -1681,8 +1691,16 @@ test('the triage prompt sends platform questions to the conventions tool, not to
 
 // ── runTriage with every dependency injected ─────────────────────────────
 
+// The bot session's slot moves go through the proposal machine
+// (session-lifecycle's takeSlot and restSession), which no fake pool runs:
+// each harness stands in for both and records every move with how many
+// turns had run when it was made.
+const sessionLifecycle = require('../src/services/session-lifecycle');
+
 function triageHarness({ verdictText, routed = null, budgetError = null, sessionId = 501, result = null } = {}) {
-  const calls = { queries: [], exec: [], spend: [], ensured: [] };
+  const calls = { queries: [], exec: [], spend: [], ensured: [], moves: [] };
+  sessionLifecycle.takeSlot = async ({ sessionId: id }) => { calls.moves.push(['takeSlot', id, calls.exec.length]); return true; };
+  sessionLifecycle.restSession = async ({ sessionId: id }) => { calls.moves.push(['restSession', id, calls.exec.length]); return true; };
   const pool = {
     async query(sql, params) {
       const s = String(sql);
@@ -1758,8 +1776,9 @@ test('runTriage: one scout turn, a fresh thread, a recorded verdict, a debited c
   assert.equal(insert.params[8], 'Route map');
   assert.equal(insert.params[14], 0.0123);
   assert.ok(calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31));
-  const statuses = calls.queries.filter((q) => /UPDATE chat_sessions SET status/.test(q.s)).map((q) => q.s.match(/status = '(\w+)'/)[1]);
-  assert.deepEqual(statuses, ['active', 'paused'], 'active only while the turn runs');
+  // Through the proposal machine: the slot taken before the turn, given
+  // back after it.
+  assert.deepEqual(calls.moves, [['takeSlot', 501, 0], ['restSession', 501, 1]], 'active only while the turn runs');
   assert.equal(deps.activeWorkers.size, 0, 'released after the turn');
 });
 
@@ -1948,8 +1967,8 @@ test('runTriage: a reply that decided in words is asked once, on its own thread,
   assert.ok(Math.abs(insert.params[14] - 0.025) < 1e-9, 'the row costs both turns');
   assert.deepEqual([insert.params[15], insert.params[16]], [2200, 80], 'and carries both turns\' tokens');
   assert.deepEqual(h.calls.spend.map((s) => s.cents), [2, 0.5], 'each turn joins the weekly pool');
-  const statuses = h.calls.queries.filter((q) => /UPDATE chat_sessions SET status/.test(q.s)).map((q) => q.s.match(/status = '(\w+)'/)[1]);
-  assert.deepEqual(statuses, ['active', 'paused', 'active', 'paused'], 'active only while each turn runs');
+  assert.deepEqual(h.calls.moves, [['takeSlot', 951, 0], ['restSession', 951, 1], ['takeSlot', 951, 1], ['restSession', 951, 2]],
+    'active only while each turn runs');
   assert.equal(h.deps.activeWorkers.size, 0, 'released after the second turn');
   assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s)), 'the row is consumed by the verdict');
 });

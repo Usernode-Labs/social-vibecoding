@@ -24,7 +24,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const machineTs = fs.readFileSync(path.join(root, 'src/workflow/merge-followups/machine.ts'), 'utf8');
 const stagingJs = fs.readFileSync(path.join(root, 'src/services/staging.js'), 'utf8');
-const lifecycleJs = fs.readFileSync(path.join(root, 'src/services/session-lifecycle.js'), 'utf8');
+const proposalTs = fs.readFileSync(path.join(root, 'src/workflow/proposal/machine.ts'), 'utf8');
 
 const slice = (src, from, to) => {
   const start = src.indexOf(from);
@@ -47,7 +47,8 @@ test('the pending value is applied in the transition that asks for the deploy', 
   // The deploy is a message to app-delivery, sent by the outbox only once
   // the transition (and so the values) has committed.
   assert.match(merged, /writes: \[\{ type: 'secrets', eventId: e\.id, sessionId: d\.sessionId, appId: d\.appId \}/);
-  assert.match(merged, /const messages = d\.delivery \? \[deliveryRequest\(d, reuseOf\(f\)\)\] : \[\]/);
+  // The proposal machine hears it merged in the same outcome.
+  assert.match(merged, /const messages = \[toProposal\(d\), \.\.\.\(d\.delivery \? \[deliveryRequest\(d, reuseOf\(f\)\)\] : \[\]\)\]/);
   assert.match(merged, /work, messages, notify, push/, 'the same outcome carries both');
 });
 
@@ -94,12 +95,12 @@ test('staging injects pending NON-private values into the proposal\'s own previe
 });
 
 test('a withdrawn proposal discards its held value', () => {
-  const archive = lifecycleJs.slice(
-    lifecycleJs.indexOf('async function archiveSession('),
-    lifecycleJs.indexOf('// Reverse an archive')
-  );
-  assert.match(archive, /discardForSession\(pool, sessionId\)/);
-  assert.match(archive, /catch/, 'and never fails the archive itself');
+  // A close is the proposal machine's (src/workflow/proposal/machine.ts):
+  // the held value is discarded in the close's own transaction, so it
+  // cannot outlive the proposal and cannot fail the close half-way.
+  const closed = slice(proposalTs, '  closed: async (tx: Tx, w: any, ctx: WriteContext) => {', '\n  },\n');
+  assert.match(closed, /UPDATE pending_secret_declarations SET status = 'discarded', value_enc = NULL\s+WHERE session_id = \$1 AND status = 'pending'/);
+  assert.match(closed, /\[w\.sessionId\]/, 'scoped to THIS proposal');
 });
 
 test('the pre-merge check counts a value carried by THIS session', () => {

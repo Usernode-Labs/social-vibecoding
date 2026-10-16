@@ -5,7 +5,8 @@
 // looped still_conflicting forever (session 2398 / PR #26: withdrawn →
 // re-promoted without a reopen). Now: closed-unmerged → reopen and fall
 // through to the normal conflict handling; reopen refused → terminal
-// pr_closed (session paused, honest group-chat message, no resolver);
+// pr_closed (no resolver; the proposal machine's MergeAbandoned takes it off
+// the vote, says so in its thread and un-latches the clients);
 // open PR / transient GET failure → the conflict path, unchanged.
 //
 // Same require.cache stubbing pattern as votes-checks-gate.test.js —
@@ -56,6 +57,7 @@ function loadVotes({ getPRImpl, reopenImpl } = {}) {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     staging: require.resolve('../src/services/staging'),
     docker: require.resolve('../src/services/docker'),
     resolver: require.resolve('../src/services/conflict-resolver'),
@@ -77,6 +79,7 @@ function loadVotes({ getPRImpl, reopenImpl } = {}) {
   const getPRCalls = [];
   const reopenCalls = [];
   const resolverCalls = [];
+  const machine = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => makeRecordingPool([]) });
@@ -97,6 +100,15 @@ function loadVotes({ getPRImpl, reopenImpl } = {}) {
       if (reopenImpl) return reopenImpl(owner, repo, pr);
       return {};
     },
+  });
+  // The claim, its release and the closed-PR abandon are the proposal
+  // machine's; each event is recorded in `machine`.
+  const event = (type) => async (p) => { machine.push({ type, ...p }); return { status: 'accepted', eventId: machine.length, reply: { claim: 1 } }; };
+  stub(ids.platform, {
+    mergeConfirmed: event('Merged'),
+    claimMerge: event('MergeClaim'),
+    releaseMerge: event('MergeReleased'),
+    abandonMerge: event('MergeAbandoned'),
   });
   stub(ids.staging, {
     rebuildProduction: async () => ({ ok: true }),
@@ -140,7 +152,8 @@ function loadVotes({ getPRImpl, reopenImpl } = {}) {
   };
   return {
     subject, systemMessages, voteUpdates, sessionUpdates,
-    getPRCalls, reopenCalls, resolverCalls, restore,
+    getPRCalls, reopenCalls, resolverCalls, machine, restore,
+    abandoned: () => machine.filter((m) => m.type === 'MergeAbandoned'),
   };
 }
 
@@ -156,7 +169,6 @@ function mergingPool() {
   return makeRecordingPool([
     [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '1' }]],
     [/SELECT check_state, test_results[\s\S]*FROM chat_sessions/, [{ check_state: 'passing', test_results: [{ status: 'pass' }], check_error_detail: null }]],
-    [/SET status = 'merging'/, [{ id: 7 }]],
   ]);
 }
 
@@ -171,7 +183,7 @@ test('405 + closed-unmerged PR + reopen OK → reopened, normal conflict path co
     assert.equal(r.conflict, true, 'still surfaced as a conflict after the reopen');
     assert.deepEqual(ctx.reopenCalls, [{ owner: 'acme', repo: 'whiteboard', pr: 52 }]);
     assert.ok(ctx.resolverCalls.length >= 1, 'the auto-resolver is queued as usual');
-    assert.ok(!p.issued(/SET status = 'paused'/), 'session is not paused on the reopen-success path');
+    assert.equal(ctx.abandoned().length, 0, 'the proposal stays on the vote on the reopen-success path');
   } finally {
     ctx.restore();
   }
@@ -188,16 +200,18 @@ test('405 + closed-unmerged PR + reopen refused → terminal pr_closed, no resol
     assert.equal(r.merged, false);
     assert.equal(r.prClosed, true);
     assert.equal(r.conflict, false, 'a dead PR is not reported as a conflict');
-    assert.ok(p.issued(/SET status = 'paused'/), 'the proposal leaves the vote panel');
+    // The claim is given back, then the proposal machine takes the proposal
+    // off the vote (MergeAbandoned). Its transition writes the thread line
+    // ("closed on GitHub ... Re-propose it") and pushes the mergeFailed /
+    // no-resolving vote update and the board's 'paused' refresh, so none of
+    // those is checkAndMerge's any more.
+    assert.deepEqual(ctx.machine.map((m) => m.type), ['MergeClaim', 'MergeReleased', 'MergeAbandoned']);
+    assert.deepEqual(ctx.abandoned().map(({ sessionId, from, reason }) => ({ sessionId, from, reason })),
+      [{ sessionId: 7, from: 'promoted', reason: 'pr_closed' }], 'the proposal leaves the vote panel');
+    assert.ok(!p.issued(/SET status = 'paused'/), 'the status is the machine\'s to write');
     assert.ok(!p.issued(/GREATEST\(behind_main, 1\)/), 'no speculative behind/conflict bump');
     assert.equal(ctx.resolverCalls.length, 0, 'the auto-resolver is never queued');
-    assert.ok(ctx.systemMessages.some((m) => /closed on GitHub/.test(m) && /re-propose/i.test(m)),
-      'the group chat explains the PR is closed and how to recover');
-    // Clients are un-latched (the merging:true broadcast armed banners).
-    assert.ok(ctx.voteUpdates.some((u) => u.mergeFailed === true && u.resolving === false),
-      'a mergeFailed/no-resolving broadcast un-latches clients');
-    assert.ok(ctx.sessionUpdates.some((u) => u.action === 'paused'),
-      'session lists refresh off the pause');
+    assert.ok(!ctx.systemMessages.some((m) => /conflict/i.test(m)), 'no conflict line for a dead PR');
   } finally {
     ctx.restore();
   }
@@ -227,7 +241,7 @@ test('405 + transient PR-state GET failure → falls through to the conflict pat
     const r = await ctx.subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
     assert.equal(r.conflict, true, 'a GET hiccup must not invent a pr_closed verdict');
     assert.equal(ctx.reopenCalls.length, 0);
-    assert.ok(!p.issued(/SET status = 'paused'/));
+    assert.equal(ctx.abandoned().length, 0);
   } finally {
     ctx.restore();
   }

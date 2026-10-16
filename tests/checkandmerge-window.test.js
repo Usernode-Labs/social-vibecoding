@@ -27,9 +27,13 @@ function stub(id, exports) {
 
 // Pool that matches SQL by regex. Each handler returns rows (or a function of
 // params). The window tests need distinct yes/no vote counts and to observe
-// whether the promoted→merging claim ran.
+// whether the promoted→merging claim ran. The claim is the proposal
+// machine's (platform.ts claimMerge), so the platform stub records each one
+// into the claims of the pool made last.
+let currentClaims = [];
 function makePool(opts) {
   const claims = [];
+  currentClaims = claims;
   const records = [];
   const pool = {
     async query(sql, params) {
@@ -46,10 +50,6 @@ function makePool(opts) {
       }
       if (/vote = 'yes'/.test(sql)) return { rows: [{ cnt: String(opts.yes) }] };
       if (/vote = 'no'/.test(sql)) return { rows: [{ cnt: String(opts.no) }] };
-      if (/SET status = 'merging'/.test(sql)) {
-        claims.push(params);
-        return { rows: [{ id: opts.sessionId }] };
-      }
       // #47 checks gate: this suite exercises the vote/window gates, so the
       // proposal's checks are always green here.
       if (/SELECT check_state, test_results, checks_checked_at/.test(sql)) {
@@ -91,6 +91,9 @@ function loadVotes() {
   const reports = [];
   stub(ids.platform, {
     mergeConfirmed: async (m) => { reports.push(m); return { status: 'accepted', eventId: 1 }; },
+    claimMerge: async (c) => { currentClaims.push(c); return { status: 'accepted', eventId: 2, reply: { claim: 1 } }; },
+    releaseMerge: async () => ({ status: 'accepted', eventId: 3 }),
+    abandonMerge: async () => ({ status: 'accepted', eventId: 4 }),
   });
   stub(ids.docker, {});
   stub(ids.resolver, {

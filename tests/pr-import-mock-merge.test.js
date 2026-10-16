@@ -75,6 +75,7 @@ function loadVotes() {
   const voteUpdates = [];
   const systemMessages = [];
   const reports = [];
+  const claims = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => makeRecordingPool([]) });
@@ -89,8 +90,13 @@ function loadVotes() {
     invalidateIssuesCache() {},
     noteIssuesClosed() {},
   });
+  // The merge's claim and its releases are the proposal machine's
+  // (platform.claimMerge / releaseMerge): granted here, and recorded.
   stub(ids.platform, {
     mergeConfirmed: async (m) => { reports.push(m); return { status: 'accepted', eventId: 1 }; },
+    claimMerge: async (c) => { claims.push(['claim', c]); return { status: 'accepted', reply: { claim: 1 } }; },
+    releaseMerge: async (r) => { claims.push(['release', r]); return { status: 'accepted', reply: {} }; },
+    abandonMerge: async (r) => { claims.push(['abandon', r]); return { status: 'accepted', reply: {} }; },
   });
   stub(ids.docker, {});
   stub(ids.resolver, { checkAndResolveConflicts: async () => {}, resolveAndMaybeRetry: async () => ({ ok: true }), isResolving: () => false });
@@ -123,7 +129,7 @@ function loadVotes() {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, realMergeCalls, voteUpdates, systemMessages, reports, restore };
+  return { subject, realMergeCalls, voteUpdates, systemMessages, reports, claims, restore };
 }
 
 const PR = 9401;
@@ -136,9 +142,7 @@ function importedSession(headSha) {
   };
 }
 function mergeReadyPool() {
-  return makeRecordingPool([
-    [/SET status = 'merging'/, [{ id: 71 }]],
-  ]);
+  return makeRecordingPool([]);
 }
 
 // The mock merge client is selected whenever USERNODE_ENV === 'staging'
@@ -174,7 +178,7 @@ test('checkAndMerge (mock): imported merge with a matching head succeeds via the
 test('checkAndMerge (mock): a stale pinned head is refused (headMoved) and left recoverable', async () => {
   githubMock._resetForTests();
   await withStagingEnv(async () => {
-    const { subject, realMergeCalls, voteUpdates, systemMessages, reports, restore } = loadVotes();
+    const { subject, realMergeCalls, voteUpdates, systemMessages, reports, claims, restore } = loadVotes();
     const pool = mergeReadyPool();
     try {
       // Simulate: the vote was cast on an older commit; the mock head is now newer.
@@ -186,10 +190,8 @@ test('checkAndMerge (mock): a stale pinned head is refused (headMoved) and left 
       assert.equal(realMergeCalls.length, 0, 'real client never used');
       assert.equal(reports.length, 0, 'no merge reported on a refused merge');
 
-      assert.ok(
-        pool.queries.some((q) => /SET status = 'promoted'\s+WHERE id = \$1 AND status = 'merging'/.test(q.sql)),
-        'row released back to promoted (recoverable)'
-      );
+      assert.deepEqual(claims.filter(([k]) => k === 'release').map(([, r]) => [r.claim, r.reason]), [[1, 'head_moved']],
+        'the merge claim is given back: the proposal machine returns it to review (recoverable)');
       assert.ok(!pool.queries.some((q) => /SET\s+status = 'merged'/.test(q.sql)), 'never marked merged');
       assert.ok(systemMessages.some((m) => /updated on GitHub/i.test(m.content)), 're-review note posted');
       assert.ok(voteUpdates.some((u) => u.headMoved === true), 'headMoved broadcast');

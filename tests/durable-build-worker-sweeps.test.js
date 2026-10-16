@@ -10,14 +10,18 @@
 // adopts them (sweepLeftWarmWorkers, which keeps a durable build's worker:
 // adoptOrphanWorker). The new process's own sweeps could then stop the
 // worker a DRAINING process's build is still using between its turns: the
-// idle eviction (idle 10 minutes) and the auto-pause sweeper (idle minutes,
-// then pauseSession destroys the worker). Slot eviction is pinned in
-// tests/session-lifecycle.test.js.
+// idle eviction (idle 10 minutes) and the idle pause (idle minutes, then the
+// pause destroys the worker). The idle pause is the proposal machine's
+// IdleCheck now (src/workflow/proposal/machine.ts), which reads the build's
+// hold under the session's lock with everything else it decides on; slot
+// eviction is the same machine's Pause guard (P8 in
+// tests/workflow-proposal-postgres.test.js).
 //
-// Pinned here: each sweep skips a session a durable build holds, says so
-// once, and still acts on every other; a read that fails is today's
+// Pinned here: the idle eviction skips a session a durable build holds, says
+// so once, and still acts on every other; a read that fails is today's
 // behaviour. The holds are answered by the real holdsSession, from a pool
-// that plays the database.
+// that plays the database. The idle check's own decision is driven as the
+// pure transition it is.
 //
 // Run with: node --test tests/durable-build-worker-sweeps.test.js
 
@@ -33,8 +37,8 @@ process.env.ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt';
 require('./platform-keys').setPlatformKeys();
 
-// ── The database, as holdsSession and the auto-pause pass read it ────────
-const db = { held: new Set(), fail: false, idle: [] };
+// ── The database, as holdsSession reads it ──────────────────────────────
+const db = { held: new Set(), fail: false };
 const calls = [];
 const pool = {
   async query(sql, params) {
@@ -42,9 +46,6 @@ const pool = {
     if (/FROM wf_instances w/.test(sql)) {
       if (db.fail) throw new Error('connection reset');
       return { rows: [{ held: db.held.has(Number(params[0])) }] };
-    }
-    if (/SELECT id FROM chat_sessions\s+WHERE status = 'active'\s+AND active_turn IS NULL/.test(sql)) {
-      return { rows: db.idle.map((id) => ({ id })) };
     }
     return { rows: [] };
   },
@@ -62,14 +63,6 @@ require.cache[workerPath].exports = {
   warmRegistrySnapshot: () => registry.map((m) => ({ ...m })),
   evictWorker: async (sessionId) => { evicted.push(Number(sessionId)); },
   forgetWorker: (sessionId) => { forgotten.push(Number(sessionId)); },
-};
-
-// Pausing a session (it destroys the worker): recorded, not run.
-const lifecycle = require('../src/services/session-lifecycle');
-const paused = [];
-lifecycle.pauseSession = async ({ sessionId, reason }) => {
-  paused.push([Number(sessionId), reason]);
-  return { paused: true };
 };
 
 // What the sweeps say.
@@ -93,14 +86,12 @@ const MIN = 60 * 1000;
 const NOW = Date.parse('2026-10-14T12:00:00Z');
 const idleFor = (min) => NOW - min * MIN;
 
-function reset({ held = [], fail = false, idle = [] } = {}) {
+function reset({ held = [], fail = false } = {}) {
   db.held = new Set(held);
   db.fail = fail;
-  db.idle = idle;
   calls.length = 0;
   evicted.length = 0;
   forgotten.length = 0;
-  paused.length = 0;
   said.length = 0;
 }
 const asked = () => calls.filter((c) => /FROM wf_instances w/.test(c.sql)).map((c) => Number(c.params[0]));
@@ -139,26 +130,52 @@ test('the idle eviction: a read that fails evicts as before', async () => {
   assert.deepEqual(evicted, [41, 42]);
 });
 
-test('the auto-pause sweeper leaves a session a durable build holds, and pauses the others', async () => {
-  reset({ held: [51], idle: [51, 52, 53] });
-  assert.deepEqual(await server.autoPauseIdleSessions(pool, { idleMs: 5 * MIN }), [52, 53]);
-  assert.deepEqual(paused, [[52, 'auto-idle'], [53, 'auto-idle']]);
-  assert.deepEqual(asked(), [51, 52, 53]);
-  assert.deepEqual(said.filter(([m]) => /durable build/.test(m)), [['Not auto-pausing an idle session: a durable build holds it', 51]]);
-  // Its own query is unchanged: only idle, active sessions with no turn.
-  const select = calls.find((c) => /SELECT id FROM chat_sessions/.test(c.sql));
-  assert.match(select.sql, /status = 'active'\s+AND active_turn IS NULL/);
-  assert.deepEqual(select.params, [5 * MIN, false]);
-  // A read that fails pauses as before.
-  reset({ held: [51], idle: [51, 52], fail: true });
-  assert.deepEqual(await server.autoPauseIdleSessions(pool, { idleMs: 5 * MIN }), [51, 52]);
+// The idle pause: the proposal machine's IdleCheck, a timer's event to a
+// session holding its slot. Idle past the window, it pauses (its worker is
+// destroyed as the pause's work); held by a durable build, it waits and
+// looks again a minute on, as it does while somebody works on it.
+test('the idle check leaves a session a durable build holds, and pauses the others', () => {
+  const { proposal, WORK, IDLE_RECHECK_MS } = require('../src/workflow/proposal/machine.ts');
+  const machine = proposal({ idleMs: 5 * MIN, exemptFixtures: false, reviewCheckMs: 60 * MIN, staleNotifyMs: 0, staleGraceMs: 0 });
+  const now = new Date(NOW);
+  const idleCheck = (row) => {
+    const s = { name: 'underway', data: {
+      sessionId: row.id, appId: 1, imported: false, slot: 'held', promoting: null, answer: null, reason: null,
+      claim: null, pr: { running: null, next: null }, n: 0 } };
+    const event = { id: 1, type: 'IdleCheck', payload: {}, source: { kind: 'timer' } };
+    const f = { row: { id: row.id, appId: 1, appSlug: 'shop', lastActivityAt: new Date(idleFor(10)).toISOString(),
+      activeTurn: false, workedOn: false, moving: false, shotsRunning: false, buildHold: false, fixture: false, ...row } };
+    const entry = machine.entryFor('underway', 'IdleCheck');
+    assert.equal(entry.guard(s, event, f, { now }), true);
+    return entry.to(s, event, f, { now });
+  };
+  const held = idleCheck({ id: 51, buildHold: true });
+  assert.equal(held.next.data.slot, 'held', 'a durable build keeps its session\'s slot');
+  assert.deepEqual(held.work || [], [], 'and its worker');
+  assert.equal(held.timer.event.type, 'IdleCheck');
+  assert.equal(held.timer.at.getTime(), NOW + IDLE_RECHECK_MS, 'it looks again a minute on');
+  for (const id of [52, 53]) {
+    const idle = idleCheck({ id });
+    assert.equal(idle.next.data.slot, 'released', 'an idle session nobody holds gives its slot back');
+    assert.deepEqual(idle.work.map((w) => w.kind), [WORK.destroy]);
+  }
+  // Not idle long enough: nothing yet, looked at again when it may be.
+  const fresh = idleCheck({ id: 54, lastActivityAt: new Date(idleFor(2)).toISOString() });
+  assert.equal(fresh.next.data.slot, 'held');
+  assert.equal(fresh.timer.at.getTime(), idleFor(2) + 5 * MIN);
+  // The hold is read under the session's lock with the rest of its facts.
+  const facts = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/proposal/facts.ts'), 'utf8');
+  assert.match(facts, /buildHoldSql\(/);
 });
 
 test('every sweep that stops a worker unasked asks first; adoption already keeps a durable build\'s', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  // The interval runs the pass, and the auto-pause sweeper's first pass is the helper.
+  // The interval runs the pass. The session sweeper pauses nothing itself:
+  // its first pass hands every session holding a slot to the proposal
+  // machine, whose idle check is the pause.
   assert.match(src, /sweeperHandle = setInterval\(async \(\) => \{\s*if \(lifecycle\.isShuttingDown\(\)\) return;\s*await sweepIdleWarmWorkers\(\)\.catch/);
-  assert.match(src, /await autoPauseIdleSessions\(pool, \{\s*idleMs: config\.sessionAutopauseIdleMs, exemptFixtures: process\.env\.USERNODE_ENV === 'staging',\s*\}\);/);
+  assert.doesNotMatch(src, /autoPauseIdleSessions/);
+  assert.match(src, /\/\/ Pass 1:[\s\S]*?await require\('\.\/src\/workflow\/platform\.ts'\)\.adoptProposals\(\)/);
   assert.match(src, /function heldByDurableBuild\(sessionId, pool = getPool\(config\)\) \{\s*return require\('\.\/src\/services\/build-runs'\)\.holdsSession\(pool, sessionId\);/);
   // The left-behind sweep adopts through adoptOrphanWorker, which keeps a
   // durable build's worker as it is (tests/homeroom-bot-restart-recovery.test.js).
