@@ -665,8 +665,14 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     guard: (s, e) => (REPLACING_REASONS.has(e.payload.reason) || manualJoin(e) ? ok() : reject('run_outstanding')),
     to: (s, e, f, ctx) => {
       if (!REPLACING_REASONS.has(e.payload.reason)) return joinOwed(s, f, ctx);
+      const trigger = recheckTrigger(e.payload.reason, e.payload.trigger);
+      // A person's (a same-commit resubmission is one): of the head the
+      // proposal is pinned to. A run of an older head is not replaced by
+      // another run of it; the pinned head is built and checked as theirs.
+      const wanted = trigger === 'manual-recheck' ? f.session?.pin ?? s.data.run!.head : s.data.run!.head;
+      if (wanted !== s.data.run!.head) return begin(s, wanted, 'manual-recheck', ctx, deps);
       const old = obsolete(s.data, ctx, deps);
-      const o = startRun({ name: s.name, data: { ...s.data, run: null } }, recheckTrigger(e.payload.reason, e.payload.trigger), ctx,
+      const o = startRun({ name: s.name, data: { ...s.data, run: null } }, trigger, ctx,
         { work: old.work });
       return { ...o, cancel: old.cancel };
     },
@@ -734,8 +740,12 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     to: (s, e, f, ctx) => {
       if (s.name === 'retiring') return toRetiring(s, s.data.exit.reason, s.data.exit.terminal, ctx, deps, s.data.exit.attempts || []);
       if (!s.data.head) return step({ name: s.name, data: s.data });
-      return s.name === 'failed' || !s.data.serving || s.data.serving.head !== s.data.head
-        ? begin(s, s.data.head, 'manual-recheck', ctx, deps)
+      // A person's retry ('manual-recheck'): of the head the proposal is
+      // pinned to (services/unit-suite-reuse.js), which may be newer than the
+      // one held.
+      const head = requestedHead(s, f) ?? s.data.head;
+      return head !== s.data.head || s.name === 'failed' || !s.data.serving || s.data.serving.head !== s.data.head
+        ? begin(s, head, 'manual-recheck', ctx, deps)
         : startRun(s, 'manual-recheck', ctx);
     },
   };

@@ -586,4 +586,65 @@ test('unit-suite reuse through the preview machine, against the full PostgreSQL 
       delete answers.byTrigger['manual-recheck'];
     }
   });
+  // A same-commit resubmission (submit_work with new testing routes or
+  // `recheck: true`: 'testing-update'; shots alone: 'shots-update') replaces
+  // the run going, and is a person's request (trigger 'manual-recheck'). When
+  // that run is of an older head than the proposal's pin, the pinned head is
+  // built and checked as theirs instead of the older head again; when it is
+  // of the pinned head, the run is replaced as before. An admin's retry is
+  // pinned the same way. (Review round 12.)
+  await t.test('a replacing recheck, and an admin retry, check the pinned head rather than an older one held', async () => {
+    const realPass = { results: [browser, unitPass], unitObserved: UNIT_KEY,
+      history: [{ checkKey: UNIT_KEY, name: unitSuiteRow.UNIT_CHECK_NAME, path: 'package.json', passed: true }] };
+    const outcomeOf = async (id) => (await pool.query('SELECT result, reason, state_after FROM wf_events WHERE id = $1', [id])).rows[0];
+    let n = 0;
+    for (const reason of ['testing-update', 'shots-update']) {
+      const s = await proposal({ status: 'promoted', source: 'cli_handoff' });
+      const A = SHA(String(++n)).replace(/^./, 'a'); const B = SHA(String(n)).replace(/^./, 'b');
+      await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [s.id, A]);
+      answers.next = result({ results: [browser, copied], unitEarned: UNIT_KEY });
+      answers.byTrigger['manual-recheck'] = result(realPass);
+      asked.length = 0;
+      await submit(s, A);
+      await rt.drain(); await rt.runServices(); await rt.drain();   // A's run is going
+      const firstRun = (await instance(s)).data.run.key;
+      // Pinned to A: replaced as before, a new run of A.
+      const same = await send(s, 'RecheckRequested', { reason }, { kind: 'route' });
+      await rt.drain();
+      let i = await instance(s);
+      assert.deepEqual([(await outcomeOf(same)).state_after, i.data.run.head], ['checking', A], `${reason}: replaces a run of the pinned head`);
+      assert.notEqual(i.data.run.key, firstRun);
+      // B is reviewed now; the run going is of A.
+      await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [s.id, B]);
+      const ev = await send(s, 'RecheckRequested', { reason }, { kind: 'route' });
+      await rt.drain();
+      i = await instance(s);
+      assert.deepEqual([(await outcomeOf(ev)).state_after, i.data.preparing?.head], ['preparing', B], `${reason}: B is built`);
+      assert.equal((await row(s.id)).unit_suite_fresh_sha, B, `${reason}: the request stays on B`);
+      await settle();
+      const r = await row(s.id);
+      assert.equal(!!r.test_results.find((x) => x.index === -3)?.reused, false, reason);
+      assert.deepEqual([r.check_state, r.checks_commit_sha, r.unit_suite_fresh_sha], ['passing', B, null], reason);
+      assert.ok((await runsOf(s)).some((w) => w.input.head === B && w.input.trigger === 'manual-recheck'), `${reason}: B's suite ran as theirs`);
+      delete answers.byTrigger['manual-recheck'];
+    }
+    // An admin's retry of a settled A while the proposal reviews B.
+    const s = await proposal({ status: 'promoted', source: 'cli_handoff' });
+    const A = SHA('7').replace(/^./, 'a'); const B = SHA('7').replace(/^./, 'b');
+    await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [s.id, A]);
+    answers.next = result(realPass);
+    await submit(s, A);
+    await settle();
+    await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [s.id, B]);
+    answers.next = result({ results: [browser, copied], unitEarned: UNIT_KEY });
+    answers.byTrigger['manual-recheck'] = result(realPass);
+    await send(s, 'AdminRetry', {}, { kind: 'admin' });
+    await rt.drain();
+    assert.equal((await instance(s)).data.preparing?.head, B, 'the admin retry builds B');
+    await settle();
+    const r = await row(s.id);
+    assert.deepEqual([r.check_state, r.checks_commit_sha, r.unit_suite_fresh_sha], ['passing', B, null]);
+    assert.equal(!!r.test_results.find((x) => x.index === -3)?.reused, false);
+    delete answers.byTrigger['manual-recheck'];
+  });
 });
