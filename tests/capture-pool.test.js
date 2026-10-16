@@ -1013,6 +1013,54 @@ test('a check still waiting on the wire gets another window, floored and capped'
   assert.ok(elapsed > 200, `it outlived the fixed window (${elapsed}ms)`);
 });
 
+test('an expiry wake that flushes ahead of the queued fetch still sees the element', async () => {
+  // The failure this exists for: a loaded watch container failed the test
+  // above with the element's data still on the wire. The stall here replays
+  // it deterministically. The wake that consumed the last request rolled the
+  // deadline to ~420ms; the NEXT wake (this page's second $) then blocks the
+  // loop 350ms, so it ends well past its own deadline — but the 340/460ms
+  // requests and the 500ms element are queued BEHIND that wake's own short
+  // sleep timer, and the timer queue flushes by due time. An expiry judged
+  // straight off that wake therefore sees neither the requests nor the
+  // element, though both land a flush later. Judging waits one poll first
+  // (see the grace in pollPresence), the queued events land inside it, and
+  // a bump they reveal still rolls through the same caps. Without it the
+  // check fails though its data has already arrived.
+  const read = collect();
+  let ready = false;
+  let mark = false;   // set when the last request that fits the deadline fires
+  let armed = false;  // set on the first $ after it — the wake that consumed it
+  const timers = [];
+  const page = makeEventPage();
+  page.$ = async () => {
+    if (mark) {
+      if (armed) {
+        mark = false; armed = false;
+        const end = Date.now() + 350;
+        while (Date.now() < end) { /* stall the loop */ }
+      } else {
+        armed = true;
+      }
+    }
+    return ready ? {} : null;
+  };
+  timers.push(setTimeout(() => { mark = true; page.emitRequest(); }, 220));
+  for (const at of [340, 460]) timers.push(setTimeout(() => page.emitRequest(), at));
+  timers.push(setTimeout(() => { ready = true; page.emitRequest(); }, 500));
+  const started = Date.now();
+  try {
+    await runTestGroup({ newPage: async () => page },
+      [{ index: 0, name: 'late data', path: '/p', url: 'http://s/p', expectSelector: '#badge' }],
+      { settleQuietMs: 20, settleMaxMs: 40, assertMaxMs: 200, assertPollMs: 20,
+        groupDeadlineAt: Date.now() + 20000 });
+  } finally {
+    for (const t of timers) clearTimeout(t);
+  }
+  const { frames } = read();
+  assert.equal(frames[0].status, 'pass',
+    'the expiry was judged while the fetch and the element sat queued behind the wake');
+});
+
 test('a silent missing element still fails on the fixed window, and console noise does not roll it', async () => {
   // The discrimination the rolling window has to make: no requests means
   // nothing is coming, so the old ceiling still applies. Console errors are

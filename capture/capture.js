@@ -1827,6 +1827,7 @@ async function runTestGroup(browser, group, opts) {
       let assertDeadlineAt = floorAt;
       let seenNetAt = netActivity.lastAt;
       let pending = cohortTests;
+      let graceTaken = false;
       for (;;) {
         const still = [];
         for (const t of pending) {
@@ -1844,7 +1845,26 @@ async function runTestGroup(browser, group, opts) {
           );
         }
         const leftMs = assertDeadlineAt - Date.now();
-        if (leftMs <= 0) break;
+        if (leftMs <= 0) {
+          // One grace poll before judging. The wake that discovers the expiry
+          // can flush AHEAD of the very callbacks it exists to see: on a
+          // stalled loop the timer queue flushes by due time, and this
+          // poll's own short sleep — armed at every wake — can come due
+          // before request and element callbacks scheduled after it, so a
+          // fetch and the element it delivers can sit queued behind the
+          // wake that judges the page "not found" (a loaded watch
+          // container failed exactly this way). One poll lets that flush
+          // land first, and a bump it reveals still rolls through the same
+          // caps above. Once only: a page that has still not settled after
+          // it is judged exactly as before, so a poller that never stops
+          // is not waited for.
+          if (!graceTaken) {
+            graceTaken = true;
+            await sleep(assertPoll);
+            continue;
+          }
+          break;
+        }
         await sleep(Math.min(assertPoll, leftMs));
       }
       return presence;
