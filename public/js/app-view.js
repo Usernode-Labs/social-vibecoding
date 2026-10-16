@@ -6563,6 +6563,7 @@ const AppView = {
     } : null;
     const unit = prog && prog.bar.unit ? prog.bar.unit : null;
     const fails = v && v.failures.length ? v.failures : [];
+    const noted = v && v.noted && v.noted.length ? v.noted : [];
     let note = null;
     if (live) {
       const why = AppView._checksTriggerCopy(item.check_trigger);
@@ -6579,12 +6580,12 @@ const AppView = {
     } else if (v && v.baseNote) {
       note = v.baseNote;
     }
-    if (!checks && !build && !unit && !fails.length && !note) return null;
+    if (!checks && !build && !unit && !fails.length && !noted.length && !note) return null;
     // Open by itself while a run is going, and when it failed: that is when
     // the bars and the names are what a reader came for. A run that will go
     // again on its own opens too, so its reason is read without a tap.
     const retrying = g.state === 'active' && item.check_state === 'error';
-    return { live, phase: item.check_phase || null, open: live || retrying || g.state === 'blocked', build, checks, unit, fails, note };
+    return { live, phase: item.check_phase || null, open: live || retrying || g.state === 'blocked', build, checks, unit, fails, noted, note };
   },
 
   // One detail model for a change before and after it enters review.
@@ -18725,6 +18726,13 @@ const AppView = {
     // One whole message per case; a recorded reason is the check's own words
     // and rides as a parameter after the sentence.
     const values = { count: runs, fails, reason: base };
+    // Its failure was one of a burst in the run's first seconds whose
+    // retries all passed (services/check-signals.js). That is often the
+    // environment, but not proof of it, so the sentence names the likely
+    // cause and still asks the author to look.
+    if (r && r.passedOnRetry && r.retryClass === 'early_burst') {
+      return base ? PlatformI18n.t('changes:checks.reason.earlyBurstWith', { reason: base }) : PlatformI18n.t('changes:checks.reason.earlyBurst');
+    }
     if (r && r.passedOnRetry) {
       return base ? PlatformI18n.t('changes:checks.reason.failedThenPassedWith', values) : PlatformI18n.t('changes:checks.reason.failedThenPassed', values);
     }
@@ -18776,9 +18784,17 @@ const AppView = {
       // the reason, because "it failed" and "it failed once out of three"
       // call for different next moves.
       reason: AppView._checkReason(r),
+      retryClass: (r && r.passedOnRetry && r.retryClass === 'early_burst') ? 'early_burst' : null,
+      // A check this proposal adds or changes that held only on a fresh
+      // load after its address change (services/check-signals.js). Advisory:
+      // the row's verdict is its own.
+      note: (r && r.cohortFallback && r.authored === true)
+        ? PlatformI18n.t('changes:checks.note.freshLoad')
+        : null,
       // A row that passed only after a retry keeps its reason line, which
-      // the verdict view otherwise drops for anything green.
-      keepReason: !!(r && r.passedOnRetry),
+      // the verdict view otherwise drops for anything green; so does one
+      // with a note.
+      keepReason: !!(r && (r.passedOnRetry || (r.cohortFallback && r.authored === true))),
       // #3978: the repo unit suite row's per-test excerpts, each with the
       // file, the test name and the captured error text. Only that row
       // carries failureDetails; the caps here mirror the capture side's, so
@@ -18840,6 +18856,12 @@ const AppView = {
       summary: summaryBits.reduce((first, second) => PlatformI18n.t('changes:facts.pair', { first, second })),
       failures: blockingRows.concat(advisoryRows).map(row),
       passes: passRows.map(row),
+      // The passes with something to say (a retry, its class, a note), for
+      // the Checks step, which lists failures by name and folds no passes.
+      // From the passing rows when present, else from the few a list row
+      // keeps beside its count (src/services/list-test-results.js).
+      noted: (hasPassRow ? passRows : (Array.isArray(pr.test_results_noted) ? pr.test_results_noted : []))
+        .map(row).filter((r) => r.pass && r.keepReason),
       // How many passed, which is more than `passes` holds while the row
       // counts its passes rather than naming them.
       passCount,

@@ -684,6 +684,7 @@ test('handoff status distinguishes a live check run from an overdue orphan', () 
       inFlight: false,
       stalled: true,
       unitSuiteReused: null,
+      advisories: [],
       activity: {
         session: false, pipeline: false, build: false, capture: false,
       },

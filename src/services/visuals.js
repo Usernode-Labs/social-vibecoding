@@ -32,6 +32,7 @@ const prMetadata = require('./pr-metadata');
 const sessionBus = require('./session-bus');
 const appManifest = require('./app-manifest');
 const checkHistory = require('./check-history');
+const checkSignals = require('./check-signals');
 const unitSuite = require('./unit-suite');
 const unitSuiteRow = require('./unit-suite-row');
 const contentReview = require('./content-review');
@@ -714,6 +715,13 @@ function parseTests(stdout) {
       // than a check of its own: the container re-ran a failure on its own
       // cold document. Names the index it is a retry of.
       retryOf: Number.isInteger(payload.retryOf) ? payload.retryOf : null,
+      // A primary's group start in its pod's run, and the pod, which the
+      // retry classes read (services/check-signals.js). Absent from older
+      // images' frames and from retries.
+      ...(Number.isFinite(payload.startedMs) ? { startedMs: payload.startedMs } : {}),
+      ...(typeof payload.pod === 'string' ? { pod: payload.pod.slice(0, 16) } : {}),
+      // The check held only on a fresh load after its hash switch failed it.
+      ...(checkSignals.cohortFallbackOf(payload) ? { cohortFallback: checkSignals.cohortFallbackOf(payload) } : {}),
       // The runner's render-health reading of this check's document (see
       // services/render-health.js). Absent from frames an older capture
       // image produced, which the row then treats as "no reading".
@@ -991,6 +999,7 @@ function classifyTests(frames, expectedCount, options) {
       status: f.status === 'pass' ? 'pass' : 'fail',
       consoleErrors: normalizeConsoleErrors(f.consoleErrors),
       failureReason: String(f.failureReason || '').slice(0, CONSOLE_MAX_MSG_LEN),
+      ...(checkSignals.cohortFallbackOf(f) ? { cohortFallback: checkSignals.cohortFallbackOf(f) } : {}),
     }));
     const expected = Number.isInteger(expectedCount) ? expectedCount : results.length;
     if (!results.length) return { state: 'error', results: extraRows.slice(), missingResults: true };
@@ -1045,6 +1054,10 @@ function classifyTests(frames, expectedCount, options) {
     if (!retriesOf.has(f.retryOf)) retriesOf.set(f.retryOf, []);
     retriesOf.get(f.retryOf).push(f);
   }
+  // Why each retried check was retried: the run's fault, a flaky check, or
+  // a real failure (services/check-signals.js). Advisory: nothing below
+  // reads it for the verdict.
+  const retryClasses = checkSignals.classifyRetries(parsed).byIndex;
 
   for (const d of dispatched) {
     if (d.repeatOf != null) continue;
@@ -1113,6 +1126,8 @@ function classifyTests(frames, expectedCount, options) {
       flakeRate: d.flakeRate != null ? d.flakeRate : null,
       consoleErrors: normalizeConsoleErrors(worst.consoleErrors),
       failureReason: pass ? '' : String(worst.failureReason || '').slice(0, CONSOLE_MAX_MSG_LEN),
+      ...(retryClasses.has(Number(d.index) || 0) ? { retryClass: retryClasses.get(Number(d.index) || 0) } : {}),
+      ...(checkSignals.cohortFallbackOf(frame) ? { cohortFallback: checkSignals.cohortFallbackOf(frame) } : {}),
     });
   }
 
@@ -1204,6 +1219,84 @@ function classifyTests(frames, expectedCount, options) {
     ranCount: rows.length,
     declaredCount: dispatched.filter((d) => d.repeatOf == null).length,
   };
+}
+
+// The run's own signals, beside its verdict (services/check-signals.js).
+// Never throws and never changes a verdict.
+//
+//   * Logs how the retried checks split, and a burst of early failures whose
+//     retries all passed as a warning of its own ("Checks early retry
+//     burst"), so a cold preview that failed a pod's first groups is counted
+//     in Loki the day it happens. A suspicion, not a finding: the same shape
+//     is an app whose address change throws (review of #5322).
+//   * Marks `authored` on the rows that needed a cohort fallback and are
+//     checks this proposal adds or changes: those carry the "fix the
+//     navigation" note. Compared against the proposal's MERGE BASE, an
+//     immutable commit, never main's tip: a main that moved on would else
+//     hand a check nobody here touched to this author, or hide the note on
+//     one they did. When dapp.json is not among the proposal's changes no
+//     check is theirs and nothing is read; otherwise dapp.json is read at
+//     the head and at the merge base. Anything unread, or slower than
+//     SIGNAL_READ_TIMEOUT_MS all told, leaves no note: the advice is the
+//     one thing here allowed to be missing.
+const SIGNAL_READ_TIMEOUT_MS = 8000;
+const signalDeps = {
+  compareRefs: (owner, repo, basehead) => github.compareRefs(owner, repo, basehead),
+  readDeclaredTests: (owner, repo, ref) => resolveDeclaredTests(owner, repo, ref),
+};
+async function authoredSince(repoOwner, repoName, commitHash, deps) {
+  const cmp = await deps.compareRefs(repoOwner, repoName, `main...${commitHash}`);
+  const mergeBase = cmp && cmp.mergeBaseSha;
+  if (!mergeBase) return null;
+  if (cmp.filesComplete && Array.isArray(cmp.files) && !cmp.files.includes(appManifest.MANIFEST_FILENAME)) {
+    return new Set();
+  }
+  const [head, base] = await Promise.all([
+    deps.readDeclaredTests(repoOwner, repoName, commitHash),
+    deps.readDeclaredTests(repoOwner, repoName, mergeBase),
+  ]);
+  return checkSignals.authoredChecks(head, base);
+}
+async function noteCheckSignals(checksResult, frames, { sessionId, commitHash, repoOwner, repoName } = {}, deps = signalDeps) {
+  try {
+    const { byIndex, bursts } = checkSignals.classifyRetries(frames);
+    if (byIndex.size) {
+      log.info('visuals', 'Checks retries', {
+        sessionId, commitHash: commitHash || null, ...checkSignals.retryCounts(byIndex),
+      });
+    }
+    for (const burst of bursts) {
+      log.warn('visuals', 'Checks early retry burst', {
+        sessionId, commitHash: commitHash || null, pod: burst.pod, checks: burst.checks,
+        lastStartedMs: burst.lastStartedMs, windowMs: checkSignals.EARLY_BURST_WINDOW_MS,
+      });
+    }
+    const rows = checksResult && Array.isArray(checksResult.results) ? checksResult.results : [];
+    const fellBack = rows.filter((r) => r && r.cohortFallback);
+    if (!fellBack.length || !repoOwner || !repoName || !commitHash) return;
+    let timer = null;
+    const timedOut = new Promise((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), deps.timeoutMs || SIGNAL_READ_TIMEOUT_MS);
+      if (timer && typeof timer.unref === 'function') timer.unref();
+    });
+    let authored;
+    try {
+      // A read that fails, or settles after the deadline, is no note, never
+      // an unhandled rejection.
+      const reads = authoredSince(repoOwner, repoName, commitHash, deps).catch(() => null);
+      authored = await Promise.race([reads, timedOut]);
+    } finally {
+      clearTimeout(timer);
+    }
+    const marked = authored === 'timeout' ? 0 : checkSignals.markAuthored(rows, authored);
+    log.info('visuals', 'Checks cohort fallbacks', {
+      sessionId, commitHash, checks: fellBack.length, authored: marked,
+      ...(authored === 'timeout' ? { authorship: 'timed out' } : (authored ? {} : { authorship: 'unread' })),
+      waitMs: fellBack.reduce((n, r) => n + (r.cohortFallback.waitMs || 0), 0),
+    });
+  } catch (err) {
+    log.warn('visuals', 'Check signals skipped', { sessionId, err: err && err.message });
+  }
 }
 
 // What a checks run leaves on the row: the verdict, the skipped and deferred
@@ -2824,6 +2917,9 @@ async function settleCaptureRun(config, pool, run) {
   const checksResult = classifyTests(parsedTests, testsCount, dispatched
     ? { dispatched, sentinel: parseTestsDone(stdout), extraRows }
     : { extraRows });
+  await noteCheckSignals(checksResult, parsedTests, {
+    sessionId: session.id, commitHash, repoOwner, repoName,
+  });
 
   // No browser row means the suite never reached a check-level verdict.
   // Preserve the runner/runtime explanation instead of storing a bare
@@ -3502,6 +3598,7 @@ module.exports = {
   parseDiagnostics,
   captureFailureDetail,
   classifyTests,
+  noteCheckSignals,
   unreachableOriginDetail,
   connectionExhaustionDetail,
   dnsHostname,
