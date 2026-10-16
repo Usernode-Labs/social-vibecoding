@@ -1931,10 +1931,10 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Landing's story signs an existing account in from the same sheet (first session)",
+      "name": "Landing's one Continue button is for new and returning people, and says we let people in in waves (first session)",
       "path": "/?shot=anon#landing",
-      "expectSelector": "#auth-landing-screen:not(.hidden) [data-landing-story] a[data-landing-story-signin][href=\"#login\"]",
-      "expectText": "Already have an account?",
+      "expectSelector": "#auth-landing-screen:not(.hidden) [data-landing-story] a[data-landing-story-start][href=\"#signup\"] + p[data-landing-story-waves]",
+      "expectText": "We let people in in waves.",
       "allowConsoleErrors": true
     },
     {

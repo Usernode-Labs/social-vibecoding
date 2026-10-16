@@ -1906,7 +1906,7 @@ export function LandingScreen() {
             </div>
           </div>
           {storyOn ? (
-            <Story primaryClass={PRIMARY_PILL} welcomeEmail={releaseEmail} onStart={() => setSheet('start')} onSignIn={() => setSheet('signin')} />
+            <Story primaryClass={PRIMARY_PILL} welcomeEmail={releaseEmail} onStart={() => setSheet('start')} />
           ) : null}
         </div>
       </div>
@@ -1944,7 +1944,7 @@ export function LandingScreen() {
       {storyOn ? (
         <SignInSheet
           open={sheet === 'start' || sheet === 'signin'}
-          title={sheet === 'signin' ? t('auth:landing.sheet.signIn') : t('auth:landing.sheet.makeAccount')}
+          title={sheet === 'signin' ? t('auth:landing.sheet.signIn') : t('auth:landing.sheet.continue')}
           providers={providers}
           native={nativeSignIn}
           from={sheet === 'signin' ? 'signin' : 'story'}

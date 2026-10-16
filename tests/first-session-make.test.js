@@ -138,7 +138,7 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
   assert.match(landing, /const storyOn = waitlistPayload\?\.story_landing !== false && !onInvitePath && !session;/);
   assert.match(landing, /useState\(\s+\(\) => typeof location !== 'undefined' && !!inviteTokenFrom\(location\.pathname\),\s+\);/);
   assert.match(landing, /const pitchHidden = madeForYou \|\| storyOn \|\| invitePending;/);
-  assert.match(landing, /<Story primaryClass=\{PRIMARY_PILL\} welcomeEmail=\{releaseEmail\} onStart=\{\(\) => setSheet\('start'\)\} onSignIn=\{\(\) => setSheet\('signin'\)\} \/>/);
+  assert.match(landing, /<Story primaryClass=\{PRIMARY_PILL\} welcomeEmail=\{releaseEmail\} onStart=\{\(\) => setSheet\('start'\)\} \/>/);
   // A new account from its sheet is asked what to make, not which communities to join.
   assert.match(landing, /sessionStorage\.setItem\('usernode:first-session:make', '1'\)/);
   assert.match(landing, /fetch\('\/api\/me\/first-session\/started', \{ method: 'POST', credentials: 'same-origin' \}\)/);
@@ -150,11 +150,11 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
 // #4037, decisions A and B on the onboarding canvas, and the owner's review of
 // 8 October (C1-story): "Welcome to Homeroom" over the picture, one headline,
 // "For example" over the make screen's three examples (Evan's, #4354; their
-// rows are pinned by the templates test below), "Get started", then "Already
-// have an account? Sign in". Nothing under the button says what a new account
-// waits for.
-test('the story: label, headline, "For example" and the three examples, "Get started", then Sign in', () => {
-  const html = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
+// rows are pinned by the templates test below), then one "Continue" (#5251,
+// the navigation review: no separate Sign in, the email decides) and the line
+// under it, which names the waitlist's waves.
+test('the story: label, headline, "For example" and the three examples, then one Continue and the waves line', () => {
+  const html = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {} });
   // Each row: its emoji (the tier list draws a chart, no text), title and line.
   const TEMPLATE_ROWS = loadTsx(`${DIR}/examples.ts`).FRONT.flatMap((t) => (t.chart ? [message(t.title), message(t.line)] : [t.emoji, message(t.title), message(t.line)]));
   const text = html.replace(/<[^>]+>/g, '\n').split('\n').map((t) => t.trim()).filter(Boolean)
@@ -164,13 +164,12 @@ test('the story: label, headline, "For example" and the three examples, "Get sta
     'On Homeroom, communities make apps together.',
     'For example',
     ...TEMPLATE_ROWS,
-    'Get started',
-    'Already have an account?',
-    'Sign in',
+    message('auth:story.continue'),
+    message('auth:story.waves'),
   ]);
-  assert.match(html, /<a href="#signup" data-landing-story-start="" class="pill">Get started<\/a>/);
-  assert.match(html, /Already have an account\? <a href="#login" data-landing-story-signin=""/);
-  assert.match(html, /<a href="#login" data-landing-story-signin=""[^>]*>Sign in<\/a>/);
+  assert.match(html, /<a href="#signup" data-landing-story-start="" class="pill">Continue<\/a>/);
+  assert.match(html, /<p data-landing-story-waves=""[^>]*>New or returning, it’s the same button\. We let people in in waves\.<\/p>/);
+  assert.doesNotMatch(html, /data-landing-story-signin|Already have an account|Get started/);
   // In a phone browser too, the story fills the screen and its foot is at the foot.
   const css = read('public/css/app.css');
   assert.match(css, /html\[data-browser-scroller="auth-landing-scroll"\] #auth-landing-scroll:has\(> \* > \[data-landing-story\]\) \{\s+flex: 1 0 auto;\s+display: flex;\s+flex-direction: column;\s+\}/);
@@ -247,7 +246,7 @@ test('the front three on the story and the make screen, the rest behind Somethin
   assert.equal(suggestedName(challenge, OWN, 'push-ups'), 'Push-ups Challenge');
   // The story says the front three, the tier list drawn as a tier list, and
   // nothing from behind Something else.
-  const story = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
+  const story = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {} });
   for (const t of FRONT) assert.ok(story.includes(`>${message(t.title)}<`) && story.includes(`>${message(t.line)}<`), t.key);
   for (const t of MORE) assert.ok(!story.includes(`>${message(t.title)}<`), `${t.key} is not on the story`);
   assert.match(story, /data-tier-chart=""/);

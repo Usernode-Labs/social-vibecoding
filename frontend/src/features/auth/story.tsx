@@ -5,16 +5,21 @@
  *
  * One centred group under the landing's logo bar: the picture, the small
  * caps "Welcome to Homeroom", one headline, the small caps "For example"
- * over the make screen's three examples (to show, not to press). The "Get
- * started" button and "Already have an account? Sign in" stay at the foot.
- * The whole story fits its screen: on a short one it shrinks, a step at a
- * time, until the foot is on screen (`fitStyle`, below). Nothing under the
- * button says what a new account waits for: the waiting screen does
- * (C1-story on the onboarding canvas, the owner's review of 8 October).
+ * over the make screen's three examples (to show, not to press). At the
+ * foot, one "Continue" button and, under it, one line saying it is the same
+ * button new or returning and that people are let in in waves (#5251, the
+ * navigation review of 15 October 2026: "Get started" beside "Already have
+ * an account? Sign in" made people decide which they were, for what is one
+ * form, and nothing mentioned the waitlist most of them land on). On a
+ * phone the foot sits at the foot of the screen and the story shrinks, a
+ * step at a time, until it is on screen (`fitStyle`, below); on a wide
+ * screen the foot follows the examples, so the button is not left far
+ * below them.
  *
- * "Get started" and "Sign in" both open the sign-in sheet over this
- * screen; an account made from it is asked what to make next
- * (../first-session/make.tsx).
+ * "Continue" opens the sign-in sheet over this screen. Its email code
+ * decides which it is: an address that has an account is signed in, on any
+ * device, and only a new one makes an account (routes/auth.js, otp/verify),
+ * which is then asked what to make next (../first-session/make.tsx).
  *
  * A "You're in" mail's link for an account that is still new does not wait
  * here (Evan, 12 Oct 2026): the landing spends it as the page opens and
@@ -31,7 +36,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { Message } from '../../lib/i18n/react';
 import { FRONT } from '../first-session/examples';
-import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { useMessages } from '../../lib/i18n/react';
 import { TierChart } from '../first-session/tier-chart';
 
 const SMALL_CAPS = 'text-[12px] leading-4 font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400';
@@ -92,12 +97,11 @@ export function nextStep(fit: number, footBottom: number, screenBottom: number):
   return fit + 1;
 }
 
-export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn }: {
+export function Story({ primaryClass, welcomeEmail = null, onStart }: {
   primaryClass: string;
   /** The address a "You're in" mail's link names, greeted under the welcome. */
   welcomeEmail?: string | null;
   onStart: () => void;
-  onSignIn: () => void;
 }) {
   const t = useMessages('auth');
   const storyRef = useRef<HTMLDivElement>(null);
@@ -161,8 +165,9 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn }: 
       {/* One group, centred in the room above the button: the picture, the
           label 16px under it, the headline 8px under that, and the examples
           28px lower (closer from step 2). Where even step 4 does not fit,
-          the auto margins fall to zero and the page scrolls. */}
-      <div className={`my-auto flex flex-col items-center ${s.group}`}>
+          the auto margins fall to zero and the page scrolls. From md the
+          group and the foot are centred together instead (#5251). */}
+      <div className={`my-auto md:mb-0 flex flex-col items-center ${s.group}`}>
         <img
           src="/brand/people.png"
           alt=""
@@ -181,7 +186,7 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn }: 
         <h1 className={`mt-2 ${s.headline} font-extrabold text-balance`}>
           {t('auth:story.headline')}
         </h1>
-        <div className={`${s.examples} flex w-full max-w-sm md:max-w-md flex-col gap-2 text-left`}>
+        <div className={`${s.examples} flex w-full max-w-sm md:max-w-lg flex-col gap-2 text-left`}>
           <div className={`px-1 ${SMALL_CAPS}`}>{t('auth:story.examples')}</div>
           <ul className="w-full overflow-hidden rounded-[20px] bg-white dark:bg-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]">
             {FRONT.slice(0, s.count).map((e) => (
@@ -196,14 +201,12 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn }: 
           </ul>
         </div>
       </div>
-      <div ref={footRef} className={`w-full max-w-sm md:max-w-md mx-auto flex flex-col gap-3 ${s.foot} pb-3`}>
+      <div ref={footRef} className={`w-full max-w-sm md:max-w-lg mx-auto md:mb-auto flex flex-col gap-3 ${s.foot} pb-3`}>
         <a href="#signup" data-landing-story-start="" className={primaryClass} onClick={(e) => { e.preventDefault(); onStart(); }}>
-          {t('auth:story.start')}
+          {t('auth:story.continue')}
         </a>
-        <p className="mt-1 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">
-          <RichMessage id="auth:story.haveAccount" components={[
-          <a href="#login" data-landing-story-signin="" className="font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={(e) => { e.preventDefault(); onSignIn(); }} />,
-          ]} />
+        <p data-landing-story-waves="" className="mt-1 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400 text-balance">
+          {t('auth:story.waves')}
         </p>
       </div>
     </div>
