@@ -58,8 +58,9 @@ import { createStore } from '../../lib/plain-store.js';
  * FIVE TABS, TEN ROOTS: the bar names sections, not screens, so several
  * roots share a tab. Global Chat is a conversation, so it lights Messages;
  * Leaderboard, Settings and Admin are all things about YOU or your account,
- * so they light Me. `#app-view` is absent on purpose — the bar is hidden
- * inside a running app, and an app is not one of the platform's places.
+ * so they light Me. `#app-view` is absent on purpose — an app is not one of
+ * the platform's places, so the rail beside a running app (on a desktop;
+ * a phone's bar is hidden there) lights nothing.
  *
  * @type {Readonly<Record<string, TabKey>>}
  */
@@ -107,7 +108,7 @@ export const TAB_FOR_SCREEN = Object.freeze({
  * @typedef {object} PeekState
  * @property {boolean} peek  The FOLDED rail is showing over the page because
  *   the pointer is at the window's left edge or on #sidebar-toggle (#2718,
- *   #2764, desktop only; never over a running app, #3138). It is not the
+ *   #2764, desktop only; never from the edge over a running app, #3138). It is not the
  *   same fact as `platform-tabs` visibility or `railOpen` and must not be
  *   folded into either: the screens reserve no band for it, and this is a
  *   temporary overlay on top of that answer.

@@ -22195,9 +22195,11 @@ html.un-kb #platform-parked {
     padding-right: var(--platform-gutter);
   }
 
-  /* …AND A RUNNING APP, WHEN THE VIEWER PINNED THE RAIL (#3319). Settings →
-     Theme → "Keep sidebar open in apps" keeps the rail docked beside an app
-     (App._syncPlatformTabs publishes it and puts `rail-pinned` on the body).
+  /* …AND A RUNNING APP, WHOSE RAIL STAYS BESIDE IT (#3319). On by default
+     now, and Settings → Theme → "Keep sidebar open in apps" switches it off
+     (App._syncPlatformTabs publishes it and puts `rail-pinned` on the body;
+     the header's corner is then the sidebar toggle, not a ✕). Folded, the
+     rule above stands aside and the app has the whole window.
      The frame steps out of the rail's column and nothing more: the gutters
      are a platform page's rhythm, and somebody's program still runs edge to
      edge in what is left. One class more than the rule above, so it wins.
@@ -22862,8 +22864,8 @@ html.un-kb #platform-parked {
    viewer folded comes back on hover and stops spending width while they
    work — an auto-hiding dock and Slack's own collapsed rail are this move.
    NOT over a running app (#3138): an app's own controls put the pointer at
-   the left edge all the time, so the hot zone is not rendered there and the
-   way out is the header's ✕. */
+   the left edge all the time, so the hot zone is not rendered there. A rail
+   folded beside an app comes back from #sidebar-toggle, in the header. */
 
 /* THE HOT ZONE, and the only thing that can start a peek. Narrow enough that
    it never intercepts a pointer heading for the app's own left edge, wide

@@ -6090,13 +6090,15 @@ const App = {
     // that settles which screen is showing, so it is where a step is
     // reported. Optional call: several suites run this method alone.
     App._reportNavigation?.(screen, inApp);
-    // …UNLESS THE VIEWER PINNED IT (#3319). Settings → Theme's "Keep sidebar
-    // open in apps" keeps the desktop rail docked beside a running app. Off
-    // by default, and desktop only: below 768px the bar is the phone's
-    // bottom bar, and an app keeps the whole screen there whatever is stored.
-    // `rail-pinned` on the body is what app.css keys the frame's own padding
-    // off (no gutter around somebody's program).
-    const railPinned = inApp && !App.embeddedPanel && App._railPinned() && !App._isPhoneLayout();
+    // …EXCEPT ON A DESKTOP, WHERE THE RAIL STAYS BESIDE IT. The rail is
+    // docked beside a running app by default now, and the header's corner is
+    // the sidebar toggle rather than a ✕ (_railBesideApp says when, and
+    // _backSlotFor agrees). Settings → Theme's "Keep sidebar open in apps"
+    // (#3319) switches it off for the old full-window app. Below 768px the
+    // bar is the phone's bottom bar, and an app keeps the whole screen there
+    // whatever is stored. `rail-pinned` on the body is what app.css keys the
+    // frame's own padding off (no gutter around somebody's program).
+    const railPinned = inApp && App._railBesideApp();
     document.body?.classList?.toggle('rail-pinned', railPinned);
     App._watchRailBreakpoint();
     App.Visibility.publish(
@@ -6226,17 +6228,31 @@ const App = {
   // ── "Keep sidebar open in apps" (#3319) ─────────────────────────────
   //
   // A per-browser display preference, like the theme: localStorage, read at
-  // every _syncPlatformTabs. Every access is guarded — storage throws in a
-  // private window or with site data blocked, and that must read as "off",
-  // the old behaviour, never as a broken router.
+  // every _syncPlatformTabs. ON BY DEFAULT now: nothing stored keeps the rail
+  // beside a running app on the desktop, and '0' is the viewer switching it
+  // off. A '1' stored while it was opt-in still reads as on. Every access is
+  // guarded — storage throws in a private window or with site data blocked,
+  // and that must read as the default, never as a broken router.
   RAIL_PINNED_KEY: 'usernode:rail-pinned',
 
   _railPinned() {
     try {
-      return window.localStorage?.getItem(App.RAIL_PINNED_KEY) === '1';
+      return window.localStorage?.getItem(App.RAIL_PINNED_KEY) !== '0';
     } catch (_) {
-      return false;
+      return true;
     }
+  },
+
+  // Whether a running app has the rail docked beside it, and so the sidebar
+  // toggle in the header's corner where the ✕ was. One predicate, because
+  // the rail (_syncPlatformTabs) and the back slot (_backSlotFor) are two
+  // answers to it and have to agree. Desktop only: on a phone an app keeps
+  // the whole screen and its ✕. Never in the side panel's document, which
+  // draws no chrome. And not for a private member's first app, which has
+  // no way out but the mark menu's "Go to Homeroom" (_privateNoClose).
+  _railBesideApp() {
+    return !App.embeddedPanel && App._railPinned() && !App._isPhoneLayout()
+      && !App._privateNoClose();
   },
 
   // Written by the Settings switch (features/settings/sections/theme.tsx),
@@ -6244,15 +6260,26 @@ const App = {
   // the moment the viewer goes back to it.
   setRailPinned(on) {
     try {
-      if (on) window.localStorage?.setItem(App.RAIL_PINNED_KEY, '1');
-      else window.localStorage?.removeItem(App.RAIL_PINNED_KEY);
+      if (on) window.localStorage?.removeItem(App.RAIL_PINNED_KEY);
+      else window.localStorage?.setItem(App.RAIL_PINNED_KEY, '0');
     } catch (_) { /* unwritable storage: the switch simply does not stick */ }
+    App._resyncRailBesideApp();
+  },
+
+  // Re-decide the rail, and with it a running app's corner: the toggle where
+  // the rail stays, the ✕ where the app takes the window. The back slot is
+  // otherwise published only on a screen swap or a tab switch, and neither
+  // happens when the switch is flipped or the window crosses 768px.
+  _resyncRailBesideApp() {
     App._syncPlatformTabs();
+    if (App._revealedScreen === 'app-view' && App.currentTab === 'app') {
+      App.setBackIcon(...App._backSlotFor('app-view'));
+    }
   },
 
   // A window resized across 768px inside an app changes the answer above
-  // (a pinned rail on the desktop, the full-screen app on a phone), so the
-  // breakpoint re-decides too. Installed once, lazily, where it is needed.
+  // (the rail beside it on the desktop, the full-screen app on a phone), so
+  // the breakpoint re-decides too. Installed once, lazily, where it is needed.
   _railBreakpointWatched: false,
   _watchRailBreakpoint() {
     if (App._railBreakpointWatched) return;
@@ -6260,7 +6287,7 @@ const App = {
     try {
       const mql = window.matchMedia?.('(min-width: 768px)');
       mql?.addEventListener?.('change', () => {
-        if (App._railPinned()) App._syncPlatformTabs();
+        if (App._railPinned()) App._resyncRailBesideApp();
       });
     } catch (_) { /* no matchMedia: nothing to watch */ }
   },
@@ -8539,6 +8566,11 @@ const App = {
       // an invite link landed them in is where they are, and the mark menu's
       // "Go to Homeroom" is the way on (_privateNoClose).
       if (App._privateNoClose()) return ['none'];
+      // ON A DESKTOP THE RAIL STAYS BESIDE THE APP, and the corner is the
+      // sidebar toggle instead of a ✕: the rail's tabs are the way out, as
+      // they are from every other screen. _syncPlatformTabs asks the same
+      // predicate, so the ✕ and the rail never show together.
+      if (App._railBesideApp()) return ['none'];
       // The ✕'s DESTINATION is the page the app was opened from (App.closeApp
       // traverses back to it; this is the href a modified click follows), and
       // Home when there is none. The table holds the glyph; this holds the
@@ -8853,10 +8885,10 @@ const App = {
       // the default for everything that was not Home, and the reset was
       // written before an app had a slot of its own. Its href is where
       // App.closeApp goes: the page the app was opened from. A private
-      // member's first app has none: the table's own answer for it, so the
-      // two writers agree (_backSlotFor, _privateNoClose).
-      if (App._privateNoClose()) App.setBackIcon(...App._backSlotFor('app-view'));
-      else App.setBackIcon('close', App._closeAppHref());
+      // member's first app has none, and a desktop with the rail beside the
+      // app has the sidebar toggle instead: the table's own answers, so the
+      // two writers agree (_backSlotFor, _privateNoClose, _railBesideApp).
+      App.setBackIcon(...App._backSlotFor('app-view'));
       AppView.renderAppTab();
       if (opening && AppView.appData?.slug === App.currentApp
           && App._isScreenVisible?.('app-view')) {
@@ -9057,7 +9089,14 @@ App._applyBootScreen = function _applyBootScreen() {
   // that carries it is installed by the bundle, which has not evaluated yet,
   // and lighting a tab before hydration would be a first render that
   // disagrees with the prerender.
-  if (target === 'app-view' || target.startsWith('auth-')) {
+  //
+  // …EXCEPT AN APP ON A DESKTOP, whose rail stays beside it
+  // (_railBesideApp): hiding it here would only have the router bring it
+  // back, sliding the app a rail's width right under the reader. A private
+  // member's first app is the one desktop app without it; App.user is not
+  // known yet, so theirs is taken away by the router instead.
+  const railStays = target === 'app-view' && App._railBesideApp();
+  if ((target === 'app-view' && !railStays) || target.startsWith('auth-')) {
     App.Visibility.publish('platform-tabs', false);
   }
 };

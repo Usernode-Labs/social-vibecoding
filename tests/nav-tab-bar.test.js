@@ -103,7 +103,10 @@ test('Home is the one tab addressed as a path, so a modified click opens a tab',
 
 // ── 3. One place decides ──────────────────────────────────────────────
 
-function harness() {
+// A desktop window unless `phone`: a running app keeps the rail beside it
+// there (App._railBesideApp, tests/nav-rail-pinned.test.js), and a phone's
+// app takes the whole screen.
+function harness({ phone = false } = {}) {
   const context = vm.createContext({
     location: new URL('https://homeroom.test/'),
     history: { pushState() {}, replaceState() {} },
@@ -115,6 +118,7 @@ function harness() {
       addEventListener() {},
     },
     addEventListener() {},
+    matchMedia: () => ({ matches: !phone, addEventListener() {} }),
     localStorage: { getItem: () => null },
     PlatformUI: { transition(fn, opts) { fn(); opts?.after?.(); } },
   });
@@ -137,12 +141,16 @@ test('loading app.js with no session hides the bar before React renders', () => 
   assert.equal(shown(), false);
 });
 
-test('the bar is up on a platform screen and down inside an app', () => {
-  const { App, shown } = harness();
+test('the bar is up on a platform screen and down inside an app on a phone', () => {
+  const { App, shown } = harness({ phone: true });
   App._syncPlatformTabs('messages-screen');
   assert.equal(shown(), true);
   App._syncPlatformTabs('app-view');
   assert.equal(shown(), false);
+  // On a desktop the rail stays beside the running app.
+  const desktop = harness();
+  desktop.App._syncPlatformTabs('app-view');
+  assert.equal(desktop.shown(), true);
 });
 
 test('chromeless takes the bar with the header', () => {
@@ -187,7 +195,7 @@ test('the section is published even when the bar is down', () => {
   // publication to know it is inside an app (its left slot becomes a close
   // button, the app's tile appears beside its name). features/nav/mount.ts
   // derives the tab from it; only the signed-out screens publish nothing.
-  const { App, context, lit } = harness();
+  const { App, context, lit } = harness({ phone: true });
   App._syncPlatformTabs('workshop-screen');
   assert.equal(lit.at(-1), 'workshop-screen');
   App._syncPlatformTabs('app-view');
@@ -204,7 +212,8 @@ test('a cold boot into an app or the signed-out shell never paints the bar', () 
     ['#login', '/', false],
     ['', '/app/some-app', true],
   ]) {
-    const { App, shown } = harness();
+    // A phone: an app covers the bar there. The desktop is below.
+    const { App, shown } = harness({ phone: true });
     // The real resolver decides; only the DOM half of the reveal is stubbed,
     // because this harness has no elements for it to toggle.
     const target = App._bootScreenFor(hash, pathname, signedIn);
@@ -225,6 +234,18 @@ test('a cold boot into an app or the signed-out shell never paints the bar', () 
   App._bootScreenFor = () => 'workshop-screen';
   App._applyBootScreen();
   assert.equal(shown(), undefined);
+
+  // ...and so does a cold boot into an app on a DESKTOP, whose rail stays
+  // beside it: hiding it would only have the router bring it back, sliding
+  // the app a rail's width right. The signed-out shell still hides it.
+  for (const [target, left] of [['app-view', true], ['auth-landing', false]]) {
+    const desktop = harness();
+    delete desktop.context.__usernodeVisibility.visible['platform-tabs'];
+    desktop.App._revealBootScreen = () => {};
+    desktop.App._bootScreenFor = () => target;
+    desktop.App._applyBootScreen();
+    assert.equal(desktop.shown(), left ? undefined : false, target);
+  }
 });
 
 // ── The band the bar covers ───────────────────────────────────────────
@@ -350,8 +371,10 @@ test('the folded rail peeks back on hover, and reserves nothing while it does', 
   // ONE QUESTION decides the zone: the viewer folded a rail the ROUTE has.
   // `visible` is false over a running app, chromeless and signed out alike —
   // places with no rail of their own to bring back.
-  assert.match(bar, /\{visible && !railOpen \? \(/,
-    'it exists only where a rail the route has was folded by hand');
+  assert.match(bar, /\{visible && !railOpen && !runningApp \? \(/,
+    'it exists only where a rail the route has was folded by hand, and never over a running app');
+  assert.match(bar, /const runningApp = screen === 'app-view' && !tab;/,
+    'a running app is the app view with no tab lit; its Workshop lights one');
   // NOT a bare `screen === 'app-view'`: the app view is two screens, and on
   // its Workshop the rail is UP. This strip is `z-index: 39` against the
   // rail's 30, so rendering it there lays an invisible 18px column down the
@@ -380,12 +403,15 @@ test('the folded rail peeks back on hover, and reserves nothing while it does', 
 // #3138: on a desktop with an app open, the pointer drifting to the
 // window's left edge (an app's own menus, lists and scrollbars put it there
 // all the time) brought the rail up over the app. The hot zone is the only
-// thing that starts a peek over a running app — the bar is `hidden` there and
-// app.css hides #sidebar-toggle with it — so with no zone, a hover at x=2
-// cannot open the sidebar. Rendered for real, across every arrangement.
-function renderTabsAt({ screen, visible, railOpen }) {
+// thing at the edge that starts a peek, so with no zone over a running app,
+// a hover at x=2 cannot open the sidebar. That holds now the rail stays
+// beside a running app on the desktop and can be folded there: the way back
+// is #sidebar-toggle in the header. Rendered for real, across every
+// arrangement. `tab` is what the router lights: nothing for a running app,
+// Workshop (or Messages) for the app view's own platform screens.
+function renderTabsAt({ screen, tab = null, visible, railOpen }) {
   const navMod = loadTsx('frontend/src/features/nav/nav-store.js');
-  navMod.navStore.set({ screen, railOpen });
+  navMod.navStore.set({ screen, tab, railOpen });
   const { PlatformTabs } = loadTsx('frontend/src/features/nav/tab-bar.tsx', {
     stubs: {
       './nav-store.js': navMod,
@@ -401,21 +427,27 @@ function renderTabsAt({ screen, visible, railOpen }) {
 
 test('hovering the window\'s left edge over a running app never opens the sidebar (#3138)', () => {
   const zone = /id="platform-rail-peek"/;
-  // A RUNNING APP: the router hides the rail. No hot zone, whether or not the
-  // viewer folded the rail before opening it — `railOpen` outlives the
-  // screen, and a fold made on Home must not bring the zone into the app.
+  // A RUNNING APP whose rail the router hides (a phone, or "Keep sidebar
+  // open in apps" off). No hot zone, whether or not the viewer folded the
+  // rail before opening it — `railOpen` outlives the screen, and a fold made
+  // on Home must not bring the zone into the app.
   assert.doesNotMatch(renderTabsAt({ screen: 'app-view', visible: false, railOpen: true }), zone,
     'a running app has no edge hot zone');
   assert.doesNotMatch(renderTabsAt({ screen: 'app-view', visible: false, railOpen: false }), zone,
     'nor after the rail was folded somewhere else');
+  // A RUNNING APP WITH THE RAIL BESIDE IT (the desktop default): folded,
+  // still no zone. The app has the window and the toggle brings the rail back.
+  assert.doesNotMatch(renderTabsAt({ screen: 'app-view', visible: true, railOpen: false }), zone,
+    'a rail folded beside a running app does not come back from the edge');
   // Chromeless and signed out: no rail behind the edge to bring back.
   assert.doesNotMatch(renderTabsAt({ screen: null, visible: false, railOpen: false }), zone);
   // UNCHANGED ELSEWHERE: a rail folded by hand on a platform screen (or an
   // app's Workshop, where the rail is up) still peeks back from the edge…
-  assert.match(renderTabsAt({ screen: 'home-screen', visible: true, railOpen: false }), zone);
-  assert.match(renderTabsAt({ screen: 'app-view', visible: true, railOpen: false }), zone);
+  assert.match(renderTabsAt({ screen: 'home-screen', tab: 'home', visible: true, railOpen: false }), zone);
+  assert.match(renderTabsAt({ screen: 'app-view', tab: 'workshop', visible: true, railOpen: false }), zone);
   // …and an open rail has nothing to peek, so no strip over its tabs.
-  assert.doesNotMatch(renderTabsAt({ screen: 'home-screen', visible: true, railOpen: true }), zone);
+  assert.doesNotMatch(renderTabsAt({ screen: 'home-screen', tab: 'home', visible: true, railOpen: true }), zone);
+  assert.doesNotMatch(renderTabsAt({ screen: 'app-view', tab: 'workshop', visible: true, railOpen: true }), zone);
   assert.doesNotMatch(renderTabsAt({ screen: 'app-view', visible: true, railOpen: true }), zone);
 });
 
@@ -426,8 +458,9 @@ test('the explicit way to bring the rail back stays the sidebar toggle (#3138)',
   const toggle = read('frontend/src/features/nav/sidebar-toggle.tsx');
   assert.match(toggle, /navStore\.set\(\{ railOpen: !navStore\.get\(\)\.railOpen, peek: false, peekOut: false \}\);/);
   assert.match(toggle, /onPointerEnter=\{railOpen \? undefined : enterPeekByMouse\}/);
-  // …and the toggle is not drawn over a running app, so hovering it there is
-  // not a second way for the rail to appear under an app's pointer.
+  // …and it is drawn only where the rail is the ROUTE's, never because a
+  // peek took `hidden` off it. Beside a running app on the desktop the rail
+  // is the route's, so the toggle is there in the ✕'s place.
   assert.match(css, /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-route-hidden\)\) \.platform-sidebar-toggle/);
 });
 

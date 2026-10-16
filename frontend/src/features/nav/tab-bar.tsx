@@ -796,6 +796,11 @@ export function PlatformTabs() {
   // watch the viewport.
   useClassToggle(barRef, 'platform-tabs-folded', !railOpen);
   const { enter, leave } = useRailPeek(peek);
+  // A RUNNING APP, as this store tells it: the app view with no tab lit. Its
+  // Workshop and its threads light Workshop or Messages (App._syncPlatformTabs),
+  // so they are not this. The hot zone below needs it since the rail stays
+  // beside a running app on the desktop.
+  const runningApp = screen === 'app-view' && !tab;
   const { box: marker, lit, markerRef, press } = useTabMarker(barRef, tab);
   // THE COMMUNITIES TAB, HELD on the phone's bar, opens "Your communities"
   // (#3701, ../workshop/tab-ladder.ts createHold); a short press is the
@@ -855,12 +860,15 @@ export function PlatformTabs() {
           (#2718), so the rail came back over the app whenever the pointer
           drifted to the window's left edge — which is where an app's own
           menus, lists and scrollbars put the pointer all the time, and the
-          rail landed on top of whatever the reader was reaching for. Inside
-          an app the way out is the header's ✕, as it is on a phone; the
-          rail is the route's to hide there (`!visible`), so nothing at the
-          edge brings it back. That holds even with the rail folded by hand:
-          `railOpen` outlives the screen, and a fold made on Home must not
-          bring the hot zone back into the next app opened.
+          rail landed on top of whatever the reader was reaching for. On a
+          desktop the rail stays beside a running app now, and folding it
+          there gives the app the window: the way back is #sidebar-toggle in
+          the header's corner, never the edge (`!runningApp`). On a phone,
+          or with "Keep sidebar open in apps" off, the way out is the
+          header's ✕ and the rail is the route's to hide (`!visible`). That
+          holds even with the rail folded by hand: `railOpen` outlives the
+          screen, and a fold made on Home must not bring the hot zone into
+          the next app opened.
 
           Nor on the chromeless and signed-out shells, the other routes with
           no rail: a strip that peeked one in there would be conjuring
@@ -874,7 +882,7 @@ export function PlatformTabs() {
           lay an invisible 18px column down the left edge of the tabs and
           swallow the press meant for the one under the pointer.
       */}
-      {visible && !railOpen ? (
+      {visible && !railOpen && !runningApp ? (
         <div
           id="platform-rail-peek"
           className="platform-rail-peek"
