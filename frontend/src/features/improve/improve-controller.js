@@ -951,13 +951,20 @@ const Improve = {
    * app" nor "Homeroom" chosen (#2707): a person in an app may well mean the
    * platform, so the press does not answer that question (#4236). A button
    * that already names the app may pass `target: 'app'` instead (Home's
-   * Getting started card's Suggest did, until #4635 retired the card).
+   * Getting started card's Suggest did, until #4635 retired the card) — and
+   * the header's Suggest on a running app does now too (#3702): the control
+   * sits on the app, so "This app" is already the answer and asking again
+   * would be a second tap.
    */
-  giveFeedback() {
+  giveFeedback(opts = {}) {
     const { slug } = improveStore.get();
     return Promise.resolve(Improve.close()).then(() => {
       if (!window.App?.openFeedbackModal) return;
       if (window.App.currentApp === slug) {
+        if (opts.target === 'app') {
+          window.App.openFeedbackModal({ target: 'app' });
+          return;
+        }
         window.App.openFeedbackModal({ fromDev: true });
         return;
       }
