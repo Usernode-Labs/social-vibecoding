@@ -21,6 +21,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const PANE_PATH = 'frontend/src/features/leaderboard/challenges-pane.tsx';
 const Pane = loadTsx(PANE_PATH);
@@ -173,4 +174,16 @@ test('the count note reads under the points, and is absent without one', () => {
   assert.ok(at < html.indexOf('role="progressbar"'), 'before the rail');
   assert.match(html, /<p class="text-\[0\.8125rem\] text-zinc-500 dark:text-zinc-400">Counts when/);
   assert.doesNotMatch(render(VIEW), /Propose to group/);
+});
+
+// #3226: a line on what points are for, under the points, whenever they show.
+test('the points note reads under the points, and only when points show', () => {
+  const note = message('leaderboard:challenges.detail.pointsNote');
+  assert.equal(note, 'Points add up across challenges and set your place in the standings.');
+  const html = render(VIEW);
+  const at = html.indexOf(note);
+  assert.ok(at > html.indexOf('720 pts so far'), 'after the points');
+  assert.ok(at < html.indexOf('src="/illustrations/'), 'before the artwork');
+  assert.doesNotMatch(render({ ...VIEW, amount: null }), /set your place in the standings/,
+    'no points shown: no note either');
 });

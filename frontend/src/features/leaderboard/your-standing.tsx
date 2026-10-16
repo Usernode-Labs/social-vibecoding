@@ -109,6 +109,9 @@ export function YourStanding(): ReactNode {
       {view.pending ? (
         <p className="mt-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">{view.pending}</p>
       ) : null}
+      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+        {t('leaderboard:standing.pointsNote')}
+      </p>
       <Token token={view.token} />
     </section>
   );

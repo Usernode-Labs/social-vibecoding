@@ -66,6 +66,11 @@ test('the card reads "#3 of 12 people", inside the grid', () => {
   assert.match(html, /<span class="[^"]*text-2xl[^"]*">#3<\/span> of 12 people<\/p>/,
     'the rank drawn large, among how many people, in one message');
   assert.equal(message('leaderboard:standing.rankOf', { rank: 3, count: 12, number: '12' }), '<0>#3</0> of 12 people');
+  // #3226: one line on what points are for, under the rank, before the tokens.
+  const pointsNote = message('leaderboard:standing.pointsNote');
+  assert.equal(pointsNote, 'Your place comes from the points you earn in challenges.');
+  assert.ok(html.indexOf(pointsNote) > html.indexOf('of 12 people'), 'after the rank');
+  assert.ok(html.indexOf(pointsNote) < html.indexOf('Token allocation'), 'before the token block');
   assert.doesNotMatch(html, /Season 3|taking part|pts · you|Standings update|Points by event|<details/,
     'no season, no update note, no points by event');
   assert.match(html, /Token allocation/);
@@ -90,6 +95,8 @@ test('challenge points the standings have not caught up with keep the card (#318
   const html = renderCard({ status: 'ready', ranking: empty, pending: 1500, revealed: false });
   assert.match(html, />Your standing<\/span>/, 'no rank yet: the card names itself');
   assert.match(html, /1,500 pts earned, not in the standings yet/);
+  assert.match(html, /Your place comes from the points you earn in challenges\./,
+    'the points note is there in the pending state too');
   assert.doesNotMatch(html, /Standings update every few hours/, 'the update note is gone');
 });
 
