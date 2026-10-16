@@ -245,20 +245,17 @@ test('the header pill and the live line say where things stand in words', () => 
   assert.equal(transcript.toolActivity('start_change'), 'Preparing a confirmation');
 });
 
-test('an agent session is an agent conversation in the inbox: under Agents on the one clock, never under People', () => {
+test('an agent session is an agent conversation in the inbox: under Agents on its clock, never under People', () => {
   const base = {
     conversations: [{ id: 1, lastActivityAt: '2026-09-01T10:00:00Z' }],
-    discussions: [],
     agents: [],
     sessions: [{ key: 's1', lastActivityAt: '2026-09-01T09:00:00Z' }],
     mayors: [{ id: 7, lastActivityAt: '2026-09-01T11:00:00Z' }, { id: 8, lastActivityAt: null }],
   };
-  const all = inbox.buildInbox({ ...base, filter: 'all' });
-  assert.deepEqual(all.map((e) => e.key), ['mayor:7', 'person:1', 'session:s1', 'mayor:8']);
-  assert.ok(all.filter((e) => e.kind === 'mayor').every((e) => e.section === 'chats'));
-  assert.deepEqual(inbox.buildInbox({ ...base, filter: 'agents' }).map((e) => e.key), ['mayor:7', 'session:s1', 'mayor:8']);
-  assert.deepEqual(inbox.buildInbox({ ...base, filter: 'people' }).map((e) => e.key), ['person:1']);
-  assert.equal(inbox.admits('channels', 'mayor'), false);
+  const all = inbox.buildInbox(base);
+  assert.deepEqual(all.map((e) => e.key), ['mayor:7', 'session:s1', 'mayor:8', 'person:1']);
+  assert.ok(all.filter((e) => e.kind === 'mayor').every((e) => e.section === 'agents'));
+  assert.deepEqual(all.filter((e) => e.section === 'people').map((e) => e.key), ['person:1']);
 });
 
 test('the screen is reachable by address, on a phone and in the desktop Messages pane', () => {

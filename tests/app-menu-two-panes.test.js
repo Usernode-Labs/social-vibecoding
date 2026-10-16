@@ -195,7 +195,9 @@ test('a platform screen is named by the bar, and says it once', () => {
   assert.doesNotMatch(workshop, /AllAppsScope/,
     'the all-apps screen\'s "All" is the bar\'s own title now (#852), not a chip under it');
   assert.match(workshop, /data-workshop-needs-open=""/);
-  assert.match(messages, /<InboxFilters /);
+  // Messages says which of three kinds each conversation is by its
+  // section's heading (Homeroom bot, Agents, People; 16 Oct 2026).
+  assert.match(messages, /<SectionHead section=\{section\}/);
 });
 
 test('the desktop rail un-centres the header title', () => {

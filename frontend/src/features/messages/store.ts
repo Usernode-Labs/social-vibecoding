@@ -6,7 +6,7 @@ import * as api from './api';
 import { WORK_CHANGED_EVENT, inMainStream, openAppTarget, threadsAllowed } from './bot-shared';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
 import { platformHubServed, platformSlug, subscribePlatformSlug } from './channel-hub';
-import { savedInboxFilter, type AppDiscussion, type InboxFilter } from './inbox';
+import { type AppDiscussion, type InboxSection } from './inbox';
 import { markFor } from './unread-anchor';
 import type {
   ConversationDetail,
@@ -71,7 +71,7 @@ let state: InternalState = {
   discussionsLoaded: false,
   discussionContext: null,
   discussionError: null,
-  filter: 'all',
+  folded: [],
   thread: null,
   nextAfter: null,
   listCollapsed: false,
@@ -266,16 +266,26 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
+/** The sections that can fold from their headings: the bot's never does. */
+const FOLDABLE: ReadonlyArray<InboxSection> = ['agents', 'people'];
+
+/** Pure: the folded sections a saved value names, ignoring anything else. */
+export function savedFolded(raw: string | null | undefined): InboxSection[] {
+  const names = String(raw || '').split(',');
+  return FOLDABLE.filter((section) => names.includes(section));
+}
+
 /**
- * Which kind the list is showing (#2718), remembered per device since #4783:
- * a daily voter coming back keeps their choice instead of landing on All.
- * Still presentation, so not in the route, and a fresh device starts on All;
- * an unknown saved value (`savedInboxFilter`) falls back to All too.
+ * Fold a section of the list away from its heading, or open it again (16
+ * Oct 2026), remembered per device. Presentation, so not in the route; a
+ * fresh device starts with everything open.
  */
-export function setFilter(next: InboxFilter): void {
-  if (state.filter === next) return;
-  try { localStorage.setItem('usernode:messages-filter', next); } catch { /* storage unavailable */ }
-  publish({ filter: next });
+export function setSectionFolded(section: InboxSection, folded: boolean): void {
+  if (!FOLDABLE.includes(section)) return;
+  const next = FOLDABLE.filter((name) => (name === section ? folded : state.folded.includes(name)));
+  if (next.length === state.folded.length && next.every((name) => state.folded.includes(name))) return;
+  try { localStorage.setItem('usernode:messages-folded', next.join(',')); } catch { /* storage unavailable */ }
+  publish({ folded: next });
 }
 
 /**
@@ -2582,17 +2592,17 @@ export function initializeMessagesStore(): () => void {
   else document.addEventListener('sv:authed', onAuthed, { once: true });
   if (window.App?.user) void loadAppDiscussions();
   // #2387 / #2967: the two layout preferences, read after mount so the first
-  // render matches the prerendered shell. #4783: the chosen filter is the
-  // third, remembered the same way.
+  // render matches the prerendered shell. The folded sections are the third,
+  // remembered the same way.
   let listCollapsed = false;
   let showMoreChannels = false;
-  let filter: InboxFilter = 'all';
+  let folded: InboxSection[] = [];
   try {
     listCollapsed = localStorage.getItem('usernode:messages-list-collapsed') === '1';
     showMoreChannels = localStorage.getItem('usernode:messages-more-channels') === '1';
-    filter = savedInboxFilter(localStorage.getItem('usernode:messages-filter'));
+    folded = savedFolded(localStorage.getItem('usernode:messages-folded'));
   } catch { /* storage unavailable */ }
-  publish({ online: navigator.onLine, demo: browserDemo(), listCollapsed, showMoreChannels, filter });
+  publish({ online: navigator.onLine, demo: browserDemo(), listCollapsed, showMoreChannels, folded });
   return () => {
     window.removeEventListener('online', onOnline);
     window.removeEventListener('offline', onOffline);

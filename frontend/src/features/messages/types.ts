@@ -776,7 +776,7 @@ export interface DiscussionContext {
   iconEmoji: string | null;
 }
 
-import type { AppDiscussion, InboxFilter } from './inbox';
+import type { AppDiscussion, InboxSection } from './inbox';
 
 export interface MessagesSnapshot {
   route: MessagesRoute;
@@ -804,8 +804,7 @@ export interface MessagesSnapshot {
    * #2718: the other two kinds of thread this screen lists.
    *
    * `discussions` is GET /api/messages/app-discussions — the general thread
-   * on each app the viewer is a member of, one row per app. `filter` is which
-   * of the four the list is showing. Agent chats are NOT here: they are
+   * on each app the viewer is a member of, one row per app. Agent chats are NOT here: they are
    * already in features/global-chat's own store, and a second copy of a list
    * that is loaded, merged and invalidated elsewhere is a copy that drifts.
    */
@@ -819,7 +818,11 @@ export interface MessagesSnapshot {
    */
   discussionContext: DiscussionContext | null;
   discussionError: string | null;
-  filter: InboxFilter;
+  /**
+   * The list's sections folded away from their headings (16 Oct 2026):
+   * Agents, People, or both. Remembered per device; the bot's never folds.
+   */
+  folded: InboxSection[];
   /**
    * #2387: the reply thread open beside the conversation, or null. Its own
    * page of messages, loaded from `/threads/<root>`, so a thread never pushes

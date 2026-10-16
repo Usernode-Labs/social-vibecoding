@@ -22673,6 +22673,67 @@ html.un-kb #platform-parked {
     box-shadow: inset -1px 0 0 var(--app-sheet-line);
   }
 
+  /* THE COLUMN'S ROWS ARE THE COMMUNITIES COLUMN'S (16 Oct 2026): the
+     places list's 40px rows (.dev-ws-place: a small glyph, 15px words, the
+     place you are on lit with --lit-tint and --lit-ink), its small-caps
+     headings and its 12px gutters, so the two sidebars read as one. One
+     line a row, since the conversation opens beside it: no time and no
+     preview, the unread count at the trailing edge. The Homeroom bot keeps
+     its second line, what waits on you. The phone keeps the cards. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-toolbar { margin: 20px 16px 8px; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-list-scroll { padding: 0 12px 12px; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-section-head { padding: 12px 10px 4px; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-section-card {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0;
+    overflow: visible;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row,
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-more-channels {
+    min-height: 40px;
+    gap: 10px;
+    padding: 0 10px;
+    border-radius: 10px;
+  }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row::after { display: none; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row > :first-child {
+    flex: 0 0 22px;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    font-size: 10px;
+  }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-agent-tile { background: none; border: 0; color: var(--text-muted); }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-agent-tile svg { width: 20px; height: 20px; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row > .min-w-0 { display: flex; align-items: center; gap: 8px; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-row-line:first-child { flex: 1 1 auto; min-width: 0; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-row-line + .messages-row-line { flex: 0 0 auto; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-row-time,
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-row-preview,
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-kind-pill,
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-bot-badge,
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-group-tag { display: none; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-row-name { font-size: 15px; font-weight: 400; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-bot-row { padding-block: 7px; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-bot-row > .min-w-0 { display: block; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-bot-row .messages-row-preview { display: block; font-size: 12px; line-height: 16px; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-active { background: var(--lit-tint); color: var(--lit-ink); }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-active .messages-row-name { color: inherit; font-weight: 600; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-more-channels { font-size: 14px; font-weight: 500; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-more-channels-glyph { flex: 0 0 22px; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-session > a { min-height: 40px; gap: 10px; padding: 0 10px; border-radius: 10px; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-session > a > :first-child { width: 22px; height: 22px; border-radius: 6px; }
+  /* A change in flight is one line too: its title and the pill that says
+     where it stands (Working, Needs you, Ready); its app and time line goes. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-session > a > .min-w-0 > :first-child { font-size: 15px; font-weight: 400; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-session > a > .min-w-0 > :first-child ~ * { display: none; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-session-active > a { background: var(--lit-tint); color: var(--lit-ink); }
+
   /* THE RESUME STRIP GIVES WAY TO THE STRIP'S APPS ON THE DESKTOP (#2802,
      #4417). The apps on the strip are the same offer, several at once, the
      ones still open with their dot, so a second copy at its foot would say
@@ -22797,58 +22858,21 @@ html.un-kb #platform-parked {
    size and colour this shell does not choose. */
 .messages-search-input::-webkit-search-cancel-button { -webkit-appearance: none; }
 
-/* THE STRIP, which is the app Workshop's (`.dev-ws-tabtrack` at 700px+) with
-   the same track, the same radius and the same segment metrics. It is a
-   TRACK holding the segments rather than four loose pills, which is what
-   makes a segmented control read as one control with a state. */
-.messages-filters {
+/* THE SEARCH AND THE "+" ON ONE LINE (16 Oct 2026). The filter strip the
+   "+" ended (#2778) went: the list's sections are headed (Homeroom bot,
+   Agents, People), so the headings say which is which. */
+.messages-toolbar {
   display: flex;
   flex: 0 0 auto;
-  padding: 0 16px 8px;
-}
-.messages-filter-track {
-  display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 2px;
-  border-radius: 9999px;
-  background-color: var(--dc-sheet-raise);
+  gap: 8px;
+  margin: 20px 16px 10px;
 }
-.messages-filter {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  height: 32px;
-  padding: 0 16px;
-  border: 0;
-  border-radius: 9999px;
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
+.messages-toolbar .messages-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
 }
-/* `aria-current` is the only marker the component renders, so it is the only
-   one this reads — the same convention @/components/ui/tabs sets for every
-   strip in the shell. The tint and the hairline ring together are what the
-   Workshop's sliding marker paints; drawn on the segment here, because the
-   marker's geometry is measured against a DOM that screen owns. */
-.messages-filter[aria-current="page"] {
-  background: var(--brand-tint);
-  color: var(--brand-ink);
-  box-shadow: inset 0 0 0 1px var(--brand-line);
-}
-
-/* WHAT STARTS SOMETHING, at the strip's trailing end (#2778): one "+"
-   that opens a small popover of three choices rather than a row of buttons
-   under the strip. It sits on the track's own height and ground, so it reads
-   as part of the strip rather than as a second control beside it. */
-.messages-filters { align-items: center; gap: 8px; }
-/* Four segments and the "+" on one line inside the 22rem list pane: the
-   segments give up some of their side padding to make room for the disc. */
-.messages-filters .messages-filter { padding: 0 11px; }
 .messages-new-btn {
   flex: 0 0 auto;
   display: inline-flex;
@@ -22904,6 +22928,8 @@ html.un-kb #platform-parked {
    over #general and the apps — Discord's two headings, small and muted so
    they divide the list without competing with its rows. */
 .messages-section-head {
+  display: flex;
+  align-items: center;
   margin: 0;
   padding: 16px 16px 8px;
   font-size: 12px;
@@ -22912,6 +22938,49 @@ html.un-kb #platform-parked {
   text-transform: uppercase;
   color: var(--text-muted);
 }
+/* 16 Oct 2026: Agents and People fold from their heading, which is one
+   button the width of the list, so the whole line is the target. What in
+   the section asks for you ("1 working", "3 unread") sits at its trailing
+   edge in the row's own case, and stays there folded; a count of unread
+   messages from people is the accent, a number that asks for the viewer. */
+.messages-section-toggle {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: -6px 0;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  text-transform: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.messages-section-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.messages-section-name { min-width: 0; }
+.messages-section-aside {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+.messages-section-aside-ask { color: var(--accent); }
+.messages-section-chevron {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.5;
+  transition: transform 150ms;
+}
+.messages-section-name + .messages-section-chevron { margin-left: auto; }
+@media (prefers-reduced-motion: reduce) { .messages-section-chevron { transition: none; } }
 /* A SECTION'S ROWS ARE A CARD: the grouped list's shape (@/components/ui/
    grouped-list.tsx), spelled here because these rows are app.css's. The same
    plane colour, the same 20px radius and the same inset hairline in the
