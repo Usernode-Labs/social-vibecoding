@@ -53,8 +53,10 @@
 //   BOT_BUILD_CRASH_LANES      builds run at once (default 4), a database each
 //   BOT_BUILD_CRASH_ONLY       a,b,…: only the kill points whose name has one
 //   BOT_BUILD_CRASH_BUDGET_MS  stop starting kill points after this long
-//                              (default 150000); the rest are skipped, so the
-//                              file stays under the runner's 180 s timeout
+//                              (default 150000); the rest are skipped, and a
+//                              run whose wait that deadline cut short and
+//                              then timed out is skipped the same way, so
+//                              the file stays under the runner's 180 s timeout
 //   BOT_BUILD_CRASH_DEBUG=1    the children's output
 //   BOT_BUILD_CRASH_TIMING=1   each run's timeline
 //   BOT_BUILD_CRASH_RESULTS=1  what each kill point ended with, as JSON
@@ -290,23 +292,26 @@ test('bot builds and bench trials carried on through a crash at every step they 
     stops.push({ ...pr, mode: 'stop' });
   }
   // The run-193 shape, in a bot build and in the bench trial it happened
-  // in: the review's fix turn under way at the kill, long enough that the
-  // next process finds it still running, and pushing after.
+  // in: the review's fix turn under way at the kill, held running until the
+  // next process attaches (plan.holdUntil 'followed'), and pushing after.
   for (const id of ['review', 'trial']) {
     fakes.unshift({
       id, point: 'dispatched:fix:1', label: 'the fix turn under way, still running when the next process attaches',
-      plan: { turns: { ...SCENARIOS[id].plan.turns, 'fix:1': { ...FIX, ms: 4000 } } },
+      plan: { turns: { ...SCENARIOS[id].plan.turns, 'fix:1': { ...FIX, ms: 100, holdUntil: 'followed' } } },
       expectFollowRunning: true,
     });
   }
   // A turn that finished while no process was up, its push refused by the
   // platform's push proxy (down with it): the next process follows it and
-  // pushes its commit from the worker (durable-turn.js followTurn).
+  // pushes its commit from the worker (durable-turn.js followTurn). The
+  // turn is held until the kill that turns the proxy down is recorded
+  // (holdUntil 'killed'), so its finish never races the kill: the push is
+  // always refused, whoever slow the child was to get there.
   for (const [id, step] of [['later', 'build'], ['review', 'fix:1'], ['trial', 'fix:1']]) {
     const turns = SCENARIOS[id].plan.turns;
     fakes.push({
       id, point: `dispatched:${step}`, label: `the ${step} turn finished while nobody was up, its push refused`,
-      plan: { turns: { ...turns, [step]: { ...turns[step], ms: 300, pushNeedsPlatform: true } } },
+      plan: { turns: { ...turns, [step]: { ...turns[step], ms: 300, pushNeedsPlatform: true, holdUntil: 'killed' } } },
       restartAfterTurns: true, expectRepush: true,
     });
   }
@@ -532,10 +537,21 @@ function makeLane(name, index, childEnv, deadline = Infinity) {
     return mine;
   }
 
-  const waitFor = (ms) => Math.max(5000, Math.min(ms, deadline - Date.now()));
-
   async function runOne(scenario, { killAt = null, killMode = 'kill', restartAfterTurns = false } = {}) {
     const timing = [];
+    // A wait the lane's deadline (the suite's time budget) cut short is
+    // remembered: if that wait then times out, the run is past what the
+    // suite can afford, and is reported as a skip, not a failure. A wait the
+    // deadline did not reach is the build's own, and its timeout still fails.
+    let waitClipped = false;
+    const waitFor = (ms) => {
+      const left = deadline - Date.now();
+      waitClipped = left < ms;
+      return Math.max(5000, Math.min(ms, left));
+    };
+    // Stops a wait of this run whose answer nobody waits for any more: the
+    // waits aborted at the run's end are the ones the run did not reach.
+    const runWait = new AbortController();
     const mark = (what) => timing.push([what, Date.now()]);
     mark('begin');
     seq += 1;
@@ -574,9 +590,15 @@ function makeLane(name, index, childEnv, deadline = Infinity) {
     let why = null;
     try {
       for (let hop = 0; ; hop += 1) {
+        // The wait for the build to end loses to the child's exit: aborted
+        // then, so it stops polling instead of left running (and, should its
+        // timeout come, never thrown at whatever test is running).
+        const hopWait = new AbortController();
+        const w = waitFor(END_WAIT_MS);
         const outcome = await Promise.race([
-          child.exited.then(() => 'exited'),
-          world.until(ended, `${key} to end`, waitFor(END_WAIT_MS), 25).then(() => 'ended'),
+          child.exited.then(() => { hopWait.abort(); return 'exited'; }),
+          world.until(ended, `${key} to end`, w.ms, 25, { signal: hopWait.signal })
+            .then((v) => (v ? 'ended' : null)),
         ]);
         mark(outcome);
         if (outcome === 'ended') {
@@ -604,9 +626,10 @@ function makeLane(name, index, childEnv, deadline = Infinity) {
         }
         // Nobody is up until every turn under way has finished.
         if (restartAfterTurns) {
+          const w = waitFor(30000);
           await world.until(async () => !(await pool.query(
             `SELECT 1 FROM crash_world_turns WHERE app_id = $1 AND status = 'running'`, [app.id])).rows.length,
-          'the turns under way to finish', waitFor(30000), 20);
+          'the turns under way to finish', w.ms, 20, { signal: runWait.signal });
         }
         if (await ended()) {
           endedInStop = stopped;
@@ -621,20 +644,25 @@ function makeLane(name, index, childEnv, deadline = Infinity) {
       // A build that did not end is still under way in its child: that child
       // goes, so the next run starts in one of its own.
       if (/^timed out/.test(why)) {
-        timedOut = true;
+        runWait.abort();
         if (current && !current.exitInfo) await current.kill();
+        // The wait the deadline cut short is the suite's budget running out,
+        // not the build failing: the point is skipped, as one never started.
+        if (waitClipped) return { overBudget: true, why };
+        timedOut = true;
       }
     }
     // The result event is applied at once: the work is settled.
     await world.until(async () => !(await pool.query(
       `SELECT 1 FROM wf_work WHERE machine = 'bot-build' AND key = $1 AND status IN ('reported')`, [key])).rows.length,
-    'the result to be applied', 5000).catch(() => {});
+    'the result to be applied', 5000, undefined, { signal: runWait.signal }).catch(() => {});
     mark('settled');
     const out = await collect(pool, { app, key, children, build });
     mark('collected');
     if (process.env.BOT_BUILD_CRASH_TIMING) {
       console.log(`[lane ${index}] ${chain.length ? `${killMode} ${chain.join(' then ')}` : 'uninterrupted'}: ${timing.slice(1).map(([w, at], i) => `${w} +${at - timing[i][1]}`).join(' ')}`);
     }
+    runWait.abort();
     return {
       ...out, killed: chain.length > 0 && kills === chain.length, kills, stopped, endedInStop, leaseGivenUp, timedOut,
       why: why || (out.state !== 'done' ? children.map((c) => c.stderr().slice(-2000)).join('\n---\n') : null),
