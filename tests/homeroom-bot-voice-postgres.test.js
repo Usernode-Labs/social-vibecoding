@@ -270,6 +270,56 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.ok(broadcasts.some((f) => f.type === 'chat_message_updated' && f.id === sent[0].id));
   });
 
+  await t.test('mentioned in the project\'s chat, it offers a vote on closing a request by its number', async () => {
+    sent.length = 0;
+    const closeCalls = [];
+    const mayor = Object.create(require('../src/services/homeroom-bot-mayor'));
+    mayor.closeGate = async (p, a) => {
+      closeCalls.push(Number(a.issueNumber));
+      return { ok: true, issueNumber: Number(a.issueNumber), issue: { title: 'X' } };
+    };
+    const model = scripted([
+      { tool: 'offer_close_request', args: { number: 12, why: 'Already done' } },
+      { tool: 'reply', args: { text: 'If #12 is done, tap Propose to close below to open a vote on closing it. Nothing happens until you do.' } },
+    ]);
+    const words = '@Homeroom bot request #12 is done, can you propose closing it?';
+    const id = await say(evan, words);
+    const heard = await voice.noteMessage(pool, {}, {
+      appId: app.id, messageId: id, hint: { content: words, thread: null, quoted: false },
+      deps: { ...base(model), mayor },
+    });
+    assert.deepEqual(heard, { scheduled: true, why: 'mentioned' });
+    await runDue();
+    assert.equal(sent.length, 1);
+    assert.deepEqual(sent[0].thread, { type: 'message', ref: id }, 'in a reply thread under the message');
+    const offer = sent[0].metadata.homeroomBot.offer;
+    assert.equal(offer.kind, 'close_request');
+    assert.equal(offer.status, 'open');
+    assert.equal(offer.forUserId, evan.id);
+    assert.deepEqual(sent[0].metadata.homeroomBot.actions.map((a) => a.label), ['Propose to close', 'Keep it open']);
+    const { rows: [row] } = await pool.query('SELECT kind, args, status, message_id FROM homeroom_bot_voice_offers WHERE id = $1', [offer.id]);
+    assert.equal(row.kind, 'close_request');
+    assert.equal(row.message_id, sent[0].id);
+    assert.equal(row.args.issueNumber, 12);
+    assert.equal(row.args.why, 'Already done');
+    assert.deepEqual(closeCalls, [12], 'the gate read the request by the number the model passed');
+
+    // No number, no offer: the tool refuses and the model answers without buttons.
+    const again = scripted([
+      { tool: 'offer_close_request', args: {} },
+      { tool: 'reply', args: { text: 'Which request: its number, and I can offer a vote on closing it.' } },
+    ]);
+    const id2 = await say(evan, '@Homeroom bot please propose closing it.');
+    await voice.noteMessage(pool, {}, {
+      appId: app.id, messageId: id2, hint: { content: '@Homeroom bot please propose closing it.', thread: null, quoted: false },
+      deps: { ...base(again), mayor },
+    });
+    await runDue();
+    assert.equal(sent.length, 2);
+    assert.equal(sent[1].metadata.homeroomBot.offer, undefined, 'nothing offered without a number');
+    assert.deepEqual(closeCalls, [12], 'the gate was not called again');
+  });
+
   await t.test('switched off in chats, a mention is the old path\'s and the voice says nothing', async () => {
     await pool.query(
       `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_voice_chat', 'off')

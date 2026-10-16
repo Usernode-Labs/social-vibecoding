@@ -120,6 +120,8 @@ async function migrate(config) {
   // #945: must run AFTER seedStagingSharedSession — the proposal-thread
   // half hangs off that fixture's session id.
   await seedStagingDiscussionContext(pool, config);
+  // #5351: independent of the fixtures above — its offer is keyed on its own row.
+  await seedStagingBotCloseOffer(pool, config);
   // Must run AFTER seedStagingSharedSession — it forks that fixture's rows.
   await seedStagingForkedChat(pool, config);
   await seedStagingCcProgressRun(pool, config);
@@ -8665,6 +8667,93 @@ async function seedStagingDiscussionContext(pool, config) {
   await insert(null, 'Staging demo: a system activity row in the issue thread', 'system', issueThread, 45);
 
   log.info('db', 'Seeded staging discussion-context fixture', { appId, sessionId, issueNumber: 42 });
+}
+
+// #5351's shots: a close offer Homeroom bot has ALREADY made in a project's
+// chat. The voice makes one only when its model answers a mention with an
+// offer_close_request call, and a copy without a model key can never take
+// that turn, so the state a fresh clone needs is written here: the shots'
+// member (usernode-capture) asks the bot to propose closing a request, and
+// the bot's reply in a reply thread under it carries the open offer — its
+// buttons in metadata and its homeroom_bot_voice_offers row, so a tap
+// decides it through the ordinary route. The member is put in the self
+// app's community, since membership gates taking part, not reading. Idem-
+// potent on the open close_request offer row; strictly a no-op outside
+// staging.
+async function seedStagingBotCloseOffer(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    // The voice's own account, in the posture botAccount() reads: the
+    // username with is_synthetic on top, sentinel password, never a login.
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`
+    );
+    const who = await pool.query(
+      `SELECT
+         (SELECT id FROM users WHERE username = 'homeroom_bot') AS bot,
+         (SELECT id FROM users WHERE username = 'usernode-capture') AS member`
+    );
+    const botId = who.rows[0]?.bot || null;
+    const memberId = who.rows[0]?.member || null;
+    const { rows: appRows } = await pool.query('SELECT id, community_id FROM apps WHERE slug = $1', [config.selfAppSlug]);
+    const app = appRows[0] || null;
+    if (!botId || !memberId || !app) {
+      log.warn('db', 'Staging bot close-offer fixture skipped', { botId, memberId, app: !!app });
+      return;
+    }
+    if (app.community_id) {
+      await pool.query(
+        `INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [app.community_id, memberId]
+      );
+    }
+    const { rows: open } = await pool.query(
+      `SELECT id FROM homeroom_bot_voice_offers WHERE app_id = $1 AND kind = 'close_request' AND status = 'open' LIMIT 1`,
+      [app.id]
+    );
+    if (open.length) return;
+    const ask = '[staging fixture] @Homeroom bot request #1 is done, can you propose closing it?';
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM chat_messages WHERE app_id = $1 AND content = $2 LIMIT 1', [app.id, ask]
+    );
+    if (existing.length) return;
+    const { rows: [askRow] } = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, created_at)
+       VALUES ($1, $2, $3, 'message', NOW() - INTERVAL '6 minutes') RETURNING id`,
+      [app.id, memberId, ask]
+    );
+    const { rows: [offerRow] } = await pool.query(
+      `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id)
+       VALUES ($1, 'close_request',
+               '{"issueNumber": 1, "title": "Staging demo request", "why": "It is done"}'::jsonb,
+               $2)
+       RETURNING id`,
+      [app.id, memberId]
+    );
+    const { rows: [replyRow] } = await pool.query(
+      `INSERT INTO chat_messages
+         (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, created_at)
+       VALUES ($1, $2, $3, 'message',
+               jsonb_build_object('homeroomBot', jsonb_build_object(
+                 'kind', 'voice',
+                 'offer', jsonb_build_object(
+                   'id', $4::int, 'kind', 'close_request', 'status', 'open', 'forUserId', $5::int),
+                 'actions', jsonb_build_array(
+                   jsonb_build_object('id', 'yes', 'label', 'Propose to close', 'style', 'primary', 'offerId', $4::int),
+                   jsonb_build_object('id', 'no', 'label', 'Keep it open', 'style', 'secondary', 'offerId', $4::int)))),
+               'message', $6, NOW() - INTERVAL '5 minutes')
+       RETURNING id`,
+      [app.id, botId,
+        'Thanks. If request #1 is done, it can go: tap Propose to close below to open a vote on closing it. Nothing happens until you do, and it closes only if the group votes for it.',
+        offerRow.id, memberId, askRow.id]
+    );
+    await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1', [offerRow.id, replyRow.id]);
+    log.info('db', 'Staging bot close-offer fixture seeded', { appId: app.id, offerId: offerRow.id, replyId: replyRow.id });
+  } catch (err) {
+    log.warn('db', 'Staging bot close-offer seeding failed', { message: err.message });
+  }
 }
 
 // #32: reproduces the "session cloned from an auto run that ended in

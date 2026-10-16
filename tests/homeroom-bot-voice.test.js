@@ -177,9 +177,14 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
   assert.deepEqual(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })),
     ['reply', 'stay_quiet', 'start_request', 'offer_close_request', 'request_detail', 'list_source', 'read_source']);
   const chat = voice.toolsFor({ type: 'chat', ref: null }, { openChangeCount: 2, platform: true });
-  assert.deepEqual(names(chat), ['reply', 'stay_quiet', 'update_change', 'offer_request', 'request_detail', 'list_source', 'read_source', 'get_change', 'get_discussion', 'list_requests']);
+  assert.deepEqual(names(chat), ['reply', 'stay_quiet', 'update_change', 'offer_request', 'offer_close_request', 'request_detail', 'list_source', 'read_source', 'get_change', 'get_discussion', 'list_requests']);
   assert.ok(chat[2].function.parameters.properties.change, 'in a chat it names which change');
   assert.ok(!names(chat).includes('offer_withdraw'), 'withdrawing is offered where the change is');
+  const chatClose = chat.find((t) => t.function.name === 'offer_close_request');
+  assert.deepEqual(chatClose.function.parameters.required, ['number', 'why'], 'in a chat it names which request');
+  const issueClose = voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })
+    .find((t) => t.function.name === 'offer_close_request');
+  assert.ok(!issueClose.function.parameters.properties.number, 'on the request it is the request itself');
 });
 
 test('the prompt says where it is, lists only what it can do, and holds it to what it did', () => {
@@ -187,6 +192,8 @@ test('the prompt says where it is, lists only what it can do, and holds it to wh
   const prompt = voice.systemPrompt({ app: { slug: 'todo', name: 'Todo' }, place: { type: 'chat', ref: null }, tools, today: new Date('2026-10-10T00:00:00Z') });
   assert.match(prompt, /in a reply thread under the message you answer/);
   assert.match(prompt, /offer_request/);
+  assert.match(prompt, /offer_close_request/);
+  assert.match(prompt, /by its number/);
   assert.doesNotMatch(prompt, /update_change|offer_withdraw/);
   assert.match(prompt, /Never say you did something/);
   assert.match(prompt, /stay_quiet/);
