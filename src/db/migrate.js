@@ -218,6 +218,9 @@ async function migrate(config) {
   // failing verdict onto an existing staging proposal.
   await seedStagingPlatformEnv(pool, config);
   await seedStagingTopochain(pool, config);
+  // After it: it seeds the invite challenge (900504) whose "Your invites"
+  // list this fixture fills, and the viewer identities the link belongs to.
+  await seedStagingInviteChallengeStatuses(pool);
   // After it: the First challenges hang off its season-type event.
   await seedStagingFirstChallenges(pool);
   // Must run AFTER seedStagingTopochain (it decorates the same three viewer
@@ -13566,6 +13569,206 @@ async function seedStagingTopochain(pool, config) {
     log.warn('db', 'Topochain staging viewer-credit seeding failed', {
       message: err.message,
     });
+  }
+}
+
+// #3650: the challenge page's "Your invites" list needs state no other
+// fixture makes — an open invite challenge a member can open on the DEFAULT
+// event (the season's), a scoring rule on INVITES_JOINED (without one the
+// challenge is never scored and the list does not draw at all), and the
+// invite records behind each status word, all belonging to the capture
+// viewer (usernode-capture), the member the shots sign as.
+//
+// DATA ONLY, NO SIGNAL (same rule as seedStagingFirstChallenges below): the
+// ledger rows here are the fixture for the "Counted" word itself — the list
+// reads the ledger for what is paid — so they are the visible state, not a
+// signal the code decides on. The scorer never touches these rows; the
+// fixture people are never-login accounts, like every staging demo person.
+//
+// Its own failure domain, so a clone missing the viewer or the invite
+// challenge skips only this. Fixed ids at 900730 (the challenge) and
+// 900900-900910 (rule and ledger, clear of the snapshots at 900600-900611
+// and the archive activities at 900700-900703), and ON CONFLICT DO NOTHING
+// throughout, so a reboot changes nothing.
+async function seedStagingInviteChallengeStatuses(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    // The invite challenge itself, open on the season-type event (the one a
+    // signed-in member lands on). Seeded, not 900504: that one's `completed`
+    // stands (its Done card is another fixture's state), and a closed
+    // challenge is never scored — no rule would speak for it. A schedule of
+    // its own, not the event's: the season event's window is refreshed to
+    // "now" on every boot, which would put every seeded join outside it.
+    await pool.query(
+      `INSERT INTO challenges
+         (id, season_event_id, challenge_template_id, schedule_start,
+          schedule_end, enabled, display_order, completed, created_at, updated_at)
+       VALUES (900730, 900501, 900503, NOW() - INTERVAL '45 days',
+               NOW() + INTERVAL '45 days', TRUE, 5, FALSE, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+    // The rule it is scored by: three joined people, 250 points each, on the
+    // event's running window (no schedule of its own). The invite status
+    // reader resolves the same rule row.
+    await pool.query(
+      `INSERT INTO challenge_scoring_rules
+         (id, name, measure, challenge_template_id, challenge_id, target,
+          points, enabled, notes, created_at, updated_at)
+       VALUES (900900, 'Staging demo: invite three participants',
+               'INVITES_JOINED', NULL, 900730, 3, 250, TRUE,
+               'Staging demo: backs the invite challenge''s per-person list.',
+               NOW(), NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         challenge_id = EXCLUDED.challenge_id, measure = EXCLUDED.measure,
+         target = EXCLUDED.target, points = EXCLUDED.points, enabled = TRUE`
+    );
+    const { rows: viewerRows } = await pool.query(
+      "SELECT id FROM users WHERE username = 'usernode-capture'");
+    if (!viewerRows.length) return;
+    const VIEWER = viewerRows[0].id;
+    const { rows: appRows } = await pool.query(
+      'SELECT id, community_id FROM apps WHERE id = 1 AND community_id IS NOT NULL');
+    if (!appRows.length) return;
+    const APP = appRows[0].id;
+    const COMMUNITY = appRows[0].community_id;
+
+    // Seven fixture people, one per status word the list shows. The names
+    // carry the demo mark.
+    await pool.query(
+      `INSERT INTO users (username, password, is_admin, is_synthetic)
+       VALUES
+         ('staging-demo-invitee-counted', 'staging-demo-not-a-login', FALSE, FALSE),
+         ('staging-demo-invitee-soon',    'staging-demo-not-a-login', FALSE, FALSE),
+         ('staging-demo-invitee-waiting', 'staging-demo-not-a-login', FALSE, FALSE),
+         ('staging-demo-invitee-gone',    'staging-demo-not-a-login', FALSE, FALSE),
+         ('staging-demo-invitee-other',   'staging-demo-not-a-login', FALSE, FALSE),
+         ('staging-demo-invitee-early',   'staging-demo-not-a-login', FALSE, FALSE),
+         ('staging-demo-invitee-notalk',  'staging-demo-not-a-login', FALSE, FALSE)
+       ON CONFLICT (username) DO NOTHING`
+    );
+    const { rows: people } = await pool.query(
+      "SELECT id, username FROM users WHERE username LIKE 'staging-demo-invitee-%'");
+    const byName = new Map(people.map((p) => [p.username, p.id]));
+    const counted = byName.get('staging-demo-invitee-counted');
+    const soon = byName.get('staging-demo-invitee-soon');
+    const waiting = byName.get('staging-demo-invitee-waiting');
+    const gone = byName.get('staging-demo-invitee-gone');
+    const other = byName.get('staging-demo-invitee-other');
+    const early = byName.get('staging-demo-invitee-early');
+    const notalk = byName.get('staging-demo-invitee-notalk');
+
+    // The viewer's links: the live one (joined and queued people hang off
+    // it) and a turned-off one. The other inviter is the fixture admin.
+    await pool.query(
+      `INSERT INTO community_invites (token, community_id, app_id, created_by, uses, created_at)
+       VALUES
+         ('stagingdemoinvitemain01', $1, $2, $3, 3, NOW() - INTERVAL '3 days'),
+         ('stagingdemoinvitegone01', $1, $2, $3, 1, NOW() - INTERVAL '10 days')
+       ON CONFLICT (token) DO NOTHING`,
+      [COMMUNITY, APP, VIEWER]
+    );
+    const { rows: linkRows } = await pool.query(
+      `SELECT token, id FROM community_invites
+        WHERE token IN ('stagingdemoinvitemain01', 'stagingdemoinvitegone01')`);
+    const links = new Map(linkRows.map((l) => [l.token, l.id]));
+    const MAIN = links.get('stagingdemoinvitemain01');
+    const GONE = links.get('stagingdemoinvitegone01');
+    if (!MAIN || !GONE) return;
+    await pool.query(
+      `UPDATE community_invites SET revoked_at = NOW() - INTERVAL '1 day'
+         WHERE token = 'stagingdemoinvitegone01' AND revoked_at IS NULL`);
+
+    // Whoever invited first: each person counts once, for the FIRST invite
+    // they took. The "someone else's invite" person joined through the
+    // admin's link a day before they followed the viewer's.
+    const { rows: inviterRows } = await pool.query(
+      "SELECT id FROM users WHERE is_admin ORDER BY id ASC LIMIT 1");
+    const ADMIN = inviterRows.length ? inviterRows[0].id : null;
+    if (ADMIN && ADMIN !== VIEWER) {
+      await pool.query(
+        `INSERT INTO community_invites (token, community_id, app_id, created_by, uses, created_at)
+         VALUES ('stagingdemoinviteadmin1', $1, $2, $3, 1, NOW() - INTERVAL '9 days')
+         ON CONFLICT (token) DO NOTHING`,
+        [COMMUNITY, APP, ADMIN]
+      );
+      await pool.query(
+        `INSERT INTO community_invite_redemptions (invite_id, user_id, status, created_at, applied_at)
+         SELECT id, $1, 'joined', NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days'
+           FROM community_invites WHERE token = 'stagingdemoinviteadmin1'
+         ON CONFLICT (invite_id, user_id) DO NOTHING`,
+        [other]
+      );
+      // The point went to whoever invited first, as the scorer would pay it.
+      await pool.query(
+        `INSERT INTO user_activities
+           (id, user_id, season_event_id, activity_type, points, description,
+            metadata, activity_at, source, challenge_id, created_at, updated_at)
+         VALUES (900902, $1, 900501, 'growth', 250, $2,
+                 $3::jsonb, NOW() - INTERVAL '2 days', 'challenge_scorer', 900730, NOW(), NOW())
+         ON CONFLICT (id) DO UPDATE SET
+           user_id = EXCLUDED.user_id, season_event_id = EXCLUDED.season_event_id,
+           activity_type = EXCLUDED.activity_type, points = EXCLUDED.points,
+           description = EXCLUDED.description, metadata = EXCLUDED.metadata,
+           activity_at = EXCLUDED.activity_at, source = EXCLUDED.source,
+           challenge_id = EXCLUDED.challenge_id`,
+        [ADMIN, '@staging-demo-invitee-other joined by your invite',
+         JSON.stringify({ source_key: `invitee:${other}`, rule_id: 900900, measure: 'INVITES_JOINED', timestamp_precision: 'instant' })]
+      );
+    }
+
+    await pool.query(
+      `INSERT INTO community_invite_redemptions (invite_id, user_id, status, created_at, applied_at)
+       VALUES
+         -- Counted: joined three days ago... the ledger row below pays it.
+         ($1, $2, 'joined', NOW() - INTERVAL '3 days', NOW() - INTERVAL '30 hours'),
+         -- Counts soon: joined through the viewer's link, not yet on the pass.
+         ($1, $3, 'joined', NOW() - INTERVAL '5 hours', NOW() - INTERVAL '4 hours'),
+         -- Waiting: followed the link, queued for admission, the maker can
+         -- still grant it.
+         ($1, $4, 'queued', NOW() - INTERVAL '2 hours', NULL),
+         -- Won't join: followed the turned-off link.
+         ($5, $6, 'queued', NOW() - INTERVAL '2 days', NULL),
+         -- Not counted (someone else's invite): joined through the viewer's
+         -- link too, but somebody else's came first.
+         ($1, $7, 'joined', NOW() - INTERVAL '1 day', NOW() - INTERVAL '20 hours'),
+         -- Not counted (outside the challenge's dates): joined before the
+         -- event's window opened.
+         ($1, $8, 'joined', NOW() - INTERVAL '60 days', NOW() - INTERVAL '60 days')
+       ON CONFLICT (invite_id, user_id) DO NOTHING`,
+      [MAIN, counted, soon, waiting, GONE, gone, other, early]
+    );
+
+    // The not-accepted one: the viewer's collaborator invite, unanswered.
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, created_at)
+       VALUES ($1, $2, 'invited', $3, NOW() - INTERVAL '6 hours')
+       ON CONFLICT (app_id, user_id) DO NOTHING`,
+      [APP, notalk, VIEWER]
+    );
+
+    // The Counted person's paid row, exactly as the scorer writes it
+    // (writeCredits): the viewer's, on the invitee's key.
+    const { rows: ruleRows } = await pool.query(
+      'SELECT id FROM challenge_scoring_rules WHERE id = 900900');
+    if (!ruleRows.length) return;
+    await pool.query(
+      `INSERT INTO user_activities
+         (id, user_id, season_event_id, activity_type, points, description,
+          metadata, activity_at, source, challenge_id, created_at, updated_at)
+       VALUES (900901, $1, 900501, 'growth', 250, $2,
+               $3::jsonb, NOW() - INTERVAL '30 hours', 'challenge_scorer', 900730, NOW(), NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         user_id = EXCLUDED.user_id, season_event_id = EXCLUDED.season_event_id,
+         activity_type = EXCLUDED.activity_type, points = EXCLUDED.points,
+         description = EXCLUDED.description, metadata = EXCLUDED.metadata,
+         activity_at = EXCLUDED.activity_at, source = EXCLUDED.source,
+         challenge_id = EXCLUDED.challenge_id`,
+      [VIEWER,
+       '@staging-demo-invitee-counted joined by your invite',
+       JSON.stringify({ source_key: `invitee:${counted}`, rule_id: 900900, measure: 'INVITES_JOINED', timestamp_precision: 'instant' })]
+    );
+  } catch (err) {
+    log.warn('db', 'Invite-challenge status seeding failed', { message: err.message });
   }
 }
 

@@ -40,7 +40,7 @@ import type { ReactNode } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { SectionHeading } from '@/components/ui/field';
-import { SectionHeader } from '@/components/ui/grouped-list';
+import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
 import { resolveIllustration } from '../../lib/challenge-illustrations';
@@ -65,6 +65,7 @@ const controller = () => (window as {
     _toOnboarding(eventId: number): void;
     requestBlockProduction(): void;
     retryBpState(): void;
+    retryInvites(): void;
     openWallet(): void;
     closeChallengeDetail(): void;
     _backFromDetail(): void;
@@ -168,6 +169,13 @@ type DetailView = {
   cta: CtaView | null;
   // #3186: the Me screen's "Your feedback", on the feedback challenge only.
   feedbackLink?: boolean;
+  // #3650: the invite challenge's plain-language line under the rail, and
+  // the per-person list of who the viewer invited and why each counts.
+  invitesNote?: string | null;
+  invites?: {
+    state: 'loading' | 'error' | 'ready';
+    people?: { key: string; name: string; word: string; reason: string }[];
+  } | null;
   blockProduction?: BlockProductionView | null;
   // The organiser's requirements, under "What counts".
   requirements: string | null;
@@ -469,6 +477,78 @@ function PageSection({ heading, children }: { heading: string; children: string 
   );
 }
 
+// #3650: the invite challenge's per-person list. A row is the person, the
+// grey line under their name is why they do or do not count yet (it can run
+// to two lines, so it is not truncated), and the word on the trailing edge
+// is the status — Counted in the accent a finished thing earns, everything
+// else quiet, because the action is on the people still waiting, not on the
+// word.
+const INVITE_COUNTED = 'text-sm font-medium text-emerald-700 dark:text-emerald-400';
+const INVITE_MUTED = 'text-sm font-medium text-zinc-500 dark:text-zinc-400';
+
+function InviteList({ view }: { view: NonNullable<DetailView['invites']> }): ReactNode {
+  const t = useMessages('leaderboard');
+  const heading = t('leaderboard:challenges.invites.heading');
+  if (view.state === 'loading') {
+    return (
+      <section data-tc-invites className="flex flex-col">
+        <SectionHeading title={heading} />
+        <SkeletonGroup label={heading}>
+          <GroupedList className="mx-0">
+            {Array.from({ length: 3 }, (_, i) => (
+              <ListRow
+                key={i}
+                chevron={false}
+                title={<Skeleton shape="block" className="h-4 w-28" />}
+                subtitle={<Skeleton shape="block" className="mt-1 h-3 w-full" />}
+              />
+            ))}
+          </GroupedList>
+        </SkeletonGroup>
+      </section>
+    );
+  }
+  if (view.state === 'error' || !view.people?.length) {
+    return (
+      <section data-tc-invites className="flex flex-col">
+        <SectionHeading title={heading} />
+        <p className={PROSE}>
+          {view.state === 'error'
+            ? t('leaderboard:challenges.invites.error')
+            : t('leaderboard:challenges.invites.empty')}
+        </p>
+        {view.state === 'error' ? (
+          <button
+            type="button" id="tc-se-invites-retry" className={`${BP_BUTTON} self-start`}
+            onClick={() => controller()?.retryInvites()}
+          >{t('leaderboard:bp.error.retry')}</button>
+        ) : null}
+      </section>
+    );
+  }
+  return (
+    <section data-tc-invites className="flex flex-col">
+      <SectionHeading title={heading} />
+      <GroupedList className="mx-0">
+        {view.people.map((p) => (
+          <ListRow
+            key={p.key}
+            chevron={false}
+            title={p.name}
+            subtitle={p.reason}
+            subtitleClassName="whitespace-normal"
+            trailing={(
+              <span className={p.word === 'counted' ? INVITE_COUNTED : INVITE_MUTED}>
+                {t(`leaderboard:challenges.invites.status.${p.word}`)}
+              </span>
+            )}
+          />
+        ))}
+      </GroupedList>
+    </section>
+  );
+}
+
 // The artwork well, drawn ONLY for a slug the registry resolves
 // (../../lib/challenge-illustrations.ts): the same artwork as the card's
 // tile, larger, on the same pale tone, which for an upload is the payload's
@@ -521,6 +601,9 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
         name={view.goal}
         counted={view.counted}
       />
+      {/* #3650: what makes an invite count, in plain words, right under the
+          rail that shows the count. */}
+      {view.invitesNote ? <p className={PROSE}>{view.invitesNote}</p> : null}
       {view.blockProduction ? <BlockProductionStep view={view.blockProduction} /> : null}
       {view.cta ? <Cta view={view.cta} /> : null}
       {/* #3186: the feedback challenge's count is the viewer's own reports;
@@ -531,6 +614,10 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
           {t('leaderboard:challenges.detail.seeFeedback')}
         </a>
       ) : null}
+      {/* #3650: who the viewer invited, and why each person does or does not
+          count yet — before "What counts", the same way the feedback link is
+          the viewer's own records beside the count. */}
+      {view.invites ? <InviteList view={view.invites} /> : null}
       {view.requirements ? <PageSection heading={t('leaderboard:challenges.detail.requirements')}>{view.requirements}</PageSection> : null}
     </>
   );

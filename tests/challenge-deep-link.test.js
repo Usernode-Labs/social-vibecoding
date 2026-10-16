@@ -549,11 +549,14 @@ test('the task line is on neither the card nor the page, and nothing is a toolti
     'the page’s title says what to do, and What counts says how it is counted (the Semi design)');
   const paneSrc = require('node:fs').readFileSync(
     require('node:path').join(root, 'frontend/src/features/leaderboard/challenges-pane.tsx'), 'utf8');
-  // `<SectionHeading title=…/>` is @/components/ui/field's PROP, not the DOM
-  // attribute of the same name: it renders the heading's visible text. Strip
-  // those and the blunt rule below still catches a real tooltip.
-  const noHeadings = paneSrc.replace(/<SectionHeading[\s\S]*?\/>/g, '');
-  assert.doesNotMatch(noHeadings, /title=\{/,
+  // `<SectionHeading title=…/>` and `<ListRow title=…/>` are kit PROPS, not
+  // the DOM attribute of the same name: they render visible text (grouped-
+  // list Omits the DOM tooltip `title` from its own props). And ListRow's
+  // `subtitle=` contains the letters `title=` — so the rule is about the
+  // attribute word itself: `title={` not preceded by another letter, which
+  // is what a real DOM tooltip write looks like.
+  const noHeadings = paneSrc.replace(/<(SectionHeading|ListRow)[\s\S]*?\/>/g, '');
+  assert.doesNotMatch(noHeadings, /(?<![A-Za-z])title=\{/,
     'a phone has no hover: nothing on this screen may live only in a title attribute');
 });
 

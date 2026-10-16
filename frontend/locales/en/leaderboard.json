@@ -223,6 +223,86 @@
     "text": "What counts",
     "description": "Heading on a challenge's page over the organiser's words on what counts towards it and how."
   },
+  "challenges.invites.note": {
+    "text": "An invite counts when the person joins your community through your invite link, or accepts your invite, while this challenge is open. Each person counts once, for the first invite they took. Counts run on a schedule, so a new join shows here a little later.",
+    "description": "Under the progress rail on the Invite 3 people challenge's page: the plain-language rule the scorer pays by."
+  },
+  "challenges.invites.heading": {
+    "text": "Your invites",
+    "description": "Heading of the per-person invite list on the Invite 3 people challenge's page, before What counts."
+  },
+  "challenges.invites.empty": {
+    "text": "You haven't invited anyone yet.",
+    "description": "The invite list on the Invite 3 people challenge's page when the viewer has no invite records at all."
+  },
+  "challenges.invites.error": {
+    "text": "Couldn't load your invites.",
+    "description": "The invite list on the Invite 3 people challenge's page when the read failed; the pane offers a retry."
+  },
+  "challenges.invites.someone": {
+    "text": "Someone you invited",
+    "description": "A row in the invite list for a person whose name cannot be shown yet (a claimed email invite with no handle)."
+  },
+  "challenges.invites.status.counted": {
+    "text": "Counted",
+    "description": "The word on a row of the invite list: the person's join is in the ledger and the points are paid."
+  },
+  "challenges.invites.status.soon": {
+    "text": "Counts soon",
+    "description": "The word on a row of the invite list: they joined through the viewer's invite and the next scheduled count pays for them."
+  },
+  "challenges.invites.status.over": {
+    "text": "Over the limit",
+    "description": "The word on a row of the invite list: they joined through the viewer's invite but the challenge has paid for its full number of people already."
+  },
+  "challenges.invites.status.notCounted": {
+    "text": "Not counted",
+    "description": "The word on a row of the invite list: they joined, but someone else's invite was first, or outside the challenge's dates."
+  },
+  "challenges.invites.status.waiting": {
+    "text": "Waiting",
+    "description": "The word on a row of the invite list: they followed the link but haven't joined yet, or haven't accepted the invite."
+  },
+  "challenges.invites.status.wontJoin": {
+    "text": "Won't join",
+    "description": "The word on a row of the invite list: the link they followed was turned off before they could join."
+  },
+  "challenges.invites.reason.counted": {
+    "text": "Joined through your invite.",
+    "description": "The grey line under a Counted row of the invite list."
+  },
+  "challenges.invites.reason.pending_count": {
+    "text": "Joined through your invite. It shows here after the next count.",
+    "description": "The grey line under a Counts soon row of the invite list."
+  },
+  "challenges.invites.reason.over_target_one": {
+    "text": "Joined, but this challenge counts up to {{count}} person.",
+    "description": "The grey line under an Over the limit row of the invite list, for one person."
+  },
+  "challenges.invites.reason.over_target_other": {
+    "text": "Joined, but this challenge counts up to {{count}} people.",
+    "description": "The grey line under an Over the limit row of the invite list."
+  },
+  "challenges.invites.reason.other_invite": {
+    "text": "They took someone else's invite first. Each person counts once.",
+    "description": "The grey line under a Not counted row whose person's first invite was somebody else's."
+  },
+  "challenges.invites.reason.outside_window": {
+    "text": "They joined outside this challenge's dates.",
+    "description": "The grey line under a Not counted row whose person joined before the challenge opened or after it closed."
+  },
+  "challenges.invites.reason.waiting_access": {
+    "text": "They followed your link but haven't joined yet. They join your community once they're let into Homeroom.",
+    "description": "The grey line under a Waiting row whose person queued for admission to Homeroom."
+  },
+  "challenges.invites.reason.not_accepted": {
+    "text": "You invited them, and they haven't accepted yet.",
+    "description": "The grey line under a Waiting row whose person has an open collaborator invite."
+  },
+  "challenges.invites.reason.link_off": {
+    "text": "The link they followed was turned off before they could join.",
+    "description": "The grey line under a Won't join row of the invite list."
+  },
   "challenges.countNote.onPropose": {
     "text": "Counts when you press Propose to group, which puts your change to a vote.",
     "description": "Note on the page of a challenge that is completed by proposing a change. \"Propose to group\" is a button's label; \"change\" is a noun."

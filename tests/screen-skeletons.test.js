@@ -228,7 +228,10 @@ test('challenges: the grid is the one loading branch, and it hands off to the sk
     assert.ok(!code(CHALLENGES).includes(gone), `"${gone}" is no longer rendered`);
   }
   assert.ok(!/>Loading…</.test(code(CHALLENGES)), 'nor a bare "Loading…"');
-  assert.equal((CHALLENGES.match(/<SkeletonGroup/g) || []).length, 1, 'one skeleton group in the pane');
+  // Two since #3650: the grid's, and the challenge page's "Your invites"
+  // list, which holds three row placeholders while its own read is in flight.
+  assert.equal((CHALLENGES.match(/<SkeletonGroup/g) || []).length, 2,
+    'the pane’s skeleton groups: the grid’s and the invite list’s');
 });
 
 test('a skeleton is never a tap target', () => {

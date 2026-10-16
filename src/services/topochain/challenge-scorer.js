@@ -316,23 +316,29 @@ const COMMUNITY_APP_CREATED_SQL = `
 // invite they took, across all time, names their one inviter. Without that,
 // a handful of accounts joining each other's communities would pay every
 // one of them.
+// The first invite each person ever took, across all inviters — one row per
+// person, the earliest record naming their one inviter. This is the inner
+// DISTINCT ON of INVITES_JOINED_SQL below, factored out so the challenge
+// page's invite list (./invite-statuses.js) reads the same records the
+// scorer pays on and the two cannot drift apart. INVITES_JOINED_SQL embeds
+// it verbatim.
+const INVITES_FIRST_TAKEN_SQL = `SELECT DISTINCT ON (t.invitee_id) t.inviter_id, t.invitee_id, t.at
+    FROM (
+      SELECT i.created_by AS inviter_id, x.user_id AS invitee_id, x.applied_at AS at
+        FROM community_invite_redemptions x
+        JOIN community_invites i ON i.id = x.invite_id
+       WHERE x.status = 'joined' AND x.applied_at IS NOT NULL AND i.created_by IS NOT NULL
+      UNION ALL
+      SELECT c.invited_by, c.user_id, c.accepted_at
+        FROM app_collaborators c
+       WHERE c.status = 'member' AND c.invited_by IS NOT NULL AND c.accepted_at IS NOT NULL
+    ) t
+   WHERE t.inviter_id <> t.invitee_id
+   ORDER BY t.invitee_id ASC, t.at ASC, t.inviter_id ASC`;
+
 const INVITES_JOINED_SQL = `
   SELECT f.inviter_id AS user_id, f.invitee_id, f.at, u.username AS invitee_username
-    FROM (
-      SELECT DISTINCT ON (t.invitee_id) t.inviter_id, t.invitee_id, t.at
-        FROM (
-          SELECT i.created_by AS inviter_id, x.user_id AS invitee_id, x.applied_at AS at
-            FROM community_invite_redemptions x
-            JOIN community_invites i ON i.id = x.invite_id
-           WHERE x.status = 'joined' AND x.applied_at IS NOT NULL AND i.created_by IS NOT NULL
-          UNION ALL
-          SELECT c.invited_by, c.user_id, c.accepted_at
-            FROM app_collaborators c
-           WHERE c.status = 'member' AND c.invited_by IS NOT NULL AND c.accepted_at IS NOT NULL
-        ) t
-       WHERE t.inviter_id <> t.invitee_id
-       ORDER BY t.invitee_id ASC, t.at ASC, t.inviter_id ASC
-    ) f
+    FROM (${INVITES_FIRST_TAKEN_SQL}) f
     LEFT JOIN users u ON u.id = f.invitee_id
    WHERE f.at >= $1 AND f.at <= $2
    ORDER BY f.inviter_id ASC, f.at ASC, f.invitee_id ASC
@@ -1400,6 +1406,7 @@ module.exports = {
   MAX_GRADES_PER_RUN,
   CANDIDATE_LIMIT,
   RULE_CHALLENGES_SQL,
+  INVITES_FIRST_TAKEN_SQL,
   ONBOARDING_LIMIT,
   CADENCE_RULES_SQL,
   CREDITED_SQL,

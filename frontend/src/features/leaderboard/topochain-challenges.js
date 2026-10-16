@@ -108,6 +108,13 @@ const TopochainChallenges = {
   _bpState: undefined,
   _bpSeq: 0,
   _bpRequesting: false,
+  // The viewer's per-invitee statuses from GET /challenges-api/me/invites,
+  // read when an invite challenge's page opens (#3650). Same shape of
+  // lifecycle as _bpState: `undefined` is loading, `null` could not be read
+  // (the page offers a retry), otherwise { target, people: [...] }.
+  // `_invitesSeq` fences each read the same way.
+  _invites: undefined,
+  _invitesSeq: 0,
   _onboarding: null,
   // Unsubscribe handle from TopochainEventContext.onChange.
   _unsub: null,
@@ -992,6 +999,7 @@ const TopochainChallenges = {
     const fromGrid = !TopochainChallenges._detailChallenge;
     TopochainChallenges._detailChallenge = challenge;
     TopochainChallenges._bpState = undefined;
+    TopochainChallenges._invites = undefined;
     // The page's visibility IS its descriptor — _renderDetailOverlay
     // publishing a non-null `detail` is what used to be the
     // classList.remove('hidden') on this line. It is a level of the screen,
@@ -1002,6 +1010,7 @@ const TopochainChallenges = {
       TopochainChallenges._syncChrome();
     }, fromGrid ? 'push' : 'none');
     if (TopochainChallenges._isBlockProduction(challenge)) TopochainChallenges._loadBpState();
+    if (TopochainChallenges._isInvites(challenge)) TopochainChallenges._loadInvites();
   },
 
   closeChallengeDetail(type = 'none') {
@@ -1236,6 +1245,14 @@ const TopochainChallenges = {
     return !!(c && c.card_preview && c.card_preview.illustration === 'useful-feedback');
   },
 
+  // Whether a list row is scored by the invite measure ("Invite 3 people"):
+  // the server's `counted_by` names the rule's measure, the same key the
+  // breakdown route and the invites route key on.
+  _isInvites(c) {
+    const by = c && c.counted_by;
+    return !!(by && by.measure === 'INVITES_JOINED');
+  },
+
   // ── The block-production step (#2493) ───────────────────────────────
   //
   // The block-production challenge's CTA used to be one link to Settings ›
@@ -1389,6 +1406,69 @@ const TopochainChallenges = {
     TopochainChallenges._loadBpState();
   },
 
+  // ── The invite list (#3650) ─────────────────────────────────────────
+  //
+  // The page's read of who the viewer invited and why each person does or
+  // does not count yet. Same lifecycle as _loadBpState above: seq-fenced,
+  // guarded against a closed or changed page, null on any failure so the
+  // page offers a retry instead of a wrong list.
+  async _loadInvites() {
+    const challenge = TopochainChallenges._detailChallenge;
+    const seq = ++TopochainChallenges._invitesSeq;
+    let next = null;
+    try {
+      const res = await window.fetch(
+        `/challenges-api/me/invites?challenge_id=${encodeURIComponent(challenge.id)}`,
+        { credentials: 'same-origin' },
+      );
+      const body = res && res.ok ? await res.json() : null;
+      next = body && body.success !== false && body.data ? body.data : null;
+    } catch { next = null; }
+    if (TopochainChallenges._detailChallenge !== challenge || seq !== TopochainChallenges._invitesSeq) return;
+    TopochainChallenges._invites = next;
+    TopochainChallenges._renderDetailOverlay();
+  },
+
+  // The list's retry link.
+  retryInvites() {
+    TopochainChallenges._invites = undefined;
+    TopochainChallenges._renderDetailOverlay();
+    TopochainChallenges._loadInvites();
+  },
+
+  // The list's descriptor: per person, the status word and its reason.
+  // The status WORD groups the server's statuses (Not counted covers two
+  // reasons, Waiting two); the reason is the server status's own line.
+  invitesView() {
+    const data = TopochainChallenges._invites;
+    if (data === undefined) return { state: 'loading' };
+    if (data === null) return { state: 'error' };
+    const people = (data && data.people) || [];
+    if (!people.length) return { state: 'ready', people: [] };
+    const target = data && Number(data.target);
+    return {
+      state: 'ready',
+      people: people.map((p) => {
+        const status = String(p.status || '');
+        const word = status === 'counted' ? 'counted'
+          : status === 'pending_count' ? 'soon'
+            : status === 'over_target' ? 'over'
+              : status === 'waiting_access' || status === 'not_accepted' ? 'waiting'
+                : status === 'link_off' ? 'wontJoin'
+                  : 'notCounted';
+        const reason = status === 'over_target' && Number.isInteger(target) && target > 0
+          ? PlatformI18n.t('leaderboard:challenges.invites.reason.over_target', { count: target })
+          : PlatformI18n.t(`leaderboard:challenges.invites.reason.${status}`);
+        return {
+          key: String(p.user_id),
+          name: p.name || PlatformI18n.t('leaderboard:challenges.invites.someone'),
+          word,
+          reason,
+        };
+      }),
+    };
+  },
+
   // The account step's button: the app's wallet sheet, whose block-production
   // card holds "Manage delegation" and, on Android, the background-service note.
   openWallet() {
@@ -1454,6 +1534,15 @@ const TopochainChallenges = {
       // A flag, not an href: the page's one computed href stays the guarded
       // CTA, and this link's address is a constant in the pane.
       feedbackLink: TopochainChallenges._isFeedback(challenge),
+      // #3650: on an invite challenge, the plain-language line under the
+      // rail (what makes an invite count) and the per-person list. On any
+      // other challenge both are absent, so the page is exactly as it was.
+      invitesNote: TopochainChallenges._isInvites(challenge)
+        ? PlatformI18n.t('leaderboard:challenges.invites.note')
+        : null,
+      invites: TopochainChallenges._isInvites(challenge)
+        ? TopochainChallenges.invitesView()
+        : null,
       // A block-production challenge draws the viewer's step instead of the
       // organiser's link, which could only ever name one destination.
       blockProduction: bpStep,

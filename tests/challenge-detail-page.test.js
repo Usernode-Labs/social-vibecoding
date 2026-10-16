@@ -174,3 +174,76 @@ test('the count note reads under the points, and is absent without one', () => {
   assert.match(html, /<p class="text-\[0\.8125rem\] text-zinc-500 dark:text-zinc-400">Counts when/);
   assert.doesNotMatch(render(VIEW), /Propose to group/);
 });
+
+// ── #3650: the invite challenge's own note and per-person list ─────────
+
+const INVITES_PEOPLE = [
+  { key: '11', name: '@evan', word: 'counted', reason: 'Joined through your invite.' },
+  { key: '12', name: '@ocank14', word: 'soon', reason: 'Joined through your invite. It shows here after the next count.' },
+  { key: '13', name: '@snait', word: 'waiting', reason: 'They followed your link but haven’t joined yet. They join your community once they’re let into Homeroom.' },
+  { key: '14', name: 'Someone you invited', word: 'notCounted', reason: 'They took someone else’s invite first. Each person counts once.' },
+];
+
+const INVITES_VIEW = {
+  ...VIEW,
+  cta: null, // the rail is followed by the note with nothing between them
+  invitesNote: 'An invite counts when the person joins your community through your invite link.',
+  invites: { state: 'ready', people: INVITES_PEOPLE },
+};
+
+test('the invite note sits directly under the rail, on an invite challenge only', () => {
+  const html = render(INVITES_VIEW);
+  const rail = html.indexOf('role="progressbar"');
+  const note = html.indexOf('An invite counts when');
+  assert.ok(rail > 0 && note > rail, 'after the rail');
+  assert.ok(note < html.indexOf('data-tc-invites'), 'before the list');
+  assert.match(html, /<p class="text-sm text-zinc-600 dark:text-zinc-400">An invite counts when/);
+  // Any other challenge: neither the note nor the list exists, so the page
+  // is exactly as it was.
+  assert.doesNotMatch(render(VIEW), /data-tc-invites|An invite counts when|Your invites/);
+});
+
+test('the invite list reads as a section before What counts, one row a person', () => {
+  const html = render(INVITES_VIEW);
+  const list = html.indexOf('data-tc-invites');
+  const whats = html.indexOf('>What counts<');
+  assert.ok(list > 0 && whats > list, 'the list stands before What counts');
+  assert.match(html, /Your invites/);
+  // The rows in order, each the person's name over their reason.
+  const rows = ['@evan', '@ocank14', '@snait', 'Someone you invited'];
+  let at = list;
+  for (const name of rows) {
+    const i = html.indexOf(name);
+    assert.ok(i > at, `${name} in the list`);
+    at = i;
+  }
+  assert.match(html, /Joined through your invite\. It shows here after the next count\./);
+});
+
+test('the invite list’s status word: Counted in the finished colour, the rest quiet', () => {
+  const html = render(INVITES_VIEW);
+  assert.match(html, /text-emerald-700 dark:text-emerald-400">Counted</);
+  for (const word of ['Counts soon', 'Waiting', 'Not counted']) {
+    const i = html.indexOf(`>${word}</span>`);
+    assert.ok(i > 0, `${word} is drawn`);
+    assert.match(html.slice(i - 120, i), /text-zinc-500 dark:text-zinc-400/,
+      `${word} is muted, not another accent`);
+  }
+});
+
+test('the invite list’s loading, error and empty states', () => {
+  // Loading: three skeleton rows, no names yet.
+  const loading = render({ ...INVITES_VIEW, invites: { state: 'loading' } });
+  assert.match(loading, /data-tc-invites/);
+  assert.match(loading, /Your invites/);
+  assert.match(loading, /animate-pulse/);
+  assert.doesNotMatch(loading, /@evan|@ocank14/);
+  // Error: the list says so, and offers a retry.
+  const error = render({ ...INVITES_VIEW, invites: { state: 'error' } });
+  assert.match(error, /Couldn&#x27;t load your invites\./);
+  assert.match(error, /id="tc-se-invites-retry"[^>]*>Try again<\/button>/);
+  // Empty: nobody invited yet.
+  const empty = render({ ...INVITES_VIEW, invites: { state: 'ready', people: [] } });
+  assert.match(empty, /You haven&#x27;t invited anyone yet\./);
+});
+
