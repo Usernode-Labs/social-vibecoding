@@ -1544,7 +1544,7 @@ test('capRoomFor counts the same two things the live check does', async () => {
   const pool = {
     async query(sql) {
       const s = String(sql);
-      if (/FROM chat_sessions\s+WHERE app_id = \$1/.test(s)) return { rows: [{ cnt: 1 }] };
+      if (s === bot.SLOT_HOLDERS_SQL) return { rows: [{ kind: 'build', issue_number: 3 }] };
       if (/FROM chat_sessions\s+WHERE user_id = \$1/.test(s)) return { rows: [{ cnt: 7 }] };
       if (/FROM homeroom_bot_runs/.test(s)) return { rows: [{ cnt: 12 }] };
       throw new Error(`unexpected query: ${s.slice(0, 60)}`);

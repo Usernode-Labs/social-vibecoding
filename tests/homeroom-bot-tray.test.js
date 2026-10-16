@@ -463,7 +463,7 @@ test('the staging demo draws work in flight at the step its card shows, a questi
   assert.deepEqual(demo.needsYou.map((job) => job.outcome), ['question']);
   assert.equal(demo.needsYou[0].issueNumber, 18);
   assert.equal(demo.needsYou[0].ask.question, 'Which night should the rota start on?');
-  assert.deepEqual(demo.history.map((job) => job.outcome), ['proposed', 'live', 'proposed']);
+  assert.deepEqual(demo.history.map((job) => job.outcome), ['proposed', 'live', 'proposed', 'held'], 'and one held for a slot (16 Oct 2026)');
   assert.deepEqual([demo.history[0], demo.history[2]].map((job) => [job.ready.approve, job.ready.waiting]), [[true, null], [false, '@ada']]);
   assert.ok(Date.parse(demo.history[1].at) > now - 24 * 3600 * 1000, 'done today');
   assert.ok(demo.history.some((job) => job.earlier.length >= 1), 'a request the bot came back to');

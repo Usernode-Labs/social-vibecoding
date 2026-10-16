@@ -11,9 +11,10 @@ import { useResolvedCommunityColor } from '../../lib/community-color';
 import * as api from './api';
 import { tryChange } from './bot-ready';
 import { requestHue, requestKey, storyRootIn } from './bot-request';
+import { ENDED_STATES, openSlots, slotsHref, trackEnding, trackLine, trackShort } from './bot-track';
 import { loadBotWork, useBotWork } from './bot-work';
 import { loadedMessages, openThreadAt } from './store';
-import type { HomeroomBotCurrentJob, HomeroomBotJob, HomeroomBotPastJob, HomeroomBotWork } from './types';
+import type { BotTrack, HomeroomBotCurrentJob, HomeroomBotJob, HomeroomBotPastJob, HomeroomBotWork } from './types';
 
 /*
  * The activity drawer in the chat with Homeroom bot (one request, one story).
@@ -51,7 +52,7 @@ import type { HomeroomBotCurrentJob, HomeroomBotJob, HomeroomBotPastJob, Homeroo
  * Nothing is drawn until the first read lands, so a first render matches.
  */
 
-export type StripGroup = 'needs' | 'ready' | 'progress' | 'done';
+export type StripGroup = 'needs' | 'ready' | 'progress' | 'held' | 'done';
 
 /** One request's row in the strip, from its tray entry. */
 export interface StripRow {
@@ -68,12 +69,16 @@ export interface StripRow {
   /** The thread and the message the row opens. */
   rootId: number | null;
   focusId: number | null;
+  /** 16 Oct 2026: its request's track, when the server sent tracks (./bot-track.tsx). */
+  track?: BotTrack;
 }
 
 export interface StripModel {
   needs: StripRow[];
   ready: StripRow[];
   progress: StripRow[];
+  /** 16 Oct 2026: held back by a limit (a slot, the week's building time): never "finished". */
+  held: StripRow[];
   done: StripRow[];
 }
 
@@ -199,8 +204,9 @@ function stripRow(job: HomeroomBotJob, group: StripGroup, state: string, action:
  * closed) in the last day.
  */
 export function stripGroups(work: HomeroomBotWork | null, now: Date = new Date()): StripModel {
-  const model: StripModel = { needs: [], ready: [], progress: [], done: [] };
+  const model: StripModel = { needs: [], ready: [], progress: [], held: [], done: [] };
   if (!work) return model;
+  if (Array.isArray(work.tracks)) return trackGroups(work, work.tracks, now);
   const placed = new Set<string>();
   const place = (row: StripRow) => {
     if (placed.has(row.key)) return;
@@ -236,6 +242,64 @@ export function stripGroups(work: HomeroomBotWork | null, now: Date = new Date()
   return model;
 }
 
+// 16 Oct 2026: a waiting track's one button, and the glyph of what to do,
+// by why it waits (services/homeroom-bot-track.js).
+const TRACK_ACTIONS: Record<string, string> = {
+  question: 'messages:bot.strip.action.answer',
+  plan: 'messages:bot.strip.action.buildIt',
+  detail: 'messages:bot.strip.action.addDetail',
+};
+const TRACK_NEED_CASES: Record<string, string> = { question: 'question', plan: 'plan', detail: 'blocked', look: 'needs_look' };
+
+/** The tray's entry for a track's request, or one made of the track itself. */
+function jobOfTrack(track: BotTrack, jobs: Map<string, HomeroomBotJob>): HomeroomBotJob {
+  const job = jobs.get(track.key);
+  if (job) return job;
+  return {
+    key: track.key, appSlug: track.appSlug, appName: track.appName, ...(track.appUnnamed ? { appUnnamed: true } : {}),
+    iconUrl: track.iconUrl, iconEmoji: track.iconEmoji, issueNumber: track.issueNumber, title: track.title,
+    firstVersion: track.firstVersion, href: track.links.proposal || track.links.request || track.links.project,
+    links: track.links, earlier: [],
+  };
+}
+
+/**
+ * Pure (16 Oct 2026): the strip's groups from the requests' tracks, one
+ * place each (services/homeroom-bot-track.js decides the state, once).
+ * Needs you is only what waits on the person: a question, a plan for Build
+ * it, more detail, a look. A change up for a vote is Ready to try; work
+ * under way, In progress; what a limit holds back, On hold, never
+ * "finished"; and what ended in the last day, Finished today.
+ */
+function trackGroups(work: HomeroomBotWork, tracks: BotTrack[], now: Date): StripModel {
+  const model: StripModel = { needs: [], ready: [], progress: [], held: [], done: [] };
+  const jobs = new Map<string, HomeroomBotJob>([...work.now, ...work.needsYou, ...work.history].map((job) => [job.key, job]));
+  const seen = new Set<string>();
+  for (const track of tracks) {
+    if (seen.has(track.key)) continue;
+    seen.add(track.key);
+    const job = jobOfTrack(track, jobs);
+    const row = (group: StripGroup, state: string, action: string | null, focusId: number | null): StripRow => ({
+      key: track.key, group, job, state, action, rootId: track.rootId || job.cardId || null, focusId, track,
+    });
+    if (track.state === 'waiting') {
+      const words = track.why === 'question' && job.ask?.question ? job.ask.question : trackLine(track);
+      model.needs.push(row('needs', words, TRACK_ACTIONS[track.why || ''] || 'messages:bot.strip.action.open', track.askId || job.ask?.messageId || null));
+    } else if (track.state === 'vote') {
+      model.ready.push(row('ready', readyState({ ...job, outcome: 'proposed' }), null, job.ready?.messageId || null));
+    } else if (track.state === 'held') {
+      model.held.push(row('held', trackShort(track), null, null));
+    } else if (ENDED_STATES.has(track.state) || track.state === 'going_live') {
+      const at = Date.parse(track.since || '');
+      if (!Number.isFinite(at) || now.getTime() - at > DONE_WINDOW_MS) continue;
+      model.done.push(row('done', trackLine(track), null, null));
+    } else {
+      model.progress.push(row('progress', trackLine(track), null, null));
+    }
+  }
+  return model;
+}
+
 /**
  * Each request in the tray by its key (./bot-request.ts), with the group it
  * is in and what its row says: where it stands NOW, for the chat's news rows.
@@ -248,7 +312,7 @@ export function trayNow(work: HomeroomBotWork | null): Map<string, StripRow> | n
   if (cached) return cached;
   const model = stripGroups(work);
   const map = new Map<string, StripRow>();
-  for (const row of [...model.needs, ...model.ready, ...model.progress, ...model.done]) {
+  for (const row of [...model.needs, ...model.ready, ...model.progress, ...model.held, ...model.done]) {
     const key = requestKey(row.job);
     if (key && !map.has(key)) map.set(key, row);
   }
@@ -267,7 +331,13 @@ export function trayEnded(work: HomeroomBotWork | null): Map<string, string> | n
   const cached = ENDED_CACHE.get(work);
   if (cached) return cached;
   const map = new Map<string, string>();
-  for (const job of work.history) {
+  // 16 Oct 2026: how each request ended, from its track, when there are tracks.
+  for (const track of work.tracks || []) {
+    const key = requestKey(track);
+    const ending = trackEnding(track);
+    if (key && ending && !map.has(key)) map.set(key, ending);
+  }
+  for (const job of work.tracks ? [] : work.history) {
     const key = requestKey(job);
     if (key && job.outcome && !map.has(key)) map.set(key, job.outcome);
   }
@@ -281,6 +351,7 @@ export function summaryParts(model: StripModel): Array<{ group: StripGroup; text
   if (model.needs.length) parts.push({ group: 'needs', text: translate('messages:bot.strip.summary.needs', { count: model.needs.length }) });
   if (model.ready.length) parts.push({ group: 'ready', text: translate('messages:bot.strip.summary.ready', { count: model.ready.length }) });
   if (model.progress.length) parts.push({ group: 'progress', text: translate('messages:bot.strip.summary.progress', { count: model.progress.length }) });
+  if (model.held.length) parts.push({ group: 'held', text: translate('messages:bot.strip.summary.held', { count: model.held.length }) });
   if (model.done.length) parts.push({ group: 'done', text: translate('messages:bot.strip.summary.done', { count: model.done.length }) });
   return parts;
 }
@@ -377,7 +448,7 @@ function Tile({ job }: { job: HomeroomBotJob }) {
 // ── How a request ended ──
 
 type EndingTone = 'good' | 'ended' | 'trouble';
-type BadgeTone = EndingTone | 'need' | 'ready' | 'working';
+type BadgeTone = EndingTone | 'need' | 'ready' | 'working' | 'held';
 type Glyph = (props: { className?: string; strokeWidth?: string; 'aria-hidden'?: 'true' }) => ReactNode;
 interface Ending { key: string; tone: EndingTone; icon: Glyph; stroke?: string }
 
@@ -392,6 +463,7 @@ interface Ending { key: string; tone: EndingTone; icon: Glyph; stroke?: string }
 const ENDINGS: Record<string, Ending> = {
   live: { key: 'messages:bot.final.live', tone: 'good', icon: CheckIcon },
   going_live: { key: 'messages:bot.final.goingLive', tone: 'good', icon: CheckIcon },
+  done_elsewhere: { key: 'messages:bot.final.doneElsewhere', tone: 'good', icon: CheckIcon },
   closed: { key: 'messages:bot.final.closed', tone: 'ended', icon: XIcon },
   person: { key: 'messages:bot.final.person', tone: 'ended', icon: UserIcon, stroke: '1.75' },
   held: { key: 'messages:bot.final.held', tone: 'ended', icon: ClockIcon },
@@ -411,6 +483,7 @@ const BADGE_TINT: Record<BadgeTone, string> = {
   need: 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300',
   ready: 'bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300',
   working: 'bg-zinc-200/80 text-zinc-600 dark:bg-zinc-700/70 dark:text-zinc-300',
+  held: 'bg-zinc-200/80 text-amber-600 dark:bg-zinc-700/70 dark:text-amber-400',
 };
 
 /** Where a request stands, as a small square: its glyph on its tone's tint. */
@@ -469,11 +542,16 @@ const NEED_GLYPHS: Record<string, { icon: Glyph; stroke?: string }> = {
  */
 export function OpenState({ row }: { row: StripRow }) {
   if (row.group === 'needs') {
-    const glyph = NEED_GLYPHS[needsCase(row.job)] || { icon: InfoCircleIcon, stroke: '2' };
+    const which = row.track ? TRACK_NEED_CASES[row.track.why || ''] || 'question' : needsCase(row.job);
+    const glyph = NEED_GLYPHS[which] || { icon: InfoCircleIcon, stroke: '2' };
     return <StatusBadge tone="need" icon={glyph.icon} stroke={glyph.stroke} data="needs" />;
   }
   if (row.group === 'ready') return <StatusBadge tone="ready" icon={PlayIcon} stroke="2" data="ready" />;
-  return <StatusBadge tone="working" icon={SpinnerArcIcon} spin data="progress" />;
+  // 16 Oct 2026: held back by a limit: a clock, waiting, never turning.
+  if (row.group === 'held') return <StatusBadge tone="held" icon={ClockIcon} data="held" />;
+  // Turning only while the bot works on it this minute.
+  const spin = !row.track || row.track.busy || row.track.state === 'building';
+  return <StatusBadge tone="working" icon={SpinnerArcIcon} spin={spin} data="progress" />;
 }
 
 /**
@@ -563,7 +641,7 @@ function DoneRow({ row, onOpen }: { row: StripRow; onOpen: (row: StripRow) => vo
         <SettledLine
           name={job.appName} slug={job.appSlug} iconUrl={job.iconUrl} emoji={job.iconEmoji}
           number={job.firstVersion ? null : job.issueNumber} title={stripTitle(job)}
-          outcome={(job as HomeroomBotPastJob).outcome} fallback={row.state}
+          outcome={row.track ? trackEnding(row.track) : (job as HomeroomBotPastJob).outcome} fallback={row.state}
         />
       </button>
     </li>
@@ -618,6 +696,11 @@ export function BotStripView({ work, remembered = null, onRemember, now }: BotSt
   const choose = (next: boolean) => { setOpen(next); setDoneOpen(false); onRemember?.(next); };
   const onOpen = (row: StripRow) => { choose(false); openRow(row); };
   const needTags = model.needs.slice(0, NEEDS_LIMIT).map((row) => row.job.issueNumber).filter((n): n is number => !!n && n > 0);
+  // 16 Oct 2026: a door to each project's bot slots where the bot has work
+  // in hand or held back: what holds each slot and what waits for one.
+  const slotProjects = [...new Map([...model.progress, ...model.ready, ...model.held]
+    .filter((row) => row.track && row.job.appSlug && !row.job.firstVersion)
+    .map((row) => [row.job.appSlug as string, { slug: row.job.appSlug as string, name: row.job.appName }])).values()];
   return (
     <section className="relative z-20 shrink-0" aria-label={t('messages:bot.strip.name')} data-bot-strip={open ? 'open' : 'closed'}>
       <button
@@ -666,6 +749,12 @@ export function BotStripView({ work, remembered = null, onRemember, now }: BotSt
                 <ul data-bot-strip-group="progress">{model.progress.map((row) => <PlainRow key={row.key} row={row} onOpen={onOpen} />)}</ul>
               </>
             ) : null}
+            {model.held.length ? (
+              <>
+                <Eyebrow className="text-zinc-500 dark:text-zinc-400">{t('messages:bot.strip.group.held')}</Eyebrow>
+                <ul data-bot-strip-group="held">{model.held.map((row) => <PlainRow key={row.key} row={row} onOpen={onOpen} />)}</ul>
+              </>
+            ) : null}
             {model.done.length ? (
               <>
                 <button
@@ -681,6 +770,21 @@ export function BotStripView({ work, remembered = null, onRemember, now }: BotSt
                 </button>
                 {doneOpen ? <ul data-bot-strip-group="done">{model.done.map((row) => <DoneRow key={row.key} row={row} onOpen={onOpen} />)}</ul> : null}
               </>
+            ) : null}
+            {slotProjects.length ? (
+              <div className="flex flex-col gap-1 px-4 pt-2" data-bot-strip-slots="">
+                {slotProjects.map((project) => (
+                  <a
+                    key={project.slug}
+                    href={slotsHref(project.slug)}
+                    className="text-[13px] font-semibold text-violet-700 hover:underline dark:text-violet-300"
+                    data-bot-strip-slots-link={project.slug}
+                    onClick={(event) => { event.preventDefault(); choose(false); openSlots(project.slug); }}
+                  >
+                    {t('messages:bot.strip.slots', { project: project.name })}
+                  </a>
+                ))}
+              </div>
             ) : null}
           </div>
         </>

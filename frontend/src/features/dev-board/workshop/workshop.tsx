@@ -107,6 +107,7 @@ import { PrivateRequests } from './private-requests';
 import { Diagram, decisionDiagram, readDiagram, type DecisionFacts, type DiagramRecord, type DiagramSource } from '../../../lib/diagram/diagram';
 import { TouchesPicture, readTouches, touchesSaid, type Touches } from './touches';
 import { PageBack } from './page-back';
+import { BotSlotsDoor, BotSlotsPage } from './bot-slots';
 import { readAskStream } from './ask-stream';
 import {
   ActButton, ActRow, WorkList, primaryAct, rowWords, topicRef, type CardRow as WorkCardRow, type TopicRef,
@@ -170,18 +171,19 @@ export function freshTab(): TabKey | null {
 }
 
 /**
- * Where a page's back button goes: All items to the Workshop, the rest (the
- * plan, #4074) to the hub. A channel, Needs you and the Workshop go to the
- * hub too (#4417: the places list's "up a level").
+ * Where a page's back button goes: All items and the bot's slots to the
+ * Workshop, the rest (the plan, #4074) to the hub. A channel, Needs you and
+ * the Workshop go to the hub too (#4417: the places list's "up a level").
  */
 export function pageParent(tab: TabKey): TabKey {
-  return tab === 'all' ? 'workshop' : 'status';
+  return tab === 'all' || tab === 'bot' ? 'workshop' : 'status';
 }
 
 /** A page's own title. A channel is its handle (`#general`, `#onboarding`). */
 export function pageTitle(tab: TabKey): string {
   if (tab === 'needs') return translate('project:page.title.needsYou');
   if (tab === 'all') return translate('project:page.title.allItems');
+  if (tab === 'bot') return translate('project:page.title.bot');
   if (tab === 'plan') return translate('project:page.title.plan');
   const handle = placeHandle(tab);
   if (handle) return `#${handle}`;
@@ -4247,7 +4249,7 @@ export function DevWorkshop(): ReactNode {
     setTab(next);
     callAppView('_setWorkshopTab', next);
     const was = tabRef.current;
-    const up = was === 'all' && next === pageParent(was) && !!callAppView('_upWorkshopTab', v.slug, next);
+    const up = (was === 'all' || was === 'bot') && next === pageParent(was) && !!callAppView('_upWorkshopTab', v.slug, next);
     if (!up) callAppView('_pushWorkshopTab', v.slug, was, next);
     callAppView('_saveFeedScroll', v.slug, 0);
     scrollToHead(hostRef.current);
@@ -5050,6 +5052,12 @@ export function DevWorkshop(): ReactNode {
               and the sentence derived from the counts, and the caption that
               said which of the two was on screen. */}
           <OpenTopics list={v.dashboard.openThemes} slug={slug} onChannel={openTab} onTheme={openTheme} />
+          {/* 16 Oct 2026 (V2): Homeroom bot's slots on this project, and the
+              requests waiting for one, a page under the Workshop
+              (./bot-slots.tsx). Inside the card, above its rule, so the
+              overview, the card and What's happening stay where the checks
+              find them and the rule still ends the card. */}
+          {slug ? <BotSlotsDoor slug={slug} onOpen={() => openTab('bot')} /> : null}
           {/* How a change gets in, in one line: the three-step Approval
               rules card it was (#4457), folded into the sentence its steps
               spelled out, with Rules for whoever may change it (#4527). See
@@ -5314,6 +5322,9 @@ export function DevWorkshop(): ReactNode {
           with them, and the search box — a node of the toolbar the pane's
           head renders — was gone before it could be cleared. The pane is the
           tab; its body is what may be empty (see EmptyNote). */}
+      {tab === 'bot' && slug ? (
+        <BotSlotsPage slug={slug} backLabel={t('project:page.backToWorkshop')} onBack={() => openTab(pageParent(tab))} />
+      ) : null}
       {tab === 'all' ? (
         <>
           {/* ── The two ways to read the same board ──────────────────────

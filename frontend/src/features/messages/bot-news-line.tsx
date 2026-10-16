@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { ChevronDownIcon, ChevronRightIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
@@ -70,10 +70,13 @@ const KIND_WORDS: Record<string, NewsWords> = {
   preview_failed: { key: 'messages:bot.news.stopped', need: true },
   allowance: { key: 'messages:bot.news.onHold', need: false },
   paused: { key: 'messages:bot.news.onHold', need: false },
+  held_proposals_per_app: { key: 'messages:bot.news.slots', need: false },
+  held_proposals_total: { key: 'messages:bot.news.slots', need: false },
   merged: { key: 'messages:bot.news.live', need: false },
+  request_closed: { key: 'messages:bot.news.doneElsewhere', need: false },
 };
 
-/** The four moments that ring, by their variant where it matters (services/homeroom-bot-dm.js `said`). */
+/** The moments that ring, by their variant where it matters (services/homeroom-bot-dm.js `said`). */
 function momentWords(moment: string, said: string): NewsWords | null {
   switch (moment) {
     case 'needs_you':
@@ -83,8 +86,9 @@ function momentWords(moment: string, said: string): NewsWords | null {
       return KIND_WORDS.question;
     case 'ready': return KIND_WORDS.proposal;
     case 'stopped': return KIND_WORDS.build_failed;
-    case 'on_hold': return KIND_WORDS.allowance;
+    case 'on_hold': return said === 'slots' ? KIND_WORDS.held_proposals_per_app : KIND_WORDS.allowance;
     case 'live': return KIND_WORDS.merged;
+    case 'done_elsewhere': return KIND_WORDS.request_closed;
     default: return null;
   }
 }
@@ -146,7 +150,7 @@ export interface NewsStatus {
 
 /** What a request ended as, read from the last news about it when the tray has no record of it. */
 const KIND_ENDINGS: Record<string, string> = {
-  merged: 'live',
+  merged: 'live', request_closed: 'done_elsewhere',
   build_failed: 'build_failed', first_version_failed: 'build_failed', preview_failed: 'build_failed', followup_failed: 'build_failed',
 };
 
@@ -206,7 +210,7 @@ export function newsStatusOf(message: ConversationMessage, work: HomeroomBotWork
 
 export function BotNewsLine({ message, focused = false, earlier = [], updates: updatesIn = null, nested = false }: {
   message: ConversationMessage;
-  /** Drawn inside an opened run, to the right of its count (SettledRun). */
+  /** Drawn with no padding of its own and no tile column, inside another row's box. */
   nested?: boolean;
   /** The message a link pointed at: flashed once. */
   focused?: boolean;
@@ -294,14 +298,16 @@ export interface SettledRunItem {
  * Settled rows in a row fold into one line (one request, one story): two or
  * more finished requests with nothing between them on the same day are
  *
- *     4 finished v  [✓][✋][✋][⚠]
+ *     [✓] 4 requests finished v  [✓][✋][✋][⚠]
  *
- * how many, then their badges, until it is pressed. Opened, the rows take
- * the badges' place, to the right of the count, one under another, so they
- * read as what the count holds; on a phone, under the count, indented as
- * far as it is, so the titles keep their room. Open requests are never folded, so what
- * still asks something is what the eye meets. A link to a folded row lands
- * on the line (each row's id is an anchor on it) and opens it.
+ * a row of its own (16 Oct 2026): its own tile in the tile column, so it
+ * never reads as part of the row above it (it sat indented under that row's
+ * title, under "3 updates", and read as those updates finishing), then how
+ * many requests it holds and their badges. Each badge opens its own
+ * request's story; the count opens the rows, each a whole row under it,
+ * where the rows above are. Open requests are never folded, so what still
+ * asks something is what the eye meets. A link to a folded row lands on the
+ * line (each row's id is an anchor on it) and opens it.
  *
  * Pressed, the count stays where it is on the screen: the rows open below
  * it, and `holdPlace` (the transcript's) stops it following the newest line
@@ -330,38 +336,55 @@ export function SettledRun({ items, holdPlace }: {
     if (count.current && holdPlace) putBack.current = holdPlace(count.current);
     setOpen(!open);
   };
+  // A badge opens its own request's story, as its row would.
+  const openItem = (item: SettledRunItem) => {
+    const rootId = newsThread(item.message) ?? (item.earlier[0]?.id || item.message.id);
+    openThreadAt(rootId, rootId === item.message.id ? null : item.message.id);
+  };
   return (
-    <div className="messages-bot-news px-4 py-1" data-bot-settled-run={items.length} data-bot-settled-first={items[0]?.message.id}>
+    <div className="messages-bot-news messages-bot-settled-run pb-1 pt-2" data-bot-settled-run={items.length} data-bot-settled-first={items[0]?.message.id}>
       {open ? null : items.flatMap((item) => [item.message, ...item.earlier]).map((m) => <span key={m.id} id={`messages-message-${m.id}`} aria-hidden="true" />)}
-      <div className="flex min-w-0 items-start gap-2">
-        <span className="w-9 shrink-0" aria-hidden="true" />
-        <div className={open ? 'flex min-w-0 flex-1 flex-col sm:flex-row sm:items-start sm:gap-2' : 'flex min-w-0 flex-1 items-start gap-2'}>
-          <button
-            ref={count}
-            type="button"
-            className="flex h-[30px] shrink-0 items-center gap-1 rounded-lg text-left text-[14px] font-medium leading-5 text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white"
-            aria-expanded={open}
-            data-bot-settled-toggle=""
-            onClick={toggle}
-          >
-            <span>{t('messages:bot.news.finished', { count: items.length })}</span>
-            <ChevronDownIcon aria-hidden="true" className={`h-4 w-4 shrink-0 text-zinc-400 transition-transform dark:text-zinc-500 ${open ? 'rotate-180' : ''}`} />
-          </button>
-          <div className="min-w-0 flex-1">
-            {open ? items.map((item) => (
-              <BotNewsLine key={item.message.clientKey || item.message.id} message={item.message} earlier={item.earlier} updates={item.updates} focused={item.focused} nested />
-            )) : (
-              // The same press as the count's, for a pointer; the count is the control.
-              <div className="flex h-[30px] min-w-0 cursor-pointer items-center gap-1 overflow-hidden" aria-hidden="true" data-bot-settled-badges="" onClick={toggle}>
-                {items.slice(0, RUN_BADGES).map((item, index) => (
-                  <FinalState key={item.message.id} outcome={statuses[index]?.ended} fallback={statuses[index]?.text || ''} />
-                ))}
-                {more > 0 ? <span className="shrink-0 text-[13px] font-semibold text-zinc-500 dark:text-zinc-400">{`+${more}`}</span> : null}
-              </div>
-            )}
+      <div className="flex min-w-0 items-center gap-2 px-4">
+        <span
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-zinc-200/80 text-emerald-600 dark:bg-zinc-700/70 dark:text-emerald-400"
+          aria-hidden="true"
+          data-bot-settled-tile=""
+        >
+          <CheckIcon aria-hidden="true" className="h-4 w-4" strokeWidth="2.5" />
+        </span>
+        <button
+          ref={count}
+          type="button"
+          className="flex h-[30px] shrink-0 items-center gap-1 rounded-lg text-left text-[14px] font-semibold leading-5 text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white"
+          aria-expanded={open}
+          data-bot-settled-toggle=""
+          onClick={toggle}
+        >
+          <span>{t('messages:bot.news.finished', { count: items.length })}</span>
+          <ChevronDownIcon aria-hidden="true" className={`h-4 w-4 shrink-0 text-zinc-400 transition-transform dark:text-zinc-500 ${open ? 'rotate-180' : ''}`} />
+        </button>
+        {open ? null : (
+          <div className="flex h-[30px] min-w-0 flex-1 items-center gap-1 overflow-hidden" data-bot-settled-badges="">
+            {items.slice(0, RUN_BADGES).map((item, index) => {
+              const meta = item.message.metadata?.homeroomBot;
+              return (
+                <button key={item.message.id} type="button" className="flex shrink-0 rounded-[6px]" data-bot-settled-badge={item.message.id} onClick={() => openItem(item)}>
+                  <FinalState outcome={statuses[index]?.ended} fallback={statuses[index]?.text || ''} />
+                  {meta ? <span className="sr-only">{newsTitle(meta)}</span> : null}
+                </button>
+              );
+            })}
+            {more > 0 ? <span className="shrink-0 text-[13px] font-semibold text-zinc-500 dark:text-zinc-400">{`+${more}`}</span> : null}
           </div>
-        </div>
+        )}
       </div>
+      {open ? (
+        <div className="mt-1 flex flex-col" data-bot-settled-rows="">
+          {items.map((item) => (
+            <BotNewsLine key={item.message.clientKey || item.message.id} message={item.message} earlier={item.earlier} updates={item.updates} focused={item.focused} />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

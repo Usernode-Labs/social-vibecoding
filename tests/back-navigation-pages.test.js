@@ -259,8 +259,8 @@ test('the page pushes on a press, shows a traversal without pushing, and its doo
   assert.ok(openTab, 'openTab located');
   assert.match(openTab[1], /const was = tabRef\.current;/, 'from the tab actually up, read before this press re-renders');
   assert.match(openTab[1],
-    /const up = was === 'all' && next === pageParent\(was\) && !!callAppView\('_upWorkshopTab', v\.slug, next\);\s*\n\s*if \(!up\) callAppView\('_pushWorkshopTab', v\.slug, was, next\);/,
-    'a press pushes; up from All items steps Back when the Workshop is below');
+    /const up = \(was === 'all' \|\| was === 'bot'\) && next === pageParent\(was\) && !!callAppView\('_upWorkshopTab', v\.slug, next\);\s*\n\s*if \(!up\) callAppView\('_pushWorkshopTab', v\.slug, was, next\);/,
+    'a press pushes; up from All items or the bot\'s slots steps Back when the Workshop is below');
   const door = WORKSHOP.slice(WORKSHOP.indexOf('const onDoor = (event: Event) => {'));
   const doorBody = door.slice(0, door.indexOf('\n    };'));
   assert.doesNotMatch(doorBody, /_pushWorkshopTab/,

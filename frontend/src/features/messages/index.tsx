@@ -1,6 +1,6 @@
 import { openReport } from '../dialogs/report';
 import {
-  memo, useDeferredValue, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode,
+  Fragment, memo, useDeferredValue, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -36,6 +36,7 @@ import {
 } from './bot-shared';
 import { BotWorkSync, newestBotMessageId, useBotWork } from './bot-work';
 import { BotStrip, RequestTag } from './bot-strip';
+import { useTrackOf } from './bot-track';
 import { BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledRun, type SettledRunItem } from './bot-news-line';
 import { requestKey } from './bot-request';
 import { MessageComposer } from './composer';
@@ -2287,6 +2288,13 @@ function ReplyThreadPanel() {
   const conversationId = snap.route.conversationId;
   const rootId = snap.route.threadRootId;
   const thread = snap.thread && snap.thread.rootId === rootId ? snap.thread : null;
+  // 16 Oct 2026: a request's thread marks where each of its tries began
+  // (./bot-track.tsx), when the bot built it more than once.
+  const trackRoot = thread?.root || snap.messages.find((item) => item.id === rootId) || null;
+  const trackMeta = trackRoot?.sender.bot ? trackRoot.metadata?.homeroomBot || null : null;
+  const track = useTrackOf(trackMeta ? {
+    appSlug: trackMeta.appSlug, appName: trackMeta.appName, issueNumber: trackMeta.issueNumber, firstVersion: trackMeta.firstVersion === true,
+  } : null);
   const scroller = useRef<HTMLDivElement>(null);
   // #3571: the same keyboard avoidance as the conversation beside it. On a
   // phone this pane covers the conversation, so its composer is the one the
@@ -2375,6 +2383,22 @@ function ReplyThreadPanel() {
     ? snap.messages.filter((item) => item.id > root.id && !item.threadRootId && !item.thread && isBotNews(item) && requestKey(item.metadata?.homeroomBot || {}) === storyKey)
     : [];
   let previous: MergedRow | null = null;
+  // Which try each entry belongs to: one divider where a try begins.
+  const tryStarts = track && track.tryStarts.length > 1 ? track.tryStarts.map((at) => Date.parse(at)).filter(Number.isFinite) : [];
+  let lastTry = 0;
+  const tryDivider = (createdAt: string) => {
+    if (!tryStarts.length) return null;
+    const at = Date.parse(createdAt);
+    const which = Math.max(1, tryStarts.filter((start) => start <= at).length);
+    if (which === lastTry) return null;
+    lastTry = which;
+    const date = new Date(tryStarts[which - 1]).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    return (
+      <div className="messages-reply-count" data-bot-try={which}>
+        <span>{t('messages:bot.track.tryDivider', { number: String(which), date })}</span>
+      </div>
+    );
+  };
   return (
     <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={t('messages:replies.paneName')} data-reply-thread={rootId}>
       <header className="messages-thread-header">
@@ -2411,8 +2435,10 @@ function ReplyThreadPanel() {
         ) : null}
         {thread?.error ? <div className="messages-state messages-state-error"><p>{thread.error}</p><button type="button" onClick={() => void loadReplyThread(conversationId, rootId, true)}>{t('core:common.tryAgain')}</button></div> : null}
         {merged.map((entry) => {
+          const divider = tryDivider(entry.message.createdAt);
           if (entry.kind === 'discussion') {
-            return <DiscussionRow key={`discussion-${entry.message.id}`} message={entry.message} appSlug={discussion.appSlug} issueNumber={discussion.issueNumber} />;
+            const row = <DiscussionRow key={`discussion-${entry.message.id}`} message={entry.message} appSlug={discussion.appSlug} issueNumber={discussion.issueNumber} />;
+            return divider ? <Fragment key={`discussion-${entry.message.id}`}>{divider}{row}</Fragment> : row;
           }
           const { message } = entry;
           const grouped = !!previous && previous.kind === 'reply' && !previous.message.failed && !message.failed
@@ -2421,7 +2447,8 @@ function ReplyThreadPanel() {
               { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
             );
           previous = entry;
-          return <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === message.id} planCardId={cardId && isPlanMessage(message) ? cardId : null} />;
+          const row = <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped && !divider} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === message.id} planCardId={cardId && isPlanMessage(message) ? cardId : null} />;
+          return divider ? <Fragment key={message.clientKey || message.id}>{divider}{row}</Fragment> : row;
         })}
       </div>
       <JumpToLatest scroller={scroller} />

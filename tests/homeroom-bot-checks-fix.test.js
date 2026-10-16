@@ -232,6 +232,7 @@ function harness({
     // (fixed-check-sync.js syncBeforeHandOff): level with main unless a test
     // says otherwise, so nothing is synced.
     fixedCheckSync: {
+      declinedWords: require('../src/services/fixed-check-sync').declinedWords,
       async syncBeforeFix(args) {
         calls.fixSync.push({ sessionId: args.sessionId, head: args.head });
         if (fixSync instanceof Error) throw fixSync;
@@ -388,6 +389,33 @@ test('no sync for failures the turn calls the change\'s own, and a sync that fai
   const broke = harness({ result: NOT_CHANGE, sync: new Error('worker went away') });
   assert.equal((await run(t, broke)).acted, 'checks_not_change', 'a sync that throws is a sync that did not happen');
   assert.equal(broke.calls.sync.length, 1);
+});
+
+test('a hand-off that was not synced with main first says why, beside its run (H3)', async (t) => {
+  const h = harness({
+    result: { lastResultText: '```json\n{"action":"person","reply":"The check expects a step the request asked to remove."}\n```', pushOk: true, sha: HEAD },
+    sync: { synced: false, why: 'main_fails' },
+  });
+  assert.equal((await run(t, h)).acted, 'checks_person');
+  const note = h.calls.queries.find((q) => /UPDATE homeroom_bot_runs SET build_note = \$2 WHERE id = \$1/.test(q.s));
+  assert.deepEqual(note.params, [901, 'Not brought up to date with main before handing it over: main fails the same check.']);
+
+  const threw = harness({ result: NOT_CHANGE, sync: new Error('worker went away') });
+  await run(t, threw);
+  const why = threw.calls.queries.find((q) => /SET build_note/.test(q.s));
+  assert.match(why.params[1], /^Not brought up to date with main before handing it over: it was not synced \(no reason given\)\.$/);
+});
+
+test('every reason fixed-check-sync declines for has words', () => {
+  const fcs = require('../src/services/fixed-check-sync');
+  const src = read('src/services/fixed-check-sync.js');
+  const whys = new Set([...src.matchAll(/why: '([a-z_]+)'/g), ...src.matchAll(/return '([a-z_]+)';/g)].map((m) => m[1]));
+  for (const why of [...whys, 'main_fails', 'own_failure', 'already_tried', 'not_failing', 'not_pushed']) {
+    assert.ok(fcs.DECLINED_WORDS[why], `words for ${why}`);
+  }
+  const seen = new Map();
+  assert.deepEqual(fcs.freshDeclines({ 7: 'level', 8: 'conflict' }, seen), { 7: 'level', 8: 'conflict' });
+  assert.deepEqual(fcs.freshDeclines({ 7: 'level', 8: 'main_fails' }, seen), { 8: 'main_fails' }, 'said once, again when it changes');
 });
 
 test('the bot asks fixed-check-sync for the sync, once per proposal, on the failing head', () => {

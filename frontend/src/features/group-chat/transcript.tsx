@@ -369,7 +369,7 @@ export function Reactions({ msg }: { msg: TranscriptMessage }) {
           onTry={(sessionId) => controller()?.tryBotChange?.(sessionId)}
           onProgress={() => (msg.botRequest?.status === 'fixing' && msg.botRequest.sessionId
             ? controller()?.openBotChange?.(msg.botRequest.sessionId)
-            : controller()?.openBotChat?.())}
+            : controller()?.openBotChat?.(msg.botRequest?.issueNumber || null))}
         />
       ) : null}
       {msg.reactions.map((r) => (
@@ -870,7 +870,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
             <BotRequestCardView
               card={msg.botCard}
               actions={{
-                onProgress: () => chat?.openBotChat?.(),
+                onProgress: () => chat?.openBotChat?.(msg.botCard?.issueNumber || null),
                 onRequest: (n) => chat?.openBotRequest?.(n),
                 onFile: () => chat?.makeBotRequest?.(msg.id),
                 onDismiss: () => chat?.dismissBotRequest?.(msg.id),

@@ -70,6 +70,19 @@ test('holding it yourself and mentioning the bot is asking it to go ahead', () =
     'Homeroom bot is taking this up now, as asked. It will reply here with a question, a note or a change to vote on.');
 });
 
+test('a mention asking to close the request is not a go-ahead: the voice offers the close (#4572)', () => {
+  const closing = { ...mention('evan', 2), content: '@Homeroom bot I think this is done, and can be closed' };
+  assert.deepEqual(holds.decide({ holds: [claim('evan', 30)], mentions: [closing] }), { action: 'none', closing: true });
+  for (const said of ['@homeroom_bot please close this', 'this was already fixed in #4925', 'no longer needed, close it', 'it\'s shipped now']) {
+    assert.equal(holds.asksToClose(said), true, said);
+  }
+  for (const said of ['@homeroom_bot please build this', 'go ahead, the earlier one closed', 'can you make it so the dialog closes on Escape? build it', '']) {
+    assert.equal(holds.asksToClose(said), false, said);
+  }
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-holds.js'), 'utf8');
+  assert.match(src, /SELECT m\.thread_ref AS n, m\.id, m\.created_at, u\.username, m\.content/, 'the words are read with the mention');
+});
+
 test('a proposal up for a vote is left to the vote, however often the bot is asked', () => {
   const proposal = { kind: 'proposal', username: 'chinchan8', since: at(60) };
   const first = holds.decide({ holds: [proposal, claim('chinchan8', DAYS3)], mentions: [mention('evan', 5)] });

@@ -172,7 +172,8 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   // the plan for the people who joined (#4074), a page under the Hub that is
   // visited and never reopened on.
   const av = read('public/js/app-view.js');
-  assert.match(av, /WORKSHOP_TABS: \['status', 'discussion', 'workshop', 'needs', 'all', 'plan'\],/);
+  // 16 Oct 2026: and `?ws=bot`, Homeroom bot's slots, a page under the Workshop.
+  assert.match(av, /WORKSHOP_TABS: \['status', 'discussion', 'workshop', 'needs', 'all', 'plan', 'bot'\],/);
   // #4417: and so is a topic's channel, `c:<handle>`, a place like the others.
   assert.match(av, /_isWorkshopPlace\(key\) \{\n\s*return AppView\.WORKSHOP_TABS\.indexOf\(key\) !== -1\n\s*\|\| \(typeof key === 'string' && AppView\.WORKSHOP_CHANNEL_RE\.test\(key\)\);/);
   assert.match(av, /const next = AppView\._isWorkshopPlace\(key\) && key !== 'plan' \? key : 'status';/);
@@ -180,6 +181,7 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   const { litPlace } = loadTsx('frontend/src/features/dev-board/workshop/places.ts');
   assert.equal(litPlace('plan'), 'status', 'Hub stays lit over the plan');
   assert.equal(litPlace('all'), 'workshop');
+  assert.equal(litPlace('bot'), 'workshop', 'and over the bot\'s slots');
 });
 
 test('For you\'s Discussion row: the channel\'s name, its last line, what is new, and the way in', () => {

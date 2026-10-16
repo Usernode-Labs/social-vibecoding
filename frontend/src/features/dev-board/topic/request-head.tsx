@@ -36,6 +36,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { swatchFor } from '../../group-chat/swatch';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { TitleContent } from '../card/dev-card';
+import { normalizeBotTrack } from '../../messages/api';
+import { TrackCard, trackLinks } from '../../messages/bot-track';
 import type { RequestStatusView, RequestView } from './model';
 import {
   STAGES,
@@ -359,6 +361,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   }, [r.number, r.editor.canEdit]);
   const back = host('gc-thread-back');
   const bar = host('gc-thread-bar');
+  const track = useMemo(() => (r.track ? normalizeBotTrack(r.track) : null), [r.track]);
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
@@ -378,6 +381,14 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
           </h1>
           {editing ? <RequestEditor r={r} onClose={() => setEditing(false)} /> : <RequestWords html={r.bodyHtml} />}
           <RequestStatus s={r.status} specs={specs} />
+          {track ? (
+            // 16 Oct 2026 (C4, V3): the same card a request's thread leads
+            // with, where it is and why, its bar and its pictures, in place
+            // of having to open the chat to find out.
+            <div className="dev-request-track" data-request-track={track.state}>
+              <TrackCard track={track} title={r.title} links={trackLinks(track, { request: false })} pictures />
+            </div>
+          ) : null}
           {specs.length ? (
             <div className="messages-object-list dev-request-specs">
               {specs.map((card) => <SpecCard key={card.key} card={card} />)}
