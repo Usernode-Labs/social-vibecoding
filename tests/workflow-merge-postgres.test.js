@@ -782,5 +782,39 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     await settle();
   });
 
+  await t.test('M25 the whole line is read: an approved proposal behind 200 older ones waiting for votes is merged (PR review)', async () => {
+    defaults();
+    const owner = await user();
+    const a = await app(owner);
+    await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, branch_name, pr_number, pr_title, reviewed_head_sha, promoted_at,
+                                  check_state, checks_commit_sha, integration_merges_clean, integration_head_sha, integration_main_sha)
+       SELECT $1, $2, 'promoted', 'waiting-' || g, 50000 + g, 'Waiting', $3, NOW() - interval '2 days', 'passing', $3, TRUE, $3, $4
+         FROM generate_series(1, 200) g`, [a.id, owner.id, SHA('b'), SHA('e')]);
+    const s = await proposalRow({ appRow: a, owner });
+    await vote(s, await user(), 'yes');
+    await want(a, { sessionId: s.id });
+    await settle();
+    assert.deepEqual(calls(WORK.attempt).map((c) => c.input.sessionId), [s.id]);
+    await pool.query(`UPDATE chat_sessions SET status = 'archived' WHERE app_id = $1 AND branch_name LIKE 'waiting-%'`, [a.id]);
+  });
+
+  await t.test('M26 GitHub\'s hourly limit: back up for its vote with nothing remembered against the head; the next look asks again (PR review)', async () => {
+    defaults();
+    const s = await proposalRow();
+    await vote(s, await user(), 'yes');
+    work.answer.set(WORK.attempt, { outcome: 'rate_limited', message: 'GitHub\'s hourly limit for Homeroom is used up.' });
+    await want(s.app, { sessionId: s.id });
+    await settle();
+    const i = await pInst(s);
+    assert.equal(i.state, 'in_review');
+    assert.equal(i.data.refused ?? null, null, 'not a refusal of this head');
+    assert.equal(calls(WORK.attempt).length, 1);
+    work.answer.set(WORK.attempt, { outcome: 'merged', sha: SHA('6') });
+    await fire(QUEUE, appKey(s.app.id));
+    assert.equal(calls(WORK.attempt).length, 2, 'the sweep, which names nobody, asks again');
+    assert.equal((await sentTo('merge-followups', sessionKey(s.id))).length, 1);
+  });
+
   void DAY;
 });

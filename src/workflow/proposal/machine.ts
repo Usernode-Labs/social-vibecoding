@@ -874,6 +874,9 @@ function attempted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, dep
       return { ...out, messages: [...(out.messages || []), ended(s.data, a, 'closed')] };
     }
     case 'gone': return backToReview(s, e, f, ctx, deps, { outcome: 'gone' });
+    // GitHub's hourly limit: not merged, nothing said against this head; the
+    // queue's next look (its sweep) asks again.
+    case 'rate_limited': return backToReview(s, e, f, ctx, deps, { outcome: 'rate_limited' });
     default: {
       const kind = String(r?.kind || 'blocked');
       // Main moved between the gate and GitHub's merge: asked once more at

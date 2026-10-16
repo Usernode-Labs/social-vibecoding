@@ -136,6 +136,35 @@ test('no answer from GitHub (the network, a 5xx, its limit) is thrown, for the w
   }
 });
 
+test('GitHub\'s hourly limit used up is not a refusal of the head: it is said as such, and a reopen it stops is not "closed for good" (PR review)', async () => {
+  const limit = (code) => Object.assign(status(code, 'API rate limit exceeded for installation'), {
+    response: { headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 600) } },
+  });
+  for (const code of [403, 429]) {
+    const c = load({ session: native, github: { mergePR: () => { throw limit(code); } } });
+    c.session = native;
+    try {
+      const { out } = await attempt(c);
+      assert.equal(out.outcome, 'rate_limited', `${code}`);
+      assert.deepEqual(c.calls.merge, [HEAD], 'asked once');
+    } finally { c.restore(); }
+  }
+  // A closed pull request whose reopen GitHub did not answer is asked again,
+  // never taken off the vote.
+  for (const [err, expect] of [[limit(403), 'rate_limited'], [status(502, 'Bad gateway'), 'thrown']]) {
+    const c = load({ session: native, github: {
+      mergePR: () => { throw status(405, 'Pull Request is not mergeable'); },
+      getPR: () => ({ state: 'closed', merged: false, head: { sha: HEAD } }),
+      reopenPR: () => { throw err; },
+    } });
+    c.session = native;
+    try {
+      if (expect === 'thrown') await assert.rejects(attempt(c), (e) => e === err);
+      else assert.equal((await attempt(c)).out.outcome, expect);
+    } finally { c.restore(); }
+  }
+});
+
 test('every refusal is named: a conflict, a draft, a branch rule, a base that moved (bug 2)', async () => {
   const cases = [
     [{ state: 'open', merged: false, mergeable: false, mergeable_state: 'dirty' }, status(405, 'Pull Request is not mergeable'), 'conflict', /hit a conflict with main/],
@@ -188,7 +217,7 @@ test('a pull request closed on GitHub is reopened (and merged next time), or, wh
   } finally { reopened.restore(); }
   const closed = load({
     session: native,
-    github: { mergePR: () => { throw status(405, 'not mergeable'); }, getPR: () => ({ state: 'closed', merged: false }), reopenPR: () => { throw new Error('branch deleted'); } },
+    github: { mergePR: () => { throw status(405, 'not mergeable'); }, getPR: () => ({ state: 'closed', merged: false }), reopenPR: () => { throw status(422, 'branch deleted'); } },
   });
   closed.session = native;
   try {

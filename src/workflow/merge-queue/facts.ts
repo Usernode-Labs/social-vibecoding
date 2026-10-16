@@ -77,6 +77,10 @@ function forkOf(r: any): boolean {
   return !PLATFORM_BRANCHES.some((p) => String(r.branch_name ?? '').startsWith(p));
 }
 
+// The whole line, never a first page: which proposals the queue may merge
+// is decided after the read (the vote gate, a force), so a cut-off before it
+// left an approved proposal behind 200 older ones out of reach for good.
+// What bounds it is the promoted caps.
 const LINE_SQL = `
   SELECT cs.id, cs.user_id, cs.source, cs.promoted_at, cs.created_at, cs.branch_name, cs.imported_pr_head_repo,
          cs.requires_explicit_approval, cs.explicit_approval_reason, cs.approval_epoch, cs.integration_resolved_epoch,
@@ -95,8 +99,7 @@ const LINE_SQL = `
     JOIN apps a ON a.id = cs.app_id
     LEFT JOIN wf_instances w ON w.machine = 'proposal' AND w.key = 'session:' || cs.id
    WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.is_headless = FALSE
-   ORDER BY cs.id
-   LIMIT 200`;
+   ORDER BY cs.id`;
 
 export async function readLine(tx: Tx, appId: number, now: Date): Promise<Candidate[]> {
   const { rows } = await tx.query(LINE_SQL, [appId]);

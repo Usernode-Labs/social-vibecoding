@@ -6008,6 +6008,12 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
     return { outcome: 'refused', kind, message, githubMessage: said || null };
   };
   const unanswered = (err) => !err || !Number.isInteger(err.status) || err.status >= 500 || err.status === 429;
+  // GitHub's hourly limit used up (a 403 or a 429 saying no requests are
+  // left): it did not merge, and it is not a refusal of this head. The
+  // proposal goes back to review with nothing remembered against it, and the
+  // queue's next look asks again.
+  const githubBudget = require('../services/github-budget');
+  const limited = (err) => ({ outcome: 'rate_limited', message: githubBudget.rateLimitNotice(err) || null });
 
   if (resumeFrom && resumeFrom.asked) {
     // It asked before, and never heard: GitHub says what happened.
@@ -6029,6 +6035,7 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
   try {
     return await merge();
   } catch (err) {
+    if (githubBudget.isRateLimitError(err)) return limited(err);
     if (err && err.headMoved) {
       // GitHub answers 409 for a moved head and for a merge it will not make:
       // a fresh read of the branch says which.
@@ -6074,6 +6081,9 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
         await client.reopenPR(owner, repo, session.pr_number);
         return { outcome: 'reopened' };
       } catch (reopenErr) {
+        // Only GitHub's refusal is "closed for good": no answer is asked again.
+        if (githubBudget.isRateLimitError(reopenErr)) return limited(reopenErr);
+        if (unanswered(reopenErr)) throw reopenErr;
         return { outcome: 'closed', message: `PR #${session.pr_number} is closed on GitHub and couldn't be reopened: ${reopenErr.message}` };
       }
     }
@@ -6084,6 +6094,7 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
         await client.markPrReadyForReview(owner, repo, session.pr_number, pr);
         return await merge();
       } catch (again) {
+        if (githubBudget.isRateLimitError(again)) return limited(again);
         if (!again?.headMoved && unanswered(again)) throw again;
         return refused(again, await readPr());
       }
