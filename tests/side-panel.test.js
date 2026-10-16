@@ -809,6 +809,24 @@ test('the runtime answers the comment\'s picture with this document\'s own page 
   assert.equal(await p.runtime.picture(1), null);
 });
 
+test('the panel keeps one picture draw in flight and shares it', async () => {
+  const p = panelWindow();
+  p.boot();
+  await tick();
+  assert.equal(p.runtime.isBooted(), true);
+  // Two asks made back to back — a scroll retake landing on a pin, say —
+  // share the draw in flight instead of stacking a second capture of the
+  // same document while the first is still running.
+  const first = p.runtime.picture(1);
+  const second = p.runtime.picture(1);
+  assert.equal(second, first, 'the second ask shares the draw in flight');
+  assert.equal(await first, null);
+  // Once settled, the next ask starts a fresh draw.
+  const third = p.runtime.picture(1);
+  assert.notEqual(third, first, 'a settled draw is not handed out again');
+  await third;
+});
+
 test('a panel inside Preview reports readiness and navigation to its immediate parent', async () => {
   const p = panelWindow({ nested: true, href: 'https://homeroom.test/?panel=1#messages/app/notes-ab12' });
   try {

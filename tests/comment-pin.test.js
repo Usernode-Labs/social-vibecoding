@@ -23,7 +23,9 @@
 //      own `window.snapdom` back.
 //   3b. THE PANEL'S PICTURE (#4975). The side panel's document draws itself,
 //      and takeBase lays its picture in at the frame's rectangle, beside the
-//      app's.
+//      app's. Every leg of takeBase is bounded: the panel gets three seconds
+//      and the shell fifteen, so a slow panel draws nothing instead of
+//      holding the mode on "Taking a screenshot…" with clicks doing nothing.
 //   4. THE SEAMS. The dialog takes a handed-over comment; the drawing
 //      library is the pinned, recorded copy, byte for byte.
 
@@ -853,6 +855,118 @@ test('requestPanelPicture: no runtime, a throwing draw, a slow draw, a real answ
   assert.equal(await picture.requestPanelPicture(frame({ picture: async () => blob }), 1, 50), blob);
   // Something that is not a picture is not drawn.
   assert.equal(await picture.requestPanelPicture(frame({ picture: async () => 'png' }), 1, 50), null);
+});
+
+test('requestPanelPicture gives the panel three seconds and takes the frame realm\'s own Blob', async () => {
+  // The panel's bound is its own constant, below the app's.
+  assert.match(read('frontend/src/features/comment-pin/picture.ts'), /timeoutMs = PANEL_PICTURE_TIMEOUT_MS/);
+  assert.ok(picture.PANEL_PICTURE_TIMEOUT_MS < picture.APP_PICTURE_TIMEOUT_MS);
+  // The panel's `toBlob` makes the Blob in the PANEL window's realm, which
+  // the top window's `instanceof Blob` never matched — the panel's picture
+  // was thrown away whatever it drew. The frame window's own class vouches
+  // for it instead.
+  class PanelBlob {}
+  const made = new PanelBlob();
+  const frame = {
+    contentWindow: {
+      Blob: PanelBlob,
+      UsernodeReact: { sidePanelEmbed: { picture: async () => made } },
+    },
+  };
+  assert.equal(await picture.requestPanelPicture(frame, 1, 50), made);
+  // Without a Blob class on the frame window nothing vouches for it, and it
+  // is refused as before.
+  const orphan = {
+    contentWindow: { UsernodeReact: { sidePanelEmbed: { picture: async () => made } } },
+  };
+  assert.equal(await picture.requestPanelPicture(orphan, 1, 50), null);
+});
+
+test('within passes a settled value through, and falls back on a rejection or a wait past ms', async (t) => {
+  assert.equal(await picture.within(Promise.resolve('v'), 20, 'fb'), 'v');
+  assert.equal(await picture.within(Promise.reject(new Error('gone')), 20, 'fb'), 'fb');
+  // A promise that never settles is cut off by the timer, not left pending.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    let settled = false;
+    const done = picture.within(new Promise(() => {}), 3000, 'fb').then((v) => { settled = true; return v; });
+    assert.equal(settled, false, 'a promise that never settles does not settle on its own');
+    t.mock.timers.tick(3000);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(await done, 'fb');
+    assert.equal(settled, true);
+  } finally {
+    t.mock.timers.reset();
+  }
+});
+
+test('the panel picture promise cannot block takeBase', async (t) => {
+  // The panel is open and laid out, its runtime answers, and its draw never
+  // settles (a capture competing for the shared main thread). takeBase must
+  // still resolve within the panel's bound, with the panel left undrawn.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const prev = {
+    document: globalThis.document,
+    window: globalThis.window,
+    getComputedStyle: globalThis.getComputedStyle,
+    requestAnimationFrame: globalThis.requestAnimationFrame,
+  };
+  const script = { onload: null, remove() {} };
+  const panel = {
+    src: 'https://homeroom.test/?panel=1#home',
+    getBoundingClientRect: () => ({ left: 880, top: 0, width: 380, height: 680 }),
+    checkVisibility: () => true,
+    contentWindow: {
+      UsernodeReact: { sidePanelEmbed: { picture: () => new Promise(() => {}) } },
+    },
+  };
+  const canvas = { width: 1280, height: 800, getContext: () => null };
+  globalThis.document = {
+    body: {},
+    documentElement: { hasAttribute: () => false },
+    getElementById: (id) => (id === 'side-panel-frame' ? panel : null),
+    createElement: () => script,
+    head: { appendChild: (s) => { s.onload(); } },
+    elementsFromPoint: () => [],
+  };
+  globalThis.window = { snapdom: () => Promise.resolve({ toCanvas: async () => canvas }) };
+  globalThis.getComputedStyle = () => ({ backgroundColor: '#ffffff' });
+  globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+  try {
+    const base = picture.takeBase({
+      host: {}, scale: 1, frame: null, frameRect: null,
+      pin: { x: 10, y: 10 }, viewport: { width: 1280, height: 800 },
+    });
+    let settled = false;
+    const done = base.then((v) => { settled = true; return v; });
+    t.mock.timers.tick(picture.PANEL_PICTURE_TIMEOUT_MS);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(settled, true, 'takeBase did not wait on the panel past its bound');
+    const out = await done;
+    assert.ok(out, 'takeBase resolved with a picture, not null');
+    assert.equal(out.canvas, canvas);
+    assert.equal(out.scale, 1);
+    assert.equal(out.app, null);
+  } finally {
+    t.mock.timers.reset();
+    globalThis.document = prev.document;
+    globalThis.window = prev.window;
+    globalThis.getComputedStyle = prev.getComputedStyle;
+    globalThis.requestAnimationFrame = prev.requestAnimationFrame;
+  }
+});
+
+test('takeBase bounds the shell\'s own draw, and layInPanel bounds the panel blob\'s decode', () => {
+  const src = read('frontend/src/features/comment-pin/picture.ts');
+  // Both shell reads go through within: a capture slowed or stalled by the
+  // panel's competing draw gives way after fifteen seconds.
+  assert.match(src, /const shell = within\(drawShell\(scale, host, false, viewport\), SHELL_PICTURE_TIMEOUT_MS, null\);/);
+  assert.match(src, /const again = await within\(drawShell\(scale, host, true, viewport\), SHELL_PICTURE_TIMEOUT_MS, null\);/);
+  // And the panel blob's decode: a blob that will not decode draws nothing.
+  const lay = src.match(/async function layInPanel[\s\S]*?\n\}/);
+  assert.ok(lay, 'layInPanel exists beside layInApp');
+  assert.match(lay[0], /within\(createImageBitmap\(blob\), PANEL_PICTURE_TIMEOUT_MS, null\)/);
+  assert.match(lay[0], /if \(!bitmap\) return;/);
 });
 
 // ── 2. Posting ────────────────────────────────────────────────────────

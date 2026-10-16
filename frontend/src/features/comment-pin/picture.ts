@@ -82,6 +82,27 @@ export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 export const SNAPSHOT_KEY = '__usernode_snapshot';
 /** How long the app gets to draw itself, the library's first load included. */
 export const APP_PICTURE_TIMEOUT_MS = 8000;
+/**
+ * The panel gets less than the app: it runs on this same page, and its draw
+ * competes with the shell's own for the one main thread.
+ */
+export const PANEL_PICTURE_TIMEOUT_MS = 3000;
+/** The page's own draw, the library's first load included. */
+export const SHELL_PICTURE_TIMEOUT_MS = 15000;
+
+/**
+ * `p`'s value, or `fallback` when `p` rejects or `ms` passes first — the
+ * bound that keeps one slow leg of a picture from holding the mode open.
+ */
+export function within<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms);
+    p.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      () => { clearTimeout(timer); resolve(fallback); },
+    );
+  });
+}
 
 export interface Point { x: number; y: number }
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -429,12 +450,15 @@ function cleanInfo(value: unknown): ElementInfo | null {
  * (`window.UsernodeReact.sidePanelEmbed`, mounted in ../side-panel/mount.ts)
  * — no postMessage, unlike the app's. Null when the frame has no runtime yet
  * (it is still booting, or gone), one that says nothing, or one that does not
- * answer in time.
+ * answer in time — the panel's three seconds, not the app's eight, since its
+ * draw runs on this same page. A blob is taken when it is a Blob of THIS
+ * window or of the frame's: the panel's `toBlob` makes it in the panel
+ * window's realm, which the top window's `instanceof Blob` never matched.
  */
 export function requestPanelPicture(
   frame: HTMLIFrameElement,
   scale: number,
-  timeoutMs = APP_PICTURE_TIMEOUT_MS,
+  timeoutMs = PANEL_PICTURE_TIMEOUT_MS,
 ): Promise<Blob | null> {
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -445,11 +469,15 @@ export function requestPanelPicture(
     timer = setTimeout(() => finish(null), timeoutMs);
     try {
       const win = frame.contentWindow as unknown as
-        { UsernodeReact?: { sidePanelEmbed?: { picture?: (s: number) => Promise<Blob | null> } } } | null;
+        { Blob?: unknown; UsernodeReact?: { sidePanelEmbed?: { picture?: (s: number) => Promise<Blob | null> } } } | null;
       const ask = win?.UsernodeReact?.sidePanelEmbed?.picture;
       const said = ask && typeof ask === 'function' ? ask(scale) : null;
       if (said && typeof said.then === 'function') {
-        said.then((blob) => finish(blob instanceof Blob ? blob : null), () => finish(null));
+        said.then((blob) => {
+          const realmBlob = win?.Blob;
+          const panelMade = typeof realmBlob === 'function' && blob instanceof (realmBlob as unknown as typeof Blob);
+          finish(blob instanceof Blob || panelMade ? blob : null);
+        }, () => finish(null));
       } else finish(null);
     } catch {
       finish(null);
@@ -799,8 +827,11 @@ export interface Base {
  * Start drawing the page now: the shell, the running app's own picture when
  * its frame is on screen, and the side panel's own picture when the panel is
  * (#4975) — all asked at once, so the slowest of them bounds the wait once.
- * Resolves null when the shell itself could not be drawn; the comment then
- * goes without a picture.
+ * Every leg is bounded (`within`): the shell by SHELL_PICTURE_TIMEOUT_MS, the
+ * app by its own timeout, the panel by the panel's three seconds — a leg that
+ * misses its bound draws nothing rather than holding the mode open. Resolves
+ * null when the shell itself could not be drawn; the comment then goes
+ * without a picture.
  */
 export function takeBase(opts: {
   host: Element;
@@ -821,7 +852,7 @@ export function takeBase(opts: {
   const app = frame && frameRect
     ? requestAppPicture(frame, { scale, x: pin.x - frameRect.x, y: pin.y - frameRect.y })
     : Promise.resolve(null);
-  const shell = drawShell(scale, host, false, viewport).catch(() => null);
+  const shell = within(drawShell(scale, host, false, viewport), SHELL_PICTURE_TIMEOUT_MS, null);
   return Promise.all([shell, app, panelPicture]).then(async ([canvas, picture, panelBlob]) => {
     if (!canvas) return null;
     // The scale the picture really has, read off it: everything drawn on it
@@ -837,7 +868,7 @@ export function takeBase(opts: {
       // data still names the element, so a second miss does not loop. The
       // panel's blob, asked once up top, is laid in again as it was.
       await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
-      const again = await drawShell(scale, host, true, viewport).catch(() => null);
+      const again = await within(drawShell(scale, host, true, viewport), SHELL_PICTURE_TIMEOUT_MS, null);
       if (again) {
         const retaken = again.width / width;
         if (frameRect) await layInApp(again, retaken, frameRect, picture);
@@ -901,14 +932,16 @@ async function layInApp(canvas: HTMLCanvasElement, scale: number, rect: Rect, pi
  * No plate when it did not answer — the frame's rectangle keeps whatever the
  * shell drew there (a hidden frame holds its place with `hide`), which at
  * worst is the empty body the bug described, never a wrong claim about the
- * page.
+ * page. The decode is bounded like the panel's own draw: a blob that will
+ * not decode draws nothing either.
  */
 async function layInPanel(canvas: HTMLCanvasElement, scale: number, rect: Rect | null, blob: Blob | null): Promise<void> {
   if (!blob || !rect) return;
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   try {
-    const bitmap = await createImageBitmap(blob);
+    const bitmap = await within(createImageBitmap(blob), PANEL_PICTURE_TIMEOUT_MS, null);
+    if (!bitmap) return;
     ctx.drawImage(bitmap, rect.x * scale, rect.y * scale, rect.width * scale, rect.height * scale);
     bitmap.close?.();
   } catch { /* the shell's own drawing of the frame's place stays */ }
