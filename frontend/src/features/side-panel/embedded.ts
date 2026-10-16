@@ -75,6 +75,13 @@ export interface EmbeddedRuntime {
   isBooted(): boolean;
 }
 
+// One draw of this document's page in flight, shared by every ask until it
+// settles. Comment mode asks on opening, after each scroll and for every
+// pin; a capture slowed by the page's own work must not be stacked with a
+// second one of the same document, each asking the main thread for more
+// than the last. Settled draws are not handed out again.
+let drawing: Promise<Blob | null> | null = null;
+
 export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
   if (!isEmbeddedPanel()) return null;
   const hist = win.history;
@@ -323,16 +330,24 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
     // reported: a panel still booting has nothing settled to draw. The
     // drawing module is imported only when asked — no comment work loads in
     // a panel that is never screenshotted — and every failure resolves
-    // null, which the caller draws as nothing.
+    // null, which the caller draws as nothing. One draw is in flight at a
+    // time (`drawing`, above): an ask made while one runs — a scroll retake
+    // landing on a pin, say — shares it instead of starting a second
+    // capture of this same document.
     picture(scale: number): Promise<Blob | null> {
       if (!booted) return Promise.resolve(null);
-      return new Promise((resolve) => {
+      if (drawing) return drawing;
+      const p: Promise<Blob | null> = new Promise((resolve) => {
         win.setTimeout(() => {
           import('../comment-pin/picture')
             .then((m) => m.drawDocument(scale))
             .then(resolve, () => resolve(null));
         }, 0);
       });
+      drawing = p;
+      const clear = () => { if (drawing === p) drawing = null; };
+      p.then(clear, clear);
+      return p;
     },
     isBooted: () => booted,
   };
