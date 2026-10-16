@@ -190,7 +190,7 @@ test('a page without the sign-in completion boots anonymous without throwing', a
 // while its read is out. These run the real one (public/js/auth-screens.js)
 // beside the real _adoptLateSession, with a fetch the test answers by hand.
 
-function withRealCompletion({ hash = '#messages', search = '?demo=1' } = {}) {
+function withRealCompletion({ hash = '#messages', search = '?demo=1', deferredTransition = false } = {}) {
   const events = [];
   const sandbox = {
     console, URL, URLSearchParams, AbortController, setTimeout, clearTimeout,
@@ -205,6 +205,13 @@ function withRealCompletion({ hash = '#messages', search = '?demo=1' } = {}) {
     },
   };
   sandbox.record = (e) => events.push(e);
+  // The native kit's screen transition on desktop: a view transition, whose
+  // callback runs later, not in the caller's tick.
+  if (deferredTransition) {
+    sandbox.PlatformUI = {
+      transition(fn) { events.push({ transition: true }); setTimeout(fn, 40); },
+    };
+  }
   const reads = [];
   sandbox.fetch = () => new Promise((resolve) => reads.push(resolve));
   vm.createContext(sandbox);
@@ -263,4 +270,46 @@ test('a sign-in merely begun while the late read was out also makes it stand dow
   await settle();
   assert.equal(events.filter((e) => e.entered || e.address).length, 0,
     'nothing changes the address or enters the shell under a sign-in in progress');
+});
+
+// The kit's transition defers its callback. A background completion that
+// went through it left a gap after its ownership check, in which a sign-in
+// the viewer began found the shell entered under it and its deep link spent
+// (review round 2). It enters in the same tick as the check instead.
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+test('with a deferred transition, the late answer enters in the tick it is checked', async () => {
+  const { sandbox, events, reads, answer } = withRealCompletion({ deferredTransition: true });
+  sandbox.App._adoptLateSession();
+  reads[0](answer());
+  await tick();
+  assert.equal(sandbox.App.user && sandbox.App.user.id, 7, 'entered before any timer could run');
+  assert.equal(new URL(sandbox.location.href).hash, '#messages');
+  assert.ok(!events.some((e) => e.transition), 'no deferred transition for a background completion');
+  // So a sign-in the viewer begins next finds the shell already up, not a
+  // half-finished adoption that will land under it later.
+  sandbox.App.noteSignInBegun();
+  await settle();
+  assert.equal(events.filter((e) => e.entered).length, 1);
+  assert.equal(new URL(sandbox.location.href).hash, '#messages');
+});
+
+test('the waiting-room entry is synchronous too', async () => {
+  const { sandbox, events, reads } = withRealCompletion({ deferredTransition: true });
+  sandbox.App._adoptLateSession();
+  reads[0]({ ok: true, status: 200, json: async () => ({ user: { id: 9, hasPlatformAccess: false } }) });
+  await tick();
+  assert.equal(sandbox.App.user && sandbox.App.user.id, 9);
+  assert.ok(!events.some((e) => e.transition));
+});
+
+test('a sign-in the viewer makes still goes through the screen transition', async () => {
+  const { sandbox, events, reads, answer } = withRealCompletion({ deferredTransition: true });
+  sandbox.App.noteSignInBegun();
+  const done = sandbox.AuthScreens.finishLogin();
+  reads[0](answer());
+  await done;
+  assert.ok(events.some((e) => e.transition), 'the foreground completion keeps its animation');
+  await settle();
+  assert.equal(events.filter((e) => e.entered).length, 1);
 });

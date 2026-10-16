@@ -418,13 +418,21 @@
     // shell, and once it answers false this stops without touching
     // anything: a sign-in the viewer started meanwhile owns the page, and
     // an older read must not send it somewhere else. Such a completion
-    // never waits again after that check (it does not move to the live
-    // build, and has no `beforeShell`), so the check holds until the shell
-    // starts.
+    // never waits again after that check: it does not move to the live
+    // build, has no `beforeShell`, and enters the shell without the screen
+    // transition (`enter` below), so everything it changes happens in the
+    // same tick as the check.
     async finishLogin(opts) {
       const beforeShell = opts && typeof opts.beforeShell === 'function' ? opts.beforeShell : null;
       const stillWanted = opts && typeof opts.stillWanted === 'function' ? opts.stillWanted : null;
       const superseded = () => !!stillWanted && !stillWanted();
+      // A background completion enters the shell WITHOUT the screen
+      // transition. The kit's transition runs its callback later (a view
+      // transition on desktop), and a sign-in the viewer begins in that gap
+      // would find the shell entered under it and its deep link already
+      // spent. Run in the same tick as the check above, the address, the
+      // pending deep link and the shell change together or not at all.
+      const enter = (fn, type) => (stillWanted ? fn() : fx(fn, type));
       let returnTo = '';
       // The login-return targets accepted by the platform. Both are separate
       // documents by design — real navigation stays.
@@ -490,7 +498,7 @@
           // routes there); keep the deep link pending for the release.
           // The waiting room moves to the live build when it lets them in
           // (features/auth/waiting.tsx), before the signed-in shell starts.
-          fx(() => App.enterAuthed(user), 'push');
+          enter(() => App.enterAuthed(user), 'push');
           return null;
         }
 
@@ -522,7 +530,7 @@
         if (beforeShell) {
           try { await beforeShell(); } catch (_) { /* the shell starts all the same */ }
         }
-        fx(() => {
+        enter(() => {
           App.enterAuthed(user);
         }, 'pop');
         AuthScreens._pendingHash = '';
