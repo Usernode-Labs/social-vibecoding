@@ -165,6 +165,19 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'global_chat_threads',
   'global_chat_messages',
   'global_chat_tool_runs',
+  // The waitlist's SMS ledger (#SMS). `sms_deliveries` is a delivery log and
+  // `sms_suppressions` the numbers that opted out or bounced — both are
+  // denied WHOLESALE to `usernode_debug_ro` because a list of numbers in bulk
+  // is PII an automated agent has no business reading, and they are
+  // `staging:private` so a clone starts empty. Neither stores a credential
+  // VALUE: the columns are a kind, a recipient number, a provider, a status,
+  // an error and timestamps. So the human-admin console follows its existing
+  // policy for private-user-data-without-a-credential (the platform Messages
+  // and Global Chat tables above) and reads them for diagnosis — "did the
+  // release text leave, and did the carrier reject it?" — without a column to
+  // mask.
+  'sms_deliveries',
+  'sms_suppressions',
 ]);
 
 // The per-column replacement for the old table-level denials — one entry

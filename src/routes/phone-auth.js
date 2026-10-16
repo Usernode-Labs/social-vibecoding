@@ -55,6 +55,7 @@ const failureLog = require('../services/phone-failure-log');
 const phoneAuth = require('../services/firebase-phone-auth');
 const providers = require('../services/sign-in-providers');
 const communityInvites = require('../services/community-invites');
+const waitlist = require('../services/waitlist');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
 const {
@@ -206,6 +207,14 @@ function phoneAuthRoutes(config) {
             return phoneAuth.verifyIdToken(pool, config, exchanged.idToken);
           })();
       const result = await phoneAuth.signIn(pool, claims, { createSession });
+      // An account appearing on a RELEASED waitlist phone row is admitted on
+      // the spot - the phone counterpart of the arrow email-signup.js already
+      // takes for email (waitlist.linkUserByEmail). Best-effort by
+      // construction: linkUserByPhone never throws, and a failure here must
+      // not fail a sign-in that already succeeded.
+      if (result.userId) {
+        await waitlist.linkUserByPhone(pool, { userId: result.userId, phone: claims.phoneNumber });
+      }
       if (result.refuse) {
         // A refused sign-in is still a failed verification, with the account
         // and number known: logged, the one refuse the flow produces.
@@ -386,6 +395,9 @@ function phoneAuthRoutes(config) {
         const exchanged = await phoneAuth.exchangeCode(config, req.body?.sessionInfo, req.body?.code, { pool });
         claims = await phoneAuth.verifyIdToken(pool, config, exchanged.idToken);
         const linked = await phoneAuth.linkPhone(pool, claims, req.user.id);
+        // A released waitlist row for this number admits the account now - the
+        // same arrow the phone sign-in path takes above.
+        await waitlist.linkUserByPhone(pool, { userId: req.user.id, phone: claims.phoneNumber });
         const joined = await communityInvites.joinQueued(pool, req.user.id);
         if (joined.length) await challengeScorer.scoreOnJoin(pool, config);
         log.info('phone-auth', 'Phone linked to a signed-in account', {

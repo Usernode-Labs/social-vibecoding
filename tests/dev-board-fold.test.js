@@ -1641,9 +1641,17 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // already selected (#admin/reports/1, the staging fixture's fake report),
   // a route no other check reaches. 732 leaves 148 slots.
   //
+  // 732 → 734: +2 (#SMS): the phone channel on the waitlist. One check pins
+  // the join screen's channel switch and number field on the
+  // ?shot=waitlist-phone state; the other pins the admin Waitlist row naming
+  // its phone signup ("by text") and the "Invite text:" line. Both are new
+  // STATES on routes that already exist, but neither route had an SMS half to
+  // fold into, so they are two declared checks. 734 leaves 146 slots under
+  // the 880 ceiling.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 732);
+  checkCap.assertPinned(DAPP.tests.length, 734);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

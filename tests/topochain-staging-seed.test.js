@@ -892,3 +892,55 @@ test('the First challenges seed: staging only, idempotent, four ONBOARDING rows 
   const boot = src.indexOf('await seedStagingTopochain(pool, config);');
   assert.ok(boot > 0 && src.indexOf('await seedStagingFirstChallenges(pool);', boot) > boot);
 });
+
+// ─── The platform-SMS fixtures (#SMS) ──────────────────────────────────
+//
+// Its own function (seedStagingPlatformSms), after seedStagingPlatformMail,
+// because the mail fixture decorates the same waitlist rows and this one
+// hangs off them. The phone rows and the text delivery a preview cannot
+// otherwise produce are the subject; the numbers are all in the reserved
+// 555-01xx range, so nothing here can text a real person.
+test('the platform-SMS seed: staging only, idempotent, phone rows and no signal', async () => {
+  const { seedStagingPlatformSms } = require('../src/db/migrate');
+  process.env.USERNODE_ENV = 'production';
+  const off = mockPool();
+  await seedStagingPlatformSms(off);
+  assert.equal(off.calls.length, 0, 'no query outside staging');
+
+  process.env.USERNODE_ENV = 'staging';
+  const pool = mockPool();
+  await seedStagingPlatformSms(pool);
+  assert.ok(pool.calls.length > 0);
+
+  const inserts = pool.calls.filter((c) => /INSERT INTO/.test(c.sql));
+  assert.ok(inserts.length >= 3, `expected the row fixtures, got ${inserts.length}`);
+  for (const call of inserts) {
+    // The signup rows use ON CONFLICT (id); the delivery and the code row
+    // use a WHERE NOT EXISTS existence check (their natural keys are not a
+    // single column), so a reboot is a no-op either way.
+    assert.match(call.sql, /ON CONFLICT \(id\) DO NOTHING|WHERE NOT EXISTS/,
+      `INSERT without an idempotency guard: ${call.sql.slice(0, 80)}`);
+  }
+  // The three phone signups, all keyed by a reserved 555-01xx number.
+  const signups = inserts.find((c) => /INSERT INTO waitlist_signups/.test(c.sql));
+  assert.match(signups.sql, /phone_e164/, 'the rows are phone-keyed');
+  assert.doesNotMatch(signups.sql.slice(0, signups.sql.indexOf('VALUES')),
+    /email/, 'a phone row carries no address column value');
+  for (const phone of signups.params) {
+    assert.match(phone, /^\+155501000\d\d$/, `reserved fictional number, got ${phone}`);
+  }
+  // One text delivery, so the admin screen's "Invite text:" line is not
+  // empty in a preview (sms_deliveries is staging:private).
+  const delivery = inserts.find((c) => /INSERT INTO sms_deliveries/.test(c.sql));
+  assert.ok(delivery, 'a release text delivery is seeded');
+  assert.match(delivery.sql, /'waitlist_released_sms'/);
+  assert.match(delivery.sql, /'sent'/);
+  // A live code with the known literal the email fixtures also use.
+  const code = inserts.find((c) => /INSERT INTO waitlist_verification_codes/.test(c.sql));
+  assert.ok(code, 'a live phone code is seeded');
+  assert.doesNotMatch(code.sql, /email/, 'the code is keyed by phone only');
+
+  // Runs after the mail fixture it decorates.
+  const mailAt = src.indexOf('await seedStagingPlatformMail(pool);');
+  assert.ok(mailAt > 0 && src.indexOf('await seedStagingPlatformSms(pool);', mailAt) > mailAt);
+});

@@ -93,6 +93,8 @@ const EXCLUDED_TABLE_DATA = Object.freeze([
   'mobile_push_registrations',
   'mobile_push_registration_events',
   'mobile_push_deliveries',
+  'sms_deliveries',
+  'sms_suppressions',
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────
