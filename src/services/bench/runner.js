@@ -365,10 +365,10 @@ async function runTurn({
     durableSteps.rethrowStop(err, 'worker');
     return { routed: { error: `worker: ${err.message}` }, result: {}, stopped: false, infra: true, costUsd: null, usage: {} };
   }
-  await pool.query(
-    "UPDATE chat_sessions SET status = 'active', agent_thread_id = NULL, agent_model = $2, last_activity_at = NOW() WHERE id = $1",
-    [session.id, model],
-  );
+  // The trial's session takes its slot for the turn (the proposal machine;
+  // never a closed one: bug 21).
+  await require('../session-lifecycle').takeSlot({ pool, sessionId: session.id, source: 'bench' });
+  await pool.query('UPDATE chat_sessions SET agent_thread_id = NULL, agent_model = $2 WHERE id = $1', [session.id, model]);
   session.agent_thread_id = null;
   session.agent_model = model;
   activeWorkers.add(session.id);
@@ -427,10 +427,7 @@ async function runTurn({
     activeWorkers.delete(session.id);
     // A stop leaves the session as it is: its turn is the trial's next owner's.
     if (!steps.stopped) {
-      await pool.query(
-        "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1 AND status = 'active'",
-        [session.id],
-      ).catch(() => {});
+      await require('../session-lifecycle').restSession({ pool, sessionId: session.id }).catch(() => {});
     }
   }
   const routed = ran.routed;

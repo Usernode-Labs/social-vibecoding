@@ -46,7 +46,14 @@ test('one count spends the budget: active and promoted, whoever owns them, not i
 test('every start, resume and reopen passes the same gate, and says where it asked', () => {
   const sessions = read('src/routes/sessions.js');
   const paths = [...sessions.matchAll(/claimGlobalSlot\(\{ pool, config, path: '([a-z_]+)'/g)].map((m) => m[1]);
-  assert.deepEqual(paths, ['resume', 'start', 'issue_headless', 'clone_headless']);
+  assert.deepEqual(paths, ['start', 'issue_headless', 'clone_headless']);
+  // A resume is the proposal machine's: it counts the same caps under locks
+  // (R5) and refuses 'global_cap' over this one, and the route frees an idle
+  // slot the same way, then records the refusal with its path, as the gate does.
+  const resume = sessions.slice(sessions.indexOf('async function resumePausedSession'));
+  assert.match(resume, /global: config && config\.maxGlobalSessions != null \? Number\(config\.maxGlobalSessions\) : 100,/);
+  assert.match(resume, /reason === 'global_cap'[\s\S]*?sessionLifecycle\.freeGlobalSlot\(\{ pool, graceMs: config && config\.sessionPressureGraceMs, excludeSessionId: sessionId \}\)/);
+  assert.match(resume, /recordCapacityRefusal\(pool, \{ cap: 'global', path: 'resume', userId: user\.id \}\);\n\s+return \{ ok: false, status: 429, error: sessionLifecycle\.PLATFORM_AT_CAPACITY \};/);
   const handoff = read('src/routes/proposal-handoff.js');
   assert.match(handoff, /claimGlobalSlot\(\{\s+pool, config, path: 'proposal_start', userId: req\.user\.id, appId: app\.id, discount: replacedActiveSlot,/);
   assert.match(handoff, /if \(!global\.ok\) return res\.status\(429\)\.json\(\{ error: sessionLifecycle\.PLATFORM_AT_CAPACITY \}\);/);

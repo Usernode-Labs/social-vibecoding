@@ -55,7 +55,6 @@ const log = require('./logger');
 const usernames = require('./usernames');
 const { listActiveUserIds } = require('./active-users');
 const notificationPreferences = require('./notification-preferences');
-const { firstVersionSql } = require('./first-version-rule');
 const notificationBookmarks = require('./notification-bookmarks');
 
 // Usernames in this app are [A-Za-z0-9_]+, length-restricted on signup.
@@ -159,6 +158,7 @@ const FRIEND_REQUEST_PENDING_SQL = `(n.kind = 'friend_request' AND EXISTS (
 // on its reader (src/workflow/rules/change-notifications.ts, where the rule
 // is spelled out). Reads `n` (the notification).
 const changeNotifications = require('../workflow/rules/change-notifications.ts');
+const proposalNotifications = require('../workflow/rules/proposal-notifications.ts');
 const { DIGEST_WAITING_SQL } = changeNotifications;
 
 // 5 October (Page Turners): the asks about a change that its decision
@@ -889,16 +889,11 @@ async function createReactionNotification(pool, { appId, messageId, senderId, re
 // the group or merge/withdraw before the grace period elapses and it's
 // auto-archived. System-generated, so source_user_id is null; references
 // the session so the dropdown can render the PR title + a deep link.
-async function createStalePrNotification(pool, { userId, appId, sessionId }) {
-  if (!userId) return [];
-  if (!await notificationPreferences.allowsKind(pool, { userId, appId, kind: 'stale_pr' })) return [];
-  const { rows } = await pool.query(
-    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
-     VALUES ($1, $2, $3, NULL, 'stale_pr')
-     RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
-    [userId, appId, sessionId]
-  );
-  return rows;
+// One copy, written by the proposal machine's review check
+// (src/workflow/rules/proposal-notifications.ts); preferences fail open.
+function createStalePrNotification(pool, { userId, appId, sessionId }) {
+  return proposalNotifications.createStalePrNotification(pool, { userId, appId, sessionId },
+    notificationPreferences.allowsKind);
 }
 
 // #237: staging preview failed to boot, so proposal checks can't run and the
@@ -986,22 +981,10 @@ async function createSessionStalledNotification(pool, { userId, appId, sessionId
 // 'shared' (#1347's in-progress area). Unread-deduped per session AND per
 // detail, so sharing repeatedly onto the same card — which #1347 deliberately
 // allows — notifies once, while a later submit of that same card still does.
-async function createConnectorSubmittedNotification(pool, { userId, appId, sessionId, detail }) {
-  if (!userId || !sessionId) return [];
-  const kindDetail = (detail || 'submitted').slice(0, 32);
-  const { rows } = await pool.query(
-    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
-     SELECT $1, $2, $3, NULL, 'connector_submitted', $4::varchar
-      WHERE NOT EXISTS (
-        SELECT 1 FROM notifications n
-        WHERE n.user_id = $1 AND n.session_id = $3
-          AND n.kind = 'connector_submitted' AND n.detail IS NOT DISTINCT FROM $4
-          AND n.read_at IS NULL
-      )
-     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
-    [userId, appId || null, sessionId, kindDetail]
-  );
-  return rows;
+// One copy (src/workflow/rules/proposal-notifications.ts): the proposal
+// machine writes it when an agent puts its owner's change up for a vote.
+function createConnectorSubmittedNotification(pool, { userId, appId, sessionId, detail }) {
+  return proposalNotifications.createConnectorSubmittedNotification(pool, { userId, appId, sessionId, detail });
 }
 
 // #1405 path B: the agent said it is waiting on this user, and the wait has now
@@ -1254,76 +1237,15 @@ async function hydrateNotification(q, id) {
 // session, so a re-promote (e.g. a PR that went stale then was proposed
 // again) doesn't re-spam people who were already pinged. `source_user_id`
 // is the proposer so the dropdown can render "@user proposed a PR…".
-async function createPrProposedNotifications(pool, { appId, sessionId, proposerId }) {
-  if (!appId || !sessionId) return [];
-
-  // Self-app exception: active-users.js counts everyone active on ANY
-  // app as "active" on the platform self-app (it has no App tab of its
-  // own), so including activeIds here would ping the entire user base
-  // on every platform self-edit PR. Scope those to opt-in stakeholders
-  // only — creator + favoriters; favoriting the platform app is the
-  // subscription. Child apps keep the active-users fan-out: active-on-
-  // that-app is already a meaningful audience.
-  const { rows: appRows } = await pool.query(
-    'SELECT self_hosted FROM apps WHERE id = $1',
-    [appId]
-  );
-  const selfHosted = !!appRows[0]?.self_hosted;
-  const activeIds = selfHosted ? [] : await listActiveUserIds(pool, appId);
-
-  // App creator + favoriters as a stakeholder floor. Either may already
-  // be in activeIds; we dedupe via the Set below.
-  const { rows: extraRows } = await pool.query(
-    `SELECT created_by AS id FROM apps WHERE id = $1 AND created_by IS NOT NULL
-     UNION
-     SELECT user_id AS id FROM app_favorites WHERE app_id = $1`,
-    [appId]
-  );
-
-  let recipientIds = new Set([...activeIds, ...extraRows.map((r) => r.id)]);
-  recipientIds.delete(proposerId);
-  // Collab-private apps: only collaborators can vote, so only they get
-  // nudged (a favoriter of a view-public/collab-private app would
-  // otherwise be asked to vote on a PR they can't act on).
-  recipientIds = new Set(await filterToCollaborators(pool, appId, [...recipientIds]));
-  if (!recipientIds.size) return [];
-
-  // #1374: drop the recipients who have muted new proposals for this app.
-  // ONE query for the whole fan-out rather than one per recipient — this
-  // list can be every active user of a busy app, and asking per person would
-  // turn a single insert into hundreds of round trips.
-  //
-  // This category defaults OFF, so on a platform with no stored preferences
-  // this returns nobody and the notification stops being sent at all. That
-  // is the intended change, and the daily digest (services/vote-digest.js)
-  // is what keeps the group's voting turnout from going with it.
-  recipientIds = new Set(await notificationPreferences.filterUsersByCategory(pool, {
-    userIds: [...recipientIds],
-    appId,
-    categoryKey: 'new_proposals',
-  }));
-  if (!recipientIds.size) return [];
-
-  // INSERT ... SELECT with a NOT EXISTS guard so the per-recipient
-  // de-dupe is atomic (no read-then-write race on concurrent promotes).
-  // 13 Oct 2026, D1: and nobody is asked to vote on a project's first
-  // version, which goes live without one (services/first-version-rule.js).
-  const ids = [...recipientIds];
-  const { rows } = await pool.query(
-    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
-     SELECT u, $2, $3, $4, 'pr_proposed'
-       FROM UNNEST($1::int[]) AS u
-      WHERE NOT EXISTS (
-        SELECT 1 FROM notifications n
-        WHERE n.user_id = u AND n.session_id = $3 AND n.kind = 'pr_proposed'
-      )
-        AND NOT EXISTS (
-          SELECT 1 FROM chat_sessions cs WHERE cs.id = $3 AND ${firstVersionSql('cs')}
-        )
-     RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
-    [ids, appId, sessionId, proposerId || null]
-  );
-  return rows;
+// One copy (src/workflow/rules/proposal-notifications.ts), written by the
+// proposal machine when the proposal goes up for a vote. The audience is read
+// through services/active-users.js and notification-preferences.js here, so a
+// test that stubs either still reaches it.
+function createPrProposedNotifications(pool, { appId, sessionId, proposerId }) {
+  return proposalNotifications.createPrProposedNotifications(pool, { appId, sessionId, proposerId }, {
+    activeIds: (db, id) => listActiveUserIds(db, id),
+    byCategory: (db, q) => notificationPreferences.filterUsersByCategory(db, q),
+  });
 }
 
 /**

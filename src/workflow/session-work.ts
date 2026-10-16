@@ -11,6 +11,8 @@
 //     flow does (a sync,       recorded by services/active-workers.js, each
 //     a dispatch, an upload)   counted while the process that holds it is
 //                              alive (rules/presence.ts)
+//   a durable build          the bot-build machine's instance, while it
+//                              builds (buildHoldSql)
 
 import { holderAliveSql } from './rules/presence.ts';
 
@@ -43,11 +45,27 @@ export function previewWorkingSql(sessionId: string): string {
 }
 
 // True while an operation recorded on that instance is held by a live
-// process.
-export function operationsLiveSql(sessionId: string): string {
+// process. `exceptParam`: an SQL value naming one operation not to count (a
+// caller's own record, read by a decision it asks for while it holds it);
+// `exceptKinds`: kinds not to count (constants of services/active-workers.js).
+export function operationsLiveSql(sessionId: string, exceptParam: string | null = null, exceptKinds: readonly string[] = []): string {
+  for (const k of exceptKinds) if (!/^[a-z][a-z-]*$/.test(k)) throw new Error(`bad operation kind ${k}`);
   return `EXISTS (SELECT 1 FROM wf_instances p,
                          jsonb_array_elements(COALESCE(p.data->'operations', '[]'::jsonb)) AS o
                    WHERE p.machine = 'preview' AND p.key = 'session:' || ${sessionId}
-                     AND p.state NOT IN ('detached', 'retired')
+                     AND p.state NOT IN ('detached', 'retired')${exceptParam ? `
+                     AND (o->>'id') IS DISTINCT FROM ${exceptParam}` : ''}${exceptKinds.length ? `
+                     AND (o->>'kind') NOT IN (${exceptKinds.map((k) => `'${k}'`).join(', ')})` : ''}
                      AND ${holderAliveSql(`(o->>'holder')`)})`;
+}
+
+// True while a durable build (the bot-build machine) holds the session
+// `alias` names: chat_sessions.workflow_owner points at its instance, still
+// building, its turns and the time between them included.
+export function buildHoldSql(alias: string): string {
+  return `(${alias}.workflow_owner IS NOT NULL AND EXISTS (
+             SELECT 1 FROM wf_instances b
+              WHERE b.machine = split_part(${alias}.workflow_owner, '/', 1)
+                AND b.key = substr(${alias}.workflow_owner, length(split_part(${alias}.workflow_owner, '/', 1)) + 2)
+                AND b.state = 'building'))`;
 }

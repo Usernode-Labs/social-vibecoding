@@ -33,12 +33,14 @@ test('SQL inventory covers static application queries and matches the reviewed d
 });
 
 test('the inventory carries the exact PostgreSQL parameter contexts from #1177', () => {
+  // The pull-request import's INSERT: parameters read in more than one
+  // context ($17 tested and stored, $8 stored twice) keep their casts.
   const votes = inventory.queries.find(({ text }) => (
-    text.includes("CASE WHEN $7::text = 'promoted' THEN NOW() END")
+    text.includes("CASE WHEN $17::text IS NULL THEN NULL ELSE $8::text END")
   ));
-  assert.ok(votes, 'expected to inventory the proposal vote write query');
+  assert.ok(votes, 'expected to inventory the pull-request import query');
   assert.match(votes.text, /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7::text,/);
-  assert.match(votes.text, /CASE WHEN \$7::text = 'active' THEN NOW\(\) END/);
+  assert.match(votes.text, /'imported', \$8::text, \$9, \$10, \$11,/);
 });
 
 test('the checker uses PostgreSQL Parse + Describe without executing queries', () => {

@@ -265,25 +265,19 @@ async function applyHeadChange({
     && sameSha(session.checks_commit_sha, oldHead)
     && CARRIABLE_CHECK_STATES.has(session.check_state);
 
-  // 2. One statement. If the epoch bump and the head install could land
-  //    separately, a crash between them would leave a row whose approvals
-  //    describe neither the old code nor the new. The WHERE is the guard
-  //    against a second applier: it only fires if the pin is still the one
-  //    this decision was made about.
-  const { rows: claimed } = await pool.query(
-    `UPDATE chat_sessions
-        SET imported_pr_head_sha = $1,
-            ${summaryFreshness.invalidateHeadMoveSql('$1')},
-            stale_notified_at = NULL,
-            approval_epoch = approval_epoch + CASE WHEN $3::boolean THEN 1 ELSE 0 END
-      WHERE id = $2
-        AND imported_pr_head_sha IS NOT DISTINCT FROM $4::varchar
-      RETURNING approval_epoch, pr_summary_stale`,
-    [newHead, session.id, bumpEpoch, oldHead]
-  );
-  if (!claimed.length) {
+  // 2. One move, the proposal machine's (Q3): the head installed and, unless
+  //    the move kept the approvals, the epoch moved on, in one statement, so
+  //    a crash can never leave a row whose approvals describe neither the old
+  //    code nor the new. It is refused if the pin is no longer the one this
+  //    decision was made about (another pass got there first), or the
+  //    proposal has closed or merged meanwhile.
+  const moved = await require('../workflow/platform.ts').moveReviewHead({
+    sessionId: session.id, appId: session.app_id, column: 'imported', from: oldHead || null, to: newHead,
+    keepVotes: !bumpEpoch, reason: `imported_head_${kind}`,
+  });
+  if (moved.status !== 'accepted' && moved.status !== 'replayed') {
     log.info('pr-import-sync', 'Head change already applied by another pass; nothing to do', {
-      sessionId: session.id, prNumber: session.pr_number, oldHead, newHead,
+      sessionId: session.id, prNumber: session.pr_number, oldHead, newHead, refused: moved.reason || moved.status,
     });
     // Let the caller carry on with the row as it now is, not as it was read:
     // a merge attempt that kept the stale pin would offer GitHub the old
@@ -296,6 +290,7 @@ async function applyHeadChange({
     if (current[0]) Object.assign(session, current[0]);
     return { applied: false, votesKept: false, checksCarry: false, kind, epoch: null };
   }
+  const claimed = [{ approval_epoch: moved.reply?.epoch, pr_summary_stale: moved.reply?.prSummaryStale }];
   const epoch = parseInt(claimed[0].approval_epoch, 10);
   session.imported_pr_head_sha = newHead;
   // #3344: read back, because an author summary recorded for this very head
@@ -319,16 +314,8 @@ async function applyHeadChange({
     });
     if (checksCarry) session.checks_commit_sha = newHead;
   }
-  if (session.shots_state || session.shots_detail) {
-    // Revision fencing is synchronous with the imported head advance. Even
-    // when execution is disabled, reviewers must stop seeing shots from
-    // the commit that just ceased to be current.
-    await require('./shots-state').markStaleForHead(
-      pool, session.id, String(newHead).toLowerCase(), null, { pin: 'imported' }
-    ).catch((err) => log.warn('pr-import-sync', 'Before & after shots invalidation failed', {
-      sessionId: session.id, oldHead, newHead, err: err.message,
-    }));
-  }
+  // The shots machine hears the head moved from the proposal machine, in the
+  // move's own transaction.
   if (bumpEpoch) {
     log.info('integration', 'Approvals cleared', {
       sessionId: session.id, epoch, reason: `imported_head_${kind}`,

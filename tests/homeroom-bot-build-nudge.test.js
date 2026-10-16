@@ -18,6 +18,10 @@ const path = require('node:path');
 
 const live = require('../src/services/homeroom-bot-live');
 const bot = require('../src/services/homeroom-bot');
+// A build closes its own session through the proposal machine
+// (session-lifecycle.closeOwnSession), which no fake pool runs: the harness
+// stands in for it and records every close.
+const sessionLifecycle = require('../src/services/session-lifecycle');
 const worker = require('../src/services/worker');
 const events = require('../src/services/events');
 
@@ -51,7 +55,8 @@ const BUILT = Object.freeze({
  * ahead from the plan). `ctx` is what the runtime hands each attempt.
  */
 function harness({ turns = [QUIT, BUILT], ctx = null, pendingStop = false, promote = { status: 200, body: { ok: true, prNumber: 42 } } } = {}) {
-  const calls = { queries: [], builds: [], loops: [], promoted: [], events: [], order: [] };
+  const calls = { queries: [], builds: [], loops: [], promoted: [], events: [], order: [], closed: [] };
+  sessionLifecycle.closeOwnSession = async ({ sessionId, reason }) => { calls.closed.push({ sessionId, reason }); return true; };
   const script = [...turns];
   const pool = {
     async query(sql, params) {
@@ -111,7 +116,7 @@ const ARGS = {
   origin: { lane: 'live', runId: 1166 },
 };
 
-const archived = (h) => h.calls.queries.some((q) => /SET status = 'archived'/.test(q.sql));
+const archived = (h) => h.calls.closed.some((c) => c.sessionId === 5001);
 
 // ── The nudge ─────────────────────────────────────────────────────────────
 

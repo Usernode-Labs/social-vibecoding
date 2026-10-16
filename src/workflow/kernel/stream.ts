@@ -245,3 +245,24 @@ export async function waitForOutcome(
     watch?.close();
   }
 }
+
+// Wait up to waitMs for an instance to reach a state `done` accepts (a route
+// that answers once a later event, a work result, has moved it on). Woken by
+// any outcome's notification, else each second; without signals, polled.
+// Resolves the instance as last read (null: it does not exist).
+export async function waitForInstance(
+  db: Queryable, signals: Signals | null, machine: string, key: string,
+  done: (i: { state: string; data: any; version: number }) => boolean, waitMs: number,
+): Promise<{ state: string; data: any; version: number } | null> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const { rows: [r] } = await db.query(
+      'SELECT state, data, version FROM wf_instances WHERE machine = $1 AND key = $2', [machine, key]);
+    const i = r ? { state: r.state, data: r.data, version: Number(r.version) } : null;
+    const left = deadline - Date.now();
+    if (!i || done(i) || left <= 0) return i;
+    const nap = Math.min(left, signals?.listening ? 1000 : 250);
+    if (signals?.listening) await signals.sleep('wf_outcome', nap);
+    else await new Promise((resolve) => setTimeout(resolve, nap));
+  }
+}

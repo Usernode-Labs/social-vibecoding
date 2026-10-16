@@ -26,12 +26,6 @@ export interface Session {
   // Its agent is free: no coding turn, no turn on a local agent, no old
   // flow's operation.
   agentBusy: boolean;
-  // A process of a release from before this machine still serves requests
-  // (a rollout): the agent's calls to the control plane could reach it, and
-  // it keeps the control plane in its memory, so it would refuse them. The
-  // agent is not dispatched until it is gone. Transitional: once every
-  // release has the machine, no such process is left.
-  olderServing: boolean;
   // The slot as [main] left it, read when the machine first takes the
   // proposal.
   slot: { state: string | null; runId: string | null; detail: any;
@@ -48,11 +42,7 @@ const SHA = /^[0-9a-f]{40}$/;
 const sha = (v: unknown) => (SHA.test(String(v || '').toLowerCase()) ? String(v).toLowerCase() : null);
 const SETTLED_CHECKS: ReadonlySet<string> = new Set(['passing', 'failing', 'error', 'skipped']);
 
-// How recently a process's row must have been beaten to count as alive
-// (services/processes.js LIVE_SECONDS).
-const PROCESS_LIVE_SECONDS = 45;
-
-export async function readFacts(tx: Tx, sessionId: number, { buildSha = null }: { buildSha?: string | null } = {}): Promise<Facts> {
+export async function readFacts(tx: Tx, sessionId: number): Promise<Facts> {
   await tx.query('SELECT 1 FROM chat_sessions WHERE id = $1 FOR UPDATE', [sessionId]);
   const { rows: [r] } = await tx.query(
     `SELECT cs.id, cs.app_id, cs.status, cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
@@ -63,16 +53,10 @@ export async function readFacts(tx: Tx, sessionId: number, { buildSha = null }: 
               OR EXISTS (SELECT 1 FROM local_agent_turns t
                           WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
               OR ${operationsLiveSql('cs.id')}) AS agent_busy,
-            ($2::text IS NOT NULL AND EXISTS (
-              SELECT 1 FROM platform_processes p
-               WHERE p.state = 'serving' AND p.role <> 'conductor'
-                 AND p.heartbeat_at > NOW() - make_interval(secs => $3)
-                 AND p.release IS DISTINCT FROM $2
-                 AND p.started_at < (SELECT min(m.started_at) FROM platform_processes m WHERE m.release = $2))) AS older_serving,
             a.slug AS app_slug
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
        LEFT JOIN shot_runs r ON r.id = cs.shots_run_id
-      WHERE cs.id = $1`, [sessionId, buildSha, PROCESS_LIVE_SECONDS]);
+      WHERE cs.id = $1`, [sessionId]);
   if (!r) return { session: null };
   const head = sha(r.imported_pr_head_sha) || sha(r.reviewed_head_sha) || sha(r.checks_commit_sha)
     || sha(r.handoff_head_sha) || sha(r.staging_commit_sha);
@@ -84,7 +68,7 @@ export async function readFacts(tx: Tx, sessionId: number, { buildSha = null }: 
       id: r.id, appId: r.app_id, appSlug: r.app_slug, status: r.status, source: r.source ?? null,
       head, readyHeads: [...readyHeads],
       pins: { imported: sha(r.imported_pr_head_sha), reviewed: sha(r.reviewed_head_sha), handoff: sha(r.handoff_head_sha) },
-      agentBusy: !!r.agent_busy, olderServing: !!r.older_serving,
+      agentBusy: !!r.agent_busy,
       slot: {
         state: r.shots_state ?? null, runId: r.shots_run_id ?? null,
         detail: r.shots_detail && typeof r.shots_detail === 'object' ? r.shots_detail : null,

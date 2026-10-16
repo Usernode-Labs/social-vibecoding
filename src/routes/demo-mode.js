@@ -5,7 +5,6 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const github = require('../services/github');
 const ws = require('../services/ws');
-const notifications = require('../services/notifications');
 const notificationPreferences = require('../services/notification-preferences');
 const activeUsers = require('../services/active-users');
 const appAccess = require('../services/app-access');
@@ -250,46 +249,15 @@ function demoModeRoutes(config) {
   // Shared by demo/propose (straight to the vote) and demo/promote (a held
   // proposal, on cue). The group-chat lines, the session update and the
   // event are the ones routes/votes.js emits when a person promotes.
-  async function announcePromotion({ app, partner, session }) {
-    const line = `${partner.username} promoted ${prLabel(session.pr_number, session.pr_title)} for voting`;
-    const meta = { vote: { sessionId: session.id, prNumber: session.pr_number } };
-    await ws.sendSystemMessage(pool, app.id, line, 'vote', meta, { type: 'session', ref: session.id })
-      .catch(() => {});
-    ws.pushSessionUpdate({ action: 'promoted', sessionId: session.id, appSlug: app.slug });
-    try {
-      events.record(pool, {
-        type: events.EVENT_TYPES.PR_PROMOTED,
-        userId: partner.id, appId: app.id, sessionId: session.id,
-        metadata: { prNumber: session.pr_number, source: 'imported', demo: true },
-      });
-    } catch { /* events are best-effort */ }
-  }
-
-  // The beat the feature exists for. Same fan-out as the promote route in
-  // routes/votes.js. The partner is the proposer, so it is excluded, and
-  // the creator — active, and the app's creator — is who it reaches.
-  // Answers how many it reached; a failed fan-out is a warning, not a
-  // failed promotion.
-  async function notifyVoters({ app, partner, session }) {
-    try {
-      const rows = await notifications.createPrProposedNotifications(pool, {
-        appId: app.id, sessionId: session.id, proposerId: partner.id,
-      });
-      for (const row of rows) {
-        ws.pushNotificationToUser(row.user_id, {
-          type: 'notification_new',
-          notification: notifications.serialize({
-            ...row, app_slug: app.slug, app_name: app.name,
-            pr_title: session.pr_title, pr_number: session.pr_number,
-            source_username: partner.username,
-          }),
-        });
-      }
-      return rows.length;
-    } catch (err) {
-      log.warn('demo-mode', 'pr_proposed fan-out failed', { sessionId: session.id, err: err.message });
-      return 0;
-    }
+  // Up for the vote, as the partner's: the proposal machine reads the pull
+  // request (refusing one merged or closed), puts it up and says so (the
+  // line, the promoted event, the vote requests to the creator, the partner
+  // being the proposer), as the promote route in routes/votes.js does.
+  async function promoteAsPartner({ app, partner, session }) {
+    return require('../workflow/platform.ts').promoteProposal({
+      sessionId: session.id, appId: app.id, userId: partner.id, username: partner.username, from: 'active',
+      cap: 1000, pr: null, source: { kind: 'system', name: 'demo' },
+    });
   }
 
   // The partner's vote: the same write a person's click makes
@@ -658,7 +626,7 @@ function demoModeRoutes(config) {
           headSha, botLogin, `${repo.owner}/${repo.repo}`,
           testingPaths[0] || null, testingPaths.length ? JSON.stringify(testingPaths) : null,
           description || null, summary,
-          hold ? 'active' : 'promoted',
+          'active',
           summaryFreshness.bodyHash(description || null),
         ]
       );
@@ -671,7 +639,7 @@ function demoModeRoutes(config) {
         user_id: partner.id, branch_name: branch, pr_number: prNumber, pr_url: prUrl,
         pr_title: title, pr_body: description || null, pr_summary_md: summary,
         repo_url: app.repo_url, staging_url: null, source: 'imported',
-        status: hold ? 'active' : 'promoted',
+        status: 'active',
         imported_pr_head_sha: headSha, imported_pr_head_repo: `${repo.owner}/${repo.repo}`,
         testing_md: null, testing_path: testingPaths[0] || null,
         testing_paths: testingPaths.length ? testingPaths : null,
@@ -679,16 +647,16 @@ function demoModeRoutes(config) {
       // Preview + checks, exactly as an import gets them. Never throws.
       prImportSync.kickImportedChecks({ config, pool, session, app, headSha });
 
-      let notified = 0;
+      const notified = null;
       if (hold) {
         // Nothing said and nothing listed. The build narrates into the
         // proposal's thread (pr-import-sync.postProposalNote), which nothing
         // can open until demo/promote.
         log.info('demo-mode', 'Demo proposal held', { slug: app.slug, sessionId, prNumber });
       } else {
-        await announcePromotion({ app, partner, session });
-        notified = await notifyVoters({ app, partner, session });
-        log.info('demo-mode', 'Demo proposal opened', { slug: app.slug, sessionId, prNumber, notified });
+        const promoted = await promoteAsPartner({ app, partner, session });
+        if (promoted.status !== 200 && promoted.status !== 202) return res.status(promoted.status).json(promoted.body);
+        log.info('demo-mode', 'Demo proposal opened', { slug: app.slug, sessionId, prNumber });
       }
       res.json({ ok: true, sessionId, prNumber, prUrl, headSha, held: hold, notified });
     } catch (err) {
@@ -744,25 +712,17 @@ function demoModeRoutes(config) {
         }
       }
 
-      // promoted_at anchors the stale-PR sweeper's clock, as in routes/
-      // votes.js; the status guard is the same one, so two cues racing
-      // cannot promote twice.
-      const promoted = await pool.query(
-        `UPDATE chat_sessions
-            SET status = 'promoted', promoted_at = NOW(), stale_notified_at = NULL
-          WHERE id = $1 AND status = 'active'`,
-        [session.id]
-      );
-      if (!promoted.rowCount) return res.status(409).json({ error: 'session_state_changed' });
+      // Up for the vote the way every proposal goes up (the proposal
+      // machine: the line, the promoted event, the vote requests), as the
+      // partner's. Two cues racing cannot promote twice.
+      const promoted = await promoteAsPartner({ app, partner, session });
+      if (promoted.status !== 200) return res.status(promoted.status).json(promoted.body);
       session.status = 'promoted';
       await refreshPartnerStanding(app, partner, req.user.id);
 
-      await announcePromotion({ app, partner, session });
-      // The vote goes before the fan-out on purpose: the notification should
-      // open on a card that already reads "voted yes".
       let voted = null;
       if (vote && await castPartnerVote({ app, partner, session, vote })) voted = vote;
-      const notified = await notifyVoters({ app, partner, session });
+      const notified = null;
 
       log.info('demo-mode', 'Demo proposal promoted', {
         slug: app.slug, sessionId: session.id, prNumber: session.pr_number, voted, notified,

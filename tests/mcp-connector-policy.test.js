@@ -348,9 +348,9 @@ test('resume is on the list only because the route is owner-scoped', () => {
   // Same reasoning again: submit_work's `propose: true` reopens a paused
   // session before promoting it (an external update usually lands on one).
   // What makes the entry safe is the handler — its ownership probe answers
-  // before any platform-wide bookkeeping runs, and the resuming UPDATE
-  // itself matches (id, user_id, 'paused'). If either loosens, this entry
-  // has to come back off.
+  // before any platform-wide bookkeeping runs, and the resume itself (the
+  // proposal machine's Resume) is guarded on the owner and on 'paused'. If
+  // either loosens, this entry has to come back off.
   const SESSIONS_SRC = fs.readFileSync(
     path.join(__dirname, '../src/routes/sessions.js'), 'utf8'
   );
@@ -367,11 +367,18 @@ test('resume is on the list only because the route is owner-scoped', () => {
     /WHERE id = \$1 AND user_id = \$2/,
     'the ownership probe answers first'
   );
+  // The resume itself is the proposal machine's: asked for the caller, from
+  // the paused status the probe read, and its guard refuses anyone but the
+  // owner (and anything no longer paused) under the proposal's lock.
   assert.match(
     handler.slice(0, 4200),
-    /WHERE id = \$1 AND user_id = \$2 AND status = 'paused'/,
-    'the resuming UPDATE is owner-scoped too'
+    /platform\.resumeProposal\(\{\s*sessionId: Number\(sessionId\), appId: own\.app_id, from: 'paused', userId: user\.id,/,
+    'the resume is asked for the caller, from what the probe read'
   );
+  const MACHINE_SRC = fs.readFileSync(path.join(__dirname, '../src/workflow/proposal/machine.ts'), 'utf8');
+  const guard = MACHINE_SRC.slice(MACHINE_SRC.indexOf("['Resume', (s, e, f) => all("));
+  assert.match(guard.slice(0, guard.indexOf(')],')), /\(\) => read\(s, e\),\s*\(\) => owner\(e, f\),/,
+    'the resuming move is owner-scoped too');
 });
 
 test('the promoted-session cap the import route lacks is applied by the connector', () => {
@@ -388,12 +395,18 @@ test('the promoted-session cap the import route lacks is applied by the connecto
   // B10a: "waiting for approval", the browser's words and the connector's.
   const wording = /You already have \$\{caps\.promotedSessions\} changes waiting for approval\./;
   assert.match(LIMITS_SRC, wording, 'the connector says what the browser says');
-  assert.match(VOTES_SRC, /You already have \$\{caps\.promotedSessions\} changes waiting for approval/);
-  // Both count the same rows: promoted + merging, headless excluded.
+  // The promote path's words are the proposal machine's refusal now
+  // (platform.ts), quoting the cap the route handed it.
+  const PLATFORM_SRC = fs.readFileSync(path.join(__dirname, '../src/workflow/platform.ts'), 'utf8');
+  assert.match(PLATFORM_SRC, /You already have \$\{cap\} changes waiting for approval\./);
+  // Both count the same rows: promoted + merging, headless excluded (the
+  // machine also counts one of the owner's going up for a vote right now).
   assert.match(
     LIMITS_SRC,
     /status IN \('promoted', 'merging'\) AND is_headless = FALSE/
   );
+  const FACTS_SRC = fs.readFileSync(path.join(__dirname, '../src/workflow/proposal/facts.ts'), 'utf8');
+  assert.match(FACTS_SRC, /cs\.user_id = \$1 AND cs\.is_headless = FALSE\s+AND \(cs\.status IN \('promoted', 'merging'\)/);
   // A limiter that cannot run refuses rather than waving the write through.
   assert.match(LIMITS_SRC, /if \(count === null\) return UNAVAILABLE;/);
 });

@@ -246,19 +246,24 @@ test('recordVote writes the line, and the upsert carries or drops the old one by
       revisionEnforced: false, reason: 'The new colors clash on mobile.',
     });
     assert.deepEqual(r.rows, [{ id: 1, reason: 'The new colors clash on mobile.' }]);
+    // One statement for every proposal, an imported one's included (the
+    // proposal machine's bug 5): the row is locked and must still be up for
+    // a vote; an epoch is held to only when the revision is enforced.
     const plain = pool.queries[0];
+    assert.match(plain.sql, /FOR UPDATE/);
+    assert.match(plain.sql, /status IN \('promoted', 'merging'\)/, 'only a proposal still up for a vote');
     assert.match(plain.sql, /INSERT INTO pr_votes \(session_id, user_id, vote, head_sha, approval_epoch, reason\)/);
     assert.match(plain.sql, /WHEN EXCLUDED\.reason IS NOT NULL THEN EXCLUDED\.reason/, 'a line that arrives replaces the old one');
     assert.match(plain.sql, /WHEN pr_votes\.vote = EXCLUDED\.vote THEN pr_votes\.reason/, 'none arriving keeps it on the same side');
     assert.match(plain.sql, /ELSE NULL END/, 'and drops it on a flip');
     assert.match(plain.sql, /RETURNING id, reason/);
-    assert.deepEqual(plain.params, [41, 8, 'no', HEAD, 'The new colors clash on mobile.']);
+    assert.deepEqual(plain.params, [41, 8, 'no', HEAD, 'The new colors clash on mobile.', null]);
 
     await subject.recordVote({
       pool, session: { id: 41 }, userId: 8, vote: 'yes', headSha: HEAD, revisionEnforced: true,
     });
     const locked = pool.queries[1];
-    assert.match(locked.sql, /FOR UPDATE/, 'the revision-enforced path still takes the row lock');
+    assert.equal(locked.sql, plain.sql, 'the revision-enforced path is the same locked statement');
     assert.match(locked.sql, /WHEN pr_votes\.vote = EXCLUDED\.vote THEN pr_votes\.reason/);
     assert.deepEqual(locked.params, [41, 8, 'yes', HEAD, null, null], 'no line: null, never the empty string; no epoch stamp: null');
   } finally {
@@ -298,7 +303,7 @@ test('a No with its line is recorded, quoted in the thread, and checks whether t
     assert.equal(r.status, 200);
     assert.deepEqual(await r.json(), { ok: true, merged: false });
     assert.equal(ctx.pool.inserted.length, 1);
-    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, 'The new colors clash on mobile.'],
+    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, 'The new colors clash on mobile.', null],
       'the line goes in normalised, beside the vote');
 
     assert.equal(ctx.systemMessages.length, 1);
@@ -320,7 +325,7 @@ test('a Yes needs no line, and without one reads exactly as before', async () =>
   await withServer({}, async (ctx) => {
     const r = await ctx.post({ vote: 'yes' });
     assert.equal(r.status, 200);
-    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'yes', HEAD, null]);
+    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'yes', HEAD, null, null]);
     assert.equal(ctx.systemMessages[0].content, 'evan voted yes on PR #26: Native iOS look');
     assert.deepEqual(ctx.systemMessages[0].metadata, { vote: { sessionId: 7, prNumber: 26, reason: null } });
     assert.deepEqual(ctx.prompts, [], 'a Yes never asks for a conversation');
@@ -336,7 +341,7 @@ test('the same side with new words updates the row and nothing else', async () =
     const r = await ctx.post({ vote: 'yes', reason: 'new words' });
     assert.equal(r.status, 200);
     assert.deepEqual(await r.json(), { ok: true, merged: false, unchanged: false, reasonUpdated: true });
-    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'yes', HEAD, 'new words']);
+    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'yes', HEAD, 'new words', null]);
     assert.equal(ctx.systemMessages.length, 0, 'the vote did not move: no second announcement');
     assert.equal(ctx.voteNotifications.length, 0, 'and no second ping to the proposer');
     assert.deepEqual(ctx.voteUpdates, [{ sessionId: 7, appSlug: 'widget', merged: false }],
@@ -395,7 +400,7 @@ test('#3977: a No\'s line on the bot\'s change goes to the bot first, and the vo
       bot.watch(ctx);
       const r = await ctx.post({ vote: 'no', reason: '  Sort the list   by date ' });
       assert.equal(r.status, 200);
-      assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, 'Sort the list by date'], 'the vote keeps its line');
+      assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, 'Sort the list by date', null], 'the vote keeps its line');
       assert.deepEqual(bot.asked, [7]);
       assert.deepEqual(bot.hands, [{ userId: 3, line: 'Sort the list by date', target: BOT_TARGET, rowsBefore: 0 }],
         'handed once, as the voter, before the vote row');

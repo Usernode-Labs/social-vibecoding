@@ -609,8 +609,14 @@ test('an issue with an open bot proposal is left alone', () => {
 
 // The spec turn comes first (mode 'scout', see tests/homeroom-bot-spec.test.js);
 // `loop` and `exec` are the BUILD turn's.
+// A build closes its own session through the proposal machine
+// (session-lifecycle.closeOwnSession), which no fake pool runs: each
+// harness stands in for it and records every close.
+const sessionLifecycle = require('../src/services/session-lifecycle');
+
 function buildHarness({ result = { pushOk: true, ahead: 1, sha: 'a'.repeat(40) }, promote = { status: 200, body: { ok: true, prNumber: 42 } }, hang = false, spec = '' } = {}) {
-  const calls = { queries: [], ensured: [], loop: null, exec: null, stopped: [], promoted: [], modes: [] };
+  const calls = { queries: [], ensured: [], loop: null, exec: null, stopped: [], promoted: [], modes: [], closed: [] };
+  sessionLifecycle.closeOwnSession = async ({ sessionId, reason }) => { calls.closed.push({ sessionId, reason }); return true; };
   const pool = {
     async query(sql, params) {
       calls.queries.push({ sql: String(sql), params });
@@ -693,7 +699,7 @@ test('a ready request is built in a session of its own and proposed', async () =
   assert.match(h.calls.exec.opts.prompt, /Do not commit or push yourself/);
   assert.deepEqual(h.calls.promoted, [{ id: '5001', user: BOT.id }], 'proposed once, as the bot');
   assert.deepEqual(h.calls.modes, ['scout', 'build'], 'a spec first; with none written, the build goes ahead from the plan');
-  assert.ok(!h.calls.queries.some((q) => /status = 'archived'/.test(q.sql)));
+  assert.deepEqual(h.calls.closed, []);
 });
 
 test('a build that changed nothing is not proposed, and its session is archived', async () => {
@@ -702,7 +708,7 @@ test('a build that changed nothing is not proposed, and its session is archived'
   assert.equal(out.ok, false);
   assert.match(out.error, /produced no change/);
   assert.deepEqual(h.calls.promoted, []);
-  assert.ok(h.calls.queries.some((q) => /SET status = 'archived'/.test(q.sql)));
+  assert.deepEqual(h.calls.closed, [{ sessionId: 5001, reason: 'bot-failed' }]);
 });
 
 test('a refused promotion is reported with the route\'s own words, and the built work is kept', async () => {
@@ -710,7 +716,7 @@ test('a refused promotion is reported with the route\'s own words, and the built
   const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...BUILD_ARGS });
   assert.equal(out.ok, false);
   assert.match(out.error, /built but could not be proposed: Session not found/);
-  assert.ok(!h.calls.queries.some((q) => /SET status = 'archived'/.test(q.sql)),
+  assert.deepEqual(h.calls.closed, [],
     'left paused, so a person can open the session and propose it');
 });
 
@@ -754,7 +760,7 @@ test('WP1: a build its request no longer needs once its plan is written stops th
   assert.deepEqual(specs, [], 'its plan is not posted');
   assert.deepEqual(h.calls.modes, ['scout'], 'and no build turn runs');
   assert.deepEqual(h.calls.promoted, []);
-  assert.ok(h.calls.queries.some((q) => /SET status = 'archived'/.test(q.sql)), 'its session is put away');
+  assert.deepEqual(h.calls.closed.map((c) => c.sessionId), [5001], 'its session is put away');
 });
 
 test('WP1: a build whose request was answered or closed while it ran is not proposed', async () => {
@@ -771,7 +777,7 @@ test('WP1: a build whose request was answered or closed while it ran is not prop
   assert.deepEqual(h.calls.promoted, [], 'and never proposed');
   assert.equal(out.skipped, 'skipped: the request was closed before it was proposed');
   assert.equal(out.costUsd, 0.05, 'what it cost is still recorded');
-  assert.ok(h.calls.queries.some((q) => /SET status = 'archived'/.test(q.sql)));
+  assert.deepEqual(h.calls.closed.map((c) => c.sessionId), [5001]);
   // The check is the step right before the proposal is prepared and put up.
   const fn = LIVE_SRC.slice(LIVE_SRC.indexOf('async function buildAndPropose('));
   const check = fn.indexOf("const skipped = await skipNow('built');");
@@ -809,7 +815,7 @@ test('a build whose run refuses its session stops before its branch, its worker 
   assert.deepEqual(h.calls.modes, [], 'no plan turn and no build turn');
   assert.deepEqual(specs, [], 'no plan posted');
   assert.deepEqual(h.calls.promoted, []);
-  assert.ok(h.calls.queries.some((q) => /SET status = 'archived'/.test(q.sql) && q.params[0] === 5001), 'its session is put away');
+  assert.deepEqual(h.calls.closed.map((c) => c.sessionId), [5001], 'its session is put away');
   // Only a reason is a refusal: a link that resolves nothing (the bench's)
   // or the query's result builds as before.
   for (const resolved of [undefined, null, { rows: [{ id: 900 }] }]) {

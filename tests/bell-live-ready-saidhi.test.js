@@ -194,9 +194,12 @@ test('every decision settles the bell: the merge, a carried change, every close,
   const machine = read('src/workflow/merge-followups/machine.ts');
   assert.match(machine, /\{ type: 'bell', sessionId: d\.sessionId \}/);
   assert.match(machine, /bell: async \(tx, w, ctx\) => \{\s+const told = new Set\(await settleDecidedChange\(tx, w\.sessionId, \{ status: 'merged' \}\)\);/);
-  const lifecycle = read('src/services/session-lifecycle.js');
-  const finalize = lifecycle.slice(lifecycle.indexOf('async function finalizeArchivedSession'));
-  assert.match(finalize.slice(0, finalize.indexOf('\n}\n')), /settleDecidedChange\(pool, sessionId\)/);
+  // Every close: the proposal machine's `closed` write, in the transaction
+  // that closes it, whatever the reason (one close for all of them).
+  const proposal = read('src/workflow/proposal/machine.ts');
+  assert.match(proposal, /closed: async \(tx: Tx, w: any, ctx: WriteContext\) => \{[\s\S]*?for \(const userId of await settleDecidedChange\(tx, w\.sessionId, \{ status: 'archived' \}\)\) \{\s*ctx\.push\(toUser\(userId, \{ type: 'notifications_changed' \}\)\);/);
+  const close = proposal.slice(proposal.indexOf('function close('), proposal.indexOf('const closeEvent'));
+  assert.match(close, /const writes: DomainWrite\[\] = \[\{ type: 'closed',/, 'every close writes it, with or without a pull request');
   assert.match(read('src/services/homeroom-bot-chat.js'), /refreshFiledMessage\(pool, \{ appId, chatMessageId: messageId \}\)/);
   // The bell's three reads carry the live columns.
   const service = read('src/services/notifications.js');

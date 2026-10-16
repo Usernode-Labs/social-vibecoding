@@ -77,10 +77,6 @@ function makePool({ epoch = 2 } = {}) {
       if (/SELECT reviewed_head_sha, approval_epoch/.test(text)) {
         return { rows: [{ reviewed_head_sha: HEAD, approval_epoch: state.epoch }], rowCount: 1 };
       }
-      if (/approval_epoch = approval_epoch \+ CASE/.test(text)) {
-        if (params[2] !== true) state.epoch += 1;
-        return { rows: [{ approval_epoch: state.epoch }], rowCount: 1 };
-      }
       return { rows: [], rowCount: 0 };
     },
   };
@@ -108,6 +104,7 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
     conversation: require.resolve('../src/services/conversation-prompt'),
     mirror: require.resolve('../src/services/repo-mirror'),
     integration: require.resolve('../src/services/integration'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     subject: require.resolve('../src/routes/votes'),
   };
   const orig = {};
@@ -117,6 +114,7 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
   const voteUpdates = [];
   const gateCalls = [];
   const revisions = [];
+  const headMoves = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => pool });
@@ -192,6 +190,17 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
     classifyHeadMove: async () => ({ kind: move }),
   });
 
+  // The head move is the proposal machine's (ReviewHeadMoved): it installs
+  // the head and, unless the move keeps the approvals, moves the epoch on,
+  // in one statement. The stub applies it to the pool's epoch the same way.
+  stub(ids.platform, {
+    moveReviewHead: async (m) => {
+      headMoves.push(m);
+      if (!m.keepVotes) pool.state.epoch += 1;
+      return { status: 'accepted', eventId: headMoves.length, reply: { epoch: pool.state.epoch, prSummaryStale: false } };
+    },
+  });
+
   delete require.cache[ids.subject];
   const subject = require(ids.subject);
   const restore = () => {
@@ -199,7 +208,7 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, systemMessages, voteUpdates, gateCalls, revisions, restore };
+  return { subject, systemMessages, voteUpdates, gateCalls, revisions, headMoves, restore };
 }
 
 // A mirror whose fetch settles only when the test says so, recording every
@@ -385,7 +394,7 @@ test('the offline read answers from the row and never touches the mirror', async
 test('an authored push found after the vote clears the approvals and skips the merge check', async () => {
   const pool = makePool();
   const mirror = controlledMirror(PUSHED);
-  const { subject, systemMessages, voteUpdates, gateCalls, revisions, restore } = loadVotes({ pool, mirror, move: 'authored' });
+  const { subject, systemMessages, voteUpdates, gateCalls, revisions, headMoves, restore } = loadVotes({ pool, mirror, move: 'authored' });
   try {
     const session = nativeRow();
     const settled = subject.settleVoteInBackground({
@@ -397,6 +406,8 @@ test('an authored push found after the vote clears the approvals and skips the m
     assert.equal(out.merged, false);
     assert.equal(out.reviewReset, true);
     assert.equal(pool.state.epoch, 3, 'the epoch the vote was stamped with no longer counts');
+    assert.deepEqual(headMoves.map(({ sessionId, column, from, to, keepVotes }) => ({ sessionId, column, from, to, keepVotes })),
+      [{ sessionId: 7, column: 'reviewed', from: HEAD, to: PUSHED, keepVotes: false }], 'the machine moves the head and clears the approvals');
     assert.equal(mirror.calls.length, 1, 'fresh read only; checkAndMerge never ran');
     assert.equal(mirror.calls[0].fresh, true);
     assert.equal(gateCalls.length, 0);
@@ -412,7 +423,7 @@ test('an authored push found after the vote clears the approvals and skips the m
 test('a mechanical sync found after the vote keeps it and goes on to the merge check', async () => {
   const pool = makePool();
   const mirror = controlledMirror(PUSHED);
-  const { subject, gateCalls, restore } = loadVotes({ pool, mirror, move: 'mechanical' });
+  const { subject, gateCalls, headMoves, restore } = loadVotes({ pool, mirror, move: 'mechanical' });
   try {
     const settled = subject.settleVoteInBackground({
       config: {}, pool, session: nativeRow(), revision: { enforced: true, deferred: true, epoch: 2 },
@@ -423,6 +434,8 @@ test('a mechanical sync found after the vote keeps it and goes on to the merge c
     mirror.fetches[1].resolve('/tmp/mirror');
     await settled;
     assert.equal(pool.state.epoch, 2, 'a sync that changed nothing keeps every vote');
+    assert.equal(headMoves.length, 1);
+    assert.equal(headMoves[0].keepVotes, true, 'the machine is asked to keep the votes');
     assert.equal(gateCalls.length, 1, 'and the majority is checked');
   } finally {
     restore();

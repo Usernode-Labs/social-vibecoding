@@ -426,17 +426,16 @@ async function setBlockReasons(pool, sessionId, reasons) {
  * statement, atomically, with no window in which a tally is half-cleared —
  * and the rows survive as a record of what was approved and when.
  *
- * Returns the new epoch, or null when the row was gone.
+ * Returns the new epoch, or null when nothing moved (the row gone, closed or
+ * merged).
  */
 async function clearApprovals(pool, sessionId, reason) {
-  const { rows } = await pool.query(
-    `UPDATE chat_sessions
-        SET approval_epoch = approval_epoch + 1
-      WHERE id = $1
-      RETURNING approval_epoch`,
-    [sessionId]
-  );
-  const epoch = rows[0] ? parseInt(rows[0].approval_epoch, 10) : null;
+  // The proposal machine's move (Q3): refused for a proposal that has closed
+  // or merged, whose votes are a record now (bug 6).
+  void pool;
+  const out = await require('../workflow/platform.ts').clearProposalApprovals({ sessionId: Number(sessionId), reason: reason || null });
+  const epoch = out && (out.status === 'accepted' || out.status === 'replayed') && out.reply?.epoch != null
+    ? parseInt(out.reply.epoch, 10) : null;
   if (epoch != null) {
     log.info('integration', 'Approvals cleared', { sessionId, epoch, reason: reason || null });
   }

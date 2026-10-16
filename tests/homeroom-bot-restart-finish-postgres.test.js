@@ -93,6 +93,9 @@ function replay(file, harness = 'claude') {
 }
 
 const calls = [];
+// The database finishTurn clears a turn's record in, as the real one does
+// (the proposal machine never rests a session under a turn record).
+let turnPool = null;
 const pushes = [];
 let pushAnswer = async () => ({ sha: null });
 const dispatches = [];
@@ -118,7 +121,11 @@ const fakeWorker = {
   ensureWorkerImage: async () => {},
   ensureWorker: async (sessionId) => `usernode-worker-${sessionId}`,
   stopTurn: async (sessionId) => { calls.push(['stopTurn', sessionId]); return true; },
-  finishTurn: async (sessionId) => { calls.push(['finishTurn', sessionId]); return true; },
+  finishTurn: async (sessionId) => {
+    calls.push(['finishTurn', sessionId]);
+    if (turnPool) await turnPool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [sessionId]);
+    return true;
+  },
   markTurnTail: async () => true,
   noteTailMilestone: async () => true,
   clearActiveTurn: async (sessionId) => { calls.push(['clearActiveTurn', sessionId]); return true; },
@@ -177,14 +184,24 @@ test('a restart no longer loses a finished bot build: recovery leaves it to its 
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 8 });
+  // A session's rest and close are the proposal machine's moves
+  // (session-lifecycle's restSession and closeOwnSession): the workflow
+  // runtime runs here, on this database, its pipeline only (no timers, no
+  // work).
+  const platform = require('../src/workflow/platform.ts');
+  require('../src/db/pool').getPool = () => pool;
+  turnPool = pool;
   t.after(async () => {
     bot._resetForTests();
+    turnPool = null;
+    await platform.stopWorkflow();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
     fs.rmSync(journalDir, { recursive: true, force: true });
   });
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+  await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
 
   const { rows: [botUser] } = await pool.query(
     `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE) RETURNING id, username`,

@@ -194,12 +194,13 @@ test('the import writes parsed notes and defaults browser imports to active', ()
   assert.match(insert, /importTesting\.testingMd/);
   assert.match(insert, /importTesting\.testingPath\b/);
   assert.match(insert, /const promote = req\.body\?\.promote === true/);
-  assert.match(insert, /const initialStatus = promote \? 'promoted' : 'active'/);
-  // The ::text casts are load-bearing (#1176): $7 also feeds the VARCHAR(32)
-  // status column, and postgres rejects the statement at prepare time unless
-  // every use of the parameter deduces the same type.
-  assert.match(insert, /CASE WHEN \$7::text = 'active' THEN NOW\(\) END/,
-    'an active import is shared onto the In-progress board');
+  // Every import is inserted Underway and shared onto the In-progress
+  // board; `promote: true` asks the proposal machine in the import's own
+  // transaction to put it up for a vote (it is not a second row shape).
+  assert.match(insert, /const initialStatus = 'active';/);
+  assert.match(insert, /promoted_at, shared_at, created_at,[\s\S]*?NULL, NOW\(\),/,
+    'an import is shared onto the In-progress board, and is not up for a vote yet');
+  assert.match(insert, /if \(promote\) \{\s*promoteEvent = await require\('\.\.\/workflow\/platform\.ts'\)\.promoteInTransaction\(\{[\s\S]*?db: importClient/);
   assert.doesNotMatch(route, /maxGlobalSessions|freeGlobalSlot/,
     'an externally produced PR owns no coding worker and spends no worker-cap slot');
 });

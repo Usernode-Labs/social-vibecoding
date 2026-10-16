@@ -373,12 +373,17 @@ test('#8 (WP3): the tray reads again when one of the bot\'s proposals is promote
   const merged = dmSrc.slice(dmSrc.indexOf('async function noteProposalMerged('), dmSrc.indexOf('// ── A person writing to the bot'));
   assert.match(merged, /if \(requester\) require\('\.\/homeroom-bot-tray'\)\.noteWorkChanged\(requester\.userId, deps\);\n {2}const settings = /,
     'merged: before anything about the DM, whose list it may not be on');
-  const votes = read('src/routes/votes.js');
-  const promote = votes.slice(votes.indexOf("router.post('/api/sessions/:id/promote'"), votes.indexOf("log.info('votes', 'Session promoted'"));
-  assert.match(promote, /if \(req\.user\?\.is_synthetic\) void require\('\.\.\/services\/homeroom-bot-dm'\)\.noteProposalChanged\(pool, session\.id\);/, 'promoted');
-  const lifecycle = read('src/services/session-lifecycle.js');
-  const archive = lifecycle.slice(lifecycle.indexOf('async function finalizeArchivedSession('), lifecycle.indexOf('async function unarchiveSession('));
-  assert.match(archive, /await require\('\.\/homeroom-bot-dm'\)\.noteProposalChanged\(pool, sessionId\);/, 'closed, by any path');
+  // Promoted and closed are the proposal machine's moves: each asks for its
+  // work 'bot', whose handler reads the tray again.
+  const machine = read('src/workflow/proposal/machine.ts');
+  assert.match(machine, /const botNote = \(d: Data, n: number\): WorkRequest => \(\{ kind: WORK\.bot,/);
+  assert.match(machine, /if \(row\.ownerSynthetic\) work\.push\(botNote\(d, promoting\.n\)\);\n {2}return step\(next, \{\n {4}writes: \[\n {6}\{ type: 'promoted'/,
+    'promoted: once its pull request is up, when it is the bot\'s');
+  const close = machine.slice(machine.indexOf('function close('), machine.indexOf('\n}\n', machine.indexOf('function close(')));
+  assert.match(close, /const destroy = destroyWorker\(d, n\);[\s\S]*?const work: WorkRequest\[\] = \[destroy, botNote\(d, n\)\];/, 'closed, by any path');
+  const services = read('src/workflow/proposal/services.ts');
+  const bot = services.slice(services.indexOf('[WORK.bot]: {'));
+  assert.match(bot, /await legacy\('services\/homeroom-bot-dm'\)\.noteProposalChanged\(pool, Number\(input\.sessionId\)\);/);
 
   // Whoever asked for the request its run is on, found by its proposal or
   // by its build (a proposal just promoted is not recorded on its run yet).

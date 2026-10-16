@@ -644,7 +644,6 @@ function makePool(opts) {
       }
       if (/vote = 'yes'/.test(sql)) return { rows: [{ cnt: String(opts.yes) }] };
       if (/vote = 'no'/.test(sql)) return { rows: [{ cnt: String(opts.no) }] };
-      if (/SET status = 'merging'/.test(sql)) return { rows: [{ id: opts.sessionId }] };
       if (/SELECT id, repo_url, self_hosted FROM apps/.test(sql)) {
         return { rows: [{ id: opts.appId, repo_url: '', self_hosted: false }] };
       }
@@ -683,8 +682,14 @@ function loadVotes(over) {
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => ({}) });
   stub(ids.github, { isEnabled: () => false, mergePR: async () => ({}) });
-  // A merge is reported to the merge-followups workflow machine.
-  stub(ids.platform, { mergeConfirmed: async () => ({ status: 'accepted', eventId: 1 }) });
+  // A merge is reported to the merge-followups workflow machine; the
+  // promoted→merging claim and its release are the proposal machine's.
+  stub(ids.platform, {
+    mergeConfirmed: async () => ({ status: 'accepted', eventId: 1 }),
+    claimMerge: async () => ({ status: 'accepted', eventId: 2, reply: { claim: 1 } }),
+    releaseMerge: async () => ({ status: 'accepted', eventId: 3 }),
+    abandonMerge: async () => ({ status: 'accepted', eventId: 4 }),
+  });
   stub(ids.docker, {});
   stub(ids.resolver, {
     checkAndResolveConflicts: async () => {}, resolveAndMaybeRetry: async () => ({ ok: true }), isResolving: () => false,
@@ -850,7 +855,6 @@ test('the recording is descriptive only — a failed write never blocks a merge'
     if (/SET merge_requirements/.test(sql)) throw new Error('disk on fire');
     if (/vote = 'yes'/.test(sql)) return { rows: [{ cnt: '4' }] };
     if (/vote = 'no'/.test(sql)) return { rows: [{ cnt: '0' }] };
-    if (/SET status = 'merging'/.test(sql)) return { rows: [{ id: 7 }] };
     if (/SELECT check_state/.test(sql)) return { rows: [{ check_state: 'passing', test_results: [] }] };
     return { rows: [] };
   } };

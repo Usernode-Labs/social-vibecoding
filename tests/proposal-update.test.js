@@ -1289,6 +1289,27 @@ function runSession(status, over = {}, log = {}, params = {}) {
   ).finally(() => { previewWorkflow.clear = realClear; });
 }
 
+// Bug 13 of the proposal lifecycle: an update read the session active, and
+// a promote committed before the active tail's guarded write. The tail is
+// the one for the status the row has NOW: a proposal gone up for a vote has
+// its reviewed head reconciled, and keeps its verdict and its preview.
+test('an update racing a promote reconciles the promoted proposal, never clears its verdict (bug 13)', async () => {
+  const log = {};
+  const session = sessionRow('active');
+  const pool = fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['SELECT status FROM chat_sessions', [{ status: 'promoted' }]],
+    ['UPDATE chat_sessions', []],
+    ['FROM pr_votes', [{ n: 4 }]],
+  ]);
+  const result = await runSession('active', { session, pool }, log);
+  assert.equal(result.ok, true);
+  assert.equal(log.verdictCleared, undefined, 'the promoted proposal keeps its verdict');
+  assert.equal(log.tornDown, undefined, 'and its preview');
+  assert.equal(log.reconcile.length, 1, 'its reviewed head is reconciled instead');
+  assert.equal(log.reconcile[0].session.status, 'promoted');
+});
+
 // The queries a run actually issued — used both ways round: to assert an
 // UPDATE's shape, and to assert that pr_votes was never read.
 const sqlsOf = (log) => (log.queries || []).map((q) => String(q.sql));
@@ -1403,14 +1424,34 @@ test('an active session that stopped being active falls back to the paused tail'
   // The guarded UPDATE matched nothing: something paused or archived the
   // session between the lock and the write. The commit is already on the
   // branch, so the answer is "it landed, reopen to rebuild" — never a failure.
+  // The tail is the one for the status it has now (bug 13 of the proposal
+  // lifecycle): paused here.
   const log = {};
-  const result = await runSession('active', { adopted: false }, log);
+  const session = sessionRow('active');
+  const pool = fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['SELECT status FROM chat_sessions', [{ status: 'paused' }]],
+    ["AND status = 'active'", []],
+    ["AND status = 'paused'", [{ id: session.id }]],
+    ['FROM pr_votes', [{ n: 4 }]],
+  ]);
+  const result = await runSession('active', { session, pool }, log);
   assert.equal(result.ok, true);
   assert.equal(result.checksRerun, false);
   assert.equal(result.previewRebuilding, false);
   assert.equal(result.resumeRequired, true);
   assert.equal(log.started, undefined, 'no build is started for a session that is not active');
   assert.equal(log.tornDown.length, 1, 'and the stale preview is reclaimed');
+  // Closed meanwhile: nothing of it is touched.
+  const closedLog = {};
+  const closed = sessionRow('active');
+  await runSession('active', { session: closed, pool: fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [closed]],
+    ['SELECT status FROM chat_sessions', [{ status: 'archived' }]],
+    ['UPDATE chat_sessions', []],
+    ['FROM pr_votes', [{ n: 4 }]],
+  ]) }, closedLog);
+  assert.deepEqual([closedLog.tornDown, closedLog.verdictCleared, closedLog.started], [undefined, undefined, undefined]);
 });
 
 test('a PAUSED session takes the commit and defers the build to its reopen', async () => {

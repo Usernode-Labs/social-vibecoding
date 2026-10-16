@@ -83,8 +83,13 @@ test('a first version planned at Make it: answered on the made screen, built wit
   pool = new Pool({ connectionString: String(url), max: 6 });
   const env = process.env.USERNODE_ENV;
   delete process.env.USERNODE_ENV;
+  // The bot session's slot moves are the proposal machine's
+  // (session-lifecycle's takeSlot and restSession): the workflow runtime runs
+  // here, on this database, its pipeline only (no timers, no work).
+  const platform = require('../src/workflow/platform.ts');
   t.after(async () => {
     if (env === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = env;
+    await platform.stopWorkflow();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
@@ -92,6 +97,7 @@ test('a first version planned at Make it: answered on the made screen, built wit
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
   // Applied twice, as every deploy does: idempotent.
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+  await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
 
   const user = async (username, synthetic = false) => (await pool.query(
     `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', TRUE, $2)

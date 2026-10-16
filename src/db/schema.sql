@@ -969,23 +969,24 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
   pr_title             VARCHAR(256),
   staging_container_id VARCHAR(128),
   staging_url          VARCHAR(512),
-  -- Lifecycle:
-  --   'active'    = open, has (or can lazily spawn) a warm worker container.
-  --                 The only status counting against the per-user
-  --                 active-session cap (MAX_USER_SESSIONS, raised for full
-  --                 platform admins by MAX_ADMIN_USER_SESSIONS — resolved
-  --                 per-requester in src/services/session-caps.js).
-  --   'promoted'  = PR is up for a merge vote and the chat is still alive.
-  --                 Un-pausable while the vote runs, so it is EXEMPT from
-  --                 the active-session cap (#193) and bounded instead by
-  --                 the promoted cap (MAX_USER_PROMOTED_SESSIONS /
-  --                 MAX_ADMIN_USER_PROMOTED_SESSIONS) at promote time.
-  --   'paused'    = open but worker container has been torn down to free
-  --                 the slot. CC volume + branch + PR are all preserved
-  --                 so /resume restores it cleanly. Unlimited — does NOT
-  --                 count against either cap (no warm container).
-  --   'archived'  = abandoned: worker container destroyed, CC volume
-  --                 destroyed, PR closed. One-way (no /unarchive route).
+  -- Lifecycle: the proposal machine's projection (src/workflow/proposal/,
+  -- the guard at the end of this file), except the move into 'merged',
+  -- which is merge-followups'.
+  --   'active'    = underway, holding one of its owner's slots (and the
+  --                 platform's): it has, or can lazily spawn, a warm worker.
+  --                 Counts against the per-user active-session cap
+  --                 (MAX_USER_SESSIONS, raised for full platform admins by
+  --                 MAX_ADMIN_USER_SESSIONS: src/services/session-caps.js).
+  --                 An imported proposal holds no slot and reads 'active'.
+  --   'paused'    = underway, its slot given back: its worker is gone, its CC
+  --                 volume, branch, pull request and preview are kept.
+  --   'promoted'  = up for a vote; bounded by the promoted cap
+  --                 (MAX_USER_PROMOTED_SESSIONS / MAX_ADMIN_USER_PROMOTED_SESSIONS).
+  --   'merging'   = claimed by a merge attempt.
+  --   'merged'    = merged (merge-followups).
+  --   'archived'  = closed (withdrawn, voted down, gone quiet, replaced, ...);
+  --                 its pull request closed, its preview and worker gone.
+  --                 Reopened as 'paused'.
   status               VARCHAR(32) NOT NULL DEFAULT 'active',
   -- Claude Code session id captured from the `init` stream-json event on the
   -- first turn of this chat. Subsequent turns pass `--resume <id>` to reuse
@@ -13993,6 +13994,30 @@ CREATE TRIGGER chat_sessions_wf_shots_owned
         OR OLD.shots_updated_at IS DISTINCT FROM NEW.shots_updated_at)
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=shots/session:',
     'shots_state', 'shots_run_id', 'shots_detail', 'shots_updated_at');
+
+-- proposal (src/workflow/proposal/) owns a proposal's lifecycle once it
+-- holds the proposal: its status (every move but the one into 'merged',
+-- which merge-followups makes with the merge) and the columns that move with
+-- it: when it went up for a vote, when it closed, its stale warning, its
+-- merge attempt, the electorate it opened with, and what the group votes on
+-- (the reviewed head and the approval epoch). INSERTs are not guarded: a
+-- session is created where it always was, and a row born in review is
+-- adopted in the inserting transaction.
+DROP TRIGGER IF EXISTS chat_sessions_wf_proposal_owned ON chat_sessions;
+CREATE TRIGGER chat_sessions_wf_proposal_owned
+  BEFORE UPDATE ON chat_sessions
+  FOR EACH ROW
+  WHEN ((OLD.status IS DISTINCT FROM NEW.status AND NEW.status IS DISTINCT FROM 'merged')
+        OR OLD.promoted_at IS DISTINCT FROM NEW.promoted_at
+        OR OLD.archived_at IS DISTINCT FROM NEW.archived_at
+        OR OLD.stale_notified_at IS DISTINCT FROM NEW.stale_notified_at
+        OR OLD.merge_attempt_at IS DISTINCT FROM NEW.merge_attempt_at
+        OR OLD.active_users_at_promote IS DISTINCT FROM NEW.active_users_at_promote
+        OR OLD.approval_epoch IS DISTINCT FROM NEW.approval_epoch
+        OR OLD.reviewed_head_sha IS DISTINCT FROM NEW.reviewed_head_sha)
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=proposal/session:',
+    'status', 'promoted_at', 'archived_at', 'stale_notified_at', 'merge_attempt_at',
+    'active_users_at_promote', 'approval_epoch', 'reviewed_head_sha');
 
 CREATE OR REPLACE FUNCTION wf_guard_shot_runs() RETURNS TRIGGER AS $$
 BEGIN

@@ -102,6 +102,13 @@ prMetadata.applyPrMetadata = async (args) => { prCalls.push(args); return {}; };
 const spends = [];
 managedKeys.usesIncludedKey = async () => true;
 limits.recordSpend = async (_pool, userId, cents) => { spends.push({ userId, cents }); };
+// A recovered session is put back at rest (or closed) through the proposal
+// machine (session-lifecycle's restSession and archiveSession), which no
+// fake pool runs: recorded here instead.
+const sessionLifecycle = require('../src/services/session-lifecycle');
+const lifecycleCalls = [];
+sessionLifecycle.restSession = async ({ sessionId }) => { lifecycleCalls.push(['restSession', sessionId]); return true; };
+sessionLifecycle.archiveSession = async ({ sessionId, reason }) => { lifecycleCalls.push(['archiveSession', sessionId, reason]); return { archived: true }; };
 
 // ── fixtures ────────────────────────────────────────────────────────────
 
@@ -152,19 +159,18 @@ async function adopt(pool, session, state = 'running') {
 }
 
 const runUpdates = (pool) => pool.calls.filter((c) => /homeroom_bot_runs/.test(c.sql));
-const sessionUpdates = (pool) => pool.calls.filter((c) => /UPDATE chat_sessions SET status/.test(c.sql));
 const devChatRows = (pool) => pool.calls.filter((c) => /INSERT INTO chat_session_messages/.test(c.sql));
 // What putAwayRecoveredSession does with a session it rests: paused, if it
-// was still active.
+// was still active (session-lifecycle.restSession, the proposal machine's
+// 'rest' pause), and nothing else. No status is written past the machine.
 function assertRested(pool, sessionId) {
-  const rested = sessionUpdates(pool);
-  assert.equal(rested.length, 1, 'the session is put back to rest, once');
-  assert.match(rested[0].sql, /SET status = 'paused', last_activity_at = NOW\(\) WHERE id = \$1 AND status = 'active'/);
-  assert.deepEqual(rested[0].params, [sessionId]);
+  assert.deepEqual(lifecycleCalls, [['restSession', sessionId]], 'the session is put back to rest, once');
+  assert.deepEqual(pool.calls.filter((c) => /UPDATE chat_sessions SET status/.test(c.sql)), []);
 }
 
 test.beforeEach(() => {
   workerCalls.length = 0; prCalls.length = 0; spends.length = 0; ledger.length = 0; staging.calls.length = 0;
+  lifecycleCalls.length = 0;
   activeMode = null;
   bot._resetForTests();
 });
@@ -269,7 +275,7 @@ test('a bot turn no build owns is stopped and its session rested: never followed
   // A read (its triage, which the queue reads again), and a build that
   // started before builds were durable (requeueLegacyBuilds asks for it).
   for (const mode of ['scout', 'build']) {
-    workerCalls.length = 0; ledger.length = 0;
+    workerCalls.length = 0; ledger.length = 0; lifecycleCalls.length = 0;
     const session = botSession({ active_turn: turn({ mode }) });
     const pool = makePool({ session });
     await adopt(pool, session);
