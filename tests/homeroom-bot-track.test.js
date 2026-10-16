@@ -174,6 +174,16 @@ test('the demo tray, the demo slots and the demo request carry tracks', async ()
   assert.deepEqual([mocked.waiting[0].issueNumber, mocked.waiting[0].title, mocked.waiting[0].excerpt], [900009, '[Mock] Newly filed issue', 'Staging-only mock issue.']);
   assert.ok(mocked.slots.every((s) => s.askedBy), 'every row says who asked');
   assert.deepEqual(mocked.taken.map((s) => [s.issueNumber, s.by, s.track.why]), [[900014, 'maya-builder', 'taken']]);
+  // And every other open request, by where the bot is on it.
+  assert.deepEqual(mocked.waitingOn.map((s) => s.track.why), ['plan', 'question']);
+  assert.deepEqual(mocked.upNext.map((s) => [s.kind, s.position ?? null, s.trial ?? null]), [['queued', null, null], ['older', 1, 'ready'], ['older', 2, null]]);
+  assert.deepEqual(mocked.stopped.map((s) => s.track.why), ['no_change']);
+  assert.deepEqual(mocked.leftToPeople.map((s) => s.track.why), ['needs_person']);
+  assert.equal(mocked.withPeople, 3);
+  assert.deepEqual(['waiting', 'queued', 'planning', 'stopped'].map((state) => track.restSection({ state, why: null })),
+    ['waitingOn', 'upNext', 'upNext', 'stopped']);
+  assert.equal(track.restSection({ state: 'stopped', why: 'needs_person' }), 'leftToPeople');
+  assert.equal(track.restSection({ state: 'vote', why: null }), null, 'a change up for a vote holds a slot');
   const request = track.demoRequestTrack({ slug: 'staging-demo' }, 900018, 'Staging demo request', NOW);
   assert.equal(request.state, 'building');
   assert.equal(request.try, 2);

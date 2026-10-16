@@ -1141,8 +1141,10 @@ export function normalizeBotTrack(input: unknown): BotTrack | null {
 function normalizeSlotEntry(input: unknown): BotSlotEntry {
   const row = record(input);
   const kind = text(pick(row, 'kind'));
+  const trial = text(pick(row, 'trial'));
   return {
-    ...(kind === 'proposal' || kind === 'build' ? { kind } : {}),
+    ...(kind === 'proposal' || kind === 'build' || kind === 'queued' || kind === 'older' ? { kind } : {}),
+    ...(CODE.test(trial) ? { trial } : {}),
     issueNumber: strictId(pick(row, 'issueNumber')),
     title: text(pick(row, 'title')) || null,
     askedBy: text(pick(row, 'askedBy')) || null,
@@ -1175,6 +1177,11 @@ export function normalizeBotSlots(input: unknown): BotSlotsView | null {
     waiting: array(pick(view, 'waiting')).map(normalizeSlotEntry).slice(0, 100),
     taken: array(pick(view, 'taken')).map(normalizeSlotEntry).slice(0, 100),
     onHold: array(pick(view, 'onHold')).map(normalizeSlotEntry).slice(0, 100),
+    waitingOn: array(pick(view, 'waitingOn')).map(normalizeSlotEntry).slice(0, 100),
+    upNext: array(pick(view, 'upNext')).map(normalizeSlotEntry).slice(0, 100),
+    stopped: array(pick(view, 'stopped')).map(normalizeSlotEntry).slice(0, 100),
+    leftToPeople: array(pick(view, 'leftToPeople')).map(normalizeSlotEntry).slice(0, 100),
+    withPeople: Math.max(0, Math.floor(Number(pick(view, 'withPeople')) || 0)),
     reading: Math.max(0, Number(pick(view, 'reading')) || 0),
     week: pick(view, 'week') ? {
       limited: bool(pick(week, 'limited')),

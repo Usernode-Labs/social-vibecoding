@@ -47,7 +47,7 @@ const SAID_BY_MOMENT = Object.freeze({
     'build_other', 'update_failed', 'needs_look', 'checks', 'first_failed']),
   // 16 Oct 2026: `slots`, a build held because the project's slots are all
   // in use (homeroom-bot.js PROPOSALS_PER_APP_CAP), rings once.
-  on_hold: Object.freeze(['allowance', 'paused', 'slots']),
+  on_hold: Object.freeze(['allowance', 'paused', 'slots', 'taken']),
   live: Object.freeze(['live', 'live_soon', 'live_first', 'live_first_soon']),
   done_elsewhere: Object.freeze(['done_elsewhere']),
 });
@@ -176,6 +176,8 @@ function saidFor(moment, metadata = {}) {
   }
   if (moment === 'on_hold') {
     if (kind === 'paused') return 'paused';
+    // 16 Oct 2026: a person took on what the bot had promised.
+    if (kind === 'request_taken') return 'taken';
     return /^held_proposals/.test(String(kind || '')) ? 'slots' : 'allowance';
   }
   if (moment === 'done_elsewhere') return 'done_elsewhere';
@@ -233,6 +235,9 @@ function botNotificationDetail(metadata) {
   // Done another way: who shipped it.
   const doneBy = oneLine(metadata.doneBy, 60);
   if (doneBy) out.y = doneBy;
+  // Taken on: who has it now.
+  const takenBy = oneLine(metadata.takenBy, 60);
+  if (takenBy) out.k = takenBy;
   const count = positiveInt(metadata.count);
   if (count) out.c = Math.min(count, 999);
   const broken = brokenCount(metadata);
@@ -264,6 +269,7 @@ function parseBotDetail(detail) {
       deciders: oneLine(raw.d, 120),
       oneMore: raw.o === 1 || raw.o === true,
       doneBy: oneLine(raw.y, 60),
+      takenBy: oneLine(raw.k, 60),
       count: positiveInt(raw.c),
       broken: positiveInt(raw.b),
       issueNumber: positiveInt(raw.i),
@@ -340,6 +346,9 @@ function bodyFor(d) {
     case 'allowance': return 'On hold until Monday: your building time for this week is used up.';
     case 'paused': return 'On hold until Monday: I\'ve used my budget for this week.';
     case 'slots': return 'Waiting for a slot: all of this project\'s are in use. I\'ll start when one frees.';
+    case 'taken': return d.takenBy
+      ? `On hold: @${d.takenBy} has taken it on, so I'm leaving it to them.`
+      : 'On hold: somebody has taken it on, so I\'m leaving it to them.';
     case 'done_elsewhere': return d.doneBy
       ? `Done another way: a change by @${d.doneBy} did what you asked, so there's nothing more for me to build.`
       : 'Done another way: another change did what you asked, so there\'s nothing more for me to build.';

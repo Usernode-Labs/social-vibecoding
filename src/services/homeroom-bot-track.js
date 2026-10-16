@@ -439,11 +439,14 @@ async function withTracks(pool, work, { entries = [], rows = [], keyOf, deps = {
 
 // ── One project's requests, whoever asked (the request page, the slots) ──
 
-// Of `$2`, the requests of project `$1` the bot has a run or a queue entry
-// for: the only ones with a track (tracksForRequests).
+// Of `$2`, the requests of project `$1` the bot has a live run or a queue
+// entry for: the only ones with a track (tracksForRequests). 16 Oct 2026: a
+// run in the background (mode 'shadow', the bot's trial before it went on
+// for everyone) is not one: nobody saw it, and a trial build read as a
+// change up for a vote on the request's own page.
 const TOUCHED_SQL = `
   SELECT w.n FROM UNNEST($2::int[]) AS w(n)
-   WHERE EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.app_id = $1 AND r.issue_number = w.n)
+   WHERE EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.app_id = $1 AND r.issue_number = w.n AND r.mode = 'live')
       OR EXISTS (SELECT 1 FROM homeroom_bot_queue q WHERE q.app_id = $1 AND q.issue_number = w.n)`;
 
 // The records progress.stageOf reads, as homeroom-bot-progress.js
@@ -488,7 +491,7 @@ const REQUEST_ROWS_SQL = `
              (review->'reviewer'->>'budgetMinutes')::int AS review_minutes,
              build_no_change->'turns'->-1->>'said' AS no_change_said
         FROM homeroom_bot_runs
-       WHERE app_id = a.id AND issue_number = w.n
+       WHERE app_id = a.id AND issue_number = w.n AND mode = 'live'
        ORDER BY id DESC LIMIT 1
     ) run ON TRUE
     LEFT JOIN chat_sessions bs ON bs.id = run.build_session_id
@@ -585,6 +588,15 @@ async function tracksForRequests(pool, { appId, numbers, now = new Date(), deps 
       runsOf.get(n).push(run);
     }
     const jobs = bot.map((row) => [row, jobOfRow(row, { now, stageOf: progress.stageOf, outcomeOf: tray.outcomeOf, linksFor: tray.linksFor })]);
+    // 16 Oct 2026: what a build waiting its turn waits for, as its
+    // requester's chat says it (homeroom-bot-progress.js buildWait): the
+    // project's other builds, or nothing, so it starts next. Without it,
+    // #5323 read "waiting its turn" on the slots page with every builder free.
+    const queuedBuilds = jobs.filter(([, job]) => job.stage === 'build_queued');
+    if (queuedBuilds.length && typeof progress.buildWait === 'function') {
+      const busy = await progress.projectsBusy(pool, queuedBuilds.map(([row]) => row));
+      for (const [row, job] of queuedBuilds) job.waitingFor = progress.buildWait(row, { busy, now }).waitingFor || null;
+    }
     let held = new Map();
     if (jobs.some(([, job]) => job.outcome === 'held' || job.stage === 'held')) {
       // A held request a person has taken since reads as theirs (heldQueue).
@@ -680,6 +692,12 @@ async function slotsView(pool, { app, user = null, settings = null, deps = {} })
     waiting: [],
     taken: [],
     onHold: [],
+    // 16 Oct 2026: every other open request, by where the bot is on it.
+    waitingOn: [],
+    upNext: [],
+    stopped: [],
+    leftToPeople: [],
+    withPeople: 0,
     reading: 0,
     week: null,
   };
@@ -738,12 +756,82 @@ async function slotsView(pool, { app, user = null, settings = null, deps = {} })
     track: tracks.get(Number(q.issue_number)) || null,
   }));
   view.reading = queue.filter((q) => !q.started_at && !(q.held_until && Date.parse(q.held_until) > Date.now())).length;
+  await placeTheRest(pool, view, { app, open, queue, people, tracks, asked, settings: s, deps, about, placed: new Set(numbers) });
   if (user?.id) {
     view.week = await (deps.buildingTime || require('./building-time')).weekFor(pool, Number(user.id), { settings: s })
       .then((w) => ({ limited: !!w.limited, usedShare: w.usedShare, usedUp: !!w.usedUp, resetsAt: w.resetsAt }))
       .catch(() => null);
   }
   return view;
+}
+
+// Where a track that is not in a slot or a line puts its request on the
+// slots page: waiting on a person (a question, a plan's Build it, more
+// detail, a look), stopped after trying, or left to people.
+const LEFT_TO_PEOPLE = new Set(['needs_person', 'nothing_to_build']);
+function restSection(track) {
+  if (!track) return null;
+  if (track.state === 'waiting') return 'waitingOn';
+  if (track.state === 'queued' || track.state === 'planning') return 'upNext';
+  if (track.state === 'stopped') return LEFT_TO_PEOPLE.has(track.why) ? 'leftToPeople' : 'stopped';
+  return null;
+}
+
+// The most rows one of those sections carries.
+const REST_LIMIT = 100;
+
+/**
+ * 16 Oct 2026: the slots page's other sections, filled into `view`: every
+ * open request (the project's whole list from GitHub) that holds no slot
+ * and waits in no line, by where the bot is on it. Up next is what the bot
+ * reads next: what waits in its queue, then its older requests in the
+ * order it takes them (homeroom-bot.js backlogFor), each with its place and
+ * what its trial run made of it. A request a person holds is theirs, and
+ * counted only (`withPeople`). Never throws; on a failure the page keeps
+ * the sections above.
+ */
+async function placeTheRest(pool, view, { app, open, queue, people, tracks, asked, settings, deps, about, placed }) {
+  try {
+    const botSvc = deps.botSvc || require('./homeroom-bot');
+    const openNumbers = [...open.byNumber.keys()].filter((n) => !placed.has(n));
+    if (!openNumbers.length) return;
+    const rest = openNumbers.filter((n) => !people.has(n));
+    const isRest = new Set(rest);
+    view.withPeople = openNumbers.length - rest.length;
+    const more = await tracksForRequests(pool, { appId: app.id, numbers: rest.filter((n) => !tracks.has(n)), deps, people });
+    const trackOfN = (n) => tracks.get(n) || more.get(n) || null;
+    // Titles for the ones the first read did not ask about.
+    const missing = rest.filter((n) => !asked.has(n));
+    if (missing.length) for (const [n, a] of await askersFor(pool, app.id, missing)) asked.set(n, a);
+    const row = (n, extra = {}) => ({ issueNumber: n, ...about(n), track: trackOfN(n), ...extra });
+    const queued = new Set();
+    // What waits in the bot's queue to be read, in its order.
+    for (const q of queue) {
+      const n = Number(q.issue_number);
+      if (!isRest.has(n) || q.started_at || (q.held_until && Date.parse(q.held_until) > Date.now())) continue;
+      queued.add(n);
+      view.upNext.push(row(n, { kind: 'queued', since: iso(q.enqueued_at) }));
+    }
+    for (const n of rest) {
+      if (queued.has(n)) continue;
+      const section = restSection(trackOfN(n));
+      if (section && section !== 'upNext') view[section].push(row(n, { since: trackOfN(n)?.since || null }));
+    }
+    // Then the older requests, where the bot acts.
+    if (view.acts) {
+      const issues = [...open.byNumber.values()];
+      const older = await botSvc.backlogFor(pool, app, { issues, settings, holders: people });
+      let position = 0;
+      for (const p of older) {
+        if (!isRest.has(p.n) || queued.has(p.n) || trackOfN(p.n)) continue;
+        position += 1;
+        view.upNext.push(row(p.n, { kind: 'older', position, trial: p.trial || null, since: iso(open.byNumber.get(p.n)?.createdAt) }));
+      }
+    }
+    for (const key of ['waitingOn', 'upNext', 'stopped', 'leftToPeople']) view[key] = view[key].slice(0, REST_LIMIT);
+  } catch (err) {
+    log.warn('homeroom-bot-track', 'Could not place the rest of a project\'s requests', { app: app?.slug, err: err.message });
+  }
 }
 
 // The project's rows in the bot's queue: being read, waiting to be, or on
@@ -781,6 +869,11 @@ function demoSlots(app, now = Date.now(), mocks = []) {
     return { issueNumber: n, ...a, position, limit: 'slots', since: ago(minutes),
       track: track(n, a.title, { outcome: 'held' }, { held: { position, limit: 'slots' } }) };
   };
+  // Any other request: its track when the bot has one (`fields` null: none).
+  const other = (n, title, askedBy, fields, extra = {}) => {
+    const a = about(n, title, askedBy);
+    return { issueNumber: n, ...a, since: fields?.since || null, track: fields ? track(n, a.title, fields, extra) : null };
+  };
   const taken = (n, title, askedBy, by, minutes) => {
     const a = about(n, title, askedBy);
     return { issueNumber: n, ...a, by, since: ago(minutes),
@@ -810,6 +903,25 @@ function demoSlots(app, now = Date.now(), mocks = []) {
       taken(900014, 'Staging demo: somebody started this', 'staging-demo-ben', 'maya-builder', 60 * 26),
     ],
     onHold: [],
+    // 16 Oct 2026: the other open requests, by where the bot is on them.
+    waitingOn: [
+      other(900016, 'Staging demo: a plan to build', 'staging-demo-cy', { stage: 'plan', since: ago(60 * 20) }),
+      other(900008, 'Staging demo: which page?', 'staging-demo-ana', { stage: 'question', since: ago(45) }),
+    ],
+    upNext: [
+      { ...other(900032, 'Staging demo: just filed', 'staging-demo-ben', { stage: 'queued', since: ago(3) }), kind: 'queued' },
+      { ...other(900004, 'Staging demo: an older request', null, null), kind: 'older', position: 1, trial: 'ready', since: ago(60 * 24 * 12) },
+      { ...other(900005, 'Staging demo: another older one', null, null), kind: 'older', position: 2, trial: null, since: ago(60 * 24 * 15) },
+    ],
+    stopped: [
+      other(900007, 'Staging demo: built nothing', 'staging-demo-cy', { outcome: 'build_failed' }, {
+        runs: [{ verdict: 'ready', created_at: ago(60 * 30), build_ok: false, build_error: 'the build produced no change to propose' }],
+      }),
+    ],
+    leftToPeople: [
+      other(900013, 'Staging demo: needs a decision', 'staging-demo-ana', { outcome: 'person' }),
+    ],
+    withPeople: 3,
     reading: 1,
     week: { limited: true, usedShare: 0.62, usedUp: false, resetsAt: new Date(now + 3 * 24 * 60 * 60 * 1000).toISOString() },
   };
@@ -857,6 +969,8 @@ module.exports = {
   demoSlots,
   requestExcerpt,
   openRequestsOf,
+  restSection,
+  placeTheRest,
   ASKERS_SQL,
   demoRequestTrack,
 };

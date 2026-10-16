@@ -1062,8 +1062,9 @@ test('a backlog pass holds silently, and still speaks when it has something to s
 test('a "Triage this app again" item is triaged without the "looking" post, and held quietly', () => {
   assert.equal(bot.APP_AGAIN_REASON, 'app_again');
   assert.match(BOT_SRC, /SELECT \$1, q\.n, 0, 'app_again', \$4/, 'retriageApp queues with that reason');
-  assert.match(BOT_SRC, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON\n\s+\|\| item\.reason === RETRY_FAILED_REASON \|\| item\.reason === READ_AGAIN_REASON \? null : await live\.post\(/);
-  assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON,/);
+  assert.match(BOT_SRC, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON \|\| item\.reason === BACKLOG_REASON\n\s+\|\| item\.reason === RETRY_FAILED_REASON \|\| item\.reason === READ_AGAIN_REASON \? null : await live\.post\(/);
+  // 16 Oct 2026: an older request's read is as quiet (BACKLOG_REASON).
+  assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON \|\| item\.reason === BACKLOG_REASON,/);
   // The refresh keeps a priority-0 row's reason, so a comment before the
   // row runs does not turn it back into a "looking" one mid-pass.
   assert.match(BOT_SRC, /reason = CASE WHEN homeroom_bot_queue\.priority = 0\s+THEN homeroom_bot_queue\.reason ELSE EXCLUDED\.reason END/);
@@ -1166,7 +1167,7 @@ test('a ready verdict is held before it is built when the bot is at its ceiling 
     seedReadAt: '2026-09-25T17:00:00Z', postedAt: [], turnBudgetMs: 1000, model: 'm', proposalCeiling: 20, deps: h.deps,
   }), 'proposed');
   assert.deepEqual(built, [20]);
-  assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON,\n\s+proposalCeiling: botProposalCeiling\(settings\),/);
+  assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON \|\| item\.reason === BACKLOG_REASON,\n\s+proposalCeiling: botProposalCeiling\(settings\),/);
   assert.match(BOT_SRC, /simulateCaps\(pool, bot, app\.id, parsed\.verdict, settings\)/);
   assert.match(LIVE_SRC, /router: deps\.votesRouter \|\| null, ceiling: proposalCeiling,/);
 });

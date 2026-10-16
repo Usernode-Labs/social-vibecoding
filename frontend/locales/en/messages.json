@@ -959,6 +959,10 @@
     "text": "Done another way",
     "description": "A row in the chat with Homeroom bot standing for one request, beside its title: somebody else's change shipped what the request asked for, so the bot has nothing more to build."
   },
+  "bot.news.taken": {
+    "text": "Somebody else took it on",
+    "description": "A row in the chat with Homeroom bot standing for one request, beside its title: the bot had said it would build the request, but a person has taken it on since (their own change, or a claim), so the bot leaves it to them."
+  },
   "bot.news.live": {
     "text": "Live",
     "description": "Where a request stands, on the line under its title in a news row in the chat with Homeroom bot: its change is live. Sentence case: it is a line of its own."

@@ -416,6 +416,12 @@ const READ_AGAIN_REASON = 'read_again';
 // page, or just filed on a project it builds on (homeroom-bot-dm.js
 // askBotToBuild, noteRequestFiled).
 const ASKED_REASON = 'asked';
+// 16 Oct 2026: the queue reason of an older request the bot reads on its
+// own: one parked when it went on for everyone, taken one at a time while
+// its project has a free slot and nothing else to read (refreshApp,
+// backlogOrder). Read quietly, as an admin's "Triage this app again" is: it
+// speaks only when it has something to say.
+const BACKLOG_REASON = 'backlog';
 // Rows the bot queued for itself rather than for anything on the issue: a
 // restart's (#3471), a failing check's, and a read started over. The issue
 // has not changed since the bot last looked, which is exactly what a
@@ -425,6 +431,10 @@ const ASKED_REASON = 'asked';
 // build a restart interrupted was never looked at again (recipebot #48,
 // run 613).
 const SELF_QUEUED_REASONS = Object.freeze([RESTART_REASON, CHECKS_REASON, READ_AGAIN_REASON]);
+// The rows a refresh keeps while their request is unchanged and nobody
+// else's: those, and an older request's read (BACKLOG_REASON), which a
+// refresh queues for an unchanged request by design.
+const KEPT_WHILE_QUIET_REASONS = Object.freeze([...SELF_QUEUED_REASONS, BACKLOG_REASON]);
 // The queue reason of a request whose last triage failed (an unparseable
 // reply, a provider error) and has not been tried again on the same thread.
 // A failed run counted as having read the thread, so the request waited for
@@ -1483,7 +1493,10 @@ async function issueHolders(pool, appId) {
   // a live build waiting its turn or under way, or a plan waiting for its
   // Build it, measured from when that run's read began. A claim made before
   // any of those still holds the bot off, as before; and once the bot's run
-  // is over, the claim is an ordinary one again.
+  // is over, the claim is an ordinary one again. 16 Oct 2026: and a request
+  // it found ready and holds only for a free slot, its newest run: it told
+  // the requester it would build it as soon as one frees, and #5169, claimed
+  // ten hours after that, was kept from it for good.
   const claims = await pool.query(
     `SELECT ic.github_issue_number AS n, u.username, ic.claimed_at AS since
        FROM issue_claims ic JOIN users u ON u.id = ic.user_id
@@ -1499,7 +1512,12 @@ async function issueHolders(pool, appId) {
              AND r.mode = 'live' AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
              AND ((r.verdict = 'ready' AND (r.live_build_waiting_at IS NOT NULL OR r.build_session_id IS NOT NULL)
                    AND r.created_at > NOW() - make_interval(days => $3))
-                  OR r.awaiting_go_at IS NOT NULL)
+                  OR r.awaiting_go_at IS NOT NULL
+                  OR (r.verdict = 'ready' AND r.cap_suppressed IS NOT NULL
+                      AND r.created_at > NOW() - make_interval(days => $3)
+                      AND NOT EXISTS (SELECT 1 FROM homeroom_bot_runs nr
+                                       WHERE nr.app_id = r.app_id AND nr.issue_number = r.issue_number
+                                         AND nr.mode = 'live' AND nr.id > r.id)))
              AND r.created_at - make_interval(secs => COALESCE(r.duration_ms, 0) / 1000.0) <= ic.claimed_at)`,
     [appId, CLAIM_TTL_DAYS, ABANDONED_LIVE_WINDOW_DAYS],
   );
@@ -1636,6 +1654,75 @@ async function lastRunsByIssue(pool, appId) {
 }
 
 /**
+ * Pure: a request's last run as the refresh judges it. An import's issues
+ * are new to nobody: one never read counts as read at the import
+ * (`imported`, #3624). And what the bot had not read live before it went on
+ * for everyone (`everyoneMs`) counts as read then (`atGoLive`), so the first
+ * refresh after did not read, and build, every open request on every app:
+ * it waits for somebody to touch it, or for its turn as an older request.
+ */
+function lastRunAsSeen(issue, realLast, { everyoneMs = 0, backlogUntil = 0, importedAt = null } = {}) {
+  const imported = !realLast && !!backlogUntil && toMs(issue.createdAt) <= backlogUntil;
+  let lastRun = realLast || (imported ? { thread_seen_at: importedAt } : null);
+  const atGoLive = !!everyoneMs && (!lastRun || lastRun.mode !== 'live') && toMs(issue.createdAt) <= everyoneMs;
+  if (atGoLive) {
+    const floor = new Date(everyoneMs).toISOString();
+    lastRun = lastRun
+      ? { ...lastRun, thread_seen_at: toMs(lastRun.thread_seen_at) > everyoneMs ? lastRun.thread_seen_at : floor }
+      : { thread_seen_at: floor };
+  }
+  return { lastRun, imported, atGoLive };
+}
+
+// Whether a project has anything in the bot's queue, waiting or running:
+// an older request is read only when it has nothing (refreshApp).
+const BACKLOG_GATE_SQL = 'SELECT COUNT(*)::int AS n FROM homeroom_bot_queue WHERE app_id = $1';
+
+// The order the bot reads older requests in, by what its trial run made of
+// each (`trial`, the verdict of its newest run, which was never live): the
+// ones it found ready first, then a question it had, then the ones it never
+// read, then the rest; newest first within each.
+const BACKLOG_TRIAL_RANK = Object.freeze({ ready: 0, question: 1, '': 2 });
+
+/** Pure: older requests ({ n, createdAt, trial }) in the order the bot takes them up. */
+function backlogOrder(parked = []) {
+  const rank = (p) => BACKLOG_TRIAL_RANK[p.trial || ''] ?? 3;
+  return [...parked].sort((a, b) => rank(a) - rank(b)
+    || toMs(b.createdAt) - toMs(a.createdAt)
+    || Number(b.n) - Number(a.n));
+}
+
+/**
+ * A live project's older requests, as the refresh finds them, in the order
+ * it takes them up (backlogOrder): open, nobody's, never read live, filed
+ * before the bot went on for everyone and untouched since. For the slots
+ * page (homeroom-bot-track.js slotsView). `issues` is the project's open
+ * list as fetched; `holders` issueHolders' Map when the caller has it.
+ * Empty when the bot has no moment it went on for everyone.
+ */
+async function backlogFor(pool, app, { issues = [], settings = null, holders = null } = {}) {
+  const everyoneMs = toMs(everyoneSinceOf(settings));
+  if (!everyoneMs || !app?.id || !issues.length) return [];
+  const [people, threads, lastRuns, importedAt] = await Promise.all([
+    holders || issueHolders(pool, app.id),
+    threadActivityByIssue(pool, app.id),
+    lastRunsByIssue(pool, app.id),
+    require('./homeroom-bot-dm').importedAt(pool, app.id).catch(() => null),
+  ]);
+  const backlogUntil = toMs(importedAt);
+  const parked = [];
+  for (const issue of issues) {
+    const n = Number(issue.number);
+    if (!Number.isInteger(n) || n <= 0) continue;
+    const { lastRun, imported, atGoLive } = lastRunAsSeen(issue, lastRuns.get(n), { everyoneMs, backlogUntil, importedAt });
+    if (!atGoLive || imported) continue;
+    const verdict = classifyIssue({ issue, threadLastAt: threads.get(n) || null, busy: people.has(n), lastRun });
+    if (verdict.reason === 'unchanged') parked.push({ n, createdAt: issue.createdAt, trial: lastRuns.get(n)?.verdict || null });
+  }
+  return backlogOrder(parked);
+}
+
+/**
  * One refresh of one app's slice of the queue. Returns what it did so a
  * test can drive it directly. `github` is injectable for the same reason.
  *
@@ -1724,26 +1811,27 @@ async function refreshApp(pool, app, {
   // go-ahead lets the bot take the request up after all.
   const busy = new Set(holders.keys());
   if (capRoom && bot && busy.size) {
-    const cleared = await require('./homeroom-bot-holds').answerMentions(pool, {
+    const holds = require('./homeroom-bot-holds');
+    const cleared = await holds.answerMentions(pool, {
       app, repo, github, bot, holders, deps: { ws, notifications },
     });
     for (const n of cleared) busy.delete(n);
+    // 16 Oct 2026: a request it had promised that a person took on since:
+    // its requester is told, once, that it is theirs now.
+    const taken = new Map([...holders].filter(([n]) => busy.has(n)));
+    if (taken.size) await holds.tellTaken(pool, { app, bot, holders: taken, deps: { dm } });
   }
 
   const eligible = [];
   const held = [];
   // Open and nobody else's: where a row the bot queued for itself may stay.
   const quiet = [];
+  // What the moment it went on for everyone parked, untouched since: its
+  // older requests (backlogOrder below).
+  const parked = [];
   for (const issue of issues) {
     const n = Number(issue.number);
-    let lastRun = lastRuns.get(n)
-      || (backlogUntil && toMs(issue.createdAt) <= backlogUntil ? { thread_seen_at: importedAt } : null);
-    if (everyoneMs && (!lastRun || lastRun.mode !== 'live') && toMs(issue.createdAt) <= everyoneMs) {
-      const floor = new Date(everyoneMs).toISOString();
-      lastRun = lastRun
-        ? { ...lastRun, thread_seen_at: toMs(lastRun.thread_seen_at) > everyoneMs ? lastRun.thread_seen_at : floor }
-        : { thread_seen_at: floor };
-    }
+    const { lastRun, imported, atGoLive } = lastRunAsSeen(issue, lastRuns.get(n), { everyoneMs, backlogUntil, importedAt });
     const verdict = classifyIssue({
       issue,
       threadLastAt: latestOf(threads.get(n), proposalThreads.get(n)),
@@ -1760,6 +1848,10 @@ async function refreshApp(pool, app, {
     // A request the bot is building keeps a row it queued for itself, as an
     // unchanged one does: it is read once the build ends.
     if (verdict.reason === 'unchanged' || verdict.reason === 'held' || verdict.reason === 'building') quiet.push(n);
+    // An import's own backlog is not one: "Triage again" takes that.
+    if (atGoLive && !imported && verdict.reason === 'unchanged') {
+      parked.push({ n, createdAt: issue.createdAt, trial: lastRuns.get(n)?.verdict || null, threadSeenAt: verdict.threadSeenAt });
+    }
   }
   if (capRoom) {
     const room = { ...capRoom };
@@ -1768,6 +1860,22 @@ async function refreshApp(pool, app, {
       if (!(room[h.cap] > 0)) continue;
       room[h.cap] -= 1;
       eligible.push({ n: h.n, eligible: true, reason: CAP_FREED_REASON, priority: 2, threadSeenAt: h.threadSeenAt });
+    }
+  }
+  // 16 Oct 2026: OLDER REQUESTS. What going on for everyone parked was
+  // waiting for somebody to touch it, and on Homeroom's own board 43 open
+  // requests waited so, 10 of them ones the bot had found ready and built
+  // cleanly in its trial run. They are read now, ONE AT A TIME: only on a
+  // live app with a free slot, on a refresh that found nothing else to
+  // read, and while nothing of this project's is in the queue, so a backlog
+  // never crowds out what people ask for now, and a ready one is built
+  // before the next is read. The order: backlogOrder.
+  if (capRoom && bot && !eligible.length && parked.length
+      && capRoom.proposals_per_app > 0 && capRoom.proposals_total > 0) {
+    const { rows: [line] = [] } = await pool.query(BACKLOG_GATE_SQL, [app.id]);
+    if (line && !Number(line.n)) {
+      const [next] = backlogOrder(parked);
+      eligible.push({ n: next.n, eligible: true, reason: BACKLOG_REASON, priority: 4, threadSeenAt: next.threadSeenAt });
     }
   }
 
@@ -1806,7 +1914,7 @@ async function refreshApp(pool, app, {
       WHERE app_id = $1 AND started_at IS NULL AND priority > 0
         AND NOT (issue_number = ANY($2::int[]))
         AND NOT (reason = ANY($3::text[]) AND issue_number = ANY($4::int[]))`,
-    [app.id, eligible.map((e) => e.n), SELF_QUEUED_REASONS, quiet],
+    [app.id, eligible.map((e) => e.n), KEPT_WHILE_QUIET_REASONS, quiet],
   );
   out.removed = removed.rowCount || 0;
   return out;
@@ -2356,7 +2464,7 @@ async function ensureBotSession(pool, config, bot, app) {
 // Turns the bot queued for itself (SELF_QUEUED_REASONS), and a turn its own
 // clock stopped and queued again, are its own doing: nobody's building time
 // pays for them.
-const UNCHARGED_REASONS = Object.freeze([...SELF_QUEUED_REASONS, 'budget_retry']);
+const UNCHARGED_REASONS = Object.freeze([...SELF_QUEUED_REASONS, BACKLOG_REASON, 'budget_retry']);
 
 /**
  * Pure: whose weekly building time a run on `item` counts toward
@@ -3586,7 +3694,7 @@ async function runTriage(pool, config, {
     // An issue a restart sent back (#3471), or a read started over because
     // somebody changed the request mid-read, was already told the bot is
     // looking; it is not told twice. A backlog pass says nothing yet (#3509).
-    const looked = item.reason === RESTART_REASON || item.reason === APP_AGAIN_REASON
+    const looked = item.reason === RESTART_REASON || item.reason === APP_AGAIN_REASON || item.reason === BACKLOG_REASON
       || item.reason === RETRY_FAILED_REASON || item.reason === READ_AGAIN_REASON ? null : await live.post({
       pool, github, ws: liveD.ws, app, repo, issueNumber,
       kind: 'looking', text: live.lookingText(), sender: bot,
@@ -3603,7 +3711,8 @@ async function runTriage(pool, config, {
     // that follows this piece of work to its end, told when the request is:
     // not twice for a restart or a read started over, and not for a backlog
     // pass. Never throws.
-    if (item.reason !== RESTART_REASON && item.reason !== APP_AGAIN_REASON && item.reason !== READ_AGAIN_REASON) {
+    if (item.reason !== RESTART_REASON && item.reason !== APP_AGAIN_REASON && item.reason !== READ_AGAIN_REASON
+        && item.reason !== BACKLOG_REASON) {
       await activity().startCard(pool, {
         app, issueNumber, requester, bot, jobKey: item.id, settings, inDm: DM_REASONS.has(item.reason), reason: item.reason,
         deps: { dm: deps.dm },
@@ -4225,7 +4334,7 @@ async function runTriage(pool, config, {
         askedLook: item.reason === ASKED_REASON,
         comments,
         model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
-        quietHold: item.reason === APP_AGAIN_REASON,
+        quietHold: item.reason === APP_AGAIN_REASON || item.reason === BACKLOG_REASON,
         proposalCeiling: botProposalCeiling(settings),
         firstVersion: !!requester?.firstVersion,
         // Who a person hand-off waits on, for the requester's DM.
@@ -11315,6 +11424,12 @@ module.exports = {
   restartAllowanceMs,
   RESTART_ALLOWANCE_MS,
   APP_AGAIN_REASON,
+  BACKLOG_REASON,
+  KEPT_WHILE_QUIET_REASONS,
+  BACKLOG_GATE_SQL,
+  backlogOrder,
+  backlogFor,
+  lastRunAsSeen,
   CHECKS_REASON,
   SELF_QUEUED_REASONS,
   NOT_FOLLOW_UP,

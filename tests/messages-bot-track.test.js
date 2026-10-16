@@ -227,6 +227,18 @@ test('a track is read field by field; one in a state the client does not know is
   assert.deepEqual([view.waiting[0].askedBy, view.waiting[0].excerpt], ['lee', 'Make it darker at night.']);
   assert.deepEqual([view.taken[0].by, view.taken[0].track.held], ['maya', { limit: 'taken', position: null, until: null, by: 'maya' }]);
   assert.deepEqual(normalizeBotSlots({ slots: { app: { slug: 'x' } } }).taken, [], 'an older server: nobody has taken anything');
+  // 16 Oct 2026: and every other open request, by where the bot is on it.
+  const rest = normalizeBotSlots({
+    slots: {
+      app: { slug: 'plant-pal' },
+      upNext: [{ issueNumber: 30, kind: 'older', position: 1, trial: 'ready' }, { issueNumber: 31, kind: 'nonsense', trial: 'Not A Code' }],
+      waitingOn: [{ issueNumber: 20, track: { ...row, issueNumber: 20, state: 'waiting', step: 'plan', why: 'plan' } }],
+      withPeople: 12.7,
+    },
+  });
+  assert.deepEqual(rest.upNext.map((e) => [e.issueNumber, e.kind ?? null, e.position, e.trial ?? null]), [[30, 'older', 1, 'ready'], [31, null, null, null]]);
+  assert.equal(rest.waitingOn[0].track.state, 'waiting');
+  assert.deepEqual([rest.stopped, rest.leftToPeople, rest.withPeople], [[], [], 12]);
   assert.equal(view.week.usedShare, 1, 'a share is clamped to the whole');
   assert.equal(normalizeBotSlots({ slots: {} }), null, 'no project, no view');
 });
@@ -247,6 +259,11 @@ test('the slots page: what holds each slot, what waits for one in order, and the
     waiting: [{ issueNumber: 12, title: 'Dark mode', askedBy: 'lee', excerpt: 'Make it darker at night.', position: 1, since: ago(200), track: held }],
     taken: [],
     onHold: [],
+    waitingOn: [],
+    upNext: [],
+    stopped: [],
+    leftToPeople: [],
+    withPeople: 0,
     week: { limited: true, usedShare: 0.42, usedUp: false, resetsAt: null },
   };
   const html = renderToHtml(createElement(BotSlotsBody, { view }));
@@ -302,6 +319,52 @@ test('the slots page: what holds each slot, what waits for one in order, and the
   const off = renderToHtml(createElement(BotSlotsBody, { view: { ...view, acts: false, slots: [], waiting: [] } }));
   assert.match(off, new RegExp(`data-ws-bot-slots-note="">${message('project:botSlots.notHere').replace(/'/g, '&#x27;')}</p>`));
   assert.match(off, new RegExp(message('project:botSlots.slots.empty')));
+});
+
+test('16 Oct 2026: the slots page lists every other open request by where the bot is on it', () => {
+  const { BotSlotsBody, olderLine } = loadTsx(SLOTS);
+  const plan = track({ issueNumber: 20, state: 'waiting', step: 'plan', why: 'plan', waitingOn: 'you', since: ago(60 * 20) });
+  const queued = track({ issueNumber: 21, state: 'queued', step: null, why: 'turn' });
+  const nothing = track({ issueNumber: 22, state: 'stopped', step: 'build', why: 'no_change' });
+  const person = track({ issueNumber: 23, state: 'stopped', step: 'plan', why: 'needs_person' });
+  const older = (n, position, trial) => ({ issueNumber: n, title: `Older ${n}`, kind: 'older', position, trial, track: null });
+  const view = {
+    app: { slug: 'plant-pal', name: 'Plant Pal' }, botOn: true, acts: true, paused: false, cap: 5, buildsAtOnce: 2, reading: 1,
+    slots: [], waiting: [], taken: [], onHold: [],
+    waitingOn: [{ issueNumber: 20, title: 'A plan', askedBy: 'lee', since: ago(60 * 20), track: plan }],
+    upNext: [
+      { issueNumber: 21, title: 'Just filed', kind: 'queued', track: queued },
+      older(30, 1, 'ready'), older(31, 2, null), older(32, 3, 'person'), older(33, 4, null), older(34, 5, null), older(35, 6, null),
+    ],
+    stopped: [{ issueNumber: 22, title: 'Built nothing', track: nothing }],
+    leftToPeople: [{ issueNumber: 23, title: 'A decision', track: person }],
+    withPeople: 12,
+    week: null,
+  };
+  const html = renderToHtml(createElement(BotSlotsBody, { view }));
+  for (const name of ['waiting-on', 'up-next', 'stopped', 'left']) assert.match(html, new RegExp(`data-ws-bot-${name}=""`), name);
+  for (const key of ['waitingOn', 'upNext', 'stopped', 'leftToPeople']) {
+    assert.match(html, new RegExp(message(`project:botSlots.${key}.title`)), key);
+  }
+  // In that order, under the slots.
+  const at = (name) => html.indexOf(`data-ws-bot-${name}=""`);
+  assert.ok(at('waiting-on') < at('up-next') && at('up-next') < at('stopped') && at('stopped') < at('left'));
+  // Up next says how older requests are read; a long section shows five and a way to the rest.
+  assert.match(html, new RegExp(message('project:botSlots.upNext.note')));
+  assert.equal((html.match(/data-ws-bot-slot="3\d"/g) || []).length, 4, 'the queued one and four older ones: five rows');
+  assert.match(html, new RegExp(`data-ws-bot-show-all="up-next"[^>]*>${message('project:botSlots.showAll', { count: 7 })}<`));
+  assert.match(html, /data-ws-bot-older-badge=""/, 'an older request has a tile, not a track\'s badge');
+  // What people have is counted, not listed.
+  assert.match(html, new RegExp(`data-ws-bot-with-people="12">${message('project:botSlots.withPeople', { count: 12 })}<`));
+  // An older request's line: its place among them, and what its trial run made of it.
+  assert.equal(olderLine(older(30, 1, 'ready')), `${message('project:botSlots.older.next')} \u00b7 ${message('project:botSlots.older.trialReady')}`);
+  assert.equal(olderLine(older(31, 2, null)), `${message('project:botSlots.older.ahead', { count: 1 })} \u00b7 ${message('project:botSlots.older.notRead')}`);
+  assert.equal(olderLine(older(32, 3, 'person')), message('project:botSlots.older.ahead', { count: 2 }), 'a trial that said a person says nothing more');
+  // Rows open beside the page, as the slots' rows do.
+  assert.match(html, /data-ws-bot-slot="30"[^>]*data-ws-open="issue:30"/);
+  // Nothing in a section draws nothing.
+  const bare = renderToHtml(createElement(BotSlotsBody, { view: { ...view, waitingOn: [], upNext: [], stopped: [], leftToPeople: [], withPeople: 0 } }));
+  assert.doesNotMatch(bare, /data-ws-bot-(?:waiting-on|up-next|stopped|left|with-people)=/);
 });
 
 test('the slots page is a page under the Workshop: its address, its way back, its door', () => {
