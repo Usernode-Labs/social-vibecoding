@@ -95,7 +95,7 @@ function fixture() {
   return { dir, ws, bin, prompt, start: git(ws, 'rev-parse', 'HEAD') };
 }
 
-function runSync(fx, mode) {
+function runSync(fx, mode, extraEnv = {}) {
   const promptLog = path.join(fx.dir, 'prompt.log');
   const notesLog = path.join(fx.dir, 'notes.log');
   const ran = spawnSync('sh', [path.join(ROOT, 'worker', 'run-cc.sh')], {
@@ -108,6 +108,7 @@ function runSync(fx, mode) {
       PLATFORM_URL: 'http://127.0.0.1:1', WORKER_JWT: 'test-worker-jwt',
       TMPDIR: fx.dir,
       STUB_MODE: mode, STUB_PROMPT_LOG: promptLog, STUB_NOTES_LOG: notesLog,
+      ...extraEnv,
     },
     encoding: 'utf8',
   });
@@ -133,12 +134,12 @@ test('the resolver is told to keep both sides whole, check with bounded reposito
   assert.match(ran.prompt, /^Conflicted files: lib\.js $/m);
   assert.match(ran.prompt, /Never keep half of a change\./);
   assert.match(ran.prompt, /an export, a call, a test or a baseline entry you keep needs the definition it names/);
-  assert.match(ran.prompt, /check the result with the repository's own tools\. Bound every command you run \(for example: timeout 600 npm test\)/);
+  assert.match(ran.prompt, /check the result with the repository's own tools\. Bound every command you run \(for example: timeout 600 npm test\); that limit is per command, and the whole resolution, checks included, is stopped after 1800 seconds and then abandoned\./);
   assert.match(ran.prompt, /npm run test:changed -- --files <the conflicted files, comma-separated>/);
   assert.match(ran.prompt, /the repository's own agent instructions \(AGENTS\.md, CLAUDE\.md\)/);
   // Review of 8758: loading every touched module ran app startup and
   // rejected valid browser code. Only a side-effect-free library is loaded.
-  assert.match(ran.prompt, /Never start the app, a server or a script to check a merge\./);
+  assert.match(ran.prompt, /Never start the app, a server or a startup script to check a merge; test and lint commands are what to run\./);
   assert.match(ran.prompt, /only when it is a plain library module that does nothing when it loads: not an entry point, a server, a script, or browser code such as a \.tsx or \.jsx file/);
   assert.match(ran.prompt, /Do not change code that is valid where it runs \(browser code, for example\) because Node cannot load it\./);
   assert.doesNotMatch(ran.prompt, /Load every module you touched/);
@@ -238,4 +239,217 @@ test('ignored files (dependencies a check installed) are not outside the boundar
   fs.writeFileSync(path.join(fx.ws, 'node_modules', 'x', 'index.js'), '');
   const ran = runSync(fx, 'resolve');
   assert.match(ran.result, /sync_result=resolved/);
+});
+
+// ── Review round 2 of proposal 8758 (Codex) ─────────────────────────────
+// Submodules, paths git quotes for display, the cap on a multibyte message,
+// and the refusal reason as HTML in the transcript.
+
+// Run one more command in the stand-in, before its STUB_MODE step.
+function inject(fx, commands) {
+  fs.writeFileSync(path.join(fx.bin, 'claude'),
+    STUB_CLAUDE.replace('case "$STUB_MODE" in', `${commands}\ncase "$STUB_MODE" in`));
+}
+
+// fixture() with hooks to add files on the base, the branch and main.
+function customFixture(hooks = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-conflict-'));
+  const origin = path.join(dir, 'origin.git');
+  const seed = path.join(dir, 'seed');
+  const ws = path.join(dir, 'ws');
+  git(dir, 'init', '-q', '--bare', '-b', 'main', origin);
+  git(dir, 'clone', '-q', origin, seed);
+  fs.writeFileSync(path.join(seed, 'lib.js'), 'module.exports = { a: 1 };\n');
+  fs.writeFileSync(path.join(seed, 'other.js'), 'module.exports = 1;\n');
+  fs.writeFileSync(path.join(seed, '.gitignore'), 'node_modules/\n');
+  if (hooks.base) hooks.base(seed);
+  git(seed, 'add', '-A');
+  git(seed, 'commit', '-qm', 'base');
+  git(seed, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
+  git(seed, 'checkout', '-qb', BRANCH);
+  fs.writeFileSync(path.join(seed, 'lib.js'), 'module.exports = { a: 1, b: 2 };\n');
+  if (hooks.branch) hooks.branch(seed);
+  git(seed, 'add', '-A');
+  git(seed, 'commit', '-qm', 'branch');
+  git(seed, 'push', '-q', 'origin', `HEAD:refs/heads/${BRANCH}`);
+  git(seed, 'checkout', '-q', 'main');
+  fs.writeFileSync(path.join(seed, 'lib.js'), 'module.exports = { a: 1, c: 3 };\n');
+  fs.writeFileSync(path.join(seed, 'other.js'), 'module.exports = 2;\n');
+  if (hooks.main) hooks.main(seed);
+  git(seed, 'add', '-A');
+  git(seed, 'commit', '-qm', 'main');
+  git(seed, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
+  git(dir, 'clone', '-q', '-b', BRANCH, origin, ws);
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'claude'), STUB_CLAUDE);
+  fs.chmodSync(path.join(bin, 'claude'), 0o755);
+  const prompt = path.join(dir, 'prompt.txt');
+  fs.writeFileSync(prompt, 'sync');
+  return { dir, origin, seed, ws, bin, prompt, start: git(ws, 'rev-parse', 'HEAD') };
+}
+
+// An initialised submodule `sub` at `first`; with mainMoves, main moves it
+// to `second` (a clean change: the branch never touches it).
+function subFixture(mainMoves = false) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-sub-'));
+  const src = path.join(d, 'source');
+  git(d, 'init', '-q', '-b', 'main', src);
+  fs.writeFileSync(path.join(src, 'v.txt'), 'first\n');
+  git(src, 'add', '-A');
+  git(src, 'commit', '-qm', 'first');
+  const first = git(src, 'rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(src, 'v.txt'), 'second\n');
+  git(src, 'commit', '-qam', 'second');
+  const second = git(src, 'rev-parse', 'HEAD');
+  const fx = customFixture({
+    base(seed) {
+      git(seed, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', src, 'sub');
+      git(path.join(seed, 'sub'), 'checkout', '-q', first);
+    },
+    main(seed) { if (mainMoves) git(path.join(seed, 'sub'), 'checkout', '-q', second); },
+  });
+  git(fx.ws, '-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '--quiet');
+  return { ...fx, first, second };
+}
+
+test('main moving a submodule cleanly is git\'s change, not the resolver\'s: the merge keeps main\'s pointer', () => {
+  const fx = subFixture(true);
+  assert.equal(git(path.join(fx.ws, 'sub'), 'rev-parse', 'HEAD'), fx.first);
+  const ran = runSync(fx, 'resolve');
+  assert.match(ran.result, /sync_result=resolved/, ran.out);
+  assert.equal(git(fx.ws, 'rev-parse', 'HEAD:sub'), fx.second);
+});
+
+test('a resolver that moves a submodule checkout is refused', () => {
+  const fx = subFixture();
+  inject(fx, `git -C sub checkout -q ${fx.second}`);
+  const ran = runSync(fx, 'resolve');
+  assertAbandoned(fx, ran);
+  assert.equal(reasonOf(ran.result), 'The resolution changed 1 file(s) outside the conflicts (sub), so it was not pushed.');
+});
+
+test('a submodule change hidden by diff.ignoreSubmodules never enters the merge', () => {
+  // Staging everything (git add -A) would commit the moved pointer here.
+  const fx = subFixture();
+  git(fx.ws, 'config', 'diff.ignoreSubmodules', 'all');
+  inject(fx, `git -C sub checkout -q ${fx.second}`);
+  const ran = runSync(fx, 'resolve');
+  assert.match(ran.result, /sync_result=resolved/, ran.out);
+  assert.equal(git(fx.ws, 'rev-parse', 'HEAD:sub'), fx.first);
+});
+
+test('paths git quotes for display are staged as the files they are', () => {
+  // ':(top)odd.txt' reads as pathspec magic unless staged literally.
+  for (const name of ['café.txt', 'with space.txt', 'tab\there.txt', 'quote"d.txt', ':(top)odd.txt']) {
+    const fx = customFixture({
+      base(s) { fs.writeFileSync(path.join(s, name), 'base\n'); },
+      branch(s) { fs.writeFileSync(path.join(s, name), 'branch\n'); },
+      main(s) { fs.writeFileSync(path.join(s, name), 'main\n'); },
+    });
+    inject(fx, `printf 'merged\\n' > '${name.replace(/'/g, "'\\''")}'`);
+    const ran = runSync(fx, 'resolve');
+    assert.match(ran.result, /sync_result=resolved/, `${JSON.stringify(name)}: ${ran.out}`);
+    assert.equal(execFileSync('git', ['--literal-pathspecs', 'show', `HEAD:${name}`], { cwd: fx.ws, encoding: 'utf8' }), 'merged\n');
+    if (!/[\t"]/.test(name)) assert.match(ran.prompt, new RegExp(`^Conflicted files: .*${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'm'), 'the prompt names the file as it is');
+    if (name === 'café.txt') {
+      assert.match(git(fx.ws, '-c', 'core.quotePath=false', 'log', '-1', '--format=%B'), /^- café\.txt$/m, 'the commit lists it unquoted');
+    }
+  }
+});
+
+test('a multibyte message is cut on a character boundary, under 8,000 bytes', () => {
+  // One ASCII byte more or less moves the cut into the middle of an é in one
+  // of the two runs, whichever way the header's length falls.
+  for (const pad of ['', 'x']) {
+    const fx = fixture();
+    inject(fx, `printf '%s' '${pad}${'é'.repeat(5000)}' > "$notes"`);
+    const ran = runSync(fx, 'silent');
+    assert.match(ran.result, /sync_result=resolved/);
+    assert.doesNotMatch(ran.out, /invalid|not UTF-8/i);
+    const raw = execFileSync('git', ['cat-file', 'commit', 'HEAD'], { cwd: fx.ws });
+    const body = raw.subarray(raw.indexOf(Buffer.from('\n\n')) + 2);
+    assert.ok(body.length <= 8000, `message is ${body.length} bytes`);
+    assert.equal(Buffer.from(body.toString('utf8'), 'utf8').equals(body), true, `valid UTF-8 (pad ${JSON.stringify(pad)})`);
+    // git stores a split character's stray byte re-read as Latin-1 ("Ã"), so
+    // the notes must end on a whole é, with nothing else after them.
+    const notes = body.toString('utf8').trimEnd().split('\n').at(-1);
+    assert.match(notes, new RegExp(`^${pad}é+$`), `the notes end on a whole character (pad ${JSON.stringify(pad)})`);
+  }
+});
+
+test('a resolver that runs past its limit is stopped and the merge abandoned', () => {
+  const fx = fixture();
+  inject(fx, 'sleep 5');
+  const ran = runSync(fx, 'resolve', { SYNC_RESOLVE_TIMEOUT: '1' });
+  assertAbandoned(fx, ran);
+  assert.equal(reasonOf(ran.result), 'The resolver ran past its 1 second limit.');
+});
+
+test('a resolver that commits the merge itself is refused, and the branch put back', () => {
+  const fx = fixture();
+  inject(fx, `printf 'module.exports = { a: 1, b: 2, c: 3 };\\n' > lib.js; git add lib.js; git -c user.name=x -c user.email=x@x commit -qm self`);
+  const ran = runSync(fx, 'resolve');
+  assertAbandoned(fx, ran);
+  assert.equal(reasonOf(ran.result), 'The resolver ran git itself, so the merge was not pushed.');
+});
+
+// P1: a reason is data. A file name a check left behind (no resolver note
+// needed) reached the transcript, which renders a status row as HTML.
+test('a reason stays text from the worker\'s result line to the dev chat transcript', async () => {
+  const fx = fixture();
+  const payload = '<img src=x onerror=globalThis.__review8758=1>';
+  inject(fx, `printf 'output' > '${payload}'`);
+  const ran = runSync(fx, 'resolve');
+  assertAbandoned(fx, ran);
+  const workerMod = require('../src/services/worker');
+  const state = {};
+  workerMod.parseLine(ran.result, () => {}, state);
+  assert.ok(state.syncReason.includes(payload), 'the reason names the file');
+
+  const Module = require('node:module');
+  const load = (file, source, exportsLine) => {
+    const m = new Module(file);
+    m.filename = file;
+    m.paths = Module._nodeModulePaths(path.dirname(file));
+    m._compile(`${source}\n${exportsLine}`, file);
+    return m.exports;
+  };
+  const sp = fs.readFileSync(path.join(__dirname, 'sync-progress.test.js'), 'utf8');
+  const helpersAt = sp.indexOf('function makePool(');
+  const helpersEnd = sp.indexOf('// ── runSyncMain coalescing');
+  const activityAt = sp.indexOf('function ownerRow(');
+  const activityEnd = sp.indexOf("test('activity: a clean merge");
+  assert.ok(helpersAt > 0 && helpersEnd > helpersAt && activityAt > 0 && activityEnd > activityAt, 'sync-progress helpers found');
+  const h = load(path.join(__dirname, 'sync-reason-render.cjs'),
+    `const assert = require('node:assert/strict');\n${sp.slice(helpersAt, helpersEnd)}\n${sp.slice(activityAt, activityEnd)}`,
+    'module.exports = { loadSyncMain, activityPool, ownerRow };');
+  const { subject, updates, restore } = h.loadSyncMain({ execImpl: async () => ({ ...state, exitCode: 0 }) });
+  const pool = h.activityPool();
+  let row;
+  let result;
+  try {
+    result = await subject.runSyncMain({}, pool, 7, { sessionRow: h.ownerRow() });
+    row = pool.calls.filter((c) => /INSERT INTO chat_session_messages/.test(c.sql)).at(-1);
+  } finally {
+    restore();
+  }
+  // The banner and the toast set text: they keep the plain sentence.
+  assert.ok(result.message.includes(payload));
+  assert.ok(updates.at(-1).message.includes(payload));
+  // The transcript's row is HTML: escaped.
+  assert.ok(!row.params[1].includes(payload));
+  assert.ok(row.params[1].includes('&lt;img src=x onerror=globalThis.__review8758=1&gt;'));
+
+  const tf = path.join(__dirname, 'dev-chat-transcript.test.js');
+  const ts = fs.readFileSync(tf, 'utf8');
+  const end = ts.indexOf('// ── 1.');
+  assert.ok(end > 0, 'dev-chat-transcript harness found');
+  const { makeDevChat } = load(path.join(__dirname, 'sync-reason-transcript.cjs'), ts.slice(0, end), 'module.exports = { makeDevChat };');
+  const html = makeDevChat().render([{
+    role: 'system', id: 42, content: row.params[1], metadata: JSON.parse(row.params[2]),
+    created_at: '2026-10-16T00:00:00Z',
+  }]);
+  assert.doesNotMatch(html, /<img src=x onerror/, 'no live element');
+  assert.match(html, /&lt;img src=x onerror=globalThis\.__review8758=1&gt;/, 'shown as text');
 });

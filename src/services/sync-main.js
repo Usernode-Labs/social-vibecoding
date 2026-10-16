@@ -163,6 +163,17 @@ function broadcastSyncStatus(session, state, extra = {}) {
 //   { ok: true, syncResult, behind, sha, pushOk, message }
 // Throws on infrastructure errors (image build, ensureWorker) — the
 // route catches and 500s; background callers catch and warn.
+// What the owner reads when a sync's merge was abandoned for a reason.
+function refusedMessage(reason) {
+  return `Tried to sync with main, but the merge was not pushed: ${reason} The branch is unchanged; resolve it locally.`;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 async function runSyncMain(config, pool, sessionId, opts = {}) {
   const key = Number(sessionId);
   const existing = _inFlightSyncs.get(key);
@@ -375,10 +386,17 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
         // A reason (the resolver's refusal, or the harness's boundary)
         // says what the owner has to do, so it is shown, not dropped.
         message = result.syncReason
-          ? `Tried to sync with main, but the merge was not pushed: ${result.syncReason} The branch is unchanged; resolve it locally.`
+          ? refusedMessage(result.syncReason)
           : 'Tried to sync with main but Claude couldn\'t resolve the conflicts. The branch is unchanged; try again or resolve locally.';
         break;
     }
+    // The dev chat's transcript renders a system status row's content as
+    // HTML, and a reason is data from the worker (an agent's sentence, a
+    // file name a check left behind), so the row gets it escaped. The banner
+    // and a toast set it as text, so they keep the plain message.
+    const statusText = result.syncReason && syncResult === 'conflict'
+      ? refusedMessage(escapeHtml(result.syncReason))
+      : message;
 
     // #361: persist the derived merge-conflict snapshot for proposal
     // cards. An unresolved conflict leaves the branch broken → 'failed'
@@ -444,7 +462,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
     }
 
     if (emitActivity) {
-      await sendStatus(message, syncMeta);
+      await sendStatus(statusText, syncMeta);
     }
 
     // Analytics: record the sync outcome on the terminal path. Attributed
