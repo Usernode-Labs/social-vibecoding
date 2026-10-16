@@ -1385,9 +1385,15 @@ async function resubmitUnchanged(ctx, headSha, via) {
   // so no reviewer is waiting on a new preview of it.
   const recovery = ctx.recovery || require('./staging-recovery');
   try {
+    // 'shots-update' only when the shots are ALL that changed. New testing
+    // routes, or an explicit `recheck: true`, ask for a fresh verdict even
+    // when the shots changed too: 'testing-update' reads as a manual re-run,
+    // so the unit suite runs again rather than reusing an earlier pass of
+    // this commit (services/unit-suite-reuse.js).
+    const shotsOnly = shotsApplied.changed && !applied.changed && !ctx.recheck;
     const run = recovery.recheckSessionChecks({
       config, pool, session,
-      reason: shotsApplied.changed ? 'shots-update' : 'testing-update',
+      reason: shotsOnly ? 'shots-update' : 'testing-update',
     });
     if (run && typeof run.catch === 'function') {
       run.catch((err) => log.warn('proposal-update', 'testing-metadata recheck failed (non-fatal)', {

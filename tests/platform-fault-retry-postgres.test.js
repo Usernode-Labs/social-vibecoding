@@ -28,7 +28,7 @@ const COLLISION = 'The unit suite could not start: a job with the same name was 
 // The smallest tables the statements read, with the failure-streak columns
 // taken from schema.sql so a rename there fails here.
 const STREAK_COLUMNS = SCHEMA_SQL.match(
-  /^ALTER TABLE chat_sessions\s+ADD COLUMN IF NOT EXISTS (?:check_error_detail|consecutive_check_failures|first_check_failure_at|last_check_failure_at|check_next_retry_at|check_error_notified_at|check_error_platform)\b[^;]*;/gm
+  /^ALTER TABLE chat_sessions\s+ADD COLUMN IF NOT EXISTS (?:check_error_detail|consecutive_check_failures|first_check_failure_at|last_check_failure_at|check_next_retry_at|check_error_notified_at|check_error_platform|unit_suite_fresh_sha)\b[^;]*;/gm
 ) || [];
 const DDL = [
   'CREATE TABLE apps (id SERIAL PRIMARY KEY, slug TEXT, name TEXT, repo_url TEXT)',
@@ -59,7 +59,9 @@ async function connect() {
 }
 
 test('every failure-streak column comes from schema.sql', () => {
-  assert.equal(STREAK_COLUMNS.length, 7);
+  // Seven, and the fresh-suite request storeChecks also writes
+  // (services/unit-suite-reuse.js).
+  assert.equal(STREAK_COLUMNS.length, 8);
 });
 
 test('a platform fault is retried past the cap for a day, any other error is not, and a held session is the machine\'s', async (t) => {

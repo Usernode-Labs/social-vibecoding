@@ -356,7 +356,10 @@ test('#3498: the column is Profile\'s, gutter and all, so its mx-0 lists keep a 
   const html = renderToHtml(createElement(mod.ProfileProposalsScreen, {}));
   const column = html.match(/^<main id="profile-proposals-screen"[^>]*><div class="([^"]+)">/);
   assert.ok(column, 'the screen\'s column is found');
-  assert.equal(column[1], profileRoot[1], 'the same column as #profile-root, class for class');
+  // Class for class, minus the two-column widening the own profile adds at
+  // lg — the Your work screen keeps the base column everywhere.
+  const baseColumn = profileRoot[1].replace(/\s*\blg:max-w-5xl\b/g, '').trim();
+  assert.equal(column[1], baseColumn, 'the same column as #profile-root, class for class');
   assert.match(read(SCREEN), /<GroupedList className="mx-0" tone="plane">/,
     'the lists still pass mx-0, which is why the column owns the gutter');
 });

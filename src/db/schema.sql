@@ -1243,6 +1243,13 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_phase VARCHAR(
 -- simply shows no trigger caption then. Advisory/display only, exactly like
 -- check_phase: the merge gate reads check_state and nothing else.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_trigger VARCHAR(32);
+-- The head a person asked to have checked again ("Run checks again"), while
+-- a unit suite that really runs on it is still owed (services/unit-suite-
+-- reuse.js). Set with the 'manual-recheck' pending stamp; cleared when a
+-- verdict whose unit suite ran on that head is stored. While it names the
+-- head, no run copies an earlier pass and no verdict carrying a copied one
+-- is stored. Survives restarts on purpose.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS unit_suite_fresh_sha TEXT;
 -- Live progress of the run in flight: `{ ran, passed, failed, expected,
 -- updatedAt, unit, build }`, written as the capture container's per-check
 -- frames stream in. `unit` is the repo unit suite's own `{ phase, ran,
@@ -1258,6 +1265,33 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_progress JSON
 -- The unit suite's size from its last completed run (`# tests`), so the
 -- next run's live bar has a denominator before the suite finishes.
 ALTER TABLE apps                   ADD COLUMN IF NOT EXISTS unit_suite_last_tests INTEGER;
+-- Unit-suite passes a later checks run of the same commit may copy instead
+-- of running the suite again (services/unit-suite-reuse.js). One row per
+-- pass the suite's own process saw end, keyed on everything the verdict
+-- depends on beside the clock: the repository and full commit, the worker
+-- image by digest, and a hash of the Job the platform wraps around the
+-- tests (unit-suite.jobDefinition). Rows older than twice the reuse age
+-- limit are deleted with the app's next pass. Platform bookkeeping with no
+-- use in a preview, so a preview's copy starts empty.
+CREATE TABLE IF NOT EXISTS unit_suite_passes (
+  id          BIGSERIAL PRIMARY KEY,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  repo        TEXT NOT NULL,
+  commit_sha  VARCHAR(40) NOT NULL,
+  image       TEXT NOT NULL,
+  job_definition VARCHAR(64) NOT NULL,
+  session_id  INTEGER,
+  run_id      TEXT,
+  summary     JSONB,
+  passed_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- When the run that passed stored its verdict and recorded the pass in
+  -- app_check_history. Only an observed pass is reused, so the gate a copy
+  -- earns always has the app's history row behind it.
+  observed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_unit_suite_passes_commit
+  ON unit_suite_passes (app_id, commit_sha, passed_at DESC);
+COMMENT ON TABLE unit_suite_passes IS 'staging:private';
 -- #11: vote-to-undo a merged PR. When the undo majority is reached we
 -- open a `git revert <merge_commit_sha>` PR and insert a new
 -- chat_sessions row pointing back here via revert_of_session_id.
@@ -14269,6 +14303,43 @@ CREATE INDEX IF NOT EXISTS idx_test_run_reports_slug
 CREATE INDEX IF NOT EXISTS idx_test_run_reports_user
   ON test_run_reports (test_user_id, created_at DESC);
 COMMENT ON TABLE test_run_reports IS 'staging:private';
+
+-- Private requests (#5048): requests only platform admins can see, for
+-- security and confidential work. Every other request is a GitHub issue, and
+-- the platform's repository is public, so a private request is never filed
+-- there: it lives in these two tables alone and is read and written only
+-- through routes/private-requests.js, which answers 404 to anyone who is not
+-- a platform admin. `status` is 'open' or 'closed'. Private, so a staging
+-- copy gets the tables without the rows (seedStagingPrivateRequest writes the
+-- one demo row there).
+CREATE TABLE IF NOT EXISTS private_requests (
+  id          SERIAL PRIMARY KEY,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  title       VARCHAR(200) NOT NULL,
+  description TEXT NOT NULL,
+  status      VARCHAR(16) NOT NULL DEFAULT 'open',
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  closed_at   TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_private_requests_app
+  ON private_requests (app_id, status, created_at DESC);
+COMMENT ON TABLE private_requests IS 'staging:private';
+
+-- Its discussion: a comment list, not a chat thread, because chat threads
+-- are read by every viewer of the app and fanned out to its whole room.
+CREATE TABLE IF NOT EXISTS private_request_comments (
+  id                 SERIAL PRIMARY KEY,
+  private_request_id INTEGER NOT NULL REFERENCES private_requests(id) ON DELETE CASCADE,
+  user_id            INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  body               TEXT NOT NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_private_request_comments_request
+  ON private_request_comments (private_request_id, id);
+COMMENT ON TABLE private_request_comments IS 'staging:private';
 
 -- When each of the leader's long-interval sweeps last completed
 -- (services/leader-timers.js, a `durable` timer). The leader changes with

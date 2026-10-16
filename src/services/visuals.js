@@ -1217,6 +1217,8 @@ function serializeTestResults(results) {
   return json;
 }
 const logTrim = ({ dropped, kept }) => log.info('visuals', 'Trimmed oversized test_results payload', { dropped, kept });
+// The fences for a person's "Run checks again" (the repo unit suite they
+// are owed, services/unit-suite-reuse.js) are check-store's own.
 function storeChecks(pool, sessionId, commitSha, result, errorDetail = null) {
   return checkStore.storeChecks(pool, sessionId, commitSha, result, errorDetail, { onTrim: logTrim });
 }
@@ -2127,6 +2129,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         expectSelector: t.expectSelector || '',
         expectText: t.expectText || '',
         allowConsoleErrors: !!t.allowConsoleErrors,
+        // capture.js groupTests gives such a check a load of its own.
+        ...(t.coldLoad === true ? { coldLoad: true } : {}),
       };
     });
 
@@ -2238,6 +2242,23 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         .then((jobs) => ((jobs.unitSuites && jobs.unitSuites.length) || jobs.unitSuite ? workflow.unitRunId : null))
         .catch(() => null)
       : null;
+    // Or no suite at all: this commit already passed it under the same
+    // conditions, and nobody asked for a fresh run (services/unit-suite-
+    // reuse.js). The pass is copied, marked as reused, and the run settles
+    // as soon as the browser checks are done.
+    let reusedUnit = null;
+    if (!shotsOnly && !earlyUnitRunId) {
+      reusedUnit = await unitSuite.reusablePass({
+        config, pool, appId: app.id, sessionId: session.id, repoOwner, repoName, commitSha: commitHash, trigger,
+      });
+      if (reusedUnit) {
+        log.info('visuals', 'Reusing an earlier unit-suite pass of this commit', {
+          sessionId: session.id, commitHash, trigger, from: reusedUnit.reused,
+        });
+        traceStep('unit_suite', 'Unit suite reused from an earlier pass of this commit', reusedUnit.reused);
+        progress.observeUnit(reusedUnit.snapshot);
+      }
+    }
 
     // The full manifest, written before either Job exists: everything the
     // verdict needs that the Jobs' own output does not carry, so a process
@@ -2275,6 +2296,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           captureShards,
           // Where a collect finds the unit suite when it is the early one.
           ...(earlyUnitRunId ? { unitRunId: earlyUnitRunId } : {}),
+          // Or the pass it copied instead of running one: a collect stores
+          // the same row, and looks for no unit-suite Job.
+          ...(reusedUnit ? { unitReused: { row: reusedUnit.row, earned: reusedUnit.earned || null, snapshot: reusedUnit.snapshot } } : {}),
           workflow: true,
           runKey: workflow.runKey,
         },
@@ -2302,9 +2326,13 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       prNumber: Number(session.pr_number) || null,
       onProgress: progress.observeUnit,
       signal: operation.signal, previewRunId: runId,
+      // The commit it judges: a pass is recorded for reuse
+      // (services/unit-suite-reuse.js) when every Job checked out exactly it.
+      commitSha: commitHash,
       strict: true,
     });
-    const unitSuitePromise = (shotsOnly ? Promise.resolve(null) : earlyUnitRunId
+    const unitSuitePromise = (shotsOnly ? Promise.resolve(null) : reusedUnit
+      ? Promise.resolve({ row: reusedUnit.row, history: null, earned: reusedUnit.earned || null }) : earlyUnitRunId
       ? unitSuite.collectUnitSuite({
         config, pool, appId: app.id, sessionId: session.id, previewRunId: earlyUnitRunId,
         onProgress: progress.observeUnit, signal: operation.signal,
@@ -2682,6 +2710,23 @@ function releaseCheckJobs(config, sessionId, runId) {
 // (services/checks-queue.js) bounds the load instead. What still reads as
 // infrastructure is what the run's own frames show to be: an unreachable
 // origin (#1381), a starved Postgres (#1771), a unit suite that never ran.
+// Is a run of `commitHash` where the unit suite really runs owed to a
+// person on this proposal (chat_sessions.unit_suite_fresh_sha,
+// services/unit-suite-reuse.js)? true, false, or null when the row could
+// not be read.
+async function freshRunOwedFor(pool, sessionId, commitHash) {
+  if (!commitHash) return false;
+  try {
+    const { rows: [row] } = await pool.query(
+      'SELECT unit_suite_fresh_sha FROM chat_sessions WHERE id = $1', [sessionId]
+    );
+    return !!(row && row.unit_suite_fresh_sha
+      && String(row.unit_suite_fresh_sha).toLowerCase() === String(commitHash).toLowerCase());
+  } catch {
+    return null;
+  }
+}
+
 async function settleCaptureRun(config, pool, run) {
   const {
     session, app, commitHash,
@@ -2864,6 +2909,45 @@ async function settleCaptureRun(config, pool, run) {
     }
   }
 
+  // A run with no unit-suite row while a person is owed a run of this head
+  // where the suite really runs (services/unit-suite-reuse.js). Only a suite
+  // confirmed not to apply (no runnable `test` script, or the suite turned
+  // off) answers the request; storeChecks then settles it. Any other missing
+  // row (package.json unreadable, the runner failed before a Job, an outcome
+  // nobody could read) did not run the suite they asked for: the verdict is
+  // a retryable 'error' and the request stands.
+  //
+  // "Does not apply" needs evidence about this commit, not a bare 404 on
+  // package.json (which a repository the reader cannot reach also answers):
+  // a commit with any recorded unit-suite pass has a suite, so it is never
+  // read as absent. A commit with none has nothing to copy either, so the
+  // request it settles cannot be answered with a copy later.
+  // An unreadable marker (null) is not "nothing owed": the transition that
+  // stores the verdict reads the marker again under the row's lock and
+  // refuses a pass with no unit row for an owed head (check-store's
+  // unitAnswer), and the head stays pending for the stale sweep.
+  if (!unitOutcome) {
+    const owed = await freshRunOwedFor(pool, session.id, commitHash);
+    if (owed !== false) {
+      // The suite turned off (or GitHub off) answers the request as it
+      // always did: nothing runs, whatever the commit's history. The pass
+      // evidence below is about the repository's content only.
+      const switchedOff = !unitSuite.isEnabled() || !github.isEnabled();
+      const applies = switchedOff ? false : await unitSuite.suiteApplies({ repoOwner, repoName, ref: commitHash });
+      if (switchedOff
+          || (applies === false && !(await require('./unit-suite-reuse').hasAnyPass(pool, { appId: app.id, commitSha: commitHash })))) {
+        checksResult.unitSuiteAbsent = true;
+      } else if (owed === true && checksResult.state !== 'error') {
+        checksResult.state = 'error';
+        checksResult.errorDetail = unitSuiteRow.MISSING_UNIT_DETAIL;
+        checksResult.platformFault = true;
+        log.warn('visuals', 'A fresh unit suite was owed and this run has none: recorded as a retryable error', {
+          sessionId: session.id, commitHash, applies,
+        });
+      }
+    }
+  }
+
   const blockingCount = Number.isInteger(checksResult.blockingCount)
     ? checksResult.blockingCount
     : checksResult.results.filter((r) => r.status !== 'pass' && !r.advisory).length;
@@ -2888,6 +2972,15 @@ async function settleCaptureRun(config, pool, run) {
       : historyRowsOf(checksResult, { dispatched, unitOutcome, assetOutcome, renderOutcome }),
     capture: held.capture,
     visuals: held.visuals,
+    // The repo unit suite, for the transition that stores this
+    // (services/unit-suite-reuse.js): confirmed not to apply, which answers
+    // a person's request for it; the gate a copied pass earns the proposal;
+    // the key of a suite that ran and passed, whose recorded pass may be
+    // copied once its history row lands with the verdict.
+    ...(checksResult.unitSuiteAbsent === true ? { unitSuiteAbsent: true } : {}),
+    unitEarned: unitOutcome && !unitOutcome.history && unitOutcome.earned ? unitOutcome.earned : null,
+    unitObserved: unitOutcome && unitOutcome.history && unitOutcome.history.passed
+      ? unitOutcome.history.checkKey : null,
   } };
 }
 

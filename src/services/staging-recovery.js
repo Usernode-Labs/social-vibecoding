@@ -55,8 +55,19 @@ function checkRunOverdue(session, { now = Date.now(), staleMs = checksStaleMs() 
 // active Dev sessions have their own turn-tail recovery, a fresh draft has no
 // checks to re-run, and an uploaded-but-unsubmitted commit is still waiting on
 // proposal_submit_build rather than on the checks service.
+//
+// And any open proposal owed a run a person asked for ("Run checks again",
+// services/unit-suite-reuse.js) on its current head: the route accepts the
+// request for active and paused proposals, native and CLI alike, and the
+// request outlives the process that took it.
+function freshRunOwed(session) {
+  return !!session?.unit_suite_fresh_sha && !!session?.checks_commit_sha
+    && String(session.unit_suite_fresh_sha).toLowerCase() === String(session.checks_commit_sha).toLowerCase();
+}
+
 function isStuckCheckRecoveryScope(session) {
   if (session?.status === 'promoted') return true;
+  if (['active', 'paused'].includes(session?.status) && freshRunOwed(session)) return true;
   if (session?.status !== 'active' || session?.source !== 'cli_handoff') return false;
   if (!(session.checks_commit_sha || session.handoff_head_sha)) return false;
   const hasUnsubmittedUpload = !!session.handoff_uploaded_sha
@@ -91,6 +102,9 @@ async function findStuckCheckSessions({
     `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
       WHERE (cs.status = 'promoted'
+             OR (cs.status IN ('active', 'paused')
+                 AND cs.unit_suite_fresh_sha IS NOT NULL
+                 AND lower(cs.unit_suite_fresh_sha) = lower(cs.checks_commit_sha))
              OR (cs.status = 'active'
                  AND cs.source = 'cli_handoff'
                  AND COALESCE(cs.checks_commit_sha, cs.handoff_head_sha) IS NOT NULL
@@ -641,6 +655,20 @@ async function recordChecksSkipped({ session, commitSha, reason }) {
     }));
 }
 
+// The head a person's recheck of `session` is for, from its row as it is
+// now (recheckHeadSha: a promoted proposal's reviewed head, a CLI hand-off's,
+// else the checks pin), or the caller's copy when the row cannot be read.
+async function requestedRecheckHead(pool, session) {
+  let current = session;
+  try {
+    const { rows: [pins] } = await pool.query(
+      `SELECT status, source, reviewed_head_sha, imported_pr_head_sha, checks_commit_sha, handoff_head_sha
+         FROM chat_sessions WHERE id = $1`, [session.id]);
+    if (pins) current = { ...session, ...pins };
+  } catch { /* the caller's copy */ }
+  return recheckHeadSha(current) || current.checks_commit_sha || null;
+}
+
 // #447: reconcile a single session's proposal checks. Used by the manual
 // "Re-run checks" endpoint and the boot-time / periodic stale-check sweep.
 // The machine decides between a run against what serves and a new build. A
@@ -649,6 +677,16 @@ async function recheckSessionChecks({ pool, session, reason }) {
   if (reason === 'conflict-resolved' && session.checks_commit_sha && await workflow().held(session.id)) {
     await require('../workflow/platform.ts').conflictResolved(Number(session.id), Number(session.app_id), session.checks_commit_sha);
     return 'handed_off';
+  }
+  if (checkTriggerForReason(reason) === 'manual-recheck') {
+    // A person asked for the suite to run again: the head is owed a unit
+    // suite that really runs (services/unit-suite-reuse.js). Recorded on the
+    // head the recheck is for, read from the row now (a caller's copy, and
+    // its checks pin, can name an older head). The machine records it again,
+    // under the row's lock, on the head of a build or run the request joins.
+    await require('./unit-suite-reuse').markFreshOwed(pool, {
+      sessionId: session.id, commitSha: await requestedRecheckHead(pool, session),
+    });
   }
   await workflow().recheck({ pool, session, reason, trigger: CHECK_TRIGGER_BY_REASON.get(reason) || null,
     system: !FORCED_RECHECK_REASONS.has(reason) && reason !== 'preview-click' });
@@ -674,5 +712,6 @@ module.exports = {
   checkTriggerForReason,
   rebuildSessionStaging,
   recheckSessionChecks,
+  requestedRecheckHead,
   recordChecksSkipped,
 };

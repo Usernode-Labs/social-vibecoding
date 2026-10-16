@@ -630,6 +630,29 @@ test('a run in progress opens its step by itself: the build as its steps, then t
   assert.equal(plain(render(av, moot).v.body.steps).rows.find((r) => r.gate === 'checks').run, null);
 });
 
+test('a unit suite copied from an earlier pass of the commit says so on its row, with that run and its age', () => {
+  const av = context();
+  const passedAt = new Date(Date.now() - 25 * 60 * 1000).toISOString();
+  const item = {
+    ...PR, check_state: 'pending', check_phase: 'testing', check_trigger: 'boot-reconcile', test_results: [],
+    checks_progress: {
+      ran: 312, passed: 312, failed: 0, expected: 840,
+      unit: { phase: 'done', ran: 23402, passed: 23380, failed: 0, skipped: 22, expected: 23402, done: true, exitOk: true,
+        reused: { runId: '5e1f0c2a-9311-4a7b-8c3d-000000009311', sessionId: 9311, passedAt } },
+    },
+    mergeRequirements: { gates: gates({ checks: { state: 'active', detail: { note: 'still running' } } }), evaluated: true, provisional: false },
+  };
+  const { html } = render(av, item);
+  assert.match(html, /<div class="dev-step-run-row" data-unit-phase="done" data-unit-reused="5e1f0c2a-9311-4a7b-8c3d-000000009311"><span class="dev-step-run-k">Unit tests<\/span>[\s\S]*?<span class="dev-step-run-v">Reused: 23,380 passed 25m ago \(run 5e1f0c2a\)<\/span>/);
+  // A suite this run ran itself reads as before.
+  const ran = render(av, { ...item, checks_progress: { ...item.checks_progress, unit: { ...item.checks_progress.unit, reused: undefined } } }).html;
+  assert.match(ran, /<span class="dev-step-run-v">23,380 passed<\/span>/);
+  assert.doesNotMatch(ran, /data-unit-reused|Reused:/);
+  // The checks note's sentence says it too.
+  const view = av._unitSuiteProgressView(item.checks_progress.unit);
+  assert.equal(view.sentence, 'The repo unit suite (npm test) did not run again: this commit passed it 25m ago in run 5e1f0c2a, with 23380 tests, on the same image and setup, and that pass is reused.');
+});
+
 test('a run that overlapped a platform update says it will run again, and opens onto its reason', () => {
   const av = context();
   const reason = 'Checks ran while Homeroom was updating, so they will run again.';

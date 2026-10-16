@@ -75,6 +75,7 @@ async function migrate(config) {
   await seedStagingSupportUser(pool);
   await seedStagingDuplicateUser(pool);
   await seedSelfApp(pool, config);
+  await seedStagingPrivateRequest(pool);
   // The Homeroom bot's first-version configurations (services/bot-configs.js):
   // the three it starts from, each written once; then, once, an untouched
   // seeded current version moved on to its next (two review rounds in 20
@@ -1378,6 +1379,36 @@ async function seedStagingAdminDetailsUser(pool) {
 // Every row belongs to fake 9003xx identities, never the viewer, and nothing
 // here is a signal the Support routes decide anything from. Fixed ids and
 // ON CONFLICT DO NOTHING keep it idempotent; strictly a no-op outside staging.
+// One private request (#5048) on the platform's own project, so a preview's
+// Workshop shows its Private requests section to the admins who open it.
+// private_requests is staging:private, so the copy has no rows of its own.
+// Fixed ids, owned by the staging demo user, idempotent, a no-op outside
+// staging.
+async function seedStagingPrivateRequest(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const { rows } = await pool.query(
+      'SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1'
+    );
+    if (!rows.length) return;
+    await pool.query(
+      `INSERT INTO private_requests (id, app_id, title, description, created_by, created_at, updated_at)
+       VALUES (900501, $1, 'Staging demo private request',
+               'Staging demo: a confidential request only platform admins can see.',
+               900001, NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day')
+       ON CONFLICT DO NOTHING`,
+      [rows[0].id]
+    );
+    await pool.query(
+      `INSERT INTO private_request_comments (id, private_request_id, user_id, body, created_at)
+       VALUES (900501, 900501, 900001, 'Staging demo comment on a private request.', NOW() - INTERVAL '1 day')
+       ON CONFLICT DO NOTHING`
+    );
+  } catch (err) {
+    log.warn('db', 'Staging private request seeding failed', { message: err.message });
+  }
+}
+
 async function seedStagingSupportUser(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
@@ -11180,6 +11211,25 @@ async function seedStagingImportedPrProposal(pool, config) {
         [id2, headSha2]
       );
     }
+    // Its run part-way through, with a unit suite it did not run again: the
+    // same commit passed it 25 minutes earlier on the same worker image and
+    // setup, and the run copied that pass (services/unit-suite-reuse.js). So
+    // the Checks step's Unit tests row reads "Reused: … (run 5e1f0c2a)".
+    // Re-stamped on every boot, so the age stays 25 minutes.
+    await pool.query(
+      `UPDATE chat_sessions
+          SET checks_progress = jsonb_build_object(
+                'ran', 312, 'passed', 312, 'failed', 0, 'expected', 840, 'done', false,
+                'unit', jsonb_build_object(
+                  'phase', 'done', 'ran', 23402, 'passed', 23380, 'failed', 0, 'skipped', 22,
+                  'expected', 23402, 'done', true, 'exitOk', true,
+                  'reused', jsonb_build_object(
+                    'runId', '5e1f0c2a-9311-4a7b-8c3d-000000009311', 'sessionId', id,
+                    'passedAt', to_char((NOW() - INTERVAL '25 minutes') AT TIME ZONE 'UTC',
+                                        'YYYY-MM-DD"T"HH24:MI:SS"Z"'))))
+        WHERE id = $1`,
+      [id2]
+    );
     // Tally reset: this row deliberately carries NO pr_votes. Post the
     // re-review note into the proposal's own thread (idempotent — only when
     // the thread has no message yet).

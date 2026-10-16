@@ -1,15 +1,16 @@
 'use strict';
 
-// The Me tab's two lists of rows (UI overhaul): "Your work" (Your changes,
-// Your requests, Your votes) and "More" (Challenges & standings, Kudos,
-// Friends, Settings), each row with a line under it that says what is behind
-// it (`scrMe` in the prototype).
+// The Me tab's lists of rows (UI overhaul, regrouped by the navigation
+// review): "Your work" (Your changes, Your requests, Your votes), "Rewards"
+// (Challenges & standings, Kudos) and "Account" (Friends, App slots), each
+// row with a line under it that says what is behind it (`scrMe` in the
+// prototype), and a Settings card at the foot that only a phone shows.
 //
 // #2718 made Challenges, Settings and the Admin console rows of the Profile
 // screen, with the native node / wallet / staking readouts and Log out under
 // them. The prototype's Me keeps three rows and puts the rest inside
 // Settings (the spec's "Me, with Admin and Validator inside Settings"), so
-// this pins the new shape and the four things that can go wrong on the way:
+// this pins the new shape and the things that can go wrong on the way:
 //
 //   1. a destination reachable from nowhere, because a row left Me before its
 //      new home existed (Admin and the native rows: tests/admin-console-entry-
@@ -17,7 +18,9 @@
 //   2. a button where an anchor belongs, which silently costs cmd-click,
 //      middle-click, the context menu and drag-to-bookmark;
 //   3. a row whose line claims something the data did not say;
-//   4. Settings' line naming the admin console to an account without it.
+//   4. Settings' line naming the admin console to an account without it;
+//   5. the old "More" list, or a Settings row repeating the sidebar's gear
+//      on a window wide enough to show that gear.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -46,19 +49,21 @@ const ROWS = [
   ['profile-row-proposals', '#profile/your-changes'],
   ['profile-row-feedback', '#profile/your-requests'],
   ['profile-row-votes', '#profile/your-votes'],
-  // More. App slots opens the create dialog, whose allowance card offers
-  // "Request more" (#3250); `#create` is the same dialog's deep link.
-  ['profile-row-app-slots', '#create'],
+  // Rewards.
   ['profile-row-challenges', '#leaderboard/challenges'],
   ['profile-row-kudos', '#leaderboard/kudos'],
-  // The Friends card over Me, by the address Profile.open() honours.
+  // Account. The Friends card over Me, by the address Profile.open() honours;
+  // App slots opens the create dialog, whose allowance card offers "Request
+  // more" (#3250); `#create` is the same dialog's deep link.
   ['profile-row-friends', '#profile?friends'],
+  ['profile-row-app-slots', '#create'],
+  // Settings: the phone's entrance, hidden where the sidebar's gear shows.
   ['profile-row-settings', '#settings'],
 ];
 
 test('the rows are anchors to their destinations', () => {
   for (const [id, href] of ROWS) {
-    assert.ok(CODE.indexOf(`id="${id}"`) > 0, `#${id} must be a row of Me's "More" list`);
+    assert.ok(CODE.indexOf(`id="${id}"`) > 0, `#${id} must be a row of Me`);
     const row = rowSource(CODE, id);
     assert.match(row, /as="a"/,
       `#${id} must be an anchor — cmd-click, middle-click, the context menu `
@@ -69,10 +74,17 @@ test('the rows are anchors to their destinations', () => {
   }
 });
 
-test('in order: Your changes, requests, votes; then App slots, Challenges & standings, Kudos, Friends, Settings', () => {
+test('in order: Your changes, requests, votes; then Challenges & standings, Kudos; Friends, App slots; Settings', () => {
   const order = ROWS.map(([id]) => CODE.indexOf(`id="${id}"`));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
-  assert.ok(CODE.indexOf('id="profile-work"') < CODE.indexOf('id="profile-more"'));
+  // The regrouped panels: Your work, then Rewards, then Account, then the
+  // phone's Settings card — and no "More" list mixing them again.
+  const sections = ['id="profile-work"', 'id="profile-rewards"', 'id="profile-account"', 'id="profile-settings"']
+    .map((needle) => CODE.indexOf(needle));
+  assert.ok(sections.every((i) => i >= 0), 'all four groups render');
+  assert.deepEqual([...sections].sort((a, b) => a - b), sections,
+    'Your work, then Rewards, then Account, then Settings');
+  assert.ok(!CODE.includes('id="profile-more"'), 'the "More" list is gone');
   // Friends opens its card in place on a plain click; the browser keeps the rest.
   assert.match(rowSource(CODE, 'profile-row-friends'), /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*Profile\.showFriends\(\);/);
   const { validateUsername } = require('../src/services/usernames');
@@ -80,6 +92,18 @@ test('in order: Your changes, requests, votes; then App slots, Challenges & stan
     const tail = href.split('/')[1];
     assert.equal(validateUsername(tail).ok, false, `${tail} can never be somebody's username`);
   }
+});
+
+test('the Settings card is the phone\'s entrance, hidden where the sidebar\'s gear shows', () => {
+  // md:hidden matches the rail's own 768px breakpoint (features/nav/
+  // tab-bar.tsx with app.css's media query): where the gear shows, no row.
+  const section = CODE.slice(CODE.indexOf('id="profile-settings"'));
+  assert.match(section, /className="mt-6 md:hidden"/);
+  // It is its own one-row card: GroupedList's separators are
+  // :not(:last-child), so a row hidden inside Account would leave a hairline.
+  const at = CODE.indexOf('id="profile-settings"');
+  const group = CODE.slice(at, CODE.indexOf('</GroupedList>', at));
+  assert.equal((group.match(/<ListRow/g) || []).length, 1, 'one row, its own card');
 });
 
 test('App slots says the allowance in words, and opens the create dialog in place', () => {
@@ -101,9 +125,10 @@ test('App slots says the allowance in words, and opens the create dialog in plac
   const mod = loadTsx('frontend/src/features/profile/account-panel.tsx', {
     stubs: { '../dialogs/app-allowance': allowance },
   });
-  const html = renderToHtml(createElement(mod.MorePanel, { rows: { challenges: null, kudos: null } }));
+  const html = renderToHtml(createElement(mod.AccountPanel, { rows: { challenges: null, kudos: null } }));
   assert.match(html, /id="profile-row-app-slots"[\s\S]*?App slots[\s\S]*?1 of 2 app slots used/);
-  assert.ok(html.indexOf('id="profile-row-app-slots"') < html.indexOf('id="profile-row-challenges"'));
+  assert.match(html, /id="profile-account"/);
+  assert.match(html, /id="profile-row-friends"/, 'Friends sits in the Account group with it');
 });
 
 test('the rows that moved to Settings are not on Me any more', () => {
@@ -114,18 +139,23 @@ test('the rows that moved to Settings are not on Me any more', () => {
 
 test('it renders the data\'s lines, and quiet fallbacks without them', () => {
   const mod = loadTsx('frontend/src/features/profile/account-panel.tsx');
-  const html = renderToHtml(createElement(mod.MorePanel, {
-    rows: { challenges: 'Season 3 · rank #3 · 2 of 7 done', kudos: '3 received', friends: '1 request waiting' },
+  const rewards = renderToHtml(createElement(mod.RewardsPanel, {
+    rows: { challenges: 'Season 3 · rank #3 · 2 of 7 done', kudos: '3 received' },
   }));
-  assert.match(html, /id="profile-more"/);
-  assert.match(html, /Challenges &amp; standings/);
-  assert.match(html, /Season 3 · rank #3 · 2 of 7 done/);
-  assert.match(html, /Kudos on your changes/, 'the number is the stat card\'s; the row says what is behind it');
-  assert.match(html, /1 request waiting/);
-  const bare = renderToHtml(createElement(mod.MorePanel, { rows: { challenges: null, kudos: null } }));
-  assert.match(bare, /This season’s challenges and standings/, 'no data, no invented rank');
-  assert.match(bare, /Only you can see your friends/, 'and no count of friends, ever');
-  assert.match(bare, /How many apps you can create/, 'no allowance yet, no invented count');
+  assert.match(rewards, /id="profile-rewards"/);
+  assert.match(rewards, /Challenges &amp; standings/);
+  assert.match(rewards, /Season 3 · rank #3 · 2 of 7 done/);
+  assert.match(rewards, /Kudos on your changes/, 'the number is the stat card\'s; the row says what is behind it');
+  const quietRewards = renderToHtml(createElement(mod.RewardsPanel, { rows: { challenges: null, kudos: null } }));
+  assert.match(quietRewards, /This season’s challenges and standings/, 'no data, no invented rank');
+
+  const account = renderToHtml(createElement(mod.AccountPanel, {
+    rows: { challenges: null, kudos: null, friends: '1 request waiting' },
+  }));
+  assert.match(account, /1 request waiting/);
+  const quietAccount = renderToHtml(createElement(mod.AccountPanel, { rows: {} }));
+  assert.match(quietAccount, /Only you can see your friends/, 'and no count of friends, ever');
+  assert.match(quietAccount, /How many apps you can create/, 'no allowance yet, no invented count');
 
   const work = renderToHtml(createElement(mod.WorkPanel, {
     rows: { changes: '9 merged · 2 in progress', requests: '2 open · 1 done', votes: 'Latest: Timer sounds' },
@@ -146,7 +176,8 @@ test('Settings\' line names the console only for the capability', () => {
   // Admin row itself is in Settings now, and this line only describes it.
   assert.match(PANEL, /useVisibility\('switcher-row-admin', false\)/);
   const mod = loadTsx('frontend/src/features/profile/account-panel.tsx');
-  const html = renderToHtml(createElement(mod.MorePanel, { rows: { challenges: null, kudos: null } }));
+  const html = renderToHtml(createElement(mod.SettingsPanel, {}));
+  assert.match(html, /id="profile-settings"/);
   assert.match(html, /Account, alerts, keys</, 'nothing published: no admin, no wallet');
   assert.doesNotMatch(html, /alerts, keys, (wallet, )?admin/);
 });

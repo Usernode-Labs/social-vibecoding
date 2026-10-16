@@ -159,7 +159,8 @@ test('Me\'s Friends row opens the private Friends section as a card', () => {
   });
   const html = renderToHtml(createElement(mod.ProfileRoot, {}));
   const at = (needle) => html.indexOf(needle);
-  // A row of More (UI overhaul), saying only how many requests wait; its
+  // A row of Account (UI overhaul; it led the "More" list before the
+  // navigation review regrouped it), saying only how many requests wait; its
   // card, when open, holds the section it used to be.
   assert.match(html, /id="profile-row-friends"[\s\S]*?1 request waiting/);
   assert.ok(at('id="profile-friends-sheet"') >= 0 && at('id="profile-friends-sheet"') < at('id="profile-friends"'),

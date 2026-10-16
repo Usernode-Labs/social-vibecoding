@@ -1179,16 +1179,30 @@ function viewerName(): string {
  * "What do you want to make?" from the Create button, over nothing else, or
  * open on importing a GitHub repo (`startImport`, #create/import). Answers
  * whether it opened: something already holding the screen keeps it.
+ *
+ * The door's own make screen is the one exception: going from #create to
+ * #create/import (or back) by the address turns it to the asked-for form,
+ * as a cold load of that address would open it. A made screen stays.
  */
 export function openCreate(setMode: Dispatch<SetStateAction<Mode>>, startImport = false): boolean {
   let opened = false;
   flushSync(() => setMode((prev) => {
-    if (prev.kind !== 'none') return prev;
+    const turning = prev.kind === 'make' && prev.entry === 'create' && !!prev.startImport !== startImport;
+    if (prev.kind !== 'none' && !turning) return prev;
     opened = true;
     return startImport ? { kind: 'make', entry: 'create', startImport: true } : { kind: 'make', entry: 'create' };
   }));
   if (opened) void invalidateAppAllowance();
   return opened;
+}
+
+/**
+ * Whether an address is one of the Create door's own (#create,
+ * #create/import). Reaching one is the router opening or turning the door,
+ * never a way out of it.
+ */
+export function isDoorRoute(hash: string): boolean {
+  return /^#create(?:\/|$)/.test(String(hash || ''));
 }
 
 /**
@@ -1456,9 +1470,18 @@ export function FirstSession() {
   // change (the hash), and any press on the header's controls, whose sheets
   // and menus open below the door's screens otherwise. The press goes on to
   // its control; the door only gets out of the way.
+  //
+  // Not a route to the door itself. Typing #create, or going Back or
+  // Forward to it, opens the door from the router's popstate, and the
+  // hashchange of that same navigation is dispatched after it, by which
+  // time this listener is in place: it took the address the door had just
+  // been opened by for a way out and closed the door in the frame it opened,
+  // so #create worked only as the first address of a page. The door's own
+  // addresses are the router's to answer (it opens or turns the door,
+  // openCreate); every other route change still leaves.
   useEffect(() => {
     if (!createDoor) return undefined;
-    const onRoute = () => leaveDoor(true);
+    const onRoute = () => { if (!isDoorRoute(window.location.hash)) leaveDoor(true); };
     const onPress = (e: Event) => { if (leavesDoor(e.target)) leaveDoor(true); };
     window.addEventListener('hashchange', onRoute);
     document.addEventListener('click', onPress, true);
@@ -1493,6 +1516,9 @@ export function FirstSession() {
   if (mode.kind === 'make' && mode.entry === 'create') {
     return (
       <MakeScreen
+        // Turned by the address (openCreate), the screen opens afresh on the
+        // asked-for form, as a cold load of that address does.
+        key={mode.startImport ? 'import' : 'make'}
         who={viewerName()}
         entry="create"
         startImport={!!mode.startImport}

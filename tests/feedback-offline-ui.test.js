@@ -111,7 +111,8 @@ test('the dialog states the offline situation on open, in the words dapp.json ch
   assert.match(message('dialogs:feedback.queue.offlineWaiting', { count: 1 }), /1 message saved on this device is waiting to send/);
   assert.match(message('dialogs:feedback.queue.offlineWaiting', { count: 3 }), /3 messages saved on this device are waiting to send/);
   // The button says what it will do.
-  assert.match(feedbackJs, /const restingSubmitLabel = \(\) => \(isOfflineNow\(\)\s*\? t\('dialogs:feedback\.submit\.saveForLater'\)\s*: t\('dialogs:feedback\.submit\.post'\)\);/);
+  // #5048: a private request is never saved for later, so it keeps Post.
+  assert.match(feedbackJs, /const restingSubmitLabel = \(\) => \(isOfflineNow\(\) && !privateChosen\(\)\s*\? t\('dialogs:feedback\.submit\.saveForLater'\)\s*: t\('dialogs:feedback\.submit\.post'\)\);/);
   assert.match(feedbackJs, /if \(!submitBusy\) feedbackBtn\.textContent = restingSubmitLabel\(\);/);
   assert.deepEqual([message('dialogs:feedback.submit.saveForLater'), message('dialogs:feedback.submit.post')],
     ['Save for later', 'Post request']);

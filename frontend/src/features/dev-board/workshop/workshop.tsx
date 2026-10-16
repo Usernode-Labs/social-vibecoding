@@ -103,6 +103,7 @@ import { PlacesTray, useEdgeSwipe } from './places-tray';
 import { ProjectPlaces } from './project-places';
 import { clearPlace, publishPlace, publishSide, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
 import { PlanPage } from './plan-page';
+import { PrivateRequests } from './private-requests';
 import { Diagram, decisionDiagram, readDiagram, type DecisionFacts, type DiagramRecord, type DiagramSource } from '../../../lib/diagram/diagram';
 import { TouchesPicture, readTouches, touchesSaid, type Touches } from './touches';
 import { PageBack } from './page-back';
@@ -5290,6 +5291,11 @@ export function DevWorkshop(): ReactNode {
           </section>
         </>
       ) : null}
+      {/* ── PRIVATE REQUESTS ── (#5048) last on the tab, for admins only and
+          only when there are some: the requests kept off GitHub. Last so
+          the parts above keep their order for everyone. See
+          ./private-requests.tsx. */}
+      {slug ? <PrivateRequests slug={slug} /> : null}
       </>
       ) : null}
 

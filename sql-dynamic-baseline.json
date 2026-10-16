@@ -1748,7 +1748,7 @@
     {
       "source": "src/workflow/preview/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "87c11ccbda54b242aefc",
+      "fingerprint": "3fdb0ac002f0301bdf3e",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.shared_at, cs.branch_name, cs.pr_number, cs.imported_pr_head_sha, cs.reviewed_hea"
     },

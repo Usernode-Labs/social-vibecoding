@@ -360,6 +360,9 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #5048: private requests ──────────────────────────────────────────────
+  'feedback-private-row': '#5048: the Suggest an improvement dialog\'s "Private request" box, which files the request in Homeroom only (POST /api/private-requests) where only platform admins can see it, never as a GitHub issue. Ships hidden; feedback-controller.js shows it to full admins on each open.',
+  'feedback-private-checkbox': '#5048: the box itself, unticked on every open.',
   'feedback-sent-edit': '#4803: correct a just-filed request from its confirmation for five minutes.',
   'feedback-first-edit': '#4803: the same correction action on the first-request confirmation.',
   'feedback-edit': '#4803: shared correction form, initially hidden; its controller owns the fields and visibility.',

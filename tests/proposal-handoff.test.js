@@ -211,7 +211,9 @@ function makeHarness() {
           ? row && row.status === params[2] && row.source === params[3]
             && row.handoff_uploaded_sha === params[0]
             && row.reviewed_head_sha === params[0]
-            && row.checks_commit_sha === params[0]
+            // The upload's own pin (nothing ran since) or the upload itself.
+            && ((row.checks_commit_sha || null) === params[0]
+              || (row.checks_commit_sha || null) === (row.handoff_upload_checked_sha || null))
             && (row.handoff_head_sha || null) === (params[4] || null)
             && (row.handoff_upload_checked_sha || null) === (params[5] || null)
           : row && row.status === params[6] && row.source === params[2]
@@ -366,11 +368,10 @@ function makeHarness() {
       state.reconciliations.push(params);
       if (state.reconcileFailure) return state.reconcileFailure;
       const row = state.sessions.find((candidate) => candidate.id === Number(params.session.id));
-      if (row) {
-        row.reviewed_head_sha = params.expectedHeadSha;
-        row.checks_commit_sha = params.expectedHeadSha;
-        row.check_state = 'pending';
-      }
+      // As votes.reconcileNativeReviewedHead with deferChecks: the head
+      // people vote on moves; the checks pin stays (the upload's own
+      // ChecksCleared cleared the verdict) until the submit hands it over.
+      if (row) row.reviewed_head_sha = params.expectedHeadSha;
       state.votes = 0;
       return { ok: true, headSha: params.expectedHeadSha, checksDeferred: true };
     },
@@ -682,6 +683,7 @@ test('handoff status distinguishes a live check run from an overdue orphan', () 
       stale: false,
       inFlight: false,
       stalled: true,
+      unitSuiteReused: null,
       activity: {
         session: false, pipeline: false, build: false, capture: false,
       },
@@ -1195,8 +1197,10 @@ test('promoted managed uploads reset votes immediately and build only the final 
     assert.equal(first.statusCode, 201);
     assert.equal(state.sessions[0].status, 'promoted');
     assert.equal(state.sessions[0].reviewed_head_sha, FIRST_REVISION);
-    assert.equal(state.sessions[0].checks_commit_sha, FIRST_REVISION);
-    assert.equal(state.sessions[0].check_state, 'pending');
+    assert.equal(state.sessions[0].checks_commit_sha, OLD_REVIEWED,
+      'the upload starts no checks: the submit hands the head over');
+    assert.equal(state.sessions[0].handoff_upload_checked_sha, OLD_REVIEWED);
+    assert.equal(state.sessions[0].check_state, null, 'the verdict is cleared');
     assert.equal(state.votes, 0, 'the prior revision tally is reset before upload returns');
     assert.equal(state.promotedChecks.length, 0,
       'upload defers the expensive pipeline so another local commit can follow');

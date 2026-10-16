@@ -6080,10 +6080,16 @@ async function checkAndMerge(config, pool, session, options = {}) {
     const { rows: checkRows } = await pool.query(
       `SELECT check_state, test_results, checks_checked_at,
               check_error_detail, checks_commit_sha, check_phase,
-              check_error_platform, consecutive_check_failures, first_check_failure_at
+              check_error_platform, consecutive_check_failures, first_check_failure_at,
+              unit_suite_fresh_sha
          FROM chat_sessions WHERE id = $1`,
       [session.id]
     );
+    // A person asked for this head's checks again and its unit suite has not
+    // run since: a verdict whose unit-suite row was copied from an earlier
+    // pass (services/unit-suite-reuse.js) is not the one they asked for, so
+    // the head reads as not yet checked until the suite really runs.
+    const freshSuiteOwed = require('../services/unit-suite-row').freshSuiteOwed(checkRows[0]);
     // A verdict deferred while the head conflicted (check_phase 'deferred',
     // services/check-admission.js). The integration gate just measured this
     // head clean, so the run that judges it can start now — the same kick
@@ -6116,7 +6122,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
       && !sameSha(returnedChecksSha, reviewedHead);
     // A green verdict for an older commit is not a green verdict for the
     // reviewed code. Treat it as pending and rebuild exactly the pinned SHA.
-    const checkState = checksRevisionMismatch
+    const checkState = checksRevisionMismatch || freshSuiteOwed
       ? 'pending'
       : (checkRows[0]?.check_state || null);
     if (checkState !== 'passing' && checkState !== 'skipped') {

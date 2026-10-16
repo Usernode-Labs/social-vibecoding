@@ -961,6 +961,18 @@
     // repaints through refreshMenu(), not through here.
     route(section) {
       Settings._ensureMounted();
+      // The Homeroom-app page's demo links (`?bridgediag=`, `?widgeticons=`,
+      // `?usernodedemo=`) ride in the hash, and that page is drawn when the
+      // screen opens. An address that changes only them, from another
+      // Settings page or from another demo, found the page drawn for the
+      // address before: with no app, the page itself was not in the menu,
+      // so the link fell back to the default page. Drawn again here, before
+      // the menu is read, it shows what a fresh load of the address shows.
+      // The gate it decides is set synchronously, before its first await.
+      if (Settings._usernodeDemoKey !== Settings._usernodeDemo()) {
+        Settings._usernodeState = null;
+        Settings._renderUsernodeSection();
+      }
       const visible = Settings._visiblePages();
       const target = Settings._resolve(section);
       const valid = !!target.page && visible.some((p) => p.key === target.page);
@@ -5033,6 +5045,13 @@
     // string, because a hash route carries its own query
     // (`/#settings/usernode?usernodedemo=ios`) while a plain capture URL
     // may put it before the fragment.
+    // Every demo link the Homeroom-app page reads, as one string, so a route
+    // can tell when an address changed them.
+    _usernodeDemo() {
+      return ['bridgediag', 'widgeticons', 'usernodedemo']
+        .map((name) => this._demoParam(name) || '').join('|');
+    },
+
     _demoParam(name) {
       try {
         const hash = String(window.location.hash || '');
@@ -5282,6 +5301,8 @@
       // getBridgeInfo is unprivileged, so `isNative` stays readable on a
       // device whose privileged handshake is refused.
       const bridge = window.usernode;
+      // The demo links this drawing follows (see route).
+      this._usernodeDemoKey = this._usernodeDemo();
       const demo = this._unDemoMode();
       const gated = this._bridgeDiagDemo() || this._walletRecoveryDemo() ||
         this._widgetIconsDemo() || !!demo ||

@@ -1097,6 +1097,9 @@ function shapeChecks(session) {
     // run itself was capped): get_check_output returns the whole stored text.
     detailsTruncated,
     total: results.length,
+    // The unit suite's pass was copied from an earlier run of the same
+    // commit instead of being run again (services/unit-suite-reuse.js).
+    unitSuiteReused: unitSuiteRow.reusedFrom(results),
     error: session.check_error_detail
       ? untrusted(session.check_error_detail, MAX_CHECK_ERROR_CHARS)
       : null,
@@ -1407,6 +1410,27 @@ function shapeNextStep(session, checks, viewerId = null) {
       + 'this change (installing its dependencies failed on its package.json or lockfile) fix it and push to '
       + `${branch.youCanPush ? (branch.name || 'this proposal\'s branch') + ' in your own fork' : 'a branch in your OWN fork'}`
       + ` and call submit_work with proposalId ${session.id} and that branch. Do not open a second proposal.`;
+  }
+  // The run errored only because the unit suite a person asked for again
+  // came back without a verdict (its runner did not start, or package.json
+  // could not be read): the build and the browser checks may well have
+  // passed, so there is nothing to fix and a retry is on its way.
+  if (unitSuiteRow.missingUnitError(session)) {
+    const again = erroredRunWillRetry(session)
+      ? 'Homeroom runs the checks again on its own; poll get_proposal for the new verdict.'
+      : 'Homeroom will not run them again on its own now; recheck_change re-runs them.';
+    const lead = `The checks on ${ref} were asked to run the repo unit suite (npm test) again, and it did not run: its `
+      + 'runner did not start or its package.json could not be read. ';
+    // Browser checks that failed in the same run are failures all the same.
+    const failed = checks.failing ? checks.failing.length : 0;
+    if (failed) {
+      return `${lead}${checks.failingTotal || failed} check(s) did fail in that run: \`failures\` names them and says `
+        + `why. ${again} Fix those checks, then push to `
+        + `${branch.youCanPush ? (branch.name || 'this proposal\'s branch') + ' in your own fork' : 'a branch in your OWN fork'}`
+        + ` and call submit_work with proposalId ${session.id} and that branch. Do not open a second proposal.`;
+    }
+    return `${lead}The build did not fail and no test failed, so `
+      + `there is nothing to fix in the change. ${again} Do not push a new commit for this.`;
   }
   // An errored run is a failure with no test to point at: the build or the
   // preview broke before the suite could report. Naming that is the difference
@@ -1738,6 +1762,19 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
     return `Checks on ${ref} ran while Homeroom was updating, so they will run again on their own. `
       + (unit ? `${unit} ${words.fixTests}${paused}`
         : `Nothing to fix yet; call get_change again for the new verdict.${paused}`);
+  }
+  if (unitSuiteRow.missingUnitError(session)) {
+    const again = erroredRunWillRetry(session)
+      ? 'Homeroom runs the checks again on its own; call get_change again for the new verdict.'
+      : 'recheck_change re-runs the checks.';
+    // Browser checks that failed in the same run are failures all the same.
+    if (checks.failing && checks.failing.length) {
+      return `The repo unit suite (npm test) asked for again on ${ref} did not run, and `
+        + `${checks.failingTotal || checks.failing.length} check(s) failed in that run (named in checks.failing). `
+        + `${again} ${words.fixTests}${paused}`;
+    }
+    return `The repo unit suite (npm test) asked for again on ${ref} did not run, so there is no verdict yet; the `
+      + `build did not fail and no test failed. ${again}${paused}`;
   }
   if (unitSuiteRow.notRunError(session)) {
     return `The repo unit suite (npm test) could not run on ${ref}, so there is no verdict yet, and no test failed. `
@@ -3923,6 +3960,15 @@ function registerTools(server, ctx) {
         total: z.number()
           .describe('How many tests reported. While pending, 0 means none has reported yet — never that this '
             + 'proposal has no checks.'),
+        unitSuiteReused: z.object({
+          runId: z.string().nullable(),
+          sessionId: z.number().nullable(),
+          passedAt: z.string().nullable(),
+        }).nullable()
+          .describe('Set when this run did not run the repo unit suite but copied an earlier pass of the SAME '
+            + 'commit, worker image and suite setup (from the run `runId` at `passedAt`, on proposal `sessionId`). '
+            + 'The merge gate treats it as that pass. Only automatic re-runs reuse; recheck_change always runs '
+            + 'the suite again. Null when the suite ran in this run.'),
         error: z.string().nullable()
           .describe('What broke when a run errored before any test could report — a build or preview failure, not '
             + 'a test failure, so there is no test to fix.'),

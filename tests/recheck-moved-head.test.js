@@ -144,3 +144,43 @@ test('the verdict store keeps to the pinned commit', () => {
   const store = visuals.slice(visuals.indexOf('async function storeChecks('), visuals.indexOf('async function storeChecksSkipped('));
   assert.equal((store.match(/AND checks_commit_sha IS NOT DISTINCT FROM \$3::text`/g) || []).length, 2);
 });
+
+test('a person\'s "Run checks again" marks the head owed a fresh unit suite before the machine is asked, and its run is manual-recheck', async (t) => {
+  // services/unit-suite-reuse.js: whichever run answers the request, the one
+  // it joins or its own, copies no earlier pass of the commit.
+  const { rec, pool, copy, calls } = harness(t, { held: OLD });
+  const marked = [];
+  pool.query = async (sql, params) => {
+    if (/UPDATE chat_sessions SET unit_suite_fresh_sha = \$2 WHERE id = \$1/.test(String(sql))) {
+      marked.push(params);
+      calls.push(['marked']);
+      return { rows: [], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 0 };
+  };
+  assert.equal(await rec.recheckSessionChecks({ pool, session: copy, reason: 'manual-recheck' }), 'handed_off');
+  assert.deepEqual(marked, [[8031, OLD]]);
+  assert.deepEqual(calls.map((c) => c.slice(0, 3)), [['marked'], ['recheck', 'manual-recheck', 'manual-recheck']],
+    'marked first, then the machine is asked for a manual run');
+  // A same-commit resubmission with new testing routes is a person asking too.
+  marked.length = 0;
+  await rec.recheckSessionChecks({ pool, session: copy, reason: 'testing-update' });
+  assert.deepEqual(marked, [[8031, OLD]]);
+
+  // The head is read from the row as it is now, not the caller's copy: a
+  // proposal promoted since reviews NEW, whatever the copy's pin says.
+  marked.length = 0;
+  const read = pool.query;
+  pool.query = async (sql, params) => (/SELECT status, source, reviewed_head_sha/.test(String(sql))
+    ? { rows: [{ status: 'promoted', source: 'cli_handoff', reviewed_head_sha: NEW, checks_commit_sha: OLD }], rowCount: 1 }
+    : read(sql, params));
+  await rec.recheckSessionChecks({ pool, session: copy, reason: 'manual-recheck' });
+  assert.deepEqual(marked, [[8031, NEW]], 'the reviewed head, not the stale checks pin');
+  pool.query = read;
+
+  // An automatic re-drive marks nothing.
+  marked.length = 0;
+  await rec.recheckSessionChecks({ pool, session: copy, reason: 'stuck-checks-sweep' });
+  await rec.recheckSessionChecks({ pool, session: copy, reason: 'promote-kick' });
+  assert.equal(marked.length, 0);
+});
