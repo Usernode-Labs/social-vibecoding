@@ -513,11 +513,15 @@ const App = {
     // NativeChrome is loaded on the web too; the bridge is what says this is
     // the app (the test restoreWebSession makes).
     if (window.usernode?.isNative === true || App.embeddedPanel) return;
-    if (App.user || App._authedBooted || App._signInBegun) return;
+    const stillWanted = () => !App.user && !App._authedBooted && !App._signInBegun;
+    if (!stillWanted()) return;
     if (!window.AuthScreens || typeof AuthScreens.finishLogin !== 'function') return;
     // Not awaited by init: the landing is already up, and nothing waits on
     // this. finishLogin answers every failure with a value, never a throw.
-    AuthScreens.finishLogin().catch(() => {});
+    // `stillWanted` is asked again after its read: a sign-in the viewer
+    // began while it was out owns the page by then, and this one stands
+    // down without touching the address or the shell.
+    AuthScreens.finishLogin({ stillWanted }).catch(() => {});
   },
 
   // Does this answer mean the SESSION is over? Only the two statuses the API

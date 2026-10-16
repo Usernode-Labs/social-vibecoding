@@ -92,6 +92,7 @@ function boot({ firstRead, native = false, signInBegun = false } = {}) {
     };
   `, sandbox);
   const App = sandbox.App;
+  App._sandbox = sandbox;
   App.enterAnonymous = async () => { calls.enterAnonymous += 1; App.user = null; };
   App.enterAuthed = (user) => { calls.enterAuthed.push(user); App.user = user; };
   App._dropCachedSession = () => { calls.dropCached += 1; };
@@ -153,4 +154,113 @@ test('the boot asks again at most once per document', async () => {
   App._adoptLateSession();
   await settle();
   assert.equal(calls.finishLogin, 1);
+});
+
+test('the side panel never asks again: its anonymous boot reloads the top window', async () => {
+  const { App, calls } = boot({ firstRead: 'hang' });
+  App.embeddedPanel = true;
+  await App.init();
+  await settle();
+  assert.equal(calls.finishLogin, 0);
+});
+
+test('a viewer who is already in the shell is not asked about again', async () => {
+  for (const state of [{ user: { id: 3 } }, { _authedBooted: true }]) {
+    const { App, calls } = boot({ firstRead: 'hang' });
+    Object.assign(App, state);
+    App._adoptLateSession();
+    await settle();
+    assert.equal(calls.finishLogin, 0, JSON.stringify(state));
+  }
+});
+
+test('a page without the sign-in completion boots anonymous without throwing', async () => {
+  const { App, calls } = boot({ firstRead: 'hang' });
+  // The sandbox's AuthScreens is the one the boot reads; take it away.
+  delete App._sandbox.window.AuthScreens;
+  delete App._sandbox.AuthScreens;
+  await App.init();
+  await settle();
+  assert.equal(calls.enterAnonymous, 1);
+});
+
+// ── Through the real completion ──────────────────────────────────────
+//
+// The tests above stub AuthScreens.finishLogin, which hides what happens
+// while its read is out. These run the real one (public/js/auth-screens.js)
+// beside the real _adoptLateSession, with a fetch the test answers by hand.
+
+function withRealCompletion({ hash = '#messages', search = '?demo=1' } = {}) {
+  const events = [];
+  const sandbox = {
+    console, URL, URLSearchParams, AbortController, setTimeout, clearTimeout,
+    document: { addEventListener() {}, getElementById() { return null; } },
+    location: new URL(`http://preview.test/${search}${hash}`),
+  };
+  sandbox.window = sandbox;
+  sandbox.history = {
+    replaceState(_s, _t, url) {
+      sandbox.location = new URL(url, sandbox.location);
+      events.push({ address: sandbox.location.pathname + sandbox.location.search + sandbox.location.hash });
+    },
+  };
+  sandbox.record = (e) => events.push(e);
+  const reads = [];
+  sandbox.fetch = () => new Promise((resolve) => reads.push(resolve));
+  vm.createContext(sandbox);
+  vm.runInContext(`var App = {
+    user: null, _authedBooted: false, embeddedPanel: false, _signInBegun: false,
+    _rootUrl(h) { return '/' + location.search + h; },
+    clearSessionSnapshot() {}, saveSessionSnapshot() {},
+    _askLiveBuild() { record({ askedLiveBuild: true }); return Promise.resolve(null); },
+    async _moveToLiveShell() { record({ moved: true }); return false; },
+    enterAuthed(user) { this.user = user; this._authedBooted = true; record({ entered: user.id, at: location.pathname + location.search + location.hash }); },
+    ${methodSource('_adoptLateSession')},
+    ${methodSource('noteSignInBegun')},
+  };`, sandbox);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'auth-screens.js'), 'utf8'), sandbox);
+  sandbox.AuthScreens._pendingHash = hash;
+  const answer = (id = 7) => ({ ok: true, status: 200, json: async () => ({ user: { id, hasPlatformAccess: true } }) });
+  return { sandbox, events, reads, answer };
+}
+
+test('the late answer, alone, enters the shell on the address the viewer asked for', async () => {
+  const { sandbox, events, reads, answer } = withRealCompletion();
+  sandbox.App._adoptLateSession();
+  assert.equal(reads.length, 1);
+  reads[0](answer());
+  await settle();
+  const entered = events.filter((e) => e.entered);
+  assert.equal(entered.length, 1);
+  assert.equal(entered[0].at, '/?demo=1#messages', 'the deep link and its query are kept');
+  assert.ok(!events.some((e) => e.moved || e.askedLiveBuild),
+    'a background completion does not move the page to another build');
+});
+
+test('a sign-in completed while the late read was out keeps the page; the late answer stands down', async () => {
+  const { sandbox, events, reads, answer } = withRealCompletion();
+  sandbox.App._adoptLateSession();
+  // The viewer signs in themselves: the guard every exchange runs, then the
+  // completion, whose read answers first.
+  sandbox.App.noteSignInBegun();
+  const foreground = sandbox.AuthScreens.finishLogin();
+  reads[1](answer());
+  await foreground;
+  const after = sandbox.location.href;
+  assert.equal(new URL(after).hash, '#messages');
+  // Now the older background read comes back.
+  reads[0](answer());
+  await settle();
+  assert.equal(sandbox.location.href, after, 'the address the sign-in restored stays');
+  assert.equal(events.filter((e) => e.entered).length, 1, 'the shell is entered once');
+});
+
+test('a sign-in merely begun while the late read was out also makes it stand down', async () => {
+  const { sandbox, events, reads, answer } = withRealCompletion();
+  sandbox.App._adoptLateSession();
+  sandbox.App.noteSignInBegun();
+  reads[0](answer());
+  await settle();
+  assert.equal(events.filter((e) => e.entered || e.address).length, 0,
+    'nothing changes the address or enters the shell under a sign-in in progress');
 });

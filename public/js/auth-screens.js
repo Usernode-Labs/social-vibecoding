@@ -410,8 +410,21 @@
     // the session read and leaves only then, so the make screen, drawn in
     // the tick the shell starts, follows it with no wait between (#4892:
     // leaving first showed a blank page for as long as the read took).
+    //
+    // `opts.stillWanted` is for a completion nobody asked for in this
+    // moment: the boot's second session read (App._adoptLateSession), which
+    // runs in the background behind the anonymous shell. It is asked once
+    // the read has answered, before this changes the address or starts the
+    // shell, and once it answers false this stops without touching
+    // anything: a sign-in the viewer started meanwhile owns the page, and
+    // an older read must not send it somewhere else. Such a completion
+    // never waits again after that check (it does not move to the live
+    // build, and has no `beforeShell`), so the check holds until the shell
+    // starts.
     async finishLogin(opts) {
       const beforeShell = opts && typeof opts.beforeShell === 'function' ? opts.beforeShell : null;
+      const stillWanted = opts && typeof opts.stillWanted === 'function' ? opts.stillWanted : null;
+      const superseded = () => !!stillWanted && !stillWanted();
       let returnTo = '';
       // The login-return targets accepted by the platform. Both are separate
       // documents by design — real navigation stays.
@@ -436,7 +449,9 @@
       // Asked alongside the session check below rather than after it: is
       // this page behind the live build (App._moveToLiveShell)? Nothing to
       // ask when the sign-in returns to another document.
-      const liveShell = !returnTo && typeof App !== 'undefined'
+      // Not asked for a background completion (`stillWanted`, below), which
+      // never moves the page: its signed-out boot already asked to move.
+      const liveShell = !returnTo && !stillWanted && typeof App !== 'undefined'
         && typeof App._askLiveBuild === 'function' ? App._askLiveBuild() : null;
 
       let stage = 'session-check';
@@ -463,6 +478,7 @@
           return { stage, status, code: 'invalid-response' };
         }
         stage = 'open-session';
+        if (superseded()) return null;
 
         if (returnTo) {
           window.location.href = returnTo;
@@ -492,7 +508,12 @@
         // account, in the tick it starts. Without it the reload waited on
         // /api/auth/me and painted Home, then the landing, before the make
         // screen. enterAuthed writes the same snapshot when nothing reloads.
-        if (typeof App !== 'undefined' && typeof App._moveToLiveShell === 'function') {
+        //
+        // A background completion (`stillWanted`) does not move: the boot's
+        // signed-out move already asked, and a reload that lands while the
+        // viewer has begun a sign-in of their own would take the page from
+        // under it.
+        if (!stillWanted && typeof App !== 'undefined' && typeof App._moveToLiveShell === 'function') {
           try { App.saveSessionSnapshot?.(user); } catch (_) {}
           await App._moveToLiveShell('signed-in', liveShell);
         }
