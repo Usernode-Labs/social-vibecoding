@@ -213,3 +213,73 @@ test('the recap holds at most RECAP_MAX_TESTS failures but counts them all', { s
   assert.equal(lines.slice(at + 1).filter((l) => l.startsWith('not ok')).length, unitSuite.RECAP_MAX_TESTS);
   assert.equal(unitSuite.failureOutcomeParts(r.stdout, '').named.complete, false);
 });
+
+// A test that failed because its subtests did: the recap repeats them too,
+// before it, as the log printed them, so a log that lost its start still
+// says which subtest broke and how (16 October 2026).
+const nestedFail = (n, name, file, subs = 2) => [
+  `# Subtest: ${name}`,
+  '    # Subtest: fine child',
+  '    ok 1 - fine child',
+  '      ---',
+  '      duration_ms: 0.5',
+  '      ...',
+  ...Array.from({ length: subs }, (_, i) => [
+    `    # Subtest: child ${i + 1}`,
+    `    not ok ${i + 2} - child ${i + 1}`,
+    '      ---',
+    `      location: '${WS}/${file}:${20 + i}:3'`,
+    "      failureType: 'testCodeFailure'",
+    `      error: 'child ${i + 1} broke'`,
+    '      stack: |-',
+    ...Array.from({ length: 30 }, (_, j) => `        frame${j} (${WS}/${file}:${40 + j}:5)`),
+    '      ...',
+  ]).flat(),
+  '    # Subtest: not yet',
+  `    not ok ${subs + 2} - not yet # TODO`,
+  '      ---',
+  '      ...',
+  `    1..${subs + 2}`,
+  `not ok ${n} - ${name}`,
+  '  ---',
+  `  location: '${WS}/${file}:10:1'`,
+  "  failureType: 'subtestsFailed'",
+  `  error: '${subs} subtests failed'`,
+  ...Array.from({ length: unitSuite.RECAP_MAX_TESTS + 20 }, (_, j) => `  note${j}: x`),
+  '  ...',
+];
+
+test('the recap repeats a test\'s failing subtests before it, and the log that lost its start keeps them', { skip: !hasBash && 'no bash' }, () => {
+  const tap = [
+    ...nestedFail(1, 'parent one', 'tests/a.test.js'),
+    ...tapOk(2, 'fine'),
+    ...nestedFail(3, 'parent two', 'tests/b.test.js', unitSuite.RECAP_MAX_SUBTESTS + 2),
+    ...tapFail(4, 'plain', 'tests/c.test.js'),
+    ...summary(4, 3),
+  ];
+  const r = runScriptTail(`cat <<'TAP'\n${tap.join('\n')}\nTAP\nreturn 1`);
+  const lines = r.stdout.split('\n');
+  const at = lines.findIndex((l) => l.startsWith(`${unitSuite.RECAP_SENTINEL}=`));
+  assert.equal(lines[at], `${unitSuite.RECAP_SENTINEL}=3`, 'subtests are not counted as tests');
+  const recapLines = lines.slice(at + 1);
+  assert.deepEqual(recapLines.filter((l) => /^\s*not ok/.test(l)).slice(0, 3),
+    ['    not ok 2 - child 1', '    not ok 3 - child 2', 'not ok 1 - parent one'], 'the subtests come first; a TODO one is left out');
+  assert.equal(recapLines.filter((l) => /^ {4}not ok \d+ - child/.test(l)).length, 2 + unitSuite.RECAP_MAX_SUBTESTS,
+    'at most RECAP_MAX_SUBTESTS for each test');
+  assert.ok(recapLines.includes("      error: 'child 1 broke'"));
+  assert.ok(!recapLines.includes('        frame29 (/tmp/tmp.Rc12Ap34Xy/tests/a.test.js:69:5)'), 'a subtest block is clipped');
+  assert.ok(!recapLines.includes('  note69: x'), 'a test block is clipped');
+  // Every block keeps its closing line, so the next test's subtests are not
+  // read as part of it.
+  assert.equal(recapLines.filter((l) => l === '  ...').length, 3);
+
+  // What a reader makes of the recap alone (the log lost everything before
+  // its tail).
+  const lost = [...summary(9000, 3), `${unitSuite.ROOT_SENTINEL}=${WS}`, ...lines.slice(at)].join('\n');
+  const parts = unitSuite.failureOutcomeParts(lost, '');
+  assert.match(parts.reason, /^tests\/a\.test\.js \(1\): parent one \| tests\/b\.test\.js \(1\): parent two \| tests\/c\.test\.js \(1\): plain \| /);
+  assert.equal(parts.named.complete, true);
+  assert.match(parts.details[0].excerpt, /^Failing subtests \(2\): child 1; child 2\n— child 1 —\n {2}location: 'tests\/a\.test\.js:20:3'/);
+  assert.match(parts.details[1].excerpt, new RegExp(`^Failing subtests \\(${unitSuite.RECAP_MAX_SUBTESTS}\\): child 1; `));
+  assert.doesNotMatch(parts.details[2].excerpt, /Failing subtests/, 'a plain failure reads as before');
+});
