@@ -1311,17 +1311,24 @@ function ThreadHeader() {
       {channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
         : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}
-      <button
-        type="button"
-        className="min-w-0 text-left flex-1"
-        onClick={() => { if (active.kind === 'group') openDialog('messagesMembers'); }}
-      >
-        <div className="messages-thread-name">{active.kind === 'direct' && person ? senderName(person, { bare: true }) : channel ? `#${active.channelKey || active.title}` : active.title}{active.kind === 'direct' && person?.bot ? <span className="messages-bot-badge">{t('messages:header.aiBadge')}</span> : null}</div>
-        {/* One request, one story: what the bot is doing is the strip under
-            this header (./bot-strip.tsx); the line under its name says what
-            it is for. */}
-        <div className="messages-thread-sub">{botDm ? t('messages:header.subtitle.homeroomBot') : subtitle}</div>
-      </button>
+      {active.kind === 'direct' && person ? (
+        <a href={`#profile/${encodeURIComponent(person.username)}`} className="profile-name-link min-w-0 flex-1 text-left">
+          <div className="messages-thread-name">{senderName(person, { bare: true })}{person.bot ? <span className="messages-bot-badge">{t('messages:header.aiBadge')}</span> : null}</div>
+          {/* One request, one story: what the bot is doing is the strip under
+              this header (./bot-strip.tsx); the line under its name says what
+              it is for. */}
+          <div className="messages-thread-sub">{botDm ? t('messages:header.subtitle.homeroomBot') : subtitle}</div>
+        </a>
+      ) : (
+        <button
+          type="button"
+          className="min-w-0 text-left flex-1"
+          onClick={() => { if (active.kind === 'group') openDialog('messagesMembers'); }}
+        >
+          <div className="messages-thread-name">{channel ? `#${active.channelKey || active.title}` : active.title}</div>
+          <div className="messages-thread-sub">{botDm ? t('messages:header.subtitle.homeroomBot') : subtitle}</div>
+        </button>
+      )}
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label={t('messages:header.groupMembers')} title={t('messages:header.groupMembers')}><UserGroupIcon aria-hidden="true" /></button> : null}
       <FullWidthToggle />
       <div className="relative" ref={menuWrapRef}>

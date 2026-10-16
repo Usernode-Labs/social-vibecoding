@@ -66,6 +66,6 @@ test('the Messages time and its "edited" never wrap inside themselves', () => {
   assert.match(CSS, /\.messages-message-head time,\n\.messages-message-head time ~ span \{[^}]*white-space: nowrap; \}/);
 });
 
-test('the Messages head names its author span, so the rule has something to hold', () => {
-  assert.match(ROW, /<div className="messages-message-head"><span className=\{`messages-message-author \$\{mine \? 'text-violet-700 dark:text-violet-300' : ''\}`\}>/);
+test('the Messages head names its author link, so the rule has something to hold', () => {
+  assert.match(ROW, /<a href=\{`#profile\/\$\{encodeURIComponent\(message\.sender\.username\)\}`\} className=\{`messages-message-author profile-name-link \$\{mine \? 'text-violet-700 dark:text-violet-300' : ''\}`\}>/);
 });

@@ -311,6 +311,16 @@ const MANIFEST_FILENAME = 'dapp.json';
 // 2x margin by ~220s, so neither the deadline nor RUN_TIMEOUT_MS moves.
 // The step buys 36 slots over the 844 declared here.
 //
+// (tappable chat names, merged under the 880 ceiling above; was 840 → 850): main stood at 820 exactly, the 20-slot
+// floor, so any proposal declaring a check was red before it started. This
+// change declares four on its own: the anchor in #general, the anchor and the
+// header in a direct conversation, a person's profile-opening route, and the
+// hub channel card's speaker links. Same arithmetic: 850 checks at ~3.9s over
+// the pool of 16 is ~207s of ideal work, and the unchanged 650s
+// TESTS_DEADLINE_MS still clears the 2x margin by ~236s, so neither the
+// deadline nor RUN_TIMEOUT_MS moves. The step buys 26 slots over the 824
+// declared here.
+//
 // THE RULE AT THE FLOOR, stated once because three guards enforce it and on
 // #4868 they gave opposite advice. Fold first: a check that can share a
 // route with an existing one joins that check's expectSelector with :has()
