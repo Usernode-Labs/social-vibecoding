@@ -40,7 +40,7 @@ test('shots worker reports the last browser tool without retaining its inputs or
       briefToolAvailable: true, saveShotToolAvailable: true,
       skipChangeToolAvailable: true,
       browserMemberToolCount: 0, browserAdminToolCount: 0, browserFullAdminToolCount: 0,
-      browserGuestToolCount: 0, browserPhoneToolCount: 0 },
+      browserGuestToolCount: 0, browserPhoneToolCount: 0, browserInvitedToolCount: 0 },
     { kind: 'first_stream' },
     { kind: 'first_output' },
     { kind: 'tool_start', sequence: 1, tool: 'browser_navigate', persona: 'member' },
@@ -67,7 +67,7 @@ test('provider init distinguishes unavailable shots tools from absent tool metad
     briefToolAvailable: false, saveShotToolAvailable: false,
     skipChangeToolAvailable: false,
     browserMemberToolCount: 1, browserAdminToolCount: 0, browserFullAdminToolCount: 0,
-    browserGuestToolCount: 2, browserPhoneToolCount: 3,
+    browserGuestToolCount: 2, browserPhoneToolCount: 3, browserInvitedToolCount: 0,
   }]);
 
   const missing = [];
@@ -80,6 +80,7 @@ test('provider init distinguishes unavailable shots tools from absent tool metad
     skipChangeToolAvailable: null,
     browserMemberToolCount: null, browserAdminToolCount: null,
     browserFullAdminToolCount: null, browserGuestToolCount: null, browserPhoneToolCount: null,
+    browserInvitedToolCount: null,
   }]);
 });
 

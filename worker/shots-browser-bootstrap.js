@@ -15,7 +15,8 @@ const { loadTrustedHostedAppOrigins } = require('./shots-hosted-origins');
 
 const reportedPersona = (persona) => (
   persona === 'member' ? 'member' : persona === 'full_admin' ? 'full_admin'
-    : persona === 'guest' ? 'guest' : 'admin'
+    : persona === 'guest' ? 'guest' : persona === 'invited_member' ? 'invited_member'
+      : persona === 'invited_member_listed' ? 'invited_member_listed' : 'admin'
 );
 // What the guest browser starts from: no cookie and no storage on any origin.
 const SIGNED_OUT_STATE = '{"cookies":[],"origins":[]}\n';
@@ -155,9 +156,23 @@ async function main(progress) {
     read_only_admin: String(process.env.SHOTS_ADMIN_TOKEN || ''),
     full_admin: String(process.env.SHOTS_FULL_ADMIN_TOKEN || ''),
   };
+  // The invited fixtures' browsers (#4437) join only when this run carries
+  // their tokens: a run whose declared changes name them, on the platform's
+  // own copies.
+  if (process.env.SHOTS_INVITED_MEMBER_TOKEN) {
+    personas.invited_member = String(process.env.SHOTS_INVITED_MEMBER_TOKEN);
+  }
+  if (process.env.SHOTS_INVITED_MEMBER_LISTED_TOKEN) {
+    personas.invited_member_listed = String(process.env.SHOTS_INVITED_MEMBER_LISTED_TOKEN);
+  }
   if (origins.length !== 2 || !outputDir || !proxy || Object.values(personas).some((value) => !value)) {
     throw new Error('Shots browser bootstrap configuration is incomplete.');
   }
+  // Where the listed invited member's browser records that it has been
+  // Home (public/js/app.js reads it on its own origin): its storage state
+  // must carry it on both origins, so the app treats it past its first
+  // visit. The first-visit persona's state carries none, by leaving it out.
+  const listedHomeKey = String(process.env.SHOTS_LISTED_HOME_KEY || '');
   const hostedFile = path.resolve(outputDir, 'hosted-origins.json');
   if (!process.env.SHOTS_HOSTED_ORIGINS_FILE
       || path.resolve(process.env.SHOTS_HOSTED_ORIGINS_FILE) !== hostedFile) {
@@ -194,6 +209,13 @@ async function main(progress) {
           const final = new URL(page.url());
           if (final.origin !== origin) {
             throw new SessionBootstrapError('cross_origin_navigation', 'Shots authentication left its private origin.');
+          }
+          if (persona === 'invited_member_listed' && listedHomeKey) {
+            // This member has been Home before: the app remembers it in this
+            // browser's storage, which the saved state carries forward.
+            await page.evaluate((key) => {
+              localStorage.setItem(key, String(Date.now()));
+            }, listedHomeKey);
           }
           await page.close();
           progress.stage = 'cookie';

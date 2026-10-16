@@ -165,6 +165,43 @@ test('every shots browser, the guest\'s included, is denied the tools that run c
   }
 });
 
+// The invited fixtures' browsers (#4437): a run's declared changes name
+// their personas, so the config writer starts those servers only then, and
+// the runner gives their directories and tokens to the bootstrap alone.
+test('the invited fixtures\' browsers start only when a run names them', () => {
+  const worker = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
+  assert.match(worker,
+    /browser_\(member\|admin\|full_admin\|guest\|invited_member\|invited_member_listed\)\(_phone\)\?\$/);
+  const claudeRunner = read('run-cc.sh');
+  assert.match(claudeRunner, /: "\$\{SHOTS_INVITED_MEMBER_TOKEN:=\}"/);
+  assert.match(claudeRunner, /: "\$\{SHOTS_INVITED_MEMBER_LISTED_TOKEN:=\}"/);
+  assert.match(claudeRunner, /mkdir -p "\$SHOTS_DIR\/invited_member"/);
+  assert.match(claudeRunner, /mkdir -p "\$SHOTS_DIR\/invited_member_listed"/);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-invited-config-'));
+  try {
+    const plain = writeConfig(dir);
+    assert.ok(!('browser_invited_member' in plain.config.mcpServers), 'no invited browser without the run naming one');
+    const named = writeConfig(dir, {
+      SHOTS_BROWSER_PERSONAS: '["member","read_only_admin","full_admin","guest","invited_member","invited_member_listed"]',
+      SHOTS_PHONE_PERSONAS: '["invited_member_listed"]',
+    });
+    assert.ok(named.config.mcpServers.browser_invited_member);
+    assert.ok(named.config.mcpServers.browser_invited_member_listed);
+    // A phone browser reads its persona's saved state, so it starts only
+    // beside the desktop browser the run also starts.
+    assert.ok(named.config.mcpServers.browser_invited_member_listed_phone);
+    assert.ok(!('browser_invited_member_phone' in named.config.mcpServers));
+    // A list without the four ordinary personas is refused: those start on
+    // every run.
+    const fallback = writeConfig(dir, { SHOTS_BROWSER_PERSONAS: '["invited_member"]' });
+    assert.ok(!('browser_invited_member' in fallback.config.mcpServers));
+    assert.ok(fallback.config.mcpServers.browser_member);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('the guest browser is never signed in, and its optional token never outlives the bootstrap', () => {
   const claudeRunner = read('run-cc.sh');
   const bootstrap = read('shots-browser-bootstrap.js');
@@ -179,7 +216,7 @@ test('the guest browser is never signed in, and its optional token never outlive
   assert.match(claudeRunner, /: "\$\{SHOTS_GUEST_TOKEN:=\}"/);
   assert.match(claudeRunner, /"guest":17895/);
   assert.match(claudeRunner,
-    /unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN SHOTS_GUEST_TOKEN\n/);
+    /unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN SHOTS_GUEST_TOKEN \\?\n\s*SHOTS_INVITED_MEMBER_TOKEN SHOTS_INVITED_MEMBER_LISTED_TOKEN\n/);
 });
 
 test('on Homeroom\'s own pairs every signed-in persona makes the copies\' first-view demo data on both sides', async () => {

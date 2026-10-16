@@ -14,6 +14,8 @@ const branchNames = require('./branch-names');
 const llmTelemetry = require('./llm-telemetry');
 const liveAgentSpend = require('./live-agent-spend');
 const workerProgress = require('./worker-progress');
+// The invited fixtures' fixed ids, for the listed persona's private-home key.
+const fixtures = require('./shots-fixtures');
 
 const WORKER_IMAGE = 'usernode-worker:latest';
 // Per-session worker container resource limits. Read from env (mirrored
@@ -203,7 +205,7 @@ function buildTurnSecretEnv({
   mode, agentBackend, agentHarness = null, workerSessionJwt, workerPushJwt, issuesReadJwt,
   anthropicProxyJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey,
   shotsJwt, shotsMemberToken, shotsAdminToken, shotsFullAdminToken,
-  shotsGuestToken = null,
+  shotsGuestToken = null, shotsInvitedMemberToken = null, shotsInvitedMemberListedToken = null,
   homeroomMcpToken = null,
 }) {
   const {
@@ -276,9 +278,18 @@ function buildTurnSecretEnv({
     env.SHOTS_ADMIN_TOKEN = requireNonEmptySecret(shotsAdminToken, 'shotsAdminToken');
     env.SHOTS_FULL_ADMIN_TOKEN = requireNonEmptySecret(shotsFullAdminToken, 'shotsFullAdminToken');
     // Optional: the guest browser is not signed in, and carries a guest
-    // token only for a view-public child app (shots-identities.js).
+    // token only for a view-public child app (shots-identities.js). The
+    // invited fixtures' tokens arrive only for a run whose declared changes
+    // name their personas, on the platform's own copies.
     if (shotsGuestToken != null) {
       env.SHOTS_GUEST_TOKEN = requireNonEmptySecret(shotsGuestToken, 'shotsGuestToken');
+    }
+    if (shotsInvitedMemberToken != null) {
+      env.SHOTS_INVITED_MEMBER_TOKEN = requireNonEmptySecret(shotsInvitedMemberToken, 'shotsInvitedMemberToken');
+    }
+    if (shotsInvitedMemberListedToken != null) {
+      env.SHOTS_INVITED_MEMBER_LISTED_TOKEN = requireNonEmptySecret(shotsInvitedMemberListedToken,
+        'shotsInvitedMemberListedToken');
     }
   }
   if (homeroomMcpToken && HOMEROOM_READ_MODES.has(mode)) env.HOMEROOM_MCP_TOKEN = homeroomMcpToken;
@@ -540,9 +551,27 @@ const SHOTS_DIAGNOSTIC_PHASES = new Set([
 ]);
 
 // Each persona's browser server, and its phone browser (`_phone`).
-const SHOTS_BROWSER_SERVER = /^browser_(member|admin|full_admin|guest)(_phone)?$/;
+const SHOTS_BROWSER_SERVER = /^browser_(member|admin|full_admin|guest|invited_member|invited_member_listed)(_phone)?$/;
 // The personas a shots turn may give a phone browser (visible-changes.PERSONAS).
-const SHOTS_PERSONAS = new Set(['member', 'read_only_admin', 'full_admin', 'guest']);
+const SHOTS_PERSONAS = new Set([
+  'member', 'read_only_admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed',
+]);
+// Which desktop browser servers a shots run starts (services/
+// shots-orchestrator.js declaredBrowserPersonas, worker/
+// write-shots-mcp-config.js): the four ordinary ones, plus an invited
+// fixture's only when the run's declared changes name it.
+const SHOTS_BROWSER_PERSONAS_DEFAULT = ['member', 'read_only_admin', 'full_admin', 'guest'];
+function parseShotsBrowserPersonas(value) {
+  if (typeof value !== 'string' || !value) return [...SHOTS_BROWSER_PERSONAS_DEFAULT];
+  let parsed;
+  try { parsed = JSON.parse(value); } catch { return null; }
+  if (!Array.isArray(parsed) || !parsed.length
+      || !parsed.every((persona) => SHOTS_PERSONAS.has(persona))
+      || !SHOTS_BROWSER_PERSONAS_DEFAULT.every((persona) => parsed.includes(persona))) {
+    return null;
+  }
+  return [...new Set(parsed)];
+}
 
 function shotsDiagnosticTool(name) {
   const parts = String(name || '').split(/__|[./]/);
@@ -1136,10 +1165,14 @@ function applyStreamEvent(event, onProgress, state) {
       browserAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_admin'),
       browserFullAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_full_admin'),
       browserGuestToolCount: mcpToolCount(systemEvent.tools, 'browser_guest'),
+      browserInvitedToolCount: collectionCount(systemEvent.tools) == null ? null
+        : ['invited_member', 'invited_member_listed'].reduce((sum, persona) => (
+          sum + mcpToolCount(systemEvent.tools, `browser_${persona}`)), 0),
       // Every phone browser's together: a turn has one per persona that needs it.
       browserPhoneToolCount: collectionCount(systemEvent.tools) == null ? null
-        : ['member', 'admin', 'full_admin', 'guest'].reduce((sum, persona) => (
-          sum + mcpToolCount(systemEvent.tools, `browser_${persona}_phone`)), 0),
+        : ['member', 'admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed']
+          .reduce((sum, persona) => (
+            sum + mcpToolCount(systemEvent.tools, `browser_${persona}_phone`)), 0),
     });
   }
   if (event.type === 'assistant' && event.message?.content) {
@@ -3488,6 +3521,9 @@ async function execInWorker(sessionId, {
   // The personas that get a phone browser beside their desktop one: those
   // with a phone screen (visible-changes.phonePersonas).
   shotsPhonePersonas = [],
+  // The desktop browser servers this run starts: the four ordinary ones,
+  // plus an invited fixture's when the declared changes name it.
+  shotsBrowserPersonas = null,
   // The app under test is a child app: the shots proxy serves its
   // /usernode-bridge|native|tailwind/ requests from the platform, as the
   // production edge does. The platform's own pairs serve their own.
@@ -3672,6 +3708,11 @@ async function execInWorker(sessionId, {
         || !shotsPhonePersonas.every((persona) => SHOTS_PERSONAS.has(persona))) {
       throw new Error('execInWorker: shots phone personas must be a list of personas');
     }
+    if (shotsBrowserPersonas != null
+        && (typeof shotsBrowserPersonas !== 'string'
+            || !parseShotsBrowserPersonas(shotsBrowserPersonas))) {
+      throw new Error('execInWorker: shots browser personas must be a list of personas');
+    }
     if (typeof shotsPlatformAssets !== 'boolean') {
       throw new Error('execInWorker: shots platform assets must be boolean');
     }
@@ -3766,6 +3807,8 @@ async function execInWorker(sessionId, {
       shotsAdminToken: shotsAuthTokens?.read_only_admin,
       shotsFullAdminToken: shotsAuthTokens?.full_admin,
       shotsGuestToken: shotsAuthTokens?.guest ?? null,
+      shotsInvitedMemberToken: shotsAuthTokens?.invited_member ?? null,
+      shotsInvitedMemberListedToken: shotsAuthTokens?.invited_member_listed ?? null,
       homeroomMcpToken: homeroomGrant ? homeroomGrant.token : null,
     });
   } catch (err) {
@@ -3792,6 +3835,12 @@ async function execInWorker(sessionId, {
       ...(shotsRecordClips && shotsClipSize ? { SHOTS_CLIP_SIZE: String(shotsClipSize) } : {}),
       ...(shotsRecordClips && shotsPhoneClipSize ? { SHOTS_PHONE_CLIP_SIZE: String(shotsPhoneClipSize) } : {}),
       SHOTS_PHONE_PERSONAS: JSON.stringify([...new Set(shotsPhonePersonas)]),
+      SHOTS_BROWSER_PERSONAS: JSON.stringify([...new Set(parseShotsBrowserPersonas(shotsBrowserPersonas)
+        || SHOTS_BROWSER_PERSONAS_DEFAULT)]),
+      // Where the listed invited member's browser records that it has been
+      // Home (public/js/app.js reads it on its own origin). A worker script
+      // cannot read src/services, so the key rides the environment.
+      SHOTS_LISTED_HOME_KEY: `usernode:private-home:${fixtures.INVITED_MEMBER_LISTED_USER_ID}`,
       SHOTS_PLATFORM_ASSETS: shotsPlatformAssets ? '1' : '0',
     } : {}),
     ...(isClaude ? {
