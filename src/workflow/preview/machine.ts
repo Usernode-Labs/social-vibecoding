@@ -531,9 +531,12 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
     to: (s, e, f, ctx) => {
       const live: Live = restarts(s) ? { name: 'idle', data: adopt(e, f, priorOf(s)) } : s;
-      // A green verdict a person asked to have checked again (services/unit-
-      // suite-reuse.js) is not carried to the merged head.
-      const carried = e.payload.carryFrom && f.session!.unitFreshSha === e.payload.carryFrom ? null
+      // A green verdict is not carried from, or to, a head a person asked to
+      // have checked again (services/unit-suite-reuse.js): the merged head
+      // is checked, and the request stays owed until its suite runs.
+      const owedCarry = !!f.session!.unitFreshSha
+        && (f.session!.unitFreshSha === e.payload.carryFrom || f.session!.unitFreshSha === e.payload.head);
+      const carried = e.payload.carryFrom && owedCarry ? null
         : carry(restarts(s) ? fromRowVerdict(live.data, f) : s, e.payload);
       if (carried) return carried;
       if (restarts(s)) return fromRow(live.data, f, e.payload.head, e.payload.trigger, ctx, deps);
@@ -608,33 +611,48 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
   };
 
+  // The head a person's recheck is for: the row's pin when it has one (a
+  // promoted proposal's reviewed head, an imported or CLI proposal's
+  // submitted head), read under the row's lock, else the head held (a
+  // native proposal being worked on: the newest wins). A request recorded
+  // for that head (services/unit-suite-reuse.js) is never moved onto an
+  // older one, and is answered by a run of that head.
+  const requestedHead = (s: Live, f: Facts): string | null => f.session?.pin ?? s.data.head ?? null;
+
   const recheck: Entry = {
     guard: (s) => (s.data.previewOnly ? reject('preview_only') : s.data.head ? ok() : reject('no_head')),
     to: (s, e, f, ctx) => {
       const trigger = recheckTrigger(e.payload.reason, e.payload.trigger);
       const d: Data = s.data;
+      // A person's: of the head they asked about, which may be newer than
+      // the one held.
+      const head = trigger === 'manual-recheck' ? requestedHead(s, f) ?? d.head! : d.head!;
       // Nothing serves the head: build it.
-      if (!d.serving || d.serving.head !== d.head) return begin(s, d.head!, trigger, ctx, deps);
+      if (head !== d.head || !d.serving || d.serving.head !== d.head) return begin(s, head, trigger, ctx, deps);
       return startRun(s, trigger, ctx);
     },
   };
 
   // A person's recheck ("Run checks again", trigger 'manual-recheck') that
-  // joins the build or run going is owed a unit suite that really runs on
-  // the head that build or run answers for (services/unit-suite-reuse.js).
-  // Recorded here, under the row's lock and against the head this instance
-  // is working on, never against a head a caller read earlier: the run's
-  // verdict is then refused if it copied a pass, and their own run follows.
-  // Any other recheck that would join is refused as before.
+  // comes during a build or run (services/unit-suite-reuse.js). When that
+  // build or run is of the head they asked about (requestedHead), it joins
+  // it, and is recorded here, under the row's lock, as owed a unit suite
+  // that really runs on that head: the run's verdict is then refused if it
+  // copied a pass, and their own run follows. When it is of an older head
+  // (the proposal's pin has moved on), it is obsolete: the requested head is
+  // built and checked instead, as theirs, and the older run neither moves
+  // nor answers their request. Any other recheck that would join is refused
+  // as before.
   const manualJoin = (e: Event<any>) => recheckTrigger(e.payload.reason, e.payload.trigger) === 'manual-recheck';
-  const joinOwed = (s: Live): Outcome<PState> => step({
-    name: s.name, data: s.data,
-    writes: [{ type: 'owed', sessionId: s.data.sessionId,
-      head: s.name === 'checking' ? s.data.run!.head : s.data.preparing!.head }],
-  });
+  const joinOwed = (s: Live, f: Facts, ctx: TransitionContext): Outcome<PState> => {
+    const going = s.name === 'checking' ? s.data.run!.head : s.data.preparing!.head;
+    const wanted = f.session?.pin ?? going;
+    if (wanted !== going) return begin(s, wanted, 'manual-recheck', ctx, deps);
+    return step({ name: s.name, data: s.data, writes: [{ type: 'owed', sessionId: s.data.sessionId, head: going }] });
+  };
   const joining: Entry = {
     guard: (s, e) => (manualJoin(e) ? ok() : reject('run_outstanding')),
-    to: (s) => joinOwed(s),
+    to: (s, e, f, ctx) => joinOwed(s, f, ctx),
   };
 
   // During a run, a recheck whose inputs changed (the proposal's capture
@@ -646,7 +664,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
   const replacing: Entry = {
     guard: (s, e) => (REPLACING_REASONS.has(e.payload.reason) || manualJoin(e) ? ok() : reject('run_outstanding')),
     to: (s, e, f, ctx) => {
-      if (!REPLACING_REASONS.has(e.payload.reason)) return joinOwed(s);
+      if (!REPLACING_REASONS.has(e.payload.reason)) return joinOwed(s, f, ctx);
       const old = obsolete(s.data, ctx, deps);
       const o = startRun({ name: s.name, data: { ...s.data, run: null } }, recheckTrigger(e.payload.reason, e.payload.trigger), ctx,
         { work: old.work });

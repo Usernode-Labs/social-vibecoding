@@ -466,4 +466,124 @@ test('unit-suite reuse through the preview machine, against the full PostgreSQL 
       delete answers.byTrigger['manual-recheck'];
     }
   });
+  // The same route, the head moving the other way: the proposal reviews B
+  // while a run of A is still going when the person presses. That run is
+  // obsolete for their request: B is built and checked as theirs, and A's
+  // run neither takes the request nor answers it (review round 11).
+  await t.test('a recheck that comes during a run of an older head than the reviewed one runs the reviewed head, and the old run never takes the request', async (st) => {
+    const platformPath = require.resolve('../src/workflow/platform.ts');
+    const realPlatform = require.cache[platformPath];
+    const platform = {};
+    require.cache[platformPath] = { id: platformPath, filename: platformPath, loaded: true, exports: platform, paths: [] };
+    st.after(() => { if (realPlatform) require.cache[platformPath] = realPlatform; else delete require.cache[platformPath]; });
+    platform.previewHeld = async (id) => (await pool.query('SELECT 1 FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(id)])).rows.length > 0;
+    platform.previewInstance = async (id) => (await pool.query('SELECT * FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(id)])).rows[0];
+    const markers = [];
+    platform.requestRecheck = async (o) => {
+      markers.push((await row(o.sessionId)).unit_suite_fresh_sha);
+      const ev = await send({ id: o.sessionId, app_id: o.appId }, 'RecheckRequested', { reason: o.reason, trigger: o.trigger }, { kind: 'route' });
+      await rt.drain();
+      markers.push((await row(o.sessionId)).unit_suite_fresh_sha);
+      return (await pool.query('SELECT result AS status, reason FROM wf_events WHERE id = $1', [ev])).rows[0];
+    };
+    st.mock.method(require('../src/db/pool'), 'getPool', () => pool);
+    const router = require('../src/routes/sessions').sessionRoutes({ databaseUrl: String(url) });
+    const handler = router.stack.find((x) => x.route?.path === '/api/sessions/:id/recheck').route.stack.at(-1).handle;
+    const realPass = { results: [browser, unitPass], unitObserved: UNIT_KEY,
+      history: [{ checkKey: UNIT_KEY, name: unitSuiteRow.UNIT_CHECK_NAME, path: 'package.json', passed: true }] };
+    const s = await proposal({ status: 'promoted', source: 'cli_handoff' });
+    const A = SHA('5'); const B = SHA('6');
+    await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [s.id, A]);
+    answers.next = result({ results: [browser, copied], unitEarned: UNIT_KEY });
+    answers.byTrigger['manual-recheck'] = result(realPass);
+    asked.length = 0;
+    await submit(s, A);
+    await rt.drain(); await rt.runServices(); await rt.drain();   // A's run is going
+    assert.equal((await instance(s)).state, 'checking');
+    await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [s.id, B]);
+    const res = { statusCode: 200, status(n) { this.statusCode = n; return this; }, json(b) { this.body = b; return this; } };
+    await handler({ params: { id: String(s.id) }, user: { id: s.user_id } }, res);
+    for (let i = 0; i < 100 && markers.length < 2; i += 1) await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(markers, [B, B], 'recorded on B, and the machine did not move it to A');
+    await settle();
+    const r = await row(s.id);
+    const runs = (await runsOf(s)).map((w) => [w.input.head, w.input.trigger]);
+    assert.ok(runs.some(([h, tr]) => h === B && tr === 'manual-recheck'), 'B is checked as theirs');
+    assert.ok(!asked.some((a) => a.trigger === 'commit-push'), 'A\'s run was superseded before it answered');
+    assert.equal(!!r.test_results.find((x) => x.index === -3)?.reused, false);
+    assert.deepEqual([r.check_state, r.checks_commit_sha, r.unit_suite_fresh_sha], ['passing', B, null]);
+    delete answers.byTrigger['manual-recheck'];
+  });
+
+  // A person presses while the proposal is busy (a turn holds it) and its
+  // checks still name A while it reviews B: the route records B and leaves
+  // the drain to start the owed run once the session is idle. Meanwhile a
+  // mechanical sync carries A's green verdict to B, or nothing happens
+  // before the drain does. Neither leaves B green without its suite.
+  await t.test('a request folded into a busy session is recorded on the reviewed head; a carry to it is refused, and the drain runs it', async (st) => {
+    const platformPath = require.resolve('../src/workflow/platform.ts');
+    const realPlatform = require.cache[platformPath];
+    const platform = {};
+    require.cache[platformPath] = { id: platformPath, filename: platformPath, loaded: true, exports: platform, paths: [] };
+    st.after(() => { if (realPlatform) require.cache[platformPath] = realPlatform; else delete require.cache[platformPath]; });
+    platform.previewHeld = async (id) => (await pool.query('SELECT 1 FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(id)])).rows.length > 0;
+    platform.previewInstance = async (id) => (await pool.query('SELECT * FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(id)])).rows[0];
+    let drained = null;
+    platform.requestRecheck = async (o) => {
+      try {
+        const ev = await send({ id: o.sessionId, app_id: o.appId }, 'RecheckRequested', { reason: o.reason, trigger: o.trigger }, { kind: 'route' });
+        await rt.drain();
+        return (await pool.query('SELECT result AS status, reason FROM wf_events WHERE id = $1', [ev])).rows[0];
+      } finally { if (drained) { drained(); drained = null; } }
+    };
+    const reuseMod = require('../src/services/unit-suite-reuse');
+    const realDrain = reuseMod.owePendingRun;
+    st.mock.method(reuseMod, 'owePendingRun', (o) => realDrain({ ...o, pollMs: 10, maxWaitMs: 2000 }));
+    st.mock.method(require('../src/db/pool'), 'getPool', () => pool);
+    const busySet = require('../src/services/active-workers').activeWorkers;
+    const router = require('../src/routes/sessions').sessionRoutes({ databaseUrl: String(url) });
+    const handler = router.stack.find((x) => x.route?.path === '/api/sessions/:id/recheck').route.stack.at(-1).handle;
+    const realPass = { results: [browser, unitPass], unitObserved: UNIT_KEY,
+      history: [{ checkKey: UNIT_KEY, name: unitSuiteRow.UNIT_CHECK_NAME, path: 'package.json', passed: true }] };
+
+    for (const thenWhat of ['carry', 'drain']) {
+      const s = await proposal({ status: 'promoted', source: 'cli_handoff' });
+      const A = thenWhat === 'carry' ? SHA('e') : SHA('0'); const B = thenWhat === 'carry' ? SHA('f') : SHA('1');
+      await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [s.id, A]);
+      answers.next = result(realPass);
+      await submit(s, A);
+      await settle();
+      assert.equal((await row(s.id)).check_state, 'passing');
+      await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [s.id, B]);
+      answers.next = result({ results: [browser, copied], unitEarned: UNIT_KEY });
+      answers.byTrigger['manual-recheck'] = result(realPass);
+      asked.length = 0;
+      busySet.add(Number(s.id));
+      const done = new Promise((resolve) => { drained = resolve; });
+      const res = { statusCode: 200, status(n) { this.statusCode = n; return this; }, json(b) { this.body = b; return this; } };
+      try {
+        await handler({ params: { id: String(s.id) }, user: { id: s.user_id } }, res);
+        assert.deepEqual([res.statusCode, res.body.status], [200, 'running'], 'folded');
+        let r = await row(s.id);
+        assert.deepEqual([r.unit_suite_fresh_sha, r.checks_commit_sha, r.check_state], [B, A, 'passing'],
+          `${thenWhat}: recorded on the reviewed head; A's verdict is untouched`);
+        if (thenWhat === 'carry') {
+          const ev = await submit(s, B, { carryFrom: A, trigger: 'sync-main' });
+          await rt.drain();
+          assert.equal((await pool.query('SELECT state_after FROM wf_events WHERE id = $1', [ev])).rows[0].state_after, 'preparing',
+            'not carried to the owed head: it is checked');
+          await settle();
+        }
+      } finally { busySet.delete(Number(s.id)); }
+      if (thenWhat === 'drain') {
+        await Promise.race([done, new Promise((_, no) => setTimeout(() => no(new Error('the drain never ran the owed head')), 3000))]);
+        await settle();
+      }
+      const r = await row(s.id);
+      assert.equal(!!r.test_results.find((x) => x.index === -3)?.reused, false, `${thenWhat}: not answered by a copy`);
+      assert.deepEqual([r.check_state, r.checks_commit_sha, r.unit_suite_fresh_sha], ['passing', B, null], thenWhat);
+      assert.ok((await runsOf(s)).some((w) => w.input.head === B && w.input.trigger === 'manual-recheck'), `${thenWhat}: B's suite ran as theirs`);
+      delete answers.byTrigger['manual-recheck'];
+    }
+  });
 });
