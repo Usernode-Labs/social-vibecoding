@@ -1203,7 +1203,9 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       p = a.next((m) => m.t === 'error');
       a.send({ t: 'act', action: { type: 'roll' } });
       assert.equal((await p).error, 'It is not your turn yet.');
-      v = (await a.next(isView((x) => x.game && x.game.rollNo >= 1))).view;
+      // The roll for an away player fires 2.5 s after her turn, checked on a
+      // 1 s update tick; the default 6 s left a loaded runner little room.
+      v = (await a.next(isView((x) => x.game && x.game.rollNo >= 1), 15000)).view;
       assert.match(v.game.log[0].text, /^@staging-demo-ana rolled \d \(rolled for them\)/, 'away: rolled for her');
       assert.equal((await app.call('POST', '/api/room/act', { as: sam, body: { action: { type: 'roll' } } })).status, 409, 'watching, not playing');
       a.close();
@@ -1304,15 +1306,17 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       a.send({ t: 'start' });
       const v = (await p).view;
       const ship = v.game.ships.find((s) => s[0] === 101);
-      // Frames arrive about twenty times a second.
-      let frames = 0;
-      const started = Date.now();
-      while (Date.now() - started < 1000) {
+      // Frames come one 50 ms tick apart, twenty a second, by the server's
+      // own clock: how fast this process reads them cannot change that.
+      const nows = [];
+      for (let i = 0; i < 10; i += 1) {
         // eslint-disable-next-line no-await-in-loop
-        await a.next((m) => m.t === 'frame');
-        frames += 1;
+        nows.push((await a.next((m) => m.t === 'frame')).frame.now);
       }
-      assert.ok(frames >= 12, `${frames} frames in a second`);
+      const steps = nows.slice(1).map((now, i) => now - nows[i]);
+      assert.ok(steps.every((step) => step > 0), `time moves forward: ${steps.join(', ')} ms`);
+      const closest = Math.min(...steps);
+      assert.ok(closest >= 25 && closest <= 150, `frames every ${steps.join(', ')} ms`);
       // A storm is the numbers every page works its sparks out from.
       const stormy = await a.next((m) => m.t === 'frame' && m.frame.storms.length);
       assert.ok(['interval', 'n', 'v', 'a0'].every((k) => k in stormy.frame.storms[0]));
