@@ -292,10 +292,8 @@ function demoModeRoutes(config) {
   // After a vote, the merge check — off the request, as routes/votes.js
   // runs it for a person's vote.
   function mergeCheckAfterVote(app, session) {
-    votes.checkAndMerge(config, pool, session)
-      .then((result) => {
-        if (result?.merged) ws.pushVoteUpdate({ sessionId: session.id, appSlug: app.slug, merged: true });
-      })
+    void ws;
+    require('../workflow/platform.ts').wantMerge({ appId: app.id, sessionId: session.id, reason: 'demo-vote' })
       .catch((err) => log.error('demo-mode', 'Background merge failed', {
         sessionId: session.id, err: err.message,
       }));

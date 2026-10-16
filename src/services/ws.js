@@ -134,8 +134,9 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       return;
     // An app's merge queue pass, asked to run again by a process that found
     // it running here (merge-queue.js kickElsewhere).
+    // An older release's merge queue asking another process for a pass
+    // (during a rollout): the merge queue is a workflow machine now.
     case 'merge_kick':
-      if (!oversize) require('./merge-queue').receiveKick(payload);
       return;
     default:
       log.warn('ws', 'unknown bus kind', { kind });

@@ -14040,9 +14040,12 @@ CREATE TRIGGER chat_sessions_wf_shots_owned
 -- which merge-followups makes with the merge) and the columns that move with
 -- it: when it went up for a vote, when it closed, its stale warning, its
 -- merge attempt, the electorate it opened with, and what the group votes on
--- (the reviewed head and the approval epoch). INSERTs are not guarded: a
--- session is created where it always was, and a row born in review is
--- adopted in the inserting transaction.
+-- (the reviewed head and the approval epoch). Since the merge (step 6) it
+-- also owns the once-records of the platform's own syncs with main, written
+-- with the sync's work (a boot failure's head, a fixed check's head and keys,
+-- rule C's one resolution per epoch). INSERTs are not guarded: a session is
+-- created where it always was, and a row born in review is adopted in the
+-- inserting transaction.
 DROP TRIGGER IF EXISTS chat_sessions_wf_proposal_owned ON chat_sessions;
 CREATE TRIGGER chat_sessions_wf_proposal_owned
   BEFORE UPDATE ON chat_sessions
@@ -14054,10 +14057,15 @@ CREATE TRIGGER chat_sessions_wf_proposal_owned
         OR OLD.merge_attempt_at IS DISTINCT FROM NEW.merge_attempt_at
         OR OLD.active_users_at_promote IS DISTINCT FROM NEW.active_users_at_promote
         OR OLD.approval_epoch IS DISTINCT FROM NEW.approval_epoch
-        OR OLD.reviewed_head_sha IS DISTINCT FROM NEW.reviewed_head_sha)
+        OR OLD.reviewed_head_sha IS DISTINCT FROM NEW.reviewed_head_sha
+        OR OLD.boot_failure_sync_head IS DISTINCT FROM NEW.boot_failure_sync_head
+        OR OLD.fixed_check_sync_head IS DISTINCT FROM NEW.fixed_check_sync_head
+        OR OLD.fixed_check_sync_keys IS DISTINCT FROM NEW.fixed_check_sync_keys
+        OR OLD.integration_resolved_epoch IS DISTINCT FROM NEW.integration_resolved_epoch)
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=proposal/session:',
     'status', 'promoted_at', 'archived_at', 'stale_notified_at', 'merge_attempt_at',
-    'active_users_at_promote', 'approval_epoch', 'reviewed_head_sha');
+    'active_users_at_promote', 'approval_epoch', 'reviewed_head_sha',
+    'boot_failure_sync_head', 'fixed_check_sync_head', 'fixed_check_sync_keys', 'integration_resolved_epoch');
 
 CREATE OR REPLACE FUNCTION wf_guard_shot_runs() RETURNS TRIGGER AS $$
 BEGIN

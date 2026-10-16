@@ -411,24 +411,18 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
       },
     },
 
-    // Hand-off: what a settled verdict sets off, each awaited so the item
-    // reports only once it is done. The Homeroom bot's note (a change of its
-    // that is ready to try, or one whose checks fail), and the app's merge
-    // queue for a passing or skipped proposal still up for review. (The
-    // shots machine hears the head from the transition; an item an older
-    // release queued hands it over in its result.)
+    // Hand-off: what a settled verdict sets off, awaited so the item reports
+    // only once it is done: the Homeroom bot's note (a change of its that is
+    // ready to try, or one whose checks fail). (The merge queue and the
+    // shots machine hear the verdict from the transition; an item an older
+    // release queued hands the head over in its result.)
     [WORK.followUps]: {
       maxAttempts: 3,
       async run({ input }): Promise<Json> {
-        const { sessionId, appId, head, state, deferred } = input;
+        const { sessionId, head, state, deferred } = input;
         if (!deferred) {
           if (state === 'passing' || state === 'skipped') {
             await legacy('services/homeroom-bot-dm').noteChangeReady(pool, sessionId);
-            const github = legacy('services/github');
-            const { rows: [fresh] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [sessionId]);
-            if (github.isEnabled() && fresh?.status === 'promoted') {
-              await legacy('services/conflict-resolver').checkAndResolveConflicts(config, { app_id: appId });
-            }
           } else if (state === 'failing') {
             await legacy('services/homeroom-bot').noteProposalChecks(pool, { sessionId });
           }

@@ -79,6 +79,9 @@ const MAX_SEARCH_LINE_CHARS = 300;
 // Pause between merge-green merges: each one triggers a production
 // rebuild, and stampeding docker builds helps nobody.
 const MERGE_GREEN_DELAY_MS = 2000;
+// How long one force is waited for before the next app's (it merges later
+// if it could not by then).
+const MERGE_GREEN_WAIT_MS = 2 * 60 * 1000;
 
 // The campaign lease (runCampaign): how long a driver holds it without
 // renewing, and how often it renews while it works.
@@ -828,10 +831,12 @@ async function runCampaign(config, pool, campaignId) {
 
 /**
  * Sequentially force-merge every campaign proposal whose checks pass
- * (or were skipped). Uses the same exported checkAndMerge the conflict
- * resolver drives, with force so the campaign's platform-level vote —
- * not each app's local tally — is the authority. `forceBy` is the
- * admin who pressed the button, named in the merge audit trail.
+ * (or were skipped): an admin's force (the proposal machine's ForceMerge),
+ * so the campaign's platform-level vote — not each app's local tally — is
+ * the authority, and the app's merge queue merges it. Each is waited for a
+ * little; a force not merged by then stays, and merges when it can.
+ * `forceBy` is the admin who pressed the button, named in the merge audit
+ * trail.
  */
 async function mergeGreen(config, pool, campaignId, { limit = null, forceBy }) {
   const params = [campaignId];
@@ -858,10 +863,13 @@ async function mergeGreen(config, pool, campaignId, { limit = null, forceBy }) {
   const results = [];
   for (const session of rows) {
     try {
-      // Lazy require: votes.js requires services that require this file's
-      // siblings; same pattern conflict-resolver uses.
-      const { checkAndMerge } = require('../routes/votes');
-      const r = await checkAndMerge(config, pool, session, { force: true, forceBy });
+      const platform = require('../workflow/platform.ts');
+      const forced = await platform.forceMerge({
+        sessionId: session.id, appId: session.app_id, userId: forceBy?.id ?? null, username: forceBy?.username ?? null,
+      });
+      const r = forced.status === 'accepted' || forced.status === 'replayed'
+        ? { merged: await platform.waitForMerge(session.id, MERGE_GREEN_WAIT_MS), reason: 'not merged yet' }
+        : { merged: false, reason: forced.reason || forced.status };
       if (r && r.merged) {
         await pool.query(
           `UPDATE maintenance_campaign_apps SET state = 'merged', updated_at = NOW() WHERE id = $1`,

@@ -233,6 +233,100 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
       },
     },
 
+    // The merge gate, measured (routes/votes.js evaluateMergeGate): the live
+    // revision, the protected-settings check, the votes, the lock, the
+    // mirror's merge, the checks, the shots, the platform variables, main's
+    // health. It writes what it found for the card and says in the thread
+    // what somebody has to do; the claim is the transition's, under the
+    // proposal's lock.
+    [WORK.gate]: {
+      maxAttempts: 3,
+      backoffMs: quick,
+      leaseMs: 180000,
+      async run({ input }): Promise<Json> {
+        const { rows: [row] } = await pool.query(
+          `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.self_hosted AS app_self_hosted, a.created_by AS app_created_by
+             FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [Number(input.sessionId)]);
+        if (!row || row.status !== 'promoted') return { ready: false, blockReason: 'not_in_review' };
+        const out = await legacy('routes/votes').evaluateMergeGate(config, pool, row, {
+          force: !!input.force, forceBy: input.forcedBy ? { username: input.forcedBy } : null,
+        });
+        if (out?.ready) {
+          return { ready: true, head: out.head, epoch: out.epoch, explicitApproval: !!out.explicitApproval,
+            explicitReason: out.explicitReason ?? null, mainPassThrough: !!out.mainPassThrough, tally: out.tally ?? null };
+        }
+        const reason = out?.blockReason || (out?.revisionBlocked ? 'revision_unverified' : out?.reviewReset ? 'review_reset'
+          : out?.waitingForWindow ? 'window' : out?.awaitingOtherMember ? 'awaiting_member' : out?.awaitingAdmin ? 'awaiting_admin'
+            : 'votes');
+        return { ready: false, blockReason: reason, ...(out?.checkState ? { checkState: out.checkState } : {}) };
+      },
+    },
+
+    // GitHub is asked to merge it, at exactly the head the claim was for
+    // (routes/votes.js attemptMerge). A retry after it asked reads the pull
+    // request first: a lost answer is observed, never asked twice. Spent
+    // with GitHub never answering, the proposal waits `unconfirmed`.
+    [WORK.attempt]: {
+      maxAttempts: 6,
+      backoffMs: (n) => Math.min(60 * 1000, 5000 * 2 ** (n - 1)),
+      leaseMs: 120000,
+      async run(ctx): Promise<Json> {
+        const out = await legacy('routes/votes').attemptMerge(config, pool, Number(ctx.input.sessionId), {
+          head: ctx.input.head ?? null, resumeFrom: ctx.resumeFrom, checkpoint: ctx.checkpoint,
+        });
+        return JSON.parse(JSON.stringify(out)) as Json;
+      },
+    },
+
+    // Did GitHub merge it? (An attempt it never answered, or a claim an
+    // older release made and lost.) A failed read reports nothing to act on
+    // and the clock asks again.
+    [WORK.observe]: {
+      maxAttempts: 2,
+      backoffMs: () => 10000,
+      async run({ input }): Promise<Json> {
+        const row = await session(Number(input.sessionId));
+        const repo = row?.repo_url ? parseGithubUrl(row.repo_url) : null;
+        if (!row || !repo || !row.pr_number) return { merged: false, gone: true };
+        const mock = row.source === 'imported' && legacy('config').usesMockGithubForImports();
+        const gh = mock ? legacy('services/github-mock') : github();
+        if (!mock && !gh.isEnabled()) throw new Error('GitHub is not configured');
+        try {
+          const pr = await gh.getPR(repo.owner, repo.repo, row.pr_number);
+          if (pr?.merged) return { merged: true, sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null };
+          return { merged: false, state: pr?.state || null };
+        } catch (err) {
+          if (gone(err)) return { merged: false, gone: true };
+          throw err;
+        }
+      },
+    },
+
+    // A sync with main (services/sync-main.js runSyncWork): the worker turn
+    // as a durable step over this item's checkpoint, so a restart follows
+    // the turn the worker still runs and then does what comes after it.
+    [WORK.sync]: {
+      resumable: true,
+      maxAttempts: 2,
+      maxLostAttempts: 20,
+      leaseMs: 120000,
+      concurrency: 4,
+      async run(ctx): Promise<Json> {
+        const { input, signal } = ctx;
+        const durableSteps = legacy('services/durable-steps');
+        const steps = durableSteps.durable({
+          resumeFrom: ctx.resumeFrom, checkpoint: ctx.checkpoint, signal, attempt: ctx.attempt,
+          lostAttempts: ctx.lostAttempts || 0, owner: `proposal/sync:${input.sessionId}:${input.n}`,
+        });
+        const out = await legacy('services/sync-main').runSyncWork(config, pool, {
+          sessionId: Number(input.sessionId), reason: String(input.reason), measureFirst: !!input.measureFirst, steps,
+        });
+        await steps.flush();
+        steps.fence();
+        return JSON.parse(JSON.stringify(out)) as Json;
+      },
+    },
+
     // One of the Homeroom bot's proposals moved (up for a vote, closed): the
     // activity tray of whoever asked for it reads again.
     [WORK.bot]: {

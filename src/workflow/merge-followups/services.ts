@@ -260,9 +260,5 @@ export function mergeFollowupsNotifiers({ config, pool }: Deps): Record<string, 
       const push = legacy('services/mobile-push');
       for (const r of rows) push.scheduleBadgeSync(r.user_id);
     },
-    // The next merge for the app: the queue's drain (backed by the 4-minute
-    // eligible-merge sweeper when this kick is lost).
-    kickQueue: (n) => legacy('services/conflict-resolver')
-      .checkAndResolveConflicts(config, { app_id: n.appId, excludeSessionId: n.excludeSessionId }),
   };
 }

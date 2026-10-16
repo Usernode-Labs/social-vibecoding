@@ -603,10 +603,10 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
   // the whole of it, and the board's banner is how it is seen
   // (main-pause-store). A channel carries no activity.
   if ((verdict.state === 'passing' && detail.flake) || detail.disjoint) {
-    kickQueue(config, app.id, 'post-flake');
+    await kickQueue(config, app.id, 'post-flake');
   } else if ((verdict.state === 'passing' || detail.flakesOnly) && wasPaused) {
     // The pause lifted; whatever was approved meanwhile can go.
-    kickQueue(config, app.id, 'post-green');
+    await kickQueue(config, app.id, 'post-green');
   }
   // Red then green on one commit: the tests that failed are flaky.
   if (verdict.state === 'passing' && detail.flake && firstRun) {
@@ -627,11 +627,14 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
   return { state: verdict.state, sha: mergeSha, detail };
 }
 
-function kickQueue(config, appId, why) {
+// Main turned green (or an admin resumed merges): the app's merge queue is
+// asked for the merges the pause held back (src/workflow/merge-queue/).
+async function kickQueue(config, appId, why) {
+  void config;
   try {
-    require('./merge-queue').enqueue(config, appId);
+    await require('../workflow/platform.ts').wantMerge({ appId, reason: `main-${why}` });
   } catch (err) {
-    log.warn('main-watch', `${why} enqueue failed`, { appId, err: err.message });
+    log.warn('main-watch', `${why}: could not ask the merge queue`, { appId, err: err.message });
   }
 }
 
@@ -959,7 +962,7 @@ async function recheckOne(config, pool, row, max) {
     appId: app.id, slug: app.slug, sha: mergeSha, state, recheck: n, flake: !!detail.flake,
     ...(detail.flakesOnly ? { flakesOnly: detail.flakesOnly.length } : {}),
   });
-  if (state === 'passing' || detail.flakesOnly) kickQueue(config, app.id, 'post-recheck');
+  if (state === 'passing' || detail.flakesOnly) await kickQueue(config, app.id, 'post-recheck');
   if (state === 'passing') {
     await noteFlakes(config, pool, app, mergeSha, [red, before.firstRun].filter(Boolean));
   } else if (detail.disjoint) {
@@ -990,7 +993,7 @@ async function resume(config, pool, appId, { by = null } = {}) {
     appId, sha: rows[0].main_check_resumed_sha, by: by && by.username,
   });
   notePauseChange(pool, appId, { was_paused: rows[0].main_check_resumed_sha, now_paused: null }, { by: 'admin' });
-  kickQueue(config, appId, 'post-resume');
+  await kickQueue(config, appId, 'post-resume');
   return describe(rows[0]);
 }
 
