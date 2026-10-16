@@ -150,6 +150,15 @@ const TopochainChallenges = {
   _detailHash: null,
   // The hashchange listener open() installs, kept so close() can remove it.
   _hashListener: null,
+  // The `sv:app-activity-recorded` listener open() installs (#5235), kept so
+  // close() can remove it. The literal string is spelled in open() because
+  // this module stays import-free (see _illustrationOf).
+  _activityListener: null,
+  // Set when an acknowledged app-visit upload arrives while a first load of
+  // the grid is still out; the end of loadChallenges takes it as one _reread
+  // once that read has settled, so the skeleton is never put back over a load
+  // that already started. Reset by close().
+  _rereadQueued: false,
 
   // Challenge detail overlay state. `_detailChallenge` is the clicked
   // challenge-grid item (already carries card_preview/detail_modal); the
@@ -341,6 +350,24 @@ const TopochainChallenges = {
       window.addEventListener('hashchange', TopochainChallenges._hashListener);
     }
     TopochainChallenges._watchLiveReads();
+    // An acknowledged app-visit upload (#5235): the visit that completes a
+    // "Try apps" challenge is often sent as the person leaves the app, at the
+    // same moment this read runs, so it can be answered before the credit
+    // lands — and after that nothing re-read until a reload. The upload
+    // announces itself on document once it is acknowledged, so the grid reads
+    // again then and the bar moves on its own.
+    if (!TopochainChallenges._activityListener
+        && typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      TopochainChallenges._activityListener = () => {
+        if (!TopochainChallenges._open) return;
+        if (TopochainChallenges._challengesLoading) {
+          TopochainChallenges._rereadQueued = true;
+          return;
+        }
+        TopochainChallenges.loadChallenges({ fresh: true });
+      };
+      document.addEventListener('sv:app-activity-recorded', TopochainChallenges._activityListener);
+    }
     TopochainChallenges.loadChallenges();
   },
 
@@ -369,6 +396,13 @@ const TopochainChallenges = {
       window.removeEventListener('hashchange', TopochainChallenges._hashListener);
     }
     TopochainChallenges._hashListener = null;
+    if (TopochainChallenges._activityListener
+        && typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+      document.removeEventListener('sv:app-activity-recorded', TopochainChallenges._activityListener);
+    }
+    TopochainChallenges._activityListener = null;
+    // An unresolved queued re-read dies with the screen, like _pendingDeepLink.
+    TopochainChallenges._rereadQueued = false;
     // An unresolved deep link dies with the screen. Keeping it would make a
     // much later, unrelated visit to this pane pop an overlay the user
     // never asked for.
@@ -430,6 +464,9 @@ const TopochainChallenges = {
       TopochainChallenges._challengesError = null;
       TopochainChallenges._mine = new Map();
       TopochainChallenges._onboarding = null;
+      // Nothing to re-read for an event-less pane: a queued acknowledgement
+      // waits for a read that can actually answer.
+      TopochainChallenges._rereadQueued = false;
       TopochainChallenges._renderGrid();
       return;
     }
@@ -462,6 +499,18 @@ const TopochainChallenges = {
     TopochainChallenges._renderGrid();
     // Decorations land in a second pass so the grid never waits on them.
     TopochainChallenges._loadMine(eventId, init);
+    // An acknowledged app-visit upload arrived while this first load was out
+    // (#5235): take its re-read now, once, in place — the cards stay up and a
+    // failed read keeps them (_reread). A first load that FAILED keeps the
+    // flag cleared without one: re-reading over an error state would leave
+    // _challengesError disagreeing with a cards grid, and the next
+    // acknowledgement or opening reads again anyway.
+    if (TopochainChallenges._rereadQueued) {
+      TopochainChallenges._rereadQueued = false;
+      if (res.ok && res.data?.success && Array.isArray(res.data.data)) {
+        void TopochainChallenges._reread(eventId);
+      }
+    }
   },
 
   // A re-read of the grid already on screen (#3985). The cards stay up while
