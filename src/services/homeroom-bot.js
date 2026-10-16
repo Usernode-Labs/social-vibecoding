@@ -127,6 +127,7 @@ function voiceModule(deps) { return (deps && deps.voice) || require('./homeroom-
 // Its proposals for requests closed some other way (a person's change, a
 // close vote, GitHub): withdrawn, which frees their slots.
 function closedRequests() { return require('./homeroom-bot-closed-requests'); }
+function redChanges() { return require('./homeroom-bot-red-changes'); }
 
 // One name, in the live module, which compares thread authors against it.
 const { BOT_USERNAME } = live;
@@ -1666,6 +1667,11 @@ async function refreshApp(pool, app, {
       appId: app.id, openNumbers: issues.map((issue) => Number(issue.number)), deps: { github },
     });
     if (withdrawn.length) capRoom = await capRoomFor(pool, bot, app.id, settings);
+    // 16 Oct 2026 (K2): and a change of the bot's left red, handed to a
+    // person and untouched for days, lets its slot go the same way
+    // (homeroom-bot-red-changes.js).
+    const red = await redChanges().sweepStaleRedChanges(pool, { appId: app.id });
+    if (red.withdrawn.length) capRoom = await capRoomFor(pool, bot, app.id, settings);
   }
 
   // A request closed by hand on GitHub also closes the platform's own row
@@ -2479,13 +2485,56 @@ async function simulateCaps(pool, bot, appId, verdict, settings = null) {
   return null;
 }
 
+/**
+ * The bot's slots on an app: what PROPOSALS_PER_APP_CAP counts. A change of
+ * its up for a vote or being merged, and (16 Oct 2026) a build under way
+ * that will become one: the newest live run of a request that was found
+ * ready, not held, not finished and not proposed yet, waiting its turn to be
+ * built or being built, in the window a build is still believed in
+ * (ABANDONED_LIVE_WINDOW_DAYS). Before, only the proposals counted, so the
+ * bot started a build for every slot that freed while its earlier builds
+ * were still running and went past the cap (eleven cap_freed builds at once
+ * on 15 October, seven open changes against five slots). A build of a
+ * request that already has an open change of the bot's is not a second
+ * slot. One row per slot, oldest first: `kind` 'proposal' or 'build',
+ * `issue_number`, `session_id` (the change, or the build's session once it
+ * has one), `run_id` (a build's), `status`, `since`.
+ */
+const SLOT_HOLDERS_SQL = `
+  SELECT 'proposal' AS kind, cs.id AS session_id, NULL::int AS run_id, cs.status,
+         COALESCE(cs.promoted_at, cs.created_at) AS since,
+         COALESCE(cs.linked_issues[1],
+                  (SELECT r.issue_number FROM homeroom_bot_runs r
+                    WHERE r.proposal_session_id = cs.id ORDER BY r.id DESC LIMIT 1)) AS issue_number
+    FROM chat_sessions cs
+   WHERE cs.app_id = $1 AND cs.user_id = $2 AND cs.status IN ('promoted', 'merging')
+  UNION ALL
+  SELECT 'build' AS kind, r.build_session_id AS session_id, r.id AS run_id, COALESCE(bs.status, 'waiting') AS status,
+         COALESCE(bs.created_at, r.live_build_waiting_at, r.created_at) AS since, r.issue_number
+    FROM homeroom_bot_runs r
+    LEFT JOIN chat_sessions bs ON bs.id = r.build_session_id
+   WHERE r.app_id = $1 AND r.mode = 'live' AND r.verdict = 'ready'
+     AND r.build_ok IS NULL AND r.proposal_session_id IS NULL AND r.cap_suppressed IS NULL
+     AND (r.live_build_waiting_at IS NOT NULL OR r.build_session_id IS NOT NULL)
+     AND (bs.id IS NULL OR bs.status IN ('active', 'paused'))
+     AND r.created_at > NOW() - make_interval(days => $3)
+     AND NOT EXISTS (
+       SELECT 1 FROM homeroom_bot_runs n
+        WHERE n.app_id = r.app_id AND n.issue_number = r.issue_number AND n.mode = 'live' AND n.id > r.id)
+     AND NOT EXISTS (
+       SELECT 1 FROM chat_sessions p
+        WHERE p.app_id = r.app_id AND p.user_id = $2 AND p.status IN ('promoted', 'merging')
+          AND r.issue_number = ANY(p.linked_issues))
+   ORDER BY since ASC NULLS LAST`;
+
+async function slotHolders(pool, bot, appId) {
+  const { rows } = await pool.query(SLOT_HOLDERS_SQL, [appId, bot.id, ABANDONED_LIVE_WINDOW_DAYS]);
+  return rows;
+}
+
+/** How many of the app's PROPOSALS_PER_APP_CAP slots are taken (slotHolders). */
 async function openBotProposalCount(pool, bot, appId) {
-  const { rows } = await pool.query(
-    `SELECT COUNT(*)::int AS cnt FROM chat_sessions
-      WHERE app_id = $1 AND user_id = $2 AND status IN ('promoted', 'merging')`,
-    [appId, bot.id],
-  );
-  return rows[0]?.cnt || 0;
+  return (await slotHolders(pool, bot, appId)).length;
 }
 
 // The bot's proposals up for a vote on every app, counted as the Propose
@@ -5372,6 +5421,9 @@ function replyFailedWhy(error) {
   const e = String(error || '');
   if (/^budget: wall clock/.test(e)) return 'it ran out of time';
   if (/^unparseable:/.test(e)) return 'its answer came back unreadable';
+  // H1: say plainly that nothing changed, never that it is done.
+  if (/could not be pushed/.test(e)) return 'its update could not be saved to the change, so the change is as it was';
+  if (/produced no change/.test(e)) return 'it made no change';
   return 'something went wrong while it worked on it';
 }
 
@@ -5757,8 +5809,14 @@ async function runFollowUp(pool, config, {
     if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);
   };
 
+  // 16 Oct 2026 (H1): a commit the turn made that could not be pushed
+  // (worker.js unpushedCommit: ahead > 0, push_ok=0) is a failed update,
+  // whatever the turn's own JSON says. On PR #4851 the turn answered as if
+  // it had made the change, its push was refused, and the person who asked
+  // was told "Done" twice while the change stayed as it was.
+  const pushRefused = mode === 'build' && !!result && result.pushOk === false && Number(result.ahead) > 0;
   // Said it would revise, but the push moved nothing.
-  if (parsed && parsed.action === 'revise' && !moved) {
+  if (parsed && !moved && (parsed.action === 'revise' || pushRefused)) {
     const why = turnFailed ? `the turn failed (${turnFailed}), so its change was not kept`
       : mode === 'build' && result.pushOk === false
         ? 'its change could not be pushed' : 'the turn produced no change';
@@ -5772,7 +5830,7 @@ async function runFollowUp(pool, config, {
     await recordSnapshot(runId);
     await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
     log.warn('homeroom-bot', 'Follow-up said it revised, but the change did not move', {
-      app: app.slug, issueNumber, sessionId: session.id, why, runId,
+      app: app.slug, issueNumber, sessionId: session.id, why, runId, action: parsed.action, pushRefused,
     });
     const postedAt = [];
     // What happened in plain words, and how to start it again; the record
@@ -6129,6 +6187,12 @@ async function runChecksFix(pool, config, {
       .then(() => (deps.fixedCheckSync || require('./fixed-check-sync'))
         .syncBeforeFix({ config, pool, sessionId: session.id, head }))
       .catch(() => null);
+    if (synced && !synced.synced) {
+      // 16 Oct 2026 (H3): a sync that did not happen says why.
+      log.info('homeroom-bot', 'Did not bring its proposal up to date with main before fixing its checks', {
+        app: app.slug, issueNumber, sessionId: session.id, head, why: synced.why || null,
+      });
+    }
     if (synced?.synced) {
       runId = await insertRun(pool, {
         ...billingOf(item, runMode),
@@ -6187,6 +6251,19 @@ async function runChecksFix(pool, config, {
         });
         return { ran: true, verdict, runId, acted: 'checks_synced' };
       }
+      // 16 Oct 2026 (H3): the hand-off records why it was not synced first,
+      // beside the run (build_note, which the admin console and the
+      // connector's run ledger show), and logs it. Before, the reason was
+      // dropped, and #5193 sat red with nothing to say why.
+      const fcs = deps.fixedCheckSync || require('./fixed-check-sync');
+      const words = typeof fcs.declinedWords === 'function' ? fcs.declinedWords(synced?.why) : null;
+      if (words) {
+        await pool.query('UPDATE homeroom_bot_runs SET build_note = $2 WHERE id = $1',
+          [runId, `Not brought up to date with main before handing it over: ${words}.`]).catch(() => {});
+      }
+      log.info('homeroom-bot', 'Did not bring its proposal up to date with main before handing it over', {
+        app: app.slug, issueNumber, sessionId: session.id, head, why: synced?.why || null, runId,
+      });
     }
     // Only shots that could not reach a change, and no data was added: the
     // change works, and its shots card already says why each was skipped, so
@@ -11269,6 +11346,8 @@ module.exports = {
   lastRunsByIssue,
   BLOCKERS,
   capRoomFor,
+  slotHolders,
+  SLOT_HOLDERS_SQL,
   simulateCaps,
   planTripwire,
   parseVerdict,

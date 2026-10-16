@@ -326,6 +326,8 @@ test('#11 (WP3): the Homeroom bot withdrawing its own proposal says so, never th
     ['superseded', '“Watering reminders” was withdrawn: another change for the same request covers it.'],
     // Its requests closed another way: a person's change, a vote, GitHub.
     ['request-closed', '“Watering reminders” was withdrawn: the request it was built for is closed.'],
+    // Red, handed to a person, and untouched for days (homeroom-bot-red-changes.js).
+    ['red-checks', '“Watering reminders” was withdrawn: its checks failed and nobody changed it for a few days.'],
     ['withdrawn', '“Watering reminders” was withdrawn.'],
   ]) {
     const { subject, spies, restore } = loadWithStubs();

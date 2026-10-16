@@ -536,6 +536,54 @@ async function sweep({ config, pool, shouldStop = () => false }, deps = defaultD
   return result;
 }
 
+/**
+ * Pure (16 Oct 2026): why a proposal was not brought up to date with main,
+ * in a few words, from a `why` this module resolves. Recorded beside the
+ * bot's hand-off (homeroom-bot.js runChecksFix) and logged by the sweep,
+ * so "it did not sync" always comes with a reason: #5193 sat red with
+ * nothing to say why the sync before its hand-off had not happened.
+ */
+const DECLINED_WORDS = {
+  disabled: 'syncing with main is switched off',
+  no_verdict: 'its checks have no verdict on this commit yet',
+  gone: 'it is no longer up for a vote',
+  imported: 'it was imported from a pull request opened elsewhere',
+  head_moved: 'its commit moved while it was being looked at',
+  already_tried: 'it was already brought up to date once for this failure',
+  nothing_fixed: 'none of its failing checks are ones main could have fixed',
+  unit_suite_only: 'only the unit suite fails, and main is not green since',
+  main_fails: 'main fails the same check',
+  own_failure: 'no other change fails the same check, so the failure looks like its own',
+  not_failing: 'its checks are not failing',
+  busy: 'a turn was running on it',
+  integrating: 'it was being merged',
+  unmeasured: 'how far behind main it is could not be measured',
+  level: 'it is already up to date with main',
+  conflict: 'main does not merge into it cleanly',
+  claimed: 'another sync had just taken it',
+  not_pushed: 'the synced commit could not be pushed',
+  threw: 'the sync failed',
+};
+
+function declinedWords(why) {
+  return DECLINED_WORDS[String(why || '')] || `it was not synced (${String(why || 'no reason given').slice(0, 60)})`;
+}
+
+// The last reason each proposal was declined for, so a sweep says so once
+// when it changes rather than on every pass.
+const lastDeclined = new Map();
+
+/** Pure: the sweep's declines that changed since `seen`, which it updates. */
+function freshDeclines(skipped, seen = lastDeclined) {
+  const fresh = {};
+  for (const [id, why] of Object.entries(skipped || {})) {
+    if (seen.get(id) === why) continue;
+    seen.set(id, why);
+    fresh[id] = why;
+  }
+  return fresh;
+}
+
 let timer = null;
 let firstPass = null;
 let inFlight = null;
@@ -546,6 +594,12 @@ function start(config, pool) {
     inFlight = sweep({ config, pool, shouldStop: () => timer === null })
       .then((result) => {
         if (result.candidates) log.info('fixed-check-sync', 'Fixed-on-main sweep', result);
+        const fresh = freshDeclines(result.skipped);
+        if (Object.keys(fresh).length) {
+          log.info('fixed-check-sync', 'Proposals with failing checks not synced with main', {
+            declined: Object.fromEntries(Object.entries(fresh).map(([id, why]) => [id, { why, words: declinedWords(why) }])),
+          });
+        }
       })
       .catch((err) => log.warn('fixed-check-sync', 'Fixed-on-main sweep stopped', { err: err.message }))
       .finally(() => { inFlight = null; });
@@ -566,6 +620,9 @@ async function stop() {
 }
 
 module.exports = {
+  declinedWords,
+  DECLINED_WORDS,
+  freshDeclines,
   select,
   selectOwn,
   sweep,

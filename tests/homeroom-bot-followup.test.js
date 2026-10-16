@@ -696,7 +696,30 @@ test('voice on: a failed turn puts its asks back, and the ones that gave up hear
   assert.deepEqual(h.deps.voice.calls.released.map((r) => r.refund), [false], 'a real try');
   const report = h.deps.voice.calls.reports[0];
   assert.equal(report.outcome.action, 'failed');
-  assert.equal(report.outcome.why, 'something went wrong while it worked on it');
+  assert.equal(report.outcome.why, 'it made no change', 'H1: what happened, in plain words');
+});
+
+test('H1: a commit the turn could not push is a failed update, whatever the turn answered (PR #4851)', async (t) => {
+  const h = harness({
+    comments: [{ author: 'evan', body: 'Make it #000', createdAt: '2026-09-26T11:30:00Z' }],
+    result: { lastResultText: '```json\n{"action":"answer","reply":"Done: the button is black now."}\n```', pushOk: false, ahead: 1, sha: NEW_HEAD },
+  });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'failed');
+  assert.equal(h.calls.reconciled.length, 0);
+  assert.equal(insertOf(h).params[18], 'revise: its change could not be pushed');
+  assert.equal(h.calls.posts[0].kind, 'followup_failed');
+  assert.doesNotMatch(h.calls.posts[0].text, /Done/, 'never "Done" for a change that did not move');
+
+  // The voice says so in plain words when the ask gives up.
+  const v = harness({ result: { lastResultText: '```json\n{"action":"answer","reply":"Done."}\n```', pushOk: false, ahead: 2, sha: NEW_HEAD } });
+  v.deps.voice = voiceStub([ASK], { gaveUp: [ASK] });
+  assert.equal((await run(t, v)).verdict, 'failed');
+  assert.equal(v.deps.voice.calls.reports[0].outcome.why, 'its update could not be saved to the change, so the change is as it was');
+
+  // An answer with nothing to push is still an answer.
+  const plain = harness({ result: { lastResultText: '```json\n{"action":"answer","reply":"It already does that."}\n```', pushOk: false, ahead: 0, sha: OLD_HEAD } });
+  assert.notEqual((await run(t, plain)).verdict, 'failed');
 });
 
 // ── Getting it queued ────────────────────────────────────────────────────

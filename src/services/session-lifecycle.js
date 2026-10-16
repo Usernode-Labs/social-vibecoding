@@ -475,7 +475,9 @@ async function teardownStagingForSession({ pool, sessionId, reason = 'idle' }) {
 //             (#11, WP3) close with 'withdrawn' (asked for in its DM),
 //             'superseded' (another proposal for the same request covers it)
 //             or 'request-closed' (every request it was built for closed
-//             another way: homeroom-bot-closed-requests.js).
+//             another way: homeroom-bot-closed-requests.js), or 'red-checks'
+//             (red, handed to a person and untouched for days:
+//             homeroom-bot-red-changes.js).
 //   purgeCc - destroy the CC volume immediately (skip retention). Default
 //             false. The activeWorkers in-flight set (routes/sessions.js)
 //             is cleared by the HTTP handler, not here.
@@ -601,6 +603,8 @@ async function finalizeArchivedSession({
         ? `${label} was withdrawn: another change for the same request covers it.`
       : reason === 'request-closed'
         ? `${label} was withdrawn: the request it was built for is closed.`
+      : reason === 'red-checks'
+        ? `${label} was withdrawn: its checks failed and nobody changed it for a few days.`
       : reason === 'withdrawn'
         ? `${label} was withdrawn.`
       : userId != null && session.owner_username

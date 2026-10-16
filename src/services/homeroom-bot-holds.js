@@ -112,6 +112,23 @@ function goingText({ asker, holders = [] }) {
 }
 
 /**
+ * Pure (16 Oct 2026, H4): whether a mention of the bot asks for the request
+ * to be closed, or says it is done, rather than asking the bot to build it.
+ * On #4572 "@Homeroom bot I think this is done, and can be closed" was read
+ * as a go-ahead by its own holder, and the bot answered "I'm taking this up
+ * now" and built nothing. Such a mention is left to the bot's voice, which
+ * offers a vote on closing the request (homeroom-bot-voice.js
+ * offer_close_request). Conservative: a mention that also asks for a build
+ * ("build it", "go ahead", "take it up") is still a go-ahead.
+ */
+const CLOSE_WORDS = /\bclos(?:e|ed|ing)\b|\b(?:is|it's|its|was|already|been|now)\s+(?:done|fixed|shipped|resolved|merged|live)\b|\bno longer needed\b|\bnot needed any ?more\b/i;
+const BUILD_WORDS = /\b(?:build|make|implement)\s+(?:it|this|that)\b|\bgo ahead\b|\btake (?:it|this) up\b|\bstart (?:on )?(?:it|this)\b/i;
+function asksToClose(text) {
+  const words = String(text || '');
+  return CLOSE_WORDS.test(words) && !BUILD_WORDS.test(words);
+}
+
+/**
  * Pure: what to do about one request a person holds, from its holds, the
  * recent mentions of the bot in its discussion (oldest first) and the
  * bot's own answers there so far (`notes`: { kind, created_at }).
@@ -132,6 +149,8 @@ function decide({ holds = [], mentions = [], notes = [] }) {
   const pending = mentions.filter((m) => toMs(m.created_at) > answeredAt);
   if (!pending.length) return { action: 'none' };
   const mention = pending[pending.length - 1];
+  // A mention asking to close it is not a go-ahead: the voice answers it.
+  if (asksToClose(mention.content)) return { action: 'none', closing: true };
   const others = active.filter((hold) => !same(hold.username, mention.username));
   // Holding it yourself and asking is asking it to go ahead.
   if (!others.length) return { action: 'go', mention, others };
@@ -160,7 +179,7 @@ function mentionPattern() {
 /** Recent mentions of the bot by people, in the discussions of `numbers`, oldest first. */
 async function recentMentions(pool, appId, numbers, { windowHours = MENTION_WINDOW_HOURS } = {}) {
   const { rows } = await pool.query(
-    `SELECT m.thread_ref AS n, m.id, m.created_at, u.username
+    `SELECT m.thread_ref AS n, m.id, m.created_at, u.username, m.content
        FROM chat_messages m
        JOIN users u ON u.id = m.user_id
       WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = ANY($2::int[])
@@ -285,6 +304,7 @@ module.exports = {
   holdsByPerson,
   leavingText,
   goingText,
+  asksToClose,
   decide,
   recentMentions,
   answerMentions,

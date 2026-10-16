@@ -1115,7 +1115,8 @@ test('a ready verdict is held before it is built when the bot is at its ceiling 
   const pool = {
     async query(sql) {
       const s = String(sql);
-      if (/FROM chat_sessions\s+WHERE app_id = \$1/.test(s)) return { rows: [{ cnt: perApp }] };
+      // The app's slots (slotHolders): one row each.
+      if (s === bot.SLOT_HOLDERS_SQL) return { rows: Array.from({ length: perApp }, (_, i) => ({ kind: 'proposal', issue_number: i + 1 })) };
       if (/FROM chat_sessions\s+WHERE user_id = \$1/.test(s)) {
         assert.match(s, /status IN \('promoted', 'merging'\) AND is_headless = FALSE/, 'counted as the Propose route counts');
         return { rows: [{ cnt: total }] };
