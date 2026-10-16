@@ -2095,6 +2095,14 @@
     "text": "Invite people",
     "description": "Label of the search field in the \"New message\" dialog when creating a group chat."
   },
+  "create.inviteNote": {
+    "text": "Note for the people you invite (optional)",
+    "description": "Label of the optional note field in the New message dialog's Group tab, under the group name: a short line the invited people read on their invitation."
+  },
+  "create.inviteNotePlaceholder": {
+    "text": "Why you’re adding them, or what the group is for",
+    "description": "Placeholder of the optional note field in the New message dialog's Group tab."
+  },
   "create.searchPlaceholder": {
     "text": "Search by username",
     "description": "Placeholder of the people search field in the \"New message\" dialog."
@@ -2230,6 +2238,14 @@
   "members.invitePeople": {
     "text": "Invite people",
     "description": "Label of the search field in the \"Group members\" dialog for adding more people to the group chat."
+  },
+  "members.inviteNote": {
+    "text": "Note for the people you invite (optional)",
+    "description": "Label of the optional note field in the Group members dialog, above the search box: a short line the invited people read on their invitation."
+  },
+  "members.inviteNotePlaceholder": {
+    "text": "Why you’re adding them, or what the group is for",
+    "description": "Placeholder of the optional note field in the Group members dialog."
   },
   "members.searchPlaceholder": {
     "text": "Search by username",
@@ -2946,6 +2962,30 @@
   "invitation.accept": {
     "text": "Accept",
     "description": "Button on the invitation banner: accepts the message request or group invitation."
+  },
+  "invitation.groupSummary_one": {
+    "text": "{{title}} · {{count}} member",
+    "description": "First line under the heading of a group invitation card: the group's name and how many people have already joined. {{title}} is the group's name; {{count}} is the number of members who accepted."
+  },
+  "invitation.groupSummary_other": {
+    "text": "{{title}} · {{count}} members",
+    "description": "First line under the heading of a group invitation card: the group's name and how many people have already joined. {{title}} is the group's name; {{count}} is the number of members who accepted."
+  },
+  "invitation.addedYouWithNote": {
+    "text": "@{{username}} added you: {{note}}",
+    "description": "Text of a group invitation card when the inviter wrote a note about why you were added. {{username}} is who added you; keep the @. {{note}} is their note."
+  },
+  "invitation.addedYouWithNoteUnknown": {
+    "text": "@unknown added you: {{note}}",
+    "description": "Text of a group invitation card when the inviter's username is not known and they wrote a note. \"@unknown\" is written as it has always been shown. {{note}} is the inviter's note."
+  },
+  "invitation.addedYouWithNoteSomeone": {
+    "text": "Someone added you: {{note}}",
+    "description": "Text of a group invitation card when it is not known who added you and they wrote a note. {{note}} is the inviter's note."
+  },
+  "invitation.historyNotice": {
+    "text": "Accepting gives you access to the complete retained conversation history.",
+    "description": "Second line under the \"added you\" line of a group invitation card that carries a note. \"Retained\" means the messages the conversation still keeps."
   },
   "header.showList": {
     "text": "Show the conversation list",

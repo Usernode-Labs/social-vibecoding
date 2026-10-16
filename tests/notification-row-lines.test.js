@@ -218,6 +218,23 @@ test('a direct message is headed by who sent it, not by "Messages" (QA 2026-09-2
   assert.equal(anonymous.label, 'Messages');
 });
 
+// #3228: a group invitation row carries the inviter's note after the
+// group's name, so the bell says why too; without a note the row is
+// unchanged.
+test('a group invitation row carries the inviter\'s note after the group', async () => {
+  const withNote = await lines({
+    kind: 'conversation_invite', appName: null, conversationId: 7, conversationKind: 'group',
+    conversationTitle: 'Friday demo crew', conversationInviteNote: 'Planning the Friday demo',
+  });
+  assert.equal(withNote.label, 'Invite');
+  assert.equal(withNote.subject, 'Friday demo crew · Planning the Friday demo');
+  const withoutNote = await lines({
+    kind: 'conversation_invite', appName: null, conversationId: 7, conversationKind: 'group',
+    conversationTitle: 'Friday demo crew',
+  });
+  assert.equal(withoutNote.subject, 'Friday demo crew');
+});
+
 test('the three conversation verbs lost their trailing preposition', async () => {
   // They read "Mentioned you in <conversation>" across one line. Broken in
   // two, "Mentioned you in" sits alone above its object — a sentence cut in

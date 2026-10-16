@@ -286,7 +286,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       const result = req.body?.kind === 'direct'
         ? await conversations.createDirect(pool, req.user, conversations.strictId(req.body.user_id))
         : req.body?.kind === 'group'
-          ? await conversations.createGroup(pool, req.user, req.body.title, req.body.member_ids)
+          ? await conversations.createGroup(pool, req.user, req.body.title, req.body.member_ids, req.body?.invite_note)
           : null;
       if (!result) return sendNotFound(res);
       await pushNotifications(pool, result.notifications);
@@ -347,7 +347,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     const id = conversations.strictId(req.params.id);
     if (!id) return sendNotFound(res);
     try {
-      const result = await conversations.addMembers(pool, req.user, id, req.body?.user_ids);
+      const result = await conversations.addMembers(pool, req.user, id, req.body?.user_ids, req.body?.invite_note);
       if (!result) return sendNotFound(res);
       await pushNotifications(pool, result.notifications);
       pushAudience(result.memberIds, { type: 'conversation_membership_changed', conversationId: id });

@@ -30,12 +30,14 @@ export function ConversationMembersDialog() {
   const snap = useMessagesSnapshot();
   const active = snap.active;
   const [query, setQuery] = useState('');
+  // #3228: the optional note the invited people read on their invitation.
+  const [note, setNote] = useState('');
   const [results, setResults] = useState<ConversationUser[]>([]);
   const [selected, setSelected] = useState<ConversationUser[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const dialog = useDialog('messagesMembers', {
-    onOpen: () => { setQuery(''); setResults([]); setSelected([]); setError(''); },
+    onOpen: () => { setQuery(''); setNote(''); setResults([]); setSelected([]); setError(''); },
   });
 
   useEffect(() => {
@@ -57,7 +59,7 @@ export function ConversationMembersDialog() {
   async function invite() {
     if (!selected.length) return;
     setBusy(true); setError('');
-    try { await inviteMembers(selected.map((user) => user.id)); setSelected([]); setQuery(''); }
+    try { await inviteMembers(selected.map((user) => user.id), note.trim() || undefined); setSelected([]); setQuery(''); setNote(''); }
     catch (err) { setError(err instanceof Error ? err.message : t('messages:members.error.invite')); }
     finally { setBusy(false); }
   }
@@ -110,6 +112,8 @@ export function ConversationMembersDialog() {
         </div>
         {active?.canInvite ? (
           <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
+            <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">{t('messages:members.inviteNote')}</label>
+            <Input value={note} onChange={(event) => setNote(event.target.value.slice(0, 140))} placeholder={t('messages:members.inviteNotePlaceholder')} maxLength={140} autoComplete="off" className="mb-3" />
             <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">{t('messages:members.invitePeople')}</label>
             {selected.length ? <div className="flex flex-wrap gap-1 mb-2">{selected.map((user) => <button type="button" key={user.id} onClick={() => setSelected((current) => current.filter((item) => item.id !== user.id))} className="rounded-full bg-violet-100 dark:bg-violet-950 text-violet-700 dark:text-violet-300 px-2 py-1 text-xs">@{user.username} ×</button>)}</div> : null}
             <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('messages:members.searchPlaceholder')} autoComplete="off" />
