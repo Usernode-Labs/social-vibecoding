@@ -49,7 +49,6 @@ const KINDS = Object.freeze([
   'session',        // a turn or an operation on a dev session (active-workers.js)
   'sync',           // a sync of a session's branch with main (sync-main.js)
   'handoff',        // a hand-off pipeline (handoff-pipeline.js)
-  'shots',          // a before & after shots run, by session (shots-orchestrator.js)
   'teardown',       // an app being torn down (app-teardown.js)
   'deploy',         // a production deploy, by app slug (app-deploy-status.js)
   'agent_turn',     // the Mayor's turn in an agent session (mayor/agent-turn.js)

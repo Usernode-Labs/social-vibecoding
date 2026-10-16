@@ -7,8 +7,8 @@
 //                the per-process queue or the coordinator), the checks run
 //                (visuals.captureForSession in its workflow mode, without
 //                its in-process seat), the Jobs and the runtime by identity;
-//   hand-offs    to flows later steps migrate: the merge queue, the
-//                Homeroom bot's notes and before & after shots.
+//   hand-offs    to flows later steps migrate: the merge queue and the
+//                Homeroom bot's notes.
 //
 // The handlers keep no state of their own in process memory: what one needs
 // is in its input, in Postgres, or on the cluster. The hand-offs call into
@@ -257,14 +257,16 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           await clearRun(input.sessionId, input.runId);
         }
         const stagingResult = { runtimeName: input.runtimeName, runtimeKind: input.runtimeKind, stagingUrl: input.url, timings: null };
+        const report: { uiAffecting?: boolean } = {};
         const result = await visuals().captureForSession(config, row, a, input.head, stagingResult, {
           trigger: input.trigger,
           workflow: {
             runId: claimRunId(input.sessionId, input.runId, attempt), runKey: input.runId, signal,
-            unitRunId: unitEarlyRunId(input.sessionId, input.n), queuedSince,
+            unitRunId: unitEarlyRunId(input.sessionId, input.n), queuedSince, report,
           },
         });
-        return (result ?? { outcome: 'blocked', reason: 'The checks run produced no result' }) as Json;
+        const out = (result ?? { outcome: 'blocked', reason: 'The checks run produced no result' }) as Record<string, Json>;
+        return (report.uiAffecting ? { ...out, uiUndeclared: String(input.head).toLowerCase() } : out) as Json;
       },
     },
 
@@ -387,22 +389,22 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
       },
     },
 
-    // Hand-off: before & after shots, started beside the checks once the
-    // preview serves (visuals.startShotsIfIdle: only while no turn holds
-    // the session; the verdict's follow-ups start them otherwise).
+    // An item an older release queued, when this work started the shots:
+    // its head is handed to the shots machine (the transition that reads
+    // this result tells it). New previews tell it by message.
     [WORK.ready]: {
       maxAttempts: 3,
       async run({ input }): Promise<Json> {
-        await visuals().startShotsIfIdle(config, pool, input.sessionId, input.head);
-        return { started: true };
+        return /^[0-9a-f]{40}$/.test(String(input.head || '')) ? { handOff: String(input.head).toLowerCase() } : { done: true };
       },
     },
 
     // Hand-off: what a settled verdict sets off, each awaited so the item
     // reports only once it is done. The Homeroom bot's note (a change of its
-    // that is ready to try, or one whose checks fail), the app's merge queue
-    // for a passing or skipped proposal still up for review, and before &
-    // after shots for the head.
+    // that is ready to try, or one whose checks fail), and the app's merge
+    // queue for a passing or skipped proposal still up for review. (The
+    // shots machine hears the head from the transition; an item an older
+    // release queued hands it over in its result.)
     [WORK.followUps]: {
       maxAttempts: 3,
       async run({ input }): Promise<Json> {
@@ -419,24 +421,20 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
             await legacy('services/homeroom-bot').noteProposalChecks(pool, { sessionId });
           }
         }
-        if (/^[0-9a-f]{40}$/.test(String(head || ''))) {
-          await legacy('services/shots-orchestrator').scheduleForSession(config, {
-            pool, sessionId: Number(sessionId), headSha: String(head).toLowerCase(), trigger: 'preview-ready',
-          });
-        }
+        if (!input.shotsTold && /^[0-9a-f]{40}$/.test(String(head || ''))) return { done: true, handOff: String(head).toLowerCase() };
         return { done: true };
       },
     },
 
-    // Hand-offs once per failure streak, for a change whose preview will not
-    // start: the Homeroom bot's note on a change of its, and for an imported
-    // pull request, its before & after shots (planned when it was submitted)
-    // told there is nothing to take shots of.
+    // Hand-off once per failure streak, for a change whose preview will not
+    // start: the Homeroom bot's note on a change of its. (An imported pull
+    // request's shots hear it from the transition; an item an older release
+    // queued hands that over in its result.)
     [WORK.stopped]: {
       maxAttempts: 3,
       async run({ input }): Promise<Json> {
         await legacy('services/homeroom-bot-dm').noteChangeStopped(pool, input.sessionId, { why: 'preview' });
-        if (input.imported) await legacy('services/shots-orchestrator').noteNotStarted(pool, Number(input.sessionId), 'no_staging_preview');
+        if (!input.shotsTold && input.imported) return { noted: true, stopped: null };
         return { noted: true };
       },
     },

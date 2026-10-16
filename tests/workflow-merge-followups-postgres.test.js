@@ -133,6 +133,20 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     await settle(); await deliveryAnswer(s, 'DeliveryFailed', { message, missingSecrets: null }); await settle();
   };
 
+  // A run of a proposal's shots in the shots machine's state, as its
+  // transition would write it (src/workflow/shots/).
+  const shotsUnderWay = async (sessionId, state) => {
+    const c = await pool.connect();
+    try {
+      await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      await c.query(
+        `INSERT INTO wf_instances (machine, key, state, data, version, machine_version) VALUES ('shots', $1, $2, $3::jsonb, 1, 1)
+         ON CONFLICT (machine, key) DO UPDATE SET state = EXCLUDED.state`,
+        [`session:${sessionId}`, state, JSON.stringify({ sessionId, run: { id: 'r'.repeat(32) } })]);
+      await c.query('COMMIT');
+    } finally { c.release(); }
+  };
+
   await t.test('F1: the merge commits with its writes and its follow-up set', async () => {
     const a = await app();
     const giver = await user();
@@ -498,10 +512,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     const shooting = await proposal(a, { status: 'promoted', extra: { head: SHA('2') } });
     const checking = await proposal(a, { status: 'promoted', extra: { head: SHA('3') } });
     const idle = await proposal(a, { status: 'promoted', extra: { head: SHA('4') } });
-    await pool.query(
-      `INSERT INTO shot_runs (id, session_id, base_sha, head_sha, intent, state, trace_summary)
-       VALUES ($1, $2, $3, $4, '{}', 'exploring', '{"progress": {}}')`,
-      [crypto.randomBytes(16).toString('hex'), shooting.id, SHA('0'), SHA('2')]);
+    await shotsUnderWay(shooting.id, 'taking_shots');
     await pool.query(`INSERT INTO check_runs (run_id, session_id, owner, manifest) VALUES ($1, $2, 'pod-a', '{}')`,
       [crypto.randomUUID(), checking.id]);
     work.results.set(WORK.find, (input) => (input.sessionId === carrier.id ? { found: [
@@ -572,24 +583,22 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.equal(held.status, 'pending', 'kept for a process that can read it');
   });
 
-  await t.test('what counts as a shots run still using the worker: heard from lately, or a planned row just made', async () => {
+  await t.test('what counts as a shots run still using the worker: the shots machine has one under way', async () => {
     const { liveShotsRun } = require('../src/workflow/merge-followups/facts.ts');
     const a = await app();
-    const run = async (state, { ago, progress = true } = {}) => {
+    const run = async (state) => {
       const s = await proposal(a);
-      const id = crypto.randomBytes(16).toString('hex');
-      await pool.query(
-        `INSERT INTO shot_runs (id, session_id, base_sha, head_sha, intent, state, trace_summary, updated_at)
-         VALUES ($1, $2, $3, $4, '{}', $5, $6, NOW() - make_interval(secs => $7))`,
-        [id, s.id, SHA('0'), SHA('1'), state, progress ? '{"progress": {}}' : null, ago]);
-      return (await liveShotsRun(pool, s.id)) === id;
+      await shotsUnderWay(s.id, state);
+      return (await liveShotsRun(pool, s.id)) === 'r'.repeat(32);
     };
-    assert.equal(await run('exploring', { ago: 4 * 60 }), true, 'heartbeated four minutes ago');
-    assert.equal(await run('exploring', { ago: 6 * 60 }), false, 'silent past five minutes: interrupted');
-    assert.equal(await run('provisioning', { ago: 30 * 60, progress: false }), true, 'never reported progress: forty-five minutes');
-    assert.equal(await run('planned', { ago: 30 }), true, 'just made, about to be claimed');
-    assert.equal(await run('planned', { ago: 3 * 60 }), false, 'a planned row nobody claimed will never start');
-    assert.equal(await run('failed', { ago: 0 }), false, 'finished');
+    for (const state of ['building_copies', 'waiting_for_agent', 'taking_shots', 'publishing']) {
+      assert.equal(await run(state), true, state);
+    }
+    for (const state of ['waiting_for_preview', 'published', 'failed', 'waived', 'closed']) {
+      assert.equal(await run(state), false, state);
+    }
+    const none = await proposal(a);
+    assert.equal(await liveShotsRun(pool, none.id), null, 'no instance, no run');
   });
 
   // ── The deploy, asked of app-delivery ──────────────────────────────

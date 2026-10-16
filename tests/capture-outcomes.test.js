@@ -136,9 +136,12 @@ test('the evidence kill switch stops v2 without reviving legacy review media', a
   }), false);
 });
 
-test('UI-affecting captures persist a missing evidence declaration before choosing legacy media', () => {
+test('UI-affecting captures report a change that owes a declaration, before choosing legacy media', () => {
+  // The checks run reports it; the preview machine tells the shots machine
+  // (UiUndeclared), whose slot says a declaration is needed.
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/visuals.js'), 'utf8');
-  assert.match(src, /config\.shots\?\.collect && uiAffecting[\s\S]*requireIntentForUiChange/);
+  assert.match(src, /config\.shots\?\.collect && uiAffecting && opts\.workflow\?\.report\)[\s\S]*report\.uiAffecting = true/);
+  assert.doesNotMatch(src, /requireIntentForUiChange/);
 });
 
 // ── capture.js resolveTargets: the still-only flag ─────────────────────

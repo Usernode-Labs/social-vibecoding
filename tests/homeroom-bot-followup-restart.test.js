@@ -165,10 +165,11 @@ test('a turn already running on the proposal: the fix waits before asking for a 
 // that started in that gap took the session, and the shots failed with
 // "durable active turn could not be persisted".
 test('a before & after shots run under way on the proposal: the follow-up waits for it, as for a turn', async (t) => {
-  const orchestrator = require('../src/services/shots-orchestrator');
-  const realRunFor = orchestrator.inFlightRunFor;
-  t.after(() => { orchestrator.inFlightRunFor = realRunFor; });
-  orchestrator.inFlightRunFor = (id) => (Number(id) === 5001 ? new Promise(() => {}) : null);
+  // The shots machine's instance says a run is under way.
+  const shotsState = require('../src/services/shots-state');
+  const realRunning = shotsState.shotsRunning;
+  t.after(() => { shotsState.shotsRunning = realRunning; });
+  shotsState.shotsRunning = async (id) => Number(id) === 5001;
   const h = harness();
   const out = await triage(t, h);
   assert.equal(out.reason, 'refused');
@@ -182,7 +183,7 @@ test('a before & after shots run under way on the proposal: the follow-up waits 
   const running = await followup.turnRunningOn({
     pool: { async query() { return { rows: [{ active_turn: null }] }; } },
     session: { id: 5001 }, worker: { isInFlight: () => false }, activeWorkers: new Set(),
-    shotsRunFor: (id) => { asked.push(id); return null; },
+    shotsRunning: async (id) => { asked.push(id); return false; },
   });
   assert.equal(running, false, 'no shots run and no turn: free');
   assert.deepEqual(asked, [5001]);
@@ -626,19 +627,21 @@ test('get_change says when the running turn started and what kind it is', async 
 // #4575: the bot's build and review-fix turns on a session wait for a
 // before & after shots run under way there, bounded, as the Mayor's do.
 test('a bot turn waits out the shots run on its session, at most its bound', async () => {
-  assert.equal(await live.waitOutShotsRun(5001, { shotsRunFor: () => null }), 'idle');
-  let finish;
-  const run = new Promise((resolve) => { finish = resolve; });
-  const waiting = live.waitOutShotsRun(5001, { shotsRunFor: () => run, shotsWaitMs: 60_000 });
-  finish();
-  assert.equal(await waiting, 'finished');
-  // A failed run is over too.
+  // Whether a run is under way, and the wait for its end, are the shots
+  // machine's state (services/shots-state.js shotsRunning, waitForShotsRun).
+  const waits = [];
+  assert.equal(await live.waitOutShotsRun(5001, { shotsRunning: async () => false }), 'idle');
   assert.equal(await live.waitOutShotsRun(5001, {
-    shotsRunFor: () => Promise.reject(new Error('shots failed')), shotsWaitMs: 60_000,
+    shotsRunning: async () => true,
+    shotsWait: async (id, o) => { waits.push([id, o.timeoutMs]); return 'finished'; },
+    shotsWaitMs: 60_000,
   }), 'finished');
+  assert.deepEqual(waits, [[5001, 60_000]]);
   assert.equal(await live.waitOutShotsRun(5001, {
-    shotsRunFor: () => new Promise(() => {}), shotsWaitMs: 5,
+    shotsRunning: async () => true, shotsWait: async () => 'timeout', shotsWaitMs: 5,
   }), 'timeout');
+  // A read that fails does not hold the turn back.
+  assert.equal(await live.waitOutShotsRun(5001, { shotsRunning: async () => { throw new Error('db'); } }), 'idle');
 
   // The runner waits it out before its turn's clock starts: a shots run
   // that outlasts the turn's whole budget costs the turn none of it. The
@@ -656,7 +659,8 @@ test('a bot turn waits out the shots run on its session, at most its bound', asy
       sessions: { async runCodexAttemptLoop() { dispatched.push(Date.now()); return { result: { pushOk: true, ahead: 1, sha: NEW_HEAD } }; } },
       agentTurn: {},
       activeWorkers: { add() {}, delete() {} },
-      shotsRunFor: (id) => (id === 5001 ? shots : null),
+      shotsRunning: async (id) => id === 5001,
+      shotsWait: async () => { await shots; return 'finished'; },
       shotsWaitMs: 60_000,
     },
   });

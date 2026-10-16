@@ -6,7 +6,7 @@
 
 import type { Tx } from '../kernel/index.ts';
 import { holderAliveSql } from '../rules/presence.ts';
-import { LIVE_SHOTS_RUN } from '../session-work.ts';
+import { shotsRunningSql } from '../session-work.ts';
 
 export interface Session {
   id: number;
@@ -32,7 +32,7 @@ export interface Session {
   // Old flows working on it, from their own durable records.
   turnRunning: boolean;         // active_turn: a coding turn's journal
   localTurnRunning: boolean;    // local_agent_turns: a turn on the author's machine
-  shotsRunning: boolean;        // shot_runs, heard from lately
+  shotsRunning: boolean;        // the shots machine has a run under way
 }
 
 export interface App { id: number; slug: string; selfHosted: boolean; repoUrl: string | null }
@@ -81,7 +81,7 @@ export async function readFacts(tx: Tx, sessionId: number,
             cs.active_turn IS NOT NULL AS turn_running,
             EXISTS (SELECT 1 FROM local_agent_turns t
                      WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running')) AS local_turn_running,
-            EXISTS (SELECT 1 FROM shot_runs r WHERE r.session_id = cs.id AND ${LIVE_SHOTS_RUN}) AS shots_running,
+            ${shotsRunningSql('cs.id')} AS shots_running,
             a.slug AS app_slug, a.self_hosted, a.repo_url
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [sessionId]);
   const alive = new Set<string>();

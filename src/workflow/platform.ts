@@ -24,6 +24,8 @@ import { MACHINE as DELIVERY, appDelivery, appKey } from './app-delivery/machine
 import { appDeliveryServices } from './app-delivery/services.ts';
 import { MACHINE as PREVIEW, preview, sessionKey as previewKey } from './preview/machine.ts';
 import { PREPARE_LEASE_MS, previewServices } from './preview/services.ts';
+import { LIVE as SHOTS_LIVE, MACHINE as SHOTS, sessionKey as shotsKey, shots } from './shots/machine.ts';
+import { shotsServices } from './shots/services.ts';
 
 const pg = createRequire(import.meta.url)('pg');
 
@@ -38,13 +40,14 @@ let merges: ReturnType<typeof mergeFollowups> | null = null;
 const builds = botBuild();
 let deliveries: ReturnType<typeof appDelivery> | null = null;
 let previews: ReturnType<typeof preview> | null = null;
+let shotRuns: ReturnType<typeof shots> | null = null;
 let log: Logger | null = null;
 
 // What the ownership triggers read, synced on every boot: enabled:<machine>
 // for every machine (wf_holds reads it). Every machine is the only path for
 // what it decides, so its guard is always on and always refuses a write
 // from outside it.
-const MACHINES = [MACHINE, MERGE, DELIVERY, PREVIEW];
+const MACHINES = [MACHINE, MERGE, DELIVERY, PREVIEW, SHOTS];
 
 export async function syncSettings(pool: Pool): Promise<void> {
   for (const name of MACHINES) {
@@ -107,10 +110,16 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   // its attempt is retired, and a retirement runs, a lease and more later
   // (and never while it serves: services.ts).
   previews = preview({ maxRetries: config.checkMaxAutoRetries ?? 6, retireAfterMs: PREPARE_LEASE_MS + 30000 });
-  const machines = [machine, merges, builds, deliveries, previews];
+  shotRuns = shots({
+    execute: !!config.shots?.execute,
+    agentBudgetMs: Number(config.shots?.maxAgentMs) || 480_000,
+    runBudgetMs: Number(config.shots?.maxRunMs) || 1_440_000,
+    buildSha: /^[0-9a-f]{40}$/.test(String(process.env.GIT_SHA || '')) ? String(process.env.GIT_SHA) : null,
+  });
+  const machines = [machine, merges, builds, deliveries, previews, shotRuns];
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
-    ...appDeliveryServices(deps), ...previewServices(deps),
+    ...appDeliveryServices(deps), ...previewServices(deps), ...shotsServices(deps),
   };
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, publish: publishPushes,
@@ -126,6 +135,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     merges = null;
     deliveries = null;
     previews = null;
+    shotRuns = null;
     throw err;
   }
   runtime = started;
@@ -161,6 +171,51 @@ export async function startWorkflowLoops(): Promise<void> {
   for (const r of rows) await file(r.id, r.app_id, { kind: 'system', name: 'backfill' });
   if (rows.length) log!.info('workflow', 'Enrolled open governance proposals', { count: rows.length });
   await retryPlatformFaults();
+  await retryShotsCutOff();
+  watchShotsCutOff();
+}
+
+// Shots [main] was taking in a process the release replaced (or that a
+// release interrupted, on the head they were for): each open proposal's are
+// taken again by the shots machine, once. Its first event adopts the
+// proposal from its row (ending the run that was cut off). A run counts once
+// it has gone quiet: [main]'s run beats its row every few seconds while its
+// process lives, and a rollout keeps [main]'s processes serving (and
+// starting runs) for a while after this one leads, so this looks again every
+// two minutes for an hour. Transitional: once no release from before the
+// machine runs, there is nothing to find.
+const CUT_OFF_QUIET = '5 minutes';
+const CUT_OFF_EVERY_MS = 2 * 60 * 1000;
+const CUT_OFF_FOR_MS = 60 * 60 * 1000;
+let cutOffWatch: NodeJS.Timeout | null = null;
+
+async function retryShotsCutOff(): Promise<void> {
+  if (!shotRuns || !runtime) return;
+  const { rows } = await kernelPool!.query(
+    `SELECT cs.id, cs.app_id FROM chat_sessions cs JOIN shot_runs r ON r.id = cs.shots_run_id
+      WHERE cs.status IN ('active', 'paused', 'promoted', 'merging')
+        AND ((r.state IN ('planned', 'provisioning', 'exploring', 'replaying', 'reviewing')
+              AND r.updated_at < NOW() - $2::interval)
+             OR (r.state = 'failed' AND r.failure_code = 'shots_run_interrupted'))
+        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'session:' || cs.id)`,
+    [SHOTS, CUT_OFF_QUIET]);
+  const release = String(process.env.GIT_SHA || 'dev').slice(0, 40);
+  for (const r of rows) {
+    await runtime!.append(shotRuns, shotsKey(r.id), { type: 'RetryRequested', payload: { sessionId: r.id, reason: 'release' } },
+      { requestKey: `shots-release:${release}:${r.id}`, source: { kind: 'system', name: 'release' }, appId: r.app_id ?? undefined })
+      .catch((err: Error) => log!.warn('workflow', 'Could not take cut-off shots again', { sessionId: r.id, message: err.message }));
+  }
+  if (rows.length) log!.info('workflow', 'Shots cut off by the release taken again', { count: rows.length });
+}
+
+function watchShotsCutOff(): void {
+  if (cutOffWatch) return;
+  const until = Date.now() + CUT_OFF_FOR_MS;
+  cutOffWatch = setInterval(() => {
+    if (Date.now() > until || !runtime) { clearInterval(cutOffWatch!); cutOffWatch = null; return; }
+    retryShotsCutOff().catch((err: Error) => log!.warn('workflow', 'Could not look for cut-off shots', { message: err.message }));
+  }, CUT_OFF_EVERY_MS);
+  cutOffWatch.unref?.();
 }
 
 // A release is when a fix to the platform's own fault (a check Job refused
@@ -198,12 +253,14 @@ export function workflowWorkRunning(): number {
 }
 
 export async function stopWorkflow(): Promise<void> {
+  if (cutOffWatch) { clearInterval(cutOffWatch); cutOffWatch = null; }
   const r = runtime;
   runtime = null;
   machine = null;
   merges = null;
   deliveries = null;
   previews = null;
+  shotRuns = null;
   await r?.stop();
   await kernelPool?.end();
   kernelPool = null;
@@ -557,6 +614,75 @@ export async function operationEnded(o: { sessionId: number; id: string }): Prom
   if (!previewsEnabled()) return;
   await runtime!.append(previews!, previewKey(o.sessionId), { type: 'OperationEnded', payload: { id: o.id } },
     { requestKey: `op:${o.id}:end`, source: sys('operation') });
+}
+
+// ── Before & after shots ────────────────────────────────────────────────
+
+// The shots machine's instance of a proposal: its state and data, or null.
+export async function shotsInstance(sessionId: number): Promise<{ state: string; data: any } | null> {
+  if (!kernelPool) return null;
+  const { rows: [r] } = await kernelPool.query(
+    'SELECT state, data FROM wf_instances WHERE machine = $1 AND key = $2', [SHOTS, shotsKey(sessionId)]);
+  return r ? { state: r.state, data: r.data } : null;
+}
+
+// A run of the proposal's shots is under way, for a coding turn deciding
+// whether to wait for it (the Homeroom bot, the Mayor), read from the
+// instance: true across restarts and in every process. A run waiting for the
+// proposal's agent is not one to wait for: it waits for the turn, and the
+// two would wait for each other until the run gave up.
+export async function shotsRunning(sessionId: number): Promise<boolean> {
+  const i = await shotsInstance(sessionId);
+  return !!i && SHOTS_LIVE.has(i.state) && i.state !== 'waiting_for_agent';
+}
+
+function shotsMachine() {
+  if (!runtime || !shotRuns) throw new Error('The workflow runtime is not running in this process');
+  return shotRuns;
+}
+
+type HeadFence = { pin?: 'imported' | 'reviewed' | 'handoff' | null; from?: string | null };
+
+// A declaration of visible changes (already validated: visible-changes.js
+// parseIntent) for `head`, or the row's newest. Inside a caller's
+// transaction (`db`, PR import) it is only appended; it applies once that
+// transaction commits.
+export async function shotsDeclared(d: { sessionId: number; appId?: number | null; head?: string | null; intent: unknown;
+  db?: Queryable; actor?: string | null } & HeadFence): Promise<EventOutcome | null> {
+  const m = shotsMachine();
+  const event = { type: 'Declared', payload: { sessionId: d.sessionId, head: d.head ?? null, intent: d.intent,
+    pin: d.pin ?? null, from: d.from ?? null } };
+  const o = { requestKey: `declare:${randomUUID()}`, source: { kind: 'route' as const, name: 'declare' },
+    appId: d.appId ?? undefined, actor: d.actor ?? undefined };
+  if (d.db) { await runtime!.append(m, shotsKey(d.sessionId), event, { ...o, db: d.db }); return null; }
+  return runtime!.appendAndWait(m, shotsKey(d.sessionId), event, { ...o, waitMs: 5000 });
+}
+
+// The proposal's head moved: shots of other heads stop counting. `pin`:
+// the revision column the caller moved (and `from`, the head the caller
+// read there), so an event a newer move overtook is refused instead of
+// taking the slot back (shots/machine.ts staleHead).
+export async function shotsHeadMoved(sessionId: number, head: string, reason: string | null = null,
+  f: HeadFence = {}): Promise<number> {
+  return runtime!.append(shotsMachine(), shotsKey(sessionId),
+    { type: 'HeadMoved', payload: { sessionId, head, reason, pin: f.pin ?? null, from: f.from ?? null } },
+    { requestKey: `head:${head}:${randomUUID()}`, source: { kind: 'system', name: 'head-moved' } });
+}
+
+// A person's Retry (with a new declaration, maybe), Stop and waiver.
+export async function shotsRetry(r: { sessionId: number; appId: number; intent?: unknown; actor?: string | null }): Promise<EventOutcome> {
+  return runtime!.appendAndWait(shotsMachine(), shotsKey(r.sessionId),
+    { type: 'RetryRequested', payload: { sessionId: r.sessionId, intent: r.intent ?? null } },
+    { requestKey: `retry:${randomUUID()}`, source: { kind: 'route', name: 'retry' }, appId: r.appId, actor: r.actor ?? undefined, waitMs: 5000 });
+}
+export async function shotsStop(r: { sessionId: number; appId: number; actor?: string | null }): Promise<EventOutcome> {
+  return runtime!.appendAndWait(shotsMachine(), shotsKey(r.sessionId), { type: 'StopRequested', payload: { sessionId: r.sessionId } },
+    { requestKey: `stop:${randomUUID()}`, source: { kind: 'route', name: 'stop' }, appId: r.appId, actor: r.actor ?? undefined, waitMs: 5000 });
+}
+export async function shotsWaive(r: { sessionId: number; appId: number; userId: number; reason: string }): Promise<EventOutcome> {
+  return runtime!.appendAndWait(shotsMachine(), shotsKey(r.sessionId),
+    { type: 'WaiveRequested', payload: { sessionId: r.sessionId, userId: r.userId, reason: r.reason } },
+    { requestKey: `waive:${randomUUID()}`, source: { kind: 'route', name: 'waive' }, appId: r.appId, actor: `user:${r.userId}`, waitMs: 5000 });
 }
 
 // ── The admin console ───────────────────────────────────────────────────

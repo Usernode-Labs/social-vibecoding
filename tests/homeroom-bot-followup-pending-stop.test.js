@@ -37,7 +37,7 @@ function harness({ inFlight = false } = {}) {
   const deps = {
     worker,
     activeWorkers: new Set(),
-    shotsRunFor: () => null,
+    shotsRunning: async () => false,
     agentTurn: { resolveCodexRuntimeContext: async () => ({}) },
     sessions: {
       async runCodexAttemptLoop({ dispatchOnce }) {

@@ -208,7 +208,7 @@ test('on Homeroom\'s own pairs every signed-in persona makes the copies\' first-
   const worker = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
   assert.match(worker, /SHOTS_PLATFORM_ASSETS: shotsPlatformAssets \? '1' : '0',/);
   const orchestrator = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'shots-orchestrator.js'), 'utf8');
-  assert.match(orchestrator, /platformAssets: app\.slug !== config\.selfAppSlug,/);
+  assert.match(orchestrator, /const selfApp = app\.slug === config\.selfAppSlug;[\s\S]*platformAssets: !selfApp,/);
   // Each persona, each side, before the browsers' storage is saved; never the guest.
   const bootstrap = read('shots-browser-bootstrap.js');
   const warm = bootstrap.indexOf('await warmDemoData(context, origin');

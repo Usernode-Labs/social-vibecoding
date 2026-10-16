@@ -326,6 +326,7 @@ async function executeTrial(pool, config, trial, entry, deps = {}) {
       onAgentFinalResponse: heartbeat.onAgentFinalResponse,
     }, {
       ...(deps.injected || {}),
+      github: deps.github || github,
       state: adapter,
       shotsAgent: promptedAgent(resolved, entry, deps.shotsAgent),
       notifyShots: () => {},
@@ -534,9 +535,10 @@ async function tick(pool, config, deps = {}) {
         [[...skipRuns], busy]
       );
       if (!next) break;
-      // The proposal's own shots running in this process (a manual rerun of
-      // a merged proposal) keeps it for the next pass.
-      if ((deps.orchestrator || orchestrator).inFlightRunFor(next.session_id)) {
+      // The proposal's own shots under way (a manual rerun of a merged
+      // proposal, whose slot may still read as settled) keep it for the
+      // next pass.
+      if (await (deps.shotsRunning || shotsState.shotsRunning)(next.session_id)) {
         skipSessions.add(Number(next.session_id));
         continue;
       }

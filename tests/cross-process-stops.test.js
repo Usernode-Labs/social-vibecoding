@@ -1,7 +1,7 @@
 'use strict';
 
 // Stops for work another platform process runs (docs/plans/
-// draining-releases.md): a turn, a shots run, a bench trial or run, and the
+// draining-releases.md): a turn, a bench trial or run, and the
 // BYOK spend a proxy saw for a turn it does not run. The process that holds
 // the work does what a stop in its own process does; the one asked forwards
 // it over the WebSocket bus and answers as if it had. Here the other process
@@ -73,27 +73,14 @@ test('a forwarded stop is run where the turn is, and never forwarded again', asy
   assert.equal(await sessions.receiveSessionStop({ sessionId: 'x', user: { id: 7 } }), null, 'a malformed one is ignored');
 });
 
-test('a Stop for shots another process runs fails the run here and tells that process to stop its agent', async (t) => {
-  await elsewhere([['shots', 42]]);
-  const bus = capturePublishes();
-  t.after(() => { bus.restore(); processes._reset(); });
-  const orchestrator = require('../src/services/shots-orchestrator');
-  const transitions = [];
-  const stops = [];
-  const pool = { query: async () => ({ rows: [{ id: 42, app_id: 7, app_slug: 'demo', shots_run_id: 'r1' }] }) };
-  const out = await orchestrator.stopForSession(pool, 42, {
-    state: {
-      getRun: async () => ({ id: 'r1', current_run_id: 'r1', state: 'exploring', head_sha: 'a'.repeat(40) }),
-      transitionRun: async (_p, runId, next) => { transitions.push([runId, next]); },
-    },
-    worker: { getActiveTurnMode: () => null, stopTurn: async (id) => { stops.push(id); } },
-  });
-  assert.deepEqual(out, { stopped: true, runId: 'r1' });
-  assert.deepEqual(transitions, [['r1', 'failed']], 'the run is failed in the database here');
-  assert.deepEqual(stops, [], 'no shots turn runs here to kill');
-  assert.deepEqual(bus.sent.filter((m) => m.kind === 'shots_stop').map((m) => [m.data.sessionId, m.data.runId]), [[42, 'r1']]);
-  // The holder: a run it does not execute is not stopped there either.
-  assert.equal(await orchestrator.receiveStop({ sessionId: 42, runId: 'r1', headSha: 'a'.repeat(40) }), false);
+test('a Stop for shots is no bus message: the shots machine cancels the agent\'s step wherever it runs', () => {
+  // src/workflow/shots/: StopRequested fails the run and cancels its work
+  // item, whose process stops at its next lease renewal; the run's cleanup
+  // stops its turn. Nothing is relayed between processes.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const ws = fs.readFileSync(path.join(__dirname, '..', 'src/services/ws.js'), 'utf8');
+  assert.doesNotMatch(ws, /shots_stop/);
 });
 
 test('a cancel for a bench trial another process runs is forwarded; one nobody runs is refused as before', async (t) => {
@@ -125,28 +112,25 @@ test('a cancel for a bench trial another process runs is forwarded; one nobody r
 test('the bus delivers each stop to its receiver, and a turn\'s BYOK spend to the process running it', async (t) => {
   const ws = require('../src/services/ws');
   const sessions = require('../src/routes/sessions');
-  const orchestrator = require('../src/services/shots-orchestrator');
   const lane = require('../src/services/bench/lane');
   const worker = require('../src/services/worker');
   const got = [];
   const saved = {
-    s: sessions.receiveSessionStop, o: orchestrator.receiveStop, l: lane.receiveCancel, w: worker.receiveTurnByok,
+    s: sessions.receiveSessionStop, l: lane.receiveCancel, w: worker.receiveTurnByok,
   };
   sessions.receiveSessionStop = async (p) => { got.push(['session', p.sessionId]); };
-  orchestrator.receiveStop = async (p) => { got.push(['shots', p.runId]); };
   lane.receiveCancel = (p) => { got.push(['bench', p.trialId]); };
   worker.receiveTurnByok = (p) => { got.push(['byok', p.cents]); };
   t.after(() => {
-    sessions.receiveSessionStop = saved.s; orchestrator.receiveStop = saved.o;
+    sessions.receiveSessionStop = saved.s;
     lane.receiveCancel = saved.l; worker.receiveTurnByok = saved.w;
   });
   ws._onBusMessage({ kind: 'session_stop', data: { sessionId: 1 } });
-  ws._onBusMessage({ kind: 'shots_stop', data: { runId: 'r' } });
   ws._onBusMessage({ kind: 'bench_cancel', data: { trialId: 3 } });
   ws._onBusMessage({ kind: 'turn_byok', data: { cents: 12 } });
   ws._onBusMessage({ kind: 'session_stop', data: { sessionId: 2 }, oversize: true });
   await new Promise((r) => setImmediate(r));
-  assert.deepEqual(got, [['session', 1], ['shots', 'r'], ['bench', 3], ['byok', 12]], 'an oversize one carries nothing to act on');
+  assert.deepEqual(got, [['session', 1], ['bench', 3], ['byok', 12]], 'an oversize one carries nothing to act on');
 });
 
 test('BYOK spend the proxy here saw for a turn another process runs is not kept here', async (t) => {

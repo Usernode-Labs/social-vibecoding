@@ -56,40 +56,6 @@ test('a Docker container surviving removal is a cleanup failure, not success', a
   assert.equal(result.errors.length, 3);
 });
 
-test('terminal cleanup rotates failed attempts and marks only successful runs complete', async () => {
-  const rows = [
-    { id: '1'.repeat(32), state: 'cancelled', failure_code: 'superseded', app_slug: 'demo' },
-    { id: '2'.repeat(32), state: 'stale', app_slug: 'demo', trace_summary: { cleanupComplete: true } },
-    { id: '3'.repeat(32), state: 'verified', app_slug: 'demo' },
-  ];
-  const updates = [];
-  let selection;
-  const pool = { query: async (sql, params) => {
-    if (sql.includes('SELECT r.*') && sql.includes("WHERE r.state IN ('verified'")) {
-      selection = { sql, params };
-      return { rows };
-    }
-    if (sql.includes('UPDATE shot_runs')) updates.push({ sql, params });
-    return { rows: [], rowCount: 1 };
-  } };
-  const attempted = [];
-  const result = await gc.recoverInterrupted(config, pool, { cleanup: async (_config, run) => {
-    attempted.push(run.id);
-    if (run.id === rows[0].id) throw new Error('transient API failure');
-    return [];
-  } });
-  assert.deepEqual(attempted, rows.map((r) => r.id));
-  assert.equal(result.cleanupRetried, 2);
-  assert.deepEqual(updates.filter((u) => u.sql.includes("'cleanupComplete', true")).map((u) => u.params),
-    rows.slice(1).map((r) => [r.id, environment.RESOURCE_CLEANUP_VERSION]));
-  assert.equal(updates.filter((u) => u.sql.includes("'cleanupAttemptAt'")).length, 3);
-  assert.doesNotMatch(selection.sql, /failure_code\s*=/);
-  assert.match(selection.sql, /'verified','failed','stale','cancelled','not_required','overridden'/);
-  assert.match(selection.sql, /ORDER BY COALESCE.*cleanupAttemptAt/);
-  assert.equal(selection.params[1], environment.RESOURCE_CLEANUP_VERSION);
-  assert.ok(selection.params[2] >= 300_000, 'allow in-process cleanup to settle');
-});
-
 const now = Date.parse('2026-10-06T12:00:00Z');
 const old = new Date(now - 86_400_000).toISOString();
 function ref(token, createdAt = old) {

@@ -231,39 +231,19 @@ test('holdsReady waits for shots on the head, and only while they can still come
   assert.equal(hold({ ...running, checks_checked_at: late, shots_updated_at: late }), false);
 });
 
-test('every way the shots slot settles tells whoever waits on it, after the write', async () => {
-  const told = [];
-  const previous = shotsState._setSettleListenerForTests((pool, id) => { told.push(id); });
-  try {
-    const row = {
-      id: 'e'.repeat(32), session_id: 42, current_run_id: 'e'.repeat(32), state: 'reviewing',
-      base_sha: 'a'.repeat(40), head_sha: HEAD, intent: fixtures.intent(), plan_hash: 'c'.repeat(64),
-      hard_verdict: { passed: true, mode: shots.SHOTS_MODE, runs: 1, stories: [{ id: 'invite-suggestions', status: 'ready', files: 2 }] },
-      updated_at: new Date(),
-    };
-    const pool = { query: async (sql, values) => {
-      if (/SELECT r\.\*/.test(sql)) return { rows: [row] };
-      if (/UPDATE shot_runs/.test(sql)) { Object.assign(row, { state: values[1] }); return { rows: [{ ...row }] }; }
-      if (/FROM shot_artifacts/.test(sql)) return { rows: [] };
-      if (/UPDATE chat_sessions/.test(sql)) return { rowCount: 1, rows: [{ id: 42 }] };
-      throw new Error(`Unexpected query: ${sql}`);
-    } };
-    await shotsState.transitionRun(pool, row.id, 'verified', {});
-    await new Promise((r) => setImmediate(r));
-    assert.deepEqual(told, [42], 'a published run');
-    await shotsState.recordNotStarted(pool, 43, 'Nothing picked this up.');
-    await new Promise((r) => setImmediate(r));
-    assert.deepEqual(told, [42, 43], 'a run that will not start');
-    row.state = 'exploring';
-    await shotsState.transitionRun(pool, row.id, 'reviewing', {});
-    await new Promise((r) => setImmediate(r));
-    assert.deepEqual(told, [42, 43], 'a run still under way tells nobody');
-  } finally {
-    shotsState._setSettleListenerForTests(previous);
-  }
-  assert.match(read('src/services/shots-state.js'),
-    /let settleListener = \(pool, sessionId\) => require\('\.\/homeroom-bot-dm'\)\.noteShotsSettled\(pool, sessionId\);/);
+test('every way the shots slot settles tells whoever waits on it, as durable work', () => {
+  // The shots machine (src/workflow/shots/) asks bot.shotsSettled whenever
+  // the slot settles: a published, failed, waived or closed run, a run that
+  // will not start, a declaration that needs none; a run still under way
+  // tells nobody. Work, not a callback after commit: a crash loses none
+  // (tests/workflow-shots-postgres.test.js S1, S3).
+  const machine = read('src/workflow/shots/machine.ts');
+  assert.match(machine, /\{ kind: WORK\.settled, key: `settled:v\$\{ctx\.version \+ 1\}`, input: \{ sessionId: d\.sessionId \} \}/);
+  const services = read('src/workflow/shots/services.ts');
+  assert.match(services, /legacy\('services\/homeroom-bot-dm'\)\.noteShotsSettled\(pool, input\.sessionId\)/);
+  assert.doesNotMatch(read('src/services/shots-state.js'), /settleListener|setImmediate/);
 });
+
 
 // ── 3. The change page never says "All checks passed" over one ───────────
 

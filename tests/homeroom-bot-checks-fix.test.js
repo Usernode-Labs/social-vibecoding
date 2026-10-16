@@ -572,7 +572,7 @@ test('every settled verdict reaches the bot, through the preview machine\'s foll
   // and a skipped one (staging-recovery hands it over). Each queues the
   // follow-ups work with its state.
   const machine = read('src/workflow/preview/machine.ts');
-  assert.match(machine, /kind: WORK\.followUps, key: `follow-ups:\$\{run\.key\}`,\n\s+input: \{ sessionId: d\.sessionId, appId: d\.appId, head: run\.head, state, deferred, trigger: d\.trigger \},/);
+  assert.match(machine, /kind: WORK\.followUps, key: `follow-ups:\$\{run\.key\}`,\n\s+input: \{ sessionId: d\.sessionId, appId: d\.appId, head: run\.head, state, deferred, trigger: d\.trigger, shotsTold: true \},/);
   assert.match(machine, /work: \[followUps\(d, run, 'skipped'\)\]/);
   assert.match(machine, /followUps\(d, run, state\),/);
   assert.match(read('src/services/staging-recovery.js'),

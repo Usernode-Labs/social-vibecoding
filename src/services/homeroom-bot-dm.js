@@ -2484,7 +2484,8 @@ async function noteChangeReady(pool, sessionId, deps = {}) {
 }
 
 /**
- * A proposal's before & after shots settled (shots-state.noteSettled: a run
+ * A proposal's before & after shots settled (the shots machine's
+ * bot.shotsSettled work, src/workflow/shots/: a run
  * published or failed, was waived, or will not start). A change of the
  * bot's that passed its checks was waiting on them: it is ready to try now,
  * or, when they show part of it failing or could not reach part of it for

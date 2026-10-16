@@ -158,3 +158,20 @@ test('PR import shots failures expose a safe stage and field without leaking the
   planError.prImportStage = 'shots_plan';
   assert.deepEqual(votes.prImportFailureBody(planError), { error: 'Internal server error' });
 });
+
+// A declaration for a named head is fenced against the revision column its
+// caller moved or read (shots/machine.ts staleHead): without it, a
+// submission that read the row before another writer moved the proposal
+// takes the shots back to the older head. Every caller that passes a head
+// passes the fence.
+test('every submission that declares for a head names the revision column it read', () => {
+  for (const file of ['src/services/proposal-update.js', 'src/routes/proposal-handoff.js']) {
+    const source = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+    const calls = [...source.matchAll(/await applyShotsRevision\(\{([\s\S]*?)\}\);/g)].map((m) => m[1]);
+    assert.ok(calls.length >= 2, `${file} declares through applyShotsRevision`);
+    for (const call of calls) {
+      if (!/headSha/.test(call)) continue;
+      assert.match(call, /\bpin\b/, `${file}: a declaration for a head without its revision fence:${call}`);
+    }
+  }
+});
