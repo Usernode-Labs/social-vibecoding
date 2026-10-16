@@ -1198,9 +1198,14 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     // bench), a release retries the platform's faults (RetryDue from the
     // system), no Detach. 3: the shots machine is told by message (a head
     // ready, a preview that will not start, a UI change undeclared, the
-    // proposal closed) instead of starting shots itself. An older Pod leaves
-    // the instances this version wrote alone during the rollout.
-    version: 3,
+    // proposal closed) instead of starting shots itself. 4: a person's
+    // request for a fresh unit suite (services/unit-suite-reuse.js) is read
+    // with the facts and decides a run's settlement (refused, or followed by
+    // their own run; the earned gate and the observed pass written with it):
+    // a version-3 runtime would store a copied pass for an owed head. An
+    // older Pod leaves the instances this version wrote alone during the
+    // rollout; this version takes over the ones an older one wrote.
+    version: 4,
     events: EVENTS,
     create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted', 'RetireRequested', 'ChecksCleared'],
     terminal: ['retired'],

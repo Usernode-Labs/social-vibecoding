@@ -501,7 +501,9 @@ test('every manual entry marks the head as owed a fresh suite, durably, before i
   const mark = route.indexOf('markFreshOwed(pool, {');
   assert.ok(mark > 0 && mark < route.indexOf('if (recheckInFlight.has(sessionId))'), 'set before any coalesced answer');
   // Deploying a preview by hand.
-  assert.match(sessions, /markFreshOwed\(pool, \{\s+sessionId: session\.id, commitSha: commitHash === 'latest' \? null : commitHash,\s+\}\);\s+return res\.json\(\{ ok: true, status: 'deploying' \}\);/);
+  // On the exact head, resolved once, and before the machine is asked
+  // (behaviourally: tests/unit-suite-reuse-machine-postgres.test.js).
+  assert.match(sessions, /const head = await previewWorkflow\.exactHead\(pool, session, commitHash === 'latest' \? null : commitHash\);[\s\S]{0,600}markFreshOwed\(pool, \{ sessionId: session\.id, commitSha: head \}\);[\s\S]{0,300}const out = await previewWorkflow\.request\(\{\s+pool, session, head, reason: 'deploy'/);
   // Every recheck a person asks for (the route, testing-update), before the
   // machine is asked: tests/recheck-moved-head.test.js.
   assert.match(read('src/services/staging-recovery.js'), /if \(checkTriggerForReason\(reason\) === 'manual-recheck'\) \{[\s\S]{0,200}markFreshOwed\(pool, \{ sessionId: session\.id, commitSha: session\.checks_commit_sha \|\| null \}\);/);

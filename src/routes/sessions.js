@@ -6223,19 +6223,24 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         } catch {}
       }
 
+      // The exact head this deploy is for, resolved once: the branch's tip
+      // when it was read, else what the machine resolves for the row (its
+      // pin, its tip, its checks).
+      const head = await previewWorkflow.exactHead(pool, session, commitHash === 'latest' ? null : commitHash);
+      // A preview deployed by hand runs its checks as 'manual-recheck': the
+      // head is owed a unit suite that really runs (services/unit-suite-reuse.js).
+      // Recorded before the machine is asked, so a build or run already going
+      // that answers instead (it may have copied an earlier pass) is not
+      // taken as theirs.
+      await require('../services/unit-suite-reuse').markFreshOwed(pool, { sessionId: session.id, commitSha: head });
       // The preview machine builds a new attempt of the head (a build or run
       // already going is the answer).
       const out = await previewWorkflow.request({
-        pool, session, head: commitHash === 'latest' ? null : commitHash, reason: 'deploy', actor: `user:${req.user.id}`,
+        pool, session, head, reason: 'deploy', actor: `user:${req.user.id}`,
       });
       if (out.status === 'rejected' && ['not_open', 'not_deployable', 'no_head'].includes(out.reason)) {
         return res.status(409).json({ error: 'This session cannot deploy a preview now', reason: out.reason });
       }
-      // A preview deployed by hand runs its checks as 'manual-recheck': the
-      // head is owed a unit suite that really runs (services/unit-suite-reuse.js).
-      await require('../services/unit-suite-reuse').markFreshOwed(pool, {
-        sessionId: session.id, commitSha: commitHash === 'latest' ? null : commitHash,
-      });
       return res.json({ ok: true, status: 'deploying' });
     } catch (err) {
       log.error('sessions', 'Deploy staging error', { message: err.message });
