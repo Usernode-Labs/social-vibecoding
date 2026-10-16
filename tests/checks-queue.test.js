@@ -195,9 +195,9 @@ test('the merge gate kicks no recheck for a queued run, and says it is waiting',
   assert.match(src, /checksQueued \? 'is waiting for a checks slot' : 'is still running its tests'/);
 });
 
-test('merge-queue counts a queued run as in flight, so nothing re-drives it', () => {
-  const src = stripComments(read('src/services/merge-queue.js'));
-  assert.match(src, /function checkRunInFlight\(row\) \{[\s\S]{0,400}return !require\('\.\/staging-recovery'\)\.checkRunOverdue\(row\);/);
+test('the merge queue counts a queued run as in flight, so nothing re-drives it', () => {
+  const src = stripComments(read('src/workflow/merge-queue/facts.ts'));
+  assert.match(src, /runInFlight: r\.check_state === 'pending' && r\.check_phase !== 'deferred' && onHead/);
 });
 
 test('main-watch\'s interrupted-run sweep leaves a run alive in the queue, and takes a dead one now, waiting or admitted', () => {

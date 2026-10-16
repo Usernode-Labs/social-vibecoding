@@ -262,7 +262,7 @@ const toShots = (d: Data, type: string, payload: Record<string, Json> = {}): Mes
   ({ to: { machine: 'shots', key: `session:${d.sessionId}` }, event: { type, payload: { sessionId: d.sessionId, ...payload } }, appId: d.appId });
 // To the app's merge queue (src/workflow/merge-queue/): a proposal in review
 // passed (or skipped) its checks, so it may merge now.
-const mergeWanted = (d: Data, f: Facts, state: string): MessageRequest[] =>
+export const mergeWanted = (d: Data, f: Facts, state: string): MessageRequest[] =>
   ((state === 'passing' || state === 'skipped') && f.session?.status === 'promoted'
     ? [{ to: { machine: 'merge-queue', key: `app:${d.appId}` }, event: { type: 'MergeWanted', payload: { appId: d.appId, sessionId: d.sessionId, reason: 'checks' } }, appId: d.appId }]
     : []);

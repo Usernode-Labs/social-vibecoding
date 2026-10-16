@@ -1,4 +1,4 @@
-// Integration-style test: checkAndMerge() emits an ordered /debug run.
+// Integration-style test: the merge gate (evaluateMergeGate) emits an ordered /debug run.
 //
 //   - A clean-merge path produces a 'merge' run whose steps narrate the
 //     gates → claim → GitHub merge → merged (the merge reported to the
@@ -44,10 +44,6 @@ stub('../src/workflow/platform.ts', {
   abandonMerge: async () => ({ status: 'accepted', eventId: 4 }),
 });
 stub('../src/services/docker', {});
-stub('../src/services/conflict-resolver', {
-  checkAndResolveConflicts: async () => {},
-  isResolving: () => false,
-});
 stub('../src/services/ws', {
   sendSystemMessage: async () => {},
   pushNotificationToUser: () => {},
@@ -85,7 +81,7 @@ stub('../src/services/topic-attributes', {
   emptySummary: () => ({ priority: null, assignee: null }),
 });
 
-const { checkAndMerge } = require('../src/routes/votes');
+const { evaluateMergeGate: checkAndMerge } = require('../src/routes/votes');
 
 // Mock pool: records every query; scripts results per regex.
 function makePool({ checkState = 'passing', yes = 3, behind = 0 } = {}) {
@@ -129,34 +125,28 @@ function session(extra = {}) {
   };
 }
 
-test('clean merge records an ordered run ending in merged', async () => {
+test('a gate that passes records an ordered run ending as merging', async () => {
   mergePRImpl = async () => ({ sha: 'abc1234ef', merged: true });
   lockedImpl = async () => false;
   reports.length = 0;
   const pool = makePool({ checkState: 'passing' });
   const res = await checkAndMerge({}, pool, session());
-  assert.equal(res.merged, true);
-  assert.equal(reports.length, 1, 'the merge was reported to the merge-followups machine');
-  assert.equal(reports[0].sessionId, 100);
-  assert.equal(reports[0].mergeSha, 'abc1234ef');
+  assert.equal(res.ready, true);
+  assert.equal(reports.length, 0, 'the gate reports no merge: the attempt is the proposal machine\'s');
 
   const phases = pool.steps.map((s) => s.phase);
-  // Gates → claim → github merge → merged, which is the last step: the
-  // deploy and the teardown are the machine's, not this run's.
+  // The gates, in order; the claim, GitHub's merge and its outcome are the
+  // proposal machine's (its timeline in Admin → Workflows).
   assert.ok(phases.includes('gate:majority'), 'majority gate step');
   assert.ok(phases.includes('gate:checks'), 'checks gate step');
-  assert.ok(phases.includes('claim'), 'claim step');
-  assert.ok(phases.includes('github_merge'), 'github merge step');
-  assert.equal(phases[phases.length - 1], 'merged', 'the run ends on the merged step');
-  assert.ok(!phases.includes('prod_rebuild') && !phases.includes('staging_teardown'),
-    'no deploy or teardown step in the merge run');
+  assert.ok(!phases.includes('github_merge'), 'GitHub is not asked from the gate');
 
   // seq is monotonic and dense within the single run.
   const seqs = pool.steps.map((s) => s.seq);
   assert.deepEqual(seqs, seqs.slice().sort((a, b) => a - b));
 
   assert.equal(pool.runUpdates.length, 1);
-  assert.equal(pool.runUpdates[0].status, 'merged');
+  assert.equal(pool.runUpdates[0].status, 'merging');
 });
 
 test('a sub-threshold vote opens no run', async () => {
@@ -177,22 +167,11 @@ test('a checks-blocked merge ends the run as blocked', async () => {
   assert.equal(pool.runUpdates[0].status, 'blocked');
 });
 
-test('a GitHub 405 conflict ends the run as conflict_resolving', async () => {
-  mergePRImpl = async () => { const e = new Error('Pull Request is not mergeable'); e.status = 405; throw e; };
-  lockedImpl = async () => false;
-  const pool = makePool({ checkState: 'passing' });
-  const res = await checkAndMerge({}, pool, session(), { autoResolve: true });
-  assert.equal(res.merged, false);
-  assert.equal(res.conflict, true);
-  assert.ok(pool.steps.some((s) => s.phase === 'conflict_detected'), 'conflict-detected step recorded');
-  assert.equal(pool.runUpdates[0].status, 'conflict_resolving');
-});
-
 test('a passed-in debugRunId is reused, not re-opened, and not ended by checkAndMerge', async () => {
   mergePRImpl = async () => ({ sha: 'abc1234ef', merged: true });
   lockedImpl = async () => false;
   const pool = makePool({ checkState: 'passing' });
-  await checkAndMerge({}, pool, session(), { autoResolve: false, debugRunId: 4242 });
+  await checkAndMerge({}, pool, session(), { debugRunId: 4242 });
   assert.ok(!pool.calls.some((c) => /INSERT INTO merge_debug_runs/.test(c.sql)), 'no new run opened');
   assert.ok(pool.steps.every((s) => s.runId === 4242), 'steps nested under the passed-in run');
   assert.equal(pool.runUpdates.length, 0, 'checkAndMerge does not end a borrowed run');

@@ -412,7 +412,6 @@ function loadVotes(mockPool, overrides = {}) {
     github: require.resolve('../src/services/github'),
     staging: require.resolve('../src/services/staging'),
     docker: require.resolve('../src/services/docker'),
-    conflictResolver: require.resolve('../src/services/conflict-resolver'),
     activeUsers: require.resolve('../src/services/active-users'),
     notifications: require.resolve('../src/services/notifications'),
     adminApproval: require.resolve('../src/services/admin-approval'),

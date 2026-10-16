@@ -141,7 +141,9 @@ const TRIGGERS = new Map([
  * durable context (services/durable-steps.js durable()). Resolves one
  * outcome for the machine:
  *   gone | unmeasured | level | conflict_skipped (a platform sync whose
- *   proposal no longer is behind and clean: nothing ran) |
+ *   proposal no longer is behind and clean: nothing ran) | clean_now (the
+ *   conflict lane's head merges cleanly by now: nothing ran) | over_budget
+ *   (the system token budget is spent: nothing ran) |
  *   clean | resolved | already_synced (synced) | not_pushed |
  *   unresolvable (Claude could not resolve it: the branch is unchanged)
  * with { sha, behind, pushOk, conflictFiles, message, headBefore, mainSha }.
@@ -178,6 +180,15 @@ async function runSyncWork(config, pool, { sessionId, reason, measureFirst = fal
     if (measured.behindBy == null) return { outcome: 'unmeasured' };
     if (measured.behindBy === 0) return { outcome: 'level' };
     if (measured.mergesClean !== true) return { outcome: 'conflict_skipped' };
+  }
+  // The merge queue's conflict lane: a head that merges cleanly by now is
+  // the direct lane's (a sibling's merge moved main), not a resolution's.
+  if (reason === 'conflict' && measured.mergesClean === true && !steps.has('started')) return { outcome: 'clean_now' };
+  // #361: housekeeping is billed to the system budget; an exhausted one is
+  // an answer (the card says so), not a failure to back off from.
+  if (!steps.has('started')) {
+    const budget = await deps.limits.checkSystemBudget(pool);
+    if (budget.error) return { outcome: 'over_budget', message: budget.error };
   }
   const headBefore = measured.headSha || session.integration_head_sha || null;
   const mainSha = measured.mainSha || session.integration_main_sha || null;
@@ -255,10 +266,7 @@ async function runSyncWork(config, pool, { sessionId, reason, measureFirst = fal
       pool, session, mode: 'sync', budgetMs: SYNC_BUDGET_MS, onProgress,
       stop: () => deps.worker.stopTurn(id),
       dispatch: async (extra, { budgetMs } = {}) => {
-        // #361: platform housekeeping, billed to the system budget, always
-        // on the platform key.
-        const sysBudget = await deps.limits.checkSystemBudget(pool);
-        if (sysBudget.error) throw new Error(sysBudget.error);
+        // Always on the platform key.
         await deps.worker.ensureWorkerImage();
         await deps.worker.ensureWorker(id, { repoOwner, repoName, branchName: session.branch_name, onProgress });
         await activeWorkers.enter(id);
@@ -286,7 +294,7 @@ async function runSyncWork(config, pool, { sessionId, reason, measureFirst = fal
       },
     });
     const routed = turn.routed || {};
-    if (typeof routed.error === 'string') throw new Error(routed.error);
+    if (typeof routed.error === 'string') throw new Error(routed.error.replace(/^dispatch: /, ''));
     const result = routed.result || {};
 
     return await steps.once('after', async () => {
@@ -352,6 +360,7 @@ async function runSyncWork(config, pool, { sessionId, reason, measureFirst = fal
           : (syncResult === 'clean' || syncResult === 'resolved') && !result.pushOk ? 'not_pushed' : syncResult,
         sha: result.sha || null, behind: result.behind || 0, pushOk: !!result.pushOk,
         conflictFiles: result.conflictFiles || [], message, headBefore, mainSha,
+        ...(managedRevision ? { managedRevision } : {}),
       };
     });
   } catch (err) {

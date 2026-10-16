@@ -84,7 +84,7 @@ resetWorld();
 
 // ── Module stubs, installed BEFORE the router loads ─────────────────────
 //
-// The router borrows recordVote/checkAndMerge from routes/votes.js and
+// The router borrows recordVote from routes/votes.js and
 // reaches GitHub, Docker and the websocket layer through their services. In
 // a test those are the things to OBSERVE, not run — and several are heavy
 // to even load — so they are placed in the require cache and the router
@@ -127,6 +127,8 @@ stubModule('../src/services/github', {
 const delivery = { requested: [] };
 stubModule('../src/workflow/platform.ts', {
   requestDeploy: async (appId, reason) => { delivery.requested.push([appId, reason]); return 1; },
+  // A vote asks the app's merge queue (the merge is the machines').
+  wantMerge: async (p) => { record('wantMerge')(p); },
   promoteProposal: async (p) => {
     record('promoteProposal')(p);
     const reply = state.promoteReply;
@@ -175,10 +177,6 @@ stubModule('../src/routes/votes', {
   recordVote: async (...args) => {
     record('recordVote')(...args);
     return { rowCount: state.voteRowCount };
-  },
-  checkAndMerge: async (...args) => {
-    record('checkAndMerge')(...args);
-    return { merged: false };
   },
 });
 stubModule('../src/services/topic-attributes', {
@@ -563,7 +561,7 @@ test('promoting a held proposal is the announcement, with the partner\'s vote on
   assert.equal(recorded.revisionEnforced, true);
   assert.equal(calls.createPrProposedNotifications, undefined, 'the route sends no vote request of its own');
   await settle();
-  assert.equal(calls.checkAndMerge[0][2].id, r.body.sessionId, 'a vote is followed by the merge check, as always');
+  assert.equal(calls.wantMerge[0][0].sessionId, r.body.sessionId, 'a vote asks the merge queue, as always');
 });
 
 test('a promote the machine refuses (a second cue, a closed PR) casts no vote', async () => {
@@ -584,7 +582,7 @@ test('promoted without a vote, the card is clean and the partner can still vote 
   assert.equal(r.body.notified, null);
   assert.equal(calls.recordVote, undefined);
   await settle();
-  assert.equal(calls.checkAndMerge, undefined, 'no vote, no merge check');
+  assert.equal(calls.wantMerge, undefined, 'no vote, no merge ask');
   const v = await post('/api/apps/demo-app/demo/vote', {});
   assert.equal(v.status, 200);
   assert.equal(calls.recordVote.length, 1);
@@ -648,7 +646,7 @@ test('one at a time counts a held proposal, and reset takes a held one down', as
 
 // ── Vote ────────────────────────────────────────────────────────────────
 
-test('the partner\'s vote is a real vote: recordVote under revision, then checkAndMerge', async () => {
+test('the partner\'s vote is a real vote: recordVote under revision, then the merge queue is asked', async () => {
   state.sessions.push({
     id: 9, app_id: 1, user_id: 50, status: 'promoted', pr_number: 42,
     pr_title: 'Smooth category animations', source: 'imported', imported_pr_head_sha: 'c'.repeat(40),
@@ -665,7 +663,7 @@ test('the partner\'s vote is a real vote: recordVote under revision, then checkA
   assert.equal(recorded.session.id, 9);
 
   await settle();
-  assert.equal(calls.checkAndMerge[0][2].id, 9, 'the merge check runs on the same session');
+  assert.equal(calls.wantMerge[0][0].sessionId, 9, 'the merge queue is asked about the same session');
   assert.equal(calls.sendSystemMessage[0][2], 'sam voted yes on PR #42: Smooth category animations');
   assert.deepEqual(calls.sendSystemMessage[0][5], { type: 'session', ref: 9 }, 'in the proposal\'s thread');
   assert.deepEqual(calls.pushVoteUpdate[0][0], { sessionId: 9, appSlug: 'demo-app', merged: false });
@@ -684,7 +682,7 @@ test('a vote with nothing open, or on a proposal that just closed, is refused', 
   r = await post('/api/apps/demo-app/demo/vote', {});
   assert.equal(r.status, 409);
   await settle();
-  assert.equal(calls.checkAndMerge, undefined, 'nothing to merge-check when nothing was written');
+  assert.equal(calls.wantMerge, undefined, 'nothing to ask when nothing was written');
 });
 
 // ── The approvals rule ──────────────────────────────────────────────────

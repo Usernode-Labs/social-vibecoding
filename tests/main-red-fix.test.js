@@ -28,7 +28,7 @@ const stub = (rel, exports) => {
   require.cache[file] = { id: file, filename: file, loaded: true, exports };
 };
 stub('../src/services/ws', { sendSystemMessage: async () => {}, pushSessionUpdate: () => {}, pushIssueUpdate: () => {} });
-stub('../src/services/merge-queue', { enqueue: () => {} });
+stub('../src/workflow/platform.ts', { wantMerge: async () => {} });
 stub('../src/services/notifications', { notifyIssueFiled: () => {} });
 stub('../src/services/homeroom-bot', {
   ensureBotUser: async () => ({ id: 77, username: 'homeroom_bot' }),

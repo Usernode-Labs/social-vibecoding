@@ -2,16 +2,16 @@
 //
 // Covers the three backend guarantees the dev-chat sync banner depends
 // on:
-//   1. runSyncMain() coalesces concurrent calls per session — a click
-//      that races the resume-triggered background sync joins the
-//      running turn instead of tripping execInWorker's "a turn is
-//      already in flight" guard.
-//   2. The run broadcasts sync_status lifecycle events (starting →
-//      phase changes → done/failed) over pushSessionUpdate, and
-//      getSyncState() tracks the live phase for reload recovery.
-//   3. The routes: POST /sync-main 409s (friendly, structured) when a
-//      chat turn holds the worker, and GET /status exposes the `sync`
-//      field.
+//   1. A sync (services/sync-main.js runSyncWork, the proposal machine's
+//      branch.sync work) broadcasts sync_status lifecycle events
+//      (starting → phase changes → done/failed) over pushSessionUpdate,
+//      and narrates its activity in the timeline. That one sync runs at a
+//      time is the proposal machine's guard
+//      (tests/workflow-merge-postgres.test.js M7).
+//   2. The routes: POST /sync-main asks the proposal machine and 409s
+//      (friendly, structured) when it refuses because a chat turn holds
+//      the session, joins a sync already under way, and GET /status
+//      exposes the `sync` field.
 //
 // Like the other suites we stub collaborators via require.cache so
 // nothing real (worker, docker, ws) spins up.
@@ -121,6 +121,12 @@ function loadSyncMain({ execImpl, reconcileImpl = async () => ({ ok: true, appli
 
   delete require.cache[ids.subject];
   const subject = require(ids.subject);
+  // The proposal machine's branch.sync work, called as runSyncMain was
+  // (tests/lib/sync-work-shim.js): the budget open.
+  subject.runSyncMain = require('./lib/sync-work-shim').shim(subject, {
+    limits: { checkSystemBudget: async () => ({}), recordSystemSpend: async () => {} },
+  });
+  subject.getSyncState = () => null;
 
   const restore = () => {
     for (const [k, id] of Object.entries(ids)) {
@@ -148,69 +154,9 @@ function sessionRow(overrides = {}) {
 
 const syncEvents = (updates) => updates.filter((u) => u.action === 'sync_status');
 
-// ── runSyncMain coalescing ──────────────────────────────────────────
-
-test('runSyncMain: concurrent calls for one session share a single worker turn', async () => {
-  const { subject, execCalls, restore } = loadSyncMain({
-    execImpl: async () => {
-      await sleep(20); // hold it in-flight so the second call overlaps
-      return { syncResult: 'clean', behind: 0, sha: 'abc1234', pushOk: true, exitCode: 0 };
-    },
-  });
-  try {
-    const pool = syncPool();
-    const row = sessionRow();
-    const p1 = subject.runSyncMain({ jwtSecret: 's' }, pool, 7, { sessionRow: row });
-    const p2 = subject.runSyncMain({ jwtSecret: 's' }, pool, 7, { sessionRow: row });
-    assert.ok(subject.getSyncState(7), 'registry reports in-flight while pending');
-    const [r1, r2] = await Promise.all([p1, p2]);
-
-    assert.equal(execCalls.length, 1, 'the second concurrent call must coalesce, not spin a second worker');
-    assert.deepEqual(r1, r2, 'both callers receive the same result');
-    assert.equal(r1.syncResult, 'clean');
-    assert.equal(subject.getSyncState(7), null, 'registry empties once the sync settles');
-  } finally {
-    restore();
-  }
-});
-
-test('runSyncMain: a later, non-overlapping call runs a fresh worker turn', async () => {
-  const { subject, execCalls, restore } = loadSyncMain({
-    execImpl: async () => ({ syncResult: 'clean', behind: 0, sha: 'abc1234', pushOk: true, exitCode: 0 }),
-  });
-  try {
-    const pool = syncPool();
-    const row = sessionRow();
-    await subject.runSyncMain({ jwtSecret: 's' }, pool, 7, { sessionRow: row });
-    await subject.runSyncMain({ jwtSecret: 's' }, pool, 7, { sessionRow: row });
-    assert.equal(execCalls.length, 2, 'sequential syncs are independent once the prior one settles');
-  } finally {
-    restore();
-  }
-});
-
-test('runSyncMain: coalescing is per-session, not global', async () => {
-  const { subject, execCalls, restore } = loadSyncMain({
-    execImpl: async () => {
-      await sleep(20);
-      return { syncResult: 'clean', behind: 0, sha: 'abc1234', pushOk: true, exitCode: 0 };
-    },
-  });
-  try {
-    const pool = syncPool();
-    const p1 = subject.runSyncMain({ jwtSecret: 's' }, pool, 7, { sessionRow: sessionRow({ id: 7 }) });
-    const p2 = subject.runSyncMain({ jwtSecret: 's' }, pool, 8, { sessionRow: sessionRow({ id: 8, branch_name: 'dev/y-2' }) });
-    await Promise.all([p1, p2]);
-    assert.equal(execCalls.length, 2, 'different sessions never coalesce');
-  } finally {
-    restore();
-  }
-});
-
 // ── sync_status lifecycle broadcasts + phase tracking ───────────────
 
 test('lifecycle: phase lines map to merging→resolving→pushing and the terminal done carries syncResult/message', async () => {
-  let midFlightPhase = null;
   const { subject, updates, restore } = loadSyncMain({
     execImpl: async (opts) => {
       // Replay the worker's MODE=sync phase markers as parseLine
@@ -218,7 +164,6 @@ test('lifecycle: phase lines map to merging→resolving→pushing and the termin
       opts.onProgress('[sync_fetch_main]');
       opts.onProgress('[sync_merge]');
       opts.onProgress('[sync_conflict_cc]');
-      midFlightPhase = subject.getSyncState(7)?.phase;
       opts.onProgress('[sync_push]');
       return { syncResult: 'resolved', behind: 0, sha: 'abc1234', pushOk: true, exitCode: 0 };
     },
@@ -240,7 +185,6 @@ test('lifecycle: phase lines map to merging→resolving→pushing and the termin
     const terminal = events[events.length - 1];
     assert.equal(terminal.syncResult, 'resolved');
     assert.match(terminal.message, /resolved merge conflicts/i);
-    assert.equal(midFlightPhase, 'resolving', 'getSyncState tracks the live phase for reload recovery');
   } finally {
     restore();
   }
@@ -537,71 +481,61 @@ function activeSessionRow(id) {
   };
 }
 
-test('POST /sync-main: 409 with a friendly error when a chat turn is in flight and no sync is running', async () => {
+// The proposal machine decides; the route asks it (platform.ts requestSync)
+// and answers with what it said.
+function withPlatform(fake, fn) {
+  const id = require.resolve('../src/workflow/platform.ts');
+  const prior = require.cache[id];
+  require.cache[id] = { id, filename: id, loaded: true, exports: fake, paths: [] };
+  return Promise.resolve().then(fn).finally(() => { if (prior) require.cache[id] = prior; else delete require.cache[id]; });
+}
+
+test('POST /sync-main: 409 with a friendly error when the proposal machine refuses because somebody works on it', async () => {
   poolQueryHandler = async (sql) => {
     if (/FROM chat_sessions cs JOIN apps a/.test(sql)) return { rows: [activeSessionRow(41)] };
     return { rows: [] };
   };
-  activeWorkers.clear();
-  activeWorkers.add(41); // a chat turn holds the worker
-  const realIsInFlight = worker.isInFlight;
-  worker.isInFlight = () => false;
-  const realGetSyncState = syncMainSvc.getSyncState;
-  syncMainSvc.getSyncState = () => null;
-  const realRunSyncMain = syncMainSvc.runSyncMain;
-  let runCalls = 0;
-  syncMainSvc.runSyncMain = async () => { runCalls += 1; return { ok: true }; };
-
-  const server = await startServer();
-  try {
-    const port = server.address().port;
-    const res = await fetch(`http://127.0.0.1:${port}/api/sessions/41/sync-main`, { method: 'POST' });
-    const body = await res.json();
-    assert.equal(res.status, 409);
-    assert.equal(body.busy, true);
-    assert.match(body.error, /still working in this session/i);
-    assert.equal(runCalls, 0, 'the guard must fire before any worker dispatch');
-  } finally {
-    syncMainSvc.getSyncState = realGetSyncState;
-    syncMainSvc.runSyncMain = realRunSyncMain;
-    worker.isInFlight = realIsInFlight;
-    activeWorkers.clear();
-    server.close();
-  }
+  const asked = [];
+  await withPlatform({
+    requestSync: async (p) => { asked.push(p); return { status: 'rejected', reason: 'busy' }; },
+  }, async () => {
+    const server = await startServer();
+    try {
+      const port = server.address().port;
+      const res = await fetch(`http://127.0.0.1:${port}/api/sessions/41/sync-main`, { method: 'POST' });
+      const body = await res.json();
+      assert.equal(res.status, 409);
+      assert.equal(body.busy, true);
+      assert.match(body.error, /still working in this session/i);
+      assert.deepEqual(asked.map((a) => [a.sessionId, a.reason, a.wait]), [[41, 'person', true]]);
+    } finally {
+      server.close();
+    }
+  });
 });
 
-test('POST /sync-main: falls through to the coalesced run when the in-flight turn IS a sync', async () => {
+test('POST /sync-main: joins a sync already under way, and answers with its outcome', async () => {
   poolQueryHandler = async (sql) => {
     if (/FROM chat_sessions cs JOIN apps a/.test(sql)) return { rows: [activeSessionRow(42)] };
     return { rows: [] };
   };
-  activeWorkers.clear();
-  activeWorkers.add(42); // the sync turn holds the worker too
-  const realIsInFlight = worker.isInFlight;
-  worker.isInFlight = () => false;
-  const realGetSyncState = syncMainSvc.getSyncState;
-  syncMainSvc.getSyncState = () => ({ phase: 'resolving', startedAt: 123 });
-  const realRunSyncMain = syncMainSvc.runSyncMain;
-  syncMainSvc.runSyncMain = async () => ({
-    ok: true, syncResult: 'resolved', behind: 0, sha: 'abc1234', pushOk: true,
-    message: 'Claude resolved merge conflicts with main and pushed abc1234.',
+  await withPlatform({
+    requestSync: async () => ({ status: 'rejected', reason: 'in_progress' }),
+    syncUnderWay: async () => ({ n: 3, reason: 'conflict' }),
+    waitForSync: async (id, n) => ({ n, outcome: 'resolved', sha: 'abc1234', message: 'Claude resolved merge conflicts with main and pushed abc1234.' }),
+  }, async () => {
+    const server = await startServer();
+    try {
+      const port = server.address().port;
+      const res = await fetch(`http://127.0.0.1:${port}/api/sessions/42/sync-main`, { method: 'POST' });
+      const body = await res.json();
+      assert.equal(res.status, 200);
+      assert.equal(body.syncResult, 'resolved');
+      assert.match(body.message, /resolved merge conflicts/i);
+    } finally {
+      server.close();
+    }
   });
-
-  const server = await startServer();
-  try {
-    const port = server.address().port;
-    const res = await fetch(`http://127.0.0.1:${port}/api/sessions/42/sync-main`, { method: 'POST' });
-    const body = await res.json();
-    assert.equal(res.status, 200);
-    assert.equal(body.syncResult, 'resolved');
-    assert.match(body.message, /resolved merge conflicts/i);
-  } finally {
-    syncMainSvc.getSyncState = realGetSyncState;
-    syncMainSvc.runSyncMain = realRunSyncMain;
-    worker.isInFlight = realIsInFlight;
-    activeWorkers.clear();
-    server.close();
-  }
 });
 
 test('GET /status: exposes the in-flight sync state, and null when idle', async () => {
@@ -616,7 +550,7 @@ test('GET /status: exposes the in-flight sync state, and null when idle', async 
   const realIsInFlight = worker.isInFlight;
   worker.isInFlight = () => false;
   const realGetSyncState = syncMainSvc.getSyncState;
-  syncMainSvc.getSyncState = (id) => (Number(id) === 43 ? { phase: 'pushing', startedAt: 456 } : null);
+  syncMainSvc.getSyncState = async (_pool, id) => (Number(id) === 43 ? { phase: 'pushing', startedAt: 456 } : null);
 
   const server = await startServer();
   try {

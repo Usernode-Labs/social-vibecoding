@@ -23,7 +23,6 @@ const ids = {
   logger: require.resolve('../src/services/logger'),
   pool: require.resolve('../src/db/pool'),
   github: require.resolve('../src/services/github'),
-  conflictResolver: require.resolve('../src/services/conflict-resolver'),
   releaseWatch: require.resolve('../src/services/release-watch'),
   mainWatch: require.resolve('../src/services/main-watch'),
   platform: require.resolve('../src/workflow/platform.ts'),
@@ -74,8 +73,8 @@ stub(ids.github, {
 const requested = [];
 stub(ids.platform, {
   requestDeploy: async (appId, reason) => { requested.push([appId, reason]); return 1; },
+  wantMerge: async () => {},
 });
-stub(ids.conflictResolver, { checkAndResolveConflicts: async () => {} });
 const observed = [];
 stub(ids.releaseWatch, {
   observe: async (config, pool, app, head) => {

@@ -196,6 +196,10 @@ function loadSyncMain(workerResult) {
 
   delete require.cache[ids.subject];
   const subject = require(ids.subject);
+  // The proposal machine's branch.sync work, called as runSyncMain was.
+  subject.runSyncMain = require('./lib/sync-work-shim').shim(subject, {
+    limits: { checkSystemBudget: async () => ({ ok: true, remaining: 2500 }), recordSystemSpend: async () => {} },
+  });
   const restore = () => {
     for (const [k, id] of Object.entries(ids)) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];

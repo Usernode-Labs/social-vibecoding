@@ -129,11 +129,11 @@ test('singleton background work lives in becomeLeader(), not start()', () => {
   for (const singleton of [
     'recoverActiveWorkers(config)',
     'resumeHeadlessRuns',
-    'recoverStuckMerges(config)',
+    'observeMergedOnGithub(config)',
     'recoverSessions(config)',
     'startSessionAutoPauseSweeper(config)',
     'startStalePrSweeper(config)',
-    'startEligibleMergeSweeper(config)',
+    'startStuckChecksSweeper(config)',
     'startTitleHealSweeper(config)',
     'resumeRunningCampaigns(config',
     "require('./src/services/main-drift-poller').start(config)",

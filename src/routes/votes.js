@@ -5049,7 +5049,7 @@ function voteRoutes(config) {
         sessionId: session.id, by: req.user.username,
       });
       const out = await require('../workflow/platform.ts').forceMerge({
-        sessionId: session.id, appId: session.app_id, userId: req.user.id, username: req.user.username,
+        sessionId: session.id, appId: session.app_id, from: session.status, userId: req.user.id, username: req.user.username,
       });
       if (out.status === 'rejected') {
         return res.status(409).json({ error: out.reason || 'not_in_review' });

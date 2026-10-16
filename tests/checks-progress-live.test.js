@@ -1055,7 +1055,7 @@ test('an integration supersedes a check run rather than queueing behind it', () 
   // The head the repair pushes reaches the preview machine as a new
   // revision, which cancels the run of the old one: the queue has nothing
   // of its own to stop before it moves the branch.
-  const queue = read('src/services/merge-queue.js');
+  const queue = read('src/workflow/merge-queue/machine.ts') + read('src/services/sync-main.js');
   assert.doesNotMatch(queue, /preview-lifecycle|\.supersede\(/, 'no second owner stops the run');
   const machine = read('src/workflow/preview/machine.ts');
   const obsolete = machine.slice(machine.indexOf('function obsolete('), machine.indexOf('function obsolete(') + 1200);

@@ -4,7 +4,9 @@
 // (requiredVotes / mergeWindowMs / mergeGate) with only getActiveUserStats
 // overridden to pin the active-user count.
 //
-// A merge is reported to the merge-followups workflow machine
+// The gate (routes/votes.js evaluateMergeGate, the proposal machine's
+// merge.gate work) answers ready with the tally the merged line reads; a
+// merge is reported to the merge-followups workflow machine
 // (platform.ts mergeConfirmed), which owns everything after GitHub's
 // merge; the stub records each report so a test can read the tally the
 // gate snapshotted.
@@ -69,7 +71,6 @@ function loadVotes() {
     github: require.resolve('../src/services/github'),
     platform: require.resolve('../src/workflow/platform.ts'),
     docker: require.resolve('../src/services/docker'),
-    resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
     activeUsers: require.resolve('../src/services/active-users'),
     notifications: require.resolve('../src/services/notifications'),
@@ -96,11 +97,6 @@ function loadVotes() {
     abandonMerge: async () => ({ status: 'accepted', eventId: 4 }),
   });
   stub(ids.docker, {});
-  stub(ids.resolver, {
-    checkAndResolveConflicts: async () => {},
-    resolveAndMaybeRetry: async () => ({ ok: true }),
-    isResolving: () => false,
-  });
   stub(ids.ws, {
     sendSystemMessage: async () => {},
     pushNotificationToUser() {},
@@ -146,7 +142,7 @@ test('threshold met but inside the visibility window → deferred (waitingForWin
     // yes=6 (>= required 6), no=0, just promoted → window ~3.4d not elapsed.
     const { pool, claims } = makePool({ yes: 6, no: 0, sessionId: 7, appId: 5 });
     const session = { ...baseSession, promoted_at: new Date().toISOString() };
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, pool, session, {});
     assert.equal(r.merged, false);
     assert.equal(r.waitingForWindow, true);
     assert.equal(r.needed, 6, 'eased threshold surfaced');
@@ -164,12 +160,9 @@ test('threshold met and window elapsed → merges', async () => {
     const { pool, claims } = makePool({ yes: 6, no: 0, sessionId: 7, appId: 5 });
     // Promoted 8 days ago → window (~3.4d) long elapsed.
     const session = { ...baseSession, promoted_at: new Date(Date.now() - 8 * DAY).toISOString() };
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
-    assert.equal(r.merged, true);
-    assert.equal(claims.length, 1, 'claimed the merge once the window elapsed');
-    assert.equal(reports.length, 1, 'the merge was reported to the merge-followups machine');
-    assert.equal(reports[0].sessionId, 7);
-    assert.equal(reports[0].tally.required, 6, 'snapshotted the eased threshold (required=6), not the majority');
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, pool, session, {});
+    assert.equal(r.ready, true);
+        assert.equal(r.tally.required, 6, 'snapshotted the eased threshold (required=6), not the majority');
   } finally {
     restore();
   }
@@ -184,7 +177,7 @@ test('below threshold, unopposed lead, clock running → deferred (lazy consensu
     // inside its visibility window.
     const { pool, claims } = makePool({ yes: 5, no: 0, sessionId: 7, appId: 5 });
     const session = { ...baseSession, promoted_at: new Date().toISOString() };
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, pool, session, {});
     assert.equal(r.merged, false);
     assert.equal(r.needed, 6);
     assert.equal(r.waitingForWindow, true, 'lazy clock surfaces as waitingForWindow');
@@ -201,11 +194,9 @@ test('below threshold, unopposed lead, clock elapsed → merges (silence is cons
   try {
     const { pool, claims } = makePool({ yes: 5, no: 0, sessionId: 7, appId: 5 });
     const session = { ...baseSession, promoted_at: new Date(Date.now() - 30 * DAY).toISOString() };
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
-    assert.equal(r.merged, true, 'lazy-consensus window elapsed with no objection');
-    assert.equal(claims.length, 1);
-    assert.equal(reports.length, 1);
-    assert.equal(reports[0].tally.required, 6, 'still snapshots the eased threshold');
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, pool, session, {});
+    assert.equal(r.ready, true, 'lazy-consensus window elapsed with no objection');
+    assert.equal(r.tally.required, 6, 'still snapshots the eased threshold');
   } finally {
     restore();
   }
@@ -219,7 +210,7 @@ test('below threshold with no Yes lead → blocked on count, no clock', async ()
     // stays blocked on the count.
     const { pool, claims } = makePool({ yes: 2, no: 2, sessionId: 7, appId: 5 });
     const session = { ...baseSession, promoted_at: new Date(Date.now() - 30 * DAY).toISOString() };
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, pool, session, {});
     assert.equal(r.merged, false);
     assert.notEqual(r.waitingForWindow, true);
     assert.equal(r.windowEndsAt, null, 'no clock of any kind serialized');
@@ -235,9 +226,8 @@ test('majority of Yes merges immediately regardless of window', async () => {
   try {
     const { pool, claims } = makePool({ yes: 11, no: 0, sessionId: 7, appId: 5 });
     const session = { ...baseSession, promoted_at: new Date().toISOString() }; // just promoted
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
-    assert.equal(r.merged, true, 'a clear majority skips the window entirely');
-    assert.equal(claims.length, 1);
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, pool, session, {});
+    assert.equal(r.ready, true, 'a clear majority skips the window entirely');
   } finally {
     restore();
   }
@@ -250,15 +240,14 @@ test('contested proposal: full majority merges immediately, sub-majority is bloc
     // Contested (no=7 → 0.35 >= 1/3). required rises to majority (11).
     const blocked = makePool({ yes: 6, no: 7, sessionId: 7, appId: 5 });
     const justNow = { ...baseSession, promoted_at: new Date().toISOString() };
-    let r = await subject.checkAndMerge({ jwtSecret: 's' }, blocked.pool, justNow, {});
+    let r = await subject.evaluateMergeGate({ jwtSecret: 's' }, blocked.pool, justNow, {});
     assert.equal(r.merged, false, 'contested + sub-majority does not merge');
     assert.equal(r.needed, 11, 'contested restores the full majority threshold');
     assert.equal(blocked.claims.length, 0);
 
     const passes = makePool({ yes: 11, no: 7, sessionId: 7, appId: 5 });
-    r = await subject.checkAndMerge({ jwtSecret: 's' }, passes.pool, justNow, {});
-    assert.equal(r.merged, true, 'contested + full majority merges immediately, no window');
-    assert.equal(passes.claims.length, 1);
+    r = await subject.evaluateMergeGate({ jwtSecret: 's' }, passes.pool, justNow, {});
+    assert.equal(r.ready, true, 'contested + full majority merges immediately, no window');
   } finally {
     restore();
   }
@@ -284,7 +273,7 @@ test('flagged: the author\'s own Yes meets the count but does not merge', async 
   setActive(1); // only the author has been active lately: one Yes is the threshold
   try {
     const { pool, claims, records } = makePool({ yes: 1, no: 0, otherYes: 0, members: 3, sessionId: 7, appId: 51 });
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, flagged({ app_id: 51 }), {});
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, pool, flagged({ app_id: 51 }), {});
     assert.equal(r.merged, false);
     assert.equal(r.awaitingOtherMember, true);
     assert.equal(claims.length, 0, 'never claimed the merge');
@@ -308,9 +297,8 @@ test('flagged: one Yes from another member merges, with no window to wait out', 
     // 6 of 20 meets the eased threshold; unflagged this would sit out the
     // visibility window (see the first test). Flagged, it merges now.
     const { pool, claims, records } = makePool({ yes: 6, no: 0, otherYes: 5, members: 20, sessionId: 7, appId: 52 });
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, flagged({ app_id: 52 }), {});
-    assert.equal(r.merged, true);
-    assert.equal(claims.length, 1);
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, pool, flagged({ app_id: 52 }), {});
+    assert.equal(r.ready, true);
     const first = records[0];
     assert.deepEqual(first.evaluated.slice(0, 2).map((e) => [e.key, e.state]),
       [['approvals', 'done'], ['explicit', 'done']]);
@@ -325,9 +313,8 @@ test('flagged in a one-member community: the author\'s Yes is enough', async () 
   setActive(1);
   try {
     const { pool, claims, records } = makePool({ yes: 1, no: 0, otherYes: 0, members: 1, sessionId: 7, appId: 53 });
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, flagged({ app_id: 53 }), {});
-    assert.equal(r.merged, true);
-    assert.equal(claims.length, 1);
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, pool, flagged({ app_id: 53 }), {});
+    assert.equal(r.ready, true);
     assert.equal(records[0].context.memberFloor, false,
       'the requirement row is left out where there is nobody else to ask');
   } finally {
@@ -340,7 +327,7 @@ test('flagged below threshold: waits on the votes first, not on the floor', asyn
   setActive(20);
   try {
     const { pool, claims, records } = makePool({ yes: 2, no: 0, otherYes: 2, members: 20, sessionId: 7, appId: 54 });
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool,
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, pool,
       flagged({ app_id: 54, promoted_at: new Date(Date.now() - 30 * DAY).toISOString() }), {});
     assert.equal(r.merged, false);
     assert.notEqual(r.awaitingOtherMember, true);

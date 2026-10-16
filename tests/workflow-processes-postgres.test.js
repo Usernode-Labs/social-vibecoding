@@ -108,6 +108,10 @@ test('workflow machines in a process of their own, and through its crash', { tim
     `SELECT status FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3 ORDER BY created_at DESC LIMIT 1`,
     [machine, key, kind])).rows[0]?.status === 'settled';
 
+  // GitHub merged it: merge-followups is created by Merged, here as the
+  // boot's merged-by-hand lookup reports it (the merge itself, below).
+  const reportMerge = async (m) => { await platform.mergeObserved({ ...m, mergedAt: null }); return { status: 'accepted' }; };
+
   await platform.startWorkflow({ ...flags, databaseUrl, wfSlots: 0 }, { loops: false });
   await startWorkflow();
 
@@ -197,8 +201,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
   async function mergeGoesLive({ crashAt } = {}) {
     const a = await app({ selfHosted: true });
     const s = await proposal(a);
-    const merged = await platform.mergeConfirmed({ sessionId: s.id, appId: a.id, mergeSha: SHA('a'), force: false,
-      tally: { yes: 1, required: 1, active: 1 } });
+    const merged = await reportMerge({ sessionId: s.id, appId: a.id, mergeSha: SHA('a') });
     assert.ok(['accepted', 'pending'].includes(merged.status), JSON.stringify(merged));
     await procs.until(async () => (await instance('merge-followups', mergeKey(s)))?.state === 'delivering', 'the merge recorded');
     if (crashAt) await procs.arm(pool, crashAt);
@@ -248,7 +251,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
     await pool.query(`INSERT INTO wf_test_effects (kind, data) VALUES ('github.prCommits', $1)`,
       [JSON.stringify({ number: carrier.pr_number, shas: [SHA('3')] })]);
     if (crashAt) await procs.arm(pool, crashAt);
-    await platform.mergeConfirmed({ sessionId: carrier.id, appId: a.id, mergeSha: SHA('4'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    await reportMerge({ sessionId: carrier.id, appId: a.id, mergeSha: SHA('4') });
     if (crashAt) {
       await procs.reached(pool, crashAt);
       await workflow.kill();
@@ -300,7 +303,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
        ON CONFLICT (machine, key) DO UPDATE SET state = EXCLUDED.state`,
       [`session:${s.id}`, state, JSON.stringify({ sessionId: s.id, run: { id: 'r'.repeat(32) } })]);
     await asWriter(shots('taking_shots'));
-    await platform.mergeConfirmed({ sessionId: s.id, appId: a.id, mergeSha: SHA('c'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    await reportMerge({ sessionId: s.id, appId: a.id, mergeSha: SHA('c') });
     const retires = async () => (await pool.query(
       `SELECT work_key, status FROM wf_work WHERE machine = 'merge-followups' AND key = $1 AND kind = 'worker.retire' ORDER BY created_at`,
       [mergeKey(s)])).rows;
@@ -357,7 +360,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
     await pool.query(`INSERT INTO wf_test_effects (kind, data) VALUES ('github.prCommits', $1)`,
       [JSON.stringify({ number: carrier.pr_number, shas: [SHA('e')] })]);
     await procs.arm(pool, 'github.prCommits');
-    await platform.mergeConfirmed({ sessionId: carrier.id, appId: a.id, mergeSha: SHA('f'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    await reportMerge({ sessionId: carrier.id, appId: a.id, mergeSha: SHA('f') });
     await procs.reached(pool, 'github.prCommits');
     await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [moved.id, SHA('7')]);
     await procs.release(pool, 'github.prCommits');
@@ -385,7 +388,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
     try {
       await done.recorded;
       assert.deepEqual((await instance('preview', `session:${busy.id}`)).data.operations.map((o) => o.kind), ['operation']);
-      await platform.mergeConfirmed({ sessionId: carrier.id, appId: a.id, mergeSha: SHA('9'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+      await reportMerge({ sessionId: carrier.id, appId: a.id, mergeSha: SHA('9') });
       await procs.until(() => settled('merge-followups', mergeKey(carrier), 'included.find'), 'the search for carried changes');
       // Wait for the decision itself, not a fixed time: the find settling
       // only starts the chain (its WorkDone decided on the carrier, then the
@@ -547,6 +550,84 @@ test('workflow machines in a process of their own, and through its crash', { tim
     assert.deepEqual(r, { status: 'archived', closed: 1, destroyed: true, preview: 'retired', processes: 2 });
   });
 
+  // ── The merge (step 6) ──────────────────────────────────────────────
+  // A vote's ask, appended by the web side to the app's merge queue; the
+  // queue's pick, the gate, the claim under the lock and GitHub's merge all
+  // in the workflow process; and the same killed after GitHub merged, before
+  // its answer (merge trace bug 1).
+  const inReview = async (a) => {
+    const s = (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, branch_name, pr_number, pr_title, reviewed_head_sha, promoted_at,
+                                  check_state, checks_commit_sha, integration_merges_clean)
+       VALUES ($1, $2, 'promoted', 'feature', $3, 'A change', $4, NOW() - interval '1 day', 'passing', $4, TRUE) RETURNING *`,
+      [a.id, author.id, ++seq, SHA('a')])).rows[0];
+    const voter = await user();
+    await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, head_sha, approval_epoch) VALUES ($1, $2, 'yes', $3, 0)`,
+      [s.id, voter.id, SHA('a')]);
+    return s;
+  };
+  async function mergeThrough({ crash } = {}) {
+    const a = await app({ selfHosted: true });
+    const s = await inReview(a);
+    if (crash) await procs.arm(pool, 'github.merge.done');
+    await platform.wantMerge({ appId: a.id, sessionId: s.id, reason: 'vote' });
+    if (crash) {
+      await procs.reached(pool, 'github.merge.done');
+      await workflow.kill();
+      await procs.expireLeases(pool);
+      await startWorkflow();
+    }
+    await procs.until(async () => (await instance('merge-followups', `session:${s.id}`))?.state === 'delivering', 'the merge recorded');
+    await procs.until(async () => (await proposalOf(s))?.state === 'merged', 'the proposal merged');
+    return {
+      status: await statusOf(s),
+      merges: (await procs.effects(pool, 'github.merge')).filter((e) => e.data.number === s.pr_number).map((e) => e.data.head),
+      gates: (await procs.effects(pool, 'merge.gate')).filter((e) => e.data.sessionId === s.id).length,
+      processes: await ranIn('proposal', `session:${s.id}`, 'merge.attempt'),
+      queue: (await instance('merge-queue', `app:${a.id}`)).state,
+    };
+  }
+
+  await t.test('merge: a vote asks from the web side; the queue, the gate, the claim and GitHub\'s merge run in the workflow process', async () => {
+    const r = await mergeThrough();
+    assert.deepEqual(r, { status: 'merged', merges: [SHA('a')], gates: 1, processes: 1, queue: 'idle' });
+  });
+
+  await t.test('merge, restarted: killed after GitHub merged, before its answer; the next process reads the PR first and never asks twice (bug 1)', async () => {
+    const r = await mergeThrough({ crash: true });
+    assert.equal(r.processes, 2, 'the attempt the crash interrupted, finished by the next process');
+    assert.deepEqual({ ...r, processes: undefined }, { status: 'merged', merges: [SHA('a')], gates: 1, processes: undefined, queue: 'idle' },
+      'merged once, at its head: as without the crash');
+  });
+
+  // A sync with main, asked from the web side (a person's "Sync with main"),
+  // run in the workflow process; and killed in its turn: the next process
+  // carries it on (its once-record never strands it, bug 9).
+  async function syncThrough({ crash } = {}) {
+    const a = await app();
+    const s = await inReview(a);
+    if (crash) await procs.arm(pool, 'sync.turn');
+    const out = await platform.requestSync({ sessionId: s.id, appId: a.id, reason: 'person', userId: author.id });
+    assert.equal(out.status, 'accepted', JSON.stringify(out));
+    if (crash) {
+      await procs.reached(pool, 'sync.turn');
+      await workflow.kill();
+      await procs.expireLeases(pool);
+      await startWorkflow();
+    }
+    await procs.until(async () => (await proposalOf(s))?.data?.lastSync?.outcome === 'clean', 'the sync ended');
+    const i = await proposalOf(s);
+    return { sync: i.data.sync, outcome: i.data.lastSync.outcome, processes: await ranIn('proposal', `session:${s.id}`, 'branch.sync') };
+  }
+
+  await t.test('sync with main: asked from the web side, run in the workflow process', async () => {
+    assert.deepEqual(await syncThrough(), { sync: null, outcome: 'clean', processes: 1 });
+  });
+
+  await t.test('sync with main, restarted: killed in its turn; the next process carries it to its end (bug 10)', async () => {
+    assert.deepEqual(await syncThrough({ crash: true }), { sync: null, outcome: 'clean', processes: 2 });
+  });
+
   // ── What the workflow process's boot gives it (src/workflow/setup.ts) ─
 
   await t.test('a merge decided in the workflow process syncs the phone badge of everyone with a bell row about it', async () => {
@@ -563,7 +644,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
        VALUES ($1, $2, 'production', $3, $4, $5, 'ios', 'authorized', NOW() + INTERVAL '30 days')`,
       [voter.id, `nsc_${String(voter.id).padStart(43, '0')}`, crypto.randomUUID(), crypto.randomBytes(32).toString('hex'),
         require('../src/services/secrets').encrypt(token, DATA_KEY)]);
-    await platform.mergeConfirmed({ sessionId: s.id, appId: a.id, mergeSha: SHA('9'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    await reportMerge({ sessionId: s.id, appId: a.id, mergeSha: SHA('9') });
     const sent = await procs.until(async () => (await procs.effects(pool, 'push.send')).find((e) => e.data.token === token), 'the badge push');
     assert.equal(sent.data.badge, 0, 'the merge settled the vote request, so nothing is left unread');
     assert.equal(sent.pid, workflow.pid, 'sent by the workflow process');
@@ -591,7 +672,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
     const a = await app();
     const s = await proposal(a);
     await procs.arm(pool, 'github.clone');
-    await platform.mergeConfirmed({ sessionId: s.id, appId: a.id, mergeSha: SHA('d'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    await reportMerge({ sessionId: s.id, appId: a.id, mergeSha: SHA('d') });
     try {
       await procs.reached(pool, 'github.clone');
       assert.equal(await deploying(a), true, 'the web side reads the deploy under way from the row');

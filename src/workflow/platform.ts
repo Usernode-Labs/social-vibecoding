@@ -709,8 +709,8 @@ export async function wantMerge(p: { appId: number; sessionId?: number | null; r
 
 // An admin forces the merge of a proposal in review (M4): the force lasts
 // until it merges, closes, leaves review or its author pushes new code.
-export function forceMerge(p: { sessionId: number; appId: number; userId?: number | null; username?: string | null }) {
-  return proposalEvent('ForceMerge', { from: 'promoted', userId: p.userId ?? null, username: p.username ?? null },
+export function forceMerge(p: { sessionId: number; appId: number; from: string; userId?: number | null; username?: string | null }) {
+  return proposalEvent('ForceMerge', { from: p.from, userId: p.userId ?? null, username: p.username ?? null },
     { sessionId: p.sessionId, appId: p.appId, source: { kind: 'route', name: 'admin-merge' }, actor: p.userId ? `user:${p.userId}` : null }) as Promise<EventOutcome>;
 }
 

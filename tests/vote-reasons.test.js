@@ -88,7 +88,6 @@ function loadVotes({ pool }) {
     github: require.resolve('../src/services/github'),
     staging: require.resolve('../src/services/staging'),
     docker: require.resolve('../src/services/docker'),
-    resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
     activeUsers: require.resolve('../src/services/active-users'),
     notifications: require.resolve('../src/services/notifications'),
@@ -119,11 +118,6 @@ function loadVotes({ pool }) {
   });
   stub(ids.staging, { teardownStaging: async () => {} });
   stub(ids.docker, {});
-  stub(ids.resolver, {
-    checkAndResolveConflicts: async () => {},
-    resolveAndMaybeRetry: async () => ({ ok: true }),
-    isResolving: () => false,
-  });
   stub(ids.ws, {
     sendSystemMessage: async (_pool, appId, content, msgType, metadata, thread) => {
       systemMessages.push({ appId, content, msgType, metadata, thread });

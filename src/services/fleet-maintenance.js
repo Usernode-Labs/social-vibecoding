@@ -865,7 +865,7 @@ async function mergeGreen(config, pool, campaignId, { limit = null, forceBy }) {
     try {
       const platform = require('../workflow/platform.ts');
       const forced = await platform.forceMerge({
-        sessionId: session.id, appId: session.app_id, userId: forceBy?.id ?? null, username: forceBy?.username ?? null,
+        sessionId: session.id, appId: session.app_id, from: session.status, userId: forceBy?.id ?? null, username: forceBy?.username ?? null,
       });
       const r = forced.status === 'accepted' || forced.status === 'replayed'
         ? { merged: await platform.waitForMerge(session.id, MERGE_GREEN_WAIT_MS), reason: 'not merged yet' }

@@ -947,7 +947,8 @@ function synced(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outco
   }
   if (outcome === 'unresolvable') d = { ...d, gaveUp: { head: r.headBefore ?? sync.head, main: r.mainSha ?? null } };
   if (sync.reason === 'conflict') {
-    writes.push({ type: 'blockReasons', sessionId: d.sessionId, reasons: outcome === 'unresolvable' ? ['unresolvable'] : [] });
+    const reasons = outcome === 'unresolvable' ? ['unresolvable'] : outcome === 'over_budget' ? ['budget'] : [];
+    writes.push({ type: 'blockReasons', sessionId: d.sessionId, reasons });
     if (outcome === 'unresolvable') {
       const owner = f.row!.userId ? `<@${f.row!.userId}>` : 'the session owner';
       writes.push({ type: 'line', eventId: e.id, appId: d.appId, sessionId: d.sessionId, msgType: 'conflict', metadata: null,

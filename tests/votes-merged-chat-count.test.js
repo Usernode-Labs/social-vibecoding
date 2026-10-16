@@ -35,7 +35,6 @@ function loadVotes({ mergedRows }) {
     github: require.resolve('../src/services/github'),
     staging: require.resolve('../src/services/staging'),
     docker: require.resolve('../src/services/docker'),
-    resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
     activeUsers: require.resolve('../src/services/active-users'),
     notifications: require.resolve('../src/services/notifications'),
@@ -76,7 +75,6 @@ function loadVotes({ mergedRows }) {
   stub(ids.github, { isEnabled: () => false });
   stub(ids.staging, {});
   stub(ids.docker, {});
-  stub(ids.resolver, { checkAndResolveConflicts: async () => {}, isResolving: () => false });
   stub(ids.ws, { broadcast() {}, getReactionsForMessages: async () => ({}) });
   stub(ids.activeUsers, {
     getActiveUserStats: async () => ({ active: 3, majority: 2 }),

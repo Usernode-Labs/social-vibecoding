@@ -71,7 +71,6 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     ...require('../src/services/issue-close-watcher'),
     watchIssuesClosedAfterMerge: async (o) => { calls.push(['watch', o.prNumber]); return { closed: [], skipped: [], stillOpen: [] }; },
   });
-  stub('../src/services/conflict-resolver', { checkAndResolveConflicts: async () => {} });
   stub('../src/services/homeroom-bot', { ...require('../src/services/homeroom-bot'), noteRequestMerged: async () => null });
   stub('../src/services/homeroom-bot-dm', {
     ...require('../src/services/homeroom-bot-dm'),
@@ -122,20 +121,22 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
      UNION ALL SELECT 1 FROM wf_events WHERE machine = 'merge-followups' AND status = 'pending'`)).rows.length,
   'every follow-up settled');
 
+  // GitHub merged it: merge-followups is created by Merged, here as the
+  // boot's merged-by-hand lookup reports it (the proposal machine's attempt
+  // reports it by message: tests/workflow-merge-postgres.test.js M1).
+  const confirmed = (m) => platform.mergeObserved({ ...m, mergedAt: null });
+
   await t.test('every machine\'s guard is recorded for the ownership triggers', async () => {
     const { rows } = await pool.query(`SELECT key FROM wf_settings WHERE key LIKE 'enabled:%' ORDER BY key`);
     assert.deepEqual(rows.map((r) => r.key),
-      ['enabled:app-delivery', 'enabled:governance-proposal', 'enabled:merge-followups', 'enabled:preview', 'enabled:proposal', 'enabled:shots'],
+      ['enabled:app-delivery', 'enabled:governance-proposal', 'enabled:merge-followups', 'enabled:merge-queue', 'enabled:preview', 'enabled:proposal', 'enabled:shots'],
       'no machine has a flag: their guards are on in every process');
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_settings WHERE key = 'ownership_mode'`)).rows[0].n, 0);
   });
 
   await t.test('a confirmed merge goes live through the real handlers', async () => {
     const s = await proposal();
-    const out = await platform.mergeConfirmed({
-      sessionId: s.id, appId: app.id, mergeSha: SHA('a'), force: false, tally: { yes: 2, required: 2, active: 4 },
-    });
-    assert.ok(['accepted', 'pending'].includes(out.status), out.status);
+    await confirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('a') });
     await until(async () => (await state(s)) === 'live', 'live');
     const r = (await pool.query('SELECT status, live_at, merge_commit_sha FROM chat_sessions WHERE id = $1', [s.id])).rows[0];
     assert.equal(r.status, 'merged');
@@ -169,7 +170,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   await t.test('a failed deploy goes live when any later deploy contains it', async () => {
     deploys.fail = true;
     const s = await proposal();
-    await platform.mergeConfirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('b'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    await confirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('b') });
     await until(async () => (await state(s)) === 'deploy_failed', 'deploy failed');
     deploys.fail = false;
     // The drift poller's deploy of a build that does not contain it, then one that does.
@@ -189,7 +190,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   await t.test('an admin retries a failed delivery', async () => {
     deploys.fail = true;
     const s = await proposal();
-    await platform.mergeConfirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('e'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    await confirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('e') });
     await until(async () => (await state(s)) === 'deploy_failed', 'deploy failed');
     deploys.fail = false;
     const out = await platform.adminEvent('merge-followups', `session:${s.id}`, 'RetryDelivery', {}, { id: author.id, username: 'author' });
@@ -205,7 +206,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     await platform.stopWorkflow();
     // Accepted with no loops running: the event waits for a runtime.
     await platform.startWorkflow(config, { loops: false });
-    await platform.mergeConfirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('a'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    await confirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('a') });
     await platform.stopWorkflow();
     await platform.startWorkflow(config, { loops: true });
     await until(async () => (await state(s)) === 'live', 'the accepted merge finished');
@@ -223,7 +224,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
       [own.id, author.id, ++seq]);
     await platform.stopWorkflow();
     await platform.startWorkflow(config, { loops: true });
-    await platform.mergeConfirmed({ sessionId: s.id, appId: own.id, mergeSha: SHA('a'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    await confirmed({ sessionId: s.id, appId: own.id, mergeSha: SHA('a') });
     await until(async () => (await state(s)) === 'delivering', 'waiting for a build that contains it');
     const booted = async () => (await pool.query('SELECT booted_shas FROM apps WHERE id = $1', [own.id])).rows[0].booted_shas;
     const was = process.env.GIT_SHA;

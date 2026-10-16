@@ -107,6 +107,8 @@ function loadSyncMain({ execImpl }) {
 
   delete require.cache[ids.subject];
   const subject = require(ids.subject);
+  // The proposal machine's branch.sync work, called as runSyncMain was.
+  subject.runSyncMain = require('./lib/sync-work-shim').shim(subject);
 
   const restore = () => {
     for (const [k, id] of Object.entries(ids)) {
@@ -151,16 +153,15 @@ test('runSyncMain records the turn cost to system_token_usage, never llm_usage',
   }
 });
 
-test('runSyncMain skips + throws the system-budget message when the budget is exhausted', async () => {
+test('runSyncMain skips with the system-budget message when the budget is exhausted (an answer, not a failure)', async () => {
   const { subject, execCalls, restore } = loadSyncMain({
     execImpl: async () => ({ syncResult: 'clean', behind: 0, sha: 'abc', pushOk: true, exitCode: 0, costUsd: 0.1 }),
   });
   try {
     const pool = makePool({ sysCap: 2500, sysSpent: 2500 }); // at cap
-    await assert.rejects(
-      () => subject.runSyncMain({ jwtSecret: 's' }, pool, 7, { sessionRow: ownerRow() }),
-      /System token budget reached/
-    );
+    const res = await subject.runSyncMain({ jwtSecret: 's' }, pool, 7, { sessionRow: ownerRow() });
+    assert.equal(res.outcome, 'over_budget');
+    assert.match(res.message, /System token budget reached/);
     assert.equal(execCalls.length, 0, 'no worker turn runs when over budget');
     assert.equal(sysSpendInserts(pool).length, 0, 'nothing recorded when the gate fails');
   } finally {

@@ -24,7 +24,6 @@ const ids = {
   logger: require.resolve('../src/services/logger'),
   pool: require.resolve('../src/db/pool'),
   github: require.resolve('../src/services/github'),
-  conflictResolver: require.resolve('../src/services/conflict-resolver'),
   mainWatch: require.resolve('../src/services/main-watch'),
   platform: require.resolve('../src/workflow/platform.ts'),
 };
@@ -54,13 +53,13 @@ stub(ids.github, {
   getReadOctokit: async () => readClient,
   isEnabled: () => true,
 });
-stub(ids.conflictResolver, { checkAndResolveConflicts: async () => {} });
 stub(ids.mainWatch, { afterMerge: async () => {} });
 // The app-delivery machine: what was asked of it, and the app's row as it
 // reads it.
 const delivery = { requested: [], row: { deploy_state: null, last_failure: null } };
 stub(ids.platform, {
   requestDeploy: async (appId, reason) => { delivery.requested.push([appId, reason]); return 1; },
+  wantMerge: async () => {},
 });
 
 const queries = [];
