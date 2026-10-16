@@ -671,4 +671,102 @@ test('unit-suite reuse through the preview machine, against the full PostgreSQL 
     assert.equal(!!r.test_results.find((x) => x.index === -3)?.reused, false);
     delete answers.byTrigger['manual-recheck'];
   });
+
+  // The machine reads the proposal's pin itself, under the row's lock, when
+  // a person's recheck arrives. preview-workflow.recheck (#5282) hands the
+  // reviewed head over as a revision first, so in the route cases above the
+  // machine is already on the newest head when the recheck lands, and they
+  // would pass even if the machine ignored the pin. A pin can still move
+  // after that hand-over (an upload lands between the revision and the
+  // recheck) with no revision of its own: these cases move it with nothing
+  // announced, so only the machine's own reading of the pin can get the
+  // newer head built and checked (review of #5310, round 1).
+  const realPassOf = () => result({ results: [browser, unitPass], unitObserved: UNIT_KEY,
+    history: [{ checkKey: UNIT_KEY, name: unitSuiteRow.UNIT_CHECK_NAME, path: 'package.json', passed: true }] });
+  const pinTo = (s, head) => pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [s.id, head]);
+
+  await t.test('a manual recheck builds a pin that moved with no revision announced, settled, preparing or checking', async () => {
+    let n = 0;
+    for (const state of ['settled', 'preparing', 'checking']) {
+      n += 1;
+      const s = await proposal({ status: 'promoted', source: 'cli_handoff' });
+      const A = SHA(String(n)).replace(/^./, 'a'); const B = SHA(String(n)).replace(/^./, 'b');
+      await pinTo(s, A);
+      // A settled run of A passed on its own suite; a run of A still to come
+      // would answer with a copied pass, which never answers a request.
+      answers.next = state === 'settled' ? realPassOf() : result({ results: [browser, copied], unitEarned: UNIT_KEY });
+      answers.byTrigger['manual-recheck'] = realPassOf();
+      await submit(s, A);
+      await rt.drain();
+      if (state === 'checking') { await rt.runServices(); await rt.drain(); }
+      if (state === 'settled') { await settle(); answers.next = result({ results: [browser, copied], unitEarned: UNIT_KEY }); }
+      assert.equal((await instance(s)).state, state);
+      const runsOfA = (await runsOf(s)).filter((w) => w.input.head === A).length;
+      asked.length = 0;
+
+      await pinTo(s, B);
+      await reuse.markFreshOwed(pool, { sessionId: s.id, commitSha: B });
+      await send(s, 'RecheckRequested', { reason: 'manual-recheck', trigger: 'manual-recheck' }, { kind: 'route' });
+      await rt.drain();
+      assert.equal((await instance(s)).data.preparing?.head, B, `${state}: the newer pin is built, not the head held`);
+      assert.equal((await row(s.id)).unit_suite_fresh_sha, B, `${state}: the request stays on the newer pin`);
+
+      await settle();
+      const r = await row(s.id);
+      assert.deepEqual([r.check_state, r.checks_commit_sha, r.unit_suite_fresh_sha], ['passing', B, null], state);
+      assert.equal(!!r.test_results.find((x) => x.index === -3)?.reused, false, `${state}: not answered by a copy`);
+      assert.ok((await runsOf(s)).some((w) => w.input.head === B && w.input.trigger === 'manual-recheck'), `${state}: B is checked as theirs`);
+      assert.equal((await runsOf(s)).filter((w) => w.input.head === A).length, runsOfA, `${state}: no new run of A`);
+      assert.ok(!asked.some((a) => a.trigger === 'commit-push'), `${state}: A's run never answered`);
+      delete answers.byTrigger['manual-recheck'];
+    }
+  });
+
+  await t.test('through the recheck route\'s hand-over: an upload that lands between the revision and the recheck is the head checked', async (st) => {
+    const platformPath = require.resolve('../src/workflow/platform.ts');
+    const realPlatform = require.cache[platformPath];
+    const platform = {};
+    require.cache[platformPath] = { id: platformPath, filename: platformPath, loaded: true, exports: platform, paths: [] };
+    st.after(() => { if (realPlatform) require.cache[platformPath] = realPlatform; else delete require.cache[platformPath]; });
+    platform.previewHeld = async (id) => (await pool.query('SELECT 1 FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(id)])).rows.length > 0;
+    platform.previewInstance = async (id) => (await pool.query('SELECT * FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(id)])).rows[0];
+    const s = await proposal({ status: 'promoted', source: 'cli_handoff' });
+    const A = SHA('a'); const B = SHA('b'); const C = SHA('c');
+    const handed = [];
+    platform.submitRevision = async (r) => {
+      const ev = await send({ id: r.sessionId, app_id: r.appId }, 'RevisionSubmitted',
+        { sessionId: r.sessionId, head: r.head, source: r.source, trigger: r.trigger ?? null, carryFrom: r.carryFrom ?? null }, { kind: 'system', name: r.source });
+      await rt.drain();
+      handed.push([r.head, (await instance(s)).data.preparing?.head]);
+      // The upload of C moves the voted-on head; nothing announces it to
+      // the machine before the recheck arrives.
+      await pinTo(s, C);
+      return (await pool.query('SELECT result AS status, reason FROM wf_events WHERE id = $1', [ev])).rows[0];
+    };
+    platform.requestRecheck = async (o) => {
+      const ev = await send({ id: o.sessionId, app_id: o.appId }, 'RecheckRequested', { reason: o.reason, trigger: o.trigger }, { kind: 'route' });
+      await rt.drain();
+      return (await pool.query('SELECT result AS status, reason FROM wf_events WHERE id = $1', [ev])).rows[0];
+    };
+    await pinTo(s, A);
+    answers.next = realPassOf();
+    await submit(s, A);
+    await settle();
+    await pinTo(s, B);
+    answers.next = result({ results: [browser, copied], unitEarned: UNIT_KEY });
+    answers.byTrigger['manual-recheck'] = realPassOf();
+    asked.length = 0;
+
+    await recovery.recheckSessionChecks({ pool, session: await row(s.id), reason: 'manual-recheck' });
+    assert.deepEqual(handed, [[B, B]], 'the hand-over took B, the head reviewed when the recheck read the row');
+    assert.equal((await instance(s)).data.preparing?.head, C, 'the machine read C under the lock and builds it instead of B');
+    await settle();
+    const r = await row(s.id);
+    assert.deepEqual([r.check_state, r.checks_commit_sha, r.unit_suite_fresh_sha], ['passing', C, null]);
+    assert.equal(!!r.test_results.find((x) => x.index === -3)?.reused, false, 'not answered by a copy');
+    const runs = (await runsOf(s)).map((w) => [w.input.head, w.input.trigger]);
+    assert.ok(runs.some(([h, tr]) => h === C && tr === 'manual-recheck'), 'C is checked as theirs');
+    assert.ok(!runs.some(([h]) => h === B), 'B, superseded while it was built, is never checked');
+    delete answers.byTrigger['manual-recheck'];
+  });
 });
