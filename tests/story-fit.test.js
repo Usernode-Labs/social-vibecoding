@@ -57,12 +57,15 @@ test('each step adds to the last, in the owner\'s order', () => {
 });
 
 test('the first render is step 0, with all three examples and nothing pinned', () => {
-  const html = renderComponent(STORY, 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
+  const html = renderComponent(STORY, 'Story', { primaryClass: 'pill', onStart() {} });
   assert.match(html, /<img[^>]*class="mx-auto block h-auto w-\[200px\] max-w-full"/);
   assert.match(html, /<h1 class="mt-2 text-\[28px\] leading-\[33px\] font-extrabold text-balance">/);
   assert.equal((html.match(/<li /g) || []).length, 3);
   assert.doesNotMatch(html, /sticky/);
-  assert.match(html, /<div class="w-full max-w-sm md:max-w-md mx-auto flex flex-col gap-3 pt-6 pb-3"><a href="#signup" data-landing-story-start=""/);
+  assert.match(html, /<div class="w-full max-w-sm md:max-w-lg mx-auto md:mb-auto flex flex-col gap-3 pt-6 pb-3"><a href="#signup" data-landing-story-start=""/);
+  // #5251: from md the foot follows the examples instead of the foot of the
+  // screen, so on a desktop the button is not left far below them.
+  assert.match(html, /<div class="my-auto md:mb-0 flex flex-col items-center py-6">/);
 });
 
 test('it steps before the browser paints, while the foot ends below the foot of the screen', () => {
@@ -72,7 +75,7 @@ test('it steps before the browser paints, while the foot ends below the foot of 
   // The foot as it would sit with the page at its top, against the foot of
   // the screen.
   assert.match(SOURCE, /const scrolled = window\.scrollY \+ \(story\.closest\('#auth-landing-scroll'\)\?\.scrollTop \|\| 0\);\s+const next = nextStep\(fit, foot\.getBoundingClientRect\(\)\.bottom \+ scrolled, screenFoot\(\)\);\s+if \(next === null\) f\.settled = true;\s+else setFit\(next\);/);
-  assert.match(SOURCE, /<div ref=\{footRef\} className=\{`w-full max-w-sm md:max-w-md mx-auto flex flex-col gap-3 \$\{s\.foot\} pb-3`\}>/);
+  assert.match(SOURCE, /<div ref=\{footRef\} className=\{`w-full max-w-sm md:max-w-lg mx-auto md:mb-auto flex flex-col gap-3 \$\{s\.foot\} pb-3`\}>/);
   // The foot of the screen is where a fixed box ends, less the home
   // indicator: in iPhone Safari, just above the toolbar.
   assert.match(SOURCE, /probe\.style\.cssText = 'position:fixed;left:0;top:0;width:1px;bottom:env\(safe-area-inset-bottom,0px\);visibility:hidden;pointer-events:none';\s+document\.body\.appendChild\(probe\);\s+const foot = probe\.getBoundingClientRect\(\)\.bottom;\s+probe\.remove\(\);/);
