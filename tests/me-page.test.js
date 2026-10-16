@@ -38,10 +38,22 @@ const SUMMARY = {
 
 test('the three stat cards: merged, kudos, challenges — and a dash, not a zero, without data', () => {
   const { statsView } = loadTsx(STORE);
-  assert.deepEqual(statsView(SUMMARY).map((s) => [s.key, s.value, s.label]),
+  // With kudos on (the switch passed explicitly, #5249).
+  assert.deepEqual(statsView(SUMMARY, { kudosParked: false }).map((s) => [s.key, s.value, s.label]),
     [['merged', '9', 'live'], ['kudos', '3', 'kudos'], ['challenges', '2', 'challenges']]);
-  assert.deepEqual(statsView(null).map((s) => s.value), ['–', '–', '–'],
+  assert.deepEqual(statsView(null, { kudosParked: false }).map((s) => s.value), ['–', '–', '–'],
     'a read that failed is not a claim of zero');
+});
+
+test('parked (#5249), two stat cards: merged and challenges, side by side', () => {
+  const { statsView } = loadTsx(STORE);
+  assert.deepEqual(statsView(SUMMARY).map((s) => [s.key, s.value, s.label]),
+    [['merged', '9', 'live'], ['challenges', '2', 'challenges']], 'the default is the switch, which is on');
+  assert.deepEqual(statsView(null).map((s) => s.value), ['–', '–']);
+  const view = read('frontend/src/features/profile/profile-view.tsx');
+  assert.match(view, /const STAT_GRID = KUDOS_PARKED \? 'grid grid-cols-2 gap-2 mb-2' : 'grid grid-cols-3 gap-2 mb-2';/,
+    'the grid has as many columns as cards');
+  assert.match(view, /<div id="profile-stats" className=\{STAT_GRID\}>/);
 });
 
 test('the rows say what is behind them, from the data only', () => {

@@ -1057,7 +1057,8 @@ test('handing over opens the dialog with the words, the pictures, the pin, the t
   assert.match(fc, /void attachScreenshotBlob\(handed\.blob, Array\.isArray\(handed\.pins\) \? handed\.pins : null\);/, 'each picture, its pins beside it');
   assert.match(fc, /feedbackTitle\.value = opts\.title\.trim\(\)\.slice\(0, 200\);\s*titleDirty = true;/,
     'the title the box showed is kept, not dropped as a stale suggestion');
-  assert.match(fc, /if \(opts\.bounty === true && !bountyCheckbox\.disabled\) bountyCheckbox\.checked = true;/);
+  // #5249: honoured only while kudos is not parked.
+  assert.match(fc, /if \(opts\.bounty === true && !KUDOS_PARKED && !bountyCheckbox\.disabled\) bountyCheckbox\.checked = true;/);
   // The form sends the pins beside the pictures it was handed with.
   assert.match(fc, /const pinned = screenshots\.filter\(\(shot\) => shot\.id && shot\.pins && shot\.pins\.length\)\s*\.flatMap\(/);
   assert.match(fc, /if \(pinned\.length\) body\.screenshotPins = pinned;/);
@@ -1287,6 +1288,12 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
   // Kudos is one line that says who it is for.
   assert.match(src, />\{t\('devchat:commentPin\.kudos\.label'\)\}</);
   assert.equal(message('devchat:commentPin.kudos.label'), 'Kudos for whoever solves it');
+  // #5249: and not drawn at all while kudos is parked; nothing the box sends
+  // or restores carries a kudos then.
+  assert.match(src, /import \{ KUDOS_PARKED \} from '\.\.\/leaderboard\/kudos-parked';/);
+  assert.match(src, /\{KUDOS_PARKED \? null : <button\s+type="button"\s+id="comment-pin-kudos"/);
+  assert.match(src, /bounty: !KUDOS_PARKED && d\.kudos && budget\.remaining !== 0,/);
+  assert.match(src, /kudos: !KUDOS_PARKED && !!c\?\.bounty,/);
   // The bar: moved by its handle (four arrows, a move cursor); it starts at
   // the foot every time (#4541, the device no longer keeps where it was left)
   // and never hides on its own.

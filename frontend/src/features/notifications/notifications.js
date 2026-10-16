@@ -101,6 +101,17 @@ const Notifications = {
   // pagination.
   savedNotifications: [],
   unread: 0,
+
+  // #5249: whether a notification is drawn at all. While kudos is parked
+  // (features/leaderboard/kudos-parked.ts; the bundle then publishes no
+  // window.Kudos) a kudos row is not: nobody can give kudos, so an old one
+  // would point at a feature that is not there. The rows stay in the
+  // database; every way a row enters `items` asks this first.
+  _shown(n) {
+    if (!n) return false;
+    if (n.kind === 'kudos' && !(typeof window !== 'undefined' && window.Kudos)) return false;
+    return true;
+  },
   // `open` is a GETTER now, defined beside show()/hide() below — the drawer
   // owns the presentation, so this module derives the state rather than
   // storing a flag that would disagree with the screen during the drawer's
@@ -216,7 +227,8 @@ const Notifications = {
         if (timeout) clearTimeout(timeout);
       }
       if (generation !== Notifications._refreshGeneration) return false;
-      Notifications.items = Array.isArray(data.notifications) ? data.notifications : [];
+      Notifications.items = Array.isArray(data.notifications)
+        ? data.notifications.filter(Notifications._shown) : [];
       Notifications.invites = Array.isArray(data.pendingInvites) ? data.pendingInvites : [];
       Notifications.saved = Array.isArray(data.savedMessages) ? data.savedMessages : [];
       // #4769: the pinned section's other half, saved NOTIFICATIONS. Same
@@ -304,7 +316,7 @@ const Notifications = {
       const res = await fetch(`/api/notifications?${params.toString()}`);
       if (!res.ok) return;
       const data = await res.json();
-      const incoming = Array.isArray(data.notifications) ? data.notifications : [];
+      const incoming = Array.isArray(data.notifications) ? data.notifications.filter(Notifications._shown) : [];
       // Append, deduping on id (a concurrent prepend could overlap).
       const seen = new Set(Notifications.items.map((n) => n.id));
       for (const n of incoming) {
@@ -355,7 +367,7 @@ const Notifications = {
       const res = await fetch(`/api/notifications?${params.toString()}`);
       if (!res.ok) return;
       const data = await res.json();
-      const incoming = Array.isArray(data.notifications) ? data.notifications : [];
+      const incoming = Array.isArray(data.notifications) ? data.notifications.filter(Notifications._shown) : [];
       const seen = new Set(Notifications.items.map((n) => n.id));
       for (const n of incoming) {
         if (!seen.has(n.id)) {
@@ -384,6 +396,7 @@ const Notifications = {
 
   handleIncoming(notif) {
     if (!notif) return;
+    if (!Notifications._shown(notif)) return;
     // Dedup on id — a reconnect might replay the same notification that
     // /api/notifications already returned.
     //

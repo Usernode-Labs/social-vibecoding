@@ -470,3 +470,37 @@ test('the kudos row button opens the Kudos leaderboard', async () => {
     globalThis.window.location = saved.location;
   }
 });
+
+// #5249: while kudos is parked (no window.Kudos) a kudos row is not drawn at
+// all: every way a row enters the list asks Notifications._shown, and a live
+// one arriving over the socket is dropped before it counts as unread. The
+// row stays in the database.
+test('parked, a kudos row never enters the list', async () => {
+  await load();
+  const N = globalThis.window.Notifications;
+  assert.equal(globalThis.window.Kudos, undefined, 'kudos is parked here');
+  assert.equal(N._shown({ ...ROW, kind: 'kudos' }), false);
+  assert.equal(N._shown({ ...ROW, kind: 'pr_proposed' }), true);
+  globalThis.window.Kudos = {};
+  try {
+    assert.equal(N._shown({ ...ROW, kind: 'kudos' }), true, 'with kudos on, it is drawn as before');
+  } finally {
+    delete globalThis.window.Kudos;
+  }
+  const saved = { items: N.items, unread: N.unread };
+  N.items = [];
+  N.unread = 0;
+  try {
+    N.handleIncoming({ ...ROW, id: 78, kind: 'kudos', readAt: null });
+    assert.equal(N.items.length, 0, 'a live kudos row is dropped');
+    assert.equal(N.unread, 0, 'and does not count as unread');
+  } finally {
+    N.items = saved.items;
+    N.unread = saved.unread;
+  }
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/notifications/notifications.js'), 'utf8');
+  assert.match(src, /Notifications\.items = Array\.isArray\(data\.notifications\)\s*\? data\.notifications\.filter\(Notifications\._shown\) : \[\];/,
+    'the first page is filtered');
+  assert.equal((src.match(/data\.notifications\.filter\(Notifications\._shown\)/g) || []).length, 3,
+    'and so are both older-page loads');
+});

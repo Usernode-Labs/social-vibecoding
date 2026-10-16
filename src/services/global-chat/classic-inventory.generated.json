@@ -8258,15 +8258,8 @@
       "method": "POST",
       "path": "/api/apps/:slug/issues/:number/bounty",
       "expression": null,
-      "status": "mapped",
-      "capabilityId": "issues.post.apps.item.issues.item.bounty.b80b1012",
-      "domain": "issues",
-      "risk": "external_write",
-      "confirmation": "required",
-      "renderer": "issue",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#app/:slug/dev/issues/:number"
+      "status": "exempt",
+      "reason": "kudos is parked (#5249): giving, retracting and pledging kudos, its givers and its allowance are off for members, so no assistant offers them"
     },
     {
       "source": "src/routes/issues.js",
@@ -8333,60 +8326,32 @@
       "method": "POST",
       "path": "/api/sessions/:id/kudos",
       "expression": null,
-      "status": "mapped",
-      "capabilityId": "development.post.sessions.item.kudos.13e64a25",
-      "domain": "development",
-      "risk": "external_write",
-      "confirmation": "required",
-      "renderer": "session",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#workshop"
+      "status": "exempt",
+      "reason": "kudos is parked (#5249): giving, retracting and pledging kudos, its givers and its allowance are off for members, so no assistant offers them"
     },
     {
       "source": "src/routes/kudos.js",
       "method": "DELETE",
       "path": "/api/sessions/:id/kudos",
       "expression": null,
-      "status": "mapped",
-      "capabilityId": "development.delete.sessions.item.kudos.e38aea5c",
-      "domain": "development",
-      "risk": "external_write",
-      "confirmation": "required",
-      "renderer": "session",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#workshop"
+      "status": "exempt",
+      "reason": "kudos is parked (#5249): giving, retracting and pledging kudos, its givers and its allowance are off for members, so no assistant offers them"
     },
     {
       "source": "src/routes/kudos.js",
       "method": "GET",
       "path": "/api/sessions/:id/kudos",
       "expression": null,
-      "status": "mapped",
-      "capabilityId": "development.get.sessions.item.kudos.d56b219b",
-      "domain": "development",
-      "risk": "read",
-      "confirmation": "never",
-      "renderer": "session",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#workshop"
+      "status": "exempt",
+      "reason": "kudos is parked (#5249): giving, retracting and pledging kudos, its givers and its allowance are off for members, so no assistant offers them"
     },
     {
       "source": "src/routes/kudos.js",
       "method": "GET",
       "path": "/api/me/kudos-budget",
       "expression": null,
-      "status": "mapped",
-      "capabilityId": "leaderboards.get.me.kudos.budget.1d61c944",
-      "domain": "leaderboards",
-      "risk": "read",
-      "confirmation": "never",
-      "renderer": "leaderboard",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#leaderboard/challenges"
+      "status": "exempt",
+      "reason": "kudos is parked (#5249): giving, retracting and pledging kudos, its givers and its allowance are off for members, so no assistant offers them"
     },
     {
       "source": "src/routes/kudos.js",

@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const {
-  buildMessage, recipientBinding, RECIPIENT_CONTEXT, isPushEnvironment,
+  buildMessage, buildNotificationCopy, isPushParked, recipientBinding, RECIPIENT_CONTEXT, isPushEnvironment,
 } = require('../src/services/mobile-push-policy');
 const {
   classifyError, parseServiceAccount,
@@ -67,6 +67,20 @@ test('a notification collapses to one alert per id on both platforms', () => {
   assert.equal(message.android.ttl, 60_000);
   assert.equal(message.apns.headers['apns-expiration'],
     String(Math.floor((now.getTime() + 60_000) / 1000)));
+});
+
+// #5249: kudos is parked. Its copy is kept for when it comes back, but no
+// push is built for it, and the worker settles its deliveries unsent.
+test('a parked kind keeps its copy but builds no push', () => {
+  assert.equal(isPushParked('kudos'), true);
+  assert.equal(isPushParked('reaction'), false);
+  assert.deepEqual(buildNotificationCopy('kudos', {
+    sourceUsername: 'alice', appName: 'MyPage', sessionTitle: 'Fix login redirect loop',
+  }), {
+    title: '@alice gave you kudos for "Fix login redirect loop" · MyPage',
+    body: 'Your work is getting noticed',
+  });
+  assert.throws(() => buildMessage({ ...INPUT, kind: 'kudos' }), /kind_not_allowed/);
 });
 
 test('reviewed interaction kinds build and unknown kinds stay closed', () => {
@@ -152,9 +166,6 @@ test('each kind renders its own title and body from send-time context', () => {
     ['reaction', { ...CONTEXT, detail: '👍' },
       '@alice reacted 👍 to your message · MyPage',
       'You said: hey can you look at the header'],
-    ['kudos', CONTEXT,
-      '@alice gave you kudos for "Fix login redirect loop" · MyPage',
-      'Your work is getting noticed'],
     ['collab_invite', CONTEXT,
       '@alice wants to build MyPage with you',
       'Join them to build it. Accept or decline in the app'],
