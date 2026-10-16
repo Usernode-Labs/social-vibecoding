@@ -389,7 +389,8 @@ function normalizeVisualScenario(test) {
 // `allowConsoleErrors` opts a test out of the baseline no-console-errors
 // rule (for a route that legitimately logs errors). `coldLoad: true` gives
 // the check a page load of its own instead of a hash switch on a page loaded
-// for another check (for a screen only a load of its address draws).
+// for another check: for a screen only a load of its address draws, or a page
+// that sends the next address change elsewhere (capture.js groupTests).
 // `visual: true` requires
 // a stable `id`, a presence assertion, and at least one repository-relative
 // `impact` glob; malformed visual metadata is ignored without dropping the

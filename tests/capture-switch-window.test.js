@@ -263,7 +263,7 @@ test('the manifest keeps coldLoad on a check that sets it, and adds nothing to o
   assert.match(visuals, /allowConsoleErrors: !!t\.allowConsoleErrors,\n(\s+\/\/[^\n]*\n)*\s+\.\.\.\(t\.coldLoad === true \? \{ coldLoad: true \} : \{\}\),\n\s+\};/);
 });
 
-test('Homeroom declares coldLoad on exactly the checks a one-time boot link draws', () => {
+test('Homeroom declares coldLoad on exactly the checks whose page a hash switch cannot share', () => {
   // `?details=1` opens Details on the first change page only, and `?shot=`
   // opens its sheet once at boot (both by design). Every cohort after a
   // document's first that carries one needed the cold-load fallback on every
@@ -271,10 +271,12 @@ test('Homeroom declares coldLoad on exactly the checks a one-time boot link draw
   // its shared load.
   const dapp = require('../dapp.json');
   const cold = dapp.tests.filter((t) => t.coldLoad === true);
-  assert.equal(cold.length, 22);
-  for (const t of cold) assert.match(t.path, /[?&](details=1|shot=[a-z-]+)(&|#)/, t.name);
+  assert.equal(cold.length, 23);
+  const boot = cold.filter((t) => /[?&](details=1|shot=[a-z-]+)(&|#)/.test(t.path));
+  assert.equal(boot.length, 22);
   const paths = [...new Set(cold.map((t) => t.path))].sort();
   assert.deepEqual(paths, [
+    '/#app/staging-demo-forkable',
     '/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000022',
     '/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000026',
     '/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000028',
@@ -287,5 +289,46 @@ test('Homeroom declares coldLoad on exactly the checks a one-time boot link draw
   // Every check at those addresses, so none is left to a switch on its own.
   for (const p of paths) {
     assert.ok(dapp.tests.filter((t) => t.path === p).every((t) => t.coldLoad === true), p);
+  }
+});
+
+test('a running app\'s check has a load of its own, because the pages after it open in its side panel', () => {
+  // The one fallback left on every run after #5280 (shard 0, 16-19s): the
+  // desktop check of a running app (`/#app/staging-demo-forkable`) was the
+  // first cohort of the shared `/` document, and the next was the agent
+  // session at `#messages/agent/990801`. With an app on screen on a
+  // desktop, `location.hash = '#messages/agent/990801'` is caught by the
+  // side panel's Navigation API chokepoint and opened beside the app
+  // (`?side=messages/agent/990801`), by design: the Messages screen the
+  // checks assert on is never drawn in the page itself.
+  const { loadTsx } = require('./lib/render-tsx');
+  const R = loadTsx('frontend/src/features/side-panel/routes.ts');
+  assert.equal(R.isPanelRoute('app/staging-demo-forkable'), false, 'the App tab: the app itself');
+  assert.equal(R.isPanelRoute('messages/agent/990801'), true, 'a conversation opens beside a running app');
+  const controller = require('node:fs').readFileSync(require.resolve('../frontend/src/features/side-panel/controller.ts'), 'utf8');
+  assert.match(controller, /export function onNavigate\(e: NavigateEventLike\): void \{[\s\S]*?if \(!isPanelRoute\(route\) \|\| !canTake\(\)\) return;\s+e\.preventDefault\(\);\s+open\(route, null\);/);
+
+  // So that check is grouped alone, and the rest of the `/` document no
+  // longer starts on a running app.
+  const { selfAppHashPath } = require('../src/services/visuals');
+  const dapp = require('../dapp.json');
+  const tests = dapp.tests.map((t, index) => ({
+    index, name: t.name, path: t.path, url: `https://s${selfAppHashPath(t.path)}`, ...(t.coldLoad ? { coldLoad: true } : {}),
+  }));
+  const groups = groupTests(tests, {});
+  const app = tests.find((t) => t.path === '/#app/staging-demo-forkable');
+  const own = groups.find((g) => g.includes(app));
+  assert.deepEqual(own.map((t) => t.index), [app.index]);
+  // Nowhere else does a running app (an App tab address) hand its page to
+  // a switch the side panel would take. Homeroom's own App tab is not one:
+  // the platform does not run itself in a frame, and a switch from it to a
+  // Workshop page draws that page in place (checked in Chromium).
+  const appTab = (hash) => /^#app\/[^/?]+(\/(app|full))?$/.test(hash) && !hash.startsWith('#app/usernode-2d5619');
+  for (const g of groups) {
+    const cohorts = cohortsOf(g);
+    for (let i = 0; i + 1 < cohorts.length; i += 1) {
+      assert.ok(!(appTab(cohorts[i].hash) && R.isPanelRoute(cohorts[i + 1].hash.slice(1))),
+        `${cohorts[i].hash} hands its page to ${cohorts[i + 1].hash}`);
+    }
   }
 });
