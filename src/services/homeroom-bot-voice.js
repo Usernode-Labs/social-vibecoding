@@ -700,7 +700,9 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     has('update_change') ? '- Change one of your own changes that is up for a vote when somebody clearly asks for a change to it (update_change): describe the change in your own words, precisely enough for a coding agent. It is queued for the change\'s next update, behind any update running now, and the result says which. Say so; never say it is done, since it is not made yet. A question about it is not a change: answer it.' : null,
     has('offer_withdraw') ? '- Offer to withdraw your change when the person who asked for its request, or the project\'s owner, wants it dropped (offer_withdraw). Nothing happens until they tap Withdraw it under your reply: say so.' : null,
     has('start_request') ? '- Start this request now, or read it again, when somebody asks you to build it (start_request). The result says what happens; say exactly that.' : null,
-    has('offer_close_request') ? '- Offer a vote on closing this request when somebody says it is done, a duplicate or not wanted (offer_close_request). It opens only when they tap Propose to close, and closes only if the group votes for it. Never start a request somebody asked you to close.' : null,
+    has('offer_close_request') ? (place.type === 'issue'
+      ? '- Offer a vote on closing this request when somebody says it is done, a duplicate or not wanted (offer_close_request). It opens only when they tap Propose to close, and closes only if the group votes for it. Never start a request somebody asked you to close.'
+      : '- Offer a vote on closing one of this project\'s requests, by its number, when somebody says it is done, a duplicate or not wanted (offer_close_request). It opens only when they tap Propose to close, and closes only if the group votes for it.') : null,
     has('offer_request') ? '- Offer to file a request in their words when somebody asks for a change to the app that none of your changes up for a vote covers (offer_request). Nothing is filed until they tap File it under your reply: say so, and never say it was filed.' : null,
     has('request_detail') ? '- Read the story of one of this project\'s requests (request_detail).' : null,
     has('read_source') ? '- Read the project\'s code as it is on main (list_source, then read_source) when somebody asks how something works. Say which file you read.' : null,
@@ -787,6 +789,10 @@ function toolsFor(place, { ownChange = false, requestChange = false, openChangeC
       title: { type: 'string', description: 'A short title: an imperative action, 5 to 10 words.' },
       details: { type: 'string', description: 'What they asked for, in their words.' },
     }, ['title', 'details']));
+    tools.push(fn('offer_close_request', 'Offer a vote on closing one of this project\'s requests, by its number.', {
+      number: { type: 'integer', description: 'The request\'s number, from the messages, the facts or a lookup.' },
+      why: { type: 'string', description: 'Why it should close, in their words.' },
+    }, ['number', 'why']));
   }
   tools.push(fn('request_detail', 'The story of one of this project\'s requests: what it asks, your reads of it, your change for it.', {
     number: { type: 'integer' },
@@ -1175,13 +1181,17 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
         return out;
       }
       case 'offer_close_request': {
-        if (place.type !== 'issue') return { error: 'Not here.' };
+        if (!['issue', 'chat', 'category', 'message'].includes(place.type)) return { error: 'Not here.' };
         if (ctx.offer) return { error: 'One offer per reply.' };
-        const gate = await mayor.closeGate(pool, { app, issueNumber: place.ref, user, deps });
+        const issueNumber = place.type === 'issue' ? place.ref : Number(args.number);
+        if (place.type !== 'issue' && (!Number.isInteger(issueNumber) || issueNumber <= 0)) {
+          return { error: 'Which request: its number.' };
+        }
+        const gate = await mayor.closeGate(pool, { app, issueNumber, user, deps });
         if (!gate.ok) return { ok: false, error: gate.error };
         ctx.offer = {
           kind: 'close_request', forUserId: user.id,
-          args: { issueNumber: place.ref, title: gate.issue.title, why: clip(args.why, 500) },
+          args: { issueNumber, title: gate.issue.title, why: clip(args.why, 500) },
         };
         return { ok: true, offered: 'Propose to close and Keep it open are under your reply, for them to tap. Nothing happens until they do; the request closes only if its group votes for it.' };
       }
