@@ -112,6 +112,18 @@ export interface CheckRow {
   keepReason?: boolean;
   reason?: string | null;
   /**
+   * 'early_burst' when this check's failure was one of a burst in the run's
+   * first seconds whose retries all passed (src/services/check-signals.js):
+   * often the environment, never proof of it. Null otherwise.
+   */
+  retryClass?: 'early_burst' | null;
+  /**
+   * An advisory about the check itself, shown in its fold: today, that a
+   * check this proposal adds or changes needed a fresh load after its
+   * address change. Never a verdict.
+   */
+  note?: string | null;
+  /**
    * The repo unit suite row's per-test excerpts (request #3978): the file,
    * the test name and the captured error text — assertion message,
    * expected/actual, the first stack lines. Empty on every other row; a
@@ -132,6 +144,8 @@ export interface ChecksVerdict {
   summary: string;
   failures: CheckRow[];
   passes: CheckRow[];
+  /** The passes with something to say, for the Checks step (see StepRun.noted). */
+  noted?: CheckRow[];
   /**
    * How many passed. More than `passes.length` while the row counts its
    * passes rather than listing them (a Workshop list row, or the item's own
@@ -481,6 +495,8 @@ export interface StepRun {
   checks: { ran: number; passed: number; failed: number; expected: number | null; done: boolean } | null;
   unit: LedgerUnitProgress | null;
   fails: CheckRow[];
+  /** Passing checks with something to say: a retry and its class, or a note. */
+  noted?: CheckRow[];
   note: string | null;
 }
 

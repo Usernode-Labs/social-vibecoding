@@ -109,7 +109,9 @@ const CATEGORY_DEFINITIONS = Object.freeze([
   Object.freeze({
     key: 'lightweight_activity',
     label: 'Lightweight activity',
-    description: 'Reactions and kudos on your work.',
+    // #5249: kudos is parked and sends no push (mobile-push-policy.js
+    // PARKED_PUSH_KINDS), so the category is described by what it sends.
+    description: 'Reactions on your work.',
     defaultEnabled: false,
     kinds: Object.freeze(['reaction', 'kudos']),
   }),

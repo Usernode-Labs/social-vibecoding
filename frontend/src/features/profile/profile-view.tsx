@@ -35,6 +35,7 @@ import {
   profileStore,
 } from './profile-store.js';
 import { Profile } from './profile.js';
+import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import { AccountPanel, RewardsPanel, SettingsPanel, WorkPanel } from './account-panel';
 import { FeedbackSheet } from './feedback-sheet';
 import { FriendsSheet } from './friends-sheet';
@@ -148,11 +149,16 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
   );
 }
 
+// #5249: two stat cards while kudos is parked (merged, challenges), so the
+// grid has two columns then. Complete literals, for Tailwind's extractor.
+const STAT_GRID = KUDOS_PARKED ? 'grid grid-cols-2 gap-2 mb-2' : 'grid grid-cols-3 gap-2 mb-2';
+const STAT_COUNT = KUDOS_PARKED ? 2 : 3;
+
 /** The three stat cards (the prototype's `.stat`): merged, kudos, challenges.
  *  Numbers the Me screen never had until GET /api/me/summary added them up. */
 function StatCards({ stats }: { stats: Array<{ key: string; value: string; label: string }> }): ReactNode {
   return (
-    <div id="profile-stats" className="grid grid-cols-3 gap-2 mb-2">
+    <div id="profile-stats" className={STAT_GRID}>
       {stats.map((stat) => (
         <div
           key={stat.key}
@@ -198,8 +204,8 @@ function ProfileSkeleton(): ReactNode {
             </div>
           </div>
           {/* The three stat cards: a figure over its label. */}
-          <div className="grid grid-cols-3 gap-2 mb-2">
-            {Array.from({ length: 3 }, (_, i) => (
+          <div className={STAT_GRID}>
+            {Array.from({ length: STAT_COUNT }, (_, i) => (
               <div key={i} className={`rounded-2xl ${PLANE_FILL} px-2 py-3 flex flex-col items-center`}>
                 <Skeleton shape="block" className="w-8 h-6" />
                 <Skeleton shape="muted" className="mt-1.5 w-14" />
@@ -209,7 +215,7 @@ function ProfileSkeleton(): ReactNode {
         </div>
         {/* Your work, then Rewards: the right column's rows. */}
         <div className="lg:col-start-2 lg:row-start-1 lg:row-span-2">
-          {[3, 2].map((count, group) => (
+          {[3, KUDOS_PARKED ? 1 : 2].map((count, group) => (
             <div key={group} className={`mt-8 rounded-2xl ${PLANE_FILL}`}>
               {Array.from({ length: count }, (_, i) => (
                 <div key={i} className="flex items-center gap-4 px-4 py-3.5">

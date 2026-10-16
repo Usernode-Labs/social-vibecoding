@@ -89,6 +89,7 @@ import { useVisibility } from '../../lib/visibility-store';
 import { walletSheetStore } from '../header/wallet-sheet-store';
 import { appSlotsLine, useAppAllowance } from '../dialogs/app-allowance';
 import { Profile } from './profile.js';
+import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 
 /** The rows' two lines are the primitive's, a size down, as the prototype sets them. */
 const TITLE = 'text-base font-semibold';
@@ -170,18 +171,21 @@ export function RewardsPanel({ rows }: {
           subtitle={rows.challenges || t('profile:more.challenges.hint')}
           subtitleClassName={SUBTITLE}
         />
-        <ListRow
-          as="a"
-          id="profile-row-kudos"
-          href="#leaderboard/kudos"
-          leading={<IconTile size="sm"><ThumbsUpIcon /></IconTile>}
-          title={t('profile:more.kudos.title')}
-          titleClassName={TITLE}
-          // The number is the stat card's at the top of the screen; the row
-          // says what is behind it.
-          subtitle={t('profile:more.kudos.hint')}
-          subtitleClassName={SUBTITLE}
-        />
+        {/* #5249: no Kudos row while kudos is parked (../leaderboard/kudos-parked.ts). */}
+        {KUDOS_PARKED ? null : (
+          <ListRow
+            as="a"
+            id="profile-row-kudos"
+            href="#leaderboard/kudos"
+            leading={<IconTile size="sm"><ThumbsUpIcon /></IconTile>}
+            title={t('profile:more.kudos.title')}
+            titleClassName={TITLE}
+            // The number is the stat card's at the top of the screen; the row
+            // says what is behind it.
+            subtitle={t('profile:more.kudos.hint')}
+            subtitleClassName={SUBTITLE}
+          />
+        )}
       </GroupedList>
     </section>
   );

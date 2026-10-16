@@ -7,6 +7,7 @@
 // so a member story can follow an actual Messages row on both revisions.
 
 const { Client } = require('pg');
+const crypto = require('node:crypto');
 const dbManager = require('./db-manager');
 const dbRetry = require('./db-retry');
 const hostedApp = require('../../worker/shots-hosted-app-contract');
@@ -26,6 +27,49 @@ const FULL_ADMIN_SESSION_PROFILE = 'platform-full-admin-agent-session-v1';
 const FULL_ADMIN_USER_ID = 2147483000;
 const FULL_ADMIN_USERNAME = 'usernode-shots-full-admin';
 const FULL_ADMIN_PROFILE = 'platform-isolated-full-admin-self-member-v2';
+
+// THE INVITED-MEMBER FIXTURES (#4437). One made-up private project, its two
+// invited members and the invite link that let them in, inserted only into
+// the two disposable shots databases. The personas they answer for: a
+// private member who has not been Home yet (first-visit, offered "Go to
+// Homeroom"), one on the platform waitlist (listed, joined by email), and
+// the unsigned-in visitor the invite link itself opens for. The two members
+// are two separate people, not one browser switching states: the first
+// visit lives in the browser's storage (the private-home key), so the
+// listed persona's storage state carries it and the first-visit persona's
+// does not. The high, fixed ids sit beside the full-admin identity's.
+const INVITED_APP_ID = 2147482998;
+const INVITED_APP_SLUG = 'shots-fixture-picnic-planner';
+const INVITED_MEMBER_USER_ID = 2147483001;
+const INVITED_MEMBER_USERNAME = 'usernode-shots-invited';
+const INVITED_MEMBER_LISTED_USER_ID = 2147483002;
+const INVITED_MEMBER_LISTED_USERNAME = 'usernode-shots-invited-listed';
+const INVITED_FIRST_VISIT_PROFILE = 'platform-invited-member-first-visit-v1';
+const INVITED_LISTED_PROFILE = 'platform-invited-member-listed-v1';
+const INVITE_LINK_PROFILE = 'platform-guest-invite-link-v1';
+// The invite's maker: the staging general channel's own person, present in
+// every staging clone. The link lives only while its maker's standing does
+// (community_invite_maker_holds), so a collaborator row keeps it true here.
+const INVITE_MAKER_USER_ID = 902784;
+const INVITE_MAKER_USERNAME = 'staging-demo-general-lin';
+const INVITED_NOTE = '[shots fixture] Come help us plan the summer picnic!';
+const INVITED_SKETCH_DESIGN = Object.freeze({
+  kind: 'card',
+  emoji: '🧺',
+  tagline: 'Plan the club picnic together',
+  points: ['Pick a date and a place', 'List what to bring', 'Sign up for food and games'],
+});
+
+// The link's 22-character token, derived from the run so both sides mint
+// the same one and the entry's path names it. community-invites TOKEN_RE
+// reads /^[A-Za-z0-9_-]{22}$/, and base64url's alphabet is exactly that.
+function invitedInviteToken(runId) {
+  return crypto.createHash('sha256').update(`${runId}:invite-token`).digest('base64url').slice(0, 22);
+}
+// The waitlist's stage-2 capability for the listed member, unique per run.
+function invitedWaitlistToken(runId) {
+  return crypto.createHash('sha256').update(`${runId}:waitlist-token`).digest('hex').slice(0, 32);
+}
 
 function assertShotsDatabase(databaseUrl, slug, runId, side) {
   const expected = dbManager.shotsDbName(slug, runId, side);
@@ -358,6 +402,198 @@ async function copyFullAdminAgentSession({ databaseUrl, slug, runId, side, selfA
   }, { at });
 }
 
+// Whether a side can hold the invited fixtures at all: the tables and user
+// columns the rows go into, the invite's maker (the staging general
+// channel's own person) and the platform app the private community is
+// built on. A copy missing any of them simply gets the fixtures left out.
+async function canInstallInvitedFixtures({ databaseUrl, slug, runId, side, selfAppSlug }) {
+  assertShotsDatabase(databaseUrl, slug, runId, side);
+  return withClient(databaseUrl, async (client) => {
+    const { rows } = await client.query(
+      `SELECT to_regclass('public.community_invites') IS NOT NULL AS has_invites,
+              to_regclass('public.app_sketches') IS NOT NULL AS has_sketches,
+              to_regclass('public.waitlist_signups') IS NOT NULL AS has_waitlist,
+              EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_schema = 'public' AND table_name = 'users'
+                         AND column_name = 'private_member_since') AS has_private_members`
+    );
+    if (!rows[0]?.has_invites || !rows[0]?.has_sketches
+        || !rows[0]?.has_waitlist || !rows[0]?.has_private_members) return false;
+    const ready = await client.query(
+      `SELECT EXISTS (SELECT 1 FROM users WHERE id = $1 AND username = $2) AS maker_ready,
+              EXISTS (SELECT 1 FROM apps WHERE slug = $3) AS self_app_ready`,
+      [INVITE_MAKER_USER_ID, INVITE_MAKER_USERNAME, selfAppSlug]
+    );
+    return ready.rows[0]?.maker_ready === true && ready.rows[0]?.self_app_ready === true;
+  });
+}
+
+// The private project, its two invited members, the sketch and the link,
+// as one transaction. Mirrors apply_community_invite's grant: a
+// collaborator row joins, a community-members row and a Home pin keep the
+// person there. Idempotent, so a retried reset lands on the update path.
+async function installInvitedFixtures(client, { selfAppSlug, runId }) {
+  const token = invitedInviteToken(runId);
+  const maker = await client.query('SELECT id FROM users WHERE id = $1 AND username = $2',
+    [INVITE_MAKER_USER_ID, INVITE_MAKER_USERNAME]);
+  if (maker.rowCount !== 1) throw new Error('The shots invite maker is missing from the paired fixture.');
+  await client.query('SELECT id FROM apps WHERE slug = $1', [selfAppSlug]);
+  const existing = await client.query(
+    `SELECT id, slug FROM apps WHERE id = $1 OR slug = $2 FOR UPDATE`,
+    [INVITED_APP_ID, INVITED_APP_SLUG]
+  );
+  if (existing.rows.some((row) => Number(row.id) !== INVITED_APP_ID || row.slug !== INVITED_APP_SLUG)) {
+    throw new Error('The reserved shots invited app conflicts with cloned data.');
+  }
+  if (existing.rowCount === 0) {
+    // community_id stays NULL: the boot trigger makes the project's
+    // private community, as it does for every app created in the app.
+    await client.query(
+      `INSERT INTO apps
+         (id, name, slug, status, created_by, self_hosted,
+          collab_visibility, view_visibility, icon_emoji, created_at)
+       VALUES ($1, $2, $3, 'running', $4, FALSE, 'private', 'private', $5, NOW())`,
+      [INVITED_APP_ID, '[shots fixture] Picnic planner', INVITED_APP_SLUG,
+        INVITE_MAKER_USER_ID, INVITED_SKETCH_DESIGN.emoji]
+    );
+  } else {
+    await client.query(
+      `UPDATE apps
+          SET name = $3, status = 'running', created_by = $4, self_hosted = FALSE,
+              collab_visibility = 'private', view_visibility = 'private', icon_emoji = $5
+        WHERE id = $1 AND slug = $2`,
+      [INVITED_APP_ID, INVITED_APP_SLUG, '[shots fixture] Picnic planner',
+        INVITE_MAKER_USER_ID, INVITED_SKETCH_DESIGN.emoji]
+    );
+  }
+  const { rows: appRows } = await client.query(
+    'SELECT community_id FROM apps WHERE id = $1 AND community_id IS NOT NULL', [INVITED_APP_ID]
+  );
+  const communityId = appRows[0]?.community_id;
+  if (!Number.isInteger(communityId)) {
+    throw new Error('The shots invited app has no community to invite into.');
+  }
+  // The two members: no platform access, joined an hour ago. Their
+  // passwords are unusable; sessions come from minted tokens only.
+  const invitedUsers = [
+    [INVITED_MEMBER_USER_ID, INVITED_MEMBER_USERNAME],
+    [INVITED_MEMBER_LISTED_USER_ID, INVITED_MEMBER_LISTED_USERNAME],
+  ];
+  for (const [userId, username] of invitedUsers) {
+    await client.query(
+      `INSERT INTO users
+         (id, username, password, is_admin, can_create_apps,
+          has_platform_access, private_member_since, created_at)
+       VALUES ($1, $2, '__shots_not_a_login__', FALSE, FALSE, FALSE, NOW() - INTERVAL '1 hour', NOW())
+       ON CONFLICT (id) DO UPDATE
+         SET username = EXCLUDED.username, is_admin = FALSE, can_create_apps = FALSE,
+             has_platform_access = FALSE,
+             private_member_since = COALESCE(users.private_member_since, EXCLUDED.private_member_since)`,
+      [userId, username]
+    );
+    await client.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
+       VALUES ($1, $2, 'member', $3, NOW())
+       ON CONFLICT (app_id, user_id)
+       DO UPDATE SET status = 'member', invited_by = $3,
+                     accepted_at = COALESCE(app_collaborators.accepted_at, NOW())`,
+      [INVITED_APP_ID, userId, INVITE_MAKER_USER_ID]
+    );
+    await client.query(
+      `INSERT INTO community_members (community_id, user_id, source)
+       VALUES ($1, $2, 'joined')
+       ON CONFLICT (community_id, user_id) DO NOTHING`,
+      [communityId, userId]
+    );
+    await client.query(
+      `INSERT INTO app_favorites (app_id, user_id, hidden)
+       VALUES ($1, $2, FALSE)
+       ON CONFLICT (app_id, user_id) DO UPDATE SET hidden = FALSE`,
+      [INVITED_APP_ID, userId]
+    );
+  }
+  // The maker keeps the standing to grant what the link grants
+  // (community_invite_maker_holds), so its page and preview stay live.
+  await client.query(
+    `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
+     VALUES ($1, $2, 'member', NULL, NOW())
+     ON CONFLICT (app_id, user_id)
+     DO UPDATE SET status = 'member',
+                   accepted_at = COALESCE(app_collaborators.accepted_at, NOW())`,
+    [INVITED_APP_ID, INVITE_MAKER_USER_ID]
+  );
+  // The sketch the project's FeaturedCard is drawn from: pictureFor reads
+  // the ready row's design, kind 'card', so the project's page and the
+  // invite page both show a picture.
+  await client.query(
+    `INSERT INTO app_sketches (app_id, user_id, status, design, created_at, ready_at)
+     VALUES ($1, $2, 'ready', $3::jsonb, NOW(), NOW())
+     ON CONFLICT (app_id) DO UPDATE
+       SET user_id = EXCLUDED.user_id, status = 'ready', design = EXCLUDED.design,
+           ready_at = NOW(), committed_at = NULL, html = NULL, error = NULL`,
+    [INVITED_APP_ID, INVITE_MAKER_USER_ID, JSON.stringify(INVITED_SKETCH_DESIGN)]
+  );
+  // The link: no end date, no use limit, the maker's own words as its note.
+  await client.query(
+    `INSERT INTO community_invites
+       (token, community_id, app_id, created_by, max_uses, uses, expires_at, revoked_at, note)
+     VALUES ($1, $2, $3, $4, NULL, 0, NULL, NULL, $5)
+     ON CONFLICT (token) DO UPDATE
+       SET community_id = EXCLUDED.community_id, app_id = EXCLUDED.app_id,
+           created_by = EXCLUDED.created_by, revoked_at = NULL, note = EXCLUDED.note`,
+    [token, communityId, INVITED_APP_ID, INVITE_MAKER_USER_ID, INVITED_NOTE]
+  );
+  // The listed member joined the waitlist by email and is confirmed, not
+  // released: member-waitlist.stateFor reads 'listed'.
+  await client.query(
+    `INSERT INTO waitlist_signups
+       (email, submitted_at, confirmed_at, released_at, linked_user_id, more_token)
+     VALUES ('shots-invited-listed@shots-fixture.invalid', NOW(), NOW() - INTERVAL '30 minutes', NULL, $1, $2)
+     ON CONFLICT (email) DO UPDATE
+       SET linked_user_id = EXCLUDED.linked_user_id,
+           confirmed_at = COALESCE(waitlist_signups.confirmed_at, EXCLUDED.confirmed_at),
+           released_at = NULL, more_token = EXCLUDED.more_token`,
+    [INVITED_MEMBER_LISTED_USER_ID, invitedWaitlistToken(runId)]
+  );
+  return [
+    {
+      id: INVITED_FIRST_VISIT_PROFILE,
+      persona: 'invited_member',
+      startPath: '/',
+      path: '/',
+      userId: INVITED_MEMBER_USER_ID,
+      username: INVITED_MEMBER_USERNAME,
+      appSlug: INVITED_APP_SLUG,
+      purpose: 'A private member on their first visit to Home, still offered Go to Homeroom.',
+    },
+    {
+      id: INVITED_LISTED_PROFILE,
+      persona: 'invited_member_listed',
+      startPath: '/',
+      path: '/',
+      userId: INVITED_MEMBER_LISTED_USER_ID,
+      username: INVITED_MEMBER_LISTED_USERNAME,
+      appSlug: INVITED_APP_SLUG,
+      purpose: 'A private member who has been Home and is on the platform waitlist.',
+    },
+    {
+      id: INVITE_LINK_PROFILE,
+      persona: 'guest',
+      startPath: `/invite/${token}`,
+      path: `/invite/${token}`,
+      appSlug: INVITED_APP_SLUG,
+      inviteToken: token,
+      note: INVITED_NOTE,
+      purpose: 'A live invite link to a private project with a sketch, opening for a visitor who is not signed in.',
+    },
+  ];
+}
+
+async function ensureInvitedFixtures({ databaseUrl, slug, runId, side, selfAppSlug, at = null }) {
+  assertShotsDatabase(databaseUrl, slug, runId, side);
+  return inTransaction(databaseUrl, (client) => installInvitedFixtures(client, { selfAppSlug, runId }), { at });
+}
+
 module.exports = {
   assertShotsDatabase,
   pairMoment,
@@ -385,4 +621,20 @@ module.exports = {
   ensureHostedAppFixture,
   canCopyMemberAgentSession,
   copyMemberAgentSession,
+  INVITED_APP_ID,
+  INVITED_APP_SLUG,
+  INVITE_MAKER_USER_ID,
+  INVITE_MAKER_USERNAME,
+  INVITED_MEMBER_USER_ID,
+  INVITED_MEMBER_USERNAME,
+  INVITED_MEMBER_LISTED_USER_ID,
+  INVITED_MEMBER_LISTED_USERNAME,
+  INVITED_FIRST_VISIT_PROFILE,
+  INVITED_LISTED_PROFILE,
+  INVITE_LINK_PROFILE,
+  invitedInviteToken,
+  invitedWaitlistToken,
+  canInstallInvitedFixtures,
+  installInvitedFixtures,
+  ensureInvitedFixtures,
 };

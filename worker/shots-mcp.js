@@ -26,7 +26,9 @@ const proxyControlToken = String(process.env.SHOTS_PROXY_CONTROL_TOKEN || '');
 // clips when a browser session closes) into its own directory here, and so
 // does a persona's phone browser, beside it (`member_phone`).
 const shotsDir = String(process.env.SHOTS_DIR || '');
-const PERSONA_DIRS = Object.freeze(['member', 'admin', 'full_admin', 'guest']);
+const PERSONA_DIRS = Object.freeze([
+  'member', 'admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed',
+]);
 const BROWSER_DIRS = Object.freeze([...PERSONA_DIRS, ...PERSONA_DIRS.map((dir) => `${dir}_phone`)]);
 // Each browser's observer answers upload_file on a socket of its own here,
 // named for its directory (shots-browser-observer.js startControl).

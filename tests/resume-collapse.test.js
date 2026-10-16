@@ -24,7 +24,9 @@ const motion = loadTsx('frontend/src/features/nav/resume-motion.ts');
 
 test('a running app you left is on the strip with the still-open dot; pressing its tile notes it as the origin', () => {
   const src = read('frontend/src/features/nav/strip-apps.tsx');
-  assert.match(src, /onClick=\{\(event\) => onAppClick\(event, app\.slug, running && !lit\)\}/,
+  // #5323: the call now sits inside a wrapper that swallows the click a
+    // drag-out leaves behind, so the literal is the call, not the handler.
+    assert.match(src, /onAppClick\(event, app\.slug, running && !lit\)/,
     'a running app you are not in grows back out of its tile; the app you are in has nothing to resume');
   assert.match(src, /if \(live\) noteResumeOrigin\(slug, event\.currentTarget\.querySelector\('\.platform-strip-tile'\) \|\| event\.currentTarget\);/);
   assert.match(src, /\{running \? <LiveAppDot className="platform-strip-live" \/> : null\}/);

@@ -148,8 +148,9 @@ test('one entry point reaches all three surfaces', () => {
   assert.equal(message('home:challenges.seeAll.label'), 'See all challenges');
   assert.match(panels, /goToChallenges\(\) \{[\s\S]*?location\.hash = '#leaderboard\/challenges'/,
     'which is a real hash navigation onto the Leaderboard screen');
-  assert.match(panels, /goToLeaderboard\(kind\) \{[\s\S]*?location\.hash = kind === 'kudos' \? '#leaderboard\/users' : '#leaderboard\/topochain'/,
-    'and it is a real hash navigation, so the device back gesture returns home');
+  assert.match(panels, /goToLeaderboard\(kind\) \{[\s\S]*?location\.hash = kind === 'kudos'\s*\? \(window\.Kudos \? '#leaderboard\/users' : '#leaderboard\/challenges'\)\s*: '#leaderboard\/topochain'/,
+    'and it is a real hash navigation, so the device back gesture returns home; '
+    + 'while kudos is parked (#5249) the kudos kind lands on Challenges');
 });
 
 // ─── app.js: router branch + state discipline ────────────────────────────

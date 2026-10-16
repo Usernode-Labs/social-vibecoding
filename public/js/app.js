@@ -5035,6 +5035,16 @@ const App = {
         const profileUser = parts[1] === 'users' && parts[2]
           ? decodeURIComponent(parts[2])
           : null;
+        // #5249: kudos is parked (features/leaderboard/kudos-parked.ts; the
+        // bundle then publishes no window.Kudos), so the Kudos tab and its
+        // three sub-views are gone. Their addresses land on Challenges, the
+        // default tab, rewritten in place so Back does not return to them.
+        // A person's page (#leaderboard/users/<name>) stays where it is.
+        if (!profileUser && !window.Kudos && App.PARKED_KUDOS_SUBS.includes(parts[1])) {
+          try { history.replaceState(null, '', '#leaderboard/challenges'); } catch (_) { /* hash stays */ }
+          App.navigateToLeaderboard('challenges', null, null);
+          return;
+        }
         // #leaderboard/challenges/<eventId>[/<challengeId>] (#982) — the
         // address the profile's completed-challenge rows link to. The
         // event id is part of the path because a challenge id alone is
@@ -6945,6 +6955,10 @@ const App = {
   */
   // Message ids: the table is read before the language runtime exists, and
   // _leaderboardTitle reads the words when it names the screen.
+  // The Kudos addresses that land on Challenges while kudos is parked
+  // (#5249, the #leaderboard branch of restoreFromHash).
+  PARKED_KUDOS_SUBS: ['kudos', 'prs', 'users', 'history'],
+
   LEADERBOARD_TITLES: {
     challenges: 'shell:title.leaderboard.challenges',
     kudos: 'shell:title.leaderboard.kudos',

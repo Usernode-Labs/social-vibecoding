@@ -2311,6 +2311,14 @@
     "text": "Passed on retry",
     "description": "Link-like label at the right end of an automated check's row on a change's page, for a check that failed once and passed when run again: opens the reason of the first failure."
   },
+  "topic.check.earlyBurst": {
+    "text": "Failed early, then passed",
+    "description": "Link-like label at the right end of an automated check's row on a change's page, for a check that failed in a burst of failures at the start of the test run and passed every time it was run again. Opens the explanation, which names a likely cause without excusing the change."
+  },
+  "topic.check.freshLoad": {
+    "text": "Needed a fresh load",
+    "description": "Link-like label at the right end of a passing automated check's row on a change's page, for a check this change adds or changes that only passed after its page was loaded again from scratch. Opens advice on fixing the page's navigation."
+  },
   "topic.check.failed": {
     "text": "failed",
     "description": "Lower-case word shown as the reason of a failed automated check when the run recorded no reason. Describes the check."
@@ -2466,6 +2474,14 @@
   "topic.change.bar.more": {
     "text": "More actions",
     "description": "Accessible name and tooltip of the ⋯ button in the header of a change's page: opens the menu with everything else that can be done with the change."
+  },
+  "topic.change.bar.openDetails": {
+    "text": "{{title}}, see details",
+    "description": "Accessible name of a change's page header title when tapping it opens the Details sheet. {{title}} is the header's title, for example \"Change #87\". \"Details\" is the same word the ⋯ menu's Details row uses."
+  },
+  "topic.change.bar.openDetailsTitle": {
+    "text": "See details",
+    "description": "Tooltip of a change's page header title when tapping it opens the Details sheet, matching the ⋯ menu's Details row."
   },
   "topic.change.summaryStale": {
     "text": "Written for an earlier version of this change.",

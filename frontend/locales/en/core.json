@@ -131,6 +131,22 @@
     "text": "One of your changes is building",
     "description": "Tooltip on the Homeroom logo button while a spinner shows on it: a change this person asked for is being built."
   },
+  "header.inApp.toVote_one": {
+    "text": "{{count}} to vote",
+    "description": "Small pill in the header while an app is running, also its tooltip and accessible name: how many proposals this app's community is waiting for this person to vote on. {{count}} is that number."
+  },
+  "header.inApp.toVote_other": {
+    "text": "{{count}} to vote",
+    "description": "Small pill in the header while an app is running, also its tooltip and accessible name: how many proposals this app's community is waiting for this person to vote on. {{count}} is that number."
+  },
+  "header.inApp.suggest": {
+    "text": "Suggest",
+    "description": "Small button in the header while an app is running: opens the form for suggesting an improvement to the app on screen."
+  },
+  "header.inApp.suggestLabel": {
+    "text": "Suggest an improvement",
+    "description": "Accessible name of the header's Suggest button while an app is running: opens the form for suggesting an improvement to the app on screen."
+  },
   "chromeless.openAppLabel": {
     "text": "Open this app on Homeroom",
     "description": "Accessible name of the floating pill shown when an app is displayed without Homeroom's own header and tabs: opens the same app inside Homeroom."
@@ -340,8 +356,28 @@
     "description": "Error under the picture chooser of an illustration editor when the chosen picture is still over the upload limit after it was shrunk. Smaller means fewer pixels or a smaller file."
   },
   "stripApps.label": {
-    "text": "My apps and recent apps",
-    "description": "Accessible name of the desktop side strip: the apps in the top row of My apps first, then the recently used apps."
+    "text": "Pinned apps and recent apps",
+    "description": "Accessible name of the desktop side strip: the apps the viewer pinned there first, then the recently used apps."
+  },
+  "stripApps.drop.pin": {
+    "text": "Pin here",
+    "description": "The dashed slot the desktop side strip draws while an app tile is dragged over from My apps: dropping the tile there pins the app to the strip."
+  },
+  "stripApps.drop.already": {
+    "text": "Already pinned",
+    "description": "The same slot when the dragged app is pinned to the strip already: dropping it would change nothing, so the drop is refused."
+  },
+  "stripApps.drop.full": {
+    "text": "Unpin one first",
+    "description": "The same slot when four apps are already pinned, the most there is room for: the drop is refused until one is taken off."
+  },
+  "stripApps.menu.unpin": {
+    "text": "Unpin",
+    "description": "The one item in the right-click menu of an app pinned to the desktop side strip: it takes the app off the pinned list."
+  },
+  "stripApps.ghost.unpin": {
+    "text": "Unpin",
+    "description": "The caption riding on the dragged pinned app's tile while it is held outside the rail: letting go there takes the app off the pinned list."
   },
   "release.sentence.waiting": {
     "text": "Merged; waiting for a release",

@@ -145,6 +145,19 @@ export function NoteBoxView({ box }: { box: NoteBox }): ReactNode {
  * errors sit until somebody asks: that detail is for whoever fixes the
  * check, not for a voter reading the row.
  */
+/**
+ * The door's label when a green row is open for something other than a
+ * plain retry: an early failure burst (often the environment, not proof of
+ * it), or a note
+ * on a check that needed a fresh load. Null for the two ordinary doors.
+ */
+function openLabel(r: CheckRow, t: ReturnType<typeof useMessages>): string | null {
+  if (!r.pass) return null;
+  if (r.retryClass === 'early_burst') return t('project:topic.check.earlyBurst');
+  if (r.note && !r.reason) return t('project:topic.check.freshLoad');
+  return null;
+}
+
 function CheckRowView({ r }: { r: CheckRow }): ReactNode {
   const t = useMessages('project');
   const glyphCls = `dev-ledger-check-glyph ${r.pass ? 'text-emerald-700 dark:text-emerald-400' : (r.advisory ? 'text-zinc-500 dark:text-zinc-400' : 'text-red-700 dark:text-red-400')} font-medium`;
@@ -178,16 +191,18 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
           <span className={glyphCls} aria-hidden="true">{r.pass ? '✓' : '✗'}</span>
           <span className="dev-ledger-check-name" title={r.name}>{r.name}</span>
           {tags}
-          <span className="dev-ledger-check-open">{r.pass ? t('project:topic.check.passedOnRetry') : t('project:topic.check.whyItFailed')}</span>
+          <span className="dev-ledger-check-open">{openLabel(r, t) || (r.pass ? t('project:topic.check.passedOnRetry') : t('project:topic.check.whyItFailed'))}</span>
         </summary>
         <div className="dev-ledger-why-body">
-          {r.path ? (
+          {/* A pass kept open only for its note has no failure to state. */}
+          {r.pass && !r.reason && r.note ? null : r.path ? (
             <RichMessage
               id="project:topic.check.reasonOnPath"
               values={{ reason: r.reason || t('project:topic.check.failed'), path: r.path }}
               components={[<span className="dev-ledger-why-path" />]}
             />
           ) : (r.reason || t('project:topic.check.failed'))}
+          {r.note ? <div className="dev-ledger-why-note mt-1">{r.note}</div> : null}
           {/* #3978: the unit-suite row's failing tests, each with the
               assertion text the run captured. The fold is the collapse —
               these open with "Why it failed" like the console errors below. */}
@@ -1277,6 +1292,13 @@ function RunPanel({ run, id }: { run: StepRun; id: string }): ReactNode {
       {run.fails.length ? (
         <ul className="dev-ledger-fails">
           {run.fails.map((f) => <CheckRowView key={f.key} r={f} />)}
+        </ul>
+      ) : null}
+      {/* Passes with something to say: a retry and why, or a note. Drawn
+          as the failures' list is (its class), in a list of their own. */}
+      {run.noted && run.noted.length ? (
+        <ul className="dev-ledger-fails dev-ledger-noted">
+          {run.noted.map((f) => <CheckRowView key={f.key} r={f} />)}
         </ul>
       ) : null}
       {run.note ? <p className="dev-step-run-note">{run.note}</p> : null}

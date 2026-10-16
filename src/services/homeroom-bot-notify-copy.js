@@ -32,6 +32,22 @@ const BELL_LABELS = Object.freeze({
   done_elsewhere: 'Done another way',
 });
 
+// 16 Oct 2026: what a "needs you" asks for, at the head of its bell row in
+// place of the bare moment, which every ask read the same. By `said`; a
+// variant not named here keeps "Needs you".
+const NEEDS_YOU_ASKS = Object.freeze({
+  question: 'Question for you',
+  questions: 'Questions for you',
+  followup_ask: 'Question for you',
+  plan: 'Plan to approve',
+  plan_first: 'Plan to approve',
+  decide: 'Your decision',
+  blocked: 'Needs more detail',
+  empty: 'Needs more detail',
+  done: 'Looks done already',
+  platform: 'Move it to Homeroom\'s board?',
+});
+
 // Older moment names (rows and senders from before), as the moment they are.
 const MOMENT_ALIASES = Object.freeze({
   question: 'needs_you',
@@ -360,12 +376,43 @@ function bodyFor(d) {
   }
 }
 
+/**
+ * Pure: the request a detail is about, in words: its title, else its number
+ * ("Request #5308"), so a request whose title is not known is never named
+ * by its project alone. Empty when it names neither.
+ */
+function requestName(d) {
+  if (d.requestTitle) return d.requestTitle;
+  return d.issueNumber ? `Request #${d.issueNumber}` : '';
+}
+
 /** Pure: the push title: "{request} · {project}", a first version's project, or a summary's count. */
 function titleFor(d) {
   if (d.moment === 'on_hold' && d.count > 1) return `${d.count} requests on hold`;
   if (d.firstVersion) return d.appName || 'Homeroom bot';
-  if (d.requestTitle && d.appName) return `${d.requestTitle} · ${d.appName}`;
-  return d.requestTitle || d.appName || 'Homeroom bot';
+  const request = requestName(d);
+  if (request && d.appName) return `${request} · ${d.appName}`;
+  return request || d.appName || 'Homeroom bot';
+}
+
+/**
+ * Pure: the bell row's head: what a needs-you asks for, else the moment. A
+ * row from before "one story" keeps the moment, as the bell reads it there.
+ */
+function bellLabelFor(d) {
+  if (d.moment === 'needs_you' && !d.legacy) {
+    if (d.said === 'decide_others') return d.deciders ? `Waiting on ${d.deciders}` : 'Waiting on a decision';
+    if (NEEDS_YOU_ASKS[d.said]) return NEEDS_YOU_ASKS[d.said];
+  }
+  return BELL_LABELS[d.moment];
+}
+
+/** Pure: the bell row's small line: the project, the request's number when its title is above, and who. */
+function bellMetaFor(d) {
+  if (!d.appName) return 'Homeroom bot';
+  return d.requestTitle && d.issueNumber && !d.firstVersion
+    ? `${d.appName} · #${d.issueNumber} · Homeroom bot`
+    : `${d.appName} · Homeroom bot`;
 }
 
 /** Pure: a chat message's markdown as the words it shows, on one line. */
@@ -404,13 +451,13 @@ function botMomentCopy(detail, message = '') {
   const title = titleFor(d);
   const bellSubject = d.moment === 'on_hold' && d.count > 1
     ? title
-    : (d.firstVersion ? (d.appName ? `${d.appName} first version` : 'Your first version') : (d.requestTitle || d.appName || 'Homeroom bot'));
+    : (d.firstVersion ? (d.appName ? `${d.appName} first version` : 'Your first version') : (requestName(d) || d.appName || 'Homeroom bot'));
   return {
     title,
     body,
-    bellLabel: BELL_LABELS[d.moment],
+    bellLabel: bellLabelFor(d),
     bellSubject,
-    bellMeta: d.appName ? `${d.appName} · Homeroom bot` : 'Homeroom bot',
+    bellMeta: bellMetaFor(d),
     moment: d.moment,
     said: d.said,
     threadRootId: d.threadRootId || null,
@@ -450,6 +497,7 @@ function isBotMomentDetail(detail) {
 module.exports = {
   DETAIL_PREFIX,
   BELL_LABELS,
+  NEEDS_YOU_ASKS,
   SAID_BY_MOMENT,
   MOMENT_KINDS,
   LEGACY_SAID,

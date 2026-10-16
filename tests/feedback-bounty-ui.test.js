@@ -200,28 +200,45 @@ test('_applyFeedbackShot handles both feedback and feedback-spent', () => {
   assert.match(kudosJs, /if \(Kudos\.Budget\._displayOverride\) return/);
 });
 
-test('dapp.json checks both shot links and the unchecked/disabled states', () => {
+// #5249: while kudos is parked the row never shows. resetBountyRow hides it
+// and returns before it paints anything, so no submit, outbox draft or
+// comment-mode hand-over can carry a bounty, and a pre-ticked hand-over is
+// not honoured.
+test('parked, the row stays hidden and unticked, whatever the allowance', () => {
+  assert.match(feedbackJs, /import \{ KUDOS_PARKED \} from '\.\.\/leaderboard\/kudos-parked';/);
+  const fn = feedbackJs.slice(
+    feedbackJs.indexOf('const resetBountyRow = () => {'),
+    feedbackJs.indexOf('const activeTargetClasses')
+  );
+  assert.match(fn, /const resetBountyRow = \(\) => \{\s*bountyCheckbox\.checked = false;\s*if \(KUDOS_PARKED\) \{\s*bountyRow\.classList\.add\('hidden'\);\s*return;\s*\}/,
+    'the first thing the reset does, before reading the budget');
+  assert.match(feedbackJs, /if \(opts\.bounty === true && !KUDOS_PARKED && !bountyCheckbox\.disabled\) bountyCheckbox\.checked = true;/);
+});
+
+test('dapp.json checks both shot links in the parked state', () => {
   const paths = dapp.tests.map((t) => t.path);
-  assert.ok(paths.includes('/?shot=feedback'), 'the enabled state is checked');
-  assert.ok(paths.includes('/?shot=feedback-spent'), 'the disabled state is checked');
+  assert.ok(paths.includes('/?shot=feedback'), 'the open dialog is checked');
+  assert.ok(paths.includes('/?shot=feedback-spent'), 'and the spent allowance');
 
   const enabled = dapp.tests.find(
     (t) => t.path === '/?shot=feedback' && t.expectSelector
   );
-  assert.match(enabled.expectSelector, /#feedback-bounty-row:not\(\.hidden\)/);
+  assert.match(enabled.expectSelector, /#feedback-bounty-row\.hidden/);
   assert.match(enabled.expectSelector, /#feedback-bounty-checkbox:not\(:checked\)/);
 
+  // Spent, the row is not painted either: no opacity, no disabled box.
   const spent = dapp.tests.find(
     (t) => t.path === '/?shot=feedback-spent' && t.expectSelector
   );
-  assert.match(spent.expectSelector, /#feedback-bounty-checkbox:disabled/);
+  assert.match(spent.expectSelector, /#feedback-bounty-row\.hidden:not\(\.opacity-60\)/);
+  assert.match(spent.expectSelector, /#feedback-bounty-checkbox:not\(:checked\):not\(:disabled\)/);
 
   // Deliberately NOT scoped under `#feedback-modal`: PlatformUI adopts the
   // modal into the native kit, which reparents the card out of that wrapper
   // (verified in a real browser — the descendant selector matched nothing).
   // Same trap as the secrets panel's check; see tests/platform-env-admin.js.
-  // `#feedback-bounty-row:not(.hidden)` is the real discriminator, since the
-  // row ships hidden and is only revealed once the dialog opens.
+  // `#feedback-form` is the scope instead; parked (#5249), the row stays
+  // hidden once the dialog opens, which the selectors above say.
   for (const t of [enabled, spent]) {
     assert.doesNotMatch(t.expectSelector, /#feedback-modal/,
       'the adopted modal reparents its content — this selector would never match');

@@ -537,6 +537,8 @@ function setFrameSink(fn) {
   // failing one because a previous run had recorded it passing.
   _testStatus.clear();
   _retryOf.clear();
+  _startedMs.clear();
+  _podLabel = null;
   _diagCount = 0;
 }
 
@@ -589,6 +591,13 @@ const _testStatus = new Map();
 // are four, so a retry frame cannot be emitted without saying what it is a
 // retry OF.
 const _retryOf = new Map();
+// A primary check's index -> when its group started, in ms after this pod
+// began running checks, and which pod this is (its shard, or its retry slot).
+// The platform reads the pair to tell a run's own fault from a flaky check:
+// a burst of failures in a pod's first seconds whose retries all pass is
+// the preview not being ready yet, not the checks (src/services/check-signals.js).
+const _startedMs = new Map();
+let _podLabel = null;
 function emitTest(index, status, loadStatus, payload) {
   const key = Number(index) || 0;
   if (_emittedTests.has(key)) return false;
@@ -596,10 +605,13 @@ function emitTest(index, status, loadStatus, payload) {
   const verdict = status === 'pass' ? 'pass' : 'fail';
   _testStatus.set(key, verdict);
   const of = _retryOf.get(key);
+  const started = _startedMs.get(key);
   // In the base64 payload, not the header: the header's attributes are a
   // fixed shape older platforms parse positionally-ish, and an unknown key
   // in the JSON is ignored by any reader that does not know about it.
-  const json = JSON.stringify(of == null ? (payload || {}) : { ...(payload || {}), retryOf: of });
+  const json = JSON.stringify(of != null
+    ? { ...(payload || {}), retryOf: of }
+    : (started != null ? { ...(payload || {}), startedMs: started, pod: _podLabel } : (payload || {})));
   _sink(
     `__USERNODE_TEST__ index=${index || 0} status=${verdict} loadStatus=${loadStatus || 0}\n`
   );
@@ -1983,6 +1995,12 @@ async function runTestGroup(browser, group, opts) {
       // Evaluated BEFORE the console errors are frozen so the cold-load
       // fallback below can re-run them on a reloaded document.
       let presence = loadFailure ? new Map() : await pollPresence(cohort.tests);
+      // The checks of this cohort that held only on a reloaded document,
+      // each with how long the hash switch was waited on before the reload
+      // and the cohort's whole lane time. Carried in that check's own frame
+      // (`cohortFallback`), which already names its path: the run's
+      // checks-timing line keeps only the count and the sum.
+      const fellBack = new Map();
 
       // ── A hash switch is not always equivalent to a cold load (#1146) ──
       //
@@ -2020,6 +2038,8 @@ async function runTestGroup(browser, group, opts) {
         // switch could not reach, and the lane time they took from the
         // switch to their verdict. A count and a sum, never a URL.
         if (o.timing) o.timing.fallbacks = (o.timing.fallbacks || 0) + 1;
+        const switchPresence = presence;
+        const waitMs = Date.now() - cohortStartedAt;
         try {
           await page.goto('about:blank', { timeout: NAV_TIMEOUT_MS });
           const resp = await gotoTestDocument(page, cohort.tests[0].url);
@@ -2037,7 +2057,16 @@ async function runTestGroup(browser, group, opts) {
           // must not turn a real assertion failure into a load error.
           pushErr('load', `cohort reload of ${cohort.hash} failed: ${err.message}`, cohort.tests[0].url);
         }
-        if (o.timing) o.timing.fallbackMs = (o.timing.fallbackMs || 0) + (Date.now() - cohortStartedAt);
+        const laneMs = Date.now() - cohortStartedAt;
+        if (o.timing) o.timing.fallbackMs = (o.timing.fallbackMs || 0) + laneMs;
+        // Only the checks the reload changed: unmet after the switch, met
+        // after it. A sibling that already held did not need it, and one
+        // that fails either way is a failure, not a navigation gap.
+        if (presence !== switchPresence) {
+          for (const t of cohort.tests) {
+            if (switchPresence.get(t) && !presence.get(t)) fellBack.set(t, { waitMs, ms: laneMs });
+          }
+        }
       }
 
       // Frozen per cohort, for the same reason it used to be frozen per group:
@@ -2072,6 +2101,7 @@ async function runTestGroup(browser, group, opts) {
           consoleErrors: t.allowConsoleErrors ? [] : cohortErrors,
           failureReason: pass ? '' : failureReason,
           ...(render ? { render } : {}),
+          ...(fellBack.has(t) ? { cohortFallback: fellBack.get(t) } : {}),
         });
       }
     }
@@ -2198,6 +2228,10 @@ async function runTests(browser, tests, opts) {
   };
   const startedAt = now();
   const wallStartedAt = Date.now();
+  // Which pod the stamped frames came from: a sharded run's stdout is its
+  // pods' joined, and each pod's clock starts on its own.
+  _podLabel = shard ? `${shard.index}/${shard.count}`
+    : (parseInt(env.TEST_RETRY_SLOT, 10) > 0 ? `slot ${parseInt(env.TEST_RETRY_SLOT, 10)}` : null);
   let ran = 0;
   let hitDeadline = false;
   // Wall-clock milliseconds per group (and per cold load), for the summary
@@ -2210,6 +2244,11 @@ async function runTests(browser, tests, opts) {
 
   const runOne = async (group, { counts = true } = {}) => {
     const groupStartedAt = Date.now();
+    // When a primary check's group started in this pod's run (see
+    // _startedMs). A retry is not stamped: it names its primary instead.
+    if (counts) {
+      for (const t of group) _startedMs.set(Number(t.index) || 0, groupStartedAt - wallStartedAt);
+    }
     const timing = {};
     const cohortCount = cohortsOf(group).length;
     const groupBudgetMs = perTestMs

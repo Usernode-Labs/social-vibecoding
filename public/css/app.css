@@ -767,6 +767,15 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-thread-name,
 .messages-thread-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .messages-thread-name { color: var(--text-primary); font-size: 17px; font-weight: 700; }
+/* #5329: a change title that opens the Details sheet — a reset button that
+   reads as the heading it sits in, underlined only on hover. */
+.messages-thread-name-link {
+  appearance: none; border: 0; background: none; padding: 0; margin: 0;
+  font: inherit; color: inherit; cursor: pointer;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.messages-thread-name-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.messages-thread-name-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .messages-thread-sub { color: var(--text-muted); font-size: 15px; }
 .messages-thread-menu {
   position: absolute;
@@ -22513,11 +22522,13 @@ html.un-kb #platform-parked {
      line above the strip. Drawn on the first non-pinned row FOLLOWING a
      pinned one, so it appears only when both groups are present: a strip
      that is all pins or all recents draws no line. */
-  .platform-strip-app[data-strip-pinned] + .platform-strip-app:not([data-strip-pinned]) {
+  .platform-strip-app[data-strip-pinned] + .platform-strip-app:not([data-strip-pinned]),
+  .platform-strip-app[data-strip-pinned] + .platform-strip-drop {
     margin-top: 9px;
     position: relative;
   }
-  .platform-strip-app[data-strip-pinned] + .platform-strip-app:not([data-strip-pinned])::before {
+  .platform-strip-app[data-strip-pinned] + .platform-strip-app:not([data-strip-pinned])::before,
+  .platform-strip-app[data-strip-pinned] + .platform-strip-drop::before {
     content: '';
     position: absolute;
     top: -5px;
@@ -22525,6 +22536,71 @@ html.un-kb #platform-parked {
     right: 10px;
     height: 1px;
     background: var(--app-sheet-line);
+  }
+  /* THE "PIN HERE" SLOT (#5323, features/nav/strip-apps.tsx): the one row the
+     strip draws while a My apps tile is in the air, after the pinned rows and
+     before the recents. A dashed tile in the lit colour says "here"; a drop
+     that would be refused says so in words instead (the muted states). */
+  .platform-strip-drop {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-width: 0;
+    min-height: 58px;
+    padding: 6px 2px;
+    border-radius: 12px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .platform-strip-drop[data-drop-state='ok'] {
+    background: color-mix(in srgb, var(--lit-tint) 70%, transparent);
+    color: var(--lit-ink);
+  }
+  .platform-strip-drop-tile {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    border: 1.5px dashed currentColor;
+    box-sizing: border-box;
+  }
+  /* THE DRAGGED PINNED TILE (#5323): the ghost that follows the pointer while
+     a pinned app is dragged back out of the rail. Portaled to the body (the
+     rail clips), pointer-events:none so it never becomes the hit-test, and it
+     carries the "Unpin" caption only while it is outside the rail — the state
+     whose release takes the app off. */
+  .platform-strip-ghost {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 80;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    pointer-events: none;
+    transform: translate(-50%, -50%) scale(1.05);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .platform-strip-ghost .platform-strip-tile {
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+  }
+  .platform-strip-ghost-caption {
+    padding: 2px 8px;
+    border-radius: 8px;
+    background: var(--lit-ink);
+    color: var(--bg-primary);
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .platform-strip-ghost { transform: translate(-50%, -50%); }
   }
   .platform-strip-mark {
     position: relative;

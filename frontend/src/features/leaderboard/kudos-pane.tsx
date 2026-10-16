@@ -80,7 +80,8 @@ type Tone = 'emerald' | 'amber' | 'zinc' | 'violet' | 'sky' | 'red';
 type Badge = { tone: Tone; label: string; title?: string };
 
 type ChromeView =
-  | { kind: 'profile'; who: string; initial: string; canMessage?: boolean }
+  /** `back` is false while kudos is parked (#5249): Top users is gone. */
+  | { kind: 'profile'; who: string; initial: string; canMessage?: boolean; back?: boolean }
   | {
       kind: 'tabs';
       subtitle: string;
@@ -121,7 +122,8 @@ type ProfileRow = {
   extUrl: string | null;
   slug: string;
   sessionId: string | number;
-  kudos: number;
+  /** Null while kudos is parked (#5249). */
+  kudos: number | null;
 };
 
 type MetaBit =
@@ -152,7 +154,8 @@ type BodyView =
   | { kind: 'users'; rows: UserRow[] }
   | {
       kind: 'profile';
-      stats: { kudosMerged: string; chips: { label: string; title: string }[] };
+      /** `kudosMerged` is null while kudos is parked (#5249). */
+      stats: { kudosMerged: string | null; chips: { label: string; title: string }[] };
       rows: ProfileRow[] | null;
       more: MoreView;
     }
@@ -298,7 +301,7 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
   const t = useMessages('leaderboard');
   return (
     <header className="mb-4">
-      <a
+      {view.back === false ? null : <a
         data-lb-back=""
         href="#leaderboard/users"
         className="inline-block text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline mb-3"
@@ -315,7 +318,7 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
         }}
       >
         {t('leaderboard:kudos.person.back')}
-      </a>
+      </a>}
       <div className="flex items-center gap-3">
         <div className="w-12 h-12 shrink-0 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-lg">
           {view.initial}
@@ -539,10 +542,12 @@ function ProfileRows({ rows }: { rows: ProfileRow[] }): ReactNode {
               <span className="sr-only">{t('leaderboard:kudos.person.openOnGithub')}</span>
             </a>
           ) : null}
-          <div className={KUDOS_PILL}>
-            <span aria-hidden="true">{CLAP}</span>
-            <span>{row.kudos}</span>
-          </div>
+          {row.kudos == null ? null : (
+            <div className={KUDOS_PILL}>
+              <span aria-hidden="true">{CLAP}</span>
+              <span>{row.kudos}</span>
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -554,13 +559,15 @@ function ProfileBody({ view }: { view: Extract<BodyView, { kind: 'profile' }> })
   return (
     <>
       <div className="flex items-center gap-2 mb-3 flex-wrap">
-        <span
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-xs font-semibold"
-          title={t('leaderboard:kudos.person.onLiveTip')}
-        >
-          <span aria-hidden="true">{CLAP}</span>
-          <span>{view.stats.kudosMerged}</span>
-        </span>
+        {view.stats.kudosMerged == null ? null : (
+          <span
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-xs font-semibold"
+            title={t('leaderboard:kudos.person.onLiveTip')}
+          >
+            <span aria-hidden="true">{CLAP}</span>
+            <span>{view.stats.kudosMerged}</span>
+          </span>
+        )}
         {view.stats.chips.map((chip) => (
           <span
             key={chip.label}

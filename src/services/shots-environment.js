@@ -563,6 +563,29 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
         shotsFixtures.ensureHostedAppFixture(fixtureInputs[side])));
       fixtureProfiles.push(`${shotsFixtures.HOSTED_APP_PROFILE}@${pair.hostedFixtureImageDigest}`);
       availableFixtures.push(hostedApps[0]);
+      // The invited-member fixtures (#4437): a private project with a
+      // sketch, its two invited members and a live invite link. Left out of
+      // BOTH sides when either revision cannot hold them, and never thrown
+      // over: they widen what shots can show, they do not gate the run.
+      onProgress?.({ stage: 'seed_invited_fixtures' });
+      const invitedReady = await allSettledValues(['base', 'head'].map((side) =>
+        shotsFixtures.canInstallInvitedFixtures({
+          ...fixtureInputs[side], selfAppSlug: config.selfAppSlug,
+        })));
+      if (invitedReady.every(Boolean)) {
+        try {
+          const invited = await allSettledValues(['base', 'head'].map((side) =>
+            shotsFixtures.ensureInvitedFixtures({
+              ...fixtureInputs[side], selfAppSlug: config.selfAppSlug,
+            })));
+          availableFixtures.push(...invited[0]);
+          fixtureProfiles.push(...invited[0].map((entry) => entry.id));
+        } catch (error) {
+          log.warn('shots', 'Invited-member fixtures left out of a pair', {
+            runId: pair.runId, error: error?.message || String(error),
+          });
+        }
+      }
       onProgress?.({ stage: 'inspect_shots_fixtures' });
       const ready = await allSettledValues(['base', 'head'].map((side) =>
         shotsFixtures.canCopyMemberAgentSession(fixtureInputs[side])));

@@ -231,8 +231,14 @@ test('demo states go into both shots copies or neither, once', { timeout: 180000
   }
   assert.equal((await base.pool.query('SELECT COUNT(*)::int AS n FROM friendships')).rows[0].n, 0,
     'base could hold the friend request; head could not, so neither has it');
-  assert.equal((await base.pool.query('SELECT COUNT(*)::int AS n FROM notifications')).rows[0].n, 0,
+  assert.equal((await base.pool.query(`SELECT COUNT(*)::int AS n FROM notifications WHERE kind = 'voted_change_merged'`)).rows[0].n, 0,
     'nor the bell row head does not know');
+  // Homeroom bot's rings are a kind both know: the same three on each side.
+  const rings = async (pool) => (await pool.query(
+    `SELECT detail, read_at IS NOT NULL AS read FROM notifications WHERE kind = 'build_needs_you' ORDER BY created_at DESC`)).rows;
+  assert.equal((await rings(base.pool)).length, 3);
+  assert.deepEqual(await rings(base.pool), await rings(head.pool));
+  assert.ok((await rings(base.pool)).every((row) => row.read), 'read: the bell\'s count stays as it was');
 
   // The same rows on both sides, and nothing left to add a second time.
   const shape = async (pool) => (await pool.query(
@@ -484,9 +490,11 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   const chat = chats.find((conversation) => conversation.id === demoStates.IDS.botConversation);
   assert.equal(chat.homeroomBot, true);
   assert.equal(chat.unreadCount, 0);
-  // The one row in the bell is the voted-live state's, and it is read.
-  const { rows: bellRows } = await pool.query('SELECT kind, read_at FROM notifications');
-  assert.deepEqual(bellRows.map((row) => [row.kind, !!row.read_at]), [['voted_change_merged', true]]);
+  // The rows in the bell are the voted-live state's and the bot's three
+  // rings, and every one is read.
+  const { rows: bellRows } = await pool.query('SELECT kind, read_at FROM notifications ORDER BY id');
+  assert.deepEqual(bellRows.map((row) => [row.kind, !!row.read_at]),
+    [['voted_change_merged', true], ['build_needs_you', true], ['build_needs_you', true], ['build_needs_you', true]]);
 
   // After them in the same chat, the plan for the member's new project,
   // answered with Build it, and the bot's thanks under it: the card Build
@@ -679,6 +687,21 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.equal(votedLive[0].app_slug, SLUG);
   assert.ok(votedLive[0].read_at);
   assert.equal(await notificationsSvc.countUnread(pool, member), 0);
+  // Homeroom bot's three rings, through the same reader: in the member's
+  // chat with the bot, so the bell lists them, newest first, worded from
+  // their detail as the push and the bell word it (16 Oct 2026).
+  const notifyCopy = require('../src/services/homeroom-bot-notify-copy');
+  const rings = bell.filter((row) => row.kind === 'build_needs_you');
+  assert.equal(rings.length, 3);
+  assert.ok(rings.every((row) => Number(row.conversation_id) === demoStates.IDS.botConversation && row.read_at));
+  const said = rings.map((row) => notifyCopy.parseBotDetail(row.detail));
+  assert.deepEqual(said.map((d) => [d.moment, d.said, d.issueNumber]), [
+    ['needs_you', 'question', demoStates.IDS.botRingRequests[0]],
+    ['needs_you', 'decide', demoStates.IDS.botRingRequests[1]],
+    ['needs_you', 'blocked', demoStates.IDS.botRingRequests[2]],
+  ]);
+  assert.deepEqual(said.map((d) => d.requestTitle), ['[shots fixture] A weekly dinner rota', '', '[shots fixture] Add a search box'],
+    'the middle one\'s title was never kept');
   const { rows: [votedOn] } = await pool.query(
     `SELECT pv.vote, cs.user_id, cs.status FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id
       WHERE pv.session_id = $1 AND pv.user_id = $2`, [demoStates.IDS.votedLiveProposal, member]);

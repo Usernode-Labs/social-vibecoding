@@ -63,6 +63,9 @@ const IDS = Object.freeze({
   botBuiltRequest: 990874,
   checksProposal: 990875,
   decidersApp: 990876,
+  // Request numbers on the platform app, as botRequest is: the three the
+  // bot's rings in the member's bell are about.
+  botRingRequests: Object.freeze([990877, 990878, 990879]),
 });
 const RESERVED_RANGE = Object.freeze([990840, 990895]);
 
@@ -1797,6 +1800,68 @@ const STATES = [
           { state: `Your weekly building allowance nearly spent, ${dollars(leftCents)} of ${dollars(limitCents)} left: a new agent conversation, before its first message, has a red credits pill beside Send and the low-credits note above the send row.`,
             path: '/#agent/new' },
         ],
+      };
+    },
+  },
+  {
+    // Homeroom bot's rings in the member's bell, as homeroom-bot-dm.js
+    // sendDm writes them: a needs-you notification in their chat with the
+    // bot, its words in `detail` (homeroom-bot-notify-copy.js
+    // botNotificationDetail). A question on a titled request, a decision on
+    // a request whose title the bot never kept, and a request that needs
+    // more detail. The bot never rings on a copy, so a change to how these
+    // rows read had no row to shoot (16 Oct 2026: "Needs you / Homeroom /
+    // Homeroom · Homeroom bot"). Written by this deployed file, so both
+    // sides hold the same detail and each draws it its own way. Read, so the
+    // bell's count on every screen the member is shot on stays as it was:
+    // the All tab shows them. No message in the chat: the other states'
+    // cards there are left as they are.
+    id: 'shots-demo-member-bot-rings-v1',
+    persona: 'member',
+    needs: {
+      users: ['id', 'username', 'password', 'is_synthetic', 'display_name'],
+      conversations: ['id', 'kind', 'created_by', 'status', 'created_at', 'updated_at'],
+      conversation_direct_pairs: ['conversation_id', 'user_low_id', 'user_high_id'],
+      conversation_members: ['conversation_id', 'user_id', 'role', 'status', 'invited_by', 'responded_at',
+        'joined_at', 'last_read_message_id'],
+      notifications: ['user_id', 'conversation_id', 'conversation_message_id', 'source_user_id', 'kind', 'detail',
+        'read_at', 'created_at'],
+      mobile_push_kind_categories: ['kind'],
+    },
+    free: async (client, ctx) => {
+      const known = await client.query(
+        `SELECT 1 FROM mobile_push_kind_categories WHERE kind = 'build_needs_you'`);
+      return known.rowCount === 1 && await botAccountFree(client, ctx) && botChatFree(client, ctx);
+    },
+    async install(client, ctx) {
+      const notifyCopy = require('./homeroom-bot-notify-copy');
+      const chat = await memberBotChat(client, ctx);
+      const app = (await client.query('SELECT name FROM apps WHERE id = $1', [ctx.appId])).rows[0];
+      const appName = app?.name || 'Homeroom';
+      const [question, decide, detail] = IDS.botRingRequests;
+      const rings = [
+        { said: 'question', issueNumber: question, requestTitle: '[shots fixture] A weekly dinner rota', minutesAgo: 6 },
+        { said: 'decide', issueNumber: decide, requestTitle: null, minutesAgo: 14 },
+        { said: 'blocked', issueNumber: detail, requestTitle: '[shots fixture] Add a search box', minutesAgo: 25 },
+      ];
+      for (const ring of rings) {
+        const words = notifyCopy.botNotificationDetail({
+          moment: 'needs_you', said: ring.said, appName, appSlug: ctx.selfAppSlug,
+          issueNumber: ring.issueNumber, requestTitle: ring.requestTitle,
+        });
+        await client.query(
+          `INSERT INTO notifications
+             (user_id, conversation_id, conversation_message_id, source_user_id, kind, detail, read_at, created_at)
+           VALUES ($1, $2, NULL, $3, 'build_needs_you', $4,
+                   NOW() - make_interval(mins => $5 - 1), NOW() - make_interval(mins => $5))`,
+          [ctx.member.id, chat.conversationId, chat.botId, words, ring.minutesAgo]
+        );
+      }
+      return {
+        shows: [{
+          state: `Your bell's All tab: three rings from Homeroom bot at the top, each needing you on a request on ${appName}: a question on "[shots fixture] A weekly dinner rota" (6 minutes ago), a decision on request #${decide}, whose title the bot never kept (14 minutes ago), and one on "[shots fixture] Add a search box" that needs more detail (25 minutes ago). They are read, so the bell's count is as it was (on the Unread tab they are under "See older notifications"). Tapping one opens your chat with the bot.`,
+          path: '/',
+        }],
       };
     },
   },

@@ -70,7 +70,7 @@ import { useScrollFade } from '../../lib/use-scroll-fade';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useLeaderboardSection } from './section-store';
-import './kudos.js';
+import { KUDOS_PARKED } from './kudos.js';
 import './topochain-event-context.js';
 // ./mount imports all three pane controllers and plants each one's store on
 // it. Importing any of them directly here would publish its global without a
@@ -105,11 +105,16 @@ import { topochainChallengesStore } from './topochain-challenges-store.js';
 // The Semi design (2026-10-16) put Standings second, beside the challenges
 // whose points it ranks, and retired the History tab: the tab is the
 // challenges running now, with no seasons to look back on.
+//
+// #5249: while kudos is parked (./kudos-parked.ts) the strip has no Kudos tab.
+// The section itself stays, because a person's page (#leaderboard/users/<name>)
+// is drawn in its pane; ./leaderboard.js sends every other Kudos address to
+// Challenges.
 const SECTION_TABS = [
   { key: 'challenges', label: 'leaderboard:tabs.challenges' },
   { key: 'topochain', label: 'leaderboard:tabs.standings' },
   { key: 'kudos', label: 'leaderboard:tabs.kudos' },
-];
+].filter((s) => !(KUDOS_PARKED && s.key === 'kudos'));
 
 // The triggers tighten to px-2 below `sm` — the same track, the same face —
 // and the list scrolls sideways rather than wrapping on anything narrower
@@ -171,7 +176,13 @@ export function LeaderboardScreen() {
           reserve nothing and are unaffected.
       */}
       <div className="max-w-5xl mx-auto px-4 pt-5 pb-4 w-full">
-        <div className={detailOpen ? 'hidden' : section === 'kudos' ? KUDOS_COLUMN : undefined}>
+        {/*
+            #5249: while kudos is parked the Kudos section is only ever a
+            person's page, a level of its own with the bar's back, so the
+            strip (which has no tab for it) steps aside as it does for a
+            challenge's page.
+        */}
+        <div className={detailOpen || (KUDOS_PARKED && section === 'kudos') ? 'hidden' : section === 'kudos' ? KUDOS_COLUMN : undefined}>
           {/*
               No <h2> here any more. The screen said "Leaderboard" twice — once
               in the platform bar and once as this heading — and neither named

@@ -1,7 +1,7 @@
 'use strict';
 
 const { decrypt } = require('./secrets');
-const { ALLOWED_KINDS, buildMessage } = require('./mobile-push-policy');
+const { ALLOWED_KINDS, buildMessage, isPushParked } = require('./mobile-push-policy');
 const { classifyError } = require('./mobile-push-provider');
 const { countUnread } = require('./notifications');
 const log = require('./logger');
@@ -336,7 +336,8 @@ class MobilePushWorker {
       }
     }
     if (row.chat_message_id != null && row.conversation_sender_blocked) return 'sender_blocked';
-    if (!ALLOWED_KINDS.has(row.kind) || !row.push_category) return 'kind_not_allowed';
+    // #5249: a parked kind (kudos) wakes no phone; see PARKED_PUSH_KINDS.
+    if (!ALLOWED_KINDS.has(row.kind) || isPushParked(row.kind) || !row.push_category) return 'kind_not_allowed';
     if (row.push_enabled !== true) return 'preference_disabled';
     if (!row.registration_id) return 'registration_missing';
     if (row.delivery_environment !== this.config.mobilePushEnvironment

@@ -1596,7 +1596,7 @@
     "description": "Name of a phone notification category in Settings > Mobile push categories: small signs of appreciation from other people."
   },
   "alerts.push.lightweightActivity.description": {
-    "text": "Reactions and kudos on your work.",
+    "text": "Reactions on your work.",
     "description": "What the Lightweight activity category covers, under its name in Settings > Mobile push categories."
   },
   "alerts.apps.title": {

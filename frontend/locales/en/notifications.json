@@ -215,6 +215,42 @@
     "text": "Done another way",
     "description": "Label at the head of a notification from Homeroom bot: somebody else's change shipped a request the bot was working on, so it has nothing more to build."
   },
+  "row.bot.ask.question": {
+    "text": "Question for you",
+    "description": "First line of a notification from Homeroom bot, the built-in assistant that builds what people ask for: it has a question for the viewer about one of their requests before it builds it. The request's title is on the line below."
+  },
+  "row.bot.ask.questions": {
+    "text": "Questions for you",
+    "description": "First line of a notification from Homeroom bot: it has two questions for the viewer about one of their requests before it builds it. The request's title is on the line below."
+  },
+  "row.bot.ask.plan": {
+    "text": "Plan to approve",
+    "description": "First line of a notification from Homeroom bot: its plan for one of the viewer's requests is ready, and it builds once the viewer approves it. The request's title is on the line below."
+  },
+  "row.bot.ask.decide": {
+    "text": "Your decision",
+    "description": "First line of a notification from Homeroom bot: one of the viewer's requests needs the viewer to decide whether it should go ahead before the bot builds it. The request's title is on the line below."
+  },
+  "row.bot.ask.waitingOn": {
+    "text": "Waiting on {{people}}",
+    "description": "First line of a notification from Homeroom bot: one of the viewer's requests needs a decision from other people before the bot builds it. {{people}} names them, like \"@ana\" or \"@ana and @ben\". The request's title is on the line below."
+  },
+  "row.bot.ask.waitingOnUnnamed": {
+    "text": "Waiting on a decision",
+    "description": "First line of a notification from Homeroom bot: one of the viewer's requests needs a decision from other people before the bot builds it, when who they are is not known. The request's title is on the line below."
+  },
+  "row.bot.ask.moreDetail": {
+    "text": "Needs more detail",
+    "description": "First line of a notification from Homeroom bot: the bot could not build one of the viewer's requests as written and asks them to add detail. The request's title is on the line below."
+  },
+  "row.bot.ask.done": {
+    "text": "Looks done already",
+    "description": "First line of a notification from Homeroom bot: what one of the viewer's requests asks for seems to exist already, and the bot offers to close it. The request's title is on the line below."
+  },
+  "row.bot.ask.platform": {
+    "text": "Move it to Homeroom's board?",
+    "description": "First line of a notification from Homeroom bot: one of the viewer's requests is about the Homeroom platform itself rather than this project, and the bot offers to move it to Homeroom's own list of requests. Homeroom is the product's name. The request's title is on the line below."
+  },
   "row.bot.subject.firstVersion": {
     "text": "{{project}} first version",
     "description": "Second line of a notification from Homeroom bot, in bold: the first version of a new project the bot builds for the viewer. {{project}} is the project's name."
@@ -222,6 +258,10 @@
   "row.bot.subject.firstVersionUnnamed": {
     "text": "Your first version",
     "description": "Second line of a notification from Homeroom bot, in bold: the first version of a new project the bot builds for the viewer, when the project's name is not known."
+  },
+  "row.bot.subject.request": {
+    "text": "Request #{{number}}",
+    "description": "Second line of a notification from Homeroom bot, in bold: the request it is about, by its number, when its title is not known. {{number}} is the request's number, like 5308."
   },
   "row.bot.subject.onHold_one": {
     "text": "{{count}} request on hold",
@@ -234,6 +274,10 @@
   "row.bot.meta": {
     "text": "{{project}} · Homeroom bot",
     "description": "Small grey line under a notification from Homeroom bot, before the time: the project it is about, then who it is from. {{project}} is the project's name; Homeroom bot is the assistant's name."
+  },
+  "row.bot.metaRequest": {
+    "text": "{{project}} · #{{number}} · Homeroom bot",
+    "description": "Small grey line under a notification from Homeroom bot, before the time: the project it is about, the request's number, then who it is from. {{project}} is the project's name and {{number}} the request's number, like 5308; Homeroom bot is the assistant's name."
   },
   "row.friend.request": {
     "text": "Friend request",
