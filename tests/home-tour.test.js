@@ -117,7 +117,8 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   assert.match(message(byId.apps.body), /people for a private community, a lock for one that is just yours/,
     'the step names the tile marks the grid draws');
   // The way into Settings is the Me tab, whose screen carries
-  // #profile-row-settings (#2718).
+  // #profile-row-settings (#2718) — on a phone it is the only entrance,
+  // since the phone has no sidebar gear to point the tour at.
   assert.deepEqual([...byId.settings.targets], ['#platform-tab-me']);
   // #3567: the Communities tab, whose key and id are still `workshop`.
   assert.deepEqual([...byId.communities.targets], ['#platform-tab-workshop']);
