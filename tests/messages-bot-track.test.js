@@ -65,6 +65,11 @@ test('each state has its word, and each why its line; a loop says which try', ()
   assert.equal(trackLine(held), t('bot.track.line.held.slots'));
   assert.equal(trackPlace(held), t('bot.track.held.ahead_other', { count: 2 }));
   assert.equal(trackPlace({ ...held, held: { ...held.held, position: 1 } }), t('bot.track.held.next'));
+  // 16 Oct 2026: one a person has taken since is theirs, not a wait.
+  const taken = track({ state: 'held', step: null, why: 'taken', held: { limit: 'taken', position: null, until: null, by: 'maya' } });
+  assert.equal(trackLine(taken), t('bot.track.line.held.taken', { username: 'maya' }));
+  assert.equal(trackLine({ ...taken, held: { ...taken.held, by: null } }), t('bot.track.line.held.takenNoName'));
+  assert.equal(trackPlace(taken), null, 'no place in a line it is not in');
 
   const elsewhere = track({ state: 'done_elsewhere', step: 'live', doneBy: { username: 'ben', prNumber: 4822 } });
   assert.equal(trackLine(elsewhere), t('bot.track.line.done_elsewhere.by', { username: 'ben', number: '4822' }), 'who shipped it, and where');
@@ -211,13 +216,17 @@ test('a track is read field by field; one in a state the client does not know is
     slots: {
       app: { slug: 'plant-pal', name: 'Plant Pal' }, botOn: true, acts: true, cap: 5, buildsAtOnce: 2, reading: 1,
       slots: [{ kind: 'proposal', issueNumber: 8, title: 'Sort by name', track: { ...row, issueNumber: 8, state: 'vote', step: 'vote' } }],
-      waiting: [{ issueNumber: 12, title: 'Dark mode', position: 1, track: row }],
+      waiting: [{ issueNumber: 12, title: 'Dark mode', askedBy: 'lee', excerpt: 'Make it darker at night.', position: 1, track: row }],
+      taken: [{ issueNumber: 13, title: 'Frost alerts', by: 'maya', track: { ...row, issueNumber: 13, why: 'taken', held: { limit: 'taken', by: 'maya' } } }],
       onHold: [], week: { limited: true, usedShare: 1.4, resetsAt: '2026-10-19T00:00:00Z' },
     },
   });
   assert.equal(view.app.slug, 'plant-pal');
   assert.equal(view.slots[0].track.state, 'vote');
   assert.equal(view.waiting[0].position, 1);
+  assert.deepEqual([view.waiting[0].askedBy, view.waiting[0].excerpt], ['lee', 'Make it darker at night.']);
+  assert.deepEqual([view.taken[0].by, view.taken[0].track.held], ['maya', { limit: 'taken', position: null, until: null, by: 'maya' }]);
+  assert.deepEqual(normalizeBotSlots({ slots: { app: { slug: 'x' } } }).taken, [], 'an older server: nobody has taken anything');
   assert.equal(view.week.usedShare, 1, 'a share is clamped to the whole');
   assert.equal(normalizeBotSlots({ slots: {} }), null, 'no project, no view');
 });
@@ -235,7 +244,8 @@ test('the slots page: what holds each slot, what waits for one in order, and the
       { kind: 'proposal', issueNumber: 8, title: 'Sort by name', track: vote },
       { kind: 'build', issueNumber: 9, title: 'Water log', track: building },
     ],
-    waiting: [{ issueNumber: 12, title: 'Dark mode', position: 1, track: held }],
+    waiting: [{ issueNumber: 12, title: 'Dark mode', askedBy: 'lee', excerpt: 'Make it darker at night.', position: 1, since: ago(200), track: held }],
+    taken: [],
     onHold: [],
     week: { limited: true, usedShare: 0.42, usedUp: false, resetsAt: null },
   };
@@ -258,6 +268,37 @@ test('the slots page: what holds each slot, what waits for one in order, and the
   assert.equal(entryLine(held), t('bot.track.held.next'));
   assert.doesNotMatch(html, />Building · /, 'never the state word twice');
 
+  // 16 Oct 2026: a row says what its request is about, not only its
+  // number: a line of what it asks, who asked, and how long it has waited.
+  assert.match(html, /data-ws-bot-slot-excerpt="">Make it darker at night\.</);
+  const { entryMeta } = loadTsx(SLOTS);
+  const meta = entryMeta(view.waiting[0], 'waiting', new Date(NOW.getTime()));
+  assert.deepEqual(meta, [
+    message('project:botSlots.meta.asked', { username: 'lee' }),
+    message('project:botSlots.meta.waiting', { span: message('messages:bot.span.hoursMinutes', { hours: 3, minutes: 20 }) }),
+  ]);
+  assert.equal(entryMeta({ ...view.waiting[0], askedBy: null }, 'slots', NOW).length, 0, 'a slot\'s row has its clock on its bar');
+
+  // A row opens its item in the Workshop's panel: the request, or its
+  // change once it has one, and the open row is marked.
+  assert.match(html, /data-ws-bot-slot="12"[^>]*data-ws-open="issue:12"/);
+  assert.match(html, /href="#app\/plant-pal\/dev\/i\/12"/, 'the request\'s own address for a plain open');
+  const { entryRef, hrefOf } = loadTsx(SLOTS);
+  assert.deepEqual(entryRef({ issueNumber: 8, track: { ...vote, proposalId: 91 } }), { kind: 'proposal', id: 91 });
+  assert.equal(entryRef({ issueNumber: 8, track: vote }), null, 'a change the panel cannot name opens as a page');
+  assert.equal(hrefOf({ issueNumber: 900009, track: { ...held, links: null } }, 'staging-demo'), '#app/staging-demo/dev/issues/900009', 'the demo\'s rows open their mock request');
+  const openHtml = renderToHtml(createElement(BotSlotsBody, { view, openKey: 'issue:12', onOpen: () => {} }));
+  assert.match(openHtml, /aria-current="true"[^>]*data-ws-open="issue:12"|data-ws-open="issue:12"[^>]*aria-current="true"/);
+
+  // One a person has taken since is listed apart, as theirs.
+  const taken = track({ issueNumber: 14, state: 'held', step: null, why: 'taken', held: { limit: 'taken', position: null, until: null, by: 'maya' } });
+  const takenHtml = renderToHtml(createElement(BotSlotsBody, {
+    view: { ...view, taken: [{ issueNumber: 14, title: 'Frost alerts', by: 'maya', since: ago(60 * 26), track: taken }] },
+  }));
+  assert.match(takenHtml, /data-ws-bot-taken=""/);
+  assert.match(takenHtml, new RegExp(message('project:botSlots.taken.title')));
+  assert.match(takenHtml, new RegExp(t('bot.track.line.held.taken', { username: 'maya' })));
+
   const off = renderToHtml(createElement(BotSlotsBody, { view: { ...view, acts: false, slots: [], waiting: [] } }));
   assert.match(off, new RegExp(`data-ws-bot-slots-note="">${message('project:botSlots.notHere').replace(/'/g, '&#x27;')}</p>`));
   assert.match(off, new RegExp(message('project:botSlots.slots.empty')));
@@ -268,7 +309,11 @@ test('the slots page is a page under the Workshop: its address, its way back, it
   assert.equal(places.litPlace('bot'), 'workshop', 'the Workshop stays lit while it is up');
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(ws, /return tab === 'all' \|\| tab === 'bot' \? 'workshop' : 'status';/, 'Back goes to the Workshop');
-  assert.match(ws, /\{tab === 'bot' && slug \? \(\s*<BotSlotsPage slug=\{slug\} backLabel=\{t\('project:page\.backToWorkshop'\)\} onBack=\{\(\) => openTab\(pageParent\(tab\)\)\} \/>/);
+  assert.match(ws, /\{tab === 'bot' && slug \? \(\s*<BotSlotsPage\s+slug=\{slug\}\s+backLabel=\{t\('project:page\.backToWorkshop'\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}\s+openKey=\{sideKey\}\s+onOpen=\{openItem\}\s+\/>/);
+  // Its rows open beside it, as the Workshop's own do.
+  assert.match(ws, /const sideOpen = !!sideItem && \(tab === 'workshop' \|\| tab === 'all' \|\| tab === 'bot'\);/);
+  assert.match(ws, /\{sideOpen && sideItem \? <TopicSidePanel item=\{sideItem\} onClose=\{closeSide\} \/> : null\}/);
+  assert.match(ws, /data-ws-side-open=\{sideOpen \? '' : undefined\}/);
   assert.match(ws, /\{slug \? <BotSlotsDoor slug=\{slug\} onOpen=\{\(\) => openTab\('bot'\)\} \/> : null\}/, 'its door in the overview card');
   const src = read(SLOTS);
   assert.match(src, /if \(!view \|\| \(!view\.acts && !view\.slots\.length\)\) return null;/, 'no door where the bot neither builds nor holds anything');

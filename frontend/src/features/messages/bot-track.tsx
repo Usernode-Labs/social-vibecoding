@@ -98,6 +98,7 @@ const LINES: Record<string, string> = {
   'held.bot_wide': 'messages:bot.track.line.held.bot_wide',
   'held.questions': 'messages:bot.track.line.held.questions',
   'held.allowance': 'messages:bot.track.line.held.allowance',
+  'held.taken': 'messages:bot.track.line.held.takenNoName',
   'stopped.needs_person': 'messages:bot.track.line.stopped.needs_person',
   'stopped.nothing_to_build': 'messages:bot.track.line.stopped.nothing_to_build',
   'stopped.withdrawn': 'messages:bot.track.line.stopped.withdrawn',
@@ -141,6 +142,10 @@ export function trackLine(track: BotTrack): string {
     return track.doneBy.prNumber
       ? translate('messages:bot.track.line.done_elsewhere.by', { username: track.doneBy.username, number: String(track.doneBy.prNumber) })
       : translate('messages:bot.track.line.done_elsewhere.byNoPr', { username: track.doneBy.username });
+  }
+  // 16 Oct 2026: a person has it now, so the bot leaves it alone.
+  if (track.state === 'held' && track.held?.limit === 'taken' && track.held.by) {
+    return translate('messages:bot.track.line.held.taken', { username: track.held.by });
   }
   if (track.state === 'held' && track.held?.limit === 'allowance' && track.held.until) {
     const date = new Date(track.held.until);
@@ -261,7 +266,7 @@ export function trackLook(track: Pick<BotTrack, 'state' | 'why' | 'busy'>): { to
   switch (track.state) {
     case 'waiting': return { tone: 'need', icon: WAIT_GLYPHS[track.why || ''] || ChatIcon, spin: false };
     case 'vote': return { tone: 'ready', icon: PlayIcon, spin: false };
-    case 'held': return { tone: 'held', icon: ClockIcon, spin: false };
+    case 'held': return track.why === 'taken' ? { tone: 'ended', icon: UserIcon, spin: false } : { tone: 'held', icon: ClockIcon, spin: false };
     case 'queued': return { tone: 'working', icon: ClockIcon, spin: false };
     // Its checks failed and it waits for its next try: a warning, not a spinner.
     case 'checks': return track.why === 'failed' ? { tone: 'trouble', icon: WarningTriangleIcon, spin: false } : { tone: 'working', icon: SpinnerArcIcon, spin: !!track.busy };

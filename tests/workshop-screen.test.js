@@ -1329,8 +1329,10 @@ test('#4486: a row on All items opens its page beside the board on a wide window
   assert.match(workshopTsx, /<DevKanban openKey=\{sideKey\} onOpen=\{openItem\} \/>/, 'the board’s rows');
   assert.match(workshopTsx, /<WorkList rows=\{rows\} slug=\{slug\} openKey=\{openKey\} onOpen=\{onOpen\} variant="board" category=\{false\} \/>/,
     'and By category’s');
-  assert.match(workshopTsx, /\{\(tab === 'workshop' \|\| tab === 'all'\) && sideItem \? <TopicSidePanel item=\{sideItem\} onClose=\{closeSide\} \/> : null\}/);
-  assert.match(workshopTsx, /data-ws-side-open=\{sideItem && \(tab === 'workshop' \|\| tab === 'all'\) \? '' : undefined\}/);
+  // 16 Oct 2026: and from the bot's slots page (?ws=bot), one `sideOpen`.
+  assert.match(workshopTsx, /const sideOpen = !!sideItem && \(tab === 'workshop' \|\| tab === 'all' \|\| tab === 'bot'\);/);
+  assert.match(workshopTsx, /\{sideOpen && sideItem \? <TopicSidePanel item=\{sideItem\} onClose=\{closeSide\} \/> : null\}/);
+  assert.match(workshopTsx, /data-ws-side-open=\{sideOpen \? '' : undefined\}/);
   // It closes whenever the tab changes, and when the window narrows.
   assert.match(workshopTsx, /useEffect\(\(\) => \{\s*setSideItem\(null\);\s*if \(tab !== 'workshop'\) setOpenWeek\(null\);\s*\}, \[tab\]\);/);
   assert.match(workshopTsx, /useEffect\(\(\) => \{\s*if \(!sideWide\) setSideItem\(null\);\s*\}, \[sideWide\]\);/);

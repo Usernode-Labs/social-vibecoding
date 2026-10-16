@@ -3535,6 +3535,14 @@
     "text": "On hold: this week's building time is used up",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"held\" when the reason is \"allowance\"."
   },
+  "bot.track.line.held.taken": {
+    "text": "With @{{username}} now, not Homeroom bot",
+    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under the title of a request the bot had found ready but that a person has taken since (they claimed it, or have a change of their own for it). {{username}} is that person's username."
+  },
+  "bot.track.line.held.takenNoName": {
+    "text": "With a person now, not Homeroom bot",
+    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under the title of a request the bot had found ready but that a person has taken since, when who it is is not known."
+  },
   "bot.track.line.stopped.needs_person": {
     "text": "This needs a person, not Homeroom bot",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"stopped\" when the reason is \"needs_person\"."
