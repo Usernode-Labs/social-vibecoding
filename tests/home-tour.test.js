@@ -1041,6 +1041,35 @@ test('Settings offers Replay the tour, and it is a registered section', () => {
   assert.equal(message('settings:nav.group.helpAbout'), 'Help & about');
 });
 
+test('Settings carries a written guide under the replay button', () => {
+  const html = renderComponent('frontend/src/features/settings/sections/tour.tsx', 'TourSection');
+  const guideTitle = message('settings:tour.guide.title');
+  assert.ok(guideTitle.length > 0, 'the guide title id resolves in the catalog');
+  assert.match(html, new RegExp(guideTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  // The seven parts, in the order a new account meets them, pinned through
+  // their ids rather than English literals.
+  const partIds = [
+    'home', 'discover', 'messages', 'communities', 'suggest', 'voting', 'profile',
+  ].map((key) => [`settings:tour.guide.${key}.title`, `settings:tour.guide.${key}.text`]);
+  let last = html.indexOf(guideTitle);
+  assert.ok(last > html.indexOf('id="settings-tour-hint"'),
+    'the guide follows the replay hint');
+  for (const [titleId, textId] of partIds) {
+    const title = message(titleId);
+    const text = message(textId);
+    assert.ok(title.length > 0 && text.length > 0, `${titleId} and ${textId} resolve`);
+    const at = html.indexOf(title, last);
+    assert.ok(at !== -1, `the guide shows "${title}"`);
+    assert.ok(html.indexOf(text, at) > at, `the guide shows the text of "${title}"`);
+    last = at;
+  }
+  // The guide is for reading only: no new ids (dapp.json and the shell
+  // baseline stay as they are) and no links.
+  assert.equal((html.match(/ id="/g) || []).length, 3,
+    'the guide adds no id (only settings-tour-section, replay and hint ship them)');
+  assert.ok(!/<a[\s>]/.test(html), 'the guide adds no links');
+});
+
 test('Replay clears the flag, asks for the tour, then goes to Home', () => {
   const fn = SETTINGS_SECTION_SRC.slice(SETTINGS_SECTION_SRC.indexOf('function replay'));
   const body = fn.slice(0, fn.indexOf('\n}'));

@@ -1703,6 +1703,70 @@
     "text": "It starts again on your home screen.",
     "description": "Note under the \"Replay the tour\" button in Settings. \"It\" is the welcome tour."
   },
+  "tour.guide.title": {
+    "text": "How Homeroom works",
+    "description": "Title of the written guide in Settings > Welcome tour, under the \"Replay the tour\" button. Keep \"Homeroom\" as written."
+  },
+  "tour.guide.intro": {
+    "text": "A written guide to each part of Homeroom, to read at your own pace.",
+    "description": "Line under the \"How Homeroom works\" guide title in Settings > Welcome tour. Keep \"Homeroom\" as written."
+  },
+  "tour.guide.home.title": {
+    "text": "Home",
+    "description": "Heading of the Home part of the \"How Homeroom works\" guide in Settings > Welcome tour. \"Home\" is the name of the app's first tab, keep it as written."
+  },
+  "tour.guide.home.text": {
+    "text": "Your apps, kept close. Tap one to open it. The last tile starts a new project: say what it should do, give it a name, and Homeroom bot builds the first version.",
+    "description": "Text under the Home heading of the \"How Homeroom works\" guide in Settings > Welcome tour. Keep \"Homeroom bot\" as written."
+  },
+  "tour.guide.discover.title": {
+    "text": "Discover",
+    "description": "Heading of the Discover part of the \"How Homeroom works\" guide in Settings > Welcome tour. \"Discover\" is the name of the app's second tab, keep it as written."
+  },
+  "tour.guide.discover.text": {
+    "text": "Find apps to use and public communities to join. Joining lets you suggest changes, file requests, vote and chat there.",
+    "description": "Text under the Discover heading of the \"How Homeroom works\" guide in Settings > Welcome tour."
+  },
+  "tour.guide.messages.title": {
+    "text": "Messages",
+    "description": "Heading of the Messages part of the \"How Homeroom works\" guide in Settings > Welcome tour. \"Messages\" is the name of the app's middle tab, keep it as written."
+  },
+  "tour.guide.messages.text": {
+    "text": "Your conversations with Homeroom bot, with agents and with people. Ask Homeroom bot anything, or ask it to build something.",
+    "description": "Text under the Messages heading of the \"How Homeroom works\" guide in Settings > Welcome tour. Keep \"Homeroom bot\" as written."
+  },
+  "tour.guide.communities.title": {
+    "text": "Communities and projects",
+    "description": "Heading of the Communities part of the \"How Homeroom works\" guide in Settings > Welcome tour. \"Communities\" is the name of the app's fourth tab, keep it as written."
+  },
+  "tour.guide.communities.text": {
+    "text": "A community is a group that builds projects together: Just you, a Private community or a Public community. Open a project to see its Hub, what Needs you, the Workshop where changes are built, and its channels.",
+    "description": "Text under the Communities heading of the \"How Homeroom works\" guide in Settings > Welcome tour. Keep \"Just you\", \"Private community\", \"Public community\", \"Hub\", \"Needs you\" and \"Workshop\" as written."
+  },
+  "tour.guide.suggest.title": {
+    "text": "Suggesting a change",
+    "description": "Heading of the part of the \"How Homeroom works\" guide in Settings > Welcome tour that explains how to suggest an improvement."
+  },
+  "tour.guide.suggest.text": {
+    "text": "Inside any app, tap the Homeroom mark and choose Suggest an improvement. Homeroom bot starts building it, or brings it to the group as a request.",
+    "description": "Text under the Suggesting a change heading of the \"How Homeroom works\" guide in Settings > Welcome tour. Keep \"Suggest an improvement\" and \"Homeroom bot\" as written."
+  },
+  "tour.guide.voting.title": {
+    "text": "Voting",
+    "description": "Heading of the Voting part of the \"How Homeroom works\" guide in Settings > Welcome tour."
+  },
+  "tour.guide.voting.text": {
+    "text": "A finished change becomes a proposal the group votes on, with before and after shots to look at. When enough people vote yes it goes live. Needs you lists the votes waiting on you.",
+    "description": "Text under the Voting heading of the \"How Homeroom works\" guide in Settings > Welcome tour. Keep \"Needs you\" as written."
+  },
+  "tour.guide.profile.title": {
+    "text": "Your profile",
+    "description": "Heading of the last part of the \"How Homeroom works\" guide in Settings > Welcome tour."
+  },
+  "tour.guide.profile.text": {
+    "text": "The tab with your name holds your profile and Settings, where you change your theme, language and alerts, and come back to this guide.",
+    "description": "Text under the Your profile heading of the \"How Homeroom works\" guide in Settings > Welcome tour. Keep \"Settings\" as written."
+  },
   "about.title": {
     "text": "About",
     "description": "Heading of the section in Settings that shows version numbers."

@@ -9,7 +9,8 @@
  * tour again, and go to Home, which is where every step points. The request
  * opens the tour whatever the account's own "done" says
  * (../../home/tour/tour-done.ts), and finishing it records "done" on both
- * again.
+ * again. Under the button sits a static written guide to each part of the
+ * app (#3222), so reading it back does not need the tour at all.
  *
  * ── Why this pane may hold a handler at all ───────────────────────────
  *
@@ -26,6 +27,19 @@ import { SectionHeading } from '@/components/ui/field';
 import { useMessages } from '../../../lib/i18n/react';
 import { requestTour } from '../../home/tour/tour-request';
 import { clearDone, currentUserId } from '../../home/tour/tour-storage';
+
+// The written guide's parts, in the order a new account meets them. Each
+// entry is one whole-literal pair of ids, so the language inventory can find
+// them; the text itself lives in frontend/locales/en/settings.json.
+const GUIDE_SECTIONS = [
+  { title: 'settings:tour.guide.home.title', text: 'settings:tour.guide.home.text' },
+  { title: 'settings:tour.guide.discover.title', text: 'settings:tour.guide.discover.text' },
+  { title: 'settings:tour.guide.messages.title', text: 'settings:tour.guide.messages.text' },
+  { title: 'settings:tour.guide.communities.title', text: 'settings:tour.guide.communities.text' },
+  { title: 'settings:tour.guide.suggest.title', text: 'settings:tour.guide.suggest.text' },
+  { title: 'settings:tour.guide.voting.title', text: 'settings:tour.guide.voting.text' },
+  { title: 'settings:tour.guide.profile.title', text: 'settings:tour.guide.profile.text' },
+];
 
 function replay(): void {
   clearDone(currentUserId());
@@ -55,6 +69,22 @@ export function TourSection() {
         <p id="settings-tour-hint" className="mt-2 text-xs text-zinc-500 dark:text-zinc-500">
           {t('settings:tour.hint')}
         </p>
+        <div className="mt-6">
+          <SectionHeading title={t('settings:tour.guide.title')}>
+            {t('settings:tour.guide.intro')}
+          </SectionHeading>
+          <div className="mt-4">
+            {GUIDE_SECTIONS.map((part) => (
+              <SectionHeading
+                key={part.title}
+                title={t(part.title)}
+                blurbClassName="leading-relaxed"
+              >
+                {t(part.text)}
+              </SectionHeading>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
