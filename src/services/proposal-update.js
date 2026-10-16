@@ -635,7 +635,7 @@ function visibleChangesSubmissionFields(result = {}) {
 // the new SHA. This is best-effort after a Git push: metadata storage must not
 // falsely report that code which already landed did not land.
 async function applyShotsRevision({
-  pool, config, session, headSha, visibleChanges, headChanged = false,
+  pool, config, session, headSha, visibleChanges, headChanged = false, pin = null, from = null,
 }) {
   const submitted = visibleChanges !== undefined;
   if (!config?.shots?.collect) {
@@ -651,7 +651,10 @@ async function applyShotsRevision({
   const intent = submitted ? visibleChanges : storedVisibleChanges(session);
   try {
     if (headChanged && shotsState.validSha(headSha)) {
-      await shotsState.markStaleForHead(pool, Number(session.id), headSha);
+      // Appended before the head is written (applyHeadChange, the reviewed
+      // head's reconcile, below): `from` lets the shots machine tell this
+      // move from one a newer move overtook.
+      await shotsState.markStaleForHead(pool, Number(session.id), headSha, null, { pin, from });
     }
     if (!intent) {
       const required = session.shots_detail?.required === true;
@@ -665,7 +668,7 @@ async function applyShotsRevision({
       pool,
       Number(session.id),
       intent,
-      shotsState.validSha(headSha) ? { headSha } : {}
+      shotsState.validSha(headSha) ? { headSha, pin, from } : {}
     );
     session.shots_state = result.state;
     session.shots_detail = result.detail;
@@ -1641,6 +1644,7 @@ async function advanceAppRepoBranch(ctx) {
   const shotsApplied = await applyShotsRevision({
     pool, config, session, headSha: verified.headSha,
     visibleChanges: ctx.visibleChanges, headChanged: liveHead !== verified.headSha,
+    pin: String(session.source) === 'imported' ? 'imported' : 'reviewed', from: liveHead,
   });
   // And the submitted title: stored for the promote-time lazy PR creation
   // when the row has no PR yet, or a rename of the existing PR when it does.
@@ -2157,7 +2161,7 @@ async function advanceForkHead(ctx) {
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
   const shotsApplied = await applyShotsRevision({
     pool, config, session, headSha: liveHead,
-    visibleChanges: ctx.visibleChanges, headChanged: oldHead !== liveHead,
+    visibleChanges: ctx.visibleChanges, headChanged: oldHead !== liveHead, pin: 'imported', from: oldHead,
   });
   // The request linkage (#1310). On an imported row this stores the DB half
   // only — the close watcher and the Dev board read it — and applyLinkedIssues

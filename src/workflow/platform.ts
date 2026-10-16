@@ -641,23 +641,31 @@ function shotsMachine() {
   return shotRuns;
 }
 
+type HeadFence = { pin?: 'imported' | 'reviewed' | 'handoff' | null; from?: string | null };
+
 // A declaration of visible changes (already validated: visible-changes.js
 // parseIntent) for `head`, or the row's newest. Inside a caller's
 // transaction (`db`, PR import) it is only appended; it applies once that
 // transaction commits.
 export async function shotsDeclared(d: { sessionId: number; appId?: number | null; head?: string | null; intent: unknown;
-  db?: Queryable; actor?: string | null }): Promise<EventOutcome | null> {
+  db?: Queryable; actor?: string | null } & HeadFence): Promise<EventOutcome | null> {
   const m = shotsMachine();
-  const event = { type: 'Declared', payload: { sessionId: d.sessionId, head: d.head ?? null, intent: d.intent } };
+  const event = { type: 'Declared', payload: { sessionId: d.sessionId, head: d.head ?? null, intent: d.intent,
+    pin: d.pin ?? null, from: d.from ?? null } };
   const o = { requestKey: `declare:${randomUUID()}`, source: { kind: 'route' as const, name: 'declare' },
     appId: d.appId ?? undefined, actor: d.actor ?? undefined };
   if (d.db) { await runtime!.append(m, shotsKey(d.sessionId), event, { ...o, db: d.db }); return null; }
   return runtime!.appendAndWait(m, shotsKey(d.sessionId), event, { ...o, waitMs: 5000 });
 }
 
-// The proposal's head moved: shots of other heads stop counting.
-export async function shotsHeadMoved(sessionId: number, head: string, reason: string | null = null): Promise<number> {
-  return runtime!.append(shotsMachine(), shotsKey(sessionId), { type: 'HeadMoved', payload: { sessionId, head, reason } },
+// The proposal's head moved: shots of other heads stop counting. `pin`:
+// the revision column the caller moved (and `from`, the head it held, when
+// the caller appends before it writes), so an event a newer move overtook
+// is refused instead of taking the slot back (shots/machine.ts staleHead).
+export async function shotsHeadMoved(sessionId: number, head: string, reason: string | null = null,
+  f: HeadFence = {}): Promise<number> {
+  return runtime!.append(shotsMachine(), shotsKey(sessionId),
+    { type: 'HeadMoved', payload: { sessionId, head, reason, pin: f.pin ?? null, from: f.from ?? null } },
     { requestKey: `head:${head}:${randomUUID()}`, source: { kind: 'system', name: 'head-moved' } });
 }
 

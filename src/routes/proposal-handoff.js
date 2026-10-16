@@ -1735,7 +1735,7 @@ function proposalHandoffRoutes(config) {
             shotsApplied = shotsApplied || await applyShotsRevision({
               pool, config, session, headSha: input.headSha,
               visibleChanges: input.visibleChanges,
-              headChanged: currentCheckedHead(session) !== input.headSha,
+              headChanged: currentCheckedHead(session) !== input.headSha, pin: 'handoff',
             });
 
             const freshSession = {
@@ -1850,7 +1850,7 @@ function proposalHandoffRoutes(config) {
           shotsApplied = shotsApplied || await applyShotsRevision({
             pool, config, session, headSha: input.headSha,
             visibleChanges: input.visibleChanges,
-            headChanged: currentCheckedHead(session) !== input.headSha,
+            headChanged: currentCheckedHead(session) !== input.headSha, pin: 'handoff',
           });
 
           const freshSession = {

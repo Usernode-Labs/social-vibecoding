@@ -1510,30 +1510,37 @@ async function newerRunUnderWay(pool, sessionId, runId) {
  * be at it (`stopTurn`: the run ended while the agent worked), its copies,
  * its workspace, and, when `worker` says so, the temporary worker an
  * imported or merged proposal's agent ran in. Throws while anything is
- * left, so the work is tried again.
+ * left (its turn's record included), so the work is tried again.
  */
 async function cleanupRun(config, pool, {
   runId, sessionId, appSlug, worker: dropWorker = false, stopTurn = false,
 }, injected = {}) {
   const workerApi = injected.worker || worker;
+  let turnHeld = false;
   if (stopTurn) {
     // Only this run's own turn: its record names the run (the dispatch's
     // telemetry id). Stopped, then its record released, as a turn whose
-    // step ended would have it.
+    // step ended would have it. A record that could not be released holds
+    // the proposal's agent: the cleanup is tried again until it is.
     const activeTurn = await turnLifecycle.loadActiveTurn(pool, sessionId).catch(() => null);
     if (activeTurn && activeTurn.mode === 'shots' && activeTurn.telemetryCorrelationId === runId) {
       await workerApi.stopTurn(sessionId).catch((error) => {
         log.warn('shots', 'Could not stop the shots agent of a run that ended', { sessionId, runId, error: error.message });
       });
-      await workerApi.finishTurn(sessionId, {
+      const released = await workerApi.finishTurn(sessionId, {
         turnId: turnLifecycle.turnIdentity(activeTurn), journal: activeTurn.journal || null,
       });
+      turnHeld = released === false;
     }
   }
   const left = await (injected.removeCopies || removeCopies)(config, { runId, appSlug });
   if (left.length) {
     throw new ShotsOrchestrationError('shots_cleanup_incomplete',
       `The copies could not all be removed: ${left.map((err) => err.message).slice(0, 3).join('; ')}`);
+  }
+  if (turnHeld) {
+    throw new ShotsOrchestrationError('shots_cleanup_incomplete',
+      'The shots agent\'s turn record could not be released.');
   }
   // The temporary worker goes unless a newer run of the proposal is under
   // way in it (this cleanup waited for its copies, or for a retry).

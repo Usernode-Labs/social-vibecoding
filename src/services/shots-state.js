@@ -112,13 +112,19 @@ async function sessionApp(pool, sessionId) {
  * `options.headSha` or its newest head: the shots machine records it, ends
  * shots it changes, and takes the shots once the head is ready. The same
  * declaration again changes nothing. Resolves what the slot reads now.
+ * `options.pin` / `options.from` fence `headSha` as markStaleForHead's do:
+ * a declaration for a revision a newer move overtook is refused.
  */
 async function recordIntent(pool, sessionId, rawIntent, options = {}) {
   const prepared = prepareIntent(rawIntent, options);
   const id = Number(sessionId);
   const outcome = await workflow().shotsDeclared({
     sessionId: id, appId: await sessionApp(pool, id), head: options.headSha || null, intent: prepared.intent,
+    pin: options.pin || null, from: options.from || null,
   });
+  if (outcome.status === 'rejected' && outcome.reason === 'stale_head') {
+    throw new ShotsStateError('stale_head', 'A newer revision of this proposal replaced the one this declaration was for.', 409);
+  }
   if (outcome.status === 'rejected' || outcome.status === 'faulted') {
     throw new ShotsStateError(outcome.reason || 'shots_declaration_refused', 'The declaration of visible changes was not recorded.');
   }
@@ -144,6 +150,7 @@ async function recordIntentInTransaction(client, sessionId, rawIntent, options =
   const prepared = prepareIntent(rawIntent, options);
   await workflow().shotsDeclared({
     sessionId: Number(sessionId), head: options.headSha || null, intent: prepared.intent, db: client,
+    pin: options.pin || null, from: options.from || null,
   });
   return {
     accepted: true, unchanged: false, required: prepared.detail.required, state: prepared.state,
@@ -152,10 +159,13 @@ async function recordIntentInTransaction(client, sessionId, rawIntent, options =
 }
 
 // The proposal's head moved to `headSha`: shots of other heads stop
-// counting (the shots machine ends a run of another head).
-async function markStaleForHead(pool, sessionId, headSha, reason = null) {
+// counting (the shots machine ends a run of another head). `fence.pin`
+// names the revision column the caller moved ('imported', 'reviewed',
+// 'handoff'), and `fence.from` the head it held when the caller appends
+// before it writes: a move a newer one overtook is then refused.
+async function markStaleForHead(pool, sessionId, headSha, reason = null, fence = {}) {
   if (!validSha(headSha)) throw new ShotsStateError('invalid_shots_revision', 'A valid head SHA is required.', 400);
-  await workflow().shotsHeadMoved(Number(sessionId), headSha, reason);
+  await workflow().shotsHeadMoved(Number(sessionId), headSha, reason, { pin: fence.pin || null, from: fence.from || null });
   return 1;
 }
 

@@ -380,6 +380,26 @@ test('the steps of a shots run against the full PostgreSQL schema', { timeout: 1
     assert.equal((await pool.query('SELECT 1 FROM shot_run_control WHERE run_id = $1', [id])).rowCount, 0);
   });
 
+  await t.test('a turn record that could not be released fails the cleanup, so it is tried again', async () => {
+    const s = await proposal();
+    const id = await prepared(s);
+    await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`,
+      [s.id, JSON.stringify({ mode: 'shots', telemetryCorrelationId: id, turnId: 't-2' })]);
+    let finishes = 0;
+    const removed = [];
+    const worker = (released) => ({ stopTurn: async () => {}, destroyCcVolume: async () => {},
+      finishTurn: async () => { finishes += 1; return released; } });
+    const removeCopies = async (_config, ref) => { removed.push(ref.runId); return []; };
+    await assert.rejects(orchestrator.cleanupRun({}, pool, { runId: id, sessionId: s.id, appSlug: s.app.slug, stopTurn: true },
+      { worker: worker(false), removeCopies }), { code: 'shots_cleanup_incomplete' });
+    assert.deepEqual(removed, [id], 'the copies still go on the attempt that failed');
+    assert.equal((await pool.query('SELECT 1 FROM shot_run_control WHERE run_id = $1', [id])).rowCount, 1, 'the workspace waits for the next attempt');
+    const done = await orchestrator.cleanupRun({}, pool, { runId: id, sessionId: s.id, appSlug: s.app.slug, stopTurn: true },
+      { worker: worker(true), removeCopies });
+    assert.equal(done.cleaned, true);
+    assert.equal(finishes, 2);
+  });
+
   await t.test('a cleanup that comes late keeps the temporary worker a newer run of the proposal is under way in', async () => {
     const s = await proposal({ source: 'imported' });
     const id = runId();

@@ -861,4 +861,43 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
     assert.equal(await facts(mine), false, 'a process gone quiet is gone');
     await pool.query('DELETE FROM platform_processes');
   });
+
+  await t.test('S32 a head move or declaration a newer move overtook is refused, and the newer head\'s shots stand', async () => {
+    defaults();
+    // An imported proposal: two import passes, A then B. B's pass wrote its
+    // head and appended first; A's pass, which wrote A before, appends last.
+    const s = await proposal({ source: 'imported', head: SHA('b'), ready: true });
+    await declare(s, INTENT(), SHA('b'));
+    await settle();
+    assert.equal((await instance(s)).state, 'published');
+    const [published] = await runs(s);
+    const late = await send(s, 'HeadMoved', { head: SHA('a'), pin: 'imported' });
+    const lateDeclared = await send(s, 'Declared', { head: SHA('a'), intent: INTENT('ui', 'An older claim'), pin: 'imported' }, route);
+    await settle();
+    for (const id of [late, lateDeclared]) {
+      assert.deepEqual([(await outcome(id)).result, (await outcome(id)).reason], ['rejected', 'stale_head']);
+    }
+    const i = await instance(s);
+    assert.deepEqual([i.state, i.data.head], ['published', SHA('b')]);
+    const r = await row(s);
+    assert.deepEqual([r.shots_state, r.shots_run_id], ['verified', published.id], 'the newer head\'s shots stand');
+    assert.equal((await runs(s))[0].state, 'verified');
+    // A Retry still takes the current head.
+    await send(s, 'RetryRequested', {}, route);
+    await settle();
+    assert.equal((await runs(s)).slice(-1)[0].head_sha, SHA('b'));
+    // A caller that appends before it writes names the head it replaced: its
+    // move stands while the column still holds that head, and once it holds
+    // the new one.
+    const before = await send(s, 'HeadMoved', { head: SHA('c'), pin: 'imported', from: SHA('b') });
+    await settle();
+    assert.equal((await outcome(before)).result, 'accepted');
+    assert.equal((await instance(s)).data.head, SHA('c'));
+    // Moved back by a force-push: the column holds it again, so it is not stale.
+    await pool.query('UPDATE chat_sessions SET imported_pr_head_sha = $2 WHERE id = $1', [s.id, SHA('b')]);
+    const back = await send(s, 'HeadMoved', { head: SHA('b'), pin: 'imported' });
+    await settle();
+    assert.equal((await outcome(back)).result, 'accepted');
+    assert.equal((await instance(s)).data.head, SHA('b'));
+  });
 });

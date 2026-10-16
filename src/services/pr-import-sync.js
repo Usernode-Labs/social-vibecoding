@@ -324,7 +324,7 @@ async function applyHeadChange({
     // when execution is disabled, reviewers must stop seeing shots from
     // the commit that just ceased to be current.
     await require('./shots-state').markStaleForHead(
-      pool, session.id, String(newHead).toLowerCase()
+      pool, session.id, String(newHead).toLowerCase(), null, { pin: 'imported' }
     ).catch((err) => log.warn('pr-import-sync', 'Before & after shots invalidation failed', {
       sessionId: session.id, oldHead, newHead, err: err.message,
     }));

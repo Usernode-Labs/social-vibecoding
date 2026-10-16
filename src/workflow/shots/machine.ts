@@ -134,13 +134,20 @@ const intentOf = (v: unknown) => {
 };
 
 const session = (p: any) => ({ sessionId: int(p?.sessionId, 'sessionId') });
+// The proposal's revision column the head event's caller moved, and the head
+// it held before when the caller appends before it writes (see staleHead).
+const PINS: ReadonlySet<string> = new Set(['imported', 'reviewed', 'handoff']);
+const fence = (p: any) => {
+  if (p?.pin != null && !PINS.has(p.pin)) throw new Error('pin must be imported, reviewed or handoff');
+  return { pin: p?.pin ?? null, from: optSha(p?.from, 'from') };
+};
 const clock = (p: any) => ({ runId: text(p?.runId, 64), phase: text(p?.phase, 64) });
 const EVENTS = {
   // A declaration of visible changes (the hosted worker's tool, submit_work,
   // a hand-off, PR import, the bot's own proposal), for `head` or the row's.
-  Declared: (p: any) => ({ ...session(p), head: optSha(p?.head, 'head'), intent: intentOf(p?.intent) }),
+  Declared: (p: any) => ({ ...session(p), head: optSha(p?.head, 'head'), intent: intentOf(p?.intent), ...fence(p) }),
   // The proposal's head moved: shots of another head no longer stand.
-  HeadMoved: (p: any) => ({ ...session(p), head: reqSha(p?.head, 'head'), reason: text(p?.reason, 1000) }),
+  HeadMoved: (p: any) => ({ ...session(p), head: reqSha(p?.head, 'head'), reason: text(p?.reason, 1000), ...fence(p) }),
   // From the preview machine.
   HeadReady: (p: any) => ({ ...session(p), head: reqSha(p?.head, 'head') }),
   PreviewStopped: (p: any) => ({ ...session(p), head: optSha(p?.head, 'head') }),
@@ -763,10 +770,26 @@ const workDone: Handler = (s, e, f, ctx, deps) => {
   return step(s);
 };
 
+// A head event its caller sent for a revision the proposal has since moved
+// past. Two callers can move the same proposal at once (two import passes,
+// an update and a sync): the one that wrote its column first may append
+// last, and its head would take the slot back. The event names the column
+// its caller moved (`pin`); once that column holds another head, it is
+// stale, unless that head is the one the caller replaced (`from`: it
+// appends before it writes).
+function staleHead(e: Event<any>, f: Facts): boolean {
+  const { head, pin, from } = e.payload;
+  if (!head || !pin || !f.session) return false;
+  const now = (f.session.pins as Record<string, string | null>)[pin];
+  return !!now && now !== head && now !== from;
+}
+
 const ranFor = (s: Live, e: Event<any>) => !!s.data.run && s.data.run.id === e.payload.runId && phaseOf(s) === e.payload.phase;
 
 // Which state takes which request.
 const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts) => Check>([
+  ['Declared', (s, e, f) => (staleHead(e, f) ? reject('stale_head') : ok())],
+  ['HeadMoved', (s, e, f) => (staleHead(e, f) ? reject('stale_head') : ok())],
   ['RetryRequested', (s, e, f) => {
     if (live(s)) return reject('shots_rerun_in_flight');
     if (!f.session) return reject('session_not_found');

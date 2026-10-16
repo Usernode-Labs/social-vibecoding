@@ -17,6 +17,9 @@ export interface Session {
   // headForSession): an imported pull request's, a promoted proposal's
   // reviewed head, its checks', a hand-off's, its preview's.
   head: string | null;
+  // The revision columns a head event names (its `pin`): an imported pull
+  // request's head, a promoted proposal's reviewed head, a hand-off's.
+  pins: { imported: string | null; reviewed: string | null; handoff: string | null };
   // A head its preview serves, or whose checks settled (a verdict that
   // needed no preview): ready to be shot.
   readyHeads: string[];
@@ -79,7 +82,9 @@ export async function readFacts(tx: Tx, sessionId: number, { buildSha = null }: 
   return {
     session: {
       id: r.id, appId: r.app_id, appSlug: r.app_slug, status: r.status, source: r.source ?? null,
-      head, readyHeads: [...readyHeads], agentBusy: !!r.agent_busy, olderServing: !!r.older_serving,
+      head, readyHeads: [...readyHeads],
+      pins: { imported: sha(r.imported_pr_head_sha), reviewed: sha(r.reviewed_head_sha), handoff: sha(r.handoff_head_sha) },
+      agentBusy: !!r.agent_busy, olderServing: !!r.older_serving,
       slot: {
         state: r.shots_state ?? null, runId: r.shots_run_id ?? null,
         detail: r.shots_detail && typeof r.shots_detail === 'object' ? r.shots_detail : null,

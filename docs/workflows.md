@@ -798,6 +798,10 @@ because a rollout keeps the older release's processes starting runs for a while
 - **Requests.** A declaration (`Declared`: the hosted worker's tool, `submit_work`, a
   hand-off, PR import in its own transaction, the bot's own proposal) and a head move
   (`HeadMoved`) are appended by `services/shots-state.js` where they were written before.
+  Each names the revision column its caller moved (`pin`: the imported head, the reviewed
+  head, the hand-off's; with `from`, the head it replaced, when the caller appends before it
+  writes): one a newer move overtook is refused (`stale_head`) instead of taking the slot
+  back to an older head.
   The preview machine says when a head is ready to be shot (`HeadReady`: its preview serves,
   or its checks settled), when an imported proposal's preview will not start
   (`PreviewStopped`), when a UI change declares nothing (`UiUndeclared`, from its checks

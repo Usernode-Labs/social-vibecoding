@@ -1912,7 +1912,7 @@ async function reconcileNativeReviewedHead({
       ? bound[0].pr_summary_stale
       : (session.pr_summary_stale || !!session.pr_summary_md);
     if (session.shots_state || session.shots_detail) {
-      await shotsState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
+      await shotsState.markStaleForHead(pool, session.id, liveHead, null, { pin: 'reviewed' }).catch((err) =>
         log.warn('votes', 'Before & after shots invalidation after revision bind failed', {
           sessionId: session.id, headSha: liveHead, err: err.message,
         }));
@@ -1989,7 +1989,7 @@ async function reconcileNativeReviewedHead({
     ? claimed[0].pr_summary_stale
     : (made.fixOnly ? !!session.pr_summary_stale : (session.pr_summary_stale || !!session.pr_summary_md));
   if (session.shots_state || session.shots_detail) {
-    await shotsState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
+    await shotsState.markStaleForHead(pool, session.id, liveHead, null, { pin: 'reviewed' }).catch((err) =>
       log.warn('votes', 'Before & after shots invalidation after head move failed', {
         sessionId: session.id, oldHead, headSha: liveHead, err: err.message,
       }));
@@ -3430,7 +3430,7 @@ function voteRoutes(config) {
               importClient,
               inserted[0].id,
               importVisibleChanges,
-              shotsState.validSha(headSha) ? { headSha } : {}
+              shotsState.validSha(headSha) ? { headSha, pin: 'imported' } : {}
             );
           } catch (err) {
             // This transaction owns `importClient`; recordIntent must neither
