@@ -28,6 +28,21 @@
  * for. The place bar's button is the way to the places meanwhile, as it is
  * with the strip folded, and the column is back when the panel closes.
  *
+ * ── The peeked column (#5308) ─────────────────────────────────────────
+ *
+ * With the strip folded on a project page, the peek (./rail-peek.ts) brings
+ * the places list back beside the strip it shows over the page: one peek
+ * state drives both, so the column carries `platform-section-column-peek`
+ * (and `-peek-out` for the fade) whenever a peek is up with a column to
+ * show, and app.css draws it at the docked column's geometry with the
+ * peeked rail's surface. It is a follower like the parked strip
+ * (./parked-strip.tsx): it keeps an existing peek open with the same
+ * enter/leave pair but never starts one — only the window's edge and
+ * #sidebar-toggle do — and crossing from the strip onto it cancels the
+ * shared grace timer, so the two fade away together, not one under the
+ * other. Nothing is docked and no width is reserved: pressing the sidebar
+ * button is still the way both come back for good.
+ *
  * ── The list moves the page, in place ───────────────────────────────
  *
  * The page owns which place is up (../dev-board/workshop/workshop.tsx), as
@@ -45,13 +60,14 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
-import { useHiddenClass } from '../../lib/legacy-dom';
+import { useClassToggle, useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { devWorkshopStore } from '../dev-board/card/cards-store';
 import { useCommunity } from '../dev-board/workshop/community-card';
 import { openPlace, placeStore } from '../dev-board/workshop/place-store';
 import { ProjectPlaces } from '../dev-board/workshop/project-places';
 import { navStore } from './nav-store.js';
+import { enterPeekByMouse, leavePeekByMouse } from './rail-peek';
 
 /** The column's width, which app.css reserves beside the strip. */
 export const SECTION_COLUMN_W = 264;
@@ -115,17 +131,31 @@ function PlacesColumn({ slug }: { slug: string }) {
 export function SectionColumn() {
   const t = useMessages('core');
   const ref = useRef<HTMLElement | null>(null);
-  const { screen, tab } = useStoreState(navStore);
+  const { screen, tab, peek, peekOut, railOpen } = useStoreState(navStore);
   const place = useStoreState(placeStore);
   const roomBesideSide = useMatches(COLUMN_BESIDE_SIDE_QUERY);
   const column = columnFor({ screen, tab, placeSlug: place.slug, side: place.side, roomBesideSide });
   useHiddenClass(ref, column === null);
+  // THE PEEKED COLUMN: only while a peek is up with a column to show and the
+  // strip is folded. `peek` alone is not enough — the peek over a running app
+  // has no column to show (columnFor answers null), and an open rail is the
+  // docked one. Toggled like `hidden`: the class string stays a constant,
+  // because the peek rules read these classes, not the attribute.
+  const peeking = column !== null && !railOpen && peek;
+  useClassToggle(ref, 'platform-section-column-peek', peeking);
+  useClassToggle(ref, 'platform-section-column-peek-out', peeking && peekOut);
   return (
     <aside
       ref={ref}
       id="platform-section-column"
       className="platform-section-column hidden"
       aria-label={t('core:sectionColumn.label')}
+      // A follower of the peek, as the parked strip is: keep an existing one
+      // alive while the pointer is on the list, hand the grace period back on
+      // the way out. Never START one — only the window's edge and
+      // #sidebar-toggle do — so the handlers ride only while a peek is up.
+      onPointerEnter={peek ? enterPeekByMouse : undefined}
+      onPointerLeave={peek ? leavePeekByMouse : undefined}
     >
       {column === 'places' && place.slug ? <PlacesColumn slug={place.slug} /> : null}
     </aside>
