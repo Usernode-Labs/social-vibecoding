@@ -110,6 +110,26 @@
     html.dark.release-signing-in::after { border-color: rgba(161, 161, 170, 0.25); border-top-color: #a1a1aa; }
     @keyframes release-signing-in-spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { html.release-signing-in::after { animation: none; } }
+    /* The wordmark on the held ground (review of #5323's build). While the
+       holds above keep the body hidden, only the ground paints — a flat
+       background with nothing on it, which is what a signed-out load shows
+       for its first moments. The Homeroom wordmark, centred on that ground,
+       says what is loading. Drawn on <html> like the spinner above, so it
+       needs no markup and no stylesheet of ours, and only while a hold is
+       held: it goes the moment the shell's first screen draws. Its bottom
+       edge sits 8px above the middle, 12px over the spinner's top, the
+       landing's own SigningIn column (its 32px logotype, 12px, the spinner).
+       The ink is the landing's wordmark ink: near-black, white in dark
+       mode — never the header's --brand-ink. */
+    html.first-session-boot::before,
+    html.language-pending::before {
+      content: 'Homeroom'; position: fixed; z-index: 2147483647;
+      left: 0; right: 0; bottom: calc(50% + 8px); text-align: center;
+      font: italic 700 20px/24px ui-sans-serif, system-ui, sans-serif;
+      color: #09090b; pointer-events: none;
+    }
+    html.dark.first-session-boot::before,
+    html.dark.language-pending::before { color: #ffffff; }
   </style>
   <script>
     // Theme module — Light / Dark / System mode selector.

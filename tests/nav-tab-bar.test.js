@@ -1090,10 +1090,10 @@ test('five recent apps, newest first, once each; the app on screen leads before 
   assert.deepEqual(stripApps([]), []);
 });
 
-// #4935: the strip leads with the top row of My apps, in the order Home
-// publishes it, and the recents fill what is left. A pinned app is never
-// listed a second time; the recents keep at least one slot.
-test('#4935: the pinned part leads in Home\'s order, once each, and leaves the recents a slot', () => {
+// #5323: the strip leads with the apps the viewer pinned there, and the
+// recents fill what is left. A pinned app is never listed a second time;
+// the recents keep at least one slot.
+test('#4935: the pinned part leads, once each, and leaves the recents a slot', () => {
   const { stripApps } = loadTsx(STRIP);
   const src = read(STRIP);
   assert.match(src, /data-strip-pinned/,
@@ -1137,17 +1137,82 @@ test('#4935: the pinned part leads in Home\'s order, once each, and leaves the r
   assert.deepEqual(stripApps(recents).map((a) => a.slug), ['chess', 'run', 'notes', 'plant', 'trade']);
 });
 
+// #5323: the "Pin here" slot is the one row the strip draws while a My apps
+// tile is in the air, after the pinned rows and before the rest; a refused
+// drop says so in words. It un-hides an empty strip so there is somewhere to
+// drop, and it is gone again when the gesture is over.
+test('#5323: the drop row renders only while a drag is up, and the hairline takes it as the pinned edge', () => {
+  const { StripApps } = loadTsx(STRIP);
+  const src = read(STRIP);
+  assert.match(src, /const \{ drop \} = useStoreState\(pinDropStore\);/,
+    'the slot answers the drag state, never its own guess');
+  assert.match(src, /data-strip-drop=""/);
+  assert.match(src, /data-drop-state=\{drop\}/);
+  assert.match(src, /core:stripApps\.drop\.pin/);
+  assert.match(src, /core:stripApps\.drop\.already/);
+  assert.match(src, /core:stripApps\.drop\.full/);
+  // The slot holds an empty strip open: hidden only when there are no items
+  // AND no drop.
+  assert.match(src, /useHiddenClass\(ref, items\.length === 0 && !drop\);/);
+  // The hairline between the groups is drawn on the slot when it follows a
+  // pinned row, as it is on the first non-pinned app.
+  assert.match(css, /\.platform-strip-app\[data-strip-pinned\] \+ \.platform-strip-drop::before/,
+    'the slot is the pinned part\'s edge in app.css');
+  assert.match(css, /\.platform-strip-drop\[data-drop-state='ok'\]/,
+    'the lit fill is the drop-accepted state');
+  // The refused words are drawn muted, so the slot never looks like an
+  // accepted drop.
+  const dropRule = css.match(/\n  \.platform-strip-drop \{[^}]*\}/)[0];
+  assert.match(dropRule, /color: var\(--text-muted\);/);
+});
+
+// #5323: unpin two ways — the same small menu a My apps tile opens, and a
+// mouse drag back out of the rail. The ghost is React state only, portaled
+// to the body, so the prerender ships nothing of it; the click a release
+// leaves behind must not open the app.
+test('#5323: a pinned row carries the Unpin menu and the drag-out path', () => {
+  const src = read(STRIP);
+  assert.match(src, /onContextMenu: \(event: MouseEvent<HTMLAnchorElement>\) => \{/,
+    'the menu opens on the pinned row itself');
+  assert.match(src, /PlatformUI;[\s\S]*?\.menu\?\.\(\{/,
+    'the kit presents it, as a My apps tile\'s menu is presented');
+  assert.match(src, /label: t\('core:stripApps\.menu\.unpin'\)/);
+  assert.match(src, /unpinApp\(app\.slug, navStore\.get\(\)\.viewer\)/);
+  // The drag-out is mouse-only, past a small threshold, with capture.
+  assert.match(src, /event\.pointerType !== 'mouse'/);
+  assert.match(src, /Math\.hypot\(event\.clientX - drag\.startX, event\.clientY - drag\.startY\) <= 6/);
+  assert.match(src, /setPointerCapture\(event\.pointerId\)/);
+  // The ghost follows the pointer, portaled out of the rail, and carries the
+  // caption only while it is outside #platform-tabs.
+  assert.match(src, /createPortal\(/);
+  assert.match(src, /data-unpin=\{ghost\.unpin \? 'true' : undefined\}/);
+  assert.match(src, /platform-strip-ghost-caption/);
+  assert.match(src, /document\.body,/);
+  // Escape aborts; the release outside unpins and swallows the click.
+  assert.match(src, /event\.key !== 'Escape'/);
+  assert.match(src, /swallowClickRef\.current = true/);
+  // Ghost and slot are React state and store state with empty initials, so
+  // the prerendered strip ships none of it — and the strip still reads no
+  // storage during a render (the stored list is read in effects and by
+  // mount.ts when the viewer is named).
+  assert.doesNotMatch(src.slice(src.indexOf('export function StripApps')), /localStorage/);
+  assert.match(css, /\.platform-strip-ghost \{[^}]*pointer-events: none;/,
+    'the ghost never becomes the hit-test');
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.platform-strip-ghost \{ transform: translate\(-50%, -50%\); \}\s*\}/,
+    'no scale on the ghost when motion is reduced');
+});
+
 test('the still-open dot only on the apps kept alive, said aloud; the app on screen lit', () => {
   const src = read(STRIP);
   assert.match(src, /const live = useLiveAppSlugs\(\);/, 'read off the frame store\'s kept frames');
   assert.match(src, /\{running \? <LiveAppDot className="platform-strip-live" \/> : null\}/);
   assert.match(src, /aria-label=\{running \? listText\(\[app\.name, liveAppLabel\(\)\]\) : undefined\}/);
   assert.equal(message('core:liveApp.stillOpen'), 'still open');
-  assert.equal(message('core:stripApps.label'), 'My apps and recent apps');
+  assert.equal(message('core:stripApps.label'), 'Pinned apps and recent apps');
   assert.match(src, /aria-current=\{lit \? 'page' : undefined\}/);
   // Nothing before mount: the prerender ships the root empty and hidden.
   const html = renderComponent(STRIP, 'StripApps', {});
-  assert.equal(html, '<div id="platform-strip-apps" class="platform-strip-apps hidden" role="group" aria-label="My apps and recent apps"></div>');
+  assert.equal(html, '<div id="platform-strip-apps" class="platform-strip-apps hidden" role="group" aria-label="Pinned apps and recent apps"></div>');
   // A closed app shrinks into its tile, and a resumed one grows out of it.
   const motion = read('frontend/src/features/nav/resume-motion.ts');
   assert.match(motion, /doc\.querySelectorAll\('#platform-strip-apps a\.platform-strip-app\[data-strip-app\]'\)/);

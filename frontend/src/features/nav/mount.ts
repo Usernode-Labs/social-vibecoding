@@ -14,7 +14,7 @@ import { flushSync } from 'react-dom';
 
 import { navStore, tabForScreen } from './nav-store.js';
 import { parkedStore, setParked } from './parked-store.js';
-import { pinnedAppsStore, readPinnedApps, setPinnedApps } from './pinned-apps-store.js';
+import { pinApp, pinDropStore, pinStatus, pinnedAppsStore, readPinnedApps } from './pinned-apps-store.js';
 import { forgetRecentApp, readRecentApps, recentAppsStore, rememberRecentApp } from './recent-apps-store.js';
 import {
   collapseIntoResume, RESUME_MOTION_MS, resumeHandleFor, takeResumeOrigin,
@@ -27,6 +27,10 @@ navStore.setFlush(flushSync);
 parkedStore.setFlush(flushSync);
 recentAppsStore.setFlush(flushSync);
 pinnedAppsStore.setFlush(flushSync);
+// The "Pin here" slot must appear and clear inside the same task as the drag
+// events that name it (features/home/home.js), for the same reason as the
+// tab's flush above.
+pinDropStore.setFlush(flushSync);
 
 export { navStore, parkedStore };
 
@@ -109,9 +113,12 @@ if (typeof window !== 'undefined') {
       // is empty. Nothing to do while the name has not changed.
       if ((viewer || null) !== navStore.get().viewer) {
         recentAppsStore.set({ apps: readRecentApps(viewer || null) });
-        // Same rule for the strip's pinned part (#4935): Home's top row is
-        // the account's own arrangement.
+        // Same rule for the strip's pinned part (#5323): the pins are the
+        // account's own choices, read fresh for whoever is signed in now —
+        // and any drag half-way to the "Pin here" slot belongs to the
+        // gesture nobody is making any more.
         pinnedAppsStore.set({ apps: readPinnedApps(viewer || null) });
+        pinDropStore.set({ drop: null });
       }
       navStore.set({ viewer: viewer || null });
     },
@@ -187,12 +194,30 @@ if (typeof window !== 'undefined') {
       forgetRecentApp(slug, navStore.get().viewer);
     },
     /**
-     * Home's top row of My apps, as the strip's pinned part (#4935). The one
-     * writer is Home's grid render (features/home/home.js), called with the
-     * apps' display data — the strip draws them without fetching anything.
+     * What a drop of `slug` on the strip's "Pin here" slot would do (#5323):
+     * the strip's own list answers, so the slot can say "Already pinned" or
+     * "Unpin one first" before the drop is refused. Caller: Home's drag
+     * recognizer (features/home/home.js).
      */
-    setPinnedApps(apps: Array<{ slug?: string; name?: string; iconUrl?: string | null; iconEmoji?: string | null }>) {
-      setPinnedApps(apps, navStore.get().viewer);
+    pinStatus(slug: string) {
+      return pinStatus(slug);
+    },
+    /**
+     * Pin `app` to the strip (#5323), as the account signed in now. Takes
+     * the app's display data, so the strip draws the new pin without
+     * fetching anything. Returns whether it pinned (an app already pinned,
+     * or a full list, is refused).
+     */
+    pinApp(app: { slug?: string; name?: string; iconUrl?: string | null; iconEmoji?: string | null }) {
+      return pinApp(app, navStore.get().viewer);
+    },
+    /**
+     * The strip's drag state while a My apps tile is in the air (#5323):
+     * 'idle' on lift, 'ok' / 'already' / 'full' while over the slot, null
+     * when the gesture is over. Caller: Home's drag recognizer.
+     */
+    setPinDrop(state: 'idle' | 'ok' | 'already' | 'full' | null) {
+      pinDropStore.set({ drop: state ?? null });
     },
   };
 }
