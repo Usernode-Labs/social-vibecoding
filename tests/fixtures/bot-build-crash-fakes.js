@@ -642,9 +642,26 @@ module.exports = function install(world) {
     }
     // GitHub opened it; the session's row is not written yet.
     await world.kill('promote:pr');
-    await db.query(
-      `UPDATE chat_sessions SET status = 'promoted', pr_number = $2,
-              pr_title = COALESCE(NULLIF(proposed_pr_title, ''), session_title) WHERE id = $1`, [sessionId, number]);
+    // The proposal machine moves the session into review (src/workflow/
+    // proposal/, its own suite). Faked whole like the route: what its
+    // Promote leaves, the row in review and the instance that holds it (a
+    // process's boot adopts the bot's session), as a transition writes it,
+    // without its GitHub work and its messages to the preview machine.
+    const tx = await db.connect();
+    try {
+      await tx.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      await tx.query(
+        `UPDATE chat_sessions SET status = 'promoted', promoted_at = NOW(), pr_number = $2,
+                pr_title = COALESCE(NULLIF(proposed_pr_title, ''), session_title) WHERE id = $1`, [sessionId, number]);
+      await tx.query(
+        `UPDATE wf_instances SET state = 'in_review', data = jsonb_set(data, '{slot}', '"none"'),
+                deadline_at = NULL, deadline_event = NULL, deadline_version = NULL, updated_at = NOW()
+          WHERE machine = 'proposal' AND key = $1`, [`session:${sessionId}`]);
+      await tx.query('COMMIT');
+    } catch (err) {
+      await tx.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally { tx.release(); }
     await world.record('promote', { sessionId, number }, s.app_id);
     return { status: 200, body: { ok: true, prNumber: number } };
   }

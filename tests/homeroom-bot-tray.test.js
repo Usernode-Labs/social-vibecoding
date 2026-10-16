@@ -380,7 +380,7 @@ test('#8 (WP3): the tray reads again when one of the bot\'s proposals is promote
   assert.match(machine, /if \(row\.ownerSynthetic\) work\.push\(botNote\(d, promoting\.n\)\);\n {2}return step\(next, \{\n {4}writes: \[\n {6}\{ type: 'promoted'/,
     'promoted: once its pull request is up, when it is the bot\'s');
   const close = machine.slice(machine.indexOf('function close('), machine.indexOf('\n}\n', machine.indexOf('function close(')));
-  assert.match(close, /const work: WorkRequest\[\] = \[destroyWorker\(d, n\), botNote\(d, n\)\];/, 'closed, by any path');
+  assert.match(close, /const destroy = destroyWorker\(d, n\);[\s\S]*?const work: WorkRequest\[\] = \[destroy, botNote\(d, n\)\];/, 'closed, by any path');
   const services = read('src/workflow/proposal/services.ts');
   const bot = services.slice(services.indexOf('[WORK.bot]: {'));
   assert.match(bot, /await legacy\('services\/homeroom-bot-dm'\)\.noteProposalChanged\(pool, Number\(input\.sessionId\)\);/);

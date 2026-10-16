@@ -175,7 +175,8 @@ test('every sweep that stops a worker unasked asks first; adoption already keeps
   // machine, whose idle check is the pause.
   assert.match(src, /sweeperHandle = setInterval\(async \(\) => \{\s*if \(lifecycle\.isShuttingDown\(\)\) return;\s*await sweepIdleWarmWorkers\(\)\.catch/);
   assert.doesNotMatch(src, /autoPauseIdleSessions/);
-  assert.match(src, /\/\/ Pass 1:[\s\S]*?await require\('\.\/src\/workflow\/platform\.ts'\)\.adoptProposals\(\)/);
+  assert.match(src, /\/\/ Pass 1:[\s\S]*?await adoptProposals\(\);/);
+  assert.match(src, /const adoptProposals = \(\) => require\('\.\/src\/workflow\/platform\.ts'\)\.adoptProposals\(\)/);
   assert.match(src, /function heldByDurableBuild\(sessionId, pool = getPool\(config\)\) \{\s*return require\('\.\/src\/services\/build-runs'\)\.holdsSession\(pool, sessionId\);/);
   // The left-behind sweep adopts through adoptOrphanWorker, which keeps a
   // durable build's worker as it is (tests/homeroom-bot-restart-recovery.test.js).
