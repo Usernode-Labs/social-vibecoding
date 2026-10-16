@@ -4770,9 +4770,9 @@
       "expectSelector": "html:not(.in-side-panel) body:has(#platform-side-panel.hidden):has(#platform-header:not(.hidden)):has(#platform-tabs:not(.hidden)) #messages-screen:not(.hidden)"
     },
     {
-      "name": "#4417, #4935: the desktop strip's apps sit between the last section, Communities, and you, named for a screen reader (pinned first, then recents; they replace the rail's Recents, #2802)",
+      "name": "#4417, #5323: the desktop strip's apps sit between the last section, Communities, and you, named for a screen reader (pins you chose first, then recents; they replace the rail's Recents, #2802)",
       "path": "/?demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-workshop + #platform-strip-apps[role=\"group\"][aria-label=\"My apps and recent apps\"] + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-workshop + #platform-strip-apps[role=\"group\"][aria-label=\"Pinned apps and recent apps\"] + #platform-tab-me"
     },
     {
       "name": "#2800, #4417: you are the strip's foot, straight after its recent apps, with your Settings beside you",
