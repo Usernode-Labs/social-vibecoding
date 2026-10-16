@@ -874,9 +874,10 @@ function attempted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, dep
       return { ...out, messages: [...(out.messages || []), ended(s.data, a, 'closed')] };
     }
     case 'gone': return backToReview(s, e, f, ctx, deps, { outcome: 'gone' });
-    // GitHub's hourly limit: not merged, nothing said against this head; the
-    // queue's next look (its sweep) asks again.
-    case 'rate_limited': return backToReview(s, e, f, ctx, deps, { outcome: 'rate_limited' });
+    // GitHub's limit: not merged, nothing said against this head, and an
+    // earlier refusal this ask was retrying is forgotten too: the queue's
+    // next look (its sweep) asks again.
+    case 'rate_limited': return backToReview(s, e, f, ctx, deps, { outcome: 'rate_limited', refused: null });
     default: {
       const kind = String(r?.kind || 'blocked');
       // Main moved between the gate and GitHub's merge: asked once more at
@@ -890,13 +891,13 @@ function attempted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, dep
       }
       // Refused: named once per head, so a refusal the queue meets again
       // says nothing new (merge trace bug 2). Main moving twice is not a
-      // refusal of this head: the next ask tries it again.
+      // refusal of this head (an earlier one is forgotten): the next ask tries it again.
       const said = s.data.refused && s.data.refused.head === f.row!.head && s.data.refused.kind === kind;
       const writes: DomainWrite[] = kind === 'conflict' ? [{ type: 'conflictMarked', sessionId: s.data.sessionId }] : [];
       return backToReview(s, e, f, ctx, deps, {
         outcome: 'refused', extra: { kind }, line: said ? null : (r?.message || null), writes,
         push: { mergeFailed: true, resolving: kind === 'conflict' },
-        refused: kind === 'base_moved' ? undefined : { head: f.row!.head, main: f.row!.integrationMain, kind },
+        refused: kind === 'base_moved' ? null : { head: f.row!.head, main: f.row!.integrationMain, kind },
       });
     }
   }

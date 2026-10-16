@@ -816,5 +816,27 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     assert.equal((await sentTo('merge-followups', sessionKey(s.id))).length, 1);
   });
 
+  await t.test('M27 a retry of a refused head that GitHub throttles, or that meets main moving twice, forgets the refusal: the sweep asks again (PR review)', async () => {
+    for (const second of [{ outcome: 'rate_limited', message: null }, { outcome: 'refused', kind: 'base_moved', message: 'Base branch was modified.' }]) {
+      defaults();
+      const s = await proposalRow();
+      await vote(s, await user(), 'yes');
+      work.answer.set(WORK.attempt, { outcome: 'refused', kind: 'blocked', message: 'Required status check is expected.' });
+      await want(s.app, { sessionId: s.id });
+      await settle();
+      assert.ok((await pInst(s)).data.refused, 'refused for this head');
+      // A named ask retries it; GitHub answers with something that is no
+      // refusal of the head.
+      work.answer.set(WORK.attempt, second);
+      await want(s.app, { sessionId: s.id });
+      await settle();
+      assert.equal((await pInst(s)).data.refused ?? null, null, `${second.outcome}: the earlier refusal is forgotten`);
+      const asked = calls(WORK.attempt).length;
+      work.answer.set(WORK.attempt, { outcome: 'merged', sha: SHA('6') });
+      await fire(QUEUE, appKey(s.app.id));
+      assert.equal(calls(WORK.attempt).length, asked + 1, 'the sweep, which names nobody, asks again');
+    }
+  });
+
   void DAY;
 });
