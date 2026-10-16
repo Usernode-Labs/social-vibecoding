@@ -1452,7 +1452,7 @@
     "description": "Label of a switch in Settings > Theme, on a computer: keeps Homeroom's sidebar visible beside an app that is open."
   },
   "theme.railPinned.description": {
-    "text": "Off, an app you open takes the whole window and the sidebar comes back when you point at the left edge. On, the sidebar stays beside it.",
+    "text": "On, the sidebar stays beside an app you open, and the sidebar button at the top left hides it. Off, an app takes the whole window and has a close button instead.",
     "description": "Explanation under the \"Keep sidebar open in apps\" switch in Settings. \"Off\" and \"On\" are the two positions of that switch."
   },
   "devConsole.title": {

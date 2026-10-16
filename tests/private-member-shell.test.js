@@ -78,7 +78,13 @@ test('the app has no ✕ for a private member until they have gone to Homeroom, 
   assert.match(APP, /_privateNoClose\(\) \{\s+return !!App\.user\?\.privateMember && !App\._privateHomeVisited\(\);/);
   const slotFor = APP.slice(APP.indexOf('  _backSlotFor(revealId) {'), APP.indexOf("return ['close', App._closeAppHref()];"));
   assert.match(slotFor, /if \(App\._privateNoClose\(\)\) return \['none'\];/);
-  assert.match(APP, /if \(App\._privateNoClose\(\)\) App\.setBackIcon\(\.\.\.App\._backSlotFor\('app-view'\)\);\s+else App\.setBackIcon\('close', App\._closeAppHref\(\)\);/);
+  // switchTab's App branch publishes the table's own answer, so the two
+  // writers agree by construction (and the ✕ never comes back that way).
+  assert.match(APP, /if \(tab === 'app'\) \{[\s\S]{0,1200}App\.setBackIcon\(\.\.\.App\._backSlotFor\('app-view'\)\);\s+AppView\.renderAppTab\(\);/);
+  assert.doesNotMatch(APP, /App\.setBackIcon\('close',/);
+  // No rail beside their first app either: the predicate that keeps it on a
+  // desktop asks the same question.
+  assert.match(APP, /_railBesideApp\(\) \{[\s\S]{0,200}&& !App\._privateNoClose\(\);/);
   // Remembered per account on this device, like the tours.
   assert.match(APP, /PRIVATE_HOME_PREFIX: 'usernode:private-home:'/);
 });

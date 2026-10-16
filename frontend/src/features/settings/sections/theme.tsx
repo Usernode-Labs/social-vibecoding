@@ -155,14 +155,16 @@ function ThemeControl() {
 
 // The key App._railPinned reads (public/js/app.js). Read here too so the
 // switch can show the stored value before App exists, and written through
-// App.setRailPinned so the router re-decides at once.
+// App.setRailPinned so the router re-decides at once. ON unless '0' is
+// stored: nothing stored is the default, and a '1' from when this was
+// opt-in still reads as on.
 export const RAIL_PINNED_KEY = 'usernode:rail-pinned';
 
 function readRailPinned(): boolean {
   try {
-    return window.localStorage.getItem(RAIL_PINNED_KEY) === '1';
+    return window.localStorage.getItem(RAIL_PINNED_KEY) !== '0';
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -172,26 +174,28 @@ export function writeRailPinned(on: boolean): void {
     return;
   }
   try {
-    if (on) window.localStorage.setItem(RAIL_PINNED_KEY, '1');
-    else window.localStorage.removeItem(RAIL_PINNED_KEY);
+    if (on) window.localStorage.removeItem(RAIL_PINNED_KEY);
+    else window.localStorage.setItem(RAIL_PINNED_KEY, '0');
   } catch { /* unwritable storage: the switch does not stick */ }
 }
 
 /**
  * "Keep sidebar open in apps" (#3319) — the desktop rail stays docked beside
- * a running app instead of giving the app the whole window. Off by default.
+ * a running app, with the sidebar toggle where the app's ✕ was. ON by
+ * default; off gives the app the whole window and its ✕ back.
  *
  * DESKTOP ONLY, and the class string says so (`hidden md:block`): below
  * 768px the bar is the phone's bottom bar, which an app always covers.
  *
- * `pinned` starts false, which is the prerender (an unchecked switch), and
- * the stored value arrives in an effect — localStorage is client-only, and
- * reading it during render would be a hydration mismatch for anyone who had
- * turned it on. Re-read on every entry into this section, like the theme.
+ * `pinned` starts true, which is the prerender (a checked switch, the
+ * default), and the stored value arrives in an effect — localStorage is
+ * client-only, and reading it during render would be a hydration mismatch
+ * for anyone who had turned it off. Re-read on every entry into this
+ * section, like the theme.
  */
 function RailPinnedRow() {
   const t = useMessages('settings');
-  const [pinned, setPinned] = useState(false);
+  const [pinned, setPinned] = useState(true);
   const sync = useCallback(() => setPinned(readRailPinned()), []);
   useIsomorphicLayoutEffect(() => { sync(); }, [sync]);
   useWindowEvent('usernode:settings-section', sync);
