@@ -3029,7 +3029,7 @@
     },
     {
       "id": "messages.inbox",
-      "name": "Messages is three headed sections, Homeroom bot, Agents and People, with no Channels: a community's channel is on its hub",
+      "name": "Messages is two headed sections, Agents with Homeroom bot first and People, with no Channels: a community's channel is on its hub",
       "path": "/?demo=1#messages",
       "expectSelector": "#messages-screen:not(.hidden) .messages-list-scroll:not(:has([data-inbox-card=\"channels\"])) > h3.messages-section-head[data-inbox-section=\"people\"] + .messages-section-card[data-inbox-card=\"people\"]",
       "visual": true,
@@ -3041,9 +3041,9 @@
       ]
     },
     {
-      "name": "People's heading is the button that folds its section, open to start, and there is no filter strip",
+      "name": "Agents' heading is the button that folds its section, open to start; People, the last section, does not fold; and there is no filter strip",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden):not(:has(#messages-filters)) h3.messages-section-head[data-inbox-section=\"people\"] > button.messages-section-toggle[data-inbox-fold=\"people\"][aria-expanded=\"true\"]"
+      "expectSelector": "#messages-screen:not(.hidden):not(:has(#messages-filters)):not(:has([data-inbox-fold=\"people\"])) h3.messages-section-head[data-inbox-section=\"agents\"] > button.messages-section-toggle[data-inbox-fold=\"agents\"][aria-expanded=\"true\"]"
     },
     {
       "name": "#2778: new message is a plus beside the search, and it opens a menu rather than a dialog",

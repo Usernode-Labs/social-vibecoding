@@ -2175,30 +2175,27 @@ form.agent-session-composer:focus-within {
 /* A linked page stops short of the present: two ways back to it. */
 .messages-newer { display: flex; justify-content: center; gap: 8px; padding: 8px 0; }
 
-/* #2967: the channels outside Your apps, behind one row. Drawn on the list's
-   own row grid — the chevron in the tile's column — so it reads as part of
-   the list rather than a button dropped into it. */
-.messages-more-channels {
-  display: flex;
-  align-items: center;
-  gap: 14px;
+/* 16 Oct 2026: the agent chats nobody used this week, and the archived
+   ones, behind a quiet link at the foot of Agents. Muted words in the
+   titles' column (16px of padding + the 44px avatar + the 14px gap), and no
+   chevron: a chevron there matched the sections' own folds and read as a
+   third heading. */
+.messages-inbox-older {
+  display: block;
   width: 100%;
   min-height: 44px;
-  padding: 6px 16px;
+  padding: 12px 16px 12px 74px;
   border: 0;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   background: transparent;
   font: inherit;
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
 }
-.messages-more-channels:hover,
-.messages-more-channels:focus-visible { color: var(--text-primary); background: var(--messages-selected); outline: none; }
-.messages-more-channels-glyph { display: inline-flex; justify-content: center; flex: 0 0 44px; color: var(--text-muted); }
-.messages-more-channels-glyph svg { width: 18px; height: 18px; transition: transform 150ms; }
-@media (prefers-reduced-motion: reduce) { .messages-more-channels-glyph svg { transition: none; } }
+.messages-inbox-older:hover,
+.messages-inbox-older:focus-visible { color: var(--text-primary); text-decoration: underline; outline: none; }
 
 /* #2883: THE TRANSCRIPT READS ONE STEP DOWN ON A DESKTOP. 17px is the phone's
    reading size, and the phone keeps it; beside a 22rem list whose previews
@@ -22711,8 +22708,7 @@ html.un-kb #platform-parked {
     background: none;
     box-shadow: none;
   }
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row,
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-more-channels {
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row {
     min-height: 40px;
     gap: 10px;
     padding: 0 10px;
@@ -22742,8 +22738,8 @@ html.un-kb #platform-parked {
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-bot-row .messages-row-preview { display: block; font-size: 12px; line-height: 16px; }
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-active { background: var(--lit-tint); color: var(--lit-ink); }
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-active .messages-row-name { color: inherit; font-weight: 600; }
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-more-channels { font-size: 14px; font-weight: 500; }
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-more-channels-glyph { flex: 0 0 22px; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-older { min-height: 32px; padding: 6px 10px 6px 42px; border-radius: 10px; font-size: 13px; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-change-tile svg { width: 15px; height: 15px; }
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-session > a { min-height: 40px; gap: 10px; padding: 0 10px; border-radius: 10px; }
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-session > a > :first-child { width: 22px; height: 22px; border-radius: 6px; }
   /* A change in flight is one line too: its title and the pill that says
@@ -23073,6 +23069,25 @@ html.un-kb #platform-parked {
   background: var(--brand-tint);
   color: var(--brand-ink);
   border: 1px solid var(--brand-line);
+}
+/* A change in flight (16 Oct 2026): an agent's pencil on a tint of its
+   project's colour (--change-ink, lib/community-color.ts), in the place of
+   the project's own icon, which for Homeroom is the bot's face. */
+.messages-inbox-change-tile {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: var(--change-ink, var(--text-muted));
+  background: color-mix(in srgb, var(--change-ink, var(--text-muted)) 14%, transparent);
+}
+.messages-inbox-change-tile svg { width: 18px; height: 18px; }
+html.dark .messages-inbox-change-tile {
+  color: color-mix(in srgb, var(--change-ink, var(--text-muted)) 45%, white);
+  background: color-mix(in srgb, var(--change-ink, var(--text-muted)) 35%, transparent);
 }
 
 

@@ -2815,10 +2815,6 @@
     "text": "Start a new conversation",
     "description": "Accessible name of the menu opened by the + button above the conversation list."
   },
-  "inbox.section.bot": {
-    "text": "Homeroom bot",
-    "description": "Small-caps heading over the first section of the Messages list: the viewer's chat with Homeroom bot, the built-in assistant that builds what people ask for. Homeroom is the product's name."
-  },
   "inbox.section.agents": {
     "text": "Agents",
     "description": "Small-caps heading over the Messages list section that holds the viewer's conversations with AI agents and their changes in flight. It is a button that folds the section away and opens it again."
@@ -2847,17 +2843,17 @@
     "text": "Loading conversations",
     "description": "Accessible label of the placeholder rows shown while the conversation list loads."
   },
-  "inbox.showLess": {
-    "text": "Show less",
-    "description": "Button in the conversation list: folds the extra channels away again."
+  "inbox.older.show_one": {
+    "text": "{{count}} older chat",
+    "description": "Quiet link at the foot of the Agents section in Messages: shows the agent chat nobody has used in the last seven days. {{count}} is how many there are."
   },
-  "inbox.showMore_one": {
-    "text": "Show {{count}} more",
-    "description": "Button in the conversation list: unfolds the channels that are hidden by default. {{count}} is how many are hidden."
+  "inbox.older.show_other": {
+    "text": "{{count}} older chats",
+    "description": "Quiet link at the foot of the Agents section in Messages: shows the agent chats nobody has used in the last seven days. {{count}} is how many there are."
   },
-  "inbox.showMore_other": {
-    "text": "Show {{count}} more",
-    "description": "Button in the conversation list: unfolds the channels that are hidden by default. {{count}} is how many are hidden."
+  "inbox.older.hide": {
+    "text": "Hide older chats",
+    "description": "Quiet link at the foot of the Agents section in Messages, once the older agent chats are shown: folds them away again."
   },
   "inbox.archived.show": {
     "text": "Show archived",

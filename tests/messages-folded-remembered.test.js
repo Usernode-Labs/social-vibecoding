@@ -35,10 +35,11 @@ const { savedFolded } = loadTsx('frontend/src/features/messages/store.ts', {
   stubs: { '../../lib/i18n/runtime': { t: (id) => id } },
 });
 
-test('a saved value folds the sections it names, Agents and People only', () => {
+test('a saved value folds Agents only', () => {
   assert.deepEqual(savedFolded('agents'), ['agents']);
-  assert.deepEqual(savedFolded('people,agents'), ['agents', 'people'], 'in the list\'s order');
-  assert.deepEqual(savedFolded('bot,people'), ['people'], 'the Homeroom bot\'s never folds');
+  assert.deepEqual(savedFolded('people,agents'), ['agents'],
+    'People no longer folds: a device that folded it before sees it open');
+  assert.deepEqual(savedFolded('bot,people'), [], 'nor does the bot, which is Agents\' first row');
 });
 
 test('an unknown saved value folds nothing', () => {
@@ -51,7 +52,8 @@ test('setSectionFolded writes the choice before it publishes, inside a try', () 
   const start = STORE.indexOf('export function setSectionFolded(');
   assert.ok(start >= 0, 'setSectionFolded exists');
   const body = STORE.slice(start, STORE.indexOf('\n}\n', start));
-  assert.match(body, /if \(!FOLDABLE\.includes\(section\)\) return;/, 'the bot\'s section never folds');
+  assert.match(body, /if \(!FOLDABLE\.includes\(section\)\) return;/, 'People never folds');
+  assert.match(STORE, /export const FOLDABLE: ReadonlyArray<InboxSection> = \['agents'\];/);
   assert.match(body, /try \{ localStorage\.setItem\('usernode:messages-folded', next\.join\(','\)\); \} catch \{ \/\* storage unavailable \*\/ \}/,
     'the write is guarded, so private mode still folds in memory');
   const write = body.indexOf("localStorage.setItem('usernode:messages-folded'");
