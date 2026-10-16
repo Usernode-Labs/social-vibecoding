@@ -1640,8 +1640,8 @@
     "description": "Description, for screen readers, of the small picture on the first-look card of a project's Hub: a drawing of the app's main screen, made before the app was built. {{app}} is the project's name."
   },
   "hub.needs.title": {
-    "text": "Needs you",
-    "description": "Heading of the card on a project's Hub that leads to the Needs you tab: the proposals waiting for this person's vote."
+    "text": "Needs your vote",
+    "description": "Title of the For you row on a project's Hub that leads to the Needs you place: the proposals waiting for this person's vote. It keeps the \"Needs you\" stem so the row still reads as the way into that place. The place in the project's list of places keeps the name \"Needs you\"."
   },
   "hub.needs.toVote_one": {
     "text": "{{count}} to vote",

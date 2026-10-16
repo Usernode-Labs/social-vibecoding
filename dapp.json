@@ -2948,7 +2948,7 @@
       "name": "The welcome tour opens on what a community is: projects built together, changes proposed and voted in (#3567)",
       "path": "/?shot=welcome-tour",
       "expectSelector": "#home-tour:not(.hidden) #home-tour-card:not(.opacity-0) #home-tour-body:not(.hidden) #home-tour-title",
-      "expectText": "Homeroom is made of communities that build projects together"
+      "expectText": "Your communities are here"
     },
     {
       "name": "Settings' About pane keeps the mobile app version and the platform version as separate rows",
@@ -4668,7 +4668,7 @@
       "name": "#2241 → #2779: New change's old address opens an unsent agent session beside the inbox, with the empty state that invites the first message",
       "path": "/#app/usernode-2d5619/dev/sessions/new",
       "expectSelector": "#messages-screen:not(.hidden) [data-agent-session-thread=\"new\"] [data-agent-session-empty]",
-      "expectText": "New agent session"
+      "expectText": "Start a change with the agent"
     },
     {
       "name": "#2779: the unsent agent session has a live message box, and no session actions for a conversation that does not exist yet",

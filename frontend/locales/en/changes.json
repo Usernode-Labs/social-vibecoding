@@ -408,12 +408,12 @@
     "description": "Row in a card's ⋯ menu: gives kudos (a thank-you point) to the author of the change."
   },
   "card.menu.openCard": {
-    "text": "Open card",
+    "text": "Open full page",
     "description": "First row in a card's ⋯ menu on the board: opens the card on a page of its own. \"Open\" is a verb."
   },
   "card.menu.openCardTitle": {
-    "text": "The card on its own page",
-    "description": "Tooltip on the Open card row of a card's ⋯ menu."
+    "text": "Opens this on its own page to read in full. Nothing is changed.",
+    "description": "Tooltip on the Open full page row of a card's ⋯ menu: says what picking the row does."
   },
   "card.proposal.fallbackTitle": {
     "text": "Change by {{username}}",
@@ -2196,16 +2196,16 @@
     "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps: the change conflicts with the main branch, and automatic resolving is paused until the project's daily AI budget resets."
   },
   "step.integration.queuedFiles_one": {
-    "text": "Conflict in {{count}} file · queued to fix",
-    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps: the change conflicts with the main branch in {{count}} files, and it is waiting its turn to be resolved automatically."
+    "text": "Conflict in {{count}} file · Homeroom fixes it, nothing for you to do",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps: the change conflicts with the main branch in {{count}} files, and it is waiting its turn to be resolved automatically, so the person has nothing to do. Homeroom is the product's name."
   },
   "step.integration.queuedFiles_other": {
-    "text": "Conflict in {{count}} files · queued to fix",
-    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps: the change conflicts with the main branch in {{count}} files, and it is waiting its turn to be resolved automatically."
+    "text": "Conflict in {{count}} files · Homeroom fixes it, nothing for you to do",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps: the change conflicts with the main branch in {{count}} files, and it is waiting its turn to be resolved automatically, so the person has nothing to do. Homeroom is the product's name."
   },
   "step.integration.queuedMain": {
-    "text": "Conflict with main · queued to fix",
-    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps: the change conflicts with the main branch, and it is waiting its turn to be resolved automatically."
+    "text": "Conflict with main · Homeroom fixes it, nothing for you to do",
+    "description": "Line under the \"No conflicts with main\" step in a proposal's list of steps: the change conflicts with the main branch, and it is waiting its turn to be resolved automatically, so the person has nothing to do. Homeroom is the product's name."
   },
   "proposal.menu.adminMerge": {
     "text": "Admin merge",
@@ -4456,40 +4456,40 @@
     "description": "Tooltip of the \"Unassigned\" chip on a request's or proposal's page."
   },
   "attributes.menu.setPriority": {
-    "text": "Set priority…",
-    "description": "Row in the ⋯ menu of a request's or proposal's card: opens the picker of priorities. Shown when the card has no priority yet. Keep the ellipsis."
+    "text": "Vote on priority…",
+    "description": "Row in the ⋯ menu of a request's or proposal's card: opens the picker of priorities, where picking one counts as the person's vote. Shown when the card has no priority yet. Keep the ellipsis."
   },
   "attributes.menu.changePriority": {
-    "text": "Change priority…",
-    "description": "Row in the ⋯ menu of a request's or proposal's card: opens the picker of priorities. Shown when the card already has one. \"Change\" is a verb. Keep the ellipsis."
+    "text": "Vote on a different priority…",
+    "description": "Row in the ⋯ menu of a request's or proposal's card: opens the picker of priorities, where picking one counts as the person's vote. Shown when the card already has one. Keep the ellipsis."
   },
   "attributes.menu.priorityTitle": {
-    "text": "Vote on this card's priority",
-    "description": "Tooltip of the \"Set priority…\" / \"Change priority…\" row in a card's ⋯ menu."
+    "text": "Pick how urgent this is. It counts as your vote, and the card shows the priority with the most votes.",
+    "description": "Tooltip of the \"Vote on priority…\" / \"Vote on a different priority…\" row in a card's ⋯ menu: says what picking the row does."
   },
   "attributes.menu.setCategory": {
-    "text": "Set category…",
-    "description": "Row in the ⋯ menu of a request's or proposal's card: opens the picker of categories. Shown when the card has no category yet. Keep the ellipsis."
+    "text": "Vote on category…",
+    "description": "Row in the ⋯ menu of a request's or proposal's card: opens the picker of categories, where picking one counts as the person's vote. Shown when the card has no category yet. Keep the ellipsis."
   },
   "attributes.menu.changeCategory": {
-    "text": "Change category…",
-    "description": "Row in the ⋯ menu of a request's or proposal's card: opens the picker of categories. Shown when the card already has one. \"Change\" is a verb. Keep the ellipsis."
+    "text": "Vote on a different category…",
+    "description": "Row in the ⋯ menu of a request's or proposal's card: opens the picker of categories, where picking one counts as the person's vote. Shown when the card already has one. Keep the ellipsis."
   },
   "attributes.menu.categoryTitle": {
-    "text": "Vote on which category this card belongs to",
-    "description": "Tooltip of the \"Set category…\" / \"Change category…\" row in a card's ⋯ menu."
+    "text": "Pick which part of the project this belongs to. It counts as your vote, and the card shows the category with the most votes.",
+    "description": "Tooltip of the \"Vote on category…\" / \"Vote on a different category…\" row in a card's ⋯ menu: says what picking the row does."
   },
   "attributes.menu.assign": {
-    "text": "Assign someone…",
-    "description": "Row in the ⋯ menu of a request's or proposal's card: opens the picker of people. Shown when nobody is assigned to the work yet. Keep the ellipsis."
+    "text": "Suggest who takes it…",
+    "description": "Row in the ⋯ menu of a request's or proposal's card: opens the picker of people, where suggesting one counts as the person's vote. Shown when nobody is assigned to the work yet. Keep the ellipsis."
   },
   "attributes.menu.changeAssignee": {
-    "text": "Change assignee…",
-    "description": "Row in the ⋯ menu of a request's or proposal's card: opens the picker of people. Shown when somebody is already assigned. \"Change\" is a verb; the assignee is the person who takes the work. Keep the ellipsis."
+    "text": "Vote on who takes it…",
+    "description": "Row in the ⋯ menu of a request's or proposal's card: opens the picker of people, where picking one counts as the person's vote. Shown when somebody is already assigned; the assignee is the person who takes the work. Keep the ellipsis."
   },
   "attributes.menu.assigneeTitle": {
-    "text": "Suggest or vote on who should take this",
-    "description": "Tooltip of the \"Assign someone…\" / \"Change assignee…\" row in a card's ⋯ menu. \"take this\" means take on the work."
+    "text": "Suggest who should do this work, or vote for someone already suggested. The card shows the person with the most votes.",
+    "description": "Tooltip of the \"Suggest who takes it…\" / \"Vote on who takes it…\" row in a card's ⋯ menu: says what picking the row does."
   },
   "attributes.picker.priorityHead": {
     "text": "Priority",

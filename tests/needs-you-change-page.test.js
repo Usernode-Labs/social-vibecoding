@@ -390,7 +390,7 @@ test('Vote is the Votes card’s button and Preview the Testing card’s; everyt
   assert.ok(!menu.includes('Edit requests'), 'a reader cannot edit its requests');
   const own = av._topicViewFor('proposal', { ...PR, user_id: 42 });
   assert.ok(av._cardMenuItems(own.card.rail.menuKey).some((a) => a.label === 'Edit requests'), 'its author can');
-  assert.ok(menu.some((l) => /priority/.test(l)) && menu.some((l) => /Assign|assignee/.test(l)), 'and the tags');
+  assert.ok(menu.some((l) => /priority/.test(l)) && menu.some((l) => /takes it/.test(l)), 'and the tags');
   assert.ok(!menu.some((l) => /kudos/i.test(l)), 'the thanks is on the page');
 });
 
@@ -589,7 +589,8 @@ test('a failing check opens its step onto the run, with each failure’s door; t
   const sync = s.rows.find((r) => r.gate === 'integration');
   assert.equal(sync.key, 'mergeability', 'the ledger row’s key is the data-note, so the declared checks still find it');
   assert.equal(sync.state, 'active');
-  assert.equal(sync.line, 'Conflict in 2 files · queued to fix');
+  assert.equal(sync.line, message('changes:step.integration.queuedFiles_other', { count: 2 }),
+    'the line says Homeroom fixes the conflict, nothing for the person to do');
   assert.match(html, /data-note="mergeability" data-req-gate="integration" data-req-state="active"><span class="dev-step-mark dev-step-mark-active" aria-hidden="true"><span class="dc-status-icon dc-status-spinner-arc"/);
   assert.doesNotMatch(html, /Main has moved 8 commits ahead/, 'no sentence restating the sync');
   const checks = s.rows.find((r) => r.gate === 'checks');

@@ -1292,16 +1292,16 @@
     "description": "Paragraph in the empty state of a new agent session that was started from a request on a known app. {{app}} is the app's name, shown in bold: keep the <0> tags around it. \"change\" is a noun; \"the group\" is the app's community."
   },
   "session.empty.heading": {
-    "text": "New agent session",
-    "description": "Heading in the empty state of a new agent session: a conversation with Homeroom's coding agent in which nothing has been said yet."
+    "text": "Start a change with the agent",
+    "description": "Heading in the empty state of a new agent session: a conversation with Homeroom's coding agent in which nothing has been said yet. It says what the person would be starting."
   },
   "session.empty.body": {
-    "text": "Start a change on any app. The agent plans it, builds it, and asks the group for approval when you say so.",
-    "description": "Paragraph in the empty state of a new agent session. \"change\" is a noun, a change to an app's code; \"the group\" is the app's community."
+    "text": "Say what you want changed in any app. The agent is built into Homeroom, nothing to install. It plans the change, builds it, and asks the group to approve it when you say so.",
+    "description": "Paragraph in the empty state of a new agent session. It says what to do, that the agent needs nothing installed, and what happens next. \"change\" is a noun, a change to an app's code; \"the group\" is the app's community. Homeroom is the product's name."
   },
   "session.empty.bodyFromApp": {
-    "text": "Started from <0>{{app}}</0>. Start a change on any app. The agent plans it, builds it, and asks the group for approval when you say so.",
-    "description": "Paragraph in the empty state of a new agent session that was opened from an app. {{app}} is that app's name, shown in bold: keep the <0> tags around it. \"change\" is a noun; \"the group\" is the app's community."
+    "text": "Started from <0>{{app}}</0>. Say what you want changed in any app. The agent is built into Homeroom, nothing to install. It plans the change, builds it, and asks the group to approve it when you say so.",
+    "description": "Paragraph in the empty state of a new agent session that was opened from an app. {{app}} is that app's name, shown in bold: keep the <0> tags around it. \"change\" is a noun; \"the group\" is the app's community. Homeroom is the product's name."
   },
   "session.starter.aboutChange": {
     "text": "Tell me about this change",

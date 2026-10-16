@@ -192,7 +192,7 @@ test('the DETAIL head keeps the unset ones it can set, and who is on it only whe
   const head = cardHtml(headModel);
   assert.match(head, /Set priority/, 'the detail view is where metadata gets set');
   assert.match(head, /Set category/);
-  // B10c: no grey "Unassigned" chip; the ⋯ row "Assign someone…" sets it.
+  // B10c: no grey "Unassigned" chip; the ⋯ row "Suggest who takes it…" sets it.
   assert.doesNotMatch(head, /Unassigned|data-attr-field="assignee"/);
 });
 
@@ -216,12 +216,12 @@ test('_attrChipSpecs: omitUnset and the field ORDER', () => {
 test('the setting entry points move into ⋯, wording by set/unset', () => {
   const AppView = makeAppView();
   const unset = menuLabels(AppView, issueCardHtml(AppView, ISSUE()));
-  assert.ok(unset.includes('Set priority…'));
-  assert.ok(unset.includes('Set category…'));
-  assert.ok(unset.includes('Assign someone…'));
+  assert.ok(unset.includes('Vote on priority…'));
+  assert.ok(unset.includes('Vote on category…'));
+  assert.ok(unset.includes('Suggest who takes it…'));
   const set = menuLabels(AppView, issueCardHtml(AppView, ISSUE(ATTRS)));
-  assert.ok(set.includes('Change priority…'));
-  assert.ok(set.includes('Change assignee…'));
+  assert.ok(set.includes('Vote on a different priority…'));
+  assert.ok(set.includes('Vote on who takes it…'));
 });
 
 test('read-only viewers get no attribute rows at all', () => {

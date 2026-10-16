@@ -761,7 +761,7 @@ test('the first render is the hidden overlay, with nothing measured', () => {
   assert.match(html, /Are you sure\? You can reopen this from Settings\./);
   // Step 1 is what a step-less render shows, on both sides of hydration.
   assert.match(html, /1 of 6/);
-  assert.match(html, /Homeroom is made of communities/);
+  assert.match(html, /Your communities are here/);
   // No geometry in the markup: the hole and the card position are style
   // writes through refs, and a measured pixel in the prerender would be a
   // hydration mismatch waiting for the first viewport that differs.
@@ -833,14 +833,16 @@ test('?shot=welcome-tour opens the tour at step 1 and writes nothing (#3567)', (
 
 test('the communities step names what the screen names (#3567)', () => {
   // AGENTS.md, "Communities own projects": a community owns projects, and
-  // people see it by its audience, in the screen's own words.
+  // what the group does there is said in two short sentences (#3676). The
+  // three audience names are not listed; the Communities screen does that.
   const step = steps.TOUR_STEPS[0];
   assert.equal(step.id, 'communities');
   assert.equal(message(step.title), 'Communities');
-  assert.match(message(step.body), /communities that build projects together/);
-  assert.match(message(step.body), /propose a change, and the group votes it in/);
+  assert.match(message(step.body), /Your communities are here/);
+  assert.match(message(step.body), /builds its projects together/);
+  assert.match(message(step.body), /votes on every change/);
   for (const audience of ['Just you', 'a Private community', 'a Public community']) {
-    assert.ok(message(step.body).includes(audience), `names ${audience}`);
+    assert.ok(!message(step.body).includes(audience), `does not name ${audience}`);
   }
   assert.doesNotMatch(message(step.body), /\bapps?\b/, 'a thing being built is a project');
 });

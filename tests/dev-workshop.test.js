@@ -5699,7 +5699,7 @@ test('the sheets move, stop above the keyboard, and More opens the card page', (
   assert.match(appView, /_cardMenuItems\(key, own\)/);
   assert.match(appView, /_cardMenuItems\(open\.key, open\.own\)/);
   assert.match(appView, /label: PlatformI18n\.t\('changes:card\.menu\.openCard'\),/);
-  assert.equal(message('changes:card.menu.openCard'), 'Open card');
+  assert.equal(message('changes:card.menu.openCard'), 'Open full page');
 });
 
 test('the lander fills its scroller without a percentage in the floor', () => {

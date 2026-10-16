@@ -1720,8 +1720,8 @@
     "description": "Title of the first card of the welcome tour on the Home screen, started from Settings: points at the Communities tab. The tab's name."
   },
   "tour.step.communities.body": {
-    "text": "Homeroom is made of communities that build projects together. Anyone in one can propose a change, and the group votes it in. A community is Just you, a Private community or a Public community. Yours are here.",
-    "description": "Text of the first card of the welcome tour on the Home screen, started from Settings, which points at the Communities tab. \"Just you\", \"Private community\" and \"Public community\" are the names the product gives the three kinds of community; write them as it does. \"change\" is a noun: a change to a project. Homeroom is the product's name."
+    "text": "Your communities are here. Each one builds its projects together and votes on every change.",
+    "description": "Text of the first card of the welcome tour on the Home screen, started from Settings, which points at the Communities tab. It says what a community is in two short sentences. \"change\" is a noun: a change to a project."
   },
   "tour.step.apps.title": {
     "text": "My apps",

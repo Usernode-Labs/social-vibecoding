@@ -227,7 +227,7 @@ test('For you\'s Needs you opens the queue and counts the votes owed', () => {
   assert.match(needs, /^<section class="dev-ws-hub-section" data-ws-hub-for-you="" aria-labelledby="([^"]+)"><h2 class="[^"]*uppercase[^"]*" id="\1">For you<\/h2><div class="dev-ws-strip dev-ws-foryou">/,
     'the small-caps label over one card');
   assert.match(needs, /<div class="dev-ws-foryou-item" data-ws-hub-needs="" data-ws-hub-needs-votes="3"><button type="button" class="[^"]*" data-ws-hub-needs-open="">/);
-  assert.match(needs, />Needs you<\/div><div class="[^"]*"><span data-ws-hub-needs-first="">Dark mode, and 2 more<\/span><\/div><\/div><span class="dev-ws-foryou-pill">3 to vote<\/span>/);
+  assert.match(needs, />Needs your vote<\/div><div class="[^"]*"><span data-ws-hub-needs-first="">Dark mode, and 2 more<\/span><\/div><\/div><span class="dev-ws-foryou-pill">3 to vote<\/span>/);
   assert.equal((needs.match(/dev-ws-foryou-pill/g) || []).length, 1, 'one pill on the row');
   assert.doesNotMatch(needs, /Join to vote/);
   assert.match(card([row('a', 'Dark mode', 'ada')]), /<span data-ws-hub-needs-first="">Dark mode<\/span>/, 'one vote: its title alone');
