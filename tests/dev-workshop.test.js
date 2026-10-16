@@ -3456,6 +3456,64 @@ test('the end card says what your votes did, in words the platform can stand beh
   } finally { global.window = prev; }
 });
 
+// #5236: the card you just answered counts your vote. The pin holds the row
+// as it was BEFORE the vote (and castVote bumps only yes_count/no_count,
+// while the pill reads qualified_yes_count), so the facts line kept the
+// pre-vote count for the whole session. It reads the board rows the vote's
+// own refresh brought back instead (AppView._needsOutcome, the end card's
+// seam), and keeps the snapshot where nothing fresher can be said.
+test('#5236: the answered card in a project\'s Needs you counts your vote', () => {
+  const { factsFor, VoteSub } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const row = (id, extra = {}) => ({
+    t: 'card', key: `vote:proposal:${id}`, kind: 'vote', ask: 'Should this change go in?',
+    card: { key: `proposal:${id}`, attrs: { 'data-proposal-row': String(id) }, title: { text: `Change ${id}`, title: '' },
+      pill: { state: { yes: 0, majority: 2, key: 'needs_vote', label: 'Vote · 0/2', plainVote: true } }, badges: [], chatCount: null,
+      rail: { menuKey: '', preview: null }, actionPreview: null },
+    yes: { label: 'Yes', act: { fn: 'castVote', args: [id, 'yes'] } }, no: { label: 'No', act: { fn: 'castVote', args: [id, 'no'] } },
+    askAbout: { kind: 'proposal', ref: id }, ...extra,
+  });
+  const fresh = { 1: { key: 'tally', label: '1 / 2', yes: 1, majority: 2 } };
+  const prev = global.window;
+  global.window = { AppView: { _needsOutcome: (kind, id) => (kind === 'proposal' ? fresh[id] || null : null) } };
+  try {
+    const tally = (r, voted) => factsFor(r, voted).filter((f) => f.key === 'tally').map((f) => f.text);
+    assert.deepEqual(tally(row(1), 'yes'), ['1 of 2 approvals'], 'your vote is counted');
+    assert.deepEqual(tally(row(1), null), ['0 of 2 approvals'], 'an unanswered card is unchanged');
+    assert.deepEqual(tally(row(9), 'yes'), ['0 of 2 approvals'], 'nothing fresh yet: the snapshot, not a guess');
+    // The vote sheet's line under its question counts the same way.
+    const sub = (r, voted) => renderToHtml(createElement(VoteSub, { row: r, voted }));
+    assert.match(sub(row(1), 'yes'), /1 of 2 have said yes so far\./);
+    assert.match(sub(row(9), 'yes'), /0 of 2 have said yes so far\./, 'the snapshot, and it renders');
+  } finally { global.window = prev; }
+});
+
+// #5236, on the Communities feed: its rows carry the counts but no pill, and
+// there is no fresh read for another project's change, so the card adds the
+// viewer's one side to the tally it already had. Safe because the feed only
+// lists changes the viewer had not voted on yet.
+test('#5236: the Communities feed\'s answered card adds your vote to its counts', () => {
+  const { factsFor } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const reelRow = () => ({
+    t: 'card', key: 'vote:proposal:12', kind: 'vote', ask: 'Should this change go in?',
+    card: { key: 'proposal:12', attrs: { 'data-proposal-row': '12' }, title: { text: 'Change 12', title: '' }, pill: null,
+      badges: [], chatCount: null, rail: { menuKey: '', preview: null }, actionPreview: null },
+    yes: { label: 'Yes', act: { fn: 'castVote', args: [12, 'yes'] } }, no: { label: 'No', act: { fn: 'castVote', args: [12, 'no'] } },
+    askAbout: { kind: 'proposal', ref: 12 },
+    app: { slug: 'garden', name: 'Garden', icon_url: null, icon_emoji: null },
+    tally: { yes: 2, no: 0 },
+  });
+  const tally = (voted) => factsFor(reelRow(), voted).filter((f) => f.key === 'tally').map((f) => f.text);
+  const prev = global.window;
+  // Even where this project's AppView is loaded, the reel counts its own
+  // snapshot: that cached row is not refreshed off the dev tab.
+  global.window = { AppView: { _needsOutcome: () => ({ key: 'tally', label: '', yes: 99, majority: 99 }) } };
+  try {
+    assert.deepEqual(tally('yes'), ['3 yes'], 'your yes is counted on the spot');
+    assert.deepEqual(tally('no'), ['2 yes · 1 no'], 'and your no');
+    assert.deepEqual(tally(null), ['2 yes'], 'unanswered: what the feed said, and a zero says nothing');
+  } finally { global.window = prev; }
+});
+
 test('the footnote says what is actually happening to the grouping', () => {
   // The first cut said "once an AI model is available" while the model was
   // mid-draft — on exactly the first visit after a deploy. Four states now.
