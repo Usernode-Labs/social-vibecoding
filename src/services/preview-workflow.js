@@ -64,15 +64,34 @@ async function request({ pool, session, head = null, reason, actor = null }) {
 // first with the head its checks are about (staging-recovery.recheckHeadSha:
 // a promoted proposal's reviewed head, never a pin a run of an earlier commit
 // left), read from the row now: the caller's copy can predate a promote.
+//
+// A session up for approval whose machine still holds an older head (a
+// promoted CLI upload moves reviewed_head_sha and only clears the verdict;
+// an imported PR's head moved) is handed the head people vote on as a
+// revision instead: the recheck builds and checks that head, never the one
+// the votes no longer describe (session 8465 re-ran its old head on every
+// "Run checks again", stuck sweep and boot reconcile). The revision moves the
+// machine to `preparing` on that head, and the recheck that follows joins
+// the build (a build runs its checks once it is up), so nothing runs twice;
+// refused (the row moved on again under us: the machine's pin guard), the
+// recheck is of what the machine holds, as before. The recheck is still
+// sent after a revision so the machine sees the request itself, under the
+// row's lock, whatever it does with a recheck during a build.
 async function recheck({ pool, session, reason, trigger = null, actor = null, system = false }) {
   const instance = await held(session.id) ? await platform().previewInstance(Number(session.id)) : null;
-  if (!instance?.data?.head) {
-    const { rows: [pins] } = await pool.query(
-      `SELECT status, source, reviewed_head_sha, imported_pr_head_sha, checks_commit_sha, handoff_head_sha
-         FROM chat_sessions WHERE id = $1`, [session.id]);
-    const current = { ...session, ...(pins || {}) };
-    await revision({ pool, session: current, head: require('./staging-recovery').recheckHeadSha(current),
-      source: 'recheck', trigger });
+  const machineHead = exact(instance?.data?.head);
+  const recovery = require('./staging-recovery');
+  const { rows: [pins] } = await pool.query(
+    `SELECT status, source, reviewed_head_sha, imported_pr_head_sha, checks_commit_sha, handoff_head_sha
+       FROM chat_sessions WHERE id = $1`, [session.id]);
+  const current = { ...session, ...(pins || {}) };
+  if (!machineHead) {
+    await revision({ pool, session: current, head: recovery.recheckHeadSha(current), source: 'recheck', trigger });
+  } else {
+    const approved = exact(recovery.approvedHeadSha(current));
+    if (approved && approved !== machineHead) {
+      await revision({ pool, session: current, head: approved, source: 'recheck', trigger });
+    }
   }
   return platform().requestRecheck({
     sessionId: Number(session.id), appId: Number(session.app_id), reason, trigger, actor, system,
