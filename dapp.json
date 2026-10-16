@@ -1933,7 +1933,7 @@
     {
       "name": "Landing's one Continue button is for new and returning people, and says we let new people in in waves (first session)",
       "path": "/?shot=anon#landing",
-      "expectSelector": "#auth-landing-screen:not(.hidden) [data-landing-story] a[data-landing-story-start][href=\"#signup\"] + p[data-landing-story-how] + p [data-landing-story-waves]",
+      "expectSelector": "#auth-landing-screen:not(.hidden) [data-landing-story] a[data-landing-story-start][href=\"#signup\"] + p[data-landing-story-how] + div [data-landing-story-waves]",
       "expectText": "We let new people in in waves.",
       "allowConsoleErrors": true
     },

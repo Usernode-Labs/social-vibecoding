@@ -34,6 +34,8 @@
 // tier list drawn as one.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { Alert } from '@/components/ui/alert';
+
 import { Message } from '../../lib/i18n/react';
 import { FRONT } from '../first-session/examples';
 import { useMessages } from '../../lib/i18n/react';
@@ -208,14 +210,14 @@ export function Story({ primaryClass, welcomeEmail = null, onStart }: {
         <p data-landing-story-how="" className="mt-1 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400 text-balance">
           {t('auth:story.email')}
         </p>
-        {/* The waitlist, said apart from the line above and drawn in the
-            notice's amber tint (@/components/ui/alert.tsx): it is the one
-            thing a new person should know before they press Continue. */}
-        <p className="flex justify-center">
-          <span data-landing-story-waves="" className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[13px] leading-5 font-semibold text-amber-800 dark:text-amber-300">
+        {/* The waitlist, said apart from the line above as the shell's amber
+            notice (@/components/ui/alert.tsx), drawn as a pill: it is the
+            one thing a new person should know before they press Continue. */}
+        <div className="flex justify-center">
+          <Alert variant="notice" density="compact" data-landing-story-waves="" className="rounded-full py-1 text-[13px] leading-5 font-semibold">
             {t('auth:story.waves')}
-          </span>
-        </p>
+          </Alert>
+        </div>
       </div>
     </div>
   );

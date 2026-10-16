@@ -160,7 +160,7 @@ test('the check-my-status line sits under the pills, unchanged (#1538)', () => {
   // from the same sheet (#5251), and the line under it.
   const manifest = JSON.parse(read('dapp.json'));
   assert.ok(
-    manifest.tests.some((t) => /a\[data-landing-story-start\]\[href="#signup"\] \+ p\[data-landing-story-how\] \+ p \[data-landing-story-waves\]/.test(t.expectSelector || '')),
+    manifest.tests.some((t) => /a\[data-landing-story-start\]\[href="#signup"\] \+ p\[data-landing-story-how\] \+ div \[data-landing-story-waves\]/.test(t.expectSelector || '')),
     'the declared check reads the story\'s one way in',
   );
 });

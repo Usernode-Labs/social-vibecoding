@@ -169,7 +169,7 @@ test('the story: label, headline, "For example" and the three examples, then one
     message('auth:story.waves'),
   ]);
   assert.match(html, /<a href="#signup" data-landing-story-start="" class="pill">Continue<\/a>/);
-  assert.match(html, /<p data-landing-story-how=""[^>]*>Sign in or join with your email\.<\/p><p class="flex justify-center"><span data-landing-story-waves="" class="[^"]*bg-amber-500\/10[^"]*">We let new people in in waves\.<\/span><\/p>/);
+  assert.match(html, /<p data-landing-story-how=""[^>]*>Sign in or join with your email\.<\/p><div class="flex justify-center"><div data-landing-story-waves="" class="[^"]*bg-amber-500\/10[^"]*rounded-full[^"]*">We let new people in in waves\.<\/div><\/div>/);
   assert.doesNotMatch(html, /data-landing-story-signin|Already have an account|Get started/);
   // In a phone browser too, the story fills the screen and its foot is at the foot.
   const css = read('public/css/app.css');
