@@ -191,7 +191,7 @@ Rules:
  * astray (the app fails with the message).
  *
  * `onUsage(usage, servedModel)` is invoked per LLM call so the caller
- * can attribute spend. `stopped()`, asked before each call, ends the run
+ * can attribute spend. `stopped()` (it may be async), asked before each call, ends the run
  * (an error with code 'campaign_stopped') when the caller's work lost its
  * claim: the campaign was stopped, or its process is shutting down.
  */
@@ -290,7 +290,7 @@ async function runAppChange({ campaign, app, exemplarSummary, onUsage, stopped =
   let nudged = false;
 
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
-    if (stopped && stopped()) {
+    if (stopped && await stopped()) {
       throw Object.assign(new Error('The change was stopped'), { code: 'campaign_stopped' });
     }
     const res = await llm.streamChat({
@@ -419,7 +419,7 @@ const prBodyOf = (campaign, summary) =>
 // ─── Status (dashboard backing) ──────────────────────────────────────
 
 // A proposed app's proposal, once it is decided.
-const PROPOSAL_OUTCOMES = new Map([['merged', 'merged'], ['archived', 'closed']]);
+const PROPOSAL_OUTCOMES = new Map([['merged', 'merged'], ['archived', 'closed'], ['active', 'underway'], ['paused', 'underway']]);
 
 async function campaignStatus(pool, campaignId) {
   const { rows: campRows } = await pool.query(
@@ -452,6 +452,7 @@ async function campaignStatus(pool, campaignId) {
     prNumber: r.pr_number,
     prUrl: r.pr_url,
     checkState: r.check_state,
+    sessionStatus: r.session_status,
     stagingUrl: r.staging_url,
     updatedAt: r.updated_at,
   }));

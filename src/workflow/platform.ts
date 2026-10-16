@@ -203,7 +203,7 @@ export async function adoptCampaigns(): Promise<number> {
   if (!runtime || !campaigns) return 0;
   const { rows } = await kernelPool!.query(
     `SELECT mc.id FROM maintenance_campaigns mc
-      WHERE (mc.lease_until IS NULL OR mc.lease_until < now())
+      WHERE (mc.lease_until IS NULL OR mc.lease_until < now() OR mc.runner_id = 'workflow')
         AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'campaign:' || mc.id)
       ORDER BY mc.id`, [CAMPAIGN]);
   for (const r of rows) {

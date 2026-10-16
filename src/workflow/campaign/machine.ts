@@ -60,6 +60,12 @@ export interface AppRec {
   // The last change attempt failed after it may have pushed: a retry starts
   // from that attempt's checkpoint (the change, the pull request).
   resumable: boolean;
+  // Its change made again from scratch after its proposal closed: a branch
+  // of its own (the closed proposal's may still be closing its pull request).
+  gen?: number;
+  // Promotes sent again after an older release's proposal machine refused
+  // them during a rollout (it did not take a campaign's messages yet).
+  resent?: number;
 }
 export interface Data {
   campaignId: number;
@@ -113,7 +119,10 @@ const EVENTS = {
 
 const step = (next: Live, more: Omit<Outcome<CState>, 'next'> = {}): Outcome<CState> => ({ next, ...more });
 const workKey = (a: AppRec) => `app:${a.appId}:${a.n}`;
-const branchOf = (d: Data, a: AppRec) => `maint/c${d.campaignId}/${a.slug}`;
+const branchOf = (d: Data, a: AppRec) => `maint/c${d.campaignId}/${a.slug}${a.gen ? `-${a.gen + 1}` : ''}`;
+// How often a promote an older release refused is sent again (a rollout
+// lasts minutes; the check runs every CHECK_MS).
+const RESENDS = 6;
 const withApp = (d: Data, appId: number, change: Partial<AppRec>): Data =>
   ({ ...d, apps: d.apps.map((a) => (a.appId === appId ? { ...a, ...change } : a)) });
 const count = (d: Data, ...states: AppState[]) => d.apps.filter((a) => states.includes(a.state)).length;
@@ -151,11 +160,13 @@ function next(s: Live, extra: { writes?: DomainWrite[]; messages?: MessageReques
   return { next: { name, data: d }, writes, work, messages: extra.messages };
 }
 
-// The timer is set wherever an app is being put up for a vote, and cleared
-// otherwise (the transitions call this on their outcome).
-function clocked(out: Outcome<CState>, ctx: TransitionContext): Outcome<CState> {
-  const d = (out.next as Live).data;
-  const waiting = d && d.apps.some((a) => a.state === 'proposing');
+// The timer is set once an app is being put up for a vote, kept while one
+// still is (not pushed back by every event), and cleared otherwise; the
+// check sets it again (the transitions call this on their outcome).
+function clocked(out: Outcome<CState>, ctx: TransitionContext, before: CState | null, rearm = false): Outcome<CState> {
+  const proposing = (st: CState | null) => !!st && st.name !== NONE && (st as Live).data.apps.some((a) => a.state === 'proposing');
+  const waiting = proposing(out.next);
+  if (waiting && proposing(before) && !rearm) return { ...out, timer: undefined };
   return { ...out, timer: waiting ? { at: new Date(ctx.now.getTime() + CHECK_MS), event: { type: 'Check' } } : null };
 }
 
@@ -183,7 +194,7 @@ function start(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<CState>
   // Its app rows (the targets, fixed now), and the older release's lease
   // fenced off for good.
   const writes: DomainWrite[] = [{ type: 'adopt', campaignId: c.id, appIds: data.apps.map((a) => a.appId) }];
-  return clocked(next(s, { writes }), ctx);
+  return clocked(next(s, { writes }), ctx, null);
 }
 
 // The AI's change for the app it was working on.
@@ -194,11 +205,18 @@ function changed(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: Transition
     // A permanent failure is the app's (a budget, no change made, no
     // repository); exhausted retries name GitHub's or the model's error.
     const message = p.error?.message || 'the change failed';
-    return clocked(next({ ...s, data: withApp(s.data, a.appId, { state: 'failed', error: message.slice(0, 2000), resumable: true }) }), ctx);
+    return clocked(next({ ...s, data: withApp(s.data, a.appId, { state: 'failed', error: message.slice(0, 2000), resumable: true }) }), ctx, s);
   }
   const r = (p.result || {}) as any;
+  // Stopped before it reached the repository.
+  if (r.stopped) return clocked(next({ ...s, data: withApp(s.data, a.appId, { state: 'not_reached' }) }), ctx, s);
   if (r.skipped) {
-    return clocked(next({ ...s, data: withApp(s.data, a.appId, { state: 'skipped', error: String(r.reason || 'not applicable').slice(0, 2000) }) }), ctx);
+    return clocked(next({ ...s, data: withApp(s.data, a.appId, { state: 'skipped', error: String(r.reason || 'not applicable').slice(0, 2000) }) }), ctx, s);
+  }
+  // Deleted while it was being changed: there is no app to propose to.
+  if (f.appAlive === false) {
+    const error = `The app was deleted while it was being changed${r.prNumber ? ` (its pull request #${r.prNumber} is left on GitHub)` : ''}`;
+    return clocked(next({ ...s, data: withApp(s.data, a.appId, { state: 'failed', error }) }), ctx, s);
   }
   let d = { ...withApp(s.data, a.appId, { state: 'proposing' as const, prNumber: r.prNumber ?? null }), proposerId: Number(r.userId) };
   if (!d.exemplar && typeof r.summary === 'string' && r.summary.trim()) d = { ...d, exemplar: r.summary.slice(0, 4000) };
@@ -208,21 +226,30 @@ function changed(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: Transition
     type: 'propose', campaignId: d.campaignId, appId: a.appId, userId: r.userId, branch: r.branch,
     prNumber: r.prNumber, prUrl: r.prUrl, prTitle: r.prTitle, head: r.head, key: campaignKey(d.campaignId),
   }];
-  return clocked(next({ ...s, data: d }, { writes }), ctx);
+  return clocked(next({ ...s, data: d }, { writes }), ctx, s);
 }
 
 function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<CState> {
   const p = e.payload;
   const d = withApp(s.data, p.appId, { state: 'proposed', sessionId: p.sessionId, prNumber: p.prNumber ?? null, error: null });
-  return clocked(next({ ...s, data: d }), ctx);
+  return clocked(next({ ...s, data: d }), ctx, s);
 }
 
 function refused(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<CState> {
   const p = e.payload;
   const error = `Could not put it up for a vote: ${p.message || p.code || 'refused'}`.slice(0, 2000);
   const d = withApp(s.data, p.appId, { state: 'failed', sessionId: p.sessionId, error });
-  return clocked(next({ ...s, data: d }), ctx);
+  return clocked(next({ ...s, data: d }, { messages: [closeMessage(p.sessionId, p.appId)] }), ctx, s);
 }
+
+// A proposal the campaign could not put up for a vote is closed (with its
+// pull request): nobody can act on the platform account's underway change,
+// and a retry makes the change again.
+export const closeMessage = (sessionId: number, appId: number): MessageRequest => ({
+  to: { machine: 'proposal', key: proposalKey(sessionId) },
+  event: { type: 'Close', payload: { sessionId, from: 'active', reason: 'campaign-refused', userId: null, username: PROPOSER_NAME } },
+  appId,
+});
 
 // A promote of the campaign's, for a proposal row it wrote.
 export const promoteMessage = (o: { sessionId: number; appId: number; userId: number; head: string | null; key: string }): MessageRequest => ({
@@ -238,19 +265,17 @@ export const promoteMessage = (o: { sessionId: number; appId: number; userId: nu
 function retry(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<CState> {
   const p = e.payload;
   const a = s.data.apps.find((x) => x.appId === p.appId)!;
-  // Refused at the promote: its change and pull request stand, and it is
-  // put up for a vote again. One closed meanwhile (its pull request with
-  // it) is changed again from scratch.
-  const closed = f.retrying?.sessionStatus === 'archived' || (a.sessionId != null && f.retrying?.sessionStatus == null);
-  if (a.state === 'failed' && a.sessionId && s.data.proposerId && !closed) {
-    const d = withApp(s.data, a.appId, { state: 'proposing', error: null });
-    return clocked(next({ name: 'running', data: d }, {
-      messages: [promoteMessage({ sessionId: a.sessionId, appId: a.appId, userId: s.data.proposerId, head: null, key: campaignKey(d.campaignId) })],
-    }), ctx);
-  }
-  const d = withApp(s.data, a.appId, { state: 'waiting', error: null, sessionId: closed ? null : a.sessionId,
-    resumable: a.state === 'failed' && a.resumable && !closed });
-  return clocked(next({ name: 'running', data: d }), ctx);
+  // A proposal it could not put up for a vote was closed with its pull
+  // request: the change is made again from scratch, on a branch of its own
+  // (the closed one's may still be closing). A change that failed after its
+  // push carries its checkpoint on.
+  const proposed = a.sessionId != null;
+  const d = withApp(s.data, a.appId, {
+    state: 'waiting', error: null, sessionId: null, resent: 0,
+    resumable: a.state === 'failed' && a.resumable && !proposed,
+    ...(proposed ? { gen: (a.gen || 0) + 1 } : {}),
+  });
+  return clocked(next({ name: 'running', data: d }), ctx, s);
 }
 
 function mergeGreen(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<CState> {
@@ -264,40 +289,50 @@ function mergeGreen(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): O
   return step({ ...s, data: { ...s.data, drained } }, { messages });
 }
 
+// Stop: no further app is reached. The change under way is not cancelled
+// (it may have pushed, or opened its pull request, already): its work reads
+// the campaign's status before the push and before the pull request, and
+// stops there; a change that reports with its pull request is put up for a
+// vote like the others (Q3: the opened ones stay).
 function stop(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<CState> {
-  const current = s.data.apps.find((a) => a.state === 'changing');
-  const apps = s.data.apps.map((a) => (a.state === 'waiting' || a.state === 'changing' ? { ...a, state: 'not_reached' as const } : a));
+  const apps = s.data.apps.map((a) => (a.state === 'waiting' ? { ...a, state: 'not_reached' as const } : a));
   const d: Data = { ...s.data, apps, stopped: { at: ctx.now.toISOString(), by: who(e.payload) } };
+  const finishing = count(d, 'changing');
   const out = step({ name: 'stopped', data: d }, {
-    cancel: current ? [{ kind: WORK.change, key: workKey(current) }] : [],
     writes: [threadLine(d, `Maintenance campaign "${d.title}" was stopped by ${who(e.payload)}: `
-      + `${count(d, 'proposed') + count(d, 'proposing')} PRs opened, ${count(d, 'not_reached')} apps not reached. `
-      + 'The opened ones stay up for their vote.')],
+      + `${count(d, 'proposed') + count(d, 'proposing')} PRs opened${finishing ? `, ${finishing} change still finishing` : ''}, `
+      + `${count(d, 'not_reached')} apps not reached. The opened ones stay up for their vote.`)],
   });
-  return clocked(out, ctx);
+  return clocked(out, ctx, s);
 }
 
 // The proposals it asked to go up for a vote and has not heard about: what
-// their rows say now (a promote refused outright sends no answer).
+// their rows say now. A promote the proposal's guard refused outright sends
+// no answer; one not applied yet is waited for (a backlog, a rollout).
 function checked(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<CState> {
   let d = s.data;
+  const messages: MessageRequest[] = [];
   for (const q of f.asked) {
     const a = d.apps.find((x) => x.appId === q.appId);
-    if (!a || a.state !== 'proposing' || !q.sessionId) continue;
-    if (q.status === 'promoted' || q.status === 'merging' || q.status === 'merged') {
+    if (!a || a.state !== 'proposing') continue;
+    const fail = (error: string) => { d = withApp(d, a.appId, { state: 'failed', sessionId: q.sessionId ?? a.sessionId, error: error.slice(0, 2000) }); };
+    if (q.gone) {
+      fail('The app or its proposal was deleted before it went up for a vote');
+    } else if (q.status === 'promoted' || q.status === 'merging' || q.status === 'merged') {
       d = withApp(d, a.appId, { state: 'proposed', sessionId: q.sessionId, prNumber: q.prNumber ?? a.prNumber });
     } else if (q.status === 'archived') {
-      d = withApp(d, a.appId, { state: 'failed', sessionId: q.sessionId, error: 'Closed before it went up for a vote' });
+      fail('Closed before it went up for a vote');
+    } else if (q.promote?.result === 'rejected' && q.promote.reason === 'not_a_producer' && (a.resent || 0) < RESENDS
+      && q.sessionId && s.data.proposerId) {
+      // An older release's proposal machine took it during a rollout.
+      d = withApp(d, a.appId, { resent: (a.resent || 0) + 1 });
+      messages.push(promoteMessage({ sessionId: q.sessionId, appId: a.appId, userId: s.data.proposerId, head: null, key: campaignKey(d.campaignId) }));
     } else if (q.promote?.result === 'rejected') {
-      // Refused outright by the proposal's guard (it sends no answer).
-      d = withApp(d, a.appId, { state: 'failed', sessionId: q.sessionId,
-        error: `Could not put it up for a vote: ${q.promote.reason || 'refused'}`.slice(0, 2000) });
-    } else if (q.state === 'underway' && !q.promoting) {
-      const why = q.answer && q.answer.ok === false ? (q.answer.message || q.answer.code) : 'the promote was refused';
-      d = withApp(d, a.appId, { state: 'failed', sessionId: q.sessionId, error: `Could not put it up for a vote: ${why}`.slice(0, 2000) });
+      fail(`Could not put it up for a vote: ${q.promote.reason || 'refused'}`);
+      if (q.sessionId) messages.push(closeMessage(q.sessionId, a.appId));
     }
   }
-  return clocked(next({ ...s, data: d }), ctx);
+  return clocked(next({ ...s, data: d }, { messages }), ctx, s, true);
 }
 
 // ── The machine ─────────────────────────────────────────────────────────
@@ -406,13 +441,18 @@ export function campaign(): Machine<CState, Facts> {
         return !b || b.state !== a.state || b.error !== a.error || b.sessionId !== a.sessionId;
       });
       if (!changedApps.length) return;
+      // The proposal's link is the data's, but while it is being put up for a
+      // vote the write that inserted the proposal set it (the data learns it
+      // from the answer).
       await tx.query(
         `UPDATE maintenance_campaign_apps mca
-            SET state = x.state, error = x.error, session_id = COALESCE(x.session_id, mca.session_id), updated_at = NOW()
-           FROM jsonb_to_recordset($2::jsonb) AS x(app_id int, state text, error text, session_id int)
+            SET state = x.state, error = x.error, updated_at = NOW(),
+                session_id = CASE WHEN x.keep THEN mca.session_id ELSE x.session_id END
+           FROM jsonb_to_recordset($2::jsonb) AS x(app_id int, state text, error text, session_id int, keep boolean)
           WHERE mca.campaign_id = $1 AND mca.app_id = x.app_id`,
         [d.campaignId, JSON.stringify(changedApps.map((a) => ({
           app_id: a.appId, state: ROW_STATE.get(a.state), error: a.error, session_id: a.sessionId,
+          keep: a.state === 'proposing' && a.sessionId == null,
         })))]);
     },
     reply: async (tx, event, after) => {

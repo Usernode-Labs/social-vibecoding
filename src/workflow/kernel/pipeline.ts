@@ -464,7 +464,11 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
   };
   for (const p of outcome.push || []) pushed(p);
   const sends: MessageRequest[] = [...(outcome.messages || [])];
+  let sealed = false;
   const sent = (m: MessageRequest) => {
+    // A write's message is part of its event: one sent once the writes are
+    // done (a promise the write did not await) would be lost.
+    if (sealed) throw new Error(`${machine.name}: a message sent after the writes ended`);
     if (!m || typeof m.to?.machine !== 'string' || typeof m.to?.key !== 'string' || typeof m.event?.type !== 'string') {
       throw new Error(`${machine.name}: a message needs a target and an event`);
     }
@@ -476,6 +480,7 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
     if (!handler) throw new Error(`${machine.name}: no write handler ${write.type}`);
     await handler(tx, write, writeCtx);
   }
+  sealed = true;
   if (machine.project) await machine.project(tx, state, outcome.next, after);
   const reply = (machine.reply ? await machine.reply(tx, event, outcome.next, after, facts) : undefined) ?? null;
   if (tx.poisoned) throw tx.poisoned;

@@ -668,6 +668,7 @@ function loadCampaignRoutes(pool, { answer = () => ({ status: 'accepted', reply:
 test('campaign routes: meta, merge-green, retry and stop are admin-gated; each is the machine\'s event', async () => {
   const pool = makePool([
     [/SELECT slug FROM apps WHERE self_hosted/, [{ slug: 'usernode-social' }]],
+    [/SELECT 1 FROM maintenance_campaigns WHERE id = \$1/, (params) => (params[0] === 5 ? [{ '?column?': 1 }] : [])],
   ]);
   const { router, spies, restore } = loadCampaignRoutes(pool);
   try {
@@ -704,6 +705,10 @@ test('campaign routes: meta, merge-green, retry and stop are admin-gated; each i
     assert.equal(rBad.statusCode, 404);
     assert.equal(spies.events.length, 2, 'a non-numeric app id never reaches the machine');
 
+    const rMissing = mockRes();
+    await retry({ params: { id: '6', appId: '9' }, user: { id: 2, canAdminWrite: true } }, rMissing);
+    assert.equal(rMissing.statusCode, 404, 'a campaign that does not exist is 404, never "being taken over"');
+
     const stop = routeHandler(router, '/api/campaigns/:id/stop', 'post');
     const sDenied = mockRes();
     await stop({ params: { id: '5' }, user: { id: 8, isAdmin: true, canAdminWrite: false } }, sDenied);
@@ -717,8 +722,8 @@ test('campaign routes: meta, merge-green, retry and stop are admin-gated; each i
 
 test('campaign routes: the machine\'s refusals answer what an admin can act on', async () => {
   const reasons = new Map([['RetryApp', 'not_retryable'], ['Stop', 'stopped']]);
-  const { router, restore } = loadCampaignRoutes(makePool([]),
-    { answer: (type) => ({ status: 'rejected', reason: reasons.get(type) }) });
+  const { router, restore } = loadCampaignRoutes(makePool([[/SELECT 1 FROM maintenance_campaigns/, [{ '?column?': 1 }]]]),
+    { answer: (type) => ({ status: type === 'MergeGreen' ? 'faulted' : 'rejected', reason: reasons.get(type) }) });
   try {
     const retry = routeHandler(router, '/api/campaigns/:id/apps/:appId/retry', 'post');
     const r = mockRes();
@@ -728,6 +733,10 @@ test('campaign routes: the machine\'s refusals answer what an admin can act on',
     const st = mockRes();
     await stop({ params: { id: '5' }, user: { id: 2, canAdminWrite: true } }, st);
     assert.deepEqual([st.statusCode, st.body.reason], [409, 'stopped']);
+    const mg = routeHandler(router, '/api/campaigns/:id/merge-green', 'post');
+    const broken = mockRes();
+    await mg({ params: { id: '5' }, user: { id: 2, canAdminWrite: true } }, broken);
+    assert.equal(broken.statusCode, 500, 'a faulted campaign is an error, not a refusal');
   } finally { restore(); }
 });
 

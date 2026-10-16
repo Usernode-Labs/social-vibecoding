@@ -43,6 +43,7 @@ const REFUSALS = new Map([
   ['no_instance', [409, 'The campaign is being taken over by this release. Try again in a minute.']],
 ]);
 function refused(res, outcome) {
+  if (outcome.status === 'faulted') return res.status(500).json({ error: 'Internal server error' });
   const [status, error] = REFUSALS.get(outcome.reason) || [409, outcome.reason || 'refused'];
   return res.status(status).json({ error, reason: outcome.reason || null });
 }
@@ -57,6 +58,7 @@ function positiveId(raw) {
 function campaignRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+  const exists = async (id) => (await pool.query('SELECT 1 FROM maintenance_campaigns WHERE id = $1', [id])).rows.length > 0;
 
   // Where does a campaign proposal get created? On the self-hosted
   // app's issues surface (kind='maintenance_campaign'). The admin
@@ -152,7 +154,7 @@ function campaignRoutes(config) {
       }
       const id = positiveId(req.params.id);
       const appId = positiveId(req.params.appId);
-      if (!id || !appId) return res.status(404).json({ error: 'Campaign app not found' });
+      if (!id || !appId || !(await exists(id))) return res.status(404).json({ error: 'Campaign app not found' });
       const outcome = await platform().campaignEvent(id, 'RetryApp', { appId }, req.user);
       if (outcome.status === 'pending') return res.status(202).json({ ok: true, pending: true });
       if (!settled(outcome)) return refused(res, outcome);
@@ -171,7 +173,7 @@ function campaignRoutes(config) {
         return res.status(403).json({ error: 'Full admin access required' });
       }
       const id = positiveId(req.params.id);
-      if (!id) return res.status(404).json({ error: 'Campaign not found' });
+      if (!id || !(await exists(id))) return res.status(404).json({ error: 'Campaign not found' });
       log.info('campaigns', 'Stop requested', { campaignId: id, by: req.user.username });
       const outcome = await platform().campaignEvent(id, 'Stop', {}, req.user);
       if (outcome.status === 'pending') return res.status(202).json({ ok: true, pending: true });

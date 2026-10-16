@@ -272,14 +272,14 @@ test('maintenance campaigns against the full PostgreSQL schema', { timeout: 2400
     assert.match((await lines(c))[0], /1 PRs opened, 1 skipped, 1 failed/);
   });
 
-  await t.test('C3 a refused promote fails the app with the reason; Retry puts the same proposal up again without redoing the change', async () => {
+  await t.test('C3 a refused promote fails the app with the reason and closes its proposal; Retry makes the change again, on a branch of its own', async () => {
     defaults(); await fresh();
     const a1 = await app();
     let refuse = true;
     work.answer.set(PWORK.open, async (input) => {
       if (refuse) throw Object.assign(new Error('GitHub could not verify the pull request revision.'), { code: 'github_unavailable', permanent: true });
       const { rows: [r] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [input.sessionId]);
-      return { head: SHA('7'), prNumber: r.pr_number, prUrl: r.pr_url, prTitle: r.pr_title };
+      return { head: input.expectedHead, prNumber: r.pr_number, prUrl: r.pr_url, prTitle: r.pr_title };
     });
     const c = await campaignRow();
     await start(c);
@@ -288,42 +288,25 @@ test('maintenance campaigns against the full PostgreSQL schema', { timeout: 2400
     assert.equal(r.state, 'failed');
     assert.match(r.error, /^Could not put it up for a vote: GitHub could not verify/);
     assert.equal((await cInst(c)).state, 'done');
-    const sessionId = r.session_id;
-    assert.equal((await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [sessionId])).rows[0].status, 'active');
+    const first = r.session_id;
+    // Nobody can act on the platform account's underway change: it is closed, its PR with it.
+    assert.equal((await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [first])).rows[0].status, 'archived');
+    assert.equal(calls(PWORK.close).length, 1);
+    const line = (await pool.query(`SELECT content FROM chat_messages WHERE thread_type = 'session' AND thread_ref = $1`, [first])).rows.at(-1);
+    assert.match(line.content, /could not be put up for a vote and was closed/);
     refuse = false;
-    const out = await send(c, 'RetryApp', { appId: a1.id, userId: owner.id, username: 'owner' });
-    assert.equal(out.status, 'accepted');
+    assert.equal((await send(c, 'RetryApp', { appId: a1.id, userId: owner.id, username: 'owner' })).status, 'accepted');
     await settle();
     r = await stateOf(c, a1);
     assert.equal(r.state, 'pr_open');
-    assert.equal(r.session_id, sessionId, 'the same proposal');
-    assert.equal(calls(WORK.change).length, 1, 'the change was not made again');
-    assert.equal((await cInst(c)).state, 'done');
-  });
-
-  await t.test('C3b a retry of an app whose refused proposal was closed meanwhile changes it again, as a new proposal', async () => {
-    defaults(); await fresh();
-    const a1 = await app();
-    work.answer.set(PWORK.open, async () => {
-      throw Object.assign(new Error('GitHub could not verify the pull request revision.'), { code: 'github_unavailable', permanent: true });
-    });
-    const c = await campaignRow();
-    await start(c);
-    await settle();
-    const first = (await stateOf(c, a1)).session_id;
-    assert.equal((await stateOf(c, a1)).state, 'failed');
-    // Closed (its pull request with it) before anybody retried.
-    await asTransition((cl) => cl.query(`UPDATE chat_sessions SET status = 'archived' WHERE id = $1`, [first]));
-    defaults();
-    assert.equal((await send(c, 'RetryApp', { appId: a1.id })).status, 'accepted');
-    await settle();
-    const r = await stateOf(c, a1);
-    assert.equal(r.state, 'pr_open');
     assert.notEqual(r.session_id, first, 'a new proposal');
-    assert.deepEqual(calls(WORK.change).map((x) => [x.key, x.input.appId]), [[`app:${a1.id}:2`, a1.id]], 'the change made again');
+    const changes = calls(WORK.change);
+    assert.deepEqual(changes.map((x) => x.key), [`app:${a1.id}:1`, `app:${a1.id}:2`], 'the change made again');
+    assert.equal(changes[1].input.branch, `maint/c${c.id}/${a1.slug}-2`, 'not the branch the closed PR is on');
     const { rows: [w] } = await pool.query(`SELECT checkpoint FROM wf_work WHERE machine = $1 AND key = $2 AND work_key = $3`,
       [MACHINE, campaignKey(c.id), `app:${a1.id}:2`]);
     assert.equal(w.checkpoint, null, 'from scratch: the closed pull request is not carried on');
+    assert.equal((await cInst(c)).state, 'done');
   });
 
   await t.test('C4 a proposal that never answers (its promote rejected outright) is read off its row by the check', async () => {
@@ -353,8 +336,10 @@ test('maintenance campaigns against the full PostgreSQL schema', { timeout: 2400
     await fire(c);
     i = await cInst(c);
     assert.equal(i.data.apps[0].state, 'failed');
-    assert.match(i.data.apps[0].error, /^Could not put it up for a vote/);
+    assert.match(i.data.apps[0].error, /^Could not put it up for a vote: headless/);
     assert.equal(i.state, 'done');
+    assert.equal((await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [(await stateOf(c, a1)).session_id])).rows[0].status,
+      'archived', 'the proposal nobody could put up for a vote is closed');
   });
 
   await t.test('C5 a retry keeps the targets: an app created since is not added (bug 3)', async () => {
@@ -374,7 +359,7 @@ test('maintenance campaigns against the full PostgreSQL schema', { timeout: 2400
     assert.equal((await send(c, 'RetryApp', { appId: a1.id })).reason, 'not_retryable');
   });
 
-  await t.test('C6 Stop: the change under way is cancelled, nothing more is opened, the opened proposals stay; a retry is refused (bug 8)', async () => {
+  await t.test('C6 Stop: nothing more is reached; the change under way finishes, and what it opened stays up for its vote (bug 8)', async () => {
     defaults(); await fresh();
     const a1 = await app();
     const a2 = await app();
@@ -391,22 +376,19 @@ test('maintenance campaigns against the full PostgreSQL schema', { timeout: 2400
     assert.deepEqual(i.data.apps.map((a) => a.state), ['proposed', 'changing', 'waiting']);
     const out = await send(c, 'Stop', { userId: owner.id, username: 'owner' });
     assert.equal(out.status, 'accepted');
+    assert.match((await lines(c)).at(-1), /was stopped by owner: 1 PRs opened, 1 change still finishing, 1 apps not reached/);
+    // The change under way had already opened its PR: it is kept, as the
+    // opened ones are (Q3), not left on GitHub with no proposal.
     hold();
     await quiet();
     i = await cInst(c);
     assert.equal(i.state, 'stopped');
-    assert.deepEqual(i.data.apps.map((a) => a.state), ['proposed', 'not_reached', 'not_reached']);
-    assert.deepEqual((await rows(c)).map((r) => r.state), ['pr_open', 'stopped', 'stopped']);
-    const { rows: [w] } = await pool.query(
-      `SELECT status, result FROM wf_work WHERE machine = $1 AND key = $2 AND work_key = $3`, [MACHINE, campaignKey(c.id), `app:${a2.id}:1`]);
-    assert.equal(w.status, 'settled');
-    assert.equal(w.result.cancelled, true);
-    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM chat_sessions WHERE source = 'maintenance' AND app_id = ANY($1)`,
-      [[a2.id, a3.id]])).rows[0].n, 0, 'no proposal for the apps it never reached');
+    assert.deepEqual(i.data.apps.map((a) => a.state), ['proposed', 'proposed', 'not_reached']);
+    assert.deepEqual((await rows(c)).map((r) => r.state), ['pr_open', 'pr_open', 'stopped']);
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM chat_sessions WHERE source = 'maintenance' AND app_id = $1`,
+      [a3.id])).rows[0].n, 0, 'no proposal for the app it never reached');
     assert.equal((await pool.query('SELECT status FROM maintenance_campaigns WHERE id = $1', [c.id])).rows[0].status, 'cancelled');
-    assert.match((await lines(c)).at(-1), /was stopped by owner: 1 PRs opened, 2 apps not reached/);
-    assert.equal((await send(c, 'RetryApp', { appId: a2.id })).reason, 'stopped');
-    void a3;
+    assert.equal((await send(c, 'RetryApp', { appId: a3.id })).reason, 'stopped');
   });
 
   await t.test('C7 Merge all green forces, at once, exactly the proposals in review whose checks pass (bug 7)', async () => {
@@ -443,11 +425,22 @@ test('maintenance campaigns against the full PostgreSQL schema', { timeout: 2400
       /WF_OWNERSHIP_VIOLATION/);
     await assert.rejects(pool.query(`UPDATE maintenance_campaigns SET status = 'running' WHERE id = $1`, [c.id]),
       /WF_OWNERSHIP_VIOLATION/);
-    // The older release's takeLease, as it was written, takes nothing.
+    // The older release's takeLease, as it was written, takes nothing: on a
+    // campaign still running (its change held).
+    await app();
+    const running = await campaignRow();
+    let release;
+    work.hold.set(WORK.change, new Promise((r) => { release = r; }));
+    await start(running);
+    await until(() => calls(WORK.change).some((x) => x.input.campaignId === running.id), 'its change started');
+    assert.equal((await cInst(running)).state, 'running');
     const { rowCount } = await pool.query(
       `UPDATE maintenance_campaigns SET runner_id = 'old', lease_until = NOW() + interval '120 seconds'
-        WHERE id = $1 AND status = 'running' AND (lease_until IS NULL OR lease_until < NOW() OR runner_id = 'old')`, [c.id]);
+        WHERE id = $1 AND status = 'running' AND (lease_until IS NULL OR lease_until < NOW() OR runner_id = 'old')`, [running.id]);
     assert.equal(rowCount, 0);
+    work.hold.delete(WORK.change);
+    release();
+    await quiet();
     const sid = (await stateOf(c, a1)).session_id;
     await asTransition((cl) => cl.query('DELETE FROM chat_sessions WHERE id = $1', [sid]));
     assert.equal((await stateOf(c, a1)).session_id, null);
@@ -492,5 +485,121 @@ test('maintenance campaigns against the full PostgreSQL schema', { timeout: 2400
     const again = await start(c);
     await rt.drain();
     assert.equal((await pool.query('SELECT reason FROM wf_events WHERE id = $1', [again])).rows[0].reason, 'already_started');
+  });
+
+  await t.test('C11 an app deleted while it is being changed fails, and the campaign goes on (no fault)', async () => {
+    defaults(); await fresh();
+    const a1 = await app();
+    const a2 = await app();
+    work.answer.set(WORK.change, async (input) => {
+      if (input.appId === a1.id) await asTransition((cl) => cl.query('DELETE FROM apps WHERE id = $1', [a1.id]));
+      return changedFor(input);
+    });
+    const c = await campaignRow();
+    await start(c);
+    await settle();
+    const i = await cInst(c);
+    assert.equal(i.flag, null, 'not faulted');
+    assert.deepEqual(i.data.apps.map((a) => a.state), ['failed', 'proposed']);
+    assert.match(i.data.apps[0].error, /^The app was deleted while it was being changed \(its pull request #\d+ is left on GitHub\)/);
+    assert.equal(i.state, 'done');
+  });
+
+  await t.test('C12 an app deleted while its change goes up for a vote is failed by the check, and the campaign is done', async () => {
+    defaults(); await fresh();
+    const a1 = await app();
+    let release;
+    work.hold.set(PWORK.open, new Promise((r) => { release = r; }));
+    const c = await campaignRow();
+    await start(c);
+    await until(async () => (await cInst(c)).data.apps[0].state === 'proposing' && calls(PWORK.open).length > 0, 'going up for a vote');
+    await asTransition((cl) => cl.query('DELETE FROM apps WHERE id = $1', [a1.id]));
+    work.hold.delete(PWORK.open);
+    release();
+    await quiet();
+    await fire(c);
+    const i = await cInst(c);
+    assert.equal(i.data.apps[0].state, 'failed');
+    assert.match(i.data.apps[0].error, /deleted before it went up for a vote/);
+    assert.equal(i.state, 'done');
+  });
+
+  await t.test('C13 the check waits for a promote not applied yet, never reading it as refused', () => {
+    // The check's own move, on the facts it reads: the campaign's last
+    // Promote still pending (a backlog, a rollout), its proposal underway
+    // with an earlier answer.
+    const app1 = { appId: 1, slug: 'x', state: 'proposing', n: 1, sessionId: null, prNumber: 101, error: null, resumable: false };
+    const s = { name: 'running', data: { campaignId: 1, issueId: 1, threadAppId: 1, title: 'T', proposerId: 2, apps: [app1],
+      exemplar: null, drained: null, stopped: null } };
+    const asked = (over) => [{ appId: 1, sessionId: 5, status: 'active', prNumber: 101, state: 'underway', promoting: false,
+      answer: { ok: false, code: 'github_unavailable' }, promote: { result: null, reason: null }, gone: false, ...over }];
+    const check = (facts) => cm.entryFor('running', 'Check').to(s, { type: 'Check', payload: {} },
+      { campaign: null, apps: [], green: [], appAlive: null, ...facts }, { now: new Date(), key: 'campaign:1', machine: MACHINE, appId: null, version: 1 });
+    assert.equal(check({ asked: asked() }).next.data.apps[0].state, 'proposing', 'pending: waited for');
+    const rejected = check({ asked: asked({ promote: { result: 'rejected', reason: 'busy' } }) });
+    assert.equal(rejected.next.data.apps[0].state, 'failed');
+    assert.deepEqual(rejected.messages.map((m) => [m.to.key, m.event.type]), [['session:5', 'Close']]);
+    const rollout = check({ asked: asked({ promote: { result: 'rejected', reason: 'not_a_producer' } }) });
+    assert.equal(rollout.next.data.apps[0].state, 'proposing', 'an older release refused it: sent again');
+    assert.deepEqual(rollout.messages.map((m) => m.event.type), ['Promote']);
+    assert.equal(rollout.next.data.apps[0].resent, 1);
+    assert.ok(rollout.timer && rollout.timer.event.type === 'Check', 'the check comes back');
+  });
+
+  await t.test('C14 the dashboard reads what came of each proposal (bug 10)', async () => {
+    defaults(); await fresh();
+    const apps = [await app(), await app(), await app(), await app()];
+    const c = await campaignRow();
+    await start(c);
+    await settle();
+    const ids = await Promise.all(apps.map(async (a) => (await stateOf(c, a)).session_id));
+    await asTransition(async (cl) => {
+      await cl.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [ids[0]]);
+      await cl.query(`UPDATE chat_sessions SET status = 'archived' WHERE id = $1`, [ids[1]]);
+      await cl.query(`UPDATE chat_sessions SET status = 'active' WHERE id = $1`, [ids[2]]);
+    });
+    const status = await require('../src/services/fleet-maintenance').campaignStatus(pool, c.id);
+    assert.deepEqual(status.apps.map((a) => [a.state, a.sessionStatus]),
+      [['merged', 'merged'], ['closed', 'archived'], ['underway', 'active'], ['pr_open', 'promoted']]);
+    assert.deepEqual(status.counts, { merged: 1, closed: 1, underway: 1, pr_open: 1 });
+  });
+
+  await t.test('C15 the change work: GitHub or the model off fails at once; a stop before the push opens nothing; a resumed change opens its PR once', async () => {
+    const { campaignServices } = require('../src/workflow/campaign/services.ts');
+    const fm = require('../src/services/fleet-maintenance');
+    const github = require('../src/services/github');
+    const llm = require('../src/services/llm');
+    const saved = new Map([[fm, { ...fm }], [github, { ...github }], [llm, { ...llm }]]);
+    const handler = campaignServices({ config: {}, pool })[WORK.change];
+    const did = [];
+    const a1 = await app();
+    const c = await campaignRow();
+    const ctx = (resumeFrom = null) => ({ input: { campaignId: c.id, appId: a1.id, branch: `maint/c${c.id}/${a1.slug}`, exemplar: null },
+      resumeFrom, signal: new AbortController().signal, checkpoint: async (v) => { did.push(['checkpoint', v]); } });
+    try {
+      github.isEnabled = () => false;
+      await assert.rejects(handler.run(ctx()), (err) => err.permanent === true && /GitHub is not configured/.test(err.message));
+      github.isEnabled = () => true;
+      llm.isEnabled = () => false;
+      await assert.rejects(handler.run(ctx()), (err) => err.permanent === true && /model is not configured/.test(err.message));
+      llm.isEnabled = () => true;
+      fm.runAppChange = async () => { did.push(['ai']); return { files: new Map([['a', 'b']]), summary: 'S' }; };
+      fm.pushChange = async () => { did.push(['push']); return 'e'.repeat(40); };
+      fm.openChangePr = async () => { did.push(['pr']); return { number: 9, url: 'u', title: 'T' }; };
+      // Stopped while the AI worked: nothing reaches the repository.
+      await asTransition((cl) => cl.query(`UPDATE maintenance_campaigns SET status = 'cancelled' WHERE id = $1`, [c.id]));
+      assert.deepEqual(await handler.run(ctx()), { stopped: true });
+      assert.deepEqual(did.map((x) => x[0]), ['ai']);
+      // Resumed after its push: no AI, no push, its PR once.
+      await asTransition((cl) => cl.query(`UPDATE maintenance_campaigns SET status = 'running' WHERE id = $1`, [c.id]));
+      did.length = 0;
+      const out = await handler.run(ctx({ head: 'e'.repeat(40), summary: 'S' }));
+      assert.deepEqual(did.map((x) => x[0]), ['checkpoint', 'pr', 'checkpoint']);
+      assert.equal(out.prNumber, 9);
+      assert.equal(handler.maxAttempts * 0 + [1, 2, 3, 4, 5, 6, 7].reduce((t, n) => t + handler.backoffMs(n), 0) >= 55 * 60 * 1000, true,
+        'GitHub\'s and the model\'s temporary errors are retried for about an hour');
+    } finally {
+      for (const [mod, orig] of saved) Object.assign(mod, orig);
+    }
   });
 });

@@ -39,9 +39,12 @@ export interface Asked {
   state: string | null;
   promoting: boolean;
   answer: { ok?: boolean; code?: string | null; message?: string | null } | null;
-  // The campaign's last promote of it, as the proposal machine settled it: a
-  // rejected one (the guard refused it) sends no answer of its own.
+  // The campaign's last promote of it, as the proposal machine settled it
+  // (result null: not applied yet): a rejected one (the guard refused it)
+  // sends no answer of its own.
   promote: { result: string | null; reason: string | null } | null;
+  // Its app row or its proposal is gone (the app was deleted).
+  gone: boolean;
 }
 
 export interface Facts {
@@ -52,11 +55,12 @@ export interface Facts {
   green: { sessionId: number; appId: number }[];
   // Check: its proposals still being put up for a vote.
   asked: Asked[];
-  // RetryApp: the status of the app's proposal, when it has one.
-  retrying: { sessionStatus: string | null } | null;
+  // A change's result: whether its app still exists (locked, so it is not
+  // deleted under the proposal row the result writes).
+  appAlive: boolean | null;
 }
 
-export const NO_FACTS: Facts = { campaign: null, apps: [], green: [], asked: [], retrying: null };
+export const NO_FACTS: Facts = { campaign: null, apps: [], green: [], asked: [], appAlive: null };
 
 async function readCampaign(tx: Tx, id: number): Promise<CampaignRow | null> {
   const { rows: [r] } = await tx.query(
@@ -76,13 +80,15 @@ async function readCampaign(tx: Tx, id: number): Promise<CampaignRow | null> {
 // campaign reaches, fixed now (Q2): every live app with a repository, but the
 // platform itself and an app moderation suspended, within the slug filter.
 async function readApps(tx: Tx, c: CampaignRow): Promise<AppRow[]> {
+  // A campaign that ended before the machine took it keeps the rows it has
+  // (none, if it reached no app): it is not given today's fleet.
   const { rows: existing } = await tx.query(
     `SELECT mca.app_id, a.slug, mca.state, mca.session_id, mca.error, cs.pr_number
        FROM maintenance_campaign_apps mca
        JOIN apps a ON a.id = mca.app_id
        LEFT JOIN chat_sessions cs ON cs.id = mca.session_id
       WHERE mca.campaign_id = $1 ORDER BY mca.id`, [c.id]);
-  if (existing.length) {
+  if (existing.length || c.status !== 'running') {
     return existing.map((r: any) => ({ appId: r.app_id, slug: String(r.slug), state: r.state ?? null,
       sessionId: r.session_id ?? null, prNumber: r.pr_number ?? null, error: r.error ?? null }));
   }
@@ -106,23 +112,26 @@ async function readGreen(tx: Tx, campaignId: number) {
 
 async function readAsked(tx: Tx, campaignId: number, appIds: number[]): Promise<Asked[]> {
   if (!appIds.length) return [];
+  // From the apps asked about, so one deleted since (its row gone with it)
+  // is still answered for.
   const { rows } = await tx.query(
-    `SELECT mca.app_id, mca.session_id, cs.status, cs.pr_number, w.state,
+    `SELECT x.app_id, mca.id IS NULL AS no_row, mca.session_id, cs.id IS NULL AS no_session, cs.status, cs.pr_number, w.state,
             (w.data->'promoting') IS NOT NULL AND w.data->'promoting' <> 'null'::jsonb AS promoting,
-            w.data->'answer' AS answer, p.result AS promote_result, p.reason AS promote_reason
-       FROM maintenance_campaign_apps mca
+            w.data->'answer' AS answer, p.id AS promote_id, p.result AS promote_result, p.reason AS promote_reason
+       FROM unnest($2::int[]) AS x(app_id)
+       LEFT JOIN maintenance_campaign_apps mca ON mca.campaign_id = $1 AND mca.app_id = x.app_id
        LEFT JOIN chat_sessions cs ON cs.id = mca.session_id
        LEFT JOIN wf_instances w ON w.machine = 'proposal' AND w.key = 'session:' || mca.session_id
        LEFT JOIN LATERAL (
-         SELECT e.result, e.reason FROM wf_events e
+         SELECT e.id, e.result, e.reason FROM wf_events e
           WHERE e.machine = 'proposal' AND e.key = 'session:' || mca.session_id AND e.type = 'Promote'
             AND e.source->>'kind' = 'message' AND e.source->'from'->>'machine' = 'campaign'
-          ORDER BY e.id DESC LIMIT 1) p ON TRUE
-      WHERE mca.campaign_id = $1 AND mca.app_id = ANY($2::int[])`, [campaignId, appIds]);
+          ORDER BY e.id DESC LIMIT 1) p ON TRUE`, [campaignId, appIds]);
   return rows.map((r: any) => ({
     appId: r.app_id, sessionId: r.session_id ?? null, status: r.status ?? null, prNumber: r.pr_number ?? null,
     state: r.state ?? null, promoting: !!r.promoting, answer: r.answer && typeof r.answer === 'object' ? r.answer : null,
-    promote: r.promote_result === undefined ? null : { result: r.promote_result ?? null, reason: r.promote_reason ?? null },
+    promote: r.promote_id == null ? null : { result: r.promote_result ?? null, reason: r.promote_reason ?? null },
+    gone: !!r.no_row || (r.session_id != null && !!r.no_session),
   }));
 }
 
@@ -133,11 +142,12 @@ export async function readFacts(tx: Tx, campaignId: number, event: Event<any>, p
   if (event.type === 'Start') out.apps = await readApps(tx, campaign);
   if (event.type === 'MergeGreen') out.green = await readGreen(tx, campaignId);
   if (event.type === 'Check') out.asked = await readAsked(tx, campaignId, proposing);
-  if (event.type === 'RetryApp') {
-    const { rows: [r] } = await tx.query(
-      `SELECT cs.status FROM maintenance_campaign_apps mca LEFT JOIN chat_sessions cs ON cs.id = mca.session_id
-        WHERE mca.campaign_id = $1 AND mca.app_id = $2`, [campaignId, Number(event.payload?.appId)]);
-    out.retrying = { sessionStatus: r?.status ?? null };
+  const p = event.payload as any;
+  if ((event.type === 'WorkSucceeded' || event.type === 'WorkFailed' || event.type === 'WorkExhausted') && typeof p?.workKey === 'string') {
+    const appId = Number(/^app:(\d+):/.exec(p.workKey)?.[1]);
+    if (Number.isInteger(appId) && appId > 0) {
+      out.appAlive = (await tx.query('SELECT 1 FROM apps WHERE id = $1 FOR KEY SHARE', [appId])).rows.length > 0;
+    }
   }
   return out;
 }

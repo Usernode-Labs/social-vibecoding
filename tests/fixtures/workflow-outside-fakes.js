@@ -127,7 +127,10 @@ module.exports = function install(fakes) {
         await fakes.record('github.push', { repo: `${owner}/${repo}`, branch, sha, paths: files.map((f) => f.path) });
         return { sha };
       },
+      // `github.findPR` stops before GitHub answers (after the change's push
+      // was checkpointed).
       async findOpenPrByBranch(owner, repo, branch) {
+        await fakes.pause('github.findPR');
         const pr = (await fakes.read('github.createPR')).find((p) => p.repo === `${owner}/${repo}` && p.branch === branch);
         return pr ? { number: pr.number, html_url: `https://github.com/${owner}/${repo}/pull/${pr.number}`, title: pr.title } : null;
       },
@@ -156,12 +159,18 @@ module.exports = function install(fakes) {
   outside(fakes, 'services/kubernetes', { keep: [] });
   // The model is off, unless the test process starts the workflow process
   // with WF_FAKE_MODEL=1: then a campaign's change is one scripted turn
-  // (`llm.call`), staging an edit and finishing.
+  // (`llm.call`; the `llm.call` point is inside it), staging an edit and
+  // finishing, or skipping an app whose slug says so.
   outside(fakes, 'services/llm', { keep: ['init'], overrides: {
     isEnabled: () => process.env.WF_FAKE_MODEL === '1',
     estimateCostCents: () => 0,
-    async streamChat() {
+    async streamChat({ messages }) {
       await fakes.record('llm.call', {});
+      await fakes.pause('llm.call');
+      if (/slug skip-/.test(String(messages?.[0]?.content || ''))) {
+        return { toolUses: [{ id: 't1', name: 'skip_app', input: { reason: 'Nothing to change here.' } }],
+          rawContent: [], stopReason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 }, servedModel: 'fake' };
+      }
       return {
         toolUses: [
           { id: 't1', name: 'write_file', input: { path: 'server.js', content: 'const key = process.env.USERNODE_JWT_PUBLIC_KEY;\n' } },

@@ -1018,24 +1018,38 @@ projections, and its guard refuses them to anyone else.
   request, using the one GitHub already has for the branch. It checkpoints after the push
   and after the pull request, so a restart never pushes or opens twice; a restart before
   the push runs the AI again. A change too big or a model gone astray fails the app at
-  once; GitHub's and the model's temporary errors are retried for about an hour.
+  once; GitHub's and the model's temporary errors are retried for about an hour. An app
+  deleted meanwhile is failed (its result's facts lock the app row), not faulted.
 - **Each change goes up for a vote through the proposal machine's promote.** The result's
   transition writes the proposal's row (the platform account's, `source 'maintenance'`,
   holding no worker slot) and its `Promote` in one transaction (`ctx.message`); the
   promote records what any promote does (the reviewed head, the electorate, the vote line,
   the requests, the preview of that head) and tells the campaign `ProposalOpened` or
   `ProposalRefused`. A promote the proposal's guard refused outright sends no answer: the
-  campaign's clock reads it off the event after five minutes. The next app starts as soon
-  as the previous change is pushed. From then on each proposal is the proposal machine's;
+  campaign's clock (set once an app goes up for a vote, not pushed back by later events)
+  reads it off the event within five minutes; one not applied yet is waited for, and one
+  an older release refused during a rollout is sent again (up to six times). A proposal
+  that could not go up for a vote is closed with its pull request (`Close`, reason
+  `campaign-refused`): nobody can act on the platform account's underway change. The
+  next app starts as soon as the previous change is pushed. From then on each proposal is the proposal machine's;
   the dashboard reads what came of it (merged, closed) off its row.
 - **Done** once no app waits, is being changed or is going up for a vote; the completion
   line goes to the governance thread in the same transaction.
 - **An admin's moves** (`routes/campaigns.js`, each answered from the outcome): `RetryApp`
-  (a failed or skipped app; a refused promote is put up again without redoing the change,
-  a failure after the push carries its checkpoint on), `MergeGreen` (forces, at once, the
+  (a failed or skipped app: a failure after the push carries its checkpoint on; an app
+  whose proposal was closed is changed again from scratch on a branch of its own, so the
+  closed one's pull request is never reused), `MergeGreen` (forces, at once, the
   campaign's proposals in review whose checks pass at the press; each merges through its
-  app's queue, and app delivery paces the rebuilds), `Stop` (the change under way is
-  cancelled, no further app is reached, the opened proposals stay up for their vote).
+  app's queue, and app delivery paces the rebuilds; during a rollout an older release may
+  refuse a force, and pressing again asks again), `Stop` (no further app is reached; the
+  change under way is not cancelled: its work reads the stop before the AI's every call,
+  before the push and before the pull request, and a change that already opened its
+  pull request goes up for a vote like the opened ones, which stay).
 - **During a rollout** an older release's `campaign.run` item only asks for that
   adoption, and the adoption fences the old lease off (`runner_id 'workflow'`, an endless
-  lease). Both go, with the lease columns, once no older release can run.
+  lease; a fenced campaign with no instance, as in a staging copy, is adopted again). A
+  campaign that ended before the machine took it keeps the app rows it had. Both go, with
+  the lease columns, once no older release can run. A release revert finds every adopted
+  campaign fenced and guarded: freeing one for the older code is
+  `DELETE FROM wf_settings WHERE key = 'enabled:campaign'` and
+  `UPDATE maintenance_campaigns SET runner_id = NULL, lease_until = NULL WHERE runner_id = 'workflow'`.

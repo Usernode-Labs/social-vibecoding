@@ -61,6 +61,8 @@ interface CampaignApp {
   prUrl?: string;
   prNumber?: number;
   checkState?: string;
+  // Its proposal's status (merge-all-green forces only those in review).
+  sessionStatus?: string;
   sessionId?: number;
   error?: string;
 }
@@ -135,6 +137,7 @@ const APP_BADGE: ReadonlyMap<string, [string, string]> = new Map([
   ['pr_open', ['bg-sky-500/10 text-sky-700 dark:text-sky-400', 'PR open']],
   ['merged', ['bg-green-500/10 text-green-800 dark:text-green-400', 'Merged']],
   ['closed', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Closed']],
+  ['underway', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Back underway']],
   ['skipped', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Skipped']],
   ['failed', ['bg-red-500/10 text-red-700 dark:text-red-400', 'Failed']],
   ['stopped', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Not reached']],
@@ -166,8 +169,8 @@ async function postRecheck(sessionId: number | string): Promise<void> {
 }
 
 function AppRow({
-  app, campaignId, write, onDone,
-}: { app: CampaignApp; campaignId: number; write: boolean; onDone: () => void }) {
+  app, campaignId, write, stopped, onDone,
+}: { app: CampaignApp; campaignId: number; write: boolean; stopped: boolean; onDone: () => void }) {
   const [busy, setBusy] = useState<'' | 'retry' | 'recheck'>('');
 
   const retry = async () => {
@@ -190,7 +193,7 @@ function AppRow({
     onDone();
   };
 
-  const showRetry = write && (app.state === 'failed' || app.state === 'skipped');
+  const showRetry = write && !stopped && (app.state === 'failed' || app.state === 'skipped');
   // Failing/error checks on an open campaign PR: offer the same manual re-run
   // as the proposal card (#447). POSTs to the session recheck endpoint, which
   // stamps 'pending' and rebuilds staging if the preview is gone — the 8s
@@ -264,7 +267,7 @@ function CampaignRow({
   const apps = detail?.apps || [];
   // "Green" = open campaign PR whose checks pass — what merge-green will
   // force-merge (mirrors the campaign machine's facts, campaign/facts.ts readGreen).
-  const green = apps.filter((a) => a.state === 'pr_open'
+  const green = apps.filter((a) => a.state === 'pr_open' && a.sessionStatus === 'promoted'
     && (a.checkState === 'passing' || a.checkState === 'skipped')).length;
   // Bulk companion to the per-row Re-run checks button. Each recheck is
   // fire-and-forget server-side; the loop below just queues them.
@@ -370,7 +373,7 @@ function CampaignRow({
             <ul className="space-y-1">
               {apps.length
                 ? apps.map((a) => (
-                  <AppRow key={a.appId} app={a} campaignId={c.id} write={write} onDone={refresh} />
+                  <AppRow key={a.appId} app={a} campaignId={c.id} write={write} stopped={detail.status === 'cancelled'} onDone={refresh} />
                 ))
                 : <li className="text-xs text-zinc-500 dark:text-zinc-400">No target apps.</li>}
             </ul>

@@ -695,13 +695,17 @@ test('workflow machines in a process of their own, and through its crash', { tim
     const models = (await procs.effects(pool, 'llm.call')).length;
     const self = (await pool.query(`SELECT * FROM apps WHERE self_hosted = TRUE LIMIT 1`)).rows[0] || await app({ selfHosted: true });
     const target = await app();
+    // A second app the model finds nothing to change in.
+    const { rows: [skipped] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by, repo_url, status) VALUES ($1::text, $1::text, $2, 'https://github.com/acme/' || $1::text, 'running')
+       RETURNING *`, [`skip-${++seq}`, author.id]);
     await pool.query(`UPDATE apps SET status = 'running' WHERE id = $1`, [target.id]);
     const { rows: [issue] } = await pool.query(
       `INSERT INTO issues (app_id, title, kind, payload, created_by, status) VALUES ($1, 'Maintenance campaign: JWT', 'maintenance_campaign', '{}', $2, 'closed')
        RETURNING id`, [self.id, author.id]);
     const { rows: [c] } = await pool.query(
       `INSERT INTO maintenance_campaigns (issue_id, title, instructions, target_filter, status, created_by)
-       VALUES ($1, 'JWT', 'Use the public key', $3, 'running', $2) RETURNING id`, [issue.id, author.id, JSON.stringify([target.slug])]);
+       VALUES ($1, 'JWT', 'Use the public key', $3, 'running', $2) RETURNING id`, [issue.id, author.id, JSON.stringify([target.slug, skipped.slug])]);
     if (crashAt) await procs.arm(pool, crashAt);
     // The web side asks; the workflow process decides and works.
     await platform.adoptCampaigns();
@@ -714,14 +718,16 @@ test('workflow machines in a process of their own, and through its crash', { tim
     await procs.until(async () => (await instance('campaign', `campaign:${c.id}`))?.state === 'done', 'the campaign done');
     const { rows: [r] } = await pool.query(
       `SELECT mca.state, cs.status, cs.reviewed_head_sha FROM maintenance_campaign_apps mca JOIN chat_sessions cs ON cs.id = mca.session_id
-        WHERE mca.campaign_id = $1`, [c.id]);
+        WHERE mca.campaign_id = $1 AND mca.app_id = $2`, [c.id, target.id]);
+    const skip = (await pool.query('SELECT state FROM maintenance_campaign_apps WHERE campaign_id = $1 AND app_id = $2', [c.id, skipped.id])).rows[0].state;
     const repo = `acme/${target.slug}`;
     const out = {
-      row: r.state, status: r.status,
+      row: r.state, status: r.status, skip,
       prs: (await procs.effects(pool, 'github.createPR')).filter((e) => e.data.repo === repo).length,
       pushes: (await procs.effects(pool, 'github.push')).filter((e) => e.data.repo === repo).length,
       head: r.reviewed_head_sha === (await procs.effects(pool, 'github.push')).filter((e) => e.data.repo === repo).pop()?.data.sha,
-      models: (await procs.effects(pool, 'llm.call')).length - models,
+      // The model's runs for the changed app (the skipped one asks it once).
+      models: (await procs.effects(pool, 'llm.call')).length - models - 1,
       processes: await ranIn('campaign', `campaign:${c.id}`, 'campaign.change'),
     };
     await workflow.stop();
@@ -731,13 +737,27 @@ test('workflow machines in a process of their own, and through its crash', { tim
 
   await t.test('campaign: started from the web side, the change, its PR and its promote run in the workflow process', async () => {
     const r = await campaignThrough();
-    assert.deepEqual(r, { row: 'pr_open', status: 'promoted', prs: 1, pushes: 1, head: true, models: 1, processes: 1 });
+    assert.deepEqual(r, { row: 'pr_open', status: 'promoted', skip: 'skipped', prs: 1, pushes: 1, head: true, models: 1, processes: 1 });
+  });
+
+  await t.test('campaign, restarted: killed while the AI works on the change; the next process makes it again, and opens one PR', async () => {
+    const r = await campaignThrough({ crashAt: 'llm.call' });
+    assert.equal(r.processes, 2);
+    assert.deepEqual({ ...r, processes: undefined }, { row: 'pr_open', status: 'promoted', skip: 'skipped', prs: 1, pushes: 1, head: true,
+      models: 2, processes: undefined }, 'the AI again (nothing reached GitHub), one push, one PR');
+  });
+
+  await t.test('campaign, restarted: killed after the change was pushed, before its PR; the next process pushes nothing again', async () => {
+    const r = await campaignThrough({ crashAt: 'github.findPR' });
+    assert.equal(r.processes, 2);
+    assert.deepEqual({ ...r, processes: undefined }, { row: 'pr_open', status: 'promoted', skip: 'skipped', prs: 1, pushes: 1, head: true,
+      models: 1, processes: undefined }, 'the push checkpointed: no AI, no push again');
   });
 
   await t.test('campaign, restarted: killed after GitHub opened the change\'s PR, before its answer; the next process opens no second one (bug 1)', async () => {
     const r = await campaignThrough({ crashAt: 'github.createPR.done' });
     assert.equal(r.processes, 2, 'the change the crash interrupted, finished by the next process');
-    assert.deepEqual({ ...r, processes: undefined }, { row: 'pr_open', status: 'promoted', prs: 1, pushes: 1, head: true, models: 1, processes: undefined },
+    assert.deepEqual({ ...r, processes: undefined }, { row: 'pr_open', status: 'promoted', skip: 'skipped', prs: 1, pushes: 1, head: true, models: 1, processes: undefined },
       'one model run, one push, one PR, one proposal: as without the crash (the push was checkpointed)');
   });
 

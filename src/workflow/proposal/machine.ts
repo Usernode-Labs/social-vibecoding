@@ -527,6 +527,7 @@ function closedLine(r: Row, reason: string, byOwner: boolean): string {
     case 'request-closed': return `${l} was withdrawn: the request it was built for is closed.`;
     case 'red-checks': return `${l} was withdrawn: its checks failed and nobody changed it for a few days.`;
     case 'stale-pr': return `${l} went quiet and was set aside. It can always come back as a new change.`;
+    case 'campaign-refused': return `${l} could not be put up for a vote and was closed. The maintenance campaign can make it again.`;
     case 'manual':
       return byOwner && r.ownerName ? `${r.ownerName} withdrew ${r.prTitle ? l : 'this change'}.` : `${l} was withdrawn.`;
     default: return `${l} was withdrawn.`;
@@ -1331,15 +1332,20 @@ const mergedAway = (s: Live, e: Event<any>, f: Facts) =>
   f.row?.status === 'merged' && s.name !== 'merged' && e.type !== 'Merged';
 
 function transitions(deps: Deps) {
+  // A campaign's proposal adopted before the flag existed learns it from its
+  // row on its next event (it holds no worker slot either).
+  const platformOf = (s: Live, f: Facts): Live => (f.row?.platform && !s.data.platform
+    ? { ...s, data: { ...s.data, platform: true } } as Live : s);
   const entry = (type: string) => ({
-    guard: (s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Check => {
+    guard: (s0: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Check => {
+      const s = platformOf(s0, f);
       if (!f.row) return reject('session_not_found');
       if (expired(e, ctx)) return reject('expired');
       if (mergedAway(s, e, f) && !type.startsWith('Work') && !ANSWERED.has(type)) return reject('merged');
       const g = GUARDS.get(type);
       return g ? g(s, e, f, ctx) : ok();
     },
-    to: (s: Live, e: Event<any>, f: Facts, ctx: TransitionContext) => HANDLERS.get(type)!(s, e, f, ctx, deps),
+    to: (s: Live, e: Event<any>, f: Facts, ctx: TransitionContext) => HANDLERS.get(type)!(platformOf(s, f), e, f, ctx, deps),
   });
   const row = Object.fromEntries([...HANDLERS.keys()].map((t) => [t, entry(t)]));
   const table: Record<string, Record<string, any>> = {};
@@ -1426,7 +1432,7 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
       Resume: routeOrSystem,
       IdleCheck: timer,
       ReviewCheck: timer,
-      Close: closer,
+      Close: (e: Event<any>): Check => (closer(e) === true || fromCampaign(e) ? ok() : reject('not_a_producer')),
       Reopen: person,
       MergeClaim: system,
       MergeReleased: system,
