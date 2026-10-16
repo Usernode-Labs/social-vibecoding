@@ -36,6 +36,7 @@ const visibleChangesContract = require('./visible-changes');
 const diagramContract = require('./diagram');
 const proposalDiagram = require('./proposal-diagram');
 const unitSuiteRow = require('./unit-suite-row');
+const checkSignals = require('./check-signals');
 const { sniffImageType } = require('./attachments');
 const requestSpecs = require('./request-specs');
 const {
@@ -1100,10 +1101,26 @@ function shapeChecks(session) {
     // The unit suite's pass was copied from an earlier run of the same
     // commit instead of being run again (services/unit-suite-reuse.js).
     unitSuiteReused: unitSuiteRow.reusedFrom(results),
+    // What the run said about itself beside the verdict, never a verdict of
+    // its own (services/check-signals.js): why each retried check was
+    // retried, and the checks this proposal adds or changes that needed a
+    // fresh load after their address change.
+    advisories: shapeCheckAdvisories(results),
     error: session.check_error_detail
       ? untrusted(session.check_error_detail, MAX_CHECK_ERROR_CHARS)
       : null,
   };
+}
+
+function shapeCheckAdvisories(results) {
+  return checkSignals.advisoriesOf(results, { limit: MAX_FAILURE_DETAILS }).map((a) => ({
+    kind: a.kind,
+    name: untrusted(a.row.name || a.row.path || 'unnamed test', MAX_TITLE_CHARS),
+    path: a.row.path ? untrusted(String(a.row.path), MAX_TITLE_CHARS) : null,
+    status: a.row.status === 'pass' ? 'pass' : 'fail',
+    note: a.note,
+    waitMs: Number.isFinite(a.waitMs) ? a.waitMs : null,
+  }));
 }
 
 // Where a proposal's head actually lives, and what the agent that wrote the
@@ -3969,6 +3986,20 @@ function registerTools(server, ctx) {
             + 'commit, worker image and suite setup (from the run `runId` at `passedAt`, on proposal `sessionId`). '
             + 'The merge gate treats it as that pass. Only automatic re-runs reuse; recheck_change always runs '
             + 'the suite again. Null when the suite ran in this run.'),
+        advisories: z.array(z.object({
+          kind: z.enum(['run_fault', 'flaky', 'failed', 'cohort_fallback']),
+          name: z.string(),
+          path: z.string().nullable(),
+          status: z.enum(['pass', 'fail']),
+          note: z.string(),
+          waitMs: z.number().nullable(),
+        })).optional()
+          .describe('Advisory, never a verdict. Per retried check, why it was retried: run_fault (one of a burst of '
+            + 'failures in the run\'s first seconds whose retries all passed: the run was at fault, not the check or '
+            + 'this change; do not change code for it), flaky (some retries passed) or failed (every retry failed: '
+            + 'a real failure). And cohort_fallback for a check this proposal adds or changes that held only on a '
+            + 'fresh load after its address change: fix the navigation so an address change draws what a fresh load '
+            + 'of that address draws; waitMs is how long the run waited on the address change first.'),
         error: z.string().nullable()
           .describe('What broke when a run errored before any test could report — a build or preview failure, not '
             + 'a test failure, so there is no test to fix.'),
@@ -4138,6 +4169,16 @@ function registerTools(server, ctx) {
         message: z.string(),
         source: z.string().nullable(),
       })).describe('A declared check\'s console/page errors. Empty on the unit suite row.'),
+      advisories: z.array(z.object({
+        kind: z.enum(['run_fault', 'flaky', 'failed', 'cohort_fallback']),
+        name: z.string(),
+        path: z.string().nullable(),
+        status: z.enum(['pass', 'fail']),
+        note: z.string(),
+        waitMs: z.number().nullable(),
+      })).optional()
+        .describe('Advisory notes on this check, as get_proposal.checks.advisories carries them: why it was '
+          + 'retried (failed: every retry failed too), and whether it needed a fresh load after its address change.'),
     },
     annotations: readAnnotations,
   }, async ({ proposalId, prNumber, slug, check }) => {
@@ -4227,6 +4268,7 @@ function registerTools(server, ctx) {
         message: untrusted((e && e.message) || '', MAX_FAILURE_REASON_CHARS) || null,
         source: (e && e.source) ? untrusted(String(e.source), MAX_TITLE_CHARS) : null,
       })),
+      advisories: shapeCheckAdvisories([row]),
     });
   });
 

@@ -3803,6 +3803,18 @@
     "text": "Failed {{fails}} of {{count}} runs on this build, then passed when re-run. {{reason}}",
     "description": "Reason line under one check in the list of a proposal's check results, for a check that was run several times on the same build. {{fails}} is how many of those runs failed and {{count}} how many runs there were (always two or more). The check passed in the end. {{reason}} is the failure message the check itself wrote, shown as it is."
   },
+  "checks.reason.runFault": {
+    "text": "Failed at the start of the run together with other checks, then passed every re-run: the run was at fault, not this check.",
+    "description": "Reason line under one check in the list of a proposal's check results, for a check that failed in a burst of failures in the first seconds of the test run (the test environment was not ready yet) and then passed every time it was run again. Says the failure was the test run's, not the check's or the change's."
+  },
+  "checks.reason.runFaultWith": {
+    "text": "Failed at the start of the run together with other checks, then passed every re-run: the run was at fault, not this check. {{reason}}",
+    "description": "Reason line under one check in the list of a proposal's check results, for a check that failed in a burst of failures in the first seconds of the test run (the test environment was not ready yet) and then passed every time it was run again. Says the failure was the test run's, not the check's or the change's. {{reason}} is the failure message the check itself wrote, shown as it is."
+  },
+  "checks.note.freshLoad": {
+    "text": "This check needed a fresh load after an address change: fix the navigation (an address change must draw what a fresh load of that address draws).",
+    "description": "Advice under one automated check that this proposal adds or changes, in its opened details. The checks reach several screens of one page by changing the address after the # sign; this check only passed after the page was loaded again from scratch. Tells the author to fix the app's navigation so that changing the address shows the same screen a fresh load of that address shows. Advisory: the check's result is unchanged."
+  },
   "verdict.summary.checks_one": {
     "text": "{{count}} check",
     "description": "One fact in the summary line above a proposal's list of check results, for example \"523 checks · 520 passed · 1 blocking failure · 2 advisory failures\". {{count}} is how many automated checks ran."

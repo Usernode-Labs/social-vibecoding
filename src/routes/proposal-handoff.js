@@ -662,6 +662,17 @@ function checksSnapshot(session, runtime, options = {}) {
     // instead of being run again (services/unit-suite-reuse.js):
     // `{ runId, sessionId, passedAt }`, or null.
     unitSuiteReused: require('../services/unit-suite-row').reusedFrom(session.test_results),
+    // Advisory notes beside the verdict (services/check-signals.js): why
+    // each retried check was retried (run_fault: the run's own, not the
+    // change's; flaky; failed), and a check this proposal adds or changes
+    // that needed a fresh load after its address change. Never a verdict.
+    advisories: require('../services/check-signals').advisoriesOf(session.test_results).map((a) => ({
+      kind: a.kind,
+      check: String(a.row.name || a.row.path || 'unnamed check').slice(0, 200),
+      path: a.row.path ? String(a.row.path).slice(0, 200) : null,
+      status: a.row.status === 'pass' ? 'pass' : 'fail',
+      note: a.note,
+    })),
     activity: {
       session: runtime.session,
       pipeline: runtime.pipeline,

@@ -2251,6 +2251,14 @@
     "text": "Passed on retry",
     "description": "Link-like label at the right end of an automated check's row on a change's page, for a check that failed once and passed when run again: opens the reason of the first failure."
   },
+  "topic.check.runFault": {
+    "text": "Run fault",
+    "description": "Link-like label at the right end of an automated check's row on a change's page, for a check that failed in a burst at the start of the test run and passed every time it was run again: the test run was at fault, not the check. Opens the explanation."
+  },
+  "topic.check.freshLoad": {
+    "text": "Needed a fresh load",
+    "description": "Link-like label at the right end of a passing automated check's row on a change's page, for a check this change adds or changes that only passed after its page was loaded again from scratch. Opens advice on fixing the page's navigation."
+  },
   "topic.check.failed": {
     "text": "failed",
     "description": "Lower-case word shown as the reason of a failed automated check when the run recorded no reason. Describes the check."
