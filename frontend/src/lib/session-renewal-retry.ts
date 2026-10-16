@@ -11,10 +11,11 @@
  * server reached in between carried the old token and was answered 401,
  * although nobody was signed out.
  *
- * Every document the app opens renews once, beside the boot's first reads, so
- * this was not rare: a link to a change opened in the app looked its number
- * up inside that gap, read the 401 as "no such change" and dropped the
- * viewer on the project's hub instead.
+ * Every document the app opened used to renew, beside the boot's first reads:
+ * a link to a change looked its number up inside that gap, read the 401 as
+ * "no such change" and dropped the viewer on the project's hub instead.
+ * Renewal is daily now (NativeChrome._renewedRecently), but the daily one, a
+ * resume and a forced one still open the same gap, and this closes it.
  *
  * ── The rule ───────────────────────────────────────────────────────────
  *

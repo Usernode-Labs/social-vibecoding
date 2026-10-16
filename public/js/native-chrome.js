@@ -148,6 +148,8 @@
 
     // ── Protocol-2 native-session realm ──────────────────────────────
     _ATTEMPT_STORAGE_KEY: 'usernode.native-session-v2.attempt',
+    // When the web session was last renewed, for the attempt above (#5049).
+    _RENEWAL_STORAGE_KEY: 'usernode.native-session-v2.web-renewal',
     _HANDOFF_ENDPOINT: '/api/v4/mobile/auth/native-establish-handoff',
     _realmGeneration: 0,
     _establishLease: null,
@@ -200,6 +202,8 @@
 
     _removeStoredAttempt() {
       try { localStorage.removeItem(NativeChrome._ATTEMPT_STORAGE_KEY); }
+      catch (_) {}
+      try { localStorage.removeItem(NativeChrome._RENEWAL_STORAGE_KEY); }
       catch (_) {}
     },
 
@@ -481,6 +485,38 @@
 
     _webRecovery: null,
     _lastWebRenewal: 0,
+    _WEB_RENEWAL_INTERVAL_MS: 24 * 60 * 60 * 1000,
+
+    // A RENEWAL IS DAILY, NOT PER DOCUMENT (#5049). The stamp used to live in
+    // this document's memory only, so every load in the app (a cold start, a
+    // tapped link) renewed, and every renewal rotates the session: a window
+    // of 401s beside the boot's first reads. It is kept in storage now, bound
+    // to the stored attempt's user and attempt, so a sign-out (which removes
+    // the attempt) or another account renews at once. Memory still answers
+    // when storage does not.
+    _renewedRecently() {
+      const fresh = (at) => {
+        const age = Date.now() - Number(at);
+        return age >= 0 && age < NativeChrome._WEB_RENEWAL_INTERVAL_MS;
+      };
+      if (NativeChrome._lastWebRenewal && fresh(NativeChrome._lastWebRenewal)) return true;
+      let stamp = null;
+      try {
+        stamp = JSON.parse(localStorage.getItem(NativeChrome._RENEWAL_STORAGE_KEY) || 'null');
+      } catch (_) {}
+      const attempt = stamp && typeof stamp === 'object' ? NativeChrome._readStoredAttempt() : null;
+      return !!attempt && stamp.userId === attempt.userId &&
+        stamp.attemptId === attempt.attemptId && fresh(stamp.at);
+    },
+
+    _stampWebRenewal(userId, attemptId) {
+      NativeChrome._lastWebRenewal = Date.now();
+      try {
+        localStorage.setItem(NativeChrome._RENEWAL_STORAGE_KEY, JSON.stringify({
+          userId, attemptId, at: NativeChrome._lastWebRenewal,
+        }));
+      } catch (_) { /* this document's memory alone */ }
+    },
     // How many times this document's web session has been restored (#5049).
     // The server ROTATES the session on every restore, deleting the old token
     // before the app has installed the new cookie, so a request that reached
@@ -504,10 +540,7 @@
         return Promise.resolve(false);
       }
       if (NativeChrome._webRecovery) return NativeChrome._webRecovery;
-      if (!force && NativeChrome._lastWebRenewal &&
-          Date.now() - NativeChrome._lastWebRenewal < 24 * 60 * 60 * 1000) {
-        return Promise.resolve(false);
-      }
+      if (!force && NativeChrome._renewedRecently()) return Promise.resolve(false);
       const generation = NativeChrome._realmGeneration;
       let run;
       run = (async () => {
@@ -528,7 +561,7 @@
         NativeChrome._writeStoredAttempt({
           protocol: 2, userId: result.userId, attemptId: result.attemptId, desiredRuntime: 'running',
         });
-        NativeChrome._lastWebRenewal = Date.now();
+        NativeChrome._stampWebRenewal(result.userId, result.attemptId);
         NativeChrome._webSessionEpoch += 1;
         return true;
       })().finally(() => {
