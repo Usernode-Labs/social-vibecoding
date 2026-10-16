@@ -462,14 +462,62 @@ const App = {
       // but leave the cache alone, and let the next read settle it.
       try { window.Offline?.nudge(); } catch (err) { /* ignore */ }
       await App.enterAnonymous();
+      App._adoptLateSession();
       return;
     }
 
-    // No answer and no snapshot: offline on a device that was never signed
-    // in. Probe so the strip appears; the anonymous shell shows its own
-    // offline state and refuses submits (see auth-screens.js).
+    // No answer and no snapshot. Offline on a device that was never signed
+    // in, or a server too slow to answer inside the boot's deadline: the
+    // two look the same from here. Probe so the strip appears; the anonymous
+    // shell shows its own offline state and refuses submits (see
+    // auth-screens.js). Then ask once more, so a slow answer still lets a
+    // signed-in viewer in (_adoptLateSession).
     try { window.Offline?.nudge(); } catch (err) { /* ignore */ }
     await App.enterAnonymous();
+    App._adoptLateSession();
+  },
+
+  // ── A boot read that never said no ──────────────────────────────────
+  //
+  // A boot with no snapshot that gets no answer about the session (the
+  // read timed out, the network failed, or the server answered 5xx) paints
+  // the anonymous shell, because there is nothing else to paint. Until
+  // this, it also STAYED there: nothing asked again, so a signed-in viewer
+  // whose cookie the server still honoured was left on the sign-in screen
+  // until they reloaded.
+  //
+  // A device with no snapshot and a live cookie is not rare. Every browser
+  // context opened on a preview has one (the staging `?token=` exchange
+  // sets the cookie on the document, and the origin's storage is new), and
+  // on a just-started preview the first /api/auth/me can take longer than
+  // BOOT_SESSION_TIMEOUT_MS. The proposal checks met exactly that: the
+  // capture pods' first pages were signed in on the server and showed the
+  // sign-in form or the landing, and every retry passed.
+  //
+  // So the anonymous boot asks once more, through the sign-in completion
+  // every login uses (AuthScreens.finishLogin). Its read has a longer
+  // deadline (12s), and a session that answers enters the signed-in shell
+  // the way a sign-in does: the remembered deep link, the waiting room, a
+  // move to the live build. A 401/403 is a real "no": finishLogin returns
+  // its failure and nothing on screen changes; neither does another
+  // non-answer. Only an answered session grants anything, and the cookie is
+  // still the credential: this asks the server, it trusts nothing local.
+  //
+  // Not for the native shell, whose own recovery (NativeChrome.
+  // restoreWebSession) decides its session, nor the side panel, whose
+  // anonymous boot reloads the top window instead. Nor once the viewer has
+  // started a sign-in of their own: that one finishes the same way.
+  _adoptLateSession() {
+    if (App._lateSessionAsked) return;
+    App._lateSessionAsked = true;
+    // NativeChrome is loaded on the web too; the bridge is what says this is
+    // the app (the test restoreWebSession makes).
+    if (window.usernode?.isNative === true || App.embeddedPanel) return;
+    if (App.user || App._authedBooted || App._signInBegun) return;
+    if (!window.AuthScreens || typeof AuthScreens.finishLogin !== 'function') return;
+    // Not awaited by init: the landing is already up, and nothing waits on
+    // this. finishLogin answers every failure with a value, never a throw.
+    AuthScreens.finishLogin().catch(() => {});
   },
 
   // Does this answer mean the SESSION is over? Only the two statuses the API
