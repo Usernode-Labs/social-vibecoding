@@ -5162,6 +5162,9 @@ const App = {
             return;
           }
           App.navigateToMessages(null, null, agent);
+          // The pane does not open the conversation it is already showing
+          // again, so a `?flow=` link to that one is handed to it here.
+          if (agent.kind === 'agent') window.UsernodeReact?.agentSession?.applyHandoff?.(agent.id);
           return;
         }
         // #2783: `#messages/channel/<handle>` is where a `#name` channel
