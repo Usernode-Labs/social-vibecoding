@@ -28,6 +28,11 @@ const PERSONAS = Object.freeze({
   read_only_admin: { dir: 'admin', server: 'browser_admin' },
   full_admin: { dir: 'full_admin', server: 'browser_full_admin' },
   guest: { dir: 'guest', server: 'browser_guest' },
+  // The invited fixtures' personas (#4437): a dry run has no such fixture
+  // account, so these browsers start signed out unless the author drops
+  // their own storage state for one in --state-dir.
+  invited_member: { dir: 'invited_member', server: 'browser_invited_member' },
+  invited_member_listed: { dir: 'invited_member_listed', server: 'browser_invited_member_listed' },
 });
 // A phone screen's browser presents as this device, as a hosted turn's does
 // (worker/write-shots-mcp-config.js); tests/shots-dry-run.test.js pins the pair.
