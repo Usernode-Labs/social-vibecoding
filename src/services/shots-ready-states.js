@@ -92,6 +92,7 @@ const READY_STATES = Object.freeze([
     ['member', 'read_only_admin', 'full_admin']],
   ['shots-demo-full-admin-allowance-low-v1', 'a weekly building allowance nearly spent (a red credits pill)',
     ['full_admin']],
+  ['shots-demo-member-bot-rings-v1', 'Homeroom bot\'s needs-you rings in your bell', ['member']],
 ].map(([id, name, personas]) => Object.freeze({ id, name, personas: Object.freeze(personas) })));
 
 // The states a declared change can need that a copy holds only when
@@ -137,6 +138,12 @@ const NEEDS = Object.freeze([
     needs: 'a Homeroom bot hand-off that needs a person to decide',
     test: /\bneeds? a (?:person|human|decision)\b|\bwho decides\b/i,
     states: ['shots-demo-member-bot-deciders-v1'],
+  },
+  {
+    // 16 Oct 2026: how the bot's rings read in the bell.
+    needs: 'Homeroom bot\'s rings in the bell',
+    test: /\bhomeroom[_ ]?bot'?s? (?:rings?|notifications?)\b|\bbell\b[^.]{0,80}\bhomeroom[_ ]?bot\b|\bhomeroom[_ ]?bot\b[^.]{0,80}\bbell\b/i,
+    states: ['shots-demo-member-bot-rings-v1'],
   },
   {
     needs: 'checks part-way through',
