@@ -564,7 +564,7 @@ test('maintenance campaigns against the full PostgreSQL schema', { timeout: 2400
     assert.deepEqual(status.counts, { merged: 1, closed: 1, underway: 1, pr_open: 1 });
   });
 
-  await t.test('C15 the change work: GitHub or the model off fails at once; a stop before the push opens nothing; a resumed change opens its PR once', async () => {
+  await t.test('C15 the change work: GitHub or the model off fails at once; a stop before the push opens nothing, and after it takes a PR GitHub already opened; a resumed change opens its PR once', async () => {
     const { campaignServices } = require('../src/workflow/campaign/services.ts');
     const fm = require('../src/services/fleet-maintenance');
     const github = require('../src/services/github');
@@ -585,16 +585,31 @@ test('maintenance campaigns against the full PostgreSQL schema', { timeout: 2400
       llm.isEnabled = () => true;
       fm.runAppChange = async () => { did.push(['ai']); return { files: new Map([['a', 'b']]), summary: 'S' }; };
       fm.pushChange = async () => { did.push(['push']); return 'e'.repeat(40); };
+      let existing = null;
+      fm.findChangePr = async () => { did.push(['find']); return existing; };
       fm.openChangePr = async () => { did.push(['pr']); return { number: 9, url: 'u', title: 'T' }; };
       // Stopped while the AI worked: nothing reaches the repository.
       await asTransition((cl) => cl.query(`UPDATE maintenance_campaigns SET status = 'cancelled' WHERE id = $1`, [c.id]));
       assert.deepEqual(await handler.run(ctx()), { stopped: true });
       assert.deepEqual(did.map((x) => x[0]), ['ai']);
-      // Resumed after its push: no AI, no push, its PR once.
+      // Stopped after its push, its PR's answer lost (GitHub opened it): the
+      // open PR is taken and goes up for a vote, never left without its
+      // proposal (review of #5357).
+      did.length = 0;
+      existing = { number: 41, url: 'u41', title: 'T' };
+      const kept = await handler.run(ctx({ head: 'e'.repeat(40), summary: 'S' }));
+      assert.deepEqual(did.map((x) => x[0]), ['checkpoint', 'find', 'checkpoint']);
+      assert.deepEqual([kept.changed, kept.prNumber], [true, 41]);
+      // Stopped after its push with no PR yet: none is opened.
+      did.length = 0;
+      existing = null;
+      assert.deepEqual(await handler.run(ctx({ head: 'e'.repeat(40), summary: 'S' })), { stopped: true });
+      assert.deepEqual(did.map((x) => x[0]), ['checkpoint', 'find']);
+      // Resumed after its push, running: no AI, no push, its PR once.
       await asTransition((cl) => cl.query(`UPDATE maintenance_campaigns SET status = 'running' WHERE id = $1`, [c.id]));
       did.length = 0;
       const out = await handler.run(ctx({ head: 'e'.repeat(40), summary: 'S' }));
-      assert.deepEqual(did.map((x) => x[0]), ['checkpoint', 'pr', 'checkpoint']);
+      assert.deepEqual(did.map((x) => x[0]), ['checkpoint', 'find', 'pr', 'checkpoint']);
       assert.equal(out.prNumber, 9);
       assert.equal(handler.maxAttempts * 0 + [1, 2, 3, 4, 5, 6, 7].reduce((t, n) => t + handler.backoffMs(n), 0) >= 55 * 60 * 1000, true,
         'GitHub\'s and the model\'s temporary errors are retried for about an hour');

@@ -70,10 +70,13 @@ export function campaignServices({ pool }: CampaignServiceDeps): Record<string, 
         }
         if (!done.pr) {
           // The push's checkpoint just proved the claim, or this one does on
-          // a resumed attempt: no pull request for a change a stop cancelled.
+          // a resumed attempt. A pull request an earlier attempt opened (its
+          // answer lost) is taken whatever happened since: a stop prevents
+          // only a new one, never leaves an open one without its proposal.
           if (resumeFrom) await checkpoint(done);
-          if (await stopped()) return halted;
-          const pr = await fm.openChangePr({ repo, branch: input.branch, campaign: c, summary: done.summary });
+          const found = await fm.findChangePr({ repo, branch: input.branch, campaign: c });
+          if (!found && await stopped()) return halted;
+          const pr = found || await fm.openChangePr({ repo, branch: input.branch, campaign: c, summary: done.summary });
           done = { ...done, pr };
           await checkpoint(done);
         }

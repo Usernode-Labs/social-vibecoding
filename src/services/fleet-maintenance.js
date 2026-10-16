@@ -397,8 +397,8 @@ async function pushChange({ repo, branch, files, message }) {
  */
 async function openChangePr({ repo, branch, campaign, summary }) {
   const shape = (pr) => ({ number: pr.number, url: pr.html_url, title: pr.title || prTitleOf(campaign) });
-  const existing = await github.findOpenPrByBranch(repo.owner, repo.repo, branch);
-  if (existing) return shape(existing);
+  const existing = await findChangePr({ repo, branch, campaign });
+  if (existing) return existing;
   try {
     return shape(await github.createPR(repo.owner, repo.repo, { branch, title: prTitleOf(campaign), body: prBodyOf(campaign, summary) }));
   } catch (err) {
@@ -407,6 +407,15 @@ async function openChangePr({ repo, branch, campaign, summary }) {
     if (!found) throw err;
     return shape(found);
   }
+}
+
+/**
+ * The open pull request GitHub has for the campaign's branch, or null: one an
+ * earlier attempt opened and lost the answer to.
+ */
+async function findChangePr({ repo, branch, campaign }) {
+  const pr = await github.findOpenPrByBranch(repo.owner, repo.repo, branch);
+  return pr ? { number: pr.number, url: pr.html_url, title: pr.title || prTitleOf(campaign) } : null;
 }
 
 const prTitleOf = (campaign) => String(campaign.title).slice(0, 250);
@@ -479,6 +488,7 @@ module.exports = {
   // The campaign machine's change work (src/workflow/campaign/services.ts).
   runAppChange,
   pushChange,
+  findChangePr,
   openChangePr,
   campaignSystemPrompt,
   CAMPAIGN_TOOLS,

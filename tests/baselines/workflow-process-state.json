@@ -96,6 +96,7 @@
     },
     "campaign": {
       "services | uses src/services/fleet-maintenance.js:ensurePlatformUser": "finds or creates the usernode-platform account a campaign's proposals belong to (campaign.change), as runCampaign did at its start; a users row, keeps nothing",
+      "services | uses src/services/fleet-maintenance.js:findChangePr": "the open pull request GitHub has for the campaign's branch (campaign.change), taken before a stop is honoured or a new one is opened, so one an earlier attempt opened is never left without its proposal; a GitHub read, keeps nothing",
       "services | uses src/services/fleet-maintenance.js:openChangePr": "the change's pull request (campaign.change): the open one GitHub has for the campaign's branch, else a new one, cut out of runCampaign's openCampaignProposal; checkpointed by the item, so a retry never opens a second",
       "services | uses src/services/fleet-maintenance.js:parseRepo": "owner and name from an app's repository address (pure), for the change's GitHub calls",
       "services | uses src/services/fleet-maintenance.js:pushChange": "the change as one commit on the campaign's branch for the app, set to main first (campaign.change), cut out of runCampaign's openCampaignProposal; checkpointed by the item once pushed",
@@ -135,6 +136,7 @@
     ],
     "campaign": [
       "services | uses src/services/fleet-maintenance.js:ensurePlatformUser",
+      "services | uses src/services/fleet-maintenance.js:findChangePr",
       "services | uses src/services/fleet-maintenance.js:openChangePr",
       "services | uses src/services/fleet-maintenance.js:parseRepo",
       "services | uses src/services/fleet-maintenance.js:pushChange",
