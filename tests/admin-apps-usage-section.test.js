@@ -81,6 +81,13 @@ test('the payload joins each app to its top contributors and totals the window',
           sessions: 0, proposed: 0, merged: 0, requests: 0, open_requests: 0, users: 0, seconds: '0',
           last_active_at: null,
         },
+        {
+          id: 3, slug: 'social-vibecoding', name: 'The platform', status: 'running', self_hosted: true,
+          view_visibility: 'private', created_at: '2026-08-01T10:00:00Z', last_deploy_at: '2026-10-14T10:00:00Z',
+          creator: 'bruno', members: 40, new_members: 1, contributors: 6, shipped_contributors: 3,
+          sessions: 20, proposed: 10, merged: 8, requests: 2, open_requests: 1, users: 30, seconds: '12000',
+          last_active_at: '2026-10-15T08:00:00Z',
+        },
       ] };
     },
   };
@@ -103,8 +110,16 @@ test('the payload joins each app to its top contributors and totals the window',
   assert.equal(quiet.creator, null);
   assert.equal(quiet.lastActiveAt, null);
   assert.deepEqual(out.totals, {
-    apps: 2, usedApps: 1, builtApps: 1, seconds: 3720, proposed: 3, merged: 2, requests: 5,
-  });
+    apps: 3, usedApps: 2, builtApps: 2, seconds: 15720, proposed: 13, merged: 10, requests: 7,
+    split: {
+      platform: { apps: 1, usedApps: 1, builtApps: 1, seconds: 12000, proposed: 10, merged: 8, requests: 2 },
+      apps: { apps: 2, usedApps: 1, builtApps: 1, seconds: 3720, proposed: 3, merged: 2, requests: 5 },
+    },
+  }, 'the combined figures keep their keys, with the platform / apps split alongside');
+  for (const key of ['apps', 'usedApps', 'builtApps', 'seconds', 'proposed', 'merged', 'requests']) {
+    assert.equal(out.totals.split.platform[key] + out.totals.split.apps[key], out.totals[key],
+      `the two halves add up to the combined ${key}`);
+  }
 });
 
 test('the SQL counts members from the community, contributors from proposals and requests of kind general', () => {
@@ -154,4 +169,25 @@ test('the section searches, sorts and words its figures', () => {
   assert.equal(mod.statusBadge('error').label, 'Failed');
   assert.equal(mod.statusBadge('awaiting_secrets').label, 'Needs secrets');
   assert.equal(mod.statusBadge('creating').label, 'creating', 'a status this build has no words for still reads');
+
+  const figures = (n) => ({
+    apps: n.apps, usedApps: 0, builtApps: 0, seconds: n.seconds,
+    proposed: n.proposed, merged: n.merged, requests: n.requests,
+  });
+  const totals = {
+    ...figures({ apps: 3, seconds: 4320, proposed: 6, merged: 4, requests: 5 }),
+    split: {
+      platform: figures({ apps: 1, seconds: 3600, proposed: 4, merged: 3, requests: 5 }),
+      apps: figures({ apps: 2, seconds: 720, proposed: 2, merged: 1, requests: 0 }),
+    },
+  };
+  const splits = mod.tileSplits(totals);
+  assert.equal(splits.apps, '1 platform · 2 apps');
+  assert.equal(splits.used, '0 platform · 0 apps', 'a zero half still shows, so the tiles stay the same shape');
+  assert.equal(splits.built, '0 platform · 0 apps');
+  assert.equal(splits.time, 'Platform 1h · apps 12m');
+  assert.equal(splits.merged, 'Platform 3 / 4 · apps 1 / 2');
+  assert.equal(splits.requests, 'Platform 5 · apps 0');
+  assert.equal(mod.tileSplits(null), null, 'loading: no split line');
+  assert.equal(mod.tileSplits({ ...totals, split: undefined }), null, 'a payload without the split draws no line');
 });
