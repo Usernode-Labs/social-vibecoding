@@ -313,9 +313,11 @@ const COMMUNITY_APP_CREATED_SQL = `
 // counts on the day its person is let in), and a collaborator invite — by
 // username, or by email once claimed — accepted. A link on an invite-only
 // project writes both, which is why each person is taken once: the FIRST
-// invite they took, across all time, names their one inviter. Without that,
+// invite they took INSIDE THE WINDOW names their one inviter. Without that,
 // a handful of accounts joining each other's communities would pay every
-// one of them.
+// one of them. The window filter sits before the DISTINCT ON: filtering
+// after it threw away every in-window join by a person whose first invite
+// ever was older than the window, so the later inviter got nobody (#4048).
 const INVITES_JOINED_SQL = `
   SELECT f.inviter_id AS user_id, f.invitee_id, f.at, u.username AS invitee_username
     FROM (
@@ -331,10 +333,10 @@ const INVITES_JOINED_SQL = `
            WHERE c.status = 'member' AND c.invited_by IS NOT NULL AND c.accepted_at IS NOT NULL
         ) t
        WHERE t.inviter_id <> t.invitee_id
+         AND t.at >= $1 AND t.at <= $2
        ORDER BY t.invitee_id ASC, t.at ASC, t.inviter_id ASC
     ) f
     LEFT JOIN users u ON u.id = f.invitee_id
-   WHERE f.at >= $1 AND f.at <= $2
    ORDER BY f.inviter_id ASC, f.at ASC, f.invitee_id ASC
    LIMIT $3
 `;

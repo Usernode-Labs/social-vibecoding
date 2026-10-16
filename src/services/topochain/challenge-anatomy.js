@@ -102,7 +102,7 @@ const READS = {
     keyLabel: 'invitee:<user id>',
     text: () => 'One row per person who joined inside the window through an invite link or an accepted '
       + 'invite, credited to whoever made the invite. Each person counts once, for the first invite '
-      + 'they ever took.',
+      + 'they took inside the window.',
   },
   VOTE_CAST: {
     tables: ['pr_votes', 'chat_sessions', 'homeroom_bot_requesters', 'issue_votes', 'issues', 'users', 'apps',
