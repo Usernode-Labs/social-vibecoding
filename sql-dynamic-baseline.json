@@ -3,13 +3,6 @@
   "description": "Runtime-built .query() calls reviewed outside the static PostgreSQL validator.",
   "queries": [
     {
-      "source": "server.js",
-      "kind": "structural-template",
-      "fingerprint": "17cd83bf6b319d7a4eea",
-      "count": 1,
-      "preview": "`SELECT cs.*, a.slug AS app_slug, a.repo_url, a.self_hosted AS app_self_hosted, (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote ="
-    },
-    {
       "source": "src/db/migrate.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
@@ -796,13 +789,6 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "67762e42050bebc6eb09",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
       "fingerprint": "b2f38492b29a6d836fab",
       "count": 1,
       "preview": "`SELECT i.id, i.kind, i.title, i.description, i.payload, i.status, i.github_issue_number, i.created_by, i.created_at, COALESCE((i.payload->>'appliedAt')::timest"
@@ -813,6 +799,13 @@
       "fingerprint": "d4cf0cf4e15e7f7d6ad5",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "e334054feeba350dbb69",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
     },
     {
       "source": "src/routes/workshop-overview.js",
@@ -1156,13 +1149,6 @@
       "fingerprint": "d84356900ebc93c01a1a",
       "count": 1,
       "preview": "dailySql"
-    },
-    {
-      "source": "src/services/merge-queue.js",
-      "kind": "structural-template",
-      "fingerprint": "8beaba6753a1b704d044",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.user_id, cs.source, cs.promoted_at, cs.created_at, cs.requires_explicit_approval, cs.explicit_approval_reason, cs.approval_epoch, cs.integrati"
     },
     {
       "source": "src/services/moderation.js",
@@ -1734,7 +1720,7 @@
     {
       "source": "src/workflow/proposal/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "393844421197a627da44",
+      "fingerprint": "76b1e5af1f8bd1f69d61",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.pr_number, cs.pr_title, cs.branch_name, cs.reviewed_head_sha, cs.imported_pr_head"
     },
@@ -1758,6 +1744,13 @@
       "fingerprint": "9003bfe93e34a954816d",
       "count": 1,
       "preview": "`INSERT INTO app_check_history AS h (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_failed_at, last_seen_at, pass_count, fail_"
+    },
+    {
+      "source": "src/workflow/rules/merge-claim.ts",
+      "kind": "structural-template",
+      "fingerprint": "de7dfef88f84d5e7b6ae",
+      "count": 1,
+      "preview": "`SELECT cs.check_state, cs.checks_commit_sha, cs.unit_suite_fresh_sha, cs.shots_state, cs.shots_detail, a.locked, a.main_check_state, a.main_check_sha, a.main_c"
     },
     {
       "source": "src/workflow/rules/merge-credits.ts",

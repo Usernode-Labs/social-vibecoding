@@ -1263,7 +1263,7 @@ const MAX_CONFLICT_PATHS_NAMED = 10;
 // until the head merges cleanly — so, unlike the two halves above, waiting
 // is not the whole answer. The way out is a head synced with main, and it
 // can come from either side: the merge queue's conflict lane
-// (services/merge-queue.js, rule C) pushes a resolution itself when it can
+// (the merge-queue machine, src/workflow/merge-queue/, rule C) pushes a resolution itself when it can
 // write the head — at once for an approved proposal or the first conflict of
 // this authored head, otherwise once the group approves it — while a
 // fork-hosted head, or one it has already failed to resolve, is the author's

@@ -615,7 +615,7 @@ test('every settled verdict reaches the bot, through the preview machine\'s foll
   assert.match(schema, /ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha TEXT;/);
 });
 
-test('the follow-ups cost an error verdict nothing, and a passing one only the ready check and the merge re-read', async () => {
+test('the follow-ups cost an error verdict nothing, and a passing one only the ready check', async () => {
   const { previewServices } = require('../src/workflow/preview/services.ts');
   const { WORK } = require('../src/workflow/preview/machine.ts');
   const asked = [];
@@ -625,15 +625,14 @@ test('the follow-ups cost an error verdict nothing, and a passing one only the r
   await followUps('error');
   assert.equal(asked.length, 0);
   // B4: passing asks whether the change is ready to try (with what its
-  // before & after shots on that head say), and whether it is still up for
-  // the merge queue.
+  // before & after shots on that head say). The app's merge queue is the
+  // machine's message, not a read here.
   await followUps('passing');
   assert.deepEqual(asked.map((s) => s.replace(/\s+/g, ' ').trim()), [
     'SELECT status, check_state, approval_epoch, source, reviewed_head_sha, imported_pr_head_sha, '
       + 'checks_commit_sha, handoff_head_sha, checks_checked_at, shots_state, shots_run_id, shots_detail, shots_updated_at, '
       + 'pr_title, pr_title_fallback, session_title '
       + 'FROM chat_sessions WHERE id = $1',
-    'SELECT status FROM chat_sessions WHERE id = $1',
   ]);
   asked.length = 0;
   await followUps('failing');

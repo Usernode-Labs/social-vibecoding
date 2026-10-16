@@ -18,6 +18,8 @@ const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
 const { proposal, sessionKey, MACHINE, WORK, CLAIM_STALE_MS } = require('../src/workflow/proposal/machine.ts');
+const { inspect } = require('../src/workflow/kernel/index.ts');
+const { attentionStates } = require('../src/workflow/platform.ts');
 const { mergeQueue, MACHINE: QUEUE, appKey } = require('../src/workflow/merge-queue/machine.ts');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -296,6 +298,11 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     assert.equal(i.state, 'unconfirmed');
     assert.equal((await row(s)).status, 'merging', 'it reads merging');
     assert.equal((await qInst(s.app)).state, 'idle', 'the queue goes on with the others');
+    // Admin → Workflows lists it under "Needs a person" (Q3), with the words.
+    const listed = (await inspect.problems(pool, { attention: attentionStates() })).waiting;
+    const mine = listed.find((w) => w.machine === MACHINE && w.key === sessionKey(s.id));
+    assert.ok(mine, 'an unconfirmed merge needs a person');
+    assert.match(mine.says, /has not answered/);
     const close = await toProposal(s, 'Close', { from: 'merging', reason: 'manual' }, { kind: 'route' });
     const unpromote = await toProposal(s, 'Unpromote', { from: 'merging', userId: s.owner.id }, { kind: 'route' });
     const sync = await toProposal(s, 'SyncRequested', { reason: 'person' }, { kind: 'route' });
@@ -326,6 +333,8 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     assert.equal((await pInst(n)).state, 'in_review');
     assert.equal((await row(n)).status, 'promoted');
     assert.ok((await lines(n)).some((l) => l.includes('GitHub says it did not merge')));
+    const after = (await inspect.problems(pool, { attention: attentionStates() })).waiting;
+    assert.ok(!after.some((w) => w.key === sessionKey(n.id)), 'answered, it no longer needs anybody');
   });
 
   await t.test('M6 the other outcomes: a head move keeps its votes or not; a closed PR leaves the vote; a reopened one is tried again', async () => {

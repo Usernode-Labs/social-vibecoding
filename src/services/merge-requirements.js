@@ -16,14 +16,14 @@
 //
 // ── Why this is a spec plus a stop point, and not a second evaluator ──
 //
-// routes/votes.js's checkAndMerge IS the gate. Re-deriving its conditions here
+// routes/votes.js's evaluateMergeGate IS the gate. Re-deriving its conditions here
 // would mean two implementations of "can this merge", drifting apart, with the
 // describing one eventually lying about the deciding one.
 //
 // It does not need re-deriving. The gate is a fixed, ordered list, and
 // evaluation only ever has to reach the FIRST refusal: everything before it
 // passed, the refusal is where the proposal is now, and everything after it is
-// simply not reached yet. So checkAndMerge records what it actually did, from
+// simply not reached yet. So evaluateMergeGate records what it actually did, from
 // the same call sites that already narrate it into merge_debug_runs, and this
 // module holds the static order and turns the two into a list.
 //
@@ -35,7 +35,7 @@
 // already exports a mergeGate(), and it is only the first of the seven steps
 // below — the vote threshold. Two things called the same would be read as one.
 
-// The gates, in the order checkAndMerge evaluates them. `key` matches the
+// The gates, in the order evaluateMergeGate evaluates them. `key` matches the
 // phase its dstep() already reports.
 //
 // `actor` is the half that makes the list worth showing. Most steps are
@@ -67,7 +67,7 @@ const GATES = [
     applies: (c) => !!c.locked,
   },
   {
-    // Under direct-merge lanes (services/merge-queue.js) this asks one thing:
+    // Under direct-merge lanes (the merge-queue machine, src/workflow/merge-queue/) this asks one thing:
     // does the head merge cleanly with main? Being behind is not a step —
     // a clean head merges as it stands — so the step is DONE for any clean
     // head, however far behind, and the drift is a note on it. A conflict
@@ -143,7 +143,7 @@ function intOrNull(v) {
 const STATES = new Set(['done', 'active', 'waiting', 'blocked', 'pending']);
 
 /**
- * Collects what a single checkAndMerge run actually did.
+ * Collects what a single evaluateMergeGate run actually did.
  *
  * The gate calls pass() as it clears each condition and stop() at the one that
  * refuses, beside the dstep() already there. Nothing here decides anything —
@@ -504,7 +504,7 @@ function explicitStep(session) {
 /**
  * The list before the gate has ever run against this proposal.
  *
- * The recording only happens when checkAndMerge runs, and checkAndMerge runs
+ * The recording only happens when evaluateMergeGate runs, and evaluateMergeGate runs
  * on a vote or on the sweep for proposals ALREADY at threshold. So a proposal
  * below threshold — the case the checklist is most useful for, where the
  * honest answer is "your vote is the only thing missing" — would have shown
@@ -634,7 +634,7 @@ function provisional(session) {
  *
  * A run is a statement about one (reviewed head, approval epoch) pair: the
  * approvals it counted are the epoch's, and the commit it measured, checked
- * and offered GitHub is the head's. checkAndMerge stamps both into the
+ * and offered GitHub is the head's. evaluateMergeGate stamps both into the
  * record's context. When either has moved since, every line of the record is
  * about a proposal that no longer exists — "enough approvals" after the
  * epoch was bumped, "merging now" after the claim was released because the
@@ -700,7 +700,7 @@ function platformFaultWillRetry(s) {
   return require('./staging-recovery').errorWithinAutoRetries(s);
 }
 
-// The record says what checkAndMerge saw when it ran; a platform fault
+// The record says what evaluateMergeGate saw when it ran; a platform fault
 // stored since, or one whose retries have since run out, is the row's
 // news. While the row says the error lane will run the checks again, the
 // step is in progress for nobody; once it no longer does, a step the record
@@ -720,7 +720,7 @@ function withLivePlatformRetry(gates, s) {
     : g));
 }
 
-// A record says what one checkAndMerge run did. The main-health step is the
+// A record says what one evaluateMergeGate run did. The main-health step is the
 // app's state, not that run's: merges paused after the record was written
 // (or the last run never reached that gate and left it 'pending') are still
 // paused for this proposal, and a board that hid that behind a stale record
@@ -735,7 +735,7 @@ function withLiveMainPause(gates, s) {
 }
 
 // #3669: the same class of staleness on the approvals step, from the other
-// direction. A vote cast after a checkAndMerge run neither bumps the approval
+// direction. A vote cast after a evaluateMergeGate run neither bumps the approval
 // epoch nor moves the head, so the run's record ("Votes waiting, 0 of 1")
 // stays current by every test recordIsSuperseded knows — and keeps being
 // served until the background run re-stamps and another refresh reads it.

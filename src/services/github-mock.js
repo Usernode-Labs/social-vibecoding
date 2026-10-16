@@ -24,7 +24,7 @@
 
 const log = require('./logger');
 
-// Reuse the real head-moved sentinel so checkAndMerge's `err.headMoved`
+// Reuse the real head-moved sentinel so attemptMerge's `err.headMoved`
 // branch treats a mock refusal identically to a real GitHub 409. Fall back
 // to a local class if github.js can't be loaded (keeps this module usable in
 // isolation / tests that stub github).
@@ -172,7 +172,7 @@ async function listChangedFiles(/* owner, repo, basehead */) {
 // Exact-sha merge, mirroring the real mergePR (Slice 4): when `sha` is pinned
 // and no longer matches the current head (a reviewer bumped it since the
 // vote), refuse with a HeadMovedError — the same sentinel a real GitHub 409
-// raises — so checkAndMerge's head-moved branch fires. Otherwise "merge".
+// raises — so attemptMerge's head-moved branch fires. Otherwise "merge".
 async function mergePR(owner, repo, prNumber, sha = null) {
   const head = currentHead(prNumber);
   if (sha && sha !== head) {

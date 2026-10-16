@@ -431,13 +431,15 @@ test('build and scout keep one owner through their complete tail', () => {
     /if \(!durableTailComplete\) \{[\s\S]{0,200}retaining durable turn for recovery/,
     'a thrown tool-side tail retains its exact durable owner');
 
-  // The sync path deliberately does NOT hold: it has no user-visible tail,
-  // and resumeDetachedTurnInner already treats recovered sync turns as
-  // no-ops.
+  // The sync is the proposal machine's work (branch.sync): its turn runs
+  // through durable-turn.runTurn, which holds the record (what dispatch is
+  // handed) so a restart follows the turn the worker still runs, and
+  // releases it (worker.finishTurn) once the turn's outcome is recorded.
   const SYNC_SRC = fs.readFileSync(
     path.join(__dirname, '../src/services/sync-main.js'), 'utf8'
   );
-  assert.ok(!/holdTurnRecord/.test(SYNC_SRC), 'sync turns keep the old contract');
+  assert.match(SYNC_SRC, /deps\.durableTurn\.runTurn\(steps, 'sync',/, 'the sync turn is a durable turn');
+  assert.match(SYNC_SRC, /\.\.\.\(extra\.holdTurnRecord \? \{ holdTurnRecord: true \} : \{\}\)/, 'held only as durable-turn asks');
 });
 
 test('every non-idempotent tail step stamps a milestone', () => {

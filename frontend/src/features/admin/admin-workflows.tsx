@@ -38,6 +38,7 @@ type Overview = {
     flagged: Instance[];
     overdueDeadlines: Instance[];
     work: (Work & { machine: string; key: string })[];
+    waiting?: (Instance & { says: string | null })[];
   };
 };
 type Ref = { machine: string; key: string };
@@ -69,7 +70,8 @@ function InstanceLink({ r, onOpen }: { r: Ref; onOpen: (r: Ref) => void }) {
 
 function Problems({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) => void }) {
   const p = overview.problems;
-  const none = !p.flagged.length && !p.overdueDeadlines.length && !p.work.length;
+  const waiting = p.waiting || [];
+  const none = !p.flagged.length && !p.overdueDeadlines.length && !p.work.length && !waiting.length;
   return (
     <div id="admin-wf-problems" className={`${AdminUI.card} p-4 mb-4`}>
       <div className={AdminUI.cardHeader}>
@@ -102,6 +104,13 @@ function Problems({ overview, onOpen }: { overview: Overview; onOpen: (r: Ref) =
             <code className="text-xs">{`${w.kind} ${w.workKey}`}</code>
             <InstanceLink r={w} onOpen={onOpen} />
             <span className={AdminUI.muted}>{w.lastError?.message || ''}</span>
+          </li>
+        ))}
+        {waiting.map((i) => (
+          <li key={`a:${i.machine}:${i.key}`} data-wf-problem="waiting" className="flex flex-wrap items-center gap-2">
+            <span className={AdminUI.badge.warn}>{i.state}</span>
+            <InstanceLink r={i} onOpen={onOpen} />
+            <span className={AdminUI.muted}>{i.says || ''}</span>
           </li>
         ))}
       </ul>

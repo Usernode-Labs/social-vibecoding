@@ -112,7 +112,7 @@ async function patOctokit(pat) {
 // ceiling bounds worst-case work for a repo with thousands of issues.
 //
 // Freshness on the "Open Issues" panel doesn't rely on this TTL: when a PR
-// merges through the platform (routes/votes.js checkAndMerge) the closed
+// merges through the platform (the merge-followups machine) the closed
 // issues are known from session.linked_issues, so the merge path busts this
 // entry via invalidateIssuesCache() and broadcasts a refresh; when an issue
 // is created through the platform, noteIssueCreated records it in the
@@ -2801,8 +2801,8 @@ function clipIssueComments(comments, { max = ISSUE_COMMENTS_KEEP, bodyMax = ISSU
 }
 
 // Expire the cached open-issues list for a repo so the next fetchPublicIssues
-// call re-reads from GitHub. Called from the merge path (routes/votes.js
-// checkAndMerge) when a PR that closed one or more issues lands, so the
+// call re-reads from GitHub. Called from the merge path (the
+// merge-followups machine) when a PR that closed one or more issues lands, so the
 // "Open Issues" panel reflects the change on the next refresh instead of
 // waiting out ISSUES_CACHE_TTL_MS. Case-insensitive match on owner/repo
 // because GitHub treats those as case-insensitive while the cache key

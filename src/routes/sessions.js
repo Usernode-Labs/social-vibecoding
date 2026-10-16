@@ -5921,7 +5921,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // instead of restarting it on every 3s poll.
     const estimate = workerProgress.get(sessionId)?.estimate || null;
 
-    // #239: whether the auto-conflict-resolver currently has a resolve
+    // #239: whether the merge queue's conflict lane currently has a resolve
     // in flight for this session. The client's "resolving merge
     // conflicts" banner used to poll this as its reload-recovery and
     // missed-WS-event safety net; that banner was retired in #962, so
@@ -6563,7 +6563,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 }
 
 // Thin alias so existing in-file callers keep working unchanged.
-// New callers (conflict-resolver, etc.) should `require('../services/limits')`
+// New callers should `require('../services/limits')`
 // directly and call `limits.checkBudget(pool, userId)`.
 async function checkBudget(pool, userId) {
   return limits.checkBudget(pool, userId);
@@ -11189,7 +11189,7 @@ async function publishStagingOutcome({
 async function retireVotesForNewCommit({ pool, session, sessionId = session.id, commitHash }) {
   // #788: the new commit may have added or removed a name in dapp.json's
   // `admins` block. Best-effort (swallows GitHub failures) and re-verified
-  // authoritatively in checkAndMerge.
+  // authoritatively in evaluateMergeGate.
   await require('../services/app-admins').refreshExplicitApproval(pool, session, session);
   const { sendSystemMessage, pushVoteUpdate } = require('../services/ws');
   return require('../services/vote-revision').retireAndRecheck(

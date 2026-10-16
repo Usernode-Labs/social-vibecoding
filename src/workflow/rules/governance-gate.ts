@@ -573,7 +573,7 @@ export interface GateOpts {
 // compares the yes votes with it (the requirements ledger, the ready card's
 // "how many more") sees nothing missing.
 //
-// It waives the VOTE and nothing else. Every gate checkAndMerge and the
+// It waives the VOTE and nothing else. Every gate evaluateMergeGate and the
 // merge queue apply after the approvals step (the checks, the before &
 // after shots, a locked app's admin yes, main's health, a conflict) still
 // applies to it, and so does the protected-settings rule: a first version

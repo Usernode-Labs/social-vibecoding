@@ -53,10 +53,13 @@ test('the problems panel lists each kind of problem, and says when nothing is st
         flagged: [{ machine: 'governance-proposal', key: 'issue:4', flag: 'faulted', flagDetail: { message: 'boom' }, heldEvents: 2 }],
         overdueDeadlines: [{ machine: 'governance-proposal', key: 'issue:5', deadlineAt: '2026-10-01T00:00:00Z' }],
         work: [{ id: 'w', machine: 'governance-proposal', key: 'issue:6', kind: 'github.closeIssue', workKey: 'target', status: 'settled', lastError: { message: '503' } }],
+        waiting: [{ machine: 'proposal', key: 'session:7', state: 'unconfirmed', says: 'GitHub was asked to merge it and has not answered' }],
       },
     },
   });
-  for (const kind of ['flagged', 'overdue', 'work']) assert.match(html, new RegExp(`data-wf-problem="${kind}"`));
+  for (const kind of ['flagged', 'overdue', 'work', 'waiting']) assert.match(html, new RegExp(`data-wf-problem="${kind}"`));
+  assert.match(html, /proposal \/ session:7/);
+  assert.match(html, /has not answered/);
   assert.match(html, /governance-proposal \/ issue:4/);
   assert.match(html, /boom · 2 held/);
   assert.match(html, /out of retries/);

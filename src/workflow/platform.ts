@@ -26,7 +26,7 @@ import { MACHINE as PREVIEW, preview, sessionKey as previewKey } from './preview
 import { PREPARE_LEASE_MS, previewServices } from './preview/services.ts';
 import { LIVE as SHOTS_LIVE, MACHINE as SHOTS, sessionKey as shotsKey, shots } from './shots/machine.ts';
 import { shotsServices } from './shots/services.ts';
-import { MACHINE as PROPOSAL, proposal, sessionKey as proposalKey } from './proposal/machine.ts';
+import { ATTENTION as PROPOSAL_ATTENTION, MACHINE as PROPOSAL, proposal, sessionKey as proposalKey } from './proposal/machine.ts';
 import { proposalServices } from './proposal/services.ts';
 import { MACHINE as QUEUE, appKey as queueKey, mergeQueue } from './merge-queue/machine.ts';
 
@@ -982,6 +982,15 @@ const ADMIN_EVENTS = new Map<string, ReadonlySet<string>>([
   [DELIVERY, new Set(['EndDeploy'])],
   [PREVIEW, new Set(['AdminRetry', 'AdminRetire', 'AdminEnd'])],
 ]);
+
+// The states a machine names as waiting on something outside (its
+// `attention`), for Admin → Workflows' "Needs a person". Read from the
+// machines' own declarations, so it answers with the runtime off too.
+const ATTENTION = new Map<string, Readonly<Record<string, string>>>([[PROPOSAL, PROPOSAL_ATTENTION]]);
+export function attentionStates(): { machine: string; state: string; says: string }[] {
+  return [...ATTENTION].flatMap(([machineName, states]) =>
+    Object.entries(states).map(([state, says]) => ({ machine: machineName, state, says })));
+}
 
 export function adminEvents(): Record<string, string[]> {
   return Object.fromEntries([...ADMIN_EVENTS].map(([m, types]) => [m, [...types]]));

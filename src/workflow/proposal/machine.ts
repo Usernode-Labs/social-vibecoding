@@ -296,7 +296,7 @@ const EVENTS = {
   Close: (p: any) => ({ ...session(p), from: from(p), reason: word(p?.reason, 'reason'),
     userId: optInt(p?.userId, 'userId'), username: text(p?.username, 100), purgeCc: !!p?.purgeCc }),
   Reopen: (p: any) => ({ ...session(p), from: from(p), userId: int(p?.userId, 'userId'), ...deadline(p) }),
-  // The merge (routes/votes.js checkAndMerge, step 6's) asks for the
+  // An older release's merge (its routes/votes.js checkAndMerge) asks for the
   // proposal at the head and epoch it gated on; the vote gate is read again
   // here unless an admin forces it.
   MergeClaim: (p: any) => {
@@ -1258,6 +1258,12 @@ function transitions(deps: Deps) {
 
 const ROUTE_OR_SYSTEM: ReadonlySet<string> = new Set(['route', 'system']);
 
+// What waits on GitHub alone, listed under Admin → Workflows' "Needs a
+// person" (Q3: there is no override; a person can look on GitHub).
+export const ATTENTION: Readonly<Record<string, string>> = Object.freeze({
+  unconfirmed: 'GitHub was asked to merge it and has not answered; Homeroom keeps asking',
+});
+
 export function proposal(deps: Deps): Machine<PState, Facts> {
   const routeOrSystem = (e: Event<any>): Check => (ROUTE_OR_SYSTEM.has(e.source.kind) ? ok() : reject('not_a_producer'));
   const person = (e: Event<any>): Check => (e.source.kind === 'route' || e.source.kind === 'system' ? ok() : reject('not_a_producer'));
@@ -1275,6 +1281,7 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
     events: EVENTS,
     create: CREATE,
     terminal: ['merged'],
+    attention: { ...ATTENTION },
     decode: (row) => ({ name: row.state, data: row.data } as PState),
     facts: (tx, state, event, ctx) => {
       const id = state.name === NONE ? Number((event.payload as any)?.sessionId) : (state.data as Data).sessionId;

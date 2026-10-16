@@ -66,7 +66,7 @@ function prLabel(session) {
 // no dev chat (nobody in the app owns its session), so those rows render
 // nowhere and every minute of a multi-minute build looks like nothing
 // happening. The thread an imported proposal DOES have is the group
-// discussion keyed ('session', id) — the same channel checkAndMerge and the
+// discussion keyed ('session', id) — the same channel the merge's lines and the
 // head-change note use. Best-effort by construction: narration must never
 // affect the build's outcome.
 async function postProposalNote(pool, session, text, metadata) {
@@ -227,7 +227,7 @@ const CARRIABLE_CHECK_STATES = new Set(['passing', 'skipped']);
 //   'await'      — (default; the poller) run the rebuild here and wait for
 //                  it, so the sweep's per-session cooldown bounds concurrency.
 //   'background' — kick the rebuild and return.
-//   'defer'      — leave the rebuild to the caller's checkAndMerge, whose
+//   'defer'      — leave the rebuild to the caller's merge gate, whose
 //                  checks gate rebuilds exactly the pinned head when the
 //                  verdict's commit does not match it. Only honoured while
 //                  the approvals survive: a run that cleared them stops at
@@ -482,9 +482,9 @@ async function reconcileImportedHead({
 // too — it renders no banner and the merge-candidate ordering already reads
 // it as clean, so there is no stale claim to correct.
 //
-// 'resolving' is deliberately absent: the conflict-resolver owns that state
-// for as long as its attempt is in flight and transitions out of it itself,
-// and overwriting it from here would race the resolver rather than help it.
+// 'resolving' is deliberately absent: the proposal machine's sync owns that
+// state for as long as it is in flight and moves out of it itself, and
+// overwriting it from here would race the sync rather than help it.
 const STRANDED_CONFLICT_STATES = new Set(['conflict', 'failed']);
 
 // #1365 — the missing half of refreshDriftState's "the next sweep re-checks".

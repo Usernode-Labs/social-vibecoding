@@ -14,7 +14,7 @@
 // sync with main was the whole fix.
 //
 // The merge queue does not bring a clean proposal up to date, on purpose
-// (services/merge-queue.js): a proposal that merges cleanly merges as it
+// (the merge-queue machine, src/workflow/merge-queue/): a proposal that merges cleanly merges as it
 // stands, judged on its own head. That holds while there is a verdict to
 // judge it on. A preview that never started gives none, and the proposal
 // waits until somebody notices. So here, and only here, the platform runs

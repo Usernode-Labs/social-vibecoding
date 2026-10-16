@@ -20,7 +20,7 @@ import type { Queryable } from './db.ts';
 // `IS DISTINCT FROM` keeps a NULL giver (deleted pledger) and a NULL awardee
 // (deleted PR author) on the award path. Self-voiding only runs when the PR
 // has an author. Returns { awarded, voided } id arrays. Extracted from
-// checkAndMerge so the self-bounty guard is unit-testable without driving the
+// the merge path so the self-bounty guard is unit-testable without driving the
 // whole merge pipeline.
 export async function resolveIssueBounty(
   pool: Queryable,

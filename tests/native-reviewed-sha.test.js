@@ -603,7 +603,7 @@ test('a silent caller posts nothing when the move cleared no votes, kept them, o
 
 test('the merge\'s head-moved 409 announces the cleared votes itself, so the reconciler does not', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/votes.js'), 'utf8');
-  assert.match(src, /nativeRefresh = await reconcileNativeReviewedHead\(\{\s*config, pool, session, fresh: true, notify: false,\s*announceClearedVotes: false,\s*\}\)/);
+  assert.match(src, /const refresh = await reconcileNativeReviewedHead\(\{\s*config, pool, session, fresh: true, notify: false,\s*announceClearedVotes: false,\s*\}\)/);
   assert.match(src, /Earlier-revision votes were cleared and the new commit is being checked/);
 });
 

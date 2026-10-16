@@ -14,7 +14,7 @@
 // nobody presses on the Homeroom bot's. They waited until somebody noticed.
 //
 // The merge queue does not bring a clean proposal up to date, on purpose
-// (services/merge-queue.js): a proposal is judged on its own head, and a
+// (the merge-queue machine, src/workflow/merge-queue/): a proposal is judged on its own head, and a
 // sync plus a full re-run per open proposal per merge is the herd #2100
 // removed. services/boot-failure-sync.js is the first exception, for a
 // preview that will not start because main moved. This is the second, and
@@ -379,7 +379,7 @@ async function syncOne({ config, pool, candidate, wait = true }, deps = defaultD
     });
     if (out.status === 'rejected') return { synced: false, why: out.reason === 'already_tried' ? 'already_tried' : (out.reason || 'claimed') };
     if (out.status !== 'accepted' && out.status !== 'replayed') return { synced: false, why: 'threw' };
-    if (!wait) return { synced: false, requested: true, why: 'requested' };
+    if (!wait) return { synced: false, requested: true, why: null };
     const done = out.lastSync;
     if (!done) return { synced: false, why: 'threw' };
     const pushed = done.outcome === 'clean' || done.outcome === 'resolved';
@@ -525,6 +525,8 @@ const DECLINED_WORDS = {
   not_failing: 'its checks are not failing',
   busy: 'a turn was running on it',
   integrating: 'it was being merged',
+  merging: 'it was being merged',
+  in_progress: 'another sync was already under way',
   unmeasured: 'how far behind main it is could not be measured',
   level: 'it is already up to date with main',
   conflict: 'main does not merge into it cleanly',

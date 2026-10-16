@@ -13,7 +13,7 @@
 // So the check moves to where the whole tree exists: after each merge, the
 // repo's own unit suite runs once more on the merge commit. Green is the
 // common case and costs one container that nobody waits on. Red PAUSES the
-// app's merges — checkAndMerge's main_healthy gate refuses every proposal
+// app's merges — the merge gate's main_healthy step refuses every proposal
 // until a fix lands (the next merge that comes back green) or an admin
 // resumes them (POST /api/apps/:slug/main-check/resume, an explicit "I know").
 // Nothing is rolled back and nothing is blamed: the culprit is whatever

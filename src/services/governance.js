@@ -4,8 +4,8 @@
 // layer between the two dapp.json-declared settings
 // (apps.approver_policy / apps.approvals_required, reconciled by
 // services/app-manifest.js reconcileAppGovernance) and every
-// merge-gate consumer (checkAndMerge, the /promoted + /me/proposals
-// serializers, the stale-PR sweeper, the conflict-resolver drain, and
+// merge-gate consumer (evaluateMergeGate, the /promoted + /me/proposals
+// serializers, the proposal machine's review check, the merge queue, and
 // the governance-issue apply paths in routes/issues.js).
 //
 // Three regimes, combined from the two settings:
@@ -29,7 +29,7 @@
 //      all votes when 'anyone'.
 //
 // The checks gate, behind-main gate, and locked-app admin-yes gate are
-// mode-independent and enforced by checkAndMerge as before. Vote WRITE
+// mode-independent and enforced by evaluateMergeGate as before. Vote WRITE
 // eligibility (app-access collab guards) is deliberately unchanged —
 // approver-ness only changes which votes COUNT.
 //

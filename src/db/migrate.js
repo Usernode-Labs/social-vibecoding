@@ -11678,9 +11678,9 @@ async function seedStagingExternalAgentProposal(pool, config) {
 // #390: fixtures for the boot-time auto-merge reconcile sweep. Auto-merge
 // used to fire only in the background of a live vote, so a proposal that
 // crossed the vote-majority threshold while the platform was down stayed
-// stuck "up for voting" forever. The boot sweep (reconcileEligibleMerges in
-// server.js) now re-evaluates every open proposal at startup and merges the
-// eligible ones. These fixtures make that scenario visible in the Dev vote
+// stuck "up for voting" forever. Every release's boot now asks each app's
+// merge queue (the merge-queue workflow machine, platform.adoptMergeQueues),
+// which re-reads every open proposal and merges the eligible ones. These fixtures make that scenario visible in the Dev vote
 // panel without live voting:
 //
 //   1. An OVER-THRESHOLD promoted proposal (more yes votes than the active-
@@ -11689,14 +11689,16 @@ async function seedStagingExternalAgentProposal(pool, config) {
 //   2. A BELOW-THRESHOLD promoted proposal (no yes votes) — must be left
 //      untouched by the sweep (the #380 "no pre-emptive resolution" bar).
 //   3. A row stuck in 'merging' with no real GitHub merge (crash mid-merge).
-//      recoverStuckMerges demotes it back to 'promoted' on boot, then the
-//      reconcile sweep re-evaluates it — demonstrating the chained ordering.
+//      The proposal machine adopts it as a claim an older release made and,
+//      once the claim is old, asks GitHub what happened: not merged puts it
+//      back up for its vote. A staging preview has no GitHub credentials, so
+//      there it stays merging and the ask is retried (as the old boot sweep
+//      also left it); the row shows the state a person would see meanwhile.
 //
 // All three use fake high pr_numbers and obviously-fake "[staging fixture]"
 // titles, keyed off their unique branch names for idempotency. The 'merging'
-// row is reset to 'merging' on each seed run (it runs during migrate, before
-// recoverStuckMerges) so the ordering is re-demonstrated on every boot. A
-// strict no-op outside staging.
+// row is reset to 'merging' on each seed run while the machine does not hold
+// it yet. A strict no-op outside staging.
 async function seedStagingRestartEligibleMerge(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
@@ -11730,9 +11732,9 @@ async function seedStagingRestartEligibleMerge(pool, config) {
       [appId, branch]
     );
     if (have.length) {
-      // Keep the 'merging' fixture pinned to 'merging' on each boot so the
-      // recoverStuckMerges → reconcile ordering is re-demonstrated; leave the
-      // promoted fixtures as-is (a real merge during testing should stick).
+      // Keep the 'merging' fixture pinned to 'merging' on each boot while the
+      // proposal machine does not hold it; leave the promoted fixtures as-is
+      // (a real merge during testing should stick).
       if (status === 'merging') {
         await pool.query(
           `UPDATE chat_sessions SET status = 'merging'
@@ -11781,8 +11783,8 @@ async function seedStagingRestartEligibleMerge(pool, config) {
     'promoted'
   );
 
-  // 3. Crash-mid-merge row: stuck in 'merging' with a fake PR. recoverStuckMerges
-  //    demotes it to 'promoted' on boot; the reconcile sweep then re-evaluates it.
+  // 3. Crash-mid-merge row: stuck in 'merging' with a fake PR, adopted by the
+  //    proposal machine as an older release's claim (see above).
   const mergingId = await ensureSession(
     'staging-fixture/restart-stuck-merging', 9212,
     '[staging fixture] Stuck mid-merge across a restart — should recover',

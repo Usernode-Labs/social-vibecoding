@@ -197,10 +197,11 @@ test('the recovered-turn success tail picks its wrap-up pill kind from the outco
 
 // #896: a sync turn is system work with no Mayor reply on the live path
 // either — recovering one must not manufacture a chat message. What it does
-// owe is the follow-through of the merge-queue pass that dispatched it and
-// died with the previous process: take back the 'integrating' that pass
-// recorded, and put the proposal back in front of the queue so the merge
-// attempt happens. Without that, the card said "bringing up to date with
+// owe is the follow-through of the older release's merge-queue pass that
+// dispatched it and died with that process: take back the 'integrating'
+// that pass recorded, and ask the app's merge queue (the workflow machine)
+// to look again so the merge attempt happens. (A sync the proposal machine
+// ran is followed by its own work item and never reaches this branch.) Without that, the card said "bringing up to date with
 // main" until an unrelated trigger came by, and a proposal whose verdict
 // carried onto the merged head had no trigger left at all.
 test('a recovered sync turn gets no Mayor wrap-up, and hands back to the integration queue', () => {
@@ -208,13 +209,13 @@ test('a recovered sync turn gets no Mayor wrap-up, and hands back to the integra
     'sync mode is branched explicitly, not lumped in with build');
   const start = SERVER_SRC.indexOf("recoveryActiveTurn.mode === 'sync'");
   const branch = SERVER_SRC.slice(start, SERVER_SRC.indexOf('} else {', start));
-  assert.match(branch, /Recovered sync turn — handing back to the integration queue/,
+  assert.match(branch, /Recovered an older release\\'s sync turn; asking the merge queue to look again/,
     'the sync branch is logged rather than surfaced in chat');
   assert.doesNotMatch(branch, /wrapUpOutcome\s*=/, 'and sets no wrap-up outcome');
   assert.match(branch, /setBlockReasons\(pool, sessionId, \[\]\)/,
     "the dead pass's 'integrating' is taken back");
-  assert.match(branch, /checkAndResolveConflicts\(config, \{ app_id: session\.app_id \}\)/,
-    'and the app is enqueued so the merge attempt follows the sync');
+  assert.match(branch, /wantMerge\(\{ appId: session\.app_id, sessionId, reason: 'recovered-sync' \}\)/,
+    'and the app\'s merge queue is asked so the merge attempt follows the sync');
   assert.match(SERVER_SRC, /if \(wrapUpOutcome\) \{/,
     'the wrap-up only runs for a branch that set an outcome');
 });

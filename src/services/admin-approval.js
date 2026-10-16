@@ -2,7 +2,7 @@
 // approve before any group-voted change applies). The lock itself is a
 // single `apps.locked` boolean toggled by admins via POST /api/apps/:slug/lock
 // (see routes/apps.js); these helpers are consumed by the merge path
-// (checkAndMerge in routes/votes.js). The governance machine reads the same
+// (the merge gate, evaluateMergeGate in routes/votes.js). The governance machine reads the same
 // rule for a governance proposal from its own facts
 // (src/workflow/governance-proposal/facts.ts).
 //

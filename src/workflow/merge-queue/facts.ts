@@ -2,8 +2,8 @@
 // what its two lanes need to know about it, read in the queue's transaction.
 // Nothing here is locked: the queue only asks, and the proposal machine
 // decides under its own lock whether the proposal may be measured, claimed
-// or synced, and answers. (The rules are the ones services/merge-queue.js
-// kept, #2038: workflow-foundation's design-merge.md.)
+// or synced, and answers. (The rules are the ones the old in-process
+// queue, services/merge-queue.js, kept, #2038: workflow-foundation's design-merge.md.)
 //
 //   approved   the vote gate as it stands (rules/pr-gate.ts)
 //   effort     what the candidate still costs: a measured conflict, then a

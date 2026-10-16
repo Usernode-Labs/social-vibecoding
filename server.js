@@ -1576,7 +1576,7 @@ async function becomeLeader() {
     // live run's and are left alone.
     .then(() => mainWatch.resumeInterrupted(config))
     .catch((err) => {
-      log.warn('server', 'Stuck-merge recovery / eligible-merge reconcile failed', {
+      log.warn('server', 'Boot merge observation / stuck-check reconcile failed', {
         err: err.message,
       });
     });

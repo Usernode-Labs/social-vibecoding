@@ -9565,7 +9565,7 @@ const DevChat = {
   // _syncState is the server-derived sync indicator (NOT a per-tab
   // flag): null when idle, { sessionId, phase, since } while a sync
   // runs anywhere (this tab, another tab, the resume auto-trigger or
-  // the conflict-resolver), and { sessionId, terminal, ok, message }
+  // the merge queue's conflict lane), and { sessionId, terminal, ok, message }
   // once it finishes. Fed by WS sync_status events, openSession's
   // status check, the poll fallback, and optimistically by the click.
   _syncState: null,
@@ -10041,7 +10041,7 @@ const DevChat = {
 
   // Called by App.handleSessionUpdate when an action='sync_status'
   // event arrives (from this tab's click, another tab, the resume
-  // auto-trigger or the conflict-resolver). No-op when the event is
+  // auto-trigger or the merge queue's conflict lane). No-op when the event is
   // for a session that isn't open — list rows are out of scope (#252).
   applySyncStatusUpdate(data) {
     const sessionId = Number(data.sessionId);

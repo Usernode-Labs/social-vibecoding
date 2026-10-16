@@ -396,6 +396,8 @@ test('the proposal machine\'s close retires the preview for good, whether or not
   const start = src.indexOf('function close(s: Live');
   assert.notEqual(start, -1, 'the machine\'s close');
   const close = src.slice(start, src.indexOf('\n}\n', start));
-  assert.match(close, /messages: \[toPreview\(d, 'RetireRequested', \{ reason: 'archived', terminal: true \}\)\]/);
+  // (`told`: the app's merge queue, when the close ends an attempt or a
+  // sync it was waiting on.)
+  assert.match(close, /messages: \[toPreview\(d, 'RetireRequested', \{ reason: 'archived', terminal: true \}\), \.\.\.told\]/);
   assert.doesNotMatch(close, /staging_(container_id|runtime_name|url)/, 'the close reads no staging column to decide it');
 });

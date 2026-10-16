@@ -32,7 +32,9 @@ function adminWorkflowRoutes(config) {
   router.get('/api/admin/workflow', async (req, res) => {
     try {
       const { inspect } = kernel();
-      const [problems, counts] = await Promise.all([inspect.problems(pool), inspect.stateCounts(pool)]);
+      const [problems, counts] = await Promise.all([
+        inspect.problems(pool, { attention: platform().attentionStates() }), inspect.stateCounts(pool),
+      ]);
       res.json({ running: platform().workflowRunning(), actions: platform().adminEvents(), problems, counts });
     } catch (err) { fail(res, err, 'Workflow overview'); }
   });

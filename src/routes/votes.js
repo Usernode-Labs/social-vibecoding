@@ -502,7 +502,7 @@ function stagingMockProposals(viewer) {
     // so the conflicting-file list renders at a realistic length. This is a
     // PREDICTION, which is why it sets `mergeability` and NOT
     // merge_conflict_state — nothing has attempted a merge, so the
-    // conflict-resolver must not see this row as one it can drain.
+    // merge queue must not read this row as a conflict to resolve.
     {
       ...mk(9000034, 900134,
         '[Mock] Freshness test: conflicts with main in seven files',
@@ -2312,8 +2312,9 @@ async function recordVote({
 // joins any fetch already in flight, and it relies on "every interactive vote
 // performs a fresh read". Running that read here, before it, keeps the
 // guarantee; it just no longer sits between the click and the answer. A
-// crash in between loses only the ask: the proposal's hourly review check
-// asks again for any proposal whose gate is met.
+// release drains it (the in-flight registry); a crash in between loses only
+// the ask, and the proposal's review check asks again within the hour for
+// any proposal whose gate is met.
 //
 // A read that finds an authored push bumps the epoch, retiring the vote just
 // recorded along with every other vote on the old code, posts the "please
@@ -5264,9 +5265,8 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
   // sub-threshold vote and would bury the interesting attempts. A run opens
   // only once a merge actually has a shot (majority reached, or a
   // force-merge), so the /debug list reads as real merge attempts — the
-  // ones that either merge or get blocked. When the conflict-resolver
-  // re-enters us (autoResolve:false) it passes its own run id so the retry
-  // merge nests under the resolution run instead of spawning a duplicate.
+  // ones that either merge or get blocked. A caller that already has a run
+  // passes its id (debugRunId) so these steps nest under it.
   const md = require('../services/merge-debug');
   let debugRunId = options.debugRunId || null;
   const ownDebugRun = !debugRunId;
@@ -5454,7 +5454,7 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
     // the message was a promise nobody was keeping, and the proposal sat
     // drifting with no actor at all. That was #2038's F2.
     //
-    // Under direct-merge lanes (services/merge-queue.js) the gate asks one
+    // Under direct-merge lanes (the merge-queue machine, src/workflow/merge-queue/) the gate asks one
     // question: does this head merge cleanly with main RIGHT NOW? Clean
     // merges as it stands, however far behind. A conflict is refused and
     // handed to the conflict lane, whose resolution pushes a new head that
@@ -5487,7 +5487,7 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
       const n = (measured.conflictPaths || []).length;
       const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
       // Who resolves it, in the words the card uses: the conflict lane's
-      // verdict on this head, read off the row (services/merge-queue.js
+      // verdict on this head, read off the row (the merge-queue machine
       // writes it; services/merge-requirements.js reads it). The approvals
       // gate has passed, so an 'awaiting_approval' left from before the
       // vote is stale here and is not repeated.

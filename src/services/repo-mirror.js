@@ -9,7 +9,7 @@
 // actually asks:
 //
 //   - `mergeable` is computed lazily and returns `null` while it thinks, so
-//     services/conflict-resolver.js polls it twice — up to 6 reads over 10s
+//     the conflict resolver (since replaced by the merge-queue machine) polled it twice — up to 6 reads over 10s
 //     to decide whether a sync is needed, then up to 8 more over 17.5s (plus
 //     a 2s settling delay) before it dares call pulls.merge. Three env vars
 //     tune that, and a 405 recovery path exists because the window can still
@@ -122,8 +122,8 @@ function text(buf) {
 
 // One in-flight ensure per repository. Several proposals on the same app are
 // measured together, and without this each would start its own fetch of the
-// same refs. Process-local, matching the single-flight registries in
-// services/conflict-resolver.js and services/proposal-freshness.js.
+// same refs. Process-local, matching the single-flight registry in
+// services/proposal-freshness.js.
 const _inFlight = new Map();
 
 async function ensureMirrorInner(owner, repo, { refs = [] } = {}) {

@@ -260,7 +260,9 @@ event.
 
 - **Problems first:**
   - faulted or stalled instances, with their held events;
-  - work that is exhausted or overdue.
+  - work that is exhausted or overdue;
+  - instances in a state their machine names as waiting on something outside (its
+    `attention`, with the words shown beside it): a merge GitHub has not answered.
 - **Counts per machine and state.**
 - **An instance list,** which can be filtered.
 - **One instance's timeline:** every event with its source, actor, result, reason, the
@@ -491,8 +493,8 @@ Two more kinds, decided with the preview machine (each named with a reason, and 
   out of the per-process wrapper the old flow runs it through (the build without
   `_stagingBuilds` and the coordinator, the checks run without its in-process seat). The
   two-process and restart tests show it keeps no process memory;
-- **a hand-off** (`handOff`) to a flow a later step migrates (the merge queue, the
-  Homeroom bot's notes, shots), naming that step: it leaves the list when the step lands.
+- **a hand-off** (`handOff`) to a flow a later step migrates (the Homeroom bot's notes,
+  fleet campaigns), naming that step: it leaves the list when the step lands.
 
 ### In production (Kubernetes)
 
@@ -594,7 +596,8 @@ A new machine brings the same two layers:
 | `app-delivery` | `app:<id>`, for each app a production deploy was asked for | `idle` ⇄ `deploying` | On everywhere; its old paths are deleted |
 | `preview` | `session:<id>`, for each proposal with a preview, a checks run or work recorded on it, and each App bench studio preview | `idle`, `preparing`, `checking`, `deferred`, `settled`, `failed`, `retiring` → `retired` | On everywhere; its old paths are deleted |
 | `shots` | `session:<id>`, for each proposal that declares visible changes or whose UI change owes a declaration | `undeclared`, `not_needed`, `waiting_for_preview`, `building_copies`, `waiting_for_agent`, `taking_shots`, `publishing`, `published`, `failed`, `waived`, `closed` | On everywhere; its old paths are deleted |
-| `proposal` | `session:<id>`, for every session (a proposal from its start), adopted from its row by its first event | `underway` → `proposing` → `in_review` ⇄ `merging` → `merged`; `closed` (reopened to `underway`) | On everywhere; its old paths are deleted |
+| `proposal` | `session:<id>`, for every session (a proposal from its start), adopted from its row by its first event | `underway` → `proposing` → `in_review` ⇄ `merging` (⇄ `unconfirmed`) → `merged`; `closed` (reopened to `underway`) | On everywhere; its old paths are deleted |
+| `merge-queue` | `app:<id>`, for each app a merge was asked for | `idle` ⇄ `working` | On everywhere; its old paths are deleted |
 
 ### governance-proposal
 
@@ -609,14 +612,40 @@ bot's proposals for it (`bot.requestsClosed`). The campaign also holds a lease o
 (`fleet-maintenance.runCampaign`), so the leader's resume or an admin's retry never drives
 it at the same time.
 
+### merge-queue
+
+An app's line of proposals in review (`src/workflow/merge-queue/`), and the one place that
+decides which of them is merged or brought up to date next. Everything that may make a
+proposal mergeable asks it (`MergeWanted`, through `platform.wantMerge`): a vote, a passing
+verdict, a merge that landed, main green again or resumed, a review check whose window
+elapsed, an admin's force, and each boot (`adoptMergeQueues`). It reads the line in its
+transaction (`facts.ts`: every promoted row, its proposal's data, the vote gate) and asks the
+proposal machine, which decides under its own lock:
+- **the direct lane:** every approved (or forced) candidate that merges cleanly with main,
+  cheapest first (forced, measured clean, settled verdict, the group's stronger preference,
+  the longer wait), one attempt at a time per app (`MergeRequested` → `AttemptEnded`).
+  Being behind main is no reason to wait.
+- **the conflict lane:** at most one resolution at a time (`SyncRequested` reason
+  `conflict` → `ResolutionEnded`), and only while no attempt is under way. Rule C admits
+  it: approved or forced, or the authored head's first conflict; never a fork's head, a
+  head the agent gave up on against this main, a failure's backoff, or failing checks.
+  The lane's reasons (`awaiting_approval`, `unresolvable`, `fork_head`) are written to the
+  row for the card. Merges go on while a resolution runs.
+
+A pass tries each candidate once; an ask during a pass makes one more pass after it. What
+is under way, what the pass tried and what is owed are the instance's data, never process
+memory. A slot it waits on for 30 minutes is looked at again (`Check`).
+
 ### merge-followups
 
 What a merged pull request still has to do once GitHub has merged it
 (`src/workflow/merge-followups/`).
 
-- **Created by `Merged`.** `checkAndMerge` appends it right after GitHub's merge, and
-  `recoverStuckMerges` appends the same event when it finds on GitHub a merge whose own
-  report was lost. Either way the merge gets every follow-up.
+- **Created by `Merged`.** The proposal machine sends it by message in the transition
+  that records GitHub's merge (its `merge.attempt`, or its `merge.observe` once GitHub
+  answers a merge nobody heard), and each boot's `observeMergedOnGithub` appends it for a
+  promoted row GitHub has merged (`platform.mergeObserved`). Either way the merge gets
+  every follow-up, and the app's merge queue is told to go on (`MergeWanted`).
 - **One transaction with the merge:**
   - the move into `merged` (with `merge_commit_sha` and the vote snapshot);
   - the secret values the proposal declared;
@@ -749,8 +778,10 @@ release built is known, and retired by identity once a newer attempt serves).
   the run's media (held under its run id until then, `check_run_media`) and the app's
   check history (`rules/check-store.ts`), with the pushes browsers hear (`checks_ready`,
   `staging_ready`, `visuals_ready`). A verdict about a head the row has left stores
-  nothing. Its follow-ups (the merge queue, the bot's note) are one work item; the shots
-  machine hears the head by message.
+  nothing. A passing or skipped verdict on a proposal in review asks the app's merge queue
+  by message (`MergeWanted`); the bot's note is a work item; the shots machine hears the
+  head by message. A build that fails because the proposal no longer starts against main
+  asks the proposal machine for its one sync (`SyncRequested`, reason `boot_failure`).
 - **Liveness is the work lease;** nothing is judged stuck by clock. An `error` runs again
   on the instance's timer (2 minutes doubling to 30, at most `CHECK_MAX_AUTO_RETRIES`, or
   for a day for the platform's own fault; a release re-arms those platform faults at
@@ -852,8 +883,10 @@ leader's boot adopts every row in review, being merged or holding a slot, and it
 sweep the ones created since. `chat_sessions.status` is its projection with the values it
 always had (the move into `merged` stays merge-followups', which tells this machine with a
 `Merged` message), and it owns the columns that move with it: `promoted_at`, `archived_at`,
-`stale_notified_at`, `merge_attempt_at`, `active_users_at_promote`, and what the group votes
-on, `reviewed_head_sha` and `approval_epoch`.
+`stale_notified_at`, `merge_attempt_at`, `active_users_at_promote`, what the group votes
+on, `reviewed_head_sha` and `approval_epoch`, and what makes each platform sync once:
+`boot_failure_sync_head`, `fixed_check_sync_head`, `fixed_check_sync_keys` and
+`integration_resolved_epoch`.
 
 - **States as a person names them.** `underway` (being worked on; the session's slot is data
   of it: held reads `active`, released `paused`, an imported proposal holds none and reads
@@ -906,11 +939,38 @@ on, `reviewed_head_sha` and `approval_epoch`.
   reopen reopens the pull request.
 - **A proposal's GitHub moves run one at a time:** a close during a promote waits for
   GitHub to open the pull request, then closes it; a reopen during a close waits for it.
-- **The merge (step 6's) asks for the claim** at the head and epoch it gated on, and the
-  vote gate is read again under the lock (an admin's force skips it); its rollbacks and
-  recovery give the claim back (`MergeReleased`, keeping the votes), and a pull request
-  closed for good takes the proposal off the vote (`MergeAbandoned`, voiding them). Every
-  other exit from review voids the votes.
+- **The merge.** The app's merge queue asks (`MergeRequested`), and the proposal answers
+  whatever its state (a refusal goes back to the queue with its reason). `merge.gate`
+  measures the gate (`votes.evaluateMergeGate`: the tally, checks, shots, main's health,
+  the pull request's own state); its report is read again under the lock with every
+  deciding input (`rules/merge-claim.ts`, and the vote gate unless an admin forced it), so a
+  No, a moved head or epoch since refuses the claim. Claimed, it reads `merging` and
+  `merge.attempt` asks GitHub once (`votes.attemptMerge`); a retry reads the pull request
+  first and never asks twice. Merged: merge-followups is told. Refused: the reason is
+  written once per head (a conflict is marked on the row at once), and the head is not
+  asked again until it, main or the votes change; a base that moved is tried once more, a
+  native draft is readied and tried once more, an imported draft is reported. The head
+  moved: back to review, with the votes kept or cleared as the reconcile decides. GitHub
+  never answered: `unconfirmed` (still `merging` on the row), and the instance's clock asks
+  GitHub every minute, doubling to ten, until it says; there is no override, and Admin →
+  Workflows lists it under "Needs a person". A pull
+  request closed for good takes the proposal off the vote (voiding the votes). An admin's
+  force (`ForceMerge`) lasts until it merges, leaves review or its author pushes. A claim
+  an older release made (`MergeClaim`, during a rollout) is asked about on GitHub once it
+  is five minutes old. Every other exit from review voids the votes.
+- **Sync with main** is a move of this machine too (`SyncRequested`: a person's Sync, the
+  resume auto-sync, the queue's conflict lane, a boot failure, a check main fixed, the
+  Homeroom bot's fix or hand-off). Under the lock it refuses a sync while one runs, while
+  the proposal is merging or somebody works on it, and checks each reason's own rule (the
+  failing head still the head, not tried for this head yet, one resolution per authored
+  head before approval, not a fork's head, not a head it already gave up on against this
+  main, not inside a failure's backoff). What makes it once is written in the same
+  transaction as its work, so a restart resumes the sync instead of reading it as tried.
+  `branch.sync` (`sync-main.runSyncWork`) measures, runs the worker's sync turn as a
+  durable turn over the item's checkpoint (a restart follows the turn the worker still
+  runs), and records what came of it; a sync that failed backs off 2 minutes doubling to
+  30. Its end tells the queue (`ResolutionEnded`) and writes the card's block reasons.
+  The session status route (`GET /api/sessions/:id/status`) reads it off the instance.
 - **The review revision** moves through it: `votes.reconcileNativeReviewedHead`,
   `pr-import-sync.applyHeadChange`, `vote-revision`'s authored push and
   `integration.clearApprovals` append `ReviewHeadMoved` / `ApprovalsCleared`, never on a
@@ -919,10 +979,6 @@ on, `reviewed_head_sha` and `approval_epoch`.
   decisions; a hand-off's promote names its own operation, and the pipeline checking the very
   commit being proposed does not count.
 
-**Planned order:**
-1. **The merge itself:** the attempt, the queue, production delivery, conflicts, and sync
-   with main. (App delivery, previews, shots and the proposal lifecycle, above, came first.)
-2. **Fleet campaigns.**
-
-Each one deletes the old paths it replaces in the same change, as governance, previews,
-merge follow-ups, app delivery, shots and the proposal lifecycle have.
+**Planned next: fleet campaigns.** It deletes the old paths it replaces in the same
+change, as governance, previews, merge follow-ups, app delivery, shots, the proposal
+lifecycle and the merge have.

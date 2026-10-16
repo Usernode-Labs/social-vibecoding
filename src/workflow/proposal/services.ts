@@ -139,7 +139,7 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
         }
 
         // #788: whether its diff changes a protected dapp.json block, stamped
-        // now so the first vote panel already says so (checkAndMerge checks
+        // now so the first vote panel already says so (the merge gate checks
         // again before it merges).
         await legacy('services/app-admins').refreshExplicitApproval(pool, row, { ...row, reviewed_head_sha: head || row.reviewed_head_sha });
         return { head, prNumber: row.pr_number ?? null, prUrl: row.pr_url ?? null, prTitle: row.pr_title ?? null, issueLinkSeeded };
