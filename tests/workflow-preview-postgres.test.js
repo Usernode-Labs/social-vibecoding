@@ -107,8 +107,12 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     ok: true, url: `https://pv--s${input.sessionId}.apps.test`, runtimeKind: 'kubernetes',
     runtimeName: `sv-preview-1-s${input.sessionId}`, containerId: null, imageRef: `img@sha256:${input.n}`, buildRef: `b-${input.n}`,
   });
+  // These apps have no repo unit suite, and their runs say so as a real run
+  // does (visuals.settleCaptureRun's `unitSuiteAbsent`), which is what
+  // answers a person's "Run checks again" (rules/check-store.ts unitAnswer).
   const verdict = (state, extra = {}) => () => ({
-    outcome: 'verdict', state, results: [{ index: 0, name: 'Loads /', status: state === 'passing' ? 'pass' : 'fail' }],
+    outcome: 'verdict', state, unitSuiteAbsent: true,
+    results: [{ index: 0, name: 'Loads /', status: state === 'passing' ? 'pass' : 'fail' }],
     console: { state: 'clean', errors: [] }, history: [{ checkKey: 'k1', name: 'Loads /', path: '/', passes: 1, fails: 0 }],
     capture: { state: 'console_only', detail: { media: false } }, visuals: false, ...extra,
   });

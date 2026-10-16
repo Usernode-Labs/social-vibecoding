@@ -346,7 +346,7 @@ function begin(s: Live, head: string, trigger: string | null, ctx: TransitionCon
   // not for a head whose last checks errored, mostly a preview that does not
   // boot, where nothing would ever read it.
   const early: WorkRequest[] = previewOnly || d.streak > 0 ? []
-    : [{ kind: WORK.unitEarly, key: unitEarlyKey(n), input: { sessionId: d.sessionId, appId: d.appId, n, head } }];
+    : [{ kind: WORK.unitEarly, key: unitEarlyKey(n), input: { sessionId: d.sessionId, appId: d.appId, n, head, trigger } }];
   return step({
     name: 'preparing', data: d,
     cancel: old.cancel,
@@ -437,9 +437,12 @@ function fromRow(d: Data, f: Facts, head: string, trigger: string | null, ctx: T
   const live: Live = { name: 'idle', data: d };
   if (!d.serving || d.serving.head !== head) return begin(live, head, trigger, ctx, deps);
   const checks = f.session!.checks;
-  const verdict = checks.commitSha === head ? verdictOf(checks.state) : null;
+  // Not a verdict a person asked to have checked again (services/unit-suite-
+  // reuse.js): that head is run, as theirs.
+  const owed = f.session!.unitFreshSha === head;
+  const verdict = checks.commitSha === head && !owed ? verdictOf(checks.state) : null;
   if (verdict) return step({ name: 'settled', data: { ...d, head, verdict }, timer: null });
-  return startRun({ name: 'settled', data: { ...d, head } }, trigger, ctx);
+  return startRun({ name: 'settled', data: { ...d, head } }, owed ? 'manual-recheck' : trigger, ctx);
 }
 
 // Where an adopted row stands, without starting anything (an operation's
@@ -517,7 +520,10 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
     to: (s, e, f, ctx) => {
       const live: Live = restarts(s) ? { name: 'idle', data: adopt(e, f, priorOf(s)) } : s;
-      const carried = carry(restarts(s) ? fromRowVerdict(live.data, f) : s, e.payload);
+      // A green verdict a person asked to have checked again (services/unit-
+      // suite-reuse.js) is not carried to the merged head.
+      const carried = e.payload.carryFrom && f.session!.unitFreshSha === e.payload.carryFrom ? null
+        : carry(restarts(s) ? fromRowVerdict(live.data, f) : s, e.payload);
       if (carried) return carried;
       if (restarts(s)) return fromRow(live.data, f, e.payload.head, e.payload.trigger, ctx, deps);
       return begin(s, e.payload.head, e.payload.trigger, ctx, deps);
@@ -910,6 +916,13 @@ export interface RunResult {
   capture?: { state: string; detail: Json } | null;
   visuals?: Json;               // the run's media, grouped as getForSession groups it (null: none)
   reason?: string;              // blocked
+  // The repo unit suite (services/unit-suite-reuse.js): confirmed not to
+  // apply to the head; the check key a copied pass earns the proposal; the
+  // check key of a suite that ran and passed, whose recorded pass may be
+  // copied once its history row is written with the verdict.
+  unitSuiteAbsent?: boolean;
+  unitEarned?: string | null;
+  unitObserved?: string | null;
 }
 
 function workResult(name: Name, outcome: 'succeeded' | 'failed' | 'exhausted', deps: Deps): Entry {
@@ -1074,16 +1087,42 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
     firstFailureAt: state === 'error' ? (d0.firstFailureAt ?? ctx.now.toISOString()) : null,
   };
   const results = blocked ? [] : ((r!.results ?? []) as unknown[]);
+  const unitSuiteAbsent = !blocked && r!.unitSuiteAbsent === true;
+  // A person asked for this head's checks again and is owed a run whose repo
+  // unit suite really runs (services/unit-suite-reuse.js): a verdict that
+  // does not answer them is not stored (check-store's fence: the same rule,
+  // read from the same row under the same lock). A run that was not theirs
+  // (started before the request came, which then joined it: its unit suite
+  // copied from an earlier pass, or its settlement not told the suite was
+  // owed) is followed at once by the run they asked for, a run of its own.
+  // Their own run, refused (the request could not be read when it settled),
+  // is left pending for the stale sweep, whose scope covers an owed head,
+  // rather than run again and again here.
+  const owed = !!f.session && f.session.unitFreshSha === run.head;
+  const answer = store.unitAnswer({ state, results, unitSuiteAbsent });
+  const refused = owed && (state === 'error' ? answer.reused : answer.unanswered);
   // The settlement is stored only while the row is open and its checks are
   // about this run's head (check-store's fence); a verdict nobody stores sets
   // nothing off.
-  const stores = !!f.session && OPEN.has(f.session.status) && f.session.checks.commitSha === run.head;
+  const stores = !refused && !!f.session && OPEN.has(f.session.status) && f.session.checks.commitSha === run.head;
+  const recorded = state !== 'error' && !blocked;
   const settle = {
     type: 'settled', ...base, state, detail, platformFault,
     results: results as Json, console: blocked ? null : (r!.console ?? null),
     history: state === 'error' || blocked ? [] : (r!.history ?? []), capture: blocked ? null : (r!.capture ?? null),
     media: !blocked && !!visuals,
+    ...(unitSuiteAbsent ? { unitSuiteAbsent: true } : {}),
+    ...(recorded && r!.unitEarned ? { unitEarned: r!.unitEarned } : {}),
+    ...(recorded && r!.unitObserved ? { unitObserved: r!.unitObserved } : {}),
   };
+  if (refused && d0.trigger !== 'manual-recheck' && d0.serving && d0.serving.head === run.head) {
+    return startRun({ name: 'checking', data: { ...d0, run: null } }, 'manual-recheck', ctx, { writes: [settle] });
+  }
+  if (refused) {
+    return step({
+      name: 'settled', data: { ...d0, run: null, verdict: null }, writes: [settle], timer: null,
+    });
+  }
   return step({
     name: 'settled', data: d,
     cancel: ended ? [{ kind: WORK.run, key: run.key }] : undefined,
@@ -1311,13 +1350,27 @@ const WRITES = {
   // row has since left.
   async settled(tx: Tx, w: any) {
     const stored = await store.storeChecks(tx, w.sessionId, w.head,
-      { state: w.state, results: w.results, ...(w.platformFault ? { platformFault: true } : {}) }, w.detail);
+      { state: w.state, results: w.results, ...(w.platformFault ? { platformFault: true } : {}),
+        ...(w.unitSuiteAbsent ? { unitSuiteAbsent: true } : {}) }, w.detail);
     if (!stored) { await dropMedia(tx, w.sessionId); return; }
     if (w.console) await store.storeConsoleCheck(tx, w.sessionId, w.console, w.head);
     if (w.capture) await store.storeCaptureOutcome(tx, w.sessionId, w.capture.state, w.capture.detail, w.head);
     if (w.media) await publishMedia(tx, w.sessionId, w.runId); else await dropMedia(tx, w.sessionId);
-    if (Array.isArray(w.history) && w.history.length) {
-      await store.recordRun(tx, w.appId, w.history, { sessionId: w.sessionId });
+    const history = Array.isArray(w.history) ? w.history : [];
+    if (history.length) {
+      await store.recordRun(tx, w.appId, history, { sessionId: w.sessionId });
+    }
+    // A unit suite copied from an earlier pass of the commit observed nothing
+    // new, so it moves no counts, but its proposal earns the gate that pass
+    // earns: a later head of it that fails the suite is blocked, as it would
+    // be had the suite run here (services/unit-suite-reuse.js).
+    if (w.unitEarned) await store.recordEarned(tx, w.appId, w.sessionId, [w.unitEarned]);
+    // A suite that ran and passed is in the app's history now, written above
+    // in this transaction (every row: no cap here): the pass its run
+    // recorded may be copied. Only when its passing row is among those.
+    if (w.unitObserved && history.some((h: any) => h && h.checkKey === w.unitObserved
+        && (Number.isInteger(h.passes) ? h.passes > 0 : !!h.passed))) {
+      await store.markUnitPassObserved(tx, { appId: w.appId, sessionId: w.sessionId, commitSha: w.head });
     }
   },
 

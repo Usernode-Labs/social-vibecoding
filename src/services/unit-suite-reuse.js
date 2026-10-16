@@ -41,7 +41,8 @@
 const crypto = require('crypto');
 const log = require('./logger');
 
-// Why a run started (visuals.CHECK_TRIGGERS) when nobody asked for it.
+// Why a run started (workflow/rules/check-store.ts CHECK_TRIGGERS) when
+// nobody asked for it.
 // 'manual-recheck' is deliberately absent, and so is anything new: a trigger
 // added later runs the suite until it is listed here on purpose.
 const AUTOMATIC_TRIGGERS = Object.freeze(new Set([
@@ -137,16 +138,17 @@ async function recordPass(pool, key, { sessionId = null, runId = null, summary =
 
 /**
  * The newest pass this run may copy, or null. `trigger` is the run's own
- * (visuals.CHECK_TRIGGERS): a person's request never reuses. Never throws:
- * a lookup that fails runs the suite.
+ * (rules/check-store.ts CHECK_TRIGGERS): a person's request never reuses.
+ * Never throws: a lookup that fails runs the suite.
  */
 //
 // Two more conditions, both read from the database so a restart keeps them:
 //   * the pass was observed: the run that passed stored its verdict and
-//     recorded the pass in app_check_history (markObserved). A pass whose
+//     recorded the pass in app_check_history, in one transition
+//     (rules/check-store.ts markUnitPassObserved). A pass whose
 //     run errored or was discarded has no history row, and the gate a copy
-//     earns its proposal (check-history.recordEarned) would then have none
-//     to become app-wide on merge;
+//     earns its proposal (rules/check-store.ts recordEarned) would then
+//     have none to become app-wide on merge;
 //   * the proposal reusing it (`sessionId`) is not owed a fresh run of this
 //     head: a person asked for one (chat_sessions.unit_suite_fresh_sha).
 async function findPass(pool, key, { trigger = null, sessionId = null } = {}) {
@@ -189,10 +191,11 @@ async function findPass(pool, key, { trigger = null, sessionId = null } = {}) {
  * (chat_sessions.unit_suite_fresh_sha), so it holds whichever run ends up
  * answering, after a restart too: no run copies a pass for it (findPass),
  * and no verdict carrying a copied pass is stored for it
- * (visuals.storeChecks), so the head stays pending and merge-blocked until
- * a verdict whose suite ran is stored, which clears it. The 'manual-recheck'
- * pending stamp sets it too (visuals.setChecksPending); this is for the
- * paths that answer before stamping. Never throws.
+ * (rules/check-store.ts storeChecks; the preview machine then starts the run
+ * they asked for), so the head stays pending and merge-blocked until a
+ * verdict whose suite ran is stored, which clears it. The 'manual-recheck'
+ * pending stamp sets it too (rules/check-store.ts setChecksPending); this is
+ * for the paths that answer before stamping. Never throws.
  */
 async function markFreshOwed(pool, { sessionId, commitSha } = {}) {
   if (!pool || !Number(sessionId) || !isSha(commitSha)) return false;
@@ -283,28 +286,6 @@ async function hasAnyPass(pool, { appId, commitSha } = {}) {
   }
 }
 
-/**
- * The run of `sessionId` that passed `commitSha` stored its verdict and
- * recorded the pass in the app's history: its passes may now be reused.
- * Never throws.
- */
-async function markObserved(pool, { appId, sessionId, commitSha } = {}) {
-  if (!pool || !Number(appId) || !Number(sessionId) || !isSha(commitSha)) return 0;
-  try {
-    const { rowCount } = await pool.query(
-      `UPDATE unit_suite_passes SET observed_at = NOW()
-        WHERE app_id = $1 AND session_id = $2 AND commit_sha = $3 AND observed_at IS NULL`,
-      [Number(appId), Number(sessionId), String(commitSha).toLowerCase()]
-    );
-    return rowCount || 0;
-  } catch (err) {
-    log.warn('unit-suite-reuse', 'Could not mark a unit-suite pass observed', {
-      appId, sessionId, commitSha, err: err.message,
-    });
-    return 0;
-  }
-}
-
 // What a reused row says about where it came from.
 function reusedFrom(pass) {
   return {
@@ -321,8 +302,8 @@ function reusedFrom(pass) {
  * not a second observation. `earned` is the suite's check key: the gate a
  * pass earns its proposal (chat_sessions.checks_earned_keys, so its later
  * heads cannot quietly fail the suite) is granted to the proposal that
- * copies it all the same (check-history.recordEarned), without touching the
- * app's counts. `shapeOutcome` is unit-suite.js's own.
+ * copies it all the same (rules/check-store.ts recordEarned), without
+ * touching the app's counts. `shapeOutcome` is unit-suite.js's own.
  */
 function reusedOutcome(shapeOutcome, pass) {
   const shaped = shapeOutcome({ passed: true, reason: '', graduated: true, summary: pass.summary || null });
@@ -381,7 +362,6 @@ module.exports = {
   recordPass,
   findPass,
   markFreshOwed,
-  markObserved,
   owePendingRun,
   hasAnyPass,
   reusedOutcome,

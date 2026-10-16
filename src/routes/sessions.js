@@ -6509,7 +6509,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // submission among them): its own pipeline is the run the user is
       // asking for. A build or checks run going is the preview machine's,
       // which joins a recheck to it (or replaces it when its inputs changed).
-      if (isSessionBusy(sessionId)) {
+      //
+      // Folded into what holds the session, the head is still owed a unit
+      // suite that really runs (services/unit-suite-reuse.js): a verdict
+      // stored before this press no longer stands for it, so it reads
+      // pending (and merge-blocked) until one does, and once the session is
+      // idle again the owed run starts if nothing has answered it. The stale
+      // sweep, whose scope covers an owed head, re-drives it after a restart.
+      const busyNow = () => isSessionBusy(sessionId);
+      if (busyNow()) {
+        await require('../services/unit-suite-reuse').owePendingRun({
+          pool, visuals, stagingRecovery, config, session, busy: busyNow,
+        });
         return res.json({ status: 'running' });
       }
       recheckInFlight.add(sessionId);

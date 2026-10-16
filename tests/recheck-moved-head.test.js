@@ -145,22 +145,31 @@ test('the verdict store keeps to the pinned commit', () => {
   assert.equal((store.match(/AND checks_commit_sha IS NOT DISTINCT FROM \$3::text`/g) || []).length, 2);
 });
 
-test('a re-driven "Run checks again" stays manual: the head is marked owed a fresh suite, and its run is manual-recheck', async (t) => {
-  const { rec, visuals, db, copy } = harness(t, { stagingCommit: NEW });
+test('a person\'s "Run checks again" marks the head owed a fresh unit suite before the machine is asked, and its run is manual-recheck', async (t) => {
+  // services/unit-suite-reuse.js: whichever run answers the request, the one
+  // it joins or its own, copies no earlier pass of the commit.
+  const { rec, pool, copy, calls } = harness(t, { held: OLD });
   const marked = [];
-  const query = db.query.bind(db);
-  db.query = async (sql, params) => {
-    if (/UPDATE chat_sessions SET unit_suite_fresh_sha = \$2 WHERE id = \$1/.test(String(sql))) { marked.push(params); return { rows: [], rowCount: 1 }; }
-    return query(sql, params);
+  pool.query = async (sql, params) => {
+    if (/UPDATE chat_sessions SET unit_suite_fresh_sha = \$2 WHERE id = \$1/.test(String(sql))) {
+      marked.push(params);
+      calls.push(['marked']);
+      return { rows: [], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 0 };
   };
-  const captured = [];
-  visuals.captureForSession = async (_config, s, _app, commit, _staging, opts) => { captured.push({ commit, trigger: opts.trigger }); };
-  assert.equal(await rec.recheckSessionChecks({ config: null, pool: db, session: copy, reason: 'orphaned-manual-run' }), 'rechecked');
-  assert.deepEqual(captured, [{ commit: NEW, trigger: 'manual-recheck' }]);
-  assert.deepEqual(marked, [[8031, NEW]], 'marked before the run that answers is looked for');
+  assert.equal(await rec.recheckSessionChecks({ pool, session: copy, reason: 'manual-recheck' }), 'handed_off');
+  assert.deepEqual(marked, [[8031, OLD]]);
+  assert.deepEqual(calls.map((c) => c.slice(0, 3)), [['marked'], ['recheck', 'manual-recheck', 'manual-recheck']],
+    'marked first, then the machine is asked for a manual run');
+  // A same-commit resubmission with new testing routes is a person asking too.
+  marked.length = 0;
+  await rec.recheckSessionChecks({ pool, session: copy, reason: 'testing-update' });
+  assert.deepEqual(marked, [[8031, OLD]]);
 
   // An automatic re-drive marks nothing.
   marked.length = 0;
-  await rec.recheckSessionChecks({ config: null, pool: db, session: copy, reason: 'orphaned-run' });
+  await rec.recheckSessionChecks({ pool, session: copy, reason: 'stuck-checks-sweep' });
+  await rec.recheckSessionChecks({ pool, session: copy, reason: 'promote-kick' });
   assert.equal(marked.length, 0);
 });

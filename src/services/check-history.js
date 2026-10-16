@@ -269,41 +269,6 @@ async function recordRun(pool, appId, rows, { sessionId = null } = {}) {
   }
 }
 
-// Add `keys` to the proposal's own earned checks (checks_earned_keys): they
-// block its later heads, and everybody's once it merges. Only what a merge
-// has not already made blocking for everybody, so the list stays the handful
-// of new or backlog checks, not the suite; a row already folded in after its
-// merge is left alone. recordRun calls it for the checks a run passed. A run
-// that copied an earlier unit-suite pass of its commit instead of running it
-// (services/unit-suite-reuse.js) calls it alone: the proposal earns the gate
-// that pass earns, and the app's counts, which the pass moved when it ran,
-// are not moved again. Never throws.
-async function recordEarned(pool, appId, sessionId, keys) {
-  const own = proposalId(sessionId);
-  const list = (keys || []).filter(Boolean).map(String);
-  if (!pool || !appId || !own || !list.length) return false;
-  try {
-    await pool.query(
-      `UPDATE chat_sessions cs
-          SET checks_earned_keys = NULLIF(ARRAY(
-                SELECT DISTINCT k
-                  FROM unnest(COALESCE(cs.checks_earned_keys, '{}'::text[]) || $3::text[]) AS k
-                 WHERE NOT EXISTS (
-                   SELECT 1 FROM app_check_history h
-                    WHERE h.app_id = $2 AND h.check_key = k AND h.merged_pass_at IS NOT NULL)
-                 ORDER BY k), '{}'::text[])
-        WHERE cs.id = $1 AND cs.app_id = $2 AND cs.checks_earned_settled_at IS NULL`,
-      [own, appId, list]
-    );
-    return true;
-  } catch (err) {
-    log.warn('check-history', 'Own passes record failed (non-fatal)', {
-      appId, sessionId: own, err: err.message,
-    });
-    return false;
-  }
-}
-
 // Every check this app has any record of, graduated or not. What it is for
 // is the opposite of loadGraduated: a check ABSENT from this set has never
 // run here, so this run is its first and it earns the repeat treatment.
@@ -375,7 +340,6 @@ module.exports = {
   hasHistory,
   bootstrapIfEmpty,
   recordRun,
-  recordEarned,
   PRUNE_AFTER_DAYS,
   MAX_ROWS_PER_RUN,
 };

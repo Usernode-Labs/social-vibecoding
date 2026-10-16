@@ -373,29 +373,6 @@ test('a blocking unit suite whose Jobs are gone is null, never settled without i
   assert.deepEqual(pool.deleted, []);
 });
 
-test('a run that reused an earlier unit-suite pass settles with that row after a restart, with no unit Job to find', async (t) => {
-  quietBroadcast(t);
-  const reusedRow = {
-    index: unitSuite.UNIT_CHECK_INDEX, name: unitSuite.UNIT_CHECK_NAME, path: unitSuite.UNIT_CHECK_PATH,
-    status: 'pass', advisory: false, consoleErrors: [], failureReason: '', summary: { tests: 5, pass: 5 },
-    reused: { runId: 'run-0', sessionId: 42, passedAt: '2026-10-14T10:00:00.000Z' },
-  };
-  const manifest = { ...orphanRow().manifest, unitReused: { row: reusedRow, earned: 'unit-key', snapshot: { phase: 'done', done: true, reused: reusedRow.reused } } };
-  const pool = makePool({ orphans: [orphanRow({ manifest })], session: sessionRow(), answer: graduatedUnit });
-  const collected = [];
-  let settledWith = null;
-  stub(t, kubernetes, {
-    findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'succeeded' }, unitSuite: null }),
-    collectCheckJob: async (_c, { kind }) => { collected.push(kind); return capturePassed; },
-  });
-  stub(t, visuals, { settleCaptureRun: async (_c, _p, run) => { settledWith = run; return { traceStatus: 'passing', result: { state: 'passing' } }; }, scheduleShots: () => {} });
-  const [result] = await (await harvest.sweep(config, { reason: 'boot', pool })).done;
-  assert.equal(result.outcome, 'settled', 'a merge-blocking suite it copied is not a missing one');
-  assert.deepEqual(collected, ['capture'], 'no unit-suite Job is looked for');
-  assert.deepEqual(settledWith.unitOutcome, { row: reusedRow, history: null, earned: 'unit-key' },
-    'the same row, no history, and the gate it earns the proposal');
-});
-
 test('an advisory unit suite whose Jobs are gone settles without its row, as before', async (t) => {
   const pool = makePool({ runs: [runRow()] });
   let settledWith = null;

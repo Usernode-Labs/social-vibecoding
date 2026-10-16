@@ -1217,28 +1217,10 @@ function serializeTestResults(results) {
   return json;
 }
 const logTrim = ({ dropped, kept }) => log.info('visuals', 'Trimmed oversized test_results payload', { dropped, kept });
+// The fences for a person's "Run checks again" (the repo unit suite they
+// are owed, services/unit-suite-reuse.js) are check-store's own.
 function storeChecks(pool, sessionId, commitSha, result, errorDetail = null) {
-  // A person asked for a fresh unit-suite run of this head
-  // (chat_sessions.unit_suite_fresh_sha, services/unit-suite-reuse.js): a
-  // verdict whose unit-suite row was copied from an earlier pass is not
-  // theirs and is not stored (`reused`/`unanswered`, the row stays pending
-  // and merge-blocked), and one whose suite really ran settles the request
-  // (`ran`).
-  const unitRow = Array.isArray(result && result.results) ? result.results.find(unitSuiteRow.isUnitSuiteRow) : null;
-  const reused = !!(unitRow && unitRow.reused);
-  // A verdict with no unit-suite row and the suite not confirmed absent
-  // does not answer the request either: refused like a copied pass, so a
-  // request is never left with a stored pass that nothing will re-drive.
-  const unanswered = reused || (!unitRow && !(result && result.unitSuiteAbsent === true));
-  // Answered by a suite that ran (pass or fail), or by a run that confirmed
-  // the suite does not apply (settleCaptureRun sets `unitSuiteAbsent`); not
-  // by a suite that could not run on an 'error' verdict, which the error
-  // lane runs again.
-  const ran = unitRow
-    ? (!reused && !(unitRow.couldNotRun && result && result.state === 'error'))
-    : !!(result && result.unitSuiteAbsent === true);
-  return checkStore.storeChecks(pool, sessionId, commitSha, result, errorDetail,
-    { onTrim: logTrim, unit: { reused, unanswered, ran } });
+  return checkStore.storeChecks(pool, sessionId, commitSha, result, errorDetail, { onTrim: logTrim });
 }
 const DEFAULT_CHECKS_SKIPPED_REASON = checkStore.DEFAULT_CHECKS_SKIPPED_REASON;
 const storeChecksSkipped = checkStore.storeChecksSkipped;
@@ -2401,6 +2383,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       prNumber: Number(session.pr_number) || null,
       onProgress: progress.observeUnit,
       signal: operation.signal, previewRunId: runId,
+      // The commit it judges: a pass is recorded for reuse
+      // (services/unit-suite-reuse.js) when every Job checked out exactly it.
+      commitSha: commitHash,
       strict: true,
     });
     const unitSuitePromise = (shotsOnly ? Promise.resolve(null) : reusedUnit
@@ -2782,6 +2767,23 @@ function releaseCheckJobs(config, sessionId, runId) {
 // (services/checks-queue.js) bounds the load instead. What still reads as
 // infrastructure is what the run's own frames show to be: an unreachable
 // origin (#1381), a starved Postgres (#1771), a unit suite that never ran.
+// Is a run of `commitHash` where the unit suite really runs owed to a
+// person on this proposal (chat_sessions.unit_suite_fresh_sha,
+// services/unit-suite-reuse.js)? true, false, or null when the row could
+// not be read.
+async function freshRunOwedFor(pool, sessionId, commitHash) {
+  if (!commitHash) return false;
+  try {
+    const { rows: [row] } = await pool.query(
+      'SELECT unit_suite_fresh_sha FROM chat_sessions WHERE id = $1', [sessionId]
+    );
+    return !!(row && row.unit_suite_fresh_sha
+      && String(row.unit_suite_fresh_sha).toLowerCase() === String(commitHash).toLowerCase());
+  } catch {
+    return null;
+  }
+}
+
 async function settleCaptureRun(config, pool, run) {
   const {
     session, app, commitHash,
@@ -2977,9 +2979,10 @@ async function settleCaptureRun(config, pool, run) {
   // a commit with any recorded unit-suite pass has a suite, so it is never
   // read as absent. A commit with none has nothing to copy either, so the
   // request it settles cannot be answered with a copy later.
-  // An unreadable marker (null) is not "nothing owed": the verdict store
-  // then refuses a pass with no unit row for an owed head (storeChecks), and
-  // the head stays pending for the stale sweep.
+  // An unreadable marker (null) is not "nothing owed": the transition that
+  // stores the verdict reads the marker again under the row's lock and
+  // refuses a pass with no unit row for an owed head (check-store's
+  // unitAnswer), and the head stays pending for the stale sweep.
   if (!unitOutcome) {
     const owed = await freshRunOwedFor(pool, session.id, commitHash);
     if (owed !== false) {
@@ -3026,6 +3029,15 @@ async function settleCaptureRun(config, pool, run) {
       : historyRowsOf(checksResult, { dispatched, unitOutcome, assetOutcome, renderOutcome }),
     capture: held.capture,
     visuals: held.visuals,
+    // The repo unit suite, for the transition that stores this
+    // (services/unit-suite-reuse.js): confirmed not to apply, which answers
+    // a person's request for it; the gate a copied pass earns the proposal;
+    // the key of a suite that ran and passed, whose recorded pass may be
+    // copied once its history row lands with the verdict.
+    ...(checksResult.unitSuiteAbsent === true ? { unitSuiteAbsent: true } : {}),
+    unitEarned: unitOutcome && !unitOutcome.history && unitOutcome.earned ? unitOutcome.earned : null,
+    unitObserved: unitOutcome && unitOutcome.history && unitOutcome.history.passed
+      ? unitOutcome.history.checkKey : null,
   } };
 }
 
@@ -3547,8 +3559,6 @@ module.exports = {
   parseDiagnostics,
   captureFailureDetail,
   classifyTests,
-  // Exported for tests.
-  requestOwedFreshRun,
   unreachableOriginDetail,
   connectionExhaustionDetail,
   dnsHostname,
