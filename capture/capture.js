@@ -1396,12 +1396,20 @@ function groupTestsByDocument(tests, opts) {
 // exactly as it did.
 //
 // A `coldLoad` check is exempt from DOCUMENT grouping, never from sharing a
-// load with the checks of its own URL. It is one whose screen only a load of
-// its address draws: a one-time deep link scripted at boot (`?shot=`,
-// `?details=1`), which an address change on a loaded page rightly does not
-// replay. Reached by a hash switch it could only fail and be re-run cold by
+// load with the checks of its own URL. Its page cannot be shared by hash
+// switches, in either direction:
+//
+//   * its screen is drawn only by a load of its address: a one-time deep
+//     link scripted at boot (`?shot=`, `?details=1`), which an address
+//     change on a loaded page rightly does not replay; or
+//   * the page it leaves sends the next address change somewhere else: an
+//     app running on a desktop opens the pages about it in a side panel
+//     beside it (Homeroom's features/side-panel), so a check switched to
+//     after it is drawn in that panel's frame, not in the page it asserts on.
+//
+// Either way, a switch onto or off it could only fail and be re-run cold by
 // runTestGroup's fallback (#1146), after waiting out the whole assertion
-// window on a screen that was not coming (5-17s a cohort in Homeroom's
+// window on a screen that was not coming (5-19s a cohort in Homeroom's
 // runs). Given its own load from the start, it is judged exactly as the
 // ungrouped runner judged it, which is what that fallback re-runs anyway:
 // same navigation, same window, same console errors. Only the wait before
