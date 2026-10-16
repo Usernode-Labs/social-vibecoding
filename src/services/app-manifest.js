@@ -387,7 +387,10 @@ function normalizeVisualScenario(test) {
 // leading slash, no scheme/whitespace/markup). `name` falls back to the
 // path. `expectSelector` / `expectText` are optional presence assertions;
 // `allowConsoleErrors` opts a test out of the baseline no-console-errors
-// rule (for a route that legitimately logs errors). `visual: true` requires
+// rule (for a route that legitimately logs errors). `coldLoad: true` gives
+// the check a page load of its own instead of a hash switch on a page loaded
+// for another check (for a screen only a load of its address draws).
+// `visual: true` requires
 // a stable `id`, a presence assertion, and at least one repository-relative
 // `impact` glob; malformed visual metadata is ignored without dropping the
 // underlying check. Invalid entries are dropped, duplicate (name+path) pairs
@@ -435,6 +438,11 @@ function readTestsWithMeta(parsed) {
       expectText: typeof t.expectText === 'string' && t.expectText.trim()
         ? t.expectText.trim().slice(0, MAX_TEST_TEXT_LEN) : null,
       allowConsoleErrors: !!t.allowConsoleErrors,
+      // A check whose screen only a load of its address draws (a one-time
+      // deep link scripted at boot) asks for its own load rather than a
+      // hash switch on a shared page (capture.js groupTests). Kept only
+      // when set, so every other entry reads exactly as before.
+      ...(t.coldLoad === true ? { coldLoad: true } : {}),
       ...(visual || {}),
     });
   }

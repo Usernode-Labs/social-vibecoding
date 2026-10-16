@@ -2127,6 +2127,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         expectSelector: t.expectSelector || '',
         expectText: t.expectText || '',
         allowConsoleErrors: !!t.allowConsoleErrors,
+        // capture.js groupTests gives such a check a load of its own.
+        ...(t.coldLoad === true ? { coldLoad: true } : {}),
       };
     });
 

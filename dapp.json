@@ -818,12 +818,14 @@
       "name": "A change row shows its title, and an idle row wears no status dot (#971, #1946)",
       "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#notifications-sheet[data-open] a[href$=\"/proposals/990101\"]:not(:has(.h-3.w-3.rounded-full))",
-      "expectText": "[Mock] Your in-progress session"
+      "expectText": "[Mock] Your in-progress session",
+      "coldLoad": true
     },
     {
       "name": "A busy change row spins the standard arc, and nothing else (#1038, #1597, #1947)",
       "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open] a[href$=\"/proposals/990102\"]:not(:has(.h-3.w-3.rounded-full)) .dc-status-spinner-arc"
+      "expectSelector": "#notifications-sheet[data-open] a[href$=\"/proposals/990102\"]:not(:has(.h-3.w-3.rounded-full)) .dc-status-spinner-arc",
+      "coldLoad": true
     },
     {
       "name": "Send Feedback offers a kudos bounty, unchecked by default (#964), room for up to three images (#3027), and a video option (#3940) behind one paperclip (#4127)",
@@ -2283,7 +2285,8 @@
     {
       "name": "Improve's actions ship on every route, and ship VISIBLE (#2718 review)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions:not(.hidden) > #improve-row-feedback"
+      "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions:not(.hidden) > #improve-row-feedback",
+      "coldLoad": true
     },
     {
       "name": "The Dev screen opens straight onto its cards, with no view tab strip above them",
@@ -2707,7 +2710,8 @@
       "name": "Checks card names the fifth build step while the run waits behind an earlier one",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000028",
       "expectSelector": ".dev-step[data-note=\"checks\"] .dev-ledger-progress-build[data-build-step=\"prepare_checks\"] .dev-ledger-build-bar[data-build-progress=\"4/5\"] > .dev-ledger-build-seg.is-now[data-step=\"prepare_checks\"]",
-      "expectText": "prepare checks (waiting for an earlier run)"
+      "expectText": "prepare checks (waiting for an earlier run)",
+      "coldLoad": true
     },
     {
       "name": "Checks card says a built preview's run is waiting for a checks slot, and where it is in line",
@@ -2723,12 +2727,14 @@
     {
       "name": "Checks card says an author's commit started the run (#1144), in Details (B10b)",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000022",
-      "expectText": "Triggered by a new commit on this proposal."
+      "expectText": "Triggered by a new commit on this proposal.",
+      "coldLoad": true
     },
     {
       "name": "Checks card owns up to a platform-restarted run (#1144), in Details (B10b)",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000026",
-      "expectText": "Restarted automatically by the platform."
+      "expectText": "Restarted automatically by the platform.",
+      "coldLoad": true
     },
     {
       "name": "Imported PR proposal card shows the Imported PR badge (#687)",
@@ -2843,7 +2849,8 @@
     {
       "name": "The mark's menu: the action, then the app's options, with no view strip between them (#2718 review, #2761)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet > #improve-quick-actions + #switcher-nav"
+      "expectSelector": "#apps-switcher-sheet > #improve-quick-actions + #switcher-nav",
+      "coldLoad": true
     },
     {
       "name": "Settings ships the native Node status row in its account block, moved there from Me",
@@ -3172,13 +3179,15 @@
       "name": "The mark opens the menu with no agent entries: Agent chats and its Build it now row moved to Messages' Agents list (#2718, #3362, #4729, first-session run-through)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open]:not(:has(#app-menu-sessions, #improve-row-new-session)) #switcher-nav > #app-menu-row-workshop ~ #app-menu-row-about",
-      "expectText": "About"
+      "expectText": "About",
+      "coldLoad": true
     },
     {
       "name": "The menu links out to the project's community, scoped to the app, as a Go to community row (#2718, #2761, #3287)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav a#app-menu-row-workshop[href=\"#app/usernode-2d5619/workshop\"]",
-      "expectText": "Go to community"
+      "expectText": "Go to community",
+      "coldLoad": true
     },
     {
       "id": "workshop.all-apps",
@@ -3727,7 +3736,8 @@
       "name": "Freshness (#1442): a conflicted proposal says so in one short line on its merge step, in Details (B10b)",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000034",
       "expectSelector": ".dev-details-card [data-note=\"mergeability\"]",
-      "expectText": "Conflict in 7 files"
+      "expectText": "Conflict in 7 files",
+      "coldLoad": true
     },
     {
       "name": "A cleared step wears the filled tick in the ok tone, whatever the sheet around it is waiting on",
@@ -3738,30 +3748,35 @@
       "name": "A blocked proposal reads as the strip's ordered steps: the votes, then no conflicts with main, then the checks",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000034",
       "expectSelector": ".dev-topic-steps .dev-step[data-note=\"votes\"][data-req-gate=\"approvals\"] ~ .dev-step[data-note=\"mergeability\"][data-req-gate=\"integration\"] ~ .dev-step[data-note=\"checks\"][data-req-gate=\"checks\"]",
-      "expectText": "No conflicts with main"
+      "expectText": "No conflicts with main",
+      "coldLoad": true
     },
     {
       "name": "The steps sheet leads with the strip's own headline and count; the merge step says its conflict in one short line",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000034",
       "expectSelector": ".dev-topic-steps > .dev-steps > .dev-steps-head:has(> .dev-steps-headline ~ .dev-steps-count) + .dev-steps-list > [data-note=\"mergeability\"] > .dev-step-main > .dev-step-line",
-      "expectText": "Conflict in 7 files"
+      "expectText": "Conflict in 7 files",
+      "coldLoad": true
     },
     {
       "name": "A failing check is one line with a Why it failed door, inside a blocked Checks step that opens onto its run",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000093",
       "expectSelector": ".dev-step-blocked[data-note=\"checks\"] .dev-step-run .dev-ledger-fails > .dev-ledger-check-why > .dev-ledger-why:not([open]) > .dev-ledger-check-line > .dev-ledger-check-name + .dev-ledger-check-open",
-      "expectText": "Why it failed"
+      "expectText": "Why it failed",
+      "coldLoad": true
     },
     {
       "name": "A failing unit-suite row lists each failing test with its error excerpt under Why it failed (#3978)",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000093",
-      "expectSelector": ".dev-step-blocked[data-note=\"checks\"] .dev-step-run .dev-ledger-fails > .dev-ledger-check-why > .dev-ledger-why > .dev-ledger-why-body > .dev-ledger-why-details > li .dev-ledger-why-excerpt"
+      "expectSelector": ".dev-step-blocked[data-note=\"checks\"] .dev-step-run .dev-ledger-fails > .dev-ledger-check-why > .dev-ledger-why > .dev-ledger-why-body > .dev-ledger-why-details > li .dev-ledger-why-excerpt",
+      "coldLoad": true
     },
     {
       "name": "Freshness (#1442): a conflicting proposal says so on its merge step, with its votes still open above it",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000034",
       "expectSelector": ".dev-topic-steps .dev-step[data-note=\"votes\"] ~ .dev-step[data-note=\"mergeability\"][data-req-gate=\"integration\"]",
-      "expectText": "Conflict in 7 files"
+      "expectText": "Conflict in 7 files",
+      "coldLoad": true
     },
     {
       "name": "Freshness (#1442): checks that passed on a superseded base say so on their line, not contradicted",
@@ -3779,7 +3794,8 @@
       "name": "Freshness (#1442): behind-but-clean needs no sync: the merge step is done, and the Votes card counts down to merge",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000033",
       "expectSelector": "body:has([data-change-gate=\"votes\"] .dev-change-gate-figure) .dev-step[data-req-gate=\"integration\"][data-req-state=\"done\"]",
-      "expectText": "No conflicts with main"
+      "expectText": "No conflicts with main",
+      "coldLoad": true
     },
     {
       "name": "A failed imported preview offers Retry preview (#866)",
@@ -4316,17 +4332,20 @@
     {
       "name": "A connector work order shows on the bell's Messages tab, beside an agent's finished-session notification (#1417, Streamlined Concept, #2815)",
       "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open]:has(#notifications-all-messages ~ .notifications-row-slot [data-notif-id=\"990209\"]) [data-improve-row=\"task\"]"
+      "expectSelector": "#notifications-sheet[data-open]:has(#notifications-all-messages ~ .notifications-row-slot [data-notif-id=\"990209\"]) [data-improve-row=\"task\"]",
+      "coldLoad": true
     },
     {
       "name": "The work-order row points at its request, not a session page (#1417)",
       "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open] [data-improve-row=\"task\"][href$=\"/dev/issues/900002\"]"
+      "expectSelector": "#notifications-sheet[data-open] [data-improve-row=\"task\"][href$=\"/dev/issues/900002\"]",
+      "coldLoad": true
     },
     {
       "name": "Real sessions still render beside it on the full change destination (#1417)",
       "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open] [data-improve-row=\"session\"][href*=\"/dev/proposals/\"]"
+      "expectSelector": "#notifications-sheet[data-open] [data-improve-row=\"session\"][href*=\"/dev/proposals/\"]",
+      "coldLoad": true
     },
     {
       "name": "The all-apps directory offers a Sort control, defaulting to Recommended (#1383)",
@@ -4384,7 +4403,8 @@
     {
       "name": "The menu's action rides the same lifted pane as the bell's sheet",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet.dc-lift.dc-lift-panel[data-open] #improve-quick-actions"
+      "expectSelector": "#apps-switcher-sheet.dc-lift.dc-lift-panel[data-open] #improve-quick-actions",
+      "coldLoad": true
     },
     {
       "name": "The app chip's menu is that pane too, and carries the actions the drawer held",
@@ -4511,7 +4531,8 @@
     {
       "name": "#1808: a change row's age is its own element with the full instant in title",
       "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open] [data-improve-row] time[title]"
+      "expectSelector": "#notifications-sheet[data-open] [data-improve-row] time[title]",
+      "coldLoad": true
     },
     {
       "name": "#1808: an admin log line keeps its seconds and gains the day once it is not today's",
@@ -4690,7 +4711,8 @@
       "name": "About is the menu's second pane: the repository, sharing, the version (#2718)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #app-menu-row-about",
-      "expectText": "About"
+      "expectText": "About",
+      "coldLoad": true
     },
     {
       "name": "About is the app's page (nav prototype): Open, Add to your apps, and its builders with what each has merged",
