@@ -1796,6 +1796,38 @@ function normalizedSha(value) {
 // merge's head-moved 409) passes `announceClearedVotes: false`. Only the
 // caller whose conditional UPDATE claims the move reaches the notice, so two
 // paths reconciling the same push cannot both post it.
+function workflowPlatform() {
+  return require('../workflow/platform.ts');
+}
+const moveAccepted = (out) => !!out && (out.status === 'accepted' || out.status === 'replayed');
+
+// The proposal machine did not move the head: another verifier installed a
+// revision while this one was reading (re-read rather than reset a second
+// time), or the proposal has left review for good, or the answer is late.
+async function refusedMove(pool, session, liveHead, out) {
+  const { rows } = await pool.query(
+    `SELECT reviewed_head_sha, approval_epoch, pr_summary_md, pr_summary_stale, status
+       FROM chat_sessions WHERE id = $1`,
+    [session.id]
+  );
+  const row = rows[0] || {};
+  session.reviewed_head_sha = row.reviewed_head_sha || null;
+  session.approval_epoch = row.approval_epoch;
+  session.pr_summary_md = row.pr_summary_md || null;
+  session.pr_summary_stale = !!row.pr_summary_stale;
+  const epoch = parseInt(row.approval_epoch, 10);
+  if (sameSha(session.reviewed_head_sha, liveHead)) {
+    return { enforced: true, headSha: liveHead, epoch: Number.isFinite(epoch) ? epoch : 0, unchanged: true };
+  }
+  if (out?.status === 'rejected' && out.reason === 'closed') {
+    return { enforced: true, blocked: true, reason: 'This proposal is no longer open.' };
+  }
+  return {
+    enforced: true, blocked: true, transient: true,
+    reason: 'The proposal changed while its revision was being verified. Try again.',
+  };
+}
+
 async function reconcileNativeReviewedHead({
   config, pool, session, fresh = false, notify = true, deferChecks = false,
   offline = false, announceClearedVotes = true, madeBy = null,
@@ -1913,24 +1945,19 @@ async function reconcileNativeReviewedHead({
 
   // A row with no pin yet is being bound for the first time. Pre-#872
   // semantics counted its unbound votes anyway, so binding costs nothing and
-  // must not clear anything.
+  // must not clear anything. The proposal machine writes it (Q3), and tells
+  // the shots machine the head moved.
   if (!oldHead) {
-    const { rows: bound } = await pool.query(
-      `UPDATE chat_sessions SET reviewed_head_sha = $1, ${summaryFreshness.invalidateHeadMoveSql('$1')}, stale_notified_at = NULL WHERE id = $2
-       RETURNING pr_summary_stale`,
-      [liveHead, session.id]
-    );
+    const bound = await workflowPlatform().moveReviewHead({
+      sessionId: session.id, appId: session.app_id, column: 'reviewed', from: null, to: liveHead, keepVotes: true,
+      reason: 'bound',
+    });
+    if (!moveAccepted(bound)) return refusedMove(pool, session, liveHead, bound);
     session.reviewed_head_sha = liveHead;
     // #3344: an author summary recorded for this very head stays fresh.
-    session.pr_summary_stale = typeof bound?.[0]?.pr_summary_stale === 'boolean'
-      ? bound[0].pr_summary_stale
+    session.pr_summary_stale = typeof bound.reply?.prSummaryStale === 'boolean'
+      ? bound.reply.prSummaryStale
       : (session.pr_summary_stale || !!session.pr_summary_md);
-    if (session.shots_state || session.shots_detail) {
-      await shotsState.markStaleForHead(pool, session.id, liveHead, null, { pin: 'reviewed' }).catch((err) =>
-        log.warn('votes', 'Before & after shots invalidation after revision bind failed', {
-          sessionId: session.id, headSha: liveHead, err: err.message,
-        }));
-    }
     return {
       enforced: true, headSha: liveHead, epoch: epochOf(session),
       updated: true, initialized: true, changed: false, kind: 'initialized',
@@ -1958,56 +1985,27 @@ async function reconcileNativeReviewedHead({
     made = homeroomCommits.classify(await mirror.commitsBetween(dir, oldHead, liveHead));
   } catch (_) { /* fail open: a person's update, as before */ }
 
-  // One statement. If the epoch bump and the head install could land
-  // separately, a crash between them would leave a row whose approvals
-  // describe neither the old code nor the new. A fix round leaves the
+  // One move, the proposal machine's (Q3): the head installed and, unless the
+  // move kept the approvals, the epoch moved on, in one statement, so a crash
+  // can never leave a row whose approvals describe neither the old code nor
+  // the new. It is refused if another verifier installed a revision while
+  // this one was reading (the head it read is no longer the row's), or the
+  // proposal has closed or merged meanwhile. A fix round leaves the
   // description as it stands: it changes how the change works, not what it
   // does (summary-freshness.js).
-  const { rows: claimed } = await pool.query(
-    `UPDATE chat_sessions
-        SET reviewed_head_sha = $1,
-            ${summaryFreshness.invalidateHeadMoveSql('$1', { fixParam: '$5' })},
-            stale_notified_at = NULL,
-            approval_epoch = approval_epoch + CASE WHEN $3::boolean THEN 0 ELSE 1 END
-      WHERE id = $2
-        AND reviewed_head_sha IS NOT DISTINCT FROM $4::varchar
-      RETURNING approval_epoch, pr_summary_stale`,
-    [liveHead, session.id, keepsApprovals, oldHead, made.fixOnly]
-  );
+  const moved = await workflowPlatform().moveReviewHead({
+    sessionId: session.id, appId: session.app_id, column: 'reviewed', from: oldHead, to: liveHead,
+    keepVotes: keepsApprovals, fixOnly: made.fixOnly, reason: move.kind,
+  });
 
-  if (!claimed.length) {
-    // Another verifier installed a revision while we were reading. Re-read
-    // rather than reset a second time.
-    const { rows } = await pool.query(
-      `SELECT reviewed_head_sha, approval_epoch, pr_summary_md, pr_summary_stale
-         FROM chat_sessions WHERE id = $1`,
-      [session.id]
-    );
-    session.reviewed_head_sha = rows[0]?.reviewed_head_sha || null;
-    session.approval_epoch = rows[0]?.approval_epoch;
-    session.pr_summary_md = rows[0]?.pr_summary_md || null;
-    session.pr_summary_stale = !!rows[0]?.pr_summary_stale;
-    if (sameSha(session.reviewed_head_sha, liveHead)) {
-      return { enforced: true, headSha: liveHead, epoch: epochOf(session), unchanged: true };
-    }
-    return {
-      enforced: true, blocked: true, transient: true,
-      reason: 'The proposal changed while its revision was being verified. Try again.',
-    };
-  }
+  if (!moveAccepted(moved)) return refusedMove(pool, session, liveHead, moved);
 
-  const epoch = parseInt(claimed[0].approval_epoch, 10);
+  const epoch = parseInt(moved.reply?.epoch, 10);
   session.reviewed_head_sha = liveHead;
   session.approval_epoch = epoch;
-  session.pr_summary_stale = typeof claimed[0].pr_summary_stale === 'boolean'
-    ? claimed[0].pr_summary_stale
+  session.pr_summary_stale = typeof moved.reply?.prSummaryStale === 'boolean'
+    ? moved.reply.prSummaryStale
     : (made.fixOnly ? !!session.pr_summary_stale : (session.pr_summary_stale || !!session.pr_summary_md));
-  if (session.shots_state || session.shots_detail) {
-    await shotsState.markStaleForHead(pool, session.id, liveHead, null, { pin: 'reviewed' }).catch((err) =>
-      log.warn('votes', 'Before & after shots invalidation after head move failed', {
-        sessionId: session.id, oldHead, headSha: liveHead, err: err.message,
-      }));
-  }
 
   // Checks policy follows who wrote the tree. A mechanical merge is pure git
   // over a tested branch and a tested main, so the verdict carries. Anything
@@ -2283,19 +2281,12 @@ function parseExpectedEpoch(raw) {
 async function recordVote({
   pool, session, userId, vote, headSha, revisionEnforced, reason = null, expectedEpoch = null,
 }) {
-  if (!revisionEnforced) {
-    return pool.query(
-      `INSERT INTO pr_votes (session_id, user_id, vote, head_sha, approval_epoch, reason)
-       SELECT $1, $2, $3, $4, cs.approval_epoch, $5 FROM chat_sessions cs WHERE cs.id = $1
-       ON CONFLICT (session_id, user_id) DO UPDATE
-         SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha,
-             approval_epoch = EXCLUDED.approval_epoch, created_at = NOW(),
-             ${VOTE_REASON_UPSERT_SQL}
-       RETURNING id, reason`,
-      [session.id, userId, vote, headSha, reason]
-    );
-  }
-
+  // One statement for every proposal, an imported one's included (bug 5):
+  // the row is locked and must be up for a vote, so a vote racing an
+  // unpromote either lands before it (and is voided with the epoch it
+  // bumps) or finds the proposal Underway and is refused. The stamp is the
+  // epoch read under that lock. An epoch the voter's screen was drawn at
+  // (#2782) is held to when the revision is enforced.
   return pool.query(
     `WITH current_session AS (
        SELECT id, approval_epoch
@@ -2312,7 +2303,7 @@ async function recordVote({
            approval_epoch = EXCLUDED.approval_epoch, created_at = NOW(),
            ${VOTE_REASON_UPSERT_SQL}
      RETURNING id, reason`,
-    [session.id, userId, vote, headSha, reason, parseExpectedEpoch(expectedEpoch)]
+    [session.id, userId, vote, headSha, reason, revisionEnforced ? parseExpectedEpoch(expectedEpoch) : null]
   );
 }
 
@@ -2567,543 +2558,51 @@ function voteRoutes(config) {
       if (req.cliHandoffStatus && req.cliHandoffStatus !== session.status) {
         return res.status(409).json({ error: 'session_state_changed' });
       }
-      const imported = session.source === 'imported';
-      const previousReviewedHead = imported
-        ? (session.imported_pr_head_sha || null)
-        : (session.reviewed_head_sha || null);
 
-      // Promoted-PR cap: worker-less promoted sessions don't count
-      // against the per-user active-session cap (see the create-session
-      // cap in routes/sessions.js), so this is the bound that keeps one
-      // user from accumulating unlimited open-for-vote PRs (each holding a
-      // staging preview and vote-panel attention). Checked before the
-      // lazy PR creation below so an over-cap promote doesn't open a
-      // PR it then refuses to put up for vote.
-      //
-      // The ceiling is per-REQUESTER: full platform admins get a raised
-      // cap (services/session-caps.js). Never compare against
-      // config.maxUserPromotedSessions directly here.
-      const caps = effectiveSessionCaps(config, req.user);
-      const { rows: promotedRows } = await pool.query(
-        `SELECT COUNT(*) AS cnt FROM chat_sessions
-         WHERE user_id = $1 AND status IN ('promoted', 'merging') AND is_headless = FALSE`,
-        [req.user.id]
-      );
-      if (parseInt(promotedRows[0].cnt) >= caps.promotedSessions) {
-        return res.status(429).json({
-          error: `You already have ${caps.promotedSessions} changes waiting for approval. Wait for one to go live, or archive one first.`,
-        });
-      }
-
-      const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-
-      // #2500 / #2537: backfill the originating issue for the sessions that
-      // predate the creation-time seed (routes/sessions.js). They recorded
-      // the issue only in `created_from_issue_number`, so their proposal
-      // showed "No issues linked yet" and, since the closing block is built
-      // from `linked_issues`, the pull request opened just below carried no
-      // `Closes #N` either. Promote time is the last moment that can still
-      // be fixed before the group sees the proposal.
-      //
-      // Only ever for a row the seed never touched: on a seeded row an empty
-      // `linked_issues` is an author's deliberate removal, and resurrecting
-      // it here would make the linked-issues editor look broken. Routed
-      // through proposal-update.updateLinkedIssues so a session that already
-      // has a pull request gets the `Closes #N` appended to its live body
-      // too — the lazy-creation block below only runs when there is no PR
-      // yet, or no title on it. Best-effort: a proposal must never fail to
-      // go up for a vote over its issue linkage.
-      if (!session.issue_link_seeded
-          && Number.isInteger(session.created_from_issue_number)
-          && session.created_from_issue_number > 0
-          && !(Array.isArray(session.linked_issues) ? session.linked_issues : []).length) {
-        try {
-          const proposalUpdate = require('../services/proposal-update');
-          await proposalUpdate.updateLinkedIssues({
-            pool, gh: github, session,
-            owner: repoOwner,
-            repo: repoName ? repoName.replace(/\.git$/, '') : repoName,
-            addIssues: [session.created_from_issue_number],
-            removeIssues: [],
-          });
-          await pool.query(
-            'UPDATE chat_sessions SET issue_link_seeded = TRUE WHERE id = $1',
-            [session.id]
-          );
-          session.issue_link_seeded = true;
-          log.info('votes', 'Backfilled the originating issue onto the proposal', {
-            sessionId: session.id, issueNumber: session.created_from_issue_number,
-          });
-        } catch (err) {
-          log.warn('votes', 'Originating-issue backfill failed (continuing)', {
-            sessionId: session.id, err: err.message,
-          });
-        }
-      }
-
-      // Lazy PR recovery: older clones and sessions whose earlier draft
-      // creation failed can arrive here without a PR. Create it on THIS
-      // session's branch — never the unattended auto branch — so the vote
-      // has something to merge. applyPrMetadata reads
-      // the clone's copied history via gatherSessionContext, so the PR
-      // title/body get the full auto-session context.
-      //
-      // Also runs when a PR exists but pr_title is missing: staging
-      // recovery (server.js rebuildSessionStaging) can mint a PR before
-      // promotion without a generated title, and a NULL pr_title would
-      // otherwise render as "Change by <user>" forever. Backfilling it
-      // here updates both GitHub and pr_title/session_title.
-      //
-      // And for a change an agent session started (#2779), always: this is
-      // the moment the group starts reading it, so its title and description
-      // are written again from the change as it now stands (its name, spec
-      // and every build's summary; pr-metadata's gatherSessionContext), not
-      // left as the first build described it. A title a person set is kept.
-      // Best-effort like the backfill: it never blocks the promotion.
-      const refreshAtSubmission = session.agent_session_id != null && !!session.pr_number;
-      if (!session.pr_number || !session.pr_title || refreshAtSubmission) {
-        // Distinguish creating a PR (no pr_number → a failure must block
-        // promotion) from merely backfilling a missing title on an
-        // existing PR, or refreshing one (best-effort — never block
-        // promotion on it).
-        const isBackfill = !!session.pr_number;
-        const { rows: msgRows } = await pool.query(
-          `SELECT content FROM chat_session_messages
-           WHERE session_id = $1 AND role = 'user'
-           ORDER BY id DESC LIMIT 1`,
-          [session.id]
-        );
-        const prMetadata = require('../services/pr-metadata');
-        let prResult = null;
-        let prError = null;
-        try {
-          let metadataApiKey = null;
-          let metadataGenerationAllowed = false;
-          try {
-            const billing = await limits.resolveBillingPath(
-              pool, config.dataEncryptionKey, req.user.id,
-            );
-            if (!billing.error) {
-              metadataApiKey = billing.apiKey;
-              metadataGenerationAllowed = true;
-            } else {
-              log.info('votes', 'Using deterministic PR metadata: no payer available', {
-                sessionId: session.id, reason: billing.reason || null,
-              });
-            }
-          } catch (billingErr) {
-            log.warn('votes', 'PR metadata billing resolve failed; using deterministic draft', {
-              sessionId: session.id, err: billingErr.message,
-            });
-          }
-          prResult = await prMetadata.applyPrMetadata({
-            pool, session, repoOwner, repoName,
-            userMessage: msgRows[0]?.content || '',
-            ccSummary: '',
-            username: req.user.username,
-            apiKey: metadataApiKey,
-            userId: req.user.id,
-            allowModelGeneration: metadataGenerationAllowed,
-            // A title the author submitted with the work (submit_work's
-            // `title`, stored at update time) names the PR verbatim instead
-            // of "<user>'s changes · auto-title pending".
-            preferredTitle: session.proposed_pr_title || null,
-          });
-        } catch (err) {
-          prError = err;
-          log.warn('votes', 'Lazy PR creation/backfill threw', {
-            sessionId: session.id, backfill: isBackfill,
-            code: err.code || null, ...github.describeGithubError(err),
-          });
-        }
-        if (!isBackfill && (!prResult || !session.pr_number)) {
-          // Refuse to promote PR-less — a vote with nothing to merge is a
-          // dead end. Nothing was mutated yet.
-          if (prError && prError.code === 'no_commits') {
-            // Permanent condition: the branch has no commits on GitHub
-            // (typically committed locally but never pushed). "Try again
-            // in a moment" would loop forever — tell the truth instead.
-            return res.status(409).json({
-              error: 'This change has no committed code on its branch yet, so there is nothing to open a pull request for. Re-run your request in the session so it produces and pushes a commit, then propose again.',
-            });
-          }
-          if (prError && prError.code === 'github_unavailable') {
-            // GitHub-side outage (2026-07-24: hours of empty-body 500s on
-            // POST /pulls only). Retrying immediately or re-running the
-            // request in the session cannot help — say so honestly. This
-            // message also reaches the Mayor, which stops it from making
-            // no-op commits to "fix" a problem that isn't in the change.
-            const detail = [
-              prError.status ? `HTTP ${prError.status} from GitHub` : 'network error reaching GitHub',
-              prError.requestId ? `request id ${prError.requestId}` : null,
-            ].filter(Boolean).join(', ');
-            return res.status(503).json({
-              error: `GitHub is currently failing to create pull requests (${detail}). This is a GitHub-side problem, not this change: the work is safe on its branch. Try proposing again in a few minutes; do not re-run the request or push extra commits.`,
-            });
-          }
-          return res.status(502).json({
-            error: 'Could not create the pull request for this change. Please retry; if it keeps failing, re-run your request in the session.',
-          });
-        }
-      }
-
-      // Reconcile the PR's GitHub state before putting it up for vote and
-      // capture the immutable head revision this review starts from. The PR
-      // head can move outside the vote flow, so failing to read it must
-      // fail closed: checks/votes cannot honestly describe an unknown revision.
-      // A session that was withdrawn (archived) carries a CLOSED PR —
-      // GitHub reports closed PRs as permanently unmergeable, so
-      // promoting one without a reopen creates a proposal that can
-      // never merge (session 2398 / PR #26: every merge 405'd and the
-      // auto-resolver looped still_conflicting forever). Reopen it here;
-      // if GitHub refuses (head branch deleted, a newer PR on the same
-      // head), refuse the promote with an actionable error instead of
-      // minting a doomed proposal.
-      let promotedHeadSha = null;
-      let nativePrForReview = null;
-      let nativePrRepo = null;
+      // The pull request as GitHub shows it now, when the proposal has one:
+      // the proposal machine refuses one already merged, an imported one
+      // closed or kept as a draft by its author. A read, not an effect:
+      // everything GitHub is asked to do (open, reopen, mark ready) is the
+      // machine's work, once the proposal is claimed for review (R4).
+      let pr = null;
       if (github.isEnabled() && session.repo_url && session.pr_number) {
         const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
         if (!owner || !repo) {
-          return res.status(409).json({
-            error: 'This proposal has no valid GitHub repository to verify.',
-          });
+          return res.status(409).json({ error: 'This proposal has no valid GitHub repository to verify.' });
         }
-        if (owner && repo) {
-          let pr = null;
-          try {
-            pr = await github.getPR(owner, repo, session.pr_number);
-          } catch (err) {
-            log.warn('votes', 'Promote PR revision check failed', {
-              sessionId: session.id, pr: session.pr_number, err: err.message,
-            });
-            return res.status(503).json({
-              error: 'GitHub could not verify the pull request revision. Try promoting again shortly.',
-            });
-          }
-          if (pr && pr.merged) {
-            return res.status(409).json({
-              error: `PR #${session.pr_number} was already merged on GitHub. This change has landed, so there is nothing to vote on.`,
-            });
-          }
-          if (pr && pr.state === 'closed') {
-            if (imported) {
-              return res.status(409).json({
-                error: 'This change was closed on GitHub, so it can\'t ask for approval.',
-              });
-            }
-            try {
-              await github.reopenPR(owner, repo, session.pr_number);
-              log.info('votes', 'Reopened closed PR at promote time', {
-                sessionId: session.id, pr: session.pr_number,
-              });
-            } catch (err) {
-              log.warn('votes', 'Could not reopen closed PR at promote time', {
-                sessionId: session.id, pr: session.pr_number, err: err.message,
-              });
-              return res.status(409).json({
-                error: `This proposal's pull request (#${session.pr_number}) was closed on GitHub and couldn't be reopened. Re-propose it as a fresh proposal.`,
-              });
-            }
-          }
-          promotedHeadSha = pr?.head?.sha || null;
-          if (!promotedHeadSha || !/^[0-9a-f]{40}$/i.test(promotedHeadSha)) {
-            return res.status(409).json({
-              error: 'GitHub did not return a valid pull-request head commit.',
-            });
-          }
-          if (req.cliHandoffCheckedHead
-              && String(promotedHeadSha).toLowerCase()
-                !== String(req.cliHandoffCheckedHead).toLowerCase()) {
-            // A direct push landed after the CLI-handoff middleware verified
-            // the managed branch but before lazy PR creation / this PR read.
-            // Keep the session active so the new head can be rebuilt; never
-            // open voting on code that did not produce the ready verdict.
-            const detail = 'The proposal branch changed after checks. Rebuild the new head locally or from the web Dev session before promoting.';
-            // The verdict is the preview machine's; the 409 says it to the author.
-            return res.status(409).json({
-              error: 'branch_head_changed',
-              message: detail,
-            });
-          }
-
-          // Defer GitHub's draft transition until the status CAS succeeds.
-          // Otherwise a concurrent pause/archive could leave a ready PR on
-          // an Underway session that never entered review.
-          if (!imported) {
-            nativePrForReview = pr;
-            nativePrRepo = { owner, repo };
-          }
-        }
-      }
-
-      // promoted_at anchors the stale-PR sweeper's "no interest since"
-      // clock; clearing stale_notified_at handles the re-promote case
-      // (a previously-stale PR that's proposed again starts fresh).
-      // #3234: active_users_at_promote is display-only (the vote's "was N
-      // when voting opened" note); the merge gate never reads it.
-      const activeAtPromote = await require('../services/governance')
-        .electorateAtPromote(pool, session.app_id);
-      const promoted = await pool.query(
-        `UPDATE chat_sessions
-            SET status = 'promoted', promoted_at = NOW(),
-                active_users_at_promote = $4,
-                stale_notified_at = NULL,
-                reviewed_head_sha = CASE WHEN source = 'imported'
-                  THEN reviewed_head_sha ELSE COALESCE($2, reviewed_head_sha) END,
-                imported_pr_head_sha = CASE WHEN source = 'imported'
-                  THEN COALESCE($2, imported_pr_head_sha) ELSE imported_pr_head_sha END
-          WHERE id = $1 AND status = $3`,
-        [session.id, promotedHeadSha, session.status, activeAtPromote]
-      );
-      if (!promoted.rowCount) {
-        return res.status(409).json({ error: 'session_state_changed' });
-      }
-      // Imported PRs retain the external author's GitHub state. For native
-      // drafts, confirm GitHub's supported ready-for-review mutation before
-      // announcing the vote. On failure, restore the pre-review row so a
-      // retry can complete the same transition.
-      if (nativePrRepo) {
         try {
-          await github.markPrReadyForReview(
-            nativePrRepo.owner, nativePrRepo.repo, session.pr_number, nativePrForReview
-          );
+          const live = await github.getPR(owner, repo.replace(/\.git$/, ''), session.pr_number);
+          pr = { state: live?.state === 'closed' ? 'closed' : 'open', draft: !!live?.draft, merged: !!live?.merged,
+            head: /^[0-9a-f]{40}$/i.test(String(live?.head?.sha || '')) ? live.head.sha : null };
         } catch (err) {
-          const rolledBack = await pool.query(
-            `UPDATE chat_sessions SET status = $1, promoted_at = $2,
-                    stale_notified_at = $3, reviewed_head_sha = $4
-              WHERE id = $5 AND status = 'promoted' AND reviewed_head_sha IS NOT DISTINCT FROM $6`,
-            [session.status, session.promoted_at || null, session.stale_notified_at || null,
-              session.reviewed_head_sha || null, session.id, promotedHeadSha]
-          ).catch((rollbackErr) => {
-            log.error('votes', 'Failed to restore session after GitHub draft transition', {
-              sessionId: session.id, err: rollbackErr.message,
-            });
-            return null;
-          });
-          log.warn('votes', 'Failed to mark PR ready on GitHub', {
+          log.warn('votes', 'Promote PR revision check failed', {
             sessionId: session.id, pr: session.pr_number, err: err.message,
-            restored: !!rolledBack?.rowCount,
           });
-          if (!rolledBack?.rowCount) {
-            return res.status(503).json({
-              error: 'GitHub could not mark the pull request ready, and Homeroom could not restore the change to Underway. Check its current status before retrying.',
-            });
-          }
           return res.status(503).json({
-            error: 'GitHub could not mark the draft pull request ready for review. The change is still underway; try promoting it again shortly.',
+            error: 'GitHub could not verify the pull request revision. Try promoting again shortly.',
           });
         }
       }
-      if (promotedHeadSha) {
-        if (imported) session.imported_pr_head_sha = promotedHeadSha;
-        else session.reviewed_head_sha = promotedHeadSha;
 
-        // A withdrawn proposal may retain votes from its earlier review.
-        // Preserve only votes explicitly cast for this exact revision; this
-        // also removes legacy unbound votes while keeping same-head re-promotes
-        // stable. The governance gate is head-scoped too, so this cleanup keeps
-        // the visible tally aligned with what can actually count.
-        const cleared = await pool.query(
-          `DELETE FROM pr_votes
-            WHERE session_id = $1 AND head_sha IS DISTINCT FROM $2`,
-          [session.id, promotedHeadSha]
-        );
-        if ((cleared.rowCount || 0) > 0) {
-          try {
-            const { pushVoteUpdate } = require('../services/ws');
-            pushVoteUpdate({
-              sessionId: session.id,
-              appSlug: session.app_slug || null,
-              merged: false,
-              headMoved: previousReviewedHead != null,
-            });
-          } catch (_) { /* ws failures are non-fatal */ }
-        }
-
-        // If this is a re-promotion on a new commit and an existing preview
-        // still describes the old one, invalidate it immediately and rebuild
-        // checks against the captured SHA. A proposal without staging is
-        // handled by the ordinary post-response build below.
-        if (session.checks_commit_sha !== promotedHeadSha) {
-          if (imported) {
-            // Import-time checks may still describe the head captured when
-            // the row entered In progress. Promotion re-read GitHub above;
-            // if that head moved, start a SHA-pinned rebuild even when the
-            // earlier preview has not finished yet.
-            await kickImportedRevisionChecks({
-              config, pool, session, headSha: promotedHeadSha,
-            });
-          } else if (previousReviewedHead !== promotedHeadSha && session.staging_url) {
-            await kickNativeRevisionChecks({
-              config, pool, session, headSha: promotedHeadSha,
-            });
-          }
-        }
-      }
-
-      // #788: classify the proposal now that it's up for vote — does its
-      // diff change dapp.json's `admins` block? A flagged proposal loses
-      // the time-based merge paths (no countdown, no silence-is-consent)
-      // and can't be force-merged by an app admin. Best-effort and
-      // awaited so the first vote-panel render already carries the flag;
-      // checkAndMerge re-verifies authoritatively before merging anyway.
-      await appAdmins.refreshExplicitApproval(pool, session, session);
-
-      // Post to group chat. Include the PR title when we have one so
-      // the feed reads like "evan promoted PR #8 — Add emoji stamp
-      // centering fix for voting" instead of the opaque "PR #8 for
-      // voting" which gives no hint about what's being voted on.
-      const promoLabel = session.pr_title
-        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
-        : `PR #${session.pr_number || session.id}`;
-      // Into the proposal's own thread, so the topic discussion carries its
-      // lifecycle in context (a channel carries no activity).
-      await sendSystemMessage(pool, session.app_id,
-        `${req.user.username} promoted ${promoLabel} for voting`,
-        'vote',
-        { vote: { sessionId: session.id, prNumber: session.pr_number || null } },
-        { type: 'session', ref: session.id }
-      ).catch(() => {});
-
-      const { pushSessionUpdate } = require('../services/ws');
-      pushSessionUpdate({ action: 'promoted', sessionId: session.id, appSlug: session.app_slug });
-      // #8 (WP3): the Homeroom bot's own proposal is up for a vote: the
-      // activity tray of whoever asked for it reads again. Never throws.
-      if (req.user?.is_synthetic) void require('../services/homeroom-bot-dm').noteProposalChanged(pool, session.id);
-      log.info('votes', 'Session promoted', { sessionId: session.id });
-      events.record(pool, {
-        type: events.EVENT_TYPES.PR_PROMOTED,
-        userId: req.user.id,
-        appId: session.app_id,
-        sessionId: session.id,
-        metadata: { prNumber: session.pr_number || null },
+      // Promoted-PR cap: the bound that keeps one user from accumulating
+      // unlimited open-for-vote PRs, per REQUESTER (full platform admins get a
+      // raised cap, the Homeroom bot its own: services/session-caps.js). The
+      // machine counts it under a lock on the owner, so two promotes at once
+      // cannot both squeeze under it (R5).
+      const caps = effectiveSessionCaps(config, req.user);
+      const reply = await require('../workflow/platform.ts').promoteProposal({
+        sessionId: session.id, appId: session.app_id, userId: req.user.id, username: req.user.username,
+        from: session.status, cap: caps.promotedSessions, pr,
+        expectedHead: req.cliHandoffCheckedHead || null,
+        // #3893: work an agent put up for its owner tells them so.
+        viaAgent: promotedByOwnersAgent(req),
+        ownOperation: req.cliHandoffOperation || null,
+        // The Homeroom bot's own promote, a step of its build, waits for
+        // GitHub's answer longer than a person's click does.
+        ...(req.user && req.user.is_synthetic ? { waitMs: 120000 } : {}),
       });
-      // #183: return the PR info so the dev-chat staging card can flip
-      // its "Changes ready" header to the PR link without a refetch —
-      // the promote may have just created the PR lazily.
-      res.json({
-        ok: true,
-        prNumber: session.pr_number || null,
-        prUrl: session.pr_url || null,
-        prTitle: session.pr_title || null,
-      });
-
-      // #183: a clone promoted straight off a headless auto run's pre-built
-      // preview may not have its own staging yet (the copied card points at
-      // the auto session's URL — same content, since the clone branch was
-      // forked from it). Build the clone's own staging from its branch head,
-      // fire-and-forget; the Pass-3 heal sweeper in server.js is the backstop.
-      if (imported) {
-        // Imported rows already start their SHA-pinned preview/check build at
-        // import time. Never fall through to the native branch-name build:
-        // a fork head may not exist in the app repository at all.
-      } else if (!session.staging_url) {
-        (async () => {
-          // Use the exact revision captured before promotion. The fallback
-          // exists only for GitHub-disabled local development.
-          let commitHash = session.reviewed_head_sha || 'latest';
-          if (commitHash === 'latest' && github.isEnabled() && repoOwner && repoName) {
-            try {
-              const octokit = await github.getInstallationOctokit(repoOwner);
-              const { data: ref } = await octokit.request(
-                'GET /repos/{owner}/{repo}/git/ref/{+ref}',
-                { owner: repoOwner, repo: repoName, ref: `heads/${session.branch_name}` }
-              );
-              commitHash = ref.object.sha;
-            } catch {}
-          }
-          // The preview machine builds and checks the reviewed head (a
-          // submission whose own run checks that head already is joined).
-          await require('../services/preview-workflow').revision({
-            pool, session, head: commitHash === 'latest' ? null : commitHash, source: 'promote', trigger: 'promote-kick',
-          });
-        })().catch((err) => {
-          log.warn('votes', 'Post-promote preview hand-off failed', { sessionId: session.id, err: err.message });
-        });
-      } else {
-        // #461: the preview already exists (e.g. built via the manual
-        // deploy-staging button, which historically never ran checks, or
-        // inherited from an earlier turn whose capture described an older
-        // commit). Kick a recheck NOW when the verdict is missing or
-        // describes a different commit than the branch head, instead of
-        // leaving the freshly-promoted proposal merge-blocked until a
-        // background sweep notices. Fire-and-forget; the preview machine
-        // re-runs against what serves (or rebuilds what does not) and joins a
-        // run already going for the head.
-        (async () => {
-          let needsKick = !session.check_state;
-          if (!needsKick && github.isEnabled() && repoOwner && repoName) {
-            try {
-              const octokit = await github.getInstallationOctokit(repoOwner);
-              const { data: ref } = await octokit.request(
-                'GET /repos/{owner}/{repo}/git/ref/{+ref}',
-                { owner: repoOwner, repo: repoName, ref: `heads/${session.branch_name}` }
-              );
-              needsKick = !!ref.object.sha && ref.object.sha !== session.checks_commit_sha;
-            } catch {}
-          }
-          if (!needsKick) return;
-          const stagingRecovery = require('../services/staging-recovery');
-          await stagingRecovery.recheckSessionChecks({
-            config, pool, session, reason: 'promote-kick',
-          });
-        })().catch((err) => {
-          log.warn('votes', 'Promote-time checks kick failed', { sessionId: session.id, err: err.message });
-        });
-      }
-
-      // Vote-request fan-out. Non-fatal + post-response: the promote
-      // itself has already succeeded, so a notification hiccup must not
-      // 500 the request. Pings the app's active users + creator +
-      // favoriters (minus the proposer) so the right people come vote,
-      // and de-dupes per session so a re-promote doesn't re-spam.
-      try {
-        const notifRows = await notifications.createPrProposedNotifications(pool, {
-          appId: session.app_id,
-          sessionId: session.id,
-          proposerId: req.user.id,
-        });
-        for (const row of notifRows) {
-          pushNotificationToUser(row.user_id, {
-            type: 'notification_new',
-            notification: notifications.serialize({
-              ...row,
-              app_slug: session.app_slug,
-              app_name: session.app_name,
-              pr_title: session.pr_title,
-              pr_number: session.pr_number,
-              source_username: req.user.username,
-            }),
-          });
-        }
-        if (notifRows.length) {
-          log.info('votes', 'PR-proposed notifications sent', {
-            sessionId: session.id, count: notifRows.length,
-          });
-        }
-      } catch (err) {
-        log.warn('votes', 'pr_proposed notify failed', { sessionId: session.id, err: err.message });
-      }
-
-      // #3893: the fan-out above leaves the proposer out, which is right for
-      // a person pressing Propose and wrong when their agent did it for them
-      // while they were away. submit_work tells them when it opens a
-      // proposal (#1405, connector_submitted); an agent that puts its change
-      // up for the vote here gets the same "Submitted by your agent". Before
-      // this, work proposed through the local Homeroom CLI, promote_change or
-      // `propose: true` reached the vote without a word to its owner.
-      // Unread-deduped per (owner, change), and best-effort like the above.
-      if (promotedByOwnersAgent(req)) {
-        try {
-          const created = await notifications.createConnectorSubmittedNotification(pool, {
-            userId: req.user.id, appId: session.app_id, sessionId: session.id, detail: 'submitted',
-          });
-          if (created.length) await notifications.hydrateAndPush(pool, created[0]);
-        } catch (err) {
-          log.warn('votes', 'connector_submitted notify failed', { sessionId: session.id, err: err.message });
-        }
-      }
+      if (reply.status === 200) log.info('votes', 'Session promoted', { sessionId: session.id });
+      return res.status(reply.status).json(reply.body);
     } catch (err) {
       log.error('votes', 'Promote failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -3376,19 +2875,17 @@ function voteRoutes(config) {
       const importLinkedIssues = parseImportLinkedIssues(req.body);
       const importSummary = parseImportSummary(req.body);
       const promote = req.body?.promote === true;
-      const initialStatus = promote ? 'promoted' : 'active';
+      const initialStatus = 'active';
 
-      // Browser imports join the shared In-progress board first. Automated
-      // submission paths may opt into the historical straight-to-vote flow
-      // with `promote: true`.
-      // #3234: a straight-to-vote import opens its vote here, so it stamps
-      // the electorate the same way the promote route does (display only).
-      const importActiveAtPromote = promote
-        ? await require('../services/governance').electorateAtPromote(pool, app.id)
-        : null;
+      // Every import joins the shared In-progress board first. Automated
+      // submission paths may go straight to a vote with `promote: true`: the
+      // proposal machine is asked in the import's own transaction, and puts
+      // it up for a vote the way the promote route does (under the owner's
+      // cap, never a draft its author keeps: bugs 10, 11).
       const importClient = await pool.connect();
       let inserted;
       let shotsResult = null;
+      let promoteEvent = null;
       try {
         await importClient.query('BEGIN');
         ({ rows: inserted } = await importClient.query(
@@ -3399,18 +2896,15 @@ function voteRoutes(config) {
             promoted_at, shared_at, created_at,
             testing_md, testing_path, testing_paths, linked_issues, pr_body,
             pr_summary_md, pr_summary_source, pr_summary_source_head_sha,
-            pr_summary_source_body_hash, pr_summary_applied_version,
-            active_users_at_promote)
+            pr_summary_source_body_hash, pr_summary_applied_version)
          VALUES ($1, $2, $3, $4, $5, $6, $7::text,
             'imported', $8::text, $9, $10, $11,
-            CASE WHEN $7::text = 'promoted' THEN NOW() END,
-            CASE WHEN $7::text = 'active' THEN NOW() END,
+            NULL, NOW(),
             NOW(), $12, $13, $14::jsonb, $15, $16, $17,
             CASE WHEN $17::text IS NULL THEN NULL ELSE 'author' END,
             CASE WHEN $17::text IS NULL THEN NULL ELSE $8::text END,
             CASE WHEN $17::text IS NULL THEN NULL ELSE $18 END,
-            CASE WHEN $17::text IS NULL THEN NULL ELSE 0 END,
-            $19::int)
+            CASE WHEN $17::text IS NULL THEN NULL ELSE 0 END)
            RETURNING id, status`,
           [
             app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
@@ -3432,7 +2926,6 @@ function voteRoutes(config) {
             // without it renders exactly as it did before this field existed.
             importSummary,
             summaryFreshness.bodyHash(pr.body || null),
-            importActiveAtPromote,
           ]
         ));
         await topicAttrs.selfAssignProposal(
@@ -3457,6 +2950,14 @@ function voteRoutes(config) {
             throw err;
           }
         }
+        if (promote) {
+          promoteEvent = await require('../workflow/platform.ts').promoteInTransaction({
+            sessionId: inserted[0].id, appId: app.id, userId: req.user.id, username: req.user.username, from: 'active',
+            cap: effectiveSessionCaps(config, req.user).promotedSessions,
+            pr: { state: pr.state, draft: !!pr.draft, merged: !!pr.merged, head: headSha },
+            expectedHead: headSha, db: importClient, source: { kind: 'route', name: 'pr-import' },
+          });
+        }
         await importClient.query('COMMIT');
       } catch (err) {
         await importClient.query('ROLLBACK').catch(() => {});
@@ -3465,12 +2966,20 @@ function voteRoutes(config) {
         importClient.release();
       }
       const sessionId = inserted[0].id;
+      // A straight-to-vote import: answered once it is up for a vote (or
+      // refused), within about twenty seconds; past them it is being put up.
+      const promoted = promoteEvent != null
+        ? await require('../workflow/platform.ts').promoteCommitted(promoteEvent, {
+          sessionId, cap: effectiveSessionCaps(config, req.user).promotedSessions,
+        })
+        : null;
+      const status = promoted?.status === 200 ? 'promoted' : initialStatus;
       const session = {
         id: sessionId, app_id: app.id, app_slug: app.slug, user_id: req.user.id,
         branch_name: headBranch, pr_number: prNumber, pr_title: pr.title || null,
         pr_body: pr.body || null,
         repo_url: app.repo_url, staging_url: null, source: 'imported',
-        status: initialStatus, imported_pr_head_sha: headSha,
+        status, imported_pr_head_sha: headSha,
         handoff_base_sha: baseSha,
         imported_pr_head_repo: headRepoFullName,
         // #1330: the capture reads its routes off THIS object — the INSERT
@@ -3493,30 +3002,10 @@ function voteRoutes(config) {
         shots_detail: shotsResult?.detail || null,
       };
 
-      if (promote) {
-        // Explicit submissions still announce the vote exactly as before.
-        const label = pr.title ? `PR #${prNumber}: ${pr.title}` : `PR #${prNumber}`;
-        await sendSystemMessage(pool, app.id,
-          `${req.user.username} imported ${label} for voting`,
-          'vote',
-          { vote: { sessionId, prNumber } },
-          { type: 'session', ref: sessionId }
-        ).catch(() => {});
-      }
-
       const { pushSessionUpdate } = require('../services/ws');
-      pushSessionUpdate({ action: promote ? 'promoted' : 'imported', sessionId, appSlug: app.slug });
-      if (promote) {
-        try {
-          events.record(pool, {
-            type: events.EVENT_TYPES.PR_PROMOTED,
-            userId: req.user.id, appId: app.id, sessionId,
-            metadata: { prNumber, source: 'imported' },
-          });
-        } catch { /* events are best-effort */ }
-      }
+      pushSessionUpdate({ action: 'imported', sessionId, appSlug: app.slug });
 
-      log.info('votes', 'PR imported', { sessionId, prNumber, appId: app.id, status: initialStatus });
+      log.info('votes', 'PR imported', { sessionId, prNumber, appId: app.id, status });
       const visibleChangesSubmission = require('../services/proposal-update').visibleChangesSubmissionFields(
         shotsResult || {
           state: null,
@@ -3532,7 +3021,11 @@ function voteRoutes(config) {
         ok: true,
         sessionId,
         prNumber,
-        status: initialStatus,
+        status,
+        // Asked to go straight to a vote and it did not (yet): why, as the
+        // promote route would have answered.
+        ...(promoted && promoted.status !== 200
+          ? { promote: { status: promoted.status, ...(promoted.body || {}) } } : {}),
         ...visibleChangesSubmission,
       });
 
@@ -3763,15 +3256,15 @@ function voteRoutes(config) {
           latest ? latest.approval_epoch : null
         );
       }
-
-      // Any voting activity revives a going-stale PR: clear the warning
-      // flag so the stale sweeper restarts its clock instead of archiving.
-      if (session.stale_notified_at) {
-        await pool.query(
-          `UPDATE chat_sessions SET stale_notified_at = NULL WHERE id = $1`,
-          [session.id]
-        );
+      if ((recorded.rowCount || 0) === 0) {
+        // It left review between the read above and the write lock (an
+        // imported proposal moved back to Underway, withdrawn): no vote.
+        return res.status(409).json({ error: 'This proposal is no longer up for a vote.' });
       }
+
+      // A vote revives a going-stale proposal: the proposal machine's review
+      // check reads the newest vote under its lock, and a vote since the
+      // warning clears it rather than closing the proposal (R2).
 
       // Auto-dismiss this voter's PR notifications for this session now that
       // the vote is recorded in the DB (i.e. confirmed, not optimistic). Runs
@@ -5752,6 +5245,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
   }
   if (!explicitApproval) explicitApprovalReason = null;
 
+  // What the gate below is about: the head and the approval epoch the row
+  // has now. The merge's claim names both, and the proposal machine reads
+  // the gate again under its lock (R1): a vote, an unpromote or a head move
+  // committed after this read is never merged past.
+  const { rows: [gatedAt] = [] } = await pool.query(
+    `SELECT approval_epoch, CASE WHEN source = 'imported' THEN imported_pr_head_sha ELSE reviewed_head_sha END AS head
+       FROM chat_sessions WHERE id = $1`, [session.id]);
   const gate = await governance.governedGate(pool, session.app_id, {
     kind: 'pr', id: session.id, openedAt, explicitApproval,
     // #4666: on a project with rules, a change to who decides goes by the
@@ -6472,12 +5972,19 @@ async function checkAndMerge(config, pool, session, options = {}) {
     dstep({ phase: 'gate:majority', message: `Force-merge by ${forceBy?.username || 'an admin'}, bypassing the vote/checks gates.`, detail: { yesCount, majority, forced: true } });
   }
 
-  const { rows: claim } = await pool.query(
-    `UPDATE chat_sessions SET status = 'merging', merge_attempt_at = NOW()
-     WHERE id = $1 AND status = 'promoted'
-     RETURNING id`,
-    [session.id]
-  );
+  // The claim is the proposal machine's (Q2): it moves the proposal into
+  // 'merging' only while it is in review at the head and epoch the gate
+  // above read, and, unless an admin forces it, while the vote gate read
+  // again under its lock still says merge (R1, bugs 1 and 2). Exactly one
+  // of two concurrent attempts wins it. Its transition clears what blocked
+  // the card and tells every client the proposal is merging.
+  const workflow = require('../workflow/platform.ts');
+  const claimed = await workflow.claimMerge({
+    sessionId: session.id, appId: session.app_id,
+    head: gatedAt && /^[0-9a-f]{40}$/i.test(String(gatedAt.head || '')) ? String(gatedAt.head).toLowerCase() : null,
+    epoch: Number.isInteger(Number(gatedAt?.approval_epoch)) ? Number(gatedAt.approval_epoch) : 0,
+    force, explicitApproval, explicitReason: explicitApprovalReason,
+  });
   // #2061 — gate 7 starts here, and until now none of its outcomes were
   // written anywhere a card could read: they are reached only inside a merge
   // attempt, which either succeeded or logged and moved on. That is why
@@ -6485,42 +5992,25 @@ async function checkAndMerge(config, pool, session, options = {}) {
   // make rather than something the card could say.
   gateTrace.stop('github', 'active', { note: 'merging now' });
   gateSave();
-  if (!claim.length) {
-    log.info('votes', 'Merge already claimed by another request, skipping', {
-      sessionId: session.id,
-    });
-    dstep({ phase: 'claim', message: 'Merge already claimed by another request, so skipping.' });
-    dend('noop', 'Another request is already merging this proposal.');
-    return { merged: false, inProgress: true };
+  if (claimed.status !== 'accepted' && claimed.status !== 'replayed') {
+    const why = claimed.status === 'rejected' ? claimed.reason : claimed.status;
+    log.info('votes', 'Merge not claimed', { sessionId: session.id, why });
+    if (why === 'in_progress' || why === 'pending') {
+      dstep({ phase: 'claim', message: 'Merge already claimed by another request, so skipping.' });
+      dend('noop', 'Another request is already merging this proposal.');
+      return { merged: false, inProgress: true };
+    }
+    dstep({ phase: 'claim', level: 'warn', message: `The proposal could not be claimed for the merge (${why}).`, detail: { why } });
+    gateTrace.revise('github', 'waiting', { note: 'the votes or the revision changed before the merge; it is looked at again' });
+    gateSave();
+    dend('deferred', `Not claimed: ${why}.`);
+    return { merged: false, needed: required, yesCount, claimRefused: why };
   }
+  const claim = claimed.reply?.claim ?? null;
   dstep({ phase: 'claim', message: 'Claimed merge (promoted → merging).' });
-  // Nothing is blocking it any more; the card should stop saying so.
-  await require('../services/integration')
-    .setBlockReasons(pool, session.id, []);
-
-  // Broadcast the 'merging' transition so every client refreshes its
-  // vote panel and re-renders the PR as "Merging…" — rather than having
-  // it silently disappear between the vote and the eventual 'merged'
-  // state (30s+ on the majority path). `merged:false` here means "still
-  // in flight"; the final `merged:true` broadcast fires below after the
-  // GitHub merge + prod rebuild + staging teardown finish.
-  //
-  // `selfHosted` rides along as a cheap, honest fact about the merge:
-  // whether this proposal deploys the platform itself. It used to arm
-  // the platform-wide "Platform updating…" banner, which was removed in
-  // #1015 — blue-green deploys (#1008) keep the live color serving
-  // through a platform redeploy, so there is no downtime to announce
-  // and no reason for a client to pause writes. No client branches on
-  // the flag today; it stays on the payload for admin/debug parity and
-  // any future surface that wants to distinguish a platform merge.
-  const { pushVoteUpdate } = require('../services/ws');
-  pushVoteUpdate({
-    sessionId: session.id,
-    appSlug: session.app_slug,
-    merged: false,
-    merging: true,
-    selfHosted: !!session.app_self_hosted,
-  });
+  // Gives the claim back: the attempt ended without merging.
+  const releaseClaim = (reason) => workflow.releaseMerge({ sessionId: session.id, appId: session.app_id, claim, reason })
+    .catch((err) => log.warn('votes', 'Could not release the merge claim', { sessionId: session.id, err: err.message }));
 
   log.info('votes',
     force ? 'Admin force-merge invoked, merging' : 'Majority reached, merging',
@@ -6610,10 +6100,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
               // claim and fail closed without claiming either a head move or a
               // merge conflict; a later vote/sweep can retry the live read.
               if (!nativeRefresh || nativeRefresh.blocked || !nativeRefresh.headSha) {
-                await pool.query(
-                  `UPDATE chat_sessions SET status = 'promoted' WHERE id = $1 AND status = 'merging'`,
-                  [session.id]
-                ).catch(() => {});
+                await releaseClaim('revision_unverified');
                 try {
                   const { pushVoteUpdate } = require('../services/ws');
                   // merging:false + merged:false is the terminal "attempt
@@ -6652,10 +6139,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
                 };
               }
             }
-            await pool.query(
-              `UPDATE chat_sessions SET status = 'promoted' WHERE id = $1 AND status = 'merging'`,
-              [session.id]
-            ).catch(() => {});
+            await releaseClaim('head_moved');
             try {
               const { pushVoteUpdate } = require('../services/ws');
               // merging:false ends the merge attempt for clients: the
@@ -6788,11 +6272,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // Release the 'merging' claim so a subsequent vote (or retry) can
     // try again. Without this the session would be stuck in 'merging'
     // forever on any transient failure.
-    await pool.query(
-      `UPDATE chat_sessions SET status = 'promoted'
-       WHERE id = $1 AND status = 'merging'`,
-      [session.id]
-    ).catch(() => {});
+    await releaseClaim('merge_failed');
 
     // #9: detect GitHub's "merge conflict" rejection specifically.
     // Octokit returns status 405 with a message containing "merge
@@ -6836,33 +6316,14 @@ async function checkAndMerge(config, pool, session, options = {}) {
           const closedLabel = session.pr_title
             ? `PR #${session.pr_number}: ${session.pr_title}`
             : `PR #${session.pr_number}`;
-          // Drop out of 'promoted' so no vote/sweep re-picks a proposal
-          // whose PR can never merge. 'paused' keeps the branch + CC
-          // memory restorable; the owner can re-propose from dev-chat.
-          await pool.query(
-            `UPDATE chat_sessions SET status = 'paused'
-             WHERE id = $1 AND status = 'promoted'`,
-            [session.id]
-          ).catch(() => {});
-          await sendSystemMessage(pool, session.app_id,
-            `${closedLabel} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel. Re-propose it from the session's dev-chat.`,
-            'system', null, { type: 'session', ref: session.id }
-          ).catch(() => {});
-          try {
-            const { pushVoteUpdate, pushSessionUpdate } = require('../services/ws');
-            // Un-latch clients (the merging:true broadcast above armed
-            // banners) and refresh session lists off the pause.
-            pushVoteUpdate({
-              sessionId: session.id,
-              appSlug: session.app_slug,
-              merged: false,
-              merging: false,
-              mergeFailed: true,
-              resolving: false,
-              selfHosted: !!session.app_self_hosted,
-            });
-            pushSessionUpdate({ action: 'paused', sessionId: session.id, appSlug: session.app_slug });
-          } catch (_) { /* ws failures non-fatal */ }
+          // Off the vote for good, so no vote or sweep picks again a
+          // proposal whose PR can never merge: the proposal machine moves it
+          // back to Underway (its votes voided: bug 19; an imported one
+          // stays as imported rows always are), says so in its thread and
+          // un-latches every client. The owner can re-propose from dev-chat.
+          void closedLabel;
+          await workflow.abandonMerge({ sessionId: session.id, appId: session.app_id, from: 'promoted', reason: 'pr_closed' })
+            .catch((e) => log.warn('votes', 'Could not take a closed PR off the vote', { sessionId: session.id, err: e.message }));
           dstep({
             phase: 'pr_closed', level: 'error',
             message: `PR #${session.pr_number} is closed on GitHub and couldn't be reopened: ${reopenErr.message}`,
@@ -7209,6 +6670,10 @@ async function checkAndOpenRevert(config, pool, session, decider) {
     ]
   );
   const revertSessionId = revertRows[0].id;
+  // Born in review: the proposal machine adopts it now (its review check
+  // armed). The leader's sweep adopts any row this missed.
+  await require('../workflow/platform.ts').proposalAdopted({ sessionId: revertSessionId, appId: session.app_id })
+    .catch((err) => log.warn('votes', 'Could not hand a proposal born in review to the proposal machine', { sessionId: revertSessionId, err: err.message }));
   await topicAttrs.selfAssignProposal(
     pool, session.app_id, revertSessionId, decider
   );

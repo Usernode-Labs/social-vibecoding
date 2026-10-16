@@ -49,6 +49,9 @@ function makeHarness() {
     proposalUpdate: require.resolve('../src/services/proposal-update'),
     prMetadata: require.resolve('../src/services/pr-metadata'),
     prImportSync: require.resolve('../src/services/pr-import-sync'),
+    // The proposal machine, as the routes reach it (closeProposal for the
+    // session a replacement supersedes).
+    platform: require.resolve('../src/workflow/platform.ts'),
     // #907: the staging/checks half of a handoff build lives in a shared
     // module so a locally-run coding turn goes through the very same pipeline
     // (it hands the head to the preview machine). It is evicted alongside the
@@ -85,7 +88,8 @@ function makeHarness() {
     promotedChecks: [],
     votes: 0,
     reconcileFailure: null,
-    finalizedArchives: [],
+    // What the proposal machine was asked to close.
+    closes: [],
   };
   let transactionState = null;
   const pool = {
@@ -176,13 +180,13 @@ function makeHarness() {
         if (row) row.commit_sha = params[0];
         return { rows: [], rowCount: row ? 1 : 0 };
       }
-      if (/SET status = 'archived', archived_at = NOW\(\)/.test(text)
-          && /source = \$4/.test(text)) {
+      // The superseded session, read and locked before the proposal machine
+      // is asked to close it in the same transaction.
+      if (/SELECT status FROM chat_sessions/.test(text) && /FOR UPDATE/.test(text) && /source = \$4/.test(text)) {
         const row = state.sessions.find((s) => s.id === Number(params[0])
           && s.user_id === Number(params[1]) && s.app_id === Number(params[2])
           && s.source === params[3] && ['active', 'paused'].includes(s.status));
-        if (row) row.status = 'archived';
-        return { rows: row ? [{ id: row.id }] : [], rowCount: row ? 1 : 0 };
+        return { rows: row ? [{ status: row.status }] : [], rowCount: row ? 1 : 0 };
       }
       if (/INSERT INTO chat_session_messages/.test(text)) {
         const metadata = JSON.parse(params[3]);
@@ -333,7 +337,22 @@ function makeHarness() {
   });
   stubModule(ids.activeWorkers, {
     isSessionBusy: () => state.busy,
-    beginSessionOperation: () => () => {},
+    // A recorded operation, named by its id (the promote preflight hands its
+    // own to the proposal machine as `ownOperation`).
+    beginSessionOperation: (sessionId, kind) => Object.assign(() => {}, {
+      id: `op-${sessionId}-${kind || 'session'}`, recorded: Promise.resolve(),
+    }),
+  });
+  // A close asked in the route's transaction (`db`) is applied by the
+  // machine once it commits; the fixture applies it at once, as the row
+  // reads afterwards (archived).
+  stubModule(ids.platform, {
+    async closeProposal(args) {
+      state.closes.push({ ...args, db: !!args.db });
+      const row = state.sessions.find((s) => s.id === Number(args.sessionId));
+      if (row && row.status === args.from) row.status = 'archived';
+      return 1;
+    },
   });
   stubModule(ids.appAccess, {
     getAppForUser: async () => ({ ...app }),
@@ -353,7 +372,6 @@ function makeHarness() {
     claimGlobalSlot: async () => ({ ok: true }),
     recordCapacityRefusal: () => {},
     PLATFORM_AT_CAPACITY: 'Platform is at capacity right now. Try again in a few minutes.',
-    finalizeArchivedSession: async (args) => { state.finalizedArchives.push(args); },
   });
   stubModule(ids.proposalUpdate, {
     isContinuableStatus(status) {
@@ -478,11 +496,18 @@ test('paused native revisions retain progress and exact-head submission prefligh
       assert.match(blocked.body.message, message);
       Object.assign(session, original);
     }
+    // Whether anything else holds the session (a turn or a sync that may
+    // still move the branch) is the proposal machine's to read, under its
+    // lock (workflow-proposal-postgres P3 'busy'): the preflight admits, and
+    // names its own claim so the machine does not count it.
     state.busy = true;
+    const busyReq = { ...req };
     const busy = mockRes();
-    await gate({ ...req }, busy, () => assert.fail('busy submission admitted'));
-    assert.equal(busy.statusCode, 409);
-    assert.match(busy.body.message, /An agent turn is still running on this change/);
+    let busyReached = false;
+    await gate(busyReq, busy, () => { busyReached = true; });
+    assert.equal(busyReached, true);
+    assert.equal(busyReq.cliHandoffOperation, 'op-101-handoff-promote', 'the promote\'s own operation is named');
+    busy.emit('finish');
     state.busy = false;
     state.remoteHead = BOT_HEAD;
     const changed = mockRes();
@@ -1382,9 +1407,15 @@ test('same linked work reuses its pre-vote handoff unless replacement is explici
     assert.equal(state.sessions[1].status, 'active');
     assert.equal(state.sessions[1].handoff_supersedes_session_id, 101);
     assert.equal(state.github.length, 2);
-    assert.equal(state.finalizedArchives.length, 1);
-    assert.equal(state.finalizedArchives[0].sessionId, 101);
-    assert.equal(state.finalizedArchives[0].reason, 'proposal-replaced');
+    // The superseded one is closed by the proposal machine, asked inside the
+    // transaction that creates its replacement (its PR, preview and worker go
+    // with it, durably), from the status the route read under the row lock.
+    assert.equal(state.closes.length, 1);
+    assert.equal(state.closes[0].sessionId, 101);
+    assert.equal(state.closes[0].reason, 'proposal-replaced');
+    assert.equal(state.closes[0].from, 'active');
+    assert.equal(state.closes[0].db, true, 'in the replacement\'s own transaction');
+    assert.equal(state.closes[0].requestKey, 'replaced:101:feature-0002');
 
     const retry = mockRes();
     await start({
@@ -1394,7 +1425,7 @@ test('same linked work reuses its pre-vote handoff unless replacement is explici
     assert.equal(retry.statusCode, 200);
     assert.equal(retry.body.sessionId, 102);
     assert.equal(state.sessions.length, 2);
-    assert.equal(state.finalizedArchives.length, 1,
+    assert.equal(state.closes.length, 1,
       'a lost-response retry neither creates nor archives twice');
   } finally { restore(); }
 });

@@ -74,6 +74,9 @@ function resetWorld() {
   // the head the branch path proposes.
   state.pr = { merged: false, state: 'open', head: { sha: 'c'.repeat(40) } };
   state.prFetchFails = false;
+  // What the proposal machine answers a promote (platform.promoteProposal's
+  // reply): put up for the vote, unless a test says otherwise.
+  state.promoteReply = { status: 200, body: { ok: true, prNumber: 42 } };
   seq.length = 0;
   for (const k of Object.keys(calls)) delete calls[k];
 }
@@ -115,10 +118,24 @@ stubModule('../src/services/github', {
     return { previousSha: 'z'.repeat(40), sha: args[3], updated: state.mainMoves };
   },
 });
-// The app-delivery workflow machine: what was asked of it.
+// The app-delivery workflow machine: what was asked of it. And the proposal
+// machine's promote: everything a promotion says (the thread line, the
+// promoted event, the vote requests, the partner being the proposer) is
+// that machine's transaction now (tests/workflow-proposal-postgres.test.js,
+// P2), so here it is what the routes asked of it, and the status it moves
+// the row to when it answers 200.
 const delivery = { requested: [] };
 stubModule('../src/workflow/platform.ts', {
   requestDeploy: async (appId, reason) => { delivery.requested.push([appId, reason]); return 1; },
+  promoteProposal: async (p) => {
+    record('promoteProposal')(p);
+    const reply = state.promoteReply;
+    if (reply.status === 200) {
+      const row = state.sessions.find((x) => x.id === p.sessionId && x.status === p.from);
+      if (row) row.status = 'promoted';
+    }
+    return reply;
+  },
 });
 stubModule('../src/services/ws', {
   sendSystemMessage: async (...args) => { record('sendSystemMessage')(...args); },
@@ -253,11 +270,6 @@ poolMod.getPool = () => ({
         imported_pr_head_sha: params[6], imported_pr_author: params[7],
       });
       return { rows: [{ id, status: params[13] }], rowCount: 1 };
-    }
-    if (s.startsWith("UPDATE chat_sessions SET status = 'promoted'")) {
-      const row = state.sessions.find((x) => x.id === params[0] && x.status === 'active');
-      if (row) row.status = 'promoted';
-      return { rows: [], rowCount: row ? 1 : 0 };
     }
     if (s.startsWith('DELETE FROM chat_sessions WHERE id = ANY')) {
       const ids = new Set(params[0]);
@@ -412,14 +424,15 @@ test('switching off is refused while the partner still has proposals, then remov
 
 // ── Propose ─────────────────────────────────────────────────────────────
 
-test('proposing opens a real PR, files it as the partner\'s, and fires the real vote notification', async () => {
+test('proposing opens a real PR, files it as the partner\'s, and puts it up for the vote the way every proposal goes up', async () => {
   const r = await post('/api/apps/demo-app/demo/propose', {
     branch: 'demo/animations', title: 'Smooth category animations',
     summary: 'Categories glide open and closed.', description: 'CSS transitions on the list.',
   });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.equal(r.body.prNumber, 42);
-  assert.equal(r.body.notified, 1);
+  // Whom the vote request reached is the machine's to know now.
+  assert.equal(r.body.notified, null);
   assert.equal(r.body.held, false);
 
   // The PR: from the named branch, on the app's own repo.
@@ -428,12 +441,12 @@ test('proposing opens a real PR, files it as the partner\'s, and fires the real 
   assert.equal(pr.branch, 'demo/animations');
   assert.equal(pr.title, 'Smooth category animations');
 
-  // The proposal: the partner's, promoted, imported (so the preview, checks
-  // and merge machinery apply), pinned to the branch head, the bot as PR
-  // author.
+  // The proposal: the partner's, imported (so the preview, checks and merge
+  // machinery apply), pinned to the branch head, the bot as PR author. It is
+  // filed Underway and the proposal machine moves it into review: no route
+  // writes a proposal's status.
   const [insert] = queriesLike('INSERT INTO chat_sessions');
-  assert.equal(insert.params[13], 'promoted', 'straight to the vote');
-  assert.match(insert.sql, /CASE WHEN \$14::text = 'promoted' THEN NOW\(\) END/, 'promoted_at set with it');
+  assert.equal(insert.params[13], 'active', 'filed Underway; the machine puts it up');
   assert.equal(insert.params[1], 50, 'owned by the partner');
   assert.equal(insert.params[6], 'c'.repeat(40), 'the branch head, as reviewed');
   assert.equal(insert.params[7], 'usernode-bot');
@@ -441,21 +454,31 @@ test('proposing opens a real PR, files it as the partner\'s, and fires the real 
   assert.equal(calls.selfAssignProposal[0][3].id, 50);
   assert.equal(calls.kickImportedChecks[0][0].headSha, 'c'.repeat(40), 'preview + checks on that head');
 
-  // The notification — the beat the feature exists for — through the same
-  // fan-out the promote route uses, with the partner as proposer so it is
-  // the one excluded, pushed live to whoever it reached.
-  const [[, fanout]] = calls.createPrProposedNotifications;
-  assert.deepEqual(fanout, { appId: 1, sessionId: r.body.sessionId, proposerId: 50 });
-  const [[toUser, push]] = calls.pushNotificationToUser;
-  assert.equal(toUser, 7);
-  assert.equal(push.type, 'notification_new');
-  assert.equal(push.notification.source_username, 'sam');
-  assert.equal(push.notification.pr_title, 'Smooth category animations');
+  // Straight to the vote, as the partner's: the same promote a person's
+  // click makes (the partner is the proposer, so the vote request it sends
+  // excludes the partner and reaches the creator).
+  assert.deepEqual(calls.promoteProposal, [[{
+    sessionId: r.body.sessionId, appId: 1, userId: 50, username: 'sam', from: 'active',
+    cap: 1000, pr: null, source: { kind: 'system', name: 'demo' },
+  }]]);
+  assert.equal(state.sessions[0].status, 'promoted');
+  // The route says nothing of its own: the line, the event and the fan-out
+  // are the machine's transaction.
+  assert.equal(calls.sendSystemMessage, undefined);
+  assert.equal(calls.createPrProposedNotifications, undefined);
+  assert.equal(calls.event, undefined);
+});
 
-  // And the group hears it the way it hears any promotion.
-  assert.equal(calls.sendSystemMessage[0][2], 'sam promoted PR #42: Smooth category animations for voting');
-  assert.equal(calls.pushSessionUpdate[0][0].action, 'promoted');
-  assert.equal(calls.event[0][1].userId, 50);
+test('a promote the machine refuses is the answer to the propose', async () => {
+  state.promoteReply = { status: 409, body: { error: 'session_state_changed' } };
+  const r = await post('/api/apps/demo-app/demo/propose', { branch: 'demo/animations', title: 'x' });
+  assert.equal(r.status, 409);
+  assert.equal(r.body.error, 'session_state_changed');
+  // Being put up for a vote while GitHub is slow (202) is a propose that went through.
+  resetWorld();
+  state.promoteReply = { status: 202, body: { ok: true, pending: true } };
+  const slow = await post('/api/apps/demo-app/demo/propose', { branch: 'demo/animations', title: 'x' });
+  assert.equal(slow.status, 200);
 });
 
 test('one demo proposal at a time, and only from a branch that exists', async () => {
@@ -480,7 +503,7 @@ test('held, a proposal opens its PR and builds its preview, and nobody hears a t
   });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.equal(r.body.held, true);
-  assert.equal(r.body.notified, 0);
+  assert.equal(r.body.notified, null);
   assert.equal(r.body.prNumber, 42, 'the PR is real and open');
 
   // Filed as the partner's unshared in-progress work: 'active', no
@@ -500,9 +523,10 @@ test('held, a proposal opens its PR and builds its preview, and nobody hears a t
   assert.equal(calls.event, undefined);
   assert.equal(calls.createPrProposedNotifications, undefined);
   assert.equal(calls.pushNotificationToUser, undefined);
+  assert.equal(calls.promoteProposal, undefined, 'and it was not put up for the vote');
 });
 
-test('promoting a held proposal is the announcement, with the partner\'s vote on the card before the notification leaves', async () => {
+test('promoting a held proposal is the announcement, with the partner\'s vote on it once it is up', async () => {
   await post('/api/apps/demo-app/demo/propose', {
     branch: 'demo/animations', title: 'Smooth category animations', hold: true,
   });
@@ -510,41 +534,46 @@ test('promoting a held proposal is the announcement, with the partner\'s vote on
   const r = await post('/api/apps/demo-app/demo/promote', { vote: 'yes' });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.equal(r.body.voted, 'yes');
-  assert.equal(r.body.notified, 1);
+  assert.equal(r.body.notified, null);
   assert.equal(r.body.prNumber, 42);
 
   // The pull request was re-read first, and it is still what was proposed.
   assert.deepEqual(calls.getPR[0], ['usernode-bot', 'demo-app', 42]);
-  // The same write routes/votes.js makes, guarded on the held status.
-  const [update] = queriesLike("UPDATE chat_sessions SET status = 'promoted'");
-  assert.match(update.sql, /promoted_at = NOW\(\), stale_notified_at = NULL WHERE id = \$1 AND status = 'active'/);
+  // Up for the vote through the proposal machine, from the held status:
+  // two cues racing cannot promote twice (the second is refused). The
+  // announcement (the thread line, the promoted event, the vote request
+  // to the creator) is the machine's transaction.
+  assert.deepEqual(calls.promoteProposal.map(([p]) => [p.sessionId, p.userId, p.from]), [[r.body.sessionId, 50, 'active']]);
+  assert.equal(queriesLike('UPDATE chat_sessions').length, 0, 'no route writes the status');
   assert.equal(state.sessions[0].status, 'promoted');
   assert.equal(queriesLike('INSERT INTO app_activity').length, 2, 'standing refreshed at both cues');
 
-  // The proposal's thread hears the promotion, then the vote, in that
-  // order (no channel line: a channel carries no activity); the
-  // notification leaves after both, so the card it opens already reads
-  // "voted yes".
+  // The vote goes on once it is up: the proposal's thread hears it (no
+  // channel line: a channel carries no activity). The promotion's own line
+  // and its vote request are the machine's, written as the proposal enters
+  // review, so they come before the vote.
+  assert.ok(seq.indexOf('promoteProposal') < seq.indexOf('recordVote'), 'up for the vote first, then the vote');
   assert.deepEqual(calls.sendSystemMessage.map((c) => c[2]), [
-    'sam promoted PR #42: Smooth category animations for voting',
     'sam voted yes on PR #42: Smooth category animations',
   ]);
-  assert.equal(calls.pushSessionUpdate[0][0].action, 'promoted');
-  assert.equal(calls.event[0][1].type, 'pr_promoted');
-  assert.equal(calls.event[1][1].type, 'pr_vote_cast');
+  assert.deepEqual(calls.event.map((c) => c[1].type), ['pr_vote_cast']);
   const [[recorded]] = calls.recordVote;
   assert.equal(recorded.userId, 50);
   assert.equal(recorded.headSha, 'c'.repeat(40), 'stamped with the head that was proposed');
   assert.equal(recorded.revisionEnforced, true);
-  assert.ok(seq.indexOf('recordVote') < seq.indexOf('createPrProposedNotifications'),
-    'the vote lands before the fan-out');
-  const [[, fanout]] = calls.createPrProposedNotifications;
-  assert.deepEqual(fanout, { appId: 1, sessionId: r.body.sessionId, proposerId: 50 });
-  assert.equal(calls.pushNotificationToUser[0][0], 7);
-  assert.equal(calls.pushNotificationToUser[0][1].notification.pr_title, 'Smooth category animations');
-  assert.equal(calls.pushNotificationToUser[0][1].notification.source_username, 'sam');
+  assert.equal(calls.createPrProposedNotifications, undefined, 'the route sends no vote request of its own');
   await settle();
   assert.equal(calls.checkAndMerge[0][2].id, r.body.sessionId, 'a vote is followed by the merge check, as always');
+});
+
+test('a promote the machine refuses (a second cue, a closed PR) casts no vote', async () => {
+  await post('/api/apps/demo-app/demo/propose', { branch: 'demo/animations', title: 'x', hold: true });
+  state.promoteReply = { status: 409, body: { error: 'session_state_changed' } };
+  const r = await post('/api/apps/demo-app/demo/promote', { vote: 'yes' });
+  assert.equal(r.status, 409);
+  assert.equal(r.body.error, 'session_state_changed');
+  assert.equal(calls.recordVote, undefined);
+  assert.equal(state.sessions[0].status, 'active', 'still held');
 });
 
 test('promoted without a vote, the card is clean and the partner can still vote afterwards', async () => {
@@ -552,7 +581,7 @@ test('promoted without a vote, the card is clean and the partner can still vote 
   const r = await post('/api/apps/demo-app/demo/promote', {});
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.equal(r.body.voted, null);
-  assert.equal(r.body.notified, 1);
+  assert.equal(r.body.notified, null);
   assert.equal(calls.recordVote, undefined);
   await settle();
   assert.equal(calls.checkAndMerge, undefined, 'no vote, no merge check');
@@ -570,12 +599,12 @@ test('promote refuses when nothing is held, when it is already up for the vote, 
   assert.equal(r.status, 409);
   assert.match(r.body.error, /already up for the vote/);
 
-  // Held, but GitHub says otherwise: every refusal fails closed and writes
-  // nothing.
+  // Held, but GitHub says otherwise: every refusal fails closed and asks
+  // the machine for nothing.
   state.sessions = [];
-  // The straight-to-vote proposal above notified, as it should; from here
+  // The straight-to-vote proposal above went up, as it should; from here
   // on, silence is the thing under test.
-  delete calls.createPrProposedNotifications;
+  delete calls.promoteProposal;
   await post('/api/apps/demo-app/demo/propose', { branch: 'demo/animations', title: 'x', hold: true });
   state.prFetchFails = true;
   r = await post('/api/apps/demo-app/demo/promote', {});
@@ -593,9 +622,8 @@ test('promote refuses when nothing is held, when it is already up for the vote, 
   r = await post('/api/apps/demo-app/demo/promote', {});
   assert.equal(r.status, 409);
   assert.match(r.body.error, /moved/);
-  assert.equal(queriesLike("UPDATE chat_sessions SET status = 'promoted'").length, 0, 'nothing was promoted');
+  assert.equal(calls.promoteProposal, undefined, 'nothing was put up for the vote, so nobody was told');
   assert.equal(state.sessions[0].status, 'active', 'still held');
-  assert.equal(calls.createPrProposedNotifications, undefined, 'and nobody was told');
 });
 
 test('a vote on a held proposal is refused with the way forward', async () => {
@@ -928,7 +956,7 @@ test('when the PR does not open, the branch the patch pushed is removed again', 
   assert.equal(r.status, 502);
   assert.equal(calls.patchCleanup.length, 1, 'applyPatch\'s cleanup ran');
   assert.equal(queriesLike('INSERT INTO chat_sessions').length, 0, 'and nothing was proposed');
-  assert.equal(calls.createPrProposedNotifications, undefined, 'so nobody was notified');
+  assert.equal(calls.promoteProposal, undefined, 'so nobody was notified');
 });
 
 test('branch and patch are one or the other', async () => {

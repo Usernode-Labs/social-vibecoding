@@ -1204,6 +1204,13 @@ function proposalRefSentence(proposalId, prNumber) {
   return ref ? ref.charAt(0).toUpperCase() + ref.slice(1) : 'This proposal';
 }
 
+// A promote answered 202: accepted, and GitHub has not answered yet. It goes
+// up without another ask, or is refused, and `tool` reports which.
+function goingUpSentence(ref, tool = 'get_proposal') {
+  return `${ref} is being put up for the group's vote: GitHub has not finished opening its pull request yet. `
+    + `It goes up without another ask, unless GitHub refuses it; ${tool} reports which.`;
+}
+
 // The two stages a 'pending' run can be in, in the words the web card has
 // used since #1144. They have very different expected durations, which is the
 // entire reason an agent wants to know which one it is waiting on.
@@ -4636,7 +4643,8 @@ function registerTools(server, ctx) {
       changeId,
       prNumber,
       prUrl: typeof body.prUrl === 'string' ? body.prUrl : null,
-      nextStep: `${prNumber ? `PR #${prNumber} (change ${changeId})` : `Change ${changeId}`} is up for the group's `
+      nextStep: result.status === 202 ? goingUpSentence(`Change ${changeId}`, 'get_change')
+        : `${prNumber ? `PR #${prNumber} (change ${changeId})` : `Change ${changeId}`} is up for the group's `
         + 'vote. It ships only if the group votes it in; get_change reports the tally.',
     });
   });
@@ -5531,7 +5539,8 @@ function registerTools(server, ctx) {
         shared: null,
         sessionId: null,
         webPath: promotedSlug ? changeWebPath(origin, promotedSlug, proposalId) : origin,
-        nextStep: `${proposalRefSentence(proposalId, promotedPr)} is now UP FOR THE GROUP'S VOTE as it stood: `
+        nextStep: attempt.status === 202 ? goingUpSentence(proposalRefSentence(proposalId, promotedPr))
+          : `${proposalRefSentence(proposalId, promotedPr)} is now UP FOR THE GROUP'S VOTE as it stood: `
           + 'nothing was pushed and no code moved. Checks and the staging preview build automatically where '
           + 'they are not already done; follow them with get_proposal. It ships only if the group votes it in.',
       });
@@ -6459,7 +6468,8 @@ function registerTools(server, ctx) {
       webPath: session.app_slug
         ? changeWebPath(origin, session.app_slug, clone.id)
         : `${origin}/#`,
-      nextStep: `It is up for a vote now as ${proposalRef(clone.id, prNumber)}. Use get_proposal to follow its checks and tally.`,
+      nextStep: promoted.status === 202 ? goingUpSentence(proposalRefSentence(clone.id, prNumber))
+        : `It is up for a vote now as ${proposalRef(clone.id, prNumber)}. Use get_proposal to follow its checks and tally.`,
     });
   });
   // ── The Homeroom bot benchmark's judge (#3654) ─────────────────────────

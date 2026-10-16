@@ -873,27 +873,6 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
     await pool.query('UPDATE shot_runs SET override_user_id = NULL WHERE id = $1', [run.id]);
   });
 
-  await t.test('S31 a process of a release from before the machine still serving: the facts say so', async () => {
-    const { readFacts } = require('../src/workflow/shots/facts.ts');
-    const s = await proposal();
-    const mine = SHA('c');
-    await pool.query(`INSERT INTO platform_processes (id, release, role, state, started_at) VALUES ('new-1', $1, 'all', 'serving', NOW())`, [mine]);
-    await pool.query(`INSERT INTO platform_processes (id, release, role, state, started_at) VALUES ('old-1', $1, 'web', 'serving', NOW() - interval '1 hour')`, [SHA('d')]);
-    await pool.query(`INSERT INTO platform_processes (id, release, role, state, started_at) VALUES ('old-2', $1, 'conductor', 'serving', NOW() - interval '1 hour')`, [SHA('d')]);
-    const facts = async (buildSha) => {
-      const c = await pool.connect();
-      try { await c.query('BEGIN'); return (await readFacts(c, s.id, { buildSha })).session.olderServing; }
-      finally { await c.query('ROLLBACK'); c.release(); }
-    };
-    assert.equal(await facts(mine), true);
-    assert.equal(await facts(null), false, 'a deployment with no release id never waits');
-    await pool.query(`UPDATE platform_processes SET state = 'draining' WHERE id = 'old-1'`);
-    assert.equal(await facts(mine), false, 'a draining process serves nobody; a conductor serves no calls');
-    await pool.query(`UPDATE platform_processes SET state = 'serving', heartbeat_at = NOW() - interval '5 minutes' WHERE id = 'old-1'`);
-    assert.equal(await facts(mine), false, 'a process gone quiet is gone');
-    await pool.query('DELETE FROM platform_processes');
-  });
-
   await t.test('S32 a head move or declaration a newer move overtook is refused, and the newer head\'s shots stand', async () => {
     defaults();
     // An imported proposal: two import passes, A then B. B's pass wrote its

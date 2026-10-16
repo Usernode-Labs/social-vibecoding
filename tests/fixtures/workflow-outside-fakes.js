@@ -57,7 +57,30 @@ module.exports = function install(fakes) {
       async fetchIssueComments(owner, repo, number) {
         return { comments: (await comments(number)).map((c) => ({ body: c.body })), truncated: false };
       },
-      async closePR(owner, repo, number) { await fakes.record('github.closePR', { repo: `${owner}/${repo}`, number }); },
+      // `github.closePR` stops before GitHub closes it.
+      async closePR(owner, repo, number) {
+        await fakes.pause('github.closePR');
+        await fakes.record('github.closePR', { repo: `${owner}/${repo}`, number });
+      },
+      // A proposal's pull request: a draft until it is marked ready (what
+      // GitHub remembers is in wf_test_effects); its head, as the test set
+      // it (`github.prHead`), else a fixed one.
+      async getPR(owner, repo, number) {
+        const ready = (await fakes.read('github.ready')).some((r) => r.number === number);
+        const closed = (await fakes.read('github.closePR')).filter((r) => r.number === number).length
+          > (await fakes.read('github.reopenPR')).filter((r) => r.number === number).length;
+        const head = (await fakes.read('github.prHead')).filter((h) => h.number === number).pop()?.sha || 'c'.repeat(40);
+        return { number, state: closed ? 'closed' : 'open', merged: false, draft: !ready, node_id: `PR_${number}`, head: { sha: head } };
+      },
+      async reopenPR(owner, repo, number) { await fakes.record('github.reopenPR', { repo: `${owner}/${repo}`, number }); },
+      // The draft marked ready; `github.ready.done` is after GitHub did it,
+      // before its answer.
+      async markPrReadyForReview(owner, repo, number, pr) {
+        if (pr && pr.draft === false) return pr;
+        await fakes.record('github.ready', { repo: `${owner}/${repo}`, number });
+        await fakes.pause('github.ready.done');
+        return { ...pr, draft: false };
+      },
       // A pull request's commits, as the test recorded them (`github.prCommits`);
       // the `github.prCommits` point is after GitHub listed them.
       async listPullRequestCommitShas(owner, repo, number) {
@@ -138,6 +161,19 @@ module.exports = function install(fakes) {
         await db.query('DELETE FROM shot_run_control WHERE run_id = $1', [o.runId]);
         return { cleaned: true, version: 2 };
       },
+    },
+  });
+  // A session's worker container: destroying it is recorded (the container
+  // runtime is outside); everything else in the module is real.
+  const worker = require(path.join(SRC, 'services/worker'));
+  fakes.stub(path.join(SRC, 'services/worker'), {
+    ...worker,
+    async destroyWorker(name) { await fakes.record('worker.destroy', { name }); },
+    // The proposal machine's fenced removal: asks to proceed, then removes.
+    async removeWorker(sessionId, { proceed = async () => true } = {}) {
+      if (!(await proceed())) return { skipped: true };
+      await fakes.record('worker.destroy', { name: worker.workerContainerName(sessionId) });
+      return { removed: true };
     },
   });
   // Not an outside service, a probe: whether the Workshop hears a board

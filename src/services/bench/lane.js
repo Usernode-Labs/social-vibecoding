@@ -990,14 +990,13 @@ async function recordTrial(pool, { trialRow, row, patch, user, d }) {
       log.warn('bench', 'Benchmark spend debit failed', { err: err.message });
     }
   }
-  // Put the trial's sessions away; nobody opens them.
+  // Put the trial's sessions away; nobody opens them. Closed the way every
+  // close goes, their workers destroyed with them.
   if (sessionIds.length && user) {
-    await pool.query(
-      `UPDATE chat_sessions SET status = 'archived', archived_at = NOW()
-        WHERE id = ANY($1::int[]) AND user_id = $2 AND status IN ('active', 'paused')`,
-      [sessionIds, user.id],
-    ).catch(() => {});
-    for (const id of sessionIds) Promise.resolve(d.worker.evictWorker?.(id)).catch(() => {});
+    const lifecycle = d.sessionLifecycle || require('../session-lifecycle');
+    for (const id of sessionIds) {
+      await lifecycle.closeOwnSession({ pool, sessionId: id, reason: 'bench' }).catch(() => {});
+    }
   }
   // A branch with nothing on it is not kept. Nor is a first version's side
   // build's (services/bot-configs.js): it sits on the live project's own

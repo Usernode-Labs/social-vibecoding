@@ -1939,6 +1939,9 @@ function sessionParts(ctx) {
     // this file for the same reason — it pulls in the server's socket state.
     pushSessionUpdate: c.pushSessionUpdate
       || ((payload) => require('./ws').pushSessionUpdate(payload)),
+    // The reviewed head's reconcile, for an active session that went up for
+    // a vote under the update (bug 13).
+    votes: c.votes || null,
   };
 }
 
@@ -1961,7 +1964,22 @@ async function settleActiveSession({ config, pool, session, sessionId, headSha, 
     [sessionId, session.checks_commit_sha || null]
   );
   if (!adopted.rowCount) {
-    await settlePausedSession({ pool, session, sessionId, headSha, parts });
+    // It moved on meanwhile (bug 13: a promote that committed between the
+    // read and here). The tail is the one for the status it has NOW: a
+    // proposal gone up for a vote gets its reviewed head reconciled, never
+    // the paused tail (which cleared a promoted proposal's verdict).
+    const { rows: [now] = [] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [sessionId]);
+    if (now?.status === 'paused') await settlePausedSession({ pool, session, sessionId, headSha, parts });
+    else if (now?.status === 'promoted' || now?.status === 'merging') {
+      const votes = parts.votes || require('../routes/votes');
+      const reconciled = await votes.reconcileNativeReviewedHead({
+        config, pool, session: { ...session, status: now.status }, fresh: true, notify: true, madeBy: 'homeroom',
+      }).catch((err) => {
+        log.error('proposal-update', 'head-move reconciliation failed after a successful push', { sessionId, err: err.message });
+        return null;
+      });
+      return { rebuilding: !!(reconciled && reconciled.updated && reconciled.changed !== false && reconciled.checksCarry !== true) };
+    }
     return { rebuilding: false };
   }
 
@@ -2006,8 +2024,11 @@ async function settlePausedSession({ pool, session, sessionId, headSha, parts })
   // No verdict for the current code: the preview machine clears it (NULL
   // check_state, not a 'pending' no run will resolve; it blocks merge, which
   // is the correct answer here). checks_commit_sha stays, as said above.
-  await pool.query(`UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 AND status = 'paused'`, [sessionId])
-    .catch(() => {});
+  // Only while it is still paused (bug 13): a proposal that went up for a
+  // vote meanwhile keeps its verdict and its preview.
+  const still = await pool.query(`UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 AND status = 'paused'`, [sessionId])
+    .catch(() => ({ rowCount: 0 }));
+  if (!still.rowCount) return;
   await require('./preview-workflow').clear({ session: { ...session, id: sessionId }, reason: 'paused-update' })
     .catch((err) => log.warn('proposal-update', 'could not clear the stale verdict', { sessionId, err: err.message }));
 

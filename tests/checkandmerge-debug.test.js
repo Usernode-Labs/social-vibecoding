@@ -36,8 +36,12 @@ stub('../src/services/github', {
   getOctokit: async () => ({ request: async () => ({ data: {} }) }),
 });
 const reports = [];
+// The promoted→merging claim and its release are the proposal machine's.
 stub('../src/workflow/platform.ts', {
   mergeConfirmed: async (m) => { reports.push(m); return { status: 'accepted', eventId: 1 }; },
+  claimMerge: async () => ({ status: 'accepted', eventId: 2, reply: { claim: 1 } }),
+  releaseMerge: async () => ({ status: 'accepted', eventId: 3 }),
+  abandonMerge: async () => ({ status: 'accepted', eventId: 4 }),
 });
 stub('../src/services/docker', {});
 stub('../src/services/conflict-resolver', {
@@ -109,7 +113,6 @@ function makePool({ checkState = 'passing', yes = 3, behind = 0 } = {}) {
       if (/SELECT check_state, test_results, checks_checked_at/.test(sql)) {
         return { rows: [{ check_state: checkState, test_results: [], checks_checked_at: new Date().toISOString() }] };
       }
-      if (/UPDATE chat_sessions SET status = 'merging'/.test(sql)) return { rows: [{ id: params[0] }] };
       if (/UPDATE chat_sessions[\s\S]*behind_main = GREATEST/.test(sql)) return { rows: [{ behind_main: 1 }] };
       return { rows: [], rowCount: 0 };
     },

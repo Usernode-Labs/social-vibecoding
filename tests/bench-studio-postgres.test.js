@@ -343,12 +343,24 @@ test('the App bench studio against the full PostgreSQL schema', { timeout: 12000
     assert.equal(capped.code, 'preview_cap');
 
     await pool.query("UPDATE bench_previews SET expires_at = NOW() - INTERVAL '1 minute'");
-    const torn = [];
+    // The session is closed the way every close goes (the proposal machine,
+    // which retires its preview for good with it): stood in for here, the
+    // close recorded and the row moved as the machine's transition moves it.
+    const closed = [];
     const ended = await studio.sweepPreviews(pool, {
-      force: true, sessionLifecycle: { async teardownStagingForSession({ sessionId }) { torn.push(sessionId); } },
+      force: true,
+      sessionLifecycle: {
+        async closeOwnSession({ sessionId, reason }) {
+          closed.push({ sessionId, reason });
+          await pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition';
+            UPDATE chat_sessions SET status = 'archived', archived_at = NOW()
+             WHERE id = ${Number(sessionId)} AND status IN ('active', 'paused'); COMMIT`);
+          return true;
+        },
+      },
     });
     assert.equal(ended, 4);
-    assert.deepEqual(torn, [deploys[0].sessionId]);
+    assert.deepEqual(closed, [{ sessionId: deploys[0].sessionId, reason: 'bench-preview-expired' }]);
     const { rows: [s] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [deploys[0].sessionId]);
     assert.equal(s.status, 'archived');
   });

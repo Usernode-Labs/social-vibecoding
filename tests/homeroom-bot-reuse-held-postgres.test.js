@@ -72,13 +72,20 @@ test('a held ready verdict is reused while its request is unchanged, and read ag
   const pool = new Pool({ connectionString: String(url), max: 4 });
   const env = process.env.USERNODE_ENV;
   delete process.env.USERNODE_ENV;
+  // The bot session's slot moves are the proposal machine's
+  // (session-lifecycle's takeSlot and restSession): the workflow runtime runs
+  // here, on this database, its pipeline only (no timers, no work).
+  const platform = require('../src/workflow/platform.ts');
+  require('../src/db/pool').getPool = () => pool;
   t.after(async () => {
     if (env === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = env;
+    await platform.stopWorkflow();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+  await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
 
   const user = async (username, synthetic = false) => (await pool.query(
     `INSERT INTO users (username, password, is_synthetic) VALUES ($1, 'x', $2) RETURNING id, username`,
@@ -157,6 +164,10 @@ test('a held ready verdict is reused while its request is unchanged, and read ag
     'SELECT kind FROM homeroom_bot_posts WHERE app_id = $1 AND issue_number = 24 ORDER BY id', [app.id],
   )).rows.map((r) => r.kind);
   const runOf = async (id) => (await pool.query('SELECT * FROM homeroom_bot_runs WHERE id = $1', [id])).rows[0];
+  // A capped proposal merged (or back up for a vote), as the machines would
+  // move it: with the guards on, only their writer moves a status.
+  const moveCapped = (status) => pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition';
+    UPDATE chat_sessions SET status = '${status}' WHERE id = ${Number(capped[0])}; COMMIT`);
 
   // 1. Read with the cap full: a ready verdict, held, and what it read recorded.
   const first = await triage('new');
@@ -194,7 +205,7 @@ test('a held ready verdict is reused while its request is unchanged, and read ag
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM homeroom_bot_queue')).rows[0].n, 0, 'the queue row is used up');
 
   // 3. Room at last: reused and built, as a fresh ready verdict is.
-  await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [capped[0]]);
+  await moveCapped('merged');
   const built = await triage(bot.CAP_FREED_REASON);
   assert.equal(built.reused, again.runId);
   assert.equal(built.acted, 'build_queued');
@@ -207,12 +218,12 @@ test('a held ready verdict is reused while its request is unchanged, and read ag
   assert.equal(buildRun.reused_run_id, again.runId);
 
   // 4. Held again, then the request changes: read again, as before.
-  await pool.query(`UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`, [capped[0]]);
+  await moveCapped('promoted');
   await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL WHERE id = $1', [built.runId]);
   const reheld = await triage('new');
   assert.equal(reheld.acted, 'held');
   assert.equal(turns.length, 2);
-  await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [capped[0]]);
+  await moveCapped('merged');
   comments.push({ id: 3, author: 'ada-gh', body: 'And the footer, please.', createdAt: '2026-10-10T01:00:00Z' });
   const changed = await triage(bot.CAP_FREED_REASON);
   assert.equal(turns.length, 3, 'a request that changed is read again');

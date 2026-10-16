@@ -789,20 +789,6 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "37b35c771c712907e554",
-      "count": 1,
-      "preview": "`UPDATE chat_sessions SET reviewed_head_sha = $1, ${summaryFreshness.invalidateHeadMoveSql('$1', { fixParam: '$5' })}, stale_notified_at = NULL, approval_epoch "
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
-      "fingerprint": "448507211744003a43f6",
-      "count": 1,
-      "preview": "`UPDATE chat_sessions SET reviewed_head_sha = $1, ${summaryFreshness.invalidateHeadMoveSql('$1')}, stale_notified_at = NULL WHERE id = $2 RETURNING pr_summary_s"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
       "fingerprint": "61a5b0d7edd56fa67c61",
       "count": 1,
       "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.id = $3 AND (cs.status IN ('promoted', 'merging', 'merged') OR (cs.status IN ('active', 'paused') AND (cs.user"
@@ -1265,13 +1251,6 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "43955023a1d61bb8b386",
-      "count": 1,
-      "preview": "`INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind) SELECT u, $2, $3, $4, 'pr_proposed' FROM UNNEST($1::int[]) AS u WHERE NOT EXISTS "
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
       "fingerprint": "50f1192d889f4f575d11",
       "count": 1,
       "preview": "`SELECT COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT ${DECIDED_ASK_SETTLED_SQL} AND ${CONVERSATION_ACCESS_SQL} "
@@ -1345,13 +1324,6 @@
       "fingerprint": "dd7dfd2983ae4a231fb1",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET pr_body = $1, ${summaryFreshness.INVALIDATE_SQL} WHERE id = $2`"
-    },
-    {
-      "source": "src/services/pr-import-sync.js",
-      "kind": "structural-template",
-      "fingerprint": "f146527ae546b17d9370",
-      "count": 1,
-      "preview": "`UPDATE chat_sessions SET imported_pr_head_sha = $1, ${summaryFreshness.invalidateHeadMoveSql('$1')}, stale_notified_at = NULL, approval_epoch = approval_epoch "
     },
     {
       "source": "src/services/proposal-update.js",
@@ -1760,6 +1732,20 @@
       "preview": "`SELECT h AS holder FROM unnest($1::text[]) AS h WHERE ${holderAliveSql('h')}`"
     },
     {
+      "source": "src/workflow/proposal/facts.ts",
+      "kind": "structural-template",
+      "fingerprint": "393844421197a627da44",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.pr_number, cs.pr_title, cs.branch_name, cs.reviewed_head_sha, cs.imported_pr_head"
+    },
+    {
+      "source": "src/workflow/proposal/machine.ts",
+      "kind": "structural-template",
+      "fingerprint": "3ad8ebb48bdd05c7dfad",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET reviewed_head_sha = CASE WHEN $3 = 'reviewed' THEN $1 ELSE reviewed_head_sha END, imported_pr_head_sha = CASE WHEN $3 = 'imported' THE"
+    },
+    {
       "source": "src/workflow/rules/change-notifications.ts",
       "kind": "structural-template",
       "fingerprint": "d81e1b5402d7ea2e1750",
@@ -1781,9 +1767,23 @@
       "preview": "`SELECT u.username, pv.vote, pv.reason FROM pr_votes pv JOIN users u ON u.id = pv.user_id JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = $"
     },
     {
+      "source": "src/workflow/rules/pr-gate.ts",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "705b05523d11a84f1872",
+      "count": 1,
+      "preview": "GATE_SQL"
+    },
+    {
+      "source": "src/workflow/rules/proposal-notifications.ts",
+      "kind": "structural-template",
+      "fingerprint": "43955023a1d61bb8b386",
+      "count": 1,
+      "preview": "`INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind) SELECT u, $2, $3, $4, 'pr_proposed' FROM UNNEST($1::int[]) AS u WHERE NOT EXISTS "
+    },
+    {
       "source": "src/workflow/shots/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "7c099c2f55e9a8c649b2",
+      "fingerprint": "44620d5c7a65a211cef8",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.status, cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha, cs.checks_commit_sha, cs.handoff_head_sha, cs.staging_commit_sha,"
     },

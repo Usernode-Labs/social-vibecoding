@@ -414,6 +414,10 @@ test('what a stop comes to is said in the words a build already had, never new o
 // ── The build's steps ────────────────────────────────────────────────────
 
 const live = require('../src/services/homeroom-bot-live');
+// A build closes its own session through the proposal machine
+// (session-lifecycle.closeOwnSession), which no fake pool runs: the harness
+// stands in for it and records every close.
+const sessionLifecycle = require('../src/services/session-lifecycle');
 
 const BAPP = { id: 9, slug: 'club-votes', name: 'Club Votes', repo_url: 'https://github.com/usernode-bot/club-votes' };
 const BOT = { id: 77, username: 'homeroom_bot' };
@@ -426,7 +430,8 @@ const BUILT = Object.freeze({
 
 /** buildAndPropose with one build turn that lands and a promote that answers ok (homeroom-bot-build-nudge's harness). */
 function harness() {
-  const calls = { queries: [], builds: [], promoted: [], order: [] };
+  const calls = { queries: [], builds: [], promoted: [], order: [], closed: [] };
+  sessionLifecycle.closeOwnSession = async ({ sessionId, reason }) => { calls.closed.push({ sessionId, reason }); return true; };
   const pool = {
     async query(sql, params) {
       calls.queries.push({ sql: String(sql), params });
@@ -476,7 +481,7 @@ const ARGS = {
   buildNote: 'Polls for the club.', turnBudgetMs: 40 * 60 * 1000, model: 'z-ai/glm-5.3-flash',
   origin: { lane: 'live', runId: 2101 },
 };
-const archived = (h) => h.calls.queries.some((q) => /SET status = 'archived'/.test(q.sql));
+const archived = (h) => h.calls.closed.some((c) => c.sessionId === 5001);
 
 /** A setupCheck answering `answers` in turn, recording what it was asked. */
 function setupAnswers(h, answers) {

@@ -58,7 +58,7 @@ test('the import handler assigns before it reports or broadcasts success', () =>
   const assignment = handler.indexOf('await topicAttrs.selfAssignProposal(');
   const commit = handler.indexOf("await importClient.query('COMMIT')");
   const response = handler.indexOf('res.json({\n        ok: true,');
-  const broadcast = handler.indexOf('pushSessionUpdate({ action: promote');
+  const broadcast = handler.indexOf("pushSessionUpdate({ action: 'imported'");
 
   assert.ok(assignment >= 0, 'the live import handler invokes self-assignment');
   assert.ok(assignment < commit, 'session creation and assignment commit atomically');

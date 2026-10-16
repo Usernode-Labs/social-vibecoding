@@ -18,6 +18,14 @@
 // verdict on a clean merge, else asking for the new head to be checked) and
 // writes no checks column itself. There is no workflow runtime here, so that
 // adapter is stubbed and what it is handed is the assertion.
+//
+// The head move itself is the proposal machine's (ReviewHeadMoved, through
+// src/workflow/platform.ts moveReviewHead): the reconciler writes no
+// chat_sessions column, it asks the machine to move the head from the one it
+// read, and reads the epoch off the reply. The stub below stands in for the
+// machine's one statement (the head installed, the epoch moved unless the
+// votes are kept, the description's freshness as summary-freshness.ts
+// decides) and records each ask.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -88,36 +96,58 @@ function repo() {
   };
 }
 
-// A pool that records what the reconciler writes, and answers the one
-// conditional UPDATE it depends on.
-function makePool({ epoch = 0, voters = 0 }) {
+// The pool the current test reads through; the machine stub moves its row.
+let activePool = null;
+
+// A pool that records what the reconciler reads and writes, and holds the
+// row the proposal machine's move (the stub) changes.
+function makePool({ epoch = 0, voters = 0, summary = null, refuse = null }) {
   const writes = [];
+  const moves = [];
   let currentEpoch = epoch;
-  return {
+  const row = { reviewed_head_sha: null, pr_summary_md: summary, pr_summary_stale: false };
+  const pool = {
     writes,
+    moves,
+    row,
     get epoch() { return currentEpoch; },
+    // ReviewHeadMoved, as the proposal machine applies it: refused when the
+    // test says another pass got there first; else one statement.
+    move(p) {
+      moves.push(p);
+      if (refuse) {
+        if (refuse.head) row.reviewed_head_sha = refuse.head;
+        return { status: 'rejected', reason: refuse.reason };
+      }
+      row.reviewed_head_sha = p.to;
+      if (!p.keepVotes) currentEpoch += 1;
+      if (!p.fixOnly) row.pr_summary_stale = row.pr_summary_stale || row.pr_summary_md != null;
+      return { status: 'accepted', reply: { state: 'in_review', status: 'promoted', epoch: currentEpoch, prSummaryStale: row.pr_summary_stale } };
+    },
     async query(sql, params) {
       const text = String(sql);
       writes.push({ sql: text, params });
-      if (/UPDATE chat_sessions[\s\S]*approval_epoch = approval_epoch \+/.test(text)) {
-        const keeps = params[2];
-        if (!keeps) currentEpoch += 1;
-        return { rows: [{ approval_epoch: currentEpoch }], rowCount: 1 };
-      }
       if (/SELECT 1 FROM pr_votes WHERE session_id = \$1 AND approval_epoch = \$2/.test(text)) {
         // `voters` votes were cast under the epoch the proposal started in.
         return { rows: params[1] === epoch && voters ? [{ '?column?': 1 }] : [], rowCount: 0 };
       }
       if (/SELECT reviewed_head_sha, approval_epoch/.test(text)) {
-        return { rows: [{ reviewed_head_sha: null, approval_epoch: currentEpoch }], rowCount: 1 };
+        return { rows: [{ ...row, approval_epoch: currentEpoch }], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };
+    },
+    // Nothing here writes the row: the head, the epoch and the description's
+    // freshness are the proposal machine's.
+    wroteSession() {
+      return this.writes.some((w) => /^\s*UPDATE\s+chat_sessions/i.test(w.sql));
     },
     // The checks columns are the preview machine's to write.
     wroteChecks() {
       return this.writes.some((w) => /checks_commit_sha|check_state/.test(w.sql) && /^\s*UPDATE/i.test(w.sql));
     },
   };
+  activePool = pool;
+  return pool;
 }
 
 function load(r, posted = []) {
@@ -131,6 +161,9 @@ function load(r, posted = []) {
       async sendSystemMessage(pool_, appId, content, type, meta, thread) {
         posted.push({ appId, content, type, meta, thread });
       },
+    }),
+    stub('src/workflow/platform.ts', {
+      async moveReviewHead(p) { return activePool.move(p); },
     }),
     stub('src/services/preview-workflow.js', {
       async revision({ session: s, head, source, trigger, carryFrom }) {
@@ -193,6 +226,10 @@ test('a clean merge of main keeps the approvals and carries the checks', async (
     assert.equal(out.checksCarry, true, 'and says so, for a caller that reports it');
     assert.equal(row.checks_commit_sha, r.featureHead(), 'the caller\'s row reads the carried verdict');
     assert.equal(pool.wroteChecks(), false, 'the stamp itself is the machine\'s');
+    assert.equal(pool.moves.length, 1);
+    assert.equal(pool.moves[0].keepVotes, true, 'the machine is asked to move the head and keep the votes');
+    assert.equal(pool.moves[0].reason, 'mechanical');
+    assert.equal(pool.wroteSession(), false);
   } finally { restore(); r.cleanup(); }
 });
 
@@ -240,7 +277,7 @@ test('a settled failure does NOT carry: main may be what fixes it, so the merged
 test('an author push clears the approvals and re-runs the checks', async () => {
   const r = repo().writeOnFeature('a.txt', 'PROPOSAL CHANGED\nl2\nl3\n');
   const { votes, handed, restore } = load(r);
-  const pool = makePool({ epoch: 0 });
+  const pool = makePool({ epoch: 0, summary: 'The earlier explanation.' });
   try {
     const revised = session(r, { pr_summary_md: 'The earlier explanation.' });
     const out = await votes.reconcileNativeReviewedHead({
@@ -252,8 +289,18 @@ test('an author push clears the approvals and re-runs the checks', async () => {
     assert.deepEqual(handed, [handOff(r.featureHead())], 'the pushed commit is checked afresh');
     assert.equal(revised.pr_summary_md, 'The earlier explanation.',
       'the previous explanation remains readable while its freshness is reviewed');
-    assert.equal(revised.pr_summary_stale, true);
-    assert.ok(pool.writes.some((w) => /pr_summary_previous_md = COALESCE/.test(w.sql)),
+    assert.equal(revised.pr_summary_stale, true, 'read off the machine\'s reply');
+    assert.deepEqual(pool.moves, [{
+      sessionId: 42, appId: 7, column: 'reviewed', from: r.approved, to: r.featureHead(),
+      keepVotes: false, fixOnly: false, reason: 'authored',
+    }], 'one move, fenced on the head read, that retires the votes');
+    assert.equal(pool.wroteSession(), false, 'the row is the machine\'s to write');
+    // The prior explanation is retained by the machine's own statement.
+    const machine = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/proposal/machine.ts'), 'utf8');
+    const headMoved = machine.slice(machine.indexOf('  headMoved: async (tx: Tx, w: any) =>'), machine.indexOf('  approvalsCleared:'));
+    assert.match(headMoved, /\$\{invalidateHeadMoveSql\('\$1', \{ fixParam: '\$5' \}\)\}/);
+    const freshness = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/rules/summary-freshness.ts'), 'utf8');
+    assert.match(freshness, /pr_summary_previous_md = COALESCE/,
       'the prior explanation is retained when the reviewed head moves');
   } finally { restore(); r.cleanup(); }
 });
@@ -346,6 +393,7 @@ test('an unmoved head writes nothing at all', async () => {
     assert.equal(out.unchanged, true);
     assert.equal(out.epoch, 4);
     assert.equal(pool.writes.length, 0, 'nothing to reconcile means nothing to write');
+    assert.deepEqual(pool.moves, [], 'nor anything to ask of the machine');
     assert.deepEqual(handed, [], 'and nothing to hand over');
   } finally { restore(); r.cleanup(); }
 });
@@ -360,7 +408,34 @@ test('a row with no pin yet is bound without clearing its unbound votes', async 
     });
     assert.equal(out.initialized, true);
     assert.equal(out.epoch, 0, 'binding a legacy row must not cost it its votes');
+    assert.deepEqual(pool.moves.map((m) => [m.from, m.to, m.keepVotes, m.reason]),
+      [[null, r.approved, true, 'bound']], 'the machine binds it, from no pin, keeping the votes');
   } finally { restore(); r.cleanup(); }
+});
+
+test('a move the machine refuses because another pass installed it first is read back, not repeated', async () => {
+  const r = repo().writeOnFeature('a.txt', 'PROPOSAL CHANGED\nl2\nl3\n');
+  const posted = [];
+  const { votes, handed, restore } = load(r, posted);
+  // Another verifier moved the head to the live one while this one read.
+  const pool = makePool({ epoch: 0, refuse: { reason: 'head_moved', head: r.featureHead() } });
+  try {
+    const out = await votes.reconcileNativeReviewedHead({ config: {}, pool, session: session(r), notify: true });
+    assert.equal(out.unchanged, true, 'the head is already the live one: nothing more to do here');
+    assert.equal(out.headSha, r.featureHead());
+    assert.equal(pool.moves.length, 1);
+    assert.deepEqual(handed, [], 'the pass that moved it handed it over');
+    assert.equal(posted.length, 0, 'and said so');
+  } finally { restore(); r.cleanup(); }
+
+  const r2 = repo().writeOnFeature('a.txt', 'PROPOSAL CHANGED\nl2\nl3\n');
+  const second = load(r2, []);
+  try {
+    const out = await second.votes.reconcileNativeReviewedHead({
+      config: {}, pool: makePool({ epoch: 0, refuse: { reason: 'closed' } }), session: session(r2), notify: false,
+    });
+    assert.deepEqual(out, { enforced: true, blocked: true, reason: 'This proposal is no longer open.' });
+  } finally { second.restore(); r2.cleanup(); }
 });
 
 test('an unreadable mirror leaves the revision alone rather than blocking', async () => {
@@ -426,6 +501,7 @@ test('imported proposals are not reconciled here at all', async () => {
     });
     assert.equal(out.enforced, false, 'the import sweeper owns that head');
     assert.equal(pool.writes.length, 0);
+    assert.deepEqual(pool.moves, []);
   } finally { restore(); r.cleanup(); }
 });
 
@@ -547,7 +623,8 @@ function commitOnFeature(r, file, body, message, { email = 'usernode-bot@users.n
   git(r.dir, 'checkout', '-q', 'main');
   return r;
 }
-const claimOf = (pool) => pool.writes.find((w) => /approval_epoch = approval_epoch \+/.test(w.sql));
+// The move the reconciler asked of the proposal machine.
+const claimOf = (pool) => pool.moves[0];
 
 test('a push Homeroom committed says "Updated." whichever caller reconciles it, with no madeBy', async () => {
   const r = commitOnFeature(repo(), 'a.txt', 'PROPOSAL CHANGED\nl2\nl3\n', 'Changes via Homeroom');
@@ -559,8 +636,10 @@ test('a push Homeroom committed says "Updated." whichever caller reconciles it, 
     await votes.reconcileNativeReviewedHead({ config: {}, pool, session: session(r, { approval_epoch: 3 }), notify: false });
     assert.equal(posted.length, 1);
     assert.equal(posted[0].content, 'Updated. Earlier votes were cleared, so take another look.');
-    assert.equal(claimOf(pool).params[4], false, 'an update that is not a fix round makes the description stale, as before');
-    assert.match(claimOf(pool).sql, /pr_summary_stale = CASE WHEN \$5::boolean THEN pr_summary_stale/);
+    assert.equal(claimOf(pool).fixOnly, false, 'an update that is not a fix round makes the description stale, as before');
+    const freshness = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/rules/summary-freshness.ts'), 'utf8');
+    assert.match(freshness, /pr_summary_stale = CASE WHEN \$\{fix\} THEN pr_summary_stale/,
+      'the machine\'s statement leaves the description of a fix round as it stands');
   } finally { restore(); r.cleanup(); }
 });
 
@@ -578,7 +657,7 @@ test('a fix round of the bot\'s leaves the description as it stands', async () =
       const pool = makePool({ epoch: 3, voters: 1 });
       const out = await votes.reconcileNativeReviewedHead({ config: {}, pool, session: session(r, { approval_epoch: 3 }), notify: true });
       assert.equal(out.epoch, 4, `${message}: the votes are cleared all the same`);
-      assert.equal(claimOf(pool).params[4], true, `${message}: the description keeps its freshness`);
+      assert.equal(claimOf(pool).fixOnly, true, `${message}: the description keeps its freshness`);
       assert.equal(posted[0].content, 'Updated. Earlier votes were cleared, so take another look.');
     } finally { restore(); r.cleanup(); }
   }
@@ -596,7 +675,7 @@ test('a person\'s push, or a fix message somebody else committed, is said and tr
       const pool = makePool({ epoch: 3, voters: 1 });
       await votes.reconcileNativeReviewedHead({ config: {}, pool, session: session(r, { approval_epoch: 3 }), notify: true });
       assert.match(posted[0].content, /^PR #99: A proposal was updated on GitHub\. Earlier votes were cleared, so please re-review commit [0-9a-f]{8}\.$/, message);
-      assert.equal(claimOf(pool).params[4], false, `${message}: stale, as before`);
+      assert.equal(claimOf(pool).fixOnly, false, `${message}: stale, as before`);
     } finally { restore(); r.cleanup(); }
   }
   // A Homeroom commit that is not a fix round, after a fix: the move is not only a fix.
@@ -606,6 +685,6 @@ test('a person\'s push, or a fix message somebody else committed, is said and tr
   try {
     const pool = makePool({ epoch: 0, voters: 0 });
     await votes.reconcileNativeReviewedHead({ config: {}, pool, session: session(r), notify: false });
-    assert.equal(claimOf(pool).params[4], false, 'a follow-up changes what it does');
+    assert.equal(claimOf(pool).fixOnly, false, 'a follow-up changes what it does');
   } finally { restore(); r.cleanup(); }
 });

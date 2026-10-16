@@ -21,6 +21,10 @@ const express = require('express');
 
 const bot = require('../src/services/homeroom-bot');
 const live = require('../src/services/homeroom-bot-live');
+// A build closes its own session through the proposal machine
+// (session-lifecycle.closeOwnSession), which no fake pool runs: the build
+// harness stands in for it and records every close.
+const sessionLifecycle = require('../src/services/session-lifecycle');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
@@ -102,7 +106,8 @@ test('which apps are shadow built: not live, not paused, and not the platform un
 // ── The build: the same one live runs, minus everything a person sees ────
 
 function buildHarness(result = { pushOk: true, ahead: 2, sha: 'c'.repeat(40) }) {
-  const calls = { queries: [], promoted: [] };
+  const calls = { queries: [], promoted: [], closed: [] };
+  sessionLifecycle.closeOwnSession = async ({ sessionId, reason }) => { calls.closed.push({ sessionId, reason }); return true; };
   const pool = {
     async query(sql, params) {
       calls.queries.push({ sql: String(sql), params });
@@ -154,9 +159,7 @@ test('propose: false builds and pushes, then puts the session away: no proposal,
   const insert = h.calls.queries.find((q) => /INSERT INTO chat_sessions/.test(q.sql));
   assert.equal(insert.params[2], null, 'no issue: no board reads it as work under way on #12');
   assert.match(insert.params[3], /^Homeroom bot shadow build: #12 /);
-  const archived = h.calls.queries.find((q) => /SET status = 'archived'/.test(q.sql));
-  assert.ok(archived, 'archived the moment the build ends');
-  assert.deepEqual(archived.params, [6001, BOT.id]);
+  assert.deepEqual(h.calls.closed, [{ sessionId: 6001, reason: 'not-proposed' }], 'archived the moment the build ends');
 });
 
 test('a shadow build that changes nothing is a failure with its branch named', async () => {

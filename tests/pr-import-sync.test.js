@@ -85,6 +85,17 @@ fakeModule('../src/services/integration', {
   classifyHeadMove: async () => scriptedMove,
 });
 
+// The head install is the proposal machine's (ReviewHeadMoved, through
+// src/workflow/platform.ts moveReviewHead): pr-import-sync asks it to move
+// the imported pin from the head it read, and reads the epoch off the reply.
+// There is no workflow runtime here, so the fake answers the way the
+// machine's guard and statement would, against the pool the test is using
+// (recordingPool below), and records each ask on it.
+let movePool = null;
+fakeModule('../src/workflow/platform.ts', {
+  moveReviewHead: async (p) => movePool.move(p),
+});
+
 const prImportSync = require('../src/services/pr-import-sync');
 
 // ── governedGate head-scoping ─────────────────────────────────────────
@@ -245,25 +256,43 @@ function withStubs(stubs, fn) {
 const SESSION_HEAD = 'a'.repeat(40);
 
 // `pinnedHead` is what the row's imported_pr_head_sha currently holds. The
-// head install is a compare-and-swap on it (RETURNING the epoch), so the pool
-// answers that statement the way Postgres would: a row iff the pin matched,
-// with the epoch bumped iff the statement asked for it. Everything else
-// records and returns no rows.
-function recordingPool({ pinnedHead = SESSION_HEAD, epoch = 0 } = {}) {
+// head install is the proposal machine's move, fenced on it, so the fake
+// machine answers it the way the machine would: accepted iff the pin matched
+// (the epoch moved on iff the votes are not kept), else refused
+// 'head_moved'. `summaryStale` is the description freshness the machine's
+// statement reports back (undefined: none reported). Every query records and
+// returns no rows.
+function recordingPool({ pinnedHead = SESSION_HEAD, epoch = 0, summaryStale } = {}) {
   const calls = [];
-  return {
+  const moves = [];
+  const pool = {
     calls,
+    moves,
+    move(p) {
+      moves.push(p);
+      if (p.from !== pinnedHead) return { status: 'rejected', reason: 'head_moved' };
+      const reply = { state: 'in_review', status: 'promoted', epoch: epoch + (p.keepVotes ? 0 : 1) };
+      if (summaryStale !== undefined) reply.prSummaryStale = summaryStale;
+      return { status: 'accepted', reply };
+    },
     query: async (sql, params) => {
       calls.push({ sql, params });
-      if (/SET imported_pr_head_sha = \$1[\s\S]*RETURNING approval_epoch/.test(sql)) {
-        const [, , bump, expectedOld] = params;
-        if (expectedOld !== pinnedHead) return { rows: [] };
-        return { rows: [{ approval_epoch: epoch + (bump ? 1 : 0) }] };
-      }
       return { rows: [] };
     },
   };
+  movePool = pool;
+  return pool;
 }
+
+// The one head move a run asked of the machine.
+function headMoveOf(pool) {
+  assert.equal(pool.moves.length, 1, 'one head move is asked of the proposal machine');
+  return pool.moves[0];
+}
+// Nothing here writes the row's head, epoch or description freshness: those
+// are the machine's.
+const wroteHead = (pool) => pool.calls.some((c) => /imported_pr_head_sha\s*=|approval_epoch\s*=/.test(c.sql)
+  && /^\s*UPDATE/i.test(c.sql));
 
 const SESSION = {
   id: 321, app_id: 9, app_slug: 'demo', app_name: 'Demo',
@@ -392,6 +421,7 @@ test('syncImportedProposal: active imports refresh without vote reset or re-revi
       config: {}, pool, session: { ...SESSION, status: 'active' },
     });
     assert.equal(res, 'updated');
+    assert.equal(headMoveOf(pool).keepVotes, true, 'not up for a vote: no epoch to move');
     assert.deepEqual(revisionHeads(), [NEW], 'preview follows the new GitHub head');
     assert.ok(!pool.calls.some((c) => /DELETE FROM pr_votes/.test(c.sql)),
       'an item not yet up for vote has no tally to clear');
@@ -417,14 +447,16 @@ test('syncImportedProposal: an authored push resets the tally, posts re-review, 
     const res = await prImportSync.syncImportedProposal({ config: {}, pool, session: { ...SESSION } });
     assert.equal(res, 'updated');
 
-    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
-    assert.ok(headUpdate, 'imported_pr_head_sha is advanced');
-    assert.equal(headUpdate.params[0], NEW);
-    assert.equal(headUpdate.params[2], true,
-      'the tally is cleared by moving the epoch on IN THE SAME STATEMENT as the head install — '
+    const headUpdate = headMoveOf(pool);
+    assert.equal(headUpdate.column, 'imported', 'imported_pr_head_sha is advanced');
+    assert.equal(headUpdate.to, NEW);
+    assert.equal(headUpdate.keepVotes, false,
+      'the tally is cleared by moving the epoch on IN THE SAME MOVE as the head install: '
       + 'no half-cleared window, and the votes survive as a record');
-    assert.equal(headUpdate.params[3], SESSION_HEAD,
-      'the install is a compare-and-swap on the pin the decision was made about');
+    assert.equal(headUpdate.from, SESSION_HEAD,
+      'the move is fenced on the pin the decision was made about');
+    assert.equal(headUpdate.reason, 'imported_head_authored');
+    assert.equal(wroteHead(pool), false, 'the row is the machine\'s to write');
 
     assert.equal(sysMessages.length, 1, 'exactly one re-review note');
     assert.match(sysMessages[0].content, /updated on GitHub/i);
@@ -472,16 +504,15 @@ test('syncImportedProposal: a mechanical sync keeps the votes and carries a sett
     const res = await prImportSync.syncImportedProposal({ config: {}, pool, session });
     assert.equal(res, 'updated');
 
-    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
-    assert.ok(headUpdate, 'the pin still advances — the next merge attempt must offer GitHub the live head');
-    assert.equal(headUpdate.params[0], NEW);
-    assert.equal(headUpdate.params[2], false, 'the epoch does NOT move: the votes still stand');
+    const headUpdate = headMoveOf(pool);
+    assert.equal(headUpdate.to, NEW, 'the pin still advances: the next merge attempt must offer GitHub the live head');
+    assert.equal(headUpdate.keepVotes, true, 'the epoch does NOT move: the votes still stand');
     assert.equal(session.approval_epoch, 4);
     assert.equal(session.checks_commit_sha, NEW);
 
-    // The carry is the machine's to make (it keeps the green verdict of the
-    // old head for the merged one); the head install no longer writes it.
-    assert.ok(!/checks_commit_sha/.test(headUpdate.sql), 'the head install leaves the verdict columns alone');
+    // The carry is the preview machine's to make (it keeps the green verdict
+    // of the old head for the merged one); nothing here writes it.
+    assert.ok(!pool.calls.some((c) => /checks_commit_sha/.test(c.sql)), 'the head install leaves the verdict columns alone');
     assert.equal(handOffs.length, 1,
       'one hand-off and no rebuild: a mechanical merge is pure git over a tested branch and a tested main');
     assert.equal(handOffs[0].kind, 'revision');
@@ -530,8 +561,7 @@ test('syncImportedProposal: a mechanical sync over a run still in flight rebuild
     const session = { ...SESSION, approval_epoch: 4, checks_commit_sha: SESSION_HEAD, check_state: 'pending' };
     await prImportSync.syncImportedProposal({ config: {}, pool, session });
 
-    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
-    assert.equal(headUpdate.params[2], false, 'still no epoch bump — the tree is unchanged');
+    assert.equal(headMoveOf(pool).keepVotes, true, 'still no epoch bump: the tree is unchanged');
     assert.ok(!handOffs.some((h) => h.carryFrom), 'but an unfinished verdict is not carried');
     assert.deepEqual(revisionHeads(), [NEW], 'the checks re-run against the merged commit');
   });
@@ -554,8 +584,7 @@ test('syncImportedProposal: a mechanical sync over a settled FAILURE rebuilds in
     const session = { ...SESSION, approval_epoch: 4, checks_commit_sha: SESSION_HEAD, check_state: 'failing' };
     await prImportSync.syncImportedProposal({ config: {}, pool, session });
 
-    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
-    assert.equal(headUpdate.params[2], false, 'no epoch bump — the tree is unchanged, the votes still stand');
+    assert.equal(headMoveOf(pool).keepVotes, true, 'no epoch bump: the tree is unchanged, the votes still stand');
     assert.ok(!handOffs.some((h) => h.carryFrom), 'but a failing verdict is not carried');
     assert.deepEqual(revisionHeads(), [NEW], 'the checks re-run against the merged commit');
     assert.equal(sysMessages.length, 1);
@@ -578,8 +607,7 @@ test('syncImportedProposal: a resolved sync keeps the votes but re-tests the mer
     const session = { ...SESSION, approval_epoch: 2, checks_commit_sha: SESSION_HEAD, check_state: 'passing' };
     await prImportSync.syncImportedProposal({ config: {}, pool, session });
 
-    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
-    assert.equal(headUpdate.params[2], false, 'the votes survive an automatic resolution');
+    assert.equal(headMoveOf(pool).keepVotes, true, 'the votes survive an automatic resolution');
     assert.ok(!handOffs.some((h) => h.carryFrom), 'a resolved tree is one nobody has tested: no carry');
     assert.deepEqual(revisionHeads(), [NEW]);
     assert.match(sysMessages[0], /2 conflicting files were resolved automatically/i);
@@ -598,8 +626,7 @@ test('syncImportedProposal: a move the mirror cannot classify is treated as auth
   ], async () => {
     const pool = recordingPool();
     await prImportSync.syncImportedProposal({ config: {}, pool, session: { ...SESSION } });
-    const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
-    assert.equal(headUpdate.params[2], true, 'failing open here would let a real push inherit approvals');
+    assert.equal(headMoveOf(pool).keepVotes, false, 'failing open here would let a real push inherit approvals');
     assert.match(sysMessages[0], /could not verify \(mirror unavailable\)/i);
     assert.match(sysMessages[0], /re-review/i);
   });
@@ -607,8 +634,8 @@ test('syncImportedProposal: a move the mirror cannot classify is treated as auth
 
 test('applyHeadChange: a second applier of the same move writes and posts nothing', async () => {
   // The sweep and the queue can both notice one move (PR #2101 saw two epoch
-  // bumps and two "please re-review" notes for it). The install is a CAS on
-  // the pin: whoever loses it must be a no-op.
+  // bumps and two "please re-review" notes for it). The machine's move is
+  // fenced on the pin: whoever it refuses must be a no-op.
   const NEW = 'b'.repeat(40);
   const sysMessages = [];
   scriptedMove = { kind: 'authored' };
@@ -623,8 +650,9 @@ test('applyHeadChange: a second applier of the same move writes and posts nothin
       config: {}, pool, session: { ...SESSION }, newHead: NEW, oldHead: SESSION_HEAD,
     });
     assert.equal(res.applied, false);
+    assert.equal(headMoveOf(pool).from, SESSION_HEAD, 'the machine was asked, from the pin this pass read, and refused it');
     const writes = pool.calls.filter((c) => /^\s*(UPDATE|INSERT|DELETE)/i.test(c.sql));
-    assert.equal(writes.length, 1, 'the failed CAS is the only write');
+    assert.equal(writes.length, 0, 'nothing is written here');
     assert.ok(pool.calls.some((c) => /SELECT imported_pr_head_sha, approval_epoch/.test(c.sql)),
       'and the row is re-read so the caller carries on with the pin as it now stands');
     assert.deepEqual(sysMessages, []);
@@ -677,6 +705,7 @@ test('reconcileImportedHead: a mechanical move re-pins, keeps the votes, and def
     assert.equal(res.votesKept, true);
     assert.equal(session.imported_pr_head_sha, NEW, 'the in-memory row follows, so the caller merges the live head');
     assert.equal(session.approval_epoch, 1);
+    assert.deepEqual([headMoveOf(pool).from, headMoveOf(pool).to, headMoveOf(pool).keepVotes], [SESSION_HEAD, NEW, true]);
     assert.deepEqual(handOffs, [],
       "'defer': nothing is handed off here; the caller's checks gate rebuilds exactly the pinned head");
     assert.deepEqual(sysMessages, [], "'notify: false': the caller is about to say something more specific");
@@ -852,23 +881,24 @@ test('applyHeadChange: a late sweep keeps an author summary recorded for the hea
     const first = recordingPool();
     assert.equal(await prImportSync.syncImportedProposal({ config: {}, pool: first, session }), 'unchanged');
 
-    // 2. The sweep, once it has. Postgres answers the claim with the kept flag.
+    // 2. The sweep, once it has. The machine's move answers with the kept flag.
     github = NEW;
-    const pool = recordingPool();
-    const realQuery = pool.query;
-    pool.query = async (sql, params) => {
-      const res = await realQuery(sql, params);
-      if (/SET imported_pr_head_sha = \$1[\s\S]*RETURNING approval_epoch/.test(sql) && res.rows.length) {
-        res.rows[0].pr_summary_stale = false;
-      }
-      return res;
-    };
+    const pool = recordingPool({ summaryStale: false });
     assert.equal(await prImportSync.syncImportedProposal({ config: {}, pool, session }), 'updated');
-    const claim = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
-    assert.match(claim.sql, /pr_summary_source = 'author'/);
-    assert.match(claim.sql, /pr_summary_source_head_sha = \$1::varchar/,
+    assert.equal(headMoveOf(pool).to, NEW);
+    // The machine's statement (src/workflow/proposal/machine.ts headMoved)
+    // installs the head as $1 and keeps an author summary recorded for it.
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const machine = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/proposal/machine.ts'), 'utf8');
+    const headMoved = machine.slice(machine.indexOf('  headMoved: async (tx: Tx, w: any) =>'), machine.indexOf('  approvalsCleared:'));
+    assert.match(headMoved, /imported_pr_head_sha = CASE WHEN \$3 = 'imported' THEN \$1/);
+    assert.match(headMoved, /invalidateHeadMoveSql\('\$1'/);
+    assert.match(headMoved, /\[w\.to, w\.sessionId/, '$1 is the head the move installs');
+    const freshness = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/rules/summary-freshness.ts'), 'utf8');
+    assert.match(freshness, /pr_summary_source = 'author'/);
+    assert.match(freshness, /pr_summary_source_head_sha = \$\{headParam\}::varchar/,
       'the exception is scoped to the head this statement installs');
-    assert.match(claim.sql, /RETURNING approval_epoch, pr_summary_stale/);
-    assert.equal(session.pr_summary_stale, false, 'the in-memory row follows what Postgres kept');
+    assert.equal(session.pr_summary_stale, false, 'the in-memory row follows what the machine kept');
   });
 });

@@ -171,7 +171,6 @@ export interface Deps {
   execute: boolean;          // config.shots.execute: this deployment takes shots
   agentBudgetMs: number;     // config.shots.maxAgentMs
   runBudgetMs: number;       // config.shots.maxRunMs
-  buildSha?: string | null;  // GIT_SHA: this release (facts.ts olderServing)
 }
 
 // How long a step may take before it is overdue: the copies (a platform
@@ -379,12 +378,10 @@ function fail(s: Live, f: Facts, ctx: TransitionContext, failure: {
 
 // The agent's turn on the run's copies, when the proposal's agent is free;
 // otherwise wait for it, until what is left of the run's time from the
-// moment its copies served. While a process of a release from before this
-// machine still serves (a rollout), the agent's calls could reach it, and it
-// keeps the agent's control plane in its memory: that is waited out too.
+// moment its copies served.
 function dispatchOrWait(s: Live, f: Facts, ctx: TransitionContext, deps: Deps, writes: DomainWrite[] = []): Outcome<SState> {
   const r = s.data.run!;
-  if (f.session?.agentBusy || f.session?.olderServing) {
+  if (f.session?.agentBusy) {
     const from = r.copiesAt || r.startedAt;
     const until = r.agentWaitUntil || new Date(Date.parse(from) + deps.runBudgetMs).toISOString();
     if (Date.parse(until) <= ctx.now.getTime()) {
@@ -853,6 +850,10 @@ const PRODUCERS: ReadonlySet<string> = new Set(['route', 'system']);
 
 export function shots(deps: Deps): Machine<SState, Facts> {
   const produced = (e: Event<any>): Check => (PRODUCERS.has(e.source.kind) ? ok() : reject('not_a_producer'));
+  // The proposal machine moves the reviewed or imported head, and says so in
+  // the move's own transaction.
+  const movedByProposal = (e: Event<any>): Check =>
+    (PRODUCERS.has(e.source.kind) || (e.source.kind === 'message' && e.source.from.machine === 'proposal') ? ok() : reject('not_a_producer'));
   const fromPreview = (e: Event<any>): Check =>
     ((e.source.kind === 'message' && e.source.from.machine === 'preview') || e.source.kind === 'system' ? ok() : reject('internal_only'));
   const person = (e: Event<any>): Check => (e.source.kind === 'route' || e.source.kind === 'system' ? ok() : reject('not_a_producer'));
@@ -866,11 +867,11 @@ export function shots(deps: Deps): Machine<SState, Facts> {
     facts: (tx, state, event) => {
       const id = state.name === NONE ? Number((event.payload as any)?.sessionId) : (state.data as Data).sessionId;
       if (!Number.isInteger(id) || id <= 0) return Promise.resolve({ session: null });
-      return readFacts(tx, id, { buildSha: deps.buildSha ?? null });
+      return readFacts(tx, id);
     },
     authorize: {
       Declared: produced,
-      HeadMoved: produced,
+      HeadMoved: movedByProposal,
       HeadReady: fromPreview,
       PreviewStopped: fromPreview,
       UiUndeclared: fromPreview,

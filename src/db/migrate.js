@@ -3806,7 +3806,8 @@ async function seedStagingAgentFailingChecks(pool, config) {
      VALUES ($1, $2, $3, 'staging-fixture/agent-failing-checks', '[staging fixture] Done section', 'active', $4,
              NOW() - INTERVAL '8 minutes', NOW() - INTERVAL '2 minutes')
      ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, agent_session_id = EXCLUDED.agent_session_id,
-                                    status = 'active'`,
+                                    status = CASE WHEN wf_holds('proposal', 'session:' || chat_sessions.id)
+                                                  THEN chat_sessions.status ELSE 'active' END`,
     [STAGING_AGENT_FAILING_CHANGE_ID, app.id, owner.id, STAGING_AGENT_FAILING_SESSION_ID]
   );
   await pool.query('UPDATE agent_sessions SET active_change_id = $2 WHERE id = $1',
@@ -3911,7 +3912,7 @@ async function seedStagingNoBranchSession(pool, config) {
      ON CONFLICT (id) DO UPDATE SET
        user_id = EXCLUDED.user_id,
        session_title = EXCLUDED.session_title,
-       status = EXCLUDED.status,
+       status = CASE WHEN wf_holds('proposal', 'session:' || chat_sessions.id) THEN chat_sessions.status ELSE EXCLUDED.status END,
        branch_name = NULL`,
     [STAGING_NO_BRANCH_SESSION_ID, appId, owner.id]
   );
@@ -5120,9 +5121,11 @@ async function seedStagingCcCohortRuns(pool, config) {
       [appId, run.branch]
     );
     if (existing.length) {
+      // A row the proposal machine holds keeps the status it decided.
       await pool.query(
         `UPDATE chat_sessions
-            SET user_id = $1, status = 'active', last_activity_at = NOW()
+            SET user_id = $1, last_activity_at = NOW(),
+                status = CASE WHEN wf_holds('proposal', 'session:' || id) THEN status ELSE 'active' END
           WHERE id = $2`,
         [owner.id, existing[0].id]
       );
@@ -11327,7 +11330,7 @@ async function seedStagingImportedPrProposal(pool, config) {
                 check_phase = 'building',
                 checks_commit_sha = $2, checks_checked_at = NOW(),
                 staging_url = NULL, staging_container_id = NULL,
-                promoted_at = NOW()
+                promoted_at = CASE WHEN wf_holds('proposal', 'session:' || id) THEN promoted_at ELSE NOW() END
           WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
         [id3, headSha3]
       );
@@ -11732,7 +11735,8 @@ async function seedStagingRestartEligibleMerge(pool, config) {
       // promoted fixtures as-is (a real merge during testing should stick).
       if (status === 'merging') {
         await pool.query(
-          `UPDATE chat_sessions SET status = 'merging' WHERE id = $1 AND status <> 'merged'`,
+          `UPDATE chat_sessions SET status = 'merging'
+            WHERE id = $1 AND status <> 'merged' AND NOT wf_holds('proposal', 'session:' || id)`,
           [have[0].id]
         );
       }

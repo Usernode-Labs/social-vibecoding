@@ -83,7 +83,7 @@ async function sweepStaleRedChanges(pool, { appId, deps = {} } = {}) {
       if (!(Number(session.id) > 0)) continue;
       let archived = false;
       try {
-        ({ archived } = await lifecycle.archiveSession({ pool, sessionId: Number(session.id), reason: REASON }));
+        ({ archived } = await lifecycle.archiveSession({ pool, sessionId: Number(session.id), reason: REASON, from: 'promoted' }));
       } catch (err) {
         log.warn('homeroom-bot-red-changes', 'Withdrawing a red change partly failed', { sessionId: session.id, err: err.message });
         const { rows: [now] = [] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [session.id]);

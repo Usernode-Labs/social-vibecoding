@@ -92,7 +92,10 @@ test('native and imported proposal creation assign inside their transactions', (
       ['session insert', 'INSERT INTO chat_sessions'],
       ['issuer assignment', 'await topicAttrs.selfAssignProposal('],
       ['transaction commit', "await importClient.query('COMMIT')"],
-      ['broadcast', 'pushSessionUpdate({ action: promote'],
+      // Since the proposal machine a straight-to-vote import is asked for in
+      // the same transaction, and its own move into review is what announces
+      // it; the import's push is the board's.
+      ['broadcast', "pushSessionUpdate({ action: 'imported'"],
       ['success response', '...visibleChangesSubmission,'],
     ]
   );

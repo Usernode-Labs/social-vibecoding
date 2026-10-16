@@ -9,7 +9,7 @@
 
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
-import { createRuntime } from './kernel/index.ts';
+import { appendEvent, createRuntime } from './kernel/index.ts';
 import type { EventOutcome, Logger, Pool, Push, Queryable, Runtime } from './kernel/index.ts';
 import { legacy } from './legacy.ts';
 import { GOVERNANCE_KINDS } from './governance-proposal/facts.ts';
@@ -26,6 +26,8 @@ import { MACHINE as PREVIEW, preview, sessionKey as previewKey } from './preview
 import { PREPARE_LEASE_MS, previewServices } from './preview/services.ts';
 import { LIVE as SHOTS_LIVE, MACHINE as SHOTS, sessionKey as shotsKey, shots } from './shots/machine.ts';
 import { shotsServices } from './shots/services.ts';
+import { MACHINE as PROPOSAL, proposal, sessionKey as proposalKey } from './proposal/machine.ts';
+import { proposalServices } from './proposal/services.ts';
 
 const pg = createRequire(import.meta.url)('pg');
 
@@ -41,13 +43,14 @@ const builds = botBuild();
 let deliveries: ReturnType<typeof appDelivery> | null = null;
 let previews: ReturnType<typeof preview> | null = null;
 let shotRuns: ReturnType<typeof shots> | null = null;
+let proposals: ReturnType<typeof proposal> | null = null;
 let log: Logger | null = null;
 
 // What the ownership triggers read, synced on every boot: enabled:<machine>
 // for every machine (wf_holds reads it). Every machine is the only path for
 // what it decides, so its guard is always on and always refuses a write
 // from outside it.
-const MACHINES = [MACHINE, MERGE, DELIVERY, PREVIEW, SHOTS];
+const MACHINES = [MACHINE, MERGE, DELIVERY, PREVIEW, SHOTS, PROPOSAL];
 
 export async function syncSettings(pool: Pool): Promise<void> {
   for (const name of MACHINES) {
@@ -114,12 +117,12 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     execute: !!config.shots?.execute,
     agentBudgetMs: Number(config.shots?.maxAgentMs) || 480_000,
     runBudgetMs: Number(config.shots?.maxRunMs) || 1_440_000,
-    buildSha: /^[0-9a-f]{40}$/.test(String(process.env.GIT_SHA || '')) ? String(process.env.GIT_SHA) : null,
   });
-  const machines = [machine, merges, builds, deliveries, previews, shotRuns];
+  proposals = proposal(proposalDeps(config));
+  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals];
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
-    ...appDeliveryServices(deps), ...previewServices(deps), ...shotsServices(deps),
+    ...appDeliveryServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
   };
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, publish: publishPushes,
@@ -136,6 +139,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     deliveries = null;
     previews = null;
     shotRuns = null;
+    proposals = null;
     throw err;
   }
   runtime = started;
@@ -159,7 +163,8 @@ export async function releaseServing(pool: Pool): Promise<void> {
 }
 
 // The leader's part: timers and services, then enrolling every open
-// governance row the machine does not hold yet.
+// governance row and every proposal that needs a timer the machines do not
+// hold yet.
 export async function startWorkflowLoops(): Promise<void> {
   if (!runtime) return;
   await runtime.start({ loops: true });
@@ -170,52 +175,27 @@ export async function startWorkflowLoops(): Promise<void> {
     [[...GOVERNANCE_KINDS], MACHINE]);
   for (const r of rows) await file(r.id, r.app_id, { kind: 'system', name: 'backfill' });
   if (rows.length) log!.info('workflow', 'Enrolled open governance proposals', { count: rows.length });
+  await adoptProposals();
   await retryPlatformFaults();
-  await retryShotsCutOff();
-  watchShotsCutOff();
 }
 
-// Shots [main] was taking in a process the release replaced (or that a
-// release interrupted, on the head they were for): each open proposal's are
-// taken again by the shots machine, once. Its first event adopts the
-// proposal from its row (ending the run that was cut off). A run counts once
-// it has gone quiet: [main]'s run beats its row every few seconds while its
-// process lives, and a rollout keeps [main]'s processes serving (and
-// starting runs) for a while after this one leads, so this looks again every
-// two minutes for an hour. Transitional: once no release from before the
-// machine runs, there is nothing to find.
-const CUT_OFF_QUIET = '5 minutes';
-const CUT_OFF_EVERY_MS = 2 * 60 * 1000;
-const CUT_OFF_FOR_MS = 60 * 60 * 1000;
-let cutOffWatch: NodeJS.Timeout | null = null;
-
-async function retryShotsCutOff(): Promise<void> {
-  if (!shotRuns || !runtime) return;
+// Every proposal in review or being merged (their review check) and every
+// session holding a slot (its idle check) that the proposal machine does not
+// hold yet is adopted from its row. The leader's sweep runs it again each
+// minute (server.js), for the sessions created since. Resolves how many.
+export async function adoptProposals(limit = 500): Promise<number> {
+  if (!runtime || !proposals) return 0;
   const { rows } = await kernelPool!.query(
-    `SELECT cs.id, cs.app_id FROM chat_sessions cs JOIN shot_runs r ON r.id = cs.shots_run_id
-      WHERE cs.status IN ('active', 'paused', 'promoted', 'merging')
-        AND ((r.state IN ('planned', 'provisioning', 'exploring', 'replaying', 'reviewing')
-              AND r.updated_at < NOW() - $2::interval)
-             OR (r.state = 'failed' AND r.failure_code = 'shots_run_interrupted'))
-        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'session:' || cs.id)`,
-    [SHOTS, CUT_OFF_QUIET]);
-  const release = String(process.env.GIT_SHA || 'dev').slice(0, 40);
+    `SELECT cs.id, cs.app_id FROM chat_sessions cs
+      WHERE cs.status IN ('active', 'promoted', 'merging')
+        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'session:' || cs.id)
+      ORDER BY cs.id LIMIT $2`, [PROPOSAL, limit]);
   for (const r of rows) {
-    await runtime!.append(shotRuns, shotsKey(r.id), { type: 'RetryRequested', payload: { sessionId: r.id, reason: 'release' } },
-      { requestKey: `shots-release:${release}:${r.id}`, source: { kind: 'system', name: 'release' }, appId: r.app_id ?? undefined })
-      .catch((err: Error) => log!.warn('workflow', 'Could not take cut-off shots again', { sessionId: r.id, message: err.message }));
+    await proposalAdopted({ sessionId: r.id, appId: r.app_id })
+      .catch((err: Error) => log!.warn('workflow', 'Could not adopt a proposal', { sessionId: r.id, message: err.message }));
   }
-  if (rows.length) log!.info('workflow', 'Shots cut off by the release taken again', { count: rows.length });
-}
-
-function watchShotsCutOff(): void {
-  if (cutOffWatch) return;
-  const until = Date.now() + CUT_OFF_FOR_MS;
-  cutOffWatch = setInterval(() => {
-    if (Date.now() > until || !runtime) { clearInterval(cutOffWatch!); cutOffWatch = null; return; }
-    retryShotsCutOff().catch((err: Error) => log!.warn('workflow', 'Could not look for cut-off shots', { message: err.message }));
-  }, CUT_OFF_EVERY_MS);
-  cutOffWatch.unref?.();
+  if (rows.length) log!.info('workflow', 'Adopted proposals', { count: rows.length });
+  return rows.length;
 }
 
 // A release is when a fix to the platform's own fault (a check Job refused
@@ -253,7 +233,6 @@ export function workflowWorkRunning(): number {
 }
 
 export async function stopWorkflow(): Promise<void> {
-  if (cutOffWatch) { clearInterval(cutOffWatch); cutOffWatch = null; }
   const r = runtime;
   runtime = null;
   machine = null;
@@ -261,6 +240,7 @@ export async function stopWorkflow(): Promise<void> {
   deliveries = null;
   previews = null;
   shotRuns = null;
+  proposals = null;
   await r?.stop();
   await kernelPool?.end();
   kernelPool = null;
@@ -683,6 +663,259 @@ export async function shotsWaive(r: { sessionId: number; appId: number; userId: 
   return runtime!.appendAndWait(shotsMachine(), shotsKey(r.sessionId),
     { type: 'WaiveRequested', payload: { sessionId: r.sessionId, userId: r.userId, reason: r.reason } },
     { requestKey: `waive:${randomUUID()}`, source: { kind: 'route', name: 'waive' }, appId: r.appId, actor: `user:${r.userId}`, waitMs: 5000 });
+}
+
+// ── Proposals ───────────────────────────────────────────────────────────
+
+// What the proposal machine needs from the configuration.
+function proposalDeps(config: any) {
+  const ms = (v: unknown, fallback: number) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
+  return {
+    idleMs: ms(config.sessionAutopauseIdleMs, 0),
+    exemptFixtures: process.env.USERNODE_ENV === 'staging',
+    reviewCheckMs: ms(config.staleSweepIntervalMs, 60 * 60 * 1000),
+    staleNotifyMs: ms(config.prStaleNotifyMs, 0),
+    staleGraceMs: ms(config.prStaleGraceMs, 0),
+  };
+}
+
+function proposalMachine() {
+  if (!runtime || !proposals) throw new Error('The workflow runtime is not running in this process');
+  return proposals;
+}
+
+// Whether the proposal machine runs in this process.
+export function proposalsRunning(): boolean {
+  return runtime !== null && proposals !== null;
+}
+
+type ProposalAppend = {
+  sessionId: number; appId?: number | null; source?: Source; actor?: string | null; requestKey?: string;
+  // Inside a caller's transaction: appended there, applied once it commits.
+  db?: Queryable; waitMs?: number;
+  // How long the caller waits for it: past that the machine refuses it
+  // (`expired`), so an answer the caller gave up on is never applied later.
+  deadlineMs?: number;
+};
+
+// What a caller that acts on the answer waits for it.
+const ANSWER_MS = 8000;
+
+async function proposalEvent(type: string, payload: Record<string, unknown>, o: ProposalAppend): Promise<EventOutcome | number> {
+  // In a process that does not run the machines (a script, a test that
+  // appends in its own transaction), the events are decoded by a copy of the
+  // machine: its deps decide nothing at an append.
+  if (o.db && !proposals) {
+    return appendEvent(o.db, proposal(proposalDeps({})), proposalKey(o.sessionId), { type, payload: { sessionId: o.sessionId, ...payload } }, {
+      requestKey: o.requestKey || `${type}:${o.sessionId}:${randomUUID()}`,
+      source: o.source || sys(type), actor: o.actor ?? undefined, appId: o.appId ?? undefined,
+    });
+  }
+  const m = proposalMachine();
+  const event = { type, payload: { sessionId: o.sessionId, ...payload,
+    ...(o.deadlineMs ? { deadline: new Date(Date.now() + o.deadlineMs).toISOString() } : {}) } };
+  const opts = {
+    requestKey: o.requestKey || `${type}:${o.sessionId}:${randomUUID()}`,
+    source: o.source || sys(type), actor: o.actor ?? undefined, appId: o.appId ?? undefined,
+  };
+  if (o.db) return runtime!.append(m, proposalKey(o.sessionId), event, { ...opts, db: o.db });
+  return runtime!.appendAndWait(m, proposalKey(o.sessionId), event,
+    { ...opts, waitMs: o.waitMs ?? (o.deadlineMs ? o.deadlineMs + 3000 : 5000) });
+}
+
+// The proposal machine's instance of a session: its state and data, or null.
+export async function proposalInstance(sessionId: number): Promise<{ state: string; data: any } | null> {
+  if (!kernelPool) return null;
+  const { rows: [r] } = await kernelPool.query(
+    'SELECT state, data FROM wf_instances WHERE machine = $1 AND key = $2', [PROPOSAL, proposalKey(sessionId)]);
+  return r ? { state: r.state, data: r.data } : null;
+}
+
+// A row the machine does not hold yet, adopted (its timer armed): the
+// leader's backfill, and an insert of a row born in review, in its own
+// transaction (`db`). Asking again is a replay.
+export async function proposalAdopted(o: { sessionId: number; appId?: number | null; db?: Queryable }): Promise<void> {
+  if (o.db) {
+    await proposalEvent('Adopted', {}, { ...o, requestKey: `adopt:${o.sessionId}`, source: sys('adopt') });
+    return;
+  }
+  await runtime!.append(proposalMachine(), proposalKey(o.sessionId), { type: 'Adopted', payload: { sessionId: o.sessionId } },
+    { requestKey: `adopt:${o.sessionId}`, source: sys('adopt'), appId: o.appId ?? undefined });
+}
+
+// The promote's answers, by the machine's rejection or review.open's code.
+const PROMOTE_REFUSALS = new Map<string, Reply>([
+  ['session_state_changed', { status: 409, body: { error: 'session_state_changed' } }],
+  ['not_owner', { status: 404, body: { error: 'Active session not found' } }],
+  ['headless', { status: 404, body: { error: 'Active session not found' } }],
+  ['session_not_found', { status: 404, body: { error: 'Active session not found' } }],
+  ['not_found', { status: 404, body: { error: 'Active session not found' } }],
+  ['busy', { status: 409, body: { error: 'session_busy', message: 'The session is still working. Try again when it finishes.' } }],
+  ['pr_merged', { status: 409, body: { error: 'This change was already merged on GitHub, so there is nothing to vote on.' } }],
+  ['pr_closed', { status: 409, body: { error: 'This change was closed on GitHub, so it can\'t ask for approval.' } }],
+  ['pr_draft', { status: 409, body: { error: 'This pull request is a draft on GitHub. Its author marks it ready for review before it can go up for a vote.' } }],
+  ['merged', { status: 409, body: { error: 'This change was already merged.' } }],
+]);
+const PROMOTE_FAILURES = new Map<string, number>([
+  ['no_commits', 409], ['github_unavailable', 503], ['pr_create_failed', 502], ['pr_merged', 409], ['pr_closed', 409],
+  ['reopen_failed', 409], ['no_repo', 409], ['bad_head', 409], ['pr_draft', 409], ['ready_failed', 503], ['not_found', 404],
+  ['session_state_changed', 409],
+]);
+
+// Up for a vote: the route has validated, and read the pull request from
+// GitHub (`pr`, null when there is none yet). The machine claims the
+// proposal for review, GitHub opens or readies its pull request, and the
+// proposal is in review once it has: answered as soon as that is so, within
+// about twenty seconds; past them, 202 (it is being put up for a vote, and
+// the page hears when it is).
+export async function promoteProposal(p: {
+  sessionId: number; appId: number; userId: number; username: string | null; from: string; cap: number;
+  pr: { state: string; draft: boolean; merged: boolean; head: string | null } | null;
+  expectedHead?: string | null; viaAgent?: boolean; ownOperation?: string | null; source?: Source; waitMs?: number;
+}): Promise<Reply> {
+  const outcome = await proposalEvent('Promote', promotePayload(p),
+    { sessionId: p.sessionId, appId: p.appId, source: p.source || { kind: 'route', name: 'promote' }, actor: `user:${p.userId}` }) as EventOutcome;
+  return promoteAnswer(outcome, { sessionId: p.sessionId, cap: p.cap, waitMs: p.waitMs });
+}
+
+const promotePayload = (p: Parameters<typeof promoteProposal>[0]) => ({
+  from: p.from, userId: p.userId, username: p.username, cap: p.cap, pr: p.pr,
+  expectedHead: p.expectedHead ?? null, viaAgent: !!p.viaAgent, ownOperation: p.ownOperation ?? null,
+});
+
+// An import going straight to a vote: the promote is appended in the
+// import's own transaction (`db`), so it is asked for whatever happens to
+// the request after the commit; the route then waits for it
+// (promoteImported's answer).
+export async function promoteInTransaction(p: Parameters<typeof promoteProposal>[0] & { db: Queryable }): Promise<number> {
+  return proposalEvent('Promote', promotePayload(p),
+    { sessionId: p.sessionId, appId: p.appId, db: p.db, source: p.source || { kind: 'route', name: 'promote' }, actor: `user:${p.userId}` }) as Promise<number>;
+}
+export async function promoteCommitted(eventId: number, p: { sessionId: number; cap: number; waitMs?: number }): Promise<Reply> {
+  return promoteAnswer(await runtime!.waitForEvent(eventId, 5000), p);
+}
+
+function promoteRefusal(reason: string | null | undefined, cap: number): Reply {
+  if (reason === 'promoted_cap') {
+    return { status: 429, body: { error: `You already have ${cap} changes waiting for approval. Wait for one to go live, or archive one first.` } };
+  }
+  return PROMOTE_REFUSALS.get(reason || '') || { status: 409, body: { error: reason } };
+}
+
+// What a promote came to: refused at once, or answered once GitHub has
+// reported (200, or the refusal it ended in), or 202 while it still goes up.
+async function promoteAnswer(outcome: EventOutcome, p: { sessionId: number; cap: number; waitMs?: number }): Promise<Reply> {
+  if (outcome.status === 'rejected') return promoteRefusal(outcome.reason, p.cap);
+  if (outcome.status === 'faulted') return { status: 500, body: { error: 'Internal server error' } };
+  const n = (outcome.reply as any)?.promoting ?? null;
+  if (outcome.status === 'pending' || n == null) return PROMOTE_PENDING;
+  const i = await runtime!.waitFor(proposalMachine(), proposalKey(p.sessionId),
+    (x) => x.state !== 'proposing' || x.data?.promoting?.n !== n, p.waitMs ?? 20000);
+  if (i?.state === 'proposing' && i.data?.promoting?.n === n) return PROMOTE_PENDING;
+  const a = i?.data?.answer;
+  if (!a || a.n !== n) return PROMOTE_REFUSALS.get('session_state_changed')!;
+  return answerReply(a);
+}
+
+const PROMOTE_PENDING: Reply = { status: 202, body: { ok: true, pending: true, message: 'Being put up for a vote.' } };
+
+// A promote that answered 202, waited on until GitHub has reported: what its
+// latest promote came to, or 202 again past `waitMs`.
+export async function promoteSettled(p: { sessionId: number; waitMs: number }): Promise<Reply> {
+  const i = await runtime!.waitFor(proposalMachine(), proposalKey(p.sessionId), (x) => x.state !== 'proposing', p.waitMs);
+  if (!i || i.state === 'proposing') return PROMOTE_PENDING;
+  const a = i.data?.answer;
+  if (!a) return PROMOTE_REFUSALS.get('session_state_changed')!;
+  return answerReply(a);
+}
+
+function answerReply(a: any): Reply {
+  if (a.ok) return { status: 200, body: { ok: true, prNumber: a.prNumber ?? null, prUrl: a.prUrl ?? null, prTitle: a.prTitle ?? null } };
+  if (a.code === 'branch_head_changed') return { status: 409, body: { error: 'branch_head_changed', message: a.message } };
+  if (a.code === 'session_state_changed') return PROMOTE_REFUSALS.get('session_state_changed')!;
+  return { status: PROMOTE_FAILURES.get(a.code) || 503, body: { error: a.message || 'Could not put the change up for a vote. Try again shortly.' } };
+}
+
+// The rest of a proposal's moves, each answered with the machine's outcome
+// (services/session-lifecycle.js turns it into what its callers read). Each
+// names what its caller read (`from`): one a newer move overtook is refused.
+export function unpromoteProposal(p: { sessionId: number; appId?: number | null; userId: number; username?: string | null; from: string }) {
+  return proposalEvent('Unpromote', { from: p.from, userId: p.userId, username: p.username ?? null },
+    { sessionId: p.sessionId, appId: p.appId, source: { kind: 'route', name: 'unpromote' }, actor: `user:${p.userId}`,
+      deadlineMs: ANSWER_MS }) as Promise<EventOutcome>;
+}
+export function pauseProposal(p: { sessionId: number; appId?: number | null; reason: string; from: string; userId?: number | null;
+  db?: Queryable; requestKey?: string; source?: Source; waitMs?: number }): Promise<EventOutcome | number> {
+  return proposalEvent('Pause', { from: p.from, reason: p.reason, userId: p.userId ?? null },
+    { sessionId: p.sessionId, appId: p.appId, db: p.db, requestKey: p.requestKey, source: p.source || sys(`pause-${p.reason}`), waitMs: p.waitMs,
+      actor: p.userId ? `user:${p.userId}` : null, deadlineMs: p.db ? undefined : ANSWER_MS });
+}
+export function resumeProposal(p: { sessionId: number; appId?: number | null; from: string; userId?: number | null;
+  caps: { user: number; global: number } | null; source?: Source }) {
+  return afterTeardown(p.sessionId, () => proposalEvent('Resume', { from: p.from, userId: p.userId ?? null, caps: p.caps },
+    { sessionId: p.sessionId, appId: p.appId, source: p.source || sys('resume'), actor: p.userId ? `user:${p.userId}` : null,
+      deadlineMs: ANSWER_MS }) as Promise<EventOutcome>);
+}
+
+// A resume or a reopen refused while the session's worker or CC volume is
+// still being removed (`tearing_down`) is asked again once a removal has
+// reported (the instance's list of them changes), or a second on (a removal
+// that failed and waits to be tried again can be cancelled). Past
+// TEARDOWN_WAIT_MS the refusal stands.
+const TEARDOWN_WAIT_MS = 30000;
+const TEARDOWN_RECHECK_MS = 1000;
+async function afterTeardown(sessionId: number, ask: () => Promise<EventOutcome>): Promise<EventOutcome> {
+  const until = Date.now() + TEARDOWN_WAIT_MS;
+  for (;;) {
+    const out = await ask();
+    if (out.status !== 'rejected' || out.reason !== 'tearing_down' || Date.now() >= until) return out;
+    const seen = JSON.stringify((await proposalInstance(sessionId))?.data?.doomed || []);
+    await runtime!.waitFor(proposalMachine(), proposalKey(sessionId),
+      (x) => JSON.stringify(x.data?.doomed || []) !== seen, TEARDOWN_RECHECK_MS);
+  }
+}
+export function closeProposal(p: { sessionId: number; appId?: number | null; reason: string; from: string; userId?: number | null;
+  username?: string | null; purgeCc?: boolean; db?: Queryable; requestKey?: string; source?: Source; waitMs?: number }): Promise<EventOutcome | number> {
+  return proposalEvent('Close', { from: p.from, reason: p.reason, userId: p.userId ?? null, username: p.username ?? null, purgeCc: !!p.purgeCc },
+    { sessionId: p.sessionId, appId: p.appId, db: p.db, requestKey: p.requestKey, source: p.source || sys(`close-${p.reason}`), waitMs: p.waitMs,
+      actor: p.userId ? `user:${p.userId}` : null });
+}
+export function reopenProposal(p: { sessionId: number; appId?: number | null; userId: number; from: string }) {
+  return afterTeardown(p.sessionId, () => proposalEvent('Reopen', { from: p.from, userId: p.userId },
+    { sessionId: p.sessionId, appId: p.appId, source: { kind: 'route', name: 'reopen' }, actor: `user:${p.userId}`,
+      deadlineMs: ANSWER_MS }) as Promise<EventOutcome>);
+}
+
+// The merge (step 6's) asks for the proposal at the head and epoch it gated
+// on; the vote gate is read again under the lock unless an admin forces it.
+// The outcome's reply names the claim, which a release gives back.
+export function claimMerge(p: { sessionId: number; appId?: number | null; head: string | null; epoch: number; force?: boolean;
+  explicitApproval?: boolean; explicitReason?: string | null }) {
+  return proposalEvent('MergeClaim', { head: p.head, epoch: p.epoch, force: !!p.force,
+    explicitApproval: !!p.explicitApproval, explicitReason: p.explicitReason ?? null },
+  { sessionId: p.sessionId, appId: p.appId, source: sys('merge'), deadlineMs: ANSWER_MS }) as Promise<EventOutcome>;
+}
+export function releaseMerge(p: { sessionId: number; appId?: number | null; claim: number | null; reason: string }) {
+  return proposalEvent('MergeReleased', { claim: p.claim, reason: p.reason },
+    { sessionId: p.sessionId, appId: p.appId, source: sys('merge-released') }) as Promise<EventOutcome>;
+}
+export function abandonMerge(p: { sessionId: number; appId?: number | null; from: string; reason: string }) {
+  return proposalEvent('MergeAbandoned', { from: p.from, reason: p.reason },
+    { sessionId: p.sessionId, appId: p.appId, source: sys('merge-abandoned') }) as Promise<EventOutcome>;
+}
+
+// The revision the group votes on moved (Q3): the caller read `from` in the
+// column it names and found `to`. The reply carries the epoch after it and
+// whether the description is stale now.
+export function moveReviewHead(p: { sessionId: number; appId?: number | null; column: 'reviewed' | 'imported';
+  from: string | null; to: string; keepVotes: boolean; fixOnly?: boolean; reason?: string | null }) {
+  return proposalEvent('ReviewHeadMoved', { column: p.column, from: p.from, to: p.to, keepVotes: !!p.keepVotes,
+    fixOnly: !!p.fixOnly, reason: p.reason ?? null },
+  { sessionId: p.sessionId, appId: p.appId, source: sys('review-head'), deadlineMs: ANSWER_MS }) as Promise<EventOutcome>;
+}
+export function clearProposalApprovals(p: { sessionId: number; appId?: number | null; reason?: string | null }) {
+  return proposalEvent('ApprovalsCleared', { reason: p.reason ?? null },
+    { sessionId: p.sessionId, appId: p.appId, source: sys('approvals-cleared'), deadlineMs: ANSWER_MS }) as Promise<EventOutcome>;
 }
 
 // ── The admin console ───────────────────────────────────────────────────
