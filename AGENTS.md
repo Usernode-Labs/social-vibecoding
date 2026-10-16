@@ -168,6 +168,14 @@ selects a skill.
   (the slowest file takes about twelve seconds); a test that never settles
   fails after three minutes instead of holding the summary open.
 
+## Mistakes that already broke main or a screen
+
+- Opening a screen by address draws what a fresh load draws, and a "route changed, so close"
+  listener ignores its own navigation. Fix the screen, not the check (`src/prompts/app-conventions.md`).
+- A timeout, network failure or 5xx is shown or retried, never read as signed out, empty or gone.
+- A test's stand-in keeps the real module's exports and never does what the real code does not.
+- Measure what the platform actually builds (`selfAppHashPath`) and confirm with raw evidence.
+
 ## Declare visible changes for before/after shots
 
 Every proposal that changes something people can see gets before/after shots.
