@@ -10762,12 +10762,13 @@ const AppView = {
   /**
    * #4772: what Homeroom bot waits on the viewer for on this project, for
    * the Workshop's Waiting on you: Map(item key, as _workshopItemKey makes
-   * it → { why: 'plan' | 'question' | 'talk', at, botLast }), one reason an
-   * item, the first that applies. From the request list's `waitingOnYou`
-   * (services/workshop-waiting.js: its plans waiting for their Build it, its
-   * open questions in their DM, the back and forths they are in with it)
-   * and, on a request of theirs, the bot's question on its discussion that
-   * nobody has answered (`botAwaits`, #4530).
+   * it → { why: 'plan' | 'question', at }), one reason an item, the first
+   * that applies. From the request list's `waitingOnYou`
+   * (services/workshop-waiting.js: its plans waiting for their Build it and
+   * its open questions in their DM) and, on a request of theirs, the bot's
+   * question on its discussion that nobody has answered (`botAwaits`,
+   * #4530). A back and forth with the bot is not a reason (#5229), so a
+   * `talks` list an older response still carries is ignored.
    */
   _workshopWaitingOn() {
     const out = new Map();
@@ -10786,12 +10787,6 @@ const AppView = {
         if (asked && asked.kind === 'question' && issue.created_by_username === me) {
           put(`issue:${issue.number}`, { why: 'question', at: null });
         }
-      }
-    }
-    if (w && typeof w === 'object') {
-      for (const t of list(w.talks)) {
-        if (!t || !n(t.ref)) continue;
-        put(`${t.type === 'issue' ? 'issue' : 'session'}:${n(t.ref)}`, { why: 'talk', at: t.at || null, botLast: !!t.botLast });
       }
     }
     return out;
@@ -10854,11 +10849,7 @@ const AppView = {
   _workshopWaitingTag(w) {
     if (w.why === 'plan') return { label: PlatformI18n.t('changes:workshop.row.tag.planWaits'), tone: 'warn' };
     if (w.why === 'question') return { label: PlatformI18n.t('changes:workshop.row.tag.botAsked'), tone: 'warn' };
-    const ago = AppView._workshopAgo(w.at);
-    if (w.botLast) {
-      return { label: ago ? PlatformI18n.t('changes:workshop.row.tag.botReplied', { ago }) : PlatformI18n.t('changes:workshop.row.tag.botRepliedNow'), tone: 'warn' };
-    }
-    return { label: ago ? PlatformI18n.t('changes:workshop.row.tag.youReplied', { ago }) : PlatformI18n.t('changes:workshop.row.tag.youRepliedNow'), tone: 'plain' };
+    return null;
   },
 
   /**

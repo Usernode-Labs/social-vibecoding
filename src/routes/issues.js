@@ -2463,16 +2463,14 @@ function issueRoutes(config) {
       const myRemaining = Math.max(0, WEEKLY_BOUNTY_LIMIT - used);
 
       // #4772: what Homeroom bot waits on this viewer for here (its plans
-      // waiting for their Build it, its open questions to them, and the
-      // back and forths they are in with it), for the Workshop's Waiting on
-      // you. Best-effort: services/workshop-waiting.js never throws. The
+      // waiting for their Build it and its open questions to them), for the
+      // Workshop's Waiting on you. A back and forth with it is not listed
+      // (#5229). Best-effort: services/workshop-waiting.js never throws. The
       // staging demo shows one of each on the mock requests.
       const workshopWaiting = require('../services/workshop-waiting');
       const waitingOnYou = IS_STAGING && req.query.demo === '1'
         ? workshopWaiting.demoWaiting()
-        : await workshopWaiting.waitingOnViewer(pool, {
-          appId: app.id, userId: req.user.id, botId: (await botDm.botAccount(pool).catch(() => null))?.id || null,
-        });
+        : await workshopWaiting.waitingOnViewer(pool, { appId: app.id, userId: req.user.id });
 
       res.json({
         issues,

@@ -269,8 +269,8 @@ const GOING_LIVE = new Set(['deploying', 'delivery_pending', 'merging']);
  *
  * `standing`: What's happening's own-work rows (Waiting on you, Your work,
  * Going live) draw this same row, ending it with where the work stands
- * instead: its most important tag in its tone ("Checks failing", "With
- * Homeroom bot · it replied 42m ago", "Started"), then who made it when
+ * instead: its most important tag in its tone ("Checks failing",
+ * "Homeroom bot asked you", "Started"), then who made it when
  * that is not simply you ("Only you", Homeroom bot), as Your work's two
  * lines picked them (work-row.tsx lineTags). Everything here is yours, so
  * no row says You, and the tag already says when where it matters.

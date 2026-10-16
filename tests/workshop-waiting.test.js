@@ -28,32 +28,39 @@ function fakePool(answers) {
 
 test('nothing is read without a project and a viewer', async () => {
   const pool = fakePool([]);
-  assert.deepEqual(await waiting.waitingOnViewer(pool, { appId: 7, userId: null, botId: 3 }), { plans: [], questions: [], talks: [] });
-  assert.deepEqual(await waiting.waitingOnViewer(pool, { appId: null, userId: 5, botId: 3 }), { plans: [], questions: [], talks: [] });
+  assert.deepEqual(await waiting.waitingOnViewer(pool, { appId: 7, userId: null }), { plans: [], questions: [] });
+  assert.deepEqual(await waiting.waitingOnViewer(pool, { appId: null, userId: 5 }), { plans: [], questions: [] });
   assert.equal(pool.calls.length, 0);
 });
 
-test('plans, questions and talks, each the viewer\'s own, newest first', async () => {
+test('plans and questions, each the viewer\'s own, newest first', async () => {
   const at = new Date('2026-10-12T10:00:00Z');
   const pool = fakePool([
     [{ issue_number: 13, at }],
     [{ issue_number: '12', at }],
-    [{ thread_type: 'session', thread_ref: 34, at, bot_last: true }, { thread_type: 'issue', thread_ref: 9, at, bot_last: false }],
   ]);
-  const out = await waiting.waitingOnViewer(pool, { appId: 7, userId: 5, botId: 3 });
+  const out = await waiting.waitingOnViewer(pool, { appId: 7, userId: 5 });
   assert.deepEqual(out, {
     plans: [{ number: 13, at: at.toISOString() }],
     questions: [{ number: 12, at: at.toISOString() }],
-    talks: [
-      { type: 'session', ref: 34, at: at.toISOString(), botLast: true },
-      { type: 'issue', ref: 9, at: at.toISOString(), botLast: false },
-    ],
   });
   assert.deepEqual(pool.calls.map((c) => c.params), [
     [7, 5, waiting.MAX_EACH],
     [7, 5, waiting.MAX_EACH],
-    [7, 5, 3, waiting.TALK_DAYS, waiting.MAX_EACH, waiting.BOT_HOLD_DAYS],
   ]);
+});
+
+test('#5229: a back and forth with the bot is not waiting on the viewer, whoever spoke last', async () => {
+  // Two reads and no third: there is no query of the discussions the viewer
+  // and the bot both wrote in, and no `talks` in the answer.
+  const pool = fakePool([[], [], [{ thread_type: 'session', thread_ref: 34, bot_last: true }]]);
+  const out = await waiting.waitingOnViewer(pool, { appId: 7, userId: 5, botId: 3 });
+  assert.equal(pool.calls.length, 2);
+  assert.deepEqual(Object.keys(out).sort(), ['plans', 'questions']);
+  assert.equal('talks' in out, false);
+  assert.equal(waiting.TALKS_SQL, undefined);
+  assert.equal(waiting.TALK_DAYS, undefined);
+  assert.equal(waiting.BOT_HOLD_DAYS, undefined);
 });
 
 test('the plan is the request\'s NEWEST run waiting for Build it, on a request recorded as the viewer\'s', () => {
@@ -70,53 +77,21 @@ test('a question is one asked of the viewer that is still open', () => {
   assert.match(waiting.QUESTIONS_SQL, /app_id = \$1 AND user_id = \$2 AND question_status = 'open'/);
 });
 
-test('a talk needs both sides, recently, with nothing deleted or hidden, on an open change', () => {
-  const sql = waiting.TALKS_SQL;
-  assert.match(sql, /m\.thread_type IN \('session', 'issue'\)/);
-  assert.match(sql, /m\.deleted_at IS NULL AND m\.moderation_hidden_at IS NULL/);
-  assert.match(sql, /m\.user_id IN \(\$2, \$3\)/);
-  assert.match(sql, /m\.created_at > NOW\(\) - make_interval\(days => \$4\)/, 'the window is a parameter');
-  assert.match(sql, /t\.mine_at IS NOT NULL AND t\.bot_at IS NOT NULL/);
-  assert.match(sql, /cs\.status IN \('active', 'paused', 'promoted', 'merging'\)/);
-  assert.match(sql, /LIMIT \$5/);
-  assert.equal(waiting.TALK_DAYS, 3);
-});
-
-test('a talk on a request the bot is reading, has queued or is building is not waiting on the viewer', () => {
-  const sql = waiting.TALKS_SQL;
-  // The whole exclusion sits behind the issue guard: session threads are
-  // unchanged.
-  assert.match(sql, /AND NOT \(t\.thread_type = 'issue' AND \(\s*EXISTS \(SELECT 1 FROM homeroom_bot_queue q\s*WHERE q\.app_id = \$1 AND q\.issue_number = t\.thread_ref\s*AND \(q\.started_at IS NOT NULL\s*OR \(q\.priority = 0 AND \(q\.held_until IS NULL OR q\.held_until <= NOW\(\)\)\)\)\)\s*OR EXISTS \(SELECT 1 FROM homeroom_bot_runs r\s*WHERE r\.app_id = \$1 AND r\.issue_number = t\.thread_ref\s*AND r\.mode = 'live' AND r\.verdict = 'ready' AND r\.build_ok IS NULL\s*AND r\.proposal_session_id IS NULL\s*AND \(r\.live_build_waiting_at IS NOT NULL OR r\.build_session_id IS NOT NULL\)\s*AND r\.created_at > NOW\(\) - make_interval\(days => \$6\)\)\)\)/);
-  // A held queue row waits: it matches neither reading of the queue.
-  assert.doesNotMatch(sql, /held_until > NOW\(\)|held_until IS NULL OR.*priority = 2/);
-  // A run waiting for Build it (awaiting_go_at, no build session) matches
-  // neither reading, so it still lists as a plan.
-  assert.doesNotMatch(sql, /awaiting_go_at/);
-  assert.equal(waiting.BOT_HOLD_DAYS, 7);
-  const window = read('src/services/homeroom-bot.js').match(/const ABANDONED_LIVE_WINDOW_DAYS = (\d+);/);
-  assert.ok(window, 'homeroom-bot.js declares ABANDONED_LIVE_WINDOW_DAYS');
-  assert.equal(Number(window[1]), waiting.BOT_HOLD_DAYS, 'BOT_HOLD_DAYS is the same window the bot abandons a live build after');
-});
-
-test('without the bot, or for the bot itself, there are no talks; a failed read is nothing waiting', async () => {
-  const noBot = fakePool([[], []]);
-  assert.deepEqual((await waiting.waitingOnViewer(noBot, { appId: 7, userId: 5, botId: null })).talks, []);
-  assert.equal(noBot.calls.length, 2);
-  const self = fakePool([[], []]);
-  await waiting.waitingOnViewer(self, { appId: 7, userId: 3, botId: 3 });
-  assert.equal(self.calls.length, 2);
+test('a failed read is nothing waiting', async () => {
   const broken = fakePool([new Error('boom')]);
-  assert.deepEqual(await waiting.waitingOnViewer(broken, { appId: 7, userId: 5, botId: 3 }), { plans: [], questions: [], talks: [] });
+  assert.deepEqual(await waiting.waitingOnViewer(broken, { appId: 7, userId: 5 }), { plans: [], questions: [] });
 });
 
-test('the request list carries it, and the staging demo shows one of each', () => {
+test('the request list carries it, and the staging demo shows a plan and a question', () => {
   const route = read('src/routes/issues.js');
   assert.match(route, /const waitingOnYou = IS_STAGING && req\.query\.demo === '1'\s*\? workshopWaiting\.demoWaiting\(\)\s*: await workshopWaiting\.waitingOnViewer\(pool, \{/);
   assert.match(route, /\.\.\.\(botDoor \? \{ homeroomBot: botDoor \} : \{\}\),\s*waitingOnYou,\s*\}\);/);
   const demo = waiting.demoWaiting(Date.parse('2026-10-12T12:00:00Z'));
   assert.deepEqual(demo.plans.map((p) => p.number), [900016]);
   assert.deepEqual(demo.questions.map((q) => q.number), [900015]);
-  assert.deepEqual(demo.talks.map((t) => [t.type, t.ref, t.botLast]), [['issue', 900002, true]]);
+  assert.equal(demo.talks, undefined);
+  // #5229: the route no longer looks the bot up for this read.
+  assert.doesNotMatch(route, /waitingOnViewer\(pool, \{[^}]*botId/);
   // The board keeps it with the list's other per-viewer facts.
   assert.match(read('public/js/app-view.js'), /waitingOnYou: \(ghData && ghData\.waitingOnYou && typeof ghData\.waitingOnYou === 'object'\) \? ghData\.waitingOnYou : null,/);
 });

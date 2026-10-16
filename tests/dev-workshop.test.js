@@ -2493,9 +2493,9 @@ test('#4772: What\'s happening files your work as Waiting on you, Your work, You
   const AppView = makeAppView({ localStorage: store });
   seed(AppView);
   // Mine: a session being built, a change up for a vote with its checks
-  // passing, one whose checks fail, and a merge still going live. Carol's
-  // change 34 is one I am talking to Homeroom bot on; request 13 has the
-  // bot's plan waiting for my Build it; request 12 its question to me.
+  // passing, one whose checks fail, and a merge still going live. Request
+  // 13 has the bot's plan waiting for my Build it; request 12 its question
+  // to me.
   AppView._mySessions = [{ id: 51, status: 'active', username: 'me', session_title: 'Bottom tabs', created_at: at(1), last_activity_at: at(1) }];
   AppView._proposals.push(
     { id: 61, pr_number: 61, pr_title: 'Mine, passing', status: 'promoted', username: 'me', user_id: 1,
@@ -2509,7 +2509,6 @@ test('#4772: What\'s happening files your work as Waiting on you, Your work, You
   AppView._ghIssuesMeta = { waitingOnYou: {
     plans: [{ number: 13, at: at(0.1) }],
     questions: [{ number: 12, at: at(0.2) }, { number: 999, at: at(0.2) }],
-    talks: [{ type: 'session', ref: 34, at: at(0.05), botLast: true }, { type: 'session', ref: 4040, at: at(0.05), botLast: false }],
   } };
   const v = AppView._workshopView();
   const groups = Object.fromEntries(plain(v.mine.rows).map((r) => [r.key, r.group]));
@@ -2518,17 +2517,15 @@ test('#4772: What\'s happening files your work as Waiting on you, Your work, You
   });
   assert.equal(v.mine.count, 4, 'the hub\'s count is unchanged: what is waiting on an item not yours is not counted');
   // What the bot waits on me for on items not otherwise mine, in its order:
-  // plans, then questions, then talks. A request or change the board no
-  // longer has (999, 4040) is left out.
+  // plans, then questions. A request the board no longer has (999) is
+  // left out.
   const extra = plain(v.mine.extra);
-  assert.deepEqual(extra.map((r) => r.key), ['mine:issue:13', 'mine:issue:12', 'mine:proposal:34']);
+  assert.deepEqual(extra.map((r) => r.key), ['mine:issue:13', 'mine:issue:12']);
   assert.ok(extra.every((r) => r.group === 'waiting'));
   assert.deepEqual(extra.map((r) => r.brief.tags[0]), [
     { label: message('changes:workshop.row.tag.planWaits'), tone: 'warn' },
     { label: message('changes:workshop.row.tag.botAsked'), tone: 'warn' },
-    { label: message('changes:workshop.row.tag.botReplied', { ago: '1h ago' }), tone: 'warn' },
   ]);
-  assert.equal(message('changes:workshop.row.tag.botReplied', { ago: '1h ago' }), 'With Homeroom bot · it replied 1h ago');
 
   const html = workshopHtml(AppView, 'workshop');
   // The sections in order, under What's happening, each a part of ONE card
@@ -2550,13 +2547,13 @@ test('#4772: What\'s happening files your work as Waiting on you, Your work, You
   const head = (title, count, cls) => new RegExp(`^data-ws-[a-z-]+="[a-z]*"><div class="dev-ws-hweek-head"><span class="dev-ws-week-head"><b>${title}</b><span${cls ? ` class="${cls}"` : ''}>${count}</span></span></div>`);
   // Waiting on you's count asks for the viewer, so it is in the accent, as
   // This week's "N new" is; the others are muted.
-  assert.match(section('waiting'), head('Waiting on you', '4 to answer', 'dev-ws-week-fresh'));
+  assert.match(section('waiting'), head('Waiting on you', '3 to answer', 'dev-ws-week-fresh'));
   assert.match(section('vote'), head('Yours, up for a vote', '1 open'));
   assert.match(section('live'), head('Going live', '1 merged'));
   const rowsOf = (chunk) => [...chunk.matchAll(/data-ws-row="([^"]+)"/g)].map((m) => m[1]);
-  // The first three of Waiting on you, the rest behind Show 1 more.
+  // All three of Waiting on you, with nothing behind a Show more.
   assert.deepEqual(rowsOf(section('waiting')), ['mine:proposal:62', 'mine:issue:13', 'mine:issue:12']);
-  assert.match(section('waiting'), /data-ws-mine-section-more="waiting" aria-expanded="false">[\s\S]*?Show 1 more/);
+  assert.ok(!section('waiting').includes('data-ws-mine-section-more='));
   assert.deepEqual(rowsOf(section('vote')), ['mine:proposal:61']);
   assert.deepEqual(rowsOf(section('live')), ['mine:merged:79']);
   const work = part('data-ws-mine=""');
@@ -2576,8 +2573,7 @@ test('#4772: What\'s happening files your work as Waiting on you, Your work, You
   // Going live is listed once: not in What happened while it is going live.
   const happened = html.slice(html.indexOf('data-ws-happened=""'));
   assert.ok(!happened.includes('Mine, going live'), 'not in What happened as well');
-  // Carol's change 34 is the fourth waiting on me, behind Show 1 more, and
-  // drawn nowhere else on this tab.
+  // Carol's change 34 is not mine, so it is not in What's happening.
   assert.equal((html.match(/data-ws-open="proposal:34"/g) || []).length, 0);
 
   // EMPTY SECTIONS ARE LEFT OUT, and with something elsewhere so is an
@@ -2593,10 +2589,31 @@ test('#4772: What\'s happening files your work as Waiting on you, Your work, You
   assert.match(none, /data-ws-part="happening"[^]*?data-ws-mine=""[^]*?data-ws-mine-empty=""/);
   // The declared check's empty Your work (?shot=mine-empty) empties the
   // sections too, so the strip stays right under the label.
-  AppView._ghIssuesMeta = { waitingOnYou: { plans: [{ number: 13, at: at(0.1) }], questions: [], talks: [] } };
+  AppView._ghIssuesMeta = { waitingOnYou: { plans: [{ number: 13, at: at(0.1) }], questions: [] } };
   AppView._workshopShot = 'mine-empty';
   const shot = workshopHtml(AppView, 'workshop');
   assert.match(shot, /data-ws-part="happening">[^<]*<\/h2><section class="dev-ws-strip" data-ws-happening=""><div class="dev-ws-hpart" data-ws-mine="">/);
+});
+
+test('#5229: a back and forth with Homeroom bot is not Waiting on you, even from an older list response', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._proposals.push({ id: 61, pr_number: 61, pr_title: 'Mine, passing', status: 'promoted', username: 'me', user_id: 1,
+    created_at: at(1), promoted_at: at(1), last_message_at: at(1), linked_issues: [], my_vote: null, check_state: 'passing' });
+  // A cached response from before #5229 still carries `talks`: one on my
+  // change 61, one on Carol's change 34. Neither is a reason to wait on me.
+  AppView._ghIssuesMeta = { waitingOnYou: { plans: [], questions: [], talks: [
+    { type: 'session', ref: 61, at: at(0.05), botLast: true },
+    { type: 'session', ref: 34, at: at(0.05), botLast: false },
+  ] } };
+  assert.equal(AppView._workshopWaitingOn().size, 0);
+  const v = AppView._workshopView();
+  const groups = Object.fromEntries(plain(v.mine.rows).map((r) => [r.key, r.group]));
+  assert.equal(groups['mine:proposal:61'], 'vote', 'my change stays up for a vote');
+  assert.deepEqual(plain(v.mine.extra), [], 'no extra row for a change that is not mine');
+  assert.equal(AppView._workshopWaitingTag({ why: 'talk', at: at(0.05), botLast: true }), null);
+  const html = workshopHtml(AppView, 'workshop');
+  assert.ok(!html.includes('data-ws-mine-section="waiting"'), 'nothing is waiting on me');
 });
 
 test('#4772: a change of yours needs your fix only when it is yours to fix', () => {
