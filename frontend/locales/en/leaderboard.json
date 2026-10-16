@@ -619,6 +619,10 @@
     "text": "{{day}}, {{time}}",
     "description": "Tooltip of an activity's date in a participant's list. {{day}} is a full date such as \"Monday, October 12, 2026\" and {{time}} a time of day. Only the separator is translated."
   },
+  "activity.gradeReason": {
+    "text": "Why: {{reason}}",
+    "description": "Under a graded activity in a participant's list on the Leaderboard: why it earned the points it did. {{reason}} is the grader's short explanation, shown as written."
+  },
   "kudos.loading": {
     "text": "Loading the leaderboard",
     "description": "Accessible name of the grey placeholder shown on the Kudos tab while a list is being fetched."

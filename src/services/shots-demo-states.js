@@ -1139,6 +1139,55 @@ const STATES = [
     },
   },
   {
+    // The grader's reason on one graded activity (#3200): the challenge
+    // scorer writes a short "grade" (score, reason, model) into the metadata
+    // of the rows it graded, and the drill-down's activity now shows it as a
+    // "Why:" line under the label. Only shots_fixture_ada's "Reported a
+    // reproducible bug." row (the standings state's bug report, challenge
+    // 900505) gets one; its points and the players' two-rows-each stay as
+    // the standings state wrote them, and the other rows stay ungraded.
+    id: 'shots-demo-standings-graded-v1',
+    persona: 'member',
+    needs: {
+      users: ['id', 'discord'],
+      user_activities: ['user_id', 'season_event_id', 'challenge_id', 'metadata'],
+    },
+    // Ready while ada's fixture-marked bug row is not graded yet — on a
+    // fresh copy the row itself does not exist until the standings state
+    // above writes it, so "exists and ungraded" is checked by the install,
+    // which throws when its UPDATE does not land on exactly that one row.
+    free: async (client) => {
+      const { rows: [found] } = await client.query(
+        `SELECT COUNT(*)::int AS graded
+           FROM user_activities
+          WHERE challenge_id = $2 AND metadata->>'fixture' = $1
+            AND user_id = (SELECT id FROM users WHERE discord = $3)
+            AND metadata ? 'grade'`,
+        [FIXTURE_MARK, STANDINGS_CHALLENGES[0][0], STANDINGS_PLAYERS[0][1]]
+      );
+      return found.graded === 0;
+    },
+    async install(client) {
+      const written = await client.query(
+        `UPDATE user_activities
+            SET metadata = metadata || jsonb_build_object('grade', $2::jsonb)
+          WHERE challenge_id = $3 AND metadata->>'fixture' = $1
+            AND user_id = (SELECT id FROM users WHERE discord = $4)`,
+        [FIXTURE_MARK,
+          JSON.stringify({ score: 250, reason: 'Says what broke, where, and what was expected. Easy to act on.', model: 'fixture' }),
+          STANDINGS_CHALLENGES[0][0], STANDINGS_PLAYERS[0][1]]
+      );
+      if (written.rowCount !== 1) throw new Error('The standings fixture bug row to grade is missing.');
+      return {
+        shows: [{
+          state: `In shots_fixture_ada's drill-down on the Leaderboard's season standings, the "Reported a reproducible bug." activity now says why it earned its points: a "Why:" line under the label, above the date.`,
+          path: '/#leaderboard/topochain',
+        }],
+        alsoFor: ['read_only_admin', 'full_admin'],
+      };
+    },
+  },
+  {
     // The Homeroom bot's hand-off on a request of the member's that needs a
     // person to decide, on a project somebody else runs (#4763): it names
     // who decides there and offers no Go ahead, since the member's go-ahead

@@ -313,7 +313,7 @@ test('a grading failure leaves the unit for the next tick instead of crediting a
   assert.deepEqual(errors, ['529']);
 });
 
-test('grading returns the model\'s score, with its reason kept for the admin', async () => {
+test('grading returns the model\'s score, with its reason written to the builder (#3200)', async () => {
   const stub = {
     isEnabled: () => true,
     gradeChallengeUnit: async ({ system, user }) => {
@@ -329,6 +329,17 @@ test('grading returns the model\'s score, with its reason kept for the admin', a
   }], { llm: stub });
   assert.equal(out[0].points, 200);
   assert.equal(out[0].grade.reason, 'Says what broke and where.');
+});
+
+test('both rubrics ask for a reason written to the person who did it, not an admin (#3200)', () => {
+  // The reason is shown on the Leaderboard under the activity now, so a
+  // reason addressed to an admin reads wrong to the builder reading it.
+  for (const [name, rubric] of Object.entries(grader.RUBRICS)) {
+    const system = rubric.system(250);
+    assert.doesNotMatch(system, /for an admin/, `${name} no longer addresses the reason to an admin`);
+    assert.match(system, /written to the person who did it, in plain words, saying what made it worth more or less/,
+      `${name} asks for the builder's reason`);
+  }
 });
 
 // ─── The tick, against a scripted pool ─────────────────────────────────

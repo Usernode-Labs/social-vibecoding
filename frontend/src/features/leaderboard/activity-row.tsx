@@ -81,17 +81,31 @@ export function activityWhen(
  * The row both lists draw: what was done, when, and the points. The date is
  * a second, smaller line under the reason, so a long reason still wraps
  * beside the points rather than pushing them off the row.
+ *
+ * A graded activity (#3200) also carries the grader's `reason`: one more
+ * line of the same small muted text, between the label and the date, saying
+ * why it earned the points it did. When there is no reason (ungraded point
+ * sources) the line is absent and the markup is what it always was.
  */
-export function ActivityRow({ text, points, at, precision }: {
-  text: string; points: string; at?: string | null; precision?: ActivityTimePrecision | null;
+export function ActivityRow({ text, points, at, precision, reason }: {
+  text: string; points: string; at?: string | null; precision?: ActivityTimePrecision | null; reason?: string | null;
 }): ReactNode {
   // Subscribed: the date line's separator is read by activityWhen.
   useMessages('leaderboard');
   const when = activityWhen(at, { precision });
+  const why = typeof reason === 'string' ? reason.trim() : '';
   return (
     <li className="flex items-start justify-between gap-3 text-xs">
       <span className="min-w-0">
         <span className="block text-zinc-600 dark:text-zinc-300">{text}</span>
+        {why ? (
+          <span
+            className="block text-[0.6875rem] text-zinc-500 dark:text-zinc-400"
+            data-activity-reason=""
+          >
+            {translate('leaderboard:activity.gradeReason', { reason: why })}
+          </span>
+        ) : null}
         {when ? (
           <time
             className="block text-[0.6875rem] text-zinc-500 dark:text-zinc-400"
