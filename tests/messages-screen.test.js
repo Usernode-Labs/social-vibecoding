@@ -159,6 +159,30 @@ test('an invitation resolves metadata before deciding whether history may be fet
     'the committed global block/decline is followed immediately by local invitation purge');
 });
 
+// #3228: a group invitation names the group, how many people are already in
+// it, and the inviter's note; without a note the card says who invited you,
+// as before. The optional note field rides both dialogs that invite.
+test('a group invitation names the group and carries the inviter\'s note', () => {
+  const createDialog = read('frontend/src/features/messages/create-dialog.tsx');
+  const membersDialog = read('frontend/src/features/messages/members-dialog.tsx');
+  const types = read('frontend/src/features/messages/types.ts');
+  assert.match(screen, /t\('messages:invitation\.groupSummary', \{ title: active\.title, count: active\.memberCount \|\| 0 \}\)/);
+  assert.match(screen, /t\('messages:invitation\.addedYouWithNote', \{ username: requesterUser\.username, note: active\.inviteNote \}\)/);
+  assert.equal(message('messages:invitation.groupSummary', { title: 'Friday demo crew', count: 4 }), 'Friday demo crew · 4 members');
+  assert.equal(message('messages:invitation.groupSummary', { title: 'Friday demo crew', count: 1 }), 'Friday demo crew · 1 member');
+  assert.equal(message('messages:invitation.addedYouWithNote', { username: 'ada', note: 'Planning the Friday demo' }), '@ada added you: Planning the Friday demo');
+  assert.equal(message('messages:invitation.historyNotice'), 'Accepting gives you access to the complete retained conversation history.');
+  // Without a note, today's "invited you" sentence stays.
+  assert.match(screen, /t\('messages:invitation\.invitedBy', \{ username: requesterUser\.username \}\)/);
+  // Both dialogs carry the optional note, capped at 140, through to the API.
+  assert.match(createDialog, /t\('messages:create\.inviteNote'\)/);
+  assert.match(createDialog, /createGroup\(title\.trim\(\), selected\.map\(\(user\) => user\.id\), note\.trim\(\) \|\| undefined\)/);
+  assert.match(membersDialog, /t\('messages:members\.inviteNote'\)/);
+  assert.match(membersDialog, /inviteMembers\(selected\.map\(\(user\) => user\.id\), note\.trim\(\) \|\| undefined\)/);
+  assert.match(types, /inviteNote\?: string \| null/);
+  assert.equal(message('messages:create.inviteNote'), 'Note for the people you invite (optional)');
+});
+
 // #5019: scrolling up near the top of a conversation reads the previous page
 // in, in place of the button that used to sit at its top. The button returns
 // only to retry a failed load.

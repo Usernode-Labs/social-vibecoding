@@ -814,6 +814,8 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   font-size: 15px;
 }
 .messages-invitation strong { display: block; color: var(--accent); font-size: 17px; }
+/* #3228: the invited group's name and member count, the card's one bold line. */
+.messages-invitation .messages-invitation-group { font-weight: 600; color: var(--text-primary); }
 .messages-invitation p { margin-top: 2px; color: var(--text-muted); }
 .messages-invitation [role="alert"] { display: block; margin-top: 4px; color: #dc2626; }
 .messages-invite-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }

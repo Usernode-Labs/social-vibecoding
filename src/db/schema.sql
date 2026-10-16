@@ -14675,3 +14675,8 @@ CREATE TABLE IF NOT EXISTS shots_eval_pairs (
 );
 CREATE INDEX IF NOT EXISTS idx_shots_eval_pairs_waiting ON shots_eval_pairs(eval_run_id, id) WHERE status = 'waiting';
 COMMENT ON TABLE shots_eval_pairs IS 'staging:private';
+
+-- #3228: the short note an inviter writes when creating a group or adding
+-- people, shown only on the invited person's invitation card until they
+-- answer it. Nullable: most invitations carry none.
+ALTER TABLE conversation_members ADD COLUMN IF NOT EXISTS invite_note TEXT;

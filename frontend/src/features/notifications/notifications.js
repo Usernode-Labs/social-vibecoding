@@ -2580,6 +2580,11 @@ function rowView(n) {
       build_stopped: headline(t(BOT_LABEL_IDS[BUILD_KIND_MOMENTS.build_stopped]), t('notifications:row.bot.name')),
       build_live: headline(t(BOT_LABEL_IDS[BUILD_KIND_MOMENTS.build_live]), t('notifications:row.bot.name')),
     }[n.kind];
+    // #3228: the inviter's note rides the invite row after the group's name,
+    // so the bell says why too.
+    if (n.kind === 'conversation_invite' && n.conversationInviteNote) {
+      copy.segments.push({ t: 'text', v: t('notifications:row.conversation.inviteNote', { note: n.conversationInviteNote }) });
+    }
     const icons = {
       conversation_invite: '✉️',
       conversation_message: '💬',

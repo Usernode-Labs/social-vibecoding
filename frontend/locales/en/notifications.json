@@ -171,6 +171,10 @@
     "text": "Invite",
     "description": "First line of a notification: the viewer was added to a conversation. A noun (an invitation). The conversation's name is on the line below."
   },
+  "row.conversation.inviteNote": {
+    "text": "· {{note}}",
+    "description": "Appended to a group invitation row after the group's name when the inviter wrote a note about why you were added. {{note}} is their note."
+  },
   "row.conversation.mention": {
     "text": "Mentioned you",
     "description": "First line of a notification: somebody named the viewer with @ in a conversation. The conversation's name is on the line below and who did it on the last line."

@@ -1192,6 +1192,12 @@ async function hydrateNotification(q, id) {
             cs.agent_session_id,
             n.conversation_id, c.kind AS conversation_kind,
             c.title AS conversation_title,
+            -- #3228: the inviter's note, read off the recipient's still-pending
+            -- membership row, rides the invite row only.
+            (SELECT invite_note FROM conversation_members inm
+              WHERE inm.conversation_id = n.conversation_id
+                AND inm.user_id = n.user_id AND inm.status = 'invited')
+              AS conversation_invite_note,
             n.conversation_message_id,
             conversation_message.content AS conversation_message_content,
             conversation_message.thread_root_id AS conversation_thread_root_id,
@@ -1562,6 +1568,12 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
             cs.agent_session_id,
             n.conversation_id, c.kind AS conversation_kind,
             c.title AS conversation_title,
+            -- #3228: the inviter's note, read off the recipient's still-pending
+            -- membership row, rides the invite row only.
+            (SELECT invite_note FROM conversation_members inm
+              WHERE inm.conversation_id = n.conversation_id
+                AND inm.user_id = n.user_id AND inm.status = 'invited')
+              AS conversation_invite_note,
             n.conversation_message_id,
             conversation_message.content AS conversation_message_content,
             conversation_message.thread_root_id AS conversation_thread_root_id,
@@ -1614,6 +1626,12 @@ async function getForUser(pool, userId, id) {
             cs.agent_session_id,
             n.conversation_id, c.kind AS conversation_kind,
             c.title AS conversation_title,
+            -- #3228: the inviter's note, read off the recipient's still-pending
+            -- membership row, rides the invite row only.
+            (SELECT invite_note FROM conversation_members inm
+              WHERE inm.conversation_id = n.conversation_id
+                AND inm.user_id = n.user_id AND inm.status = 'invited')
+              AS conversation_invite_note,
             n.conversation_message_id,
             conversation_message.content AS conversation_message_content,
             conversation_message.thread_root_id AS conversation_thread_root_id,
@@ -2011,6 +2029,11 @@ function serialize(row) {
     conversationId: isConversation ? row.conversation_id : null,
     conversationKind: isConversation ? (row.conversation_kind || null) : null,
     conversationTitle: isConversation ? (row.conversation_title || null) : null,
+    // #3228: the inviter's note, on the invite row only — it is not part of
+    // `detail`, which other parsers read (the hrbot prefix among them).
+    conversationInviteNote: isConversation && row.kind === 'conversation_invite'
+      ? (row.conversation_invite_note || null)
+      : null,
     conversationMessageId: isConversation ? row.conversation_message_id : null,
     // #2387: the thread the referenced message sits in (null: the main
     // stream). A thread alert opens #messages/<id>/thread/<root>.

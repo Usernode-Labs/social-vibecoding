@@ -37,6 +37,8 @@ export function CreateConversationDialog() {
   const [mode, setMode] = useState<'direct' | 'group'>('direct');
   const [query, setQuery] = useState('');
   const [title, setTitle] = useState('');
+  // #3228: the optional note the invited people read on their invitation.
+  const [note, setNote] = useState('');
   const [selected, setSelected] = useState<ConversationUser[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -48,7 +50,7 @@ export function CreateConversationDialog() {
   // nothing and keeps the tab it always opened on).
   const dialog = useDialog<'direct' | 'group'>('messagesCreate', {
     onOpen: (tab) => {
-      setMode(tab === 'group' ? 'group' : 'direct'); setQuery(''); setTitle(''); setSelected([]); setError(''); setShowBlocked(false);
+      setMode(tab === 'group' ? 'group' : 'direct'); setQuery(''); setTitle(''); setNote(''); setSelected([]); setError(''); setShowBlocked(false);
     },
   });
 
@@ -72,7 +74,7 @@ export function CreateConversationDialog() {
   async function submitGroup() {
     if (!title.trim() || !selected.length) return;
     setSubmitting(true); setError('');
-    try { await createGroup(title.trim(), selected.map((user) => user.id)); dialog.close(); }
+    try { await createGroup(title.trim(), selected.map((user) => user.id), note.trim() || undefined); dialog.close(); }
     catch (err) { setError(err instanceof Error ? err.message : t('messages:create.error.group')); }
     finally { setSubmitting(false); }
   }
@@ -116,7 +118,7 @@ export function CreateConversationDialog() {
         </div>
         <div className="grid grid-cols-2 gap-1 p-1 mb-4 rounded-lg bg-zinc-100 dark:bg-zinc-800" role="tablist" aria-label={t('messages:create.typeTabs')}>
           {(['direct', 'group'] as const).map((kind) => (
-            <button key={kind} type="button" role="tab" aria-selected={mode === kind} onClick={() => { setMode(kind); setQuery(''); setSelected([]); setError(''); }} className={`rounded-md px-3 py-1.5 text-sm font-medium ${mode === kind ? 'bg-white dark:bg-zinc-700 text-violet-700 dark:text-violet-300 shadow-sm' : 'text-zinc-500 dark:text-zinc-400'}`}>
+            <button key={kind} type="button" role="tab" aria-selected={mode === kind} onClick={() => { setMode(kind); setQuery(''); setNote(''); setSelected([]); setError(''); }} className={`rounded-md px-3 py-1.5 text-sm font-medium ${mode === kind ? 'bg-white dark:bg-zinc-700 text-violet-700 dark:text-violet-300 shadow-sm' : 'text-zinc-500 dark:text-zinc-400'}`}>
               {kind === 'direct' ? t('messages:create.tab.direct') : t('messages:create.tab.group')}
             </button>
           ))}
@@ -125,6 +127,12 @@ export function CreateConversationDialog() {
           <label className="block mb-3">
             <span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">{t('messages:create.groupName')}</span>
             <Input value={title} onChange={(event) => setTitle(event.target.value.slice(0, 80))} placeholder={t('messages:create.groupNamePlaceholder')} maxLength={80} autoComplete="off" />
+          </label>
+        ) : null}
+        {mode === 'group' ? (
+          <label className="block mb-3">
+            <span className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">{t('messages:create.inviteNote')}</span>
+            <Input value={note} onChange={(event) => setNote(event.target.value.slice(0, 140))} placeholder={t('messages:create.inviteNotePlaceholder')} maxLength={140} autoComplete="off" />
           </label>
         ) : null}
         {selected.length ? (

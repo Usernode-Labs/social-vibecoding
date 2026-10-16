@@ -34,6 +34,24 @@ function normalizeTitle(raw) {
   return title && title.length <= 80 ? title : null;
 }
 
+// #3228: the short note an inviter writes when creating a group or adding
+// people, shown on the invited person's invitation card. undefined, null or
+// a blank string is no note at all (NULL on the row); any other string is
+// trimmed with its whitespace — newlines included — collapsed to one space.
+// A non-string, or a line longer than 140 characters after that, is invalid,
+// told apart from "no note" by the `false` sentinel so the caller can refuse
+// the invitation the way it refuses a bad title rather than silently
+// dropping the note.
+const MAX_INVITE_NOTE = 140;
+
+function normalizeInviteNote(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== 'string') return false;
+  const note = raw.trim().replace(/\s+/g, ' ');
+  if (!note) return null;
+  return note.length <= MAX_INVITE_NOTE ? note : false;
+}
+
 function normalizeContent(raw, { allowEmpty = false } = {}) {
   if (typeof raw !== 'string') return null;
   const content = raw.trim();
@@ -920,6 +938,7 @@ async function conversationRow(db, user, conversationId) {
     `SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at, c.deleted_peer,
             c.channel_key,
             me.role AS my_role, me.status AS membership_status, me.invited_by,
+            me.invite_note,
             me.last_read_message_id,
             inviter.username AS requester_username,
             inviter_avatar.id AS requester_avatar_id,
@@ -997,6 +1016,16 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
       [row.id]
     )).rows[0]?.count || 0
     : 0;
+  // #3228: an invited person sees how many people have already accepted the
+  // group — the count only, never the roster, which stays hidden until they
+  // answer the invitation.
+  const invitedGroupMemberCount = !accepted && row.kind === 'group'
+    ? (await db.query(
+      `SELECT COUNT(*)::int AS count FROM conversation_members
+        WHERE conversation_id = $1 AND status = 'member'`,
+      [row.id]
+    )).rows[0]?.count || 0
+    : 0;
   const latest = accepted && row.latest_message_id
     ? await getMessage(db, user, row.id, row.latest_message_id)
     : null;
@@ -1046,10 +1075,14 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     members,
     memberCount: channel
       ? channelMemberCount
-      : (accepted ? members.filter((member) => member.status === 'member').length : 0),
+      : (accepted ? members.filter((member) => member.status === 'member').length
+        : (row.kind === 'group' ? invitedGroupMemberCount : 0)),
     channelKey: channel ? row.channel_key : null,
     membershipStatus: row.membership_status,
     myRole: row.my_role,
+    // #3228: the inviter's note rides the invitation only. After it is
+    // answered (or on any other membership) it is nobody's business.
+    inviteNote: row.membership_status === 'invited' ? (row.invite_note || null) : null,
     requester,
     peer,
     latestMessage: latest,
@@ -1254,10 +1287,11 @@ async function ensureEligibleInvitees(db, inviterId, ids) {
   return true;
 }
 
-async function createGroup(pool, user, title, memberIds) {
+async function createGroup(pool, user, title, memberIds, inviteNote) {
   const safeTitle = normalizeTitle(title);
   const ids = strictIds(memberIds);
-  if (!safeTitle || !ids) return null;
+  const safeNote = normalizeInviteNote(inviteNote);
+  if (!safeTitle || !ids || safeNote === false) return null;
   const invitees = ids.filter((id) => id !== user.id);
   if (invitees.length + 1 > MAX_GROUP_MEMBERS) return null;
   const result = await transaction(pool, async (db) => {
@@ -1282,9 +1316,9 @@ async function createGroup(pool, user, title, memberIds) {
     for (const inviteeId of invitees) {
       await db.query(
         `INSERT INTO conversation_members
-           (conversation_id, user_id, role, status, invited_by)
-         VALUES ($1, $2, 'member', 'invited', $3)`,
-        [conversationId, inviteeId, user.id]
+           (conversation_id, user_id, role, status, invited_by, invite_note)
+         VALUES ($1, $2, 'member', 'invited', $3, $4)`,
+        [conversationId, inviteeId, user.id, safeNote]
       );
       notifications.push(await insertNotification(db, {
         userId: inviteeId, conversationId, sourceUserId: user.id, kind: 'conversation_invite',
@@ -1486,9 +1520,10 @@ async function respond(pool, user, conversationId, action) {
   };
 }
 
-async function addMembers(pool, user, conversationId, rawIds) {
+async function addMembers(pool, user, conversationId, rawIds, inviteNote) {
   const ids = strictIds(rawIds);
-  if (!ids?.length) return null;
+  const safeNote = normalizeInviteNote(inviteNote);
+  if (!ids?.length || safeNote === false) return null;
   const result = await transaction(pool, async (db) => {
     const preflight = await loadMembership(db, conversationId, user.id);
     if (!preflight || preflight.kind !== 'group') return null;
@@ -1514,19 +1549,22 @@ async function addMembers(pool, user, conversationId, rawIds) {
     const notifications = [];
     for (const id of inviteIds) {
       if (statuses.has(id)) {
+        // A re-invite replaces the old note, or clears it when the new
+        // invite carries none (#3228).
         await db.query(
           `UPDATE conversation_members
               SET status = 'invited', role = 'member', invited_by = $3,
+                  invite_note = $4,
                   responded_at = NULL, joined_at = NULL, left_at = NULL
             WHERE conversation_id = $1 AND user_id = $2`,
-          [conversationId, id, user.id]
+          [conversationId, id, user.id, safeNote]
         );
       } else {
         await db.query(
           `INSERT INTO conversation_members
-             (conversation_id, user_id, role, status, invited_by)
-           VALUES ($1, $2, 'member', 'invited', $3)`,
-          [conversationId, id, user.id]
+             (conversation_id, user_id, role, status, invited_by, invite_note)
+           VALUES ($1, $2, 'member', 'invited', $3, $4)`,
+          [conversationId, id, user.id, safeNote]
         );
       }
       notifications.push(await insertNotification(db, {

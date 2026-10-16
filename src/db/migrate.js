@@ -175,6 +175,8 @@ async function migrate(config) {
   await seedStagingGeneralChannel(pool);
   // After it: this thread's second speaker is that seed's fake person.
   await seedStagingScrollTestThread(pool);
+  // Must run AFTER seedStagingScrollTestThread — it invites the same member fixture.
+  await seedStagingGroupInviteNote(pool);
   await seedStagingQuickReplyFallback(pool, config);
   await seedStagingChatAttachments(pool, config);
   await seedStagingGroupChatAttachments(pool, config);
@@ -1717,6 +1719,85 @@ async function seedStagingScrollTestThread(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging scroll-test thread seeding failed', { message: err.message });
+  }
+}
+
+// #3228's before/after shots follow a group invitation card: who added the
+// viewer and why, the group's name and how many people have already joined.
+// A fresh clone has no pending invitation for the shots' member fixture, so
+// one is seeded: a group owned by one of the fake speakers above, one fake
+// member accepted, and usernode-capture invited with a note. Idempotent
+// through the membership rows' primary key; strictly a no-op outside staging.
+async function seedStagingGroupInviteNote(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query(
+      `SELECT id, username FROM users
+        WHERE username IN ('usernode-capture', 'staging-demo-general-ada',
+                           'staging-demo-general-lin', 'staging-code-signin@usernode.test')`
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const ada = people.rows.find((row) => row.username === 'staging-demo-general-ada');
+    const lin = people.rows.find((row) => row.username === 'staging-demo-general-lin');
+    // The proposal checks' sign-in fixture gets the same invitation, so a
+    // check or a person driving the app as that account reaches the card
+    // too. It is seeded later in the boot than this runs; skipped here and
+    // self-healed by the next boot when it is not there yet.
+    const viewer = people.rows.find((row) => row.username === 'staging-code-signin@usernode.test');
+    if (!member || !ada || !lin || member.id === ada.id || member.id === lin.id) {
+      log.warn('db', 'Staging group invite note skipped: fixture users missing');
+      return;
+    }
+    const found = await pool.query(
+      `SELECT c.id FROM conversations c
+        JOIN conversation_members cm ON cm.conversation_id = c.id AND cm.user_id = $1
+          AND cm.status = 'invited'
+        JOIN conversation_members owner ON owner.conversation_id = c.id
+          AND owner.user_id = $2 AND owner.role = 'owner'
+       WHERE c.kind = 'group' AND c.title = $3
+       LIMIT 1`,
+      [member.id, ada.id, 'Friday demo crew (staging demo)']
+    );
+    let conversationId = found.rows[0]?.id;
+    if (!conversationId) {
+      const created = await pool.query(
+        `INSERT INTO conversations (kind, title, created_by)
+         VALUES ('group', $1, $2) RETURNING id`,
+        ['Friday demo crew (staging demo)', ada.id]
+      );
+      conversationId = created.rows[0].id;
+    }
+    // The owner and the fake member have accepted; the capture member sits
+    // on the invitation, with the note the card shows. Re-asserted on every
+    // boot so a partial earlier boot self-heals.
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, invited_by, responded_at, joined_at)
+       SELECT $1, u.id, 'owner', 'member', u.id, NOW(), NOW()
+         FROM users u WHERE u.id = $2
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [conversationId, ada.id]
+    );
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, invited_by, responded_at, joined_at)
+       SELECT $1, u.id, 'member', 'member', $2, NOW(), NOW()
+         FROM users u WHERE u.id = $3
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [conversationId, ada.id, lin.id]
+    );
+    await pool.query(
+      `INSERT INTO conversation_members
+         (conversation_id, user_id, role, status, invited_by, invite_note)
+       SELECT $1, u.id, 'member', 'invited', $2,
+              'Staging demo: planning the Friday demo, we need someone for the slides'
+         FROM users u WHERE u.id = ANY($3::int[])
+       ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+      [conversationId, ada.id, [member.id, viewer?.id].filter(Boolean)]
+    );
+    log.info('db', 'Staging group invite note seeded', { conversationId });
+  } catch (err) {
+    log.warn('db', 'Staging group invite note seeding failed', { message: err.message });
   }
 }
 

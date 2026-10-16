@@ -681,6 +681,8 @@ export interface ConversationSummary {
 
 export interface ConversationDetail extends ConversationSummary {
   members: ConversationMember[];
+  /** #3228: the inviter's note, set on the invitation only. */
+  inviteNote?: string | null;
 }
 
 export interface UserSearchResult extends ConversationUser {}
