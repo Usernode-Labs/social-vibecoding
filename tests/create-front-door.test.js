@@ -113,6 +113,50 @@ test('the island opens the Create door over nothing else, on importing when aske
   assert.doesNotMatch(src, /made\(made: Made\): boolean|onMoreOptions|dialogs\?\.create/, 'no hand-off from a dialog, and no way to one');
 });
 
+test('the address turns an open Create door between its two forms, and leaves a made screen alone', async () => {
+  // #leaderboard → #create → #create/import by the address: the router asks
+  // the island for the import form while the make screen is up. It said no
+  // ("something already holding the screen keeps it"), so the address said
+  // #create/import over the plain make screen until a reload.
+  const island = loadTsx(ISLAND);
+  await withGlobals({
+    window: { App: { user: { id: 3, username: 'sam' } }, addEventListener() {} },
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+  }, async () => {
+    let state = { kind: 'make', entry: 'create' };
+    const setMode = (fn) => { state = typeof fn === 'function' ? fn(state) : fn; };
+    assert.equal(island.openCreate(setMode, true), true);
+    assert.deepEqual(state, { kind: 'make', entry: 'create', startImport: true });
+    assert.equal(island.openCreate(setMode, false), true);
+    assert.deepEqual(state, { kind: 'make', entry: 'create' });
+    assert.equal(island.openCreate(setMode, false), false, 'already the asked-for form');
+    assert.deepEqual(state, { kind: 'make', entry: 'create' });
+    const made = { kind: 'made', made: { slug: 'x' }, entry: 'create' };
+    state = made;
+    assert.equal(island.openCreate(setMode, true), false, 'a made screen stays');
+    assert.equal(state, made);
+    // The first session's own make screen is not the Create door.
+    state = { kind: 'make' };
+    assert.equal(island.openCreate(setMode, true), false);
+  });
+  const door = read(ISLAND).slice(read(ISLAND).indexOf("if (mode.kind === 'make' && mode.entry === 'create') {"));
+  assert.match(door, /<MakeScreen\s+(?:\/\/[^\n]*\n\s+)*key=\{mode\.startImport \? 'import' : 'make'\}/,
+    'turned, the screen opens afresh on the asked-for form, as a cold load does');
+});
+
+test('only the door\'s own addresses are not a way out of it', () => {
+  // Typing #create opens the door from the router's popstate; the hashchange
+  // of that same navigation came after, found the door's listener in place
+  // and closed it in the frame it opened. #create worked only as the first
+  // address of a page, so the declared check for it needed a cold reload on
+  // every run.
+  const { isDoorRoute } = loadTsx(ISLAND);
+  for (const hash of ['#create', '#create/import']) assert.equal(isDoorRoute(hash), true, hash);
+  for (const hash of ['', '#', '#leaderboard', '#created', '#creator/x', '#app/x/dev', '#settings/create']) {
+    assert.equal(isDoorRoute(hash), false, hash || '(none)');
+  }
+});
+
 test('from Create: nothing is answered, the grid is refreshed, and it ends on the hub', () => {
   const src = read(ISLAND);
   const door = src.slice(src.indexOf("if (mode.kind === 'make' && mode.entry === 'create') {"), src.indexOf("if (mode.kind === 'make') {"));
