@@ -136,22 +136,28 @@ test('no answer from GitHub (the network, a 5xx, its limit) is thrown, for the w
   }
 });
 
-test('GitHub\'s hourly limit used up is not a refusal of the head: it is said as such, and a reopen it stops is not "closed for good" (PR review)', async () => {
+test('GitHub\'s hourly or secondary limit is not a refusal of the head: it is said as such, and a reopen it stops is not "closed for good" (PR review)', async () => {
   const limit = (code) => Object.assign(status(code, 'API rate limit exceeded for installation'), {
     response: { headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 600) } },
   });
-  for (const code of [403, 429]) {
-    const c = load({ session: native, github: { mergePR: () => { throw limit(code); } } });
+  // GitHub's secondary limit: requests left in the hour, Retry-After said
+  // (or only its wording, when the headers are gone).
+  const secondary = (code) => Object.assign(status(code, 'You have exceeded a secondary rate limit. Please wait a few minutes.'), {
+    response: { headers: { 'x-ratelimit-remaining': '4321', 'retry-after': '60' } },
+  });
+  const worded = () => status(403, 'You have exceeded a secondary rate limit and have been temporarily blocked.');
+  for (const err of [limit(403), limit(429), secondary(403), secondary(429), worded()]) {
+    const c = load({ session: native, github: { mergePR: () => { throw err; } } });
     c.session = native;
     try {
       const { out } = await attempt(c);
-      assert.equal(out.outcome, 'rate_limited', `${code}`);
+      assert.equal(out.outcome, 'rate_limited', err.message);
       assert.deepEqual(c.calls.merge, [HEAD], 'asked once');
     } finally { c.restore(); }
   }
   // A closed pull request whose reopen GitHub did not answer is asked again,
   // never taken off the vote.
-  for (const [err, expect] of [[limit(403), 'rate_limited'], [status(502, 'Bad gateway'), 'thrown']]) {
+  for (const [err, expect] of [[limit(403), 'rate_limited'], [secondary(403), 'rate_limited'], [status(502, 'Bad gateway'), 'thrown']]) {
     const c = load({ session: native, github: {
       mergePR: () => { throw status(405, 'Pull Request is not mergeable'); },
       getPR: () => ({ state: 'closed', merged: false, head: { sha: HEAD } }),

@@ -229,6 +229,14 @@ test('an error that lost its headers still reads, from the recorded window or "w
 test('other refusals are not called a used-up budget', () => {
   const secondary = rateLimited({ remaining: '17', message: 'You have exceeded a secondary rate limit.' });
   assert.equal(budget.isRateLimitError(secondary), false, 'a per-minute limit is not the hourly one');
+  // It is GitHub's secondary limit, temporary all the same (the merge reads
+  // it so, routes/votes.js attemptMerge): by Retry-After or by its wording.
+  assert.equal(budget.isSecondaryRateLimitError(secondary), true);
+  const retryAfter = Object.assign(new Error('Forbidden'), { status: 403, response: { headers: { 'retry-after': '30', 'x-ratelimit-remaining': '900' } } });
+  assert.equal(budget.isSecondaryRateLimitError(retryAfter), true);
+  assert.equal(budget.isSecondaryRateLimitError(Object.assign(new Error('Resource not accessible by integration'), { status: 403 })), false,
+    'a 403 that is a permission is no limit');
+  assert.equal(budget.isSecondaryRateLimitError(null), false);
   const notFound = Object.assign(new Error('Not Found'), { status: 404 });
   assert.equal(budget.rateLimitNotice(notFound), null);
   assert.equal(budget.rateLimitNotice(null), null);
