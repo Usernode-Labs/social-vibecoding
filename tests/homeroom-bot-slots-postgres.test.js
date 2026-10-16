@@ -168,6 +168,9 @@ test('the bot\'s slots on a project count its builds under way, against the full
     assert.equal(six.title, 'Sunlight log');
     assert.equal(six.track.state, 'queued', 'ready, waiting its turn to be built');
     assert.equal(six.track.step, 'build');
+    // And what it waits for, as its requester's chat says it: nothing is
+    // ahead of it, so it starts next, never a bare "waiting its turn" (#5323).
+    assert.equal(six.track.why, 'next');
     assert.equal(view.slots.find((s) => s.issueNumber === 7).track.state, 'planning', 'its build session is open; no plan posted yet');
     assert.deepEqual(view.waiting.map((w) => [w.issueNumber, w.position, w.limit, w.title]), [[8, 1, 'slots', 'Repotting reminders']]);
     assert.equal(view.waiting[0].track.state, 'held');
@@ -183,5 +186,56 @@ test('the bot\'s slots on a project count its builds under way, against the full
     assert.deepEqual([...tracks.keys()], [30], 'only requests the bot had');
     assert.equal(tracks.get(30).state, 'done_elsewhere');
     assert.deepEqual(tracks.get(30).doneBy, { username: 'lee', prNumber: 5247 });
+  });
+
+  // 16 Oct 2026: the platform's slots page listed 25 requests "waiting for a
+  // slot" with none of its slots in use. All but one had closed, and that
+  // one was claimed: the bot leaves a request a person has alone. The line
+  // now holds only what waits for the bot, and each row says what it is.
+  await t.test('the line is only what waits for the bot, and each row says what it asks and who asked', async () => {
+    const track = require('../src/services/homeroom-bot-track');
+    const settings = { mode: 'live', pausedApps: [] };
+    const liveSvc = { isLiveFor: () => true };
+    const plantPal = { id: app.id, slug: 'plant-pal', name: 'Plant Pal', repo_url: 'https://github.com/usernode-bot/plant-pal' };
+    await run(40, { cap: 'proposals_per_app' }); // closed since, as the bot recorded
+    await pool.query('INSERT INTO homeroom_bot_closed_requests (app_id, issue_number, closed_at) VALUES ($1, 40, NOW())', [app.id]);
+    await run(41, { cap: 'proposals_per_app' }); // a person has a change of their own for it now
+    await session({ status: 'active', linked: [41], user: lee.id });
+    await run(42, { cap: 'proposals_per_app' }); // closed on GitHub; nothing of ours says so yet
+    await run(43, { cap: 'proposals_per_app' }); // open: waits behind #8
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 43, $2, 'Water reminders')`,
+      [app.id, lee.id],
+    );
+    const github = {
+      fetchPublicIssues: async () => ({
+        issues: [
+          { number: 8, title: 'Repotting reminders', body: '' },
+          { number: 41, title: 'Frost alerts', body: 'Warn me before a frost.' },
+          { number: 43, title: 'Water reminders by plant', body: '**Source:** Suggest an improvement\n\nRemind me to water each plant on its own schedule.\n\nPinned with Comment mode' },
+        ],
+        truncatedList: false,
+      }),
+    };
+    const view = await track.slotsView(pool, { app: plantPal, settings, deps: { liveSvc, github } });
+    assert.deepEqual(view.waiting.map((w) => [w.issueNumber, w.position]), [[8, 1], [43, 2]],
+      'neither the recorded close (#40), the closed one (#42), nor the taken one (#41)');
+    const water = view.waiting[1];
+    assert.equal(water.title, 'Water reminders by plant', 'GitHub\'s title before the one the bot kept');
+    assert.equal(water.askedBy, 'lee');
+    assert.equal(water.excerpt, 'Remind me to water each plant on its own schedule.', 'the asker\'s words, not the lines around them');
+    assert.deepEqual(view.taken.map((w) => [w.issueNumber, w.by, w.title, w.excerpt]), [[41, 'lee', 'Frost alerts', 'Warn me before a frost.']]);
+    assert.equal(view.taken[0].track.why, 'taken');
+    assert.deepEqual(view.taken[0].track.held, { limit: 'taken', position: null, until: null, by: 'lee' });
+    // The request's own page says the same.
+    const own = await track.tracksForRequests(pool, { appId: app.id, numbers: [41] });
+    assert.equal(own.get(41).why, 'taken');
+
+    // A list that is not whole says nothing about what closed: #42 stays.
+    const unsure = { fetchPublicIssues: async () => ({ issues: [], note: 'issues unavailable' }) };
+    const partial = await track.slotsView(pool, { app: plantPal, settings, deps: { liveSvc, github: unsure } });
+    assert.deepEqual(partial.waiting.map((w) => w.issueNumber), [8, 42, 43]);
+    assert.equal(partial.waiting[2].title, 'Water reminders', 'the title the bot kept when GitHub has none');
+    assert.equal(partial.waiting[2].excerpt, null);
   });
 });

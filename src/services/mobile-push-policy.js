@@ -8,6 +8,18 @@ const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const RECIPIENT_CONTEXT = 'usernode-social-push-recipient-v1';
 const PUSH_ENV_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 
+// #5249: kinds whose feature is parked. Their notification rows are still
+// written (nothing is deleted or rewired server-side), but no phone is
+// woken for one: the worker settles such a delivery as kind_not_allowed and
+// buildMessage refuses it. Kudos is parked on the client by
+// frontend/src/features/leaderboard/kudos-parked.ts; take its kind out of
+// this set when that switch goes back to false.
+const PARKED_PUSH_KINDS = new Set(['kudos']);
+
+function isPushParked(kind) {
+  return PARKED_PUSH_KINDS.has(kind);
+}
+
 function isPushEnvironment(value) {
   return typeof value === 'string' && PUSH_ENV_RE.test(value);
 }
@@ -671,7 +683,7 @@ function buildMessage({
   expiresAt, context, unreadCount, now = new Date(),
 }) {
   if (typeof token !== 'string' || !token) throw new Error('mobile_push_registration_missing');
-  if (!ALLOWED_KINDS.has(kind)) throw new Error('mobile_push_kind_not_allowed');
+  if (!ALLOWED_KINDS.has(kind) || isPushParked(kind)) throw new Error('mobile_push_kind_not_allowed');
   const id = Number(notificationId);
   if (!Number.isInteger(id) || id <= 0 || id > 2147483647) {
     throw new Error('mobile_push_notification_id_invalid');
@@ -749,6 +761,8 @@ function buildBadgeMessage({ token, unreadCount, now = new Date() }) {
 
 module.exports = {
   ALLOWED_KINDS,
+  PARKED_PUSH_KINDS,
+  isPushParked,
   botMomentCopy,
   buildNotificationCopy,
   plainMarkdown,

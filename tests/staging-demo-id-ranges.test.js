@@ -87,6 +87,36 @@ test('the shots demo states keep a block of ids nothing else uses', () => {
   assert.deepEqual(users, [], 'only the shots demo states use their block');
 });
 
+// The shots fixtures take their fixed ids from the top of the range, one
+// owner each: the hosted app's (worker/shots-hosted-app-contract.js), the
+// full-admin service account's and the invited fixtures' (both in
+// src/services/shots-fixtures.js). A real app or account takes its id from
+// the sequence near 1, so the reservation only has to keep the five numbers
+// out of every other hand.
+test('the shots fixtures\' high ids sit beside each other, one owner each', () => {
+  const fixtures = require('../src/services/shots-fixtures');
+  assert.equal(fixtures.INVITED_APP_ID, 2147482998);
+  assert.equal(fixtures.INVITED_MEMBER_USER_ID, 2147483001);
+  assert.equal(fixtures.INVITED_MEMBER_LISTED_USER_ID, 2147483002);
+  assert.match(read('src/services/shots-fixtures.js'), /const FULL_ADMIN_USER_ID = 2147483000;/);
+  assert.match(read('worker/shots-hosted-app-contract.js'), /const HOSTED_APP_ID = 2147482999;/);
+  assert.deepEqual(
+    [2147482998, 2147482999, 2147483000, 2147483001, 2147483002].sort((a, b) => a - b),
+    [2147482998, 2147482999, 2147483000, 2147483001, 2147483002], 'one block at the top of the range');
+
+  const inBlock = /\b(2147482998|2147482999|2147483000|2147483001|2147483002)\b/;
+  const owners = new Set([
+    path.join('src', 'services', 'shots-fixtures.js'),
+    path.join('worker', 'shots-hosted-app-contract.js'),
+  ]);
+  const walk = (dir) => fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true }).flatMap((entry) =>
+    entry.isDirectory() ? walk(path.join(dir, entry.name)) : [path.join(dir, entry.name)]);
+  const users = [...walk('src'), ...walk('public/js'), ...walk('worker'), 'dapp.json']
+    .filter((file) => /\.(js|ts|tsx|sql|json)$/.test(file) && !owners.has(file))
+    .filter((file) => inBlock.test(read(file)));
+  assert.deepEqual(users, [], 'only the shots fixtures use their ids');
+});
+
 test('the shots demo states build on staging seeds that still exist', () => {
   // The challenge states join the topochain fixture season and event and
   // credit its one open challenge; the standings state names three of its

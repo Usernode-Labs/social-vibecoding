@@ -767,6 +767,15 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-thread-name,
 .messages-thread-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .messages-thread-name { color: var(--text-primary); font-size: 17px; font-weight: 700; }
+/* #5329: a change title that opens the Details sheet — a reset button that
+   reads as the heading it sits in, underlined only on hover. */
+.messages-thread-name-link {
+  appearance: none; border: 0; background: none; padding: 0; margin: 0;
+  font: inherit; color: inherit; cursor: pointer;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.messages-thread-name-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.messages-thread-name-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .messages-thread-sub { color: var(--text-muted); font-size: 15px; }
 .messages-thread-menu {
   position: absolute;
@@ -4814,16 +4823,17 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    list with min-height: 0 and overflow: hidden — so content CLIPPED at the
    ceiling instead of growing the tile, with .home-panel--expanded lifting it.
 
-   A section grows. What bounds the collapsed block is the MARKUP:
-   visibleSlots() draws at most HomePanels.ROW_SLOTS challenge rows and the
-   footer's "See all N challenges" is the way past them.
+   A section grows. What bounds the Challenges block is the MARKUP:
+   HomePanels.challengesView draws a short pick (every First challenge, or
+   at most three Next ones) and "See all" in its heading goes to the
+   Challenges tab.
 
    THE LEADERBOARD FILL (.home-panel-fill) was a standings preview under the
    challenge rows, and it is REMOVED — two labelled lists with two different
    tap destinations inside one card called Challenges. The standings are a
    screen, and the section's heading carries the one tap to it. Its rules are
-   gone from this file; `.home-panel-lb-browse`, the heading's link, is a
-   different thing and stays.
+   gone from this file, and so is the heading's own "Open challenges" link
+   (`.home-panel-lb-browse`), replaced by "See all" (`.home-panel-see-all`).
 
    NO WIDTH CAP any more. It was --home-panel-max-w, half of .home-column
    (512px of 1024px), and the argument for it was "a widget is not a section":
@@ -4915,10 +4925,10 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    existed to make a block CLIP inside the two-app-row rectangle it occupied
    on the launcher canvas.
 
-   A section has no rectangle. What bounds the collapsed block now is the
-   MARKUP: visibleSlots() renders at most ROW_SLOTS challenge rows and the
-   footer's "See all N challenges" is the way past them, so there is nothing
-   left for a second, invisible mechanism to bound. Keeping the cap after the
+   A section has no rectangle. What bounds the Challenges block now is the
+   MARKUP: HomePanels.challengesView draws a short pick and "See all" goes to
+   the Challenges tab, so there is nothing left for a second, invisible
+   mechanism to bound. Keeping the cap after the
    fill stopped being leftover-sized would have clipped the standings preview
    the Challenges area now exists to show. */
 .home-panel {
@@ -5039,28 +5049,11 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    hook the declared checks select on, and needs no rule: the block is one flat
    column now and the progress is just its first band. */
 
-/* The footer bar: the expand/collapse toggle, drawn only when it has rows to
-   reveal (the way out is the section heading's link alone). It carries no
-   rule and no inset (see ui.tsx's PanelFooter); the height keeps the toggle
-   on one steady line. */
-.home-panel-footer {
-  min-height: 1.625rem; /* 26px */
-}
-
-/* EXPANDED: every challenge the season has, including the organiser-finished
-   ones the collapsed view filters out. The COUNT is markup — visibleSlots()
-   returns all of them rather than the first ROW_SLOTS — and this rule is the
-   CSS half: the rows list stops clipping, so a list longer than the flex
-   layout budgeted for is drawn rather than cut.
-
-   `max-height: none` sat here too, lifting --home-panel-max-h. Both are gone
-   with the cap (see .home-panel above): a section grows to its content, so
-   there is nothing left to lift. Deliberately NOT a scroll container either
-   way: a nested scroller inside the page scroller is the touch trap this
-   block has avoided from the start. */
-.home-panel--expanded .home-panel-rows {
-  overflow: visible;
-}
+/* The footer bar (`.home-panel-footer`, the "See all N challenges" / "Show
+   less" toggle) and `.home-panel--expanded .home-panel-rows`, which stopped
+   the rows list clipping while the block was expanded in place, are gone
+   with the toggle: the block shows a short pick and "See all" in its heading
+   goes to the Challenges tab (the Semi design, 2026-10-16). */
 
 /* `.home-panel-slot` — the in-grid drag host — is gone with the placement.
    It spanned real cells so app icons flowed around a widget the iOS way, and
@@ -22511,11 +22504,13 @@ html.un-kb #platform-parked {
      line above the strip. Drawn on the first non-pinned row FOLLOWING a
      pinned one, so it appears only when both groups are present: a strip
      that is all pins or all recents draws no line. */
-  .platform-strip-app[data-strip-pinned] + .platform-strip-app:not([data-strip-pinned]) {
+  .platform-strip-app[data-strip-pinned] + .platform-strip-app:not([data-strip-pinned]),
+  .platform-strip-app[data-strip-pinned] + .platform-strip-drop {
     margin-top: 9px;
     position: relative;
   }
-  .platform-strip-app[data-strip-pinned] + .platform-strip-app:not([data-strip-pinned])::before {
+  .platform-strip-app[data-strip-pinned] + .platform-strip-app:not([data-strip-pinned])::before,
+  .platform-strip-app[data-strip-pinned] + .platform-strip-drop::before {
     content: '';
     position: absolute;
     top: -5px;
@@ -22523,6 +22518,71 @@ html.un-kb #platform-parked {
     right: 10px;
     height: 1px;
     background: var(--app-sheet-line);
+  }
+  /* THE "PIN HERE" SLOT (#5323, features/nav/strip-apps.tsx): the one row the
+     strip draws while a My apps tile is in the air, after the pinned rows and
+     before the recents. A dashed tile in the lit colour says "here"; a drop
+     that would be refused says so in words instead (the muted states). */
+  .platform-strip-drop {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-width: 0;
+    min-height: 58px;
+    padding: 6px 2px;
+    border-radius: 12px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .platform-strip-drop[data-drop-state='ok'] {
+    background: color-mix(in srgb, var(--lit-tint) 70%, transparent);
+    color: var(--lit-ink);
+  }
+  .platform-strip-drop-tile {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    border: 1.5px dashed currentColor;
+    box-sizing: border-box;
+  }
+  /* THE DRAGGED PINNED TILE (#5323): the ghost that follows the pointer while
+     a pinned app is dragged back out of the rail. Portaled to the body (the
+     rail clips), pointer-events:none so it never becomes the hit-test, and it
+     carries the "Unpin" caption only while it is outside the rail — the state
+     whose release takes the app off. */
+  .platform-strip-ghost {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 80;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    pointer-events: none;
+    transform: translate(-50%, -50%) scale(1.05);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .platform-strip-ghost .platform-strip-tile {
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+  }
+  .platform-strip-ghost-caption {
+    padding: 2px 8px;
+    border-radius: 8px;
+    background: var(--lit-ink);
+    color: var(--bg-primary);
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .platform-strip-ghost { transform: translate(-50%, -50%); }
   }
   .platform-strip-mark {
     position: relative;

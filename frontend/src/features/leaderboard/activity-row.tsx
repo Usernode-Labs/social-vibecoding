@@ -4,11 +4,10 @@ import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 
 /**
- * One points activity, with when it happened (#3648), for the activity lists in the
- * profile overlay (./challenges-pane.tsx) and the standings drill-down
- * (./topochain-standings.tsx).
+ * One points activity, with when it happened (#3648), for the activity list in
+ * the standings drill-down (./topochain-standings.tsx).
  *
- * Both lists showed only what was done and the points, so nobody could tell
+ * The list showed only what was done and the points, so nobody could tell
  * which day a credit belonged to or check it against what they remember
  * doing. Every activity the API returns carries `activity_at`; this turns it
  * into one compact line in the viewer's own locale and timezone:
@@ -20,9 +19,9 @@ import { t as translate } from '../../lib/i18n/runtime';
  * occurrence times. A real noon or midnight action keeps its hour. The noon
  * sentinel is only a fallback for responses from an older server.
  *
- * Kept out of ../topochain-challenges.js and ../topochain-leaderboard.js on
- * purpose: those view modules must stay import-free (tests evaluate them in a
- * bare vm), so they pass `activity_at` through and the renderers format it.
+ * Kept out of ./topochain-leaderboard.js on purpose: that view module must
+ * stay import-free (tests evaluate it in a bare vm), so it passes
+ * `activity_at` through and the renderer formats it.
  */
 
 export interface ActivityWhen {

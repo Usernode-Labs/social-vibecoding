@@ -6563,6 +6563,7 @@ const AppView = {
     } : null;
     const unit = prog && prog.bar.unit ? prog.bar.unit : null;
     const fails = v && v.failures.length ? v.failures : [];
+    const noted = v && v.noted && v.noted.length ? v.noted : [];
     let note = null;
     if (live) {
       const why = AppView._checksTriggerCopy(item.check_trigger);
@@ -6579,12 +6580,12 @@ const AppView = {
     } else if (v && v.baseNote) {
       note = v.baseNote;
     }
-    if (!checks && !build && !unit && !fails.length && !note) return null;
+    if (!checks && !build && !unit && !fails.length && !noted.length && !note) return null;
     // Open by itself while a run is going, and when it failed: that is when
     // the bars and the names are what a reader came for. A run that will go
     // again on its own opens too, so its reason is read without a tap.
     const retrying = g.state === 'active' && item.check_state === 'error';
-    return { live, phase: item.check_phase || null, open: live || retrying || g.state === 'blocked', build, checks, unit, fails, note };
+    return { live, phase: item.check_phase || null, open: live || retrying || g.state === 'blocked', build, checks, unit, fails, noted, note };
   },
 
   // One detail model for a change before and after it enters review.
@@ -7570,7 +7571,7 @@ const AppView = {
         });
       }
       const meta = AppView._ghIssuesMeta || {};
-      pills.push({
+      if (AppView._bountiesOffered()) pills.push({
         key: 'bounty', cls: 'gc-vote-btn',
         label: item.my_bounty ? PlatformI18n.t('changes:request.actions.bountied') : PlatformI18n.t('changes:request.actions.pledgeKudos'),
         title: PlatformI18n.t('changes:request.actions.pledgeKudosTitle'),
@@ -18725,6 +18726,13 @@ const AppView = {
     // One whole message per case; a recorded reason is the check's own words
     // and rides as a parameter after the sentence.
     const values = { count: runs, fails, reason: base };
+    // Its failure was one of a burst in the run's first seconds whose
+    // retries all passed (services/check-signals.js). That is often the
+    // environment, but not proof of it, so the sentence names the likely
+    // cause and still asks the author to look.
+    if (r && r.passedOnRetry && r.retryClass === 'early_burst') {
+      return base ? PlatformI18n.t('changes:checks.reason.earlyBurstWith', { reason: base }) : PlatformI18n.t('changes:checks.reason.earlyBurst');
+    }
     if (r && r.passedOnRetry) {
       return base ? PlatformI18n.t('changes:checks.reason.failedThenPassedWith', values) : PlatformI18n.t('changes:checks.reason.failedThenPassed', values);
     }
@@ -18776,9 +18784,17 @@ const AppView = {
       // the reason, because "it failed" and "it failed once out of three"
       // call for different next moves.
       reason: AppView._checkReason(r),
+      retryClass: (r && r.passedOnRetry && r.retryClass === 'early_burst') ? 'early_burst' : null,
+      // A check this proposal adds or changes that held only on a fresh
+      // load after its address change (services/check-signals.js). Advisory:
+      // the row's verdict is its own.
+      note: (r && r.cohortFallback && r.authored === true)
+        ? PlatformI18n.t('changes:checks.note.freshLoad')
+        : null,
       // A row that passed only after a retry keeps its reason line, which
-      // the verdict view otherwise drops for anything green.
-      keepReason: !!(r && r.passedOnRetry),
+      // the verdict view otherwise drops for anything green; so does one
+      // with a note.
+      keepReason: !!(r && (r.passedOnRetry || (r.cohortFallback && r.authored === true))),
       // #3978: the repo unit suite row's per-test excerpts, each with the
       // file, the test name and the captured error text. Only that row
       // carries failureDetails; the caps here mirror the capture side's, so
@@ -18840,6 +18856,12 @@ const AppView = {
       summary: summaryBits.reduce((first, second) => PlatformI18n.t('changes:facts.pair', { first, second })),
       failures: blockingRows.concat(advisoryRows).map(row),
       passes: passRows.map(row),
+      // The passes with something to say (a retry, its class, a note), for
+      // the Checks step, which lists failures by name and folds no passes.
+      // From the passing rows when present, else from the few a list row
+      // keeps beside its count (src/services/list-test-results.js).
+      noted: (hasPassRow ? passRows : (Array.isArray(pr.test_results_noted) ? pr.test_results_noted : []))
+        .map(row).filter((r) => r.pass && r.keepReason),
       // How many passed, which is more than `passes` holds while the row
       // counts its passes rather than naming them.
       passCount,
@@ -21020,7 +21042,7 @@ const AppView = {
     // column's cards use (_mergedCardModel).
     const age = AppView._agePart(issue.createdAt || issue.created_at);
     if (age) meta.push(age);
-    if (issue.bounty_count) {
+    if (issue.bounty_count && AppView._bountiesOffered()) {
       meta.push({
         t: 'span', cls: 'text-amber-800 dark:text-amber-300', title: PlatformI18n.t('changes:issue.card.kudosTitle'),
         s: `★ ${parseInt(issue.bounty_count, 10) || 0}`,
@@ -21412,6 +21434,18 @@ const AppView = {
   },
 
   /**
+   * Whether a request offers a kudos bounty (its "Pledge kudos" pill and ⋯
+   * row, and the ★ count on its meta line). A bounty is kudos pledged to a
+   * request, so it is offered exactly when kudos is: features/leaderboard/
+   * kudos.js publishes `window.Kudos` only while kudos is not parked
+   * (KUDOS_PARKED, #5249). Parked, nothing pledges and no count is shown;
+   * the bounties already pledged stay in the database untouched.
+   */
+  _bountiesOffered() {
+    return !!window.Kudos;
+  },
+
+  /**
    * B8: "Ask for changes" on a change Homeroom bot built: the viewer's chat
    * with it, with this change attached on the composer and the caret in the
    * box (messages/store.ts openBot). The page names the change's project, so
@@ -21591,11 +21625,12 @@ const AppView = {
       });
       // "Pledge kudos" disables once the viewer has an open bounty here or
       // has spent their shared weekly allowance.
+      // Not while kudos is parked (#5249, see _bountiesOffered).
       const budgetSpent = meta.myRemaining === 0;
       const kudosReason = issue.my_bounty
         ? PlatformI18n.t('changes:issue.menu.alreadyBountied')
         : (budgetSpent ? PlatformI18n.t('changes:issue.menu.allowanceSpent') : '');
-      items.push({
+      if (AppView._bountiesOffered()) items.push({
         label: issue.my_bounty ? PlatformI18n.t('changes:issue.menu.bountied') : PlatformI18n.t('changes:issue.menu.pledgeKudos'),
         icon: 'kudos',
         title: kudosReason
@@ -22118,6 +22153,8 @@ const AppView = {
   // weekly kudos allowance server-side; optimistically bumps the local count
   // and disables the button on success.
   async giveIssueBounty(issueNumber) {
+    // Every door to this is gated by _bountiesOffered; a stale one is a no-op.
+    if (!AppView._bountiesOffered()) return;
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug) return;
     const key = `bounty:${issueNumber}`;

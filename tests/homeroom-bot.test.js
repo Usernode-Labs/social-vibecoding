@@ -85,7 +85,38 @@ test('a request that is already there is `done`: on a person or empty verdict, n
   const prompt = fs.readFileSync(path.join(__dirname, '..', 'src/prompts/homeroom-bot-triage.md'), 'utf8');
   assert.match(prompt, /- `done`: true only with `person` or `empty`, when all it asks for already exists or is done; `reason` says where on screen, and its requester is offered a vote to close it\./);
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
-  assert.match(src, /await say\('empty', live\.emptyText\(parsed\), \{ dm: \{ reason: parsed\.reason, \.\.\.\(parsed\.done \? \{ done: true \} : \{\}\) \} \}\);/);
+  assert.match(src, /await say\('empty', live\.emptyText\(parsed\), \{ dm: \{ reason: parsed\.reason, \.\.\.\(parsed\.done \? \{ done: true \} : \{\}\), \.\.\.quiet \} \}\);/);
+});
+
+test('a request that names who builds it is `builder`: a person verdict only, a bare name, and its news rings nobody', () => {
+  const named = bot.parseVerdict('{"verdict":"person","builder":"@snait","reason":"Assigned to snait, not for the bot."}');
+  assert.equal(named.builder, 'snait', 'the name, without its @');
+  assert.equal(bot.parseVerdict('{"verdict":"person","reason":"A design call."}').builder, null, 'absent is null');
+  assert.equal(bot.parseVerdict('{"verdict":"ready","builder":"snait","build_note":"Edit app.js."}').builder, null,
+    'never on a verdict that builds');
+  assert.equal(bot.parseVerdict('{"verdict":"person","builder":"two words","reason":"x"}').builder, null, 'a name, or nothing');
+  assert.equal(bot.parseVerdict('{"verdict":"person","builder":true,"reason":"x"}').builder, null);
+  const prompt = fs.readFileSync(path.join(__dirname, '..', 'src/prompts/homeroom-bot-triage.md'), 'utf8');
+  assert.match(prompt, /- `builder`: only with `person`, when the request or its discussion says a named person will build it: that username, without the @\./);
+  assert.match(prompt, /"builder": "who the request says will build it \(verdict person, only then\)",/);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
+  // Said in their chat with the bot, and quiet (homeroom-bot-dm.js relayIssuePost).
+  assert.match(src, /\.\.\.\(parsed\.builder \? \{ builder: parsed\.builder, quiet: true \} : quiet\),/);
+});
+
+test('an older request\'s first read rings only when it is ready to try (16 Oct 2026)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
+  assert.match(src, /backlog: item\.reason === BACKLOG_REASON,\n/, 'the read says which it is');
+  assert.match(src, /const quiet = backlog \? \{ quiet: true \} : \{\};/);
+  // A question and an empty request are quiet; a person hand-off is too.
+  const act = src.slice(src.indexOf('async function actOnVerdict'));
+  const body = act.slice(0, act.indexOf('\n}\n'));
+  assert.match(body, /\.\.\.\(parsed\.plan\?\.questions\?\.length > 1 \? \{ questions: parsed\.plan\.questions \} : \{\}\),\n\s+\.\.\.quiet,\n/);
+  // A ready one builds, and its news rings as it did: nothing marks it quiet.
+  const ready = body.slice(body.indexOf("} else if (parsed.verdict === 'ready') {"));
+  assert.doesNotMatch(ready.slice(0, 4000), /quiet: true|\.\.\.quiet\b/);
+  const dmSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
+  assert.match(dmSrc, /\.\.\.\(dm\.quiet \? \{ moment: null \} : \{\}\),/);
 });
 
 test('a re-read and the ask to repair a reply restate the verdict\'s keys (runs 1390, 1451, 1454 answered in keys of their own)', () => {
@@ -1336,7 +1367,9 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
   // ...except a row the bot queued for itself (a restart's, a failing
   // check's) on an issue that is open, unchanged and nobody else's (#2), or
   // that the bot is building (#6).
-  assert.deepEqual(deleted.slice(2), [bot.SELF_QUEUED_REASONS, [2, 6]]);
+  // The rows a refresh keeps while their request is unchanged: the bot's own,
+  // and an older request's read (16 Oct 2026).
+  assert.deepEqual(deleted.slice(2), [bot.KEPT_WHILE_QUIET_REASONS, [2, 6]]);
   assert.equal(out.removed, 2);
 });
 
@@ -1842,8 +1875,9 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // 2026): the UI design guidance's line on forms on a phone (about 335
   // characters), which every build reads, rides in the reference too. #5224:
   // the plan lines' rule (about 330 more), so the plan card's lines stay
-  // short and one point each.
-  assert.ok(prompt.length < 22100, `a triage prompt stays small: ${prompt.length} chars`);
+  // short and one point each. 16 Oct 2026: `builder` (about 280 more), so a
+  // request that names who builds it does not ring its requester.
+  assert.ok(prompt.length < 22400, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
   assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\."\}$/);
 });
@@ -2163,7 +2197,7 @@ test('interruptRead: only a message or an edit sends a read back', () => {
   assert.match(onBus, /if \(data\.issueNumber != null\) interruptRead\(/, 'and on the Pod running the loop');
   assert.match(SRC, /\|\| item\.reason === RETRY_FAILED_REASON \|\| item\.reason === READ_AGAIN_REASON \? null : await live\.post\(\{/,
     'a read started over is not announced twice');
-  assert.match(SRC, /item\.reason !== APP_AGAIN_REASON && item\.reason !== READ_AGAIN_REASON\) \{\n\s+await activity\(\)\.startCard/,
+  assert.match(SRC, /item\.reason !== APP_AGAIN_REASON && item\.reason !== READ_AGAIN_REASON\n\s+&& item\.reason !== BACKLOG_REASON\) \{\n\s+await activity\(\)\.startCard/,
     'and its card is not started twice');
   assert.ok(bot.SELF_QUEUED_REASONS.includes(bot.READ_AGAIN_REASON), 'a refresh keeps its row and its reason');
 });

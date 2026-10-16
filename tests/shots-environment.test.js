@@ -103,6 +103,7 @@ test('each paired reset serializes clones and adds the same member and full-admi
     clone: dbManager.cloneFromPreparedSource, connectionUrl: dbManager.connectionUrl,
     fullAdmin: fixtures.ensureFullAdminIdentity,
     hostedApp: fixtures.ensureHostedAppFixture,
+    invitedCan: fixtures.canInstallInvitedFixtures, invited: fixtures.ensureInvitedFixtures,
     inspect: fixtures.canCopyMemberAgentSession, copy: fixtures.copyMemberAgentSession,
     copyAdmin: fixtures.copyFullAdminAgentSession,
     inspectDemo: demoStates.inspectDemoStates, installDemo: demoStates.installDemoStates,
@@ -155,6 +156,14 @@ test('each paired reset serializes clones and adds the same member and full-admi
     });
     fixtures.copyMemberAgentSession = async ({ side, at }) => (moments.push(['member', side, at]), { id: fixtures.PROFILE,
       persona: 'member', path: '/#messages/agent/990899', side });
+    // The invited fixtures (#4437), seeded beside the hosted app's: each
+    // side's install is handed the pair's one moment.
+    fixtures.canInstallInvitedFixtures = async () => true;
+    fixtures.ensureInvitedFixtures = async ({ side, at }) => (moments.push(['invited', side, at]), [
+      { id: fixtures.INVITED_FIRST_VISIT_PROFILE, persona: 'invited_member', path: '/', side },
+      { id: fixtures.INVITED_LISTED_PROFILE, persona: 'invited_member_listed', path: '/', side },
+      { id: fixtures.INVITE_LINK_PROFILE, persona: 'guest', path: `/invite/${fixtures.invitedInviteToken(runId)}`, side },
+    ]);
     const adminSides = [];
     fixtures.copyFullAdminAgentSession = async ({ side, at }) => {
       adminSides.push(side);
@@ -183,7 +192,7 @@ test('each paired reset serializes clones and adds the same member and full-admi
     }, pair,
       { onProgress: (event) => progress.push(event.stage) });
     assert.deepEqual(order, [pair.sides.base.dbName, pair.sides.head.dbName]);
-    assert.equal(moments.length, 10);
+    assert.equal(moments.length, 12);
     assert.equal(new Set(moments.map(([, , at]) => at)).size, 1, 'one moment, read once per reset');
     assert.equal(moments[0][2], new Date(Date.parse(moments[0][2])).toISOString());
     assert.deepEqual(progress.slice(0, 6), [
@@ -195,17 +204,28 @@ test('each paired reset serializes clones and adds the same member and full-admi
       dbs: [`postgres://fixture@db/${pair.sides.base.dbName}`, `postgres://fixture@db/${pair.sides.head.dbName}`],
       stateIds: [runs, list],
     }]);
-    assert.deepEqual(deployment.availableFixtures.slice(4).map((fixture) => fixture.id), [runs, list]);
+    assert.deepEqual(deployment.availableFixtures.slice(7).map((fixture) => fixture.id), [runs, list]);
+    assert.ok(progress.includes('seed_invited_fixtures'));
     assert.ok(progress.includes('seed_shots_demo_states'));
-    assert.equal(deployment.availableFixtures.length, 6);
+    assert.equal(deployment.availableFixtures.length, 9);
     assert.equal(deployment.availableFixtures[0].persona, 'full_admin');
     assert.deepEqual(deployment.availableFixtures[0].appMembership,
       { appId: 42, slug, status: 'member' });
     assert.equal(deployment.availableFixtures[1].appSlug, fixtures.hostedAppSlug(runId));
-    assert.equal(deployment.availableFixtures[2].persona, 'member');
+    // The invited fixtures' three entries, after the hosted app's: two
+    // invited members and the link, the guest's path naming its token.
+    assert.deepEqual(deployment.availableFixtures.slice(2, 5).map((fixture) => fixture.id), [
+      fixtures.INVITED_FIRST_VISIT_PROFILE, fixtures.INVITED_LISTED_PROFILE, fixtures.INVITE_LINK_PROFILE,
+    ]);
+    assert.equal(deployment.availableFixtures[2].persona, 'invited_member');
+    assert.equal(deployment.availableFixtures[3].persona, 'invited_member_listed');
+    assert.equal(deployment.availableFixtures[4].persona, 'guest');
+    assert.equal(deployment.availableFixtures[4].path,
+      `/invite/${fixtures.invitedInviteToken(runId)}`);
+    assert.equal(deployment.availableFixtures[5].persona, 'member');
     // The full admin gets an agent session too, on both revisions, so a list
     // drawn only for a viewer with sessions is there before as well as after.
-    assert.equal(deployment.availableFixtures[3].id, fixtures.FULL_ADMIN_SESSION_PROFILE);
+    assert.equal(deployment.availableFixtures[6].id, fixtures.FULL_ADMIN_SESSION_PROFILE);
     assert.deepEqual(adminSides.sort(), ['base', 'head']);
     const pairedEnvs = deployedEnvs.filter((env) => env.DATABASE_URL);
     assert.equal(pairedEnvs.length, 2);
@@ -229,7 +249,10 @@ test('each paired reset serializes clones and adds the same member and full-admi
     assert.ok(progress.includes('seed_hosted_app_fixture'));
     assert.equal(deployment.fixtureFingerprint, crypto.createHash('sha256')
       .update(`source-fingerprint\n${fixtures.FULL_ADMIN_PROFILE}`
-        + `+${fixtures.HOSTED_APP_PROFILE}@${captureDigest}+${fixtures.PROFILE}+${fixtures.FULL_ADMIN_SESSION_PROFILE}`
+        + `+${fixtures.HOSTED_APP_PROFILE}@${captureDigest}`
+        + `+${fixtures.INVITED_FIRST_VISIT_PROFILE}+${fixtures.INVITED_LISTED_PROFILE}`
+        + `+${fixtures.INVITE_LINK_PROFILE}`
+        + `+${fixtures.PROFILE}+${fixtures.FULL_ADMIN_SESSION_PROFILE}`
         + `+${runs}+${list}`).digest('hex'));
   } finally {
     runtime.remove = original.remove;
@@ -239,6 +262,8 @@ test('each paired reset serializes clones and adds the same member and full-admi
     dbManager.connectionUrl = original.connectionUrl;
     fixtures.ensureFullAdminIdentity = original.fullAdmin;
     fixtures.ensureHostedAppFixture = original.hostedApp;
+    fixtures.canInstallInvitedFixtures = original.invitedCan;
+    fixtures.ensureInvitedFixtures = original.invited;
     fixtures.canCopyMemberAgentSession = original.inspect;
     fixtures.copyMemberAgentSession = original.copy;
     demoStates.inspectDemoStates = original.inspectDemo;

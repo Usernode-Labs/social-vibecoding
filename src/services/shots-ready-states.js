@@ -92,6 +92,7 @@ const READY_STATES = Object.freeze([
     ['member', 'read_only_admin', 'full_admin']],
   ['shots-demo-full-admin-allowance-low-v1', 'a weekly building allowance nearly spent (a red credits pill)',
     ['full_admin']],
+  ['shots-demo-member-bot-rings-v1', 'Homeroom bot\'s needs-you rings in your bell', ['member']],
 ].map(([id, name, personas]) => Object.freeze({ id, name, personas: Object.freeze(personas) })));
 
 // The states a declared change can need that a copy holds only when
@@ -139,6 +140,12 @@ const NEEDS = Object.freeze([
     states: ['shots-demo-member-bot-deciders-v1'],
   },
   {
+    // 16 Oct 2026: how the bot's rings read in the bell.
+    needs: 'Homeroom bot\'s rings in the bell',
+    test: /\bhomeroom[_ ]?bot'?s? (?:rings?|notifications?)\b|\bbell\b[^.]{0,80}\bhomeroom[_ ]?bot\b|\bhomeroom[_ ]?bot\b[^.]{0,80}\bbell\b/i,
+    states: ['shots-demo-member-bot-rings-v1'],
+  },
+  {
     needs: 'checks part-way through',
     test: /\bchecks? (?:are |is )?(?:still )?(?:mid[- ]?run|part[- ]?way|half[- ]?way|part done|half done)\b|\b(?:mid[- ]?run|part[- ]?way through)\b|\bwhile (?:a |the |its )?(?:change's |proposal's )?(?:checks|tests) (?:run|are running)\b/i,
     states: ['shots-demo-member-checks-part-way-v1'],
@@ -156,11 +163,17 @@ const NEEDS = Object.freeze([
     states: [],
   },
   {
+    // The invited fixtures (#4437) hold this on Homeroom's own copies: the
+    // link itself for a signed-out visitor, the two invited members for the
+    // personas they are shot as.
     needs: 'an account somebody invited',
     test: /\b(?:invited (?:\w+ )?(?:member|person|people|user|account|friend)s?|(?:member|person|user|account)s? (?:who|that) (?:was|were|has been|have been) invited|accept(?:ed|s|ing)? (?:an|the|their) invit(?:e|ation))\b/i,
-    states: [],
+    states: ['platform-guest-invite-link-v1', 'platform-invited-member-first-visit-v1',
+      'platform-invited-member-listed-v1'],
   },
-  { needs: 'an account on the waitlist', test: /\bwait[- ]?list(?:ed)?\b/i, states: [] },
+  // The listed invited member is on the platform waitlist, joined by email.
+  { needs: 'an account on the waitlist', test: /\bwait[- ]?list(?:ed)?\b/i,
+    states: ['platform-invited-member-listed-v1'] },
   {
     // Words that make the bot answer, not ones that describe what it already
     // said: "ask the Homeroom bot to close it" and "the bot replies", never
@@ -174,14 +187,25 @@ const NEEDS = Object.freeze([
     needs: 'an empty state, or an account with nothing of its own yet',
     test: /\b(?:new (?:user|member|account|player)s?|brand[- ]new (?:user|member|account)s?|first[- ]time (?:user|member|visitor)s?|(?:has|have)(?:n't| not| never) (?:\w+ ){0,2}yet|no \w+ (?:\w+ )?yet|empty state)\b/i,
     states: [],
-    // The guest browser IS a visitor with nothing yet.
-    skipPersonas: ['guest'],
+    // The guest browser IS a visitor with nothing yet; the invited members
+    // are fixtures whose own fresh state is the fixture (#4437).
+    skipPersonas: ['guest', 'invited_member', 'invited_member_listed'],
   },
 ]);
 
 const SEEDS = Object.freeze({
   self: 'the staging seeds in src/db/migrate.js',
   child: 'the app\'s own staging seed (its IS_STAGING seed)',
+});
+
+// Fixture entries (shots-fixtures.js) a need can be held by, beside the
+// ready-made states: people the platform's paired copies are seeded with,
+// each with the personas it is shot as. Homeroom's own copies only — a child
+// app's have none, and their needs stay warned about.
+const FIXTURE_STATES = Object.freeze({
+  'platform-guest-invite-link-v1': ['guest'],
+  'platform-invited-member-first-visit-v1': ['invited_member'],
+  'platform-invited-member-listed-v1': ['invited_member_listed'],
 });
 
 // What a seed may hold. The platform's seed rule ("seed fake identities
@@ -229,8 +253,11 @@ function declarationAdvice(intent, { selfApp = false } = {}) {
       if ((need.skipPersonas || []).includes(story.persona)) continue;
       // A ready-made state helps only a change shot as somebody it is for:
       // the nearly spent allowance is the full admin's, not the member's.
+      // The invited fixtures hold theirs the same way (#4437).
       const heldForThem = need.states.some((id) => personasOf.has(id)
-        && (!story.persona || personasOf.get(id).includes(story.persona)));
+        && (!story.persona || personasOf.get(id).includes(story.persona)))
+        || (selfApp && need.states.some((id) => FIXTURE_STATES[id]
+          && (!story.persona || FIXTURE_STATES[id].includes(story.persona))));
       if (!need.live && (setup || heldForThem)) continue;
       if (!need.test.test(words)) continue;
       if (!lacking.has(need)) lacking.set(need, []);

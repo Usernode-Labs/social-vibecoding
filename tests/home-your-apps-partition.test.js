@@ -58,8 +58,8 @@ function makeHome(appOver) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  // home-layout.js is a plain script with no import; topRowApps (#4935)
-  // resolves HomeLayout against it, so it loads wherever Home does.
+  // home-layout.js is a plain script with no import; it loads wherever Home
+  // does, and the drag recognizers below resolve HomeLayout against it too.
   vm.runInContext(`${LAYOUT_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   return sandbox.__Home;
 }
@@ -370,77 +370,27 @@ test('partitionApps: a row with no created_at is not a hoist candidate', () => {
   assert.equal(Home.partitionApps([other, dated]).yours[0].slug, 'dated');
 });
 
-// ── The desktop strip's pinned part (#4935) ───────────────────────
+// ── The desktop strip's pinned part (#5323) ───────────────────────
 //
-// "Pinned" on the strip is the TOP ROW of My apps, in reading order, as
-// the viewer arranged it on Home. Home names it to the nav bridge on
-// every grid paint (topRowApps → UsernodeReact.nav.setPinnedApps); the
-// strip's store and the drawing live in the nav feature and are pinned
-// by tests/nav-tab-bar.test.js and tests/pinned-apps-store.test.js.
+// The strip's pins are the viewer's own list now (features/nav/
+// pinned-apps-store.js, pinned by tests/pinned-apps-store.test.js and
+// tests/nav-tab-bar.test.js). Home publishes nothing to it any more — no
+// grid paint writes to the strip at all. The one path from here is a My
+// apps tile dropped on the "Pin here" slot, wired into the grid placement
+// recognizer in _attachGridPlacement, the same way the widget strip's drop
+// is.
 
 // A layout, as HomeLayout.toWire / a stored _layouts entry writes it.
 const cell = (slug, col, row) => ({ type: 'app', slug, col, row });
 
-test('topRowApps: row 0 only, in reading order, holes skipped', () => {
-  const Home = makeHome();
-  Home._apps = [
-    app({ slug: 'left', name: 'Left', icon_url: 'https://sv.test/l.png', is_favorited: true }),
-    app({ slug: 'right', name: 'Right', icon_emoji: '🎲', is_favorited: true }),
-  ];
-  // A hole at col 1, an app on row 1 (a second-row tile must never lead),
-  // and a widget cell the overhaul no longer places but the model still
-  // tolerates.
-  const layout = [
-    cell('left', 0, 0),
-    { type: 'widget', widget: 'challenges', col: 1, row: 0 },
-    cell('right', 2, 0),
-    cell('left', 0, 1),
-  ];
-  const tops = Home.topRowApps(layout);
-  // Spread before asserting: topRowApps returns a vm-realm array, whose
-  // Array.prototype deepStrictEqual rejects against this file's own.
-  assert.deepEqual([...tops].map((a) => a.slug), ['left', 'right'],
-    'reading order left to right, the widget hole and row 1 dropped');
-  assert.deepEqual(
-    { ...tops[0] },
-    { slug: 'left', name: 'Left', iconUrl: 'https://sv.test/l.png', iconEmoji: null },
-    'display fields only: icon_url maps to iconUrl, a missing emoji is null'
-  );
-  assert.deepEqual(
-    { ...tops[1] },
-    { slug: 'right', name: 'Right', iconUrl: null, iconEmoji: '🎲' }
-  );
-});
-
-test('topRowApps: a slug off My apps is dropped, demos included', () => {
-  const Home = makeHome();
-  // 'stranger' is neither a member nor a favourite; a demo tile is never
-  // either, so the same guard covers it without a demo-specific check.
-  Home._apps = [
-    app({ slug: 'mine', is_favorited: true }),
-    app({ slug: 'stranger' }),
-  ];
-  const tops = Home.topRowApps([cell('stranger', 0, 0), cell('gone', 1, 0), cell('mine', 2, 0)]);
-  assert.deepEqual([...tops].map((a) => a.slug), ['mine'],
-    'unknown and not-yours slugs leave no hole in the strip either');
-});
-
-test('topRowApps: no layout, or nothing of yours on row 0, is an empty list', () => {
-  const Home = makeHome();
-  Home._apps = [app({ slug: 'mine', is_collaborator: true })];
-  assert.equal(Home.topRowApps(null).length, 0, 'null layout');
-  assert.equal(Home.topRowApps([]).length, 0, 'empty layout');
-  assert.equal(Home.topRowApps([cell('mine', 0, 3)]).length, 0, 'yours, but not on row 0');
-});
-
-// The publish side: a render of the GRID branch hands the top row to the
-// nav bridge once; a search render (and, by the same branch, the offline
-// and error states that share its shape) publishes nothing. The sandbox is
-// the render-capable one from home-create-tile.test.js, with a recording
-// bridge where the nav island would be.
+// The render-capable sandbox, with a recording bridge where the nav island
+// would be: no render may name the bridge's pin calls, and the placement
+// tests read what the drag wiring sends it.
 
 function makePublishingHome() {
   const pins = [];
+  const stripPins = [];
+  const dropStates = [];
   const sandbox = {
     console,
     App: { user: { id: 1, canCreateApps: true } },
@@ -465,6 +415,9 @@ function makePublishingHome() {
     UsernodeReact: {
       nav: {
         setPinnedApps: (apps) => { pins.push(JSON.parse(JSON.stringify(apps))); },
+        pinStatus: () => 'ok',
+        pinApp: (a) => { stripPins.push(JSON.parse(JSON.stringify(a))); return true; },
+        setPinDrop: (state) => { dropStates.push(state); },
       },
     },
   };
@@ -476,11 +429,11 @@ function makePublishingHome() {
   installGridStore(sandbox);
   sandbox.HomePanels = { render: () => {}, ensureLoaded: () => Promise.resolve() };
   vm.runInContext(`${LAYOUT_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
-  return { Home: sandbox.__Home, pins };
+  return { Home: sandbox.__Home, pins, stripPins, dropStates, sandbox };
 }
 
-test('a grid render publishes the top row to the nav bridge once (#4935)', () => {
-  const { Home, pins } = makePublishingHome();
+test('a grid render writes nothing to the strip: no publish, no pin (#5323)', () => {
+  const { Home, pins, stripPins } = makePublishingHome();
   Home._apps = [
     app({ slug: 'first', name: 'First', is_favorited: true }),
     app({ slug: 'second', name: 'Second', is_collaborator: true }),
@@ -488,17 +441,98 @@ test('a grid render publishes the top row to the nav bridge once (#4935)', () =>
   Home._appsLoaded = true;
   Home._layouts = { 4: [cell('second', 0, 0), cell('first', 1, 0)] };
   Home.render();
-  assert.equal(pins.length, 1, 'one publish per grid paint');
-  assert.deepEqual(pins[0].map((a) => a.slug), ['second', 'first'],
-    'the arrangement the viewer chose, reading order');
+  assert.equal(pins.length, 0, 'the top row is not published — the strip is not Home\'s mirror');
+  assert.equal(stripPins.length, 0, 'a paint never pins anything either');
 });
 
-test('a search render publishes nothing (#4935)', () => {
-  const { Home, pins } = makePublishingHome();
+// The drag wiring: a My apps tile dropped on the strip's pinned part pins
+// through the bridge and writes NOTHING to the layout. The recognizer is
+// captured from the stubbed kit, so the real callbacks run.
+
+function makeDraggingHome() {
+  const made = makePublishingHome();
+  const { Home, sandbox } = made;
+  let handlers = null;
+  // The strip, as the rail shows it while a drag is up: visible, over the
+  // probe point, with the "Pin here" slot row drawn at a known rect.
+  const stripRect = { left: 0, top: 100, right: 76, bottom: 600, width: 76, height: 500 };
+  const dropRect = { left: 10, top: 110, right: 66, bottom: 168, width: 56, height: 58 };
+  const fakeStrip = {
+    classList: { contains: (name) => name === 'hidden' && made.stripHidden === true },
+    getBoundingClientRect: () => stripRect,
+    querySelector: (sel) => (sel === '[data-strip-drop]' && !made.noDropRow
+      ? { getBoundingClientRect: () => dropRect } : null),
+  };
+  sandbox.document.getElementById = (id) => (id === 'platform-strip-apps' ? fakeStrip : null);
+  sandbox.unNative = {
+    attachGridPlacement: (el, h) => { handlers = h; return { detach() {} }; },
+  };
+  made.captured = () => handlers;
+  return made;
+}
+
+test('a My apps tile dropped on the strip pins through the bridge and leaves the layout alone (#5323)', () => {
+  const made = makeDraggingHome();
+  const { Home, stripPins, dropStates } = made;
   Home._apps = [app({ slug: 'first', name: 'First', is_favorited: true })];
   Home._appsLoaded = true;
-  Home._query = 'first';
-  Home.render();
-  assert.equal(pins.length, 0,
-    'the search list is not the shelf: the strip keeps the last published top row');
+  Home._layouts = { 4: [cell('first', 0, 0)] };
+  const layoutsBefore = JSON.stringify(Home._layouts);
+  Home._attachGridPlacement({ appendChild: () => {} }, true);
+  const h = made.captured();
+  assert.ok(h, 'the recognizer was attached with Home\'s callbacks');
+
+  // Over the strip, while the slot is up: the sentinel cell, ahead of the
+  // grid's own geometry. The slot un-hides the strip on lift, so the rect
+  // test sees it.
+  Home._dragActive = false;
+  h.onLift({ dataset: { slug: 'first' } });
+  assert.deepEqual(dropStates, ['idle'], 'the "Pin here" slot goes up on lift');
+  assert.equal(h.cellFromPoint(10, 110, {}), Home.STRIP_PIN_CELL, 'the strip is the cell over the strip');
+  const el = { dataset: { slug: 'first' } };
+  assert.equal(h.canPlace(el, Home.STRIP_PIN_CELL), true, 'the strip\'s list says ok');
+  assert.deepEqual({ ...h.rectForCell(el, Home.STRIP_PIN_CELL) }, { left: 10, top: 110 },
+    'the tile settles on the slot row the strip drew');
+
+  // A committed drop parks the slug and writes nothing to the layout.
+  h.onPlace(el, Home.STRIP_PIN_CELL);
+  assert.equal(Home._pendingStripPin, 'first', 'the pin waits for onSettle');
+  assert.equal(JSON.stringify(Home._layouts), layoutsBefore, 'the arrangement on My apps is untouched');
+
+  // Settled: the bridge pins the app with its display data, and the slot
+  // goes away — whatever happened, including a settle with nothing pending.
+  h.onSettle();
+  assert.deepEqual({ ...stripPins[0] },
+    { slug: 'first', name: 'First', iconUrl: null, iconEmoji: null },
+    'display data only: icon_url maps to iconUrl, a missing emoji to null');
+  assert.deepEqual(dropStates, ['idle', null], 'the slot clears on every settle');
+  assert.equal(Home._pendingStripPin, null);
+  assert.equal(Home._dragActive, false);
+  h.onSettle();
+  assert.deepEqual(dropStates, ['idle', null, null], 'and again on a settle with nothing pending');
+});
+
+test('a refused drop (already pinned, or full) never pins and never moves the tile (#5323)', () => {
+  const made = makeDraggingHome();
+  const { Home, stripPins, dropStates } = made;
+  Home._apps = [app({ slug: 'first', name: 'First', is_favorited: true })];
+  Home._appsLoaded = true;
+  Home._layouts = { 4: [cell('first', 0, 0)] };
+  const layoutsBefore = JSON.stringify(Home._layouts);
+  Home._attachGridPlacement({ appendChild: () => {} }, true);
+  const h = made.captured();
+  const el = { dataset: { slug: 'first' } };
+
+  // The bridge's own list answers 'already': canPlace vetoes, the slot names
+  // the refusal, and a settle with nothing parked pins nothing.
+  made.sandbox.UsernodeReact.nav.pinStatus = () => 'already';
+  assert.equal(h.canPlace(el, Home.STRIP_PIN_CELL), false);
+  h.onHover(el, Home.STRIP_PIN_CELL, false);
+  assert.deepEqual(dropStates, ['already'], 'the slot says what a drop would do instead');
+  h.onHover(el, null, false);
+  assert.deepEqual(dropStates, ['already', 'idle'], 'back over the grid, the slot waits neutrally');
+  h.onSettle();
+  assert.deepEqual(stripPins, [], 'a refused drop wrote no pin');
+  assert.deepEqual(dropStates, ['already', 'idle', null], 'and cleared the slot anyway');
+  assert.equal(JSON.stringify(Home._layouts), layoutsBefore, 'and moved no tile');
 });

@@ -114,6 +114,19 @@ test('held says which limit, its place in line, and for an allowance when it lif
   assert.equal(wide.held.limit, 'bot_wide');
   const week = track.trackOf({ job: job({ stage: 'on_hold', since: ago(60) }), until: '2026-10-19T00:00:00.000Z' });
   assert.deepEqual(week.held, { limit: 'allowance', position: null, until: '2026-10-19T00:00:00.000Z' });
+  // 16 Oct 2026: held, but a person has it now: theirs, with no place in line.
+  const taken = track.trackOf({ job: job({ outcome: 'held', id: 9 }), runs: [{ id: 9, verdict: 'ready', cap_suppressed: 'proposals_per_app' }], held: { position: null, limit: 'taken', by: 'snait' } });
+  assert.equal(taken.why, 'taken');
+  assert.deepEqual(taken.held, { limit: 'taken', position: null, until: null, by: 'snait' });
+});
+
+test('a row of the slots page quotes its request: the asker\'s first line, not what Homeroom wrote around it', () => {
+  assert.equal(track.requestExcerpt('**Source:** Suggest an improvement on Homeroom\n\n![screenshot](x.png)\n\nChallenges still refers to season 2\n\nPinned with Comment mode'),
+    'Challenges still refers to season 2');
+  assert.equal(track.requestExcerpt('## Make it *darker* at `night`'), 'Make it darker at night');
+  assert.equal(track.requestExcerpt(`${'word '.repeat(60)}`, 20), 'word word word word\u2026');
+  assert.equal(track.requestExcerpt(''), null);
+  assert.equal(track.requestExcerpt('**Source:** a comment pin'), null, 'nothing of their own: no line');
 });
 
 test('a stopped build says why, in codes, never the agent\'s words', () => {
@@ -153,6 +166,24 @@ test('the demo tray, the demo slots and the demo request carry tracks', async ()
   assert.deepEqual(slots.slots.map((s) => s.track.state), ['building', 'building', 'vote', 'checks', 'waiting']);
   assert.equal(slots.slots[1].track.try, 2, 'its fix is the second try');
   assert.equal(slots.waiting[0].track.held.position, 1);
+  // Its rows are staging's mock requests when it has them, so a tap opens
+  // one; each says who asked, and one a person took is listed apart.
+  const mocked = track.demoSlots({ slug: 'staging-demo', name: 'Staging demo' }, NOW, [
+    { number: 900009, title: '[Mock] Newly filed issue', body: 'Staging-only mock issue.' },
+  ]);
+  assert.deepEqual([mocked.waiting[0].issueNumber, mocked.waiting[0].title, mocked.waiting[0].excerpt], [900009, '[Mock] Newly filed issue', 'Staging-only mock issue.']);
+  assert.ok(mocked.slots.every((s) => s.askedBy), 'every row says who asked');
+  assert.deepEqual(mocked.taken.map((s) => [s.issueNumber, s.by, s.track.why]), [[900014, 'maya-builder', 'taken']]);
+  // And every other open request, by where the bot is on it.
+  assert.deepEqual(mocked.waitingOn.map((s) => s.track.why), ['plan', 'question']);
+  assert.deepEqual(mocked.upNext.map((s) => [s.kind, s.position ?? null, s.trial ?? null]), [['queued', null, null], ['older', 1, 'ready'], ['older', 2, null]]);
+  assert.deepEqual(mocked.stopped.map((s) => s.track.why), ['no_change']);
+  assert.deepEqual(mocked.leftToPeople.map((s) => s.track.why), ['needs_person']);
+  assert.equal(mocked.withPeople, 3);
+  assert.deepEqual(['waiting', 'queued', 'planning', 'stopped'].map((state) => track.restSection({ state, why: null })),
+    ['waitingOn', 'upNext', 'upNext', 'stopped']);
+  assert.equal(track.restSection({ state: 'stopped', why: 'needs_person' }), 'leftToPeople');
+  assert.equal(track.restSection({ state: 'vote', why: null }), null, 'a change up for a vote holds a slot');
   const request = track.demoRequestTrack({ slug: 'staging-demo' }, 900018, 'Staging demo request', NOW);
   assert.equal(request.state, 'building');
   assert.equal(request.try, 2);

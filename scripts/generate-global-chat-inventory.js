@@ -141,6 +141,21 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'bridge asset: where the platform is, read by the app-host Homeroom button, never a model-visible capability',
   },
   {
+    // #5249: kudos is parked. Members can no longer give, retract or pledge
+    // kudos, see who gave them or read their allowance anywhere in the
+    // shell, so no assistant offers that either. The leaderboard reads stay
+    // (Global Chat's "View leaderboard" action is built on one), as do a
+    // person's page and Your votes. The routes themselves are unchanged, and
+    // so is everything they wrote. Remove this entry when
+    // frontend/src/features/leaderboard/kudos-parked.ts goes back to false.
+    matches: (route) => (route.source === 'src/routes/kudos.js'
+        && (route.path === '/api/sessions/:id/kudos'
+          || (route.method === 'GET' && route.path === '/api/me/kudos-budget')))
+      || (route.source === 'src/routes/issues.js'
+        && route.method === 'POST' && route.path === '/api/apps/:slug/issues/:number/bounty'),
+    reason: 'kudos is parked (#5249): giving, retracting and pledging kudos, its givers and its allowance are off for members, so no assistant offers them',
+  },
+  {
     matches: (route) => route.path === '/api/iframe-token',
     reason: 'credential mint used by the app iframe transport, never a model-visible capability',
   },

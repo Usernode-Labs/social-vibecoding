@@ -38,10 +38,22 @@ const SUMMARY = {
 
 test('the three stat cards: merged, kudos, challenges — and a dash, not a zero, without data', () => {
   const { statsView } = loadTsx(STORE);
-  assert.deepEqual(statsView(SUMMARY).map((s) => [s.key, s.value, s.label]),
+  // With kudos on (the switch passed explicitly, #5249).
+  assert.deepEqual(statsView(SUMMARY, { kudosParked: false }).map((s) => [s.key, s.value, s.label]),
     [['merged', '9', 'live'], ['kudos', '3', 'kudos'], ['challenges', '2', 'challenges']]);
-  assert.deepEqual(statsView(null).map((s) => s.value), ['–', '–', '–'],
+  assert.deepEqual(statsView(null, { kudosParked: false }).map((s) => s.value), ['–', '–', '–'],
     'a read that failed is not a claim of zero');
+});
+
+test('parked (#5249), two stat cards: merged and challenges, side by side', () => {
+  const { statsView } = loadTsx(STORE);
+  assert.deepEqual(statsView(SUMMARY).map((s) => [s.key, s.value, s.label]),
+    [['merged', '9', 'live'], ['challenges', '2', 'challenges']], 'the default is the switch, which is on');
+  assert.deepEqual(statsView(null).map((s) => s.value), ['–', '–']);
+  const view = read('frontend/src/features/profile/profile-view.tsx');
+  assert.match(view, /const STAT_GRID = KUDOS_PARKED \? 'grid grid-cols-2 gap-2 mb-2' : 'grid grid-cols-3 gap-2 mb-2';/,
+    'the grid has as many columns as cards');
+  assert.match(view, /<div id="profile-stats" className=\{STAT_GRID\}>/);
 });
 
 test('the rows say what is behind them, from the data only', () => {
@@ -169,10 +181,12 @@ test('Me sits in the Workshop tab\'s frame, and its labels on the rows\' edge (#
 });
 
 test('every part of the older Profile has a home', () => {
-  // points, rank, breakdown, token → the Challenges tab's standing card
+  // rank and token → the Challenges tab's standing card; the points by event
+  // went with the seasons (the Semi design, 2026-10-16), and the points are
+  // on that tab's summary line
   const standing = read('frontend/src/features/leaderboard/your-standing.tsx');
-  assert.match(standing, /\{t\('leaderboard:standing\.byEvent'\)\}/);
-  assert.equal(message('leaderboard:standing.byEvent'), 'Points by event');
+  assert.match(standing, /id="leaderboard:standing\.rankOf"/);
+  assert.equal(message('leaderboard:standing.rankOf', { rank: 3, count: 12, number: '12' }), '<0>#3</0> of 12 people');
   assert.match(standing, /\{t\('leaderboard:standing\.token\.label'\)\}/);
   assert.equal(message('leaderboard:standing.token.label'), 'Token allocation');
   assert.match(read('frontend/src/features/leaderboard/challenges-pane.tsx'), /<YourStanding \/>/);

@@ -615,6 +615,20 @@ function stagingMockProposals(viewer) {
             { kind: 'pageerror', message: 'TypeError: Cannot read properties of undefined (reading \'rows\')', source: 'dev-kanban.tsx' },
           ],
         },
+        // Two green rows with something to say (services/check-signals.js):
+        // one failed in a burst at the start of the run and passed all three
+        // retries (often the environment, never proof of it), and one this proposal
+        // adds that held only on a fresh load after its address change.
+        {
+          name: 'The board opens on the Workshop', path: '/dev', status: 'pass',
+          runs: 4, passes: 3, fails: 1, flakyRun: true, passedOnRetry: true, retryClass: 'early_burst',
+          failureReason: '', consoleErrors: [],
+        },
+        {
+          name: 'Kudos totals open on the leaderboard tab', path: '/#leaderboard/kudos', status: 'pass',
+          cohortFallback: { waitMs: 12400, ms: 17800 }, authored: true,
+          failureReason: '', consoleErrors: [],
+        },
         {
           index: -3,
           name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail',

@@ -4,10 +4,10 @@
 //   discover   — the admin-curated featured tiles, the Popular lane, and
 //                "Browse all apps". The shell's ONLY door to the app
 //                directory, which is why it cannot be hidden.
-//   challenges — the season's open challenges with the viewer's progress,
-//                and under them the LEADERBOARD standings preview. That
-//                preview is where the standings live on the home screen now
-//                that the hamburger's Leaderboard row is gone.
+//   challenges — what the viewer can do next: their First challenges while
+//                any is unfinished, then up to three open ones, furthest
+//                along first, or one line when nothing is open. "See all"
+//                in its heading goes to the Challenges tab.
 //
 // CREATE APP WAS THE THIRD. It is the launcher grid's trailing tile now
 // (features/home/create-tile.tsx, placed by Home.render() — the prototype's
@@ -45,18 +45,14 @@
 // Each section has its own heading and navigation. Blocks are plain
 // full-width children — .home-column bounds the feed.
 //
-// DENSITY — a section sizes to its own CONTENT. That is the shape the full
-// render branch was always written for, and it is now the only one: the
-// capped variants (`inGrid: true`, the phone one-cell branch with its
-// two-row budget and its footer-less title bar) were concessions to a fixed
-// rectangle of the launcher canvas and went with the placement. What
-// survives is the four-row budget itself — a ~26px title bar, up to FOUR
-// 40px single-line rows, a ~27px footer — because it is a good density for
-// a home-screen block. Overflow is still handled by
-// rendering fewer rows plus the footer's expand toggle — never an inner
-// scroller (a nested scroll region inside the page scroller is a touch trap)
-// and never a horizontal pager (invisible to the screenshot capture and to
-// dapp.json checks, which can only navigate).
+// DENSITY — a section sizes to its own CONTENT. The capped variants
+// (`inGrid: true`, the phone one-cell branch with its two-row budget) were
+// concessions to a fixed rectangle of the launcher canvas and went with the
+// placement. Challenges draws a short pick (challengesView) and leaves the
+// rest to the Challenges tab behind "See all" — never an inner scroller (a
+// nested scroll region inside the page scroller is a touch trap), never a
+// horizontal pager (invisible to the screenshot capture and to dapp.json
+// checks, which can only navigate), and no longer an in-place expansion.
 //
 // THE LEADERBOARD FILL IS GONE. A standings preview used to sit under the
 // challenge rows — first as something to spend the fixed 2x2 rectangle on,
@@ -89,30 +85,16 @@ const HomePanels = {
   _inflight: null,
   TTL_MS: 60 * 1000,
 
-  // Which panels the viewer has expanded in place, this visit only. The
-  // expand toggle grows the block past its height cap and asks the server
-  // for the full list (finished challenges included); nothing is
-  // persisted, so a reload comes back collapsed. Deliberate: the cap is
-  // the default contract, and an expansion the user forgot about would
-  // quietly eat the fold forever.
-  _expanded: Object.create(null),
-
-  // ── The row budget ─────────────────────────────────────────────────
+  // ── The pick ───────────────────────────────────────────────────────
   //
-  // How many challenge rows the block draws before the footer takes over
-  // with "See all N". The server sends the whole collapsed scope (up to its
-  // 40-row ceiling, CHALLENGE_EXPANDED_LIMIT in src/routes/home-panels.js);
-  // this module orders it the Challenges tab's way and gives the ROW_SLOTS
-  // slots to the viewer's unfinished challenges first (#2490, visibleSlots),
-  // with a group cut mid-way when the cap falls inside it. Finished challenges
-  // only fill the slots that are left.
-  //
-  // It used to be a per-breakpoint pair — four here, and a PHONE_ROW_SLOTS of
-  // two for the single grid cell the block owned below 640px (#968). A fixed
-  // section has no cell to fit into, so there is one budget at every width,
-  // and the phone half went with the placement. Four survives as a PREVIEW
-  // cap; the footer's "See all N challenges" is the way past it.
-  ROW_SLOTS: 4,
+  // How many open challenges "Next challenges" draws. The server sends the
+  // whole open scope (up to its 40-row ceiling, CHALLENGE_EXPANDED_LIMIT in
+  // src/routes/home-panels.js) and this module picks from it
+  // (challengesView): a short look at what to do next, with the whole list one
+  // tap away behind "See all". The four-row preview, its "See all N
+  // challenges" / "Show less" toggle and the in-place expansion it fetched
+  // (`?expand=challenges`) went with the Semi design, 2026-10-16.
+  NEXT_SLOTS: 3,
 
   // `esc()` and `safeHref()` lived here. Both existed for the string
   // renderers: organiser prose (challenge goals, metric labels) landed in BOTH
@@ -147,9 +129,8 @@ const HomePanels = {
   // The block's rows in the Challenges tab's order
   // (TopochainChallenges._ordered), so the same challenges come out in the
   // same sequence on both surfaces. THE CLIENT IS THE SOURCE OF TRUTH: the
-  // server's ORDER BY only decides which rows survive its row ceiling. The
-  // expanded block draws this list as it is; the collapsed one picks its four
-  // from it (visibleSlots).
+  // server's ORDER BY only decides which rows survive its row ceiling.
+  // "Next challenges" breaks its ties in this sequence (nextRows).
   //
   // The keys, in order: the group (groupRankOf: First challenges while unfinished,
   // This week, Always open, Season challenges, then a finished First challenges group),
@@ -190,67 +171,50 @@ const HomePanels = {
       .map((x) => x.c);
   },
 
-  // Which rows to draw. Expanded draws everything the server sent, in
-  // orderRows' sequence, and the CSS cap lifts.
-  //
-  // COLLAPSED GIVES ITS SLOTS TO WHAT IS LEFT TO DO (#2490). It draws `slots`
-  // rows (ROW_SLOTS unless a caller says otherwise): the viewer's unfinished
-  // challenges first, in orderRows' sequence, then finished ones to fill the
-  // slots that are left, in the same sequence. It used to draw the first
-  // `slots` rows of orderRows as they came, and that list sorts by group
-  // first: a group kept its finished cards, and a card the viewer had finished
-  // in This week pushed one they had not started in Always open off the block.
-  //
-  // The finished fill still draws rather than leaving a slot empty, so the
-  // block keeps its size, a season the viewer has finished still has cards,
-  // and a half-done setup keeps its check mark in view. `doneFrom` is the
-  // index where that fill starts, and challengeGroups heads it "Done". It is
-  // null when there is no fill, and always null expanded, where a finished
-  // card stays in its own group as it does on the tab. The overflow
-  // affordance is the footer's expand toggle, so it costs no row slot of its
-  // own (it used to take the fourth).
-  //
-  // `collapsed` forced the un-expanded rendering for the phone branch, whose
-  // one-cell footprint could not grow (#968). Nothing forces it now — the
-  // section grows with its content — but it stays honoured so the option is
-  // still the way to render a preview of a block somebody has expanded.
-  //
-  // `link` stays in the return shape as a compatibility flag for anything
-  // still reading it, but it is always false: the footer owns overflow.
-  visibleSlots(panel, opts) {
-    const rows = HomePanels.orderRows(panel && panel.challenges, panel && panel.onboarding);
-    const total = Number(panel && panel.total) || 0;
-    const key = panel && panel.key;
-    const slots = Number(opts && opts.slots) > 0
-      ? Number(opts.slots) : HomePanels.ROW_SLOTS;
-    const collapsed = !!(opts && opts.collapsed);
-    if (!collapsed && key && HomePanels._expanded[key]) {
-      return { rows, link: false, total, expanded: true, doneFrom: null };
-    }
-    const open = rows.filter((c) => !HomePanels.orderDone(c));
-    const drawn = open.concat(rows.filter((c) => HomePanels.orderDone(c))).slice(0, slots);
-    return {
-      rows: drawn,
-      link: false, total, expanded: false,
-      doneFrom: open.length < drawn.length ? open.length : null,
-    };
+  // The First challenges in the admin's order, done ones IN PLACE: a card
+  // the viewer finished keeps its seat and shows its Done rail, so the four
+  // read as one checklist being ticked rather than a list that reshuffles
+  // under the thumb. `display_order`, then `id`, when every row carries an
+  // order (the tab's public list order); otherwise the server's sequence.
+  inAdminOrder(rows) {
+    const list = (rows || []).slice();
+    const byOrder = list.length > 0 && list.every((c) => c && c.display_order != null
+      && c.display_order !== '' && Number.isFinite(Number(c.display_order)));
+    if (!byOrder) return list;
+    return list
+      .map((c, i) => ({ c, i }))
+      .sort((a, b) => (Number(a.c.display_order) - Number(b.c.display_order))
+        || (Number(a.c.id) - Number(b.c.id)) || (a.i - b.i))
+      .map((x) => x.c);
   },
 
-  // "1 of 6 · 3,900 pts left" — folded into the title bar rather than
-  // spending a row of its own. The points clause only appears when the
-  // server could total the open rewards honestly (organiser prose can't
-  // be summed; see parseRewardPoints server-side).
-  summaryLine(panel) {
-    if (!panel) return '';
-    const total = Number(panel.total) || 0;
-    const done = Number(panel.done) || 0;
-    const remaining = panel.points_remaining;
-    if (typeof remaining === 'number' && Number.isFinite(remaining) && remaining > 0) {
-      return message('home:challenges.summary.withPointsLeft', {
-        done, total, points: remaining.toLocaleString('en-US'), count: remaining,
-      });
-    }
-    return message('home:challenges.summary.progress', { done, total });
+  // How far along an unfinished challenge is, for "Next challenges":
+  // `fraction` is the counted share (current over a target above one; 0 for
+  // a yes-or-no challenge, which has no share to show), and `started` is
+  // whether the viewer has anything on it at all (a count, or points). The
+  // same facts challengeRowView turns into the rail.
+  progressOf(c) {
+    const target = HomePanels.hasMeter(c) ? Number(c.progress.target) : 0;
+    const current = target > 0 ? Math.max(0, Number(c.progress.current) || 0) : 0;
+    const fraction = target > 1 ? Math.min(current, target) / target : 0;
+    return { fraction, started: fraction > 0 || Number(c.earned_points) > 0 };
+  },
+
+  // "Next challenges": the open challenges the viewer has not finished,
+  // furthest along first (the counted share, then Started before Not
+  // started), ties in orderRows' sequence, cut to NEXT_SLOTS. A challenge
+  // carried while not open (organiser-closed, or outside its window) is not
+  // something to do next. Stable, and the input is not mutated.
+  nextRows(rows, onboarding) {
+    return HomePanels.orderRows(rows, onboarding)
+      .filter((c) => c && HomePanels.groupOf(c).key !== 'setup'
+        && !HomePanels.orderDone(c) && c.open !== false)
+      .map((c, i) => ({ c, i, p: HomePanels.progressOf(c) }))
+      .sort((a, b) => (b.p.fraction - a.p.fraction)
+        || ((b.p.started ? 1 : 0) - (a.p.started ? 1 : 0))
+        || (a.i - b.i))
+      .slice(0, HomePanels.NEXT_SLOTS)
+      .map((x) => x.c);
   },
 
   // ── Data ───────────────────────────────────────────────────────────
@@ -259,8 +223,8 @@ const HomePanels = {
   // callers share the in-flight promise.
   //
   // A FORCED read is a refresh, not a boot. Its caller knows the copy is
-  // behind something that just happened (a join the server has counted, the
-  // block expanded, a First challenge ticked), so two things that suit a
+  // behind something that just happened (a join the server has counted, an
+  // app visit credited, a First challenge ticked), so two things that suit a
   // boot are wrong for it:
   //   * sharing a read already in flight, which may have left before that
   //     thing happened. It waits for that read and then reads again, once,
@@ -301,8 +265,7 @@ const HomePanels = {
     }
     if (force) App._announceRefreshIntent?.();
     // ?demo=1 rides along exactly like Home.load()'s own demoQS — the
-    // server only honours it in staging. `expand` names the one panel the
-    // viewer has opened in place, so the fetch brings its full list.
+    // server only honours it in staging.
     //
     // `challenges=few|none` rides along WITH it: the demo variant is chosen
     // server-side, so a param left in the address bar but not on the fetch
@@ -318,9 +281,6 @@ const HomePanels = {
         if (variant) params.set('challenges', variant);
       }
     } catch (err) { /* ignore */ }
-    const expandKey = Object.keys(HomePanels._expanded)
-      .find((k) => HomePanels._expanded[k]);
-    if (expandKey) params.set('expand', expandKey);
     const qs = params.toString() ? `?${params.toString()}` : '';
 
     const init = { credentials: 'same-origin' };
@@ -501,104 +461,99 @@ const HomePanels = {
 
   // ── The Challenges block's view model ──────────────────────────────
   //
-  // THE PHONE SHAPE (#968) IS GONE. It existed because the widget owned ONE
-  // grid cell below five columns — two rows, the way out in the title bar, no
-  // footer, never expanded — and every one of those was a concession to a
-  // 116px rectangle. THE UI OVERHAUL made this a fixed SECTION that sizes to
-  // its own content, so the full shape is right at every width. The
-  // `opts`/`inGrid`/`cols` triple that chose between them went with it; the
-  // four-row budget is now simply THE budget.
+  // THE BLOCK IS NAMED BY WHAT IT HOLDS (the Semi design, 2026-10-16). One
+  // of four modes, each its own heading:
+  //
+  //   first — "First challenges" while any First challenge (ONBOARDING) is
+  //           unfinished: every one of them, in the admin's order, the done
+  //           ones in place with their Done rail (inAdminOrder).
+  //   next  — "Next challenges" once they are all done: up to NEXT_SLOTS open
+  //           challenges the viewer has not finished, furthest along first
+  //           (nextRows).
+  //   done  — "Challenges" over one line, when nothing is open and every
+  //           This week challenge is done: "All done for this week", and how
+  //           many start again on Monday (the week the scorer counts by).
+  //   none  — "Challenges" over one line, when nothing is open otherwise,
+  //           a season with no challenges included: "No challenges right
+  //           now". The only mode without "See all": there is nothing behind
+  //           it to see.
+  //
+  // What it no longer says, on purpose: the season and its progress bar, a
+  // points total, "N of M done", group headers, and any deadline or
+  // countdown. The payload still carries `season`, `points_*`, `all_*` and
+  // `ends_at`; they are ignored here.
   challengesView(panel) {
-    const total = Number(panel.total) || 0;
-    // A NEW ACCOUNT'S FIRST CHALLENGES ARE ORDINARY CARDS (#4635). Until then
-    // a new account's season waited on a Getting started card on top of Home,
-    // and this block drew one dashed "N challenges unlock after Getting
-    // started" card in its place. Every new account gets a tour now, so
-    // the card and the gate are gone: the First challenges are rows like any
-    // other, under their own "First challenges" header, listed first while
-    // any of them is unfinished (groupRankOf) and last once all are done.
-    const expanded = !!HomePanels._expanded[panel.key];
-    const empty = !total
-      || !Array.isArray(panel.challenges)
-      || !panel.challenges.length;
-    // A payload that came back empty can't be expanded — and leaving the flag
-    // set would keep ?expand=challenges on every later fetch, asking for a
-    // finished-challenge list that would repopulate the block.
-    if (empty && HomePanels._expanded[panel.key]) HomePanels._expanded[panel.key] = false;
-    if (empty) {
-      return {
-        key: panel.key,
-        title: panel.title || message('home:challenges.fallbackTitle'),
-        summary: null,
-        season: null,
-        total,
-        allTotal: total,
-        expandable: false,
-        expanded: false,
-        rows: [],
-        groups: [],
-      };
-    }
-    const { rows, doneFrom } = HomePanels.visibleSlots(panel, { slots: HomePanels.ROW_SLOTS });
-    // #1824: whether the footer's expand toggle has anything to reveal.
-    // `total` counts the OPEN challenges and `all_total` the ones an
-    // expansion would draw (the season's finished and out-of-window ones
-    // too), so the honest question is "are there more than are on screen?" —
-    // and a block already showing every challenge there is draws no toggle,
-    // instead of a "See all 3 challenges" beside three challenges. An older
-    // cached payload has no `all_total`; `total` alone is the fallback.
-    const allTotal = Math.max(
-      total,
-      Number.isFinite(Number(panel.all_total)) ? Number(panel.all_total) : 0
-    );
-    const expandable = expanded || rows.length < allTotal;
-    const season = HomePanels.seasonView(panel);
-    const views = rows.map((c) => HomePanels.challengeRowView(c, panel));
-    const groups = HomePanels.challengeGroups(rows, views, panel, doneFrom);
-    return {
+    const all = Array.isArray(panel.challenges) ? panel.challenges.filter(Boolean) : [];
+    const base = {
       key: panel.key,
       title: panel.title || message('home:challenges.fallbackTitle'),
-      // Still computed, and still the one-line form of the same counts
-      // the season progress draws — it is the block's accessible summary and what the ⋮
-      // menu and the tests read. It is no longer rendered in the section
-      // heading; `season` is where it shows.
-      summary: HomePanels.summaryLine(panel),
-      season,
-      total,
-      allTotal,
-      expandable,
-      expanded,
-      // The drawn rows in visibleSlots' sequence, which is the groups'
-      // sequence too: `data-rows` counts them and the tests read them.
-      // `groups` holds the SAME row objects under their headers, so a deadline
-      // a header took off a card is gone from both.
-      rows: views,
-      groups,
+    };
+    const rowsOf = (list) => list.map((c) => HomePanels.challengeRowView(c));
+    const setup = all.filter((c) => HomePanels.groupOf(c).key === 'setup');
+    if (setup.length && !HomePanels.setupFinished(all, panel.onboarding)) {
+      return {
+        ...base,
+        mode: 'first',
+        heading: message('home:challenges.headingFirst'),
+        seeAll: true,
+        rows: rowsOf(HomePanels.inAdminOrder(setup)),
+        note: null,
+      };
+    }
+    const next = HomePanels.nextRows(all, panel.onboarding);
+    if (next.length) {
+      return {
+        ...base,
+        mode: 'next',
+        heading: message('home:challenges.headingNext'),
+        seeAll: true,
+        rows: rowsOf(next),
+        note: null,
+      };
+    }
+    const weekly = all.filter((c) => HomePanels.groupOf(c).key === 'week');
+    if (weekly.length && weekly.every((c) => HomePanels.orderDone(c))) {
+      return {
+        ...base,
+        mode: 'done',
+        heading: message('home:challenges.heading'),
+        seeAll: true,
+        rows: [],
+        note: {
+          title: message('home:challenges.allDone.title'),
+          text: message('home:challenges.allDone.text', { count: weekly.length }),
+        },
+      };
+    }
+    return {
+      ...base,
+      mode: 'none',
+      heading: message('home:challenges.heading'),
+      seeAll: false,
+      rows: [],
+      note: {
+        title: message('home:challenges.none.title'),
+        text: message('home:challenges.none.text'),
+      },
     };
   },
 
-  // ── The groups ─────────────────────────────────────────────────────
+  // ── The categories ─────────────────────────────────────────────────
   //
-  // The ITERATION 03 board sorts challenges into groups by category: Get
-  // started, This week, Always open, and the season's other challenges. The
-  // Challenges tab's controller (TopochainChallenges) holds the same table
-  // and the same rank rule; two classic scripts cannot import one another, so
-  // both spell them out, and tests/challenge-group-parity.test.js holds the
-  // two copies to the same answers. The keys are not the headings: the tab's
-  // ids (`tc-se-group-<key>`) and the tests name the keys. `order` is each
-  // group's rank while setup is unfinished; groupRankOf moves a finished Get
-  // started to the end.
+  // A challenge's category decides two things here: whether it is a First
+  // challenge (ONBOARDING, the `setup` key) and whether it counts by the week
+  // (WEEKLY, `week`), whose rail says "this week". The Challenges tab reads
+  // the same two facts and whether a challenge is done the same way, and
+  // tests/challenge-group-parity.test.js holds the two copies to those three
+  // answers. It carries no headings any more: Home draws no group headers.
+  // `order` is each category's rank while setup is unfinished; groupRankOf
+  // moves a finished First challenges group to the end.
   CHALLENGE_GROUPS: {
-    ONBOARDING: { key: 'setup', heading: 'home:challenges.group.setup', order: 0 },
-    WEEKLY: { key: 'week', heading: 'home:challenges.group.week', order: 1 },
-    PERSISTENT: { key: 'always', heading: 'home:challenges.group.always', order: 2 },
+    ONBOARDING: { key: 'setup', order: 0 },
+    WEEKLY: { key: 'week', order: 1 },
+    PERSISTENT: { key: 'always', order: 2 },
   },
-  OTHER_GROUP: { key: 'other', heading: 'home:challenges.group.other', order: 3 },
-  // The collapsed block's finished fill (visibleSlots' `doneFrom`), headed
-  // after every group that still has something to do (#2490). Home only: the
-  // tab draws every card, so a finished card stays in its own group there. No
-  // `order`, because no category resolves to it and it never ranks.
-  DONE_GROUP: { key: 'done', heading: 'home:challenges.group.done' },
+  OTHER_GROUP: { key: 'other', order: 3 },
 
   // A challenge's group, from its label: the category, trimmed and uppercased.
   groupOf(c) {
@@ -607,30 +562,10 @@ const HomePanels = {
       ? HomePanels.CHALLENGE_GROUPS[category] : HomePanels.OTHER_GROUP;
   },
 
-  // When a row's time runs out, for its countdown: its own `ends_at`, else
-  // `fallback` (the season's end). A This week challenge's cap starts again
-  // every Monday 00:00 UTC, the week the scorer counts by, so its clock runs
-  // to the end of this week when that comes first. The same rule as the
-  // Challenges tab's TopochainChallenges._endOf.
-  endsOf(c, fallback = null) {
-    const raw = (c && c.ends_at) || fallback || null;
-    if (HomePanels.groupOf(c).key !== 'week') return raw;
-    const weekEnd = HomePanels.weekEnd();
-    return !raw || Date.parse(weekEnd) < Date.parse(raw) ? weekEnd : raw;
-  },
-
-  // The next Monday 00:00 UTC, as an ISO string.
-  weekEnd(now = Date.now()) {
-    const d = new Date(now);
-    const sinceMonday = (d.getUTCDay() + 6) % 7;
-    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - sinceMonday + 7)).toISOString();
-  },
-
-  // Whether setup is behind the viewer, which decides where the First challenges group sits.
-  // The tab's rule (TopochainChallenges._setupFinished): the rows must hold at
-  // least one setup card and every one of them must be done. A server before
-  // #4635 sent a gate summary that decided instead (`unlocked === true`); none
-  // does now, and the branch stays for the parity the tab is held to.
+  // Whether setup is behind the viewer, which decides between First and Next.
+  // The rows must hold at least one setup card and every one of them must be
+  // done. A server before #4635 sent a gate summary that decided instead
+  // (`unlocked === true`); none does now, and the branch stays for it.
   setupFinished(rows, onboarding) {
     if (onboarding) return onboarding.unlocked === true;
     const setup = (Array.isArray(rows) ? rows : [])
@@ -638,13 +573,9 @@ const HomePanels = {
     return setup.length > 0 && setup.every((c) => HomePanels.orderDone(c));
   },
 
-  // The not-done key the ordering sorts on and the collapsed block picks its
-  // slots by: the tab's _isDone. Both lists carry the viewer's own `progress`
-  // on every card now. This key used to read it inside First challenges only and
-  // the organiser's `completed` flag everywhere else, which is never set on a
-  // challenge the collapsed block receives (the server sends open ones only),
-  // so a card the viewer had finished kept its place (#2490). A row without
-  // `progress` falls back to the organiser's flag, as the tab's does.
+  // Whether the viewer has finished a challenge: the tab's _isDone. Both
+  // lists carry the viewer's own `progress` on every card; a row without it
+  // falls back to the organiser's `completed` flag, as the tab's does.
   orderDone(c) {
     if (!c) return false;
     if (c.progress) return c.progress.done === true;
@@ -652,70 +583,12 @@ const HomePanels = {
   },
 
   // A group's rank in the board's order, the tab's _groupRankOf: First challenges
-  // while unfinished (0), This week (1), Always open (2), Season challenges
-  // (3), then First challenges once finished (4, last), so the block leads with
-  // what is left to do. Pure: a group from CHALLENGE_GROUPS/OTHER_GROUP and
-  // the setupFinished answer.
+  // while unfinished (0), This week (1), Always open (2), the rest (3), then
+  // First challenges once finished (4, last). Pure: a group from
+  // CHALLENGE_GROUPS/OTHER_GROUP and the setupFinished answer.
   groupRankOf(group, setupFinished) {
     const g = group || HomePanels.OTHER_GROUP;
     return g.key === 'setup' && setupFinished === true ? 4 : g.order;
-  },
-
-  // The drawn rows under the board's group headers: contiguous and in rank
-  // order, because orderRows sorts by group first and visibleSlots keeps that
-  // sequence inside each half of its pick.
-  //
-  // THE FINISHED FILL GOES LAST, UNDER "DONE" (#2490). Rows from `doneFrom` on
-  // are the collapsed block's finished fill (see visibleSlots). They sit
-  // under one Done header after every other group, whatever group they came
-  // from, so no finished card is drawn above one the viewer still has to do.
-  // The Done header has no clock, since nothing under it is counting down.
-  //
-  // EVERY GROUP IS HEADED, a block whose cards are all from one group
-  // included: the Challenges tab heads each of its groups, so a card sits
-  // under the same words on both surfaces. When the cap cuts a group mid-way,
-  // its header still draws over the cards that made it in.
-  //
-  // Home's headers carry NO counts and do not collapse; the tab, which draws
-  // every card of a group, counts and collapses. The header owns the clock:
-  // This week and the season's other challenges say when their soonest open,
-  // unfinished challenge ends (its own `ends_at`, else the season's, as
-  // challengeRowView reads it), taken over the whole group the payload holds,
-  // as the tab takes it over its group, not only over the cards the cap left
-  // on screen. Always open says it has no deadline. Their cards drop theirs.
-  // First challenges has no clock, so its cards keep their own. `views` are changed
-  // in place, which is what keeps `rows` in agreement.
-  challengeGroups(rows, views, panel, doneFrom) {
-    const seasonEnd = panel && panel.season && panel.season.ends_at;
-    const payload = Array.isArray(panel && panel.challenges) ? panel.challenges : rows;
-    const clockOf = (key) => {
-      let soonest = null;
-      for (const c of payload) {
-        if (!c || HomePanels.groupOf(c).key !== key) continue;
-        if (c.open === false || (c.progress && c.progress.done)) continue;
-        const ends = HomePanels.endsOf(c, seasonEnd);
-        if (!HomePanels.timeLeft(ends)) continue;
-        if (soonest == null || Date.parse(ends) < Date.parse(soonest)) soonest = ends;
-      }
-      return HomePanels.timeLeft(soonest);
-    };
-    const runs = [];
-    rows.forEach((c, i) => {
-      const group = doneFrom != null && i >= doneFrom
-        ? HomePanels.DONE_GROUP : HomePanels.groupOf(c);
-      let run = runs[runs.length - 1];
-      if (!run || run.group !== group) runs.push(run = { group, views: [] });
-      run.views.push(views[i]);
-    });
-    return runs.map(({ group, views: members }) => {
-      let meta = null;
-      if (group.key === 'always') meta = message('home:challenges.group.noDeadline');
-      else if (group.key !== 'setup' && group.key !== 'done') meta = clockOf(group.key);
-      if (group.key !== 'setup') {
-        for (const view of members) view.deadline = null;
-      }
-      return { key: group.key, heading: message(group.heading), meta, rows: members };
-    });
   },
 
   // `renderChallengesPanel` and `_countFillRows` lived here. The first is
@@ -746,11 +619,8 @@ const HomePanels = {
   //
   // THE BROWSE CONTROL RIDES IN THE TITLE BAR, not in a footer of its own.
   // Discover has ONE destination, so it belongs beside the title rather than
-  // in 27px of chrome under two lanes. (Challenges keeps _panelFooter for its
-  // expand toggle, and #980 moved its leaderboard door up to the bar for the
-  // same reason this one lives there.) _wire() needs no change for this: its
-  // pointerdown guard is on `.home-panel button` generally, so the button is
-  // excluded from the drag handle the bar otherwise is.
+  // in 27px of chrome under two lanes. (Challenges' "See all" sits in its
+  // heading for the same reason.)
   //
   // The browse control ALWAYS renders — it is THE discovery path, so it must
   // not depend on curation existing. With nothing left to feature the tile
@@ -854,40 +724,45 @@ const HomePanels = {
   // ONE CARD ON BOTH SURFACES. Home's Challenges block draws the Challenges
   // tab's card (features/leaderboard/challenge-card.tsx), so a row carries the
   // descriptor that tab's controller builds: the rail's state, its one short
-  // label, its fill, and "Earned N pts" on a finished challenge the viewer
-  // scored on. The words are the tab's ("Not started", "3/8 apps tested",
-  // "Started", "Done"), composed here so a number and its unit stay one text
-  // node. Progress is this payload's own — resolveProgress on the server,
-  // which reads snapshot blocks — so "Not started" is a counted fact here.
-  // The card is the title, its deadline and the rail only: the organiser CTA,
-  // the category and the task stay off it, and all three are a tap away on
-  // the Challenges tab.
+  // label, its fill, the reward, and "Earned N pts" on a finished challenge
+  // the viewer scored on. The words are the tab's ("Not started", "3/8 apps
+  // tested", "Started", "Done"), composed here so a number and its unit stay
+  // one text node. Progress is this payload's own — resolveProgress on the
+  // server, which reads snapshot blocks — so "Not started" is a counted fact
+  // here. The card is the art, the title with its points and the rail only:
+  // no deadline, no category, no task and no organiser CTA, all of which are
+  // a tap away on the Challenges tab.
   //
   // A COUNTED challenge (a target above one) shows its count and bar from
   // zero — "0/3 Apps tried" — so a challenge with steps never reads as the
-  // plain "Not started" of a yes-or-no one.
-  //
-  // The DEADLINE is the row's `ends_at` — its own schedule_end, else its
-  // event's end, the same date the Challenges tab uses — else the season's
-  // end; none on a finished or not-open challenge. `group` is the card's key in
-  // the board's group table (groupOf). challengeGroups heads every group, hands
-  // the clock to the headers and takes it off every card but those in First challenges.
-  challengeRowView(c, panel) {
+  // plain "Not started" of a yes-or-no one. A This week challenge counts by
+  // the week, so its count says so: "2/3 apps tried this week". A yes-or-no
+  // one keeps Started / Not started: it has no count to put a week on.
+  challengeRowView(c) {
     const numeric = HomePanels.hasMeter(c);
     const done = !!(c.progress && c.progress.done);
     const target = numeric ? Number(c.progress.target) : null;
     const current = numeric ? Math.max(0, Number(c.progress.current) || 0) : 0;
     const points = Number(c.earned_points) > 0 ? Number(c.earned_points) : 0;
+    const weekly = HomePanels.groupOf(c).key === 'week';
     let rail;
     if (done) {
       rail = { state: 'done', stateLabel: message('home:challenges.row.done'), fill: 1, counted: false };
     } else if (numeric && target > 1) {
       const count = Math.min(current, target);
+      let stateLabel;
+      if (weekly) {
+        stateLabel = c.metric.label
+          ? message('home:challenges.row.countOfUnitThisWeek', { current: count, target, unit: c.metric.label })
+          : message('home:challenges.row.countOfThisWeek', { current: count, target });
+      } else {
+        stateLabel = c.metric.label
+          ? message('home:challenges.row.countOfUnit', { current: count, target, unit: c.metric.label })
+          : message('home:challenges.row.countOf', { current: count, target });
+      }
       rail = {
         state: count > 0 || points ? 'progress' : 'new',
-        stateLabel: c.metric.label
-          ? message('home:challenges.row.countOfUnit', { current: count, target, unit: c.metric.label })
-          : message('home:challenges.row.countOf', { current: count, target }),
+        stateLabel,
         fill: count / target,
         counted: true,
       };
@@ -902,10 +777,6 @@ const HomePanels = {
       // The event the challenge belongs to, for the card's deep link to its
       // page on the Challenges tab (goToChallenge); null without one.
       eventId: Number.isSafeInteger(eventId) && eventId > 0 ? eventId : null,
-      // The group the card's category puts it in: setup, week, always or
-      // other. The collapsed block heads its finished fill Done instead
-      // (challengeGroups), whatever this says.
-      group: HomePanels.groupOf(c).key,
       // The kind's icon (challenge_kinds.icon — one setting gives every
       // challenge of a kind the same face), the tile's fallback when the
       // template names no illustration the registry resolves or its artwork fails
@@ -924,80 +795,19 @@ const HomePanels = {
       done,
       reward: HomePanels.formatReward(c.reward) || null,
       ...rail,
-      // No countdown on a finished challenge, nor on one the expanded list
-      // carries while it is not open (organiser-closed, or outside its
-      // window). `ends_at` is the challenge's own end, else its event's.
-      deadline: done || c.open === false ? null
-        : HomePanels.timeLeft(HomePanels.endsOf(c, panel && panel.season && panel.season.ends_at)),
       earned: done && points
         ? message('home:challenges.row.earned', { points: points.toLocaleString('en-US'), count: points })
         : null,
     };
   },
 
-  // ── The season progress ────────────────────────────────────────────
-  //
-  // "3/9 done in Season 2" over one segment per challenge, drawn by
-  // features/leaderboard/season-progress.tsx: the component the Leaderboard
-  // screen's Challenges tab opens on too, so the season reads the same on
-  // both. It replaced a ring with a points lead and a count under it, which
-  // took three lines to say what the segments say in one.
-  //
-  // The scope is the season, for everyone: a new account's First challenges
-  // are part of it like any other (#4635), so there is no "done in First
-  // challenges" scope on Home any more. Deadlines stay on the cards or their
-  // group headers, and points on the cards.
-  //
-  // THE SEASON IS EVERY CHALLENGE IN IT (QA 2026-09-24 Q17): `all_done` of
-  // `all_total`, finished and out-of-window ones included, which is how the
-  // profile counts ("4 of 15 done") and how the Challenges tab counts its
-  // event. It was the payload's `done` of `total`, the OPEN challenges only,
-  // so Home said 2/6 where the profile said 4 of 15 for the same season, and
-  // the figure jumped to the other when "See all" expanded the block. An
-  // older payload without `all_done` keeps the open counts.
-  seasonView(panel) {
-    const open = Number(panel && panel.total) || 0;
-    const hasAll = panel && panel.all_done != null && Number.isFinite(Number(panel.all_done))
-      && Number(panel.all_total) > 0;
-    const total = hasAll ? Number(panel.all_total) : open;
-    if (!total) return null;
-    // The points line (#4565): the server's pair covers the season's whole
-    // set. Absent (an older payload) or nothing on offer, no line.
-    const pointsTotal = Number(panel && panel.points_total);
-    const points = Number.isFinite(pointsTotal) && pointsTotal > 0
-      ? {
-        earned: Math.max(0, Math.min(pointsTotal, Math.floor(Number(panel.points_earned) || 0))),
-        total: pointsTotal,
-      }
-      : null;
-    const name = panel.season && typeof panel.season.name === 'string'
-      ? panel.season.name.trim() : '';
-    return {
-      done: Math.max(0, Math.min(total, Number(hasAll ? panel.all_done : panel.done) || 0)),
-      total,
-      scope: name ? 'season' : null,
-      name: name || null,
-      ...(points ? { points } : {}),
-    };
-  },
-
-  // An end date as the cards say it, in the board's short form: whole days
-  // rounded UP ("5d left"; 23.5 hours is "1d left"), hours under a day ("7h
-  // left", at least "1h left"), and null once past or unparseable rather than
-  // a negative count — the panel is only built for a running season, so that
-  // is a clock skew case, not a state. The Challenges tab says the same words
-  // (TopochainChallenges._timeLeft); both test files pin one table.
-  timeLeft(raw) {
-    if (!raw) return null;
-    const ends = Date.parse(raw);
-    if (!Number.isFinite(ends)) return null;
-    const ms = ends - Date.now();
-    if (ms <= 0) return null;
-    const hours = Math.ceil(ms / 3600000);
-    return hours < 24
-      ? message('home:challenges.timeLeft.hours', { count: hours })
-      : message('home:challenges.timeLeft.days', { count: Math.ceil(ms / 86400000) });
-  },
+  // `seasonView` and `timeLeft` lived here: the season progress line over the
+  // block ("3/9 done in Season 2", with its points) and the "5d left" clocks
+  // on the cards and the group headers, with `endsOf` / `weekEnd` working out
+  // when a This week challenge's count started again. The Semi design
+  // (2026-10-16) took the season, the points total and every deadline off
+  // Home; a This week card says "this week" on its rail instead, and the
+  // "All done for this week" line says the count starts again on Monday.
 
   // Real hash navigation (not a router call) so the Challenges screen gets a
   // history entry and the device back gesture returns to the home screen.
@@ -1027,8 +837,14 @@ const HomePanels = {
   // home. (The Challenges heading's link used to come here as "Open
   // leaderboard"; since #1916 it reads "Open challenges" and goes through
   // goToChallenges instead.)
+  //
+  // #5249: while kudos is parked (no window.Kudos, see
+  // features/leaderboard/kudos-parked.ts) there is no Top users list, so the
+  // kudos kind lands on Challenges.
   goToLeaderboard(kind) {
-    location.hash = kind === 'kudos' ? '#leaderboard/users' : '#leaderboard/topochain';
+    location.hash = kind === 'kudos'
+      ? (window.Kudos ? '#leaderboard/users' : '#leaderboard/challenges')
+      : '#leaderboard/topochain';
   },
 
   // `_wire(section)` lived here: eight `querySelectorAll` sweeps re-run after
@@ -1056,26 +872,10 @@ const HomePanels = {
   // #app-list, so stopping the event AT the button was what kept a press on ⋮
   // from arming a drag. These sections are outside #app-list now.
 
-  // Grow the block past its height cap in place, showing every challenge
-  // including the organiser-finished ones; the same control collapses it.
-  // Expanding needs a refetch because the collapsed payload is filtered
-  // server-side (finished challenges never left the database), so the
-  // toggle paints the state it can immediately and fills in when the
-  // wider list lands.
-  async toggleExpanded(key) {
-    if (!key) return false;
-    const next = !HomePanels._expanded[key];
-    HomePanels._expanded[key] = next;
-    HomePanels.render();
-    try {
-      await HomePanels.ensureLoaded({ force: true });
-      return true;
-    } catch (err) {
-      // A failed refetch leaves the rows as they were rather than emptying
-      // the block; the toggle can simply be pressed again.
-      return false;
-    }
-  },
+  // `toggleExpanded` lived here: the footer's "See all N challenges" / "Show
+  // less", which grew the block in place and refetched it with
+  // `?expand=challenges`. "See all" in the heading is a link to the
+  // Challenges tab now (./panels/ui.tsx, SeeAllLink).
 };
 
 // Home calls this module through the legacy global. Guard the

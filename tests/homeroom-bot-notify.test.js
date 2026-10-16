@@ -41,8 +41,9 @@ const notifyCopy = require('../src/services/homeroom-bot-notify-copy');
 // subject]. The full table of variants is tests/homeroom-bot-notify-copy.test.js.
 const D = (metadata) => notifyCopy.botNotificationDetail({ appName: 'Plant Pal', requestTitle: 'Dark mode', ...metadata });
 const MOMENT_WORDS = [
-  [D({ moment: 'needs_you', said: 'question' }), 'Dark mode · Plant Pal', 'I have a question before I build it.', 'Needs you', 'Dark mode'],
-  [D({ moment: 'needs_you', said: 'plan' }), 'Dark mode · Plant Pal', 'My plan is ready. Tap Build it if it looks right.', 'Needs you', 'Dark mode'],
+  // 16 Oct 2026: a needs-you is headed by what it asks for.
+  [D({ moment: 'needs_you', said: 'question' }), 'Dark mode · Plant Pal', 'I have a question before I build it.', 'Question for you', 'Dark mode'],
+  [D({ moment: 'needs_you', said: 'plan' }), 'Dark mode · Plant Pal', 'My plan is ready. Tap Build it if it looks right.', 'Plan to approve', 'Dark mode'],
   [D({ moment: 'ready', said: 'ready' }), 'Dark mode · Plant Pal', 'Ready to try. Try it, and approve it if you\'re happy.', 'Ready to try', 'Dark mode'],
   [D({ moment: 'ready', said: 'ready_group', appName: 'Supper Club', waiting: 'you and @ada' }), 'Dark mode · Supper Club',
     'Ready to try. It goes live once you and @ada say yes.', 'Ready to try', 'Dark mode'],
@@ -130,6 +131,26 @@ test('B4: the bell heads each moment as the push names it, under the project and
     { id: 0, createdAt: AT, kind: 'conversation_message', detail: null, conversationId: 7, conversationKind: 'direct', sourceUsername: 'ada', messageContent: 'b' },
   ]);
   assert.deepEqual(views.map((v) => v.count || 1), [1, 1, 2], '"is live" does not hide "needs you"; a person\'s run still folds');
+});
+
+test('16 Oct 2026: a bot row names its request by title, else by number, with the number beside the project', () => {
+  const N = loadBell();
+  const view = (meta) => N._rowView({
+    id: 1, createdAt: AT, readAt: null, kind: 'build_needs_you', detail: notifyCopy.botNotificationDetail({ appName: 'Homeroom', ...meta }),
+    conversationId: 7, conversationKind: 'direct',
+  });
+  const titled = view({ moment: 'needs_you', said: 'question', requestTitle: 'Show slots by state', issueNumber: 5308 });
+  assert.deepEqual([titled.label, titled.segments[0].v, titled.appLine],
+    ['Question for you', 'Show slots by state', 'Homeroom · #5308 · Homeroom bot']);
+  const untitled = view({ moment: 'needs_you', said: 'decide', issueNumber: 5308 });
+  assert.deepEqual([untitled.label, untitled.segments[0].v, untitled.appLine], ['Your decision', 'Request #5308', 'Homeroom · Homeroom bot'],
+    'never "Needs you / Homeroom / Homeroom · Homeroom bot"');
+  const waiting = view({ moment: 'needs_you', said: 'decide_others', deciders: ['ada'], requestTitle: 'Dark mode', issueNumber: 4 });
+  assert.equal(waiting.label, 'Waiting on @ada');
+  // Each ask is the push module's word for it.
+  for (const [said, words] of Object.entries(notifyCopy.NEEDS_YOU_ASKS)) {
+    assert.equal(view({ moment: 'needs_you', said, requestTitle: 'Dark mode' }).label, words, said);
+  }
 });
 
 test('one story: a bell row or push tap opens the request\'s thread in the chat with the bot', () => {

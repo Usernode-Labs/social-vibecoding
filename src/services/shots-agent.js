@@ -39,6 +39,9 @@ browser named for each change's persona in the brief: browser_member for
 member, browser_admin for read_only_admin, browser_full_admin for full_admin,
 browser_guest for guest. The guest browser is not signed in: it sees what a
 visitor who is not signed in sees, and the brief says what that is here.
+The brief also names a browser for an invited fixture's persona when this
+run has one (browser_invited_member, browser_invited_member_listed): use
+that one for a change declared for it.
 A phone screen (narrower than 768 px) has a browser of its own: the same
 name with _phone (browser_member_phone for member, and so on), signed in as
 the same persona. It presents as an iPhone running Safari, with a phone's
@@ -344,6 +347,11 @@ async function dispatchClaude(config, options, deps) {
       ? { shotsPhoneClipSize: options.phoneClipSize } : {}),
     // Who gets a phone browser: the personas with a phone screen.
     shotsPhonePersonas: Array.isArray(options.phonePersonas) ? options.phonePersonas : [],
+    // Which desktop browsers this run starts: the four ordinary ones, plus
+    // an invited fixture's when the run's declared changes name it. Left
+    // out when the caller names none, so execInWorker keeps its default.
+    ...(Array.isArray(options.browserPersonas) && options.browserPersonas.length
+      ? { shotsBrowserPersonas: JSON.stringify(options.browserPersonas) } : {}),
     shotsPlatformAssets: options.platformAssets === true,
     telemetryComponent: 'shots_agent',
     telemetryCorrelationId: runId,

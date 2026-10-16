@@ -65,6 +65,11 @@ test('each state has its word, and each why its line; a loop says which try', ()
   assert.equal(trackLine(held), t('bot.track.line.held.slots'));
   assert.equal(trackPlace(held), t('bot.track.held.ahead_other', { count: 2 }));
   assert.equal(trackPlace({ ...held, held: { ...held.held, position: 1 } }), t('bot.track.held.next'));
+  // 16 Oct 2026: one a person has taken since is theirs, not a wait.
+  const taken = track({ state: 'held', step: null, why: 'taken', held: { limit: 'taken', position: null, until: null, by: 'maya' } });
+  assert.equal(trackLine(taken), t('bot.track.line.held.taken', { username: 'maya' }));
+  assert.equal(trackLine({ ...taken, held: { ...taken.held, by: null } }), t('bot.track.line.held.takenNoName'));
+  assert.equal(trackPlace(taken), null, 'no place in a line it is not in');
 
   const elsewhere = track({ state: 'done_elsewhere', step: 'live', doneBy: { username: 'ben', prNumber: 4822 } });
   assert.equal(trackLine(elsewhere), t('bot.track.line.done_elsewhere.by', { username: 'ben', number: '4822' }), 'who shipped it, and where');
@@ -211,13 +216,29 @@ test('a track is read field by field; one in a state the client does not know is
     slots: {
       app: { slug: 'plant-pal', name: 'Plant Pal' }, botOn: true, acts: true, cap: 5, buildsAtOnce: 2, reading: 1,
       slots: [{ kind: 'proposal', issueNumber: 8, title: 'Sort by name', track: { ...row, issueNumber: 8, state: 'vote', step: 'vote' } }],
-      waiting: [{ issueNumber: 12, title: 'Dark mode', position: 1, track: row }],
+      waiting: [{ issueNumber: 12, title: 'Dark mode', askedBy: 'lee', excerpt: 'Make it darker at night.', position: 1, track: row }],
+      taken: [{ issueNumber: 13, title: 'Frost alerts', by: 'maya', track: { ...row, issueNumber: 13, why: 'taken', held: { limit: 'taken', by: 'maya' } } }],
       onHold: [], week: { limited: true, usedShare: 1.4, resetsAt: '2026-10-19T00:00:00Z' },
     },
   });
   assert.equal(view.app.slug, 'plant-pal');
   assert.equal(view.slots[0].track.state, 'vote');
   assert.equal(view.waiting[0].position, 1);
+  assert.deepEqual([view.waiting[0].askedBy, view.waiting[0].excerpt], ['lee', 'Make it darker at night.']);
+  assert.deepEqual([view.taken[0].by, view.taken[0].track.held], ['maya', { limit: 'taken', position: null, until: null, by: 'maya' }]);
+  assert.deepEqual(normalizeBotSlots({ slots: { app: { slug: 'x' } } }).taken, [], 'an older server: nobody has taken anything');
+  // 16 Oct 2026: and every other open request, by where the bot is on it.
+  const rest = normalizeBotSlots({
+    slots: {
+      app: { slug: 'plant-pal' },
+      upNext: [{ issueNumber: 30, kind: 'older', position: 1, trial: 'ready' }, { issueNumber: 31, kind: 'nonsense', trial: 'Not A Code' }],
+      waitingOn: [{ issueNumber: 20, track: { ...row, issueNumber: 20, state: 'waiting', step: 'plan', why: 'plan' } }],
+      withPeople: 12.7,
+    },
+  });
+  assert.deepEqual(rest.upNext.map((e) => [e.issueNumber, e.kind ?? null, e.position, e.trial ?? null]), [[30, 'older', 1, 'ready'], [31, null, null, null]]);
+  assert.equal(rest.waitingOn[0].track.state, 'waiting');
+  assert.deepEqual([rest.stopped, rest.leftToPeople, rest.withPeople], [[], [], 12]);
   assert.equal(view.week.usedShare, 1, 'a share is clamped to the whole');
   assert.equal(normalizeBotSlots({ slots: {} }), null, 'no project, no view');
 });
@@ -235,8 +256,14 @@ test('the slots page: what holds each slot, what waits for one in order, and the
       { kind: 'proposal', issueNumber: 8, title: 'Sort by name', track: vote },
       { kind: 'build', issueNumber: 9, title: 'Water log', track: building },
     ],
-    waiting: [{ issueNumber: 12, title: 'Dark mode', position: 1, track: held }],
+    waiting: [{ issueNumber: 12, title: 'Dark mode', askedBy: 'lee', excerpt: 'Make it darker at night.', position: 1, since: ago(200), track: held }],
+    taken: [],
     onHold: [],
+    waitingOn: [],
+    upNext: [],
+    stopped: [],
+    leftToPeople: [],
+    withPeople: 0,
     week: { limited: true, usedShare: 0.42, usedUp: false, resetsAt: null },
   };
   const html = renderToHtml(createElement(BotSlotsBody, { view }));
@@ -258,9 +285,86 @@ test('the slots page: what holds each slot, what waits for one in order, and the
   assert.equal(entryLine(held), t('bot.track.held.next'));
   assert.doesNotMatch(html, />Building · /, 'never the state word twice');
 
+  // 16 Oct 2026: a row says what its request is about, not only its
+  // number: a line of what it asks, who asked, and how long it has waited.
+  assert.match(html, /data-ws-bot-slot-excerpt="">Make it darker at night\.</);
+  const { entryMeta } = loadTsx(SLOTS);
+  const meta = entryMeta(view.waiting[0], 'waiting', new Date(NOW.getTime()));
+  assert.deepEqual(meta, [
+    message('project:botSlots.meta.asked', { username: 'lee' }),
+    message('project:botSlots.meta.waiting', { span: message('messages:bot.span.hoursMinutes', { hours: 3, minutes: 20 }) }),
+  ]);
+  assert.equal(entryMeta({ ...view.waiting[0], askedBy: null }, 'slots', NOW).length, 0, 'a slot\'s row has its clock on its bar');
+
+  // A row opens its item in the Workshop's panel: the request, or its
+  // change once it has one, and the open row is marked.
+  assert.match(html, /data-ws-bot-slot="12"[^>]*data-ws-open="issue:12"/);
+  assert.match(html, /href="#app\/plant-pal\/dev\/i\/12"/, 'the request\'s own address for a plain open');
+  const { entryRef, hrefOf } = loadTsx(SLOTS);
+  assert.deepEqual(entryRef({ issueNumber: 8, track: { ...vote, proposalId: 91 } }), { kind: 'proposal', id: 91 });
+  assert.equal(entryRef({ issueNumber: 8, track: vote }), null, 'a change the panel cannot name opens as a page');
+  assert.equal(hrefOf({ issueNumber: 900009, track: { ...held, links: null } }, 'staging-demo'), '#app/staging-demo/dev/issues/900009', 'the demo\'s rows open their mock request');
+  const openHtml = renderToHtml(createElement(BotSlotsBody, { view, openKey: 'issue:12', onOpen: () => {} }));
+  assert.match(openHtml, /aria-current="true"[^>]*data-ws-open="issue:12"|data-ws-open="issue:12"[^>]*aria-current="true"/);
+
+  // One a person has taken since is listed apart, as theirs.
+  const taken = track({ issueNumber: 14, state: 'held', step: null, why: 'taken', held: { limit: 'taken', position: null, until: null, by: 'maya' } });
+  const takenHtml = renderToHtml(createElement(BotSlotsBody, {
+    view: { ...view, taken: [{ issueNumber: 14, title: 'Frost alerts', by: 'maya', since: ago(60 * 26), track: taken }] },
+  }));
+  assert.match(takenHtml, /data-ws-bot-taken=""/);
+  assert.match(takenHtml, new RegExp(message('project:botSlots.taken.title')));
+  assert.match(takenHtml, new RegExp(t('bot.track.line.held.taken', { username: 'maya' })));
+
   const off = renderToHtml(createElement(BotSlotsBody, { view: { ...view, acts: false, slots: [], waiting: [] } }));
   assert.match(off, new RegExp(`data-ws-bot-slots-note="">${message('project:botSlots.notHere').replace(/'/g, '&#x27;')}</p>`));
   assert.match(off, new RegExp(message('project:botSlots.slots.empty')));
+});
+
+test('16 Oct 2026: the slots page lists every other open request by where the bot is on it', () => {
+  const { BotSlotsBody, olderLine } = loadTsx(SLOTS);
+  const plan = track({ issueNumber: 20, state: 'waiting', step: 'plan', why: 'plan', waitingOn: 'you', since: ago(60 * 20) });
+  const queued = track({ issueNumber: 21, state: 'queued', step: null, why: 'turn' });
+  const nothing = track({ issueNumber: 22, state: 'stopped', step: 'build', why: 'no_change' });
+  const person = track({ issueNumber: 23, state: 'stopped', step: 'plan', why: 'needs_person' });
+  const older = (n, position, trial) => ({ issueNumber: n, title: `Older ${n}`, kind: 'older', position, trial, track: null });
+  const view = {
+    app: { slug: 'plant-pal', name: 'Plant Pal' }, botOn: true, acts: true, paused: false, cap: 5, buildsAtOnce: 2, reading: 1,
+    slots: [], waiting: [], taken: [], onHold: [],
+    waitingOn: [{ issueNumber: 20, title: 'A plan', askedBy: 'lee', since: ago(60 * 20), track: plan }],
+    upNext: [
+      { issueNumber: 21, title: 'Just filed', kind: 'queued', track: queued },
+      older(30, 1, 'ready'), older(31, 2, null), older(32, 3, 'person'), older(33, 4, null), older(34, 5, null), older(35, 6, null),
+    ],
+    stopped: [{ issueNumber: 22, title: 'Built nothing', track: nothing }],
+    leftToPeople: [{ issueNumber: 23, title: 'A decision', track: person }],
+    withPeople: 12,
+    week: null,
+  };
+  const html = renderToHtml(createElement(BotSlotsBody, { view }));
+  for (const name of ['waiting-on', 'up-next', 'stopped', 'left']) assert.match(html, new RegExp(`data-ws-bot-${name}=""`), name);
+  for (const key of ['waitingOn', 'upNext', 'stopped', 'leftToPeople']) {
+    assert.match(html, new RegExp(message(`project:botSlots.${key}.title`)), key);
+  }
+  // In that order, under the slots.
+  const at = (name) => html.indexOf(`data-ws-bot-${name}=""`);
+  assert.ok(at('waiting-on') < at('up-next') && at('up-next') < at('stopped') && at('stopped') < at('left'));
+  // Up next says how older requests are read; a long section shows five and a way to the rest.
+  assert.match(html, new RegExp(message('project:botSlots.upNext.note')));
+  assert.equal((html.match(/data-ws-bot-slot="3\d"/g) || []).length, 4, 'the queued one and four older ones: five rows');
+  assert.match(html, new RegExp(`data-ws-bot-show-all="up-next"[^>]*>${message('project:botSlots.showAll', { count: 7 })}<`));
+  assert.match(html, /data-ws-bot-older-badge=""/, 'an older request has a tile, not a track\'s badge');
+  // What people have is counted, not listed.
+  assert.match(html, new RegExp(`data-ws-bot-with-people="12">${message('project:botSlots.withPeople', { count: 12 })}<`));
+  // An older request's line: its place among them, and what its trial run made of it.
+  assert.equal(olderLine(older(30, 1, 'ready')), `${message('project:botSlots.older.next')} \u00b7 ${message('project:botSlots.older.trialReady')}`);
+  assert.equal(olderLine(older(31, 2, null)), `${message('project:botSlots.older.ahead', { count: 1 })} \u00b7 ${message('project:botSlots.older.notRead')}`);
+  assert.equal(olderLine(older(32, 3, 'person')), message('project:botSlots.older.ahead', { count: 2 }), 'a trial that said a person says nothing more');
+  // Rows open beside the page, as the slots' rows do.
+  assert.match(html, /data-ws-bot-slot="30"[^>]*data-ws-open="issue:30"/);
+  // Nothing in a section draws nothing.
+  const bare = renderToHtml(createElement(BotSlotsBody, { view: { ...view, waitingOn: [], upNext: [], stopped: [], leftToPeople: [], withPeople: 0 } }));
+  assert.doesNotMatch(bare, /data-ws-bot-(?:waiting-on|up-next|stopped|left|with-people)=/);
 });
 
 test('the slots page is a page under the Workshop: its address, its way back, its door', () => {
@@ -268,7 +372,11 @@ test('the slots page is a page under the Workshop: its address, its way back, it
   assert.equal(places.litPlace('bot'), 'workshop', 'the Workshop stays lit while it is up');
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(ws, /return tab === 'all' \|\| tab === 'bot' \? 'workshop' : 'status';/, 'Back goes to the Workshop');
-  assert.match(ws, /\{tab === 'bot' && slug \? \(\s*<BotSlotsPage slug=\{slug\} backLabel=\{t\('project:page\.backToWorkshop'\)\} onBack=\{\(\) => openTab\(pageParent\(tab\)\)\} \/>/);
+  assert.match(ws, /\{tab === 'bot' && slug \? \(\s*<BotSlotsPage\s+slug=\{slug\}\s+backLabel=\{t\('project:page\.backToWorkshop'\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}\s+openKey=\{sideKey\}\s+onOpen=\{openItem\}\s+\/>/);
+  // Its rows open beside it, as the Workshop's own do.
+  assert.match(ws, /const sideOpen = !!sideItem && \(tab === 'workshop' \|\| tab === 'all' \|\| tab === 'bot'\);/);
+  assert.match(ws, /\{sideOpen && sideItem \? <TopicSidePanel item=\{sideItem\} onClose=\{closeSide\} \/> : null\}/);
+  assert.match(ws, /data-ws-side-open=\{sideOpen \? '' : undefined\}/);
   assert.match(ws, /\{slug \? <BotSlotsDoor slug=\{slug\} onOpen=\{\(\) => openTab\('bot'\)\} \/> : null\}/, 'its door in the overview card');
   const src = read(SLOTS);
   assert.match(src, /if \(!view \|\| \(!view\.acts && !view\.slots\.length\)\) return null;/, 'no door where the bot neither builds nor holds anything');

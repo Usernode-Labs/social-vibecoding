@@ -34,6 +34,23 @@ test('full-admin shots token names only the identity installed in disposable clo
   }
 });
 
+// The invited fixtures' tokens (#4437), minted from the fixed identities the
+// same way the full admin's is: only a shots clone whose resetPair inserted
+// the matching member can turn one into a session.
+test('the invited fixtures\' tokens name only the identities installed in disposable clones', () => {
+  const original = visuals.mintCaptureToken;
+  visuals.mintCaptureToken = (user, appId) => `${appId}:${user.id}:${user.username}`;
+  try {
+    const tokens = identities.mintInvitedTokens(42);
+    assert.deepEqual(tokens, {
+      invited_member: `42:${fixtures.INVITED_MEMBER_USER_ID}:${fixtures.INVITED_MEMBER_USERNAME}`,
+      invited_member_listed: `42:${fixtures.INVITED_MEMBER_LISTED_USER_ID}:${fixtures.INVITED_MEMBER_LISTED_USERNAME}`,
+    });
+  } finally {
+    visuals.mintCaptureToken = original;
+  }
+});
+
 // The guest browser is not signed in. A guest token goes only where the
 // production edge would give one (services/edge-gate.js): a view-public,
 // unsuspended child app, with app-host sign-in on and a guest signer.
@@ -192,6 +209,20 @@ test('persona warnings say no shots browser is a child app\'s creator or admin',
   })]), [], 'a role the app grants in its own UI is reached through hints.setup');
   assert.deepEqual(await warn([story('banner', 'guest', 'Admins are named in the guest banner.')]), [],
     'a guest holds no role anywhere, and a public app shows it its guest view');
+
+  // The invited fixtures' personas are Homeroom's own fixture people: a
+  // child app's copies hold no such account, so its run is not handed one.
+  const invited = await warn([
+    story('first-visit', 'invited_member', 'A private member sees the welcome.'),
+    story('listed', 'invited_member_listed', 'A private member on the waitlist sees it too.'),
+  ]);
+  assert.equal(invited.length, 1);
+  assert.match(invited[0], /^first-visit, listed are declared for an invited private member/);
+  assert.match(invited[0], /present only in the paired copies of Homeroom itself/);
+  assert.match(invited[0], /that browser cannot sign in here/);
+  assert.match(invited[0], /declare it again with persona member/);
+  assert.deepEqual(await warn([story('first-visit', 'invited_member', 'A private member sees the welcome.')],
+    { selfApp: true }), [], 'Homeroom\'s own copies hold the invited fixtures');
 
   // Homeroom's own copies: the administrator personas are its administrators.
   assert.deepEqual(await warn([

@@ -3,7 +3,7 @@
 // challenges, as three top-level sections of one screen.
 //
 // Two levels of tabs:
-//   1. SECTION (Challenges | Kudos | Standings | History), rendered into
+//   1. SECTION (Challenges | Standings | Kudos), rendered into
 //      #standings-tabs by this module. 'challenges' — the one a fresh visit
 //      opens on (#2374) — reveals #challenges-root and hands off to
 //      TopochainChallenges; 'topochain', labelled "Standings" (it was
@@ -12,12 +12,10 @@
 //      TopochainLeaderboard module. Both are Topochain-domain
 //      views of one EVENT, so they also share the screen-level event bar
 //      (#leaderboard-event-bar, owned by TopochainEventContext) — hidden
-//      on Kudos, which has no event dimension. 'seasons', labelled
-//      "History", reveals #leaderboard-history-root: the seasons that have
-//      ENDED, their winners and each event's winner (./history.js). It
-//      spans seasons, so the one-event bar is hidden there too.
-//      Everything below this point is the Kudos pane and is unchanged by
-//      the merge.
+//      on Kudos, which has no event dimension. The History section
+//      ('seasons') is retired (2026-10-16): the router sends
+//      #leaderboard/seasons to Challenges. Everything below this point is
+//      the Kudos pane and is unchanged by the merge.
 //   2. Within Kudos: three sub-views (Top PRs, Top Users, My history)
 //      and — for the two leaderboard tabs — two window tabs.
 //
@@ -65,6 +63,17 @@
 // through `window` rather than importing it.
 const LEADERBOARD_SECTION_STORE_KEY = '__usernodeLeaderboardSection';
 
+// #5249: whether kudos is parked. ./kudos.js publishes `window.Kudos` only
+// while it is not (./kudos-parked.ts), and this file takes no import (see
+// ./kudos-pane-store.js), so it reads the switch the way the classic scripts
+// do. Parked, the Kudos tab and its sub-views (Top changes, Top users, My
+// history) are gone and every road to them lands on Challenges; the section
+// stays only for a person's page, which is drawn in its pane without the
+// kudos figures.
+function kudosParked() {
+  return !(typeof window !== 'undefined' && window.Kudos);
+}
+
 function leaderboardSectionStore() {
   let store = window[LEADERBOARD_SECTION_STORE_KEY];
   if (!store) {
@@ -88,7 +97,7 @@ const Leaderboard = {
   // re-opening the screen lands where you left it; a fresh page load
   // starts on Challenges (#2374) — the first tab of the strip, what you
   // can do next ahead of the ranking it feeds.
-  section: 'challenges',  // 'topochain' | 'kudos' | 'challenges' | 'seasons'
+  section: 'challenges',  // 'topochain' | 'kudos' | 'challenges'
   // Whether TopochainLeaderboard.open() / TopochainChallenges.open() have
   // run for this screen mount — each Topochain-domain pane loads lazily,
   // only once its tab is first shown, and so does the shared event bar
@@ -96,7 +105,6 @@ const Leaderboard = {
   _topoMounted: false,
   _challengesMounted: false,
   _eventBarMounted: false,
-  _historyMounted: false,
   sub: 'prs',           // 'prs' | 'users' | 'history'
   window: 'all',         // 'all' | 'week'
   // (#60) Profile drill-in from the Top-users tab. Non-null = the
@@ -148,13 +156,9 @@ const Leaderboard = {
     if (Leaderboard._eventBarMounted && window.TopochainEventContext?.close) {
       TopochainEventContext.close();
     }
-    if (Leaderboard._historyMounted && window.LeaderboardHistory?.close) {
-      LeaderboardHistory.close();
-    }
     Leaderboard._topoMounted = false;
     Leaderboard._challengesMounted = false;
     Leaderboard._eventBarMounted = false;
-    Leaderboard._historyMounted = false;
   },
 
   // ── Section (Kudos | Topochain | Challenges) ─────────────────────
@@ -162,7 +166,7 @@ const Leaderboard = {
   // Every section. The strip's ORDER lives in the island's SECTION_TABS
   // (./index.tsx), Challenges first since #1917. The two that live in the Topochain event domain (i.e. the ones the shared
   // event bar applies to) are declared separately below.
-  SECTIONS: ['topochain', 'kudos', 'challenges', 'seasons'],
+  SECTIONS: ['topochain', 'kudos', 'challenges'],
   EVENT_SECTIONS: ['topochain', 'challenges'],
 
   // Switch the screen's top-level section. Mirrors _setSub's contract:
@@ -171,6 +175,8 @@ const Leaderboard = {
   // open()).
   _setSection(section) {
     if (!Leaderboard.SECTIONS.includes(section)) return;
+    // Parked, the Kudos section is a person's page or nothing.
+    if (section === 'kudos' && kudosParked() && !Leaderboard.profileUser) section = 'challenges';
     if (Leaderboard.section === section && Leaderboard._open) return;
     Leaderboard.section = section;
     // Leaving Kudos abandons the profile drill-in — otherwise coming
@@ -199,7 +205,6 @@ const Leaderboard = {
       'leaderboard-root': Leaderboard.section === 'kudos',
       'topochain-leaderboard-root': Leaderboard.section === 'topochain',
       'challenges-root': Leaderboard.section === 'challenges',
-      'leaderboard-history-root': Leaderboard.section === 'seasons',
     };
     for (const [id, visible] of Object.entries(panes)) {
       const el = document.getElementById(id);
@@ -222,11 +227,6 @@ const Leaderboard = {
         && window.TopochainChallenges?.open) {
       Leaderboard._challengesMounted = true;
       TopochainChallenges.open();
-    }
-    if (Leaderboard.section === 'seasons' && !Leaderboard._historyMounted
-        && window.LeaderboardHistory?.open) {
-      Leaderboard._historyMounted = true;
-      LeaderboardHistory.open();
     }
   },
 
@@ -323,6 +323,11 @@ const Leaderboard = {
 
   _setSub(sub) {
     if (sub !== 'prs' && sub !== 'users' && sub !== 'history') return;
+    if (kudosParked()) {
+      Leaderboard.profileUser = null;
+      Leaderboard._setSection('challenges');
+      return;
+    }
     Leaderboard.sub = sub;
     // A Kudos sub-tab implies the Kudos section — a deep link straight to
     // #leaderboard/history must not land on a Topochain tab left over
@@ -365,8 +370,8 @@ const Leaderboard = {
   // route mid-navigation).
   //
   // #3620: A PRESS IS A PAGE, A ROUTER PASS IS NOT. A tab press on the open
-  // screen (the strip, Kudos' own Top changes | Top users | History, the
-  // event bar's way to History) PUSHES, so Back from Kudos is Challenges
+  // screen (the strip, Kudos' own Top changes | Top users | History)
+  // PUSHES, so Back from Kudos is Challenges
   // again rather than the Profile screen the leaderboard was opened from.
   // Everything the router does — a deep link healing to its canonical tab,
   // Back or Forward arriving on one — runs inside restoreFromHash
@@ -386,11 +391,9 @@ const Leaderboard = {
       ? '#leaderboard/topochain'
       : Leaderboard.section === 'challenges'
         ? '#leaderboard/challenges'
-        : Leaderboard.section === 'seasons'
-          ? '#leaderboard/seasons'
-          : Leaderboard.profileUser
-            ? `#leaderboard/users/${encodeURIComponent(Leaderboard.profileUser)}`
-            : `#leaderboard/${Leaderboard.sub}`;
+        : Leaderboard.profileUser
+          ? `#leaderboard/users/${encodeURIComponent(Leaderboard.profileUser)}`
+          : `#leaderboard/${Leaderboard.sub}`;
     if (location.hash.startsWith('#leaderboard') && location.hash !== target) {
       const pressed = Leaderboard._open
         && !(typeof App !== 'undefined' && App && App._isRestoring);
@@ -417,12 +420,6 @@ const Leaderboard = {
   },
 
   async _load() {
-    // Pull-to-refresh lands here for every section it does not name itself
-    // (App._refreshLeaderboard); on History that is the past seasons, which
-    // ./history.js loads, not a Kudos pane nobody is looking at.
-    if (Leaderboard.section === 'seasons') {
-      return window.LeaderboardHistory?.refresh?.();
-    }
     const key = Leaderboard._key(Leaderboard.sub, Leaderboard.window);
     if (Leaderboard._cache.has(key)) {
       Leaderboard._renderBody();
@@ -525,6 +522,9 @@ const Leaderboard = {
         who,
         initial: (who[0] || '?').toUpperCase(),
         canMessage: Leaderboard._canMessage(who),
+        // The way back is to Top users, which is gone while kudos is parked;
+        // the platform bar's own back is the way out then.
+        back: !kudosParked(),
       };
     }
     const isHistory = Leaderboard.sub === 'history';
@@ -613,7 +613,10 @@ const Leaderboard = {
     const s = data.stats || {};
     const prsTotal = s.prs_total || 0;
     const stats = {
-      kudosMerged: PlatformI18n.t('leaderboard:kudos.person.onLive', { count: Number(s.kudos_merged || 0) }),
+      // Null while kudos is parked: the page keeps the person's changes and
+      // drops what they were thanked with.
+      kudosMerged: kudosParked() ? null
+        : PlatformI18n.t('leaderboard:kudos.person.onLive', { count: Number(s.kudos_merged || 0) }),
       chips: [
         {
           label: PlatformI18n.t('leaderboard:kudos.person.live', { count: Number(s.prs_merged || 0) }),
@@ -657,7 +660,7 @@ const Leaderboard = {
       extUrl: row.pr_url || null,
       slug: row.app_slug,
       sessionId: row.session_id,
-      kudos: row.kudos_count,
+      kudos: kudosParked() ? null : row.kudos_count,
     }));
   },
 

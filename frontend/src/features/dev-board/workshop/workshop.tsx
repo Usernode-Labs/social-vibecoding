@@ -4464,8 +4464,8 @@ export function DevWorkshop(): ReactNode {
   const closeSide = useCallback(() => setSideItem(null), []);
   const sideKey = sideItem ? `${sideItem.kind}:${sideItem.id}` : null;
   // The panel goes with a change of tab (it opens from the Workshop tab's
-  // lists and, #4486, from All items), the project and the wide window; a
-  // week's page goes with the tab and the project.
+  // lists and, #4486, from All items and the bot's slots page), the project
+  // and the wide window; a week's page goes with the tab and the project.
   useEffect(() => {
     setSideItem(null);
     if (tab !== 'workshop') setOpenWeek(null);
@@ -4614,7 +4614,8 @@ export function DevWorkshop(): ReactNode {
     const undo = registerTrayToggle(mine, () => trayToggleRef.current());
     return () => { undo(); };
   }, [v.slug]);
-  const sideOpen = !!sideItem && (tab === 'workshop' || tab === 'all');
+  // The bot's slots page (?ws=bot) opens its rows beside it too.
+  const sideOpen = !!sideItem && (tab === 'workshop' || tab === 'all' || tab === 'bot');
   useEffect(() => {
     if (v.slug) publishSide(v.slug, sideOpen);
   }, [v.slug, sideOpen]);
@@ -4822,7 +4823,7 @@ export function DevWorkshop(): ReactNode {
       // #4457: an item's page is open in the panel beside the list, and the
       // list makes room for it (app.css). An attribute, not a class: the
       // host's classes are written by useWorkshopHostState.
-      data-ws-side-open={sideItem && (tab === 'workshop' || tab === 'all') ? '' : undefined}
+      data-ws-side-open={sideOpen ? '' : undefined}
     >
       {band}
       {tray}
@@ -5300,7 +5301,7 @@ export function DevWorkshop(): ReactNode {
       ) : null}
 
       {/* ── The item's page, beside the list (#4457) or the board (#4486) ── ./side-panel.tsx */}
-      {(tab === 'workshop' || tab === 'all') && sideItem ? <TopicSidePanel item={sideItem} onClose={closeSide} /> : null}
+      {sideOpen && sideItem ? <TopicSidePanel item={sideItem} onClose={closeSide} /> : null}
 
       {tab === 'needs' ? (
         <NeedsFeed
@@ -5323,7 +5324,13 @@ export function DevWorkshop(): ReactNode {
           head renders — was gone before it could be cleared. The pane is the
           tab; its body is what may be empty (see EmptyNote). */}
       {tab === 'bot' && slug ? (
-        <BotSlotsPage slug={slug} backLabel={t('project:page.backToWorkshop')} onBack={() => openTab(pageParent(tab))} />
+        <BotSlotsPage
+          slug={slug}
+          backLabel={t('project:page.backToWorkshop')}
+          onBack={() => openTab(pageParent(tab))}
+          openKey={sideKey}
+          onOpen={openItem}
+        />
       ) : null}
       {tab === 'all' ? (
         <>

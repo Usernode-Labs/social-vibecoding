@@ -145,7 +145,8 @@ test('it renders the data\'s lines, and quiet fallbacks without them', () => {
   assert.match(rewards, /id="profile-rewards"/);
   assert.match(rewards, /Challenges &amp; standings/);
   assert.match(rewards, /Season 3 · rank #3 · 2 of 7 done/);
-  assert.match(rewards, /Kudos on your changes/, 'the number is the stat card\'s; the row says what is behind it');
+  // #5249: while kudos is parked Rewards is Challenges & standings alone.
+  assert.doesNotMatch(rewards, /id="profile-row-kudos"|Kudos on your changes/, 'no Kudos row while kudos is parked');
   const quietRewards = renderToHtml(createElement(mod.RewardsPanel, { rows: { challenges: null, kudos: null } }));
   assert.match(quietRewards, /This season’s challenges and standings/, 'no data, no invented rank');
 

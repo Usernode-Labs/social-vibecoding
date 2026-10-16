@@ -1,174 +1,104 @@
 /**
- * The Challenges block: what the group is working towards.
+ * The Challenges block: what the viewer can do next.
  *
- * ── Two branches, and why the empty one is not "nothing" ──────────────
+ * ── Named by what it holds (the Semi design, 2026-10-16) ───────────────
  *
- * With no season running the block STAYS — for everyone, admins included — and
- * says so in one line. A block that silently vanishes between seasons leaves
- * the viewer with no way to tell "nothing is running" from "this broke".
+ * HomePanels.challengesView decides, and the section heading says it:
+ *
+ *   First challenges — every First challenge while any is unfinished, in the
+ *                      admin's order, the done ones in place with their Done
+ *                      rail.
+ *   Next challenges  — once those are done: up to three open challenges,
+ *                      furthest along first.
+ *   Challenges       — over ONE LINE when nothing is open: "All done for
+ *                      this week" when this week's are all done, otherwise
+ *                      "No challenges right now".
+ *
+ * The heading and its "See all" are ./sections.tsx's (they sit in the static
+ * section heading, filled in once the view arrives); this file draws what is
+ * under them.
+ *
+ * What the block used to carry and does not any more: the season progress
+ * line and bar (`.home-panel-season`), the points total, "N of M done", the
+ * group headers (This week, Always open, Season challenges, and the Done
+ * header `home-challenge-done-head`), the clocks on them and on the cards,
+ * the footer's "See all N challenges" / "Show less" toggle, and the "Open
+ * challenges" link. The Challenges tab, one tap away behind "See all", has
+ * the whole list.
  *
  * ── A FLAT COLUMN OF CARDS, and the card is the Challenges tab's ───────
  *
- * The ITERATION 03 board's Home screen draws this area straight on the page
- * ground: the season summary, the group headers, one card per challenge and
- * the footer, stacked in one column under the section heading. There is no
- * plate around them (`PanelShell plate="none"`, as Discover) and no rule
- * between them. The cards and the headers are surfaces of their own, so a
- * translucent plate behind them was a second frame, and its 0.625rem padding
- * pulled the whole block in from the heading's left edge.
- *
- * ONE RHYTHM: every band in the column is a 14px step from the one above it.
- * The heading ends on `pb-1.5`, so each band here opens on `pt-2` and closes
- * on `pb-1.5` (6px + 8px). Inside the rows list the cards and the headers
- * sit `gap-2.5` (10px) apart, the same step as the featured
- * apps rail (`.home-discover-rail` in app.css). Nothing is inset: the season line, the headers, the cards
- * and the footer all start where the heading's label starts.
+ * The cards sit straight on the page ground, in one column under the section
+ * heading, with no plate around them (`PanelShell plate="none"`, as
+ * Discover): the cards are surfaces of their own. The heading ends on
+ * `pb-1.5` and the body opens on `pt-2`, a 14px step, and the cards sit
+ * `gap-2.5` (10px) apart, the step of the featured apps rail. Nothing is
+ * inset: the cards start where the heading's label starts.
  *
  * THE CARD IS SHARED. It is `ChallengeCard` from
- * features/leaderboard/challenge-card.tsx, the same component the Leaderboard
- * screen's Challenges tab draws, so a challenge reads the same state, words and
- * reward on both surfaces. This block used to draw its own: a tinted card, a
- * category word in the well ("ONBOARDI / NG" on a phone), and a pill with a
- * ○/✓ or a count capsule, the season deadline and a plain reward. Only the
- * root class `home-challenge-card` and `data-challenge-id` are this block's,
- * because the declared checks and the tests select on them.
+ * features/leaderboard/challenge-card.tsx, the same component the
+ * Leaderboard screen's Challenges tab draws, so a challenge reads the same
+ * state, words and reward on both surfaces. Home hands it no deadline. Only
+ * the root class `home-challenge-card` and `data-challenge-id` are this
+ * block's, because the declared checks and the tests select on them.
  *
- * A CARD'S DEADLINE sits on the line under its title beside the reward ("5d
- * left · 500 pts"): the challenge's own end, else its event's, else the
- * season's. Only the First challenges open cards draw it; every other group's header
- * carries the clock instead (below).
+ * ── The one line ──────────────────────────────────────────────────────
  *
- * ── Group headers, without counts ─────────────────────────────────────
+ * With nothing open the block STAYS, for everyone, and says why in one card:
+ * a block that silently vanished would leave the viewer unable to tell
+ * "nothing to do" from "this broke". It is a statement, not a control: "See
+ * all" beside the heading is the way to the tab when there is one. It keeps
+ * `home-panel-rows home-panel-row` and the article's `data-rows="0"`, which
+ * the declared checks select the empty state by.
  *
- * The cards are the Challenges tab's list in the tab's order: grouped by the
- * board's categories (First challenges, This week, Always open, the season's other
- * challenges, and a finished First challenges group last). Expanded, the block draws
- * that whole list. Collapsed, its four slots go to the viewer's unfinished
- * challenges first (#2490), cutting a group mid-way when the cap falls inside
- * it; finished challenges only fill the slots that are left, and they sit
- * last under one "Done" header, so a finished card is never drawn above one
- * still to do. EVERY group opens with the tab's `GroupHeader`, one group on
- * screen included, static here: no toggle, no collapse and no count, because a
- * collapsed block does not draw the whole group. The header owns the clock
- * ("This week · 3d left", "Always open · no deadline") and the cards under it
- * drop theirs; the First challenges cards keep their own. The Done header carries no clock.
- * HomePanels.orderRows, HomePanels.visibleSlots and HomePanels.challengeGroups
- * decide all of it; the headers sit inside `.home-panel-rows` beside the
- * cards, which the declared checks select through, so nothing comes between
- * the season progress and the body. The Done header alone carries a class of
- * its own, `home-challenge-done-head`, which the #2490 check selects on.
+ * ── Loading and failure ───────────────────────────────────────────────
  *
- * ── First challenges are ordinary cards ──────────────────────────────
- *
- * A new account's First challenges (Join a community, Try an app, Vote on an
- * app, Send feedback, as the admin sets them up) are drawn here like every
- * other challenge: `.home-challenge-card`s under the "First challenges"
- * header, in the admin's order, ticking from their credits, and opening on
- * the Challenges tab when tapped. While any of them is unfinished the group
- * leads the block; once all are done it moves to the end (HomePanels
- * groupRankOf), as it does for everyone.
- *
- * Until #4635 a new account's season was GATED behind a Getting started card
- * on top of Home, and this block drew one dashed locked card ("6 challenges
- * unlock after Getting started") in place of its cards, or an unlock note
- * under them. Every new account gets a tour now, so the card, the gate,
- * the locked card and the note all went: nothing here is locked.
- *
- * ── The standings preview is GONE ─────────────────────────────────────
- *
- * A block of leaderboard rows used to sit under the challenges. It is
- * removed: this area is called Challenges, and a second list with its own
- * label inside one card made the reader work out which list they were looking
- * at before they could read either. The way to the Leaderboard screen is one
- * tap from here — "Open challenges" (#1916), in this section's own heading,
- * which renders in every branch including the between-seasons one and lands
- * on the screen's Challenges tab, one tab from the standings.
- *
- * It is the ONLY one. The footer used to repeat "Open challenges" at its right
- * end, one card below the heading's; that copy is gone, so the footer draws
- * only when its "See all N challenges" toggle has something to reveal.
+ * Until the first read lands the section shows its heading alone
+ * ("Challenges", no link), as it always has; there is no skeleton. A failed
+ * read keeps no copy, so the section is hidden (HomePanels.ensureLoaded is
+ * silent on failure); there is no error state to draw.
  */
 
-import { Fragment } from 'react';
-
-import { useMessages } from '../../../lib/i18n/react';
 import { ChallengeCard } from '../../leaderboard/challenge-card';
-import { GroupHeader } from '../../leaderboard/group-header';
-import { SeasonProgress } from '../../leaderboard/season-progress';
-import type { ChallengeGroupView, ChallengesView } from '../panels-store';
-import { PanelFooter, PanelShell, panels } from './ui';
+import type { ChallengesView } from '../panels-store';
+import { PanelShell, panels } from './ui';
 
 export function ChallengesPanel({ view }: { view: ChallengesView }) {
-  const t = useMessages('home');
-  if (!view.rows.length) {
-    // The line's hover is a text colour, not a tint: with no plate and no
-    // inset a background would fill a square box starting at the first glyph,
-    // and `.home-panel-body` clips overflow, so a negative-margin inset cannot
-    // widen it past the text either.
-    //
-    // It opens something, so it is a real <button> (#1918, #2989): Tailwind's
-    // preflight already strips a button's background, border, padding and
-    // font, and `w-full text-left` keep the box and the glyphs where the <p>
-    // put them. The accessible name starts with the visible text (so a voice
-    // command that reads it still matches) and then says where it goes. The
-    // focus ring is inset because `.home-panel-body` clips overflow.
+  if (view.note) {
     return (
-      <PanelShell panelKey={view.key} expanded={false} plate="none" stamps={{ rows: 0 }}>
-        <div className="home-panel-body">
-          <button
-            type="button"
-            className="home-panel-rows home-panel-row flex w-full items-center text-left text-[13px] text-zinc-500 dark:text-zinc-400 cursor-pointer hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-violet-500"
-            title={t('home:challenges.empty.tip')}
-            aria-label={t('home:challenges.empty.label')}
-            onClick={() => panels()?.goToChallenges?.()}
-          >
-            {t('home:challenges.empty.text')}
-          </button>
+      <PanelShell panelKey={view.key} plate="none" stamps={{ rows: 0 }}>
+        <div className="home-panel-body pt-2">
+          {/* Rows are 15 over 13 (AGENTS.md): the title at 15px/650, the
+              sentence at 13px muted. White on the page ground like the
+              challenge cards, so the line sits where a card would, with the
+              20px corners of a card this short. `.home-panel-row` gives it
+              its fixed 56px height (app.css) and its nowrap, so the two
+              lines are centred in it rather than padded. */}
+          <div className="home-panel-rows home-panel-row home-challenges-note flex flex-col justify-center gap-0.5 rounded-[1.25rem] bg-white px-4 dark:bg-zinc-900">
+            <p className="truncate text-[15px] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">
+              {view.note.title}
+            </p>
+            <p className="truncate text-[13px] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">
+              {view.note.text}
+            </p>
+          </div>
         </div>
       </PanelShell>
     );
   }
 
-  const groups: ChallengeGroupView[] = view.groups
-    ?? [{ key: 'all', heading: null, meta: null, rows: view.rows }];
-  const hasFooter = view.expandable !== false;
-
   return (
-    <PanelShell
-      panelKey={view.key}
-      expanded={view.expanded}
-      plate="none"
-      stamps={{ rows: view.rows.length }}
-      footer={hasFooter ? (
-        <PanelFooter panelKey={view.key} total={view.total} expanded={view.expanded} />
-      ) : null}
-    >
-      {view.season ? <SeasonProgress view={view.season} className="home-panel-season pt-2 pb-1.5" /> : null}
-      {/* The body closes on `pb-1.5` only when a band follows it (the
-          footer), as the first half of their 14px step. A block that ends at
-          its last card ends there, on the section's own bottom padding, as
-          Discover does. */}
-      <div className={hasFooter ? 'home-panel-body pt-2 pb-1.5' : 'home-panel-body pt-2'}>
+    <PanelShell panelKey={view.key} plate="none" stamps={{ rows: view.rows.length }}>
+      <div className="home-panel-body pt-2">
         <div className="home-panel-rows flex flex-col gap-2.5">
-          {groups.map((g) => (
-            <Fragment key={g.key}>
-              {g.heading ? (
-                <GroupHeader
-                  heading={g.heading}
-                  meta={g.meta}
-                  className={g.key === 'done' ? 'home-challenge-done-head' : undefined}
-                />
-              ) : null}
-              {g.rows.map((row) => (
-                <ChallengeCard
-                  key={row.id}
-                  view={row}
-                  className="home-challenge-card"
-                  data-challenge-id={row.id}
-                  onClick={() => panels()?.goToChallenge?.(row.eventId, row.id)}
-                />
-              ))}
-            </Fragment>
+          {view.rows.map((row) => (
+            <ChallengeCard
+              key={row.id}
+              view={row}
+              className="home-challenge-card"
+              data-challenge-id={row.id}
+              onClick={() => panels()?.goToChallenge?.(row.eventId, row.id)}
+            />
           ))}
         </div>
       </div>

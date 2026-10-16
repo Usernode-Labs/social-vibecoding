@@ -101,6 +101,17 @@ const Notifications = {
   // pagination.
   savedNotifications: [],
   unread: 0,
+
+  // #5249: whether a notification is drawn at all. While kudos is parked
+  // (features/leaderboard/kudos-parked.ts; the bundle then publishes no
+  // window.Kudos) a kudos row is not: nobody can give kudos, so an old one
+  // would point at a feature that is not there. The rows stay in the
+  // database; every way a row enters `items` asks this first.
+  _shown(n) {
+    if (!n) return false;
+    if (n.kind === 'kudos' && !(typeof window !== 'undefined' && window.Kudos)) return false;
+    return true;
+  },
   // `open` is a GETTER now, defined beside show()/hide() below — the drawer
   // owns the presentation, so this module derives the state rather than
   // storing a flag that would disagree with the screen during the drawer's
@@ -216,7 +227,8 @@ const Notifications = {
         if (timeout) clearTimeout(timeout);
       }
       if (generation !== Notifications._refreshGeneration) return false;
-      Notifications.items = Array.isArray(data.notifications) ? data.notifications : [];
+      Notifications.items = Array.isArray(data.notifications)
+        ? data.notifications.filter(Notifications._shown) : [];
       Notifications.invites = Array.isArray(data.pendingInvites) ? data.pendingInvites : [];
       Notifications.saved = Array.isArray(data.savedMessages) ? data.savedMessages : [];
       // #4769: the pinned section's other half, saved NOTIFICATIONS. Same
@@ -304,7 +316,7 @@ const Notifications = {
       const res = await fetch(`/api/notifications?${params.toString()}`);
       if (!res.ok) return;
       const data = await res.json();
-      const incoming = Array.isArray(data.notifications) ? data.notifications : [];
+      const incoming = Array.isArray(data.notifications) ? data.notifications.filter(Notifications._shown) : [];
       // Append, deduping on id (a concurrent prepend could overlap).
       const seen = new Set(Notifications.items.map((n) => n.id));
       for (const n of incoming) {
@@ -355,7 +367,7 @@ const Notifications = {
       const res = await fetch(`/api/notifications?${params.toString()}`);
       if (!res.ok) return;
       const data = await res.json();
-      const incoming = Array.isArray(data.notifications) ? data.notifications : [];
+      const incoming = Array.isArray(data.notifications) ? data.notifications.filter(Notifications._shown) : [];
       const seen = new Set(Notifications.items.map((n) => n.id));
       for (const n of incoming) {
         if (!seen.has(n.id)) {
@@ -384,6 +396,7 @@ const Notifications = {
 
   handleIncoming(notif) {
     if (!notif) return;
+    if (!Notifications._shown(notif)) return;
     // Dedup on id — a reconnect might replay the same notification that
     // /api/notifications already returned.
     //
@@ -2308,6 +2321,21 @@ const BOT_LABEL_IDS = {
   live: 'notifications:row.bot.label.live',
   done_elsewhere: 'notifications:row.bot.label.doneElsewhere',
 };
+// 16 Oct 2026: what a "needs you" asks for, heading its row in place of the
+// bare moment (homeroom-bot-notify-copy.js NEEDS_YOU_ASKS, held to these by
+// tests/homeroom-bot-notify.test.js). By `said`; any other keeps "Needs you".
+const BOT_ASK_IDS = {
+  question: 'notifications:row.bot.ask.question',
+  questions: 'notifications:row.bot.ask.questions',
+  followup_ask: 'notifications:row.bot.ask.question',
+  plan: 'notifications:row.bot.ask.plan',
+  plan_first: 'notifications:row.bot.ask.plan',
+  decide: 'notifications:row.bot.ask.decide',
+  blocked: 'notifications:row.bot.ask.moreDetail',
+  empty: 'notifications:row.bot.ask.moreDetail',
+  done: 'notifications:row.bot.ask.done',
+  platform: 'notifications:row.bot.ask.platform',
+};
 // A row from before "one story": the moment each old token is.
 const BOT_LEGACY_MOMENTS = {
   question: 'needs_you',
@@ -2342,10 +2370,13 @@ function parseBotDetail(detail) {
     if (!Object.prototype.hasOwnProperty.call(BOT_LABEL_IDS, moment)) return null;
     return {
       moment,
+      said: typeof raw.s === 'string' ? raw.s : '',
       appName: oneLine(raw.a, 80),
       requestTitle: oneLine(raw.t, 120),
       firstVersion: raw.f === 1 || raw.f === true,
+      deciders: oneLine(raw.d, 120),
       count: positiveId(raw.c),
+      issueNumber: positiveId(raw.i),
       threadRootId: positiveId(raw.r),
     };
   }
@@ -2355,10 +2386,13 @@ function parseBotDetail(detail) {
   if (moment === 'reply') return { moment };
   return {
     moment,
+    said: '',
     appName: oneLine(m[2], 80),
     requestTitle: '',
     firstVersion: /^live_first/.test(m[1]) || m[1] === 'stopped_first',
+    deciders: '',
     count: null,
+    issueNumber: null,
     threadRootId: null,
   };
 }
@@ -2397,12 +2431,24 @@ function botMomentLine(detail, message) {
     subject = d.appName
       ? t('notifications:row.bot.subject.firstVersion', { project: d.appName })
       : t('notifications:row.bot.subject.firstVersionUnnamed');
-  } else subject = d.requestTitle || d.appName || t('notifications:row.bot.name');
-  return {
-    label: t(BOT_LABEL_IDS[d.moment]),
-    subject,
-    meta: d.appName ? t('notifications:row.bot.meta', { project: d.appName }) : t('notifications:row.bot.name'),
-  };
+  } else if (d.requestTitle) subject = d.requestTitle;
+  // A request whose title is not known is named by its number, never by its
+  // project alone ("Needs you / Homeroom / Homeroom · Homeroom bot").
+  else if (d.issueNumber) subject = t('notifications:row.bot.subject.request', { number: d.issueNumber });
+  else subject = d.appName || t('notifications:row.bot.name');
+  let label = t(BOT_LABEL_IDS[d.moment]);
+  if (d.moment === 'needs_you' && d.said === 'decide_others') {
+    label = d.deciders
+      ? t('notifications:row.bot.ask.waitingOn', { people: d.deciders })
+      : t('notifications:row.bot.ask.waitingOnUnnamed');
+  } else if (d.moment === 'needs_you' && Object.prototype.hasOwnProperty.call(BOT_ASK_IDS, d.said)) {
+    label = t(BOT_ASK_IDS[d.said]);
+  }
+  let meta = t('notifications:row.bot.name');
+  if (d.appName && d.requestTitle && d.issueNumber && !d.firstVersion) {
+    meta = t('notifications:row.bot.metaRequest', { project: d.appName, number: d.issueNumber });
+  } else if (d.appName) meta = t('notifications:row.bot.meta', { project: d.appName });
+  return { label, subject, meta };
 }
 
 // A whole message with one emphasised part, as a row's segments: the catalog

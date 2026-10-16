@@ -14,14 +14,16 @@
  * is left here is the apps: the five you used last, newest first, each its
  * own tile over its name.
  *
- * ── The pinned part (#4935) ──────────────────────────────────────────
+ * ── The pinned part (#5323) ──────────────────────────────────────────
  *
- * Those five were a random handful of Home's tiles, and read as duplicates
- * of them. The strip now leads with the apps in the top row of My apps —
- * Home publishes them (./pinned-apps-store.js) — separated from the recents
- * by a hairline, and the recents fill the slots that are left. A pinned app
- * is never listed a second time: the one on screen stays in its pinned slot
- * and stays lit.
+ * The strip no longer copies My apps. Its top part holds the apps YOU pinned
+ * there, by dragging a My apps tile onto it while the "Pin here" slot is up
+ * (./pinned-apps-store.js keeps the list; Home's drag recognizer names the
+ * drop through the nav bridge). It starts empty for everyone, so a strip
+ * with nothing pinned shows only recents. A pinned app is never listed a
+ * second time: the one on screen stays in its pinned slot and stays lit.
+ * Unpin by dragging the pinned tile back out of the rail, or by Unpin in its
+ * right-click menu — the same small menu a My apps tile opens.
  *
  * ── Still open ───────────────────────────────────────────────────────
  *
@@ -53,7 +55,9 @@
  * prerendered document and the first client render still agree.
  */
 
-import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useEffect, useRef, useState,
+  type MouseEvent, type PointerEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
@@ -63,7 +67,7 @@ import { liveAppLabel, LiveAppDot, useCurrentAppSlug, useLiveAppSlugs } from '..
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { improveStore } from '../improve/improve-store.js';
 import { navStore } from './nav-store.js';
-import { pinnedAppsStore, readPinnedApps } from './pinned-apps-store.js';
+import { pinDropStore, pinnedAppsStore, readPinnedApps, unpinApp } from './pinned-apps-store.js';
 import { readRecentApps, recentAppsStore } from './recent-apps-store.js';
 import { noteResumeOrigin } from './resume-motion';
 
@@ -77,7 +81,7 @@ export interface StripApp {
   iconUrl: string | null;
   iconEmoji: string | null;
   at?: string;
-  /** In the strip's pinned part: an app from My apps' top row (#4935). */
+  /** In the strip's pinned part: an app the viewer pinned there (#5323). */
   pinned?: boolean;
 }
 
@@ -156,11 +160,81 @@ export function StripApps() {
   const [more, setMore] = useState(false);
   const { apps } = useStoreState(recentAppsStore);
   const { apps: pinned } = useStoreState(pinnedAppsStore);
+  // The "Pin here" slot's state while a My apps tile is in the air (#5323),
+  // named by Home's drag recognizer through the bridge. null the rest of the
+  // time — which is also the hydration state: nothing sets it but a drag.
+  const { drop } = useStoreState(pinDropStore);
   const live = useLiveAppSlugs();
   const frameSlug = useCurrentAppSlug();
   const improve = useStoreState(improveStore);
   const { viewer, screen, tab } = useStoreState(navStore);
   const on = currentAppOnScreen({ frameSlug, screen, tab });
+
+  // ── Dragging a pinned app back OUT (#5323) ─────────────────────────
+  // Mouse-only: touch lifts open the card menu instead. Past 6px the row
+  // captures the pointer and a ghost follows it; while the ghost is outside
+  // #platform-tabs it carries the "Unpin" caption, and letting go there
+  // unpins. Letting go inside the rail does nothing, Escape and a cancelled
+  // pointer abort, and the click the release would otherwise turn into is
+  // swallowed. React state only — the ghost is null on first render, so the
+  // prerender is untouched.
+  const [ghost, setGhost] = useState<{
+    app: StripApp; x: number; y: number; unpin: boolean;
+  } | null>(null);
+  const dragRef = useRef<{ app: StripApp; startX: number; startY: number; active: boolean } | null>(null);
+  const swallowClickRef = useRef(false);
+
+  useEffect(() => {
+    if (!ghost) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      dragRef.current = null;
+      setGhost(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [ghost]);
+
+  const insideTabs = (x: number, y: number): boolean => {
+    const tabs = document.getElementById('platform-tabs');
+    if (!tabs || typeof tabs.getBoundingClientRect !== 'function') return false;
+    const r = tabs.getBoundingClientRect();
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  };
+  const endDrag = () => {
+    dragRef.current = null;
+    setGhost(null);
+  };
+  const pinnedPointerDown = (event: PointerEvent<HTMLAnchorElement>, app: StripApp) => {
+    if (event.button !== 0 || event.pointerType !== 'mouse') return;
+    dragRef.current = { app, startX: event.clientX, startY: event.clientY, active: false };
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* a drag needs no capture to try */ }
+  };
+  const pinnedPointerMove = (event: PointerEvent<HTMLAnchorElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    if (!drag.active
+      && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) <= 6) return;
+    drag.active = true;
+    setGhost({
+      app: drag.app,
+      x: event.clientX,
+      y: event.clientY,
+      unpin: !insideTabs(event.clientX, event.clientY),
+    });
+  };
+  const pinnedPointerUp = (event: PointerEvent<HTMLAnchorElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    if (drag.active) {
+      // The release must not ALSO open the app the row links to.
+      swallowClickRef.current = true;
+      if (!insideTabs(event.clientX, event.clientY)) {
+        unpinApp(drag.app.slug, navStore.get().viewer);
+      }
+    }
+    endDrag();
+  };
 
   // POST-MOUNT, for hydration. The stored apps are read by ./mount.ts when
   // the router names the viewer, since the list is theirs; this covers a
@@ -187,7 +261,10 @@ export function StripApps() {
   const items = mounted && viewer
     ? stripApps(apps as StripApp[], current, live, STRIP_APPS, pinned as StripApp[])
     : [];
-  useHiddenClass(ref, items.length === 0);
+  // The slot must be there to drop ON, so the strip stays visible while a
+  // tile is in the air even when the list itself is empty; an empty settle
+  // hides it again.
+  useHiddenClass(ref, items.length === 0 && !drop);
 
   // THE SCROLL CUE (#4738): the fade shows only while apps sit below the
   // fold. Keyed on the rendered slugs so a change of list re-checks; the
@@ -209,47 +286,137 @@ export function StripApps() {
     };
   }, [slugKey]);
 
-  return (
+  // THE "PIN HERE" SLOT (#5323). One row while a My apps tile is in the air,
+  // drawn after the pinned rows and before the rest — it IS the pinned
+  // part's edge then, and app.css draws the hairline on it. The refused
+  // states say what a drop would do instead of doing it.
+  const dropLabel = drop === 'already' ? t('core:stripApps.drop.already')
+    : drop === 'full' ? t('core:stripApps.drop.full')
+      : t('core:stripApps.drop.pin');
+  const dropRow = drop ? (
     <div
-      ref={ref}
-      id="platform-strip-apps"
-      className="platform-strip-apps hidden"
-      role="group"
-      aria-label={t('core:stripApps.label')}
-      data-more={more ? 'true' : undefined}
+      key="strip-drop"
+      className="platform-strip-drop"
+      data-strip-drop=""
+      data-drop-state={drop}
     >
-      {items.map((app) => {
-        const running = live.includes(app.slug);
-        const lit = app.slug === on;
-        const record = { icon_url: app.iconUrl, icon_emoji: app.iconEmoji, name: app.name };
-        return (
-          <a
-            key={app.slug}
-            className="platform-strip-app"
-            href={`/app/${encodeURIComponent(app.slug)}`}
-            data-strip-app={app.slug}
-            // The pinned part's edge is where the hairline between the two
-            // groups is drawn (app.css): the last pinned row before a
-            // non-pinned one.
-            {...(app.pinned ? { 'data-strip-pinned': 'true' } : null)}
-            title={app.name}
-            // A kept-alive app says so aloud after its name: two facts, joined
-            // the way the language joins them.
-            aria-label={running ? listText([app.name, liveAppLabel()]) : undefined}
-            aria-current={lit ? 'page' : undefined}
-            {...(running ? { 'data-live': 'true' } : null)}
-            onClick={(event) => onAppClick(event, app.slug, running && !lit)}
-          >
-            <span className="platform-strip-mark">
-              <span className="app-icon-tile platform-strip-tile" data-icon={appIconKind(record)} aria-hidden="true">
-                <AppIconContent app={record} />
-              </span>
-              {running ? <LiveAppDot className="platform-strip-live" /> : null}
-            </span>
-            <span className="platform-strip-label">{app.name}</span>
-          </a>
-        );
-      })}
+      <span className="platform-strip-drop-tile" aria-hidden="true" />
+      <span className="platform-strip-drop-label">{dropLabel}</span>
     </div>
+  ) : null;
+
+  const renderRow = (app: StripApp) => {
+    const running = live.includes(app.slug);
+    const lit = app.slug === on;
+    const record = { icon_url: app.iconUrl, icon_emoji: app.iconEmoji, name: app.name };
+    return (
+      <a
+        key={app.slug}
+        className="platform-strip-app"
+        href={`/app/${encodeURIComponent(app.slug)}`}
+        data-strip-app={app.slug}
+        // The pinned part's edge is where the hairline between the two
+        // groups is drawn (app.css): the last pinned row before a non-pinned
+        // one, or before the "Pin here" slot while it is up.
+        {...(app.pinned ? { 'data-strip-pinned': 'true' } : null)}
+        title={app.name}
+        // A kept-alive app says so aloud after its name: two facts, joined
+        // the way the language joins them.
+        aria-label={running ? listText([app.name, liveAppLabel()]) : undefined}
+        aria-current={lit ? 'page' : undefined}
+        {...(running ? { 'data-live': 'true' } : null)}
+        onClick={(event) => {
+          // A drag-out ends with a click on the row it started from; that
+          // click must not open the app (a plain click never sets it).
+          if (app.pinned && swallowClickRef.current) {
+            swallowClickRef.current = false;
+            event.preventDefault();
+            return;
+          }
+          onAppClick(event, app.slug, running && !lit);
+        }}
+        // Unpin is in the same small menu a My apps tile opens (#5323).
+        {...(app.pinned ? {
+          onContextMenu: (event: MouseEvent<HTMLAnchorElement>) => {
+            event.preventDefault();
+            const ui = (window as unknown as {
+              PlatformUI?: { menu?: (opts: unknown) => unknown };
+            }).PlatformUI;
+            ui?.menu?.({
+              anchorEl: event.currentTarget,
+              title: app.name,
+              items: [{
+                label: t('core:stripApps.menu.unpin'),
+                handler: () => { unpinApp(app.slug, navStore.get().viewer); },
+              }],
+            });
+          },
+          onPointerDown: (event: PointerEvent<HTMLAnchorElement>) => pinnedPointerDown(event, app),
+          onPointerMove: pinnedPointerMove,
+          onPointerUp: pinnedPointerUp,
+          onPointerCancel: endDrag,
+        } : null)}
+      >
+        <span className="platform-strip-mark">
+          <span className="app-icon-tile platform-strip-tile" data-icon={appIconKind(record)} aria-hidden="true">
+            <AppIconContent app={record} />
+          </span>
+          {running ? <LiveAppDot className="platform-strip-live" /> : null}
+        </span>
+        <span className="platform-strip-label">{app.name}</span>
+      </a>
+    );
+  };
+
+  // Pinned rows first, the slot after them (it leads when nothing is pinned
+  // and is the whole strip when the list is empty), then the rest.
+  const rows: ReactNode[] = [];
+  let dropPlaced = false;
+  for (const app of items) {
+    if (dropRow && !app.pinned && !dropPlaced) {
+      rows.push(dropRow);
+      dropPlaced = true;
+    }
+    rows.push(renderRow(app));
+  }
+  if (dropRow && !dropPlaced) rows.push(dropRow);
+
+  return (
+    <>
+      <div
+        ref={ref}
+        id="platform-strip-apps"
+        className="platform-strip-apps hidden"
+        role="group"
+        aria-label={t('core:stripApps.label')}
+        data-more={more ? 'true' : undefined}
+      >
+        {rows}
+      </div>
+      {/* THE DRAGGED PINNED TILE (#5323). Portaled to the body, because the
+          rail clips what it holds and a ghost must cross it. The "Unpin"
+          caption rides along only while the ghost is outside the rail —
+          that is the state whose release takes the app off. */}
+      {ghost ? createPortal(
+        <span
+          className="platform-strip-ghost"
+          style={{ left: ghost.x, top: ghost.y }}
+          data-unpin={ghost.unpin ? 'true' : undefined}
+          aria-hidden="true"
+        >
+          <span className="app-icon-tile platform-strip-tile" data-icon={appIconKind({
+            icon_url: ghost.app.iconUrl, icon_emoji: ghost.app.iconEmoji, name: ghost.app.name,
+          })}>
+            <AppIconContent app={{
+              icon_url: ghost.app.iconUrl, icon_emoji: ghost.app.iconEmoji, name: ghost.app.name,
+            }} />
+          </span>
+          {ghost.unpin ? (
+            <span className="platform-strip-ghost-caption">{t('core:stripApps.ghost.unpin')}</span>
+          ) : null}
+        </span>,
+        document.body,
+      ) : null}
+    </>
   );
 }

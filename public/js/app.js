@@ -5035,6 +5035,16 @@ const App = {
         const profileUser = parts[1] === 'users' && parts[2]
           ? decodeURIComponent(parts[2])
           : null;
+        // #5249: kudos is parked (features/leaderboard/kudos-parked.ts; the
+        // bundle then publishes no window.Kudos), so the Kudos tab and its
+        // three sub-views are gone. Their addresses land on Challenges, the
+        // default tab, rewritten in place so Back does not return to them.
+        // A person's page (#leaderboard/users/<name>) stays where it is.
+        if (!profileUser && !window.Kudos && App.PARKED_KUDOS_SUBS.includes(parts[1])) {
+          try { history.replaceState(null, '', '#leaderboard/challenges'); } catch (_) { /* hash stays */ }
+          App.navigateToLeaderboard('challenges', null, null);
+          return;
+        }
         // #leaderboard/challenges/<eventId>[/<challengeId>] (#982) — the
         // address the profile's completed-challenge rows link to. The
         // event id is part of the path because a challenge id alone is
@@ -5048,6 +5058,16 @@ const App = {
             challengeId: App._numericSegment(parts[3]),
           }
           : null;
+        // #leaderboard/seasons was the History tab, retired with the seasons
+        // it listed (2026-10-16). An old link lands on Challenges, its address
+        // rewritten first so Leaderboard._syncHash finds nothing to heal.
+        if (parts[1] === 'seasons') {
+          try {
+            history.replaceState(null, '', '#leaderboard/challenges');
+          } catch (err) { /* non-fatal: navigation below still works */ }
+          App.navigateToLeaderboard('challenges', null, null);
+          return;
+        }
         App.navigateToLeaderboard(parts[1], profileUser, challengeTarget);
         return;
       }
@@ -6928,13 +6948,17 @@ const App = {
       Kudos sub-views (#leaderboard/prs, /users, /history) fell through to
       "Leaderboard". It is one entry per ADDRESS now, each the label of the
       tab that address shows (frontend/src/features/leaderboard/index.tsx's
-      SECTION_TABS); `seasons` is the History tab. And it is no longer only
+      SECTION_TABS). And it is no longer only
       the ENTRY's title: a tab press rewrites the address with replaceState
       and never comes back through here, so Leaderboard._syncTitle asks this
       same method on every section change. One table, both paths.
   */
   // Message ids: the table is read before the language runtime exists, and
   // _leaderboardTitle reads the words when it names the screen.
+  // The Kudos addresses that land on Challenges while kudos is parked
+  // (#5249, the #leaderboard branch of restoreFromHash).
+  PARKED_KUDOS_SUBS: ['kudos', 'prs', 'users', 'history'],
+
   LEADERBOARD_TITLES: {
     challenges: 'shell:title.leaderboard.challenges',
     kudos: 'shell:title.leaderboard.kudos',
@@ -6942,7 +6966,6 @@ const App = {
     users: 'shell:title.leaderboard.kudos',
     history: 'shell:title.leaderboard.kudos',
     topochain: 'shell:title.leaderboard.standings',
-    seasons: 'shell:title.leaderboard.history',
   },
 
   _leaderboardTitle(sub, profileUser) {
@@ -6960,8 +6983,7 @@ const App = {
       Leaderboard.openProfile(profileUser);
     } else if (!sub && window.Leaderboard?._setSection) {
       Leaderboard._setSection('challenges');
-    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges'
-                || sub === 'seasons')
+    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges')
                && window.Leaderboard?._setSection) {
       // Register the challenge deep link BEFORE the section mounts (#982).
       // Selecting the event first means the pane's very first fetch is

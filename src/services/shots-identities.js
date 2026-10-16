@@ -46,6 +46,21 @@ async function mintShotsAuthTokens(pool, appId) {
   };
 }
 
+// The invited fixtures' tokens (#4437), minted the same way the full
+// admin's is: from the fixed fixture identity, never a database row. Such a
+// token can only become a session inside a shots clone whose resetPair
+// inserted the matching invited member; a child app's copies hold no such
+// user, so its runs are never handed these tokens.
+function mintInvitedTokens(appId) {
+  const mint = (id, username) => visuals.mintCaptureToken({
+    id, username, usernode_pubkey: null, locale: 'en',
+  }, appId);
+  return {
+    invited_member: mint(fixtures.INVITED_MEMBER_USER_ID, fixtures.INVITED_MEMBER_USERNAME),
+    invited_member_listed: mint(fixtures.INVITED_MEMBER_LISTED_USER_ID, fixtures.INVITED_MEMBER_LISTED_USERNAME),
+  };
+}
+
 // What the guest browser is to the app it shoots, and the token it carries
 // if any. Homeroom's own copies show a browser with no session their
 // signed-out pages, so it needs nothing. A child app learns of a visitor
@@ -86,6 +101,9 @@ const SIGNED_OUT_WORDS = /\b(?:signed[- ]out|logged[- ]out|not signed in|not log
 // the app's creator, owner or admins ("Creator Studio", "/#/admin").
 const ROLE_WORDS = /\b(?:creators?|owners?|admins?|administrators?)\b/i;
 const ADMIN_PERSONAS = new Set(['read_only_admin', 'full_admin']);
+// Homeroom's own invited fixtures (#4437): they exist only in the paired
+// disposable copies of Homeroom itself, never in a child app's.
+const INVITED_PERSONAS = new Set(['invited_member', 'invited_member_listed']);
 
 // What follows either role warning: what the shots can and cannot do.
 const ROLE_ADVICE = 'A screen the app keeps for particular accounts (its creator, a list of usernames or ids) '
@@ -134,6 +152,14 @@ async function personaWarnings(pool, app, intent, { selfApp = false } = {}) {
   }
   if (!selfApp) {
     const signedIn = stories.filter((story) => story.persona !== 'guest');
+    const invited = signedIn.filter((story) => INVITED_PERSONAS.has(story.persona)).map((story) => story.id);
+    if (invited.length) {
+      warnings.push(`${invited.join(', ')} ${invited.length > 1 ? 'are' : 'is'} declared for an invited `
+        + 'private member, but invited_member and invited_member_listed are Homeroom\'s own fixture people, '
+        + 'present only in the paired copies of Homeroom itself: this app\'s copies hold no such account, so '
+        + 'that browser cannot sign in here. If the change is for an ordinary signed-in person, declare it '
+        + 'again with persona member.');
+    }
     const admins = signedIn.filter((story) => ADMIN_PERSONAS.has(story.persona)).map((story) => story.id);
     if (admins.length) {
       warnings.push(`${admins.join(', ')} ${admins.length > 1 ? 'are' : 'is'} declared for an administrator `
@@ -152,4 +178,4 @@ async function personaWarnings(pool, app, intent, { selfApp = false } = {}) {
   return warnings;
 }
 
-module.exports = { mintShotsAuthTokens, shotsGuestKind, shotsGuestIdentity, personaWarnings };
+module.exports = { mintShotsAuthTokens, mintInvitedTokens, shotsGuestKind, shotsGuestIdentity, personaWarnings };

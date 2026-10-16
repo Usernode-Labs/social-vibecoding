@@ -725,17 +725,17 @@
       "expectText": "WAITLIST_X_CLIENT_ID"
     },
     {
-      "name": "Me: the editable profile card leads, above the merged / kudos / challenges stat cards (#982)",
+      "name": "Me: the editable profile card leads, above the merged and challenges stat cards (#982; no kudos card, #5249)",
       "path": "/?demo=1#profile",
       "expectText": "Edit profile",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-identity-card:has(#profile-edit-btn) + #profile-stats > [data-profile-stat=\"merged\"] + [data-profile-stat=\"kudos\"] + [data-profile-stat=\"challenges\"]"
+      "expectSelector": "#profile-screen:not(.hidden) #profile-identity-card:has(#profile-edit-btn) + #profile-stats:not(:has([data-profile-stat=\"kudos\"])) > [data-profile-stat=\"merged\"] + [data-profile-stat=\"challenges\"]"
     },
     {
       "id": "profile.feedback-list",
-      "name": "Me: Your work leads, then Rewards (Challenges & standings, Kudos); Account holds Friends and App slots; the feedback challenge's card lists what you sent with its status (#3186, UI overhaul, navigation review)",
+      "name": "Me: Your work leads, then Rewards (Challenges & standings; Kudos is parked, #5249); Account holds Friends and App slots; the feedback challenge's card lists what you sent with its status (#3186, UI overhaul, navigation review)",
       "path": "/?demo=1#profile?feedback",
       "expectText": "Counted",
-      "expectSelector": "body:has([data-feedback-status=\"received\"]~[data-feedback-status=\"counted\"]):has(#profile-work+#profile-rewards #profile-row-challenges+#profile-row-kudos):has(#profile-row-friends+#profile-row-app-slots):has(#profile-settings #profile-row-settings)",
+      "expectSelector": "body:has([data-feedback-status=\"received\"]~[data-feedback-status=\"counted\"]):has(#profile-work+#profile-rewards #profile-row-challenges:only-child):has(#profile-row-friends+#profile-row-app-slots):has(#profile-settings #profile-row-settings)",
       "visual": true,
       "impact": [
         "frontend/src/features/profile/feedback-sheet.tsx",
@@ -751,15 +751,14 @@
       "expectSelector": "#profile-screen:not(.hidden) #profile-work #profile-row-proposals[href=\"#profile/your-changes\"] + #profile-row-feedback[href=\"#profile/your-requests\"] + #profile-row-votes[href=\"#profile/your-votes\"]"
     },
     {
-      "name": "A History tab after Standings lists the seasons that ended, with each season's and each event's winner",
+      "name": "The retired History address opens the Challenges tab, and the tabs are Challenges and Standings",
       "path": "/?demo=1#leaderboard/seasons",
-      "expectText": "won with",
-      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"topochain\"] + [data-standings-tab=\"seasons\"][aria-current=\"page\"]) #leaderboard-history-root:not(.hidden) #lb-history-seasons [data-history-season] [data-history-result]"
+      "expectSelector": "#leaderboard-screen:not(.hidden):has([data-standings-tab=\"challenges\"][aria-current=\"page\"] + [data-standings-tab=\"topochain\"]):not(:has([data-standings-tab=\"seasons\"],[data-standings-tab=\"kudos\"])) #challenges-root #tc-se-challenge-summary"
     },
     {
-      "name": "A person's page carries Message beside their name, which opens a direct message",
+      "name": "A person's page carries Message beside their name, which opens a direct message (no Top users link, #5249)",
       "path": "/?demo=1#leaderboard/users/usernode-capture",
-      "expectSelector": "#leaderboard-root:not(.hidden) header:has([data-lb-back]) button[data-message-person=\"usernode-capture\"]"
+      "expectSelector": "#leaderboard-root:not(.hidden) header:not(:has([data-lb-back])) button[data-message-person=\"usernode-capture\"]"
     },
     {
       "name": "Friends: a person who asked you gets Accept and Decline under their name, beside Message (#2386)",
@@ -828,9 +827,9 @@
       "coldLoad": true
     },
     {
-      "name": "Send Feedback offers a kudos bounty, unchecked by default (#964), room for up to three images (#3027), and a video option (#3940) behind one paperclip (#4127)",
+      "name": "Send Feedback: no kudos bounty (#964, #5249), up to three images (#3027), video (#3940) behind one paperclip (#4127)",
       "path": "/?shot=feedback",
-      "expectSelector": "#feedback-form:has(#feedback-screenshot-count:not(.hidden)):has(#feedback-attach-btn:not(.hidden,:disabled)+.hidden>#feedback-video-btn:not(.hidden)) #feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:not(:checked):not(:disabled)",
+      "expectSelector": "#feedback-form:has(#feedback-screenshot-count:not(.hidden)):has(#feedback-attach-btn:not(.hidden,:disabled)+.hidden>#feedback-video-btn:not(.hidden)) #feedback-bounty-row.hidden #feedback-bounty-checkbox:not(:checked)",
       "expectText": "You can attach up to 3 images."
     },
     {
@@ -846,9 +845,9 @@
       "expectText": "Try a fix yourself"
     },
     {
-      "name": "The bounty checkbox is disabled once the weekly allowance is spent (#964)",
+      "name": "With kudos parked, a spent allowance leaves Send Feedback's bounty row hidden and unpainted (#964, #5249)",
       "path": "/?shot=feedback-spent",
-      "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:disabled"
+      "expectSelector": "#feedback-form #feedback-bounty-row.hidden:not(.opacity-60) #feedback-bounty-checkbox:not(:checked):not(:disabled)"
     },
     {
       "name": "Offline, Send Feedback promises to save the message instead of failing (#1054)",
@@ -926,26 +925,28 @@
       "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card [role=progressbar][aria-valuetext]"
     },
     {
-      "name": "Challenges: the season progress leads the flat block, above the shared challenge cards",
+      "name": "Challenges: Home names the block by what it holds, with no season progress above the cards",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section > h2.home-area-label + article.home-panel > .home-panel-season + .home-panel-body .home-challenge-card [role=progressbar]"
+      "expectSelector": "#home-challenges-section:not(:has(.home-panel-season)) > h2.home-area-label + article.home-panel > .home-panel-body .home-challenge-card [role=progressbar]",
+      "expectText": "Next challenges"
     },
     {
       "name": "Challenges: with nothing running it says so, and shows only that (#947)",
       "path": "/?demo=1&challenges=none",
       "expectSelector": "#home-body [data-panel-slot=\"challenges\"] article.home-panel[data-rows=\"0\"] .home-panel-row",
-      "expectText": "No challenges are running right now"
+      "expectText": "No challenges right now"
     },
     {
-      "name": "Challenges: a block showing every challenge there is draws no \"see all\" (#1824)",
+      "name": "Challenges: with two open, Next challenges shows just those two",
       "path": "/?demo=1&challenges=few",
-      "expectSelector": "#home-challenges-section article.home-panel:not(:has(.home-panel-expand)) > .home-panel-body .home-challenge-card"
+      "expectSelector": "#home-challenges-section article.home-panel[data-rows=\"2\"] > .home-panel-body .home-challenge-card",
+      "expectText": "Next challenges"
     },
     {
-      "name": "Challenges: a truncated list still draws the toggle that opens the rest (#1824)",
+      "name": "Challenges: Next challenges shows at most three, the furthest along first",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section article.home-panel > .home-panel-footer > .home-panel-expand[aria-expanded=\"false\"]",
-      "expectText": "See all 7 challenges"
+      "expectSelector": "#home-challenges-section article.home-panel[data-rows=\"3\"]:not(:has(.home-panel-expand)) .home-panel-rows > .home-challenge-card[data-challenge-id=\"900512\"]:first-child",
+      "expectText": "4/8 Apps tested this week"
     },
     {
       "name": "Challenges: a Home card with an illustration draws its artwork (Iteration 03)",
@@ -953,9 +954,9 @@
       "expectSelector": "#home-body.home-column #home-challenges-section .home-challenge-card img[src^=\"/illustrations/challenges/\"]"
     },
     {
-      "name": "Challenges: on Home, finished challenges sit last under a Done header, after every unfinished one (#2490)",
+      "name": "Challenges: on Home, Next challenges lists only unfinished ones, under no group headers",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section .home-panel-rows:has(> h3.home-challenge-done-head + .home-challenge-card):not(:has(> h3.home-challenge-done-head ~ .home-challenge-card [role=progressbar]:not([aria-valuetext=\"Done\"])))"
+      "expectSelector": "#home-challenges-section .home-panel-rows:not(:has(h3)):not(:has(.home-challenge-card [role=progressbar][aria-valuetext=\"Done\"])) > .home-challenge-card"
     },
     {
       "name": "Dev board: one composite status pill and a menu trigger per card (card-as-pointer)",
@@ -1008,9 +1009,9 @@
       "expectText": "Request #900003"
     },
     {
-      "name": "Dev board, round three: the vote is one button beside the state bar, with a picker; #1688 puts \"Still yes?\" on a card backed on an earlier version and \"Thank <author>\" in a fresh card's kudos slot",
+      "name": "Dev board, round three: the vote is one button beside the state bar; \"Still yes?\" (#1688); no kudos slot (#5249)",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-col-inreview:has([data-vote-btn=\"prior-yes\"]):has(.gc-card-actions .dev-thanks-pill > .dev-thanks-label) .gc-vote-item .dev-card-status > .dev-status-pill-block + .dev-vote-btn[data-vote-btn=\"open\"][aria-haspopup=\"dialog\"]",
+      "expectSelector": "#dev-kanban-col-inreview:has([data-vote-btn=\"prior-yes\"]):not(:has([data-kudos-host],.dev-thanks-pill)) .gc-vote-item .dev-card-status > .dev-status-pill-block + .dev-vote-btn[data-vote-btn=\"open\"][aria-haspopup=\"dialog\"]",
       "expectText": "Vote"
     },
     {
@@ -2044,9 +2045,9 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Leaderboard screen renders with the Kudos Top-users tab",
+      "name": "With kudos parked, the Kudos Top-users address lands on Challenges and the strip has no Kudos tab (#5249)",
       "path": "/#leaderboard/users",
-      "expectText": "Top users"
+      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]):not(:has([data-standings-tab=\"kudos\"])) #challenges-root:not(.hidden) #tc-se-grid"
     },
     {
       "name": "Admin Users list renders, with its Total points column and the Podium switch (#3938)",
@@ -3233,10 +3234,10 @@
       "expectText": "Waiting for your approval."
     },
     {
-      "name": "The Challenges area is the way to the Leaderboard screen",
+      "name": "The Challenges area's See all opens the Challenges tab",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section > h2.home-area-label .home-panel-lb-browse[aria-label=\"Open challenges\"]",
-      "expectText": "Open challenges"
+      "expectSelector": "#home-challenges-section > h2.home-area-label > a.home-panel-see-all[href=\"#leaderboard/challenges\"][aria-label=\"See all challenges\"]",
+      "expectText": "See all"
     },
     {
       "name": "Admin & moderation console page renders at #admin (#818)",
@@ -4089,15 +4090,14 @@
       "expectText": "Spinning the preview back up…"
     },
     {
-      "name": "The kudos row says a kudos thanks whoever solves it (#2586)",
-      "path": "/?shot=feedback",
-      "expectText": "to thank whoever solves it"
+      "name": "With kudos parked, the notifications sheet shows no kudos row (#3227, #5249)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet[data-open]:has([data-notif-id=\"990210\"]):not(:has([data-notif-id=\"990213\"]))"
     },
     {
-      "name": "A spent allowance says so instead of showing a count (#964)",
+      "name": "With kudos parked, the bounty note says nothing, even with the allowance spent (#964, #5249)",
       "path": "/?shot=feedback-spent",
-      "expectSelector": "#feedback-bounty-note[title$=\" 00:00 UTC\"]",
-      "expectText": "kudos this week. Resets"
+      "expectSelector": "#feedback-form #feedback-bounty-row.hidden #feedback-bounty-note:empty"
     },
     {
       "name": "The AI-credit row shows the remaining allowance (#555, #593)",
@@ -4769,9 +4769,9 @@
       "expectSelector": "html:not(.in-side-panel) body:has(#platform-side-panel.hidden):has(#platform-header:not(.hidden)):has(#platform-tabs:not(.hidden)) #messages-screen:not(.hidden)"
     },
     {
-      "name": "#4417, #4935: the desktop strip's apps sit between the last section, Communities, and you, named for a screen reader (pinned first, then recents; they replace the rail's Recents, #2802)",
+      "name": "#4417, #5323: the desktop strip's apps sit between the last section, Communities, and you, named for a screen reader (pins you chose first, then recents; they replace the rail's Recents, #2802)",
       "path": "/?demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-workshop + #platform-strip-apps[role=\"group\"][aria-label=\"My apps and recent apps\"] + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-workshop + #platform-strip-apps[role=\"group\"][aria-label=\"Pinned apps and recent apps\"] + #platform-tab-me"
     },
     {
       "name": "#2800, #4417: you are the strip's foot, straight after its recent apps, with your Settings beside you",
@@ -4802,7 +4802,8 @@
     {
       "name": "On a desktop a running app keeps the sidebar beside it, its Communities tab names the app's community, and the header's corner is the sidebar toggle rather than a ✕; no left-edge hover strip over the app (#3138)",
       "path": "/#app/staging-demo-forkable",
-      "expectSelector": "body.rail-pinned:has(#app-view:not(.hidden)):has(#platform-tab-workshop[aria-label$=\"forkable app\"]):not(:has(#platform-rail-peek)) #platform-header .platform-header-left:has(> a#back-btn.hidden) > #sidebar-toggle[aria-pressed=\"true\"]"
+      "expectSelector": "body.rail-pinned:has(#app-view:not(.hidden)):has(#platform-tab-workshop[aria-label$=\"forkable app\"]):not(:has(#platform-rail-peek)) #platform-header .platform-header-left:has(> a#back-btn.hidden) > #sidebar-toggle[aria-pressed=\"true\"]",
+      "coldLoad": true
     },
     {
       "id": "agent-session.card",
@@ -4978,9 +4979,9 @@
       "expectText": "Try 2"
     },
     {
-      "name": "Homeroom bot's slots, a page under a project's Workshop: what holds each slot with where it is, the requests waiting for one in order, and the limits (16 Oct 2026)",
+      "name": "Homeroom bot's slots, a page under a project's Workshop: what holds each slot with where it is, the requests waiting for one in order, each saying what it asks and opening beside the page, the ones a person took apart, and every other open request by where the bot is on it: up next with its older requests, and those left to people (16 Oct 2026)",
       "path": "/?demo=1&ws=bot#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-bot-slots-page]:has([data-ws-bot-slots] [data-ws-bot-slot-state=vote] [data-bot-track-badge]):has([data-ws-bot-waiting] [data-ws-bot-slot-state=held]):has([data-ws-bot-limits] [data-ws-bot-week]) [data-ws-bot-slots-used=\"5/5\"]",
+      "expectSelector": "#dev-workshop [data-ws-bot-slots-page]:has([data-ws-bot-waiting] [data-ws-bot-slot-excerpt]):has([data-ws-bot-taken] [data-ws-open]):has([data-ws-bot-up-next] [data-ws-bot-older-badge]):has([data-ws-bot-left]) [data-ws-bot-slots-used=\"5/5\"]",
       "expectText": "5 of 5 in use"
     }
   ],

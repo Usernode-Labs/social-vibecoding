@@ -9,6 +9,11 @@
 // mention is the go-ahead and queues the request, the go-ahead lasts, and a
 // hold that starts after it keeps the bot off again.
 //
+// 16 Oct 2026: a request held on a cap is one the bot has promised its
+// requester, and a claim made after that no longer keeps the bot off it
+// (homeroom-bot-older-requests-postgres.test.js). So the bot's look here is
+// one that promised nothing (a question), as a claim still holds after it.
+//
 // Skips when no PostgreSQL is reachable, like the repository's other
 // postgres tests.
 
@@ -75,10 +80,10 @@ test('a mention on a claimed request is answered, a second one is the go-ahead, 
     [evan.id],
   );
 
-  // Three days ago: the bot looked, a cap held it, and chinchan claimed it.
+  // Three days ago: the bot looked and asked a question, and chinchan claimed it.
   await pool.query(
-    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, cap_suppressed, thread_seen_at, created_at)
-     VALUES ($1, 75, 'live', 'ready', 'proposals_per_app', NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days')`,
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, thread_seen_at, created_at)
+     VALUES ($1, 75, 'live', 'question', NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days')`,
     [app.id],
   );
   await pool.query(

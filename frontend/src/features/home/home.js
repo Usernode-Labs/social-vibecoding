@@ -819,29 +819,6 @@ const Home = {
     return layout;
   },
 
-  // THE DESKTOP STRIP'S PINNED PART (#4935): the apps in the layout's top
-  // row, in reading order, as display data the strip can draw without
-  // fetching anything. "Pinned" is the top row of My apps on purpose — the
-  // part people arrange and can see, favourites and own apps alike. Holes
-  // are skipped, and so is anything that is not on My apps (which covers the
-  // demo tiles: they are never favourites, so isYours drops them). Pure.
-  topRowApps(layout) {
-    const items = HomeLayout.canvasItems(layout || [])
-      .filter((it) => it && it.type === 'app' && it.row === 0);
-    const out = [];
-    for (const item of items) {
-      const app = (Home._apps || []).find((a) => a && a.slug === item.slug && Home.isYours(a));
-      if (!app) continue;
-      out.push({
-        slug: app.slug,
-        name: app.name || app.slug,
-        iconUrl: app.icon_url || null,
-        iconEmoji: app.icon_emoji || null,
-      });
-    }
-    return out;
-  },
-
   // One fetch per TTL, shared by concurrent callers — Home.load() runs from
   // a dozen WS/event paths and must not turn into a dozen requests.
   _ensureLayoutLoaded(opts) {
@@ -968,20 +945,11 @@ const Home = {
       // order in this array.
       const cols = Home.currentCols();
       const layout = Home.currentLayout(cols);
-      // THE STRIP'S PINNED PART (#4935): every grid paint names the top row
-      // to the nav bridge, so the desktop strip leads with the same apps in
-      // the same order. Home is the one writer. A search render is a
-      // transient list of matches, not the shelf, so it publishes nothing —
-      // and neither do the offline and error states below. The bridge is
-      // optional (a vm test, a page before the nav island mounts): a missing
-      // or throwing one must not take the grid render down with it.
-      if (Home._appsLoaded) {
-        try {
-          window.UsernodeReact?.nav?.setPinnedApps?.(Home.topRowApps(layout));
-        } catch {
-          // The strip following Home is a convenience, never a dependency.
-        }
-      }
+      // THE STRIP'S PINNED PART (#5323): Home no longer publishes anything
+      // here. The strip's pins are the viewer's own list now — a My apps
+      // tile dropped on the "Pin here" slot pins through the drag recognizer
+      // below (_attachGridPlacement), and nothing in a grid paint writes to
+      // the strip at all.
       // AS MANY ROWS AS THE FIRST TWO-THIRDS OF THE SCREEN HOLDS, AND NEVER
       // FEWER THAN TWO (HomeLayout.DEFAULT_ROWS). The cap is on what is SHOWN,
       // never on what a viewer may have or where they may put it: the canvas
@@ -1319,6 +1287,13 @@ const Home = {
           Home._showGridOverlay(listEl, cols, Home._contextLift.item);
           Home._contextLift = null;
         }
+        // #5323: the desktop strip's pinned part is a drop target too, and it is
+        // checked first (it sits in the rail, beside the canvas). Its own
+        // flag is reset here so a move from one target to the other cannot
+        // leave the previous one claiming the release.
+        Home._pointerOverWidget = false;
+        Home._pointerOverStrip = Home._stripPinAt(x, y);
+        if (Home._pointerOverStrip) return Home.STRIP_PIN_CELL;
         // #2894: the open widget strip is a drop target too. It is checked
         // BEFORE the grid's own geometry because the strip sits above the
         // canvas and a finger over it resolves to no cell there anyway.
@@ -1330,11 +1305,16 @@ const Home = {
       // both need the SAME displacement plan — so compute it once and memo it
       // for the paint. Recomputing would risk the highlight describing a
       // different outcome than the one that commits.
-      canPlace: (item, cell) => (Home._isWidgetDropCell(cell)
-        ? Home._canDropOnWidget(item)
-        : !!Home._planFor(item, cell, cols)),
+      canPlace: (item, cell) => (Home._isStripPinCell(cell)
+        ? Home._canDropOnStripPin(item)
+        : Home._isWidgetDropCell(cell)
+          ? Home._canDropOnWidget(item)
+          : !!Home._planFor(item, cell, cols)),
       onLift: (item) => {
         Home._dragActive = true;
+        // #5323: the "Pin here" slot goes up for the whole drag, so an empty
+        // strip has somewhere to drop onto. Cleared on every settle.
+        try { window.UsernodeReact?.nav?.setPinDrop?.('idle'); } catch { /* the slot is a convenience */ }
         if (Home._cardPointerType === 'touch') {
           Home._contextLift = { item, origin: null };
           Home.openCardMenu(item.dataset.slug, item);
@@ -1350,16 +1330,42 @@ const Home = {
         }
       },
       onHover: (item, cell, ok) => {
+        const overStrip = Home._isStripPinCell(cell);
         const overWidget = Home._isWidgetDropCell(cell);
+        if (overStrip) {
+          // The slot names what a drop would do: it pins, or the refusal
+          // words for an app already pinned or a full list.
+          const slug = item && item.dataset ? item.dataset.slug : null;
+          let state = 'full';
+          try {
+            state = ok ? 'ok'
+              : (window.UsernodeReact?.nav?.pinStatus?.(slug) || 'full');
+          } catch { /* the slot is a convenience */ }
+          try { window.UsernodeReact?.nav?.setPinDrop?.(state); } catch { /* ditto */ }
+        } else if (!overWidget) {
+          // Back over the grid (or a gap): the slot waits neutrally, and the
+          // drop would still be the grid's to take.
+          try { window.UsernodeReact?.nav?.setPinDrop?.('idle'); } catch { /* ditto */ }
+        }
         Home._markWidgetDrop(overWidget ? item : null, ok);
-        Home._previewDrop(item, overWidget ? null : cell, ok, cols);
+        Home._previewDrop(item, overWidget || overStrip ? null : cell, ok, cols);
       },
       // The release spring's destination. Same memoised plan again: the tile
       // settles on the cell the tint promised, not the one it left.
-      rectForCell: (item, cell) => (Home._isWidgetDropCell(cell)
-        ? Home._widgetDropRect()
-        : Home._rectForCell(item, cell, cols)),
+      rectForCell: (item, cell) => (Home._isStripPinCell(cell)
+        ? Home._stripPinRect()
+        : Home._isWidgetDropCell(cell)
+          ? Home._widgetDropRect()
+          : Home._rectForCell(item, cell, cols)),
       onPlace: (item, cell) => {
+        // A pin writes NOTHING to the layout: the tile stays where it is on
+        // My apps and the app is pinned to the strip as well (#5323). The
+        // pin itself waits for onSettle, when the gesture is over and the
+        // strip may repaint.
+        if (Home._isStripPinCell(cell)) {
+          Home._pendingStripPin = (item && item.dataset && item.dataset.slug) || null;
+          return;
+        }
         // A widget drop writes NOTHING to the layout: the tile stays where it
         // is on the canvas and the app is pinned as well. The pin itself waits
         // for onSettle, when the gesture is over and the strip may repaint.
@@ -1381,6 +1387,28 @@ const Home = {
         Home._markWidgetDrop(null, false);
         const widgetAdd = Home._pendingWidgetAdd;
         Home._pendingWidgetAdd = null;
+        const stripPin = Home._pendingStripPin;
+        Home._pendingStripPin = null;
+        // The gesture is over whatever happened: the "Pin here" slot goes
+        // away before any flush below repaints the grid (#5323).
+        try { window.UsernodeReact?.nav?.setPinDrop?.(null); } catch { /* the slot is a convenience */ }
+        if (stripPin) {
+          // The pin waits for onSettle (onPlace) so the strip may repaint.
+          // The bridge takes the app's display data, and the account's own
+          // list answers — a refusal here changed nothing and there is
+          // nothing to undo.
+          const app = (Home._apps || []).find((a) => a.slug === stripPin);
+          if (app) {
+            try {
+              window.UsernodeReact?.nav?.pinApp?.({
+                slug: app.slug,
+                name: app.name || app.slug,
+                iconUrl: app.icon_url || null,
+                iconEmoji: app.icon_emoji || null,
+              });
+            } catch { /* the pin is a convenience */ }
+          }
+        }
         if (widgetAdd) {
           // The drop's own add is the terminal repaint (it renders the new
           // tile optimistically), so a deferred reload is flushed through it
@@ -1776,13 +1804,12 @@ const Home = {
     resolver?.resolve?.();
   },
 
-  // Per-visit only, like the widgets' own expand flag: a viewer who opened
-  // the full grid once should not have every later visit start scrolled past
-  // two sections, and a preference this cheap is not worth a write.
+  // Per-visit only: a viewer who opened the full grid once should not have
+  // every later visit start scrolled past two sections, and a preference
+  // this cheap is not worth a write.
   // Whether "Show all N apps" has been pressed this visit. Per-visit state,
   // deliberately not persisted: the collapsed grid is the contract, and an
-  // expansion the viewer forgot about would quietly eat the fold forever —
-  // the same reasoning as HomePanels._expanded.
+  // expansion the viewer forgot about would quietly eat the fold forever.
   //
   // `?shot=home-apps` pins it ON before the first paint. Every row past the
   // budget is unreachable to a still frame and to a declared check otherwise,
@@ -4351,6 +4378,74 @@ const Home = {
       Home.render();
     }
     return ok;
+  },
+
+  // ── Dragging a tile ONTO the strip's pinned part (#5323) ───────────
+  //
+  // No second recognizer: the widget strip above already showed the way, and
+  // the desktop rail's pinned list is one more sentinel cell. Dropping a My
+  // apps tile on the strip pins it there (features/nav/pinned-apps-store.js
+  // keeps the list, through the nav bridge); dropping it on the canvas still
+  // rearranges My apps, and a refused drop (already pinned, or four already
+  // there) springs the tile back and writes nothing.
+  //
+  // `col`/`row` are what the kit's sameCell compares, so they must be stable
+  // and must never collide with a real cell.
+  STRIP_PIN_CELL: Object.freeze({ col: 'strip', row: 'strip', strip: true }),
+
+  // Slug a committed strip-pin drop still owes a pin (onPlace → onSettle).
+  _pendingStripPin: null,
+
+  // Whether the pointer was over the strip at the last hit-test, kept for
+  // symmetry with the widget flag (and so a later settle can tell).
+  _pointerOverStrip: false,
+
+  _isStripPinCell(cell) {
+    return !!(cell && cell.strip === true);
+  },
+
+  // A rect test on the strip's app list, not elementFromPoint: the rail is a
+  // plain box and the kit's ghost is pointer-events:none anyway. Only while
+  // the strip is actually showing — hidden (nothing pinned yet AND no drag
+  // up), folded (`platform-tabs-folded`), or on a phone (display:none) all
+  // give a zero rect and the drag behaves exactly as before.
+  _stripPinAt(x, y) {
+    if (typeof document === 'undefined') return false;
+    const strip = document.getElementById('platform-strip-apps');
+    if (!strip || typeof strip.getBoundingClientRect !== 'function') return false;
+    if (strip.classList.contains('hidden')) return false;
+    const r = strip.getBoundingClientRect();
+    if (!r.width || !r.height) return false;
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  },
+
+  // The same gate as the drop: the strip's own list answers through the
+  // bridge — 'ok' to append, 'already' and 'full' to refuse. The bridge is
+  // optional (a vm test, a page before the nav island mounts).
+  _canDropOnStripPin(el) {
+    const slug = el && el.dataset ? el.dataset.slug : null;
+    if (!slug) return false;
+    try {
+      return window.UsernodeReact?.nav?.pinStatus?.(slug) === 'ok';
+    } catch {
+      return false;
+    }
+  },
+
+  // Where the dropped tile lands: the "Pin here" slot row the strip draws
+  // while the drag is up, else the strip's top-left corner (a slot that has
+  // just been refused still drew its words the instant before).
+  _stripPinRect() {
+    if (typeof document === 'undefined') return null;
+    const strip = document.getElementById('platform-strip-apps');
+    if (!strip || typeof strip.getBoundingClientRect !== 'function') return null;
+    const drop = strip.querySelector('[data-strip-drop]');
+    if (drop && typeof drop.getBoundingClientRect === 'function') {
+      const r = drop.getBoundingClientRect();
+      if (r.width || r.height) return { left: r.left, top: r.top };
+    }
+    const sr = strip.getBoundingClientRect();
+    return { left: sr.left + 10, top: sr.top + 6 };
   },
 
   // #2892: "apps can get stuck in the selected state when adding to the

@@ -423,8 +423,28 @@ const BROWSER_TOOLS = Object.freeze({
   read_only_admin: 'browser_admin',
   full_admin: 'browser_full_admin',
   guest: 'browser_guest',
+  invited_member: 'browser_invited_member',
+  invited_member_listed: 'browser_invited_member_listed',
 });
 const phoneTool = (persona) => `${BROWSER_TOOLS[persona]}_phone`;
+// The invited fixtures' personas (#4437): their browsers start only for a
+// run whose declared changes name them, and only on the platform's own
+// copies, where their fixtures were installed. The four ordinary personas'
+// browsers start on every run, as before.
+const INVITED_PERSONAS = new Set(['invited_member', 'invited_member_listed']);
+const ORDINARY_PERSONAS = Object.freeze(['member', 'read_only_admin', 'full_admin', 'guest']);
+// Which desktop browsers this run starts (worker/write-shots-mcp-config.js
+// reads it as SHOTS_BROWSER_PERSONAS): the four ordinary ones, plus an
+// invited fixture's when a declared change names it and the pair installed
+// that fixture.
+function declaredBrowserPersonas(intent, availableFixtures = []) {
+  const wanted = new Set((intent?.stories || []).map((story) => story.persona));
+  const installed = new Set((availableFixtures || []).map((fixture) => fixture.persona));
+  return [
+    ...ORDINARY_PERSONAS,
+    ...[...INVITED_PERSONAS].filter((persona) => wanted.has(persona) && installed.has(persona)),
+  ];
+}
 
 // Which browser shoots each declared change's screens, by change id and
 // screen name. The shots bridge reads it too, to find a screen's clip.
@@ -542,6 +562,9 @@ function shotsBrief({
 }) {
   const testingPaths = testingPathsForSession(session);
   const phones = new Set(planContract.phonePersonas(intent));
+  const invitedInstalled = new Set((deployment.availableFixtures || [])
+    .map((fixture) => (INVITED_PERSONAS.has(fixture?.persona) ? fixture.persona : null))
+    .filter(Boolean));
   const browser = (persona, who) => ({
     tool: BROWSER_TOOLS[persona],
     ...(phones.has(persona) ? { phoneTool: phoneTool(persona) } : {}),
@@ -570,6 +593,19 @@ function shotsBrief({
       full_admin: browser('full_admin', childApp ? CHILD_APP_WHO.full_admin
         : 'a full administrator that exists only in these two throwaway copies'),
       guest: browser('guest', GUEST_WHO[guestKind] || 'a visitor who is not signed in'),
+      // The invited fixtures' browsers, only when this pair installed them
+      // (#4437). They are Homeroom's own fixture people, so a child app's
+      // brief never carries them.
+      ...(invitedInstalled.has('invited_member') ? {
+        invited_member: browser('invited_member',
+          'a private member without platform access whom an invite let in, who has not been Home yet; '
+          + 'the fixture exists only in these two throwaway copies'),
+      } : {}),
+      ...(invitedInstalled.has('invited_member_listed') ? {
+        invited_member_listed: browser('invited_member_listed',
+          'the same kind of private member, but one who has been Home and is on the platform waitlist; '
+          + 'the fixture exists only in these two throwaway copies'),
+      } : {}),
     },
     screenBrowsers: screenBrowsers(intent),
     secondAccount: secondAccountBrief(selfApp),
@@ -908,7 +944,7 @@ function recordAgentDiagnostic(metrics, raw) {
   }
   if (raw.signal === 'SIGTERM' || raw.signal === 'SIGINT') event.signal = raw.signal;
   if (['base', 'head', 'hosted', 'outside'].includes(raw.side)) event.side = raw.side;
-  if (['member', 'admin', 'full_admin', 'guest'].includes(raw.persona)) event.persona = raw.persona;
+  if (['member', 'admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed'].includes(raw.persona)) event.persona = raw.persona;
   // A call in the persona's phone browser rather than its desktop one.
   if (raw.phone === true) event.phone = true;
   if (['intent_start', 'declared_check', 'other'].includes(raw.routeHint)) {
@@ -945,7 +981,7 @@ function recordAgentDiagnostic(metrics, raw) {
       || kind === 'browser_call_start' || kind === 'browser_call_pending'
       || kind === 'browser_call_end') {
     event.tool = AGENT_DIAGNOSTIC_TOOLS.has(raw.tool) ? raw.tool : 'other';
-    if (['member', 'admin', 'full_admin', 'guest'].includes(raw.persona)) event.persona = raw.persona;
+    if (['member', 'admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed'].includes(raw.persona)) event.persona = raw.persona;
     if (['base', 'head', 'outside'].includes(raw.side)) event.side = raw.side;
     if (Number.isSafeInteger(raw.routeOrdinal) && raw.routeOrdinal > 0
         && raw.routeOrdinal <= 1000) event.routeOrdinal = raw.routeOrdinal;
@@ -1271,6 +1307,10 @@ async function buildCopies(config, pool, {
       clipSize: planContract.clipSize(intent, { phone: false }),
       phoneClipSize: planContract.clipSize(intent, { phone: true }),
       phonePersonas: planContract.phonePersonas(intent),
+      // The invited fixtures' desktop browsers start only when a declared
+      // change names them and this pair installed their fixture
+      // (declaredBrowserPersonas).
+      browserPersonas: declaredBrowserPersonas(intent, exploration.availableFixtures),
       // A child app's pages load /usernode-bridge|native|tailwind/ from the
       // platform, which the edge routes in production; the shots browser's
       // proxy does the same. The platform serves its own.
@@ -1375,9 +1415,17 @@ async function dispatchAgent(config, pool, {
   metrics.planSource = 'shots_agent';
   metrics.agentActivity.budgetMs = budgetMs;
   const guest = await deps.identities.shotsGuestIdentity(pool, app, { selfApp: a.selfApp === true });
+  // The invited fixtures' tokens are minted only for a run that starts
+  // their browsers: browserPersonas carries an invited persona only when
+  // the pair installed its fixture, and only Homeroom's own copies can hold
+  // a session for one.
+  const invitedPersonas = Array.isArray(a.browserPersonas)
+    ? a.browserPersonas.filter((persona) => INVITED_PERSONAS.has(persona)) : [];
   const authTokens = {
     ...await deps.identities.mintShotsAuthTokens(pool, app.id),
     ...(guest.token ? { guest: guest.token } : {}),
+    ...(a.selfApp === true && invitedPersonas.length
+      ? await deps.identities.mintInvitedTokens(app.id) : {}),
   };
   await shotsControl.extend(pool, runId, Date.now() + budgetMs + CONTROL_SLACK_MS);
   // A turn stopped on its clock leaves the worker's stop marker; this is a
@@ -1414,6 +1462,7 @@ async function dispatchAgent(config, pool, {
         clipSize: a.clipSize,
         phoneClipSize: a.phoneClipSize,
         phonePersonas: a.phonePersonas || [],
+        browserPersonas: Array.isArray(a.browserPersonas) ? a.browserPersonas : [],
         platformAssets: a.platformAssets === true,
         onProgress: onProgress ? (line) => onProgress(`Shots agent: ${line}`) : null,
         onShotsDiagnostic,

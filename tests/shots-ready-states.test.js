@@ -26,8 +26,11 @@ test('every demo state is a ready-made state with a name, in the same order, for
     assert.ok(state.name.length > 10 && state.name.length < 90, state.id);
   }
   const ids = new Set(demoStates.STATE_IDS);
+  const fixtures = require('../src/services/shots-fixtures');
+  const fixtureIds = new Set([fixtures.INVITED_FIRST_VISIT_PROFILE, fixtures.INVITED_LISTED_PROFILE,
+    fixtures.INVITE_LINK_PROFILE]);
   for (const need of readyStates.NEEDS) {
-    assert.ok(need.states.every((id) => ids.has(id)), need.needs);
+    assert.ok(need.states.every((id) => ids.has(id) || fixtureIds.has(id)), need.needs);
   }
 });
 
@@ -160,6 +163,28 @@ test('a change needing a state no ready-made state holds is warned about, once p
 
   // A child app's empty state its own seed fills (Todo List #90).
   assert.equal(warned(declare(story('no-lists', 'A new user with no lists sees how to start one.')), false).length, 1);
+});
+
+// The invited fixtures (#4437) hold a change for the persona they answer
+// for on Homeroom's own copies, so a change declared for one of them is not
+// warned about a state the copies lack.
+test('the invited fixtures hold a change declared for the persona they answer for', () => {
+  const held = declare(
+    story('first-visit', 'An invited member who has not been Home yet sees the welcome.',
+      { persona: 'invited_member' }),
+    story('listed', 'An invited member on the waitlist sees when they get in.',
+      { persona: 'invited_member_listed' }),
+    story('link', 'The invite link shows the project before somebody accepts an invitation.',
+      { persona: 'guest' }),
+  );
+  assert.deepEqual(warned(held, true), []);
+  // On a child app's copies there are no such people, and no such link.
+  const child = warned(held, false).map((w) => w.split(' to need ')[0].split(' seem')[0]);
+  assert.deepEqual(child, ['first-visit, listed, link', 'listed']);
+  // A member persona is not one of them: the fixtures do not hold its
+  // change, so both needs that match its words are warned about.
+  assert.equal(warned(declare(story('invited-home',
+    'An invited private member who has not been Home yet sees a welcome.')), true).length, 2);
 });
 
 test('no warning when the author says how to make it, for the guest\'s own state, or for ordinary words', () => {
