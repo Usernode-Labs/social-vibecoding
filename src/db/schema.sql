@@ -2241,16 +2241,14 @@ CREATE INDEX IF NOT EXISTS idx_issue_votes_user ON issue_votes (user_id, created
 -- self-hosted app) that, once its vote passes, runs a sequential AI loop
 -- over every child app repo, opening one maintenance PR per app
 -- (chat_sessions.source='maintenance'). The campaign row is created by
--- the governance machine's apply (src/workflow/governance-proposal/); per-app
--- execution state lives in maintenance_campaign_apps so a platform
--- restart resumes from the first pending row instead of losing track
--- (fleet-maintenance.resumeRunningCampaigns).
---   status: 'running'   = fan-out in progress (the boot resume picks
---                         these up);
---           'done'      = every target reached a terminal engine state
---                         (pr_open / skipped / failed) — merging is
---                         tracked per-app, not here;
---           'cancelled' = an admin stopped it.
+-- the governance machine's apply (src/workflow/governance-proposal/), which
+-- starts the campaign machine (src/workflow/campaign/); both tables are that
+-- machine's projections (its ownership guard is below, with the others).
+--   status: 'running'   = opening proposals (the campaign machine's
+--                         `running`; src/workflow/campaign/);
+--           'done'      = every target has an outcome (pr_open / skipped /
+--                         failed) — merging is the proposals', not here;
+--           'cancelled' = an admin stopped it (`stopped`).
 CREATE TABLE IF NOT EXISTS maintenance_campaigns (
   id            SERIAL PRIMARY KEY,
   issue_id      INTEGER REFERENCES issues(id) ON DELETE SET NULL,
@@ -2263,15 +2261,15 @@ CREATE TABLE IF NOT EXISTS maintenance_campaigns (
   completed_at  TIMESTAMPTZ
 );
 
--- One row per (campaign, target app). State machine, engine-owned:
---   pending -> running -> pr_open | skipped | failed
---   pr_open -> merged   (written by the merge-green drain; the status
---                        endpoint also derives live merge state from the
---                        joined session so a normal community-vote merge
---                        shows correctly without this write)
+-- One row per (campaign, target app), the targets fixed when the campaign
+-- starts. The campaign machine's projection of each app:
+--   pending -> running (being changed, then put up for a vote) -> pr_open | skipped | failed
+--   pending | running -> stopped (a stop reached it first)
+-- What came of a proposal (merged, closed) is read off its session, never
+-- written here ('merged' is only on rows an older release's drain wrote).
 -- 'skipped' = the AI concluded the app doesn't need the change;
--- 'failed'  = LLM/GitHub error, `error` carries the reason; the dashboard
---             retry route resets the row to 'pending' and re-runs it.
+-- 'failed'  = LLM/GitHub error or a refused promote, `error` carries the
+--             reason; the dashboard's retry asks the machine again.
 CREATE TABLE IF NOT EXISTS maintenance_campaign_apps (
   id          SERIAL PRIMARY KEY,
   campaign_id INTEGER NOT NULL REFERENCES maintenance_campaigns(id) ON DELETE CASCADE,
@@ -2282,11 +2280,11 @@ CREATE TABLE IF NOT EXISTS maintenance_campaign_apps (
   updated_at  TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(campaign_id, app_id)
 );
--- One driver per campaign, in any process (fleet-maintenance.runCampaign):
--- the driver's lease on the campaign row, renewed while it runs and let go
--- when it stops, and the driver that claimed each app row ('running'),
--- the only one that writes that row's result. They replace an in-process
--- set, which a second process or a restarted one never saw.
+-- The lease an older release's driver held on a campaign (its runner and
+-- until when) and the runner that claimed each app row. Read only during a
+-- rollout: the campaign machine adopts a campaign once no older driver
+-- holds it and fences it off ('workflow', 'infinity'). Dropped once no
+-- release older than the campaign machine can run.
 ALTER TABLE maintenance_campaigns ADD COLUMN IF NOT EXISTS runner_id TEXT;
 ALTER TABLE maintenance_campaigns ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
 ALTER TABLE maintenance_campaign_apps ADD COLUMN IF NOT EXISTS runner_id TEXT;
@@ -14066,6 +14064,25 @@ CREATE TRIGGER chat_sessions_wf_proposal_owned
     'status', 'promoted_at', 'archived_at', 'stale_notified_at', 'merge_attempt_at',
     'active_users_at_promote', 'approval_epoch', 'reviewed_head_sha',
     'boot_failure_sync_head', 'fixed_check_sync_head', 'fixed_check_sync_keys', 'integration_resolved_epoch');
+
+-- campaign (src/workflow/campaign/) owns a fleet maintenance campaign once it
+-- holds it: the campaign's status, when it ended, and each app's record (its
+-- state and error), projected from the instance; and the older release's
+-- lease, which it fences off for good. INSERTs are not guarded (the
+-- governance apply inserts the campaign, the machine its app rows), nor are
+-- the columns a foreign key empties (a deleted proposal, issue or author).
+DROP TRIGGER IF EXISTS maintenance_campaigns_wf_owned ON maintenance_campaigns;
+CREATE TRIGGER maintenance_campaigns_wf_owned
+  BEFORE UPDATE ON maintenance_campaigns
+  FOR EACH ROW
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=campaign/campaign:',
+    'status', 'completed_at', 'runner_id', 'lease_until');
+DROP TRIGGER IF EXISTS maintenance_campaign_apps_wf_owned ON maintenance_campaign_apps;
+CREATE TRIGGER maintenance_campaign_apps_wf_owned
+  BEFORE UPDATE ON maintenance_campaign_apps
+  FOR EACH ROW
+  WHEN (wf_holds('campaign', 'campaign:' || OLD.campaign_id))
+  EXECUTE FUNCTION wf_guard_owned_columns('state', 'error', 'runner_id');
 
 CREATE OR REPLACE FUNCTION wf_guard_shot_runs() RETURNS TRIGGER AS $$
 BEGIN

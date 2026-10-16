@@ -1,56 +1,40 @@
 'use strict';
 
 /**
- * Fleet maintenance campaigns — the engine behind
+ * Fleet maintenance campaigns: the I/O behind the campaign machine
+ * (src/workflow/campaign/), which is the engine behind
  * issues.kind='maintenance_campaign' (#853's generalization).
  *
  * A campaign is a platform-level governance proposal on the self-hosted
- * app. Once its vote passes (or an admin force-applies it),
- * the governance machine creates a maintenance_campaigns row and runs
- * runCampaign() here as durable work (campaign.run), which:
+ * app. Once its vote passes (or an admin force-applies it), the governance
+ * machine inserts a maintenance_campaigns row and starts the campaign
+ * machine, which fixes the apps it reaches, works on them one at a time and
+ * puts each change up for a vote through the proposal machine's promote.
+ * What lives here is what its work does to one app:
  *
- *   1. Seeds one maintenance_campaign_apps row per target app
- *      (repo_url set, not self-hosted, optional slug filter) —
- *      idempotent, so re-entry after a restart just continues.
- *   2. Walks the pending rows ONE AT A TIME. Per app it runs a bounded
- *      LLM tool loop (read_file / edit_file / write_file / skip_app /
- *      finish) against the app's repo via the GitHub API. This is
- *      deliberately NOT a worker session: workers are repo-scoped by
- *      design (one session-scoped credential per repo), whereas the
- *      platform process already holds the PAT and the LLM client —
- *      no container boot, no clone, and the first successful app's
- *      summary is carried forward so later apps stay consistent.
- *   3. On staged edits: branch + push + PR, then a plain `promoted`
- *      chat_sessions row with source='maintenance' (the exact
- *      createManifestPR pattern — no worker, votable like any
- *      proposal), and kicks staging checks immediately (the
- *      kickImportedChecks pattern). Checks run in parallel across the
- *      fleet while the loop moves on.
- *   4. Marks the campaign 'done' when no pending rows remain. Merging
- *      is per-app: each community can vote its PR through normally, or
- *      an admin drains everything green via mergeGreen() (dashboard's
- *      "Merge all green" → routes/campaigns.js).
- *
- * Restart story: campaign + per-app state live in the DB. The leader
- * resumes every campaign still 'running' at boot and every two minutes
- * (resumeRunningCampaigns). One driver at a time, in any process: the loop
- * holds a lease on the campaign row (runner_id, lease_until), taken where
- * runCampaign starts and renewed while it runs, so the governance apply, the
- * dashboard's retry, the boot resume and the sweep can all call it. Once it
- * holds the lease, rows left 'running' by a driver that died are reset to
- * 'pending'; each app row is then claimed by the driver, and only it writes
- * the row's result. A driver whose process is shutting down stops between
- * apps and lets the lease go, for the next leader.
+ *   - runAppChange: a bounded LLM tool loop (read_file / search_file /
+ *     edit_file / write_file / skip_app / finish) against the app's repo via
+ *     the GitHub API. Deliberately NOT a worker session: workers are
+ *     repo-scoped by design (one session-scoped credential per repo), whereas
+ *     the platform process already holds the PAT and the LLM client: no
+ *     container boot, no clone. The first successful app's summary is carried
+ *     forward (the machine keeps it) so later apps stay consistent;
+ *   - pushChange: the change as one commit on the campaign's branch for the
+ *     app;
+ *   - openChangePr: its pull request, found before it is created;
+ *   - campaignStatus: the dashboard's read.
  */
 
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const log = require('./logger');
-const lifecycle = require('./lifecycle');
 const github = require('./github');
 const llm = require('./llm');
 
 const PLATFORM_USERNAME = 'usernode-platform';
+// A failure retrying cannot mend (the change is too big or the model went
+// astray): the campaign's work fails the app at once.
+const permanent = (message) => Object.assign(new Error(message), { permanent: true });
 // Tool-call round-trips per app. Maintenance changes are small by
 // definition (read a file or two, stage an edit or two, finish) — but a
 // repo with several >100 KB files can legitimately need a handful of
@@ -76,18 +60,6 @@ const MAX_READ_RESULT_CHARS = 100 * 1024;
 // worst real repo without ever flooding the context.
 const MAX_SEARCH_MATCHES = 50;
 const MAX_SEARCH_LINE_CHARS = 300;
-// Pause between merge-green merges: each one triggers a production
-// rebuild, and stampeding docker builds helps nobody.
-const MERGE_GREEN_DELAY_MS = 2000;
-// How long one force is waited for before the next app's (it merges later
-// if it could not by then).
-const MERGE_GREEN_WAIT_MS = 2 * 60 * 1000;
-
-// The campaign lease (runCampaign): how long a driver holds it without
-// renewing, and how often it renews while it works.
-const CAMPAIGN_LEASE_SECONDS = 120;
-const CAMPAIGN_RENEW_MS = 30 * 1000;
-
 
 function parseRepo(url) {
   const [, owner, repo] = (url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
@@ -214,18 +186,18 @@ Rules:
  * Run the bounded tool loop for one app. Resolves to
  *   { files: Map<path, content>, summary }  — edits staged, or
  *   { skipped: true, reason }               — app doesn't need the change.
- * Throws on LLM/GitHub errors, truncation, or budget exhaustion —
- * the caller records those as state='failed' with the message.
+ * Throws on LLM/GitHub errors (retried by the caller's work), and with
+ * `permanent: true` on truncation, budget exhaustion or a model that went
+ * astray (the app fails with the message).
  *
  * `onUsage(usage, servedModel)` is invoked per LLM call so the caller
  * can attribute spend. `stopped()`, asked before each call, ends the run
- * (an error with code 'campaign_stopped') when the caller no longer drives
- * the campaign: its lease went to another driver, or its process is
- * shutting down.
+ * (an error with code 'campaign_stopped') when the caller's work lost its
+ * claim: the campaign was stopped, or its process is shutting down.
  */
 async function runAppChange({ campaign, app, exemplarSummary, onUsage, stopped = null }) {
   const repo = parseRepo(app.repo_url);
-  if (!repo) throw new Error(`Unparseable repo_url: ${app.repo_url}`);
+  if (!repo) throw permanent(`Unparseable repo_url: ${app.repo_url}`);
 
   const staged = new Map();   // path -> full staged content
   const original = new Map(); // path -> content on main (read cache; null = 404)
@@ -319,7 +291,7 @@ async function runAppChange({ campaign, app, exemplarSummary, onUsage, stopped =
 
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
     if (stopped && stopped()) {
-      throw Object.assign(new Error('The campaign is no longer this driver\'s'), { code: 'campaign_stopped' });
+      throw Object.assign(new Error('The change was stopped'), { code: 'campaign_stopped' });
     }
     const res = await llm.streamChat({
       messages,
@@ -337,7 +309,7 @@ async function runAppChange({ campaign, app, exemplarSummary, onUsage, stopped =
 
     if (!res.toolUses.length) {
       if (res.stopReason === 'max_tokens') {
-        throw new Error('LLM response truncated (max_tokens) — the change may be too large for a maintenance campaign');
+        throw permanent('LLM response truncated (max_tokens) — the change may be too large for a maintenance campaign');
       }
       // The model answered in prose. One nudge back toward the tools;
       // a second prose-only turn is a hard failure, not a loop.
@@ -348,7 +320,7 @@ async function runAppChange({ campaign, app, exemplarSummary, onUsage, stopped =
         messages.push({ role: 'user', content: 'Use the tools to make the change, or call skip_app / finish. Do not answer in prose.' });
         continue;
       }
-      throw new Error('LLM ended without calling finish or skip_app');
+      throw permanent('LLM ended without calling finish or skip_app');
     }
 
     // Resolve every tool call (Anthropic requires a tool_result per
@@ -376,7 +348,7 @@ async function runAppChange({ campaign, app, exemplarSummary, onUsage, stopped =
 
     if (terminal) {
       if (terminal.skipped) return { skipped: true, reason: terminal.reason };
-      if (!staged.size) throw new Error('LLM called finish without staging any edits');
+      if (!staged.size) throw permanent('LLM called finish without staging any edits');
       return { files: staged, summary: terminal.summary };
     }
 
@@ -387,512 +359,67 @@ async function runAppChange({ campaign, app, exemplarSummary, onUsage, stopped =
     });
   }
 
-  throw new Error(
+  throw permanent(
     `Tool-call budget exhausted (${MAX_TOOL_ITERATIONS} iterations) without finish/skip_app. `
     + `Tool trace: ${trace.join(' → ') || '(none)'}`
   );
 }
 
-// ─── PR + proposal per app ───────────────────────────────────────────
+// ─── The change on GitHub ────────────────────────────────────────────
 
 /**
- * Branch + push + PR + promoted session row (source='maintenance') +
- * the promote-path side effects (group-chat vote message, vote-panel
- * push, pr_promoted event, pr_proposed notifications) — mirrors
- * rename-pr.js's createManifestPR so campaign proposals behave like
- * every other platform-opened proposal. Then kicks staging checks.
+ * The app's change as one commit on the campaign's own branch for it
+ * (`maint/c<campaign>/<slug>`, no timestamp, so a retry finds it): the branch
+ * is created at main's head, or moved back there when an earlier attempt left
+ * it, then the staged files are pushed. Resolves to the commit's sha.
  */
-async function openCampaignProposal({ config, pool, campaign, app, files, summary, platformUserId }) {
-  const repo = parseRepo(app.repo_url);
-  if (!repo) throw new Error(`Unparseable repo_url: ${app.repo_url}`);
-
-  const branch = `maint/c${campaign.id}/${app.slug}-${Date.now()}`;
-  await github.createBranch(repo.owner, repo.repo, branch);
-  await github.pushFiles(
+async function pushChange({ repo, branch, files, message }) {
+  const main = await github.getBranchSha(repo.owner, repo.repo, 'main');
+  if (!main) throw new Error(`${repo.owner}/${repo.repo} has no main branch`);
+  try {
+    await github.createBranch(repo.owner, repo.repo, branch);
+  } catch (err) {
+    if (err.status !== 422) throw err;
+    await github.forceBranchToSha(repo.owner, repo.repo, branch, main);
+  }
+  const commit = await github.pushFiles(
     repo.owner, repo.repo,
     Array.from(files.entries()).map(([path, content]) => ({ path, content })),
-    { branch, message: `Maintenance: ${campaign.title}` }
+    { branch, message }
   );
-
-  const prTitle = String(campaign.title).slice(0, 250);
-  const prBody =
-    `Platform maintenance campaign #${campaign.id}: **${campaign.title}**\n\n` +
-    `${summary || 'See campaign instructions.'}\n\n` +
-    `This PR was opened automatically by the Homeroom platform after the campaign's ` +
-    `governance vote passed. It merges like any proposal: through this app's own ` +
-    `merge vote, or when a platform admin drains the campaign's green checks.`;
-  const prData = await github.createPR(repo.owner, repo.repo, { branch, title: prTitle, body: prBody });
-
-  const { rows: sessRows } = await pool.query(
-    `INSERT INTO chat_sessions
-       (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status, promoted_at, source)
-     VALUES ($1, $2, $3, $4, $5, $6, 'promoted', NOW(), 'maintenance')
-     RETURNING id`,
-    [app.id, platformUserId, branch, prData.number, prData.html_url, prTitle]
-  );
-  const sessionId = sessRows[0].id;
-  // Born in review: the proposal machine adopts it now (its review check
-  // armed). The leader's sweep adopts any row this missed.
-  await require('../workflow/platform.ts').proposalAdopted({ sessionId: sessionId, appId: app.id })
-    .catch((err) => log.warn('fleet-maintenance', 'Could not hand a proposal born in review to the proposal machine', { sessionId: sessionId, err: err.message }));
-
-  const { sendSystemMessage, pushVoteUpdate, pushNotificationToUser } = require('./ws');
-  const notifications = require('./notifications');
-  const events = require('./events');
-  const { getActiveUserStats } = require('./active-users');
-  const { active: activeUsers, majority } = await getActiveUserStats(pool, app.id);
-
-  await sendSystemMessage(pool, app.id,
-    `Platform maintenance: "${campaign.title}" opened PR #${prData.number}. ` +
-    `Needs ${majority}/${activeUsers} votes to land (or a platform admin merges it once checks pass).`,
-    'vote',
-    { vote: { sessionId, prNumber: prData.number } },
-    { type: 'session', ref: sessionId }
-  ).catch((err) => log.warn('fleet-maintenance', 'Campaign chat msg failed', { err: err.message }));
-
-  pushVoteUpdate({ sessionId, appSlug: app.slug, merged: false });
-
-  events.record(pool, {
-    type: events.EVENT_TYPES.PR_PROMOTED,
-    userId: platformUserId,
-    appId: app.id,
-    sessionId,
-    metadata: { prNumber: prData.number, maintenanceCampaignId: campaign.id },
-  });
-
-  try {
-    const notifRows = await notifications.createPrProposedNotifications(pool, {
-      appId: app.id,
-      sessionId,
-      proposerId: platformUserId,
-    });
-    for (const row of notifRows) {
-      pushNotificationToUser(row.user_id, {
-        type: 'notification_new',
-        notification: notifications.serialize({
-          ...row,
-          app_slug: app.slug,
-          app_name: app.name,
-          pr_title: prTitle,
-          pr_number: prData.number,
-          source_username: PLATFORM_USERNAME,
-        }),
-      });
-    }
-  } catch (err) {
-    log.warn('fleet-maintenance', 'Campaign pr_proposed notify failed', { sessionId, err: err.message });
-  }
-
-  kickChecks(config, pool, { id: sessionId, branch_name: branch, pr_number: prData.number }, app);
-
-  log.info('fleet-maintenance', 'Campaign PR opened', {
-    campaignId: campaign.id, slug: app.slug, prNumber: prData.number, sessionId,
-  });
-  return { sessionId, prNumber: prData.number, prUrl: prData.html_url };
-}
-
-// Fire-and-forget staging build + checks for a freshly opened campaign
-// proposal — the kickImportedChecks pattern (routes/votes.js): a
-// campaign proposal gets a preview + checks verdict like any native one.
-// Never throws into the campaign loop.
-function kickChecks(config, pool, session, app) {
-  (async () => {
-    // The preview machine builds and checks the campaign's exact head (its
-    // pin, else the branch tip), never 'latest'.
-    const { rows: [row] } = await pool.query(
-      'SELECT cs.*, a.repo_url FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1', [session.id]);
-    if (row) await require('./preview-workflow').revision({ pool, session: row, source: 'fleet', trigger: 'fleet-maintenance' });
-  })().catch((err) => log.warn('fleet-maintenance', 'Campaign checks hand-off failed', { sessionId: session.id, app: app && app.slug, err: err.message }));
-}
-
-// ─── The campaign loop ───────────────────────────────────────────────
-
-// The lease, taken: the campaign row is this driver's while lease_until is
-// ahead, and nobody else's lease is. No row back: another driver holds it,
-// or the campaign is not running. A campaign no driver ever leased whose
-// app row moved in the last half hour is driven by a process from before
-// the lease (the rollout that brings it): left to that driver, which keeps
-// its rows moving, until it goes quiet.
-async function takeLease(pool, campaignId, runner) {
-  const { rows } = await pool.query(
-    `UPDATE maintenance_campaigns
-        SET runner_id = $2, lease_until = NOW() + make_interval(secs => $3)
-      WHERE id = $1 AND status = 'running'
-        AND (lease_until IS NULL OR lease_until < NOW() OR runner_id = $2)
-        AND NOT (runner_id IS NULL AND EXISTS (
-              SELECT 1 FROM maintenance_campaign_apps
-               WHERE campaign_id = $1 AND state = 'running'
-                 AND updated_at > NOW() - INTERVAL '30 minutes'))
-      RETURNING *`,
-    [campaignId, runner, CAMPAIGN_LEASE_SECONDS]
-  );
-  return rows[0] || null;
-}
-
-// Renewed while the driver works. False when it is no longer this driver's
-// (it lapsed and another took it): the driver stops.
-async function renewLease(pool, campaignId, runner) {
-  const { rows } = await pool.query(
-    `UPDATE maintenance_campaigns SET lease_until = NOW() + make_interval(secs => $3)
-      WHERE id = $1 AND runner_id = $2 RETURNING id`,
-    [campaignId, runner, CAMPAIGN_LEASE_SECONDS]
-  );
-  return rows.length > 0;
-}
-
-// The fence for the writes that decide from the campaign row (the stale-row
-// reset, the claim, "done"; an app's result goes by its own row, see the
-// loop): in one transaction, the
-// campaign row is share-locked while its lease is still this driver's and
-// has not run out, then `write(client)` runs. A takeover updates that row,
-// so it waits for a fenced write in progress and cannot land in the middle
-// of one; a write after a takeover finds the lease gone and does nothing
-// (null). A check inside the write's own statement would not do: a write
-// that waits on an app row's lock re-reads that row, but not the campaign
-// row its check read before the wait.
-async function underLease(pool, campaignId, runner, write) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const { rows } = await client.query(
-      `SELECT 1 FROM maintenance_campaigns
-        WHERE id = $1 AND runner_id = $2 AND lease_until > NOW()
-        FOR SHARE`,
-      [campaignId, runner]
-    );
-    if (!rows.length) {
-      await client.query('ROLLBACK');
-      return null;
-    }
-    const out = await write(client);
-    await client.query('COMMIT');
-    return out;
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw err;
-  } finally {
-    client.release();
-  }
+  return String(commit.sha).toLowerCase();
 }
 
 /**
- * Drive one campaign: every pending app, one at a time. Returns
- * { ran: false, reason } when it did not drive it (another driver holds its
- * lease, it is not running, or GitHub or the model is off), { ran: true }
- * otherwise. Throws when the database does, so a caller that retries (the
- * governance machine's work) retries.
+ * The change's pull request: the open one GitHub already has for the
+ * branch (an attempt that opened it and was lost before it said so), else a
+ * new one with the campaign's title and the AI's summary.
  */
-async function runCampaign(config, pool, campaignId) {
-  const runner = crypto.randomUUID();
-  const campaign = await takeLease(pool, campaignId, runner);
-  if (!campaign) {
-    log.info('fleet-maintenance', 'Campaign not taken: not running, or another driver holds it', { campaignId });
-    return { ran: false, reason: 'not_taken' };
-  }
-  let lost = false;
-  let renewing = Promise.resolve(true);
-  // Renew the lease. A renewal that fails is not proof it is still this
-  // driver's: the heartbeat lets it pass (the next renewal decides), but
-  // before anything it must not do twice (`sure`) the driver stops.
-  const keep = ({ sure = false } = {}) => {
-    if (lost) return Promise.resolve(false);
-    renewing = renewLease(pool, campaignId, runner).then((mine) => {
-      if (!mine) lost = true;
-      return mine;
-    }, (err) => {
-      log.warn('fleet-maintenance', 'Campaign lease renewal failed', { campaignId, err: err.message });
-      return !sure;
-    });
-    return renewing;
-  };
-  const heartbeat = setInterval(() => { void keep(); }, CAMPAIGN_RENEW_MS);
-  heartbeat.unref?.();
+async function openChangePr({ repo, branch, campaign, summary }) {
+  const shape = (pr) => ({ number: pr.number, url: pr.html_url, title: pr.title || prTitleOf(campaign) });
+  const existing = await github.findOpenPrByBranch(repo.owner, repo.repo, branch);
+  if (existing) return shape(existing);
   try {
-    if (!github.isEnabled()) {
-      log.warn('fleet-maintenance', 'GitHub disabled — campaign cannot run', { campaignId });
-      return { ran: false, reason: 'github_off' };
-    }
-    if (!llm.isEnabled()) {
-      log.warn('fleet-maintenance', 'LLM disabled — campaign cannot run', { campaignId });
-      return { ran: false, reason: 'llm_off' };
-    }
-    const platformUserId = await ensurePlatformUser(pool);
-
-    // Seed targets (idempotent — ON CONFLICT keeps prior state on
-    // resume). target_filter, when present, is an array of app slugs.
-    const filterSlugs = Array.isArray(campaign.target_filter) && campaign.target_filter.length
-      ? campaign.target_filter.map(String)
-      : null;
-    if (filterSlugs) {
-      await pool.query(
-        `INSERT INTO maintenance_campaign_apps (campaign_id, app_id)
-         SELECT $1, a.id FROM apps a
-          WHERE a.repo_url IS NOT NULL AND a.self_hosted IS NOT TRUE
-            AND a.slug = ANY($2)
-         ON CONFLICT (campaign_id, app_id) DO NOTHING`,
-        [campaignId, filterSlugs]
-      );
-    } else {
-      await pool.query(
-        `INSERT INTO maintenance_campaign_apps (campaign_id, app_id)
-         SELECT $1, a.id FROM apps a
-          WHERE a.repo_url IS NOT NULL AND a.self_hosted IS NOT TRUE
-         ON CONFLICT (campaign_id, app_id) DO NOTHING`,
-        [campaignId]
-      );
-    }
-
-    // Rows left 'running' by a driver whose lease lapsed: that driver is
-    // gone (this one holds the lease), so the app is run again. A crash
-    // between "PR opened on GitHub" and the row's 'pr_open' opens a second
-    // PR here; that gap is [main]'s, to close when campaigns migrate.
-    await underLease(pool, campaignId, runner, (client) => client.query(
-      `UPDATE maintenance_campaign_apps
-          SET state = 'pending', error = NULL, updated_at = NOW()
-        WHERE campaign_id = $1 AND state = 'running' AND runner_id IS DISTINCT FROM $2`,
-      [campaignId, runner]
-    ));
-
-    // Few-shot carry-forward: the first successful app's summary keeps
-    // later apps consistent. In-process only — after a restart the
-    // instructions alone re-seed it from the next success.
-    let exemplarSummary = null;
-
-    for (;;) {
-      if (lifecycle.isShuttingDown()) {
-        log.info('fleet-maintenance', 'Campaign paused: this process is shutting down; the next leader resumes it', { campaignId });
-        return { ran: true, paused: 'shutting_down' };
-      }
-      if (!(await keep({ sure: true }))) {
-        log.warn('fleet-maintenance', 'Campaign lease lost or uncertain; another driver goes on', { campaignId });
-        return { ran: true, paused: 'lease_lost' };
-      }
-      // The next pending app, claimed by this driver.
-      const claimed = await underLease(pool, campaignId, runner, (client) => client.query(
-        `UPDATE maintenance_campaign_apps c
-            SET state = 'running', runner_id = $2, updated_at = NOW()
-           FROM apps a
-          WHERE c.id = (SELECT mca.id FROM maintenance_campaign_apps mca
-                         WHERE mca.campaign_id = $1 AND mca.state = 'pending'
-                         ORDER BY mca.id
-                         LIMIT 1 FOR UPDATE SKIP LOCKED)
-            AND a.id = c.app_id
-        RETURNING c.id AS row_id, a.id AS app_id, a.slug, a.name, a.repo_url, a.self_hosted`,
-        [campaignId, runner]
-      ));
-      if (!claimed) {
-        log.warn('fleet-maintenance', 'Campaign lease lost before claiming an app; another driver goes on', { campaignId });
-        return { ran: true, paused: 'lease_lost' };
-      }
-      const { rows } = claimed;
-      if (!rows.length) {
-        // Done: with the lease, and no app left pending or still running
-        // (another driver's row that a retry made pending, or a row a
-        // replaced driver held, is not done).
-        const finished = await underLease(pool, campaignId, runner, (client) => client.query(
-          `UPDATE maintenance_campaigns
-              SET status = 'done', completed_at = NOW()
-            WHERE id = $1 AND status = 'running' AND runner_id = $2
-              AND NOT EXISTS (SELECT 1 FROM maintenance_campaign_apps
-                               WHERE campaign_id = $1 AND state IN ('pending', 'running'))`,
-          [campaignId, runner]
-        ));
-        const rowCount = finished ? finished.rowCount : 0;
-        if (rowCount === 0) {
-          // A pending row again (a retry): run it. Otherwise this driver
-          // stops, and the resume picks the campaign up once nobody holds it.
-          if ((await pool.query(
-            `SELECT 1 FROM maintenance_campaign_apps WHERE campaign_id = $1 AND state = 'pending' LIMIT 1`, [campaignId]
-          )).rows.length) continue;
-          return { ran: true, paused: 'not_done' };
-        }
-        break;
-      }
-      const row = rows[0];
-      const app = { id: row.app_id, slug: row.slug, name: row.name, repo_url: row.repo_url };
-      // The row's result is written only by the driver that claimed it,
-      // while the row is still that claim (runner_id = $3, still
-      // 'running'). Not under the lease: the app's work is done (a PR is
-      // open on GitHub, say), and a lease that lapsed while nobody took it
-      // over must not lose the record of it, or the next driver runs the
-      // app again and opens a second PR. The row's own condition keeps a
-      // late result off a row another driver owns: Postgres re-checks it on
-      // the row as it is when the write runs, after any lock it waited on,
-      // and a takeover's reset (state 'pending') or a new claim (runner_id)
-      // both change it. A result that lands first is one the takeover's
-      // reset then leaves alone.
-
-      try {
-        const out = await runAppChange({
-          campaign, app, exemplarSummary,
-          stopped: () => lost || lifecycle.isShuttingDown(),
-          onUsage: (usage, servedModel) => {
-            const cost = llm.estimateCostCents(usage, servedModel);
-            // Attributed to the platform user purely as an audit trail
-            // of what the campaign spent; non-fatal by construction.
-            const limits = require('./limits');
-            limits.recordSpend(pool, platformUserId, cost).catch(() => {});
-          },
-        });
-
-        if (out.skipped) {
-          await pool.query(
-            `UPDATE maintenance_campaign_apps
-                SET state = 'skipped', error = $2, updated_at = NOW()
-              WHERE id = $1 AND runner_id = $3 AND state = 'running'`,
-            [row.row_id, String(out.reason || '').slice(0, 2000), runner]
-          );
-          log.info('fleet-maintenance', 'Campaign app skipped', {
-            campaignId, slug: app.slug, reason: out.reason,
-          });
-          continue;
-        }
-
-        // Opening the PR is the step that must not happen twice: only with
-        // the lease renewed just now, and not in a process on its way out
-        // (its pool may close before the row records the PR). The row stays
-        // 'running', and the next driver runs it again.
-        if (lifecycle.isShuttingDown()) {
-          log.info('fleet-maintenance', 'Campaign paused before opening a PR: this process is shutting down', { campaignId, slug: app.slug });
-          return { ran: true, paused: 'shutting_down' };
-        }
-        if (!(await keep({ sure: true }))) {
-          log.warn('fleet-maintenance', 'Campaign lease not certain before opening a PR; another driver goes on', { campaignId, slug: app.slug });
-          return { ran: true, paused: 'lease_lost' };
-        }
-        const opened = await openCampaignProposal({
-          config, pool, campaign, app, files: out.files, summary: out.summary, platformUserId,
-        });
-        if (!exemplarSummary && out.summary) exemplarSummary = out.summary;
-        await pool.query(
-          `UPDATE maintenance_campaign_apps
-              SET state = 'pr_open', session_id = $2, error = NULL, updated_at = NOW()
-            WHERE id = $1 AND runner_id = $3 AND state = 'running'`,
-          [row.row_id, opened.sessionId, runner]
-        );
-      } catch (err) {
-        // Stopped mid-app: the row is left 'running' for the next driver.
-        if (err.code === 'campaign_stopped') {
-          log.info('fleet-maintenance', 'Campaign app stopped: no longer this driver\'s', { campaignId, slug: app.slug });
-          return { ran: true, paused: lifecycle.isShuttingDown() ? 'shutting_down' : 'lease_lost' };
-        }
-        log.warn('fleet-maintenance', 'Campaign app failed', {
-          campaignId, slug: app.slug, err: err.message,
-        });
-        await pool.query(
-          `UPDATE maintenance_campaign_apps
-              SET state = 'failed', error = $2, updated_at = NOW()
-            WHERE id = $1 AND runner_id = $3 AND state = 'running'`,
-          [row.row_id, String(err.message || err).slice(0, 2000), runner]
-        ).catch(() => {});
-      }
-    }
-
-    // Completion note in the thread of the decision that voted the
-    // campaign, with the final tallies (a channel carries no activity:
-    // ws.sendSystemMessage).
-    try {
-      const { rows: counts } = await pool.query(
-        `SELECT state, COUNT(*)::int AS n
-           FROM maintenance_campaign_apps WHERE campaign_id = $1 GROUP BY state`,
-        [campaignId]
-      );
-      const byState = Object.fromEntries(counts.map((r) => [r.state, r.n]));
-      const { rows: issueRows } = campaign.issue_id
-        ? await pool.query('SELECT app_id FROM issues WHERE id = $1', [campaign.issue_id])
-        : { rows: [] };
-      if (issueRows.length) {
-        const { sendSystemMessage } = require('./ws');
-        await sendSystemMessage(pool, issueRows[0].app_id,
-          `Maintenance campaign "${campaign.title}" finished fanning out: ` +
-          `${byState.pr_open || 0} PRs opened, ${byState.skipped || 0} skipped, ` +
-          `${byState.failed || 0} failed. Each PR now runs its own checks and merge vote.`,
-          'system', null, { type: 'governance', ref: campaign.issue_id });
-      }
-    } catch (err) {
-      log.warn('fleet-maintenance', 'Campaign completion message failed', { campaignId, err: err.message });
-    }
-
-    log.info('fleet-maintenance', 'Campaign fan-out complete', { campaignId });
-    return { ran: true };
-  } finally {
-    clearInterval(heartbeat);
-    // A renewal already on its way must not land after the release below.
-    await renewing.catch(() => {});
-    // Let it go at once, for the next driver (a resume after a shutdown).
-    await pool.query(
-      `UPDATE maintenance_campaigns SET lease_until = NULL WHERE id = $1 AND runner_id = $2`,
-      [campaignId, runner]
-    ).catch(() => {});
+    return shape(await github.createPR(repo.owner, repo.repo, { branch, title: prTitleOf(campaign), body: prBodyOf(campaign, summary) }));
+  } catch (err) {
+    if (err.code !== 'pr_exists') throw err;
+    const found = await github.findOpenPrByBranch(repo.owner, repo.repo, branch);
+    if (!found) throw err;
+    return shape(found);
   }
 }
 
-// ─── Merge-all-green ─────────────────────────────────────────────────
+const prTitleOf = (campaign) => String(campaign.title).slice(0, 250);
+const prBodyOf = (campaign, summary) =>
+  `Platform maintenance campaign #${campaign.id}: **${campaign.title}**\n\n` +
+  `${summary || 'See campaign instructions.'}\n\n` +
+  'This PR was opened automatically by the Homeroom platform after the campaign\'s ' +
+  'governance vote passed. It merges like any proposal: through this app\'s own ' +
+  'merge vote, or when a platform admin drains the campaign\'s green checks.';
+// ─── Status (dashboard backing) ──────────────────────────────────────
 
-/**
- * Sequentially force-merge every campaign proposal whose checks pass
- * (or were skipped): an admin's force (the proposal machine's ForceMerge),
- * so the campaign's platform-level vote — not each app's local tally — is
- * the authority, and the app's merge queue merges it. Each is waited for a
- * little; a force not merged by then stays, and merges when it can.
- * `forceBy` is the admin who pressed the button, named in the merge audit
- * trail.
- */
-async function mergeGreen(config, pool, campaignId, { limit = null, forceBy }) {
-  const params = [campaignId];
-  let limitSql = '';
-  if (Number.isInteger(limit) && limit > 0) {
-    params.push(limit);
-    limitSql = 'LIMIT $2';
-  }
-  const { rows } = await pool.query(
-    `SELECT mca.id AS row_id, cs.*,
-            a.slug AS app_slug, a.repo_url, a.name AS app_name,
-            a.self_hosted AS app_self_hosted
-       FROM maintenance_campaign_apps mca
-       JOIN chat_sessions cs ON cs.id = mca.session_id
-       JOIN apps a ON a.id = mca.app_id
-      WHERE mca.campaign_id = $1
-        AND cs.status = 'promoted'
-        AND cs.check_state IN ('passing', 'skipped')
-      ORDER BY mca.id
-      ${limitSql}`,
-    params
-  );
-
-  const results = [];
-  for (const session of rows) {
-    try {
-      const platform = require('../workflow/platform.ts');
-      const forced = await platform.forceMerge({
-        sessionId: session.id, appId: session.app_id, from: session.status, userId: forceBy?.id ?? null, username: forceBy?.username ?? null,
-      });
-      const r = forced.status === 'accepted' || forced.status === 'replayed'
-        ? { merged: await platform.waitForMerge(session.id, MERGE_GREEN_WAIT_MS), reason: 'not merged yet' }
-        : { merged: false, reason: forced.reason || forced.status };
-      if (r && r.merged) {
-        await pool.query(
-          `UPDATE maintenance_campaign_apps SET state = 'merged', updated_at = NOW() WHERE id = $1`,
-          [session.row_id]
-        ).catch(() => {});
-        results.push({ slug: session.app_slug, prNumber: session.pr_number, merged: true });
-      } else {
-        results.push({
-          slug: session.app_slug, prNumber: session.pr_number, merged: false,
-          reason: (r && r.reason) || 'not merged',
-        });
-      }
-    } catch (err) {
-      results.push({
-        slug: session.app_slug, prNumber: session.pr_number, merged: false, error: err.message,
-      });
-    }
-    await new Promise((r) => setTimeout(r, MERGE_GREEN_DELAY_MS));
-  }
-  return results;
-}
-
-// ─── Status + retry (dashboard backing) ──────────────────────────────
+// A proposed app's proposal, once it is decided.
+const PROPOSAL_OUTCOMES = new Map([['merged', 'merged'], ['archived', 'closed']]);
 
 async function campaignStatus(pool, campaignId) {
   const { rows: campRows } = await pool.query(
@@ -900,9 +427,9 @@ async function campaignStatus(pool, campaignId) {
   );
   if (!campRows.length) return null;
   const campaign = campRows[0];
-  // Live merge state comes from the joined session — a proposal the
-  // community voted through shows 'merged' here without the engine
-  // ever touching the row.
+  // What came of a proposed app is its proposal's: merged (by its vote or a
+  // drain) or closed (voted down, gone quiet, withdrawn) reads off the
+  // joined session, never the campaign's own row.
   const { rows: apps } = await pool.query(
     `SELECT mca.app_id, mca.state, mca.error, mca.updated_at, mca.session_id,
             a.slug, a.name,
@@ -919,7 +446,7 @@ async function campaignStatus(pool, campaignId) {
     appId: r.app_id,
     slug: r.slug,
     name: r.name,
-    state: r.session_status === 'merged' ? 'merged' : r.state,
+    state: r.state === 'pr_open' && PROPOSAL_OUTCOMES.has(r.session_status) ? PROPOSAL_OUTCOMES.get(r.session_status) : r.state,
     error: r.error,
     sessionId: r.session_id,
     prNumber: r.pr_number,
@@ -928,8 +455,8 @@ async function campaignStatus(pool, campaignId) {
     stagingUrl: r.staging_url,
     updatedAt: r.updated_at,
   }));
-  const counts = {};
-  for (const r of rows) counts[r.state] = (counts[r.state] || 0) + 1;
+  const counts = new Map();
+  for (const r of rows) counts.set(r.state, (counts.get(r.state) || 0) + 1);
   return {
     id: campaign.id,
     issueId: campaign.issue_id,
@@ -938,74 +465,20 @@ async function campaignStatus(pool, campaignId) {
     status: campaign.status,
     createdAt: campaign.created_at,
     completedAt: campaign.completed_at,
-    counts,
+    counts: Object.fromEntries(counts),
     apps: rows,
   };
-}
-
-/**
- * Reset one failed/skipped app to pending and re-enter the campaign
- * loop. Flips a 'done' campaign back to 'running' so the loop picks
- * the row up; a campaign already looping in-process just continues.
- */
-async function retryCampaignApp(config, pool, campaignId, appId) {
-  const { rowCount } = await pool.query(
-    `UPDATE maintenance_campaign_apps
-        SET state = 'pending', error = NULL, updated_at = NOW()
-      WHERE campaign_id = $1 AND app_id = $2 AND state IN ('failed', 'skipped')`,
-    [campaignId, appId]
-  );
-  if (!rowCount) return false;
-  await pool.query(
-    `UPDATE maintenance_campaigns SET status = 'running', completed_at = NULL
-      WHERE id = $1 AND status = 'done'`,
-    [campaignId]
-  );
-  runCampaign(config, pool, campaignId).catch((err) =>
-    log.error('fleet-maintenance', 'Campaign retry run failed', { campaignId, err: err.message }));
-  return true;
-}
-
-// Resume: campaigns are DB-state machines, so a restart mid-fan-out just
-// re-enters the loop. Called by the leader at boot and every two minutes
-// (server.js); a campaign whose driver is alive keeps its lease, and
-// runCampaign leaves it to it.
-async function resumeRunningCampaigns(config, pool) {
-  let rows;
-  try {
-    ({ rows } = await pool.query(
-      // Those no driver holds: one still running keeps its lease.
-      `SELECT id FROM maintenance_campaigns
-        WHERE status = 'running' AND (lease_until IS NULL OR lease_until < NOW())`
-    ));
-  } catch (err) {
-    // Fresh DB mid-migration — nothing to resume.
-    log.warn('fleet-maintenance', 'Could not query running campaigns (skipping resume)', { err: err.message });
-    return;
-  }
-  for (const row of rows) {
-    log.info('fleet-maintenance', 'Resuming a maintenance campaign no driver holds', { campaignId: row.id });
-    runCampaign(config, pool, row.id).catch((err) =>
-      log.error('fleet-maintenance', 'Campaign resume failed', { campaignId: row.id, err: err.message }));
-  }
 }
 
 module.exports = {
   PLATFORM_USERNAME,
   MAX_TOOL_ITERATIONS,
   ensurePlatformUser,
-  runCampaign,
-  mergeGreen,
   campaignStatus,
-  retryCampaignApp,
-  resumeRunningCampaigns,
-  // Exported for unit tests.
+  // The campaign machine's change work (src/workflow/campaign/services.ts).
   runAppChange,
-  takeLease,
-  underLease,
-  openCampaignProposal,
-  // A platform-opened proposal's preview and checks (services/language-sync-runner.js).
-  kickChecks,
+  pushChange,
+  openChangePr,
   campaignSystemPrompt,
   CAMPAIGN_TOOLS,
   parseRepo,

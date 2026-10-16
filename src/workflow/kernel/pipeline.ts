@@ -10,7 +10,7 @@
 import { NONE, WORK_EVENTS, assertJson, canonicalHash, isIgnored, isRejection } from './machine.ts';
 import type { Machine, WorkResultPayload } from './machine.ts';
 import type {
-  Event, Json, Logger, Notification, Outcome, Pool, PoolClient, Push, Queryable, State, TransitionContext, Tx,
+  Event, Json, Logger, MessageRequest, Notification, Outcome, Pool, PoolClient, Push, Queryable, State, TransitionContext, Tx,
 } from './types.ts';
 
 export interface PipelineOptions {
@@ -463,7 +463,14 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
     pushes.push(JSON.parse(JSON.stringify({ kind: p.kind, routing: p.routing ?? null, data: p.data })));
   };
   for (const p of outcome.push || []) pushed(p);
-  const writeCtx = Object.freeze({ ...after, push: pushed });
+  const sends: MessageRequest[] = [...(outcome.messages || [])];
+  const sent = (m: MessageRequest) => {
+    if (!m || typeof m.to?.machine !== 'string' || typeof m.to?.key !== 'string' || typeof m.event?.type !== 'string') {
+      throw new Error(`${machine.name}: a message needs a target and an event`);
+    }
+    sends.push(m);
+  };
+  const writeCtx = Object.freeze({ ...after, push: pushed, message: sent });
   for (const write of outcome.writes || []) {
     const handler = machine.writes.get(write.type);
     if (!handler) throw new Error(`${machine.name}: no write handler ${write.type}`);
@@ -494,7 +501,7 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
     work.push({ kind: w.kind, key: w.key, id: created?.id ?? null });
   }
   const messages = [];
-  for (const [i, m] of (outcome.messages || []).entries()) {
+  for (const [i, m] of sends.entries()) {
     assertJson(m.event.payload);
     const { rows: [sent] } = await client.query(
       `WITH ins AS (

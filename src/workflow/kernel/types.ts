@@ -119,8 +119,10 @@ export interface Tx {
 
 export type Decoder = (payload: unknown) => unknown;
 export type Authorize<S extends State, F> = (event: Event<any>, facts: F, state: S) => Check;
-// A domain write may add what browsers should hear about the rows it wrote.
-export interface WriteContext extends TransitionContext { push(p: Push): void }
+// A domain write may add what browsers should hear about the rows it wrote,
+// and a message for an instance whose key only the write knows (a row it has
+// just inserted): committed with the event, as the outcome's own messages are.
+export interface WriteContext extends TransitionContext { push(p: Push): void; message(m: MessageRequest): void }
 export type WriteHandler = (tx: Tx, write: any, ctx: WriteContext) => Promise<unknown>;
 export type Notifier = (notification: any) => void | Promise<void>;
 

@@ -29,6 +29,8 @@ import { shotsServices } from './shots/services.ts';
 import { ATTENTION as PROPOSAL_ATTENTION, MACHINE as PROPOSAL, proposal, sessionKey as proposalKey } from './proposal/machine.ts';
 import { proposalServices } from './proposal/services.ts';
 import { MACHINE as QUEUE, appKey as queueKey, mergeQueue } from './merge-queue/machine.ts';
+import { MACHINE as CAMPAIGN, campaign, campaignKey } from './campaign/machine.ts';
+import { campaignServices } from './campaign/services.ts';
 
 const pg = createRequire(import.meta.url)('pg');
 
@@ -46,13 +48,14 @@ let previews: ReturnType<typeof preview> | null = null;
 let shotRuns: ReturnType<typeof shots> | null = null;
 let proposals: ReturnType<typeof proposal> | null = null;
 let queues: ReturnType<typeof mergeQueue> | null = null;
+let campaigns: ReturnType<typeof campaign> | null = null;
 let log: Logger | null = null;
 
 // What the ownership triggers read, synced on every boot: enabled:<machine>
 // for every machine (wf_holds reads it). Every machine is the only path for
 // what it decides, so its guard is always on and always refuses a write
 // from outside it.
-const MACHINES = [MACHINE, MERGE, DELIVERY, PREVIEW, SHOTS, PROPOSAL, QUEUE];
+const MACHINES = [MACHINE, MERGE, DELIVERY, PREVIEW, SHOTS, PROPOSAL, QUEUE, CAMPAIGN];
 
 export async function syncSettings(pool: Pool): Promise<void> {
   for (const name of MACHINES) {
@@ -122,10 +125,12 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   });
   proposals = proposal(proposalDeps(config));
   queues = mergeQueue();
-  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues];
+  campaigns = campaign();
+  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns];
   const services = {
-    ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
+    ...governanceServices({ ...deps, adoptCampaigns }), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
     ...appDeliveryServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
+    ...campaignServices(deps),
   };
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, publish: publishPushes,
@@ -144,6 +149,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     shotRuns = null;
     proposals = null;
     queues = null;
+    campaigns = null;
     throw err;
   }
   runtime = started;
@@ -182,7 +188,42 @@ export async function startWorkflowLoops(): Promise<void> {
   await adoptProposals();
   await rearmWaitingProposals();
   await adoptMergeQueues();
+  await adoptCampaigns();
   await retryPlatformFaults();
+}
+
+// A campaign an older release started (no instance yet: running, or done
+// and retryable) is taken by the campaign machine once no older driver holds
+// its lease, so a driver finishing an app records its pull request before
+// the machine takes the campaign. The leader's boot and its minute sweep
+// (server.js) ask. Transitional: an apply since this release starts its
+// campaign itself (the governance machine's message); deleted with the lease
+// columns once no older release can run.
+export async function adoptCampaigns(): Promise<number> {
+  if (!runtime || !campaigns) return 0;
+  const { rows } = await kernelPool!.query(
+    `SELECT mc.id FROM maintenance_campaigns mc
+      WHERE (mc.lease_until IS NULL OR mc.lease_until < now())
+        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'campaign:' || mc.id)
+      ORDER BY mc.id`, [CAMPAIGN]);
+  for (const r of rows) {
+    await runtime.append(campaigns, campaignKey(r.id), { type: 'Start', payload: { campaignId: r.id } },
+      { requestKey: `adopt:${r.id}`, source: { kind: 'system', name: 'adopt' } })
+      .catch((err: Error) => log!.warn('workflow', 'Could not adopt a maintenance campaign', { campaignId: r.id, message: err.message }));
+  }
+  if (rows.length) log!.info('workflow', 'Adopted maintenance campaigns', { count: rows.length });
+  return rows.length;
+}
+
+// An admin's moves on a campaign (routes/campaigns.js): retry one app, force
+// its green proposals, stop it. Each answers with the machine's outcome.
+export async function campaignEvent(campaignId: number, type: 'RetryApp' | 'MergeGreen' | 'Stop',
+  payload: Record<string, unknown>, user: { id?: number | null; username?: string | null }): Promise<EventOutcome> {
+  if (!runtime || !campaigns) throw new Error('The workflow runtime is not running in this process');
+  return runtime.appendAndWait(campaigns, campaignKey(campaignId),
+    { type, payload: { ...payload, userId: user.id ?? null, username: user.username ?? null } },
+    { requestKey: `${type}:${campaignId}:${randomUUID()}`, source: { kind: 'route', name: `campaign-${type}` },
+      actor: user.id ? `user:${user.id}` : undefined, waitMs: 5000 });
 }
 
 // Every app with a proposal in review gets its merge queue's look at boot:
