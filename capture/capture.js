@@ -1116,8 +1116,11 @@ function resolveTests(env, readStdin) {
       expectSelector: t.expectSelector ? String(t.expectSelector).slice(0, 256) : '',
       expectText: t.expectText ? String(t.expectText).slice(0, 256) : '',
       allowConsoleErrors: !!t.allowConsoleErrors,
-      // Only when set, so a list that uses none reads exactly as before.
+      // How groupTests loads the check's page. The platform sets these
+      // from the app's dapp.json rules (app-manifest.js checkLoadFlags);
+      // only when set, so a list that uses none reads exactly as before.
       ...(t.coldLoad === true ? { coldLoad: true } : {}),
+      ...(t.endsGroup === true ? { endsGroup: true } : {}),
     });
   }
   return out;
@@ -1372,10 +1375,27 @@ function groupTestsByDocument(tests, opts) {
     const cohorts = hoistBareCohort(
       Array.from(byHash.entries()).map(([hash, members]) => ({ hash, tests: members }))
     );
-    for (let i = 0; i < cohorts.length; i += cap) {
+    // A cohort at one of the app's routing boundaries ends its group (see
+    // groupTests): it is chunked like the rest and still reached by a switch,
+    // but last, so nothing is switched to after it. Each joins the first
+    // chunk that has not already ended, one past the cap if it must, and
+    // starts a chunk of its own only when every chunk has ended. A bare
+    // cohort cannot be one (a boundary is a fragment route), and would have
+    // to be first anyway, so it is never moved.
+    const ends = (c) => !!c.hash && c.tests.some((t) => t && t.endsGroup);
+    const rest = cohorts.filter((c) => !ends(c));
+    const chunks = [];
+    for (let i = 0; i < rest.length; i += cap) chunks.push({ cohorts: rest.slice(i, i + cap), ended: false });
+    for (const c of cohorts.filter(ends)) {
+      let host = chunks.find((ch) => !ch.ended);
+      if (!host) { host = { cohorts: [], ended: false }; chunks.push(host); }
+      host.cohorts.push(c);
+      host.ended = true;
+    }
+    for (const ch of chunks) {
       // Flatten the chunk: a group stays a plain array of tests, which is what
       // the pool's budget/timeout/emit paths already iterate.
-      groups.push([].concat(...cohorts.slice(i, i + cap).map((c) => c.tests)));
+      groups.push([].concat(...ch.cohorts.map((c) => c.tests)));
     }
   }
   return groups;
@@ -1396,26 +1416,29 @@ function groupTestsByDocument(tests, opts) {
 // exactly as it did.
 //
 // A `coldLoad` check is exempt from DOCUMENT grouping, never from sharing a
-// load with the checks of its own URL. Its page cannot be shared by hash
-// switches, in either direction:
+// load with the checks of its own URL. Its address carries one of the app's
+// boot parameters (dapp.json `bootParams`): a one-time deep link scripted at
+// boot (Homeroom's `?shot=`, `?details=1`), which an address change on a
+// loaded page rightly does not replay. Reached by a hash switch it could only
+// fail and be re-run cold by runTestGroup's fallback (#1146), after waiting
+// out the whole assertion window on a screen that was not coming (5-17s a
+// cohort in Homeroom's runs). Given its own load from the start, it is judged
+// exactly as the ungrouped runner judged it, which is what that fallback
+// re-runs anyway: same navigation, same window, same console errors. Only
+// the wait before it goes.
 //
-//   * its screen is drawn only by a load of its address: a one-time deep
-//     link scripted at boot (`?shot=`, `?details=1`), which an address
-//     change on a loaded page rightly does not replay; or
-//   * the page it leaves sends the next address change somewhere else: an
-//     app running on a desktop opens the pages about it in a side panel
-//     beside it (Homeroom's features/side-panel), so a check switched to
-//     after it is drawn in that panel's frame, not in the page it asserts on.
+// An `endsGroup` check stays in its document's group and is reached by a
+// switch like any other; nothing is switched to after it
+// (groupTestsByDocument). Its route is one of the app's routing boundaries
+// (dapp.json `routingBoundaries`): a screen that sends the next address
+// change somewhere else, as a running app on a desktop opens the pages about
+// it in a side panel beside it (Homeroom's). A check switched to after it
+// would be judged on a screen its address does not draw.
 //
-// Either way, a switch onto or off it could only fail and be re-run cold by
-// runTestGroup's fallback (#1146), after waiting out the whole assertion
-// window on a screen that was not coming (5-19s a cohort in Homeroom's
-// runs). Given its own load from the start, it is judged exactly as the
-// ungrouped runner judged it, which is what that fallback re-runs anyway:
-// same navigation, same window, same console errors. Only the wait before
-// it goes. The app declares it (dapp.json `"coldLoad": true` on the check);
-// nothing here guesses which links are boot-only, and nothing shortens the
-// window a switch gets: a shorter one changed verdicts both ways (see
+// The platform sets both bits from the app's rules (app-manifest.js
+// checkLoadFlags); a check cannot ask for either, and this file knows no
+// app's parameters or routes. Nothing shortens the window a switch gets: a
+// shorter one changed verdicts both ways (see
 // tests/capture-switch-window.test.js).
 function groupTests(tests, env) {
   const all = Array.isArray(tests) ? tests : [];
@@ -2349,8 +2372,9 @@ async function runTests(browser, tests, opts) {
   // (visuals.js parseDiagnostics). Wall clock, not CPU: it is what a check
   // run waits on. No verdict reads it. Nothing in it names a URL.
   // `fallbacks` counts the hash cohorts that had to be loaded cold (#1146)
-  // and the lane time they took: the cost grouping did not save. A check
-  // that is always one of them can say so (`coldLoad`, see groupTests).
+  // and the lane time they took: the cost grouping did not save. One on a
+  // plain address is a navigation bug in the app; an app's boot parameters
+  // and routing boundaries are what it declares instead (see groupTests).
   emitDiag('checks-timing', {
     shard: shard ? `${shard.index}/${shard.count}` : null,
     lanes: Math.min(concurrency, groups.length),

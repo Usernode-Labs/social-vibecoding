@@ -387,11 +387,10 @@ function normalizeVisualScenario(test) {
 // leading slash, no scheme/whitespace/markup). `name` falls back to the
 // path. `expectSelector` / `expectText` are optional presence assertions;
 // `allowConsoleErrors` opts a test out of the baseline no-console-errors
-// rule (for a route that legitimately logs errors). `coldLoad: true` gives
-// the check a page load of its own instead of a hash switch on a page loaded
-// for another check: for a screen only a load of its address draws, or a page
-// that sends the next address change elsewhere (capture.js groupTests).
-// `visual: true` requires
+// rule (for a route that legitimately logs errors). A check carries no say
+// in how its page is loaded: that is the app's top-level `bootParams` and
+// `routingBoundaries` (readLoadRules below), and the retired per-check
+// `coldLoad` key is ignored. `visual: true` requires
 // a stable `id`, a presence assertion, and at least one repository-relative
 // `impact` glob; malformed visual metadata is ignored without dropping the
 // underlying check. Invalid entries are dropped, duplicate (name+path) pairs
@@ -412,6 +411,7 @@ function readTestsWithMeta(parsed) {
   let invalidDropped = 0;
   let ceilingDropped = 0;
   let invalidVisualDropped = 0;
+  let retiredColdLoad = 0;
   const visualIds = new Set();
   for (const t of raw) {
     if (!t || typeof t !== 'object') { invalidDropped++; continue; }
@@ -439,13 +439,12 @@ function readTestsWithMeta(parsed) {
       expectText: typeof t.expectText === 'string' && t.expectText.trim()
         ? t.expectText.trim().slice(0, MAX_TEST_TEXT_LEN) : null,
       allowConsoleErrors: !!t.allowConsoleErrors,
-      // A check whose screen only a load of its address draws (a one-time
-      // deep link scripted at boot) asks for its own load rather than a
-      // hash switch on a shared page (capture.js groupTests). Kept only
-      // when set, so every other entry reads exactly as before.
-      ...(t.coldLoad === true ? { coldLoad: true } : {}),
+      // No per-check load setting is kept: how a check's page is loaded is
+      // the app's rule (readLoadRules below), never the check's. A leftover
+      // `coldLoad` key is ignored, and counted for the warning below.
       ...(visual || {}),
     });
+    if (Object.prototype.hasOwnProperty.call(t, 'coldLoad')) retiredColdLoad++;
   }
   const dropped = invalidDropped + ceilingDropped;
   if (dropped > 0 || invalidVisualDropped > 0) {
@@ -454,7 +453,144 @@ function readTestsWithMeta(parsed) {
       kept: out.length, ceiling: MAX_DECLARED_TESTS,
     });
   }
-  return { tests: out, rawCount: raw.length, ceilingDropped, invalidVisualDropped };
+  if (retiredColdLoad > 0) {
+    log.warn('app-manifest', 'Ignored the retired per-check "coldLoad" key: declare the app\'s "bootParams" or "routingBoundaries" instead (app-conventions.md)', {
+      checks: retiredColdLoad,
+    });
+  }
+  return {
+    tests: out, rawCount: raw.length, ceilingDropped, invalidVisualDropped,
+    loadRules: readLoadRules(parsed),
+  };
+}
+
+// ── How a check's page is loaded: the app's rules, never a check's ──────
+//
+// The browser checks group a document's checks and reach all but the first
+// by writing `location.hash` (capture/capture.js groupTests). Two kinds of
+// address legitimately cannot be shared that way, and both are facts about
+// the APP, so dapp.json declares them once at its top level:
+//
+//   * `bootParams`: query parameters the app reads only when a page loads,
+//     a one-time deep link scripted at boot (Homeroom's `?shot=`, and
+//     `?details=1`, which opens Details once). An address change rightly
+//     does not replay them, so every check whose address carries one (in
+//     its query or its fragment's) gets a load of its own, shared only with
+//     its own address's checks.
+//   * `routingBoundaries`: fragment routes whose screen sends the NEXT
+//     address change somewhere else (Homeroom: on a desktop, a running
+//     app's App tab opens the pages about it in a side panel beside it).
+//     A check at such a route is still reached by a switch like any other;
+//     the only thing that changes is that no other check is switched to
+//     after it: it ends its group.
+//
+// There is deliberately no per-check form, and no rule exempts an address
+// that carries no boot parameter from being reached by a switch: a check
+// that falls back on a plain address is a navigation bug, and the fix is
+// that an address change draws what a fresh load of that address draws.
+// The per-check `"coldLoad": true` #5280 introduced is retired and ignored
+// (counted in the warning above). Ignored, not refused: the reader's only
+// refusal is dropping the check, which would lose a check to remove a
+// speed hint that never changed a verdict.
+//
+// What reaches the runner is two bits per check (checkLoadFlags), computed
+// by the platform from these rules against the address it visits: the
+// `coldLoad` bit every runner since #5280 already honours, and `endsGroup`.
+const MAX_BOOT_PARAMS = 8;
+const BOOT_PARAM_RE = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
+const MAX_ROUTING_BOUNDARIES = 8;
+const MAX_BOUNDARY_ROUTE_LEN = 128;
+const MAX_BOUNDARY_REASON_LEN = 300;
+const BOUNDARY_SEGMENT_RE = /^(?:\*|[A-Za-z0-9._~%-]+)$/;
+
+// A short list of plain parameter names. Anything else in an entry (an
+// `=`, a `&`, a space, a pattern) is dropped, as is a non-array field.
+function readBootParams(parsed) {
+  const raw = parsed && parsed.bootParams;
+  if (raw === undefined) return [];
+  const out = [];
+  let dropped = Array.isArray(raw) ? 0 : 1;
+  for (const p of (Array.isArray(raw) ? raw : [])) {
+    if (typeof p !== 'string' || !BOOT_PARAM_RE.test(p) || out.length >= MAX_BOOT_PARAMS) { dropped++; continue; }
+    if (!out.includes(p)) out.push(p);
+  }
+  if (dropped) log.warn('app-manifest', 'Dropped invalid "bootParams" entries', { dropped, kept: out.length });
+  return out;
+}
+
+// The segments of a fragment route, without its `#`, one leading `/`, or
+// its own `?query`.
+function fragmentSegments(fragment) {
+  return String(fragment || '').replace(/^#/, '').split('?')[0].replace(/^\//, '').split('/');
+}
+
+// `{ route, reason }`. `route` is a fragment route: `#`, then `/`-separated
+// segments, each literal or `*` (exactly one non-empty segment). It matches
+// a whole route, never a prefix, and its first segment is literal, so no
+// entry can cover every address. `reason` says why the screen hands the
+// next address change elsewhere; an entry without one is dropped.
+function readRoutingBoundaries(parsed) {
+  const raw = parsed && parsed.routingBoundaries;
+  if (raw === undefined) return [];
+  const out = [];
+  let dropped = Array.isArray(raw) ? 0 : 1;
+  for (const e of (Array.isArray(raw) ? raw : [])) {
+    const route = e && typeof e.route === 'string' ? e.route.trim() : '';
+    const reason = e && typeof e.reason === 'string' ? e.reason.trim() : '';
+    const segs = route.startsWith('#') && !route.includes('?') ? fragmentSegments(route) : [];
+    const ok = route.length <= MAX_BOUNDARY_ROUTE_LEN
+      && !!reason && reason.length <= MAX_BOUNDARY_REASON_LEN
+      && segs.length > 0 && segs.every((s) => BOUNDARY_SEGMENT_RE.test(s)) && segs[0] !== '*';
+    if (!ok || out.length >= MAX_ROUTING_BOUNDARIES) { dropped++; continue; }
+    if (!out.some((b) => b.route === route)) out.push({ route, reason });
+  }
+  if (dropped) log.warn('app-manifest', 'Dropped invalid "routingBoundaries" entries', { dropped, kept: out.length });
+  return out;
+}
+
+function readLoadRules(parsed) {
+  return { bootParams: readBootParams(parsed), routingBoundaries: readRoutingBoundaries(parsed) };
+}
+
+function paramNames(query) {
+  const names = [];
+  for (const part of String(query || '').split('&')) {
+    const raw = part.split('=')[0];
+    if (!raw) continue;
+    try { names.push(decodeURIComponent(raw.replace(/\+/g, ' '))); } catch { names.push(raw); }
+  }
+  return names;
+}
+
+// The wire bits for one check, from the app's rules and the address the
+// platform VISITS (for Homeroom, after selfAppHashPath: `/app/x` is visited
+// as `/#app/x`). Plain string surgery, like capture.js splitDocumentUrl, so
+// a malformed address degrades to no bits rather than throwing.
+function checkLoadFlags(address, rules) {
+  const r = rules || {};
+  const boot = Array.isArray(r.bootParams) ? r.bootParams : [];
+  const bounds = Array.isArray(r.routingBoundaries) ? r.routingBoundaries : [];
+  if (!boot.length && !bounds.length) return {};
+  const s = String(address == null ? '' : address);
+  const h = s.indexOf('#');
+  const doc = h === -1 ? s : s.slice(0, h);
+  const frag = h === -1 ? '' : s.slice(h + 1);
+  const q = doc.indexOf('?');
+  const fq = frag.indexOf('?');
+  const names = paramNames(q === -1 ? '' : doc.slice(q + 1))
+    .concat(paramNames(fq === -1 ? '' : frag.slice(fq + 1)));
+  const out = {};
+  if (names.some((n) => boot.includes(n))) out.coldLoad = true;
+  if (frag) {
+    const segs = fragmentSegments(frag);
+    const hit = bounds.some((b) => {
+      const pat = fragmentSegments(b.route);
+      return pat.length === segs.length
+        && pat.every((p, i) => (p === '*' ? !!segs[i] : p === segs[i]));
+    });
+    if (hit) out.endsGroup = true;
+  }
+  return out;
 }
 
 function readTests(parsed) {
@@ -2384,6 +2520,10 @@ module.exports = {
   readScreenshot,
   readTests,
   readTestsWithMeta,
+  readLoadRules,
+  checkLoadFlags,
+  MAX_BOOT_PARAMS,
+  MAX_ROUTING_BOUNDARIES,
   checkKey,
   readIcon,
   loadIconImage,

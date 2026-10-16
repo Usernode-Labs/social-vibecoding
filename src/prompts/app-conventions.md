@@ -958,6 +958,60 @@ Per-test fields:
   `*`, `?`, or `**`. A changed file must match. Keep this mapping in
   `dapp.json`, not in source functions.
 
+A check has no say in how its page is loaded. The old per-check
+`"coldLoad": true` is retired: the platform ignores it, so remove it.
+
+**How checks share a page load.** The runner loads each document (the
+address up to its `#`) once and reaches that document's other checks by
+changing `location.hash`, the way a person following a link inside the app
+would. So **an address change must draw what a fresh load of that address
+draws.** When a check's screen does not appear after the switch, the runner
+waits out its whole assertion window (up to ~15 s) and then reloads the
+page at that address and judges it there. The verdict stays the same, but
+the run is slower and the checks-timing line counts it under `fallbacks`. A
+check that falls back on a plain address is a **navigation bug**. Fix it in
+the app: a route handler that never redraws, a dialog that closes on its own
+`hashchange`, or a parameter read only at boot that people also reach by
+navigating. Do not work around it in `dapp.json`.
+
+Two things legitimately cannot be reached by a switch. Both are facts about
+the app, so `dapp.json` declares each once at its top level:
+
+```json
+{
+  "bootParams": ["shot", "details"],
+  "routingBoundaries": [
+    { "route": "#app/*", "reason": "A running app opens the next page in a side panel beside it" }
+  ]
+}
+```
+
+- `bootParams` — query parameters your app reads **only when the page
+  loads**: a one-time deep link scripted at boot, such as a `?shot=` that
+  opens a sheet or a `?details=1` that opens a panel once. An address
+  change rightly does not replay them. Every check whose address carries
+  one, in its query or in its fragment's query, gets a page load of its
+  own, shared only with checks at the same address. List up to 8 plain
+  names (letters, digits, `-`, `_`). Declare a parameter only if the app
+  really reads it once at boot. Each one costs a load on every check that
+  uses it. A parameter that people reach by navigating (such as a `?flow=`
+  link inside a conversation that is already open) must work on an address
+  change: fix the app, and do not declare the parameter.
+- `routingBoundaries` — fragment routes whose screen **sends the next
+  address change somewhere else** on purpose. Homeroom's App tab is one: on
+  a desktop, a running app opens the pages about it in a side panel beside
+  it, so the page itself never draws them. A check at such a route is still
+  reached by a switch and judged like any other. The only change is that
+  **no other check is switched to after it**: it ends its group. Each entry
+  is `{ "route", "reason" }`, up to 8. `route` starts with `#`, and its
+  `/`-separated segments are literal or `*` (exactly one segment). It
+  matches the whole route without the fragment's `?query`, never a prefix,
+  and its first segment must be literal. An entry without a `reason` is
+  dropped.
+
+Neither rule takes a check on a plain address out of being reached by a
+switch. Apps that declare neither are grouped as before.
+
 Visual scenario metadata remains useful executable documentation and durable
 regression coverage. Before/after shots are proposal-specific: the authoring
 agent declares up to three changes (changes that show on the same screen are
