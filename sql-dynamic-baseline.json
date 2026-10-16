@@ -1466,6 +1466,20 @@
       "preview": "`SELECT ${columnList} FROM ${table} ORDER BY 1`"
     },
     {
+      "source": "src/services/topochain/invite-statuses.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "2eb7672a10ede70da2e0",
+      "count": 1,
+      "preview": "scorer.RULE_CHALLENGES_SQL"
+    },
+    {
+      "source": "src/services/topochain/invite-statuses.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "ab99fbb1c43c3aa576c1",
+      "count": 1,
+      "preview": "FIRST_RECORDS_SQL"
+    },
+    {
       "source": "src/services/topochain/native-session-protocol.js",
       "kind": "structural-template",
       "fingerprint": "3dc5e15e8d408d0e7773",

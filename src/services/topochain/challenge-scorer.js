@@ -315,7 +315,26 @@ const COMMUNITY_APP_CREATED_SQL = `
 // project writes both, which is why each person is taken once: the FIRST
 // invite they took INSIDE THE WINDOW names their one inviter. Without that,
 // a handful of accounts joining each other's communities would pay every
-// one of them. The window filter sits before the DISTINCT ON: filtering
+// one of them.
+//
+// The first invite each person ever took, across all inviters — one row per
+// person, the earliest record naming their one inviter. The challenge page's
+// invite list (./invite-statuses.js) reads it to show whose invite came first.
+const INVITES_FIRST_TAKEN_SQL = `SELECT DISTINCT ON (t.invitee_id) t.inviter_id, t.invitee_id, t.at
+    FROM (
+      SELECT i.created_by AS inviter_id, x.user_id AS invitee_id, x.applied_at AS at
+        FROM community_invite_redemptions x
+        JOIN community_invites i ON i.id = x.invite_id
+       WHERE x.status = 'joined' AND x.applied_at IS NOT NULL AND i.created_by IS NOT NULL
+      UNION ALL
+      SELECT c.invited_by, c.user_id, c.accepted_at
+        FROM app_collaborators c
+       WHERE c.status = 'member' AND c.invited_by IS NOT NULL AND c.accepted_at IS NOT NULL
+    ) t
+   WHERE t.inviter_id <> t.invitee_id
+   ORDER BY t.invitee_id ASC, t.at ASC, t.inviter_id ASC`;
+
+// INVITES_JOINED_SQL is the scorer's read: the window filter sits before the DISTINCT ON: filtering
 // after it threw away every in-window join by a person whose first invite
 // ever was older than the window, so the later inviter got nobody (#4048).
 const INVITES_JOINED_SQL = `
@@ -1402,6 +1421,7 @@ module.exports = {
   MAX_GRADES_PER_RUN,
   CANDIDATE_LIMIT,
   RULE_CHALLENGES_SQL,
+  INVITES_FIRST_TAKEN_SQL,
   ONBOARDING_LIMIT,
   CADENCE_RULES_SQL,
   CREDITED_SQL,

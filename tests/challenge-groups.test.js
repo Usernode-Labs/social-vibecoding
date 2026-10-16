@@ -213,7 +213,7 @@ test('the summary counts every challenge on the tab, and the viewer’s points o
 
 test('the pane draws each group as a small-caps heading over its own grid', () => {
   assert.doesNotMatch(PANE, /GroupHeader|_toggleGroup|aria-expanded/, 'no disclosure: every group is open');
-  assert.match(PANE, /import \{ SectionHeader \} from '@\/components\/ui\/grouped-list';/,
+  assert.match(PANE, /import \{[^}]*\bSectionHeader\b[^}]*\} from '@\/components\/ui\/grouped-list';/,
     'the shell’s label over a card group, not a hand-written one');
   const { pane, store } = loadPane({ challenges: MIXED });
   pane._renderGrid();
