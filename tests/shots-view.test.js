@@ -400,6 +400,34 @@ test('mismatched media is refused: no PNG animation, no WebM shot, no paired sti
   }), [], 'an unverified run serves no clip');
 });
 
+// Dark artifacts exist only as a whole-screen PNG (#4459); every row written
+// before the column, and any dark row that is not that, reads as light.
+test('an artifact\'s theme is kept for a dark whole screen and light for everything else', () => {
+  const theme = (item) => kept(item)[0]?.theme;
+  assert.equal(theme(artifact({ theme: 'dark' })), 'dark');
+  assert.equal(theme(artifact({ theme: 'light' })), 'light');
+  // Rows the theme column predates carry no theme at all.
+  assert.equal(theme(artifact()), 'light');
+  // A dark row that is not a whole-screen PNG is not a dark artifact.
+  assert.equal(theme(artifact({ theme: 'dark', variant: 'focus' })), 'light');
+  assert.equal(theme(artifact({ theme: 'dark', variant: 'animation', media: 'webm', contentType: 'video/webm' })), 'light');
+  assert.equal(theme(artifact({ theme: 'midnight' })), 'light');
+});
+
+test('the artifact cap covers a run\'s dark shots: 48, not 36', () => {
+  // 40 light artifacts plus 8 dark whole screens: every one survives.
+  const hex = (i, start) => (start + i.toString(16)).padStart(8, '0').repeat(4);
+  const many = Array.from({ length: 40 }, (_, i) => artifact({ id: hex(i, 'd') }));
+  many.push(...Array.from({ length: 8 }, (_, i) => artifact({
+    id: hex(i, 'a'), theme: 'dark',
+  })));
+  const kept = view.cleanArtifacts(many, { slug: 'demo-app', sessionId: 42, verified: true });
+  assert.equal(kept.length, 48);
+  assert.equal(kept.filter((item) => item.theme === 'dark').length, 8);
+  assert.equal(view.cleanArtifacts(many.concat(many.map((item) => ({ ...item, id: hex(0, 'f') }))),
+    { slug: 'demo-app', sessionId: 42, verified: true }).length, 48, 'still the cap, whatever comes after it');
+});
+
 test('a failed run the shots machine takes again says so, and is not offered for a manual retry', () => {
   // src/workflow/shots/: a platform fault's one retry is scheduled by the
   // machine, which marks the run so as it fails it (automaticRetry).

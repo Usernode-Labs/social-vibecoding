@@ -120,7 +120,9 @@ function artifactUrl(slug, sessionId, artifactId) {
 
 function cleanArtifacts(items, { slug, sessionId, verified }) {
   if (!verified || !Array.isArray(items)) return [];
-  return items.slice(0, 36).filter((artifact) => {
+  // Up to 48: three changes more than the old 36, the room a run's dark
+  // shots (#4459) take beside their light ones.
+  return items.slice(0, 48).filter((artifact) => {
     if (!artifact || !ARTIFACT_ID_RE.test(String(artifact.id || ''))
         || !STORY_ID_RE.test(String(artifact.storyId || ''))
         || !VIEWPORT_RE.test(String(artifact.viewport || ''))
@@ -141,6 +143,10 @@ function cleanArtifacts(items, { slug, sessionId, verified }) {
     side: ['base', 'head', 'paired'].includes(artifact.side) ? artifact.side : null,
     variant: ['focus', 'context', 'animation'].includes(artifact.variant) ? artifact.variant : null,
     media: ['png', 'webm', 'gif'].includes(artifact.media) ? artifact.media : null,
+    // A dark artifact exists only as a whole-screen PNG; anything else reads
+    // as light, which is what every row before the column held.
+    theme: artifact.theme === 'dark' && artifact.variant === 'context' && artifact.media === 'png'
+      ? 'dark' : 'light',
     contentType: String(artifact.contentType || '').slice(0, 32),
     width: Number.isInteger(artifact.width) ? artifact.width : null,
     height: Number.isInteger(artifact.height) ? artifact.height : null,
@@ -274,10 +280,11 @@ async function getForSessions(pool, sessions, slug) {
                 SELECT jsonb_agg(jsonb_build_object(
                   'id', a.id, 'storyId', a.story_id, 'viewport', a.viewport,
                   'side', a.side, 'variant', a.variant, 'media', a.media,
+                  'theme', a.theme,
                   'contentType', a.content_type, 'width', a.width,
                   'height', a.height, 'bytes', a.bytes,
                   'focusRect', a.focus_rect, 'stageLabels', a.stage_labels
-                ) ORDER BY a.story_id, a.viewport, a.side, a.variant)
+                ) ORDER BY a.story_id, a.viewport, a.side, a.variant, a.theme)
                   FROM shot_artifacts a WHERE a.run_id = r.id
               ), '[]'::jsonb) AS artifact_summary
          FROM shot_runs r WHERE r.id = ANY($1::varchar[])`,

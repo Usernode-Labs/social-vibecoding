@@ -165,6 +165,14 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(prompt, /If the brief has makeProject, a project made on these copies never finishes\s+setting up/);
   assert.match(prompt, /Read makeProject\.note before a change whose\s+steps make, remix or import a project/);
   assert.match(prompt, /a\s+change that needs a made project to run is skipped at once/);
+  // Dark shots (#4459): after the light ones, whole screens only, and the
+  // answer that a screen looks the same in both modes stops the rest.
+  assert.match(prompt, /If the brief has darkMode, every screen is also shot in dark mode, but only\s+once a change's light shots are all saved/);
+  assert.match(prompt, /dark shots come last, so a run\s+that runs out of time loses only them/);
+  assert.match(prompt, /open the start path again with darkMode\.param set to darkMode\.value added to\s+its query/);
+  assert.match(prompt, /save one whole-screen shot with save_shot listing theme "dark"/);
+  assert.match(prompt, /No element\s+shot and no clip in dark/);
+  assert.match(prompt, /When save_shot answers sameAsLight, this screen looks\s+the same in both modes: leave out the rest of the dark shots for this app/);
   assert.ok(prompt.includes(`narrower than ${require('../src/services/visible-changes').PHONE_WIDTH_BELOW} px`),
     'the prompt names the same threshold the brief is built with');
   assert.match(prompt, /browser_take_screenshot with a filename/);
@@ -250,6 +258,8 @@ test('the shots agent takes only the after side when the brief has afterOnly', (
   assert.match(prompt, /create hints\.setup data on the after address only/);
   assert.match(prompt, /A change is ready with its after shots\./);
   assert.match(agent.TASK_PROMPT, /When the brief has afterOnly, save the after side only\./);
+  assert.match(agent.TASK_PROMPT,
+    /When the brief has\s+darkMode, save a dark whole-screen shot of each side too, after the light\s+ones \(theme "dark" in save_shot\)\./);
 });
 
 // reloop PR 12, smart-cashier PR 2 and pixora PR 3 went unshot (2026-10-09 to

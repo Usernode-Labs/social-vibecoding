@@ -212,6 +212,38 @@ test('Homeroom\'s own brief says a project made on the copies never finishes set
   }
 });
 
+// Every screen is also shot in dark mode (#4459), by the mode parameter
+// each copy answers: an app built on Homeroom reads un-theme, Homeroom
+// itself reads theme.
+test('the brief\'s dark mode names the parameter the copy answers', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-dark-mode-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const briefFor = (options) => orchestrator.shotsBrief({
+      run: { id: RUN_ID },
+      session: { pr_title: 'Dark mode shots' },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['public/app.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' } },
+      intent: contract.parseIntent(fixtures.intent()),
+      ...options,
+    });
+    assert.deepEqual(briefFor({ childApp: true }).darkMode, {
+      param: 'un-theme', value: 'dark',
+      note: 'Add un-theme=dark to the start path\'s query to open a page in dark mode.',
+    });
+    assert.deepEqual(briefFor({ selfApp: true }).darkMode, {
+      param: 'theme', value: 'dark',
+      note: 'Add theme=dark to the start path\'s query to open a page in dark mode.',
+    });
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
 // PR 4626's notification for a reply in a topic's thread was skipped: "it
 // needs a second account to reply to my message, and I can't sign in as
 // another account" (2026-10-09). The other signed-in browsers are that

@@ -15763,6 +15763,24 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .shots-screen-step-off { opacity: 0.35; cursor: default; }
 .shots-screen-count { min-width: 3.4em; text-align: center; font-size: 13px; font-weight: 600; color: #52525b; }
 .dark .shots-screen-count { color: #d4d4d8; }
+/* The mode flip (#4459): the same 30px round grey disc as the screen arrows,
+   pushed to the bar's right end. One of the two labels is always hidden by
+   the theme pick (the one naming the mode already showing), so the bar ends
+   with one moon or one sun. */
+.shots-theme-flip { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 999px; cursor: pointer;
+  user-select: none; margin-left: auto; color: #3f3f46; background: rgba(24, 24, 27, 0.06); }
+.shots-theme-flip:hover { background: rgba(24, 24, 27, 0.12); }
+.dark .shots-theme-flip { color: #e4e4e7; background: rgba(255, 255, 255, 0.08); }
+.dark .shots-theme-flip:hover { background: rgba(255, 255, 255, 0.14); }
+.shots-theme-flip svg { width: 16px; height: 16px; flex: none; }
+.shots-theme-flip ~ .shots-screen-nav { margin-left: 0; }
+.shots-viewer:has(.shots-theme-pick:focus-visible) .shots-theme-flip { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
+.shots-viewer:has(.shots-theme-dark:checked) .shots-theme-to-dark,
+.shots-viewer:has(.shots-theme-light:checked) .shots-theme-to-light { display: none; }
+/* Dark pick: a side that has a dark shot shows it instead of its light one;
+   one that has not keeps its light shot in both modes. */
+.shots-viewer:has(.shots-theme-dark:checked) .shots-flip-side:has(.shots-img-dark) .shots-img-light,
+.shots-viewer:has(.shots-theme-light:checked) .shots-img-dark { display: none; }
 @container (max-width: 430px) {
   .shots-seg-label { display: none; }
   .shots-seg-btn { padding: 0 9px; }

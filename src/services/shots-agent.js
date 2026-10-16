@@ -143,6 +143,18 @@ keeping any query the path already has (for example
 "/rota?un-now=2026-10-08T18:00:00.000Z"). Do this for every change, screen
 and clip, so the two sides differ only by the change.
 
+If the brief has darkMode, every screen is also shot in dark mode, but only
+once a change's light shots are all saved: dark shots come last, so a run
+that runs out of time loses only them. For each change, screen and side:
+open the start path again with darkMode.param set to darkMode.value added to
+its query (keeping any previewAt or installStrip parameters the light shot
+used), follow the steps to the same state and framing as the light shot, and
+save one whole-screen shot with save_shot listing theme "dark". No element
+shot and no clip in dark: only the screen, on the before and the after
+address alike (the brief's afterOnly rule applies: that run has no before
+side in dark either). When save_shot answers sameAsLight, this screen looks
+the same in both modes: leave out the rest of the dark shots for this app.
+
 The copies hold demo data for each persona. The brief's availableFixtures
 lists it: who it is for (persona, alsoFor), what it shows and its path. Look
 there for a state the steps need before you decide a change cannot be
@@ -239,7 +251,9 @@ you see on the way.`;
 const TASK_PROMPT = `Read your brief with get_brief, then save a before and an
 after shot of every declared change on each of its screens (plus a clip of
 each side for motion changes), or skip a change you cannot reach and say why.
-When the brief has afterOnly, save the after side only.`;
+When the brief has afterOnly, save the after side only. When the brief has
+darkMode, save a dark whole-screen shot of each side too, after the light
+ones (theme "dark" in save_shot).`;
 
 function resultThreadId(result) {
   return result?.sessionId || result?.initSessionId || null;

@@ -5999,6 +5999,14 @@
     "text": "Show the whole screen",
     "description": "Accessible name of the hidden option in the before/after viewer that shows the entire screenshot."
   },
+  "shots.viewer.showDark": {
+    "text": "Show in dark mode",
+    "description": "Hover text and accessible name of the small round button at the right end of the before/after viewer's toolbar that switches the screenshots to their dark-mode versions, when the run took them in both modes. It shows a moon."
+  },
+  "shots.viewer.showLight": {
+    "text": "Show in light mode",
+    "description": "Hover text and accessible name of the small round button at the right end of the before/after viewer's toolbar that switches the screenshots to their light-mode versions, when the run took them in both modes. It shows a sun."
+  },
   "shots.viewer.pickDesktop": {
     "text": "Screen {{index}} of {{total}}: desktop",
     "description": "Accessible name of the hidden option in the before/after viewer that picks one screenshot taken at desktop size. {{index}} is its number and {{total}} how many screenshots the viewer holds."

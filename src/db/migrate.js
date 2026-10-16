@@ -7497,7 +7497,8 @@ async function seedStagingGalleryProposals(pool) {
 // first in the admin Screenshot gallery as well, and its change page is
 // /#app/staging-demo-gallery-app/dev/proposals/900108. The run is verified
 // on the proposal's reviewed head, with a desktop and a phone screen per
-// side drawn as plain bars (services/bench/demo.js demoPng), and two
+// side drawn as plain bars (services/bench/demo.js demoPng) in light and,
+// so the card's theme flip is reachable (#4459), in dark, and two
 // notices: one also on the before build, one not. Every word is an
 // obviously fake "Staging demo" line; fixed ids, idempotent, and a strict
 // no-op outside staging.
@@ -7560,6 +7561,31 @@ async function seedStagingShotsNoticed(pool) {
           id: crypto.createHash('sha256').update(`staging-shots-noticed:${viewport}:${side}`).digest('hex').slice(0, 32),
           viewport, side, data, width, height,
           sha256: crypto.createHash('sha256').update(data).digest('hex'),
+          theme: 'light',
+        });
+      }
+    }
+    // The same screens in the viewer's other mode (#4459), so the card's
+    // theme flip is reachable on a preview: dark ground, dimmer bars, and
+    // the sort control in the accent's dark-tuning shade. Kept out of the
+    // verdict the way a real run leaves its dark shots out of a story's
+    // file count.
+    const darkGround = [24, 24, 27];
+    const darkInk = [82, 82, 91];
+    const darkAccent = [139, 92, 246];
+    const darkShot = (width, height, side) => demoPng(width, height, darkGround, [
+      { y: 32, h: 40, rgb: darkInk },
+      ...(side === 'head' ? [{ y: 96, h: 32, rgb: darkAccent }] : []),
+      ...[0, 1, 2].map((i) => ({ y: 152 + i * 104, h: 80, rgb: darkInk })),
+    ]);
+    for (const [viewport, width, height] of [['desktop', 1280, 800], ['phone', 390, 844]]) {
+      for (const side of ['base', 'head']) {
+        const data = darkShot(width, height, side);
+        files.push({
+          id: crypto.createHash('sha256').update(`staging-shots-noticed:${viewport}:${side}:dark`).digest('hex').slice(0, 32),
+          viewport, side, data, width, height,
+          sha256: crypto.createHash('sha256').update(data).digest('hex'),
+          theme: 'dark',
         });
       }
     }
@@ -7628,13 +7654,13 @@ async function seedStagingShotsNoticed(pool) {
       await pool.query(
         `INSERT INTO shot_artifacts
            (id, run_id, story_id, viewport, side, variant, media, content_type,
-            data, width, height, bytes, sha256)
+            data, width, height, bytes, sha256, theme)
          SELECT $1::varchar, $2::varchar, 'board-sort', $3::varchar, $4::varchar, 'context', 'png', 'image/png',
-                $5::bytea, $6::int, $7::int, $8::int, $9::varchar
+                $5::bytea, $6::int, $7::int, $8::int, $9::varchar, $10::varchar
           WHERE EXISTS (SELECT 1 FROM shot_runs WHERE id = $2::varchar)
          ON CONFLICT (id) DO NOTHING`,
         [file.id, runId, file.viewport, file.side, file.data, file.width, file.height,
-          file.data.length, file.sha256]
+          file.data.length, file.sha256, file.theme]
       );
     }
     log.info('db', 'Staging shots "Also noticed" fixture seeded', { sessionId: id });

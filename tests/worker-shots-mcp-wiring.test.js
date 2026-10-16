@@ -695,6 +695,36 @@ test('save_shot publishes only a plain .png the browser saved in a persona direc
   assert.deepEqual(uploads(bridge).slice(2).map((sent) => sent.query.change), ['invite-suggestions', 'saved-toast']);
 });
 
+// The brief's dark shots (#4459): the browser opens the page with the mode
+// parameter set, and save_shot says so when it uploads, so the run stores
+// the file as a dark slot and not a retake of the light one.
+test('save_shot forwards theme "dark" for a whole-screen shot taken in dark mode', async (t) => {
+  const bridge = bridgeFixture(t);
+  const image = Buffer.from('png bytes the platform will check');
+  fs.writeFileSync(path.join(bridge.shotsDir, 'admin', 'invite-desktop-after-dark.png'), image);
+  stamp(bridge, 'admin', 'invite-desktop-after-dark.png', `${HEAD}/?un-theme=dark#invite`);
+  const shot = { change: 'invite-suggestions', screen: 'desktop', side: 'after', theme: 'dark' };
+
+  const saved = await bridge.call('save_shot', { shots: [{ ...shot, file: 'invite-desktop-after-dark.png' }] });
+  assert.equal(saved.isError, false);
+  const [sent] = uploads(bridge);
+  assert.deepEqual(sent.query, { change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen', theme: 'dark' });
+  assert.ok(Buffer.from(sent.body).equals(image));
+
+  // A light shot (the default) carries no theme in the query at all.
+  const light = await bridge.call('save_shot', { shots: [{
+    change: 'invite-suggestions', screen: 'desktop', side: 'after', theme: 'light', file: 'invite-desktop-after-dark.png',
+  }] });
+  assert.equal(light.isError, false);
+  assert.equal('theme' in uploads(bridge)[1].query, false);
+
+  // The tool takes the field for a whole-screen shot only, and describes why.
+  const tool = /registerTool\('save_shot', \{[\s\S]*?\n\}, async/.exec(read('shots-mcp.js'))[0];
+  assert.match(tool, /theme: z\.enum\(\['light', 'dark'\]\)\.optional\(\)/);
+  assert.match(tool, /Set "dark" only for a whole-screen shot taken with the page in dark mode/);
+  assert.match(tool, /also pass theme "dark"; element shots and clips are always light/);
+});
+
 test('save_shot publishes a shot only from its own side\'s address', async (t) => {
   const bridge = bridgeFixture(t);
   const member = path.join(bridge.shotsDir, 'member');
