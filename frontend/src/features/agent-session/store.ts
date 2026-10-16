@@ -942,6 +942,22 @@ export function prepareHandoff(flow: unknown) {
   pendingHandoff = handoffFromFlow(flow);
 }
 
+/**
+ * A `?flow=` link to the conversation already on screen. A desktop's
+ * Messages pane does not open the conversation it is showing again, so the
+ * prepared hand-off waited for the next conversation opened, a different
+ * one: the link did nothing where it pointed, and the sheet opened later
+ * somewhere it was not asked for. The conversation it names takes it now.
+ * Any other id leaves it for that conversation, which takes it as it opens.
+ */
+export function applyHandoff(id: AgentSessionTarget): boolean {
+  if (!pendingHandoff || !state.open) return false;
+  const current = state.id ?? (state.draft ? 'new' : null);
+  if (current !== id) return false;
+  publish({ handoff: takeHandoff() });
+  return true;
+}
+
 function takeHandoff(): HandoffAgent | null {
   const agent = pendingHandoff;
   pendingHandoff = null;
@@ -2234,6 +2250,7 @@ export const agentSessionController = {
   start: (hint: AgentHint | null = null) => startAgentSession(hint),
   prepareDraft: prepareAgentDraft,
   prepareHandoff,
+  applyHandoff,
   deactivate: deactivateAgentSession,
   isOpen: () => state.open,
   /** The conversation on screen: its id, `new` while it is unsent, or null. */

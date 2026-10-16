@@ -1116,6 +1116,8 @@ function resolveTests(env, readStdin) {
       expectSelector: t.expectSelector ? String(t.expectSelector).slice(0, 256) : '',
       expectText: t.expectText ? String(t.expectText).slice(0, 256) : '',
       allowConsoleErrors: !!t.allowConsoleErrors,
+      // Only when set, so a list that uses none reads exactly as before.
+      ...(t.coldLoad === true ? { coldLoad: true } : {}),
     });
   }
   return out;
@@ -1392,13 +1394,30 @@ function groupTestsByDocument(tests, opts) {
 // navigation on purpose. Nothing else in the suite is affected: they are
 // pulled out before grouping and appended after, so a normal run groups
 // exactly as it did.
+//
+// A `coldLoad` check is exempt from DOCUMENT grouping, never from sharing a
+// load with the checks of its own URL. It is one whose screen only a load of
+// its address draws: a one-time deep link scripted at boot (`?shot=`,
+// `?details=1`), which an address change on a loaded page rightly does not
+// replay. Reached by a hash switch it could only fail and be re-run cold by
+// runTestGroup's fallback (#1146), after waiting out the whole assertion
+// window on a screen that was not coming (5-17s a cohort in Homeroom's
+// runs). Given its own load from the start, it is judged exactly as the
+// ungrouped runner judged it, which is what that fallback re-runs anyway:
+// same navigation, same window, same console errors. Only the wait before
+// it goes. The app declares it (dapp.json `"coldLoad": true` on the check);
+// nothing here guesses which links are boot-only, and nothing shortens the
+// window a switch gets: a shorter one changed verdicts both ways (see
+// tests/capture-switch-window.test.js).
 function groupTests(tests, env) {
   const all = Array.isArray(tests) ? tests : [];
   const solo = all.filter((t) => t && t.solo);
-  const shared = solo.length ? all.filter((t) => !(t && t.solo)) : all;
+  const cold = all.filter((t) => t && !t.solo && t.coldLoad);
+  const shared = (solo.length || cold.length) ? all.filter((t) => !(t && (t.solo || t.coldLoad))) : all;
   const groups = groupByDocument(env)
     ? groupTestsByDocument(shared, { cap: hashGroupCap(env) })
     : groupTestsByUrl(shared);
+  for (const g of groupTestsByUrl(cold)) groups.push(g);
   for (const t of solo) groups.push([t]);
   return groups;
 }
@@ -1910,6 +1929,7 @@ async function runTestGroup(browser, group, opts) {
     for (let ci = 0; ci < cohorts.length; ci += 1) {
       const cohort = cohorts[ci];
       let cohortFrom = 0;
+      const cohortStartedAt = Date.now();
       if (ci === 0) {
         // Stamp the clock so the cold load always gets a listening window,
         // then wait it out.
@@ -1988,6 +2008,10 @@ async function runTestGroup(browser, group, opts) {
       // not reload anything.
       if (ci > 0 && !loadFailure && cohortReloadFallback(o.env)
         && [...presence.values()].some(Boolean)) {
+        // Counted for the run's checks-timing line: how many cohorts a hash
+        // switch could not reach, and the lane time they took from the
+        // switch to their verdict. A count and a sum, never a URL.
+        if (o.timing) o.timing.fallbacks = (o.timing.fallbacks || 0) + 1;
         try {
           await page.goto('about:blank', { timeout: NAV_TIMEOUT_MS });
           const resp = await gotoTestDocument(page, cohort.tests[0].url);
@@ -2005,6 +2029,7 @@ async function runTestGroup(browser, group, opts) {
           // must not turn a real assertion failure into a load error.
           pushErr('load', `cohort reload of ${cohort.hash} failed: ${err.message}`, cohort.tests[0].url);
         }
+        if (o.timing) o.timing.fallbackMs = (o.timing.fallbackMs || 0) + (Date.now() - cohortStartedAt);
       }
 
       // Frozen per cohort, for the same reason it used to be frozen per group:
@@ -2172,6 +2197,8 @@ async function runTests(browser, tests, opts) {
   const groupTimes = [];
   const retryTimes = [];
   const loadTimes = [];
+  // Hash cohorts that needed the cold-load fallback, and their lane time.
+  const fallbacks = { n: 0, ms: 0 };
 
   const runOne = async (group, { counts = true } = {}) => {
     const groupStartedAt = Date.now();
@@ -2222,6 +2249,10 @@ async function runTests(browser, tests, opts) {
     if (counts) ran += group.length;
     (counts ? groupTimes : retryTimes).push(Date.now() - groupStartedAt);
     if (counts && Number.isFinite(timing.loadMs)) loadTimes.push(timing.loadMs);
+    if (timing.fallbacks) {
+      fallbacks.n += timing.fallbacks;
+      fallbacks.ms += Math.round(timing.fallbackMs || 0);
+    }
   };
 
   // Every group straight through the pool — with per-group contexts there
@@ -2309,6 +2340,9 @@ async function runTests(browser, tests, opts) {
   // How long this run's groups took, in one line the platform logs
   // (visuals.js parseDiagnostics). Wall clock, not CPU: it is what a check
   // run waits on. No verdict reads it. Nothing in it names a URL.
+  // `fallbacks` counts the hash cohorts that had to be loaded cold (#1146)
+  // and the lane time they took: the cost grouping did not save. A check
+  // that is always one of them can say so (`coldLoad`, see groupTests).
   emitDiag('checks-timing', {
     shard: shard ? `${shard.index}/${shard.count}` : null,
     lanes: Math.min(concurrency, groups.length),
@@ -2316,6 +2350,7 @@ async function runTests(browser, tests, opts) {
     groups: timingSummary(groupTimes),
     loads: timingSummary(loadTimes),
     retries: timingSummary(retryTimes),
+    fallbacks,
   }, { uncapped: true });
 
   // `ran` and `expected` still count DECLARED checks only. A retry is a
