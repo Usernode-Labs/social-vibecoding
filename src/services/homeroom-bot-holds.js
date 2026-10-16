@@ -295,6 +295,96 @@ async function goneAhead(pool, appId, holders) {
   return cleared;
 }
 
+// ── A request the bot had promised, taken on by a person ────────────────
+//
+// 16 Oct 2026: the bot tells a requester it will build their request (it
+// found it ready and waits for a free slot, or its plan waits for their
+// Build it), and then a person takes it on: their own change on it, or a
+// claim made before #4190's rule covers it. The bot steps aside, as above,
+// and used to say nothing, so the requester went on waiting for a build that
+// was never coming (#5169's card still said "I'll start when a slot frees"
+// a day after it was taken). It tells them once, in their chat with it.
+
+// Of `$2`, the requests of app `$1` people hold whose newest live run is
+// that promise, still standing, with who asked for each (never a project's
+// first version), and not yet told: the DM's idempotency key (TAKEN_KEY),
+// looked up here so a refresh does not try again every pass. `$3` the bot.
+const PROMISED_SQL = `
+  SELECT q.issue_number, q.user_id, q.issue_title, u.username AS requester, r.id AS run_id
+    FROM homeroom_bot_requesters q
+    JOIN users u ON u.id = q.user_id
+    JOIN LATERAL (
+      SELECT id, verdict, cap_suppressed, awaiting_go_at, build_ok, proposal_session_id
+        FROM homeroom_bot_runs
+       WHERE app_id = q.app_id AND issue_number = q.issue_number AND mode = 'live'
+       ORDER BY id DESC LIMIT 1
+    ) r ON TRUE
+   WHERE q.app_id = $1 AND q.issue_number = ANY($2::int[]) AND q.first_version IS NOT TRUE
+     AND r.verdict = 'ready' AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
+     AND (r.cap_suppressed IS NOT NULL OR r.awaiting_go_at IS NOT NULL)
+     AND NOT EXISTS (SELECT 1 FROM conversation_members cm
+                       JOIN conversation_messages m ON m.conversation_id = cm.conversation_id
+                      WHERE cm.user_id = q.user_id AND m.sender_id = $3
+                        AND m.idempotency_key = 'hrbot-taken-' || q.app_id || '-' || q.issue_number || '-' || q.user_id || '-' || r.id)`;
+
+/** The DM's idempotency key: once per person, request and promise (the run that made it). */
+function takenKey(appId, issueNumber, userId, runId) {
+  return `hrbot-taken-${Number(appId)}-${Number(issueNumber)}-${Number(userId)}-${Number(runId)}`;
+}
+
+/** Pure: what the bot tells the requester when somebody took on what it had promised. */
+function takenText({ title, username }) {
+  const what = title ? `“${String(title).slice(0, 120)}”` : 'Your request';
+  const who = username ? `@${username}` : 'Somebody';
+  return `${what}: ${who} has taken it on, so I'm leaving it to them. `
+    + 'If you would still like me to build it, mention me on the request.';
+}
+
+/**
+ * Tell each requester whose request the bot had promised and a person has
+ * since taken on (`holders`: issueHolders' Map), once, and re-read their
+ * tray. Who holds it is the first holder who is not the requester: a
+ * requester holding their own request is not told about themselves. Live
+ * apps only (the refresh calls it there). Best effort, never throws;
+ * resolves how many were told.
+ */
+async function tellTaken(pool, { app, bot, holders, deps = {} }) {
+  let told = 0;
+  const numbers = [...(holders?.keys() || [])];
+  if (!numbers.length || !bot?.id || !app?.id) return 0;
+  try {
+    const { rows } = await pool.query(PROMISED_SQL, [Number(app.id), numbers, Number(bot.id)]);
+    if (!rows.length) return 0;
+    const dm = deps.dm || require('./homeroom-bot-dm');
+    const tray = deps.tray || require('./homeroom-bot-tray');
+    for (const row of rows) {
+      const n = Number(row.issue_number);
+      const who = (holders.get(n) || []).find((h) => h.username && !same(h.username, row.requester));
+      if (!who) continue;
+      const sent = await dm.sendDm(pool, {
+        bot,
+        userId: Number(row.user_id),
+        content: takenText({ title: row.issue_title, username: who.username }),
+        metadata: {
+          kind: 'request_taken', appSlug: app.slug, appName: app.name || app.slug, issueNumber: n,
+          requestTitle: row.issue_title || null, said: 'taken', takenBy: who.username,
+        },
+        idempotencyKey: takenKey(app.id, n, row.user_id, row.run_id),
+      }).catch((err) => {
+        log.warn('homeroom-bot', 'Could not tell a requester somebody took their request on', { app: app.slug, n, err: err.message });
+        return null;
+      });
+      if (sent && !sent.duplicate) {
+        told += 1;
+        tray.noteWorkChanged(Number(row.user_id));
+      }
+    }
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not tell requesters about requests taken on', { app: app?.slug, err: err.message });
+  }
+  return told;
+}
+
 module.exports = {
   LEAVING_KIND,
   GOING_KIND,
@@ -309,4 +399,8 @@ module.exports = {
   recentMentions,
   answerMentions,
   goneAhead,
+  PROMISED_SQL,
+  takenKey,
+  takenText,
+  tellTaken,
 };

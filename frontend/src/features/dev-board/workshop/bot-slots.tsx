@@ -33,7 +33,7 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
-import { ChevronRightIcon } from '@/components/ui/icons';
+import { ChevronRightIcon, ClockIcon } from '@/components/ui/icons';
 import { Skeleton } from '@/components/ui/skeleton';
 
 import { t as translate } from '../../../lib/i18n/runtime';
@@ -117,8 +117,45 @@ export function entryLine(track: BotSlotEntry['track']): string | null {
   return track ? trackShort(track) : null;
 }
 
+/** What the bot's trial run made of an older request, by its verdict code, where it says something. */
+const TRIAL_WORDS: Record<string, string> = {
+  ready: 'project:botSlots.older.trialReady',
+  question: 'project:botSlots.older.trialQuestion',
+};
+
+/**
+ * Pure: an older request's line (16 Oct 2026): its place among the older
+ * requests the bot reads one at a time ("Next of the older requests"), and
+ * what its trial run made of it, or that it has not been read at all.
+ */
+export function olderLine(entry: BotSlotEntry): string {
+  const ahead = Math.max(0, (entry.position || 1) - 1);
+  const place = ahead
+    ? translate('project:botSlots.older.ahead', { count: ahead })
+    : translate('project:botSlots.older.next');
+  const trial = entry.trial ? TRIAL_WORDS[entry.trial] : 'project:botSlots.older.notRead';
+  return trial ? `${place} \u00b7 ${translate(trial)}` : place;
+}
+
+/**
+ * An older request's tile, where a track's badge would be: it has no track
+ * yet, only its turn. The same small square as the badges (bot-track.tsx).
+ */
+function OlderBadge(): ReactNode {
+  const t = useMessages('project');
+  return (
+    <span
+      className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[6px] bg-zinc-200/80 text-zinc-600 dark:bg-zinc-700/70 dark:text-zinc-300"
+      data-ws-bot-older-badge=""
+    >
+      <ClockIcon aria-hidden="true" className="h-3.5 w-3.5" strokeWidth="2.25" />
+      <span className="sr-only">{t('project:botSlots.older.badge')}</span>
+    </span>
+  );
+}
+
 /** Which of the page's lists a row is in. */
-type Section = 'slots' | 'waiting' | 'taken' | 'onHold';
+type Section = 'slots' | 'waiting' | 'taken' | 'onHold' | 'waitingOn' | 'upNext' | 'stopped' | 'leftToPeople';
 
 /**
  * Pure: the facts after a row's line: who asked, and how long a request
@@ -127,7 +164,7 @@ type Section = 'slots' | 'waiting' | 'taken' | 'onHold';
 export function entryMeta(entry: BotSlotEntry, section: Section, now: Date): string[] {
   const out: string[] = [];
   if (entry.askedBy) out.push(translate('project:botSlots.meta.asked', { username: entry.askedBy }));
-  const span = section === 'waiting' || section === 'taken' ? spanText(entry.since || null, now) : null;
+  const span = section === 'waiting' || section === 'waitingOn' || section === 'taken' ? spanText(entry.since || null, now) : null;
   if (span) out.push(translate(section === 'taken' ? 'project:botSlots.meta.taken' : 'project:botSlots.meta.waiting', { span }));
   return out;
 }
@@ -150,7 +187,8 @@ function EntryRow({ entry, section, slug, openKey, onOpen }: {
   const href = hrefOf(entry, slug);
   const ref = entryRef(entry);
   const on = !!openKey && !!ref && openKey === `${ref.kind}:${ref.id}`;
-  const facts = [entryLine(track), ...entryMeta(entry, section, new Date())].filter(Boolean).join(' \u00b7 ');
+  const line = entry.kind === 'older' ? olderLine(entry) : entryLine(track);
+  const facts = [line, ...entryMeta(entry, section, new Date())].filter(Boolean).join(' \u00b7 ');
   return (
     <ListRow
       as={href ? 'a' : 'div'}
@@ -159,7 +197,7 @@ function EntryRow({ entry, section, slug, openKey, onOpen }: {
       aria-current={on ? 'true' : undefined}
       onClick={href && ref && onOpen ? (event: ReactMouseEvent<HTMLElement>) => onOpen(event as ReactMouseEvent<HTMLAnchorElement>, ref) : undefined}
       className={on ? 'bg-[color:var(--lit-tint)]' : undefined}
-      leading={track ? <TrackBadge track={track} /> : null}
+      leading={track ? <TrackBadge track={track} /> : entry.kind === 'older' ? <OlderBadge /> : null}
       title={(
         <span className="flex min-w-0 items-center gap-1.5">
           <RequestTag number={entry.issueNumber} />
@@ -172,7 +210,7 @@ function EntryRow({ entry, section, slug, openKey, onOpen }: {
             <span className="line-clamp-2 text-zinc-700 dark:text-zinc-300" data-ws-bot-slot-excerpt="">{entry.excerpt}</span>
           ) : null}
           {facts ? <span className="line-clamp-2" data-ws-bot-slot-facts="">{facts}</span> : null}
-          {track && section !== 'taken' ? <TrackBar track={track} className="max-w-[220px]" /> : null}
+          {track && section !== 'taken' && section !== 'leftToPeople' ? <TrackBar track={track} className="max-w-[220px]" /> : null}
         </span>
       ) : null}
       subtitleClassName="whitespace-normal"
@@ -180,6 +218,47 @@ function EntryRow({ entry, section, slug, openKey, onOpen }: {
       data-ws-bot-slot-state={track?.state || ''}
       data-ws-open={ref ? `${ref.kind}:${ref.id}` : undefined}
     />
+  );
+}
+
+// How many rows a long section shows before its "Show all".
+const FOLDED_ROWS = 5;
+
+/**
+ * One section of requests under its heading: its rows, the first
+ * FOLDED_ROWS of a long one until "Show all" opens the rest. Nothing when it
+ * has none. `name` is the list's data attribute (`data-ws-bot-<name>`).
+ */
+function RowSection({ name, title, note = null, entries, section, rowProps }: {
+  name: string;
+  title: string;
+  note?: string | null;
+  entries: BotSlotEntry[];
+  section: Section;
+  rowProps: (section: Section) => { section: Section; slug: string; openKey?: string | null; onOpen?: OpenItem };
+}): ReactNode {
+  const t = useMessages('project');
+  const [all, setAll] = useState(false);
+  if (!entries.length) return null;
+  const shown = all ? entries : entries.slice(0, FOLDED_ROWS);
+  return (
+    <>
+      <SectionHeader className="px-5 pb-0 pt-3">{title}</SectionHeader>
+      {note ? <p className="px-5 text-[12px] text-zinc-500 dark:text-zinc-400" data-ws-bot-section-note={name}>{note}</p> : null}
+      <GroupedList tone="plane" {...{ [`data-ws-bot-${name}`]: '' }}>
+        {shown.map((entry) => <EntryRow key={`${name}-${entry.issueNumber}`} entry={entry} {...rowProps(section)} />)}
+        {shown.length < entries.length ? (
+          <button
+            type="button"
+            className="w-full px-4 py-3 text-left text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
+            data-ws-bot-show-all={name}
+            onClick={() => setAll(true)}
+          >
+            {t('project:botSlots.showAll', { count: entries.length })}
+          </button>
+        ) : null}
+      </GroupedList>
+    </>
   );
 }
 
@@ -221,29 +300,24 @@ export function BotSlotsBody({ view, openKey = null, onOpen }: { view: BotSlotsV
         </div>
         {view.slots.map((entry) => <EntryRow key={`${entry.kind || 'slot'}-${entry.issueNumber}`} entry={entry} {...rowProps('slots')} />)}
       </GroupedList>
-      {view.waiting.length ? (
-        <>
-          <SectionHeader className="px-5 pb-0 pt-3">{t('project:botSlots.waiting.title')}</SectionHeader>
-          <GroupedList tone="plane" data-ws-bot-waiting="">
-            {view.waiting.map((entry) => <EntryRow key={`waiting-${entry.issueNumber}`} entry={entry} {...rowProps('waiting')} />)}
-          </GroupedList>
-        </>
-      ) : null}
-      {view.taken.length ? (
-        <>
-          <SectionHeader className="px-5 pb-0 pt-3">{t('project:botSlots.taken.title')}</SectionHeader>
-          <GroupedList tone="plane" data-ws-bot-taken="">
-            {view.taken.map((entry) => <EntryRow key={`taken-${entry.issueNumber}`} entry={entry} {...rowProps('taken')} />)}
-          </GroupedList>
-        </>
-      ) : null}
-      {view.onHold.length ? (
-        <>
-          <SectionHeader className="px-5 pb-0 pt-3">{t('project:botSlots.onHold.title')}</SectionHeader>
-          <GroupedList tone="plane" data-ws-bot-on-hold="">
-            {view.onHold.map((entry) => <EntryRow key={`hold-${entry.issueNumber}`} entry={entry} {...rowProps('onHold')} />)}
-          </GroupedList>
-        </>
+      <RowSection name="waiting" title={t('project:botSlots.waiting.title')} entries={view.waiting} section="waiting" rowProps={rowProps} />
+      <RowSection name="waiting-on" title={t('project:botSlots.waitingOn.title')} entries={view.waitingOn} section="waitingOn" rowProps={rowProps} />
+      <RowSection
+        name="up-next"
+        title={t('project:botSlots.upNext.title')}
+        note={view.upNext.some((entry) => entry.kind === 'older') ? t('project:botSlots.upNext.note') : null}
+        entries={view.upNext}
+        section="upNext"
+        rowProps={rowProps}
+      />
+      <RowSection name="taken" title={t('project:botSlots.taken.title')} entries={view.taken} section="taken" rowProps={rowProps} />
+      <RowSection name="stopped" title={t('project:botSlots.stopped.title')} entries={view.stopped} section="stopped" rowProps={rowProps} />
+      <RowSection name="left" title={t('project:botSlots.leftToPeople.title')} entries={view.leftToPeople} section="leftToPeople" rowProps={rowProps} />
+      <RowSection name="on-hold" title={t('project:botSlots.onHold.title')} entries={view.onHold} section="onHold" rowProps={rowProps} />
+      {view.withPeople ? (
+        <p className="px-5 pt-1 text-[12px] text-zinc-500 dark:text-zinc-400" data-ws-bot-with-people={view.withPeople}>
+          {t('project:botSlots.withPeople', { count: view.withPeople })}
+        </p>
       ) : null}
       <SectionHeader className="px-5 pb-0 pt-3">{t('project:botSlots.limits.title')}</SectionHeader>
       <GroupedList tone="plane" data-ws-bot-limits="">

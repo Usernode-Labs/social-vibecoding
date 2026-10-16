@@ -74,6 +74,7 @@ const KIND_WORDS: Record<string, NewsWords> = {
   held_proposals_total: { key: 'messages:bot.news.slots', need: false },
   merged: { key: 'messages:bot.news.live', need: false },
   request_closed: { key: 'messages:bot.news.doneElsewhere', need: false },
+  request_taken: { key: 'messages:bot.news.taken', need: false },
 };
 
 /** The moments that ring, by their variant where it matters (services/homeroom-bot-dm.js `said`). */
@@ -86,7 +87,9 @@ function momentWords(moment: string, said: string): NewsWords | null {
       return KIND_WORDS.question;
     case 'ready': return KIND_WORDS.proposal;
     case 'stopped': return KIND_WORDS.build_failed;
-    case 'on_hold': return said === 'slots' ? KIND_WORDS.held_proposals_per_app : KIND_WORDS.allowance;
+    case 'on_hold':
+      if (said === 'taken') return KIND_WORDS.request_taken;
+      return said === 'slots' ? KIND_WORDS.held_proposals_per_app : KIND_WORDS.allowance;
     case 'live': return KIND_WORDS.merged;
     case 'done_elsewhere': return KIND_WORDS.request_closed;
     default: return null;

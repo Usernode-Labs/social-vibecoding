@@ -1335,7 +1335,9 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
   // ...except a row the bot queued for itself (a restart's, a failing
   // check's) on an issue that is open, unchanged and nobody else's (#2), or
   // that the bot is building (#6).
-  assert.deepEqual(deleted.slice(2), [bot.SELF_QUEUED_REASONS, [2, 6]]);
+  // The rows a refresh keeps while their request is unchanged: the bot's own,
+  // and an older request's read (16 Oct 2026).
+  assert.deepEqual(deleted.slice(2), [bot.KEPT_WHILE_QUIET_REASONS, [2, 6]]);
   assert.equal(out.removed, 2);
 });
 
@@ -2144,7 +2146,7 @@ test('interruptRead: only a message or an edit sends a read back', () => {
   assert.match(onBus, /if \(data\.issueNumber != null\) interruptRead\(/, 'and on the Pod running the loop');
   assert.match(SRC, /\|\| item\.reason === RETRY_FAILED_REASON \|\| item\.reason === READ_AGAIN_REASON \? null : await live\.post\(\{/,
     'a read started over is not announced twice');
-  assert.match(SRC, /item\.reason !== APP_AGAIN_REASON && item\.reason !== READ_AGAIN_REASON\) \{\n\s+await activity\(\)\.startCard/,
+  assert.match(SRC, /item\.reason !== APP_AGAIN_REASON && item\.reason !== READ_AGAIN_REASON\n\s+&& item\.reason !== BACKLOG_REASON\) \{\n\s+await activity\(\)\.startCard/,
     'and its card is not started twice');
   assert.ok(bot.SELF_QUEUED_REASONS.includes(bot.READ_AGAIN_REASON), 'a refresh keeps its row and its reason');
 });

@@ -204,8 +204,10 @@ test('answerMentions never throws: a failure leaves every hold in place', async 
 test('the refresh answers mentions on live apps only, and lets a go-ahead through (homeroom-bot.js)', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/services/homeroom-bot.js'), 'utf8');
   const refresh = src.slice(src.indexOf('async function refreshApp('), src.indexOf('async function refreshQueue('));
-  assert.match(refresh, /if \(capRoom && bot && busy\.size\) \{\s*const cleared = await require\('\.\/homeroom-bot-holds'\)\.answerMentions\(/);
+  assert.match(refresh, /if \(capRoom && bot && busy\.size\) \{\s*const holds = require\('\.\/homeroom-bot-holds'\);\s*const cleared = await holds\.answerMentions\(/);
   assert.match(refresh, /for \(const n of cleared\) busy\.delete\(n\);/);
+  // 16 Oct 2026: and a requester whose promised request a person took on is told, once.
+  assert.match(refresh, /const taken = new Map\(\[\.\.\.holders\]\.filter\(\(\[n\]\) => busy\.has\(n\)\)\);\s*if \(taken\.size\) await holds\.tellTaken\(pool, \{ app, bot, holders: taken, deps: \{ dm \} \}\);/);
   assert.match(refresh, /busy: busy\.has\(n\),/);
   const again = src.slice(src.indexOf('async function retriageApp('), src.indexOf("log.info('homeroom-bot', 'App queued to be triaged again'"));
   assert.match(again, /goneAhead\(pool, app\.id, holders\)/, 'Triage again respects a go-ahead too');

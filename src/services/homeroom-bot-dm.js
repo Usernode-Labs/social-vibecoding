@@ -411,6 +411,8 @@ const STORY_MOMENTS = Object.freeze({
   merged: 'live',
   // 16 Oct 2026: somebody else's change shipped it (homeroom-bot-closed-requests.js).
   request_closed: 'done_elsewhere',
+  // 16 Oct 2026: a person took on what it had promised (homeroom-bot-holds.js tellTaken).
+  request_taken: 'on_hold',
   chat: 'reply', confirm: 'reply',
 });
 // The moments that ring, shown in the main chat as well as the request's thread.
@@ -456,6 +458,7 @@ function saidOf(kind, info = {}) {
     case 'allowance': return 'allowance';
     case 'paused': return 'paused';
     case 'held_proposals_per_app': case 'held_proposals_total': return 'slots';
+    case 'request_taken': return 'taken';
     case 'request_closed': return 'done_elsewhere';
     case 'merged': {
       const soon = info.live === false;

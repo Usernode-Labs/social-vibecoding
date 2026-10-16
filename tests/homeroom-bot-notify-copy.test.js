@@ -45,6 +45,9 @@ const BODIES = [
   ['on_hold', 'allowance', {}, 'On hold until Monday: your building time for this week is used up.'],
   ['on_hold', 'paused', {}, 'On hold until Monday: I\'ve used my budget for this week.'],
   ['on_hold', 'slots', {}, 'Waiting for a slot: all of this project\'s are in use. I\'ll start when one frees.'],
+  // 16 Oct 2026: a person took on what the bot had promised.
+  ['on_hold', 'taken', { takenBy: 'maya' }, 'On hold: @maya has taken it on, so I\'m leaving it to them.'],
+  ['on_hold', 'taken', {}, 'On hold: somebody has taken it on, so I\'m leaving it to them.'],
   ['live', 'live', {}, 'It\'s live. Open Plant Pal to see it.'],
   ['live', 'live_soon', {}, 'It\'s going live now. Open Plant Pal in a few minutes to see it.'],
   ['done_elsewhere', 'done_elsewhere', { doneBy: 'ada' }, 'Done another way: a change by @ada did what you asked, so there\'s nothing more for me to build.'],
@@ -115,6 +118,7 @@ test('a sender that names only the moment and its kind still gets the right vari
   assert.equal(said({ moment: 'stopped', kind: 'build_failed', cause: 'timeout' }), 'build_time');
   assert.equal(said({ moment: 'stopped', kind: 'followup_failed' }), 'update_failed');
   assert.equal(said({ moment: 'live', kind: 'merged', live: false }), 'live_soon');
+  assert.equal(said({ moment: 'on_hold', kind: 'request_taken' }), 'taken');
   // The older moment names, and a request it cannot build rung as a stop.
   assert.equal(copy.parseBotDetail(copy.botNotificationDetail({ moment: 'question', kind: 'question' })).moment, 'needs_you');
   assert.equal(copy.parseBotDetail(copy.botNotificationDetail({ moment: 'held', kind: 'paused' })).said, 'paused');

@@ -59,6 +59,26 @@
     "text": "Taken by a person",
     "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Heading over the requests the bot had found ready but that a person has taken since: the bot leaves them alone, so they do not wait for a slot."
   },
+  "botSlots.waitingOn.title": {
+    "text": "Waiting on someone",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Heading over the requests where the bot waits on a person: a question for them to answer, or a plan waiting for them to tap Build it."
+  },
+  "botSlots.upNext.title": {
+    "text": "Up next",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Heading over the requests the bot will read next, in order: those waiting in its queue, then the project's older requests."
+  },
+  "botSlots.upNext.note": {
+    "text": "Older requests are read one at a time, while a slot is free and nothing newer waits.",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Note under the Up next heading when it lists older requests: requests filed before the bot started building for everyone, which it now reads one by one when it has room."
+  },
+  "botSlots.stopped.title": {
+    "text": "Tried and stopped",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Heading over the requests the bot tried to build that stopped: the build failed, or ended with no change to show."
+  },
+  "botSlots.leftToPeople.title": {
+    "text": "Left to people",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Heading over the requests the bot read and judged need a person rather than the bot: a decision to make, or nothing it can build."
+  },
   "botSlots.onHold.title": {
     "text": "On hold until the week resets",
     "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Heading over the requests on hold because whoever pays for them has used up this week's building time."
@@ -130,6 +150,46 @@
   "botSlots.meta.taken": {
     "text": "taken {{span}} ago",
     "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Part of the line under the title of a request a person has taken: how long ago they took it (claimed it, or started a change of their own for it). {{span}} is a short span of time such as \"3h 20m\" or \"2d 4h\"."
+  },
+  "botSlots.older.next": {
+    "text": "Next of the older requests",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Part of the line under the title of an older request in Up next: it is the next of the older requests the bot will read."
+  },
+  "botSlots.older.ahead_one": {
+    "text": "{{count}} older request ahead of it",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Part of the line under the title of an older request in Up next: how many older requests the bot will read before this one. {{count}} is that number."
+  },
+  "botSlots.older.ahead_other": {
+    "text": "{{count}} older requests ahead of it",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Part of the line under the title of an older request in Up next: how many older requests the bot will read before this one. {{count}} is that number."
+  },
+  "botSlots.older.trialReady": {
+    "text": "found ready in its trial run",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Part of the line under the title of an older request in Up next, after its place: before the bot started building for everyone, it read this request in a trial and found it ready to build."
+  },
+  "botSlots.older.trialQuestion": {
+    "text": "had a question in its trial run",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Part of the line under the title of an older request in Up next, after its place: before the bot started building for everyone, it read this request in a trial and had a question about it."
+  },
+  "botSlots.older.notRead": {
+    "text": "not read yet",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Part of the line under the title of an older request in Up next, after its place: the bot has not read this request at all yet."
+  },
+  "botSlots.older.badge": {
+    "text": "Older request, waiting its turn",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Words for screen readers on the small square beside an older request in Up next: it waits its turn to be read."
+  },
+  "botSlots.showAll": {
+    "text": "Show all {{count}}",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Button at the end of a long section of requests that shows the rest of them. {{count}} is how many requests the section has in all."
+  },
+  "botSlots.withPeople_one": {
+    "text": "{{count}} more open request is with a person who took it on.",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Line after the sections of requests: how many other open requests a person has taken on (claimed, or a change of their own), which the bot leaves to them. {{count}} is that number."
+  },
+  "botSlots.withPeople_other": {
+    "text": "{{count}} more open requests are with people who took them on.",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Line after the sections of requests: how many other open requests people have taken on (claimed, or a change of their own), which the bot leaves to them. {{count}} is that number."
   },
   "page.title.workshop": {
     "text": "Workshop",

@@ -920,6 +920,9 @@ test('news the card and the tray show is never a DM message of its own; what nee
   }
   assert.equal(dm.storyMomentOf({ kind: 'request_closed' }), 'done_elsewhere');
   assert.equal(dm.saidOf('request_closed'), 'done_elsewhere');
+  // 16 Oct 2026: a person took on what the bot had promised: on hold, as theirs.
+  assert.equal(dm.storyMomentOf({ kind: 'request_taken' }), 'on_hold');
+  assert.equal(dm.saidOf('request_taken'), 'taken');
   // One story: a change's red checks a person must look at are a stop of
   // their own ('checks'), which rings; an answer to what they asked too.
   assert.equal(dm.newsKind('followup_person', { reason: 'its checks are failing: x', checks: true }), 'checks');

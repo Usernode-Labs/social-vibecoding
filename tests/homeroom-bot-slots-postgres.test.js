@@ -168,6 +168,9 @@ test('the bot\'s slots on a project count its builds under way, against the full
     assert.equal(six.title, 'Sunlight log');
     assert.equal(six.track.state, 'queued', 'ready, waiting its turn to be built');
     assert.equal(six.track.step, 'build');
+    // And what it waits for, as its requester's chat says it: nothing is
+    // ahead of it, so it starts next, never a bare "waiting its turn" (#5323).
+    assert.equal(six.track.why, 'next');
     assert.equal(view.slots.find((s) => s.issueNumber === 7).track.state, 'planning', 'its build session is open; no plan posted yet');
     assert.deepEqual(view.waiting.map((w) => [w.issueNumber, w.position, w.limit, w.title]), [[8, 1, 'slots', 'Repotting reminders']]);
     assert.equal(view.waiting[0].track.state, 'held');

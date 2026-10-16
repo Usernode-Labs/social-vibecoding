@@ -375,7 +375,10 @@ export interface BotTrack {
 
 /** One request in the slots view: what it is, and its track. */
 export interface BotSlotEntry {
-  kind?: 'proposal' | 'build';
+  /** In a slot: a change or a build. Up next: in the queue, or an older request. */
+  kind?: 'proposal' | 'build' | 'queued' | 'older';
+  /** An older request: what the bot's trial run made of it (a verdict code), or null. */
+  trial?: string | null;
   issueNumber: number | null;
   title: string | null;
   /** Who asked for it, when the bot knows. */
@@ -404,6 +407,13 @@ export interface BotSlotsView {
   /** Held requests a person has now: the bot leaves them alone. */
   taken: BotSlotEntry[];
   onHold: BotSlotEntry[];
+  /** Every other open request, by where the bot is on it (16 Oct 2026). */
+  waitingOn: BotSlotEntry[];
+  upNext: BotSlotEntry[];
+  stopped: BotSlotEntry[];
+  leftToPeople: BotSlotEntry[];
+  /** Open requests people have taken on, counted only. */
+  withPeople: number;
   reading: number;
   week: { limited: boolean; usedShare: number | null; usedUp: boolean; resetsAt: string | null } | null;
 }
