@@ -38,6 +38,19 @@
 // GitHub itself reports closes the row (one-way; a reopen never reopens it),
 // then the caches are busted and open trays re-read, the same way a merge's
 // close does (issue-close-watcher.js bustAndBroadcast, closeTwinRows).
+// then the caches are busted and open trays re-read, the same way a merge's
+// close does (issue-close-watcher.js bustAndBroadcast, closeTwinRows).
+//
+// 16 Oct 2026: #4752 never had such a row. A request filed through Suggest an
+// improvement or a comment pin (routes/feedback.js) gets a GitHub issue and a
+// requester, not a row in issues, so neither closing a row nor reading one
+// could ever tell the tray it closed, and its old ask stayed in Needs you.
+// Every close the bot sees of a request it tracks is now also recorded in
+// homeroom_bot_closed_requests (recordClosed), row or no row: by
+// noteRequestsClosed, which every merge's and every close vote's close
+// reaches, and by closeRequestRows, whose candidates are now the tracked
+// requests themselves rather than their rows. The bot's readers take a
+// request as closed when either its row or this record says so.
 
 const log = require('./logger');
 
@@ -212,6 +225,47 @@ async function tellDoneElsewhere(pool, { appId, numbers, deps = {} }) {
   return told;
 }
 
+// Of `$2`, the requests of app `$1` the bot tracks (somebody filed it through
+// the bot, or the bot has a live run on it), recorded closed now. A request
+// recorded open (asked about, not closed) is recorded closed; one already
+// closed keeps when it closed.
+const RECORD_CLOSED_SQL = `
+  INSERT INTO homeroom_bot_closed_requests (app_id, issue_number, closed_at, checked_at)
+  SELECT $1, w.n, NOW(), NOW()
+    FROM UNNEST($2::int[]) AS w(n)
+   WHERE EXISTS (SELECT 1 FROM homeroom_bot_requesters q WHERE q.app_id = $1 AND q.issue_number = w.n)
+      OR EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.app_id = $1 AND r.issue_number = w.n AND r.mode = 'live')
+  ON CONFLICT (app_id, issue_number) DO UPDATE
+     SET closed_at = COALESCE(homeroom_bot_closed_requests.closed_at, EXCLUDED.closed_at),
+         checked_at = EXCLUDED.checked_at`;
+
+// The reconcile asked GitHub about `$2` and none was closed: remembered, so
+// the next refresh asks about the others first (OPEN_TRACKED_SQL's order).
+const CHECKED_OPEN_SQL = `
+  INSERT INTO homeroom_bot_closed_requests (app_id, issue_number, closed_at, checked_at)
+  SELECT $1, w.n, NULL, NOW() FROM UNNEST($2::int[]) AS w(n)
+  ON CONFLICT (app_id, issue_number) DO UPDATE SET checked_at = EXCLUDED.checked_at
+   WHERE homeroom_bot_closed_requests.closed_at IS NULL`;
+
+// A request on a whole, fresh open list is open: whatever was recorded about
+// it goes. A close recorded in the last ten minutes stays, in case the list
+// was read before GitHub's own caught up with the close.
+const CLEAR_REOPENED_SQL = `
+  DELETE FROM homeroom_bot_closed_requests
+   WHERE app_id = $1 AND issue_number = ANY($2::int[])
+     AND (closed_at IS NULL OR closed_at < NOW() - INTERVAL '10 minutes')`;
+
+/**
+ * Record that requests `numbers` of app `appId` closed, for those the bot
+ * tracks (homeroom_bot_closed_requests). Throws on a failed write; the callers
+ * decide whether that matters.
+ */
+async function recordClosed(pool, { appId, numbers }) {
+  const list = numbersOf(numbers);
+  if (!pool || !(Number(appId) > 0) || !list.length) return;
+  await pool.query(RECORD_CLOSED_SQL, [Number(appId), list]);
+}
+
 function wakeFor(appId, deps) {
   try {
     (deps.wake || require('./homeroom-bot').wake)({ appId: Number(appId) });
@@ -232,6 +286,15 @@ async function noteRequestsClosed(pool, { appId, closed, strict = false, deps = 
   const numbers = numbersOf(closed);
   if (!pool || !(Number(appId) > 0) || !numbers.length) return { withdrawn: [] };
   try {
+    // 16 Oct 2026: recorded first, so the tray reads them closed, a request
+    // with no row of ours among them (recordClosed). A failed write never
+    // keeps the bot's proposals for them up, unless `strict` retries it all.
+    try {
+      await recordClosed(pool, { appId, numbers });
+    } catch (err) {
+      if (strict) throw err;
+      log.warn('homeroom-bot-closed-requests', 'Could not record requests as closed', { appId, closed: numbers, err: err.message });
+    }
     const { rows } = await pool.query(LINKED_TO_ANY_SQL, [Number(appId), BOT_USERNAME, numbers]);
     const withdrawn = await withdrawWhereAllClosed(pool, rows, { known: new Set(numbers), deps });
     if (withdrawn.length) {
@@ -274,27 +337,32 @@ async function sweepClosedRequests(pool, { appId, openNumbers, deps = {} } = {})
   }
 }
 
-// The bot's tracked requests whose platform row still says open and whose
-// GitHub number is NOT on the refresh's open list, newest first, a few at a
-// time (RECONCILE_LIMIT): a large backlog clears over several refreshes
-// instead of asking GitHub about all of it at once. Tracked means somebody
-// filed it through the bot (homeroom_bot_requesters) or the bot has a live
-// run on it — a request filed straight on GitHub has no row of ours to close
-// and is never a candidate.
+// The bot's tracked requests whose GitHub number is NOT on the refresh's open
+// list and that nothing yet reads closed, a few at a time (RECONCILE_LIMIT):
+// a large backlog clears over several refreshes instead of asking GitHub
+// about all of it at once. Tracked means somebody filed it through the bot
+// (homeroom_bot_requesters) or the bot has a live run on it — a request filed
+// straight on GitHub that the bot never read is never a candidate. Until 16
+// Oct 2026 these were the tracked requests' open rows in issues, so a request
+// with no row (Suggest an improvement, a comment pin) was never asked about.
+// One its row already reads closed is not asked about either. Never asked
+// first, newest first; then the ones asked longest ago, so a request GitHub
+// keeps not reporting closed (deleted, moved) never holds a place for good.
 const RECONCILE_LIMIT = 25;
 
 const OPEN_TRACKED_SQL = `
-  SELECT DISTINCT i.github_issue_number
-    FROM issues i
-   WHERE i.app_id = $1 AND i.kind = 'general' AND i.status = 'open'
-     AND i.github_issue_number IS NOT NULL
-     AND NOT (i.github_issue_number = ANY($2::int[]))
-     AND (EXISTS (SELECT 1 FROM homeroom_bot_requesters q
-                   WHERE q.app_id = i.app_id AND q.issue_number = i.github_issue_number)
-       OR EXISTS (SELECT 1 FROM homeroom_bot_runs r
-                   WHERE r.app_id = i.app_id AND r.issue_number = i.github_issue_number
-                     AND r.mode = 'live'))
-   ORDER BY 1 DESC
+  SELECT t.n AS github_issue_number
+    FROM (SELECT q.issue_number AS n FROM homeroom_bot_requesters q WHERE q.app_id = $1
+          UNION
+          SELECT r.issue_number FROM homeroom_bot_runs r WHERE r.app_id = $1 AND r.mode = 'live') t
+    LEFT JOIN homeroom_bot_closed_requests c ON c.app_id = $1 AND c.issue_number = t.n
+   WHERE t.n IS NOT NULL AND t.n > 0
+     AND NOT (t.n = ANY($2::int[]))
+     AND c.closed_at IS NULL
+     AND COALESCE((SELECT i.status = 'closed' FROM issues i
+                    WHERE i.app_id = $1 AND i.github_issue_number = t.n
+                    ORDER BY i.id DESC LIMIT 1), FALSE) IS FALSE
+   ORDER BY c.checked_at ASC NULLS FIRST, t.n DESC
    LIMIT $3`;
 
 /**
@@ -316,13 +384,22 @@ async function closeRequestRows(pool, { appId, appSlug, repoUrl, openNumbers, de
   const repo = parseRepo(repoUrl);
   if (!pool || !(Number(appId) > 0) || !repo || !Array.isArray(openNumbers)) return { closed: [] };
   try {
+    // A request back on the open list is open again (CLEAR_REOPENED_SQL).
+    if (numbers.length) await pool.query(CLEAR_REOPENED_SQL, [Number(appId), numbers]);
     const { rows: candidates } = await pool.query(OPEN_TRACKED_SQL, [Number(appId), numbers, RECONCILE_LIMIT]);
     const isClosed = deps.isClosed || githubClosed(repo, deps);
     const confirmed = [];
+    const notClosed = [];
     for (const row of candidates) {
-      if (await isClosed(Number(row.github_issue_number))) confirmed.push(Number(row.github_issue_number));
+      const n = Number(row.github_issue_number);
+      if (await isClosed(n)) confirmed.push(n);
+      else notClosed.push(n);
     }
+    if (notClosed.length) await pool.query(CHECKED_OPEN_SQL, [Number(appId), notClosed]);
     if (!confirmed.length) return { closed: [] };
+    // Recorded for the tray (a request with no row of ours too), then the
+    // row closed where there is one.
+    await recordClosed(pool, { appId, numbers: confirmed });
     const watcher = deps.watcher || require('./issue-close-watcher');
     // closeTwinRows swallows its own failures (non-strict); it awaits the
     // UPDATE, so a caller (a test, the next refresh) sees the close done.
@@ -366,4 +443,5 @@ async function announceClosed(pool, { repo, appId, appSlug, closed, watcher, dep
 module.exports = {
   noteRequestsClosed, sweepClosedRequests, closeRequestRows, closedNote, REASON,
   RECONCILE_LIMIT, DONE_ELSEWHERE_SQL, doneElsewhereText, tellDoneElsewhere,
+  recordClosed, RECORD_CLOSED_SQL, CHECKED_OPEN_SQL, CLEAR_REOPENED_SQL, OPEN_TRACKED_SQL,
 };

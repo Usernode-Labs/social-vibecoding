@@ -414,9 +414,11 @@ const REQUEST_ROWS_SQL = `
          cs.checks_commit_sha AS checks_sha, cs.reviewed_head_sha, cs.imported_pr_head_sha,
          cs.source AS proposal_source,
          COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.live_at AS merged_at,
-         (SELECT ri.status = 'closed' FROM issues ri
-           WHERE ri.app_id = a.id AND ri.github_issue_number = w.n
-           ORDER BY ri.id DESC LIMIT 1) AS request_closed,
+         (COALESCE((SELECT ri.status = 'closed' FROM issues ri
+                      WHERE ri.app_id = a.id AND ri.github_issue_number = w.n
+                      ORDER BY ri.id DESC LIMIT 1), FALSE)
+             OR EXISTS (SELECT 1 FROM homeroom_bot_closed_requests cr
+                         WHERE cr.app_id = a.id AND cr.issue_number = w.n AND cr.closed_at IS NOT NULL)) AS request_closed,
          oq.created_at AS question_at
     FROM UNNEST($2::int[]) AS w(n)
     JOIN apps a ON a.id = $1

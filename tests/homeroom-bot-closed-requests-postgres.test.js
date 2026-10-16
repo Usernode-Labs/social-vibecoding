@@ -445,6 +445,104 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
     assert.equal(status[0].status, 'closed', 'still closed');
   });
 
+  await t.test('a request with no row of ours leaves Needs you once it closes, however it closed (16 Oct 2026, #4752)', async () => {
+    // #4752 was filed through Suggest an improvement: a GitHub issue and a
+    // requester, never a row in issues. Closing a row could not reach it, so
+    // its last ask stayed in its requester's Needs you after it closed.
+    const { rows: [nia] } = await pool.query(
+      `INSERT INTO users (username, password, has_platform_access) VALUES ('nia', 'x', TRUE) RETURNING id`,
+    );
+    for (const table of ['homeroom_bot_runs', 'homeroom_bot_requesters', 'homeroom_bot_closed_requests', 'chat_sessions']) {
+      await pool.query(`DELETE FROM ${table}`);
+    }
+    await pool.query(`DELETE FROM issues WHERE app_id = $1 AND github_issue_number BETWEEN 90 AND 99`, [app.id]);
+    const ask = async (n, title) => {
+      await pool.query(
+        `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, $2, $3, $4)`,
+        [app.id, n, nia.id, title],
+      );
+      await pool.query(
+        `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, thread_seen_at) VALUES ($1, $2, 'live', 'question', $3)`,
+        [app.id, n, SEEN],
+      );
+    };
+    await ask(90, 'Fix missing needs-you area');
+    const conversation = (await pool.query(
+      `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`, [nia.id],
+    )).rows[0].id;
+    const message = (await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content) VALUES ($1, $2, 'Add detail and I will look again.') RETURNING id`,
+      [conversation, botUser.id],
+    )).rows[0].id;
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, question_status)
+       VALUES ($1, $2, $3, $4, 90, 'question', 'open')`,
+      [message, nia.id, conversation, app.id],
+    );
+    const asNia = { id: nia.id, username: nia.username, isAdmin: false };
+    const waiting = async () => (await tray.workFor(pool, { user: asNia })).needsYou.some((job) => job.issueNumber === 90);
+    assert.equal(await waiting(), true, 'before: it waits on her');
+
+    const w = stubWs();
+    try {
+      // Closed by hand on GitHub: the reconcile asks about it although it has
+      // no row, and records the close GitHub confirms.
+      const out = await closedRequests.closeRequestRows(pool, {
+        appId: app.id, appSlug: app.slug, repoUrl: app.repo_url, openNumbers: [], deps: { github: gh({ closed: [90] }) },
+      });
+      assert.deepEqual(out, { closed: [90] });
+      assert.equal(await waiting(), false, 'Needs you lets it go');
+      const tile = (await tray.workFor(pool, { user: asNia })).history.find((job) => job.issueNumber === 90);
+      assert.equal(tile.outcome, 'stopped');
+      assert.equal(tile.ask, undefined, 'its old ask does not put it back');
+      const tracks = await require('../src/services/homeroom-bot-track').tracksForRequests(pool, { appId: app.id, numbers: [90] });
+      assert.equal(tracks.get(90).state, 'closed', 'its track reads closed, on its page too');
+      assert.deepEqual(w.pushes, [[nia.id, { type: 'homeroom_bot_work_changed' }]], 'her open tray re-reads');
+
+      // Reopened on GitHub: back on a whole open list, its record goes, and it
+      // waits on her again. A close from the last ten minutes is kept, in case
+      // the list lagged behind it.
+      await closedRequests.closeRequestRows(pool, {
+        appId: app.id, appSlug: app.slug, repoUrl: app.repo_url, openNumbers: [90], deps: { github: gh() },
+      });
+      assert.equal(await waiting(), false, 'a close this recent outlives a list that may lag');
+      await pool.query(`UPDATE homeroom_bot_closed_requests SET closed_at = NOW() - INTERVAL '11 minutes' WHERE issue_number = 90`);
+      await closedRequests.closeRequestRows(pool, {
+        appId: app.id, appSlug: app.slug, repoUrl: app.repo_url, openNumbers: [90], deps: { github: gh() },
+      });
+      assert.equal(await waiting(), true, 'reopened: it waits on her again');
+    } finally {
+      w.restore();
+    }
+
+    // Closed by a merged change or a passed close vote (noteRequestsClosed):
+    // recorded for a request the bot tracks, row or no row; one it does not
+    // track is not.
+    await ask(91, 'Sort the plants');
+    await closedRequests.noteRequestsClosed(pool, {
+      appId: app.id, closed: [91, 92], deps: { ...harness(gh()).deps, tellDoneElsewhere: false },
+    });
+    const { rows: recorded } = await pool.query(
+      `SELECT issue_number, closed_at IS NOT NULL AS closed FROM homeroom_bot_closed_requests WHERE app_id = $1 ORDER BY 1`, [app.id],
+    );
+    assert.deepEqual(recorded.map((r) => [r.issue_number, r.closed]), [[91, true]]);
+
+    // One GitHub keeps not reporting closed (deleted, moved) is remembered as
+    // asked, so the next refresh asks about the ones never asked first.
+    await ask(97, 'Gone from GitHub');
+    await ask(93, 'Never asked yet');
+    await closedRequests.closeRequestRows(pool, {
+      appId: app.id, appSlug: app.slug, repoUrl: app.repo_url, openNumbers: [90], deps: { github: gh() },
+    });
+    const { rows: [asked] } = await pool.query(
+      `SELECT closed_at, checked_at FROM homeroom_bot_closed_requests WHERE app_id = $1 AND issue_number = 97`, [app.id],
+    );
+    assert.equal(asked.closed_at, null, 'asked, not closed');
+    await ask(95, 'Filed after');
+    const { rows: next } = await pool.query(closedRequests.OPEN_TRACKED_SQL, [app.id, [90], 1]);
+    assert.deepEqual(next.map((r) => r.github_issue_number), [95], 'a never-asked request comes before one asked already, newer or not');
+  });
+
   await t.test('a backlog of hand-closed requests clears a few at a time, newest first', async () => {
     await pool.query('DELETE FROM homeroom_bot_runs');
     await pool.query('DELETE FROM homeroom_bot_requesters');

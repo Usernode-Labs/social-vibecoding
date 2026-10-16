@@ -1681,7 +1681,10 @@ async function refreshApp(pool, app, {
   // sweep; not gated on capRoom — it only closes rows GitHub confirms
   // closed, and only for requests the bot tracks, so it changes nothing a
   // held request or a full cap was protecting. The rest of this refresh
-  // does not read what it did.
+  // does not read what it did. 16 Oct 2026: row or no row, it records the
+  // close too (homeroom_bot_closed_requests), since a request filed through
+  // Suggest an improvement has no row of ours to close (#4752); and a
+  // request back on this list loses what was recorded about it.
   if (!fetched?.note && !fetched?.truncatedList) {
     await closedRequests().closeRequestRows(pool, {
       appId: app.id, appSlug: app.slug, repoUrl: app.repo_url,
@@ -6969,9 +6972,11 @@ async function finishableRun(pool, runId) {
                FROM homeroom_bot_runs p JOIN chat_sessions cs ON cs.id = p.proposal_session_id
               WHERE p.app_id = r.app_id AND p.issue_number = r.issue_number
               ORDER BY p.id DESC LIMIT 1) AS proposal_status,
-            (SELECT ri.status = 'closed' FROM issues ri
-              WHERE ri.app_id = r.app_id AND ri.github_issue_number = r.issue_number
-              ORDER BY ri.id DESC LIMIT 1) AS request_closed,
+            (COALESCE((SELECT ri.status = 'closed' FROM issues ri
+                         WHERE ri.app_id = r.app_id AND ri.github_issue_number = r.issue_number
+                         ORDER BY ri.id DESC LIMIT 1), FALSE)
+                OR EXISTS (SELECT 1 FROM homeroom_bot_closed_requests cr
+                            WHERE cr.app_id = r.app_id AND cr.issue_number = r.issue_number AND cr.closed_at IS NOT NULL)) AS request_closed,
             EXISTS (SELECT 1 FROM homeroom_bot_queue q
                      WHERE q.app_id = r.app_id AND q.issue_number = r.issue_number) AS queued,
             f.user_id AS maker_id,

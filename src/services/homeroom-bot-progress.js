@@ -690,10 +690,14 @@ async function requestRows(pool, userId) {
             -- #4539: the request's own state, newest row by id (issues is not
             -- unique on (app_id, github_issue_number), so a join could
             -- duplicate rows). Null: no mirrored issue, or a first version
-            -- before its request is filed. Null reads as not closed.
-            (SELECT ri.status = 'closed' FROM issues ri
-              WHERE ri.app_id = m.app_id AND ri.github_issue_number = m.issue_number
-              ORDER BY ri.id DESC LIMIT 1) AS request_closed,
+            -- before its request is filed. Null reads as not closed, unless
+            -- the bot recorded its close (a request with no row of ours:
+            -- homeroom-bot-closed-requests.js recordClosed).
+            (COALESCE((SELECT ri.status = 'closed' FROM issues ri
+                         WHERE ri.app_id = m.app_id AND ri.github_issue_number = m.issue_number
+                         ORDER BY ri.id DESC LIMIT 1), FALSE)
+                OR EXISTS (SELECT 1 FROM homeroom_bot_closed_requests cr
+                            WHERE cr.app_id = m.app_id AND cr.issue_number = m.issue_number AND cr.closed_at IS NOT NULL)) AS request_closed,
             oq.created_at AS question_at
        FROM mine m
        JOIN apps a ON a.id = m.app_id
