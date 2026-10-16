@@ -250,19 +250,22 @@ function privateRequestRoutes(config) {
         const app = await adminApp(req, req.params.slug);
         if (!app) return notFound(res);
         if (!req.user.canAdminWrite) return res.status(403).json({ error: 'Admin write access required' });
-        const closing = action === 'close';
-        const { rowCount } = await pool.query(
-          closing
-            ? `UPDATE private_requests
-                  SET status = 'closed', closed_by = $3, closed_at = NOW(), updated_at = NOW()
-                WHERE app_id = $1 AND id = $2`
-            : `UPDATE private_requests
-                  SET status = 'open', closed_by = NULL, closed_at = NULL, updated_at = NOW()
-                WHERE app_id = $1 AND id = $2`,
-          closing ? [app.id, Number(req.params.id), req.user.id] : [app.id, Number(req.params.id)]
-        );
+        const id = Number(req.params.id);
+        const { rowCount } = action === 'close'
+          ? await pool.query(
+            `UPDATE private_requests
+                SET status = 'closed', closed_by = $3, closed_at = NOW(), updated_at = NOW()
+              WHERE app_id = $1 AND id = $2`,
+            [app.id, id, req.user.id]
+          )
+          : await pool.query(
+            `UPDATE private_requests
+                SET status = 'open', closed_by = NULL, closed_at = NULL, updated_at = NOW()
+              WHERE app_id = $1 AND id = $2`,
+            [app.id, id]
+          );
         if (!rowCount) return notFound(res);
-        res.json({ request: shapeRequest(await loadRequest(app.id, Number(req.params.id))) });
+        res.json({ request: shapeRequest(await loadRequest(app.id, id)) });
       } catch (err) {
         log.error('private-requests', `${action} failed`, { message: err.message });
         res.status(500).json({ error: 'Internal server error' });
