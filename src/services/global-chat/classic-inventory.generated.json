@@ -13369,6 +13369,21 @@
     {
       "source": "src/routes/topochain/mobile.js",
       "method": "GET",
+      "path": "/challenges-api/me/invites",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "leaderboards.get.challenges.api.me.invites.8664a8e4",
+      "domain": "leaderboards",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "leaderboard",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#leaderboard/challenges"
+    },
+    {
+      "source": "src/routes/topochain/mobile.js",
+      "method": "GET",
       "path": "/challenges-api/terms/current",
       "expression": null,
       "status": "mapped",
