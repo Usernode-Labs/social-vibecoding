@@ -4,7 +4,8 @@
     "timer src/workflow/kernel/stream.ts#Signals setTimeout": "the LISTEN connection's reconnect and a loop's idle sleep; loops poll while it is down",
     "timer src/workflow/kernel/stream.ts#waitForOutcome setTimeout": "a route's bounded wait for an event's outcome; it answers 202 when it runs out",
     "uses src/services/build-runs.js:run": "the bot-build machine's build.run handler is the build's own pipeline (homeroom-bot.js, bench/lane.js), run on durable steps over the work item's checkpoint: the machine owns where a build is and who runs it, not what a build does (docs/plans/bot-build-workflow.md)",
-    "uses src/services/build-runs.js:lost": "the bot-build machine's build.lost handler records a build that failed for good where the build is read (the run's outcome, the trial's row), which only the build's own module knows (docs/plans/bot-build-workflow.md)"
+    "uses src/services/build-runs.js:lost": "the bot-build machine's build.lost handler records a build that failed for good where the build is read (the run's outcome, the trial's row), which only the build's own module knows (docs/plans/bot-build-workflow.md)",
+    "timer src/workflow/kernel/stream.ts#waitForInstance setTimeout": "a route's bounded wait for an instance to leave a state (the promote route waits for GitHub's answer); it answers 202 when it runs out"
   },
   "takenOver": {
     "app-delivery": {
@@ -71,11 +72,26 @@
       "services | uses src/services/durable-steps.js:durable": "the agent step's durable context over the work item's own checkpoint (the kernel's), which durable-turn.js keeps the turn's record and clock in; no state outside the item",
       "services | uses src/services/pr-metadata.js:syncShotsPrBlock": "github.prShotsBlock: the pull request description's shots block (GitHub), cut out of scheduleForSession's floating promise; now durable work at a run's start and when the slot settles",
       "services | uses src/services/shots-orchestrator.js:runCurrent": "whether a step's run is still the proposal's run under way (its row and the slot), so copies of a run that ended stop at their next phase and an agent step whose run ended starts no turn; a read, no state"
+    },
+    "proposal": {
+      "services | uses src/services/app-admins.js:refreshExplicitApproval": "reads the pull request's diff from GitHub and stamps whether it changes a protected dapp.json block (#788), as the promote route did after its claim; review.open runs it once the proposal is claimed for review",
+      "services | uses src/services/github.js (whole module)": "the GitHub client handed to proposal-update.updateLinkedIssues (review.open), which writes a session's originating request into its pull request's Closes lines; no process state",
+      "services | uses src/services/github.js:closePR": "closes a closed proposal's pull request on GitHub (pr.close), the call finalizeArchivedSession made best-effort after the archive; one API call",
+      "services | uses src/services/github.js:getPR": "reads the pull request as GitHub has it (review.open: merged, closed, a draft, its head; pr.reopen: closed for good), outside the promote route that read it before its claim",
+      "services | uses src/services/github.js:isEnabled": "whether GitHub is configured (pure), before a pull request is read, opened, closed or reopened",
+      "services | uses src/services/github.js:markPrReadyForReview": "marks a native proposal's draft pull request ready for review (review.open), before the proposal is in review, never after it (bug 9); one GraphQL mutation",
+      "services | uses src/services/github.js:reopenPR": "reopens a pull request: a closed native one going up for a vote (review.open), a reopened proposal's (pr.reopen), as the promote route and unarchiveSession did; one API call",
+      "services | uses src/services/limits.js:resolveBillingPath": "reads who pays for the model call that titles a new pull request (review.open), from the owner's stored keys, as the promote route did; no process state",
+      "services | uses src/services/pr-metadata.js:applyPrMetadata": "creates the proposal's pull request, or backfills its title, on GitHub (review.open), the promote route's lazy creation cut out of the route that ran it before its claim",
+      "services | uses src/services/proposal-update.js:updateLinkedIssues": "links the session's originating request to its pull request on GitHub (review.open), the promote route's #2500 backfill, cut out of the route",
+      "services | uses src/services/worker.js:destroyCcVolume": "destroys a closed proposal's Claude Code volume at once when the close asked (cc.purge), as finalizeArchivedSession did with purgeCc",
+      "services | uses src/services/worker.js:destroyWorker": "destroys the proposal's worker container (worker.destroy: a pause, an unpromote, a close), the call pauseSession and finalizeArchivedSession made after their writes",
+      "services | uses src/services/worker.js:workerContainerName": "the name of a session's worker container, from its id (pure)"
     }
   },
   "handOff": {
     "preview": {
-      "services | uses src/services/boot-failure-sync.js:afterBootFailure": "a promoted proposal behind main whose preview fails to start is synced with main, once per head (preview.prepare); goes when the proposal lifecycle step migrates sync with main",
+      "services | uses src/services/boot-failure-sync.js:afterBootFailure": "a promoted proposal behind main whose preview fails to start is synced with main, once per head (preview.prepare); goes with the merge step (the attempt, the queue and conflicts, with sync with main: the proposal lifecycle step left it there, Q5)",
       "services | uses src/services/conflict-resolver.js:checkAndResolveConflicts": "a passing or skipped verdict drives the app's merge queue (verdict.followUps), which keeps in-process state; goes when the merge step (attempt, queue, conflicts) migrates the queue",
       "services | uses src/services/homeroom-bot-dm.js:noteChangeReady": "the Homeroom bot hears that its change is ready to try (verdict.followUps); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)",
       "services | uses src/services/homeroom-bot-dm.js:noteChangeStopped": "the Homeroom bot hears that its change's preview will not start (preview.stopped); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)",
@@ -89,6 +105,9 @@
     },
     "shots": {
       "services | uses src/services/homeroom-bot-dm.js:noteShotsSettled": "bot.shotsSettled: tells the Homeroom bot a change of its is ready to try (or goes back to it) once its shots settled; was shots-state.noteSettled's setImmediate after commit; goes with the step that migrates the bot's wake (the rest)"
+    },
+    "proposal": {
+      "services | uses src/services/homeroom-bot-dm.js:noteProposalChanged": "bot.proposalChanged: one of the Homeroom bot's proposals went up for a vote or closed, and the activity tray of whoever asked for it reads again (was the promote route's and finalizeArchivedSession's call); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)"
     }
   },
   "machines": {
@@ -134,31 +153,10 @@
       "ownership | chat_sessions.merge_commit_sha ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
       "ownership | chat_sessions.merged_at ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
       "ownership | chat_sessions.merged_at ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
-      "ownership | chat_sessions.status ← server.js#abandonOrphanBenchTurn",
-      "ownership | chat_sessions.status ← server.js#recoverStuckMerges",
       "ownership | chat_sessions.status ← src/db/migrate.js#seedStagingCcCohortRuns",
       "ownership | chat_sessions.status ← src/db/migrate.js#seedStagingRestartEligibleMerge",
-      "ownership | chat_sessions.status ← src/routes/demo-mode.js#demoModeRoutes",
-      "ownership | chat_sessions.status ← src/routes/proposal-handoff.js#proposalHandoffRoutes",
-      "ownership | chat_sessions.status ← src/routes/sessions.js#resumePausedSession",
       "ownership | chat_sessions.status ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
-      "ownership | chat_sessions.status ← src/routes/votes.js#checkAndMerge",
-      "ownership | chat_sessions.status ← src/routes/votes.js#voteRoutes",
-      "ownership | chat_sessions.status ← src/services/account-deletion.js#deleteAccount",
-      "ownership | chat_sessions.status ← src/services/bench/lane.js#recordTrial",
-      "ownership | chat_sessions.status ← src/services/bench/runner.js#runTurn",
-      "ownership | chat_sessions.status ← src/services/bench/studio.js#sweepPreviews",
-      "ownership | chat_sessions.status ← src/services/homeroom-bot-live.js#buildAndPropose",
-      "ownership | chat_sessions.status ← src/services/homeroom-bot-live.js#buildTurnRunner",
-      "ownership | chat_sessions.status ← src/services/homeroom-bot.js#askForVerdictBlock",
-      "ownership | chat_sessions.status ← src/services/homeroom-bot.js#pauseIdleSession",
-      "ownership | chat_sessions.status ← src/services/homeroom-bot.js#putAwayRecoveredSession",
-      "ownership | chat_sessions.status ← src/services/homeroom-bot.js#runTriage",
       "ownership | chat_sessions.status ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
-      "ownership | chat_sessions.status ← src/services/session-lifecycle.js#archiveSession",
-      "ownership | chat_sessions.status ← src/services/session-lifecycle.js#pauseSession",
-      "ownership | chat_sessions.status ← src/services/session-lifecycle.js#unarchiveSession",
-      "ownership | chat_sessions.status ← src/services/session-lifecycle.js#unpromoteSession",
       "services | uses src/routes/issues.js:resolveSupersededCloseProposals",
       "services | uses src/services/application-runtime.js:mode",
       "services | uses src/services/deploy-nudge.js:nudgeHostDeployer",
@@ -186,16 +184,15 @@
       "shared | uses src/services/github.js:isEnabled"
     ],
     "platform": [
-      "web | state src/workflow/platform.ts#cutOffWatch",
       "web | state src/workflow/platform.ts#deliveries",
       "web | state src/workflow/platform.ts#kernelPool",
       "web | state src/workflow/platform.ts#log",
       "web | state src/workflow/platform.ts#machine",
       "web | state src/workflow/platform.ts#merges",
       "web | state src/workflow/platform.ts#previews",
+      "web | state src/workflow/platform.ts#proposals",
       "web | state src/workflow/platform.ts#runtime",
       "web | state src/workflow/platform.ts#shotRuns",
-      "web | timer src/workflow/platform.ts#watchShotsCutOff setInterval",
       "web | uses src/db/pool.js:getPool",
       "web | uses src/routes/votes.js:VOTE_REASON_MAX",
       "web | uses src/routes/votes.js:VOTE_REASON_REQUIRED",
@@ -341,6 +338,41 @@
       "services | uses src/services/shots-orchestrator.js:resolveRevision",
       "services | uses src/services/shots-orchestrator.js:runCurrent",
       "services | uses src/services/shots-orchestrator.js:visibleError"
+    ],
+    "proposal": [
+      "ownership | chat_sessions.active_users_at_promote ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
+      "ownership | chat_sessions.active_users_at_promote ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
+      "ownership | chat_sessions.approval_epoch ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
+      "ownership | chat_sessions.approval_epoch ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
+      "ownership | chat_sessions.archived_at ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
+      "ownership | chat_sessions.archived_at ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
+      "ownership | chat_sessions.merge_attempt_at ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
+      "ownership | chat_sessions.merge_attempt_at ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
+      "ownership | chat_sessions.promoted_at ← src/db/migrate.js#seedStagingImportedPrProposal",
+      "ownership | chat_sessions.promoted_at ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
+      "ownership | chat_sessions.promoted_at ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
+      "ownership | chat_sessions.reviewed_head_sha ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
+      "ownership | chat_sessions.reviewed_head_sha ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
+      "ownership | chat_sessions.stale_notified_at ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
+      "ownership | chat_sessions.stale_notified_at ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
+      "ownership | chat_sessions.status ← src/db/migrate.js#seedStagingCcCohortRuns",
+      "ownership | chat_sessions.status ← src/db/migrate.js#seedStagingRestartEligibleMerge",
+      "ownership | chat_sessions.status ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
+      "ownership | chat_sessions.status ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
+      "services | uses src/services/app-admins.js:refreshExplicitApproval",
+      "services | uses src/services/github.js (whole module)",
+      "services | uses src/services/github.js:closePR",
+      "services | uses src/services/github.js:getPR",
+      "services | uses src/services/github.js:isEnabled",
+      "services | uses src/services/github.js:markPrReadyForReview",
+      "services | uses src/services/github.js:reopenPR",
+      "services | uses src/services/homeroom-bot-dm.js:noteProposalChanged",
+      "services | uses src/services/limits.js:resolveBillingPath",
+      "services | uses src/services/pr-metadata.js:applyPrMetadata",
+      "services | uses src/services/proposal-update.js:updateLinkedIssues",
+      "services | uses src/services/worker.js:destroyCcVolume",
+      "services | uses src/services/worker.js:destroyWorker",
+      "services | uses src/services/worker.js:workerContainerName"
     ]
   }
 }

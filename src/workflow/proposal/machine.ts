@@ -299,8 +299,12 @@ const prLabel = (r: Row, prNumber = r.prNumber, prTitle = r.prTitle) =>
 const line = (e: Event<any>, d: Data, content: string, extra: { msgType?: string; metadata?: Json } = {}): DomainWrite =>
   ({ type: 'line', eventId: e.id, appId: d.appId, sessionId: d.sessionId, content, msgType: extra.msgType || 'system',
     metadata: extra.metadata ?? null });
-const board = (f: Facts, action: string, extra: Record<string, Json> = {}): Push =>
-  sessionUpdate({ action, sessionId: f.row!.id, appId: f.row!.appId, appSlug: f.row!.appSlug, ...extra });
+// A card moved on the boards: browsers hear it, and so does the Workshop's
+// placement stage in every web process (services/ws.js, `boardChange`).
+const board = (f: Facts, action: string, extra: Record<string, Json> = {}): Push => {
+  const p = sessionUpdate({ action, sessionId: f.row!.id, appId: f.row!.appId, appSlug: f.row!.appSlug, ...extra });
+  return { ...p, routing: { ...(p.routing || {}), boardChange: true } };
+};
 const votes = (f: Facts, extra: Record<string, Json> = {}): Push =>
   voteUpdate({ sessionId: f.row!.id, appId: f.row!.appId, appSlug: f.row!.appSlug, merged: false, ...extra });
 

@@ -19,6 +19,9 @@ CREATE TABLE things (id SERIAL PRIMARY KEY, status TEXT, note TEXT);
 CREATE TABLE logs (id SERIAL PRIMARY KEY);
 CREATE TRIGGER things_wf_owned BEFORE UPDATE ON things FOR EACH ROW
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=demo/thing:', 'status');
+CREATE TRIGGER things_wf_done BEFORE UPDATE ON things FOR EACH ROW
+  WHEN (NEW.status = 'done')
+  EXECUTE FUNCTION wf_guard_owned_columns('@enabled=coowner', 'status');
 CREATE OR REPLACE FUNCTION things_fill() RETURNS TRIGGER AS $$
 BEGIN NEW.status := 'x'; RETURN NEW; END; $$ LANGUAGE plpgsql;
 CREATE TRIGGER things_fill BEFORE INSERT ON things FOR EACH ROW EXECUTE FUNCTION things_fill();
@@ -118,6 +121,11 @@ export function demoNotifiers() {
   };
 }
 `,
+  // A second machine owning a move of the same column: each is a co-owner,
+  // never the other's "other writer".
+  'src/workflow/coowner/machine.ts': `
+export async function finish(tx: any): Promise<void> { await tx.query("UPDATE things SET status = 'done' WHERE id = 1"); }
+`,
   'src/workflow/platform.ts': `
 let runtime: unknown = null;
 export function running(): boolean { return runtime !== null; }
@@ -188,4 +196,5 @@ test('notifiers, and other writers of owned columns', () => {
   has(demo, 'ownership | things.status ← src/services/shadow.js#rewrite (dynamic SET)');      // a local of the same name
   has(demo, 'ownership | things.status ← src/services/stranger.js#guess (dynamic SET)');     // not imported
   assert.ok(!demo.some((e) => e.startsWith('ownership | things.note')), 'only owned columns');
+  assert.ok(!demo.some((e) => e.includes('src/workflow/coowner/')), 'a machine that owns the column too is no other writer');
 });
