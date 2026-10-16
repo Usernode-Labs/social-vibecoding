@@ -617,11 +617,11 @@ function stagingMockProposals(viewer) {
         },
         // Two green rows with something to say (services/check-signals.js):
         // one failed in a burst at the start of the run and passed all three
-        // retries (the run's fault, not the check's), and one this proposal
+        // retries (often the environment, never proof of it), and one this proposal
         // adds that held only on a fresh load after its address change.
         {
           name: 'The board opens on the Workshop', path: '/dev', status: 'pass',
-          runs: 4, passes: 3, fails: 1, flakyRun: true, passedOnRetry: true, retryClass: 'run_fault',
+          runs: 4, passes: 3, fails: 1, flakyRun: true, passedOnRetry: true, retryClass: 'early_burst',
           failureReason: '', consoleErrors: [],
         },
         {

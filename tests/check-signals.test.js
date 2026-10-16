@@ -141,17 +141,17 @@ function retries(of, statuses, base = 1000000 + of * 10) {
   return statuses.map((s, i) => ({ index: base + i, status: s, retryOf: of }));
 }
 
-test('a burst of early failures whose retries all pass is the run\'s fault', () => {
+test('a burst of early failures whose retries all pass is an early burst', () => {
   const frames = [
     primary(1, 'fail', 0), primary(2, 'fail', 0), primary(3, 'fail', 4200), primary(4, 'pass', 0),
     ...retries(1, ['pass', 'pass', 'pass']), ...retries(2, ['pass', 'pass', 'pass']), ...retries(3, ['pass', 'pass', 'pass']),
   ];
   const { byIndex, bursts } = signals.classifyRetries(frames);
-  assert.deepEqual([...byIndex].sort(), [[1, 'run_fault'], [2, 'run_fault'], [3, 'run_fault']]);
+  assert.deepEqual([...byIndex].sort(), [[1, 'early_burst'], [2, 'early_burst'], [3, 'early_burst']]);
   assert.deepEqual(bursts, [{ pod: '0/3', checks: 3, lastStartedMs: 4200 }]);
 });
 
-test('the run-fault rule\'s edges: too few, too late, a failing retry, another pod', () => {
+test('the early-burst rule\'s edges: too few, too late, a failing retry, another pod', () => {
   const allPass = ['pass', 'pass', 'pass'];
   // Two early failures are two flaky checks: a burst needs three.
   let out = signals.classifyRetries([
@@ -160,7 +160,7 @@ test('the run-fault rule\'s edges: too few, too late, a failing retry, another p
   assert.deepEqual([...out.byIndex.values()], ['flaky', 'flaky']);
   assert.equal(out.bursts.length, 0);
   // Started after the window: flaky, however many.
-  out = signals.classifyRetries([1, 2, 3].flatMap((i) => [primary(i, 'fail', signals.RUN_FAULT_WINDOW_MS + 1), ...retries(i, allPass)]));
+  out = signals.classifyRetries([1, 2, 3].flatMap((i) => [primary(i, 'fail', signals.EARLY_BURST_WINDOW_MS + 1), ...retries(i, allPass)]));
   assert.deepEqual([...out.byIndex.values()], ['flaky', 'flaky', 'flaky']);
   // One retry failed: that check is flaky, and without it there is no burst.
   out = signals.classifyRetries([
@@ -177,7 +177,7 @@ test('the run-fault rule\'s edges: too few, too late, a failing retry, another p
   // Every retry failing is a real failure, early or not.
   out = signals.classifyRetries([1, 2, 3].flatMap((i) => [primary(i, 'fail', 0), ...retries(i, ['fail', 'fail', 'fail'])]));
   assert.deepEqual([...out.byIndex.values()], ['failed', 'failed', 'failed']);
-  // A frame from an image without the stamp is never a run fault.
+  // A frame from an image without the stamp is never an early burst.
   out = signals.classifyRetries([1, 2, 3].flatMap((i) => [{ index: i, status: 'fail', retryOf: null }, ...retries(i, allPass)]));
   assert.deepEqual([...out.byIndex.values()], ['flaky', 'flaky', 'flaky']);
 });
@@ -194,7 +194,7 @@ test('16 Oct 2026: the runs\' retried checks classify as they happened', () => {
     const { byIndex, bursts } = signals.classifyRetries(visuals.parseTests(stdout));
     got[run] = { ...signals.retryCounts(byIndex), bursts: bursts.length };
   }
-  const want = (run_fault, flaky, failed, bursts) => ({ run_fault, flaky, failed, bursts });
+  const want = (early_burst, flaky, failed, bursts) => ({ early_burst, flaky, failed, bursts });
   assert.deepEqual(got, {
     '6706 b4cf1a25': want(0, 0, 1, 0), // #222 fails every retry: a real failure
     '6706 a5d27922': want(13, 0, 1, 1), // the same #222, beside a burst of 13
@@ -232,7 +232,7 @@ test('the rows carry the class and the fallback, and the verdict is the one it w
   ].join('\n');
   const out = visuals.classifyTests(visuals.parseTests(stdout), 5, { dispatched: dispatch(5) });
   const row = (i) => out.results.find((r) => r.index === i);
-  assert.deepEqual([0, 1, 2, 3, 4].map((i) => row(i).retryClass || null), ['run_fault', 'run_fault', 'run_fault', null, 'failed']);
+  assert.deepEqual([0, 1, 2, 3, 4].map((i) => row(i).retryClass || null), ['early_burst', 'early_burst', 'early_burst', null, 'failed']);
   assert.deepEqual(row(3).cohortFallback, { waitMs: 12346, ms: 17000 });
   assert.equal(out.state, 'failing');
   // The same frames with neither signal in them: the same verdict, row by row.
@@ -253,7 +253,7 @@ test('a check this proposal adds or changes is the one the fallback note is for'
     { name: 'same', path: '/a', expectSelector: '#a' },
     { name: 'changed', path: '/b', expectSelector: '#b2' },
     { name: 'new', path: '/c', expectText: 'C' },
-    { name: 'knob', path: '/d', expectSelector: '#d', coldLoad: true },
+    { name: 'knob', path: '/d', expectSelector: '#d', coldLoad: true, endsGroup: true },
   ] };
   const base = { ok: true, tests: [
     { name: 'same', path: '/a', expectSelector: '#a' },
@@ -274,7 +274,7 @@ test('a check this proposal adds or changes is the one the fallback note is for'
   assert.deepEqual(rows.map((r) => r.authored === true), [false, true, false]);
 });
 
-test('a run-fault burst is logged as a warning of its own, with no names or URLs', async () => {
+test('an early burst is logged as a warning of its own, with no names or URLs', async () => {
   const log = require('../src/services/logger');
   const calls = [];
   const orig = { info: log.info, warn: log.warn };
@@ -287,11 +287,11 @@ test('a run-fault burst is logged as a warning of its own, with no names or URLs
     ]).join('\n'));
     await visuals.noteCheckSignals({ results: [] }, frames, { sessionId: 7, commitHash: 'abc' });
   } finally { Object.assign(log, orig); }
-  const warn = calls.find((c) => c[0] === 'warn' && c[2] === 'Checks run fault');
+  const warn = calls.find((c) => c[0] === 'warn' && c[2] === 'Checks early retry burst');
   assert.ok(warn, JSON.stringify(calls));
   assert.deepEqual(warn[3], { sessionId: 7, commitHash: 'abc', pod: '1/3', checks: 3, lastStartedMs: 5, windowMs: 5000 });
   const counts = calls.find((c) => c[2] === 'Checks retries');
-  assert.deepEqual(counts[3], { sessionId: 7, commitHash: 'abc', run_fault: 3, flaky: 0, failed: 0 });
+  assert.deepEqual(counts[3], { sessionId: 7, commitHash: 'abc', early_burst: 3, flaky: 0, failed: 0 });
   assert.ok(!/secret|token/.test(JSON.stringify(calls)));
 });
 
@@ -321,20 +321,20 @@ function loadAppView() {
   return sandbox.__AppView;
 }
 
-test('the card: a run fault is not called flaky, and the fallback note shows on an authored check only', () => {
+test('the card: an early burst is not called flaky, and the fallback note shows on an authored check only', () => {
   const AppView = loadAppView();
   const v = AppView._checksVerdictView({
     check_state: 'passing',
     test_results: [
-      { name: 'Run fault', path: '/a', status: 'pass', runs: 4, passes: 3, fails: 1, passedOnRetry: true, retryClass: 'run_fault' },
+      { name: 'Early', path: '/a', status: 'pass', runs: 4, passes: 3, fails: 1, passedOnRetry: true, retryClass: 'early_burst' },
       { name: 'Flaky', path: '/b', status: 'pass', runs: 4, passes: 2, fails: 2, passedOnRetry: true, retryClass: 'flaky' },
       { name: 'Fresh', path: '/c', status: 'pass', cohortFallback: { waitMs: 1, ms: 2 }, authored: true },
       { name: 'Not theirs', path: '/d', status: 'pass', cohortFallback: { waitMs: 1, ms: 2 } },
     ],
   });
   const by = new Map(v.passes.map((r) => [r.name, r]));
-  assert.equal(by.get('Run fault').reason, message('changes:checks.reason.runFault'));
-  assert.equal(by.get('Run fault').retryClass, 'run_fault');
+  assert.equal(by.get('Early').reason, message('changes:checks.reason.earlyBurst'));
+  assert.equal(by.get('Early').retryClass, 'early_burst');
   assert.match(by.get('Flaky').reason, /then passed when re-run/);
   assert.equal(by.get('Flaky').retryClass, null);
   assert.equal(by.get('Fresh').note, message('changes:checks.note.freshLoad'));
@@ -342,17 +342,17 @@ test('the card: a run fault is not called flaky, and the fallback note shows on 
   assert.equal(by.get('Not theirs').note, null);
   assert.equal(by.get('Not theirs').keepReason, false);
   assert.match(message('changes:checks.note.freshLoad'), /fix the navigation/);
-  assert.match(message('changes:checks.reason.runFault'), /the run was at fault/);
+  assert.match(message('changes:checks.reason.earlyBurst'), /check that this change does not break the screen/);
   const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
-  assert.match(tsx, /r\.retryClass === 'run_fault'\) return t\('project:topic\.check\.runFault'\)/);
+  assert.match(tsx, /r\.retryClass === 'early_burst'\) return t\('project:topic\.check\.earlyBurst'\)/);
   assert.match(tsx, /\{r\.note \? <div className="dev-ledger-why-note mt-1">\{r\.note\}<\/div> : null\}/);
-  assert.deepEqual([message('project:topic.check.runFault'), message('project:topic.check.freshLoad')],
-    ['Run fault', 'Needed a fresh load']);
+  assert.deepEqual([message('project:topic.check.earlyBurst'), message('project:topic.check.freshLoad')],
+    ['Failed early, then passed', 'Needed a fresh load']);
 });
 
 test('agents read the same advisories: get_proposal, get_check_output and proposal_status', () => {
   const rows = [
-    { name: 'a', path: '/a', status: 'pass', retryClass: 'run_fault' },
+    { name: 'a', path: '/a', status: 'pass', retryClass: 'early_burst' },
     { name: 'b', path: '/b', status: 'fail', retryClass: 'failed' },
     { name: 'c', path: '/c', status: 'pass', cohortFallback: { waitMs: 900, ms: 1200 }, authored: true },
     { name: 'd', path: '/d', status: 'pass', cohortFallback: { waitMs: 900, ms: 1200 } },
@@ -360,9 +360,9 @@ test('agents read the same advisories: get_proposal, get_check_output and propos
   ];
   const out = signals.advisoriesOf(rows);
   assert.deepEqual(out.map((a) => [a.row.name, a.kind, a.waitMs ?? null]),
-    [['a', 'run_fault', null], ['b', 'failed', null], ['c', 'cohort_fallback', 900]]);
+    [['a', 'early_burst', null], ['b', 'failed', null], ['c', 'cohort_fallback', 900]]);
   assert.equal(out[2].note, signals.COHORT_FALLBACK_NOTE);
-  assert.match(signals.RETRY_CLASS_NOTES.run_fault, /the run was at fault, not this check or this change/);
+  assert.match(signals.RETRY_CLASS_NOTES.early_burst, /it is not proof: check that this change does not break the screen/);
   const mcp = read('src/services/mcp-tools.js');
   assert.match(mcp, /advisories: shapeCheckAdvisories\(results\),/);
   assert.match(mcp, /advisories: shapeCheckAdvisories\(\[row\]\),/);
@@ -376,7 +376,7 @@ test('the Checks step names the passes with something to say, from a full row or
     id: 5, check_state: 'failing',
     test_results: [
       { name: 'Broken', path: '/x', status: 'fail', failureReason: 'gone' },
-      { name: 'Run fault', path: '/a', status: 'pass', runs: 4, passes: 3, fails: 1, passedOnRetry: true, retryClass: 'run_fault' },
+      { name: 'Early', path: '/a', status: 'pass', runs: 4, passes: 3, fails: 1, passedOnRetry: true, retryClass: 'early_burst' },
       { name: 'Fresh', path: '/c', status: 'pass', cohortFallback: { waitMs: 1, ms: 2 }, authored: true },
       { name: 'Plain', path: '/d', status: 'pass' },
       { name: 'Not theirs', path: '/e', status: 'pass', cohortFallback: { waitMs: 1, ms: 2 } },
@@ -385,15 +385,137 @@ test('the Checks step names the passes with something to say, from a full row or
   const trimmed = lists.failingResultsOnly(full);
   assert.equal(trimmed.test_results_omitted, 4, 'the count of passes is still the whole count');
   assert.deepEqual(trimmed.test_results.map((r) => r.name), ['Broken']);
-  assert.deepEqual(trimmed.test_results_noted.map((r) => r.name), ['Run fault', 'Fresh']);
+  assert.deepEqual(trimmed.test_results_noted.map((r) => r.name), ['Early', 'Fresh']);
   assert.equal('test_results_noted' in lists.failingResultsOnly({ test_results: [{ status: 'pass' }, { status: 'fail' }] }), false);
   for (const pr of [full, trimmed]) {
     const v = AppView._checksVerdictView(pr);
-    assert.deepEqual(v.noted.map((r) => r.name), ['Run fault', 'Fresh']);
+    assert.deepEqual(v.noted.map((r) => r.name), ['Early', 'Fresh']);
     assert.equal(v.passCount, 4);
     const run = AppView._checksRunView(pr, { state: 'blocked' });
-    assert.deepEqual(run.noted.map((r) => r.name), ['Run fault', 'Fresh']);
+    assert.deepEqual(run.noted.map((r) => r.name), ['Early', 'Fresh']);
   }
   const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
   assert.match(tsx, /<ul className="dev-ledger-fails dev-ledger-noted">\s*\{run\.noted\.map\(\(f\) => <CheckRowView key=\{f\.key\} r=\{f\} \/>\)\}/);
+});
+
+// ── Review of #5322, round 1 ─────────────────────────────────────────────
+
+// The counterexample: the app's own address change throws on a document
+// whose fresh loads work. Three checks share that early group and all nine
+// cold retries pass. The shape is an early burst, and nothing anywhere may
+// tell the author the change is innocent.
+test('an app whose address change throws makes an early burst, and no surface excuses the change', async () => {
+  const done = collect();
+  const browser = {
+    async createBrowserContext() {
+      return {
+        async newPage() {
+          const handlers = {};
+          return {
+            on(event, fn) { (handlers[event] = handlers[event] || []).push(fn); },
+            async setViewport() {}, async waitForNetworkIdle() {}, async close() {},
+            async goto() { return { status: () => 200 }; },
+            async $() { return {}; },
+            async evaluate(fn, arg) {
+              if (arg === '#/b') for (const h of handlers.pageerror || []) h(new Error('hash navigation throws'));
+              return true;
+            },
+          };
+        },
+        async close() {},
+      };
+    },
+  };
+  const tests = [
+    { index: 0, name: 'initial', path: '/d#/a', url: 'http://s/d#/a', expectSelector: '#x' },
+    ...[1, 2, 3].map((index) => ({ index, name: `nav ${index}`, path: '/d#/b', url: 'http://s/d#/b', expectSelector: '#x' })),
+    ...Array.from({ length: 12 }, (_, i) => ({ index: i + 4, name: `o${i}`, path: `/o${i}`, url: `http://s/o${i}`, expectSelector: '#x' })),
+  ];
+  await runTests(browser, tests, { concurrency: 2, testTimeoutMs: 5000, ...FAST, shard: { index: 0, count: 1 }, env: {} });
+  const frames = done().frames;
+  assert.equal(frames.filter((f) => f.retryOf != null && f.status === 'pass').length, 9);
+  const { byIndex } = signals.classifyRetries(frames);
+  assert.deepEqual([...byIndex].sort(), [[1, 'early_burst'], [2, 'early_burst'], [3, 'early_burst']]);
+  assert.equal(signals.RETRY_CLASSES.includes('run_fault'), false, 'no class claims the run was at fault');
+  // Every surface's words: the card (both forms and the door), the agents'
+  // note, and the connector's schema description.
+  const mcp = read('src/services/mcp-tools.js');
+  const describe = mcp.slice(mcp.indexOf("kind: z.enum(['early_burst'"), mcp.indexOf("kind: z.enum(['early_burst'") + 1500);
+  const texts = [
+    message('changes:checks.reason.earlyBurst'),
+    message('changes:checks.reason.earlyBurstWith', { reason: 'x' }),
+    message('project:topic.check.earlyBurst'),
+    signals.RETRY_CLASS_NOTES.early_burst,
+    describe,
+  ];
+  for (const text of texts) {
+    assert.doesNotMatch(text, /at fault|not this check|not the check|not this change|do not change code|innocent/i, text);
+  }
+  for (const text of [texts[0], texts[3]]) assert.match(text, /not ready/);
+  for (const text of [texts[0], texts[1], texts[3], describe]) assert.match(text, /does not break the screen/);
+});
+
+// Authorship is against the proposal's merge base, never main's tip.
+// Any ref other than the head and the merge base reads as `main`: a main
+// whose dapp.json has none of these checks, so reading it would mark them all.
+function fakeRepo({ base, head, main = [], files = ['dapp.json'], mergeBaseSha = 'b'.repeat(40), delayMs = 0, fail = null }) {
+  const reads = [];
+  return {
+    reads,
+    compareRefs: async (owner, repo, basehead) => {
+      reads.push(['compare', basehead]);
+      if (fail === 'compare') throw new Error('compare down');
+      return { mergeBaseSha, files, filesComplete: true };
+    },
+    readDeclaredTests: async (owner, repo, ref) => {
+      reads.push(['dapp.json', ref]);
+      if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+      if (fail === 'read') return { ok: false, tests: [] };
+      if (ref === 'c'.repeat(40)) return { ok: true, tests: head };
+      return ref === mergeBaseSha ? { ok: true, tests: base } : { ok: true, tests: main };
+    },
+  };
+}
+const ctx = { sessionId: 1, commitHash: 'c'.repeat(40), repoOwner: 'o', repoName: 'r' };
+const fellBackRow = (name, path) => ({ name, path, status: 'pass', cohortFallback: { waitMs: 1, ms: 2 } });
+
+test('main moving on does not change whose check it is', async () => {
+  const old = { name: 'existing', path: '/old', expectSelector: '#old' };
+  // Main changed this check's selector after the branch was cut; the
+  // proposal did not touch it: not the author's.
+  let repo = fakeRepo({ base: [old], head: [old] });
+  let rows = [fellBackRow('existing', '/old')];
+  await visuals.noteCheckSignals({ results: rows }, [], ctx, repo);
+  assert.equal(rows[0].authored, undefined);
+  assert.deepEqual(repo.reads.map((r) => r[1]), ['main...' + 'c'.repeat(40), 'c'.repeat(40), 'b'.repeat(40)],
+    'read at the head and at the merge base, never at main');
+  // The proposal edited it, and main later made the same edit: still theirs.
+  const edited = { ...old, expectSelector: '#fixed' };
+  repo = fakeRepo({ base: [old], head: [edited] });
+  rows = [fellBackRow('existing', '/old')];
+  await visuals.noteCheckSignals({ results: rows }, [], ctx, repo);
+  assert.equal(rows[0].authored, true);
+  // dapp.json not among the proposal's changes: nothing is theirs, nothing read.
+  repo = fakeRepo({ base: [old], head: [edited], files: ['src/app.js'] });
+  rows = [fellBackRow('existing', '/old')];
+  await visuals.noteCheckSignals({ results: rows }, [], ctx, repo);
+  assert.equal(rows[0].authored, undefined);
+  assert.deepEqual(repo.reads.map((r) => r[0]), ['compare']);
+});
+
+test('an unread or slow comparison gives no note', async () => {
+  const old = { name: 'existing', path: '/old', expectSelector: '#old' };
+  const edited = { ...old, expectSelector: '#fixed' };
+  for (const repo of [
+    fakeRepo({ base: [old], head: [edited], fail: 'compare' }),
+    fakeRepo({ base: [old], head: [edited], fail: 'read' }),
+    fakeRepo({ base: [old], head: [old], mergeBaseSha: null }),
+    { ...fakeRepo({ base: [old], head: [edited], delayMs: 200 }), timeoutMs: 20 },
+  ]) {
+    const rows = [fellBackRow('existing', '/old')];
+    const started = Date.now();
+    await visuals.noteCheckSignals({ results: rows }, [], ctx, repo);
+    assert.equal(rows[0].authored, undefined);
+    assert.ok(Date.now() - started < 150, 'the settlement does not wait out a slow read');
+  }
 });

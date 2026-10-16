@@ -147,12 +147,13 @@ export function NoteBoxView({ box }: { box: NoteBox }): ReactNode {
  */
 /**
  * The door's label when a green row is open for something other than a
- * plain retry: a run fault (the run failed it, not the check), or a note
+ * plain retry: an early failure burst (often the environment, not proof of
+ * it), or a note
  * on a check that needed a fresh load. Null for the two ordinary doors.
  */
 function openLabel(r: CheckRow, t: ReturnType<typeof useMessages>): string | null {
   if (!r.pass) return null;
-  if (r.retryClass === 'run_fault') return t('project:topic.check.runFault');
+  if (r.retryClass === 'early_burst') return t('project:topic.check.earlyBurst');
   if (r.note && !r.reason) return t('project:topic.check.freshLoad');
   return null;
 }

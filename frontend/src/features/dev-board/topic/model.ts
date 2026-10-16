@@ -112,11 +112,11 @@ export interface CheckRow {
   keepReason?: boolean;
   reason?: string | null;
   /**
-   * 'run_fault' when this check's failure was one of a burst in the run's
+   * 'early_burst' when this check's failure was one of a burst in the run's
    * first seconds whose retries all passed (src/services/check-signals.js):
-   * the run's fault, not the check's. Null otherwise.
+   * often the environment, never proof of it. Null otherwise.
    */
-  retryClass?: 'run_fault' | null;
+  retryClass?: 'early_burst' | null;
   /**
    * An advisory about the check itself, shown in its fold: today, that a
    * check this proposal adds or changes needed a fresh load after its

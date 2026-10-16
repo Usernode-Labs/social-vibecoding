@@ -3803,13 +3803,13 @@
     "text": "Failed {{fails}} of {{count}} runs on this build, then passed when re-run. {{reason}}",
     "description": "Reason line under one check in the list of a proposal's check results, for a check that was run several times on the same build. {{fails}} is how many of those runs failed and {{count}} how many runs there were (always two or more). The check passed in the end. {{reason}} is the failure message the check itself wrote, shown as it is."
   },
-  "checks.reason.runFault": {
-    "text": "Failed at the start of the run together with other checks, then passed every re-run: the run was at fault, not this check.",
-    "description": "Reason line under one check in the list of a proposal's check results, for a check that failed in a burst of failures in the first seconds of the test run (the test environment was not ready yet) and then passed every time it was run again. Says the failure was the test run's, not the check's or the change's."
+  "checks.reason.earlyBurst": {
+    "text": "Failed early in the run together with other checks, then passed every re-run. This often means the test environment was not ready yet, but check that this change does not break the screen this check opens.",
+    "description": "Reason line under one check in the list of a proposal's check results, for a check that failed in a burst of failures in the first seconds of the test run and then passed every time it was run again on a fresh page. Says the environment is a likely cause but not a proven one, and asks the author to check the screen anyway."
   },
-  "checks.reason.runFaultWith": {
-    "text": "Failed at the start of the run together with other checks, then passed every re-run: the run was at fault, not this check. {{reason}}",
-    "description": "Reason line under one check in the list of a proposal's check results, for a check that failed in a burst of failures in the first seconds of the test run (the test environment was not ready yet) and then passed every time it was run again. Says the failure was the test run's, not the check's or the change's. {{reason}} is the failure message the check itself wrote, shown as it is."
+  "checks.reason.earlyBurstWith": {
+    "text": "Failed early in the run together with other checks, then passed every re-run. This often means the test environment was not ready yet, but check that this change does not break the screen this check opens. {{reason}}",
+    "description": "Reason line under one check in the list of a proposal's check results, for a check that failed in a burst of failures in the first seconds of the test run and then passed every time it was run again on a fresh page. Says the environment is a likely cause but not a proven one, and asks the author to check the screen anyway. {{reason}} is the failure message the check itself wrote, shown as it is."
   },
   "checks.note.freshLoad": {
     "text": "This check needed a fresh load after an address change: fix the navigation (an address change must draw what a fresh load of that address draws).",

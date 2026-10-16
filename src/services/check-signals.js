@@ -6,16 +6,23 @@
 //
 // 1. RETRY CLASS. A check that failed is asked again up to three times on
 //    its own cold document. Before this, every recovered check read as
-//    "flaky", which on 16 Oct 2026 was untrue in six of seven retry-heavy
-//    runs: a preview still warming up failed the first groups a pod loaded
-//    (the client's 2 s session timeout, #5305), and every one of their
-//    retries passed. So each retried check is one of three:
+//    "flaky", which on 16 Oct 2026 hid what six of seven retry-heavy runs
+//    had in common: a preview still warming up failed the first groups a
+//    pod loaded (the client's 2 s session timeout, #5305), and every one of
+//    their retries passed. So each retried check is one of three:
 //
-//      run_fault  part of a burst of failures in a pod's first seconds whose
-//                 retries all passed: the run was not ready, the check was
-//                 fine. See RUN_FAULT_* below for the rule and its data.
-//      flaky      at least one retry passed (and it was not such a burst).
-//      failed     every retry failed too: a real failure.
+//      early_burst  part of a burst of failures in a pod's first seconds
+//                   whose retries all passed. A SUSPICION about the
+//                   environment, never a verdict on the change: an app whose
+//                   address change throws, on a document whose fresh loads
+//                   work, makes exactly this shape (review of #5322), so
+//                   nothing that reads it may excuse the change or tell its
+//                   author not to look. Only independent infrastructure
+//                   evidence (a pod that never started, check-pod-start.js;
+//                   a network change, a starved Postgres) may say the run was
+//                   at fault. See EARLY_BURST_* below for the rule and data.
+//      flaky        at least one retry passed (and it was not such a burst).
+//      failed       every retry failed too: a real failure.
 //
 // 2. COHORT FALLBACK. Checks on one document share a load and reach their
 //    own address by writing `location.hash`. When a check's assertions did
@@ -27,7 +34,7 @@
 //    proposal adds or changes (`authoredChecks`): those it can fix.
 const appManifest = require('./app-manifest');
 
-// ── The run-fault rule ───────────────────────────────────────────────────
+// ── The early-burst rule ─────────────────────────────────────────────────
 //
 // From the capture logs of 16 Oct 2026 (runs 6706, 8678, 8695, 8703, 8710,
 // 8717 ×2, 8732, 8744, 8747, 8748, 8751, 8753; 42 pods):
@@ -40,16 +47,18 @@ const appManifest = require('./app-manifest');
 //     (/?shot=feedback-capture-failed) failed 28–35 s in, as two checks;
 //     the real failures (all retries failing) came 27–68 s in.
 //
-// So: a check is a run fault when its group STARTED within the pod's first
-// RUN_FAULT_WINDOW_MS, all of its retries passed, and at least
-// RUN_FAULT_MIN_CHECKS checks in the same pod meet both. One check on its
-// own is never a run fault, however early: that is what flakiness looks
-// like. A check with a failing retry is never one: the run recovered and
-// it did not.
-const RUN_FAULT_WINDOW_MS = 5000;
-const RUN_FAULT_MIN_CHECKS = 3;
+// So: a check is in an early burst when its group STARTED within the pod's
+// first EARLY_BURST_WINDOW_MS, all of its retries passed, and at least
+// EARLY_BURST_MIN_CHECKS checks in the same pod meet both. One check on its
+// own is never a burst, however early: that is what flakiness looks like.
+// A check with a failing retry is never one. The start times in that data
+// are estimates (a verdict's time less 8 s; the frames predate the stamp),
+// so the window and the count are a heuristic, which is one more reason the
+// class only ever raises a question.
+const EARLY_BURST_WINDOW_MS = 5000;
+const EARLY_BURST_MIN_CHECKS = 3;
 
-const RETRY_CLASSES = Object.freeze(['run_fault', 'flaky', 'failed']);
+const RETRY_CLASSES = Object.freeze(['early_burst', 'flaky', 'failed']);
 
 function finiteMs(value) {
   const n = Number(value);
@@ -82,15 +91,15 @@ function classifyRetries(frames) {
     const primary = primaries.get(index);
     if (!primary || primary.status === 'pass' || passes !== retries.length) continue;
     const started = finiteMs(primary.startedMs);
-    if (started == null || started > RUN_FAULT_WINDOW_MS) continue;
+    if (started == null || started > EARLY_BURST_WINDOW_MS) continue;
     const pod = typeof primary.pod === 'string' ? primary.pod : '';
     if (!candidates.has(pod)) candidates.set(pod, []);
     candidates.get(pod).push({ index, started });
   }
   const bursts = [];
   for (const [pod, checks] of candidates) {
-    if (checks.length < RUN_FAULT_MIN_CHECKS) continue;
-    for (const c of checks) byIndex.set(c.index, 'run_fault');
+    if (checks.length < EARLY_BURST_MIN_CHECKS) continue;
+    for (const c of checks) byIndex.set(c.index, 'early_burst');
     bursts.push({
       pod: pod || null,
       checks: checks.length,
@@ -102,7 +111,7 @@ function classifyRetries(frames) {
 
 // How the run's retried checks split, for the log line (no names, no URLs).
 function retryCounts(byIndex) {
-  const out = { run_fault: 0, flaky: 0, failed: 0 };
+  const out = { early_burst: 0, flaky: 0, failed: 0 };
   for (const cls of (byIndex instanceof Map ? byIndex.values() : [])) {
     if (Object.prototype.hasOwnProperty.call(out, cls)) out[cls] += 1;
   }
@@ -168,8 +177,9 @@ function markAuthored(rows, authored) {
 const COHORT_FALLBACK_NOTE = 'This check needed a fresh load after an address change: fix the navigation '
   + '(an address change must draw what a fresh load of that address draws).';
 const RETRY_CLASS_NOTES = Object.freeze({
-  run_fault: 'Failed at the start of the run together with other checks, then passed every retry: the run '
-    + 'was at fault, not this check or this change.',
+  early_burst: 'Failed early in the run together with other checks, then passed every retry. This often means '
+    + 'the test environment was not ready yet, but it is not proof: check that this change does not break the '
+    + 'screen this check opens.',
   flaky: 'Failed, then passed at least one retry: this check is flaky on this build.',
   failed: 'Failed every retry as well: a real failure.',
 });
@@ -192,8 +202,8 @@ function advisoriesOf(results, { limit = 20 } = {}) {
 }
 
 module.exports = {
-  RUN_FAULT_WINDOW_MS,
-  RUN_FAULT_MIN_CHECKS,
+  EARLY_BURST_WINDOW_MS,
+  EARLY_BURST_MIN_CHECKS,
   RETRY_CLASSES,
   COHORT_FALLBACK_NOTE,
   RETRY_CLASS_NOTES,

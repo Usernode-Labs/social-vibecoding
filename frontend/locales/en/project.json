@@ -2251,9 +2251,9 @@
     "text": "Passed on retry",
     "description": "Link-like label at the right end of an automated check's row on a change's page, for a check that failed once and passed when run again: opens the reason of the first failure."
   },
-  "topic.check.runFault": {
-    "text": "Run fault",
-    "description": "Link-like label at the right end of an automated check's row on a change's page, for a check that failed in a burst at the start of the test run and passed every time it was run again: the test run was at fault, not the check. Opens the explanation."
+  "topic.check.earlyBurst": {
+    "text": "Failed early, then passed",
+    "description": "Link-like label at the right end of an automated check's row on a change's page, for a check that failed in a burst of failures at the start of the test run and passed every time it was run again. Opens the explanation, which names a likely cause without excusing the change."
   },
   "topic.check.freshLoad": {
     "text": "Needed a fresh load",

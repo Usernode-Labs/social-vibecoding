@@ -3987,19 +3987,20 @@ function registerTools(server, ctx) {
             + 'The merge gate treats it as that pass. Only automatic re-runs reuse; recheck_change always runs '
             + 'the suite again. Null when the suite ran in this run.'),
         advisories: z.array(z.object({
-          kind: z.enum(['run_fault', 'flaky', 'failed', 'cohort_fallback']),
+          kind: z.enum(['early_burst', 'flaky', 'failed', 'cohort_fallback']),
           name: z.string(),
           path: z.string().nullable(),
           status: z.enum(['pass', 'fail']),
           note: z.string(),
           waitMs: z.number().nullable(),
         })).optional()
-          .describe('Advisory, never a verdict. Per retried check, why it was retried: run_fault (one of a burst of '
-            + 'failures in the run\'s first seconds whose retries all passed: the run was at fault, not the check or '
-            + 'this change; do not change code for it), flaky (some retries passed) or failed (every retry failed: '
-            + 'a real failure). And cohort_fallback for a check this proposal adds or changes that held only on a '
-            + 'fresh load after its address change: fix the navigation so an address change draws what a fresh load '
-            + 'of that address draws; waitMs is how long the run waited on the address change first.'),
+          .describe('Advisory, never a verdict. Per retried check, how it was retried: early_burst (one of a burst of '
+            + 'failures in the run\'s first seconds whose retries all passed; often the environment was not ready, '
+            + 'but that is not proof: check that the change does not break the screen the check opens), flaky (some '
+            + 'retries passed) or failed (every retry failed: a real failure). And cohort_fallback for a check this '
+            + 'proposal adds or changes that held only on a fresh load after its address change: fix the navigation so '
+            + 'an address change draws what a fresh load of that address draws; waitMs is how long the run waited on '
+            + 'the address change first.'),
         error: z.string().nullable()
           .describe('What broke when a run errored before any test could report — a build or preview failure, not '
             + 'a test failure, so there is no test to fix.'),
@@ -4170,7 +4171,7 @@ function registerTools(server, ctx) {
         source: z.string().nullable(),
       })).describe('A declared check\'s console/page errors. Empty on the unit suite row.'),
       advisories: z.array(z.object({
-        kind: z.enum(['run_fault', 'flaky', 'failed', 'cohort_fallback']),
+        kind: z.enum(['early_burst', 'flaky', 'failed', 'cohort_fallback']),
         name: z.string(),
         path: z.string().nullable(),
         status: z.enum(['pass', 'fail']),

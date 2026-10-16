@@ -1224,14 +1224,40 @@ function classifyTests(frames, expectedCount, options) {
 // The run's own signals, beside its verdict (services/check-signals.js).
 // Never throws and never changes a verdict.
 //
-//   * Logs how the retried checks split, and a burst of run-fault failures
-//     as a warning of its own ("Checks run fault"), so a cold preview that
-//     failed a pod's first groups is counted in Loki the day it happens.
+//   * Logs how the retried checks split, and a burst of early failures whose
+//     retries all passed as a warning of its own ("Checks early retry
+//     burst"), so a cold preview that failed a pod's first groups is counted
+//     in Loki the day it happens. A suspicion, not a finding: the same shape
+//     is an app whose address change throws (review of #5322).
 //   * Marks `authored` on the rows that needed a cohort fallback and are
-//     checks this proposal adds or changes, compared with main's dapp.json:
-//     those carry the "fix the navigation" note. Two reads of dapp.json,
-//     only when a row needs them.
-async function noteCheckSignals(checksResult, frames, { sessionId, commitHash, repoOwner, repoName } = {}) {
+//     checks this proposal adds or changes: those carry the "fix the
+//     navigation" note. Compared against the proposal's MERGE BASE, an
+//     immutable commit, never main's tip: a main that moved on would else
+//     hand a check nobody here touched to this author, or hide the note on
+//     one they did. When dapp.json is not among the proposal's changes no
+//     check is theirs and nothing is read; otherwise dapp.json is read at
+//     the head and at the merge base. Anything unread, or slower than
+//     SIGNAL_READ_TIMEOUT_MS all told, leaves no note: the advice is the
+//     one thing here allowed to be missing.
+const SIGNAL_READ_TIMEOUT_MS = 8000;
+const signalDeps = {
+  compareRefs: (owner, repo, basehead) => github.compareRefs(owner, repo, basehead),
+  readDeclaredTests: (owner, repo, ref) => resolveDeclaredTests(owner, repo, ref),
+};
+async function authoredSince(repoOwner, repoName, commitHash, deps) {
+  const cmp = await deps.compareRefs(repoOwner, repoName, `main...${commitHash}`);
+  const mergeBase = cmp && cmp.mergeBaseSha;
+  if (!mergeBase) return null;
+  if (cmp.filesComplete && Array.isArray(cmp.files) && !cmp.files.includes(appManifest.MANIFEST_FILENAME)) {
+    return new Set();
+  }
+  const [head, base] = await Promise.all([
+    deps.readDeclaredTests(repoOwner, repoName, commitHash),
+    deps.readDeclaredTests(repoOwner, repoName, mergeBase),
+  ]);
+  return checkSignals.authoredChecks(head, base);
+}
+async function noteCheckSignals(checksResult, frames, { sessionId, commitHash, repoOwner, repoName } = {}, deps = signalDeps) {
   try {
     const { byIndex, bursts } = checkSignals.classifyRetries(frames);
     if (byIndex.size) {
@@ -1240,21 +1266,32 @@ async function noteCheckSignals(checksResult, frames, { sessionId, commitHash, r
       });
     }
     for (const burst of bursts) {
-      log.warn('visuals', 'Checks run fault', {
+      log.warn('visuals', 'Checks early retry burst', {
         sessionId, commitHash: commitHash || null, pod: burst.pod, checks: burst.checks,
-        lastStartedMs: burst.lastStartedMs, windowMs: checkSignals.RUN_FAULT_WINDOW_MS,
+        lastStartedMs: burst.lastStartedMs, windowMs: checkSignals.EARLY_BURST_WINDOW_MS,
       });
     }
     const rows = checksResult && Array.isArray(checksResult.results) ? checksResult.results : [];
     const fellBack = rows.filter((r) => r && r.cohortFallback);
     if (!fellBack.length || !repoOwner || !repoName || !commitHash) return;
-    const [head, base] = await Promise.all([
-      resolveDeclaredTests(repoOwner, repoName, commitHash),
-      resolveDeclaredTests(repoOwner, repoName, 'main'),
-    ]);
-    const marked = checkSignals.markAuthored(rows, checkSignals.authoredChecks(head, base));
+    let timer = null;
+    const timedOut = new Promise((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), deps.timeoutMs || SIGNAL_READ_TIMEOUT_MS);
+      if (timer && typeof timer.unref === 'function') timer.unref();
+    });
+    let authored;
+    try {
+      // A read that fails, or settles after the deadline, is no note, never
+      // an unhandled rejection.
+      const reads = authoredSince(repoOwner, repoName, commitHash, deps).catch(() => null);
+      authored = await Promise.race([reads, timedOut]);
+    } finally {
+      clearTimeout(timer);
+    }
+    const marked = authored === 'timeout' ? 0 : checkSignals.markAuthored(rows, authored);
     log.info('visuals', 'Checks cohort fallbacks', {
       sessionId, commitHash, checks: fellBack.length, authored: marked,
+      ...(authored === 'timeout' ? { authorship: 'timed out' } : (authored ? {} : { authorship: 'unread' })),
       waitMs: fellBack.reduce((n, r) => n + (r.cohortFallback.waitMs || 0), 0),
     });
   } catch (err) {

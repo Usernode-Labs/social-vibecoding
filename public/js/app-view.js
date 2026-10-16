@@ -18727,10 +18727,11 @@ const AppView = {
     // and rides as a parameter after the sentence.
     const values = { count: runs, fails, reason: base };
     // Its failure was one of a burst in the run's first seconds whose
-    // retries all passed (services/check-signals.js): the run's fault, and
-    // calling the check flaky would blame the wrong thing.
-    if (r && r.passedOnRetry && r.retryClass === 'run_fault') {
-      return base ? PlatformI18n.t('changes:checks.reason.runFaultWith', { reason: base }) : PlatformI18n.t('changes:checks.reason.runFault');
+    // retries all passed (services/check-signals.js). That is often the
+    // environment, but not proof of it, so the sentence names the likely
+    // cause and still asks the author to look.
+    if (r && r.passedOnRetry && r.retryClass === 'early_burst') {
+      return base ? PlatformI18n.t('changes:checks.reason.earlyBurstWith', { reason: base }) : PlatformI18n.t('changes:checks.reason.earlyBurst');
     }
     if (r && r.passedOnRetry) {
       return base ? PlatformI18n.t('changes:checks.reason.failedThenPassedWith', values) : PlatformI18n.t('changes:checks.reason.failedThenPassed', values);
@@ -18783,7 +18784,7 @@ const AppView = {
       // the reason, because "it failed" and "it failed once out of three"
       // call for different next moves.
       reason: AppView._checkReason(r),
-      retryClass: (r && r.passedOnRetry && r.retryClass === 'run_fault') ? 'run_fault' : null,
+      retryClass: (r && r.passedOnRetry && r.retryClass === 'early_burst') ? 'early_burst' : null,
       // A check this proposal adds or changes that held only on a fresh
       // load after its address change (services/check-signals.js). Advisory:
       // the row's verdict is its own.
