@@ -767,6 +767,15 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-thread-name,
 .messages-thread-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .messages-thread-name { color: var(--text-primary); font-size: 17px; font-weight: 700; }
+/* #5329: a change title that opens the Details sheet — a reset button that
+   reads as the heading it sits in, underlined only on hover. */
+.messages-thread-name-link {
+  appearance: none; border: 0; background: none; padding: 0; margin: 0;
+  font: inherit; color: inherit; cursor: pointer;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.messages-thread-name-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.messages-thread-name-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .messages-thread-sub { color: var(--text-muted); font-size: 15px; }
 .messages-thread-menu {
   position: absolute;
