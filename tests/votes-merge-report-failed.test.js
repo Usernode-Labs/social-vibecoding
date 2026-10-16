@@ -1,15 +1,16 @@
-// Regression: a GitHub merge that succeeds but whose post-merge step (prod
-// rebuild, staging teardown, …) THROWS must NOT roll the session back to
+// Regression: a GitHub merge that succeeds but whose report to the
+// merge-followups workflow machine THROWS must NOT roll the session back to
 // 'promoted'. The PR is merged on GitHub — re-opening it for voting is the
-// bug that left whiteboard #41/#44/#52/#54 showing "up for voting" forever
-// (the prod rebuild kept failing on a newly-required secret with no
-// production value). Instead checkAndMerge must mark the session 'merged'
-// and broadcast merged:true + deployFailed:true.
+// bug that left whiteboard #41/#44/#52/#54 showing "up for voting" forever.
+// Instead checkAndMerge leaves the row 'merging' and answers merged with
+// its follow-ups pending: recoverStuckMerges (server.js) finds the merge on
+// GitHub and reports it again. Nothing outside the machine moves the row
+// into 'merged' (its ownership guard would refuse it).
 //
 // Same require.cache stubbing pattern as votes-merge-failed-broadcast.test.js
-// — nothing real (GitHub, docker, staging) spins up.
+// — nothing real (GitHub, docker, the workflow runtime) spins up.
 //
-// Run with: node --test tests/votes-merge-deploy-failed.test.js
+// Run with: node --test tests/votes-merge-report-failed.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -51,13 +52,13 @@ function makeRecordingPool(handlers) {
 }
 
 // Loads routes/votes with collaborators stubbed: mergePR SUCCEEDS, but
-// staging.rebuildProduction THROWS (the missing-secret failure mode).
-function loadVotesWithFailingRebuild(rebuildError) {
+// the report to the merge-followups machine THROWS.
+function loadVotesWithFailingReport(reportError) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
-    staging: require.resolve('../src/services/staging'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     docker: require.resolve('../src/services/docker'),
     resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
@@ -81,9 +82,9 @@ function loadVotesWithFailingRebuild(rebuildError) {
     // Succeeds and returns a squash-merge SHA, just like the real one.
     mergePR: async () => ({ sha: 'deadbeefcafe', merged: true }),
   });
-  stub(ids.staging, {
-    rebuildProduction: async () => { throw rebuildError; },
-    teardownStaging: async () => {},
+  const reports = [];
+  stub(ids.platform, {
+    mergeConfirmed: async (m) => { reports.push(m); throw reportError; },
   });
   stub(ids.docker, {});
   stub(ids.resolver, {
@@ -115,7 +116,7 @@ function loadVotesWithFailingRebuild(rebuildError) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, voteUpdates, systemMessages, restore };
+  return { subject, voteUpdates, systemMessages, reports, restore };
 }
 
 const session = {
@@ -125,68 +126,27 @@ const session = {
   reviewed_head_sha: 'a'.repeat(40),
 };
 
-// The apps row must exist + be non-self-hosted so the rebuild branch runs.
 const pool = () => makeRecordingPool([
   [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '1' }]],
   [/SET status = 'merging'/, [{ id: 7 }]],
-  [/SELECT \* FROM apps WHERE id/, [{ id: 5, slug: 'whiteboard', self_hosted: false }]],
-  [/SET\s+status = 'merged'/, { rows: [], rowCount: 1 }],
 ]);
 
-test('post-merge rebuild failure marks session merged (not promoted) and broadcasts deployFailed', async () => {
-  const err = new Error('missing required secrets: PREMIUM_BRUSH_PAYEE_PUBKEY');
-  const { subject, voteUpdates, systemMessages, restore } = loadVotesWithFailingRebuild(err);
+test('a merge whose report to the machine fails stays merging for recovery, never promoted', async () => {
+  const { subject, voteUpdates, reports, restore } = loadVotesWithFailingReport(new Error('the workflow runtime is not running'));
   const p = pool();
   try {
     const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session }, { force: true });
 
-    // The PR IS merged on GitHub — the result reflects that, with the
-    // deploy failure surfaced separately.
-    assert.equal(r.merged, true);
-    assert.equal(r.deployFailed, true);
-    assert.ok(/PREMIUM_BRUSH_PAYEE_PUBKEY/.test(r.error));
+    // The PR IS merged on GitHub; recovery records it.
+    assert.deepEqual(r, { merged: true, followupsPending: true });
+    assert.equal(reports.length, 1);
+    assert.equal(reports[0].sessionId, 7);
+    assert.equal(reports[0].mergeSha, 'deadbeefcafe');
 
-    // It marked the row merged — and NEVER rolled back to 'promoted'.
-    const markedMerged = p.queries.some((q) => /SET\s+status = 'merged'/.test(q.sql));
-    const rolledBack = p.queries.some((q) => /SET status = 'promoted'\s+WHERE id/.test(q.sql));
-    assert.ok(markedMerged, 'session marked merged after the deploy failure');
-    assert.ok(!rolledBack, 'session was NOT rolled back to promoted');
-
-    // The merge SHA captured from mergePR is persisted via COALESCE.
-    const mergedQ = p.queries.find((q) => /SET\s+status = 'merged'/.test(q.sql));
-    assert.equal(mergedQ.params[1], 'deadbeefcafe');
-
-    // A "merged but deploy failed" notice went to the group chat.
-    assert.ok(systemMessages.some((m) => /merged on GitHub.*deploy failed/i.test(m)));
-
-    // Exactly one vote_update with merged:true + deployFailed:true; never
-    // a mergeFailed/rollback broadcast.
-    const merged = voteUpdates.filter((u) => u.merged === true && u.deployFailed === true);
-    assert.equal(merged.length, 1);
-    assert.equal(merged[0].sessionId, 7);
+    // Neither moved into 'merged' here nor rolled back to 'promoted'.
+    assert.ok(!p.queries.some((q) => /SET\s+status = 'merged'/.test(q.sql)), 'only the machine moves a row into merged');
+    assert.ok(!p.queries.some((q) => /SET status = 'promoted'\s+WHERE id/.test(q.sql)), 'never rolled back to promoted');
     assert.ok(!voteUpdates.some((u) => u.mergeFailed), 'no mergeFailed broadcast on a merged PR');
-  } finally {
-    restore();
-  }
-});
-
-// An image refused for running as root (Goalio, 15 Oct 2026: three merges
-// told "an operator can retry the deploy", which could never work). The
-// person who merged is told what to change instead.
-test('a merge whose image runs as root says what to change in the Dockerfile', async () => {
-  const err = new Error('Deployment social-apps/sv-app-5-whiteboard cannot start: app: CreateContainerConfigError: '
-    + 'container has runAsNonRoot and image will run as root (pod: "sv-app-5-x", container: app)');
-  err.healthcheckFailed = true;
-  const { subject, systemMessages, restore } = loadVotesWithFailingRebuild(err);
-  try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool(), { ...session }, { force: true });
-    assert.equal(r.merged, true);
-    assert.equal(r.deployFailed, true);
-    const said = systemMessages.find((m) => /merged on GitHub/.test(m));
-    assert.match(said, /cannot go live/);
-    assert.match(said, /USER 1000:1000/);
-    assert.match(said, /previous version/);
-    assert.doesNotMatch(said, /an operator can retry/);
   } finally {
     restore();
   }

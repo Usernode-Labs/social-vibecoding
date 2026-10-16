@@ -238,6 +238,74 @@ test('transient HTTP failures retain seconds while authentication loss clears th
   assert.deepEqual(h.usage.debug().state, { owner: null, batches: [], buffers: {} });
 });
 
+// #5235: an acknowledged upload announces itself, so a challenge screen that
+// is open can read the new count at once instead of waiting for a reload.
+test('an acknowledged upload announces the app once, with the slug', async () => {
+  const recorded = [];
+  const h = await collectorHarness({
+    collectorOptions: { onRecorded: (slug) => recorded.push(slug) },
+  });
+  h.signal('ready');
+  h.signal('activity');
+  h.advance(1_000);
+  assert.equal(await h.usage.flush(), true);
+  assert.deepEqual(recorded, ['notes']);
+});
+
+test('a failed, 5xx, dropped-4xx, 401 or unstaged upload announces nothing', async () => {
+  const recorded = [];
+  const h = await collectorHarness({
+    collectorOptions: { onRecorded: (slug) => recorded.push(slug) },
+  });
+  h.signal('ready');
+  h.signal('activity');
+  h.advance(1_000);
+  h.setFetch(async () => { throw new Error('lost'); });
+  assert.equal(await h.usage.flush(), false);
+  h.setFetch(async () => ({ ok: false, status: 503 }));
+  assert.equal(await h.usage.flush(), false);
+  h.setFetch(async () => ({ ok: false, status: 422 }));
+  assert.equal(await h.usage.flush(), true, 'the dropped receipt counts as sent');
+  assert.equal(h.usage.debug().state.batches.length, 0);
+  assert.deepEqual(recorded, [], 'a dropped 4xx never announces');
+
+  const authless = await collectorHarness({
+    fetch: async () => ({ ok: false, status: 401 }),
+    collectorOptions: { onRecorded: (slug) => recorded.push(slug) },
+  });
+  authless.signal('ready');
+  authless.signal('activity');
+  authless.advance(1_000);
+  assert.equal(await authless.usage.flush(), false);
+
+  const idle = await collectorHarness({
+    collectorOptions: { onRecorded: (slug) => recorded.push(slug) },
+  });
+  assert.equal(await idle.usage.flush(), false, 'nothing staged sends nothing');
+  assert.deepEqual(recorded, []);
+});
+
+test('the default announcement dispatches the recorded event on document', async () => {
+  const { APP_ACTIVITY_RECORDED_EVENT } = await import(MODULE_URL);
+  const events = [];
+  const bus = new EventTarget();
+  const prior = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: bus });
+  try {
+    bus.addEventListener(APP_ACTIVITY_RECORDED_EVENT, (e) => events.push(e.detail && e.detail.slug));
+    const h = await collectorHarness();
+    h.signal('ready');
+    h.signal('activity');
+    h.advance(1_000);
+    assert.equal(await h.usage.flush(), true);
+    for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
+    assert.deepEqual(events, ['notes'], 'the challenge screens hear the acknowledgement');
+  } finally {
+    if (prior) Object.defineProperty(globalThis, 'document', prior);
+    else delete globalThis.document;
+  }
+});
+
 test('switching accounts clears the prior account queue and buffers', async () => {
   const h = await collectorHarness({ fetch: async () => { throw new Error('offline'); } });
   h.signal('ready');

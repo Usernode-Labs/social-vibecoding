@@ -1750,7 +1750,7 @@ async function seedSelfApp(pool, config) {
   // DO UPDATE deliberately does NOT touch name — the reconcile below is
   // the single place the self-app display name is resolved from
   // dapp.json (so a merged self-app rename PR actually applies on the
-  // post-deploy reboot, same as child apps do in rebuildProduction).
+  // post-deploy reboot, same as child apps do in deployProduction).
   const { rows: selfRows } = await pool.query(
     `INSERT INTO apps
        (name, slug, repo_url, container_id, status, self_hosted,
@@ -1787,13 +1787,13 @@ async function seedSelfApp(pool, config) {
     await appManifest.reconcileAppIcon(pool, selfRows[0], manifest, repoRoot)
       .catch((err) => log.warn('db', 'Self-app icon reconcile failed', { err: err.message }));
     // And the `governance` block (issue #646). The self-app deploys via
-    // GitHub Actions (rebuildProduction never runs for it), so this
+    // GitHub Actions (deployProduction never runs for it), so this
     // boot-time reconcile is where a merged governance-change PR's
     // proposal-approval settings actually apply.
     await appManifest.reconcileAppGovernance(pool, selfRows[0], manifest)
       .catch((err) => log.warn('db', 'Self-app governance reconcile failed', { err: err.message }));
     // And the `topics` array (#4417), for the same reason: the self-app
-    // never runs rebuildProduction, so a merged topics PR's new topic,
+    // never runs deployProduction, so a merged topics PR's new topic,
     // rename, merge or archive applies on the post-deploy boot.
     await appManifest.reconcileAppTopics(pool, selfRows[0], manifest)
       .catch((err) => log.warn('db', 'Self-app topics reconcile failed', { err: err.message }));
@@ -2952,7 +2952,7 @@ async function seedStagingChatEditFixtures(pool, config) {
 // The key is STAGING_DEMO_PUBLIC_URL, which seedStagingPlatformEnv() also
 // declares and sets. That pairing is deliberate: because this is the
 // SELF-hosted app, voting the fixture through exercises the platform-env
-// apply branch (write via the platform-env DAO, no rebuildProduction) and
+// apply branch (write via the platform-env DAO, no deployProduction) and
 // the reviewer can see the change land on the matching row in the Platform
 // variables panel. A key nothing declares would still apply, but as an
 // orphan row — a worse demo of the normal case.
@@ -7588,6 +7588,7 @@ async function seedStagingShotsNoticed(pool) {
        SELECT $1::varchar, $2::int, $3::varchar, $4::varchar, $5::varchar, $6::jsonb, $7::jsonb, $8::jsonb,
               'verified', 'staging-fixture', NOW() - interval '3 hours', NOW() - interval '3 hours'
         WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $2::int AND app_id = 900106)
+          AND NOT wf_holds('shots', 'session:' || $2::int)
        ON CONFLICT (id) DO NOTHING`,
       [runId, id, baseSha, headSha, planHash, JSON.stringify(intent), JSON.stringify(verdict),
         JSON.stringify(cleaned)]

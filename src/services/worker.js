@@ -1,7 +1,6 @@
 'use strict';
 
 const { spawn } = require('child_process');
-const net = require('node:net');
 const log = require('./logger');
 const platformJwt = require('./platform-jwt');
 const docker = require('./docker');
@@ -77,22 +76,6 @@ async function execWorkerCommand(runtimeName, command, stdinText = null, {
 // for self-hosted deployments that put the platform on a different
 // hostname / port.
 const PLATFORM_INTERNAL_URL = process.env.PLATFORM_INTERNAL_URL || 'http://usernode:3000';
-
-// Shots controls are intentionally process-local: the run's paired
-// environments and callbacks live in the Pod that scheduled it. During a
-// rolling update the shared Service also points at the other color, so a
-// shots worker must call this Pod directly or half its tools see an empty
-// control registry. Ordinary worker traffic remains on the shared Service.
-function shotsControlUrl({ podIp = process.env.POD_IP, port = process.env.PORT,
-  fallback = PLATFORM_INTERNAL_URL } = {}) {
-  const family = net.isIP(String(podIp || ''));
-  const selectedPort = Number(port || 3000);
-  if (!family || !Number.isInteger(selectedPort) || selectedPort < 1 || selectedPort > 65535) {
-    return fallback;
-  }
-  const host = family === 6 ? `[${podIp}]` : podIp;
-  return `http://${host}:${selectedPort}`;
-}
 
 // Worker JWTs are short-lived but cover the entire chat session; 24h is
 // the cap any single session is allowed to run before re-auth becomes
@@ -3796,7 +3779,7 @@ async function execInWorker(sessionId, {
     BRANCH: branchName || '',
     COMMIT_MSG: commitMsg || 'Changes via Homeroom',
     SESSION_ID: String(sessionId),
-    PLATFORM_URL: mode === 'shots' ? shotsControlUrl() : PLATFORM_INTERNAL_URL,
+    PLATFORM_URL: PLATFORM_INTERNAL_URL,
     // usernode-push rides out a platform restart only when asked to: every
     // real turn asks, and a test or a stray run of the script tries once.
     USERNODE_PUSH_RETRY: '1',
@@ -4278,7 +4261,7 @@ async function remoteTurn(sessionId) {
   const meta = _warmRegistry.get(sid);
   if (meta && meta.inFlight) return null;
   const processes = require('./processes');
-  if (!processes.heldElsewhere('session', sid) && !processes.heldElsewhere('shots', sid)) return null;
+  if (!processes.heldElsewhere('session', sid)) return null;
   const cached = _remoteTurns.get(sid);
   if (cached && Date.now() - cached.at < REMOTE_TURN_TTL_MS) return cached.turn;
   const pool = _getPoolSafe();
@@ -5667,58 +5650,6 @@ async function destroyCcVolume(sessionId) {
   _warmRegistry.delete(sessionId);
 }
 
-// A before/after shots run works inside its proposal's own worker, and a
-// merge retires that worker. Retiring it mid-run killed the shots agent
-// about 30 seconds later, when Kubernetes' grace period for the deleted
-// pod ran out (exit cause container_gone). So a shots run holds the worker
-// for as long as it runs: a retirement that arrives meanwhile is recorded,
-// and the release of the last hold carries it out. Whichever comes second
-// does the teardown, and only once.
-//
-// Both sides run in this process (the platform is one pod, and the shots
-// control plane is in memory for the same reason), and each checks the
-// other and records itself in one synchronous step, so neither can slip
-// between the other's check and record. A restart drops the holds along
-// with the runs that held them; the hourly volume sweep frees a merged
-// change's leftover volume.
-const _workerHolds = new Map();
-
-function holdWorker(sessionId) {
-  const id = Number(sessionId);
-  const hold = _workerHolds.get(id) || { count: 0, retire: false };
-  hold.count += 1;
-  _workerHolds.set(id, hold);
-  let released = false;
-  return {
-    // Resolves true when this release retired the worker.
-    async release() {
-      if (released) return false;
-      released = true;
-      hold.count -= 1;
-      if (hold.count > 0) return false;
-      if (_workerHolds.get(id) === hold) _workerHolds.delete(id);
-      if (!hold.retire) return false;
-      log.info('worker', 'Retiring the worker a shots run kept through its merge', { sessionId: id });
-      await destroyCcVolume(id);
-      return true;
-    },
-  };
-}
-
-// The change is finished for good (it merged): delete its worker and
-// volume now, or when the shots run holding them ends.
-async function retireWorker(sessionId) {
-  const id = Number(sessionId);
-  const hold = _workerHolds.get(id);
-  if (hold) {
-    hold.retire = true;
-    log.info('worker', 'Worker retirement waits for its shots run to finish', { sessionId: id });
-    return { deferred: true };
-  }
-  await destroyCcVolume(id);
-  return { deferred: false };
-}
-
 // Kubernetes worker state volumes, one per change (see
 // worker-volume-reclaim.js). A Docker host has no volume quota to manage.
 async function listWorkerVolumes() {
@@ -6013,8 +5944,6 @@ module.exports = {
   listOrphanWorkers,
   destroyWorker,
   destroyCcVolume,
-  holdWorker,
-  retireWorker,
   listWorkerVolumes,
   eraseAccountWorkspace,
   setAccountDeletionGuard,
@@ -6049,7 +5978,6 @@ module.exports = {
   // #616: prod-debug JWT + pure turn-env builder (exported for tests)
   mintProdDebugJwt,
   mintShotsJwt,
-  shotsControlUrl,
   claudeTurnModel,
   buildTurnSecretEnv,
   // #3296: harness-aware backend resolution and result shape (for tests)

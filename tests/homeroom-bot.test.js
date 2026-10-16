@@ -1631,8 +1631,6 @@ test('the loop is leader-only, locked, ships off, and its spend joins the shared
   assert.match(schema, /CREATE TABLE IF NOT EXISTS homeroom_bot_queue/);
   assert.match(schema, /CREATE TABLE IF NOT EXISTS homeroom_bot_runs/);
   assert.match(schema, /\('homeroom_bot_mode', 'off'\)/, 'the setting seeds off');
-  assert.ok(schema.indexOf('homeroom_bot_runs') < schema.indexOf('CREATE TABLE IF NOT EXISTS preview_operations'),
-    'preview_operations stays the last block in schema.sql');
   assert.match(SRC, /limits\.checkBudget\(pool, bot\.id\)/, 'gated by the weekly cap before every turn');
   assert.match(SRC, /usesIncludedKey\(pool, bot\.id\)/);
   assert.match(SRC, /limits\.recordSpend\(pool, bot\.id/, 'debited into llm_usage like any included-key turn');
@@ -1823,8 +1821,10 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // (about 120 more) lets a request that is already there be offered for
   // closing instead of left at "a person decides". Newcomer run six (14 Oct
   // 2026): the UI design guidance's line on forms on a phone (about 335
-  // characters), which every build reads, rides in the reference too.
-  assert.ok(prompt.length < 21500, `a triage prompt stays small: ${prompt.length} chars`);
+  // characters), which every build reads, rides in the reference too. #5224:
+  // the plan lines' rule (about 330 more), so the plan card's lines stay
+  // short and one point each.
+  assert.ok(prompt.length < 22100, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
   assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\."\}$/);
 });

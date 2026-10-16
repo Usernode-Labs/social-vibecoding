@@ -8921,6 +8921,38 @@ const AppView = {
     const t = AppView._devTopic;
     return !!t && (t.kind === 'proposal' || t.kind === 'session') && Number(t.id) === id;
   },
+  // #5233: a proposal has just merged (the vote_update carrying
+  // `merged: true`), and the board's cached lists must agree. The server's
+  // open-proposals list already leaves merged rows out, so the stale card
+  // was pure cache. This patches the cached row's status to 'merged' — every
+  // later paint from these lists, a board reopen's included, drops it from
+  // Waiting for approval — and, while the board they belong to is NOT
+  // showing live (the board's own burst refresh covers that), re-reads its
+  // proposals + merged parts in the background, so the row is in Done when
+  // the board next paints. Writes caches only, and never repaints: an open
+  // proposal page is undisturbed (_topicRowFor also looks in _merged, so it
+  // still finds the row there after the partial load moves it).
+  //
+  // `appSlug` decides whose lists these are (_devDataSlug names the app the
+  // last load was made for), so a merge on one app never touches another's
+  // caches, and a board that has not loaded whole once does nothing here —
+  // its own whole load on open is already correct.
+  noteSessionMerged(sessionId, appSlug) {
+    if (!appSlug || AppView._devDataSlug !== appSlug) return false;
+    const id = Number(sessionId);
+    if (!Number.isFinite(id)) return false;
+    const row = (AppView._proposals || []).find((p) => p && Number(p.id) === id);
+    if (row && (row.status === 'promoted' || row.status === 'merging')) {
+      row.status = 'merged';
+    }
+    if (!AppView._devDataReady) return false;
+    if (!AppView.appData || AppView.appData.slug !== appSlug) return false;
+    if (typeof App !== 'undefined' && App.currentTab === 'dev' && App.currentSubTab === 'forum') return false;
+    // A partial load replaces _proposals and _merged in the same run; `fresh`
+    // queues it behind any run in flight so it reads after this merge write.
+    AppView._loadDevData({ fresh: true, parts: ['promoted', 'merged'] }).catch(() => {});
+    return true;
+  },
   _repaintTopicIfShowing(sessionId) {
     const t = AppView._devTopic;
     if (!t || t.kind !== 'proposal' || Number(t.id) !== Number(sessionId)) return;
@@ -10730,12 +10762,13 @@ const AppView = {
   /**
    * #4772: what Homeroom bot waits on the viewer for on this project, for
    * the Workshop's Waiting on you: Map(item key, as _workshopItemKey makes
-   * it → { why: 'plan' | 'question' | 'talk', at, botLast }), one reason an
-   * item, the first that applies. From the request list's `waitingOnYou`
-   * (services/workshop-waiting.js: its plans waiting for their Build it, its
-   * open questions in their DM, the back and forths they are in with it)
-   * and, on a request of theirs, the bot's question on its discussion that
-   * nobody has answered (`botAwaits`, #4530).
+   * it → { why: 'plan' | 'question', at }), one reason an item, the first
+   * that applies. From the request list's `waitingOnYou`
+   * (services/workshop-waiting.js: its plans waiting for their Build it and
+   * its open questions in their DM) and, on a request of theirs, the bot's
+   * question on its discussion that nobody has answered (`botAwaits`,
+   * #4530). A back and forth with the bot is not a reason (#5229), so a
+   * `talks` list an older response still carries is ignored.
    */
   _workshopWaitingOn() {
     const out = new Map();
@@ -10754,12 +10787,6 @@ const AppView = {
         if (asked && asked.kind === 'question' && issue.created_by_username === me) {
           put(`issue:${issue.number}`, { why: 'question', at: null });
         }
-      }
-    }
-    if (w && typeof w === 'object') {
-      for (const t of list(w.talks)) {
-        if (!t || !n(t.ref)) continue;
-        put(`${t.type === 'issue' ? 'issue' : 'session'}:${n(t.ref)}`, { why: 'talk', at: t.at || null, botLast: !!t.botLast });
       }
     }
     return out;
@@ -10822,11 +10849,7 @@ const AppView = {
   _workshopWaitingTag(w) {
     if (w.why === 'plan') return { label: PlatformI18n.t('changes:workshop.row.tag.planWaits'), tone: 'warn' };
     if (w.why === 'question') return { label: PlatformI18n.t('changes:workshop.row.tag.botAsked'), tone: 'warn' };
-    const ago = AppView._workshopAgo(w.at);
-    if (w.botLast) {
-      return { label: ago ? PlatformI18n.t('changes:workshop.row.tag.botReplied', { ago }) : PlatformI18n.t('changes:workshop.row.tag.botRepliedNow'), tone: 'warn' };
-    }
-    return { label: ago ? PlatformI18n.t('changes:workshop.row.tag.youReplied', { ago }) : PlatformI18n.t('changes:workshop.row.tag.youRepliedNow'), tone: 'plain' };
+    return null;
   },
 
   /**
@@ -13452,6 +13475,17 @@ const AppView = {
       return 4;
     };
 
+    // #5233: only what the server's own open-proposals list can hold buckets
+    // into In review. GET /api/apps/:slug/promoted returns status IN
+    // ('promoted','merging') (src/routes/votes.js), so a cached row whose
+    // status has since been patched to 'merged' (noteSessionMerged, on its
+    // vote_update) must leave the column on every paint from these lists —
+    // otherwise a reopened board keeps the merged card under Waiting for
+    // approval until its whole reload lands. A row with no status at all is
+    // kept, so synthetic fixtures and demo rows behave as before.
+    const openProposals = proposals.filter(
+      (p) => !p.status || p.status === 'promoted' || p.status === 'merging'
+    );
     // Issue numbers an open promoted proposal card (Column 3) addresses.
     // #1251: these used to be dropped from BOTH issue columns so they
     // wouldn't "double up" with the proposal card — but the board is the
@@ -13461,9 +13495,11 @@ const AppView = {
     // findable nowhere on the board — it survived only as a "Closes #N"
     // chip on the proposal card. It now stays on the board, in the In
     // progress column: an open proposal IS work under way, and the two
-    // cards never share a column, so nothing doubles up within one.
+    // cards never share a column, so nothing doubles up within one. Built
+    // from the same filtered list, so a merged proposal releases its issue
+    // back to wherever the issue itself says it belongs.
     const linked = new Set();
-    for (const p of proposals) {
+    for (const p of openProposals) {
       const arr = Array.isArray(p.linked_issues) ? p.linked_issues : [];
       for (const n of arr) {
         const num = parseInt(n, 10);
@@ -13490,7 +13526,7 @@ const AppView = {
     col2.sort((a, b) => issueT(b) - issueT(a));
 
     const review = [];
-    for (const p of proposals) review.push({ kind: 'proposal', item: p, _r: pinRank(p), _t: prT(p) });
+    for (const p of openProposals) review.push({ kind: 'proposal', item: p, _r: pinRank(p), _t: prT(p) });
     // Governance proposals have no merge or check state, so they sort in the
     // normal (unpinned) tier alongside non-pipeline PRs.
     for (const g of gov) review.push({ kind: 'gov', item: g, _r: 4, _t: govT(g) });

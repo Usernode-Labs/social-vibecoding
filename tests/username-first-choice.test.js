@@ -404,12 +404,6 @@ test('the column is added the way every other users column is', () => {
   const schema = read('src/db/schema.sql');
   assert.match(schema,
     /ALTER TABLE users ADD COLUMN IF NOT EXISTS needs_username_choice BOOLEAN NOT NULL DEFAULT FALSE;/);
-  // The preview_operations block has to stay last in the file — see its
-  // own comment and tests/preview-lifecycle.test.js.
-  assert.ok(
-    schema.indexOf('needs_username_choice')
-      < schema.indexOf('CREATE TABLE IF NOT EXISTS preview_operations'),
-    'the new column must sit above the trailing preview_operations block');
 });
 
 test('the backfill matches the two columns exactly, not "looks like an email"', () => {

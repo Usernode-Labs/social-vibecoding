@@ -1103,8 +1103,10 @@ function suggestedAnswers(raw, fallback = null) {
 }
 
 // B6: a plan its person sees before anything is built: at most this many
-// bullets, each at most this long (the prompt asks for 80), and at most two
-// questions, each with two to four answers (the suggested one first).
+// bullets, each at most this long (the prompts ask for 40 for a first
+// version, 60 for a complicated change; the clip is a last resort), and at
+// most two questions, each with two to four answers (the suggested one
+// first).
 const MAX_PLAN_BULLETS = 5;
 const PLAN_BULLET_MAX = 120;
 const MAX_PLAN_QUESTIONS = 2;
@@ -1664,6 +1666,21 @@ async function refreshApp(pool, app, {
       appId: app.id, openNumbers: issues.map((issue) => Number(issue.number)), deps: { github },
     });
     if (withdrawn.length) capRoom = await capRoomFor(pool, bot, app.id, settings);
+  }
+
+  // A request closed by hand on GitHub also closes the platform's own row
+  // for it, which the tray's Needs you reads (pastRuns' request_closed):
+  // nothing else closes that row on a GitHub-side close, so the request
+  // kept showing there for good (#5218). Whole, fresh list only, like the
+  // sweep; not gated on capRoom — it only closes rows GitHub confirms
+  // closed, and only for requests the bot tracks, so it changes nothing a
+  // held request or a full cap was protecting. The rest of this refresh
+  // does not read what it did.
+  if (!fetched?.note && !fetched?.truncatedList) {
+    await closedRequests().closeRequestRows(pool, {
+      appId: app.id, appSlug: app.slug, repoUrl: app.repo_url,
+      openNumbers: issues.map((issue) => Number(issue.number)), deps: { github },
+    });
   }
 
   // #3264: on a live app (capRoom is set only there) a person's reply in the
@@ -9067,8 +9084,8 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
 // after the first was merged, and the next request waited behind it.
 
 /**
- * Called by the merge (routes/votes.js finalizeMerge) once `session` is
- * merged. Only for a proposal of the bot's. Never throws; resolves what it
+ * Called by the merge-followups workflow machine's bot.requestMerged work
+ * once `session` is merged. Only for a proposal of the bot's. Never throws; resolves what it
  * did ({ skipped, stopped, withdrawn, dequeued }), or null.
  *
  * `deps.before` (the merge's time) leaves alone the builds, proposals and

@@ -166,7 +166,7 @@ test('the leader adopts only what no live process holds', { timeout: 120000 }, a
     const warmThere = await idle('warm-there');
     const busyThere = await idle('busy-there');
     const stopped = await idle('stopped');
-    await pool.query(`INSERT INTO process_holds (process_id, kind, ref) VALUES ('pod-old', 'warm', $1), ('pod-old', 'shots', $2)`,
+    await pool.query(`INSERT INTO process_holds (process_id, kind, ref) VALUES ('pod-old', 'warm', $1), ('pod-old', 'session', $2)`,
       [String(warmThere), String(busyThere)]);
     await pool.query(`UPDATE platform_processes SET heartbeat_at = NOW() WHERE id = 'pod-old'`);
     const list = async () => [leftWarm, warmThere, busyThere, left].map((id) => ({ name: `usernode-worker-${id}`, sessionId: id, state: 'running' }))

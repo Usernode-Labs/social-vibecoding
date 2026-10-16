@@ -741,7 +741,7 @@ UPDATE apps SET last_deploy_at = created_at WHERE last_deploy_at IS NULL;
 -- recorded the moment (the admin Journey's creation path says so).
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS first_running_at TIMESTAMPTZ;
 -- Snapshot of `dapp.json` from the last successful clone (createApp +
--- rebuildProduction both write it). The Secrets UI reads this so it
+-- deployProduction both write it). The Secrets UI reads this so it
 -- can render the manifest-declared keys without re-cloning, and the
 -- deploy block-on-missing-required check uses it as the source of
 -- truth for "what does this dapp create".
@@ -756,7 +756,7 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
 --   interrupted : true on a creation the platform's restarts ended, whose
 --            Retry is not counted against the creator
 -- Written by the deploy catch paths (services/app-creator.js,
--- services/staging.js rebuildProduction, the creation watchdog in
+-- services/staging.js deployProduction, the creation watchdog in
 -- services/app-creation-owner.js);
 -- cleared (NULL) on every successful deploy. Exposed API-side only to
 -- the app's creator / collaborators / admins — see routes/apps.js.
@@ -776,15 +776,13 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_failure JSONB;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_owner TEXT;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_heartbeat_at TIMESTAMPTZ;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS creating_redrives INTEGER NOT NULL DEFAULT 0;
--- A production redeploy the old governance paths owed an app (the retired
--- services/owed-redeploy.js). Nothing writes or reads these any more: the
--- governance machine owes its rebuild as durable work of its own. Left in
--- place; dropping them is a separate, irreversible step.
-ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_owed_at TIMESTAMPTZ;
-ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_owed_reason TEXT;
-ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_owner TEXT;
-ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_heartbeat_at TIMESTAMPTZ;
-ALTER TABLE apps ADD COLUMN IF NOT EXISTS redeploy_kicks INTEGER NOT NULL DEFAULT 0;
+-- Retired: a production redeploy the old governance paths owed an app (the
+-- deleted services/owed-redeploy.js). Every deploy is app-delivery's request.
+ALTER TABLE apps DROP COLUMN IF EXISTS redeploy_owed_at;
+ALTER TABLE apps DROP COLUMN IF EXISTS redeploy_owed_reason;
+ALTER TABLE apps DROP COLUMN IF EXISTS redeploy_owner;
+ALTER TABLE apps DROP COLUMN IF EXISTS redeploy_heartbeat_at;
+ALTER TABLE apps DROP COLUMN IF EXISTS redeploy_kicks;
 
 -- Admin-gated change lock. When TRUE, applying any group-voted change to
 -- this app (PR merge in routes/votes.js, a governance proposal in the
@@ -1309,22 +1307,11 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_commit_sha    
 -- A recovery sweep may release a failed merge claim only after its GitHub
 -- request has had time to finish. The timestamp is set with the claim.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_attempt_at   TIMESTAMPTZ;
--- What a merge still owes once it is recorded (routes/votes.js
--- runMergeFollowups: the PR_MERGED event, the changes it carried, the bell,
--- the bot's news, the bounties, the requests and their watch, the
--- announcement), on the legacy path (WF_MERGE_FOLLOWUPS_ENABLED off). They
--- run in the process that merged, and a restart can cut them off.
---   merge_followups_due_at  set with the status move to 'merged' (the merge's
---                           own, or recoverStuckMerges' heal of one GitHub
---                           merged), cleared once they have all run.
---                           recoverStuckMerges runs a row that still has it.
---   merge_followups_done    the follow-ups not safe to run twice that have
---                           run ('pr_merged', 'agent_note', 'merged_line'),
---                           so a resumed run skips them.
-ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_followups_due_at TIMESTAMPTZ;
-ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_followups_done TEXT[];
-CREATE INDEX IF NOT EXISTS chat_sessions_merge_followups_due_idx
-  ON chat_sessions (merge_followups_due_at) WHERE merge_followups_due_at IS NOT NULL;
+-- Retired with the old merge paths: what a merge still owed once recorded
+-- (the merge-followups machine keeps that as durable work).
+DROP INDEX IF EXISTS chat_sessions_merge_followups_due_idx;
+ALTER TABLE chat_sessions          DROP COLUMN IF EXISTS merge_followups_due_at;
+ALTER TABLE chat_sessions          DROP COLUMN IF EXISTS merge_followups_done;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS revert_of_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS chat_sessions_revert_of_idx ON chat_sessions(revert_of_session_id);
 
@@ -2923,7 +2910,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS connector_input_waits_live_idx
 -- (see src/services/app-manifest.js). Stored values for any `required`
 -- key listed there must be present at deploy time, otherwise the
 -- deploy is blocked (createApp flips status to 'awaiting_secrets';
--- rebuildProduction throws with `missingSecrets`).
+-- deployProduction throws with `missingSecrets`).
 --
 -- value_last4 is a redacted preview the UI can show without a decrypt
 -- round-trip (e.g. "ut1…abcd"). Sensitive values store NULL here so the
@@ -4493,7 +4480,8 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS platform_env_detail JSONB;
 -- chat_sessions row:
 --   status='pending'   the PR is open; the value (if any) is held here
 --   status='applied'   the PR merged and the value was written to the
---                      real store by routes/votes.js finalizeMerge()
+--                      real store by the merge (the merge-followups
+--                      workflow machine)
 --   status='discarded' the PR was withdrawn / voted down
 --
 -- `value_enc` is NULL in two legitimate cases: no value was supplied
@@ -10013,6 +10001,67 @@ CREATE INDEX IF NOT EXISTS idx_shot_diagnostic_artifacts_run
   ON shot_diagnostic_artifacts(run_id, attempt);
 COMMENT ON TABLE shot_diagnostic_artifacts IS 'staging:private';
 
+-- The shots agent's workspace for one run (a proposal's, or a shots eval's
+-- trial): its brief, and what it has said so far through its tools (the
+-- changes it skipped, its notes, the problems and conditions it noted).
+-- Written by the agent's tool calls, through whichever web process serves
+-- them (routes/internal.js, services/shots-control.js), so a restart of the
+-- process that started the run loses nothing and the agent never has to
+-- reach one particular Pod. The shots machine reads it once the agent's
+-- turn has ended (src/workflow/shots/). `kind`: 'run' is checked against
+-- the proposal's current run, 'trial' against nothing more (its runner owns
+-- it). Removed with the run's copies.
+CREATE TABLE IF NOT EXISTS shot_run_control (
+  run_id             VARCHAR(32) PRIMARY KEY CHECK (run_id ~ '^[0-9a-f]{32}$'),
+  kind               VARCHAR(8) NOT NULL DEFAULT 'run' CHECK (kind IN ('run', 'trial')),
+  session_id         INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  intent             JSONB NOT NULL,
+  context            JSONB NOT NULL,
+  home_tiles         JSONB,
+  after_only         BOOLEAN NOT NULL DEFAULT FALSE,
+  -- What the agent's dispatch needs beyond the brief: the copies' internal
+  -- addresses and the phone sign-in code their fixture copies accept.
+  agent              JSONB,
+  -- What the agent is doing now (its last tool, its provider calls), for
+  -- the owner's diagnostics only: nothing decides on it.
+  progress           JSONB,
+  expires_at         TIMESTAMPTZ NOT NULL,
+  skipped            JSONB NOT NULL DEFAULT '{}'::jsonb,
+  failed             JSONB NOT NULL DEFAULT '[]'::jsonb,
+  notes              JSONB NOT NULL DEFAULT '{}'::jsonb,
+  notices            JSONB NOT NULL DEFAULT '[]'::jsonb,
+  conditions         JSONB NOT NULL DEFAULT '{}'::jsonb,
+  skipped_all        TEXT,
+  skipped_all_failed BOOLEAN NOT NULL DEFAULT FALSE,
+  last_tool_failure  JSONB,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_shot_run_control_session ON shot_run_control(session_id);
+COMMENT ON TABLE shot_run_control IS 'staging:private';
+
+-- Every shot and clip the agent saved for a run, one row per slot (saving
+-- the same slot again replaces it). Published by copying the ready ones
+-- into shot_artifacts in the transition that publishes the run.
+CREATE TABLE IF NOT EXISTS shot_run_files (
+  run_id        VARCHAR(32) NOT NULL REFERENCES shot_run_control(run_id) ON DELETE CASCADE,
+  slot          VARCHAR(200) NOT NULL,
+  story_id      VARCHAR(96) NOT NULL,
+  viewport      VARCHAR(32) NOT NULL,
+  side          VARCHAR(8) NOT NULL CHECK (side IN ('base', 'head')),
+  variant       VARCHAR(16) NOT NULL CHECK (variant IN ('focus', 'context', 'animation')),
+  media         VARCHAR(8) NOT NULL CHECK (media IN ('png', 'webm')),
+  content_type  VARCHAR(32) NOT NULL,
+  data          BYTEA NOT NULL,
+  width         INTEGER CHECK (width IS NULL OR width > 0),
+  height        INTEGER CHECK (height IS NULL OR height > 0),
+  bytes         INTEGER NOT NULL CHECK (bytes >= 0),
+  sha256        VARCHAR(64) NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  saved_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (run_id, slot)
+);
+COMMENT ON TABLE shot_run_files IS 'staging:private';
+
 -- #2377: experimental Global Chat. These records are deliberately separate
 -- from repository-development chat_sessions and user_agent_preferences: the
 -- inexpensive global assistant may discover and operate the product, while
@@ -10296,7 +10345,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS needs_username_choice BOOLEAN NOT NUL
 --   runUrl       the workflow run on GitHub, when one was found
 --   runStatus / runConclusion   the run's own words, when found
 -- Only the self-hosted row ever carries one; a child app's merges deploy
--- through rebuildProduction and record their failures on last_failure.
+-- through deployProduction and record their failures on last_failure.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS release_stall JSONB;
 
 -- The release workflow's run for main's tip, as the drift poller last read
@@ -11530,22 +11579,9 @@ COMMENT ON TABLE moderation_message_originals IS 'staging:private';
 
 CREATE UNIQUE INDEX IF NOT EXISTS moderation_reports_unique_open ON moderation_reports(case_id,cycle,reporter_user_id) WHERE legacy_type IS NULL;
 
--- Cross-Pod ownership of a preview build/capture under the retired preview
--- lifecycle; nothing writes it since the preview machine
--- (src/workflow/preview/) became the only path. Kept for one release so a
--- rollback target still finds it; drop it after that.
-CREATE TABLE IF NOT EXISTS preview_operations (
-  session_id INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
-  desired_revision TEXT NOT NULL,
-  run_id UUID,
-  revision TEXT,
-  phase TEXT,
-  state TEXT NOT NULL DEFAULT 'queued',
-  result JSONB,
-  finished_at TIMESTAMPTZ,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-COMMENT ON TABLE preview_operations IS 'staging:private';
+-- Retired: cross-Pod ownership of a preview build under the old preview
+-- lifecycle (the preview machine owns every build since #5212).
+DROP TABLE IF EXISTS preview_operations;
 
 
 -- #2716 account deletion: the receipt carries only opaque record ids, never
@@ -13658,35 +13694,20 @@ CREATE TABLE IF NOT EXISTS wf_work_attempts (
 COMMENT ON TABLE wf_work_attempts IS 'staging:private';
 
 -- Kernel settings, written at boot (src/workflow/platform.ts):
--- 'ownership_mode' is 'raise' (the default when absent) or 'log'; in log
--- mode a write to an owned legacy column without the writer marker is
--- allowed and recorded in wf_ownership_violations instead of refused. A
--- machine whose old paths are deleted passes '@raise' to its guards
--- (wf_guard_owned_columns below), which refuse whatever this says.
--- 'enabled:<machine>' is the machine's ownership guard: a boot with the
--- machine's flag on writes it. In 'log' mode (production, where Pods
--- overlap) a boot with the flag off leaves it, and an admin removes it
--- (Admin → Workflows) once no process runs the machine; in 'raise' mode a
--- flag-off boot removes it.
+-- 'enabled:<machine>' switches the machine's ownership guards on. Every
+-- boot writes it for every machine (each is the only path for what it
+-- decides); a database no process has booted on yet has none, so its
+-- guards are off.
 CREATE TABLE IF NOT EXISTS wf_settings (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE wf_settings IS 'staging:private';
-
-CREATE TABLE IF NOT EXISTS wf_ownership_violations (
-  id          BIGSERIAL PRIMARY KEY,
-  table_name  TEXT NOT NULL,
-  column_path TEXT NOT NULL,
-  row_ref     JSONB,
-  query       TEXT,
-  application TEXT,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS wf_ownership_violations_created_idx
-  ON wf_ownership_violations (created_at DESC);
-COMMENT ON TABLE wf_ownership_violations IS 'staging:private';
+-- Retired with the machines' flags: the ownership "log mode" (a write
+-- outside a machine allowed and recorded instead of refused) and its record.
+DELETE FROM wf_settings WHERE key = 'ownership_mode';
+DROP TABLE IF EXISTS wf_ownership_violations;
 
 -- Kernel tables: instances and receipts are written only with the marker;
 -- events may be appended by anyone, but only as plain pending events, and
@@ -13726,31 +13747,25 @@ CREATE TRIGGER wf_events_writer
 --   CREATE TRIGGER issues_wf_owned BEFORE UPDATE ON issues FOR EACH ROW
 --     WHEN (OLD.kind IN ('rename', ...))
 --     EXECUTE FUNCTION wf_guard_owned_columns('status', 'payload.appliedAt');
--- An UPDATE that changes an owned path without the writer marker raises,
--- or in 'log' mode is recorded and allowed.
+-- An UPDATE that changes an owned path without the writer marker raises.
 --
 -- A first argument '@enrolled=<machine>/<key prefix>' limits the guard to
 -- rows whose instance exists (key = prefix || id), and only while the
 -- machine's guard is on (wf_settings 'enabled:<machine>', see wf_settings
--- above; wf_holds asks the same question). A machine rolled out behind a
--- flag owns a row from the moment it enrolls it; the legacy writers keep
--- the rows it has not, and every row again once its guard is off.
+-- above; wf_holds asks the same question). A machine owns a row from the
+-- moment it enrolls it.
 --
 -- A first argument '@enabled=<machine>' guards every row the trigger's WHEN
 -- clause selects, but only while the machine is switched on: for a change
 -- only the machine may make, whether or not the row is enrolled yet (the
 -- move of a proposal into 'merged' is what enrolls it).
---
--- '@raise' anywhere among the arguments refuses a write outside the
--- machine even while 'ownership_mode' is 'log': the machine's old paths are
--- deleted, so no writer of these columns is left outside it.
 -- Whether a machine holds this instance and is on: what an `@enrolled=`
 -- guard below checks before it guards a row. Code outside the machine that
 -- must leave such a row alone (a legacy migration, a backfill) asks the same
 -- question in its WHERE clause, so the two cannot disagree.
--- An instance a machine has handed back holds nothing: 'detached' (its flag
--- was turned off and the old paths own the row again) and the preview
--- machine's 'retired' (a retired preview's row is the old paths' again, as
+-- An instance a machine has handed back holds nothing: 'detached' (left by
+-- the preview machine's flag, before its old paths were deleted) and the
+-- preview machine's 'retired' (a retired preview's row is the old paths' again, as
 -- an unarchived proposal's must be until its next event).
 CREATE OR REPLACE FUNCTION wf_holds(machine_name TEXT, instance_key TEXT) RETURNS BOOLEAN AS $$
   SELECT EXISTS (SELECT 1 FROM wf_settings WHERE key = 'enabled:' || machine_name)
@@ -13765,7 +13780,6 @@ DECLARE
   sub TEXT;
   before JSONB;
   after JSONB;
-  mode TEXT;
   enrolled TEXT;
 BEGIN
   IF current_setting('app.wf_writer', true) = 'transition' THEN
@@ -13790,20 +13804,7 @@ BEGIN
     sub := NULLIF(split_part(owned, '.', 2), '');
     IF (sub IS NULL AND (after -> col) IS DISTINCT FROM (before -> col))
        OR (sub IS NOT NULL AND (after -> col -> sub) IS DISTINCT FROM (before -> col -> sub)) THEN
-      -- '@raise' among the arguments: the machine's old paths are deleted,
-      -- so a write outside it is refused whatever the cluster's mode.
-      IF '@raise' = ANY (TG_ARGV) THEN
-        mode := 'raise';
-      ELSE
-        SELECT value INTO mode FROM wf_settings WHERE key = 'ownership_mode';
-      END IF;
-      IF COALESCE(mode, 'raise') = 'log' THEN
-        INSERT INTO wf_ownership_violations (table_name, column_path, row_ref, query, application)
-        VALUES (TG_TABLE_NAME, owned, jsonb_build_object('id', before -> 'id'),
-                left(current_query(), 2000), current_setting('application_name', true));
-      ELSE
-        RAISE EXCEPTION 'WF_OWNERSHIP_VIOLATION: %.% is owned by a workflow machine', TG_TABLE_NAME, owned;
-      END IF;
+      RAISE EXCEPTION 'WF_OWNERSHIP_VIOLATION: %.% is owned by a workflow machine', TG_TABLE_NAME, owned;
     END IF;
   END LOOP;
   RETURN NEW;
@@ -13820,7 +13821,7 @@ CREATE TRIGGER issues_wf_governance_owned
   BEFORE UPDATE ON issues
   FOR EACH ROW
   WHEN (OLD.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign', 'featured_illustration'))
-  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=governance-proposal/issue:', '@raise', 'status',
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=governance-proposal/issue:', 'status',
     'payload.appliedAt', 'payload.appliedBy', 'payload.withdrawnAt', 'payload.supersededAt');
 
 -- merge-followups (src/workflow/merge-followups/): what a merged pull
@@ -13830,10 +13831,9 @@ CREATE TRIGGER issues_wf_governance_owned
 --
 -- live_at: when production first ran a revision containing this change.
 -- NULL while it is merged but not live yet ("going live"), or when its
--- deploy failed. The machine sets it; with its flag off the legacy merge
--- paths set it with the status, since there merged has always meant live.
--- The backfill gives rows merged before the column the same reading, and
--- leaves alone any row the machine holds.
+-- deploy failed. The machine sets it. The backfill gives rows merged before
+-- the column the reading they always had (merged was live), and leaves
+-- alone any row the machine holds.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS live_at TIMESTAMPTZ;
 -- booted_shas: the platform's own row only. The builds platform processes
 -- booted with, newest first, at most ten: [{ "sha": ..., "at": ... }].
@@ -13851,11 +13851,12 @@ UPDATE chat_sessions cs SET live_at = COALESCE(cs.merged_at, cs.created_at, NOW(
    AND NOT EXISTS (SELECT 1 FROM wf_instances w
                     WHERE w.machine = 'merge-followups' AND w.key = 'session:' || cs.id);
 
--- A row merged by anything but the machine reads as [main] always read it:
--- live. That covers rows INSERTED as merged (seeds, fixtures, history) and
--- the legacy merge paths, which run while the machine's flag is off. Only
--- the machine (the transition pipeline's writer marker) makes a merged row
--- that is not live yet.
+-- A row merged by anything but the machine reads as live: one INSERTED as
+-- merged (seeds, fixtures, history), or moved into 'merged' where the
+-- machine's guard is not on (a database nothing has booted on: test
+-- fixtures, a seed before the first boot). Only the machine (the transition
+-- pipeline's writer marker) makes a merged row that is not live yet; where
+-- its guard is on, only it moves a row into 'merged'.
 CREATE OR REPLACE FUNCTION chat_sessions_inserted_merged_live() RETURNS TRIGGER AS $$
 BEGIN
   IF current_setting('app.wf_writer', true) IS DISTINCT FROM 'transition' THEN
@@ -13877,9 +13878,12 @@ CREATE TRIGGER chat_sessions_merged_live
   WHEN (NEW.status = 'merged' AND OLD.status IS DISTINCT FROM 'merged' AND NEW.live_at IS NULL)
   EXECUTE FUNCTION chat_sessions_inserted_merged_live();
 
--- While the machine is on, only it moves a proposal into 'merged' (the
--- merge appends an event; recovery appends the same one), and once it holds
--- a row it owns the merge's columns.
+-- Only the machine moves a proposal into 'merged' (the merge appends an
+-- event; recovery appends the same one), and once it holds a row it owns
+-- the merge's columns. One write is not the machine's and is let through:
+-- included_in_session_id set to NULL, which is the foreign key's own
+-- ON DELETE SET NULL when the change that carried it is deleted (a demo
+-- reset deletes the partner's changes, which may have carried another).
 DROP TRIGGER IF EXISTS chat_sessions_wf_merged ON chat_sessions;
 CREATE TRIGGER chat_sessions_wf_merged
   BEFORE UPDATE ON chat_sessions
@@ -13892,7 +13896,7 @@ CREATE TRIGGER chat_sessions_wf_merge_owned
   FOR EACH ROW
   WHEN (OLD.merged_at IS DISTINCT FROM NEW.merged_at
         OR OLD.merge_commit_sha IS DISTINCT FROM NEW.merge_commit_sha
-        OR OLD.included_in_session_id IS DISTINCT FROM NEW.included_in_session_id
+        OR (OLD.included_in_session_id IS DISTINCT FROM NEW.included_in_session_id AND NEW.included_in_session_id IS NOT NULL)
         OR OLD.live_at IS DISTINCT FROM NEW.live_at)
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=merge-followups/session:',
     'merged_at', 'merge_commit_sha', 'included_in_session_id', 'live_at');
@@ -13903,9 +13907,9 @@ CREATE TRIGGER chat_sessions_wf_merge_owned
 --
 -- deploy_state: 'deploying' while a deploy of the app runs, NULL otherwise;
 -- deploy_started_at and deploy_from_sha say since when and from which
--- revision. The machine's projection, and the durable form of what
--- services/app-deploy-status.js keeps in one process's memory for the
--- legacy deploys: the version pill, heal and rollover read both.
+-- revision. The machine's projection: the version pill, heal, rollover and
+-- the drift poller read it (services/app-deploy-status.js, which also keeps
+-- rollover's respawn of an existing image in one process's memory).
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS deploy_state TEXT;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS deploy_started_at TIMESTAMPTZ;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS deploy_from_sha TEXT;
@@ -13925,10 +13929,8 @@ CREATE TRIGGER apps_wf_delivery_owned
 -- the checks' (which revision the verdict is for, and the verdict), and
 -- writes them in the transition that decides. checks_progress and
 -- check_phase stay the run's progress stream (a run says while it waits for
--- a checks slot, and when it starts testing) and are not guarded. The old
--- preview paths are deleted, so a write from outside the machine is refused
--- whatever the cluster's ownership mode ('@raise'); a seed in migrate.js
--- leaves a row the machine holds alone (wf_holds).
+-- a checks slot, and when it starts testing) and are not guarded. A seed in
+-- migrate.js leaves a row the machine holds alone (wf_holds).
 DROP TRIGGER IF EXISTS chat_sessions_wf_preview_owned ON chat_sessions;
 CREATE TRIGGER chat_sessions_wf_preview_owned
   BEFORE UPDATE ON chat_sessions
@@ -13948,11 +13950,47 @@ CREATE TRIGGER chat_sessions_wf_preview_owned
         OR OLD.check_next_retry_at IS DISTINCT FROM NEW.check_next_retry_at
         OR OLD.console_check_state IS DISTINCT FROM NEW.console_check_state
         OR OLD.capture_state IS DISTINCT FROM NEW.capture_state)
-  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=preview/session:', '@raise',
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=preview/session:',
     'staging_url', 'staging_container_id', 'staging_image_ref', 'staging_build_ref', 'staging_runtime_kind',
     'staging_runtime_name', 'staging_commit_sha', 'checks_commit_sha', 'check_state',
     'test_results', 'check_error_detail', 'consecutive_check_failures', 'check_next_retry_at',
     'console_check_state', 'capture_state');
+
+-- shots (src/workflow/shots/) owns a proposal's before & after shots once it
+-- holds the proposal: the slot on chat_sessions and every run row. Every
+-- writer is the machine's transition (the declarations, the runs, the
+-- waivers); the retention prune and the cascades only delete. A staging seed
+-- inserts its fixture runs for proposals the machine does not hold.
+DROP TRIGGER IF EXISTS chat_sessions_wf_shots_owned ON chat_sessions;
+CREATE TRIGGER chat_sessions_wf_shots_owned
+  BEFORE UPDATE ON chat_sessions
+  FOR EACH ROW
+  WHEN (OLD.shots_state IS DISTINCT FROM NEW.shots_state
+        OR OLD.shots_run_id IS DISTINCT FROM NEW.shots_run_id
+        OR OLD.shots_detail IS DISTINCT FROM NEW.shots_detail
+        OR OLD.shots_updated_at IS DISTINCT FROM NEW.shots_updated_at)
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=shots/session:',
+    'shots_state', 'shots_run_id', 'shots_detail', 'shots_updated_at');
+
+CREATE OR REPLACE FUNCTION wf_guard_shot_runs() RETURNS TRIGGER AS $$
+BEGIN
+  IF current_setting('app.wf_writer', true) = 'transition' THEN
+    RETURN NEW;
+  END IF;
+  -- A deleted account's waiver (ON DELETE SET NULL) is not the run moving.
+  IF TG_OP = 'UPDATE' AND (to_jsonb(NEW) - 'override_user_id') = (to_jsonb(OLD) - 'override_user_id') THEN
+    RETURN NEW;
+  END IF;
+  IF wf_holds('shots', 'session:' || NEW.session_id) THEN
+    RAISE EXCEPTION 'WF_OWNERSHIP_VIOLATION: % on shot_runs of a proposal the shots machine holds', TG_OP;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS shot_runs_wf_shots_owned ON shot_runs;
+CREATE TRIGGER shot_runs_wf_shots_owned
+  BEFORE INSERT OR UPDATE ON shot_runs
+  FOR EACH ROW EXECUTE FUNCTION wf_guard_shot_runs();
 
 -- A checks run's media (screenshots, recordings) while the run is under
 -- way: its handler stores them here under the run's id, and the transition

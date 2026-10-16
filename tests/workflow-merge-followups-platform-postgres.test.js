@@ -1,13 +1,13 @@
 'use strict';
 
-// The merge-followups machine wired into the platform (src/workflow/
-// platform.ts), with WF_MERGE_FOLLOWUPS_ENABLED on and a running runtime:
-// a confirmed merge goes live through the real work handlers (their I/O
-// stubbed), recovery's report reads the tally again, a successful deploy
-// anywhere reaches the merges still waiting, the admin's Retry delivery
-// works, and with the flag off the runtime still finishes accepted work but
-// takes no new merges. GitHub, the rebuild, the watcher and WS pushes are
-// stubbed; everything else is the full PostgreSQL schema.
+// The merge-followups and app-delivery machines wired into the platform
+// (src/workflow/platform.ts) with a running runtime: a confirmed merge asks
+// app-delivery for its deploy and goes live through the real work handlers
+// (their I/O stubbed), recovery's report reads the tally again, a later
+// deploy reaches the merges still waiting, the admin's Retry delivery works,
+// and a merge accepted before a restart finishes after it. GitHub, the
+// deploy, the watcher and WS pushes are stubbed; everything else is the
+// full PostgreSQL schema.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -44,7 +44,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     pushIssueUpdate: () => {}, pushNotificationToUser: () => {},
   });
   const realGithub = require('../src/services/github');
-  const deploys = { fail: null };
+  const deploys = { fail: null, sha: null };
   stub('../src/services/github', {
     ...realGithub,
     isEnabled: () => true,
@@ -58,10 +58,10 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   const realStaging = require('../src/services/staging');
   stub('../src/services/staging', {
     ...realStaging,
-    async rebuildProduction(config, app, opts) {
-      calls.push(['rebuild', app.id, opts]);
+    async deployProduction(config, app, opts) {
+      calls.push(['deploy', app.id, opts]);
       if (deploys.fail) throw new realStaging.MissingSecretsError(['API_KEY']);
-      return { containerId: null, sha: opts.reuseRunningRevision || SHA('f') };
+      return { containerId: null, sha: opts.reuseRunningRevision || deploys.sha || SHA('f') };
     },
     async teardownStaging(row) { calls.push(['teardown', row.id, row.status]); return { removed: true }; },
   });
@@ -75,12 +75,11 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   stub('../src/services/homeroom-bot', { ...require('../src/services/homeroom-bot'), noteRequestMerged: async () => null });
   stub('../src/services/homeroom-bot-dm', {
     ...require('../src/services/homeroom-bot-dm'),
-    noteProposalMerged: async (p, s, o) => { calls.push(['dm', s.id, o.live, o.sha]); return null; },
+    noteProposalMerged: async (p, s) => { calls.push(['dm', s.id]); return null; },
   });
 
   const config = {
-    databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfMergeFollowupsEnabled: true,
-    wfPoolMax: 4, wfSlots: 2, wfOwnershipMode: 'raise',
+    databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2,
   };
   const platform = require('../src/workflow/platform.ts');
   t.after(async () => {
@@ -123,11 +122,12 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
      UNION ALL SELECT 1 FROM wf_events WHERE machine = 'merge-followups' AND status = 'pending'`)).rows.length,
   'every follow-up settled');
 
-  await t.test('the flag is recorded for the ownership triggers', async () => {
+  await t.test('every machine\'s guard is recorded for the ownership triggers', async () => {
     const { rows } = await pool.query(`SELECT key FROM wf_settings WHERE key LIKE 'enabled:%' ORDER BY key`);
-    assert.deepEqual(rows.map((r) => r.key), ['enabled:governance-proposal', 'enabled:merge-followups', 'enabled:preview'],
-      'governance and the preview machine have no flag: their guards are on in every process');
-    assert.equal(platform.mergeFollowupsEnabled(), true);
+    assert.deepEqual(rows.map((r) => r.key),
+      ['enabled:app-delivery', 'enabled:governance-proposal', 'enabled:merge-followups', 'enabled:preview', 'enabled:shots'],
+      'no machine has a flag: their guards are on in every process');
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_settings WHERE key = 'ownership_mode'`)).rows[0].n, 0);
   });
 
   await t.test('a confirmed merge goes live through the real handlers', async () => {
@@ -140,14 +140,16 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     const r = (await pool.query('SELECT status, live_at, merge_commit_sha FROM chat_sessions WHERE id = $1', [s.id])).rows[0];
     assert.equal(r.status, 'merged');
     assert.ok(r.live_at);
-    assert.ok(calls.some((c) => c[0] === 'rebuild' && c[2].reuseRunningRevision === SHA('a')), 'the merge commit, not main\'s tip');
+    assert.ok(calls.some((c) => c[0] === 'deploy' && c[2].reuseRunningRevision === SHA('a')),
+      'app-delivery deploys, offered the merge commit');
     await until(async () => calls.some((c) => c[0] === 'dm' && c[1] === s.id), 'the DM');
-    assert.deepEqual(calls.find((c) => c[0] === 'dm' && c[1] === s.id).slice(2), [true, SHA('a')]);
-    // The preview goes once the delivery has its result (demo mode deploys its build).
+    // The preview goes once the deploy is answered (demo mode deploys its build).
     await until(async () => calls.some((c) => c[0] === 'teardown' && c[1] === s.id), 'the teardown');
     assert.ok(calls.some((c) => c[0] === 'teardown' && c[1] === s.id && c[2] === 'merged'));
-    assert.ok(calls.findIndex((c) => c[0] === 'rebuild') < calls.findIndex((c) => c[0] === 'teardown' && c[1] === s.id),
-      'after the delivery');
+    assert.ok(calls.findIndex((c) => c[0] === 'deploy') < calls.findIndex((c) => c[0] === 'teardown' && c[1] === s.id),
+      'after the deploy');
+    const { rows: [d] } = await pool.query(`SELECT state FROM wf_instances WHERE machine = 'app-delivery' AND key = $1`, [`app:${app.id}`]);
+    assert.equal(d.state, 'idle');
     assert.ok(calls.some((c) => c[0] === 'main-check' && c[1] === SHA('a')));
     const { rows: [m] } = await pool.query('SELECT main_sha FROM apps WHERE id = $1', [app.id]);
     assert.equal(m.main_sha, SHA('a'));
@@ -171,11 +173,17 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     await until(async () => (await state(s)) === 'deploy_failed', 'deploy failed');
     deploys.fail = false;
     // The drift poller's deploy of a build that does not contain it, then one that does.
-    await platform.productionDeployed(app.id, SHA('d'));
+    const idle = async () => (await pool.query(
+      `SELECT state FROM wf_instances WHERE machine = 'app-delivery' AND key = $1`, [`app:${app.id}`])).rows[0]?.state === 'idle';
+    deploys.sha = SHA('d');
+    await platform.requestDeploy(app.id, 'drift');
     await until(async () => calls.some((c) => c[0] === 'compare' && c[2] === SHA('d')), 'checked');
+    await until(idle, 'the deploy ended');
     assert.equal(await state(s), 'deploy_failed');
-    await platform.productionDeployed(app.id, SHA('c'));
+    deploys.sha = SHA('c');
+    await platform.requestDeploy(app.id, 'drift');
     await until(async () => (await state(s)) === 'live', 'live after a deploy containing it');
+    deploys.sha = null;
   });
 
   await t.test('an admin retries a failed delivery', async () => {
@@ -191,66 +199,17 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
       /not an admin action/);
   });
 
-  await t.test('with the flag off, accepted work still finishes and nothing new is taken', async () => {
+  await t.test('a merge accepted before a restart finishes after it', async () => {
     const s = await proposal();
     await quiet();
     await platform.stopWorkflow();
-    // Accepted before the restart: the event waits for a runtime.
+    // Accepted with no loops running: the event waits for a runtime.
     await platform.startWorkflow(config, { loops: false });
     await platform.mergeConfirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('a'), force: false, tally: { yes: 1, required: 1, active: 1 } });
     await platform.stopWorkflow();
-    const off = { ...config, wfMergeFollowupsEnabled: false };
-    await platform.startWorkflow(off, { loops: true });
-    assert.equal(platform.workflowRunning(), true, 'it runs to finish what it accepted');
-    assert.equal(platform.mergeFollowupsEnabled(), false, 'but takes no new merges');
-    // In 'raise' mode (one process: development, previews, tests) a flag-off
-    // boot turns the guard off, so the legacy merge path may move rows into
-    // merged again.
-    const guard = async () => (await pool.query(`SELECT key FROM wf_settings WHERE key = 'enabled:merge-followups'`)).rows.length;
-    assert.equal(await guard(), 0, 'raise mode: the flag-off boot turned it off');
-    // In 'log' mode (production, Pods overlap) it stays: a process booting
-    // with its flag off cannot tell that no other one runs the machine. An
-    // admin turns it off, not while the flag is on in the serving process.
-    await platform.syncSettings(pool, config);
-    const logOff = { ...off, wfOwnershipMode: 'log' };
-    await platform.syncSettings(pool, logOff);
-    assert.equal(await guard(), 1, 'log mode: a flag-off boot leaves the guard on');
-    await assert.rejects(platform.turnGuardOff(pool, config, 'merge-followups', { id: 1 }), /WF_MERGE_FOLLOWUPS_ENABLED is on in this process/);
-    assert.deepEqual((await platform.guards(pool, logOff)).find((g) => g.machine === 'merge-followups'),
-      { machine: 'merge-followups', flag: 'WF_MERGE_FOLLOWUPS_ENABLED', on: true, flagHere: false, blocked: null });
-    await platform.turnGuardOff(pool, logOff, 'merge-followups', { id: 1 });
-    assert.equal(await guard(), 0, 'turned off by the admin');
-    await platform.syncSettings(pool, off);   // back to raise mode for what follows
-    await until(async () => (await state(s)) === 'live', 'the accepted merge finished');
-    // And every follow-up of it, the DM and journey record that follow live included.
-    await quiet();
-    await platform.stopWorkflow();
-    await platform.startWorkflow(off, { loops: true });
-    // Nothing left of the merges: the runtime still runs, for the bot's
-    // builds (docs/plans/bot-build-workflow.md), without the merge machine.
-    assert.equal(platform.workflowRunning(), true, 'the runtime runs for the bot\'s builds');
-    assert.equal(platform.mergeFollowupsEnabled(), false, 'and takes no merges');
-    await platform.stopWorkflow();
-  });
-
-  await t.test('with the flag off, a merge still waiting for a deploy keeps the runtime (review finding 3)', async () => {
     await platform.startWorkflow(config, { loops: true });
-    deploys.fail = true;
-    const s = await proposal();
-    await platform.mergeConfirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('9'), force: false, tally: { yes: 1, required: 1, active: 1 } });
-    await until(async () => (await state(s)) === 'deploy_failed', 'deploy failed');
-    deploys.fail = false;
-    await quiet();  // it now only waits for a deploy
-    await platform.stopWorkflow();
-    const off = { ...config, wfMergeFollowupsEnabled: false };
-    await platform.startWorkflow(off, { loops: true });
-    assert.equal(platform.workflowRunning(), true, 'a merge waiting for a deploy keeps it running');
-    assert.equal(platform.mergeFollowupsEnabled(), false);
-    // The drift poller's later deploy (a build GitHub says contains it) is heard.
-    await platform.productionDeployed(app.id, SHA('c'));
-    await until(async () => (await state(s)) === 'live', 'live after the flag went off');
+    await until(async () => (await state(s)) === 'live', 'the accepted merge finished');
     await quiet();
-    await platform.stopWorkflow();
   });
 
   await t.test('a conductor booting a build says nothing is live; a process serving it does', async () => {

@@ -1217,9 +1217,11 @@ async function becomeLeader() {
   // next release reset: due at once if it never ran.
   leaderTimers.every('cli-auth-cleanup', runCliAuthCleanup, 6 * 60 * 60 * 1000, { durable: getPool(config) });
 
-  // Before & after shots is private, revision-scoped data. Recover runs whose
-  // worker died, remove their deterministic paired runtimes/databases, and
-  // enforce the shorter failed-media and bounded audit-retention windows.
+  // Before & after shots is private, revision-scoped data: enforce the
+  // shorter failed-media and bounded audit-retention windows, and remove
+  // copies and checkouts nothing owns any more. Runs themselves are the
+  // shots machine's (src/workflow/shots/), which settles and cleans up every
+  // run it starts.
   const shotsGc = require('./src/services/shots-gc');
   let shotsGcRunning = false;
   const runShotsGc = () => {
@@ -1228,69 +1230,14 @@ async function becomeLeader() {
     return shotsGc.sweep(config, getPool(config))
       .then((counts) => {
         if (Object.values(counts).some((count) => count > 0)) {
-          log.info('shots', 'Retention/recovery sweep completed', counts);
+          log.info('shots', 'Retention sweep completed', counts);
         }
       })
-      .catch((err) => log.warn('shots', 'Retention/recovery sweep failed', { err: err.message }))
+      .catch((err) => log.warn('shots', 'Retention sweep failed', { err: err.message }))
       .finally(() => { shotsGcRunning = false; });
   };
   // Six-hourly on the durable clock, like the cleanup above.
   leaderTimers.every('shots-gc', runShotsGc, 6 * 60 * 60 * 1000, { durable: getPool(config) });
-  // Shots runs execute after their scheduling HTTP request has returned.
-  // A platform rollout can terminate that process mid-build; heartbeats stop
-  // then, and this short recovery poll releases the abandoned proposal slot.
-  // The six-hour sweep above still owns retention and orphan-file pruning.
-  const recoverInterruptedShots = () => {
-    if (shotsGcRunning) return undefined;
-    shotsGcRunning = true;
-    return shotsGc.recoverInterrupted(config, getPool(config))
-      .then(({ failed, cancelled, cleanupRetried }) => {
-        if (failed || cancelled || cleanupRetried) {
-          log.warn('shots', 'Interrupted before & after shots runs recovered', {
-            failed, cancelled, cleanupRetried,
-          });
-        }
-      })
-      .catch((err) => log.warn('shots', 'Interrupted shots recovery failed', { err: err.message }))
-      .finally(() => { shotsGcRunning = false; });
-  };
-  leaderTimers.every('shots-recover-interrupted', recoverInterruptedShots, 2 * 60 * 1000);
-  // Recover intent-only proposals separately from the six-hour retention
-  // sweep. A missed checks hand-off should start within minutes, while the
-  // durable run claim ensures this cannot duplicate a live runner.
-  const runUnstartedShots = () => shotsGc.recoverUnstarted(config, getPool(config))
-    .then(({ scheduled }) => {
-      if (scheduled) log.info('shots', 'Recovered unstarted before & after shots claims', { scheduled });
-    })
-    .catch((err) => log.warn('shots', 'Unstarted shots recovery failed', { err: err.message }));
-  runUnstartedShots();
-  leaderTimers.every('shots-recover-unstarted', runUnstartedShots, 2 * 60 * 1000);
-  // A rollout interrupts runs through no fault of the proposal; start the
-  // same head again (bounded) rather than waiting for someone to click Retry.
-  // Its own, shorter timer: the run is marked interrupted as the old process
-  // exits, the sweep waits 30 seconds past that, and a card that says "trying
-  // again" should not then sit for up to two more minutes. The query is one
-  // indexed read that usually finds nothing.
-  let shotsRetryRunning = false;
-  const retryInterruptedShots = () => {
-    if (shotsRetryRunning) return undefined;
-    shotsRetryRunning = true;
-    return shotsGc.retryInterrupted(config, getPool(config))
-      .then((result) => {
-        if (result?.scheduled) log.info('shots', 'Retried interrupted before & after shots runs', result);
-      })
-      .catch((err) => log.warn('shots', 'Interrupted shots retry failed', { err: err.message }))
-      // A run a platform step failed (the copies' database, a clone, GitHub's
-      // hourly limit, the shots agent's exit) is taken again once, the same way.
-      .then(() => shotsGc.retryPlatformFaults(config, getPool(config)))
-      .then((result) => {
-        if (result?.scheduled) log.info('shots', 'Retried before & after shots runs a platform fault ended', result);
-      })
-      .catch((err) => log.warn('shots', 'Platform-fault shots retry failed', { err: err.message }))
-      .finally(() => { shotsRetryRunning = false; });
-  };
-  retryInterruptedShots();
-  leaderTimers.every('shots-retry-interrupted', retryInterruptedShots, 30 * 1000);
 
   // #616: ensure the read-only prod-debug Postgres role (fresh in-memory
   // password every boot) and refresh its deny-listed grants so tables
@@ -1601,10 +1548,10 @@ async function becomeLeader() {
   });
 
   // Reconcile open PR sessions ('promoted'/'merging') against GitHub's
-  // actual merge state. Heals sessions that merged on GitHub but whose
-  // post-merge step (prod rebuild, etc.) failed — those would otherwise
-  // stay 'promoted' and keep showing as "up for voting" forever — and
-  // demotes 'merging' rows GitHub never merged (crash mid-merge) back to
+  // actual merge state. Reports to the merge-followups machine a merge
+  // GitHub made whose own report was lost (a crash between GitHub's answer
+  // and the append) — it would otherwise stay 'promoted' and keep showing
+  // as "up for voting" forever — and demotes 'merging' rows GitHub never merged (crash mid-merge) back to
   // 'promoted' so the next vote/retry can redrive. See the function body.
   // #390: after the GitHub-state reconcile completes (which demotes
   // crash-stuck 'merging' rows back to 'promoted' so they're eligible
@@ -1617,20 +1564,7 @@ async function becomeLeader() {
   // rollout interrupted is the preview machine's work: claimed again once
   // its lease lapses, and its Jobs are collected rather than started over.)
   const mainWatch = require('./src/services/main-watch');
-  const mergeFollowups = require('./src/services/merge-followup-recovery');
   recoverStuckMerges(config)
-    .then((reconciled) => {
-      // With the merge-followups machine on, a merge's follow-ups are its
-      // durable work, and this sweep would only race its delivery.
-      if (config.wfMergeFollowupsEnabled) return;
-      mergeFollowups.recover(config).catch((err) => {
-        log.warn('server', 'Boot merge follow-up recovery failed', { err: err.message });
-      });
-      // #144, after the heal: see below.
-      resumeIssueCloseWatches(config, { skip: reconciled?.followedUp }).catch((err) => {
-        log.warn('server', 'Issue-close watch resume failed', { err: err.message });
-      });
-    })
     .then(() => reconcileEligibleMerges(config))
     // #447: after reconciling merge state, hand the preview machine any
     // proposal whose checks were never recorded or were left 'pending' from
@@ -1652,25 +1586,6 @@ async function becomeLeader() {
       });
     });
   mainWatch.start(config);
-  if (!config.wfMergeFollowupsEnabled) mergeFollowups.start(config);
-
-  // #144: re-arm post-merge issue-close watches a restart killed. The
-  // watcher (services/issue-close-watcher.js) is fired-and-forgotten
-  // in-process from the merge path; for the self-edits app a merge
-  // triggers the GitHub Actions deploy that rolls THIS platform process,
-  // so the watcher dies before it can confirm GitHub's async auto-close
-  // and refresh the "Open Issues" panel — the closed issue then lingers
-  // until someone happens to reload after the cache TTL. Re-watching
-  // recently-merged sessions on boot closes that gap (and covers crash
-  // restarts mid-watch for ordinary apps too).
-  //
-  // It runs in the chain above, after recoverStuckMerges rather than beside
-  // it: a merge the heal records as merged reads as merged only once the
-  // heal's GitHub round trips are done, and one it records later, on the
-  // eligible-merge timer, is past this boot's look. So the heal watches each
-  // merge it records itself, with the rest of its follow-ups, and the resume
-  // leaves those (`followedUp`) out. With the merge-followups machine on,
-  // the watch is its durable work.
 
   // Fallback recovery: for sessions whose container is already gone but
   // whose branch is ahead of main (i.e. CC pushed commits during an old
@@ -1891,7 +1806,6 @@ module.exports = {
   finalizeRecoveredTurn,
   restoreMissingQuickReplies,
   recoverStuckMerges,
-  resumeIssueCloseWatches,
   reconcileEligibleMerges,
   reconcileStuckChecks,
   cleanup,
@@ -1901,7 +1815,6 @@ module.exports = {
   get DRAIN_TIMEOUT_MS() { return DRAIN_TIMEOUT_MS; },
   get POOL_CLOSE_TIMEOUT_MS() { return POOL_CLOSE_TIMEOUT_MS; },
   get SUCCESSOR_ANNOUNCE_TIMEOUT_MS() { return SUCCESSOR_ANNOUNCE_TIMEOUT_MS; },
-  get SHOTS_SHUTDOWN_MARK_TIMEOUT_MS() { return SHOTS_SHUTDOWN_MARK_TIMEOUT_MS; },
   get BUILD_SHUTDOWN_MARK_TIMEOUT_MS() { return BUILD_SHUTDOWN_MARK_TIMEOUT_MS; },
   get SUCCESSOR_WAIT_MS() { return SUCCESSOR_WAIT_MS; },
   shutdownDrainMs: (...args) => shutdownDrainMs(...args),
@@ -2027,12 +1940,6 @@ const OLD_MERGE_ATTEMPT_RECHECK_MS = 60 * 60 * 1000;
 // sessionId -> when the timer sweep last looked up its old attempt.
 const oldMergeAttemptLookedUpAt = new Map();
 
-// On the legacy path (WF_MERGE_FOLLOWUPS_ENABLED off) a heal also runs what
-// the merge still owed (routes/votes.js runMergeFollowups), and the sweep
-// first resumes the follow-ups of merges recorded as merged that a restart
-// cut off (merge_followups_due_at). Resolves { followedUp }: the sessions
-// whose follow-ups this sweep ran, the request watch among them, which the
-// boot's resumeIssueCloseWatches then leaves alone.
 async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.now } = {}) {
   const { getPool } = require('./src/db/pool');
   const github = require('./src/services/github');
@@ -2040,18 +1947,6 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
   const mergeLock = require('./src/services/merge-finalization-lock');
   const pool = getPool(config);
   const workflow = require('./src/workflow/platform.ts');
-  const followedUp = [];
-  const result = { followedUp };
-
-  // Owed follow-ups need no GitHub lookup, so they are resumed first and
-  // whatever GitHub's state.
-  if (!workflow.mergeFollowupsEnabled()) {
-    try {
-      followedUp.push(...await require('./src/routes/votes').resumeOwedMergeFollowups(config, pool));
-    } catch (err) {
-      log.warn('server', 'recoverStuckMerges: resuming owed merge follow-ups failed', { err: err.message });
-    }
-  }
 
   let rows;
   try {
@@ -2067,16 +1962,16 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
     ));
   } catch (err) {
     log.warn('server', 'recoverStuckMerges query failed', { err: err.message });
-    return result;
+    return;
   }
-  if (!rows.length) return result;
+  if (!rows.length) return;
 
   // Without GitHub auth the outcome is unknown. Keep the claim until a
   // later sweep can ask GitHub; a blind demotion can reopen a merged PR.
   if (!github.isEnabled()) {
     const merging = rows.filter((row) => row.status === 'merging').length;
     if (merging) log.warn('server', 'Cannot reconcile merging sessions without GitHub auth', { count: merging });
-    return result;
+    return;
   }
 
   // An old attempt the timer looked up within the hour waits its turn.
@@ -2093,7 +1988,7 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
       if (last && now() - last < OLD_MERGE_ATTEMPT_RECHECK_MS) { deferred++; return false; }
       return true;
     });
-    if (!rows.length) return result;
+    if (!rows.length) return;
   }
 
   log.info('server', 'Reconciling open PR sessions against GitHub', { count: rows.length, deferred });
@@ -2129,7 +2024,7 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
         try {
           const pr = await github.getPR(owner, repo, row.pr_number);
           if (attemptedOnly) oldMergeAttemptLookedUpAt.set(row.id, now());
-          if (pr && pr.merged && workflow.mergeFollowupsEnabled()) {
+          if (pr && pr.merged) {
             // The merge-followups machine records the merge and runs every
             // follow-up the lost report would have (F2), not only the status.
             await workflow.mergeObserved({
@@ -2140,43 +2035,6 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
             log.info('server', 'Reported a merged-on-GitHub session to the merge-followups machine', {
               sessionId: row.id, prNumber: row.pr_number, repo: `${owner}/${repo}`, mergeSha: pr.merge_commit_sha || null,
             });
-          } else if (pr && pr.merged) {
-            // The merge that did this never finished: most often a restart
-            // cut off a child app's finalizer in its production rebuild.
-            // What it still owes is done here, as finalizeMerge does it
-            // (routes/votes.js): the values the proposal declared first, so
-            // the delivery merge-followup-recovery makes next has them; then
-            // the status, owing the follow-ups (merge_followups_due_at); then
-            // the follow-ups, the request watch among them (#144). Delivery
-            // and the combined-main check are merge-followup-recovery's.
-            const votes = require('./src/routes/votes');
-            await votes.applyDeclaredValues({ config, pool, session: { id: row.id, app_id: row.app_id } });
-            const { rowCount } = await pool.query(
-              `UPDATE chat_sessions
-                  SET status = 'merged',
-                      merged_at = COALESCE(merged_at, $2, NOW()),
-                      live_at = COALESCE(live_at, NOW()),
-                      merge_commit_sha = COALESCE(merge_commit_sha, $3),
-                      merge_followups_due_at = NOW()
-                WHERE id = $1 AND status IN ('promoted', 'merging')`,
-              [row.id, pr.merged_at || null, pr.merge_commit_sha || null]
-            );
-            if (rowCount) {
-              healed++;
-              log.info('server', 'Reconciled merged-on-GitHub session to merged', {
-                sessionId: row.id, prNumber: row.pr_number,
-                repo: `${owner}/${repo}`, mergeSha: pr.merge_commit_sha || null,
-              });
-              // Under the lock this worker holds. A failure leaves the row
-              // owing them, for the next sweep's resume.
-              try {
-                if ((await votes.runOwedMergeFollowups(config, pool, row.id)).ran) followedUp.push(Number(row.id));
-              } catch (err) {
-                log.warn('server', 'recoverStuckMerges: the follow-ups of a healed merge failed; the next sweep resumes them', {
-                  sessionId: row.id, err: err.message,
-                });
-              }
-            }
           } else if (row.status === 'merging' && oldAttempt) {
             // Not merged on GitHub and stuck in 'merging' (crash mid-merge):
             // demote so the next vote/retry can redrive.
@@ -2227,7 +2085,6 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
     scanned: rows.length, healed, demoted, errors,
     ...(held ? { heldForGithubBudget: held } : {}),
   });
-  return result;
 }
 
 // Boot-time auto-merge reconcile sweep (#390). recoverStuckMerges above
@@ -2522,54 +2379,6 @@ async function recoverLocalAgentTurns(config) {
   }
 }
 
-// Resume post-merge issue-close watches for sessions merged shortly
-// before this process started. See the call site for rationale. The
-// 15-minute window comfortably covers the merge → GHA build → rolling
-// restart sequence of the self-edits app; re-watching an issue GitHub
-// already closed is cheap (first poll confirms, one cache bust + panel
-// broadcast) and idempotent. `skip` names sessions whose watch the boot's
-// recoverStuckMerges already started with the rest of their follow-ups.
-async function resumeIssueCloseWatches(config, { skip = [] } = {}) {
-  const github = require('./src/services/github');
-  if (!github.isEnabled()) return;
-  const watched = new Set((skip || []).map(Number));
-  const { getPool } = require('./src/db/pool');
-  const pool = getPool(config);
-  let { rows } = await pool.query(
-    `SELECT cs.id, cs.pr_number, cs.linked_issues,
-            a.repo_url, a.slug AS app_slug, a.id AS app_id
-       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-      WHERE cs.status = 'merged'
-        AND cs.merged_at > NOW() - INTERVAL '15 minutes'
-        AND cs.pr_number IS NOT NULL`
-  );
-  rows = rows.filter((row) => !watched.has(Number(row.id)));
-  if (!rows.length) return;
-  const { watchIssuesClosedAfterMerge } = require('./src/services/issue-close-watcher');
-  log.info('server', 'Resuming post-merge issue-close watches', {
-    count: rows.length, sessionIds: rows.map((r) => r.id),
-  });
-  for (const row of rows) {
-    const [, owner, repo] = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-    if (!owner || !repo) continue;
-    watchIssuesClosedAfterMerge({
-      owner, repo,
-      prNumber: row.pr_number,
-      linkedIssues: row.linked_issues,
-      appSlug: row.app_slug,
-      appId: row.app_id,
-      // The merge-time superseded-proposal resolve ran in the dead
-      // pre-restart process — the resumed watch re-runs it for observed
-      // closes so no close-issue proposal is left dangling.
-      pool,
-    }).catch((err) => {
-      log.warn('server', 'Resumed issue-close watch failed', {
-        sessionId: row.id, err: err.message,
-      });
-    });
-  }
-}
-
 // stagingNeedsRebuild + rebuildSessionStaging moved to
 // src/services/staging-recovery.js so the startup recovery, the heal
 // sweep (Pass 3), and the on-demand ensure-staging route share one
@@ -2844,7 +2653,7 @@ const ORPHAN_MIN_AGE_MS = 2 * 60 * 1000;
 // (holders), and a session whose holders cannot be read is left for the next
 // pass.
 const LEFT_WARM_SWEEP_MS = 5 * 60 * 1000;
-const HELD_WORKER_KINDS = ['warm', 'session', 'shots', 'sync'];
+const HELD_WORKER_KINDS = ['warm', 'session', 'sync'];
 
 async function sweepLeftWarmWorkers(config, { list = () => worker.listOrphanWorkers(), adopt = adoptOrphanWorker } = {}) {
   const pool = getPool(config);
@@ -2890,9 +2699,12 @@ async function sweepOrphanTurns(config, { adopt = adoptOrphanWorker } = {}) {
            WHERE h.kind = ANY($3::text[]) AND h.ref = cs.id::text
              AND p.heartbeat_at > NOW() - make_interval(secs => $4))
         -- What adoption leaves as it is, and so would come back every pass:
-        -- a headless run (resumeHeadlessRuns carries it), and a durable
-        -- build's session (its build carries it, wherever it runs).
+        -- a headless run (resumeHeadlessRuns carries it), a durable build's
+        -- session (its build carries it, wherever it runs), and a shots
+        -- agent's turn (the shots machine's agent step follows it).
         AND cs.is_headless IS NOT TRUE
+        AND NOT EXISTS (SELECT 1 FROM wf_instances w
+                         WHERE w.machine = 'shots' AND w.key = 'session:' || cs.id AND w.state = 'taking_shots')
         AND NOT (cs.workflow_owner IS NOT NULL AND EXISTS (
           SELECT 1 FROM wf_instances w
            WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
@@ -2901,12 +2713,12 @@ async function sweepOrphanTurns(config, { adopt = adoptOrphanWorker } = {}) {
       ORDER BY cs.id
       LIMIT 20`,
     [[...turnLifecycle.RECOVERABLE_PHASES], new Date(Date.now() - ORPHAN_MIN_AGE_MS).toISOString(),
-      ['session', 'shots', 'sync'], processes.LIVE_SECONDS],
+      ['session', 'sync'], processes.LIVE_SECONDS],
   );
   let adopted = 0;
   for (const { id } of rows) {
     // What this process holds, whether or not its write has landed yet.
-    if (['session', 'shots', 'sync'].some((kind) => processes.heldHere(kind, id))) continue;
+    if (['session', 'sync'].some((kind) => processes.heldHere(kind, id))) continue;
     if (activeWorkersSvc.isSessionBusyHere(id) || worker.getActiveTurnMode(id)) continue;
     const name = worker.workerContainerName(id);
     let state;
@@ -3131,9 +2943,9 @@ async function abandonCodexAttempt(pool, sessionId, turn, { label, errorDetail }
 // answers to exists only in that process's control registry. Resumed, the
 // agent retries tool calls that can no longer succeed, holding the session
 // busy and spending the user's model credit with no bound. End it instead,
-// without chat narration — shots turns never write chat rows, and the
-// shots GC fails the run itself with a retryable reason once the
-// run goes idle.
+// without chat narration — shots turns never write chat rows. A turn the
+// shots machine's run follows is left to it (adoptOrphanWorker): only a
+// turn with no run taking shots is ended here.
 async function abandonOrphanShotsTurn({
   pool, sessionId, containerName, activeTurn, containerRunning, retryRuntimeRecovery,
 }) {
@@ -3310,7 +3122,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   // exactly: a session whose holders cannot be read is retried, not taken.
   let holders;
   try {
-    holders = await processes.holders(['session', 'shots', 'sync'], sessionId, pool);
+    holders = await processes.holders(['session', 'sync'], sessionId, pool);
   } catch (err) {
     throw retryRuntimeRecovery(`could not read who holds the session: ${err.message}`);
   }
@@ -3425,6 +3237,13 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   }
 
   if (session.active_turn?.mode === 'shots') {
+    // The shots machine's agent step follows its turn through a restart
+    // (services/durable-turn.js): left to it while its run is taking shots.
+    const shots = await require('./src/workflow/platform.ts').shotsInstance(sessionId).catch(() => null);
+    if (shots?.state === 'taking_shots') {
+      log.info('server', 'A shots turn its run follows; not adopting it', { containerName, sessionId });
+      return;
+    }
     await abandonOrphanShotsTurn({
       pool, sessionId, containerName,
       activeTurn: session.active_turn,
@@ -6435,11 +6254,10 @@ function shutdownDrainMs() {
 
 // Budget for closing the pg pool after the handler drain (#767). Sits
 // INSIDE the same compose stop_grace_period as DRAIN_TIMEOUT_MS —
-// tests/caddy-deploy-grace.test.js pins drain + evidence marking + pool close
+// tests/caddy-deploy-grace.test.js pins drain + pool close
 // below grace — so a
 // pool that refuses to settle can never push the exit past the SIGKILL.
 const POOL_CLOSE_TIMEOUT_MS = 1000;
-const SHOTS_SHUTDOWN_MARK_TIMEOUT_MS = 1000;
 const BUILD_SHUTDOWN_MARK_TIMEOUT_MS = 1000;
 
 // ── The process being replaced tells its tabs where traffic went (#2545) ─
@@ -6690,17 +6508,14 @@ async function cleanup() {
     also: () => inflightRequests.pending() === 0,
   });
 
-  const shotsRuns = require('./src/services/shots-orchestrator').inFlightSnapshot;
   const startingCount = getActiveWorkerCount();
-  const startingShots = shotsRuns();
   log.info('server', 'Shutdown initiated, draining handlers', {
     activeWorkers: startingCount,
-    activeShotsRuns: startingShots.slice(0, 20),
     timeoutMs: DRAIN_TIMEOUT_MS,
   });
 
   const [drained] = await Promise.all([
-    lifecycle.waitFor(() => getActiveWorkerCount() === 0 && shotsRuns().length === 0, {
+    lifecycle.waitFor(() => getActiveWorkerCount() === 0, {
       timeoutMs: DRAIN_TIMEOUT_MS, intervalMs: 500,
     }),
     announced,
@@ -6709,10 +6524,9 @@ async function cleanup() {
   if (!drained) {
     log.warn('server', 'Drain timeout — exiting with in-flight work', {
       remainingWorkers: getActiveWorkerCount(),
-      remainingShotsRuns: shotsRuns().slice(0, 20),
     });
-  } else if (startingCount > 0 || startingShots.length > 0) {
-    log.info('server', 'All handlers and before & after shots runs drained');
+  } else if (startingCount > 0) {
+    log.info('server', 'All handlers drained');
   }
   if (!(await handlersDrained)) {
     log.warn('server', 'Drain deadline passed with requests or background work in flight', {
@@ -6725,37 +6539,6 @@ async function cleanup() {
   }
   await pushStop;
   await agentTurnsEnded;
-
-  // A planned replay is hosted by this server process. If it is still active
-  // when the drain expires, record the actual shutdown now so its owner can
-  // retry immediately. The recovery sweep remains the fallback for SIGKILL,
-  // crashes, and a database that cannot accept this bounded write.
-  const interruptedShots = require('./src/services/shots-orchestrator').inFlightRunSnapshot();
-  if (interruptedShots.length && shutdownPool) {
-    const shotsState = require('./src/services/shots-state');
-    let markTimer = null;
-    const marking = Promise.allSettled(interruptedShots.map((runId) =>
-      shotsState.transitionRun(shutdownPool, runId, 'failed', {
-        failureCode: 'shots_run_interrupted',
-        failureReason: shotsState.SHUTDOWN_INTERRUPTED_REASON,
-        // A rollout, not the run: the automatic retry does not count it
-        // against the tighter budget for unexplained interruptions.
-        traceMerge: { interruptedBy: shotsState.SHUTDOWN_INTERRUPTION },
-      })
-    ));
-    const result = await Promise.race([
-      marking,
-      new Promise((resolve) => {
-        markTimer = setTimeout(() => resolve(null), SHOTS_SHUTDOWN_MARK_TIMEOUT_MS);
-      }),
-    ]);
-    if (markTimer) clearTimeout(markTimer);
-    log.info('server', 'Marked active before & after shots runs interrupted on shutdown', {
-      attempted: interruptedShots.length,
-      marked: result?.filter((entry) => entry.status === 'fulfilled').length || 0,
-      timedOut: result === null,
-    });
-  }
 
   // The checks runs this process launched go on without it: their Jobs
   // belong to the cluster. Their rows still carry this process's heartbeat,

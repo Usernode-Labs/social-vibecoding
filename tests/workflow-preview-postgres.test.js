@@ -179,7 +179,12 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     const publish = (await workOf(s, WORK.publish))[0];
     assert.equal(publish.input.state, 'passing', 'the platform-variables check refreshes on a verdict (review finding 4)');
     const kinds = (await workOf(s)).map((w) => w.kind).sort();
-    assert.deepEqual(kinds, [WORK.followUps, WORK.run, WORK.publish, WORK.prepare, WORK.unitEarly, WORK.ready].sort());
+    assert.deepEqual(kinds, [WORK.followUps, WORK.run, WORK.publish, WORK.prepare, WORK.unitEarly].sort());
+    // The shots machine hears the head: when the preview served, and when
+    // the verdict settled (messages, not hand-off work).
+    const { rows: told } = await pool.query(
+      `SELECT type, payload FROM wf_events WHERE machine = 'shots' AND key = $1 ORDER BY id`, [sessionKey(s.id)]);
+    assert.deepEqual(told.map((e) => [e.type, e.payload.head]), [['HeadReady', SHA('a')], ['HeadReady', SHA('a')]]);
   });
 
   await t.test('P2 the same head joins; a stale producer is refused; a newer head cancels the attempt and retires it', async () => {

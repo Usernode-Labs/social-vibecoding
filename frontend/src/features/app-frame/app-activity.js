@@ -25,6 +25,12 @@ export const ACTIVITY_MAX_INTERVALS = 64;
 const MAX_BUFFER_INTERVALS = 256;
 export const ACTIVITY_FETCH_TIMEOUT_MS = 10_000;
 
+// The document event an acknowledged upload dispatches (see _drain): the
+// server has counted the engagement, so a challenge screen that shows its
+// progress can read it again now rather than waiting for its next read
+// (#5235). Announced once per drain that got an ok answer, per app.
+export const APP_ACTIVITY_RECORDED_EVENT = 'sv:app-activity-recorded';
+
 const STORAGE_KEY = 'sv:engaged-app-usage:v1';
 const MAX_DRAIN_BATCHES = 8;
 const MESSAGE_KEY = '__usernode_engagement';
@@ -69,6 +75,18 @@ function browserStorage() {
   try { return typeof window !== 'undefined' ? window.localStorage : null; } catch { return null; }
 }
 
+// The default onRecorded: say on `document` that the upload landed. Never
+// throws — the write has landed, and a document without CustomEvent (the
+// server-side prerender, a test's stub) only means nobody is listening, the
+// same guard as Home._announceMembership.
+function announceRecorded(slug) {
+  try {
+    if (typeof document === 'undefined' || typeof document.dispatchEvent !== 'function') return;
+    if (typeof CustomEvent !== 'function') return;
+    document.dispatchEvent(new CustomEvent(APP_ACTIVITY_RECORDED_EVENT, { detail: { slug } }));
+  } catch (_) { /* a listener's trouble is not the upload's */ }
+}
+
 export class EngagedAppUsage {
   constructor(options = {}) {
     this.now = options.now || (() => Date.now());
@@ -99,6 +117,7 @@ export class EngagedAppUsage {
     this.onlineWindow = null;
     this.generation = 0;
     this.stateGeneration = 0;
+    this.onRecorded = options.onRecorded || announceRecorded;
     this.sessionId = this.uuid();
     this._onOnline = () => { void this.flush(); };
   }
@@ -490,6 +509,11 @@ export class EngagedAppUsage {
 
   async _drain(generation) {
     let sent = 0;
+    // The apps whose uploads got an ok answer this drain. A duplicate receipt
+    // (`duplicate: true`) answers ok too and announces as well: the re-read it
+    // triggers reads the same number. A 401, a dropped 4xx and a lost response
+    // never land here.
+    const recorded = [];
     while (generation === this.stateGeneration
         && this.state.batches.length && sent < MAX_DRAIN_BATCHES) {
       const batch = this.state.batches[0];
@@ -513,6 +537,7 @@ export class EngagedAppUsage {
       if (response && response.ok) {
         this.state.batches.shift();
         sent += 1;
+        if (!recorded.includes(batch.slug)) recorded.push(batch.slug);
         this._stageOne();
         this._persist();
         continue;
@@ -533,6 +558,9 @@ export class EngagedAppUsage {
         continue;
       }
       return false;
+    }
+    for (const slug of recorded) {
+      try { this.onRecorded(slug); } catch { /* a listener's trouble is not the upload's */ }
     }
     return sent > 0;
   }

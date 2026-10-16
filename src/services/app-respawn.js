@@ -8,7 +8,7 @@
 // (services/app-heal.js) to re-run an already-built image for apps
 // without a repo_url when their container has gone missing.
 //
-// Distinct from staging.js's `rebuildProduction`, which does a full
+// Distinct from staging.js's `deployProduction`, which does a full
 // git clone + docker build + run. These helpers assume the app's
 // image is already built (`usernode-app-<slug>:latest` exists on the
 // host) and just stop+rm+run with fresh env.
@@ -100,7 +100,7 @@ async function runExistingImage(config, app) {
     dbManager.appDbName(app.slug), app.db_password
   );
 
-  // Same production env contract as app-creator / rebuildProduction —
+  // Same production env contract as app-creator / deployProduction —
   // a respawn must not silently drop the LLM-proxy pair (issue #34) or
   // the app-storage pair (#752).
   const llmEnv = await appLlmEnv.productionLlmEnv(pool, app.id);

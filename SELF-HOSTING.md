@@ -559,7 +559,8 @@ in [dapp.json](./dapp.json) (via the shared manifest-PR core in
 A full admin's value is written to `platform_env_values` on submit —
 which they may already do for any declared key — while everybody
 else's waits encrypted in `pending_secret_declarations` and is written
-by [routes/votes.js](./src/routes/votes.js) `finalizeMerge()` the
+by the merge (the merge-followups workflow machine, in
+[src/workflow/merge-followups/](./src/workflow/merge-followups/)) the
 moment the PR merges. The pre-merge platform-env check counts a value
 carried by the same session, so such a proposal never blocks itself;
 the declaration itself reaches `platform_env_declarations` on the

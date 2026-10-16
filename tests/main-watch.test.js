@@ -806,7 +806,9 @@ test('the route and the gate read the same module', () => {
   assert.match(apps, /main-check\/resume/);
   assert.match(apps, /mainWatch\.resume\(/);
   assert.match(votes, /mergePause\(/);
-  assert.match(votes, /afterMerge\(/);
+  // The run after a merge is the merge-followups machine's main.check work.
+  const services = fs.readFileSync(path.join(__dirname, '..', 'src', 'workflow', 'merge-followups', 'services.ts'), 'utf8');
+  assert.match(services, /legacy\('services\/main-watch'\)\.afterMerge\(/);
 });
 
 test('the schema carries the pause column and the backfill for the derived pauses', () => {

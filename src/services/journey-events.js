@@ -13,10 +13,10 @@
 //     notePreviewOpened writes `preview_opened` when the server answers a
 //     preview as ready (routes/sessions.js, the preview-status read and the
 //     ensure-staging click), once per viewer per change.
-//   * when a requested change was live: the health-checked answer was kept
-//     only in the requester's DM. recordChangeLive writes `change_live` at
-//     the merge (routes/votes.js finalizeMerge), once per change, with who
-//     asked for it and whether the project answered on what was deployed.
+//   * when a requested change was live: kept only in the requester's DM.
+//     recordChangeLive writes `change_live` once production runs it (the
+//     merge-followups workflow machine), once per change, with who asked
+//     for it.
 //
 // Every one of them is a record beside the act, never part of it: each
 // resolves (never rejects, never throws), and a failure is a warning in the
@@ -136,8 +136,6 @@ const CHANGE_LIVE_SQL = `WITH asked AS (
   ON CONFLICT (session_id) WHERE event_type = 'change_live' DO NOTHING
   RETURNING metadata`;
 
-const APP_FOR_LIVE_SQL = `SELECT id, slug, self_hosted, runtime_kind, runtime_name FROM apps WHERE id = $1::int`;
-
 /** The request numbers a change answers: its linked issues and the one it was started from. */
 function requestNumbers(session) {
   const out = new Set();
@@ -149,30 +147,20 @@ function requestNumbers(session) {
 }
 
 /**
- * A change merged and was deployed (`sha`, what the merge deployed; null for
- * Homeroom's own project, which is released outside this process). `live`
- * is whether the project answered its health check on that build, read the
- * way the bot's DM reads it (homeroom-bot-dm.js liveAfterMerge); `deps.live`
- * replaces that reading in tests. Recorded at the moment of the merge, not
- * after the reading. Resolves the metadata written, or null.
+ * A change is live (`sha`, the build production runs that contains it; null
+ * for Homeroom's own project when its release named none): the
+ * merge-followups workflow machine records it once production runs it.
+ * Recorded at the moment of the merge (`at`). Resolves the metadata
+ * written, or null.
  */
 // `strict` (the merge-followups machine's durable work) throws what it could
 // not record instead of resolving null, so the work is retried.
-async function recordChangeLive(pool, { config = null, session, sha = null, at = new Date(), deps = {}, strict = false } = {}) {
+async function recordChangeLive(pool, { session, sha = null, at = new Date(), strict = false } = {}) {
   try {
     const sessionId = Number(session && session.id);
     const appId = Number(session && session.app_id);
     if (!Number.isSafeInteger(sessionId) || sessionId <= 0 || !Number.isSafeInteger(appId) || appId <= 0) return null;
-    let live = false;
-    if (typeof deps.live === 'function') {
-      live = !!(await deps.live());
-    } else if (sha && config) {
-      const { rows } = await pool.query(APP_FOR_LIVE_SQL, [appId]);
-      if (rows[0]) {
-        live = await require('./homeroom-bot-dm').liveAfterMerge(config, rows[0], { sha, deps })
-          .catch(() => false);
-      }
-    }
+    const live = true;
     const author = Number(session.user_id);
     const { rows } = await pool.query(CHANGE_LIVE_SQL, [
       sessionId, appId, requestNumbers(session),
@@ -268,7 +256,6 @@ async function noteInviteSignedIn(pool, { token, userId, carried = false } = {})
 }
 
 module.exports = {
-  APP_FOR_LIVE_SQL,
   FIRST_ARTEFACT_SQL,
   INVITE_SIGNED_IN_SQL,
   noteFirstArtefactShown,

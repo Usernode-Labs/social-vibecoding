@@ -6,9 +6,7 @@ const { governanceVoteLimiter } = require('../middleware/rate-limits');
 const log = require('../services/logger');
 const github = require('../services/github');
 const githubMock = require('../services/github-mock');
-const staging = require('../services/staging');
 const docker = require('../services/docker');
-const applicationRuntime = require('../services/application-runtime');
 const { checkAndResolveConflicts, isResolving } = require('../services/conflict-resolver');
 const { sendSystemMessage, pushNotificationToUser } = require('../services/ws');
 const { getActiveUserStats, isUserActive } = require('../services/active-users');
@@ -1914,7 +1912,7 @@ async function reconcileNativeReviewedHead({
       ? bound[0].pr_summary_stale
       : (session.pr_summary_stale || !!session.pr_summary_md);
     if (session.shots_state || session.shots_detail) {
-      await shotsState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
+      await shotsState.markStaleForHead(pool, session.id, liveHead, null, { pin: 'reviewed' }).catch((err) =>
         log.warn('votes', 'Before & after shots invalidation after revision bind failed', {
           sessionId: session.id, headSha: liveHead, err: err.message,
         }));
@@ -1991,7 +1989,7 @@ async function reconcileNativeReviewedHead({
     ? claimed[0].pr_summary_stale
     : (made.fixOnly ? !!session.pr_summary_stale : (session.pr_summary_stale || !!session.pr_summary_md));
   if (session.shots_state || session.shots_detail) {
-    await shotsState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
+    await shotsState.markStaleForHead(pool, session.id, liveHead, null, { pin: 'reviewed' }).catch((err) =>
       log.warn('votes', 'Before & after shots invalidation after head move failed', {
         sessionId: session.id, oldHead, headSha: liveHead, err: err.message,
       }));
@@ -3432,7 +3430,7 @@ function voteRoutes(config) {
               importClient,
               inserted[0].id,
               importVisibleChanges,
-              shotsState.validSha(headSha) ? { headSha } : {}
+              shotsState.validSha(headSha) ? { headSha, pin: 'imported' } : {}
             );
           } catch (err) {
             // This transaction owns `importClient`; recordIntent must neither
@@ -5331,8 +5329,8 @@ function voteRoutes(config) {
       // #5064: a merge of the platform's own app opened on its own (a link
       // from the bell or Home, beyond the board's first page) gets the
       // board's deployment_state too, so its page says "going live" until
-      // the running build carries it rather than reading the live_at the
-      // legacy merge stamps at once. A child app's keeps its words.
+      // the running build carries it rather than reading a live_at the old
+      // merge path stamped at once. A child app's keeps its words.
       if (proposal.status === 'merged' && proposal.deployment_state == null && gatedApp.self_hosted
           && !(IS_STAGING && req.query.demo === '1')) {
         const { rows: [selfApp] } = await pool.query(
@@ -5586,820 +5584,6 @@ function voteRoutes(config) {
 // races against any concurrent vote-driven merge, so we won't double-
 // merge. `options.forceBy` is the admin user object (id, username) used
 // for the "merged by <admin> overriding vote" chat message.
-// Resolve open issue bounties for a single closed issue when a PR merges
-// (src/workflow/rules/bounties.ts, where the self-bounty rule is): the
-// merge-followups machine pays them in its transaction with the same code.
-const { resolveIssueBounty } = require('../workflow/rules/bounties.ts');
-
-// #687 Slice 4: shared post-merge finalizer. Everything AFTER the
-// irreversible github.mergePR call — rebuild production (unless self-hosted),
-// stamp apps.main_sha/main_pr_number/last_deploy_at, broadcast
-// app_version_changed, teardown staging, pay out bounties, refresh issues,
-// transition the session to 'merged', and announce it — factored out so that
-// NATIVE and IMPORTED merges run byte-for-byte the same tail. Called from
-// inside checkAndMerge's try, so a throw here still lands in that catch, which
-// honours the `githubMerged` guard (never roll a GitHub-merged PR back to
-// 'promoted') and the merge-debug tracing. Only ever leaves the row in
-// 'merged' — a state recoverStuckMerges already understands.
-// #1688: who to name when a proposal lands, and the sentence that names
-// them (src/workflow/rules/merge-credits.ts): author, backers, shapers.
-const { mergeCredits, creditsSentence } = require('../workflow/rules/merge-credits.ts');
-
-// On an app in DEMO MODE, the preview the checks ran against is an image of
-// the very tree the merge just squashed onto main, so production can deploy
-// it instead of building the same source again — which is the ~9s of an ~18s
-// merge-to-live that a recording sits through with nothing on screen.
-//
-// Demo mode only, on purpose. The image's baked GIT_SHA names the commit it
-// was built from, so a reused image reports the proposal's head where
-// apps.main_sha reports the merge commit. On a demo app nothing reads it and
-// the whole app is rewound between takes; making this the fleet's merge path
-// means resolving that difference rather than tolerating it.
-//
-// Fails open at every step: no preview image, no tree to compare, a GitHub
-// that will not answer — all of them mean "build it", which is what the
-// platform did before. staging.rebuildProduction re-verifies the tree itself
-// against the clone; this only offers.
-async function demoPreviewImage(pool, app, session) {
-  if (!app?.demo_mode) return null;
-  try {
-    const { rows } = await pool.query(
-      `SELECT staging_image_ref, staging_build_ref, staging_commit_sha
-         FROM chat_sessions WHERE id = $1`,
-      [session.id]
-    );
-    const row = rows[0];
-    if (!row?.staging_image_ref || !row.staging_commit_sha) return null;
-    const [, owner, repo] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-    if (!owner || !repo || !github.isEnabled()) return null;
-    const treeSha = await github.getCommitTree(owner, repo, row.staging_commit_sha);
-    if (!treeSha) return null;
-    return {
-      imageRef: row.staging_image_ref,
-      buildRef: row.staging_build_ref || null,
-      treeSha,
-      fromSha: row.staging_commit_sha,
-    };
-  } catch (err) {
-    log.warn('votes', 'Could not offer the preview image to the rebuild; it will build', {
-      sessionId: session.id, err: err.message,
-    });
-    return null;
-  }
-}
-
-// Apply any values this proposal carried for the variables it
-// DECLARES (services/pending-secrets.js — the "+ New variable" panel
-// flow). BEFORE the rebuild, deliberately: a newly `required` child-app
-// secret whose value arrived with the proposal has to be in
-// `app_secrets` before mergeForDeploy() looks for it, or the merge
-// would park the app in `awaiting_secrets` over its own change.
-//
-// Best-effort: the GitHub merge has already happened and can't be
-// rolled back, so a failure here logs and lets the rest of the tail
-// run. The pending row stays claimed either way, and the panel shows
-// the key as unset — recoverable by setting it directly.
-//
-// Its own function because recoverStuckMerges (server.js) applies them too,
-// for a merge whose finalizer a restart cut off before it got this far, and
-// before it records the merge, so the delivery that follows has them.
-async function applyDeclaredValues({ config, pool, session, dstep = () => {} }) {
-  try {
-    const pendingSecrets = require('../services/pending-secrets');
-    const { applied } = await pendingSecrets.applyForSession(config, pool, session.id);
-    for (const a of applied) {
-      if (!a.hadValue) continue;
-      dstep({
-        phase: 'pending_secrets',
-        message: `Applied the value declared with this proposal for ${a.key}.`,
-        detail: { key: a.key, scope: a.scope, private: a.private },
-      });
-      // Say what actually happens next — the platform's env is
-      // materialized by its own deploy, a child app's by the rebuild
-      // that follows (finalizeMerge's, or after a restart the delivery
-      // services/merge-followup-recovery.js makes).
-      const msg = a.scope === 'platform'
-        ? `Platform variable "${a.key}" was declared and set by this proposal; takes effect on the platform's next deploy.`
-        : `Secret "${a.key}" was declared and set by this proposal; redeploying…`;
-      await sendSystemMessage(pool, session.app_id, msg, 'system',
-        null, { type: 'session', ref: session.id }).catch(() => {});
-      if (a.scope === 'platform') {
-        events.record(pool, {
-          type: events.EVENT_TYPES.PLATFORM_ENV_CHANGED,
-          userId: a.userId,
-          appId: session.app_id,
-          metadata: {
-            key: a.key, action: 'set', private: a.private,
-            appliedBy: 'declaration-proposal',
-          },
-        });
-      }
-    }
-  } catch (err) {
-    log.error('votes', 'Pending secret-declaration apply failed', {
-      sessionId: session.id, err: err.message,
-    });
-    dstep({
-      phase: 'pending_secrets', level: 'warn',
-      message: `Couldn't apply the value declared with this proposal: ${err.message}`,
-    });
-  }
-}
-
-async function finalizeMerge({ config, pool, session, mergeCommitSha, required, activeCount, yesCount, majority, force, forceBy, dstep, dend, gateTrace, gateSave }) {
-    // Rebuild production
-    const { rows: appRows } = await pool.query('SELECT * FROM apps WHERE id = $1', [session.app_id]);
-    const app = appRows[0];
-
-    // Start the combined-main check as soon as GitHub has returned its merge
-    // SHA. A deploy failure or interruption later in this finalizer must not
-    // prevent the check from being claimed; recovery picks up a missing claim.
-    if (app && mergeCommitSha) {
-      require('../services/main-watch').afterMerge(config, pool, {
-        app, session, mergeSha: mergeCommitSha,
-      }).catch((err) => {
-        log.warn('votes', 'Main watch failed to run (non-fatal)', {
-          appId: session.app_id, sha: mergeCommitSha, err: err.message,
-        });
-      });
-    }
-
-    // Apply any values this proposal carried for the variables it DECLARES.
-    // BEFORE the rebuild, deliberately (applyDeclaredValues says why).
-    if (app) await applyDeclaredValues({ config, pool, session, dstep });
-
-    // #7 (WP3): what this merge deployed, for the Homeroom bot's "it is live"
-    // news below, which waits for the app to answer on it.
-    let deployedSha = null;
-    if (app) {
-      let sha = null;
-      // SELF-HOSTING.md sub-step 2g (Guard B): for the self-app,
-      // there's no platform-managed prod container to rebuild — the
-      // host-side deployer (nudged below) rolls the harness through a
-      // blue-green rollout when the merge lands on main. Skip
-      // rebuildProduction entirely, but keep the app_version_changed
-      // broadcast firing so the app's own commit pills refresh.
-      // main_sha is refreshed by seedSelfApp() on the next boot, which
-      // clients pick up via /api/version.
-      if (!app.self_hosted) {
-        dstep({ phase: 'prod_rebuild', message: 'Production rebuild started.' });
-        const reuseImage = await demoPreviewImage(pool, app, session);
-        const result = await staging.rebuildProduction(config, app, reuseImage ? { reuseImage } : {});
-        sha = result.sha;
-        deployedSha = sha || null;
-        dstep({
-          phase: 'prod_rebuild',
-          message: `Production rebuild finished${sha ? ` (deployed ${String(sha).slice(0, 9)})` : ''}${result.imageReused ? ', on the image the checks ran against' : ''}.`,
-          detail: { sha: sha || null, imageReused: !!result.imageReused },
-        });
-        // Also record the SHA + originating PR so the main app view can
-        // show "live on <sha> · PR #<n>" (#21). pr_number comes from the
-        // session we just merged; sha is what `rebuildProduction` cloned.
-        await pool.query(
-          `UPDATE apps SET container_id = $1, main_sha = $2, main_pr_number = $3,
-                           last_deploy_at = NOW()
-           WHERE id = $4`,
-          [result.containerId, sha || null, session.pr_number || null, app.id]
-        );
-      } else {
-        const clusterRuntime = applicationRuntime.mode(config) === 'kubernetes';
-        log.info('votes', clusterRuntime
-          ? 'Self-app PR merged; GitHub Actions publishes the release for Argo CD'
-          : 'Self-app PR merged; host deployer will roll the harness', {
-          appId: app.id, prNumber: session.pr_number,
-        });
-        // Skip the deployer's ~2-min baseline poll: tell it main just
-        // moved so it fetches within seconds. Best-effort by design —
-        // if the nudge mount is missing (local dev, pre-deployer host)
-        // the baseline poll still delivers the deploy.
-        try {
-          const { nudgeHostDeployer } = require('../services/deploy-nudge');
-          if (!clusterRuntime) nudgeHostDeployer({ sha: mergeCommitSha, prNumber: session.pr_number });
-        } catch (_) { /* never fail a merge over a hint */ }
-      }
-      // Let every tab watching this app refresh its commit pill without
-      // polling. The existing vote_update event already fires on merge
-      // but is scoped to vote panel refreshes; a dedicated event keeps
-      // the concerns separated and avoids over-broadcasting. Fires for
-      // self-hosted too (sha=null): the platform's own row refreshes
-      // from /api/version, which has no new SHA to report until the
-      // blue-green rollout cuts over.
-      try {
-        const { broadcastGlobalScoped } = require('../services/ws');
-        broadcastGlobalScoped({
-          type: 'app_version_changed',
-          appSlug: session.app_slug,
-          sha: sha || null,
-          prNumber: session.pr_number || null,
-        }, { appId: session.app_id, appSlug: session.app_slug });
-      } catch {}
-    }
-
-    // Teardown staging. #851: this is the path that produced the ten known
-    // orphans — a swallowed removal failure while the session row was nulled
-    // anyway. teardownStaging now reports a leak instead of hiding it, and the
-    // trace says so rather than claiming a teardown that didn't happen. The
-    // merge itself must not fail over a container that won't die: the row keeps
-    // pointing at it and the stale-preview sweeper retries.
-    const stagingTeardown = await staging.teardownStaging(session, app)
-      .catch((err) => ({ removed: false, leaked: true, error: err.message }));
-    if (stagingTeardown && stagingTeardown.leaked) {
-      dstep({
-        phase: 'staging_teardown',
-        message: 'Staging container could not be removed. It is left for the stale-preview sweeper.',
-      });
-    } else {
-      dstep({ phase: 'staging_teardown', message: 'Staging container torn down.' });
-    }
-
-    // #58: snapshot the vote threshold + active-user count in effect at
-    // this merge, so the merged-PR pill shows the historical "yes / N"
-    // instead of drifting with the live threshold. `required` is the eased
-    // dynamic threshold (services/active-users.js → requiredVotes) actually
-    // applied to this merge; activeCount comes from getActiveUserStats() at
-    // the top of this function. The visibility window is intentionally NOT
-    // snapshotted (a merged row just shows its historical count). COALESCE
-    // keeps any earlier snapshot (defensive; the promoted→merging claim
-    // already guarantees a single merge transition). The follow-ups below
-    // are owed from here until runMergeFollowups has run them all
-    // (merge_followups_due_at), so a restart that cuts them off leaves the
-    // rest for recoverStuckMerges to run.
-    await pool.query(
-      `UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW(),
-                                merge_commit_sha = COALESCE($2, merge_commit_sha),
-                                votes_required = COALESCE(votes_required, $3),
-                                active_users_at_merge = COALESCE(active_users_at_merge, $4),
-                                merge_followups_due_at = NOW()
-       WHERE id = $1`,
-      [session.id, mergeCommitSha, required, activeCount]
-    );
-
-    // Everything a merge does once it is recorded, from the funnel event to
-    // the cascade (runMergeFollowups).
-    await runMergeFollowups({
-      config, pool, session, app, deployedSha, force, forceBy, yesCount, activeCount, dstep,
-    });
-
-    dstep({ phase: 'merged', message: `Marked session merged${mergeCommitSha ? ` (commit ${String(mergeCommitSha).slice(0, 9)})` : ''}.`, detail: { sha: mergeCommitSha, yesCount, majority } });
-    // Optional: finalizeMerge is exported and called directly (the imported-PR
-    // suite drives it on its own), and the recording is a description. A merge
-    // must never fail because nobody passed it something to narrate into.
-    gateTrace?.revise('github', 'done', { note: 'merged' });
-    gateSave?.();
-    dend('merged', `Merged${force ? ` (force by ${forceBy?.username || 'admin'})` : ''}.`);
-    return { merged: true };
-}
-
-// One of runMergeFollowups' run-once follow-ups is done. Best-effort: a mark
-// that is not written only means a resumed run does it again.
-async function noteFollowupDone(pool, sessionId, step) {
-  try {
-    await pool.query(
-      `UPDATE chat_sessions
-          SET merge_followups_done = array_append(COALESCE(merge_followups_done, '{}'::text[]), $2::text)
-        WHERE id = $1 AND NOT ($2::text = ANY(COALESCE(merge_followups_done, '{}'::text[])))`,
-      [sessionId, step]
-    );
-  } catch (err) {
-    log.warn('votes', 'Could not record a merge follow-up as done', { sessionId, step, err: err.message });
-  }
-}
-
-// What a merge does once it is recorded as merged: the funnel event, the
-// changes it carried, the agent session's note, the bell and the bot's news,
-// the bounties, the requests it closes and their watch, the worker, the
-// announcement and the cascade. finalizeMerge runs them right after its
-// status move. recoverStuckMerges (server.js) runs them, through
-// runOwedMergeFollowups, for a merge a restart cut off: before its status
-// moved (most often in a child app's production rebuild, which takes
-// minutes, so the heal records the merge and runs them), or after it. With
-// WF_MERGE_FOLLOWUPS_ENABLED on, the merge-followups machine runs its own
-// and none of this does.
-//
-// A resumed run repeats nothing anybody sees twice. Most follow-ups are keyed
-// by their own rows: the declared values, the bell rows, the bot's posts and
-// DM, the change_live record, the bounties (only an open one is paid) and the
-// included changes (only one still up for a vote is marked). The three that
-// are not, the PR_MERGED event, the agent session's note and the
-// announcement, are recorded in merge_followups_done once done, and `done`
-// is that list when a run resumes. Once all have run,
-// merge_followups_due_at is cleared.
-//
-// `recovered`: run by recovery rather than by the merge. Production may not
-// run the merge yet (its delivery is services/merge-followup-recovery.js's,
-// next), so the announcement says it will be live in a few minutes unless
-// `deployedSha` says it is; the tally is the one read now, or none.
-async function runMergeFollowups({
-  config, pool, session, app, deployedSha = null, force = false, forceBy = null,
-  yesCount = null, activeCount = null, dstep = () => {}, recovered = false, done = new Set(),
-}) {
-    // pr_merged is the terminal stage of the PR-promotion funnel and the
-    // signal behind the "merges over time" growth chart (now exact thanks
-    // to merged_at above). Attributed to the PR author (session.user_id),
-    // which may be NULL if the author was deleted.
-    if (!done.has('pr_merged')) {
-      await events.record(pool, {
-        type: events.EVENT_TYPES.PR_MERGED,
-        userId: session.user_id || null,
-        appId: session.app_id,
-        sessionId: session.id,
-        metadata: {
-          prNumber: session.pr_number || null,
-          forced: !!force,
-          ...(force && forceBy ? { forcedBy: forceBy.username } : {}),
-        },
-      });
-      await noteFollowupDone(pool, session.id, 'pr_merged');
-    }
-
-    // A change built on another one that was up for a vote carried it (its
-    // head is one of this pull request's commits), so that one is live now
-    // too: it is marked merged as included in this one before anything
-    // below reads the app's open changes (the bot's request bookkeeping, the
-    // cascade at the end), and its pull request, requests and first version
-    // are settled in the background (services/included-changes.js). Never a
-    // reason the merge fails.
-    try {
-      const inclusion = await require('../services/included-changes').includeStackedChanges({
-        config, pool, session, sha: deployedSha,
-      });
-      if (inclusion?.included?.length) {
-        dstep({
-          phase: 'included',
-          message: `Marked ${inclusion.included.length === 1 ? 'an open change' : `${inclusion.included.length} open changes`} this one was built on as live with it.`,
-          detail: { sessionIds: inclusion.included },
-        });
-      }
-    } catch (err) {
-      log.warn('votes', 'Including the changes this merge carried failed', { sessionId: session.id, err: err.message });
-    }
-
-    // #2779: the agent session that started this change, if one did, hears
-    // that it landed and stops treating it as its active change. A classic
-    // session's row says agent_session_id is null and costs nothing here.
-    // Never a reason the merge fails.
-    try {
-      if (!done.has('agent_note')) {
-        await require('../services/agent-sessions').noteChangeClosed(pool, { change: session, outcome: 'merged' });
-        await noteFollowupDone(pool, session.id, 'agent_note');
-      }
-    } catch (err) {
-      log.warn('votes', 'Agent session merge note failed', { sessionId: session.id, err: err.message });
-    }
-
-    // #1374: the author's change landed, and before this nothing told them.
-    // Beside the funnel event on purpose — the two mark the same moment, so
-    // a future edit that moves one should have to look at the other.
-    // Wrapped, and optional-called, because a notification must never be
-    // able to fail a MERGE. A `.catch()` alone would not do it: a
-    // synchronous throw (the module stubbed, the export renamed) escapes a
-    // promise chain entirely, and the first thing that noticed was a merge
-    // test going red.
-    // #1688: read once, used twice — the author's notification here and the
-    // announcement further down. Never for a force merge, and never a
-    // reason the merge fails: no names is the old wording, not an error.
-    const mergedCredits = force ? null : await mergeCredits(pool, session).catch((err) => {
-      log.warn('votes', 'Merge credits unavailable; announcing without names', {
-        sessionId: session.id, err: err.message,
-      });
-      return null;
-    });
-    try {
-      notifications.createPrMergedNotification?.(pool, {
-        userId: session.user_id,
-        appId: session.app_id,
-        sessionId: session.id,
-        forced: !!force,
-        // #1688: the names, for the author's own notification and push —
-        // without "Built by", since it goes to the builder.
-        credits: mergedCredits ? creditsSentence(mergedCredits, { withAuthor: false }) : null,
-      })?.then((created) => Promise.all(
-        created.map((row) => notifications.hydrateAndPush(pool, row))
-      ))?.catch((err) => log.error('votes',
-        'Merged notification failed', { sessionId: session.id, err: err.message }));
-    } catch (err) {
-      log.error('votes', 'Merged notification threw', { sessionId: session.id, err: err.message });
-    }
-    // #4787: the people who voted on it, yes or no, hear that it went live
-    // too — the author's row above stays the only one they (the author) get.
-    // Wrapped, and optional-called, for the same reason as above: never able
-    // to fail a MERGE.
-    try {
-      notifications.createVotedChangeMergedNotifications?.(pool, {
-        appId: session.app_id,
-        sessionId: session.id,
-        authorId: session.user_id,
-      })?.then((created) => Promise.all(
-        created.map((row) => notifications.hydrateAndPush(pool, row))
-      ))?.catch((err) => log.error('votes',
-        'Voted-change merged notification failed', { sessionId: session.id, err: err.message }));
-    } catch (err) {
-      log.error('votes', 'Voted-change merged notification threw', { sessionId: session.id, err: err.message });
-    }
-    // 5 October (Page Turners): the bell stops asking about it. Its "ready
-    // to try" rows say it is live (unread again for whoever had not said
-    // yes), and the vote nudges and digests it answered are read
-    // (notifications.settleDecidedChange). Never a reason the merge fails.
-    try {
-      notifications.settleDecidedChange?.(pool, session.id)
-        ?.catch?.((err) => log.warn('votes', 'Settling the bell after a merge failed', { sessionId: session.id, err: err.message }));
-    } catch (err) {
-      log.warn('votes', 'Settling the bell after a merge threw', { sessionId: session.id, err: err.message });
-    }
-    // #3624: a proposal the Homeroom bot built for somebody it talks to in
-    // a DM: they hear it is live there (the notification above goes to the
-    // proposal's author, which for a bot build is the bot). Never a reason
-    // the merge fails.
-    try {
-      require('../services/homeroom-bot-dm').noteProposalMerged(pool, session, { config, sha: deployedSha })
-        ?.catch?.((err) => log.warn('votes', 'Homeroom bot merged DM failed', { sessionId: session.id, err: err.message }));
-    } catch (err) {
-      log.warn('votes', 'Homeroom bot merged DM threw', { sessionId: session.id, err: err.message });
-    }
-    // One request, one story: the request the bot built it for says it is
-    // live, its closing line ("It's live. {title} is in {project} now."),
-    // once per change. Beside the DM above; the merge of the streams can
-    // fold the two into one hook. Never a reason the merge fails.
-    try {
-      require('../services/homeroom-bot-live').announceLive(pool, { session, deps: { github } })
-        ?.catch?.((err) => log.warn('votes', 'Homeroom bot live note failed', { sessionId: session.id, err: err.message }));
-    } catch (err) {
-      log.warn('votes', 'Homeroom bot live note threw', { sessionId: session.id, err: err.message });
-    }
-
-    // The admin Journey's change_live record: who asked for this change,
-    // whether it was a project's first version, and whether the project
-    // answered its health check on what was deployed (the reading the DM
-    // above says "live now" on, which until this lived only in that DM).
-    // Recorded for every merged change, not only the bot's. Never awaited,
-    // and never a reason the merge fails.
-    try {
-      require('../services/journey-events').recordChangeLive(pool, { config, session, sha: deployedSha })
-        ?.catch?.((err) => log.warn('votes', 'Journey change_live record failed', { sessionId: session.id, err: err.message }));
-    } catch (err) {
-      log.warn('votes', 'Journey change_live record threw', { sessionId: session.id, err: err.message });
-    }
-
-    // WP1 (#2): and nothing else of the bot's on the same request goes on: a
-    // build waiting or under way is stopped, another proposal of its for the
-    // request is withdrawn, and the request leaves the bot's queue. Never a
-    // reason the merge fails.
-    try {
-      require('../services/homeroom-bot').noteRequestMerged(pool, session)
-        ?.catch?.((err) => log.warn('votes', 'Homeroom bot merge note failed', { sessionId: session.id, err: err.message }));
-    } catch (err) {
-      log.warn('votes', 'Homeroom bot merge note threw', { sessionId: session.id, err: err.message });
-    }
-
-    // Resolve any open issue bounties for the issues this PR closes (declared
-    // through the session's linked_issues → `Closes #N` in the PR body).
-    // Bounties pledged by OTHER users flip 'open' → 'awarded' and credit this
-    // PR's author; a bounty the author pledged on their own resolved issue is
-    // 'voided' instead (self-kudos guard — see resolveIssueBounty). Idempotent
-    // (only status='open' rows transition, so a later PR closing the same
-    // issue finds none) and best-effort — a failure here must never roll back
-    // or fail the merge, same as the CC volume teardown below.
-    try {
-      const linked = Array.isArray(session.linked_issues) ? session.linked_issues : [];
-      const seen = new Set();
-      for (const raw of linked) {
-        const n = Number(raw);
-        if (!Number.isInteger(n) || n <= 0 || seen.has(n)) continue;
-        seen.add(n);
-        const { awarded, voided } = await resolveIssueBounty(pool, {
-          appId: session.app_id,
-          sessionId: session.id,
-          awardeeUserId: session.user_id || null,
-          issueNumber: n,
-        });
-        if (voided.length) {
-          log.info('votes', 'Self-bounty voided on merge', {
-            sessionId: session.id, issueNumber: n, count: voided.length,
-          });
-        }
-        // Only announce / record genuine awards; a purely self-voided issue
-        // produces no "awarded" chat noise or event.
-        if (!awarded.length) continue;
-        events.record(pool, {
-          type: events.EVENT_TYPES.BOUNTY_AWARDED,
-          userId: session.user_id || null,
-          appId: session.app_id,
-          sessionId: session.id,
-          metadata: { issueNumber: n, prNumber: session.pr_number || null, count: awarded.length },
-        });
-        const recipient = session.user_id ? `<@${session.user_id}>` : 'the author';
-        const bountyMsg = `Bounty on issue #${n} (${awarded.length} kudos) awarded to ${recipient} for PR #${session.pr_number || session.id}`;
-        // Into the proposal's thread (lifecycle in context).
-        await sendSystemMessage(pool, session.app_id, bountyMsg, 'system',
-          null, { type: 'session', ref: session.id }).catch(() => {});
-      }
-    } catch (err) {
-      log.warn('votes', 'Bounty payout failed', { sessionId: session.id, err: err.message });
-    }
-
-    // Keep the "Open Issues" panel honest. A merged PR carrying `Closes #N`
-    // has just closed those issues on GitHub, but the panel reads
-    // github.fetchPublicIssues (cached, state=open) and nothing else learns
-    // the issue closed — so without this the closed issue lingers until the
-    // cache TTL expires AND something separately triggers a panel reload.
-    // Bust this repo's open-issues cache and broadcast a refresh so every
-    // client viewing the app's group chat refetches (App.handleIssueUpdate →
-    // AppView.loadVotePanel). Use the same repo_url regex as parseOwnerRepo
-    // (routes/issues.js) so the invalidated key matches the cached one.
-    // Best-effort and post-merge — a failure here must never fail the merge.
-    try {
-      const [, ghOwner, ghRepo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-      if (ghOwner && ghRepo) {
-        // #144: record the linked issues as closed BEFORE busting the
-        // cache + broadcasting. GitHub's auto-close is async and its
-        // anonymous list endpoint lags even further, so the refetch this
-        // broadcast triggers can read the issues as still open and
-        // re-cache them — the suppression list makes fetchPublicIssues
-        // drop them no matter what the list says. Optimistic on purpose:
-        // GitHub usually closes `Closes #N` (late), and when it does not
-        // (as on 2026-09-30) the watcher below closes the linked issues
-        // itself once its polls run out; only a failed close there lifts
-        // the suppression again.
-        const { sanitizeIssueNumbers } = require('../services/pr-metadata');
-        const closedNumbers = sanitizeIssueNumbers(session.linked_issues);
-        if (closedNumbers.length) github.noteIssuesClosed(ghOwner, ghRepo, closedNumbers);
-        // Auto-resolve any open close-issue proposals targeting the issues
-        // this merge closes — their vote is moot now. Same optimism as the
-        // suppression above (GitHub closes `Closes #N`, or the watcher
-        // below closes the linked ones itself); the watcher also catches
-        // hand-edited `Closes #N` beyond linked_issues. Lazy require to avoid an import cycle;
-        // fired-and-forgotten so a failure never fails the merge.
-        if (closedNumbers.length) {
-          try {
-            const { resolveSupersededCloseProposals } = require('./issues');
-            resolveSupersededCloseProposals(pool, {
-              appId: session.app_id,
-              appSlug: session.app_slug,
-              numbers: closedNumbers,
-              cause: { kind: 'pr-merge', prNumber: session.pr_number || session.id },
-            }).catch((err) => log.warn('votes', 'Superseded close-proposal resolve failed', {
-              sessionId: session.id, err: err.message,
-            }));
-          } catch (err) {
-            log.warn('votes', 'Superseded close-proposal resolve setup failed', {
-              sessionId: session.id, err: err.message,
-            });
-          }
-        }
-        github.invalidateIssuesCache(ghOwner, ghRepo);
-        const { pushIssueUpdate } = require('../services/ws');
-        pushIssueUpdate({
-          action: 'github_synced',
-          appSlug: session.app_slug,
-          appId: session.app_id,
-          source: 'pr_merged',
-        });
-      }
-    } catch (err) {
-      log.warn('votes', 'Open-issues refresh after merge failed', {
-        sessionId: session.id, err: err.message,
-      });
-    }
-
-    // #135: GitHub closes `Closes #N`-referenced issues itself, but a few
-    // seconds AFTER the merge — so the cache bust + refetch above can race
-    // it, re-caching the issue as open and leaving the group-chat panel
-    // stale for the cache TTL. Watch the referenced issues (PR-body closing
-    // keywords ∪ linked_issues) with retry/backoff until GitHub reports
-    // them closed, then bust the cache and broadcast the refresh again.
-    // If GitHub still has not closed a LINKED issue when the polls run
-    // out, the watcher closes it itself (after re-reading the PR as merged
-    // into the default branch); body-only numbers are never closed there.
-    // Fired-and-forgotten — the polling must never slow down or fail the
-    // merge flow.
-    try {
-      if (github.isEnabled() && session.pr_number) {
-        const [, wOwner, wRepo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-        if (wOwner && wRepo) {
-          const { watchIssuesClosedAfterMerge } = require('../services/issue-close-watcher');
-          watchIssuesClosedAfterMerge({
-            owner: wOwner,
-            repo: wRepo,
-            prNumber: session.pr_number,
-            linkedIssues: session.linked_issues,
-            appSlug: session.app_slug,
-            appId: session.app_id,
-            // Lets the watcher auto-resolve close-issue proposals for the
-            // numbers it observes closed (incl. hand-edited `Closes #N`).
-            pool,
-          }).catch((err) => {
-            log.warn('votes', 'Post-merge issue-close watch failed', {
-              sessionId: session.id, err: err.message,
-            });
-          });
-        }
-      }
-    } catch (err) {
-      log.warn('votes', 'Post-merge issue-close watch setup failed', {
-        sessionId: session.id, err: err.message,
-      });
-    }
-
-    // Chat session is done: no further turns will reference CC memory, so
-    // drop the worker and its persistent `.claude` volume. A shots run still
-    // working in that worker keeps it until it finishes (worker.retireWorker).
-    try {
-      const worker = require('../services/worker');
-      await worker.retireWorker(session.id);
-    } catch (err) {
-      log.warn('votes', 'Failed to destroy CC volume', { sessionId: session.id, err: err.message });
-    }
-
-    // Say it in the proposal's own thread, so its discussion carries the
-    // outcome in context (a channel carries no activity).
-    // The ordinary line leads with the change and thanks the voters; the
-    // "(yes/active votes)" figure stays at the end in the same shape, since
-    // migrate.js's votes_required backfill parses it out of historical
-    // announcements (rows merged since the snapshot columns exist never need
-    // that backfill, so the changed lead-in costs nothing there).
-    const prRef = `PR #${session.pr_number || session.id}`;
-    const mergedLabel = session.pr_title ? `${prRef}: ${session.pr_title}` : prRef;
-    // #1688: the announcement names the people. mergeCredits reads the
-    // author, the Yes voters whose votes counted and whoever shaped it (a No
-    // with a line, or a word in the thread before it landed); the sentence
-    // sits between the lead-in and the tally, whose "(yes/active votes)"
-    // shape migrate.js's backfill still parses. Without credits — a force
-    // merge, or a read that failed — the line reads as it did.
-    const credits = mergedCredits;
-    const creditLine = credits ? creditsSentence(credits) : 'Thanks to everyone who voted';
-    // Follow-up to #2897: a child app's merge rebuilt production before
-    // this (finalizeMerge), so "is live" is true when this posts. The
-    // platform's own app (self_hosted) releases AFTER the merge and outside
-    // this process (GitHub Actions builds the image, Argo CD rolls it out,
-    // services/release-watch.js reports a stall), so its line says the
-    // change merged and will be live in a few minutes, and so does a merge
-    // recovery records before production runs it. group-chat.js
-    // _proposalEvent recognises both wordings (older rows keep "is live"
-    // forever) and reads `liveSoon` from the metadata where it rides.
-    const liveSoon = !!(app && app.self_hosted) || (recovered && !deployedSha);
-    const liveClause = liveSoon
-      ? (session.pr_title ? `merged (${prRef}) and will be live in a few minutes` : 'merged and will be live in a few minutes')
-      : (session.pr_title ? `is live (${prRef})` : 'is live');
-    // A recovered merge without a tally read says no figure rather than a
-    // wrong one (the credits sentence ends itself; the thanks do not).
-    const tallied = yesCount != null && activeCount != null;
-    const tallyTail = tallied ? ` (${yesCount}/${activeCount} votes)` : (/[.!?]$/.test(creditLine) ? '' : '.');
-    const mergedLine = force && forceBy
-      ? `${mergedLabel} force-merged by admin ${forceBy.username} (${yesCount}/${activeCount} vote${yesCount === 1 ? '' : 's'} at the time)`
-      : `${session.pr_title || prRef} ${liveClause}. ${creditLine}${tallyTail}`;
-    // The names ride as metadata too, so the general chat's event row draws
-    // from data rather than from the wording.
-    const mergedMeta = credits ? {
-      merged: {
-        sessionId: session.id,
-        prNumber: session.pr_number || null,
-        title: session.pr_title || '',
-        author: credits.author || '',
-        backers: credits.backers,
-        shapers: credits.shapers,
-        ...(tallied ? { votes: `${yesCount}/${activeCount}` } : {}),
-        ...(liveSoon ? { liveSoon: true } : {}),
-      },
-    } : null;
-    if (!done.has('merged_line')) {
-      await sendSystemMessage(pool, session.app_id, mergedLine,
-        'system', mergedMeta, { type: 'session', ref: session.id }
-      ).catch(() => {});
-      await noteFollowupDone(pool, session.id, 'merged_line');
-    }
-
-    // Cascade: drain the next eligible promoted PR for this app. The
-    // app-level drain serializes this with any vote-triggered resolves so
-    // only one PR per app resolves+merges at a time. Exclude the session we
-    // just merged so it's never re-picked.
-    checkAndResolveConflicts(config, { app_id: session.app_id, excludeSessionId: session.id }).catch((err) => {
-      log.error('votes', 'Conflict resolution check failed', { err: err.message });
-    });
-
-    // All of them have run: nothing is owed any more.
-    try {
-      await pool.query(
-        'UPDATE chat_sessions SET merge_followups_due_at = NULL WHERE id = $1',
-        [session.id]
-      );
-    } catch (err) {
-      log.warn('votes', 'Could not record a merge\'s follow-ups as done; recovery runs what is left', {
-        sessionId: session.id, err: err.message,
-      });
-    }
-}
-
-// The tally a recovered merge announces and snapshots: its votes read now
-// (governance.governedGate, the gate checkAndMerge read before merging), or
-// null when they cannot be read. The merge that would have read them at the
-// time is gone; votes are not cast on a merged change, so this is close.
-async function recoveredTally(pool, session) {
-  try {
-    const gate = await require('../services/governance').governedGate(pool, session.app_id, {
-      kind: 'pr', id: session.id, openedAt: session.promoted_at || session.created_at || null,
-      explicitApproval: !!session.requires_explicit_approval,
-      explicitReason: session.explicit_approval_reason || null,
-      authorId: session.user_id ?? null,
-    });
-    const yes = Number(gate?.qualifiedYes);
-    const active = Number(gate?.activeCount);
-    if (!Number.isInteger(yes) || !Number.isInteger(active)) return null;
-    return { yes, active, required: Number.isInteger(Number(gate.required)) ? Number(gate.required) : null };
-  } catch (err) {
-    log.warn('votes', 'Could not read a recovered merge\'s tally; it is announced without one', {
-      sessionId: session.id, err: err.message,
-    });
-    return null;
-  }
-}
-
-// recoverStuckMerges (server.js), on the legacy path: the follow-ups owed by
-// a merge recorded as merged (merge_followups_due_at), run by whichever
-// process holds the session's merge-finalization lock. Its caller takes the
-// lock: the heal right after it records a merge GitHub reports and the
-// platform never finished, resumeOwedMergeFollowups for one a restart cut
-// off after the status move. Reads the row again under that lock, so a
-// finalizer that finished meanwhile leaves nothing to do. Resolves
-// { ran: true } when the follow-ups ran (the request watch among them).
-async function runOwedMergeFollowups(config, pool, sessionId) {
-  const { rows } = await pool.query(
-    `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.self_hosted AS app_self_hosted
-       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-      WHERE cs.id = $1 AND cs.status = 'merged' AND cs.merge_followups_due_at IS NOT NULL`,
-    [sessionId]
-  );
-  const session = rows[0];
-  if (!session) return { ran: false };
-  const { rows: appRows } = await pool.query('SELECT * FROM apps WHERE id = $1', [session.app_id]);
-  const app = appRows[0] || null;
-  // What production runs is the merge only once its delivery is done (a
-  // finalizer cut off after its rebuild, or recovery's own).
-  const mergeSha = String(session.merge_commit_sha || '').toLowerCase();
-  const deployedSha = app && !app.self_hosted && mergeSha
-    && String(app.main_sha || '').toLowerCase() === mergeSha ? app.main_sha : null;
-  const tally = await recoveredTally(pool, session);
-  if (tally) {
-    // The pill's "yes / N", as the merge's own status move snapshots it.
-    await pool.query(
-      `UPDATE chat_sessions
-          SET votes_required = COALESCE(votes_required, $2),
-              active_users_at_merge = COALESCE(active_users_at_merge, $3)
-        WHERE id = $1`,
-      [session.id, tally.required, tally.active]
-    ).catch(() => {});
-  }
-  log.info('votes', 'Running the follow-ups of a merge a restart cut off', {
-    sessionId: session.id, prNumber: session.pr_number || null,
-    done: session.merge_followups_done || [], delivered: !!deployedSha,
-  });
-  await runMergeFollowups({
-    config, pool, session, app, deployedSha,
-    yesCount: tally ? tally.yes : null, activeCount: tally ? tally.active : null,
-    recovered: true, done: new Set(Array.isArray(session.merge_followups_done) ? session.merge_followups_done : []),
-  });
-  // The vote panels drop it, as they do when a merge reports itself.
-  try {
-    require('../services/ws').pushVoteUpdate({
-      sessionId: session.id, appSlug: session.app_slug, merged: true, merging: false,
-      selfHosted: !!session.app_self_hosted,
-    });
-  } catch (_) { /* ws failures non-fatal */ }
-  return { ran: true };
-}
-
-// Merges recorded as merged whose follow-ups a restart cut off, resumed: a
-// finalizer or a heal that died after its status move left
-// merge_followups_due_at set. One owed for longer than a day is left alone,
-// so a row that can never finish is not retried forever. Each runs under
-// the session's merge-finalization lock, tried only, so a live finalizer
-// keeps its own. Resolves the sessions whose follow-ups ran.
-async function resumeOwedMergeFollowups(config, pool, { limit = 20 } = {}) {
-  const mergeLock = require('../services/merge-finalization-lock');
-  const { rows } = await pool.query(
-    `SELECT id FROM chat_sessions
-      WHERE merge_followups_due_at IS NOT NULL AND status = 'merged'
-        AND merge_followups_due_at > NOW() - INTERVAL '1 day'
-      ORDER BY merge_followups_due_at
-      LIMIT $1`,
-    [limit]
-  );
-  const resumed = [];
-  for (const { id } of rows) {
-    const release = await mergeLock.acquire(pool, id, { tryOnly: true });
-    if (!release) continue; // Its finalizer is still running them.
-    try {
-      if ((await runOwedMergeFollowups(config, pool, id)).ran) resumed.push(Number(id));
-    } catch (err) {
-      log.warn('votes', 'Resuming a merge\'s follow-ups failed; the next sweep tries again', {
-        sessionId: id, err: err.message,
-      });
-    } finally {
-      await release();
-    }
-  }
-  return resumed;
-}
-
 async function checkAndMerge(config, pool, session, options = {}) {
   // `options.autoResolve` (default true): when a merge is blocked by a
   // conflict / behind-main, kick off the worker-based auto-resolver
@@ -7545,143 +6729,45 @@ async function checkAndMerge(config, pool, session, options = {}) {
       dstep({ phase: 'github_merge', message: 'GitHub not enabled or PR-less, so skipping the GitHub merge call.' });
     }
 
-    // With WF_MERGE_FOLLOWUPS_ENABLED on, everything after GitHub's merge
-    // belongs to the merge-followups workflow machine
-    // (src/workflow/merge-followups/): the status move, delivery, teardown,
-    // included changes, requests and the announcements, each durable. The
-    // merge reports it and waits briefly for the status move.
-    const workflow = require('../workflow/platform.ts');
-    if (workflow.mergeFollowupsEnabled()) {
-      const handed = await workflow.mergeConfirmed({
-        sessionId: session.id, appId: session.app_id, mergeSha: mergeCommitSha,
-        force, forcedBy: forceBy?.username || null,
-        tally: { yes: yesCount, required, active: activeCount },
-      });
-      if (handed.status === 'rejected' || handed.status === 'faulted') {
-        log.error('votes', 'The merge-followups machine refused a confirmed merge', {
-          sessionId: session.id, status: handed.status, reason: handed.reason,
-        });
-      }
-      dstep({
-        phase: 'merged',
-        message: `Merged${mergeCommitSha ? ` (commit ${String(mergeCommitSha).slice(0, 9)})` : ''}. Delivery and the follow-ups are the merge-followups workflow's (${handed.status}).`,
-        detail: { sha: mergeCommitSha, workflowEvent: handed.eventId, outcome: handed.status },
-      });
-      gateTrace.revise('github', 'done', { note: 'merged' });
-      gateSave();
-      dend('merged', `Merged${force ? ` (force by ${forceBy?.username || 'admin'})` : ''}.`);
-      return { merged: true, ...(handed.status === 'pending' ? { followupsPending: true } : {}) };
-    }
-
-    // #687 Slice 4: run the shared post-merge finalizer. Both native and
-    // imported merges converge here after the (only-difference) github.mergePR
-    // call above, so the deploy/teardown/announce tail is byte-for-byte
-    // identical for both. A throw inside still lands in this try's catch,
-    // which honours the githubMerged guard and the merge-debug tracing.
-    return await finalizeMerge({
-      config, pool, session,
-      mergeCommitSha, required, activeCount, yesCount, majority,
-      force, forceBy, dstep, dend,
-      // #2061: finalizeMerge owns the success end, so it has to be able to
-      // record gate 7's real outcome. Threaded like dstep/dend for the same
-      // reason — it is a separate top-level function, not a closure.
-      gateTrace, gateSave,
+    // Everything after GitHub's merge belongs to the merge-followups
+    // workflow machine (src/workflow/merge-followups/): the status move,
+    // delivery, teardown, included changes, requests and the announcements,
+    // each durable. The merge reports it and waits briefly for the status
+    // move.
+    const handed = await require('../workflow/platform.ts').mergeConfirmed({
+      sessionId: session.id, appId: session.app_id, mergeSha: mergeCommitSha,
+      force, forcedBy: forceBy?.username || null,
+      tally: { yes: yesCount, required, active: activeCount },
     });
+    if (handed.status === 'rejected' || handed.status === 'faulted') {
+      log.error('votes', 'The merge-followups machine refused a confirmed merge', {
+        sessionId: session.id, status: handed.status, reason: handed.reason,
+      });
+    }
+    dstep({
+      phase: 'merged',
+      message: `Merged${mergeCommitSha ? ` (commit ${String(mergeCommitSha).slice(0, 9)})` : ''}. Delivery and the follow-ups are the merge-followups workflow's (${handed.status}).`,
+      detail: { sha: mergeCommitSha, workflowEvent: handed.eventId, outcome: handed.status },
+    });
+    gateTrace.revise('github', 'done', { note: 'merged' });
+    gateSave();
+    dend('merged', `Merged${force ? ` (force by ${forceBy?.username || 'admin'})` : ''}.`);
+    return { merged: true, ...(handed.status === 'pending' ? { followupsPending: true } : {}) };
   } catch (err) {
     log.error('votes', 'Merge failed', { sessionId: session.id, err: err.message, githubMerged });
     dstep({ phase: 'merge_error', level: 'error', message: `Merge step threw: ${err.message}`, detail: { githubMerged, status: err.status || null } });
 
-    // The GitHub merge is irreversible. If it already succeeded and a
-    // LATER step threw (most commonly `staging.rebuildProduction` — e.g. a
-    // PR that introduces a new required secret with no production value
-    // raises MissingSecretsError, or two sibling rebuilds race on the
-    // container name), the PR *is* merged. Rolling the session back to
-    // 'promoted' here is exactly what left whiteboard PRs #41/#44/#52/#54
-    // showing "up for voting" forever: `GET /api/apps/:slug/promoted`
-    // returns `status IN ('promoted','merging')`, and any "retry" merge
-    // 405s because GitHub has nothing left to merge. Instead, record the
-    // merge and surface the deploy failure separately so an operator can
-    // fix the cause and re-run the rebuild ("Check for updates" / drift
-    // poller). The pre-merge conflict/behind_main handling further down is
-    // premised on the merge NOT having happened, so we return early.
-    // With the merge-followups machine on, the only step after GitHub's merge
-    // is reporting it. A report that failed leaves the row 'merging', and
-    // recoverStuckMerges finds the merge on GitHub and reports it again.
-    if (githubMerged && require('../workflow/platform.ts').mergeFollowupsEnabled()) {
+    // The GitHub merge is irreversible. If it succeeded, the only step
+    // after it is reporting it to the merge-followups machine: a report that
+    // failed leaves the row 'merging', and recoverStuckMerges finds the
+    // merge on GitHub and reports it again. Rolling the session back to
+    // 'promoted' would show a merged PR as "up for voting" forever (any
+    // "retry" merge 405s: GitHub has nothing left to merge). The pre-merge
+    // conflict/behind_main handling further down is premised on the merge
+    // NOT having happened, so we return early.
+    if (githubMerged) {
       dend('merged', 'Merged on GitHub; recovery records the merge.');
       return { merged: true, followupsPending: true };
-    }
-
-    if (githubMerged) {
-      await pool.query(
-        `UPDATE chat_sessions
-            SET status = 'merged',
-                merged_at = COALESCE(merged_at, NOW()),
-                live_at = COALESCE(live_at, NOW()),
-                merge_commit_sha = COALESCE(merge_commit_sha, $2),
-                votes_required = COALESCE(votes_required, $3),
-                active_users_at_merge = COALESCE(active_users_at_merge, $4)
-          WHERE id = $1 AND status IN ('merging', 'merged')`,
-        [session.id, mergeCommitSha, required, activeCount]
-      ).catch((e) => log.error('votes',
-        'Failed to mark session merged after post-merge error', {
-          sessionId: session.id, err: e.message,
-        }));
-
-      // What this merge carried is on main too (services/included-changes.js).
-      // finalizeMerge may already have marked it before the step that threw;
-      // a second pass finds nothing left up for a vote. Nobody is told it is
-      // live: the deploy failed.
-      try {
-        await require('../services/included-changes').includeStackedChanges({
-          config, pool, session, deployed: false,
-        });
-      } catch (e) {
-        log.warn('votes', 'Including the changes a merge carried failed after its deploy failed', {
-          sessionId: session.id, err: e.message,
-        });
-      }
-      // The vote is over all the same: nothing is asked of anybody about it
-      // (notifications.settleDecidedChange). Never a reason this path fails.
-      try {
-        await notifications.settleDecidedChange?.(pool, session.id);
-      } catch (e) {
-        log.warn('votes', 'Settling the bell after a merge whose deploy failed failed', {
-          sessionId: session.id, err: e.message,
-        });
-      }
-
-      const failLabel = session.pr_title
-        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
-        : `PR #${session.pr_number || session.id}`;
-      // An image refused for running as root is the app's own Dockerfile,
-      // not something an operator retries away: say what to change.
-      const deployFailure = require('../services/deploy-failure');
-      const rootImage = deployFailure.isRootImageRefusal(err);
-      await sendSystemMessage(pool, session.app_id,
-        rootImage
-          ? `${failLabel} merged on GitHub, but it cannot go live: ${deployFailure.ROOT_IMAGE_FIX} ` +
-            `Production keeps serving the previous version until then.`
-          : `${failLabel} merged on GitHub, but the production deploy failed: ${err.message}. ` +
-            `The change is on main; an operator can retry the deploy once the cause is resolved.`,
-        'system', null, { type: 'session', ref: session.id }
-      ).catch(() => {});
-
-      try {
-        const { pushVoteUpdate } = require('../services/ws');
-        pushVoteUpdate({
-          sessionId: session.id,
-          appSlug: session.app_slug,
-          merged: true,
-          merging: false,
-          deployFailed: true,
-          selfHosted: !!session.app_self_hosted,
-        });
-      } catch (_) { /* ws failures non-fatal */ }
-
-      dstep({ phase: 'merged', level: 'warn', message: `PR merged on GitHub but the production deploy failed: ${err.message}`, detail: { deployFailed: true } });
-      dend('merged', 'Merged on GitHub; production deploy failed (operator retry needed).');
-      return { merged: true, deployFailed: true, error: err.message };
     }
 
     // GitHub merge did NOT happen (conflict, auth, transient API error).
@@ -8158,7 +7244,7 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
 
   try {
     // Full clone — we need history reaching back to the merge SHA, so
-    // the rebuildProduction shallow-clone pattern doesn't apply here.
+    // the deployProduction shallow-clone pattern doesn't apply here.
     await docker.execFileAsync('git', ['clone', cloneUrl, tmpDir], { timeout: 180000 });
 
     // Committer identity for the revert commit. Matches the
@@ -8227,18 +7313,7 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
 module.exports = {
   voteRoutes,
   checkAndMerge,
-  resolveIssueBounty,
   createRevertPR,
-  finalizeMerge,
-  // recoverStuckMerges (server.js), on the legacy path: what a merge a
-  // restart cut off still owes, the declared values before its status move
-  // and the follow-ups after it.
-  applyDeclaredValues,
-  runMergeFollowups,
-  runOwedMergeFollowups,
-  resumeOwedMergeFollowups,
-  // #demo: the preview image a demo-mode merge offers its rebuild.
-  demoPreviewImage,
   // Focused revision-safety tests exercise the reconciliation without
   // driving the full HTTP router.
   reconcileNativeReviewedHead,
@@ -8263,8 +7338,6 @@ module.exports = {
   normalizeVoteReason,
   VOTE_REASON_MAX,
   VOTE_REASON_REQUIRED,
-  mergeCredits,
-  creditsSentence,
   // (#1115) The applied-close demo rows live here because they belong to the
   // Completed stream, but GET /api/apps/:slug/governance/:id in issues.js has
   // to resolve them too for a ?demo=1 deep link. Exported for that handler's

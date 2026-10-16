@@ -147,11 +147,14 @@ function pipelineDeps({ dispatched, costUsd = 0.5 } = {}) {
           model: shotsAgent.agentModel(cfg), budgetMs: cfg.shots.maxAgentMs, timeoutMs: options.timeoutMs,
           systemPrompt: options.systemPrompt, taskPrompt: options.taskPrompt, runId: options.runId,
         });
-        const control = controlPlane.forRequest({ runId: options.runId, sessionId: options.session.id });
-        for (const story of control.intent.stories) {
+        // The agent's calls, through the trial's workspace in Postgres.
+        const intent = (await controlPlane.read(options.pool, options.runId)).intent;
+        for (const story of intent.stories) {
           for (const viewport of story.viewports) {
-            control.saveShot({ change: story.id, screen: viewport.name, side: 'before', kind: 'screen' }, fixtures.png({ shade: 10 }));
-            control.saveShot({ change: story.id, screen: viewport.name, side: 'after', kind: 'screen' }, fixtures.png({ shade: 200 }));
+            for (const [side, shade] of [['before', 10], ['after', 200]]) {
+              await controlPlane.withControl(options.pool, { runId: options.runId, sessionId: options.session.id },
+                (control) => control.saveShot({ change: story.id, screen: viewport.name, side, kind: 'screen' }, fixtures.png({ shade })));
+            }
           }
         }
         return { backend: 'claude_code', model: shotsAgent.agentModel(cfg), result: { costUsd } };
@@ -165,13 +168,13 @@ function pipelineDeps({ dispatched, costUsd = 0.5 } = {}) {
             head: { imageDigest: provenance.headImageDigest, checkout: checkouts.head } },
         }),
         resetPair: async () => ({ origins: { base: 'http://base.internal:3000', head: 'http://head.internal:3000' }, baseSha: BASE, headSha: HEAD, ...provenance }),
-        cleanupPair: async () => ({ cleaned: true, errors: [] }),
       },
+      // The copies are fakes: nothing to remove.
+      removeCopies: async () => [],
       identities: {
         mintShotsAuthTokens: async () => ({ member: 'm', read_only_admin: 'a', full_admin: 'f' }),
         shotsGuestIdentity: async () => ({ kind: 'private', token: null }),
       },
-      shotsControl: controlPlane,
       shotsStarter: { beforeIsStarter: async () => false },
       worker: {
         isInFlight: () => false, getActiveTurnMode: () => null, stopTurn: async () => {},
@@ -191,7 +194,6 @@ test('shots evals, end to end (PostgreSQL)', { timeout: 180_000 }, async (t) => 
   const pool = await freshDb(t);
   if (!pool) return;
   runner._resetForTests();
-  controlPlane._clearForTests();
   t.after(() => runner._resetForTests());
   const adminId = await seed(pool);
   let configId;

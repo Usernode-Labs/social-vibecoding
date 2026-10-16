@@ -194,13 +194,16 @@ test('the nudge mount is the one writable exception under runtime/', () => {
     'deploy.sh pre-creates the dir so docker does not create it root-owned at mount time');
 });
 
-test('the self-app merge path fires the nudge, best-effort', () => {
-  const start = votesJs.indexOf('Self-app PR merged; host deployer will roll');
-  assert.ok(start !== -1, 'the self-hosted merge branch exists');
-  const branch = votesJs.slice(start, votesJs.indexOf('app_version_changed', start));
-  assert.match(branch, /nudgeHostDeployer\(\{ sha: mergeCommitSha, prNumber: session\.pr_number \}\)/);
-  assert.match(branch, /catch \(_\) \{ \/\* never fail a merge over a hint \*\//,
-    'a missing mount or fs error must never fail the merge that triggered it');
+test('the self-app merge path fires the nudge, as durable work of the merge', () => {
+  // The merge-followups machine: a self-hosted merge asks the host deployer
+  // to fetch (host.nudgeDeployer work), skipped on Kubernetes; the nudge
+  // itself fails soft (below), so it never fails the merge.
+  const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  const machine = read('src/workflow/merge-followups/machine.ts');
+  assert.match(machine, /app\.selfHosted \? \[\{ kind: WORK\.nudge, key: 'nudge', input: \{ sha: d\.mergeSha, prNumber: d\.prNumber \} \}\]/);
+  const services = read('src/workflow/merge-followups/services.ts');
+  assert.match(services, /if \(legacy\('services\/application-runtime'\)\.mode\(config\) === 'kubernetes'\) return \{ skipped: 'kubernetes' \};/);
+  assert.match(services, /nudgeHostDeployer\(\{ sha: input\.sha, prNumber: input\.prNumber \}\)/);
 });
 
 test('nudgeHostDeployer writes atomically and fails soft when the mount is absent', () => {

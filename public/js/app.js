@@ -2780,9 +2780,9 @@ const App = {
   // of the yellow + spinner state. Reacts to BOTH the start broadcast
   // (deploying:true → render the deploying pill) and the end
   // broadcast (deploying:false → re-fetch the version so the new
-  // SHA shows up). The server emits these from staging.js around
-  // every rebuildProduction call, so all entry paths (dev-chat
-  // merge, drift poller, manual check-updates) are covered.
+  // SHA shows up). The app-delivery workflow machine pushes these
+  // around every production deploy, so all entry paths (a merge, the
+  // drift poller, manual check-updates) are covered.
   handleAppRedeployStatus(data) {
     if (!data || !data.appSlug) return;
     const slug = data.appSlug;
@@ -4029,6 +4029,14 @@ const App = {
   // caught up by the drawer's stale-revision indicator
   // (renderPlatformVersionPill) or by pull-to-refresh (_refreshOrReload).
   handleVoteUpdate(data) {
+    // #5233: a merge lands while the viewer is anywhere but the board itself
+    // — the app tab, the proposal's own page, Home — and the board's cached
+    // lists still hold it as open. The helper checks which app the lists
+    // belong to, so it is called whatever is showing here; the burst below
+    // covers the board showing live.
+    if (data.merged && typeof AppView !== 'undefined' && AppView.noteSessionMerged) {
+      AppView.noteSessionMerged(data.sessionId, data.appSlug);
+    }
     // Refresh the proposals tab / inline chat vote state if we're in this
     // app's Dev view, and the work drawer and Home, which track tallies:
     // once for the burst this event arrives in, which usually also carries
