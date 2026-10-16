@@ -223,12 +223,15 @@ async function markFreshOwed(pool, { sessionId, commitSha } = {}) {
  *     the stale sweep re-drives the head if this process goes away;
  *   * once the session is idle, if nothing has answered the request yet
  *     (still owed on that head), the owed run starts.
- * `busy()` is the route's own test of "something is running". Never throws.
+ * `busy()` is the route's own test of "something is running". `head` is
+ * the head the request is for, as the route resolved it from the row
+ * (staging-recovery.requestedRecheckHead); without it, the caller's copy of
+ * the checks pin. Never throws.
  */
 async function owePendingRun({
-  pool, visuals, stagingRecovery, config, session, busy, pollMs = 5000, maxWaitMs = 15 * 60 * 1000,
+  pool, visuals, stagingRecovery, config, session, busy, head = null, pollMs = 5000, maxWaitMs = 15 * 60 * 1000,
 }) {
-  const sha = session && session.checks_commit_sha;
+  const sha = head || (session && session.checks_commit_sha);
   if (!pool || !isSha(sha)) return false;
   const same = (a) => !!a && String(a).toLowerCase() === String(sha).toLowerCase();
   try {
@@ -253,7 +256,8 @@ async function owePendingRun({
       const { rows: [r] } = await pool.query(
         'SELECT checks_commit_sha, unit_suite_fresh_sha FROM chat_sessions WHERE id = $1', [Number(session.id)]
       );
-      if (!r || !same(r.unit_suite_fresh_sha) || !same(r.checks_commit_sha)) return;
+      // Still owed on that head: nothing has answered it (an answer clears it).
+      if (!r || !same(r.unit_suite_fresh_sha)) return;
       log.info('unit-suite-reuse', 'The session is idle and its owed unit suite has not run: starting it', {
         sessionId: session.id, commitSha: sha,
       });

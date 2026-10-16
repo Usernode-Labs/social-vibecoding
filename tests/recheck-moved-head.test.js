@@ -167,6 +167,17 @@ test('a person\'s "Run checks again" marks the head owed a fresh unit suite befo
   await rec.recheckSessionChecks({ pool, session: copy, reason: 'testing-update' });
   assert.deepEqual(marked, [[8031, OLD]]);
 
+  // The head is read from the row as it is now, not the caller's copy: a
+  // proposal promoted since reviews NEW, whatever the copy's pin says.
+  marked.length = 0;
+  const read = pool.query;
+  pool.query = async (sql, params) => (/SELECT status, source, reviewed_head_sha/.test(String(sql))
+    ? { rows: [{ status: 'promoted', source: 'cli_handoff', reviewed_head_sha: NEW, checks_commit_sha: OLD }], rowCount: 1 }
+    : read(sql, params));
+  await rec.recheckSessionChecks({ pool, session: copy, reason: 'manual-recheck' });
+  assert.deepEqual(marked, [[8031, NEW]], 'the reviewed head, not the stale checks pin');
+  pool.query = read;
+
   // An automatic re-drive marks nothing.
   marked.length = 0;
   await rec.recheckSessionChecks({ pool, session: copy, reason: 'stuck-checks-sweep' });

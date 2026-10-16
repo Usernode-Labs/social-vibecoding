@@ -388,4 +388,82 @@ test('unit-suite reuse through the preview machine, against the full PostgreSQL 
     }
     delete answers.byTrigger['manual-recheck'];
   });
+  // routes/sessions.js recheck → staging-recovery.recheckSessionChecks →
+  // preview-workflow → the machine, with a run that copied a pass of the
+  // head starting while the request is on its way (another proposal earned
+  // the pass). Two interleavings:
+  //   * 'read': the proposal reviews B while its checks still name A; the
+  //     route reads that row, then B's run starts. The request is recorded on
+  //     the head the recheck is for, read from the row (B), not the stale pin.
+  //   * 'mark': the request is recorded on B, then the head moves to C and
+  //     C's run starts before the machine hears the request. Only the
+  //     machine, joining it under its lock, can name C.
+  // Either way the copy is refused and their own run follows.
+  await t.test('a recheck whose head moves while it is on its way still gets a fresh suite from the run it joins', async (st) => {
+    const platformPath = require.resolve('../src/workflow/platform.ts');
+    const realPlatform = require.cache[platformPath];
+    const platform = {};
+    require.cache[platformPath] = { id: platformPath, filename: platformPath, loaded: true, exports: platform, paths: [] };
+    st.after(() => { if (realPlatform) require.cache[platformPath] = realPlatform; else delete require.cache[platformPath]; });
+    platform.previewHeld = async (id) => (await pool.query('SELECT 1 FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(id)])).rows.length > 0;
+    platform.previewInstance = async (id) => (await pool.query('SELECT * FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(id)])).rows[0];
+    let handedOff = null;
+    let beforeMachine = null;
+    platform.requestRecheck = async (o) => {
+      try {
+        if (beforeMachine) { const go = beforeMachine; beforeMachine = null; await go(); }
+        const ev = await send({ id: o.sessionId, app_id: o.appId }, 'RecheckRequested', { reason: o.reason, trigger: o.trigger }, { kind: 'route' });
+        await rt.drain();
+        return (await pool.query('SELECT result AS status, reason FROM wf_events WHERE id = $1', [ev])).rows[0];
+      } finally { if (handedOff) { handedOff(); handedOff = null; } }
+    };
+    let afterRead = null;
+    const routePool = { query: async (sql, params) => {
+      const res = await pool.query(sql, params);
+      if (afterRead && /^\s*SELECT cs\.\*, a\.slug as app_slug/.test(String(sql))) { const go = afterRead; afterRead = null; await go(); }
+      return res;
+    } };
+    st.mock.method(require('../src/db/pool'), 'getPool', () => routePool);
+    const router = require('../src/routes/sessions').sessionRoutes({ databaseUrl: String(url) });
+    const handler = router.stack.find((x) => x.route?.path === '/api/sessions/:id/recheck').route.stack.at(-1).handle;
+    const realPass = { results: [browser, unitPass], unitObserved: UNIT_KEY,
+      history: [{ checkKey: UNIT_KEY, name: unitSuiteRow.UNIT_CHECK_NAME, path: 'package.json', passed: true }] };
+    const startRunOf = async (s, head) => {
+      await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [s.id, head]);
+      await submit(s, head);
+      await rt.drain(); await rt.runServices(); await rt.drain();
+    };
+
+    for (const [when, A, B, C] of [['read', SHA('8'), SHA('9'), SHA('9')], ['mark', SHA('c'), SHA('d'), SHA('e')]]) {
+      const s = await proposal({ status: 'promoted', source: 'cli_handoff' });
+      await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [s.id, A]);
+      answers.next = result(realPass);
+      await submit(s, A);
+      await settle();
+      answers.next = result({ results: [browser, copied], unitEarned: UNIT_KEY });
+      answers.byTrigger['manual-recheck'] = result(realPass);
+      asked.length = 0;
+      if (when === 'read') {
+        // B is reviewed, and its run queued, when the route reads the row.
+        await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [s.id, B]);
+        await submit(s, B);
+        afterRead = async () => { await rt.drain(); await rt.runServices(); await rt.drain(); };
+      } else {
+        await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [s.id, B]);
+        beforeMachine = () => startRunOf(s, C);
+      }
+      const done = new Promise((resolve) => { handedOff = resolve; });
+      const res = { statusCode: 200, status(n) { this.statusCode = n; return this; }, json(b) { this.body = b; return this; } };
+      await handler({ params: { id: String(s.id) }, user: { id: s.user_id } }, res);
+      await Promise.race([done, new Promise((_, no) => setTimeout(() => no(new Error('recheck not handed off')), 5000))]);
+      assert.equal((await row(s.id)).unit_suite_fresh_sha, C, `${when}: the request names the head it joined`);
+      await settle();
+      const r = await row(s.id);
+      assert.deepEqual([res.statusCode, res.body.status], [200, 'running']);
+      assert.equal(!!r.test_results.find((x) => x.index === -3)?.reused, false, `${when}: not answered by the copy`);
+      assert.deepEqual([r.check_state, r.checks_commit_sha, r.unit_suite_fresh_sha], ['passing', C, null], when);
+      assert.deepEqual(asked.map((a) => a.trigger), ['commit-push', 'manual-recheck'], when);
+      delete answers.byTrigger['manual-recheck'];
+    }
+  });
 });

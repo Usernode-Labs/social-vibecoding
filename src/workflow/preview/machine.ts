@@ -619,14 +619,34 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
   };
 
+  // A person's recheck ("Run checks again", trigger 'manual-recheck') that
+  // joins the build or run going is owed a unit suite that really runs on
+  // the head that build or run answers for (services/unit-suite-reuse.js).
+  // Recorded here, under the row's lock and against the head this instance
+  // is working on, never against a head a caller read earlier: the run's
+  // verdict is then refused if it copied a pass, and their own run follows.
+  // Any other recheck that would join is refused as before.
+  const manualJoin = (e: Event<any>) => recheckTrigger(e.payload.reason, e.payload.trigger) === 'manual-recheck';
+  const joinOwed = (s: Live): Outcome<PState> => step({
+    name: s.name, data: s.data,
+    writes: [{ type: 'owed', sessionId: s.data.sessionId,
+      head: s.name === 'checking' ? s.data.run!.head : s.data.preparing!.head }],
+  });
+  const joining: Entry = {
+    guard: (s, e) => (manualJoin(e) ? ok() : reject('run_outstanding')),
+    to: (s) => joinOwed(s),
+  };
+
   // During a run, a recheck whose inputs changed (the proposal's capture
   // routes or its shots: staging-recovery's REPLACING_RECHECK_REASONS)
   // replaces it, since the run going answers the old question; any other
-  // recheck joins it. (A build in progress runs its checks with what the row
-  // says once it is up, so it needs nothing.)
+  // recheck joins it (a person's is recorded on the run's head: joining
+  // above). (A build in progress runs its checks with what the row says once
+  // it is up, so it needs nothing more.)
   const replacing: Entry = {
-    guard: (s, e) => (REPLACING_REASONS.has(e.payload.reason) ? ok() : reject('run_outstanding')),
+    guard: (s, e) => (REPLACING_REASONS.has(e.payload.reason) || manualJoin(e) ? ok() : reject('run_outstanding')),
     to: (s, e, f, ctx) => {
+      if (!REPLACING_REASONS.has(e.payload.reason)) return joinOwed(s);
       const old = obsolete(s.data, ctx, deps);
       const o = startRun({ name: s.name, data: { ...s.data, run: null } }, recheckTrigger(e.payload.reason, e.payload.trigger), ctx,
         { work: old.work });
@@ -768,7 +788,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     preparing: {
       ...created, ...ops,
       ChecksSkipped: notHere('in_progress'),
-      RecheckRequested: notHere('run_outstanding'),
+      RecheckRequested: joining,
       ConflictResolved: notHere('not_deferred'),
       ChecksCleared: cleared,
       PreviewLost: notHere('preparing'),
@@ -1406,6 +1426,13 @@ const WRITES = {
       await store.markUnitPassObserved(tx, { appId: w.appId, sessionId: w.sessionId, commitSha: w.head });
     }
   },
+
+  // A person's request for a fresh unit suite, joined to the build or run of
+  // `head` (services/unit-suite-reuse.js): the same column the
+  // 'manual-recheck' pending stamp sets.
+  owed: (tx: Tx, w: any) => tx.query(
+    `UPDATE chat_sessions SET unit_suite_fresh_sha = lower($2::text)
+      WHERE id = $1 AND status IN ('active', 'paused', 'promoted', 'merging')`, [w.sessionId, w.head]),
 
   // No verdict for the branch's code: what the CLI upload route cleared.
   cleared: (tx: Tx, w: any) => tx.query(

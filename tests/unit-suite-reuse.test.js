@@ -500,13 +500,16 @@ test('every manual entry marks the head as owed a fresh suite, durably, before i
   const route = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/recheck'"), sessions.indexOf("router.post('/api/sessions/:id/recheck'") + 9000);
   const mark = route.indexOf('markFreshOwed(pool, {');
   assert.ok(mark > 0 && mark < route.indexOf('if (recheckInFlight.has(sessionId))'), 'set before any coalesced answer');
+  // On the head the request is for, read from the row now, which the busy
+  // drain also waits on (not a checks pin an older run left).
+  assert.match(route, /const requestedHead = await stagingRecovery\.requestedRecheckHead\(pool, session\);\s+await require\('\.\.\/services\/unit-suite-reuse'\)\.markFreshOwed\(pool, \{\s+sessionId, commitSha: requestedHead,/);
   // Deploying a preview by hand.
   // On the exact head, resolved once, and before the machine is asked
   // (behaviourally: tests/unit-suite-reuse-machine-postgres.test.js).
   assert.match(sessions, /const head = await previewWorkflow\.exactHead\(pool, session, commitHash === 'latest' \? null : commitHash\);[\s\S]{0,600}markFreshOwed\(pool, \{ sessionId: session\.id, commitSha: head \}\);[\s\S]{0,300}const out = await previewWorkflow\.request\(\{\s+pool, session, head, reason: 'deploy'/);
   // Every recheck a person asks for (the route, testing-update), before the
   // machine is asked: tests/recheck-moved-head.test.js.
-  assert.match(read('src/services/staging-recovery.js'), /if \(checkTriggerForReason\(reason\) === 'manual-recheck'\) \{[\s\S]{0,200}markFreshOwed\(pool, \{ sessionId: session\.id, commitSha: session\.checks_commit_sha \|\| null \}\);/);
+  assert.match(read('src/services/staging-recovery.js'), /if \(checkTriggerForReason\(reason\) === 'manual-recheck'\) \{[\s\S]{0,700}markFreshOwed\(pool, \{\s+sessionId: session\.id, commitSha: await requestedRecheckHead\(pool, session\),\s+\}\);/);
   // And the machine's 'manual-recheck' pending stamp, every way it starts
   // a run for a person.
   assert.match(read('src/workflow/rules/check-store.ts'), /unit_suite_fresh_sha = CASE WHEN \$4::text = 'manual-recheck' AND \$2::text IS NOT NULL\s+THEN lower\(\$2::text\) ELSE unit_suite_fresh_sha END,/,
@@ -807,7 +810,7 @@ test('postgres: a request folded into a busy session stamps the head pending and
 
   const route = read('src/routes/sessions.js');
   const recheck = route.slice(route.indexOf("router.post('/api/sessions/:id/recheck'"), route.indexOf("router.post('/api/sessions/:id/recheck'") + 9000);
-  assert.match(recheck, /const busyNow = \(\) => isSessionBusy\(sessionId\);\s+if \(busyNow\(\)\) \{\s+await require\('\.\.\/services\/unit-suite-reuse'\)\.owePendingRun\(\{\s+pool, visuals, stagingRecovery, config, session, busy: busyNow,\s+\}\);\s+return res\.json\(\{ status: 'running' \}\);/);
+  assert.match(recheck, /const busyNow = \(\) => isSessionBusy\(sessionId\);\s+if \(busyNow\(\)\) \{\s+await require\('\.\.\/services\/unit-suite-reuse'\)\.owePendingRun\(\{\s+pool, visuals, stagingRecovery, config, session, busy: busyNow, head: requestedHead,\s+\}\);\s+return res\.json\(\{ status: 'running' \}\);/);
 });
 
 // The settlement's view of a run with no unit-suite row while a fresh run is

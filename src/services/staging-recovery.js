@@ -655,6 +655,20 @@ async function recordChecksSkipped({ session, commitSha, reason }) {
     }));
 }
 
+// The head a person's recheck of `session` is for, from its row as it is
+// now (recheckHeadSha: a promoted proposal's reviewed head, a CLI hand-off's,
+// else the checks pin), or the caller's copy when the row cannot be read.
+async function requestedRecheckHead(pool, session) {
+  let current = session;
+  try {
+    const { rows: [pins] } = await pool.query(
+      `SELECT status, source, reviewed_head_sha, imported_pr_head_sha, checks_commit_sha, handoff_head_sha
+         FROM chat_sessions WHERE id = $1`, [session.id]);
+    if (pins) current = { ...session, ...pins };
+  } catch { /* the caller's copy */ }
+  return recheckHeadSha(current) || current.checks_commit_sha || null;
+}
+
 // #447: reconcile a single session's proposal checks. Used by the manual
 // "Re-run checks" endpoint and the boot-time / periodic stale-check sweep.
 // The machine decides between a run against what serves and a new build. A
@@ -666,8 +680,13 @@ async function recheckSessionChecks({ pool, session, reason }) {
   }
   if (checkTriggerForReason(reason) === 'manual-recheck') {
     // A person asked for the suite to run again: the head is owed a unit
-    // suite that really runs (services/unit-suite-reuse.js).
-    await require('./unit-suite-reuse').markFreshOwed(pool, { sessionId: session.id, commitSha: session.checks_commit_sha || null });
+    // suite that really runs (services/unit-suite-reuse.js). Recorded on the
+    // head the recheck is for, read from the row now (a caller's copy, and
+    // its checks pin, can name an older head). The machine records it again,
+    // under the row's lock, on the head of a build or run the request joins.
+    await require('./unit-suite-reuse').markFreshOwed(pool, {
+      sessionId: session.id, commitSha: await requestedRecheckHead(pool, session),
+    });
   }
   await workflow().recheck({ pool, session, reason, trigger: CHECK_TRIGGER_BY_REASON.get(reason) || null,
     system: !FORCED_RECHECK_REASONS.has(reason) && reason !== 'preview-click' });
@@ -693,5 +712,6 @@ module.exports = {
   checkTriggerForReason,
   rebuildSessionStaging,
   recheckSessionChecks,
+  requestedRecheckHead,
   recordChecksSkipped,
 };

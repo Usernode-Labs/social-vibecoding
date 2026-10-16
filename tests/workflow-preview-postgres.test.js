@@ -596,9 +596,16 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal((await outcome(ensure)).reason, 'already_serving');
     await send(s, 'PreviewRequested', { sessionId: s.id, head: SHA('7'), reason: 'deploy' }, { kind: 'route' });
     await rt.drain();
+    // A person's recheck joins the build going, recorded on its head as owed
+    // a fresh unit suite (services/unit-suite-reuse.js); a system one is
+    // refused as joined.
     const busy = await send(s, 'RecheckRequested', { reason: 'manual' }, { kind: 'route' });
     await rt.drain();
-    assert.equal((await outcome(busy)).reason, 'run_outstanding');
+    assert.deepEqual([(await outcome(busy)).result, (await outcome(busy)).state_after], ['accepted', 'preparing']);
+    assert.equal((await row(s.id)).unit_suite_fresh_sha, SHA('7'));
+    const sweep = await send(s, 'RecheckRequested', { reason: 'stuck-checks-sweep' });
+    await rt.drain();
+    assert.equal((await outcome(sweep)).reason, 'run_outstanding');
     await settle();
     const i = await instance(s);
     assert.equal(i.data.serving.n, 2, 'deploy built a new attempt of the same head');
@@ -838,7 +845,11 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     const first = (await instance(s)).data.run.key;
     const joins = await send(s, 'RecheckRequested', { reason: 'manual' }, { kind: 'route' });
     await rt.drain();
-    assert.equal((await outcome(joins)).reason, 'run_outstanding');
+    assert.equal((await outcome(joins)).state_after, 'checking');
+    assert.equal((await instance(s)).data.run.key, first, 'a person\'s recheck joins the run (recorded as owed on its head)');
+    const system = await send(s, 'RecheckRequested', { reason: 'stuck-checks-sweep' });
+    await rt.drain();
+    assert.equal((await outcome(system)).reason, 'run_outstanding');
     const replaces = await send(s, 'RecheckRequested', { reason: 'testing-update' }, { kind: 'system' });
     await rt.drain();
     assert.equal((await outcome(replaces)).state_after, 'checking');

@@ -6502,8 +6502,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // is folded into below or its own, copies no earlier pass, and a
       // verdict that carries a copied pass is not stored. Durable, and set
       // before any of the answers below.
+      // On the head the request is for, read from the row now: a promoted
+      // proposal's reviewed head, not a checks pin an older run left.
+      const requestedHead = await stagingRecovery.requestedRecheckHead(pool, session);
       await require('../services/unit-suite-reuse').markFreshOwed(pool, {
-        sessionId, commitSha: session.checks_commit_sha,
+        sessionId, commitSha: requestedHead,
       });
 
       // Coalesce repeat clicks.
@@ -6524,7 +6527,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const busyNow = () => isSessionBusy(sessionId);
       if (busyNow()) {
         await require('../services/unit-suite-reuse').owePendingRun({
-          pool, visuals, stagingRecovery, config, session, busy: busyNow,
+          pool, visuals, stagingRecovery, config, session, busy: busyNow, head: requestedHead,
         });
         return res.json({ status: 'running' });
       }
