@@ -6,10 +6,15 @@ import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { backoff, closeAndComment, gone, permanent } from '../github-work.ts';
 
-// requestDeploy: platform.ts's, for the rebuild work left from before.
-interface Deps { config: any; pool: Pool; requestDeploy?: (appId: number, reason: string, o?: Record<string, unknown>) => Promise<number> }
+// requestDeploy: platform.ts's, for the rebuild work left from before;
+// adoptCampaigns: platform.ts's, for the campaign work left from before.
+interface Deps {
+  config: any; pool: Pool;
+  requestDeploy?: (appId: number, reason: string, o?: Record<string, unknown>) => Promise<number>;
+  adoptCampaigns?: () => Promise<number>;
+}
 
-export function governanceServices({ config, pool, requestDeploy }: Deps): Record<string, WorkHandler> {
+export function governanceServices({ config, pool, requestDeploy, adoptCampaigns }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
   return {
     // Close a GitHub issue, then comment on it (github-work.ts). The
@@ -41,20 +46,16 @@ export function governanceServices({ config, pool, requestDeploy }: Deps): Recor
       },
     },
 
-    // A passed maintenance campaign fans out over the fleet: the engine's
-    // loop, for as long as it runs (the kernel renews this item's lease).
-    // The campaign holds its own lease too, so whoever else drives it (the
-    // leader's resume, an admin's retry) and this never run it together;
-    // finding it driven elsewhere is done.
+    // A campaign an older release applied queued this item (it ran
+    // fleet-maintenance's old driver): the campaign machine takes the
+    // campaign instead (platform.adoptCampaigns), and the item is done.
+    // Transitional: deleted once no older release can run.
     'campaign.run': {
       maxAttempts: 5,
       backoffMs: backoff,
-      async run({ input }): Promise<Json> {
-        const { rows: [c] } = await pool.query(
-          'SELECT id FROM maintenance_campaigns WHERE issue_id = $1 ORDER BY id DESC LIMIT 1', [input.issueId]);
-        if (!c) return { skipped: 'no_campaign' };
-        const out = await legacy('services/fleet-maintenance').runCampaign(config, pool, c.id);
-        return { campaignId: c.id, ...(out || {}) } as Json;
+      async run(): Promise<Json> {
+        await adoptCampaigns!();
+        return { handOff: 'campaign' };
       },
     },
 

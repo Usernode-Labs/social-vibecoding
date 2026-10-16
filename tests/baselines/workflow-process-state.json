@@ -93,6 +93,18 @@
       "services | uses src/services/sync-main.js:runSyncWork": "brings the proposal's branch level with main (branch.sync): measures, runs the worker's sync turn as a durable step, records what came of it, the work the conflict resolver's and the sync route's in-process jobs did; the turn is followed after a restart",
       "services | uses src/services/worker.js:removeCcVolume": "removes a closed proposal's Claude Code volume at once when the close asked (cc.purge), as finalizeArchivedSession did with purgeCc; strict, so a refused removal is tried again",
       "services | uses src/services/worker.js:removeWorker": "removes the proposal's worker container (worker.destroy: a pause, an unpromote, a close), the call pauseSession and finalizeArchivedSession made after their writes; strict, so a refused removal is tried again"
+    },
+    "campaign": {
+      "services | uses src/services/fleet-maintenance.js:ensurePlatformUser": "finds or creates the usernode-platform account a campaign's proposals belong to (campaign.change), as runCampaign did at its start; a users row, keeps nothing",
+      "services | uses src/services/fleet-maintenance.js:findChangePr": "the open pull request GitHub has for the campaign's branch (campaign.change), taken before a stop is honoured or a new one is opened, so one an earlier attempt opened is never left without its proposal; a GitHub read, keeps nothing",
+      "services | uses src/services/fleet-maintenance.js:openChangePr": "the change's pull request (campaign.change): the open one GitHub has for the campaign's branch, else a new one, cut out of runCampaign's openCampaignProposal; checkpointed by the item, so a retry never opens a second",
+      "services | uses src/services/fleet-maintenance.js:parseRepo": "owner and name from an app's repository address (pure), for the change's GitHub calls",
+      "services | uses src/services/fleet-maintenance.js:pushChange": "the change as one commit on the campaign's branch for the app, set to main first (campaign.change), cut out of runCampaign's openCampaignProposal; checkpointed by the item once pushed",
+      "services | uses src/services/fleet-maintenance.js:runAppChange": "the AI's bounded tool loop over the app's repository through the GitHub API (campaign.change), cut out of runCampaign's leased in-process loop; stops at the item's signal, keeps nothing between attempts",
+      "services | uses src/services/github.js:isEnabled": "whether GitHub is configured on this platform (pure, configuration): a campaign's change fails at once without it",
+      "services | uses src/services/limits.js:recordSpend": "records what the AI's calls cost against the platform account (campaign.change), as runCampaign's loop did; a row, non-fatal",
+      "services | uses src/services/llm.js:estimateCostCents": "what one model call cost, from its usage (pure), for the spend record",
+      "services | uses src/services/llm.js:isEnabled": "whether the model is configured on this platform (pure, configuration): a campaign's change fails at once without it"
     }
   },
   "handOff": {
@@ -122,6 +134,18 @@
       "services | uses src/services/github.js:getCommitTree",
       "services | uses src/services/staging.js:deployProduction"
     ],
+    "campaign": [
+      "services | uses src/services/fleet-maintenance.js:ensurePlatformUser",
+      "services | uses src/services/fleet-maintenance.js:findChangePr",
+      "services | uses src/services/fleet-maintenance.js:openChangePr",
+      "services | uses src/services/fleet-maintenance.js:parseRepo",
+      "services | uses src/services/fleet-maintenance.js:pushChange",
+      "services | uses src/services/fleet-maintenance.js:runAppChange",
+      "services | uses src/services/github.js:isEnabled",
+      "services | uses src/services/limits.js:recordSpend",
+      "services | uses src/services/llm.js:estimateCostCents",
+      "services | uses src/services/llm.js:isEnabled"
+    ],
     "governance-proposal": [
       "notifiers | notifier boardChange",
       "notifiers | notifier scoreVote",
@@ -129,7 +153,6 @@
       "notifiers | uses src/services/ws.js:noteBoardChange",
       "ownership | issues.status ← src/services/homeroom-bot-move.js#closeNow",
       "ownership | issues.status ← src/services/issue-close-watcher.js#closeTwinRows",
-      "services | uses src/services/fleet-maintenance.js:runCampaign",
       "services | uses src/services/github.js:getIssue",
       "services | uses src/services/github.js:isEnabled",
       "services | uses src/services/homeroom-bot-closed-requests.js:noteRequestsClosed",
@@ -186,6 +209,7 @@
       "shared | uses src/services/github.js:isEnabled"
     ],
     "platform": [
+      "web | state src/workflow/platform.ts#campaigns",
       "web | state src/workflow/platform.ts#deliveries",
       "web | state src/workflow/platform.ts#kernelPool",
       "web | state src/workflow/platform.ts#log",

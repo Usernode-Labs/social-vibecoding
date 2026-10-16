@@ -16,7 +16,8 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // opens a kind='maintenance_campaign' governance issue on the platform app,
 // and the engine starts when that vote passes (or an admin force-applies
 // the proposal). This section tracks per-app fan-out progress and offers
-// retry / re-run-checks / merge-all-green once PRs exist.
+// retry / re-run-checks / merge-all-green once PRs exist, and Stop while it
+// runs. Each move is an event on the campaign machine (src/workflow/campaign/).
 //
 // The `#admin/campaigns/<id>` deep link is owned entirely by this module —
 // read at mount so a link pre-expands that campaign, written back with
@@ -28,7 +29,7 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // PERMISSIONS: visible to any admin (isAdmin — full and view-only); every
 // mutating control is gated on AdminConsole.canWrite() (canAdminWrite), so
 // a view-only admin sees the list and the per-app states but no New
-// campaign form, no Retry, no Re-run checks and no Merge-all-green. The
+// campaign form, no Retry, no Re-run checks, no Merge-all-green and no Stop. The
 // server enforces this independently on /api/campaigns/*.
 //
 // ── React-owned (#1120 slice 11) ──────────────────────────────────────
@@ -60,6 +61,8 @@ interface CampaignApp {
   prUrl?: string;
   prNumber?: number;
   checkState?: string;
+  // Its proposal's status (merge-all-green forces only those in review).
+  sessionStatus?: string;
   sessionId?: number;
   error?: string;
 }
@@ -126,17 +129,22 @@ function writeSubHash(id: number | null): void {
   if (location.hash !== target) history.replaceState(null, '', target);
 }
 
-const APP_BADGE: Record<string, [string, string]> = {
-  pending: ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Pending'],
-  running: ['bg-violet-500/10 text-violet-700 dark:text-violet-400', 'Running'],
-  pr_open: ['bg-sky-500/10 text-sky-700 dark:text-sky-400', 'PR open'],
-  merged: ['bg-green-500/10 text-green-800 dark:text-green-400', 'Merged'],
-  skipped: ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Skipped'],
-  failed: ['bg-red-500/10 text-red-700 dark:text-red-400', 'Failed'],
-};
+// An app's state: the campaign's own record, or (merged, closed) what came
+// of its proposal.
+const APP_BADGE: ReadonlyMap<string, [string, string]> = new Map([
+  ['pending', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Pending']],
+  ['running', ['bg-violet-500/10 text-violet-700 dark:text-violet-400', 'Running']],
+  ['pr_open', ['bg-sky-500/10 text-sky-700 dark:text-sky-400', 'PR open']],
+  ['merged', ['bg-green-500/10 text-green-800 dark:text-green-400', 'Merged']],
+  ['closed', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Closed']],
+  ['underway', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Back underway']],
+  ['skipped', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Skipped']],
+  ['failed', ['bg-red-500/10 text-red-700 dark:text-red-400', 'Failed']],
+  ['stopped', ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Not reached']],
+]);
 
 function AppBadge({ state }: { state?: string }) {
-  const [cls, label] = (state && APP_BADGE[state]) || ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', state || '—'];
+  const [cls, label] = (state && APP_BADGE.get(state)) || ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', state || '—'];
   return (
     <span className={`text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${cls} shrink-0`}>
       {label}
@@ -161,8 +169,8 @@ async function postRecheck(sessionId: number | string): Promise<void> {
 }
 
 function AppRow({
-  app, campaignId, write, onDone,
-}: { app: CampaignApp; campaignId: number; write: boolean; onDone: () => void }) {
+  app, campaignId, write, stopped, onDone,
+}: { app: CampaignApp; campaignId: number; write: boolean; stopped: boolean; onDone: () => void }) {
   const [busy, setBusy] = useState<'' | 'retry' | 'recheck'>('');
 
   const retry = async () => {
@@ -185,7 +193,7 @@ function AppRow({
     onDone();
   };
 
-  const showRetry = write && (app.state === 'failed' || app.state === 'skipped');
+  const showRetry = write && !stopped && (app.state === 'failed' || app.state === 'skipped');
   // Failing/error checks on an open campaign PR: offer the same manual re-run
   // as the proposal card (#447). POSTs to the session recheck endpoint, which
   // stamps 'pending' and rebuilds staging if the preview is gone — the 8s
@@ -234,6 +242,7 @@ function CampaignRow({
   const [detail, setDetail] = useState<CampaignDetail | null>(null);
   const [failed, setFailed] = useState(false);
   const [merging, setMerging] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [recheckingAll, setRecheckingAll] = useState(false);
   const [status, setStatus] = useState('');
   const alive = useRef(true);
@@ -257,8 +266,8 @@ function CampaignRow({
 
   const apps = detail?.apps || [];
   // "Green" = open campaign PR whose checks pass — what merge-green will
-  // force-merge (mirrors the server-side query in fleet-maintenance.mergeGreen).
-  const green = apps.filter((a) => a.state === 'pr_open'
+  // force-merge (mirrors the campaign machine's facts, campaign/facts.ts readGreen).
+  const green = apps.filter((a) => a.state === 'pr_open' && a.sessionStatus === 'promoted'
     && (a.checkState === 'passing' || a.checkState === 'skipped')).length;
   // Bulk companion to the per-row Re-run checks button. Each recheck is
   // fire-and-forget server-side; the loop below just queues them.
@@ -282,25 +291,46 @@ function CampaignRow({
   const mergeGreen = async () => {
     const ok = await confirmMsg({
       title: 'Merge all green?',
-      message: 'Force-merge every campaign PR whose checks pass? Each merge triggers a production rebuild of that app.',
+      message: 'Force-merge every campaign PR whose checks pass now? Each merges as soon as its app\'s merge queue can, and triggers a production rebuild of that app.',
       confirmLabel: 'Merge all green',
       destructive: true,
     });
     if (!ok) return;
     setMerging(true);
-    setStatus('Merging sequentially. This can take a while…');
     try {
       const res = await fetch(`/api/campaigns/${c.id}/merge-green`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      const merged = (data.results || []).filter((r: any) => r.merged).length;
-      const bad = (data.results || []).length - merged;
-      alertMsg(`Merge-green done: ${merged} merged${bad ? `, ${bad} failed (see per-app rows)` : ''}.`);
+      const forced = Array.isArray(data.forced) ? data.forced.length : 0;
+      if (alive.current) setStatus(data.pending ? 'Merge all green asked; the rows show each merge as it lands.'
+        : `${forced} forced; the rows show each merge as it lands.`);
     } catch (err: any) {
       alertMsg(`Merge-green failed: ${err.message}`);
     }
     if (!alive.current) return;
     setMerging(false);
+    onReloadList();
+  };
+
+  const stop = async () => {
+    const ok = await confirmMsg({
+      title: 'Stop this campaign?',
+      message: 'No further app gets a change, and the one being changed now is abandoned. The PRs already opened stay up for their vote.',
+      confirmLabel: 'Stop campaign',
+      destructive: true,
+    });
+    if (!ok) return;
+    setStopping(true);
+    try {
+      const res = await fetch(`/api/campaigns/${c.id}/stop`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    } catch (err: any) {
+      alertMsg(`Stop failed: ${err.message}`);
+    }
+    if (!alive.current) return;
+    setStopping(false);
+    refresh();
     onReloadList();
   };
 
@@ -343,7 +373,7 @@ function CampaignRow({
             <ul className="space-y-1">
               {apps.length
                 ? apps.map((a) => (
-                  <AppRow key={a.appId} app={a} campaignId={c.id} write={write} onDone={refresh} />
+                  <AppRow key={a.appId} app={a} campaignId={c.id} write={write} stopped={detail.status === 'cancelled'} onDone={refresh} />
                 ))
                 : <li className="text-xs text-zinc-500 dark:text-zinc-400">No target apps.</li>}
             </ul>
@@ -353,6 +383,12 @@ function CampaignRow({
                 <button type="button" className={`campaign-recheck-all-btn ${AdminUI.btn.primarySm}`}
                   disabled={recheckingAll} onClick={recheckAll}>
                   {recheckingAll ? 'Rechecking…' : `Re-run failing checks (${failingChecks.length})`}
+                </button>
+              ) : null}
+              {write && detail.status === 'running' ? (
+                <button type="button" className={`campaign-stop-btn ${AdminUI.btn.destructiveSm}`}
+                  disabled={stopping} onClick={stop}>
+                  {stopping ? 'Stopping…' : 'Stop campaign'}
                 </button>
               ) : null}
               {write && green > 0 ? (

@@ -41,6 +41,9 @@ export interface Row {
   ownerSynthetic: boolean;
   status: string;
   imported: boolean;
+  // A maintenance campaign's proposal (source 'maintenance'): it holds no
+  // worker slot.
+  platform: boolean;
   headless: boolean;
   prNumber: number | null;
   prTitle: string | null;
@@ -167,7 +170,7 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
     id: r.id, appId: r.app_id, appSlug: r.app_slug, selfHosted: !!r.self_hosted,
     repo: r.repo_url ? parseGithubUrl(r.repo_url) : null,
     userId: r.user_id ?? null, ownerName: r.owner_name ?? null, ownerSynthetic: !!r.owner_synthetic,
-    status: r.status, imported, headless: !!r.is_headless,
+    status: r.status, imported, platform: r.source === 'maintenance', headless: !!r.is_headless,
     prNumber: r.pr_number ?? null, prTitle: r.pr_title ?? null, branch: r.branch_name ?? null,
     head: imported ? sha(r.imported_pr_head_sha) : sha(r.reviewed_head_sha),
     reviewedHead: sha(r.reviewed_head_sha), importedHead: sha(r.imported_pr_head_sha),

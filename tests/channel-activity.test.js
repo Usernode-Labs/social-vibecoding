@@ -139,9 +139,14 @@ test('a proposal\'s own notices that only ever went to the channel now go to its
   // proposal machine's line too (its sync's outcome).
   assert.match(pm, /writes\.push\(\{ type: 'line', eventId: e\.id, appId: d\.appId, sessionId: d\.sessionId, msgType: 'conflict'/);
   assert.match(read('src/services/rename-pr.js'), /\{ vote: \{ sessionId, prNumber: prData\.number \} \},\n {4}\{ type: 'session', ref: sessionId \}/);
-  const fleet = read('src/services/fleet-maintenance.js');
-  assert.match(fleet, /\{ vote: \{ sessionId, prNumber: prData\.number \} \},\n {4}\{ type: 'session', ref: sessionId \}/);
-  assert.match(fleet, /'system', null, \{ type: 'governance', ref: campaign\.issue_id \}\);/, 'the campaign\'s tallies go to the decision that voted it');
+  // A maintenance campaign's proposal goes up for a vote through the
+  // proposal machine's promote (its vote line is the promote's, in the
+  // proposal's thread, above); the campaign's own lines (done, stopped) go
+  // to the decision that voted it.
+  const campaign = read('src/workflow/campaign/machine.ts');
+  assert.match(campaign, /`INSERT INTO chat_messages \(app_id, content, msg_type, metadata, thread_type, thread_ref\)\n {5}VALUES \(\$1, \$2, 'system', '\{\}'::jsonb, 'governance', \$3\)/,
+    'the campaign\'s tallies go to the decision that voted it');
+  assert.doesNotMatch(read('src/services/fleet-maintenance.js'), /sendSystemMessage/);
 });
 
 test('the lines written before are cleared on boot, after the staging fixtures', () => {

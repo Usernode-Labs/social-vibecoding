@@ -239,7 +239,9 @@ A service is a `WorkHandler` registered for a kind:
 - **Messages.** `messages: [{ to: { machine, key }, event }]` appends events for other
   instances in the same transaction, with `caused_by` pointing at the cause. They cannot
   be lost and cannot deadlock. They arrive in order per target, and a rejection shows on
-  both timelines.
+  both timelines. A domain write may add one with `ctx.message`, for an instance whose key
+  only it knows: the row it has just inserted (the governance apply's campaign, a
+  campaign's proposal). It commits with the event like any other.
 
 ## Failures
 
@@ -366,7 +368,7 @@ defineMachine<State, Facts>({
   writes: { vote: writeVote, chat: writeChat, apply: applyKind },   // named domain writes
   project: async (tx, before, after) => { /* UPDATE issues ... */ },
   reply: async (tx, event, after) => ({ result: ... }),   // the routes' answer, replayed as recorded
-  notifiers: { startCampaign, ... },  // post-commit kicks (being retired; see Rules)
+  notifiers: { boardChange, ... },    // post-commit kicks (being retired; see Rules)
 });
 ```
 
@@ -493,8 +495,8 @@ Two more kinds, decided with the preview machine (each named with a reason, and 
   out of the per-process wrapper the old flow runs it through (the build without
   `_stagingBuilds` and the coordinator, the checks run without its in-process seat). The
   two-process and restart tests show it keeps no process memory;
-- **a hand-off** (`handOff`) to a flow a later step migrates (the Homeroom bot's notes,
-  fleet campaigns), naming that step: it leaves the list when the step lands.
+- **a hand-off** (`handOff`) to a flow a later step migrates (the Homeroom bot's notes),
+  naming that step: it leaves the list when the step lands.
 
 ### In production (Kubernetes)
 
@@ -598,6 +600,7 @@ A new machine brings the same two layers:
 | `shots` | `session:<id>`, for each proposal that declares visible changes or whose UI change owes a declaration | `undeclared`, `not_needed`, `waiting_for_preview`, `building_copies`, `waiting_for_agent`, `taking_shots`, `publishing`, `published`, `failed`, `waived`, `closed` | On everywhere; its old paths are deleted |
 | `proposal` | `session:<id>`, for every session (a proposal from its start), adopted from its row by its first event | `underway` → `proposing` → `in_review` ⇄ `merging` (⇄ `unconfirmed`) → `merged`; `closed` (reopened to `underway`) | On everywhere; its old paths are deleted |
 | `merge-queue` | `app:<id>`, for each app a merge was asked for | `idle` ⇄ `working` | On everywhere; its old paths are deleted |
+| `campaign` | `campaign:<id>`, for each fleet maintenance campaign | `running` → `done` (⇄ `running` on a retry), `stopped` | On everywhere; its old paths are deleted |
 
 ### governance-proposal
 
@@ -606,11 +609,10 @@ votes, the gate (`rules/governance-gate.ts`, the same rule every merge path uses
 vote window and a 10-minute backstop as the instance's timer, then the kind's own change
 in the transaction that closes it. What talks to the outside is durable work: GitHub's
 close and comment (`github.closeIssue`), the production redeploy a secret change needs
-(asked of `app-delivery` by message), the target check of a close proposal, a passed maintenance
-campaign's fan-out (`campaign.run`), and, when a close vote closes a request, the Homeroom
-bot's proposals for it (`bot.requestsClosed`). The campaign also holds a lease of its own
-(`fleet-maintenance.runCampaign`), so the leader's resume or an admin's retry never drives
-it at the same time.
+(asked of `app-delivery` by message), the target check of a close proposal, and, when a
+close vote closes a request, the Homeroom bot's proposals for it (`bot.requestsClosed`). A
+passed maintenance campaign is inserted by the apply's write, which starts the `campaign`
+machine with a message naming the row.
 
 ### merge-queue
 
@@ -997,6 +999,57 @@ on, `reviewed_head_sha` and `approval_epoch`, and what makes each platform sync 
   decisions; a hand-off's promote names its own operation, and the pipeline checking the very
   commit being proposed does not count.
 
-**Planned next: fleet campaigns.** It deletes the old paths it replaces in the same
-change, as governance, previews, merge follow-ups, app delivery, shots, the proposal
-lifecycle and the merge have.
+### campaign
+
+A fleet maintenance campaign (`src/workflow/campaign/`), from the moment its governance
+vote passes until every app it reaches has an outcome: an AI makes one small change in
+each app's repository and each change goes up for that app's vote. One instance per
+campaign, started by the governance apply's message (or, during a rollout, by the leader's
+adoption of a campaign an older release was driving, once its driver lets its lease go).
+`maintenance_campaigns.status` and every `maintenance_campaign_apps` row are its
+projections, and its guard refuses them to anyone else.
+
+- **Its targets are fixed when it starts:** every live app with a repository, but the
+  platform itself and an app moderation suspended, within the proposal's slug filter. A
+  retry never adds an app created since.
+- **One app at a time.** `campaign.change` (work) runs the AI's tool loop
+  (`fleet-maintenance.runAppChange`), sets the campaign's own branch for the app
+  (`maint/c<id>/<slug>`) to main and pushes the change as one commit, then opens its pull
+  request, using the one GitHub already has for the branch. It checkpoints after the push
+  and after the pull request, so a restart never pushes or opens twice; a restart before
+  the push runs the AI again. A change too big or a model gone astray fails the app at
+  once; GitHub's and the model's temporary errors are retried for about an hour. An app
+  deleted meanwhile is failed (its result's facts lock the app row), not faulted.
+- **Each change goes up for a vote through the proposal machine's promote.** The result's
+  transition writes the proposal's row (the platform account's, `source 'maintenance'`,
+  holding no worker slot) and its `Promote` in one transaction (`ctx.message`); the
+  promote records what any promote does (the reviewed head, the electorate, the vote line,
+  the requests, the preview of that head) and tells the campaign `ProposalOpened` or
+  `ProposalRefused`. A promote the proposal's guard refused outright sends no answer: the
+  campaign's clock (set once an app goes up for a vote, not pushed back by later events)
+  reads it off the event within five minutes; one not applied yet is waited for, and one
+  an older release refused during a rollout is sent again (up to six times). A proposal
+  that could not go up for a vote is closed with its pull request (`Close`, reason
+  `campaign-refused`): nobody can act on the platform account's underway change. The
+  next app starts as soon as the previous change is pushed. From then on each proposal is the proposal machine's;
+  the dashboard reads what came of it (merged, closed) off its row.
+- **Done** once no app waits, is being changed or is going up for a vote; the completion
+  line goes to the governance thread in the same transaction.
+- **An admin's moves** (`routes/campaigns.js`, each answered from the outcome): `RetryApp`
+  (a failed or skipped app: a failure after the push carries its checkpoint on; an app
+  whose proposal was closed is changed again from scratch on a branch of its own, so the
+  closed one's pull request is never reused), `MergeGreen` (forces, at once, the
+  campaign's proposals in review whose checks pass at the press; each merges through its
+  app's queue, and app delivery paces the rebuilds; during a rollout an older release may
+  refuse a force, and pressing again asks again), `Stop` (no further app is reached; the
+  change under way is not cancelled: its work reads the stop before the AI's every call,
+  before the push and before the pull request, and a change that already opened its
+  pull request goes up for a vote like the opened ones, which stay).
+- **During a rollout** an older release's `campaign.run` item only asks for that
+  adoption, and the adoption fences the old lease off (`runner_id 'workflow'`, an endless
+  lease; a fenced campaign with no instance, as in a staging copy, is adopted again). A
+  campaign that ended before the machine took it keeps the app rows it had. Both go, with
+  the lease columns, once no older release can run. A release revert finds every adopted
+  campaign fenced and guarded: freeing one for the older code is
+  `DELETE FROM wf_settings WHERE key = 'enabled:campaign'` and
+  `UPDATE maintenance_campaigns SET runner_id = NULL, lease_until = NULL WHERE runner_id = 'workflow'`.

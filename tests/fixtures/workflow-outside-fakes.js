@@ -107,6 +107,42 @@ module.exports = function install(fakes) {
         await fakes.pause('github.compare');
         return { status: base === head ? 'identical' : 'ahead' };
       },
+      // A maintenance campaign's change (src/workflow/campaign/): main's
+      // head, its branch, one commit pushed to it (`github.push`), and its
+      // pull request (`github.createPR`; the `github.createPR.done` point is
+      // after GitHub opened it, before its answer). The pull request's head
+      // is the branch's last push.
+      async getFileContent() { return 'const secret = process.env.JWT_SECRET;\n'; },
+      async getBranchSha() { return 'a'.repeat(40); },
+      async createBranch(owner, repo, branch) {
+        if ((await fakes.read('github.branch')).some((b) => b.repo === `${owner}/${repo}` && b.branch === branch)) {
+          throw Object.assign(new Error('Reference already exists'), { status: 422 });
+        }
+        await fakes.record('github.branch', { repo: `${owner}/${repo}`, branch });
+      },
+      async forceBranchToSha(owner, repo, branch, sha) { await fakes.record('github.forceBranch', { repo: `${owner}/${repo}`, branch, sha }); },
+      async pushFiles(owner, repo, files, { branch }) {
+        const n = (await fakes.read('github.push')).length + 1;
+        const sha = String(n % 10).repeat(40).replace(/^./, 'e');
+        await fakes.record('github.push', { repo: `${owner}/${repo}`, branch, sha, paths: files.map((f) => f.path) });
+        return { sha };
+      },
+      // `github.findPR` stops before GitHub answers (after the change's push
+      // was checkpointed).
+      async findOpenPrByBranch(owner, repo, branch) {
+        await fakes.pause('github.findPR');
+        const pr = (await fakes.read('github.createPR')).find((p) => p.repo === `${owner}/${repo}` && p.branch === branch);
+        return pr ? { number: pr.number, html_url: `https://github.com/${owner}/${repo}/pull/${pr.number}`, title: pr.title } : null;
+      },
+      async createPR(owner, repo, { branch, title }) {
+        const number = 500 + (await fakes.read('github.createPR')).length;
+        const head = (await fakes.read('github.push')).filter((p) => p.repo === `${owner}/${repo}` && p.branch === branch).pop()?.sha;
+        await fakes.record('github.createPR', { repo: `${owner}/${repo}`, branch, title, number });
+        await fakes.record('github.prHead', { number, sha: head });
+        await fakes.record('github.ready', { repo: `${owner}/${repo}`, number });
+        await fakes.pause('github.createPR.done');
+        return { number, html_url: `https://github.com/${owner}/${repo}/pull/${number}`, title };
+      },
       // A production deploy starts by cloning; `github.clone` stops there.
       async getCloneUrl(owner, repo) {
         await fakes.pause('github.clone');
@@ -121,7 +157,29 @@ module.exports = function install(fakes) {
     },
   });
   outside(fakes, 'services/kubernetes', { keep: [] });
-  outside(fakes, 'services/llm', { keep: ['init'], overrides: { isEnabled: () => false } });
+  // The model is off, unless the test process starts the workflow process
+  // with WF_FAKE_MODEL=1: then a campaign's change is one scripted turn
+  // (`llm.call`; the `llm.call` point is inside it), staging an edit and
+  // finishing, or skipping an app whose slug says so.
+  outside(fakes, 'services/llm', { keep: ['init'], overrides: {
+    isEnabled: () => process.env.WF_FAKE_MODEL === '1',
+    estimateCostCents: () => 0,
+    async streamChat({ messages }) {
+      await fakes.record('llm.call', {});
+      await fakes.pause('llm.call');
+      if (/slug skip-/.test(String(messages?.[0]?.content || ''))) {
+        return { toolUses: [{ id: 't1', name: 'skip_app', input: { reason: 'Nothing to change here.' } }],
+          rawContent: [], stopReason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 }, servedModel: 'fake' };
+      }
+      return {
+        toolUses: [
+          { id: 't1', name: 'write_file', input: { path: 'server.js', content: 'const key = process.env.USERNODE_JWT_PUBLIC_KEY;\n' } },
+          { id: 't2', name: 'finish', input: { summary: 'Switched server.js to the public key.' } },
+        ],
+        rawContent: [], stopReason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 }, servedModel: 'fake',
+      };
+    },
+  } });
   // Firebase: what a push to a phone carries, recorded (`push.send`).
   const firebase = (name, exports) => fakes.stub(require.resolve(name, { paths: [SRC] }), exports);
   firebase('firebase-admin/app', { initializeApp: (o, name) => ({ name }), cert: (account) => account, deleteApp: async () => {} });

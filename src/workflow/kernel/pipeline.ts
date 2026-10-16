@@ -10,7 +10,7 @@
 import { NONE, WORK_EVENTS, assertJson, canonicalHash, isIgnored, isRejection } from './machine.ts';
 import type { Machine, WorkResultPayload } from './machine.ts';
 import type {
-  Event, Json, Logger, Notification, Outcome, Pool, PoolClient, Push, Queryable, State, TransitionContext, Tx,
+  Event, Json, Logger, MessageRequest, Notification, Outcome, Pool, PoolClient, Push, Queryable, State, TransitionContext, Tx,
 } from './types.ts';
 
 export interface PipelineOptions {
@@ -463,12 +463,24 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
     pushes.push(JSON.parse(JSON.stringify({ kind: p.kind, routing: p.routing ?? null, data: p.data })));
   };
   for (const p of outcome.push || []) pushed(p);
-  const writeCtx = Object.freeze({ ...after, push: pushed });
+  const sends: MessageRequest[] = [...(outcome.messages || [])];
+  let sealed = false;
+  const sent = (m: MessageRequest) => {
+    // A write's message is part of its event: one sent once the writes are
+    // done (a promise the write did not await) would be lost.
+    if (sealed) throw new Error(`${machine.name}: a message sent after the writes ended`);
+    if (!m || typeof m.to?.machine !== 'string' || typeof m.to?.key !== 'string' || typeof m.event?.type !== 'string') {
+      throw new Error(`${machine.name}: a message needs a target and an event`);
+    }
+    sends.push(m);
+  };
+  const writeCtx = Object.freeze({ ...after, push: pushed, message: sent });
   for (const write of outcome.writes || []) {
     const handler = machine.writes.get(write.type);
     if (!handler) throw new Error(`${machine.name}: no write handler ${write.type}`);
     await handler(tx, write, writeCtx);
   }
+  sealed = true;
   if (machine.project) await machine.project(tx, state, outcome.next, after);
   const reply = (machine.reply ? await machine.reply(tx, event, outcome.next, after, facts) : undefined) ?? null;
   if (tx.poisoned) throw tx.poisoned;
@@ -494,7 +506,7 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
     work.push({ kind: w.kind, key: w.key, id: created?.id ?? null });
   }
   const messages = [];
-  for (const [i, m] of (outcome.messages || []).entries()) {
+  for (const [i, m] of sends.entries()) {
     assertJson(m.event.payload);
     const { rows: [sent] } = await client.query(
       `WITH ins AS (

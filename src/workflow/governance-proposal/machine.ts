@@ -237,12 +237,9 @@ function apply(
   } else if (issue.kind === 'featured_illustration') {
     push.push(appUpdate({ action: 'illustration_changed', appId: issue.appId, slug: issue.app.slug,
       illustration: p.proposed || null }));
-  } else if (issue.kind === 'maintenance_campaign') {
-    // Driven as durable work: a crash or a release mid-campaign leaves the
-    // item to be run again, and the campaign's own lease keeps it to one
-    // driver whoever else resumes it (fleet-maintenance.runCampaign).
-    work.push({ kind: 'campaign.run', key: 'campaign', input: { issueId: issue.id } });
   }
+  // A maintenance campaign is started by the apply's own write: it inserts
+  // the campaign's row and messages the campaign machine (src/workflow/campaign/).
   const audit = { appliedAt: at, appliedBy: by ? `admin:${by.admin}` : 'group-vote', ...tally };
   return close('applied', issue, event, ctx, audit, { writes, work, asked, push, notify });
 }
@@ -437,10 +434,11 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
     // change's redeploy asked of app-delivery (Delivered, DeliveryFailed).
     // 4: bot.requestsClosed work on a close vote's apply. 5: every secret
     // change's redeploy is asked of app-delivery (an app.rebuildProduction
-    // item from before hands off to it).
+    // item from before hands off to it). 6: a maintenance campaign is
+    // started by a message to the campaign machine, not campaign.run work.
     // During a rollout an older Pod leaves the instances a newer version
     // wrote alone.
-    version: 5,
+    version: 6,
     events: EVENTS,
     create: ['Filed'],
     terminal: ['applied', 'refused', 'withdrawn', 'superseded'],
@@ -530,7 +528,7 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
            VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, app_id, content, msg_type, metadata, thread_type, thread_ref, created_at`, chatValues(w));
         ctx.push(chatLine(row));
       },
-      apply: (tx, w) => applyKind(tx, w, deps.dataKey),
+      apply: (tx, w, ctx) => applyKind(tx, w, deps.dataKey, ctx),
     },
     async project(tx, before, after) {
       // On entering a closed state, from open or straight from Filed (a
@@ -622,7 +620,7 @@ async function writeVote(tx: Tx, w: any, ctx: WriteContext) {
 }
 
 // The kind's own change, in the transaction that closes the proposal.
-async function applyKind(tx: Tx, w: any, dataKey: string) {
+async function applyKind(tx: Tx, w: any, dataKey: string, ctx?: WriteContext) {
   const p = w.payload || {};
   switch (w.kind) {
     case 'rename':
@@ -645,11 +643,13 @@ async function applyKind(tx: Tx, w: any, dataKey: string) {
       return;
     case 'maintenance_campaign': {
       const targetFilter = Array.isArray(p.targetFilter) && p.targetFilter.length ? p.targetFilter : null;
-      await tx.query(
+      const { rows: [c] } = await tx.query(
         `INSERT INTO maintenance_campaigns (issue_id, title, instructions, target_filter, status, created_by)
-         VALUES ($1, $2, $3, $4, 'running', $5)`,
+         VALUES ($1, $2, $3, $4, 'running', $5) RETURNING id`,
         [w.issueId, w.campaignTitle.slice(0, 300), p.instructions.trim(),
           targetFilter ? JSON.stringify(targetFilter) : null, w.authorId]);
+      // Only this write knows the row's id, which names the campaign's instance.
+      ctx!.message({ to: { machine: 'campaign', key: `campaign:${c.id}` }, event: { type: 'Start', payload: { campaignId: Number(c.id) } } });
       return;
     }
     case 'secret_change':

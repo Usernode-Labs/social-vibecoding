@@ -89,6 +89,9 @@ export interface Promoting {
   // The head the row named when it was asked: one a push moved meanwhile
   // (a reconcile while it went up) is the head it goes up on.
   headAt: string | null;
+  // A maintenance campaign asked (src/workflow/campaign/): it hears whether
+  // the proposal went up for a vote.
+  campaign?: { key: string; appId: number } | null;
 }
 // What the last promote came to, for the route that waits on it.
 export interface Answer {
@@ -143,6 +146,9 @@ export interface Data {
   sessionId: number;
   appId: number;
   imported: boolean;
+  // A maintenance campaign's proposal (the platform's): like an imported
+  // one, it holds no worker slot.
+  platform?: boolean;
   slot: Slot;
   promoting: Promoting | null;
   answer: Answer | null;
@@ -284,6 +290,13 @@ const from = (p: any) => {
   return p.from as string;
 };
 const session = (p: any) => ({ sessionId: int(p?.sessionId, 'sessionId') });
+// The campaign that asked for a promote, and its app.
+const campaignRef = (c: any) => {
+  if (c == null) return null;
+  const key = String(c?.key || '');
+  if (!/^campaign:[1-9][0-9]*$/.test(key)) throw new Error('campaign.key must name a campaign');
+  return { key, appId: int(c?.appId, 'campaign.appId') };
+};
 const ownOperation = (p: any) => ({ ownOperation: text(p?.ownOperation, 120) });
 
 const EVENTS = {
@@ -301,7 +314,7 @@ const EVENTS = {
     };
     return { ...session(p), from: from(p), userId: int(p?.userId, 'userId'), username: text(p?.username, 100),
       cap: count(p?.cap, 'cap'), pr, expectedHead: optSha(p?.expectedHead, 'expectedHead'), viaAgent: !!p?.viaAgent,
-      ...ownOperation(p) };
+      ...ownOperation(p), campaign: campaignRef(p?.campaign) };
   },
   Unpromote: (p: any) => ({ ...session(p), from: from(p), userId: int(p?.userId, 'userId'), username: text(p?.username, 100), ...deadline(p) }),
   Pause: (p: any) => {
@@ -410,7 +423,8 @@ function timerFor(s: Live, f: Facts, ctx: TransitionContext, deps: Deps): TimerR
 // The state a row it does not hold yet stands for.
 function adopt(sessionId: number, row: Row): Live {
   const data: Data = {
-    sessionId, appId: row.appId, imported: row.imported, slot: row.imported ? 'none' : 'held',
+    sessionId, appId: row.appId, imported: row.imported, ...(row.platform ? { platform: true } : {}),
+    slot: row.imported || row.platform ? 'none' : 'held',
     promoting: null, answer: null, reason: null, claim: null, pr: { running: null, next: [] }, doomed: [], n: 0,
   };
   switch (row.status) {
@@ -453,8 +467,10 @@ const repoInput = (f: Facts) => (f.row?.repo && f.row.prNumber
   ? { owner: f.row.repo.owner, repo: f.row.repo.repo, number: f.row.prNumber } : null);
 
 // The slot an underway proposal goes back to.
+// An imported proposal and a campaign's hold no worker slot.
+const noSlot = (d: Data) => d.imported || !!d.platform;
 const slotFor = (d: Data, prior: string | null = null): Slot =>
-  (d.imported ? 'none' : prior === 'active' ? 'held' : 'released');
+  (noSlot(d) ? 'none' : prior === 'active' ? 'held' : 'released');
 
 const busy = (r: Row) => r.activeTurn || r.workedOn;
 // 'active' and 'paused' are one reading of an underway proposal for a move
@@ -487,6 +503,9 @@ const toShots = (d: Data, type: string, payload: Record<string, Json>): MessageR
 // The app's merge queue (src/workflow/merge-queue/).
 const toQueue = (d: Data, type: string, payload: Record<string, Json>): MessageRequest =>
   ({ to: { machine: QUEUE, key: appKey(d.appId) }, event: { type, payload: { appId: d.appId, sessionId: d.sessionId, ...payload } }, appId: d.appId });
+// The maintenance campaign that asked for its promote (src/workflow/campaign/).
+const toCampaign = (d: Data, c: { key: string; appId: number }, type: string, payload: Record<string, Json>): MessageRequest =>
+  ({ to: { machine: 'campaign', key: c.key }, event: { type, payload: { appId: c.appId, sessionId: d.sessionId, ...payload } }, appId: d.appId });
 // merge-followups: GitHub merged it. Its instance is created by this, and it
 // moves the proposal into 'merged' with everything that goes with it.
 const toFollowups = (d: Data, payload: Record<string, Json>): MessageRequest =>
@@ -508,6 +527,7 @@ function closedLine(r: Row, reason: string, byOwner: boolean): string {
     case 'request-closed': return `${l} was withdrawn: the request it was built for is closed.`;
     case 'red-checks': return `${l} was withdrawn: its checks failed and nobody changed it for a few days.`;
     case 'stale-pr': return `${l} went quiet and was set aside. It can always come back as a new change.`;
+    case 'campaign-refused': return `${l} could not be put up for a vote and was closed. The maintenance campaign can make it again.`;
     case 'manual':
       return byOwner && r.ownerName ? `${r.ownerName} withdrew ${r.prTitle ? l : 'this change'}.` : `${l} was withdrawn.`;
     default: return `${l} was withdrawn.`;
@@ -530,7 +550,7 @@ const promote: Handler = (s, e, f) => {
   const p = e.payload;
   const n = s.data.n + 1;
   const promoting: Promoting = { n, by: p.userId, byName: p.username, prior: statusOf(s) === 'paused' ? 'paused' : 'active',
-    expectedHead: p.expectedHead, viaAgent: p.viaAgent, headAt: f.row!.head };
+    expectedHead: p.expectedHead, viaAgent: p.viaAgent, headAt: f.row!.head, campaign: p.campaign ?? null };
   const moved = prMove({ ...s.data, n, promoting, answer: null },
     { kind: WORK.open, key: `open:${n}`, input: { sessionId: s.data.sessionId, n, userId: p.userId, expectedHead: p.expectedHead,
       imported: s.data.imported } });
@@ -546,8 +566,11 @@ function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
     const code = p.error?.code || 'github_unavailable';
     const back: Live = { name: 'underway', data: { ...done.data, slot: slotFor(s.data, promoting.prior), promoting: null,
       answer: { n: promoting.n, ok: false, code, message: p.error?.message?.slice(0, 500) ?? null } } };
-    // A page that stopped waiting (the route answered 202) reads it again.
-    return step(back, { work: done.work, timer: timerFor(back, f, ctx, deps), push: [board(f, 'promote_failed', { error: code })] });
+    // A page that stopped waiting (the route answered 202) reads it again;
+    // a campaign that asked hears it.
+    return step(back, { work: done.work, timer: timerFor(back, f, ctx, deps), push: [board(f, 'promote_failed', { error: code })],
+      messages: promoting.campaign ? [toCampaign(back.data, promoting.campaign, 'ProposalRefused',
+        { code, message: p.error?.message?.slice(0, 500) ?? null })] : undefined });
   }
   const r = (p.result || {}) as any;
   const row = f.row!;
@@ -578,7 +601,8 @@ function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
     // The app's merge queue hears it is in line (it sweeps its line from
     // then on, so a conflict before any vote is looked at too).
     messages: [...(head ? [toPreview(d, 'RevisionSubmitted', { head, source: d.imported ? 'imported' : 'promote', trigger: 'promote-kick' })] : []),
-      toQueue(d, 'MergeWanted', { reason: 'promoted' })],
+      toQueue(d, 'MergeWanted', { reason: 'promoted' }),
+      ...(promoting.campaign ? [toCampaign(d, promoting.campaign, 'ProposalOpened', { prNumber: prNumber || null })] : [])],
     timer: timerFor(next, f, ctx, deps),
   });
 }
@@ -586,14 +610,14 @@ function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
 const unpromote: Handler = (s, e, f, ctx, deps) => {
   const n = s.data.n + 1;
   const destroy = destroyWorker(s.data, n);
-  const next: Live = { name: 'underway', data: { ...(s.data.imported ? s.data : doom(s.data, destroy)), n, slot: slotFor(s.data), force: null } };
+  const next: Live = { name: 'underway', data: { ...(noSlot(s.data) ? s.data : doom(s.data, destroy)), n, slot: slotFor(s.data), force: null } };
   const who = e.payload.username || 'The author';
   return step(next, {
     writes: [
       { type: 'unpromoted', sessionId: s.data.sessionId },
       line(e, s.data, `${who} moved ${prLabel(f.row!)} back to Underway. Its votes were cleared, and it goes up for a fresh vote when it is proposed again`),
     ],
-    work: s.data.imported ? [] : [destroy],
+    work: noSlot(s.data) ? [] : [destroy],
     push: [board(f, 'unpromoted'), votes(f)],
     timer: timerFor(next, f, ctx, deps),
   });
@@ -615,9 +639,9 @@ const resume: Handler = (s, e, f, ctx, deps) => {
   // 'active' again, as imports always do).
   // A worker destroy still owed from the pause it comes back from goes.
   const spared = spare(s.data, SPARE_WORKER);
-  const next: Live = { name: 'underway', data: { ...spared.data, slot: s.data.imported ? 'none' : 'held' } };
+  const next: Live = { name: 'underway', data: { ...spared.data, slot: noSlot(s.data) ? 'none' : 'held' } };
   // last_activity_at moves with it: the idle timer runs from now.
-  const timer = deps.idleMs > 0 && !s.data.imported ? { at: later(ctx, deps.idleMs), event: { type: 'IdleCheck' } } : null;
+  const timer = deps.idleMs > 0 && !noSlot(s.data) ? { at: later(ctx, deps.idleMs), event: { type: 'IdleCheck' } } : null;
   return step(next, { writes: [{ type: 'resumed', sessionId: s.data.sessionId }], push: [board(f, 'resumed')], timer,
     cancel: spared.cancel });
 };
@@ -1073,7 +1097,7 @@ const approvalsCleared: Handler = (s) => step(s, { writes: [{ type: 'approvalsCl
 // The idle check: a held slot nobody has used for a while is given back.
 const idleCheck: Handler = (s, e, f, ctx, deps) => {
   const row = f.row!;
-  if (deps.idleMs <= 0 || s.data.imported) return step(s, { timer: null });
+  if (deps.idleMs <= 0 || noSlot(s.data)) return step(s, { timer: null });
   const last = row.lastActivityAt ? Date.parse(row.lastActivityAt) : 0;
   if (ctx.now.getTime() - last < deps.idleMs) return step(s, { timer: { at: new Date(last + deps.idleMs), event: { type: 'IdleCheck' } } });
   if (busy(row) || s.data.sync || row.shotsRunning || row.buildHold || (deps.exemptFixtures && row.fixture)) {
@@ -1190,7 +1214,7 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
   )],
   ['Pause', (s, e, f) => all(
     () => (s.name === 'underway' ? ok() : reject('not_underway')),
-    () => (s.data.imported ? reject('imported') : ok()),
+    () => (s.data.imported ? reject('imported') : s.data.platform ? reject('no_worker') : ok()),
     () => (s.data.slot === 'held' ? ok() : reject('already_paused')),
     () => read(s, e),
     () => owner(e, f),
@@ -1308,15 +1332,20 @@ const mergedAway = (s: Live, e: Event<any>, f: Facts) =>
   f.row?.status === 'merged' && s.name !== 'merged' && e.type !== 'Merged';
 
 function transitions(deps: Deps) {
+  // A campaign's proposal adopted before the flag existed learns it from its
+  // row on its next event (it holds no worker slot either).
+  const platformOf = (s: Live, f: Facts): Live => (f.row?.platform && !s.data.platform
+    ? { ...s, data: { ...s.data, platform: true } } as Live : s);
   const entry = (type: string) => ({
-    guard: (s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Check => {
+    guard: (s0: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Check => {
+      const s = platformOf(s0, f);
       if (!f.row) return reject('session_not_found');
       if (expired(e, ctx)) return reject('expired');
       if (mergedAway(s, e, f) && !type.startsWith('Work') && !ANSWERED.has(type)) return reject('merged');
       const g = GUARDS.get(type);
       return g ? g(s, e, f, ctx) : ok();
     },
-    to: (s: Live, e: Event<any>, f: Facts, ctx: TransitionContext) => HANDLERS.get(type)!(s, e, f, ctx, deps),
+    to: (s: Live, e: Event<any>, f: Facts, ctx: TransitionContext) => HANDLERS.get(type)!(platformOf(s, f), e, f, ctx, deps),
   });
   const row = Object.fromEntries([...HANDLERS.keys()].map((t) => [t, entry(t)]));
   const table: Record<string, Record<string, any>> = {};
@@ -1369,12 +1398,17 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
   const timer = (e: Event<any>): Check => (e.source.kind === 'timer' ? ok() : reject('timer_only'));
   const fromMerge = (e: Event<any>): Check =>
     ((e.source.kind === 'message' && e.source.from.machine === 'merge-followups') || e.source.kind === 'system' ? ok() : reject('internal_only'));
+  // A maintenance campaign puts its changes up for a vote and forces its
+  // green ones (src/workflow/campaign/).
+  const fromCampaign = (e: Event<any>) => e.source.kind === 'message' && e.source.from.machine === 'campaign';
   const fromQueue = (e: Event<any>): Check =>
     ((e.source.kind === 'message' && e.source.from.machine === QUEUE) || e.source.kind === 'system' ? ok() : reject('internal_only'));
   return defineMachine<PState, Facts>({
     name: MACHINE,
-    // 2: the merge (step 6): attempts, unconfirmed, syncs, forces.
-    version: 2,
+    // 2: the merge (step 6): attempts, unconfirmed, syncs, forces. 3: a
+    // maintenance campaign's promote (the campaign hears its outcome) and its
+    // proposals, which hold no worker slot (`platform`).
+    version: 3,
     events: EVENTS,
     create: CREATE,
     terminal: ['merged'],
@@ -1392,13 +1426,13 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
     },
     authorize: {
       Adopted: system,
-      Promote: routeOrSystem,
+      Promote: (e: Event<any>): Check => (ROUTE_OR_SYSTEM.has(e.source.kind) || fromCampaign(e) ? ok() : reject('not_a_producer')),
       Unpromote: person,
       Pause: routeOrSystem,
       Resume: routeOrSystem,
       IdleCheck: timer,
       ReviewCheck: timer,
-      Close: closer,
+      Close: (e: Event<any>): Check => (closer(e) === true || fromCampaign(e) ? ok() : reject('not_a_producer')),
       Reopen: person,
       MergeClaim: system,
       MergeReleased: system,
@@ -1407,7 +1441,7 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
       ReviewHeadMoved: routeOrSystem,
       ApprovalsCleared: routeOrSystem,
       MergeRequested: fromQueue,
-      ForceMerge: routeOrSystem,
+      ForceMerge: (e: Event<any>): Check => (ROUTE_OR_SYSTEM.has(e.source.kind) || fromCampaign(e) ? ok() : reject('not_a_producer')),
       SyncRequested: (e: Event<any>): Check => (ROUTE_OR_SYSTEM.has(e.source.kind)
         || (e.source.kind === 'message' && (e.source.from.machine === QUEUE || e.source.from.machine === 'preview')) ? ok() : reject('not_a_producer')),
       ObserveDue: timer,

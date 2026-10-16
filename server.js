@@ -1339,19 +1339,6 @@ async function becomeLeader() {
     log.warn('server', 'private-repo audit failed', { err: err.message });
   });
 
-  // Resume fleet maintenance campaigns interrupted by the restart —
-  // campaign state is a DB state machine (maintenance_campaign_apps),
-  // so re-entering the loop just continues from the first pending app.
-  // Again every two minutes: a driver that stopped anywhere (a follower's
-  // run, a process that died) lets its lease lapse, and this takes it up;
-  // one still running keeps it (fleet-maintenance.runCampaign).
-  const { resumeRunningCampaigns } = require('./src/services/fleet-maintenance');
-  const resumeCampaigns = () => resumeRunningCampaigns(config, getPool(config)).catch((err) => {
-    log.warn('server', 'Campaign resume failed', { err: err.message });
-  });
-  resumeCampaigns();
-  leaderTimers.every('campaign-resume', resumeCampaigns, 2 * 60 * 1000);
-
   // The push SENDER claims queued jobs — a singleton. Enqueueing (HTTP
   // side) works on every color; only the leader drains the queue.
   mobilePush.start();
@@ -4942,9 +4929,16 @@ const FRESHNESS_REFRESH_COOLDOWN_MS = Math.max(
 
 // Every session the proposal machine does not hold yet is adopted (one
 // created since the leader started): its idle check and its hourly review
-// check are the machine's timers, armed on adoption.
-const adoptProposals = () => require('./src/workflow/platform.ts').adoptProposals()
-  .catch((err) => log.warn('server', 'Adopting sessions for the proposal machine failed', { err: err.message }));
+// check are the machine's timers, armed on adoption. So is a maintenance
+// campaign an older release was driving, once its driver lets it go (a
+// rollout's transitional piece: platform.adoptCampaigns).
+const adoptProposals = async () => {
+  const platform = require('./src/workflow/platform.ts');
+  await platform.adoptProposals()
+    .catch((err) => log.warn('server', 'Adopting sessions for the proposal machine failed', { err: err.message }));
+  await platform.adoptCampaigns()
+    .catch((err) => log.warn('server', 'Adopting maintenance campaigns failed', { err: err.message }));
+};
 
 function startSessionAutoPauseSweeper(config) {
   if (sessionSweeperHandle) return;

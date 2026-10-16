@@ -195,10 +195,15 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     const camp = (await pool.query('SELECT * FROM maintenance_campaigns WHERE issue_id = $1', [c.id])).rows[0];
     assert.equal(camp.status, 'running');
     assert.equal((await row(c)).payload.campaignId, camp.id);
-    // Driven as durable work, not a post-commit kick a crash could lose.
-    const { rows: [run] } = await pool.query(
-      `SELECT work_key, input FROM wf_work WHERE machine = $1 AND key = $2 AND kind = 'campaign.run'`, [MACHINE, issueKey(c.id)]);
-    assert.deepEqual([run.work_key, run.input], ['campaign', { issueId: c.id }]);
+    // Started by a message committed with the apply (the campaign machine's
+    // Start, naming the row the apply's write inserted), not work or a
+    // post-commit kick a crash could lose.
+    const { rows: [start] } = await pool.query(
+      `SELECT type, payload, source FROM wf_events WHERE machine = 'campaign' AND key = $1`, [`campaign:${camp.id}`]);
+    assert.deepEqual([start.type, start.payload, start.source.kind, start.source.from.machine],
+      ['Start', { campaignId: camp.id }, 'message', MACHINE]);
+    assert.equal((await pool.query(
+      `SELECT count(*)::int AS n FROM wf_work WHERE machine = $1 AND key = $2 AND kind = 'campaign.run'`, [MACHINE, issueKey(c.id)])).rows[0].n, 0);
     assert.ok(!notified.some((n) => n.type === 'startCampaign'));
     // secret_change: the secret, the redeploy asked of app-delivery, and no ciphertext left behind.
     const valueEnc = secrets.encrypt('hunter2-value', DATA_KEY);
