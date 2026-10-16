@@ -381,28 +381,30 @@ test('the password step is the sheet\'s: the link opens it, and Forgot password 
 test('each way into the sheet says only what is true for it', () => {
   const { SignInSheet, firstStepLine } = loadTsx(SHEET);
   // The first step is the title, the field, the button and what sits under it
-  // (#4037, the owner's 7 Oct ruling): the terms alone where the sheet makes
-  // an account; the way to a password, then the terms, where it is for an
-  // account somebody has.
+  // (#4037, the owner's 7 Oct ruling): the terms alone where the sheet only
+  // makes an account (an invite's Join); the way to a password, then the
+  // terms, where it may be for an account somebody has: Sign in, and the
+  // story's one Continue (#5251), which has no Sign in beside it any more.
   assert.equal(firstStepLine('invite'), 'terms');
-  assert.equal(firstStepLine('story'), 'terms');
+  assert.equal(firstStepLine('story'), 'password');
   assert.equal(firstStepLine('signin'), 'password');
   assert.equal(firstStepLine('invite', true), 'password');
   const render = (from, title) => renderToHtml(createElement(SignInSheet, {
     open: true, title, from, onClose() {}, primaryClass: 'pill',
   }));
   const signin = render('signin', 'Sign in');
-  const start = render('story', 'Make your account');
+  const start = render('story', 'Continue to Homeroom');
   const join = render('invite', 'Join Sunday Run Club');
   const BUTTON = /<button type="submit"[^>]*>Send code<\/button>/;
-  // Sign in: the button, the password link, the terms, and nothing after the form.
-  assert.match(signin, new RegExp(`${BUTTON.source}<p[^>]*><a href="#login" data-sign-in-sheet-password=""[^>]*>Sign in with a password</a></p><p[^>]*>By continuing, you agree to Homeroom&#x27;s terms\\.</p></form></div></div>`),
-    'Sign in: the link right under the button, then the terms');
-  // Make your account and Join: the button, then the terms, and nothing after.
-  for (const html of [start, join]) {
-    assert.match(html, new RegExp(`${BUTTON.source}<p[^>]*>By continuing, you agree to Homeroom&#x27;s terms\\.</p></form></div></div>`));
-    assert.doesNotMatch(html, /Sign in with a password|New to Homeroom|This makes your account|Already have an account|Welcome back/);
+  // Sign in and Continue: the button, the password link, the terms, and nothing after the form.
+  for (const html of [signin, start]) {
+    assert.match(html, new RegExp(`${BUTTON.source}<p[^>]*><a href="#login" data-sign-in-sheet-password=""[^>]*>Sign in with a password</a></p><p[^>]*>By continuing, you agree to Homeroom&#x27;s terms\\.</p></form></div></div>`),
+      'the link right under the button, then the terms');
+    assert.doesNotMatch(html, /New to Homeroom|This makes your account|Already have an account|Welcome back/);
   }
+  // Join: the button, then the terms, and nothing after.
+  assert.match(join, new RegExp(`${BUTTON.source}<p[^>]*>By continuing, you agree to Homeroom&#x27;s terms\\.</p></form></div></div>`));
+  assert.doesNotMatch(join, /Sign in with a password|New to Homeroom|This makes your account|Already have an account|Welcome back/);
   // Nothing the story's two sheets say is a dash.
   for (const html of [signin, start, join]) assert.doesNotMatch(html, /—/);
   // #4037: no sheet has a line under its title, the title says it, and no
@@ -411,8 +413,8 @@ test('each way into the sheet says only what is true for it', () => {
     assert.match(html, /<\/button><\/div><form/, 'the title row, then the email step');
     assert.doesNotMatch(html, /<p class="mt-1 text-\[15px\] leading-snug/);
   }
-  for (const html of [start, join]) assert.equal(html.match(/<p[\s>]/g).length, 1, 'the terms alone under the button');
-  assert.equal(signin.match(/<p[\s>]/g).length, 2, 'the password link and the terms');
+  assert.equal(join.match(/<p[\s>]/g).length, 1, 'the terms alone under the button');
+  for (const html of [signin, start]) assert.equal(html.match(/<p[\s>]/g).length, 2, 'the password link and the terms');
   const landing = read(LANDING);
   assert.doesNotMatch(landing, /It takes a minute|Welcome back|Sign in or make an account/);
   // No line under any title, the phone's join included (#4326 trimmed its copy).

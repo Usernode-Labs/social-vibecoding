@@ -156,11 +156,12 @@ test('the check-my-status line sits under the pills, unchanged (#1538)', () => {
   // It is the waitlist landing's, which shows only when the first session's
   // story is switched off (services/first-session.js); the story is the
   // default, so the declared check that used to select on this link now
-  // selects on the story's own "Sign in" instead.
+  // selects on the story's one Continue, which signs an existing account in
+  // from the same sheet (#5251), and the line under it.
   const manifest = JSON.parse(read('dapp.json'));
   assert.ok(
-    manifest.tests.some((t) => /a\[data-landing-story-signin\]\[href="#login"\]/.test(t.expectSelector || '')),
-    'the declared check signs an existing account in from the story',
+    manifest.tests.some((t) => /a\[data-landing-story-start\]\[href="#signup"\] \+ p\[data-landing-story-how\] \+ div \[data-landing-story-waves\]/.test(t.expectSelector || '')),
+    'the declared check reads the story\'s one way in',
   );
 });
 
