@@ -129,7 +129,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   await t.test('every machine\'s guard is recorded for the ownership triggers', async () => {
     const { rows } = await pool.query(`SELECT key FROM wf_settings WHERE key LIKE 'enabled:%' ORDER BY key`);
     assert.deepEqual(rows.map((r) => r.key),
-      ['enabled:app-delivery', 'enabled:governance-proposal', 'enabled:merge-followups', 'enabled:merge-queue', 'enabled:preview', 'enabled:proposal', 'enabled:shots'],
+      ['enabled:app-delivery', 'enabled:campaign', 'enabled:governance-proposal', 'enabled:merge-followups', 'enabled:merge-queue', 'enabled:preview', 'enabled:proposal', 'enabled:shots'],
       'no machine has a flag: their guards are on in every process');
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_settings WHERE key = 'ownership_mode'`)).rows[0].n, 0);
   });
