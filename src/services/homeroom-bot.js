@@ -1668,6 +1668,21 @@ async function refreshApp(pool, app, {
     if (withdrawn.length) capRoom = await capRoomFor(pool, bot, app.id, settings);
   }
 
+  // A request closed by hand on GitHub also closes the platform's own row
+  // for it, which the tray's Needs you reads (pastRuns' request_closed):
+  // nothing else closes that row on a GitHub-side close, so the request
+  // kept showing there for good (#5218). Whole, fresh list only, like the
+  // sweep; not gated on capRoom — it only closes rows GitHub confirms
+  // closed, and only for requests the bot tracks, so it changes nothing a
+  // held request or a full cap was protecting. The rest of this refresh
+  // does not read what it did.
+  if (!fetched?.note && !fetched?.truncatedList) {
+    await closedRequests().closeRequestRows(pool, {
+      appId: app.id, appSlug: app.slug, repoUrl: app.repo_url,
+      openNumbers: issues.map((issue) => Number(issue.number)), deps: { github },
+    });
+  }
+
   // #3264: on a live app (capRoom is set only there) a person's reply in the
   // discussion of the bot's own open proposal is activity on its issue, so
   // it comes back for a follow-up.
