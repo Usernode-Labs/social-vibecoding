@@ -34,8 +34,8 @@ import { isReadyMessage } from './bot-ready';
 import {
   alsoInChat, botRequestNames, botThreadTitle, changeBlocks, dotText, threadsAllowed, type ChangeBlock,
 } from './bot-shared';
-import { BotWorkSync, newestBotMessageId, useBotWork } from './bot-work';
-import { BotStrip, RequestTag } from './bot-strip';
+import { BotWorkSync, loadBotWork, newestBotMessageId, useBotWork } from './bot-work';
+import { BotStrip, RequestTag, stripGroups, summaryParts } from './bot-strip';
 import { useTrackOf } from './bot-track';
 import { BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledRun, type SettledRunItem } from './bot-news-line';
 import { requestKey } from './bot-request';
@@ -78,10 +78,9 @@ import {
   setUserBlocked,
   selectConversation,
   setListCollapsed,
-  setShowMoreChannels,
+  setSectionFolded,
   syncChrome,
   followPlatformSlug,
-  setFilter,
   typingUsers,
   useChannelHandles,
   useMessagesSnapshot,
@@ -122,7 +121,7 @@ import {
 import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
-import { INBOX_FILTERS, buildInbox, sectionRuns, type AgentChat, type AppDiscussion, type InboxFilter, type InboxSection, inClockOrder } from './inbox';
+import { AGENTS_SHOWN, INBOX_SECTIONS, buildInbox, shownInSection, type AgentChat, type AppDiscussion, type InboxSection } from './inbox';
 import type { ConversationMessage, ConversationSummary, DiscussionMessage, MessagesAgentThread } from './types';
 
 /*
@@ -200,7 +199,12 @@ function GroupMemberCount({ count }: { count: number }) {
   );
 }
 
-const ConversationRow = memo(function ConversationRow({ conversation, active }: { conversation: ConversationSummary; active: boolean }) {
+const ConversationRow = memo(function ConversationRow({ conversation, active, preview = null }: {
+  conversation: ConversationSummary;
+  active: boolean;
+  /** 16 Oct 2026: the Homeroom bot's row says what waits on you, not its last message. */
+  preview?: string | null;
+}) {
   const t = useMessages('messages');
   const peer = directPerson(conversation);
   const invited = conversation.membershipStatus === 'invited';
@@ -218,7 +222,7 @@ const ConversationRow = memo(function ConversationRow({ conversation, active }: 
           event.preventDefault(); selectConversation(conversation.id);
         }
       }}
-      className={`messages-conversation-row ${active ? 'messages-conversation-active' : ''}`}
+      className={`messages-conversation-row ${conversation.homeroomBot ? 'messages-bot-row' : ''} ${active ? 'messages-conversation-active' : ''}`}
       aria-current={active ? 'page' : undefined}
     >
       <UserAvatar user={conversation.kind === 'direct' ? peer : null} title={peer?.username || conversation.title} size="lg" shape="square" />
@@ -233,7 +237,7 @@ const ConversationRow = memo(function ConversationRow({ conversation, active }: 
           <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
         </div>
         <div className="messages-row-line">
-          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{invited ? (conversation.kind === 'direct' ? t('messages:inbox.requestReview') : t('messages:inbox.invitationReview')) : conversation.latestSummary || t('messages:inbox.noMessages')}</span>
+          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{invited ? (conversation.kind === 'direct' ? t('messages:inbox.requestReview') : t('messages:inbox.invitationReview')) : preview || conversation.latestSummary || t('messages:inbox.noMessages')}</span>
           {conversation.unreadCount > 0 ? <span className="messages-unread" aria-label={t('messages:inbox.unread', { count: conversation.unreadCount })}>{conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}</span> : null}
         </div>
       </div>
@@ -541,48 +545,6 @@ const AgentSessionRow = memo(function AgentSessionRow({ session, active }: { ses
 });
 
 /**
- * The filter row — a SEGMENTED STRIP, the same one the app Workshop wears —
- * with the "+" that starts something at its trailing end (#2778).
- *
- * THE PLUS IS BACK ON IT. #2718's review took it off because one control
- * saying "new" could only ever mean one of the things this inbox holds — it
- * opened the people dialog on the Agents tab as readily as on People. It
- * comes back as a CHOICE rather than a guess: pressing it opens a small
- * popover, the vote picker's kind rather than a dialog, offering the three
- * things that can be started — a direct message, a group chat, an agent
- * chat. A channel is not among them: #general and each app's exist already.
- *
- * STYLED AS THE WORKSHOP'S STRIP IS: a track with the segments inside it and
- * the selected one tinted with a hairline ring, which is the shell's one
- * segmented control rather than this screen's own. The Workshop's slides a
- * measured marker between segments; this does not, because that measurement
- * is against a DOM that screen owns. At rest they are the same object.
- */
-function InboxFilters({ filter }: { filter: InboxFilter }) {
-  const t = useMessages('messages');
-  return (
-    <div id="messages-filters" className="messages-filters">
-      <div className="messages-filter-track" role="group" aria-label={t('messages:inbox.filterGroup')}>
-        {INBOX_FILTERS.map(([key, label]) => (
-          <button
-            key={key}
-            id={`messages-filter-${key}`}
-            type="button"
-            data-messages-filter={key}
-            aria-current={filter === key ? 'page' : 'false'}
-            className="messages-filter"
-            onClick={() => setFilter(key)}
-          >
-            {t(label)}
-          </button>
-        ))}
-      </div>
-      <NewMessageButton />
-    </div>
-  );
-}
-
-/**
  * What the "+" can start, in the order the popover lists them. B8: Homeroom
  * bot first, for somebody who has it (/api/auth/me `homeroomBotDm`), then
  * building it yourself, then people.
@@ -616,7 +578,8 @@ function startNew(choice: NewChoice) {
 }
 
 /**
- * The "+" and its popover (#2778).
+ * The "+" and its popover (#2778), beside the search since the filter strip
+ * went (16 Oct 2026).
  *
  * The popover is placed and dismissed exactly as the vote picker's desktop
  * home is — lib/anchor-popover.ts and lib/popover-dismiss.ts are that code,
@@ -715,11 +678,50 @@ function NewMessageButton() {
   );
 }
 
-/** The heading over each part of the list (#2783). */
+/** The heading over each section of the list (16 Oct 2026). */
 const SECTION_LABELS: Record<InboxSection, string> = {
-  chats: 'messages:inbox.section.chats',
-  channels: 'messages:inbox.section.channels',
+  bot: 'messages:inbox.section.bot',
+  agents: 'messages:inbox.section.agents',
+  people: 'messages:inbox.section.people',
 };
+
+/**
+ * A section's heading (16 Oct 2026): its name in small caps, and for Agents
+ * and People what in it asks for you ("1 working", "3 unread"), which stays
+ * when it is folded. Agents and People fold from the heading itself, a
+ * button the width of the list; the Homeroom bot's never folds.
+ */
+function SectionHead({ section, folded, aside, ask = false }: {
+  section: InboxSection;
+  folded: boolean;
+  aside: string | null;
+  ask?: boolean;
+}) {
+  const t = useMessages('messages');
+  const words = (
+    <>
+      <span className="messages-section-name">{t(SECTION_LABELS[section])}</span>
+      {aside ? <span className={`messages-section-aside ${ask ? 'messages-section-aside-ask' : ''}`}>{aside}</span> : null}
+    </>
+  );
+  if (section === 'bot') {
+    return <h3 className="messages-section-head" data-inbox-section={section}>{words}</h3>;
+  }
+  return (
+    <h3 className="messages-section-head" data-inbox-section={section}>
+      <button
+        type="button"
+        className="messages-section-toggle"
+        data-inbox-fold={section}
+        aria-expanded={!folded}
+        onClick={() => setSectionFolded(section, !folded)}
+      >
+        {words}
+        <ChevronDownIcon className={`messages-section-chevron ${folded ? '-rotate-90' : ''}`} aria-hidden="true" />
+      </button>
+    </h3>
+  );
+}
 
 /**
  * Narrow the inbox by what a row SAYS, not by what it is.
@@ -869,25 +871,18 @@ function ConversationList() {
   // in the search box or per publish of a store this list does not draw.
   const inbox = useMemo(() => buildInbox({
     conversations: snap.conversations,
-    discussions: snap.discussions,
     agents,
     sessions,
     mayors,
-    filter: snap.filter,
-  }), [snap.conversations, snap.discussions, agents, sessions, mayors, snap.filter]);
+  }), [snap.conversations, agents, sessions, mayors]);
   const byMayor = useMemo(() => new Map(mayors.map((item) => [String(item.id), item])), [mayors]);
   const byConversation = useMemo(() => new Map(snap.conversations.map((item) => [String(item.id), item])), [snap.conversations]);
-  const byApp = useMemo(() => new Map(snap.discussions.map((item) => [item.slug, item])), [snap.discussions]);
   const byAgent = useMemo(() => new Map(agents.map((item) => [item.id, item])), [agents]);
   const bySession = useMemo(() => new Map(sessions.map((item) => [item.key, item])), [sessions]);
 
   const q = deferredQuery.trim().toLowerCase();
   const matches = (entry: { kind: string; key: string }) => {
     if (!q) return true;
-    if (entry.kind === 'channel') {
-      const c = byConversation.get(entry.key.slice('channel:'.length));
-      return !!c && (inboxMatches(c.title, q) || inboxMatches(c.channelKey, q));
-    }
     if (entry.kind === 'person') {
       const c = byConversation.get(entry.key.slice('person:'.length));
       if (!c) return false;
@@ -895,10 +890,6 @@ function ConversationList() {
       return inboxMatches(c.title, q)
         || inboxMatches(peer?.username, q)
         || inboxMatches(peer?.displayName, q);
-    }
-    if (entry.kind === 'app') {
-      const a = byApp.get(entry.key.slice('app:'.length));
-      return !!a && (inboxMatches(a.name, q) || inboxMatches(a.slug, q) || inboxMatches(a.channel, q));
     }
     if (entry.kind === 'session') {
       const c = bySession.get(entry.key.slice('session:'.length));
@@ -912,38 +903,58 @@ function ConversationList() {
     const g = byAgent.get(entry.key.slice('agent:'.length));
     return !!g && inboxMatches(g.title, q);
   };
-  // #2967: the channels outside Your apps fold behind "Show N more" — except
-  // while searching (a query looks through everything), and except the one
-  // that is open, which stays in view wherever it lives.
-  const moreEntries = inbox.filter((entry) => entry.more);
-  const openSlug = snap.route.appSlug;
-  const openAgent = snap.route.agent;
-  const found = inbox.filter(matches).filter((entry) => !entry.more || !!q || snap.showMoreChannels
-    || (entry.kind === 'app' && entry.key === `app:${openSlug}`));
-  // B5: search results stay in the order things happened; only the full
-  // list keeps the Homeroom bot first.
-  const shown = q ? inClockOrder(found) : found;
-  const moreToggle = moreEntries.length && !q ? (
-    <button
-      key="more-channels"
-      type="button"
-      id="messages-more-channels"
-      className="messages-more-channels"
-      aria-expanded={snap.showMoreChannels}
-      onClick={() => setShowMoreChannels(!snap.showMoreChannels)}
-    >
-      <span className="messages-more-channels-glyph" aria-hidden="true">
-        <ChevronDownIcon className={snap.showMoreChannels ? 'rotate-180' : ''} />
-      </span>
-      <span>{snap.showMoreChannels ? t('messages:inbox.showLess') : t('messages:inbox.showMore', { count: moreEntries.length })}</span>
-    </button>
-  ) : null;
+  const searching = !!q;
+  const found = inbox.filter(matches);
+  // The row that is open, so a section showing its newest few keeps it.
+  const open = snap.route.agent;
+  const isOpen = (entry: { kind: string; key: string }) => {
+    if (entry.kind === 'person') return snap.route.conversationId === Number(entry.key.slice('person:'.length));
+    if (entry.kind === 'session') {
+      const session = bySession.get(entry.key.slice('session:'.length));
+      return !!session && open?.kind === 'session' && open.id === session.id;
+    }
+    if (entry.kind === 'mayor') return open?.kind === 'agent' && String(open.id) === entry.key.slice('mayor:'.length);
+    return open?.kind === 'chat' && open.id === entry.key.slice('agent:'.length);
+  };
+  const openKey = found.find(isOpen)?.key || null;
+
+  // 16 Oct 2026: what the Homeroom bot's row says. What waits on you and
+  // what it is doing, in the words of its chat's own activity bar
+  // (./bot-strip.tsx summaryParts: "1 needs you · 2 in progress"), read
+  // from the same store once this list is up; its last message until then.
+  const botWork = useBotWork();
+  const hasBot = snap.conversations.some((item) => item.homeroomBot && item.kind !== 'channel');
+  useEffect(() => {
+    if (mounted && hasBot && !botWork.work) loadBotWork({ fresh: false });
+  }, [mounted, hasBot, botWork.work]);
+  const botLine = useMemo(() => {
+    if (!botWork.work) return null;
+    const parts = summaryParts(stripGroups(botWork.work));
+    return parts.length ? parts.slice(0, 2).map((part) => part.text).join(' · ') : null;
+  }, [botWork.work]);
+
+  // What each section's heading says asks for you: agents at work, and the
+  // messages from people you have not read. A zero says nothing.
+  const working = mayors.filter((item) => item.busy).length + agents.filter((item) => item.busy).length
+    + sessions.filter((item) => item.busy).length;
+  const unreadFromPeople = snap.conversations
+    .filter((item) => !item.homeroomBot && item.kind !== 'channel')
+    .reduce((sum, item) => sum + Math.max(0, Number(item.unreadCount) || 0), 0);
+  const asides: Record<InboxSection, { text: string | null; ask: boolean }> = {
+    bot: { text: null, ask: false },
+    agents: { text: working ? t('messages:inbox.section.working', { count: working }) : null, ask: false },
+    people: { text: unreadFromPeople ? t('messages:inbox.section.unread', { count: unreadFromPeople }) : null, ask: true },
+  };
+  // Agents shows its newest few until "Show N more" (./inbox.ts
+  // shownInSection). Not remembered: the next visit starts on the newest.
+  const [agentsExpanded, setAgentsExpanded] = useState(false);
+
   // #4729: the archived agent chats fold behind a toggle at the Agents
-  // list's foot, in the channels' "Show N more" shape. Opening it re-reads
-  // the archived list each time, so a session archived or unarchived since
-  // the last look shows where it now belongs; a query hides the toggle,
-  // because search covers the open chats only.
-  const showArchivedToggle = mounted && !!agentChatsShown && snap.filter === 'agents' && !deferredQuery.trim();
+  // section's foot, in the "Show N more" shape. Opening it re-reads the
+  // archived list each time, so a session archived or unarchived since the
+  // last look shows where it now belongs; a query hides the toggle, because
+  // search covers the open chats only.
+  const showArchivedToggle = mounted && !!agentChatsShown && !snap.folded.includes('agents') && !searching;
   const archivedToggle = showArchivedToggle ? (
     <button
       key="show-archived"
@@ -968,20 +979,25 @@ function ConversationList() {
           what it is for on every other screen in the shell.
 
           A SEARCH TAKES ITS PLACE, because a list that can run to hundreds of
-          rows and holds three kinds of thing needs a way to name one. */}
-      <div className="messages-search">
-        <SearchIcon className="messages-search-glyph w-5 h-5" aria-hidden="true" />
-        <input
-          id="messages-search"
-          type="search"
-          className="messages-search-input"
-          placeholder={t('messages:inbox.searchPlaceholder')}
-          aria-label={t('messages:inbox.searchLabel')}
-          value={query}
-          onChange={(e) => setQuery(e.currentTarget.value)}
-        />
+          rows and holds three kinds of thing needs a way to name one. The
+          "+" that starts something is beside it, since the filter strip it
+          ended went (16 Oct 2026): the sections' headings say which is
+          which. */}
+      <div className="messages-toolbar">
+        <div className="messages-search">
+          <SearchIcon className="messages-search-glyph w-5 h-5" aria-hidden="true" />
+          <input
+            id="messages-search"
+            type="search"
+            className="messages-search-input"
+            placeholder={t('messages:inbox.searchPlaceholder')}
+            aria-label={t('messages:inbox.searchLabel')}
+            value={query}
+            onChange={(e) => setQuery(e.currentTarget.value)}
+          />
+        </div>
+        <NewMessageButton />
       </div>
-      <InboxFilters filter={snap.filter} />
       {!snap.online ? <div className="messages-network-banner">{t('messages:inbox.offline')}</div> : null}
       {/* #1953: a click on the list's own blank space — below the last row,
           not on a row or a button — closes the open conversation, as it
@@ -998,124 +1014,119 @@ function ConversationList() {
       >
         {snap.loadingList && !snap.listLoaded ? <ConversationRowSkeleton /> : null}
         {snap.error ? <div className="messages-state messages-state-error"><p>{snap.error}</p><button type="button" onClick={() => void loadConversations(true)}>{t('core:common.tryAgain')}</button></div> : null}
-        {/* THE EMPTY STATE IS STILL THE CONVERSATIONS', and that is the
-            correct reading: "no messages yet" offers to start one, which is
-            an answer about people. An inbox that is empty only because a
-            FILTER is narrow says something else, below. */}
         {!snap.loadingList && !snap.error && snap.listLoaded && !snap.conversations.length && !inbox.length
           ? <div className="messages-empty"><h3>{t('messages:inbox.empty.title')}</h3><p>{t('messages:inbox.empty.body')}</p><button type="button" onClick={() => openDialog('messagesCreate')}>{t('messages:inbox.empty.action')}</button></div>
-          : null}
-        {!snap.loadingList && !snap.error && snap.listLoaded && !inbox.length && snap.filter !== 'all'
-          ? <div id="messages-filter-empty" className="messages-state"><p>{t('messages:inbox.filterEmpty')}</p></div>
           : null}
         {/* A QUERY THAT MATCHED NOTHING is not an empty inbox, and must not
             borrow the empty inbox's offer to start a conversation: the rows
             are there, this one word is what hid them. */}
-        {!snap.loadingList && !snap.error && snap.listLoaded && inbox.length && !shown.length
+        {!snap.loadingList && !snap.error && snap.listLoaded && inbox.length && !found.length
           ? <div id="messages-search-empty" className="messages-state"><p>{t('messages:inbox.searchEmpty', { query: deferredQuery.trim() })}</p></div>
           : null}
-        {/* ONE LIST, TWO SECTIONS (#2783). ./inbox.ts orders them — the
-            chats on one clock, then the channels — and returns DESCRIPTORS
-            rather than rows, so each kind is still drawn by the component
-            that knows how. Under All each section is headed, the way Discord
-            heads its DMs and its channels; under a filter the strip already
-            says which one this is. */}
-        {/* EACH SECTION'S ROWS SIT IN A CARD, under its label: the grouped
-            list's label-over-card shape that Workshop and Discover draw,
-            rather than rows ruled straight onto the strip. The card is the
-            rows' parent, so `:last-child` (which drops the last separator)
-            now means the last row of its section. Under a filter there is no
-            label and one card.
-
-            #2967's toggle is a row of the channels card: it sits where the
-            channels outside Your apps begin (above them once they are shown,
-            so "Show less" is next to what it folds), or at the card's foot
-            while they are folded. */}
-        {/* ONE LIST, UNHEADED. The Channels section moved to the hubs of the
-            communities its rooms belong to (./inbox.ts), which leaves the
-            chats alone here, and a lone "Chats" heading over the only list
-            on the screen would be a label for nothing. */}
-        {sectionRuns(shown, false).map((run) => {
-          const rows = run.entries.flatMap((entry, i) => {
-            const toggle = entry.more && (i === 0 || !run.entries[i - 1].more) ? moreToggle : null;
-            return [toggle, inboxRow(entry)].filter(Boolean);
-          });
-          const foot = run.section === 'channels' && moreToggle && !run.entries.some((entry) => entry.more)
-            ? moreToggle : null;
-          return [
-            run.head
-              ? <h3 key={`head-${run.section}`} className="messages-section-head" data-inbox-section={run.section}>{t(SECTION_LABELS[run.section])}</h3>
-              : null,
-            <div key={`card-${run.section}`} className="messages-section-card" data-inbox-card={run.section}>
-              {rows}
-              {foot}
-            </div>,
-          ];
+        {/* THREE SECTIONS, EACH HEADED (16 Oct 2026): the Homeroom bot's
+            chat, Agents, People, in that order (./inbox.ts). Each section's
+            rows sit in a card under its heading, the grouped list's label-
+            over-card shape; on a desktop the column draws them as the
+            Communities column draws its places (app.css). Agents and People
+            fold from their headings, which keep their counts folded; a
+            search opens every section. Agents shows its newest few until
+            "Show N more". */}
+        {INBOX_SECTIONS.map((section) => {
+          const entries = found.filter((entry) => entry.section === section);
+          const { shown, hidden } = shownInSection(section, entries, { expanded: agentsExpanded, searching, openKey });
+          // The archived chats are reached past the open ones: under all of
+          // them, once "Show N more" has shown the rest.
+          const archive = section === 'agents' && showArchivedToggle && !hidden;
+          if (!entries.length && !archive) return null;
+          const folded = !searching && snap.folded.includes(section);
+          const more = section === 'agents' && !searching && (hidden > 0 || (agentsExpanded && entries.length > AGENTS_SHOWN)) ? (
+            <button
+              key="agents-more"
+              type="button"
+              className="messages-more-channels"
+              data-inbox-more="agents"
+              aria-expanded={agentsExpanded}
+              onClick={() => setAgentsExpanded(!agentsExpanded)}
+            >
+              <span className="messages-more-channels-glyph" aria-hidden="true">
+                <ChevronDownIcon className={agentsExpanded ? 'rotate-180' : ''} />
+              </span>
+              <span>{agentsExpanded ? t('messages:inbox.showLess') : t('messages:inbox.showMore', { count: hidden })}</span>
+            </button>
+          ) : null;
+          return (
+            <Fragment key={section}>
+              <SectionHead section={section} folded={folded} aside={asides[section].text} ask={asides[section].ask} />
+              {folded ? null : (
+                <>
+                  {shown.length ? (
+                    <div className="messages-section-card" data-inbox-card={section}>
+                      {shown.map(inboxRow)}
+                      {more}
+                    </div>
+                  ) : null}
+                  {archive ? archivedToggle : null}
+                  {archive && archivedOpen ? (
+                    <>
+                      <h3 className="messages-section-head" data-inbox-section="archived">{t('messages:inbox.archived.heading')}</h3>
+                      {archivedError ? (
+                        <div className="messages-state messages-state-error">
+                          <p>{archivedError}</p>
+                          <button type="button" onClick={readArchived}>{t('core:common.tryAgain')}</button>
+                        </div>
+                      ) : !archived ? (
+                        <div className="messages-state"><span className="messages-spinner" aria-hidden="true" /></div>
+                      ) : !archived.length ? (
+                        <div className="messages-state"><p>{t('messages:inbox.archived.empty')}</p></div>
+                      ) : (
+                        <div className="messages-section-card" data-inbox-card="archived">
+                          {archived.map((session) => (
+                            <MayorSessionRow
+                              key={session.id}
+                              session={session}
+                              active={open?.kind === 'agent' && open.id === session.id}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  ) : null}
+                </>
+              )}
+            </Fragment>
+          );
         })}
-        {moreToggle && !shown.some((entry) => entry.section === 'channels') && (snap.filter === 'all' || snap.filter === 'channels') ? moreToggle : null}
-        {archivedToggle}
-        {archivedOpen && showArchivedToggle ? (
-          <>
-            <h3 className="messages-section-head" data-inbox-section="archived">{t('messages:inbox.archived.heading')}</h3>
-            {archivedError ? (
-              <div className="messages-state messages-state-error">
-                <p>{archivedError}</p>
-                <button type="button" onClick={readArchived}>{t('core:common.tryAgain')}</button>
-              </div>
-            ) : !archived ? (
-              <div className="messages-state"><span className="messages-spinner" aria-hidden="true" /></div>
-            ) : !archived.length ? (
-              <div className="messages-state"><p>{t('messages:inbox.archived.empty')}</p></div>
-            ) : (
-              <div className="messages-section-card" data-inbox-card="archived">
-                {archived.map((session) => (
-                  <MayorSessionRow
-                    key={session.id}
-                    session={session}
-                    active={openAgent?.kind === 'agent' && openAgent.id === session.id}
-                  />
-                ))}
-              </div>
-            )}
-          </>
-        ) : null}
       </div>
     </section>
   );
 
   function inboxRow(entry: { kind: string; key: string }) {
-    if (entry.kind === 'channel') {
-      const conversation = byConversation.get(entry.key.slice('channel:'.length));
-      return conversation
-        ? <GeneralChannelRow key={entry.key} conversation={conversation} active={snap.route.conversationId === conversation.id} />
-        : null;
-    }
     if (entry.kind === 'person') {
       const conversation = byConversation.get(entry.key.slice('person:'.length));
       return conversation
-        ? <ConversationRow key={entry.key} conversation={conversation} active={snap.route.conversationId === conversation.id} />
+        ? (
+          <ConversationRow
+            key={entry.key}
+            conversation={conversation}
+            active={snap.route.conversationId === conversation.id}
+            preview={conversation.homeroomBot ? botLine : null}
+          />
+        )
         : null;
-    }
-    if (entry.kind === 'app') {
-      const discussion = byApp.get(entry.key.slice('app:'.length));
-      return discussion ? <AppChannelRow key={entry.key} discussion={discussion} active={snap.route.appSlug === discussion.slug} /> : null;
     }
     if (entry.kind === 'session') {
       const session = bySession.get(entry.key.slice('session:'.length));
-      const open = snap.route.agent;
       return session
         ? <AgentSessionRow key={entry.key} session={session} active={open?.kind === 'session' && open.id === session.id} />
         : null;
     }
     if (entry.kind === 'mayor') {
       const session = byMayor.get(entry.key.slice('mayor:'.length));
-      const open = snap.route.agent;
       return session
         ? <MayorSessionRow key={entry.key} session={session} active={open?.kind === 'agent' && open.id === session.id} />
         : null;
     }
     const agent = byAgent.get(entry.key.slice('agent:'.length));
-    const open = snap.route.agent;
     return agent
       ? <AgentChatRow key={entry.key} chat={agent} active={open?.kind === 'chat' && open.id === agent.id} />
       : null;

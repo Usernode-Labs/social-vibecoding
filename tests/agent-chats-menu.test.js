@@ -222,7 +222,7 @@ test('the mark\'s menu has no agent entries, in the prerender and after mount (#
   // list's "Show archived" group, in the list that is agent chats' home.
   const list = read('frontend/src/features/messages/index.tsx');
   assert.match(list, /const agentChatsShown = useAgentChatsShown\(\);/);
-  assert.match(list, /const showArchivedToggle = mounted && !!agentChatsShown && snap\.filter === 'agents' && !deferredQuery\.trim\(\);/,
+  assert.match(list, /const showArchivedToggle = mounted && !!agentChatsShown && !snap\.folded\.includes\('agents'\) && !searching;/,
     'after mount (the hydrating render matches the prerender), for somebody who has had an agent session, on the Agents list, with no query: search does not cover the archived');
   const store = read(STORE);
   assert.match(store, /export function agentChatsShown\(current: Pick<AgentSessionState, 'sessionsStarted' \| 'sessions'>\): boolean \{\s*return current\.sessionsStarted \|\| current\.sessions\.length > 0;\s*\}/);

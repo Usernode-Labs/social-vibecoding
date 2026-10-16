@@ -99,7 +99,9 @@ test('#4729: the Agents list folds its archived chats behind Show archived at it
   // matches the prerender.
   assert.match(SCREEN, /id="messages-show-archived"/);
   assert.match(SCREEN, /className="messages-more-channels"\s*aria-expanded=\{archivedOpen\}/);
-  assert.match(SCREEN, /const showArchivedToggle = mounted && !!agentChatsShown && snap\.filter === 'agents' && !deferredQuery\.trim\(\);/);
+  assert.match(SCREEN, /const showArchivedToggle = mounted && !!agentChatsShown && !snap\.folded\.includes\('agents'\) && !searching;/);
+  // Under all of the open ones: once "Show N more" has shown the rest.
+  assert.match(SCREEN, /const archive = section === 'agents' && showArchivedToggle && !hidden;/);
   assert.match(SCREEN, /\{archivedOpen \? t\('messages:inbox\.archived\.hide'\) : t\('messages:inbox\.archived\.show'\)\}/);
   // Opening it reads the archived list from the same route the open list
   // reads, ?status=archived, and reads it again on EVERY open, so a session
@@ -112,7 +114,7 @@ test('#4729: the Agents list folds its archived chats behind Show archived at it
   // the one that is open.
   assert.match(SCREEN, /<h3 className="messages-section-head" data-inbox-section="archived">\{t\('messages:inbox\.archived\.heading'\)\}<\/h3>/);
   assert.match(SCREEN, /<div className="messages-section-card" data-inbox-card="archived">/);
-  assert.match(SCREEN, /active=\{openAgent\?\.kind === 'agent' && openAgent\.id === session\.id\}/);
+  assert.match(SCREEN, /active=\{open\?\.kind === 'agent' && open\.id === session\.id\}/);
   assert.match(SCREEN, /<div className="messages-state"><p>\{t\('messages:inbox\.archived\.empty'\)\}<\/p><\/div>/);
   assert.match(SCREEN, /archivedError \? \(\s*<div className="messages-state messages-state-error">/);
   // The words, in English, in the catalog.

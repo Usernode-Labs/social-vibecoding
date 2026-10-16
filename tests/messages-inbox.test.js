@@ -27,6 +27,12 @@
 // #2783 sections the list the way Discord does: the CHATS (people and
 // agents) on the one clock, then the CHANNELS — #general, then one per app
 // the viewer is a member of, including one nobody has spoken in yet.
+//
+// 16 Oct 2026: the channels live on their hubs now, and the one clock is
+// three sections, each on its own: the Homeroom bot's chat, Agents, People.
+// One clock had put the bot's news and every agent turning above the
+// people, so a person was easily three screens down. The filter chips went
+// with it: the headings say which is which, and Agents and People fold.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -46,7 +52,7 @@ const inbox = loadTsx('frontend/src/features/messages/inbox.ts');
 
 const at = (iso) => iso;
 
-test('one clock orders the chats, and the channels are not listed here: they live on their hubs', () => {
+test('three sections in a fixed order, each on its own clock; the channels are not listed here: they live on their hubs', () => {
   const merged = inbox.buildInbox({
     conversations: [
       { id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') },
@@ -62,18 +68,17 @@ test('one clock orders the chats, and the channels are not listed here: they liv
   // Messages is people and agents. #general is the Homeroom community's
   // channel and each app's channel is its own community's, drawn on the
   // hub (features/dev-board/workshop/hub-cards.tsx), so neither is a row.
-  assert.deepEqual(merged.map((e) => e.key), ['person:1', 'agent:a1']);
-  assert.deepEqual(merged.map((e) => e.section), ['chats', 'chats']);
+  // Agents before People, whatever the clock says between them.
+  assert.deepEqual(merged.map((e) => e.key), ['agent:a1', 'person:1']);
+  assert.deepEqual(merged.map((e) => e.section), ['agents', 'people']);
 });
 
-test('a row with no timestamp sorts last, not first', () => {
+test('a row with no timestamp sorts last in its section, not first', () => {
   const merged = inbox.buildInbox({
     conversations: [{ id: 1, lastActivityAt: at('2020-01-01T00:00:00Z') }],
-    discussions: [],
-    agents: [{ id: 'never', updatedAt: null, createdAt: null }],
-    filter: 'all',
+    agents: [{ id: 'never', updatedAt: null, createdAt: null }, { id: 'dated', updatedAt: at('2019-01-01T00:00:00Z') }],
   });
-  assert.deepEqual(merged.map((e) => e.key), ['person:1', 'agent:never']);
+  assert.deepEqual(merged.map((e) => e.key), ['agent:dated', 'agent:never', 'person:1']);
 });
 
 test('an agent chat falls back to when it was created', () => {
@@ -89,39 +94,30 @@ test('an agent chat falls back to when it was created', () => {
   assert.deepEqual(merged.map((e) => e.key), ['agent:new', 'agent:old']);
 });
 
-test('each filter admits exactly its own kind, and All admits every one', () => {
-  // The Channels filter went with the channels (they live on their hubs).
-  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[0]), ['all', 'people', 'agents']);
-  assert.equal(message('messages:inbox.filter.all'), 'All');
-  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => message(f[1])), ['All', 'People', 'Agents']);
-  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[1]), ['messages:inbox.filter.all', 'messages:inbox.filter.people', 'messages:inbox.filter.agents']);
-  for (const kind of ['person', 'agent']) {
-    assert.equal(inbox.admits('all', kind), true, `all admits ${kind}`);
-  }
-  assert.equal(inbox.admits('people', 'person'), true);
-  assert.equal(inbox.admits('people', 'app'), false);
-  assert.equal(inbox.admits('people', 'channel'), false, '#general is not a person');
-  assert.equal(inbox.admits('agents', 'agent'), true);
-  assert.equal(inbox.admits('agents', 'person'), false);
+test('the sections are Homeroom bot, Agents and People, and there are no filter chips', () => {
+  assert.deepEqual([...inbox.INBOX_SECTIONS], ['bot', 'agents', 'people']);
+  assert.deepEqual(inbox.INBOX_SECTIONS.map((section) => message(`messages:inbox.section.${section}`)),
+    ['Homeroom bot', 'Agents', 'People']);
+  assert.equal(inbox.INBOX_FILTERS, undefined, 'the chips went: the headings say which is which');
+  assert.equal(inbox.admits, undefined);
+  assert.doesNotMatch(SCREEN, /InboxFilters|setFilter|messages-filter/);
   const people = inbox.buildInbox({
     conversations: [{ id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') }, { id: 9, kind: 'channel', lastActivityAt: null }],
-    discussions: [{ slug: 'notes', lastAt: null }], agents: [], filter: 'people',
+    agents: [],
   });
   assert.deepEqual(people.map((e) => e.key), ['person:1'], 'a channel is no one\'s person row');
 });
 
-test('#18 (WP3): the Homeroom bot\'s DM is filed under Agents, not People, and is still drawn as a DM', () => {
+test('#18 (WP3): the Homeroom bot\'s DM is a section of its own, first, and is still drawn as a DM', () => {
   const conversations = [
     { id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') },
-    { id: 2, kind: 'direct', homeroomBot: true, lastActivityAt: at('2026-01-03T00:00:00Z') },
+    { id: 2, kind: 'direct', homeroomBot: true, lastActivityAt: at('2026-01-01T00:00:00Z') },
   ];
-  const sessions = [{ key: 's7', lastActivityAt: at('2026-01-01T00:00:00Z') }];
-  const build = (filter) => inbox.buildInbox({ conversations, discussions: [], agents: [], sessions, filter });
-  assert.deepEqual(build('agents').map((e) => e.key), ['person:2', 'session:s7'], 'Agents lists it, on the same clock');
-  assert.deepEqual(build('people').map((e) => e.key), ['person:1'], 'People does not');
-  assert.deepEqual(build('all').map((e) => e.key), ['person:2', 'person:1', 'session:s7'], 'All lists it once');
-  const [bot] = build('agents');
-  assert.deepEqual([bot.kind, bot.section], ['person', 'chats'], 'drawn by the conversation row, as before');
+  const sessions = [{ key: 's7', lastActivityAt: at('2026-01-03T00:00:00Z') }];
+  const merged = inbox.buildInbox({ conversations, agents: [], sessions });
+  assert.deepEqual(merged.map((e) => e.key), ['person:2', 'session:s7', 'person:1'], 'first, whatever was said last');
+  assert.deepEqual(merged.map((e) => e.section), ['bot', 'agents', 'people']);
+  assert.equal(merged[0].kind, 'person', 'drawn by the conversation row, as before');
   assert.match(SCREEN, /conversations: snap\.conversations,/, 'the screen hands the merge the summaries that carry the mark');
 });
 
@@ -150,14 +146,15 @@ test('the discussions read fails quietly', () => {
   assert.doesNotMatch(body, /publish\(\{ error/, 'it never blanks the conversations');
 });
 
-test('the "+" is back at the strip\'s trailing end, and opens a choice rather than guessing (#2778)', () => {
+test('the "+" sits beside the search, and opens a choice rather than guessing (#2778)', () => {
   // It was a disc at the far end of the filter row, taken off in #2718's
   // review because ONE control could only mean one of the things the inbox
-  // holds. It comes back as a popover of three choices: DM, group, agent.
-  const filters = SCREEN.slice(SCREEN.indexOf('function InboxFilters'));
-  const body = filters.slice(0, filters.indexOf('\n}\n'));
-  assert.ok(body.indexOf('messages-filter-track') < body.indexOf('<NewMessageButton />'),
-    'the plus sits after the track, to the right of the filters');
+  // holds, and came back as a popover of three choices: DM, group, agent.
+  // The filter row went (16 Oct 2026), so it sits beside the search.
+  const toolbar = SCREEN.slice(SCREEN.indexOf('<div className="messages-toolbar">'));
+  const body = toolbar.slice(0, toolbar.indexOf('<NewMessageButton />') + 20);
+  assert.ok(body.indexOf('id="messages-search"') > 0 && body.indexOf('id="messages-search"') < body.indexOf('<NewMessageButton />'),
+    'the plus sits after the search, to its right');
   assert.ok(!SCREEN.includes('function InboxCompose'), 'the row of compose buttons under the strip is gone');
   assert.ok(!SCREEN.includes('id="messages-new-agent"'));
 
@@ -266,45 +263,80 @@ test('the route is registered after the workshop one', () => {
   assert.match(server, /app\.use\(messagesOverviewRoutes\(config\)\);/);
 });
 
-test('the filter row ships in the prerendered document, with the plus at its end', () => {
-  for (const id of ['messages-filters', 'messages-filter-all', 'messages-filter-people',
-    'messages-filter-agents', 'messages-new']) {
+test('the search and the plus ship in the prerendered document; the filter row is gone', () => {
+  for (const id of ['messages-search', 'messages-new']) {
     assert.ok(HTML.includes(`id="${id}"`), `#${id} is in the shipped shell`);
   }
-  // The Channels filter left with the channels, which live on their hubs.
-  for (const id of ['messages-filter-apps', 'messages-filter-channels', 'messages-compose', 'messages-new-agent']) {
+  for (const id of ['messages-filters', 'messages-filter-all', 'messages-filter-people', 'messages-filter-agents',
+    'messages-filter-apps', 'messages-filter-channels', 'messages-compose', 'messages-new-agent']) {
     assert.ok(!HTML.includes(`id="${id}"`), `#${id} is retired`);
   }
-  assert.match(HTML, /id="messages-filter-agents"[^<]*>Agents<\/button><\/div><button[^>]*id="messages-new"/,
-    'the plus is inside the strip, right after the track');
+  assert.match(HTML, /<div class="messages-toolbar"><div class="messages-search">[\s\S]*?id="messages-search"[^>]*\/><\/div><button[^>]*id="messages-new"/,
+    'the plus is right after the search, on its line');
   assert.ok(!HTML.includes('id="messages-new-menu"'), 'the popover renders only when pressed');
-  assert.ok(!HTML.includes('id="messages-filter-empty"'),
-    'the narrowed-to-nothing note is not, because nothing has narrowed');
+  assert.ok(!HTML.includes('data-inbox-section'), 'the sections draw once the rows arrive, after mount');
 });
 
-test('one row shape per kind; the channels are headed rather than pilled', () => {
-  assert.match(SCREEN, /function GeneralChannelRow/);
-  assert.match(SCREEN, /function AppChannelRow/);
+test('one row shape per kind, under three headed sections; Agents shows its newest three', () => {
   assert.match(SCREEN, /function AgentChatRow/);
   assert.doesNotMatch(SCREEN, /<KindPill kind="app" \/>/, 'a section heading says it once');
-  assert.match(SCREEN, /<KindPill kind="agent" \/>/, 'an agent among the people still says so');
-  assert.equal(message('messages:inbox.section.chats'), 'Chats');
-  assert.equal(message('messages:inbox.section.channels'), 'Channels');
-  assert.match(SCREEN, /chats: 'messages:inbox\.section\.chats',\s*channels: 'messages:inbox\.section\.channels',/);
-  // ONE LIST, unheaded: the channels moved to their hubs, which leaves the
-  // chats alone, and a lone "Chats" heading would label nothing.
-  assert.match(SCREEN, /sectionRuns\(shown, false\)/, 'no heading over the one list');
-  assert.match(SCREEN, /<div key=\{`card-\$\{run\.section\}`\} className="messages-section-card" data-inbox-card=\{run\.section\}>/,
-    'and each section\'s rows in a card of their own, so the last row of a section drops its separator');
-  const e = (section, more) => ({ section, more });
-  assert.deepEqual(inbox.sectionRuns([e('chats'), e('chats'), e('channels'), e('channels', true)], true)
-    .map((r) => [r.section, r.head, r.entries.length]),
-  [['chats', true, 2], ['channels', true, 2]], 'one card per section, each headed under All; the folded channels stay in theirs');
-  assert.deepEqual(inbox.sectionRuns([e('channels')], false).map((r) => [r.section, r.head]), [['channels', false]],
-    'under a filter: one card, no heading');
+  assert.match(SCREEN, /<KindPill kind="agent" \/>/, 'an agent row still says so on a phone');
+  assert.match(SCREEN, /bot: 'messages:inbox\.section\.bot',\s*agents: 'messages:inbox\.section\.agents',\s*people: 'messages:inbox\.section\.people',/);
+  assert.match(SCREEN, /\{INBOX_SECTIONS\.map\(\(section\) => \{/, 'every section, in order');
+  assert.match(SCREEN, /<SectionHead section=\{section\} folded=\{folded\} aside=\{asides\[section\]\.text\} ask=\{asides\[section\]\.ask\} \/>/);
+  assert.match(SCREEN, /<div className="messages-section-card" data-inbox-card=\{section\}>/,
+    'each section\'s rows in a card of their own, so the last row of a section drops its separator');
+  // The heading folds Agents and People; the bot's never folds.
+  const head = SCREEN.slice(SCREEN.indexOf('function SectionHead'));
+  const fn = head.slice(0, head.indexOf('\n}\n'));
+  assert.match(fn, /if \(section === 'bot'\) \{\s*return <h3 className="messages-section-head" data-inbox-section=\{section\}>\{words\}<\/h3>;/);
+  assert.match(fn, /data-inbox-fold=\{section\}\s*aria-expanded=\{!folded\}\s*onClick=\{\(\) => setSectionFolded\(section, !folded\)\}/);
+  // A search opens every section and shows every match.
+  assert.match(SCREEN, /const folded = !searching && snap\.folded\.includes\(section\);/);
+  const e = (key, section) => ({ key, section, kind: 'mayor', at: null });
+  const agents = ['a', 'b', 'c', 'd', 'e'].map((k) => e(k, 'agents'));
+  const newest = inbox.shownInSection('agents', agents);
+  assert.deepEqual([newest.shown.map((x) => x.key), newest.hidden], [['a', 'b', 'c'], 2], 'the newest three, and how many more');
+  const open = inbox.shownInSection('agents', agents, { openKey: 'e' });
+  assert.deepEqual([open.shown.map((x) => x.key), open.hidden], [['a', 'b', 'c', 'e'], 1], 'and the open one wherever it sits');
+  assert.equal(inbox.shownInSection('agents', agents, { expanded: true }).hidden, 0, 'Show N more shows the rest');
+  assert.equal(inbox.shownInSection('agents', agents, { searching: true }).hidden, 0, 'a search shows every match');
+  assert.equal(inbox.shownInSection('people', agents).hidden, 0, 'People shows all of them');
+  assert.equal(inbox.AGENTS_SHOWN, 3);
+  assert.deepEqual(inbox.sectionRuns([e('x', 'bot'), e('a', 'agents'), e('b', 'agents'), e('p', 'people')])
+    .map((r) => [r.section, r.entries.length]), [['bot', 1], ['agents', 2], ['people', 1]]);
   const conversationRow = SCREEN.slice(SCREEN.indexOf('function ConversationRow'), SCREEN.indexOf('function KindPill'));
   assert.doesNotMatch(conversationRow, /KindPill/,
     'a person gets none: they are the majority, and a pill on every row says nothing');
+});
+
+test('the bot\'s row says what waits on you, and the headings say what in them asks for you', () => {
+  // Its chat's own activity bar words, from the same store, once it has read.
+  assert.match(SCREEN, /const parts = summaryParts\(stripGroups\(botWork\.work\)\);/);
+  assert.match(SCREEN, /return parts\.length \? parts\.slice\(0, 2\)\.map\(\(part\) => part\.text\)\.join\(' · '\) : null;/);
+  assert.match(SCREEN, /if \(mounted && hasBot && !botWork\.work\) loadBotWork\(\{ fresh: false \}\);/, 'after mount');
+  assert.match(SCREEN, /preview=\{conversation\.homeroomBot \? botLine : null\}/);
+  assert.match(SCREEN, /: preview \|\| conversation\.latestSummary \|\| t\('messages:inbox\.noMessages'\)/, 'its last message until then');
+  assert.equal(message('messages:inbox.section.working', { count: 1 }), '1 working');
+  assert.equal(message('messages:inbox.section.unread', { count: 3 }), '3 unread');
+  assert.match(SCREEN, /people: \{ text: unreadFromPeople \? t\('messages:inbox\.section\.unread', \{ count: unreadFromPeople \}\) : null, ask: true \},/,
+    'a zero says nothing, and the people count is the accent');
+});
+
+test('on a desktop the column draws its rows as the Communities column does', () => {
+  const css = read('public/css/app.css');
+  const P = 'html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane';
+  const rule = (sel) => {
+    const at = css.indexOf(`${P} ${sel} {`);
+    assert.ok(at >= 0, sel);
+    return css.slice(at, css.indexOf('}', at));
+  };
+  assert.match(rule('.messages-conversation-row,\n  ' + P + ' .messages-more-channels').replace(/\s+/g, ' '), /min-height: 40px; gap: 10px; padding: 0 10px; border-radius: 10px;/,
+    'the places list\'s 40px rows');
+  assert.match(rule('.messages-conversation-row > :first-child'), /width: 22px;\s*height: 22px;/, 'a small avatar');
+  assert.match(rule('.messages-conversation-active'), /background: var\(--lit-tint\); color: var\(--lit-ink\);/, 'the open one lit like a place');
+  assert.match(css, new RegExp(`${P.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\.messages-bot-row \\.messages-row-preview \\{ display: block;`),
+    'the bot keeps its second line');
 });
 
 // ── The agent half has to ask for itself (#2718 review) ────────────────
@@ -334,24 +366,14 @@ test('the inbox initialises the global-chat bootstrap it reads', () => {
 
 // ── A change is an agent conversation (#2770, #2772) ────────────────────
 
-test('a change sorts on the same clock and files under Agents', () => {
+test('a change sorts on the Agents clock and files under Agents', () => {
   const merged = inbox.buildInbox({
     conversations: [{ id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') }],
-    discussions: [],
     agents: [{ id: 'a1', updatedAt: at('2026-01-01T00:00:00Z') }],
     sessions: [{ key: 's7', lastActivityAt: at('2026-01-03T00:00:00Z') }],
-    filter: 'all',
   });
-  assert.deepEqual(merged.map((e) => e.key), ['session:s7', 'person:1', 'agent:a1']);
-  assert.equal(inbox.admits('agents', 'session'), true, 'Agents admits a change');
-  assert.equal(inbox.admits('people', 'session'), false);
-  assert.equal(inbox.admits('channels', 'session'), false);
-  const agentsOnly = inbox.buildInbox({
-    conversations: [{ id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') }],
-    discussions: [], agents: [], sessions: [{ key: 's7', lastActivityAt: null }],
-    filter: 'agents',
-  });
-  assert.deepEqual(agentsOnly.map((e) => e.key), ['session:s7']);
+  assert.deepEqual(merged.map((e) => e.key), ['session:s7', 'agent:a1', 'person:1']);
+  assert.deepEqual(merged.map((e) => e.section), ['agents', 'agents', 'people']);
 });
 
 test('changes are read from the Improve store, drawn by SessionRow, and not gated on the chat flags', () => {

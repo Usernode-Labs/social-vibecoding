@@ -424,14 +424,12 @@ const ADDED_IDS = {
   // this map: they render only once a filter has narrowed to nothing or once
   // a discussion or an agent chat has arrived, so none of them is in the
   // prerendered document, which is what this map is for.
-  'messages-filters': '#2718: the filter row — All, People, Channels (Apps until #2783), Agents, with the "+" at its trailing end (#2778). Messages was the `conversations` domain only; an app\'s own discussion and an agent chat were reachable only from inside the thing they belonged to, which is not findable from the one screen somebody opens looking for "what was said to me". One list, one clock, a mark on the rows that are not a person — the arrangement Slack and Teams land on with a channel, a DM and a bot thread in one sidebar.',
-  'messages-filter-all': '#2718: the default, and the one thing this screen must always be able to say. Still presentation, so not in the route; since #4783 the choice is remembered per device, and All is both the fresh-device start and the fallback for an unknown saved value.',
-  'messages-filter-people': '#2718: conversations only — the `conversations` domain this screen used to be.',
-  // #messages-filter-apps left this map in #2783: "Apps" became "Channels"
-  // (#messages-filter-channels, below). It was only ever an ADDED id, so it
-  // simply leaves, as #workshop-scope did.
-  'messages-filter-agents': '#2718: the viewer\'s agent chats, read from features/global-chat\'s own store rather than copied into this one — that list is already loaded, merged on every thread event and invalidated by the chat itself. Gated on the same two flags the Improve panel\'s list is, so a shell with the feature off shows no Agents rows.',
-  'messages-new': '#2718, then #2778: the "+" at the filter strip\'s trailing end. #2718\'s review took it off the strip because ONE control saying "new" could only mean one of the kinds the inbox holds, and replaced it with a row of compose buttons under the strip (#messages-compose, retired below). #2778 brings it back as a CHOICE: pressing it opens a small popover — the vote picker\'s placement and dismissal, shared through lib/anchor-popover.ts and lib/popover-dismiss.ts — offering a direct message, a group chat or an agent chat, so it no longer has to guess. On touch the choice is the kit\'s action sheet. The popover (#messages-new-menu) renders only once pressed, so it is not in the prerendered document and not in this map.',
+  // #messages-filters and its three chips (#messages-filter-all, -people,
+  // -agents) left this map on 16 Oct 2026: the list was split into headed
+  // sections (Homeroom bot, Agents, People), which say which is which, so
+  // the strip went. They were only ever ADDED ids, so they simply leave, as
+  // #messages-filter-apps did.
+  'messages-new': '#2718, then #2778: the "+" at the filter strip\'s trailing end, beside the search since the strip went (16 Oct 2026). #2718\'s review took it off the strip because ONE control saying "new" could only mean one of the kinds the inbox holds, and replaced it with a row of compose buttons under the strip (#messages-compose, retired below). #2778 brings it back as a CHOICE: pressing it opens a small popover — the vote picker\'s placement and dismissal, shared through lib/anchor-popover.ts and lib/popover-dismiss.ts — offering a direct message, a group chat or an agent chat, so it no longer has to guess. On touch the choice is the kit\'s action sheet. The popover (#messages-new-menu) renders only once pressed, so it is not in the prerendered document and not in this map.',
   // ── #2718: the Workshop gets a scope, three tabs and a plus ──────
   //
   // #workshop-picker, #workshop-picker-all, #workshop-plus-change,
