@@ -119,6 +119,16 @@ test('unit-suite reuse through the preview machine, against the full PostgreSQL 
     }
   };
   const submit = (s, head, extra = {}) => send(s, 'RevisionSubmitted', { sessionId: s.id, head, source: 'test', trigger: 'commit-push', ...extra });
+  // platform.submitRevision for a test-local stub of platform.ts: a recheck
+  // of a proposal up for approval whose machine holds an older head hands the
+  // reviewed head over as a revision first (services/preview-workflow.js
+  // recheck), so a stub that takes the recheck takes the revision too.
+  const submitRevision = async (r) => {
+    const ev = await send({ id: r.sessionId, app_id: r.appId }, 'RevisionSubmitted', { sessionId: r.sessionId, head: r.head,
+      source: r.source, trigger: r.trigger ?? null, carryFrom: r.carryFrom ?? null });
+    await rt.drain();
+    return (await pool.query('SELECT result AS status, reason FROM wf_events WHERE id = $1', [ev])).rows[0];
+  };
   const press = (s) => async () => {
     await reuse.markFreshOwed(pool, { sessionId: s.id, commitSha: (await row(s.id)).checks_commit_sha });
     await send(s, 'RecheckRequested', { reason: 'manual' }, { kind: 'route' });
@@ -407,6 +417,7 @@ test('unit-suite reuse through the preview machine, against the full PostgreSQL 
     st.after(() => { if (realPlatform) require.cache[platformPath] = realPlatform; else delete require.cache[platformPath]; });
     platform.previewHeld = async (id) => (await pool.query('SELECT 1 FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(id)])).rows.length > 0;
     platform.previewInstance = async (id) => (await pool.query('SELECT * FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(id)])).rows[0];
+    platform.submitRevision = submitRevision;
     let handedOff = null;
     let beforeMachine = null;
     platform.requestRecheck = async (o) => {
@@ -478,6 +489,7 @@ test('unit-suite reuse through the preview machine, against the full PostgreSQL 
     st.after(() => { if (realPlatform) require.cache[platformPath] = realPlatform; else delete require.cache[platformPath]; });
     platform.previewHeld = async (id) => (await pool.query('SELECT 1 FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(id)])).rows.length > 0;
     platform.previewInstance = async (id) => (await pool.query('SELECT * FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(id)])).rows[0];
+    platform.submitRevision = submitRevision;
     const markers = [];
     platform.requestRecheck = async (o) => {
       markers.push((await row(o.sessionId)).unit_suite_fresh_sha);
@@ -528,6 +540,7 @@ test('unit-suite reuse through the preview machine, against the full PostgreSQL 
     st.after(() => { if (realPlatform) require.cache[platformPath] = realPlatform; else delete require.cache[platformPath]; });
     platform.previewHeld = async (id) => (await pool.query('SELECT 1 FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(id)])).rows.length > 0;
     platform.previewInstance = async (id) => (await pool.query('SELECT * FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(id)])).rows[0];
+    platform.submitRevision = submitRevision;
     let drained = null;
     platform.requestRecheck = async (o) => {
       try {
