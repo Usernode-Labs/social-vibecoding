@@ -35,14 +35,6 @@ import { TrackBadge, TrackBar, trackShort } from '../../messages/bot-track';
 import type { BotSlotEntry, BotSlotsView } from '../../messages/types';
 import { PageBack } from './page-back';
 
-function demoAsked(): boolean {
-  try {
-    return new URLSearchParams(window.location.search).get('demo') === '1';
-  } catch {
-    return false;
-  }
-}
-
 interface SlotsState { view: BotSlotsView | null; failed: boolean; loaded: boolean }
 
 /** A project's bot slots, read in an effect, again when the slug changes. */
@@ -52,7 +44,7 @@ export function useBotSlots(slug: string | null | undefined): SlotsState {
     if (!slug) return undefined;
     let live = true;
     setState({ view: null, failed: false, loaded: false });
-    getBotSlots(slug, { demo: demoAsked() })
+    getBotSlots(slug)
       .then((view) => { if (live) setState({ view, failed: false, loaded: true }); })
       .catch(() => { if (live) setState({ view: null, failed: true, loaded: true }); });
     return () => { live = false; };

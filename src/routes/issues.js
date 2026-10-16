@@ -2139,6 +2139,11 @@ function issueRoutes(config) {
         pool, app.id, (result.issues || []).map((i) => i.number), req.user.id
       );
       const botByNumber = await botWorkFor(pool, app.id);
+      // 16 Oct 2026: where the bot's work on each request is
+      // (homeroom-bot-track.js): an open request's page draws from this
+      // list, so its track card travels with it, as `bot` does.
+      const trackSvc = require('../services/homeroom-bot-track');
+      const tracks = await trackSvc.tracksForRequests(pool, { appId: app.id, numbers: (result.issues || []).map((i) => i.number) });
       // B8: who each request the bot is on is being built for, and whether
       // the bot builds here for this viewer (the page's "Ask Homeroom bot to
       // build this").
@@ -2187,6 +2192,7 @@ function issueRoutes(config) {
           // ({ what, since }), or null. Its own field, like `headless`: the
           // bot is never `in_progress`.
           bot: botAsked(issue.number),
+          track: tracks.get(issue.number) || null,
           // #4530: the bot's note there that nobody has answered yet
           // ({ kind: 'question' | 'person' | 'empty', messageId }), or null.
           botAwaits: botWaiting.get(issue.number) || null,
@@ -2372,6 +2378,8 @@ function issueRoutes(config) {
         // marks, and only where no real bot work claimed the number.
         for (const issue of issues) {
           if (issue.number === 900018 && !issue.bot) issue.bot = stagingMockBotWork();
+          // And its track, as its own page shows it (homeroom-bot-track.js).
+          if (issue.number === 900018 && !issue.track) issue.track = trackSvc.demoRequestTrack(app, 900018, issue.title);
         }
         // #4530: and one it asked a question on that nobody has answered:
         // 900001, where its door is drawn (?demo=1&bot=1). Its card offers

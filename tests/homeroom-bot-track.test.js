@@ -163,4 +163,19 @@ test('the tray answers with its tracks; the request page and the slots route rea
   const issues = read('src/routes/issues.js');
   assert.match(issues, /trackSvc\.tracksForRequests\(pool, \{ appId: app\.id, numbers: \[number\] \}\)/);
   assert.match(issues, /router\.get\('\/api\/apps\/:slug\/homeroom-bot\/slots'/);
+  // An open request's page draws from the board's list, not from the one
+  // request's route: the list carries each request's track too (the
+  // declared check on #900018 found the card missing without it).
+  assert.match(issues, /const tracks = await trackSvc\.tracksForRequests\(pool, \{ appId: app\.id, numbers: \(result\.issues \|\| \[\]\)\.map\(\(i\) => i\.number\) \}\);/);
+  assert.match(issues, /bot: botAsked\(issue\.number\),\s*track: tracks\.get\(issue\.number\) \|\| null,/);
+  assert.match(issues, /if \(issue\.number === 900018 && !issue\.track\) issue\.track = trackSvc\.demoRequestTrack\(app, 900018, issue\.title\);/);
+  // A whole list is narrowed first to the requests the bot has touched.
+  assert.match(read('src/services/homeroom-bot-track.js'), /\? \(await pool\.query\(TOUCHED_SQL, \[Number\(appId\), asked\]\)\)\.rows\.map/);
+  // The staging demo's ?demo=1 rides on every messages read already
+  // (api.ts demoQuery): the slots read must not add it twice, which the
+  // server reads as a list and answers with the real, empty view.
+  const api = read('frontend/src/features/messages/api.ts');
+  const slotsRead = api.slice(api.indexOf('export async function getBotSlots'), api.indexOf('export async function getBotSlots') + 400);
+  assert.doesNotMatch(slotsRead, /demo=1/);
+  assert.match(api, /function demoQuery\(path: string\): string \{[\s\S]*?demo=1`;/);
 });

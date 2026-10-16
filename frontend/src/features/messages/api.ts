@@ -1180,9 +1180,13 @@ export function normalizeBotSlots(input: unknown): BotSlotsView | null {
   };
 }
 
-/** 16 Oct 2026: a project's bot slots, for the page under its Workshop. */
-export async function getBotSlots(slug: string, { demo = false }: { demo?: boolean } = {}): Promise<BotSlotsView | null> {
-  const path = `/api/apps/${encodeURIComponent(slug)}/homeroom-bot/slots${demo ? '?demo=1' : ''}`;
+/**
+ * 16 Oct 2026: a project's bot slots, for the page under its Workshop. The
+ * staging demo's `?demo=1` rides on every read already (demoQuery); adding
+ * it here too sent it twice, which the server reads as a list, not '1'.
+ */
+export async function getBotSlots(slug: string): Promise<BotSlotsView | null> {
+  const path = `/api/apps/${encodeURIComponent(slug)}/homeroom-bot/slots`;
   return normalizeBotSlots(await request<unknown>(path, readInit({ fresh: true })));
 }
 

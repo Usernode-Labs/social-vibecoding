@@ -383,6 +383,13 @@ async function withTracks(pool, work, { entries = [], rows = [], keyOf, deps = {
 
 // ── One project's requests, whoever asked (the request page, the slots) ──
 
+// Of `$2`, the requests of project `$1` the bot has a run or a queue entry
+// for: the only ones with a track (tracksForRequests).
+const TOUCHED_SQL = `
+  SELECT w.n FROM UNNEST($2::int[]) AS w(n)
+   WHERE EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.app_id = $1 AND r.issue_number = w.n)
+      OR EXISTS (SELECT 1 FROM homeroom_bot_queue q WHERE q.app_id = $1 AND q.issue_number = w.n)`;
+
 // The records progress.stageOf reads, as homeroom-bot-progress.js
 // requestRows reads them for one person, for any requests of one project:
 // `$1` the project, `$2` the request numbers. An open question is anybody's.
@@ -495,9 +502,15 @@ function jobOfRow(row, { now = new Date(), stageOf, outcomeOf, linksFor = null }
  */
 async function tracksForRequests(pool, { appId, numbers, now = new Date(), deps = {} }) {
   const out = new Map();
-  const wanted = [...new Set((numbers || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
-  if (!appId || !wanted.length) return out;
+  const asked = [...new Set((numbers || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!appId || !asked.length) return out;
   try {
+    // A board's whole list comes through here: only the requests the bot has
+    // read or queued are worth the full read below.
+    const wanted = asked.length > 1
+      ? (await pool.query(TOUCHED_SQL, [Number(appId), asked])).rows.map((row) => Number(row.n))
+      : asked;
+    if (!wanted.length) return out;
     const progress = deps.progress || require('./homeroom-bot-progress');
     const tray = deps.tray || require('./homeroom-bot-tray');
     const [{ rows }, { rows: runs }] = await Promise.all([
@@ -679,6 +692,7 @@ module.exports = {
   DONE_BY_SQL,
   doneByFor,
   withTracks,
+  TOUCHED_SQL,
   REQUEST_ROWS_SQL,
   REQUEST_RUNS_SQL,
   QUEUE_SQL,
