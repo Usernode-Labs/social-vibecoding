@@ -129,12 +129,15 @@ function changeFor(intent, changeId) {
   return story;
 }
 
-function slotKey({ storyId, viewport, side, variant }) {
-  return `${storyId}\u0000${viewport}\u0000${side}\u0000${variant}`;
+function slotKey({ storyId, viewport, side, variant, theme }) {
+  // A dark slot's key extends the light one only when it is dark, so every
+  // light key stays exactly as it is now.
+  return `${storyId}\u0000${viewport}\u0000${side}\u0000${variant}${theme === 'dark' ? '\u0000dark' : ''}`;
 }
 
 // Where a saved file belongs: a declared change, one of its screen sizes, a
-// side, and whether it is the screen, one element, or a clip.
+// side, and whether it is the screen, one element, or a clip — in light, or
+// (whole screens only) in dark.
 function shotTarget(intent, raw = {}) {
   const story = changeFor(intent, raw.change);
   const viewport = String(raw.screen || '');
@@ -149,7 +152,15 @@ function shotTarget(intent, raw = {}) {
   if (kind.variant === 'animation' && !planContract.needsClip(story)) {
     throw new ShotError('clip_not_needed', `${story.id} is not declared as motion; save still shots for it.`);
   }
-  return { storyId: story.id, viewport, side, variant: kind.variant, media: kind.media };
+  const theme = raw.theme == null || raw.theme === '' ? 'light' : String(raw.theme);
+  if (!['light', 'dark'].includes(theme)) {
+    throw new ShotError('invalid_theme', 'Theme must be light or dark.');
+  }
+  if (theme === 'dark' && kind.variant !== 'context') {
+    throw new ShotError('dark_screen_only',
+      'A dark shot is the whole screen only: element shots and clips stay in light mode.');
+  }
+  return { storyId: story.id, viewport, side, variant: kind.variant, media: kind.media, theme };
 }
 
 // Whether a skip says the after build broke ('failed') or the state could
@@ -382,6 +393,9 @@ function summarize(intent, saved, skipped = new Map(), {
     }
     const missing = [];
     const files = [];
+    // Dark shots (#4459) are extras beside the light ones: they are never
+    // required, so a change with no dark shot is still ready.
+    const darkFiles = [];
     const required = planContract.needsClip(story) ? ['context', 'animation'] : ['context'];
     for (const viewport of story.viewports) {
       for (const side of sides) {
@@ -389,11 +403,15 @@ function summarize(intent, saved, skipped = new Map(), {
           const file = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side, variant }));
           if (file) files.push(file);
           else if (required.includes(variant)) missing.push(missingWords(viewport.name, side, variant));
+          if (variant === 'context') {
+            const dark = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side, variant, theme: 'dark' }));
+            if (dark) darkFiles.push(dark);
+          }
         }
       }
     }
     if (!missing.length) {
-      published.push(...files);
+      published.push(...files, ...darkFiles);
       const note = notes.get(story.id);
       return { id: story.id, status: 'ready', files: files.length, ...(note ? { note } : {}) };
     }
@@ -415,7 +433,7 @@ function summarize(intent, saved, skipped = new Map(), {
   const stories = afterOnly ? results : markUnchanged(results, identicalStories(intent, saved));
   const ready = stories.filter((story) => story.status === 'ready').length;
   const manifest = published
-    .map(({ storyId, viewport, side, variant, sha256: digest }) => ({ storyId, viewport, side, variant, sha256: digest }))
+    .map(({ storyId, viewport, side, variant, theme, sha256: digest }) => ({ storyId, viewport, side, variant, theme, sha256: digest }))
     .sort((a, b) => slotKey(a).localeCompare(slotKey(b)));
   const publishedSlots = new Set(published.map(slotKey));
   const noticed = (Array.isArray(notices) ? notices : []).slice(0, MAX_NOTICES).map((entry) => ({

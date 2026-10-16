@@ -178,6 +178,7 @@ function internalRoutes(_config) {
         screen: req.query.screen,
         side: req.query.side,
         kind: req.query.kind,
+        theme: req.query.theme,
       }, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)));
       return res.json({ ok: true, result });
     } catch (err) { return shotsError(res, err); }

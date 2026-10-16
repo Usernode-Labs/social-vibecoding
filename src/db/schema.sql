@@ -10061,6 +10061,46 @@ CREATE TABLE IF NOT EXISTS shot_run_files (
   saved_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (run_id, slot)
 );
+-- #4459: a screen shot can be taken in both light and dark mode. Dark exists
+-- only for whole-screen PNGs (context), so element shots and clips stay
+-- light; the column's default makes every older row light, so older runs
+-- need no backfill. Dark files live under their own slot name (…/dark), so
+-- shot_run_files keeps its (run_id, slot) key and shot_artifacts' unique key
+-- gains the theme.
+ALTER TABLE shot_run_files ADD COLUMN IF NOT EXISTS theme VARCHAR(8) NOT NULL DEFAULT 'light';
+ALTER TABLE shot_artifacts ADD COLUMN IF NOT EXISTS theme VARCHAR(8) NOT NULL DEFAULT 'light';
+DO $$
+DECLARE old_constraint text;
+BEGIN
+  -- The old six-column unique on shot_artifacts, found by its definition,
+  -- gives way to one that knows the theme.
+  FOR old_constraint IN
+    SELECT conname FROM pg_constraint
+     WHERE conrelid = 'shot_artifacts'::regclass AND contype = 'u'
+       AND pg_get_constraintdef(oid) LIKE '%story_id%viewport%side%variant%media%'
+       AND pg_get_constraintdef(oid) NOT LIKE '%theme%'
+  LOOP
+    EXECUTE format('ALTER TABLE shot_artifacts DROP CONSTRAINT %I', old_constraint);
+  END LOOP;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'shot_run_files'::regclass AND conname = 'shot_run_files_theme_check'
+  ) THEN
+    ALTER TABLE shot_run_files
+      ADD CONSTRAINT shot_run_files_theme_check
+      CHECK (theme IN ('light', 'dark') AND (theme = 'light' OR (variant = 'context' AND media = 'png')));
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'shot_artifacts'::regclass AND conname = 'shot_artifacts_theme_check'
+  ) THEN
+    ALTER TABLE shot_artifacts
+      ADD CONSTRAINT shot_artifacts_theme_check
+      CHECK (theme IN ('light', 'dark') AND (theme = 'light' OR (variant = 'context' AND media = 'png')));
+  END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS shot_artifacts_slot_key
+  ON shot_artifacts(run_id, story_id, viewport, side, variant, media, theme);
 COMMENT ON TABLE shot_run_files IS 'staging:private';
 
 -- #2377: experimental Global Chat. These records are deliberately separate

@@ -926,9 +926,9 @@ async function showRun(tx: Tx, ctx: any, runIdOf: string) {
   let artifacts: unknown[] = [];
   if (run.state === 'verified') {
     ({ rows: artifacts } = await tx.query(
-      `SELECT id, story_id AS "storyId", viewport, side, variant, media, content_type AS "contentType",
+      `SELECT id, story_id AS "storyId", viewport, side, variant, media, theme, content_type AS "contentType",
               width, height, bytes, sha256, focus_rect AS "focusRect", stage_labels AS "stageLabels"
-         FROM shot_artifacts WHERE run_id = $1 ORDER BY story_id, viewport, side, variant`, [runIdOf]));
+         FROM shot_artifacts WHERE run_id = $1 ORDER BY story_id, viewport, side, variant, theme`, [runIdOf]));
   }
   const detail = { ...runSummary(run, artifacts), intent: run.intent };
   const { rowCount } = await tx.query(
@@ -1005,9 +1005,9 @@ const WRITES = {
   // published, in one transaction.
   published: async (tx: Tx, w: any, ctx: any) => {
     await tx.query(
-      `INSERT INTO shot_artifacts (id, run_id, story_id, viewport, side, variant, media, content_type,
+      `INSERT INTO shot_artifacts (id, run_id, story_id, viewport, side, variant, media, theme, content_type,
                                    data, width, height, bytes, sha256)
-       SELECT md5(f.run_id || ':' || f.slot), f.run_id, f.story_id, f.viewport, f.side, f.variant, f.media,
+       SELECT md5(f.run_id || ':' || f.slot), f.run_id, f.story_id, f.viewport, f.side, f.variant, f.media, f.theme,
               f.content_type, f.data, f.width, f.height, f.bytes, f.sha256
          FROM shot_run_files f WHERE f.run_id = $1 AND f.slot = ANY($2::text[])
        ON CONFLICT DO NOTHING`, [w.runId, w.slots]);

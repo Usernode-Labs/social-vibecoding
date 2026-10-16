@@ -220,6 +220,45 @@ test('the shot route takes the raw file and maps each refusal to a status', asyn
   assert.equal((await registration.control()).lastToolFailure.operation, 'save-shot');
 });
 
+// Dark shots (#4459): the same query field carries the mode, dark whole
+// screens live beside their light copies, and a dark shot that matches its
+// light one stores nothing.
+test('the shot route takes a theme: dark is stored beside light, whole screens only', async (t) => {
+  const runId = 'b'.repeat(32);
+  const { registration, base, token } = await serve(t, { runId });
+  const post = (query, body, auth = token) => fetch(`${base}/shot?${new URLSearchParams(query)}`,
+    { method: 'POST', headers: { authorization: `Bearer ${auth}`, 'content-type': 'application/octet-stream' }, body });
+  const still = { change: 'invite-suggestions', screen: 'desktop' };
+
+  const midnight = await json(await post({ ...still, side: 'after', theme: 'midnight' }, fixtures.png()));
+  assert.deepEqual([midnight.status, midnight.body.code], [400, 'invalid_theme']);
+
+  const light = await json(await post({ ...still, side: 'after' }, fixtures.png({ shade: 3 })));
+  const dark = await json(await post({ ...still, side: 'after', theme: 'dark' }, fixtures.png({ shade: 40 })));
+  assert.deepEqual([light.status, dark.status], [200, 200]);
+  const control = await registration.control();
+  assert.deepEqual([...control.saved.values()].map((file) => [file.theme, controlPlane.dbSlot(file).endsWith('/dark')]), [
+    ['light', false], ['dark', true],
+  ], 'the theme survives the round trip through Postgres, under two slot names');
+
+  // Only a whole screen may be dark.
+  const elementDark = await json(await post({ ...still, side: 'after', kind: 'element', theme: 'dark' }, fixtures.png()));
+  assert.deepEqual([elementDark.status, elementDark.body.code], [400, 'dark_screen_only']);
+  const clipDark = await json(await post({ change: 'saved-toast', screen: 'desktop', side: 'after', kind: 'clip', theme: 'dark' },
+    fixtures.webm()));
+  assert.deepEqual([clipDark.status, clipDark.body.code], [400, 'dark_screen_only']);
+
+  // A dark shot identical to its light one stores nothing and says so.
+  const same = await json(await post({ ...still, side: 'after', theme: 'dark' }, fixtures.png({ shade: 3 })));
+  assert.equal(same.body.result.sameAsLight, true);
+  assert.equal(same.body.result.saved, false);
+  assert.equal((await registration.control()).saved.size, 2, 'still light and dark only');
+
+  // filesFor serves the theme with the bytes (the screen diff reads it).
+  const files = await controlPlane.filesFor(pool, runId);
+  assert.deepEqual(files.map((file) => [file.variant, file.theme]).sort(), [['context', 'dark'], ['context', 'light']]);
+});
+
 test('the skip route records a reason per change or for all, then closes the turn', async (t) => {
   const runId = 'e'.repeat(32);
   const { registration, base, token } = await serve(t, { runId });

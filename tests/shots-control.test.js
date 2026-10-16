@@ -481,6 +481,8 @@ test('a run\'s workspace is made only for a run id, and a lapsed one answers not
   assert.throws(() => lapsed.getContext(), { code: 'shots_control_expired', status: 410 });
   assert.equal(controlPlane.dbSlot({ storyId: 'c1', viewport: 'desktop', side: 'base', variant: 'context' }), 'c1/desktop/base/context',
     'a slot Postgres can hold (the in-memory key separates with NUL)');
+  assert.equal(controlPlane.dbSlot({ storyId: 'c1', viewport: 'desktop', side: 'base', variant: 'context', theme: 'dark' }),
+    'c1/desktop/base/context/dark', 'a dark slot is a light slot with /dark at its end (#4459)');
 });
 
 test('saving the same image on both sides warns the agent while it can still retake them', () => {
@@ -506,4 +508,41 @@ test('an element shot wider than its screen is refused and saves nothing', () =>
     fixtures.png({ width: 1300, height: 40 })), { code: 'element_shot_too_wide', status: 400 });
   assert.equal(run.saved.size, 1);
   assert.equal(run.lastToolFailure.operation, 'save-shot');
+});
+
+// A dark shot only earns its place when the screen looks different in dark
+// mode (#4459): one identical to its light copy is not kept, and the answer
+// tells the agent it can leave out the rest of this app's dark shots.
+test('a dark shot that matches its light copy answers sameAsLight and stores nothing', () => {
+  const run = control();
+  const light = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after' },
+    fixtures.png({ shade: 5 }));
+  assert.equal(light.saved, true);
+
+  const same = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after', theme: 'dark' },
+    fixtures.png({ shade: 5 }));
+  assert.equal(same.saved, false, 'nothing was stored for the dark shot');
+  assert.equal(same.sameAsLight, true);
+  assert.equal(same.kind, 'screen');
+  assert.match(same.hint, /leave out the rest of the dark shots/);
+  assert.equal(run.saved.size, 1, 'the dark copy is not in the run\'s saved files');
+  assert.equal(run.lastToolFailure, null, 'not an error, so no refusal is recorded');
+
+  // The comparison is against this slot's own light shot, not another
+  // change's, and a dark shot that differs is kept as its own slot.
+  const different = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after', theme: 'dark' },
+    fixtures.png({ shade: 9 }));
+  assert.equal(different.saved, true);
+  assert.equal(run.saved.size, 2);
+  const [lightFile, darkFile] = [...run.saved.values()];
+  assert.equal(lightFile.theme, 'light');
+  assert.equal(darkFile.theme, 'dark');
+  assert.ok(darkFile.sha256 !== lightFile.sha256);
+
+  // A dark shot with no light counterpart yet is kept whatever it shows:
+  // the light one may come later, or never (the agent shoots light first,
+  // but no rule here depends on that order).
+  const beforeDark = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', theme: 'dark' },
+    fixtures.png());
+  assert.equal(beforeDark.saved, true);
 });

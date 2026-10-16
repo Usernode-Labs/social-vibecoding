@@ -242,7 +242,10 @@ function trialState(trialId) {
         );
         if (!row) throw stateError('stale_shots_operation', 'This trial no longer owns its shots; they were discarded.');
         await client.query('DELETE FROM shots_eval_artifacts WHERE trial_id = $1', [trialId]);
-        for (const a of artifacts) {
+        // A trial stays light only (#4459): its dark shots are skipped, so
+        // the table's six-column unique needs no theme.
+        const kept = artifacts.filter((a) => a?.theme !== 'dark');
+        for (const a of kept) {
           await client.query(
             `INSERT INTO shots_eval_artifacts
                (id, trial_id, story_id, viewport, side, variant, media, content_type,
@@ -253,7 +256,7 @@ function trialState(trialId) {
           );
         }
         await client.query('COMMIT');
-        return artifacts.length;
+        return kept.length;
       } catch (err) {
         await client.query('ROLLBACK').catch(() => {});
         throw err;

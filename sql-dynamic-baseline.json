@@ -1377,9 +1377,9 @@
     {
       "source": "src/services/shots-control.js",
       "kind": "structural-template",
-      "fingerprint": "fa1766456316830cbe95",
+      "fingerprint": "b3a7f1dd86d8f71edaff",
       "count": 1,
-      "preview": "`SELECT slot, story_id, viewport, side, variant, media, content_type, data, width, height, bytes, sha256 FROM shot_run_files WHERE run_id = $1 ${slots ? 'AND sl"
+      "preview": "`SELECT slot, story_id, viewport, side, variant, media, theme, content_type, data, width, height, bytes, sha256 FROM shot_run_files WHERE run_id = $1 ${slots ? "
     },
     {
       "source": "src/services/shots-demo-states.js",
@@ -1412,7 +1412,7 @@
     {
       "source": "src/services/shots-state.js",
       "kind": "structural-template",
-      "fingerprint": "1f1db1e09f25c5c1c7be",
+      "fingerprint": "1c7bcee924702f029300",
       "count": 1,
       "preview": "`SELECT r.*, COALESCE(( SELECT jsonb_agg(jsonb_build_object( 'id', a.id, 'storyId', a.story_id, 'viewport', a.viewport, 'side', a.side, 'variant', a.variant, 'm"
     },

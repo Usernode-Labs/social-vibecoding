@@ -202,7 +202,39 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
     const before = work.calls.length;
     await send(s, 'HeadReady', { head: SHA('a') }, fromPreview);
     await settle();
-    assert.equal(work.calls.length, before);
+    assert.equal(work.calls.length, before, 'no new run');
+  });
+
+  // Dark shots (#4459) are whole screens taken in dark mode and stored as
+  // their own slots: publication copies their theme, and the light and dark
+  // copies of one slot both become artifacts under the run.
+  await t.test('S9 a dark shot publishes beside its light copy, with its theme', async () => {
+    defaults();
+    const DARK = Buffer.from('fake-png-dark');
+    work.answer.set(WORK.agent, async (input) => {
+      await saved(input.runId, 'base');
+      await saved(input.runId, 'head');
+      await pool.query(
+        `INSERT INTO shot_run_files (run_id, slot, story_id, viewport, side, variant, media, theme, content_type, data, bytes, sha256)
+         VALUES ($1, $2, 'c1', 'desktop', 'head', 'context', 'png', 'dark', 'image/png', $3, $4, $5)`,
+        [input.runId, 'c1/desktop/head/context/dark', DARK, DARK.length,
+          crypto.createHash('sha256').update('dark').digest('hex')]);
+      return { ...passed(input), slots: [...passed(input).slots, 'c1/desktop/head/context/dark'] };
+    });
+    const s = await proposal();
+    await declare(s);
+    await rt.drain();
+    await send(s, 'HeadReady', { head: SHA('a') }, fromPreview);
+    await settle();
+    const [run] = await runs(s);
+    assert.equal(run.state, 'verified');
+    const { rows: arts } = await pool.query(
+      'SELECT side, theme, data FROM shot_artifacts WHERE run_id = $1 ORDER BY side, theme', [run.id]);
+    assert.deepEqual(arts.map((a) => [a.side, a.theme, a.data.toString()]), [
+      ['base', 'light', 'fake-png'], ['head', 'dark', 'fake-png-dark'], ['head', 'light', 'fake-png'],
+    ], 'light and dark of one slot coexist, each with its theme');
+    const summary = (await row(s)).shots_detail.artifactSummary;
+    assert.deepEqual(summary.map((a) => [a.side, a.theme]), [['base', 'light'], ['head', 'dark'], ['head', 'light']]);
   });
 
   await t.test('S2 a declaration on a head already ready starts at once; the same one again changes nothing', async () => {
