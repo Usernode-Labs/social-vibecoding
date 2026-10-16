@@ -751,9 +751,9 @@
       "expectSelector": "#profile-screen:not(.hidden) #profile-work #profile-row-proposals[href=\"#profile/your-changes\"] + #profile-row-feedback[href=\"#profile/your-requests\"] + #profile-row-votes[href=\"#profile/your-votes\"]"
     },
     {
-      "name": "The retired History address opens the Challenges tab, and the tabs are Challenges, Standings and Kudos",
+      "name": "The retired History address opens the Challenges tab, and the tabs are Challenges and Standings",
       "path": "/?demo=1#leaderboard/seasons",
-      "expectSelector": "#leaderboard-screen:not(.hidden):has([data-standings-tab=\"challenges\"][aria-current=\"page\"] + [data-standings-tab=\"topochain\"] + [data-standings-tab=\"kudos\"]):not(:has([data-standings-tab=\"seasons\"])) #challenges-root #tc-se-challenge-summary"
+      "expectSelector": "#leaderboard-screen:not(.hidden):has([data-standings-tab=\"challenges\"][aria-current=\"page\"] + [data-standings-tab=\"topochain\"]):not(:has([data-standings-tab=\"seasons\"],[data-standings-tab=\"kudos\"])) #challenges-root #tc-se-challenge-summary"
     },
     {
       "name": "A person's page carries Message beside their name, which opens a direct message (no Top users link, #5249)",
