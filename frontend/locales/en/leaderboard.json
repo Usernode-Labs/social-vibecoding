@@ -223,6 +223,10 @@
     "text": "What counts",
     "description": "Heading on a challenge's page over the organiser's words on what counts towards it and how."
   },
+  "challenges.detail.pointsNote": {
+    "text": "Points add up across challenges and set your place in the standings.",
+    "description": "On a challenge's page, under the points it pays or the viewer has earned in it: what points are for."
+  },
   "challenges.countNote.onPropose": {
     "text": "Counts when you press Propose to group, which puts your change to a vote.",
     "description": "Note on the page of a challenge that is completed by proposing a change. \"Propose to group\" is a button's label; \"change\" is a noun."
@@ -374,6 +378,10 @@
   "standing.yourStanding": {
     "text": "Your standing",
     "description": "On the \"Your standing\" card, in place of the rank, when the viewer has points the ranking does not show yet."
+  },
+  "standing.pointsNote": {
+    "text": "Your place comes from the points you earn in challenges.",
+    "description": "On the \"Your standing\" card, under the viewer's rank: what the rank is based on."
   },
   "standing.pending_one": {
     "text": "{{points}} pts earned, not in the standings yet",
