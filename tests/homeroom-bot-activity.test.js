@@ -639,7 +639,7 @@ test('the row draws a bot\'s activity message as the card, in place of its words
   assert.match(row, /const words = !message\.content \? null : head\s*\? <BotHeadWords head=\{head\} objects=\{message\.objects\} channels=\{channels\} \/>\s*: <MessageMarkdown content=\{message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} requestColors=\{!!botMeta\(message\)\} \/>;/);
   // B5: led by the bot's hello, on the first card it sends somebody.
   // B6: then a plan and two questions at once, which stand in place of their words too.
-  assert.match(row, /\) : isActivityMessage\(message\) \? \([\s\S]{0,600}homeroomBot\?\.hello \? <p className="messages-bot-hello">[\s\S]{0,120}<BotActivityCard message=\{message\} words=\{words\} \/>\s*<\/>\s*\) : isPlanMessage\(message\) \? \(/);
+  assert.match(row, /\) : isActivityMessage\(message\) \? \([\s\S]{0,600}homeroomBot\?\.hello \? <p className="messages-bot-hello">[\s\S]{0,120}<BotCardOrTrack message=\{message\} words=\{words\} \/>\s*<\/>\s*\) : isPlanMessage\(message\) \? \(/);
   // B7: and a change ready to try.
   assert.match(row, /<BotPlanCard message=\{message\} conversationId=\{conversationId\} cardId=\{planCardId\} \/>\s*\) : isTwoQuestions\(message\) \? \(\s*<BotTwoQuestions message=\{message\} conversationId=\{conversationId\} \/>\s*\) : isReadyMessage\(message\) \? \([\s\S]{0,120}<BotReadyCard message=\{message\} conversationId=\{conversationId\} \/>\s*\) : step && words \? \([\s\S]{0,200}data-bot-step=""[\s\S]{0,40}\) : words\}/);
   // One request, one story: a quiet step line in a request's thread reads quietly.

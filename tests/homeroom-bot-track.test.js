@@ -55,6 +55,16 @@ test('a track is a loop: failing checks or asked-for changes go back to building
   assert.equal(track.triesOf([{ verdict: 'ready', cap_suppressed: 'proposals_per_app' }]), 1, 'a hold is no try, but there is always one');
 });
 
+test('a thread marks where each try began', () => {
+  assert.deepEqual(track.tryStartsOf([{ verdict: 'ready', created_at: ago(30) }]), [], 'one try: nothing to mark');
+  assert.deepEqual(track.tryStartsOf([
+    { verdict: 'revise', proposal_session_id: 9, created_at: ago(10) },
+    { verdict: 'answer', proposal_session_id: 9, created_at: ago(20) },
+    { verdict: 'ready', created_at: ago(30) },
+  ]), [ago(30), ago(10)]);
+  assert.deepEqual(track.tryStartsOf([{ verdict: 'ready', created_at: ago(30) }], { underWay: ago(5) }), [ago(30), ago(5)]);
+});
+
 test('#5210: the clock times the try under way, not the first one', () => {
   const t = track.trackOf({
     job: job({ stage: 'building', since: ago(15) }),
@@ -124,7 +134,9 @@ test('a stopped build says why, in codes, never the agent\'s words', () => {
 test('a track carries codes and links, never words', () => {
   const t = track.trackOf({ job: job({ stage: 'vote', cardId: 44, proposalId: 9, links: { request: '/r', proposal: '/p', project: '/x' } }) });
   assert.deepEqual(Object.keys(t).sort(), ['appName', 'appSlug', 'askId', 'busy', 'firstVersion', 'iconEmoji', 'iconUrl', 'issueNumber',
-    'key', 'links', 'proposalId', 'rootId', 'since', 'state', 'step', 'title', 'try', 'tryStartedAt', 'waitingOn', 'why'].sort());
+    'key', 'links', 'proposalId', 'rootId', 'sessionId', 'since', 'state', 'step', 'title', 'try', 'tryStartedAt', 'tryStarts',
+    'waitingOn', 'why'].sort());
+  assert.equal(t.sessionId, 9, 'its plan and change: the change');
   assert.equal(t.rootId, 44, 'the thread to open: its card');
   assert.equal(t.waitingOn, 'group');
 });
@@ -134,6 +146,8 @@ test('the demo tray, the demo slots and the demo request carry tracks', async ()
   const work = await tray.demoWorkFor(pool, null, NOW);
   assert.ok(Array.isArray(work.tracks) && work.tracks.length >= 5);
   for (const t of work.tracks) assert.ok(track.STATES.includes(t.state), t.key);
+  const held = work.tracks.find((t) => t.state === 'held');
+  assert.deepEqual([held.issueNumber, held.why, held.held.position], [16, 'slots', 1], 'the drawer\'s On hold group can be seen');
   const slots = track.demoSlots({ slug: 'staging-demo', name: 'Staging demo' }, NOW);
   assert.equal(slots.slots.length, 5);
   assert.deepEqual(slots.slots.map((s) => s.track.state), ['building', 'building', 'vote', 'checks', 'waiting']);

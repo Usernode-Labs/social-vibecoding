@@ -353,6 +353,42 @@ function renderPart(nodes: Node[], key: string, screensBox: { next: number }, st
   return html;
 }
 
+/** One screen of a plan, as a sandboxed frame's document for each side, at its drawn size. */
+export interface SpecScreen {
+  width: number;
+  height: number;
+  /** The part of the screen that changes, `[x, y, w, h]`, when the plan named one. */
+  focus: [number, number, number, number] | null;
+  before: string;
+  after: string;
+}
+
+/**
+ * 16 Oct 2026: the first screen a plan drew (its first `template
+ * data-screen`), before and after, as the documents of two sandboxed frames:
+ * the same cleaned markup and frame the plan's own viewer draws, for a small
+ * picture on a request's track card (features/messages/bot-track.tsx). Null
+ * when the plan drew no screens.
+ */
+export function firstSpecScreen(source: string): SpecScreen | null {
+  if (typeof source !== 'string' || !source.trim() || typeof DOMParser === 'undefined') return null;
+  const parsed = new DOMParser().parseFromString(source, 'text/html');
+  const article = parsed.querySelector('article[data-spec]') || parsed.body;
+  const styles: SpecStyles = article.getAttribute('data-spec-styles') === 'platform' ? 'platform' : 'kit';
+  const tpl = article.querySelector('figure[data-screens] template[data-screen]') || article.querySelector('template[data-screen]');
+  if (!tpl) return null;
+  const g = geometryOf(tpl);
+  const markup = cleanScreenMarkup((tpl as HTMLTemplateElement).innerHTML);
+  if (!markup.trim()) return null;
+  return {
+    width: g.width,
+    height: g.height,
+    focus: g.focus,
+    before: frameDoc(markup, 'before', styles),
+    after: frameDoc(markup, 'after', styles),
+  };
+}
+
 const cache = new Map<string, SpecHtmlDoc>();
 const CACHE_MAX = 24;
 

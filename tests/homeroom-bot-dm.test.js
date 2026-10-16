@@ -907,9 +907,19 @@ test('"typing" goes out before the answer starts, bounded', () => {
 });
 
 test('news the card and the tray show is never a DM message of its own; what needs them still is', () => {
-  for (const kind of ['spec', 'held_proposals_per_app', 'held_proposals_total', 'followup_revise']) {
+  for (const kind of ['spec', 'followup_revise']) {
     assert.equal(dm.cardOnly(kind, {}), true, kind);
   }
+  // 16 Oct 2026 (V4): a build waiting for one of the project's slots rings
+  // once, as on hold, and a request somebody else's change shipped as done
+  // another way: neither wait nor ending is silent any more.
+  for (const kind of ['held_proposals_per_app', 'held_proposals_total']) {
+    assert.equal(dm.cardOnly(kind, {}), false, kind);
+    assert.equal(dm.storyMomentOf({ kind }), 'on_hold', kind);
+    assert.equal(dm.saidOf(kind), 'slots', kind);
+  }
+  assert.equal(dm.storyMomentOf({ kind: 'request_closed' }), 'done_elsewhere');
+  assert.equal(dm.saidOf('request_closed'), 'done_elsewhere');
   // One story: a change's red checks a person must look at are a stop of
   // their own ('checks'), which rings; an answer to what they asked too.
   assert.equal(dm.newsKind('followup_person', { reason: 'its checks are failing: x', checks: true }), 'checks');

@@ -159,6 +159,61 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
     assert.deepEqual(await closedRequests.noteRequestsClosed(pool, { appId: app.id, closed: [12], deps: later.deps }), { withdrawn: [pair] });
   });
 
+  await t.test('whoever asked the bot hears once when somebody else\'s change shipped their request (16 Oct 2026)', async () => {
+    await pool.query('DELETE FROM chat_sessions');
+    await pool.query('DELETE FROM homeroom_bot_runs');
+    await pool.query('DELETE FROM homeroom_bot_requesters');
+    const { rows: [ada] } = await pool.query(`INSERT INTO users (username, password) VALUES ('ada', 'x') RETURNING id`);
+    const ask = async (n, title, user = lee.id) => {
+      await pool.query(
+        `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, $2, $3, $4)`,
+        [app.id, n, user, title],
+      );
+      await pool.query(
+        `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, thread_seen_at) VALUES ($1, $2, 'live', 'ready', $3)`,
+        [app.id, n, SEEN],
+      );
+    };
+    const merged = (n, user) => pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, linked_issues, pr_number, merged_at)
+       VALUES ($1, $2, $3, 'merged', $4::int[], $5, NOW())`,
+      [app.id, user, `dev/x-${crypto.randomBytes(3).toString('hex')}`, [n], 4800 + n],
+    );
+    await ask(30, 'Repot alerts'); await merged(30, ada.id); // shipped by ada
+    await ask(31, 'Fern mode'); await merged(31, botUser.id); // the bot's own: its Live says it
+    await ask(32, 'Soil log'); await merged(32, lee.id); // the requester shipped it
+    await ask(33, 'Leaf count'); // closed by hand: nothing shipped it
+    const sent = [];
+    const noted = [];
+    const deps = {
+      ...harness(gh()).deps,
+      dm: { async sendDm(_pool, args) { sent.push(args); return { messageId: sent.length }; } },
+      tray: { noteWorkChanged(userId) { noted.push(userId); } },
+    };
+    await closedRequests.noteRequestsClosed(pool, { appId: app.id, closed: [30, 31, 32, 33], deps });
+    assert.equal(sent.length, 1, 'only the request somebody else\'s change shipped');
+    assert.equal(sent[0].userId, lee.id);
+    assert.equal(sent[0].bot.username, 'homeroom_bot');
+    assert.equal(sent[0].content, '“Repot alerts” was done another way: a change by @ada did what it asked. There\'s nothing more for me to build here.');
+    assert.deepEqual(
+      { kind: sent[0].metadata.kind, said: sent[0].metadata.said, doneBy: sent[0].metadata.doneBy, issueNumber: sent[0].metadata.issueNumber },
+      { kind: 'request_closed', said: 'done_elsewhere', doneBy: 'ada', issueNumber: 30 },
+      'it rings as done another way (homeroom-bot-dm.js STORY_MOMENTS)',
+    );
+    assert.equal(sent[0].idempotencyKey, `hrbot-done-elsewhere-${app.id}-30-${lee.id}`, 'said once, whichever Pod hears the close');
+    assert.deepEqual(noted, [lee.id], 'their open tray re-reads');
+    assert.equal(closedRequests.doneElsewhereText({ title: null, username: null }),
+      'This request was done another way: another change did what it asked. There\'s nothing more for me to build here.');
+    const quiet = [];
+    await closedRequests.noteRequestsClosed(pool, {
+      appId: app.id, closed: [30], deps: { ...deps, tellDoneElsewhere: false, dm: { async sendDm(_p, a) { quiet.push(a); } } },
+    });
+    assert.deepEqual(quiet, [], 'a caller can keep it quiet');
+    await pool.query('DELETE FROM homeroom_bot_runs');
+    await pool.query('DELETE FROM homeroom_bot_requesters');
+    await pool.query('DELETE FROM chat_sessions');
+  });
+
   await t.test('a failed GitHub read keeps the proposal up; the helper never throws unless strict', async () => {
     await pool.query('DELETE FROM chat_sessions');
     const unsure = await proposal([20, 21]);

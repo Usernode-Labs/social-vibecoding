@@ -19,6 +19,102 @@
     "text": "The plan",
     "description": "Title of the page that shows the plan for a project's first version, opened from its Hub."
   },
+  "page.title.bot": {
+    "text": "Homeroom bot's slots",
+    "description": "Title of the page under a project's Workshop that lists what holds each of Homeroom bot's slots on the project and what waits for one."
+  },
+  "botSlots.door": {
+    "text": "Homeroom bot: {{used}} of {{cap}} slots in use",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Link at the bottom of the Workshop's overview card that opens the page. {{used}} is how many slots are taken, {{cap}} how many the project has."
+  },
+  "botSlots.doorWaiting_one": {
+    "text": "Homeroom bot: {{used}} of {{cap}} slots in use, {{count}} request waiting",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Link at the bottom of the Workshop's overview card that opens the page, when requests wait for a slot. {{used}} is how many slots are taken, {{cap}} how many the project has, {{count}} how many requests wait."
+  },
+  "botSlots.doorWaiting_other": {
+    "text": "Homeroom bot: {{used}} of {{cap}} slots in use, {{count}} requests waiting",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Link at the bottom of the Workshop's overview card that opens the page, when requests wait for a slot. {{used}} is how many slots are taken, {{cap}} how many the project has, {{count}} how many requests wait."
+  },
+  "botSlots.slots.title": {
+    "text": "Slots",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Heading over the card listing what holds each slot."
+  },
+  "botSlots.slots.used": {
+    "text": "{{used}} of {{cap}} in use",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Figure in the Slots card: how many of the project's slots are taken. {{used}} is how many, {{cap}} how many there are."
+  },
+  "botSlots.slots.frees": {
+    "text": "A slot frees when a change merges or is withdrawn, or when its request closes.",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Note in the Slots card saying what frees a slot."
+  },
+  "botSlots.slots.empty": {
+    "text": "No slots in use: a request found ready is built at once.",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Note in the Slots card when nothing holds a slot."
+  },
+  "botSlots.waiting.title": {
+    "text": "Waiting for a slot",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Heading over the requests that are ready but wait for a slot, in the order the bot will take them up."
+  },
+  "botSlots.onHold.title": {
+    "text": "On hold until the week resets",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Heading over the requests on hold because whoever pays for them has used up this week's building time."
+  },
+  "botSlots.limits.title": {
+    "text": "Limits",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Heading over the card with the limits that hold work back."
+  },
+  "botSlots.limits.week": {
+    "text": "Your building time this week",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Label in the Limits card for the signed-in person's own building time this week."
+  },
+  "botSlots.limits.weekUsed": {
+    "text": "{{percent}}% used",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. How much of the signed-in person's building time this week is used. {{percent}} is a whole number from 0 to 100."
+  },
+  "botSlots.limits.weekResets": {
+    "text": "Resets {{date}}",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. When the signed-in person's building time resets. {{date}} is a short weekday, date and time."
+  },
+  "botSlots.limits.weekUnlimited": {
+    "text": "No weekly limit",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Shown in place of how much is used when the signed-in person's building time has no weekly limit."
+  },
+  "botSlots.limits.buildsAtOnce_one": {
+    "text": "Up to {{count}} build at once on this project",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. How many builds the bot runs on the project at the same time. {{count}} is that number."
+  },
+  "botSlots.limits.buildsAtOnce_other": {
+    "text": "Up to {{count}} builds at once on this project",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. How many builds the bot runs on the project at the same time. {{count}} is that number."
+  },
+  "botSlots.limits.reading_one": {
+    "text": "{{count}} request waiting to be read",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. How many requests wait for the bot to read them. {{count}} is that number."
+  },
+  "botSlots.limits.reading_other": {
+    "text": "{{count}} requests waiting to be read",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. How many requests wait for the bot to read them. {{count}} is that number."
+  },
+  "botSlots.off": {
+    "text": "Homeroom bot is switched off.",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Note at the top of the page when the bot is switched off everywhere."
+  },
+  "botSlots.notHere": {
+    "text": "Homeroom bot doesn't build changes on this project.",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Note at the top of the page when the bot does not act on this project."
+  },
+  "botSlots.paused": {
+    "text": "Homeroom bot is paused on this project.",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Note at the top of the page when the bot is paused on this project."
+  },
+  "botSlots.loadFailed": {
+    "text": "Couldn't load Homeroom bot's slots.",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. Shown when the page could not be read."
+  },
+  "botSlots.untitled": {
+    "text": "Request #{{number}}",
+    "description": "The Homeroom bot's slots page, under a project's Workshop: what holds each of the project's bot slots (a change of the bot's up for a vote, or a build under way), the requests waiting for a slot, and the limits. A request's row when it has no title. {{number}} is its number."
+  },
   "page.title.workshop": {
     "text": "Workshop",
     "description": "Title of a project's Workshop page: the build tab beside its Hub, where the open work, the approval rule and recent changes are listed. A noun, the name of the tab."

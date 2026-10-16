@@ -157,14 +157,27 @@ function fromOutcome(outcome, lead = null) {
  * failed), plus the one `under way` now when no run records it yet. At
  * least 1.
  */
+function isTry(run) {
+  if (run.verdict === 'ready') return !run.cap_suppressed && run.plan_only !== true && !run.awaiting_go_at;
+  if (run.verdict === 'revise') return !!run.proposal_session_id;
+  return run.verdict === 'failed' && /^revise:/.test(String(run.error || ''));
+}
+
 function triesOf(runs = [], { underWay = false } = {}) {
-  let tries = 0;
-  for (const run of runs) {
-    if (run.verdict === 'ready' && !run.cap_suppressed && run.plan_only !== true && !run.awaiting_go_at) tries += 1;
-    else if (run.verdict === 'revise' && run.proposal_session_id) tries += 1;
-    else if (run.verdict === 'failed' && /^revise:/.test(String(run.error || ''))) tries += 1;
-  }
+  const tries = runs.filter(isTry).length;
   return Math.max(1, tries + (underWay ? 1 : 0));
+}
+
+/**
+ * Pure: when each of a request's tries began, oldest first (the runs that
+ * triesOf counts, and the try under way when no run records it yet): where
+ * a thread marks "Try 2". Empty for a request with one try.
+ */
+function tryStartsOf(runs = [], { underWay = null } = {}) {
+  const starts = runs.filter(isTry).map((run) => iso(run.created_at)).filter(Boolean);
+  if (underWay) starts.push(iso(underWay));
+  const sorted = [...new Set(starts.filter(Boolean))].sort();
+  return sorted.length > 1 ? sorted : [];
 }
 
 function iso(value) {
@@ -216,6 +229,7 @@ function trackOf({ job, entry = null, runs = [], held = null, doneBy = null, unt
   const underWay = !!base.loop && !runs.some((run) => run.verdict === 'revise' && Date.parse(run.created_at) >= Date.parse(entry?.since || job.since || 0));
   const tries = triesOf(runs, { underWay });
   const since = iso(job.since) || iso(entry?.since) || iso(job.at);
+  const lastBuild = runs.find((run) => Number(run.build_session_id) > 0);
   const track = {
     key: job.key,
     appSlug: job.appSlug || null,
@@ -239,6 +253,9 @@ function trackOf({ job, entry = null, runs = [], held = null, doneBy = null, unt
     rootId: Number(job.cardId) || Number(job.ask?.messageId) || null,
     askId: Number(job.ask?.messageId) || null,
     proposalId: Number(job.proposalId) || Number(entry?.proposal?.proposal) || null,
+    // The session its plan and change live in: the change, else its build.
+    sessionId: Number(job.proposalId) || Number(entry?.proposal?.proposal) || Number(lastBuild?.build_session_id) || null,
+    tryStarts: tryStartsOf(runs, { underWay: underWay ? since : null }),
     links: job.links || null,
     ...(job.release ? { release: job.release } : {}),
   };
@@ -430,7 +447,7 @@ const REQUEST_ROWS_SQL = `
 // Every live run of those requests, newest first, for their tries.
 const REQUEST_RUNS_SQL = `
   SELECT r.id, r.app_id, r.issue_number, r.verdict, r.cap_suppressed, r.awaiting_go_at, r.proposal_session_id,
-         r.build_ok, r.build_error, r.error, r.created_at,
+         r.build_ok, r.build_error, r.build_session_id, r.error, r.created_at,
          (r.plan IS NOT NULL AND r.plan->'chosen' IS NULL AND r.build_ok IS FALSE
            AND r.build_session_id IS NULL AND r.proposal_session_id IS NULL) AS plan_only
     FROM homeroom_bot_runs r
@@ -443,7 +460,7 @@ const REQUEST_RUNS_SQL = `
  * nothing about it is in hand, what its newest run came to (the tray's
  * outcomeOf).
  */
-function jobOfRow(row, { now = new Date(), stageOf, outcomeOf } = {}) {
+function jobOfRow(row, { now = new Date(), stageOf, outcomeOf, linksFor = null } = {}) {
   const live = row.mode === 'live' || !row.run_id;
   const state = live ? stageOf(row, { now }) : null;
   const outcome = state || !row.run_id ? null : outcomeOf({
@@ -452,6 +469,7 @@ function jobOfRow(row, { now = new Date(), stageOf, outcomeOf } = {}) {
     proposal_status: row.run_proposal && Number(row.run_proposal) === Number(row.proposal_session_id) ? row.proposal_status : null,
   });
   const n = Number(row.issue_number);
+  const open = ['promoted', 'merging'].includes(row.proposal_status) ? Number(row.proposal_session_id) || null : null;
   return {
     key: `${row.slug}#${n}`,
     id: Number(row.run_id) || null,
@@ -465,8 +483,8 @@ function jobOfRow(row, { now = new Date(), stageOf, outcomeOf } = {}) {
     at: iso(row.run_at),
     outcome,
     requestClosed: row.request_closed === true,
-    proposalId: ['promoted', 'merging'].includes(row.proposal_status) ? Number(row.proposal_session_id) || null : null,
-    links: null,
+    proposalId: open,
+    links: linksFor ? linksFor(row.slug, n, open, row.proposal_pr_number || null) : null,
   };
 }
 
@@ -494,7 +512,7 @@ async function tracksForRequests(pool, { appId, numbers, now = new Date(), deps 
       if (!runsOf.has(n)) runsOf.set(n, []);
       runsOf.get(n).push(run);
     }
-    const jobs = bot.map((row) => [row, jobOfRow(row, { now, stageOf: progress.stageOf, outcomeOf: tray.outcomeOf })]);
+    const jobs = bot.map((row) => [row, jobOfRow(row, { now, stageOf: progress.stageOf, outcomeOf: tray.outcomeOf, linksFor: tray.linksFor })]);
     const held = jobs.some(([, job]) => job.outcome === 'held' || job.stage === 'held')
       ? await heldQueue(pool, [appId]) : new Map();
     const closed = jobs.filter(([, job]) => job.requestClosed).map(([, job]) => ({ appId: Number(appId), n: job.issueNumber }));
@@ -654,6 +672,7 @@ module.exports = {
   buildStopWhy,
   noChangeWhy,
   triesOf,
+  tryStartsOf,
   trackOf,
   HELD_QUEUE_SQL,
   heldQueue,

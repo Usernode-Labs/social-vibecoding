@@ -480,7 +480,7 @@ async function pastRuns(pool, { userId, limit = RUN_LIMIT }) {
   const { rows } = await pool.query(
     `SELECT r.id, r.app_id, r.issue_number, r.verdict, r.build_ok, r.build_error, r.cap_suppressed,
             r.proposal_session_id, cs.pr_number AS proposal_pr_number, r.created_at,
-            r.awaiting_go_at, r.error,
+            r.awaiting_go_at, r.error, r.build_session_id,
             -- A build that changed nothing: what its last turn said, which
             -- the track reads for why (homeroom-bot-track.js noChangeWhy)
             -- and never passes on.
@@ -745,7 +745,8 @@ function noteWorkChanged(userId, deps = {}) {
  * needs the viewer (#18, its question open in its thread), two ready to try
  * (one waiting for their yes, one for @ada's), two in progress (one being
  * built, one being planned, the second the card opening the DM gives it),
- * and one done today (a first version gone live). A staging copy never runs
+ * one done today (a first version gone live), and one on hold, waiting for
+ * one of its project's slots. A staging copy never runs
  * the bot, so without it the strip could not be seen there. Times are
  * relative to `now` so it always reads fresh. No project stands behind it
  * (as behind the fixture's own messages), so it links nowhere: `href` and
@@ -791,6 +792,11 @@ function demoWork(now = Date.now(), ids = {}) {
       id: 2, outcome: 'proposed', doing: null, at: ago(60 * 2), ...nowhere, ...card(ids.done),
       earlier: [{ id: 5, outcome: 'revise', at: ago(60 * 3) }],
       ready: { messageId: null, sessionId: null, epoch: 0, open: true, approve: false, waiting: '@ada' },
+    }, {
+      // 16 Oct 2026: one held for a slot, so the drawer's On hold group can
+      // be seen (its place in line is set by demoWorkFor).
+      ...request(16, 'Staging demo, a dark mode'),
+      id: 8, outcome: 'held', doing: null, at: ago(60 * 3), ...nowhere, earlier: [],
     }],
   };
 }
@@ -826,12 +832,17 @@ async function demoWorkFor(pool, user, now = Date.now()) {
   } catch (err) {
     log.warn('homeroom-bot-tray', 'Could not read the demo strip\'s messages', { err: err.message });
   }
-  // Its tracks too, read the same way as a real tray's (no runs behind them).
-  return trackSvc().withTracks(pool, demoWork(now, ids), { keyOf });
+  // Its tracks too, read the same way as a real tray's (no runs behind them),
+  // with the held one first in line for a slot.
+  const work = await trackSvc().withTracks(pool, demoWork(now, ids), { keyOf });
+  for (const track of work.tracks || []) {
+    if (track.state === 'held' && track.held && !track.held.position) track.held.position = 1;
+  }
+  return work;
 }
 
 module.exports = {
-  workFor, currentJobs, pastRuns, arrange, noteWorkChanged, demoWork, demoWorkFor, iconOf, withIcons, threadsOf, ASK_KINDS,
+  workFor, currentJobs, pastRuns, arrange, noteWorkChanged, demoWork, demoWorkFor, iconOf, withIcons, threadsOf, ASK_KINDS, linksFor,
   jobOfProgress, needsYouOfProgress, entryOfRuns, leadOf, outcomeOf, hrefOf, keyOf, planOnly,
   OUTCOMES, NEEDS_YOU, PHASES, PHASE_OF_STAGE, HISTORY_LIMIT, NOW_LIMIT, NOT_FINISHED,
   settleAnswered,

@@ -29,6 +29,8 @@ test('each ringing moment of the bot has its own kind; an answer stays a message
   assert.deepEqual({ ...dm.BUILD_KINDS }, {
     needs_you: 'build_needs_you', ready: 'build_ready', stopped: 'build_stopped', on_hold: 'build_stopped', live: 'build_live',
     question: 'build_needs_you', held: 'build_stopped',
+    // 16 Oct 2026: somebody else's change shipped it; it rings as the news it is.
+    done_elsewhere: 'build_live',
   });
   assert.equal(dm.BUILD_KINDS.reply, undefined);
   const src = read('src/services/homeroom-bot-dm.js');

@@ -4942,6 +4942,18 @@
       "name": "Workshop: What's happening files your work in sections of one card: Waiting on you and Going live one line a row, Yours, up for a vote two (#4772)",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-workshop .dev-ws-tabbody > [data-ws-part=\"happening\"] + [data-ws-happening] > [data-ws-mine-section=\"waiting\"]:has(.dev-ws-hrow) ~ [data-ws-mine-section=\"vote\"]:has(.dev-ws-lrow) ~ [data-ws-mine-section=\"live\"] .dev-ws-hrow[data-ws-row]"
+    },
+    {
+      "name": "A request Homeroom bot is building says where it is on its own page, as its thread in the chat does: its status word and try, where it is and why, and the five steps with the one it is on lit (16 Oct 2026)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900018",
+      "expectSelector": "#gc-thread-head .dev-request-root .dev-request-track[data-request-track=building] [data-bot-track=building]:has([data-bot-track-bar=building] [data-bot-track-step=build][data-state=now]) [data-bot-activity-eyebrow]",
+      "expectText": "Try 2"
+    },
+    {
+      "name": "Homeroom bot's slots, a page under a project's Workshop: what holds each slot with where it is, the requests waiting for one in order, and the limits (16 Oct 2026)",
+      "path": "/?demo=1&ws=bot#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop [data-ws-bot-slots-page]:has([data-ws-bot-slots] [data-ws-bot-slot-state=vote] [data-bot-track-badge]):has([data-ws-bot-waiting] [data-ws-bot-slot-state=held]):has([data-ws-bot-limits] [data-ws-bot-week]) [data-ws-bot-slots-used=\"5/5\"]",
+      "expectText": "5 of 5 in use"
     }
   ],
   "governance": {

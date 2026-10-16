@@ -1273,6 +1273,23 @@ export async function openBot(reference?: StagedObject | null): Promise<void> {
   }
 }
 
+/**
+ * 16 Oct 2026 (C4): "See progress" on a request's page. The chat with the
+ * bot, opened at that request's story: its thread, at the message waiting
+ * on the person when there is one, read off the request's track
+ * (services/homeroom-bot-track.js). Before, it opened the chat alone, and
+ * the person had to find the request in it. A request with no thread yet
+ * opens the chat, as before.
+ */
+export async function openBotRequest(slug: string, number: number): Promise<void> {
+  await openBot();
+  try {
+    const work = await api.getHomeroomBotWork({ fresh: true });
+    const track = (work.tracks || []).find((item) => item.appSlug === slug && item.issueNumber === Number(number));
+    if (track?.rootId) openThreadAt(track.rootId, track.askId || null);
+  } catch { /* the chat itself, then */ }
+}
+
 /** What the composer's box asks once Ask for changes has attached a change. */
 export const ASK_FOR_CHANGES_PLACEHOLDER = 'messages:store.askForChangesPlaceholder';
 
@@ -2499,6 +2516,8 @@ export const messagesController = {
   open,
   // B8: the chat with Homeroom bot (app-view.js's doors to it).
   openBot: (reference?: StagedObject | null) => { void openBot(reference); },
+  // 16 Oct 2026: a request's page's See progress, at the request's own thread.
+  openBotRequest: (slug: string, number: number) => { void openBotRequest(slug, number); },
   // B6: the App tab's Change something, under a first version's plan.
   quoteBotMessage: (conversationId?: number | null, messageId?: number | null) => { void quoteBotMessage(conversationId, messageId); },
   openAddress,

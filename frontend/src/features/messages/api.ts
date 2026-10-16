@@ -17,6 +17,11 @@ import type {
   HomeroomBotPlanQuestion,
   HomeroomBotReadyNow,
   HomeroomBotWork,
+  BotSlotEntry,
+  BotSlotsView,
+  BotTrack,
+  BotTrackState,
+  BotTrackStep,
   MessageAttachment,
   DiscussionMessage,
   DiscussionState,
@@ -1062,7 +1067,123 @@ export function normalizeBotWork(input: unknown): HomeroomBotWork {
   });
   const past = (key: string) => array(pick(data, key)).map(normalizeBotPastJob)
     .filter((job): job is HomeroomBotPastJob => !!job);
-  return { now, needsYou: past('needsYou'), history: past('history') };
+  const tracks = pick(data, 'tracks');
+  return {
+    now, needsYou: past('needsYou'), history: past('history'),
+    ...(Array.isArray(tracks) ? { tracks: tracks.map(normalizeBotTrack).filter((track): track is BotTrack => !!track) } : {}),
+  };
+}
+
+const TRACK_STATES = new Set<BotTrackState>([
+  'queued', 'planning', 'waiting', 'building', 'checks', 'vote', 'going_live', 'live', 'held', 'stopped', 'done_elsewhere', 'closed',
+]);
+const TRACK_STEPS = new Set<BotTrackStep>(['plan', 'build', 'checks', 'vote', 'live']);
+const CODE = /^[a-z_]{1,40}$/;
+
+/**
+ * 16 Oct 2026: one request's track (services/homeroom-bot-track.js), field
+ * by field. Null for one in a state the client does not know, which it
+ * then draws nowhere rather than guessing at.
+ */
+export function normalizeBotTrack(input: unknown): BotTrack | null {
+  const row = record(input);
+  const state = text(pick(row, 'state')) as BotTrackState;
+  if (!TRACK_STATES.has(state)) return null;
+  const job = normalizeBotJob(row);
+  const step = text(pick(row, 'step')) as BotTrackStep;
+  const why = text(pick(row, 'why'));
+  const waitingOn = text(pick(row, 'waitingOn'));
+  const held = record(pick(row, 'held'));
+  const queue = record(pick(row, 'queue'));
+  const doneBy = record(pick(row, 'doneBy'));
+  const tries = strictId(pick(row, 'try')) || 1;
+  const release = state === 'going_live' ? releaseOf(pick(row, 'release')) : null;
+  return {
+    key: job.key,
+    appSlug: job.appSlug,
+    appName: job.appName,
+    ...(job.appUnnamed ? { appUnnamed: true } : {}),
+    iconUrl: job.iconUrl,
+    iconEmoji: job.iconEmoji,
+    issueNumber: job.issueNumber,
+    title: job.title,
+    firstVersion: job.firstVersion,
+    state,
+    step: TRACK_STEPS.has(step) ? step : null,
+    why: CODE.test(why) ? why : null,
+    waitingOn: waitingOn === 'you' || waitingOn === 'group' ? waitingOn : null,
+    busy: bool(pick(row, 'busy')),
+    try: Math.min(tries, 99),
+    tryStartedAt: text(pick(row, 'tryStartedAt')) || null,
+    tryStarts: array(pick(row, 'tryStarts')).map((at) => text(at)).filter(Boolean).slice(0, 20),
+    since: text(pick(row, 'since')) || null,
+    rootId: strictId(pick(row, 'rootId')),
+    askId: strictId(pick(row, 'askId')),
+    proposalId: strictId(pick(row, 'proposalId')),
+    sessionId: strictId(pick(row, 'sessionId')),
+    links: job.links,
+    ...(state === 'held' ? {
+      held: {
+        limit: CODE.test(text(pick(held, 'limit'))) ? text(pick(held, 'limit')) : 'slots',
+        position: strictId(pick(held, 'position')),
+        until: text(pick(held, 'until')) || null,
+      },
+    } : {}),
+    ...(state === 'queued' && pick(queue, 'ahead') !== undefined ? { queue: { ahead: Math.max(0, Number(pick(queue, 'ahead')) || 0) } } : {}),
+    ...(state === 'done_elsewhere' && pick(row, 'doneBy') ? {
+      doneBy: { username: text(pick(doneBy, 'username')) || null, prNumber: strictId(pick(doneBy, 'prNumber')) },
+    } : {}),
+    ...(release ? { release } : {}),
+  };
+}
+
+function normalizeSlotEntry(input: unknown): BotSlotEntry {
+  const row = record(input);
+  const kind = text(pick(row, 'kind'));
+  return {
+    ...(kind === 'proposal' || kind === 'build' ? { kind } : {}),
+    issueNumber: strictId(pick(row, 'issueNumber')),
+    title: text(pick(row, 'title')) || null,
+    position: strictId(pick(row, 'position')),
+    limit: CODE.test(text(pick(row, 'limit'))) ? text(pick(row, 'limit')) : null,
+    since: text(pick(row, 'since')) || null,
+    until: text(pick(row, 'until')) || null,
+    track: pick(row, 'track') ? normalizeBotTrack(pick(row, 'track')) : null,
+  };
+}
+
+/** A project's bot slots view, field by field (services/homeroom-bot-track.js slotsView). */
+export function normalizeBotSlots(input: unknown): BotSlotsView | null {
+  const view = record(pick(record(input), 'slots'));
+  const app = record(pick(view, 'app'));
+  const slug = text(pick(app, 'slug'));
+  if (!slug) return null;
+  const week = record(pick(view, 'week'));
+  const share = Number(pick(week, 'usedShare'));
+  return {
+    app: { slug, name: text(pick(app, 'name')) || slug },
+    botOn: bool(pick(view, 'botOn')),
+    acts: bool(pick(view, 'acts')),
+    paused: bool(pick(view, 'paused')),
+    cap: strictId(pick(view, 'cap')) || 5,
+    buildsAtOnce: strictId(pick(view, 'buildsAtOnce')),
+    slots: array(pick(view, 'slots')).map(normalizeSlotEntry).slice(0, 50),
+    waiting: array(pick(view, 'waiting')).map(normalizeSlotEntry).slice(0, 100),
+    onHold: array(pick(view, 'onHold')).map(normalizeSlotEntry).slice(0, 100),
+    reading: Math.max(0, Number(pick(view, 'reading')) || 0),
+    week: pick(view, 'week') ? {
+      limited: bool(pick(week, 'limited')),
+      usedShare: Number.isFinite(share) ? Math.max(0, Math.min(1, share)) : null,
+      usedUp: bool(pick(week, 'usedUp')),
+      resetsAt: text(pick(week, 'resetsAt')) || null,
+    } : null,
+  };
+}
+
+/** 16 Oct 2026: a project's bot slots, for the page under its Workshop. */
+export async function getBotSlots(slug: string, { demo = false }: { demo?: boolean } = {}): Promise<BotSlotsView | null> {
+  const path = `/api/apps/${encodeURIComponent(slug)}/homeroom-bot/slots${demo ? '?demo=1' : ''}`;
+  return normalizeBotSlots(await request<unknown>(path, readInit({ fresh: true })));
 }
 
 /**

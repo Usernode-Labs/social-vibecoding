@@ -100,6 +100,13 @@ export interface PlanCardViewProps {
   progress?: PlanProgress | null;
   /** Drawn last, inside the card. */
   footer?: ReactNode;
+  /**
+   * 16 Oct 2026: a plan for a request on a project that already runs is
+   * titled by the request, not the project ("My plan for Homeroom" read as
+   * a plan for all of it). Its title, '' when unknown; null for a first
+   * version, titled by its project.
+   */
+  request?: string | null;
 }
 
 /** #4197: a question that was answered, and the answer it went with. */
@@ -228,6 +235,7 @@ export function PlanChoices({ questions, picked, onPick, idBase, top = 'divided'
 
 export function PlanCardView({
   appName, plan, state, choices = [], busy = false, building, onBuild, onChange, surface = 'messages', progress = null, footer = null,
+  request = null,
 }: PlanCardViewProps) {
   const t = useMessages('messages');
   const [picked, setPicked] = useState<Array<string | null>>(() => plan.questions.map(() => null));
@@ -245,7 +253,9 @@ export function PlanCardView({
   // An empty `appName` is a project whose name is not known: its own messages.
   const title = surface === 'app'
     ? (appName ? t('messages:bot.plan.titleInApp', { project: appName }) : t('messages:bot.plan.titleInAppUnnamed'))
-    : (appName ? t('messages:bot.plan.title', { project: appName }) : t('messages:bot.plan.titleUnnamed'));
+    : request !== null
+      ? (request ? t('messages:bot.plan.titleRequest', { title: request }) : t('messages:bot.plan.titleRequestUntitled'))
+      : (appName ? t('messages:bot.plan.title', { project: appName }) : t('messages:bot.plan.titleUnnamed'));
 
   function choose(index: number, answer: string) {
     setPicked((current) => current.map((value, i) => (i === index ? answer : value)));

@@ -44,8 +44,11 @@ const BODIES = [
   ['stopped', 'checks', {}, 'Stopped: its checks still fail. A person needs to look.'],
   ['on_hold', 'allowance', {}, 'On hold until Monday: your building time for this week is used up.'],
   ['on_hold', 'paused', {}, 'On hold until Monday: I\'ve used my budget for this week.'],
+  ['on_hold', 'slots', {}, 'Waiting for a slot: all of this project\'s are in use. I\'ll start when one frees.'],
   ['live', 'live', {}, 'It\'s live. Open Plant Pal to see it.'],
   ['live', 'live_soon', {}, 'It\'s going live now. Open Plant Pal in a few minutes to see it.'],
+  ['done_elsewhere', 'done_elsewhere', { doneBy: 'ada' }, 'Done another way: a change by @ada did what you asked, so there\'s nothing more for me to build.'],
+  ['done_elsewhere', 'done_elsewhere', {}, 'Done another way: another change did what you asked, so there\'s nothing more for me to build.'],
 ];
 
 const FIRST_VERSION = [
@@ -59,7 +62,7 @@ const FIRST_VERSION = [
   ['live', 'live_first_soon', 'Your first version is going live now. Open Plant Pal in a few minutes to try it.'],
 ];
 
-const LABELS = { needs_you: 'Needs you', ready: 'Ready to try', stopped: 'Stopped', on_hold: 'On hold', live: 'Live' };
+const LABELS = { needs_you: 'Needs you', ready: 'Ready to try', stopped: 'Stopped', on_hold: 'On hold', live: 'Live', done_elsewhere: 'Done another way' };
 
 test('every variant of the contract is worded, with the request and its project as the title', () => {
   const covered = new Set();

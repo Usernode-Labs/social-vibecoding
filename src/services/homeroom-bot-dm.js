@@ -405,11 +405,16 @@ const STORY_MOMENTS = Object.freeze({
   build_failed: 'stopped', first_version_failed: 'stopped', preview_failed: 'stopped', needs_look: 'stopped',
   followup_failed: 'stopped', checks: 'stopped',
   allowance: 'on_hold', paused: 'on_hold',
+  // 16 Oct 2026 (V4): a build held because the project's slots are all in
+  // use rings once, as on hold: where it stands is no longer silent.
+  held_proposals_per_app: 'on_hold', held_proposals_total: 'on_hold',
   merged: 'live',
+  // 16 Oct 2026: somebody else's change shipped it (homeroom-bot-closed-requests.js).
+  request_closed: 'done_elsewhere',
   chat: 'reply', confirm: 'reply',
 });
-// The four moments that ring, shown in the main chat as well as the request's thread.
-const RINGING_MOMENTS = new Set(['needs_you', 'ready', 'stopped', 'on_hold', 'live']);
+// The moments that ring, shown in the main chat as well as the request's thread.
+const RINGING_MOMENTS = new Set(['needs_you', 'ready', 'stopped', 'on_hold', 'live', 'done_elsewhere']);
 // A build that did not finish, by its cause (buildFailedCause).
 const BUILD_SAID = Object.freeze({
   time: 'build_time', restart: 'build_restart', restarts: 'build_restart', no_change: 'build_no_change',
@@ -450,6 +455,8 @@ function saidOf(kind, info = {}) {
     case 'followup_failed': return 'update_failed';
     case 'allowance': return 'allowance';
     case 'paused': return 'paused';
+    case 'held_proposals_per_app': case 'held_proposals_total': return 'slots';
+    case 'request_closed': return 'done_elsewhere';
     case 'merged': {
       const soon = info.live === false;
       if (first) return soon ? 'live_first_soon' : 'live_first';
@@ -1405,7 +1412,10 @@ async function setQuestionState(pool, messageId, patch, { ws = null, conversatio
 // and the tray alone. The DM rings when it needs them or has news they act
 // on: a question, a plan, a change to try, a stop, live. On 9 October 2026
 // one person's DM got 123 messages in an afternoon, 53 of which rang.
-const CARD_ONLY = new Set(['spec', 'held_proposals_per_app', 'held_proposals_total', 'followup_revise']);
+// 16 Oct 2026 (V4): a build held because the project's slots are all in use
+// is no longer card-only: it rings once, as on hold (STORY_MOMENTS), so the
+// wait is never silent. It is said once per hold (actOnVerdict, quietHold).
+const CARD_ONLY = new Set(['spec', 'followup_revise']);
 
 /** Pure: whether a post's news is quiet: a line in its thread, or nothing without one (CARD_ONLY). */
 function cardOnly(kind, dm = null) {

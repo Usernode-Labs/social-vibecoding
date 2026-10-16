@@ -211,6 +211,10 @@
     "text": "Live",
     "description": "First line of a notification from Homeroom bot: what the viewer asked for is now part of the running project. The request's title is on the line below."
   },
+  "row.bot.label.doneElsewhere": {
+    "text": "Done another way",
+    "description": "Label at the head of a notification from Homeroom bot: somebody else's change shipped a request the bot was working on, so it has nothing more to build."
+  },
   "row.bot.subject.firstVersion": {
     "text": "{{project}} first version",
     "description": "Second line of a notification from Homeroom bot, in bold: the first version of a new project the bot builds for the viewer. {{project}} is the project's name."

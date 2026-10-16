@@ -513,6 +513,12 @@ export interface RequestView {
    */
   editor: { issue: number; markdown: string; source: string | null; canEdit: boolean };
   status: RequestStatusView;
+  /**
+   * 16 Oct 2026: where Homeroom bot's work on it is, as the server words it
+   * (services/homeroom-bot-track.js), read field by field by
+   * ../../messages/api.ts normalizeBotTrack. Null when the bot has none.
+   */
+  track?: unknown;
 }
 
 /** The card under the request: where it stands, and the one next step. */
