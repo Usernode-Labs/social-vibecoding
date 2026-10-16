@@ -63,6 +63,17 @@
 // through `window` rather than importing it.
 const LEADERBOARD_SECTION_STORE_KEY = '__usernodeLeaderboardSection';
 
+// #5249: whether kudos is parked. ./kudos.js publishes `window.Kudos` only
+// while it is not (./kudos-parked.ts), and this file takes no import (see
+// ./kudos-pane-store.js), so it reads the switch the way the classic scripts
+// do. Parked, the Kudos tab and its sub-views (Top changes, Top users, My
+// history) are gone and every road to them lands on Challenges; the section
+// stays only for a person's page, which is drawn in its pane without the
+// kudos figures.
+function kudosParked() {
+  return !(typeof window !== 'undefined' && window.Kudos);
+}
+
 function leaderboardSectionStore() {
   let store = window[LEADERBOARD_SECTION_STORE_KEY];
   if (!store) {
@@ -164,6 +175,8 @@ const Leaderboard = {
   // open()).
   _setSection(section) {
     if (!Leaderboard.SECTIONS.includes(section)) return;
+    // Parked, the Kudos section is a person's page or nothing.
+    if (section === 'kudos' && kudosParked() && !Leaderboard.profileUser) section = 'challenges';
     if (Leaderboard.section === section && Leaderboard._open) return;
     Leaderboard.section = section;
     // Leaving Kudos abandons the profile drill-in — otherwise coming
@@ -310,6 +323,11 @@ const Leaderboard = {
 
   _setSub(sub) {
     if (sub !== 'prs' && sub !== 'users' && sub !== 'history') return;
+    if (kudosParked()) {
+      Leaderboard.profileUser = null;
+      Leaderboard._setSection('challenges');
+      return;
+    }
     Leaderboard.sub = sub;
     // A Kudos sub-tab implies the Kudos section — a deep link straight to
     // #leaderboard/history must not land on a Topochain tab left over
@@ -504,6 +522,9 @@ const Leaderboard = {
         who,
         initial: (who[0] || '?').toUpperCase(),
         canMessage: Leaderboard._canMessage(who),
+        // The way back is to Top users, which is gone while kudos is parked;
+        // the platform bar's own back is the way out then.
+        back: !kudosParked(),
       };
     }
     const isHistory = Leaderboard.sub === 'history';
@@ -592,7 +613,10 @@ const Leaderboard = {
     const s = data.stats || {};
     const prsTotal = s.prs_total || 0;
     const stats = {
-      kudosMerged: PlatformI18n.t('leaderboard:kudos.person.onLive', { count: Number(s.kudos_merged || 0) }),
+      // Null while kudos is parked: the page keeps the person's changes and
+      // drops what they were thanked with.
+      kudosMerged: kudosParked() ? null
+        : PlatformI18n.t('leaderboard:kudos.person.onLive', { count: Number(s.kudos_merged || 0) }),
       chips: [
         {
           label: PlatformI18n.t('leaderboard:kudos.person.live', { count: Number(s.prs_merged || 0) }),
@@ -636,7 +660,7 @@ const Leaderboard = {
       extUrl: row.pr_url || null,
       slug: row.app_slug,
       sessionId: row.session_id,
-      kudos: row.kudos_count,
+      kudos: kudosParked() ? null : row.kudos_count,
     }));
   },
 

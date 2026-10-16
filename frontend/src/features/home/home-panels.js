@@ -837,8 +837,14 @@ const HomePanels = {
   // home. (The Challenges heading's link used to come here as "Open
   // leaderboard"; since #1916 it reads "Open challenges" and goes through
   // goToChallenges instead.)
+  //
+  // #5249: while kudos is parked (no window.Kudos, see
+  // features/leaderboard/kudos-parked.ts) there is no Top users list, so the
+  // kudos kind lands on Challenges.
   goToLeaderboard(kind) {
-    location.hash = kind === 'kudos' ? '#leaderboard/users' : '#leaderboard/topochain';
+    location.hash = kind === 'kudos'
+      ? (window.Kudos ? '#leaderboard/users' : '#leaderboard/challenges')
+      : '#leaderboard/topochain';
   },
 
   // `_wire(section)` lived here: eight `querySelectorAll` sweeps re-run after

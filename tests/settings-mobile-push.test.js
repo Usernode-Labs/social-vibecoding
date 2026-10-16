@@ -49,7 +49,7 @@ test('settings renders clear user-facing category labels and descriptions', () =
   }
   assert.match(message('settings:alerts.push.directInteractions.description'), /Mentions, replies to your messages, and friend requests/);
   assert.match(message('settings:alerts.push.messages.description'), /Conversation invitations, messages, mentions, replies, and reactions/);
-  assert.match(message('settings:alerts.push.lightweightActivity.description'), /Reactions and kudos on your work/);
+  assert.match(message('settings:alerts.push.lightweightActivity.description'), /^Reactions on your work\.$/);
   assert.doesNotMatch(block, />\s*(mention|reply|stale_pr|check_failed|pr_proposed|spec_shared)\s*</,
     'internal notification identifiers never become visible labels');
 });

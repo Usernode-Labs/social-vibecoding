@@ -245,6 +245,8 @@ test('pre-send revalidation cancels ineligible recipient and deployment state', 
   for (const [change, reason] of [
     [{ read_at: new Date() }, 'notification_read'],
     [{ kind: 'future_kind', push_category: null, push_enabled: false }, 'kind_not_allowed'],
+    // #5249: a parked kind is settled unsent, even with its category on.
+    [{ kind: 'kudos', push_category: 'lightweight_activity', push_enabled: true }, 'kind_not_allowed'],
     [{ push_enabled: false }, 'preference_disabled'],
     [{ delivery_environment: 'staging' }, 'environment_mismatch'],
     [{ deployment_send_enabled: false }, 'sender_disabled'],

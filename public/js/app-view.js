@@ -7570,7 +7570,7 @@ const AppView = {
         });
       }
       const meta = AppView._ghIssuesMeta || {};
-      pills.push({
+      if (AppView._bountiesOffered()) pills.push({
         key: 'bounty', cls: 'gc-vote-btn',
         label: item.my_bounty ? PlatformI18n.t('changes:request.actions.bountied') : PlatformI18n.t('changes:request.actions.pledgeKudos'),
         title: PlatformI18n.t('changes:request.actions.pledgeKudosTitle'),
@@ -21020,7 +21020,7 @@ const AppView = {
     // column's cards use (_mergedCardModel).
     const age = AppView._agePart(issue.createdAt || issue.created_at);
     if (age) meta.push(age);
-    if (issue.bounty_count) {
+    if (issue.bounty_count && AppView._bountiesOffered()) {
       meta.push({
         t: 'span', cls: 'text-amber-800 dark:text-amber-300', title: PlatformI18n.t('changes:issue.card.kudosTitle'),
         s: `★ ${parseInt(issue.bounty_count, 10) || 0}`,
@@ -21412,6 +21412,18 @@ const AppView = {
   },
 
   /**
+   * Whether a request offers a kudos bounty (its "Pledge kudos" pill and ⋯
+   * row, and the ★ count on its meta line). A bounty is kudos pledged to a
+   * request, so it is offered exactly when kudos is: features/leaderboard/
+   * kudos.js publishes `window.Kudos` only while kudos is not parked
+   * (KUDOS_PARKED, #5249). Parked, nothing pledges and no count is shown;
+   * the bounties already pledged stay in the database untouched.
+   */
+  _bountiesOffered() {
+    return !!window.Kudos;
+  },
+
+  /**
    * B8: "Ask for changes" on a change Homeroom bot built: the viewer's chat
    * with it, with this change attached on the composer and the caret in the
    * box (messages/store.ts openBot). The page names the change's project, so
@@ -21591,11 +21603,12 @@ const AppView = {
       });
       // "Pledge kudos" disables once the viewer has an open bounty here or
       // has spent their shared weekly allowance.
+      // Not while kudos is parked (#5249, see _bountiesOffered).
       const budgetSpent = meta.myRemaining === 0;
       const kudosReason = issue.my_bounty
         ? PlatformI18n.t('changes:issue.menu.alreadyBountied')
         : (budgetSpent ? PlatformI18n.t('changes:issue.menu.allowanceSpent') : '');
-      items.push({
+      if (AppView._bountiesOffered()) items.push({
         label: issue.my_bounty ? PlatformI18n.t('changes:issue.menu.bountied') : PlatformI18n.t('changes:issue.menu.pledgeKudos'),
         icon: 'kudos',
         title: kudosReason
@@ -22118,6 +22131,8 @@ const AppView = {
   // weekly kudos allowance server-side; optimistically bumps the local count
   // and disables the button on success.
   async giveIssueBounty(issueNumber) {
+    // Every door to this is gated by _bountiesOffered; a stale one is a no-op.
+    if (!AppView._bountiesOffered()) return;
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug) return;
     const key = `bounty:${issueNumber}`;

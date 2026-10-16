@@ -20,6 +20,11 @@
 
 import { agoStamp } from '../../lib/timestamp';
 import { t, htmlText, htmlRich } from '../../lib/i18n/runtime';
+import { KUDOS_PARKED } from './kudos-parked';
+
+// #5249: the one switch (see ./kudos-parked.ts). Re-exported so a module that
+// already imports this file reads it from here.
+export { KUDOS_PARKED };
 
 const Kudos = {
   // appSlug => Map<sessionId, { count, my_kudos, givers? }>. We cache
@@ -601,10 +606,17 @@ function escapeAttr(str) {
 // all still reach it by name. The guard is for the SSG prerender pass —
 // frontend/scripts/build-shell.mjs evaluates the island's whole module graph
 // in Node, where there is no window.
-if (typeof window !== 'undefined') window.Kudos = Kudos;
+//
+// #5249: NOT published while kudos is parked. Every legacy caller asks
+// `window.Kudos` before it draws a kudos slot, a "Thank", a ⋯ row, a bounty
+// pill or the budget, so its absence is how the switch reaches them. The
+// object is still exported, so its own logic stays testable.
+if (typeof window !== 'undefined' && !KUDOS_PARKED) window.Kudos = Kudos;
+
+export { Kudos };
 
 // The weekly meter is this module's to repaint; a kudos button is redrawn by
 // whichever surface drew it.
-if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+if (!KUDOS_PARKED && typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
   document.addEventListener('homeroom:language-changed', () => { Kudos.Budget._render(); });
 }

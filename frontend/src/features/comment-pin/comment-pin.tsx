@@ -80,6 +80,7 @@ import { textFocused } from '../../lib/browser-scroll';
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { platformSlug } from '../messages/channel-hub';
+import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import {
   changesPicture, loadLibrary, outOfPicture, textsUnchanged,
   closeUpView, coverCrop, cropCanvas, CROP_SHADE, describeElement, dragCrop, encodeUnder, FULL_CROP, inRect, insetFrame,
@@ -953,7 +954,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       titleAsks: 0,
       editingTitle: false,
       images,
-      kudos: !!c?.bounty,
+      // #5249: a draft saved before kudos was parked does not carry its kudos.
+      kudos: !KUDOS_PARKED && !!c?.bounty,
       chosen: c?.target ?? null,
       sending: false,
       error: '',
@@ -1094,7 +1096,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       shots,
       images: d.images.map((i) => i.blob),
       title: titleToSend(d),
-      bounty: d.kudos && budget.remaining !== 0,
+      bounty: !KUDOS_PARKED && d.kudos && budget.remaining !== 0,
       where: live.length ? whereLines(spots, app?.slug ?? null) : '',
     };
   }, [app, budget.remaining]);
@@ -2109,8 +2111,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             />
           </div>
           {/* Kudos (#964): one line, a switch. What it costs is said on hover
-              and to a screen reader; the line itself says what it is for. */}
-          <button
+              and to a screen reader; the line itself says what it is for.
+              Not drawn while kudos is parked (#5249, ../leaderboard/kudos-parked.ts). */}
+          {KUDOS_PARKED ? null : <button
             type="button"
             id="comment-pin-kudos"
             role="switch"
@@ -2140,7 +2143,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 : 'absolute left-[3px] top-[3px] h-3.5 w-3.5 rounded-full bg-white shadow'}
               />
             </span>
-          </button>
+          </button>}
           {draft.error ? (
             <p id="comment-pin-error" role="alert" className="text-[13px] text-red-700 dark:text-red-400">{draft.error}</p>
           ) : null}

@@ -725,17 +725,17 @@
       "expectText": "WAITLIST_X_CLIENT_ID"
     },
     {
-      "name": "Me: the editable profile card leads, above the merged / kudos / challenges stat cards (#982)",
+      "name": "Me: the editable profile card leads, above the merged and challenges stat cards (#982; no kudos card, #5249)",
       "path": "/?demo=1#profile",
       "expectText": "Edit profile",
-      "expectSelector": "#profile-screen:not(.hidden) #profile-identity-card:has(#profile-edit-btn) + #profile-stats > [data-profile-stat=\"merged\"] + [data-profile-stat=\"kudos\"] + [data-profile-stat=\"challenges\"]"
+      "expectSelector": "#profile-screen:not(.hidden) #profile-identity-card:has(#profile-edit-btn) + #profile-stats:not(:has([data-profile-stat=\"kudos\"])) > [data-profile-stat=\"merged\"] + [data-profile-stat=\"challenges\"]"
     },
     {
       "id": "profile.feedback-list",
-      "name": "Me: Your work leads, then Rewards (Challenges & standings, Kudos); Account holds Friends and App slots; the feedback challenge's card lists what you sent with its status (#3186, UI overhaul, navigation review)",
+      "name": "Me: Your work leads, then Rewards (Challenges & standings; Kudos is parked, #5249); Account holds Friends and App slots; the feedback challenge's card lists what you sent with its status (#3186, UI overhaul, navigation review)",
       "path": "/?demo=1#profile?feedback",
       "expectText": "Counted",
-      "expectSelector": "body:has([data-feedback-status=\"received\"]~[data-feedback-status=\"counted\"]):has(#profile-work+#profile-rewards #profile-row-challenges+#profile-row-kudos):has(#profile-row-friends+#profile-row-app-slots):has(#profile-settings #profile-row-settings)",
+      "expectSelector": "body:has([data-feedback-status=\"received\"]~[data-feedback-status=\"counted\"]):has(#profile-work+#profile-rewards #profile-row-challenges:only-child):has(#profile-row-friends+#profile-row-app-slots):has(#profile-settings #profile-row-settings)",
       "visual": true,
       "impact": [
         "frontend/src/features/profile/feedback-sheet.tsx",
@@ -756,9 +756,9 @@
       "expectSelector": "#leaderboard-screen:not(.hidden):has([data-standings-tab=\"challenges\"][aria-current=\"page\"] + [data-standings-tab=\"topochain\"] + [data-standings-tab=\"kudos\"]):not(:has([data-standings-tab=\"seasons\"])) #challenges-root #tc-se-challenge-summary"
     },
     {
-      "name": "A person's page carries Message beside their name, which opens a direct message",
+      "name": "A person's page carries Message beside their name, which opens a direct message (no Top users link, #5249)",
       "path": "/?demo=1#leaderboard/users/usernode-capture",
-      "expectSelector": "#leaderboard-root:not(.hidden) header:has([data-lb-back]) button[data-message-person=\"usernode-capture\"]"
+      "expectSelector": "#leaderboard-root:not(.hidden) header:not(:has([data-lb-back])) button[data-message-person=\"usernode-capture\"]"
     },
     {
       "name": "Friends: a person who asked you gets Accept and Decline under their name, beside Message (#2386)",
@@ -827,9 +827,9 @@
       "coldLoad": true
     },
     {
-      "name": "Send Feedback offers a kudos bounty, unchecked by default (#964), room for up to three images (#3027), and a video option (#3940) behind one paperclip (#4127)",
+      "name": "Send Feedback: no kudos bounty (#964, #5249), up to three images (#3027), video (#3940) behind one paperclip (#4127)",
       "path": "/?shot=feedback",
-      "expectSelector": "#feedback-form:has(#feedback-screenshot-count:not(.hidden)):has(#feedback-attach-btn:not(.hidden,:disabled)+.hidden>#feedback-video-btn:not(.hidden)) #feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:not(:checked):not(:disabled)",
+      "expectSelector": "#feedback-form:has(#feedback-screenshot-count:not(.hidden)):has(#feedback-attach-btn:not(.hidden,:disabled)+.hidden>#feedback-video-btn:not(.hidden)) #feedback-bounty-row.hidden #feedback-bounty-checkbox:not(:checked)",
       "expectText": "You can attach up to 3 images."
     },
     {
@@ -845,9 +845,9 @@
       "expectText": "Try a fix yourself"
     },
     {
-      "name": "The bounty checkbox is disabled once the weekly allowance is spent (#964)",
+      "name": "With kudos parked, a spent allowance leaves Send Feedback's bounty row hidden and unpainted (#964, #5249)",
       "path": "/?shot=feedback-spent",
-      "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:disabled"
+      "expectSelector": "#feedback-form #feedback-bounty-row.hidden:not(.opacity-60) #feedback-bounty-checkbox:not(:checked):not(:disabled)"
     },
     {
       "name": "Offline, Send Feedback promises to save the message instead of failing (#1054)",
@@ -1009,9 +1009,9 @@
       "expectText": "Request #900003"
     },
     {
-      "name": "Dev board, round three: the vote is one button beside the state bar, with a picker; #1688 puts \"Still yes?\" on a card backed on an earlier version and \"Thank <author>\" in a fresh card's kudos slot",
+      "name": "Dev board, round three: the vote is one button beside the state bar; \"Still yes?\" (#1688); no kudos slot (#5249)",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-col-inreview:has([data-vote-btn=\"prior-yes\"]):has(.gc-card-actions .dev-thanks-pill > .dev-thanks-label) .gc-vote-item .dev-card-status > .dev-status-pill-block + .dev-vote-btn[data-vote-btn=\"open\"][aria-haspopup=\"dialog\"]",
+      "expectSelector": "#dev-kanban-col-inreview:has([data-vote-btn=\"prior-yes\"]):not(:has([data-kudos-host],.dev-thanks-pill)) .gc-vote-item .dev-card-status > .dev-status-pill-block + .dev-vote-btn[data-vote-btn=\"open\"][aria-haspopup=\"dialog\"]",
       "expectText": "Vote"
     },
     {
@@ -2045,9 +2045,9 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Leaderboard screen renders with the Kudos Top-users tab",
+      "name": "With kudos parked, the Kudos Top-users address lands on Challenges and the strip has no Kudos tab (#5249)",
       "path": "/#leaderboard/users",
-      "expectText": "Top users"
+      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]):not(:has([data-standings-tab=\"kudos\"])) #challenges-root:not(.hidden) #tc-se-grid"
     },
     {
       "name": "Admin Users list renders, with its Total points column and the Podium switch (#3938)",
@@ -4090,15 +4090,14 @@
       "expectText": "Spinning the preview back up…"
     },
     {
-      "name": "The kudos row says a kudos thanks whoever solves it (#2586)",
-      "path": "/?shot=feedback",
-      "expectText": "to thank whoever solves it"
+      "name": "With kudos parked, the notifications sheet shows no kudos row (#3227, #5249)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet[data-open]:has([data-notif-id=\"990210\"]):not(:has([data-notif-id=\"990213\"]))"
     },
     {
-      "name": "A spent allowance says so instead of showing a count (#964)",
+      "name": "With kudos parked, the bounty note says nothing, even with the allowance spent (#964, #5249)",
       "path": "/?shot=feedback-spent",
-      "expectSelector": "#feedback-bounty-note[title$=\" 00:00 UTC\"]",
-      "expectText": "kudos this week. Resets"
+      "expectSelector": "#feedback-form #feedback-bounty-row.hidden #feedback-bounty-note:empty"
     },
     {
       "name": "The AI-credit row shows the remaining allowance (#555, #593)",

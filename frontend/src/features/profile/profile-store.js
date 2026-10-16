@@ -51,6 +51,7 @@
 import { createStore } from '../../lib/plain-store.js';
 import { changeHref } from '../../lib/change-href';
 import { t } from '../../lib/i18n/runtime';
+import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 
 /** Short facts on one small line, each a whole message, joined the way the
  *  language on screen separates them (`profile:line.factPair`). */
@@ -261,9 +262,11 @@ export function identityView(state) {
  * From GET /api/me/summary. A read that failed or has not answered shows a
  * dash rather than a zero — a 0 would be a claim.
  */
-export function statsView(summary) {
+export function statsView(summary, { kudosParked = KUDOS_PARKED } = {}) {
   const has = !!summary;
   const value = (n) => (has ? Number(n || 0).toLocaleString() : '–');
+  // #5249: while kudos is parked (../leaderboard/kudos-parked.ts) there is no
+  // kudos card, and merged and challenges share the row.
   return [
     { key: 'merged', value: value(summary && summary.merged), label: t('profile:stats.live') },
     { key: 'kudos', value: value(summary && summary.kudos), label: t('profile:stats.kudos') },
@@ -272,7 +275,7 @@ export function statsView(summary) {
       value: value(summary && summary.challenges && summary.challenges.done),
       label: t('profile:stats.challenges'),
     },
-  ];
+  ].filter((stat) => !(kudosParked && stat.key === 'kudos'));
 }
 
 /**

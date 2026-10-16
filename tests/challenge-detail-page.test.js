@@ -149,7 +149,9 @@ test('a level of the screen, not an overlay: in flow, the rest of the screen ste
     'the platform header is the nav bar, and nothing sits over the screen to guard or trap');
   assert.match(src, /<div id="tc-se-grid" className=\{state\.detail \? 'hidden' : undefined\}>/,
     'the grid steps aside while a page is open');
-  assert.match(screenSrc, /<div className=\{detailOpen \? 'hidden' : section === 'kudos' \? KUDOS_COLUMN : undefined\}>/,
+  // (#5249: and while kudos is parked, a person's page in the Kudos section,
+  // which is a level of its own too.)
+  assert.match(screenSrc, /<div className=\{detailOpen \|\| \(KUDOS_PARKED && section === 'kudos'\) \? 'hidden' : section === 'kudos' \? KUDOS_COLUMN : undefined\}>/,
     'and so do the screen’s own title, tabs and event bar');
   assert.match(src, /if \(e\.key === 'Escape'\) controller\(\)\?\.handleBack\(\);/, 'Escape goes back up on a keyboard');
   // The screen's scroller is the page's: a page opens at its top and the grid

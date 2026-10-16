@@ -274,6 +274,10 @@ function makeHarness({ appData = null, sessionDraft = null } = {}) {
   const sandbox = {
     // The binding the controller's i18n import gives it (the import line is stripped above).
     t: englishPlatformI18n().t,
+    // The controller's KUDOS_PARKED import, stripped above too: these suites
+    // drive the bounty row with the switch off (#5249). The parked state is
+    // pinned in tests/feedback-bounty-ui.test.js.
+    KUDOS_PARKED: false,
     console: { ...console, warn: () => {}, debug: () => {} },
     URLSearchParams,
     location: { search: '', hash: '', pathname: '/' },

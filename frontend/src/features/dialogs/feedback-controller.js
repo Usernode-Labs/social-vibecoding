@@ -48,6 +48,7 @@
 import './screenshot-select';
 
 import { t } from '../../lib/i18n/runtime';
+import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import { publishVisibility } from '../../lib/visibility-store';
 
 // The shell globals this block reaches for. Resolved in `init()` rather than
@@ -533,8 +534,16 @@ export function init() {
     // its unchecked default. Budget state is null only when the first-load
     // fetch failed — show the row enabled with no count rather than hiding a
     // working feature; the server is the real gate.
+    //
+    // #5249: while kudos is parked the row never shows, so no submit carries
+    // a bounty (the submit and the outbox both read the box, which stays
+    // unticked). The markup stays, hidden, for when it comes back.
     const resetBountyRow = () => {
       bountyCheckbox.checked = false;
+      if (KUDOS_PARKED) {
+        bountyRow.classList.add('hidden');
+        return;
+      }
       const budget = window.Kudos?.Budget?.state || null;
       const remaining = budget ? budget.remaining : null;
       const limit = budget ? budget.limit : null;
@@ -2549,7 +2558,7 @@ export function init() {
         feedbackTitle.value = opts.title.trim().slice(0, 200);
         titleDirty = true;
       }
-      if (opts.bounty === true && !bountyCheckbox.disabled) bountyCheckbox.checked = true;
+      if (opts.bounty === true && !KUDOS_PARKED && !bountyCheckbox.disabled) bountyCheckbox.checked = true;
 
       // #1054: the outbox state — the offline hint, the "Save for later"
       // button label, and anything already waiting to send. Painted last so
