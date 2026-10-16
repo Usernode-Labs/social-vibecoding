@@ -1002,7 +1002,10 @@ the app, so `dapp.json` declares each once at its top level:
   a desktop, a running app opens the pages about it in a side panel beside
   it, so the page itself never draws them. A check at such a route is still
   reached by a switch and judged like any other. The only change is that
-  **no other check is switched to after it**: it ends its group. Each entry
+  **no other check is switched to after it**: it ends its group. It never
+  gets a load of its own. When its document has no ordinary check left to
+  lead a group into it, it is grouped like any other address, and the
+  check after it may fall back. Each entry
   is `{ "route", "reason" }`, up to 8. `route` starts with `#`, and its
   `/`-separated segments are literal or `*` (exactly one segment). It
   matches the whole route without the fragment's `?query`, never a prefix,

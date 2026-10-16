@@ -226,14 +226,19 @@ test('an endsGroup cohort stays in its document\'s group, reached by a switch, a
     T(0, 'http://s/#/a'), T(1, 'http://s/#/b'), T(2, 'http://s/#/c'),
     T(3, 'http://s/#/e1', E), T(4, 'http://s/#/e2', E), T(5, 'http://s/#/e3', E), T(6, 'http://s/#/e3', E),
   ];
-  assert.deepEqual(ids(groupTests(many, { TEST_HASH_GROUP_CAP: '2' })), [[0, 1, 3], [2, 4], [5, 6]]);
+  // Two chunks can each end on one; the third boundary stays an ordinary
+  // cohort rather than leading a chunk of its own (Codex, review of 8764).
+  assert.deepEqual(ids(groupTests(many, { TEST_HASH_GROUP_CAP: '2' })), [[0, 1, 3], [2, 5, 6, 4]]);
   for (const g of groupTests(many, { TEST_HASH_GROUP_CAP: '2' })) {
-    const cs = cohortsOf(g);
-    assert.ok(cs.slice(0, -1).every((c) => !c.tests.some((t) => t.endsGroup)), 'a boundary is only ever its group\'s last cohort');
+    assert.ok(!cohortsOf(g)[0].tests.some((t) => t.endsGroup), 'no boundary is a group\'s load');
   }
   // A list that sets none is grouped exactly as before.
   const plain = many.map(({ endsGroup, ...t }) => t);
   assert.deepEqual(ids(groupTests(plain, { TEST_HASH_GROUP_CAP: '2' })), [[0, 1], [2, 3], [4, 5, 6]]);
+  // A document of boundaries only is grouped exactly as plain grouping would.
+  const all = [T(0, 'http://s/#/p/a', E), T(1, 'http://s/#/p/b', E), T(2, 'http://s/#/p/c', E)];
+  assert.deepEqual(ids(groupTests(all, {})), [[0, 1, 2]]);
+  assert.deepEqual(ids(groupTests(all, { TEST_HASH_GROUP_CAP: '2' })), [[0, 1], [2]]);
   // A bare address is never moved, whatever it carries: it is the group's load.
   assert.deepEqual(ids(groupTests([T(0, 'http://s/#/a'), T(1, 'http://s/', E)], {})), [[1, 0]]);
   // Per-URL grouping has no switches to order.
@@ -285,6 +290,117 @@ for (const marked of [true, false]) {
     }
   });
 }
+
+// Codex's reproduction (review of 8764): `#home`, then two routes under a
+// declared boundary `#page/*` whose screen hands the next switch elsewhere,
+// and `#page/broken`, which an incoming switch never draws (a navigation
+// bug; a load of it does draw it). The rule must not make it fast.
+function makeRoutesPage({ handsOff, brokenOnSwitch }) {
+  const p = makePage({ renderOnHash: true });
+  const evaluate = p.evaluate;
+  let handedOff = false;
+  p.evaluate = async (fn, arg) => {
+    const isHash = typeof fn === 'function' && /location\.hash/.test(String(fn));
+    if (isHash && (handedOff || brokenOnSwitch.includes(arg))) {
+      p.hashes.push(arg);
+      handedOff = handedOff || handsOff.some((h) => String(arg).startsWith(h));
+      return undefined;
+    }
+    const r = await evaluate(fn, arg);
+    if (isHash && handsOff.some((h) => String(arg).startsWith(h))) handedOff = true;
+    return r;
+  };
+  const goto = p.goto;
+  p.goto = async (u) => {
+    const at = String(u).slice(String(u).indexOf('#'));
+    handedOff = handsOff.some((h) => at.startsWith(h));
+    return goto(u);
+  };
+  return p;
+}
+
+async function runRoutes(tests) {
+  const read = collect();
+  const pages = [];
+  const browser = {
+    async createBrowserContext() {
+      return {
+        async newPage() {
+          const p = makeRoutesPage({ handsOff: ['#page/'], brokenOnSwitch: ['#page/broken'] });
+          pages.push(p);
+          return p;
+        },
+        async close() {},
+      };
+    },
+  };
+  try {
+    await runTests(browser, tests, { concurrency: 1, testTimeoutMs: 5000, ...FAST, assertMaxMs: 200 });
+  } finally { for (const p of pages) p.stop(); }
+  const { frames, text } = read();
+  const d = parseDiagnostics(text).find((x) => x.kind === 'checks-timing').data;
+  return { frames, fallbacks: d.fallbacks.n, switched: pages.flatMap((p) => p.hashes), loads: pages.flatMap((p) => p.gotos).filter((u) => u !== 'about:blank') };
+}
+
+for (const marked of [false, true]) {
+  test(`a broken route under a routing boundary is still reached by a switch and still falls back (${marked ? 'boundary declared' : 'no rule'})`, async () => {
+    const E = marked ? { endsGroup: true } : {};
+    const tests = [
+      T(0, 'http://s/#home', { expectSelector: '#at-#home' }),
+      T(1, 'http://s/#page/first', { expectSelector: '#at-#page/first', ...E }),
+      T(2, 'http://s/#page/broken', { expectSelector: '#at-#page/broken', ...E }),
+    ];
+    const groups = groupTests(tests, {});
+    assert.equal(groups.length, 1, 'no load of its own');
+    const r = await runRoutes(tests);
+    assert.deepEqual(r.frames.map((f) => f.status), ['pass', 'pass', 'pass']);
+    assert.ok(r.switched.includes('#page/broken'), 'its incoming switch is tested');
+    assert.ok(r.fallbacks >= 1, 'the navigation bug still costs its fallback');
+    assert.deepEqual(r.loads.filter((u) => u.endsWith('#page/broken')).length, 1, 'loaded only by the fallback');
+  });
+}
+
+test('a document of boundaries only: every one after the first is still reached by a switch', async () => {
+  const E = { endsGroup: true };
+  const tests = [
+    T(0, 'http://s/#page/first', { expectSelector: '#at-#page/first', ...E }),
+    T(1, 'http://s/#page/broken', { expectSelector: '#at-#page/broken', ...E }),
+  ];
+  assert.deepEqual(ids(groupTests(tests, {})), [[0, 1]]);
+  const r = await runRoutes(tests);
+  assert.ok(r.switched.includes('#page/broken'));
+  assert.equal(r.fallbacks, 1);
+});
+
+test('a routing boundary never adds a load and never turns a switch into one (random documents)', () => {
+  // The invariant, behaviourally: compared with grouping the same document
+  // with no boundary declared, the rule makes no more groups, and a check
+  // that is its group's load under the rule is its group's load without it
+  // too, or is not a boundary at all.
+  let seed = 7;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  for (let run = 0; run < 400; run += 1) {
+    const n = 1 + rnd(14);
+    const cap = String(1 + rnd(7));
+    const tests = [];
+    for (let i = 0; i < n; i += 1) {
+      const hash = rnd(9) === 0 ? '' : `#r${rnd(12)}`;
+      tests.push(T(i, `http://s/${hash}`, rnd(3) === 0 ? { endsGroup: true } : {}));
+    }
+    const env = { TEST_HASH_GROUP_CAP: cap };
+    const ruled = groupTests(tests, env);
+    const plain = groupTests(tests.map(({ endsGroup, ...t }) => t), env);
+    assert.ok(ruled.length <= plain.length, `more loads: ${JSON.stringify(ids(ruled))}`);
+    const leads = (groups) => new Set(groups.flatMap((g) => cohortsOf(g)[0].tests.map((t) => t.index)));
+    const plainLeads = leads(plain);
+    for (const g of ruled) {
+      for (const t of cohortsOf(g)[0].tests) {
+        if (tests[t.index].endsGroup) assert.ok(plainLeads.has(t.index), `boundary ${t.url} became a load (cap ${cap}): ${JSON.stringify(ids(ruled))} vs ${JSON.stringify(ids(plain))}`);
+      }
+    }
+    assert.equal(ruled.flat().length, n);
+  }
+});
 
 test('resolveTests carries coldLoad and endsGroup when they are true, and only then', () => {
   const out = resolveTests({

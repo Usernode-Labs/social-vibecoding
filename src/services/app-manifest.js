@@ -482,7 +482,9 @@ function readTestsWithMeta(parsed) {
 //     app's App tab opens the pages about it in a side panel beside it).
 //     A check at such a route is still reached by a switch like any other;
 //     the only thing that changes is that no other check is switched to
-//     after it: it ends its group.
+//     after it: it ends its group. It never becomes a load of its own
+//     (capture.js groupTestsByDocument): where its document has no ordinary
+//     check left to lead a group into it, it stays an ordinary cohort.
 //
 // There is deliberately no per-check form, and no rule exempts an address
 // that carries no boot parameter from being reached by a switch: a check
@@ -563,9 +565,11 @@ function paramNames(query) {
 }
 
 // The wire bits for one check, from the app's rules and the address the
-// platform VISITS (for Homeroom, after selfAppHashPath: `/app/x` is visited
-// as `/#app/x`). Plain string surgery, like capture.js splitDocumentUrl, so
-// a malformed address degrades to no bits rather than throwing.
+// platform VISITS (for Homeroom, after selfAppHashPath: `/messages/x` is
+// visited as `/#messages/x`, while a clean `/app/<slug>` path stays a path, a
+// document of its own). Plain string surgery, like capture.js
+// splitDocumentUrl, so a malformed address degrades to no bits rather than
+// throwing.
 function checkLoadFlags(address, rules) {
   const r = rules || {};
   const boot = Array.isArray(r.bootParams) ? r.bootParams : [];

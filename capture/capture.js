@@ -1376,22 +1376,37 @@ function groupTestsByDocument(tests, opts) {
       Array.from(byHash.entries()).map(([hash, members]) => ({ hash, tests: members }))
     );
     // A cohort at one of the app's routing boundaries ends its group (see
-    // groupTests): it is chunked like the rest and still reached by a switch,
-    // but last, so nothing is switched to after it. Each joins the first
-    // chunk that has not already ended, one past the cap if it must, and
-    // starts a chunk of its own only when every chunk has ended. A bare
-    // cohort cannot be one (a boundary is a fragment route), and would have
-    // to be first anyway, so it is never moved.
+    // groupTests): it is still reached by a switch, but last, so nothing is
+    // switched to after it. That is ordering only, and it must never become a
+    // load of the boundary's own: a check that first appears in a group is
+    // never reached by a switch, so a boundary leading a group would be judged
+    // without its incoming switch, the exemption a plain address must not get.
+    //
+    // So the first k boundaries each end one chunk of the rest, which keeps
+    // the document's order and is chunked as usual, and k is the most for
+    // which every chunk is led by an ordinary cohort (one past the cap where
+    // a boundary joins). That never adds a load: there are at most as many
+    // chunks as plain grouping makes. A boundary past k stays where it is, as
+    // an ordinary cohort: a check switched to after it may fall back, which
+    // costs time and never a verdict. A document with no ordinary cohort
+    // (all boundaries) is grouped exactly as before. A bare cohort cannot be
+    // a boundary (a boundary is a fragment route), and stays first.
     const ends = (c) => !!c.hash && c.tests.some((t) => t && t.endsGroup);
-    const rest = cohorts.filter((c) => !ends(c));
-    const chunks = [];
-    for (let i = 0; i < rest.length; i += cap) chunks.push({ cohorts: rest.slice(i, i + cap), ended: false });
-    for (const c of cohorts.filter(ends)) {
-      let host = chunks.find((ch) => !ch.ended);
-      if (!host) { host = { cohorts: [], ended: false }; chunks.push(host); }
-      host.cohorts.push(c);
-      host.ended = true;
+    const bounds = cohorts.filter(ends);
+    let k = bounds.length;
+    let lead = cohorts;
+    for (; k > 0; k -= 1) {
+      const last = new Set(bounds.slice(0, k));
+      lead = cohorts.filter((c) => !last.has(c));
+      const n = Math.ceil(lead.length / cap);
+      let ledByOrdinary = n >= k;
+      for (let c = 0; ledByOrdinary && c < n; c += 1) ledByOrdinary = !ends(lead[c * cap]);
+      if (ledByOrdinary) break;
     }
+    if (k === 0) lead = cohorts;
+    const chunks = [];
+    for (let i = 0; i < lead.length; i += cap) chunks.push({ cohorts: lead.slice(i, i + cap) });
+    bounds.slice(0, k).forEach((c, i) => chunks[i].cohorts.push(c));
     for (const ch of chunks) {
       // Flatten the chunk: a group stays a plain array of tests, which is what
       // the pool's budget/timeout/emit paths already iterate.
