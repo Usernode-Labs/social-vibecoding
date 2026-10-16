@@ -97,7 +97,7 @@ function loadRoutes(pool) {
       ...require('../src/services/worker'),
       destroyWorker: async (name) => { spies.destroyed.push(name); },
       // The proposal machine's worker.destroy removes it strictly.
-      removeWorker: async (id) => { spies.destroyed.push(`usernode-worker-${id}`); },
+      removeWorker: async (id) => { spies.destroyed.push(`usernode-worker-${id}`); return { removed: true }; },
     })],
     [paths.github, stubModule(paths.github, { ...require('../src/services/github'), isEnabled: () => false })],
     [paths.appAdmins, stubModule(paths.appAdmins, {

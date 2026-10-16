@@ -192,30 +192,44 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
     },
 
     // Its worker goes (a pause, an unpromote, a close). One already gone is
-    // gone.
+    // gone. Fenced and finished (worker.removeWorker): the resources are read
+    // by identity, then removed only while this claim is still ours (a
+    // checkpoint is refused once it is not) and the session has not taken
+    // its slot back; it reports once they are gone. A resume waits for it
+    // meanwhile (facts.ts readTeardown).
     [WORK.destroy]: {
-      maxAttempts: 5,
+      maxAttempts: 8,
       backoffMs: (n) => Math.min(10 * 60 * 1000, 15 * 1000 * 2 ** (n - 1)),
-      async run({ input }): Promise<Json> {
-        // A session that took its slot back since (a cancel that came after
-        // this claim) keeps its worker.
-        const i = await lifecycle(Number(input.sessionId));
-        if (i?.state === 'underway' && i.data?.slot === 'held') return { skipped: 'held' };
-        // Strict: a removal the runtime refused throws, and is tried again.
-        await legacy('services/worker').removeWorker(Number(input.sessionId));
-        return { destroyed: true };
+      async run(ctx): Promise<Json> {
+        const id = Number(ctx.input.sessionId);
+        const back = async () => {
+          const i = await lifecycle(id);
+          return i?.state === 'underway' && i.data?.slot === 'held';
+        };
+        if (await back()) return { skipped: 'held' };
+        const out = await legacy('services/worker').removeWorker(id, {
+          proceed: async () => { await ctx.checkpoint({ removing: true }); return !(await back()); },
+          renew: () => ctx.checkpoint({ removing: true }),
+        });
+        return out.skipped ? { skipped: 'held' } : { destroyed: true };
       },
     },
 
-    // Its Claude Code volume goes at once, for a close that asked.
+    // Its Claude Code volume goes at once (with its worker), for a close that
+    // asked: fenced and finished the same way, only while it is closed.
     [WORK.purge]: {
-      maxAttempts: 5,
+      maxAttempts: 8,
       backoffMs: (n) => Math.min(10 * 60 * 1000, 15 * 1000 * 2 ** (n - 1)),
-      async run({ input }): Promise<Json> {
+      async run(ctx): Promise<Json> {
+        const id = Number(ctx.input.sessionId);
+        const closed = async () => (await lifecycle(id))?.state === 'closed';
         // Reopened since: its memory stays.
-        if ((await lifecycle(Number(input.sessionId)))?.state !== 'closed') return { skipped: 'reopened' };
-        await legacy('services/worker').removeCcVolume(Number(input.sessionId));
-        return { purged: true };
+        if (!(await closed())) return { skipped: 'reopened' };
+        const out = await legacy('services/worker').removeCcVolume(id, {
+          proceed: async () => { await ctx.checkpoint({ removing: true }); return closed(); },
+          renew: () => ctx.checkpoint({ removing: true }),
+        });
+        return out.skipped ? { skipped: 'reopened' } : { purged: true };
       },
     },
 

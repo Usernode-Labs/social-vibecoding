@@ -17,8 +17,8 @@
 //   - for a move that brings the session back (a resume, a reopen), the
 //     teardown work still owed for it, its rows locked: one not claimed yet
 //     cannot be claimed before the move cancels it (the claim skips locked
-//     rows), and one already under way (or done and not yet reported) is
-//     read as such, so the move waits for it rather than racing it.
+//     rows), and one any attempt has started is read as under way, so the
+//     move waits for it rather than racing it.
 
 import type { Event, Tx } from '../kernel/index.ts';
 import { readPrGate } from '../rules/pr-gate.ts';
@@ -213,14 +213,17 @@ export interface ReadOptions {
 }
 
 // Teardown work outstanding for the session, its rows locked (see the top).
+// Only an item no attempt has started is cancelled by the move: one running
+// (its lease lapsed or not: a lapsed lease does not prove its call stopped,
+// a stalled process may still be in it), done and not reported, or waiting
+// to be tried again after an attempt (which may have asked for the removal
+// already) is teardown under way, and the move waits for it.
 async function readTeardown(tx: Tx, sessionId: number, kinds: string[]): Promise<boolean> {
   const { rows } = await tx.query(
-    `SELECT status, lease_until > now() AS live FROM wf_work
+    `SELECT status, attempt_count FROM wf_work
       WHERE machine = 'proposal' AND key = $1 AND kind = ANY($2::text[]) AND status IN ('queued', 'running', 'reported')
         FOR UPDATE`, [`session:${sessionId}`, kinds]);
-  // A running item whose lease lapsed belongs to a process that went: it is
-  // claimed again only after this move, which cancels it.
-  return rows.some((r: any) => r.status === 'reported' || (r.status === 'running' && r.live));
+  return rows.some((r: any) => r.status !== 'queued' || Number(r.attempt_count) > 0);
 }
 
 export async function readFacts(tx: Tx, sessionId: number, event: Event<any>, o: ReadOptions): Promise<Facts> {

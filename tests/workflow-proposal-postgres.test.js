@@ -849,10 +849,21 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     tt.after(() => { for (const [mod, n, fn] of restore) mod[n] = fn; });
     github.isEnabled = () => true;
     github.closePR = async (owner, repo, number) => { seen.push(['closePR', number]); };
-    worker.removeWorker = async (id) => { seen.push(['removeWorker', id]); };
-    worker.removeCcVolume = async (id) => { seen.push(['removeCcVolume', id]); };
+    // The runtime's removal as worker.js does it: it asks to proceed first.
+    worker.removeWorker = async (id, o) => {
+      if (!(await o.proceed())) return { skipped: true };
+      seen.push(['removeWorker', id]);
+      return { removed: true };
+    };
+    worker.removeCcVolume = async (id, o) => {
+      if (!(await o.proceed())) return { skipped: true };
+      seen.push(['removeCcVolume', id]);
+      return { removed: true };
+    };
     const svc = proposalServices({ config: {}, pool });
-    const run = (kind, input) => svc[kind].run({ input, key: 'k', attempt: 1 });
+    let claimLost = false;
+    const run = (kind, input) => svc[kind].run({ input, key: 'k', attempt: 1,
+      checkpoint: async () => { if (claimLost) throw new Error('lease lost'); } });
 
     // Closed while GitHub opened it: the number is the one the row has now.
     const s = await session({ pr: false });
@@ -884,6 +895,76 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     // it never reports a worker destroyed that is still there (review 2.2).
     worker.removeWorker = async () => { throw new Error('kubernetes unavailable'); };
     await assert.rejects(run(WORK.destroy, { sessionId: paused.id }), /kubernetes unavailable/);
+
+    // Fenced (second review): a claim lost before the removal removes
+    // nothing; nor does a session that came back between the handler's
+    // first look and the removal.
+    worker.removeWorker = async (id, o) => {
+      if (!(await o.proceed())) return { skipped: true };
+      seen.push(['removeWorker', id]);
+      return { removed: true };
+    };
+    const before = seen.length;
+    claimLost = true;
+    await assert.rejects(run(WORK.destroy, { sessionId: paused.id }), /lease lost/);
+    claimLost = false;
+    const racing = worker.removeWorker;
+    worker.removeWorker = async (id, o) => {
+      await asTransition((c) => c.query(
+        `UPDATE wf_instances SET data = jsonb_set(data, '{slot}', '"held"') WHERE machine = $1 AND key = $2`, [MACHINE, sessionKey(id)]));
+      return racing(id, o);
+    };
+    assert.deepEqual(await run(WORK.destroy, { sessionId: paused.id }), { skipped: 'held' });
+    assert.equal(seen.length, before, 'nothing removed');
+  });
+
+  await t.test('P33 a lapsed lease or an attempt that failed does not end teardown: a resume or a reopen still waits (second review)', async () => {
+    defaults();
+    const lapse = (s, kind) => pool.query(
+      `UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE machine = $1 AND key = $2 AND kind = $3 AND status = 'running'`,
+      [MACHINE, sessionKey(s.id), kind]);
+    // The worker's destroy claimed by a process that stalled in its call.
+    let release;
+    work.gate.set(WORK.destroy, new Promise((r) => { release = r; }));
+    const s = await session();
+    await send(s, 'Pause', { from: 'active', reason: 'manual', userId: s.owner.id }, route);
+    await rt.drain();
+    const running = rt.runServices();
+    await new Promise((r) => setTimeout(r, 50));
+    await lapse(s, WORK.destroy);
+    const resume = await send(s, 'Resume', { from: 'paused', userId: s.owner.id, caps: { user: 100, global: 100 } }, route);
+    await rt.drain();
+    assert.equal((await outcome(resume)).reason, 'tearing_down', 'a lapsed lease does not prove the call stopped');
+    // Its attempt failed and waits to be tried again: it may have asked for
+    // the removal already.
+    await pool.query(
+      `UPDATE wf_work SET status = 'queued', claim_id = NULL, lease_until = NULL, due_at = now() + interval '1 hour'
+        WHERE machine = $1 AND key = $2 AND kind = $3`, [MACHINE, sessionKey(s.id), WORK.destroy]);
+    const again = await send(s, 'Resume', { from: 'paused', userId: s.owner.id, caps: { user: 100, global: 100 } }, route);
+    await rt.drain();
+    assert.equal((await outcome(again)).reason, 'tearing_down');
+    assert.equal((await row(s)).status, 'paused');
+    release();
+    await running.catch(() => {});
+
+    // The CC volume's purge, its lease lapsed mid-call: the reopen waits,
+    // and the memory is never reported kept while it goes.
+    defaults();
+    work.answer.set(WORK.purge, { purged: true });
+    let purged;
+    work.gate.set(WORK.purge, new Promise((r) => { purged = r; }));
+    const c = await session({ status: 'paused', pr: false });
+    await send(c, 'Close', { from: 'paused', reason: 'manual', userId: c.owner.id, purgeCc: true }, route);
+    await rt.drain();
+    const purging = rt.runServices();
+    await new Promise((r) => setTimeout(r, 50));
+    await lapse(c, WORK.purge);
+    const reopen = await send(c, 'Reopen', { from: 'archived', userId: c.owner.id }, route);
+    await rt.drain();
+    assert.equal((await outcome(reopen)).reason, 'tearing_down');
+    assert.equal((await row(c)).status, 'archived');
+    purged();
+    await purging.catch(() => {});
   });
 
   await t.test('P32 a resume or a reopen waits for teardown already under way, never races it (review 2.1)', async () => {

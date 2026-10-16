@@ -867,10 +867,14 @@ on, `reviewed_head_sha` and `approval_epoch`.
   carries a deadline a few seconds out: past it the machine refuses it (`expired`), so an
   answer the caller stopped waiting for never applies later. A close carries none.
 - **Teardown and coming back.** A pause, an unpromote or a close queues the worker's removal
-  (and a close that asks, the CC volume's), strict: a removal the runtime refuses is tried
-  again. A resume or a reopen reads that work under lock: one not started yet is cancelled,
-  one under way makes the move wait (`tearing_down`, asked again for up to 30 s), so a
-  session never comes back while its worker or memory is still being removed.
+  (and a close that asks, the CC volume's). The removal (`worker.removeWorker`,
+  `removeCcVolume`) is strict (a refusal throws and is tried again), fenced (it reads the
+  resources' identities, Kubernetes uids or the container's id, checks its claim is still its
+  own and the session has not come back, and deletes only those, so a stalled call never
+  removes a newer worker) and finished (it reports once they are gone, not when the delete is
+  accepted). A resume or a reopen reads that work under lock: one no attempt has started is
+  cancelled; one any attempt has started (running, its lease lapsed or not; reported; waiting
+  for a retry) makes the move wait (`tearing_down`, asked again for up to 30 s).
 - **Promote** (the button, the connector's tools, the local CLI, the Homeroom bot, an import
   going straight to a vote in its own transaction): under the owner's promoted cap, counted
   under a lock on their `users` row; refused while somebody works on the session, and for a

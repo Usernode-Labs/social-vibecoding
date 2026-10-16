@@ -169,7 +169,12 @@ module.exports = function install(fakes) {
   fakes.stub(path.join(SRC, 'services/worker'), {
     ...worker,
     async destroyWorker(name) { await fakes.record('worker.destroy', { name }); },
-    async removeWorker(sessionId) { await fakes.record('worker.destroy', { name: worker.workerContainerName(sessionId) }); },
+    // The proposal machine's fenced removal: asks to proceed, then removes.
+    async removeWorker(sessionId, { proceed = async () => true } = {}) {
+      if (!(await proceed())) return { skipped: true };
+      await fakes.record('worker.destroy', { name: worker.workerContainerName(sessionId) });
+      return { removed: true };
+    },
   });
   // Not an outside service, a probe: whether the Workshop hears a board
   // change in this process (its listener is registered by server.js only).

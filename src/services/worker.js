@@ -5621,32 +5621,72 @@ async function destroyWorker(containerName) {
 }
 
 // The proposal machine's teardown work (src/workflow/proposal/services.ts):
-// unlike destroyWorker / destroyCcVolume it throws when the runtime refuses,
-// so its durable work item is tried again rather than reporting a removal
-// that did not happen. Already gone is success.
-async function removeWorker(sessionId) {
+// a session's worker (`removeWorker`), or its worker and its Claude Code
+// volume (`removeCcVolume`). Unlike destroyWorker / destroyCcVolume:
+//   - strict: a removal the runtime refuses throws, and is tried again;
+//   - fenced: what is removed is read by identity first (Kubernetes uids,
+//     the Docker container's id), then `proceed()` is asked (the caller's
+//     claim on the work is still its own, the session has not come back),
+//     and only those are deleted. A call that stalls and lands after the
+//     session came back meets a newer worker under other identities, and
+//     leaves it alone;
+//   - finished: it answers once the resources are gone, not when the
+//     delete is accepted (a Deployment goes after its pods, a volume after
+//     the pod that mounts it), calling `renew()` while it waits; past
+//     `waitMs` it throws, and is tried again.
+// Answers { removed: true }, or { skipped: true } when `proceed()` said no.
+// Docker's named volume carries no identity: a local stack's only.
+async function removeSessionRuntime(sessionId, {
+  volume = false, proceed = async () => true, renew = async () => {}, waitMs = 90000, pollMs = 2000,
+} = {}) {
   if (!Number.isSafeInteger(sessionId) || sessionId <= 0) throw new Error('invalid_session');
+  const until = Date.now() + waitMs;
+  const settle = async (gone) => {
+    for (;;) {
+      if (await gone()) return;
+      if (Date.now() >= until) throw new Error('worker_removal_pending');
+      await renew();
+      await new Promise((r) => { setTimeout(r, pollMs); });
+    }
+  };
   if (usesKubernetesWorkers()) {
-    await kubernetes.deleteWorker(kubernetesWorkerConfig(), sessionId, { deleteVolume: false });
+    const config = kubernetesWorkerConfig();
+    const ids = await kubernetes.workerIdentity(config, sessionId, { volume });
+    if (!(await proceed())) return { skipped: true };
+    await kubernetes.deleteWorkerIdentity(config, sessionId, ids);
+    await settle(() => kubernetes.workerIdentityGone(config, sessionId, ids));
   } else {
-    const result = await docker.stopAndRemove(workerContainerName(sessionId));
-    if (!result.removed) throw new Error('worker_removal_failed');
-  }
-  _warmRegistry.delete(sessionId);
-  log.info('worker', 'Worker destroyed', { sessionId });
-}
-async function removeCcVolume(sessionId) {
-  if (!Number.isSafeInteger(sessionId) || sessionId <= 0) throw new Error('invalid_session');
-  if (usesKubernetesWorkers()) {
-    await kubernetes.deleteWorker(kubernetesWorkerConfig(), sessionId, { deleteVolume: true });
-  } else {
-    try {
-      await docker.execFileAsync('docker', ['volume', 'rm', '-f', ccVolumeName(sessionId)], { timeout: 10000 });
-    } catch (err) {
-      if (!/no such volume/i.test(String(err.stderr || err.message))) throw new Error('volume_removal_failed');
+    const id = await dockerContainerId(workerContainerName(sessionId));
+    if (!(await proceed())) return { skipped: true };
+    if (id) {
+      const result = await docker.stopAndRemove(id);
+      if (!result.removed) throw new Error('worker_removal_failed');
+      await settle(async () => (await docker.getContainerStatus(id)) === 'not_found');
+    }
+    if (volume) {
+      try {
+        await docker.execFileAsync('docker', ['volume', 'rm', '-f', ccVolumeName(sessionId)], { timeout: 10000 });
+      } catch (err) {
+        if (!/no such volume/i.test(String(err.stderr || err.message))) throw new Error('volume_removal_failed');
+      }
     }
   }
   _warmRegistry.delete(sessionId);
+  log.info('worker', volume ? 'Worker and its Claude Code volume removed' : 'Worker destroyed', { sessionId });
+  return { removed: true };
+}
+const removeWorker = (sessionId, opts = {}) => removeSessionRuntime(sessionId, { ...opts, volume: false });
+const removeCcVolume = (sessionId, opts = {}) => removeSessionRuntime(sessionId, { ...opts, volume: true });
+
+// A container's id, or null when there is none by that name.
+async function dockerContainerId(name) {
+  try {
+    const { stdout } = await docker.execFileAsync('docker', ['inspect', '--format', '{{.Id}}', name], { timeout: 5000 });
+    return String(stdout).trim() || null;
+  } catch (err) {
+    if (/no such (container|object)/i.test(String(err.stderr || err.message))) return null;
+    throw err;
+  }
 }
 
 // Account erasure must not use the best-effort archive helpers: a failed
