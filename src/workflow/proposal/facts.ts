@@ -1,0 +1,224 @@
+// What the proposal machine reads inside a transition. The proposal's row is
+// locked first and read by the next statement: a statement that waited for a
+// lock keeps the snapshot it started with, so a vote, a turn or a merge
+// committed while this transition waited would be missing from a read folded
+// into the locking one. Everything a decision rests on is read here, under
+// that lock, and nothing is cached:
+//
+//   - who is working on the proposal (src/workflow/session-work.ts: its
+//     coding turn, a turn on its author's own machine, its shots run, an old
+//     flow's recorded operation, a durable build that holds it);
+//   - for a move into a slot or into review, the caps, counted under a lock
+//     on the owner's users row and, for the platform-wide cap, a
+//     transaction-scoped advisory lock: two such moves for one owner wait for
+//     each other, so neither counts the other out (R5);
+//   - for a merge claim and the review check, the vote gate (rules/pr-gate.ts),
+//     so a vote committed before the decision is counted (R1, R2).
+
+import type { Event, Tx } from '../kernel/index.ts';
+import { readPrGate } from '../rules/pr-gate.ts';
+import type { GovernedGate } from '../rules/governance-gate.ts';
+import { appMetaFromRow, governanceFromRow } from '../rules/governance-gate.ts';
+import { electorate } from '../rules/electorate.ts';
+import { parseGithubUrl } from '../rules/github-url.ts';
+import { buildHoldSql, operationsLiveSql, shotsRunningSql } from '../session-work.ts';
+
+export interface Row {
+  id: number;
+  appId: number;
+  appSlug: string;
+  selfHosted: boolean;
+  repo: { owner: string; repo: string } | null;
+  userId: number | null;
+  ownerName: string | null;
+  ownerSynthetic: boolean;
+  status: string;
+  imported: boolean;
+  headless: boolean;
+  prNumber: number | null;
+  prTitle: string | null;
+  branch: string | null;
+  // The commit the vote is on: an import's pull-request head, else the
+  // reviewed head; and the two columns themselves.
+  head: string | null;
+  reviewedHead: string | null;
+  importedHead: string | null;
+  epoch: number;
+  promotedAt: string | null;
+  createdAt: string;
+  staleNotifiedAt: string | null;
+  lastActivityAt: string | null;
+  linkedIssues: number[];
+  agentSessionId: number | null;
+  explicitApproval: boolean;
+  explicitReason: string | null;
+  mergeAttemptAt: string | null;
+  // Its before & after shots have been declared or asked for: a head move
+  // tells the shots machine (one that never declared anything is left alone).
+  shots: boolean;
+  // A staging fixture (migrate.js seeds it active to show what an active
+  // session paints): never paused for being idle on a staging deployment.
+  fixture: boolean;
+  // Somebody works on it: its coding turn (activeTurn, its journal), a turn
+  // on its author's own machine or an old flow's recorded operation other
+  // than the caller's own (workedOn), its shots run (shotsRunning).
+  // `moving`: what may still move its branch under a promote or an
+  // unpromote: its coding turn, a turn on its author's machine, an old
+  // flow's operation (a sync, an upload) other than the caller's own, a
+  // worker's turn record (whose end is recorded after the turn, and is
+  // read as its journal instead) and a hand-off's pipeline (which checks
+  // the very commit being proposed, as [main] let it).
+  activeTurn: boolean;
+  workedOn: boolean;
+  moving: boolean;
+  shotsRunning: boolean;
+  // A durable build (the Homeroom bot's, a bench trial's) holds it.
+  buildHold: boolean;
+  pendingSecret: boolean;
+}
+
+export interface Caps {
+  promoted: number;      // the owner's proposals in review or going up for one
+  active: number;        // the owner's sessions holding a slot
+  global: number;        // the sessions spending the platform-wide budget
+}
+
+export interface Facts {
+  row: Row | null;
+  caps: Caps | null;
+  gate: GovernedGate | null;
+  // ReviewCheck: the last sign of interest (its promotion or the newest vote).
+  interestAt: string | null;
+  // review.open's success: the electorate, stamped as it goes up for a vote.
+  electorate: number | null;
+}
+
+export const NO_FACTS: Facts = { row: null, caps: null, gate: null, interestAt: null, electorate: null };
+
+// The platform-wide slot count's lock: every move into a slot takes it, for
+// the length of its transaction.
+export const GLOBAL_SLOTS_LOCK = 'homeroom:proposal-slots';
+
+const SHA = /^[0-9a-f]{40}$/;
+const sha = (v: unknown) => (SHA.test(String(v || '').toLowerCase()) ? String(v).toLowerCase() : null);
+const iso = (v: unknown) => (v == null ? null : new Date(v as string).toISOString());
+const issueNumbers = (v: unknown): number[] =>
+  [...new Set((Array.isArray(v) ? v : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+
+// The sessions spending the platform-wide budget (services/session-caps.js
+// GLOBAL_SESSIONS_SQL): active and in review, an import's aside.
+const GLOBAL_COUNT = `(SELECT COUNT(*)::int FROM chat_sessions g
+                        WHERE g.status IN ('active', 'promoted') AND g.source IS DISTINCT FROM 'imported')`;
+
+async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): Promise<Row | null> {
+  await tx.query('SELECT 1 FROM chat_sessions WHERE id = $1 FOR UPDATE', [sessionId]);
+  const { rows: [r] } = await tx.query(
+    `SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.pr_number, cs.pr_title,
+            cs.branch_name, cs.reviewed_head_sha, cs.imported_pr_head_sha, cs.approval_epoch, cs.promoted_at,
+            cs.created_at, cs.stale_notified_at, cs.last_activity_at, cs.linked_issues, cs.agent_session_id,
+            cs.requires_explicit_approval, cs.explicit_approval_reason, cs.merge_attempt_at,
+            (cs.shots_state IS NOT NULL OR cs.shots_detail IS NOT NULL
+              OR EXISTS (SELECT 1 FROM wf_instances sh WHERE sh.machine = 'shots' AND sh.key = 'session:' || cs.id)) AS shots,
+            cs.active_turn IS NOT NULL AS active_turn,
+            EXISTS (SELECT 1 FROM local_agent_turns t
+                     WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running')) AS local_turn,
+            ${operationsLiveSql('cs.id', '$2::text')} AS operations,
+            ${operationsLiveSql('cs.id', '$2::text', ['turn', 'handoff-pipeline'])} AS moving_operations,
+            ${shotsRunningSql('cs.id')} AS shots_running,
+            ${buildHoldSql('cs')} AS build_hold,
+            EXISTS (SELECT 1 FROM pending_secret_declarations p
+                     WHERE p.session_id = cs.id AND p.status = 'pending') AS pending_secret,
+            a.slug AS app_slug, a.repo_url, a.self_hosted,
+            u.username AS owner_name, COALESCE(u.is_synthetic, FALSE) AS owner_synthetic
+       FROM chat_sessions cs
+       JOIN apps a ON a.id = cs.app_id
+       LEFT JOIN users u ON u.id = cs.user_id
+      WHERE cs.id = $1`, [sessionId, ownOperation]);
+  if (!r) return null;
+  const imported = r.source === 'imported';
+  return {
+    id: r.id, appId: r.app_id, appSlug: r.app_slug, selfHosted: !!r.self_hosted,
+    repo: r.repo_url ? parseGithubUrl(r.repo_url) : null,
+    userId: r.user_id ?? null, ownerName: r.owner_name ?? null, ownerSynthetic: !!r.owner_synthetic,
+    status: r.status, imported, headless: !!r.is_headless,
+    prNumber: r.pr_number ?? null, prTitle: r.pr_title ?? null, branch: r.branch_name ?? null,
+    head: imported ? sha(r.imported_pr_head_sha) : sha(r.reviewed_head_sha),
+    reviewedHead: sha(r.reviewed_head_sha), importedHead: sha(r.imported_pr_head_sha),
+    epoch: Number(r.approval_epoch) || 0,
+    promotedAt: iso(r.promoted_at), createdAt: iso(r.created_at)!, staleNotifiedAt: iso(r.stale_notified_at),
+    lastActivityAt: iso(r.last_activity_at),
+    linkedIssues: issueNumbers(r.linked_issues), agentSessionId: r.agent_session_id ?? null,
+    explicitApproval: !!r.requires_explicit_approval, explicitReason: r.explicit_approval_reason ?? null,
+    mergeAttemptAt: iso(r.merge_attempt_at), shots: !!r.shots,
+    fixture: String(r.branch_name || '').startsWith('staging-fixture/'),
+    activeTurn: !!r.active_turn, workedOn: !!r.local_turn || !!r.operations,
+    moving: !!r.active_turn || !!r.local_turn || !!r.moving_operations, shotsRunning: !!r.shots_running,
+    buildHold: !!r.build_hold, pendingSecret: !!r.pending_secret,
+  };
+}
+
+// The caps' counts, under the owner's lock (and the platform's, `global`).
+async function readCaps(tx: Tx, row: Row, global: boolean): Promise<Caps> {
+  if (row.userId != null) await tx.query('SELECT 1 FROM users WHERE id = $1 FOR UPDATE', [row.userId]);
+  if (global) await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [GLOBAL_SLOTS_LOCK]);
+  const { rows: [c] } = await tx.query(
+    `SELECT (SELECT COUNT(*)::int FROM chat_sessions cs
+              WHERE cs.user_id = $1 AND cs.is_headless = FALSE
+                AND (cs.status IN ('promoted', 'merging')
+                     OR EXISTS (SELECT 1 FROM wf_instances w
+                                 WHERE w.machine = 'proposal' AND w.key = 'session:' || cs.id
+                                   AND w.state = 'proposing'))) AS promoted,
+            (SELECT COUNT(*)::int FROM chat_sessions cs
+              WHERE cs.user_id = $1 AND cs.status = 'active' AND cs.source IS DISTINCT FROM 'imported') AS active,
+            CASE WHEN $2::boolean THEN ${GLOBAL_COUNT} ELSE 0 END AS global`,
+    [row.userId, global]);
+  return { promoted: Number(c.promoted) || 0, active: Number(c.active) || 0, global: Number(c.global) || 0 };
+}
+
+// What the review check reads beside the gate: when anybody last showed
+// interest (the promotion, or the newest vote on it, whatever its epoch).
+async function readInterest(tx: Tx, row: Row): Promise<string | null> {
+  const { rows: [r] } = await tx.query(
+    `SELECT GREATEST(COALESCE($2::timestamptz, $3::timestamptz),
+                     COALESCE((SELECT MAX(pv.created_at) FROM pr_votes pv WHERE pv.session_id = $1), $2::timestamptz, $3::timestamptz))
+              AS at`, [row.id, row.promotedAt, row.createdAt]);
+  return iso(r?.at);
+}
+
+async function readElectorate(tx: Tx, appId: number): Promise<number | null> {
+  const { rows: [a] } = await tx.query(
+    'SELECT approver_policy, approvals_required, governance_rules, self_hosted, collab_visibility FROM apps WHERE id = $1', [appId]);
+  if (!a) return null;
+  const { active } = await electorate(tx, appId, governanceFromRow(a), appMetaFromRow(a));
+  return Math.max(Number(active) || 0, 1);
+}
+
+export interface ReadOptions {
+  now: Date;
+  // A work result for the open review (its result is stamped with the
+  // electorate).
+  reviewOpened?: boolean;
+}
+
+export async function readFacts(tx: Tx, sessionId: number, event: Event<any>, o: ReadOptions): Promise<Facts> {
+  const p = event.payload || {};
+  const row = await readRow(tx, sessionId, typeof p.ownOperation === 'string' ? p.ownOperation : null);
+  if (!row) return NO_FACTS;
+  const out: Facts = { ...NO_FACTS, row };
+  if (event.type === 'Promote') out.caps = await readCaps(tx, row, false);
+  if (event.type === 'Resume' && p.caps) out.caps = await readCaps(tx, row, true);
+  const gated = (event.type === 'MergeClaim' && !p.force) || event.type === 'ReviewCheck';
+  if (gated && row.status === 'promoted') {
+    out.gate = await readPrGate(tx, {
+      sessionId: row.id, appId: row.appId, openedAt: row.promotedAt || row.createdAt,
+      // A claim names the protected-settings check it made on the live head;
+      // the hourly check reads the stored flag.
+      explicitApproval: event.type === 'MergeClaim' ? !!p.explicitApproval : row.explicitApproval,
+      explicitReason: event.type === 'MergeClaim' ? (p.explicitReason ?? null) : row.explicitReason,
+      authorId: row.userId, now: o.now,
+    });
+  }
+  if (event.type === 'ReviewCheck') out.interestAt = await readInterest(tx, row);
+  if (o.reviewOpened) out.electorate = await readElectorate(tx, row.appId);
+  return out;
+}

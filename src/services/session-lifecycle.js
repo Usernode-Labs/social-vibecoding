@@ -1,37 +1,22 @@
 'use strict';
 
-// Shared session lifecycle transitions, callable from both HTTP route
-// handlers (manual pause/resume) and the background sweeper (auto-pause).
+// A proposal's lifecycle moves, by the names their callers have always used.
 //
-// Why a service instead of inline route logic: the auto-pause sweeper in
-// server.js needs to run the exact same teardown the manual POST /pause
-// endpoint does (status flip + staging teardown + worker destroy + WS
-// notify), and we don't want two copies drifting apart. Resume's LRU
-// logic in routes/sessions.js also leans on pauseSession here.
+// The proposal machine decides every one of them (src/workflow/proposal/):
+// pause and resume (the session's slot), unpromote, archive (a close, for
+// any reason) and unarchive (a reopen). Each name here reads what its caller
+// decides on when the caller has not (the status it saw, as `from`), appends
+// the machine's event, waits for its outcome, and answers as it always did.
+// What a move does around it (the worker destroyed, the pull request closed
+// or reopened, the preview retired, the work orders and the held secret
+// discarded, the thread line, the bell) is the machine's: in the move's
+// transaction, or durable work.
 
 const log = require('./logger');
-const notifications = require('./notifications');
 const staging = require('./staging');
-const turnLifecycle = require('./turn-lifecycle');
 const worker = require('./worker');
-const { isSessionBusy } = require('./active-workers');
-const workerProgress = require('./worker-progress');
 const github = require('./github');
 const branchNames = require('./branch-names');
-const externalAgentTasks = require('./external-agent-tasks');
-
-// 14 Oct 2026 (#5162's follow-up): whether a durable build holds the
-// session (services/build-runs.js holdsSession: its build is still under
-// way, wherever it runs, its turns and the time between them). Slot eviction
-// pauses a session without its asking, and pausing destroys its worker: a
-// build on a draining process can sit idle between turns longer than the
-// grace these use, so a held session is never their victim. A read that
-// fails answers false, and the eviction goes on as it did before.
-async function heldByDurableBuild(pool, sessionId, why) {
-  const held = await require('./build-runs').holdsSession(pool, sessionId);
-  if (held) log.info('session-lifecycle', 'Not pausing a session a durable build holds', { sessionId, why });
-  return held;
-}
 
 // Parse "owner/repo" out of a stored GitHub repo URL. Returns [owner,
 // repo] or [] when the URL is missing/unparseable.
@@ -40,335 +25,131 @@ function ownerRepo(repoUrl) {
   return owner && repo ? [owner, repo] : [];
 }
 
-// Transition a session 'active'|'promoted' -> 'paused'. Reversible: keeps
-// the CC volume, branch, PR, AND the staging preview so /resume restores
-// cleanly (and cheaply — no staging rebuild). Mirrors the historical
-// POST /pause handler body, minus the HTTP-only concerns (auth scoping,
-// already-paused soft-200, the in-flight activeWorkers set that lives in
-// routes/sessions.js).
-//
-// NOTE: pause deliberately no longer tears down staging. Staging has its
-// own lifecycle now (kept alive across pause so reopening is cheap;
-// reclaimed by teardownStagingForSession on a longer idle timer, or on
-// archive/merge). Worker re-warm is cheap (~5-30s); a staging rebuild is
-// not (docker build + pg clone), so pausing on a short idle timer must
-// not pay that cost.
-//
-// Callers that pause a session which might have a CC turn in flight (the
-// manual endpoint, where the user may pause to abort) handle the
-// activeWorkers bookkeeping themselves before calling this. The sweeper
-// only ever calls this for sessions that are NOT in flight, so there's
-// nothing to clear there.
-//
-// Params:
-//   pool      - pg pool
-//   sessionId - numeric session id
-//   userId    - optional; when set, scopes the status flip to that owner
-//               (authz for the manual endpoint). Omit for system actions.
-//   reason    - free-form string for logs ('manual' | 'auto-idle' | 'lru')
-//
-// Returns { paused: boolean, appSlug?: string }. paused=false means the
-// row wasn't in a pausable state (already paused/archived/merged, or not
-// owned by userId) and nothing was torn down.
-async function pauseSession({ pool, sessionId, userId = null, reason = 'manual' }) {
-  const params = [sessionId];
-  let ownerClause = '';
-  if (userId != null) {
-    params.push(userId);
-    ownerClause = ' AND user_id = $2';
-  }
+function platform() {
+  return require('../workflow/platform.ts');
+}
 
-  // Only 'active' sessions are demoted to 'paused'. A 'promoted' session
-  // must keep its status so its PR stays up for vote — pausing the
-  // proposer's worker must not yank the PR out of the vote (the vote
-  // endpoint and cast-vote handler key off status IN ('promoted','merging')).
-  // This mirrors the auto-pause sweeper and LRU eviction, which already
-  // refuse to pause promoted sessions. The manual /pause endpoint handles
-  // the worker teardown for promoted sessions itself (see routes/sessions.js).
+const accepted = (out) => !!out && (out.status === 'accepted' || out.status === 'replayed');
+
+async function appSlugOf(pool, sessionId) {
   const { rows } = await pool.query(
-    `UPDATE chat_sessions SET status = 'paused'
-     WHERE id = $1${ownerClause} AND status = 'active'
-       AND source IS DISTINCT FROM 'imported'
-     RETURNING id`,
-    params
-  );
-  if (!rows.length) return { paused: false };
+    'SELECT a.slug FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1', [sessionId]);
+  return rows[0]?.slug || null;
+}
 
-  const { rows: sessionRows } = await pool.query(
-    `SELECT cs.*, a.slug as app_slug
-     FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
-     WHERE cs.id = $1`,
-    [sessionId]
-  );
-  const session = sessionRows[0];
-  const appSlug = session?.app_slug;
-
-  // Clear any lingering progress + tear down the worker container. Both
-  // are no-ops if there's nothing there (the common auto-pause case:
-  // worker was already idle-evicted minutes ago). Staging is left up on
-  // purpose — see the note above.
-  workerProgress.clear(sessionId);
-  await worker.destroyWorker(worker.workerContainerName(sessionId)).catch(() => {});
-
-  const { pushSessionUpdate } = require('./ws');
-  pushSessionUpdate({ action: 'paused', sessionId, appSlug });
+// Give the session's slot back (status 'paused'): its worker goes; its CC
+// volume, branch, pull request and preview are kept, so resuming it is
+// cheap. `from` is the status the caller read ('active'); `reason` is
+// 'manual' (the owner's /pause), 'park', 'lru' and 'pressure' (a slot freed
+// for other work), 'rest', 'account-deletion', 'build-ended'. The platform's
+// own reasons never pause a session somebody works on, nor one a durable
+// build holds (the machine's guard). Returns { paused, appSlug? }.
+async function pauseSession({ pool, sessionId, userId = null, reason = 'manual', from }) {
+  const out = await platform().pauseProposal({ sessionId: Number(sessionId), reason, from, userId });
+  if (!accepted(out)) return { paused: false, reason: out?.reason || out?.status || null };
+  const appSlug = await appSlugOf(pool, sessionId);
   log.info('session-lifecycle', 'Session paused', { sessionId, reason });
-
-  if (SYSTEM_PAUSE_REASONS.has(reason) && pausedMidTurn(session)) {
-    await notifyPausedMidTurn(pool, session);
-  }
-
   return { paused: true, appSlug };
 }
 
-// #3181: the pauses the platform makes on its own. A pause the owner asked
-// for ('manual', or parking a change from an agent session) is a deliberate
-// end, like pressing stop, and never reports a stall.
-const SYSTEM_PAUSE_REASONS = new Set(['auto-idle', 'pressure', 'lru']);
-
-// Was a turn still open on this session when it was paused? The slot sweeps
-// skip sessions busy in THIS process, but a turn record can outlive that:
-// one running on another process, or one left detached by a restart and not
-// yet recovered. Destroying the worker ends it either way. A record that is
-// only waiting for its final cleanup belongs to a turn that already finished.
-function pausedMidTurn(session) {
-  if (!session || session.is_headless) return false;
-  return turnLifecycle.recoveryAction(session.active_turn) === 'resume';
-}
-
-// Tell the owner, in the bell and as a push, that the session stopped before
-// finishing (same kind and unread dedup the chat turn uses). Best-effort: a
-// failed notification never fails the pause.
-async function notifyPausedMidTurn(pool, session) {
-  try {
-    const created = await notifications.createSessionStalledNotification(pool, {
-      userId: session.user_id, appId: session.app_id, sessionId: session.id,
-    });
-    if (created.length) await notifications.hydrateAndPush(pool, created[0]);
-  } catch (err) {
-    log.warn('session-lifecycle', 'session_stalled notify failed', {
-      sessionId: session.id, err: err.message,
-    });
-  }
-}
-
 // #3114: take a proposal out of review and back to Underway, for when its
-// author wants to keep working on it before the group can merge it. The
-// opposite of the promote route (routes/votes.js), and deliberately NOT a
-// withdraw: the pull request, branch, staging preview and CC volume all stay
-// exactly as they are, so a later promote reuses them.
-//
-// Everything that decides safety happens in ONE guarded UPDATE:
-//   - `status = 'promoted'` is the same compare-and-set the merge claim in
-//     checkAndMerge uses ('promoted' -> 'merging'). Exactly one of the two can
-//     win, so a proposal that has started merging is never pulled back, and
-//     one that has been pulled back can never be claimed for a merge.
-//   - `approval_epoch + 1` voids every vote cast so far, the way
-//     integration.clearApprovals does (no DELETE: the rows stay as a record
-//     and a re-promote shows voters "Still yes?"). recordVote locks the row
-//     and requires 'promoted'/'merging', so a vote racing this either lands
-//     before it (and is voided) or finds the row Underway and is refused.
-//   - `active_turn IS NULL` plus the in-process busy check keep a running
-//     build from being cut off mid-turn.
-//   - A secret-declaration proposal is refused: its held value is discarded
-//     the moment the session leaves review (services/pending-secrets.js), so
-//     the author must decide to withdraw it rather than lose it silently.
-//
-// Native sessions land in 'paused' (the worker is torn down like /pause, and
-// sending a message resumes it through the usual caps); an imported PR has
-// no worker and no paused state, so it returns to 'active', the state it was
-// promoted from.
+// author wants to keep working on it before the group can merge it. Not a
+// withdraw: its pull request, branch, preview and CC volume stay as they
+// are, so a later promote reuses them. Its votes are voided (the approval
+// epoch moves on); a session somebody works on, or one holding a secret
+// declaration (discarded when it leaves review), is refused.
 //
 // Returns { ok: true, status, appSlug } on success, { ok: true, already: true,
 // status } when the proposal is already Underway, or { ok: false, code } with
 // code in 'not_found' | 'forbidden' | 'merging' | 'closed' | 'busy' |
 // 'pending_secret'.
 async function unpromoteSession({ pool, sessionId, userId, actorUsername = null }) {
-  // An in-process turn (the chat handler's set, a sync-main run) is not in
-  // the row, so it is checked here; a busy session skips the write and is
-  // reported below, after the ownership answer.
-  const busyNow = require('./active-workers').isSessionBusy(sessionId);
-
-  const { rows } = busyNow ? { rows: [] } : await pool.query(
-    `UPDATE chat_sessions cs
-        SET status = CASE WHEN cs.source = 'imported' THEN 'active' ELSE 'paused' END,
-            approval_epoch = cs.approval_epoch + 1,
-            stale_notified_at = NULL
-      WHERE cs.id = $1 AND cs.user_id = $2
-        AND cs.status = 'promoted'
-        AND cs.is_headless = FALSE
-        AND cs.active_turn IS NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM pending_secret_declarations p
-           WHERE p.session_id = cs.id AND p.status = 'pending'
-        )
-      RETURNING cs.id, cs.status, cs.app_id, cs.pr_number, cs.pr_title, cs.source`,
-    [sessionId, userId]
-  );
-
-  if (!rows.length) {
-    const { rows: current } = await pool.query(
-      `SELECT cs.status, cs.user_id, cs.active_turn IS NOT NULL AS turn_running,
-              EXISTS (
-                SELECT 1 FROM pending_secret_declarations p
-                 WHERE p.session_id = cs.id AND p.status = 'pending'
-              ) AS pending_secret
-         FROM chat_sessions cs
-        WHERE cs.id = $1 AND cs.is_headless = FALSE`,
-      [sessionId]
-    );
-    const row = current[0];
-    if (!row) return { ok: false, code: 'not_found' };
-    if (Number(row.user_id) !== Number(userId)) {
-      // A proposal in review is public, so naming it as someone else's leaks
-      // nothing; a private Underway session stays indistinguishable from a
-      // missing one.
-      return ['promoted', 'merging', 'merged'].includes(row.status)
-        ? { ok: false, code: 'forbidden' }
-        : { ok: false, code: 'not_found' };
-    }
-    if (row.status === 'active' || row.status === 'paused') {
-      return { ok: true, already: true, status: row.status };
-    }
-    if (row.status === 'merging' || row.status === 'merged') return { ok: false, code: 'merging' };
-    if (row.status !== 'promoted') return { ok: false, code: 'closed' };
-    if (busyNow || row.turn_running) return { ok: false, code: 'busy' };
-    if (row.pending_secret) return { ok: false, code: 'pending_secret' };
-    // Promoted a moment ago and changed again under us: report it as a
-    // conflict rather than guessing which state it is in now.
+  const { rows: [row] } = await pool.query(
+    'SELECT status, user_id, app_id FROM chat_sessions WHERE id = $1 AND is_headless = FALSE', [sessionId]);
+  if (!row) return { ok: false, code: 'not_found' };
+  if (Number(row.user_id) !== Number(userId)) {
+    // A proposal in review is public, so naming it as someone else's leaks
+    // nothing; a private Underway session stays indistinguishable from a
+    // missing one.
+    return ['promoted', 'merging', 'merged'].includes(row.status)
+      ? { ok: false, code: 'forbidden' } : { ok: false, code: 'not_found' };
+  }
+  if (row.status === 'active' || row.status === 'paused') return { ok: true, already: true, status: row.status };
+  if (row.status === 'merging' || row.status === 'merged') return { ok: false, code: 'merging' };
+  if (row.status !== 'promoted') return { ok: false, code: 'closed' };
+  const out = await platform().unpromoteProposal({
+    sessionId: Number(sessionId), appId: row.app_id, userId: Number(userId), username: actorUsername, from: row.status,
+  });
+  if (!accepted(out)) {
+    const code = out?.reason;
+    if (code === 'already_underway') return { ok: true, already: true, status: 'paused' };
+    if (code === 'busy' || code === 'pending_secret' || code === 'closed' || code === 'merging') return { ok: false, code };
+    // Changed under us (merging, merged): a conflict rather than a guess.
     return { ok: false, code: 'merging' };
   }
+  log.info('session-lifecycle', 'Proposal moved back to Underway', { sessionId });
+  return { ok: true, status: out.reply?.status || 'paused', appSlug: await appSlugOf(pool, sessionId) };
+}
 
-  const session = rows[0];
-  const { rows: appRows } = await pool.query('SELECT slug FROM apps WHERE id = $1', [session.app_id]);
-  const appSlug = appRows[0]?.slug || null;
+// Sessions to pause for a slot, least recently active first: holding one,
+// not imported, and (for the platform-wide cap) idle past the grace window.
+// The machine's guard skips any somebody works on or a durable build holds.
+const GLOBAL_VICTIMS_SQL = `SELECT id FROM chat_sessions
+   WHERE status = 'active'
+     AND source IS DISTINCT FROM 'imported'
+     AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
+     AND id <> $2
+   ORDER BY last_activity_at ASC
+   LIMIT 20`;
+const USER_VICTIMS_SQL = `SELECT id FROM chat_sessions
+  WHERE user_id = $1 AND status = 'active' AND id <> $2
+    AND source IS DISTINCT FROM 'imported'
+    AND ($3::boolean OR is_headless = FALSE)
+  ORDER BY last_activity_at ASC
+  LIMIT 20`;
 
-  // The merge gate's "what it still needs" list describes a proposal under
-  // review; an Underway change has nothing blocking it.
-  await require('./integration').setBlockReasons(pool, session.id, []).catch(() => {});
-
-  if (session.source !== 'imported') {
-    workerProgress.clear(sessionId);
-    await worker.destroyWorker(worker.workerContainerName(sessionId)).catch(() => {});
+// The first of `ids` the machine pauses for `reason`.
+async function pauseFirst(ids, reason) {
+  for (const id of ids) {
+    const out = await platform().pauseProposal({ sessionId: Number(id), reason, from: 'active' }).catch((err) => {
+      log.warn('session-lifecycle', 'Could not ask to pause a session for a slot', { sessionId: id, reason, err: err.message });
+      return null;
+    });
+    if (accepted(out)) return Number(id);
   }
-
-  // The lifecycle feed: promote, merge and withdraw all post here, so the
-  // move back is on the record in the app chat and the proposal's own thread.
-  const label = session.pr_number
-    ? (session.pr_title ? `PR #${session.pr_number}: ${session.pr_title}` : `PR #${session.pr_number}`)
-    : `Proposal #${session.id}`;
-  const content = `${actorUsername || 'The author'} moved ${label} back to Underway. Its votes were cleared, and it goes up for a fresh vote when it is proposed again`;
-  try {
-    const { sendSystemMessage } = require('./ws');
-    await sendSystemMessage(pool, session.app_id, content, 'system', null,
-      { type: 'session', ref: session.id }).catch(() => {});
-  } catch (err) {
-    log.warn('session-lifecycle', 'Failed to post moved-to-Underway chat message', { sessionId, err: err.message });
-  }
-
-  try {
-    const { pushSessionUpdate, pushVoteUpdate } = require('./ws');
-    pushSessionUpdate({ action: 'unpromoted', sessionId, appSlug });
-    pushVoteUpdate({ sessionId, appSlug, appId: session.app_id, merged: false });
-  } catch (_) { /* ws failures are non-fatal */ }
-
-  log.info('session-lifecycle', 'Proposal moved back to Underway', { sessionId, status: session.status });
-  return { ok: true, status: session.status, appSlug };
+  return null;
 }
 
 // Demand-driven global-cap eviction. Called when a new session is needed
-// (create or resume) but the platform is at the global cap. Pauses the
-// globally least-recently-active 'active' session that has been idle
-// longer than `graceMs` and isn't mid-turn — freeing a slot immediately
-// rather than making the requester wait for the slow background auto-
-// pause. The grace window protects anyone actively working: only
-// sessions idle past it are eligible victims.
-//
-// Cross-user by design: under contention, an idle session belonging to
-// any user can be paused to admit a new one. The victim's worker is
-// already long gone (idle-evicted), so reopening auto-resumes cleanly.
-//
-// Params:
-//   pool             - pg pool
-//   graceMs          - minimum idle time (ms) a session must exceed to be
-//                      an eviction candidate. <= 0 disables (returns
-//                      {freed:false} without touching anything).
-//   excludeSessionId - optional id to never evict (e.g. the session being
-//                      resumed).
-//
+// (create, resume, reopen) but the platform is at the global cap: the
+// least recently active idle session anywhere, idle past `graceMs` and with
+// nobody working on it, is paused, freeing a slot at once rather than
+// making the requester wait for its idle check. Cross-user by design: its
+// worker is long gone, and opening it resumes it. <= 0 disables.
 // Returns { freed: boolean, sessionId?: number }.
 async function freeGlobalSlot({ pool, graceMs, excludeSessionId = null }) {
   if (!graceMs || graceMs <= 0) return { freed: false };
-
-  const params = [graceMs];
-  let exclude = '';
-  if (excludeSessionId != null) {
-    params.push(excludeSessionId);
-    exclude = ' AND id <> $2';
-  }
-
-  const { rows } = await pool.query(
-    `SELECT id FROM chat_sessions
-     WHERE status = 'active'
-       AND source IS DISTINCT FROM 'imported'
-       AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)${exclude}
-     ORDER BY last_activity_at ASC
-     LIMIT 20`,
-    params
-  );
-
-  for (const row of rows) {
-    // Never evict a session with any turn/pipeline in flight. Native CLI
-    // proposal staging has no worker exec, but it owns the same session and
-    // must be allowed to finish just like a web coding turn.
-    if (isSessionBusy(row.id)) continue;
-    if (await heldByDurableBuild(pool, row.id, 'pressure')) continue;
-    const { paused } = await pauseSession({ pool, sessionId: row.id, reason: 'pressure' });
-    if (paused) {
-      log.info('session-lifecycle', 'Freed global slot under pressure', { sessionId: row.id });
-      return { freed: true, sessionId: row.id };
-    }
-  }
-  return { freed: false };
+  const { rows } = await pool.query(GLOBAL_VICTIMS_SQL, [graceMs, excludeSessionId == null ? 0 : excludeSessionId]);
+  const id = await pauseFirst(rows.map((r) => r.id), 'pressure');
+  if (id == null) return { freed: false };
+  log.info('session-lifecycle', 'Freed global slot under pressure', { sessionId: id });
+  return { freed: true, sessionId: id };
 }
 
-// The per-user cap, handled for the user rather than put to them. When their
-// own work needs one of their slots and every slot is taken, pause their
-// least-recently-active session that is not mid-turn. Pausing keeps the
+// The per-user cap, handled for the user rather than put to them: when
+// their own work needs one of their slots and every slot is taken, their
+// least recently active session nobody works on is paused. Pausing keeps the
 // branch, the pull request, the preview and the agent's context, and opening
-// or messaging the session resumes it, so it is bookkeeping the user never
-// sees: "paused" is not a state anybody is asked to manage (#2779 follow-up).
-// The resume route has always done this; starting new work does it too now.
-//
-// Params:
-//   userId           - whose slot to free (only their own sessions).
-//   excludeSessionId - a session never to pause (the one being resumed or
-//                      replaced).
-//   includeHeadless  - the resume route's count includes headless rows, so
-//                      its victims may be headless too; every other count
-//                      excludes them.
-//
+// or messaging the session resumes it: "paused" is not a state anybody is
+// asked to manage (#2779 follow-up). `includeHeadless`: the resume route's
+// count includes headless rows, so its victims may be headless too.
 // Returns { freed: boolean, sessionId?: number }.
 async function freeUserSlot({ pool, userId, excludeSessionId = null, includeHeadless = false }) {
-  const { rows } = await pool.query(
-    `SELECT id FROM chat_sessions
-      WHERE user_id = $1 AND status = 'active' AND id <> $2
-        AND source IS DISTINCT FROM 'imported'
-        AND ($3::boolean OR is_headless = FALSE)
-      ORDER BY last_activity_at ASC`,
-    [userId, excludeSessionId == null ? 0 : excludeSessionId, !!includeHeadless]
-  );
-  for (const row of rows) {
-    const id = Number(row && row.id);
-    if (!Number.isInteger(id) || id <= 0 || isSessionBusy(id)) continue;
-    if (await heldByDurableBuild(pool, id, 'lru')) continue;
-    const { paused } = await pauseSession({ pool, sessionId: id, userId, reason: 'lru' });
-    if (paused) {
-      log.info('session-lifecycle', 'Freed a user slot', { userId, sessionId: id });
-      return { freed: true, sessionId: id };
-    }
-  }
-  return { freed: false };
+  const { rows } = await pool.query(USER_VICTIMS_SQL, [userId, excludeSessionId == null ? 0 : excludeSessionId, !!includeHeadless]);
+  const id = await pauseFirst(rows.map((r) => r.id), 'lru');
+  if (id == null) return { freed: false };
+  log.info('session-lifecycle', 'Freed a user slot', { userId, sessionId: id });
+  return { freed: true, sessionId: id };
 }
 
 // The one thing a user is told when their slots cannot be freed: every other
@@ -462,289 +243,89 @@ async function teardownStagingForSession({ pool, sessionId, reason = 'idle' }) {
   return { torn: true };
 }
 
-// Archive a session. Reversible now: it tears down the live resources
-// (staging + worker) and closes the PR, but KEEPS the CC volume + branch
-// so /unarchive can restore it. The CC volume is only destroyed later by
-// purgeArchivedCc once the retention window elapses (or immediately when
-// purgeCc=true, for callers that want the old hard-delete).
-//
-// Params:
-//   pool, sessionId
-//   userId  - optional owner scope (HTTP authz). Omit for system actions.
-//   reason  - 'manual' | 'stale-pr' | ... The Homeroom bot's own proposals
-//             (#11, WP3) close with 'withdrawn' (asked for in its DM),
-//             'superseded' (another proposal for the same request covers it)
-//             or 'request-closed' (every request it was built for closed
-//             another way: homeroom-bot-closed-requests.js), or 'red-checks'
-//             (red, handed to a person and untouched for days:
-//             homeroom-bot-red-changes.js).
-//   purgeCc - destroy the CC volume immediately (skip retention). Default
-//             false. The activeWorkers in-flight set (routes/sessions.js)
-//             is cleared by the HTTP handler, not here.
-// Returns { archived: boolean, appSlug?: string }.
-async function archiveSession({ pool, sessionId, userId = null, reason = 'manual', purgeCc = false }) {
-  const params = [sessionId];
-  let ownerClause = '';
-  if (userId != null) {
-    params.push(userId);
-    ownerClause = ' AND user_id = $2';
-  }
-
-  const { rows } = await pool.query(
-    `UPDATE chat_sessions SET status = 'archived', archived_at = NOW()
-     WHERE id = $1${ownerClause} AND status IN ('active', 'promoted', 'paused')
-     RETURNING id`,
-    params
-  );
-  if (!rows.length) return { archived: false };
-
-  return finalizeArchivedSession({ pool, sessionId, userId, reason, purgeCc });
-}
-
-// Finish the reversible-archive side effects after the status transition.
-// proposal_start uses this after atomically archiving a predecessor and
-// inserting its successor in one transaction; ordinary archiveSession calls
-// it immediately after its own guarded UPDATE. These operations are
-// best-effort, so a process restart can leave only resources the existing
-// staging/worker reapers already know how to collect.
-async function finalizeArchivedSession({
-  pool,
-  sessionId,
-  userId = null,
-  reason = 'manual',
-  purgeCc = false,
-}) {
-
-  // A work order is one ATTEMPT at an issue, and this is where the attempt
-  // ends. It had a beginning (prepare) and two endings (submit, "Start over")
-  // but none for "the session it belonged to is over", so dead attempts
-  // leaked: each held one of the owner's ten open-work-order slots for the
-  // full 14-day expiry, and they piled up into a backlog the launchpad then
-  // tried to hand back out, one per new change. Best-effort like every side
-  // effect here — an archive must not fail because a reservation could not be
-  // closed, and the expiry still collects anything this misses.
-  await externalAgentTasks.abandonTasksForSession(pool, sessionId)
-    .then((closed) => {
-      if (closed) {
-        log.info('session-lifecycle', 'Work orders closed with the session', { sessionId, closed });
-      }
-    })
-    .catch((err) => {
-      log.warn('session-lifecycle', 'Failed to close work orders on archive', { sessionId, err: err.message });
-    });
-
-  // owner_username feeds the PR-withdrawn group-chat line (#200). The
-  // manual archive endpoint is owner-scoped, so when userId is present
-  // the session owner IS the actor. LEFT JOIN: a missing user row must
-  // not block the archive — the message just falls back to actor-less.
-  const { rows: sessionRows } = await pool.query(
-    `SELECT cs.*, a.slug as app_slug, a.repo_url, u.username AS owner_username
-     FROM chat_sessions cs
-     JOIN apps a ON cs.app_id = a.id
-     LEFT JOIN users u ON u.id = cs.user_id
-     WHERE cs.id = $1`,
-    [sessionId]
-  );
-  const session = sessionRows[0];
-  const appSlug = session?.app_slug;
-
-  // #2779: a change an agent session started tells that conversation it is
-  // closed, and stops being its active change. Best-effort, like everything
-  // else here: the note never holds up the archive.
-  if (session) {
-    await require('./agent-sessions').noteChangeClosed(pool, {
-      change: session,
-      outcome: require('./agent-sessions').outcomeForArchiveReason(reason),
-    });
-  }
-
-  // A preview the machine is still building has no columns yet, and is
-  // retired all the same: the archive is what stops it.
-  const previewHeld = session ? await require('./preview-workflow').held(session.id).catch(() => false) : false;
-  if (session?.staging_runtime_name || session?.staging_container_id || previewHeld) {
-    // Same contract as teardownStagingForSession above (#851): the preview
-    // machine retires it (the session is archived by now, so for good), and
-    // the columns go once it has. The archive itself proceeds regardless —
-    // closing the PR and changing status must not hinge on the cluster.
-    const result = await staging.teardownStaging(session, { slug: appSlug })
-      .catch((err) => {
-        log.warn('session-lifecycle', 'Staging teardown threw on archive', { sessionId, err: err.message });
-        return { removed: false, leaked: true };
-      });
-    if (result && result.leaked) {
-      log.warn('session-lifecycle', 'Archive left a staging container behind — link kept for retry', {
-        sessionId, reason,
-      });
-    }
-  }
-
-  if (session?.pr_number) {
-    const [owner, repo] = ownerRepo(session.repo_url);
-    if (owner) await github.closePR(owner, repo, session.pr_number).catch((err) => {
-      log.warn('session-lifecycle', 'Failed to close PR on archive', { sessionId, err: err.message });
-    });
-
-    // #200: say the withdrawal in the proposal's own thread, completing its
-    // story (promote/merge already post there — a withdrawn PR otherwise
-    // vanishes silently; a channel carries no activity, ws.sendSystemMessage).
-    // Posted regardless of closePR's
-    // outcome: the close is best-effort and the PR leaves the vote
-    // panel either way. Own catch so a chat failure never fails the
-    // archive itself.
-    // Named by its title, in Homeroom's words: a change, never "PR #n".
-    const label = session.pr_title ? `“${session.pr_title}”` : 'This change';
-    // Rejection (auto-takedown) gets its own line so the lifecycle feed reads
-    // correctly: the group voted it down rather than it just going quiet.
-    const content = reason === 'auto-rejected'
-      ? `${label} was set aside for now (more No than Yes, and not enough support to carry it).`
-      : reason === 'proposal-replaced' && userId != null && session.owner_username
-        ? `${session.owner_username} replaced ${session.pr_title ? label : 'this change'} with a new one.`
-      : reason === 'superseded'
-        ? `${label} was withdrawn: another change for the same request covers it.`
-      : reason === 'request-closed'
-        ? `${label} was withdrawn: the request it was built for is closed.`
-      : reason === 'red-checks'
-        ? `${label} was withdrawn: its checks failed and nobody changed it for a few days.`
-      : reason === 'withdrawn'
-        ? `${label} was withdrawn.`
-      : userId != null && session.owner_username
-        ? `${session.owner_username} withdrew ${session.pr_title ? label : 'this change'}.`
-        : `${label} went quiet and was set aside. It can always come back as a new change.`;
-    try {
-      const { sendSystemMessage } = require('./ws');
-      await sendSystemMessage(pool, session.app_id, content, 'system', null, { type: 'session', ref: session.id });
-    } catch (err) {
-      log.warn('session-lifecycle', 'Failed to post PR-withdrawn chat message', { sessionId, err: err.message });
-    }
-  }
-
-  workerProgress.clear(sessionId);
-  await worker.destroyWorker(worker.workerContainerName(sessionId)).catch(() => {});
-
-  // A withdrawn / voted-down declaration proposal takes its held secret
-  // value with it: the group didn't approve the change, so the value must
-  // stop existing rather than sit around waiting for a PR that will never
-  // merge (services/pending-secrets.js). This covers every abandonment
-  // path, since they all funnel through archiveSession. Best-effort — the
-  // panel also treats a row whose session left the live statuses as dead.
-  await require('./pending-secrets').discardForSession(pool, sessionId)
-    .catch((err) => log.warn('session-lifecycle', 'Pending-declaration discard failed', {
-      sessionId, err: err.message,
-    }));
-
-  // Retention: keep the CC volume so /unarchive can restore conversation
-  // memory. purgeArchivedCc (or purgeCc=true here) destroys it later.
-  if (purgeCc) {
-    await worker.destroyCcVolume(sessionId).catch(() => {});
-    await pool.query(`UPDATE chat_sessions SET cc_purged = TRUE WHERE id = $1`, [sessionId]);
-  }
-
-  const { pushSessionUpdate, pushIssueUpdate } = require('./ws');
-  pushSessionUpdate({ action: 'archived', sessionId, appSlug });
-  // #8 (WP3): one of the Homeroom bot's proposals closed, by any of the
-  // paths above: the activity tray of whoever asked for it reads again.
-  // Never throws, and finds nobody for anybody else's session.
-  await require('./homeroom-bot-dm').noteProposalChanged(pool, sessionId);
-  // 5 October (Page Turners): a closed change asks nobody anything: its
-  // "ready to try" rows, vote nudges and digests are settled
-  // (notifications.settleDecidedChange). Best-effort like the rest.
-  await require('./notifications').settleDecidedChange(pool, sessionId).catch((err) => {
-    log.warn('session-lifecycle', 'Settling the bell for a closed change failed', { sessionId, err: err.message });
+// Close a proposal (status 'archived'), for any reason: withdrawn by its
+// owner ('manual'), voted down ('auto-rejected'), gone quiet ('stale-pr'),
+// replaced, superseded, its request closed, red and untouched, the Homeroom
+// bot's or a bench trial's own ending. One path for every close: the
+// machine closes its pull request, retires its preview for good, destroys
+// its worker, abandons its work orders, discards a secret it held, tells the
+// conversation that started it and settles the bell, durably. Reversible
+// (unarchiveSession). `from` is the status the caller read; a close a newer
+// move overtook is refused. `userId` scopes it to the owner (the route).
+// `purgeCc` destroys the CC volume at once instead of after the retention
+// window. Returns { archived, appSlug?, reason? }.
+async function archiveSession({ pool, sessionId, userId = null, reason = 'manual', purgeCc = false, from, username = null, waitMs }) {
+  const out = await platform().closeProposal({
+    sessionId: Number(sessionId), reason, from, userId, username, purgeCc, waitMs,
   });
-  // Issues this session's dispatches declared lose their contribution to
-  // the derived "In progress" chip the moment the row leaves the live
-  // statuses — tell open Dev panels to refetch. This one hook covers every
-  // abandonment path (manual withdraw, vote-down auto-takedown, stale-PR
-  // sweeper): they all funnel through archiveSession.
-  if (Array.isArray(session?.linked_issues) && session.linked_issues.length) {
-    pushIssueUpdate({
-      action: 'updated', source: 'session_archived',
-      appSlug, appId: session.app_id,
-    });
-  }
+  if (!accepted(out)) return { archived: false, reason: out?.reason || out?.status || null };
   log.info('session-lifecycle', 'Session archived', { sessionId, reason, purgeCc });
-  return { archived: true, appSlug };
+  return { archived: true, appSlug: await appSlugOf(pool, sessionId) };
 }
 
-// Reverse an archive (within the retention window). Restores the session
-// to 'paused' — reopening it then goes through the normal auto-resume
-// path. Best-effort reopens the PR; if that fails (branch gone, install
-// restrictions), the session still has its branch + (unless purged) its
-// CC memory, and the user can propose a fresh PR.
-//
-// Returns { unarchived: boolean, ccPurged?: boolean, prReopened?: boolean }.
+// Reopen a closed proposal (within the retention window): it is Underway
+// again, its slot given back ('paused'), so opening it resumes it through the
+// usual caps. Its pull request is reopened (after a close still under way
+// reports); one GitHub says is closed for good is forgotten, so the next
+// promote opens a fresh one. Returns { unarchived, ccPurged? }.
 async function unarchiveSession({ pool, sessionId, userId = null }) {
-  const params = [sessionId];
-  let ownerClause = '';
-  if (userId != null) {
-    params.push(userId);
-    ownerClause = ' AND user_id = $2';
-  }
+  const { rows: [row] } = await pool.query(
+    `SELECT status, user_id, app_id, cc_purged FROM chat_sessions WHERE id = $1`, [sessionId]);
+  if (!row || row.status !== 'archived' || (userId != null && Number(row.user_id) !== Number(userId))) return { unarchived: false };
+  const out = await platform().reopenProposal({
+    sessionId: Number(sessionId), appId: row.app_id, userId: Number(userId ?? row.user_id), from: row.status,
+  });
+  if (!accepted(out)) return { unarchived: false };
+  log.info('session-lifecycle', 'Session unarchived', { sessionId, ccPurged: !!row.cc_purged });
+  return { unarchived: true, ccPurged: !!row.cc_purged };
+}
 
-  const { rows } = await pool.query(
-    `UPDATE chat_sessions SET status = 'paused', archived_at = NULL
-     WHERE id = $1${ownerClause} AND status = 'archived'
-     RETURNING id`,
-    params
-  );
-  if (!rows.length) return { unarchived: false };
+// ── A flow's own sessions (the Homeroom bot's, a bench trial's) ─────────
 
-  const { rows: sessionRows } = await pool.query(
-    `SELECT cs.*, a.slug as app_slug, a.repo_url
-     FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
-     WHERE cs.id = $1`,
-    [sessionId]
-  );
-  const session = sessionRows[0];
-
-  let prReopened = false;
-  if (session?.pr_number) {
-    const [owner, repo] = ownerRepo(session.repo_url);
-    if (owner) {
-      try {
-        await github.reopenPR(owner, repo, session.pr_number);
-        prReopened = true;
-      } catch (err) {
-        log.warn('session-lifecycle', 'Could not reopen PR on unarchive (branch may need re-proposing)', { sessionId, err: err.message });
-        // Self-heal: when GitHub definitively reports the PR
-        // closed-unmerged, drop the dead reference (keep pr_title for
-        // reuse) so the promote route's lazy PR creation mints a fresh
-        // PR on the same branch. Carrying the closed pr_number forward
-        // is what made a re-promoted proposal permanently unmergeable
-        // (session 2398 / PR #26). A transient GET failure leaves the
-        // row as-is — the promote-time reopen guard still catches it.
-        try {
-          const pr = await github.getPR(owner, repo, session.pr_number);
-          if (pr && pr.state === 'closed' && !pr.merged) {
-            await pool.query(
-              `UPDATE chat_sessions SET pr_number = NULL, pr_url = NULL WHERE id = $1`,
-              [sessionId]
-            );
-            log.info('session-lifecycle', 'Cleared closed-unmerged PR reference on unarchive', {
-              sessionId, pr: session.pr_number,
-            });
-          }
-        } catch (checkErr) {
-          log.warn('session-lifecycle', 'PR state check on unarchive failed (leaving PR reference)', {
-            sessionId, err: checkErr.message,
-          });
-        }
-      }
-    }
-  }
-
-  const { pushSessionUpdate, pushIssueUpdate } = require('./ws');
-  pushSessionUpdate({ action: 'unarchived', sessionId, appSlug: session?.app_slug });
-  // Mirror of the archive-time broadcast: a restored session's linked
-  // issues regain their "In progress" chip on the next panel refetch.
-  if (Array.isArray(session?.linked_issues) && session.linked_issues.length) {
-    pushIssueUpdate({
-      action: 'updated', source: 'session_unarchived',
-      appSlug: session?.app_slug, appId: session?.app_id,
+// Takes its own session's slot for a turn ('paused' → 'active'), through the
+// proposal machine: never a closed session (bug 21), with no caps (the flow
+// keeps its own). Its last activity moves to now either way. Answers whether
+// the session holds its slot.
+async function takeSlot({ pool, sessionId, source = 'own-turn' }) {
+  const { rows: [now] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [sessionId]);
+  if (!now) return false;
+  if (now.status === 'paused') {
+    const out = await platform().resumeProposal({
+      sessionId: Number(sessionId), from: 'paused', caps: null, source: { kind: 'system', name: source },
     });
+    if (!accepted(out) && out?.reason !== 'already_active') {
+      log.warn('session-lifecycle', 'A flow\'s own session did not take its slot', { sessionId, reason: out?.reason || out?.status });
+      return false;
+    }
+    return true;
   }
-  log.info('session-lifecycle', 'Session unarchived', { sessionId, prReopened, ccPurged: !!session?.cc_purged });
-  return { unarchived: true, ccPurged: !!session?.cc_purged, prReopened };
+  await pool.query('UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1', [sessionId]);
+  return now.status === 'active';
+}
+
+// ... and puts it back at rest once its turn is over ('active' → 'paused'),
+// never under a turn record: restart recovery throws away a session it
+// finds paused, so pausing one under a turn in flight is how a running turn
+// gets lost (#1006). Answers whether it paused.
+async function restSession({ pool, sessionId }) {
+  const { rows: [now] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [sessionId]);
+  if (!now || now.status !== 'active') return false;
+  const out = await platform().pauseProposal({ sessionId: Number(sessionId), reason: 'rest', from: 'active' })
+    .catch((err) => {
+      log.warn('session-lifecycle', 'Could not put a session back at rest', { sessionId, err: err.message });
+      return null;
+    });
+  return accepted(out);
+}
+
+// Closes a session its own flow is done with (a build that failed, a plan
+// with nothing to build, a bench trial), from whatever status it is open in,
+// the way every close goes. Answers whether it closed.
+async function closeOwnSession({ pool, sessionId, reason, waitMs }) {
+  const { rows: [now] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [sessionId]);
+  if (!now || !['active', 'paused', 'promoted'].includes(now.status)) return false;
+  const { archived } = await archiveSession({ pool, sessionId, reason, from: now.status, waitMs });
+  return archived;
 }
 
 // Hard GC for the retention window: destroy the CC volume of an archived
@@ -877,7 +458,11 @@ module.exports = {
   claimGlobalSlot,
   teardownStagingForSession,
   archiveSession,
-  finalizeArchivedSession,
   unarchiveSession,
   purgeArchivedCc,
+  GLOBAL_VICTIMS_SQL,
+  USER_VICTIMS_SQL,
+  takeSlot,
+  restSession,
+  closeOwnSession,
 };

@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { processNext } from './pipeline.ts';
 import { fireDueTimers, nextDeadlineMs, purge } from './timers.ts';
 import { claim, execute, nextDueMs } from './services.ts';
-import { Signals, append, waitForOutcome } from './stream.ts';
+import { Signals, append, waitForInstance, waitForOutcome } from './stream.ts';
 import type { AppendOptions } from './stream.ts';
 import { release } from './inspect.ts';
 import type { Machine } from './machine.ts';
@@ -140,6 +140,20 @@ export function createRuntime(opts: RuntimeOptions) {
         throw err;
       }
       return waitForOutcome(opts.pool, listening ? signals : null, id, o.waitMs ?? 3000, watch);
+    },
+
+    // Wait up to waitMs for the outcome of an event appended earlier (one
+    // appended in a caller's transaction, once that has committed).
+    waitForEvent(eventId: number, waitMs: number): Promise<EventOutcome> {
+      return waitForOutcome(opts.pool, listening ? signals : null, eventId, waitMs, null);
+    },
+
+    // Wait up to waitMs for an instance to reach a state `done` accepts, as
+    // a route that waits for a later event (a work result) to move it on.
+    waitFor(machine: Machine<any, any> | string, key: string,
+      done: (i: { state: string; data: any; version: number }) => boolean, waitMs: number) {
+      const name = typeof machine === 'string' ? machine : machine.name;
+      return waitForInstance(opts.pool, listening ? signals : null, name, key, done, waitMs);
     },
 
     // Single steps, for tests and admin tooling.

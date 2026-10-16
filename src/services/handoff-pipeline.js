@@ -54,7 +54,9 @@ function hasInFlightHandoffPipeline(sessionId) {
 function beginHandoffPipeline(sessionId) {
   const key = String(sessionId);
   handoffPipelines.add(key);
-  const releaseOperation = beginSessionOperation(sessionId);
+  // Its own kind: a promote of the very commit it checks does not wait for
+  // it (src/workflow/proposal/facts.ts).
+  const releaseOperation = beginSessionOperation(sessionId, 'handoff-pipeline');
   let released = false;
   return () => {
     if (released) return;

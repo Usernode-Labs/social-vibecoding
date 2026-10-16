@@ -3555,7 +3555,7 @@ async function withdrawNow(pool, { gate, user, reason, deps = {} }) {
   const lifecycle = deps.sessionLifecycle || require('./session-lifecycle');
   let archived = false;
   try {
-    ({ archived } = await lifecycle.archiveSession({ pool, sessionId: gate.session.id, reason }));
+    ({ archived } = await lifecycle.archiveSession({ pool, sessionId: gate.session.id, reason, from: gate.session.status }));
   } catch (err) {
     // A side effect after the archive itself failed: it is withdrawn if its
     // row says so.

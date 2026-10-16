@@ -1273,20 +1273,27 @@ function proposalHandoffRoutes(config) {
         try {
           await client.query('BEGIN');
           if (replacementSession) {
-            const replaced = await client.query(
-              `UPDATE chat_sessions
-                  SET status = 'archived', archived_at = NOW()
+            // The one it replaces is closed by the proposal machine, asked in
+            // this transaction, so a crash after the commit still closes it
+            // (its pull request, preview and worker go with it).
+            const { rows: [replaced] } = await client.query(
+              `SELECT status FROM chat_sessions
                 WHERE id = $1 AND user_id = $2 AND app_id = $3 AND source = $4
                   AND status IN ('active', 'paused')
-                RETURNING id`,
+                FOR UPDATE`,
               [replacementSession.id, req.user.id, app.id, SOURCE]
             );
-            if (!replaced.rowCount) {
+            if (!replaced) {
               throw new ReplacementConflictError(
                 'replacement_target_changed',
                 'The proposal being replaced changed state. Read its status before trying again.'
               );
             }
+            await require('../workflow/platform.ts').closeProposal({
+              sessionId: Number(replacementSession.id), appId: app.id, reason: 'proposal-replaced', from: replaced.status,
+              userId: req.user.id, username: req.user.username, db: client,
+              requestKey: `replaced:${replacementSession.id}:${input.requestId}`, source: { kind: 'route', name: 'proposal-start' },
+            });
           }
           const { rows } = await client.query(
             // This session's turns run on the
@@ -1343,18 +1350,6 @@ function proposalHandoffRoutes(config) {
               : {}),
           },
         });
-        if (replacementSession) {
-          await sessionLifecycle.finalizeArchivedSession({
-            pool,
-            sessionId: replacementSession.id,
-            userId: req.user.id,
-            reason: 'proposal-replaced',
-          }).catch((err) => log.warn('proposal-handoff', 'Replacement cleanup failed', {
-            sessionId: replacementSession.id,
-            replacementSessionId: created.id,
-            err: err.message,
-          }));
-        }
       }
       res.status(insertedSession ? 201 : 200)
         .json(publicSessionStatus({ ...created, app_slug: app.slug }));
@@ -1971,19 +1966,15 @@ function proposalHandoffRoutes(config) {
       if (!currentCheckedHead(session)) {
         return refuse('Nothing has been submitted to this change yet, so there is nothing to put up for review.');
       }
-      // A running handoff pipeline is checking this very commit and keeps
-      // publishing after promotion (services/handoff-pipeline.js). It holds
-      // the session for its whole run, so no coding turn or sync can start
-      // beside it; anything ELSE holding the session may still move its
-      // branch.
-      if (isSessionBusy(Number(session.id)) && !hasInFlightHandoffPipeline(session.id)) {
-        return refuse('An agent turn is still running on this change. Submit it for review when the turn finishes.');
-      }
       // Hold the same cross-surface claim used by build/sync through the
       // downstream promotion handler. Releasing before next() would reopen a
       // window where a local build could replace the reviewed SHA between
-      // this preflight and the status='promoted' write.
-      releasePromotion = beginSessionOperation(session.id);
+      // this preflight and the proposal's claim for review. Whether anything
+      // else holds the session (a coding turn or a sync that may still move
+      // the branch; a running hand-off pipeline checking this very commit
+      // does not count) is the proposal machine's to read, under its lock:
+      // this claim is named to it as the promote's own.
+      releasePromotion = beginSessionOperation(session.id, 'handoff-promote');
       await releasePromotion.recorded;
       const repo = repoCoordinates(session);
       if (!repo) return res.status(409).json({ error: 'proposal_repo_missing' });
@@ -2007,6 +1998,7 @@ function proposalHandoffRoutes(config) {
       // race before the row enters voting.
       req.cliHandoffCheckedHead = checkedHead;
       req.cliHandoffStatus = session.status;
+      req.cliHandoffOperation = releasePromotion.id || null;
       res.once('finish', releasePromotion);
       res.once('close', releasePromotion);
       releaseOnResponse = true;

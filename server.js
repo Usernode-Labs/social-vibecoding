@@ -1798,7 +1798,6 @@ module.exports = {
   // 14 Oct 2026: the idle eviction and the auto-pause sweeper's first pass,
   // each of which leaves a session a durable build holds alone.
   sweepIdleWarmWorkers,
-  autoPauseIdleSessions,
   // #1378: the detached-turn resume itself, so tests can prove a stop that
   // lands on an ADOPTED turn terminalizes it as a stop instead of narrating
   // an interruption (or retrying it). Driving it through adoptOrphanWorker
@@ -2043,14 +2042,12 @@ async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.no
             });
           } else if (row.status === 'merging' && oldAttempt) {
             // Not merged on GitHub and stuck in 'merging' (crash mid-merge):
-            // demote so the next vote/retry can redrive.
-            const { rowCount } = await pool.query(
-              `UPDATE chat_sessions SET status = 'promoted'
-                WHERE id = $1 AND status = 'merging'
-                  AND (merge_attempt_at IS NULL OR merge_attempt_at < NOW() - interval '5 minutes')`,
-              [row.id]
-            ).catch(() => ({ rowCount: 0 }));
-            if (rowCount) demoted++;
+            // the claim goes back to review so the next vote or retry can
+            // drive it again. The proposal machine gives it back only if the
+            // claim is still that old one (a new attempt's is left alone).
+            const out = await workflow.releaseMerge({ sessionId: row.id, appId: row.app_id, claim: null, reason: 'stuck' })
+              .catch(() => null);
+            if (out && (out.status === 'accepted' || out.status === 'replayed')) demoted++;
           }
           // Not merged + 'promoted' == genuinely open proposal: leave alone.
         } catch (err) {
@@ -3024,10 +3021,12 @@ async function abandonOrphanBenchTurn({
       args,
     );
   }
-  await pool.query(
-    "UPDATE chat_sessions SET status = 'archived', archived_at = NOW() WHERE id = $1 AND status IN ('active', 'paused')",
-    [sessionId],
-  ).catch(() => {});
+  // Closed by the proposal machine, which destroys its worker too.
+  const { rows: [now] = [] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [sessionId]);
+  if (now && ['active', 'paused'].includes(now.status)) {
+    await require('./src/workflow/platform.ts').closeProposal({ sessionId: Number(sessionId), reason: 'bench', from: now.status })
+      .catch((err) => log.warn('server', 'Could not close an abandoned benchmark trial\'s session', { sessionId, err: err.message }));
+  }
   await worker.destroyWorker(containerName).catch(() => {});
   log.warn('server', 'Abandoned a benchmark trial\'s worker after restart', { containerName, sessionId });
   // After the attempt is terminalized, so the ledger it is charged from is
@@ -5182,50 +5181,6 @@ const FRESHNESS_REFRESH_COOLDOWN_MS = Math.max(
   60 * 1000
 );
 
-const autoPauseLeftToBuilds = new Set();
-
-// The auto-pause sweeper's first pass (startSessionAutoPauseSweeper below):
-// idle 'active' sessions paused, their workers destroyed and their slots
-// freed. Never one mid-turn (active_turn, isSessionBusy), and, since 14 Oct
-// 2026, never one a durable build holds between its turns
-// (heldByDurableBuild): the auto-pause idle window is minutes, and a build
-// on a draining process can be quiet that long while its review runs.
-// `held` is that question, for tests. Resolves the ids it paused.
-async function autoPauseIdleSessions(pool, { idleMs, exemptFixtures = false, held = (id) => heldByDurableBuild(id, pool) } = {}) {
-  const paused = [];
-  try {
-    const { rows } = await pool.query(
-      `SELECT id FROM chat_sessions
-       WHERE status = 'active'
-         AND active_turn IS NULL
-         AND source IS DISTINCT FROM 'imported'
-         AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
-         AND NOT ($2::boolean AND COALESCE(branch_name, '') LIKE 'staging-fixture/%')
-       ORDER BY last_activity_at ASC
-       LIMIT 50`,
-      [idleMs, !!exemptFixtures]
-    );
-    forgetUnseen(autoPauseLeftToBuilds, rows.map((row) => row.id));
-    for (const row of rows) {
-      if (activeWorkersSvc.isSessionBusy(row.id)) continue;
-      if (await held(row.id)) {
-        sayLeftToBuild(autoPauseLeftToBuilds, row.id, 'Not auto-pausing an idle session: a durable build holds it');
-        continue;
-      }
-      autoPauseLeftToBuilds.delete(Number(row.id));
-      try {
-        const out = await sessionLifecycle.pauseSession({ pool, sessionId: row.id, reason: 'auto-idle' });
-        if (out && out.paused) paused.push(Number(row.id));
-      } catch (err) {
-        log.warn('server', 'Auto-pause failed', { sessionId: row.id, err: err.message });
-      }
-    }
-  } catch (err) {
-    log.warn('server', 'Session auto-pause sweep failed', { err: err.message });
-  }
-  return paused;
-}
-
 function startSessionAutoPauseSweeper(config) {
   if (sessionSweeperHandle) return;
   if (!config.sessionAutopauseIdleMs || config.sessionAutopauseIdleMs <= 0) {
@@ -5248,31 +5203,14 @@ function startSessionAutoPauseSweeper(config) {
   sessionSweeperHandle = setInterval(singleFlight('session-sweeper', async () => {
     if (lifecycle.isShuttingDown()) return;
 
-    // Pass 1: auto-pause idle 'active' sessions (worker + slot only;
-    // staging is left up for the cheap-resume window). Never pause a
-    // session mid-turn: `active_turn IS NULL` excludes detached turns at
-    // the SQL level (the watchdog pass below reaps stale rows, so this
-    // can't block pausing forever), and isSessionBusy covers the whole
-    // in-process window including the post-exec PR/staging tail — the
-    // bare isInFlight check used to miss that tail and paused sessions
-    // mid-wrap-up (sessions 2391/2386).
-    //
-    // STAGING ONLY: the `staging-fixture/*` sessions are exempt. They are
-    // seeded 'active' by migrate.js because the states they exist to show —
-    // the wrap-up quick-reply pills, the "Propose to group" button on the
-    // changes-ready card, the starter suggestions on an empty session —
-    // render on an ACTIVE session and on nothing else. Their seed comment
-    // stamps `last_activity_at = NOW()` to survive the first sweep, but that
-    // only buys one auto-pause window: five minutes after a deploy every one
-    // of them flips to 'paused' and a dozen dapp.json checks start asserting
-    // against a screen that can no longer paint what they name. Nobody is
-    // holding a worker for them (they were never dispatched), so exempting
-    // them costs no capacity. The predicate is the branch prefix migrate.js
-    // seeds them under, and it is gated on USERNODE_ENV so production's
-    // sweep is byte-for-byte what it was.
-    await autoPauseIdleSessions(pool, {
-      idleMs: config.sessionAutopauseIdleMs, exemptFixtures: process.env.USERNODE_ENV === 'staging',
-    });
+    // Pass 1: every session holding a slot that the proposal machine does
+    // not hold yet (one created since the leader started) is adopted: its
+    // idle check gives the slot back once nobody has used it for
+    // SESSION_AUTOPAUSE_IDLE_MS (src/workflow/proposal/, IdleCheck: never
+    // mid-turn, never under a durable build, never a staging fixture). The
+    // pause itself is the machine's, decided under the session's lock.
+    await require('./src/workflow/platform.ts').adoptProposals()
+      .catch((err) => log.warn('server', 'Adopting sessions for the proposal machine failed', { err: err.message }));
 
     // Pass 2: staging GC. Reclaim the staging container + cloned DB from
     // sessions cold past the (much longer) staging-idle window. Skips
@@ -5813,17 +5751,14 @@ function startSessionAutoPauseSweeper(config) {
   }), config.sessionSweepIntervalMs).unref();
 }
 
-// Stale-promoted-PR policy + reversible-archive hard GC.
-//   Pass 1 (notify): a promoted PR with no voting interest for
-//     PR_STALE_NOTIFY_MS gets its author a 'stale_pr' notification, and
-//     we stamp stale_notified_at so the warning fires once.
-//   Pass 2 (archive): if still untouched PR_STALE_GRACE_MS after that
-//     warning, auto-archive it (reversible — keeps CC + branch).
+// Window-elapsed merges + reversible-archive hard GC.
+//   Pass 0 (merge): a promoted PR whose window has elapsed is merged.
 //   Pass 3 (GC): archived sessions past ARCHIVED_RETENTION_MS get their
 //     CC volume purged so memory stops occupying disk, and a merged
 //     change's Kubernetes worker volume that outlived its merge is freed.
-// "Interest" = the later of promoted_at and the newest vote; casting a
-// vote clears stale_notified_at (see routes/votes.js), reviving the PR.
+// Warning the author of a quiet proposal (PR_STALE_NOTIFY_MS), closing it
+// once it stays quiet (PR_STALE_GRACE_MS) and closing one voted down are the
+// proposal machine's hourly review check (src/workflow/proposal/).
 //
 // Hourly (staleSweepIntervalMs) on the durable clock leader_sweeps keeps
 // (services/leader-timers.js). As a bare setInterval its clock restarted at
@@ -5839,7 +5774,6 @@ function startStalePrSweeper(config) {
     return;
   }
   const pool = getPool(config);
-  const notifications = require('./src/services/notifications');
   log.info('server', 'Stale-PR / archived-GC sweeper started', {
     notifyMs: config.prStaleNotifyMs, graceMs: config.prStaleGraceMs,
     retentionMs: config.archivedRetentionMs, intervalMs: config.staleSweepIntervalMs,
@@ -5915,8 +5849,8 @@ function startStalePrSweeper(config) {
             authorId: session.user_id ?? null,
             // #2038: scoped by approval epoch inside the gate.
           });
-          // Merge takes precedence: a row that just became mergeable should
-          // merge, not reject. checkAndMerge re-confirms both gates atomically.
+          // A row that became mergeable merges: the proposal machine reads the
+          // gate again under its lock when checkAndMerge claims it (R1).
           if (gate.mergeable) {
             const result = await checkAndMerge(config, pool, session);
             if (result?.merged) {
@@ -5926,27 +5860,10 @@ function startStalePrSweeper(config) {
             }
             continue;
           }
-          // Auto-takedown: the rejection window has elapsed on a promoted PR
-          // the group is voting down (No > Yes, under the keep-alive support
-          // line). Reuse the real close/un-promote path (archiveSession),
-          // then nudge clients to refetch /promoted so the row drops out (the
-          // session_update 'archived' broadcast isn't wired to the vote panel).
-          if (gate.rejectable) {
-            const res = await sessionLifecycle.archiveSession({
-              pool, sessionId: session.id, reason: 'auto-rejected',
-            });
-            if (res?.archived) {
-              try {
-                ws.pushVoteUpdate({
-                  sessionId: session.id, appSlug: session.app_slug, merged: false,
-                });
-              } catch {}
-              log.info('server', 'Promoted PR auto-rejected by sweeper', {
-                sessionId: session.id,
-                yesCount: session.yes_count, noCount: session.no_count,
-              });
-            }
-          }
+          // A proposal the group is voting down is the proposal machine's to
+          // close: its hourly review check reads the gate under the
+          // proposal's lock (src/workflow/proposal/, ReviewCheck), so a Yes
+          // or an unpromote committed meanwhile is counted (bug 3).
         } catch (err) {
           log.warn('server', 'Window-elapsed merge check failed', {
             sessionId: session.id, err: err.message,
@@ -5957,69 +5874,10 @@ function startStalePrSweeper(config) {
       log.warn('server', 'Window-elapsed merge sweep failed', { err: err.message });
     }
 
-    if (notifyEnabled) {
-      // Pass 1: warn authors of quiet promoted PRs (once).
-      try {
-        const { rows } = await pool.query(
-          `SELECT cs.id AS session_id, cs.user_id, cs.app_id, cs.pr_title, cs.pr_number,
-                  a.slug AS app_slug, a.name AS app_name
-           FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
-           WHERE cs.status = 'promoted'
-             AND cs.stale_notified_at IS NULL
-             AND GREATEST(
-                   COALESCE(cs.promoted_at, cs.created_at),
-                   COALESCE((SELECT MAX(created_at) FROM pr_votes WHERE session_id = cs.id), cs.promoted_at, cs.created_at)
-                 ) < NOW() - make_interval(secs => $1::double precision / 1000.0)
-           LIMIT 50`,
-          [config.prStaleNotifyMs]
-        );
-        for (const row of rows) {
-          try {
-            const inserted = await notifications.createStalePrNotification(pool, {
-              userId: row.user_id, appId: row.app_id, sessionId: row.session_id,
-            });
-            await pool.query(`UPDATE chat_sessions SET stale_notified_at = NOW() WHERE id = $1`, [row.session_id]);
-            if (inserted[0]) {
-              ws.pushNotificationToUser(row.user_id, {
-                type: 'notification_new',
-                notification: notifications.serialize({
-                  id: inserted[0].id, kind: 'stale_pr', read_at: null, created_at: inserted[0].created_at,
-                  app_id: row.app_id, app_slug: row.app_slug, app_name: row.app_name,
-                  chat_message_id: null, message_content: null,
-                  session_id: row.session_id, pr_title: row.pr_title, pr_number: row.pr_number,
-                  source_username: null, detail: null,
-                }),
-              });
-            }
-          } catch (err) {
-            log.warn('server', 'Stale-PR notify failed', { sessionId: row.session_id, err: err.message });
-          }
-        }
-      } catch (err) {
-        log.warn('server', 'Stale-PR notify sweep failed', { err: err.message });
-      }
-
-      // Pass 2: archive PRs still untouched after the grace period.
-      try {
-        const { rows } = await pool.query(
-          `SELECT id FROM chat_sessions
-           WHERE status = 'promoted' AND stale_notified_at IS NOT NULL
-             AND stale_notified_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
-           LIMIT 50`,
-          [config.prStaleGraceMs]
-        );
-        for (const row of rows) {
-          if (activeWorkersSvc.isSessionBusy(row.id)) continue;
-          try {
-            await sessionLifecycle.archiveSession({ pool, sessionId: row.id, reason: 'stale-pr' });
-          } catch (err) {
-            log.warn('server', 'Stale-PR archive failed', { sessionId: row.id, err: err.message });
-          }
-        }
-      } catch (err) {
-        log.warn('server', 'Stale-PR archive sweep failed', { err: err.message });
-      }
-    }
+    // Pass 1 and Pass 2 (warn the author of a proposal nobody has looked at
+    // for a while, close it once it stays quiet) are the proposal machine's
+    // hourly review check, each read under the proposal's lock: a vote since
+    // the warning clears it rather than closing the proposal (bug 4).
 
     if (gcEnabled) {
       // Pass 3: hard-GC archived CC volumes past the retention window.

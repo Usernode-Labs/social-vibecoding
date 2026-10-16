@@ -2300,11 +2300,7 @@ async function headShaOf(github, repo, branch = 'main') {
  * running turn gets lost (#1006).
  */
 async function pauseIdleSession(pool, sessionId) {
-  await pool.query(
-    `UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW()
-      WHERE id = $1 AND status = 'active' AND active_turn IS NULL`,
-    [sessionId],
-  ).catch(() => {});
+  await require('./session-lifecycle').restSession({ pool, sessionId }).catch(() => {});
 }
 
 /**
@@ -2918,10 +2914,9 @@ async function askForVerdictBlock(pool, config, {
 }) {
   const { worker, agentTurn, sessions, activeWorkers } = deps;
   if (!threadId || activeWorkers.has(session.id)) return null;
-  await pool.query(
-    "UPDATE chat_sessions SET status = 'active', last_activity_at = NOW() WHERE id = $1",
-    [session.id],
-  );
+  // The session takes its slot for the turn (the proposal machine; never a
+  // closed one).
+  await require('./session-lifecycle').takeSlot({ pool, sessionId: session.id, source: 'homeroom-bot' });
   activeWorkers.add(session.id);
   let stopped = false;
   let stopping = null;
@@ -3791,10 +3786,8 @@ async function runTriage(pool, config, {
   // context, its usage a running total that passed 2.7 billion tokens.
   // Clearing the saved thread here, in the row and in the object the
   // runtime is resolved from, is what makes every path resolve to none.
-  await pool.query(
-    "UPDATE chat_sessions SET status = 'active', agent_thread_id = NULL, last_activity_at = NOW() WHERE id = $1",
-    [session.id],
-  );
+  await require('./session-lifecycle').takeSlot({ pool, sessionId: session.id, source: 'homeroom-bot' });
+  await pool.query('UPDATE chat_sessions SET agent_thread_id = NULL WHERE id = $1', [session.id]);
   session.agent_thread_id = null;
   activeWorkers.add(session.id);
   // A stop stays pending on the session after the turn it stopped has
@@ -4966,18 +4959,17 @@ const ABANDONED_LIVE_REASON = 'the platform restarted while it was building, and
 
 /** A build session is archived once its run is recorded; the triage session rests paused. */
 async function putAwayRecoveredSession(pool, session, { archive }) {
+  const lifecycle = require('./session-lifecycle');
+  // Closed the way every close goes (its worker destroyed, its preview
+  // retired, its pull request closed: bug 15), or put back at rest.
   if (archive) {
-    await pool.query(
-      `UPDATE chat_sessions SET status = 'archived', archived_at = NOW()
-        WHERE id = $1 AND status IN ('active', 'paused')`,
-      [session.id],
-    ).catch(() => {});
+    const { rows: [now] = [] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [session.id]);
+    if (now && ['active', 'paused'].includes(now.status)) {
+      await lifecycle.archiveSession({ pool, sessionId: session.id, reason: 'bot-recovered', from: now.status }).catch(() => {});
+    }
     return;
   }
-  await pool.query(
-    "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1 AND status = 'active'",
-    [session.id],
-  ).catch(() => {});
+  await lifecycle.restSession({ pool, sessionId: session.id }).catch(() => {});
 }
 
 /**
@@ -9252,7 +9244,7 @@ async function noteRequestMerged(pool, session, deps = {}) {
     const sessionLifecycle = deps.sessionLifecycle || require('./session-lifecycle');
     for (const other of others) {
       try {
-        const done = await sessionLifecycle.archiveSession({ pool, sessionId: Number(other.id), reason: 'superseded' });
+        const done = await sessionLifecycle.archiveSession({ pool, sessionId: Number(other.id), reason: 'superseded', from: 'promoted' });
         if (done?.archived) out.withdrawn += 1;
       } catch (err) {
         if (deps.strict) throw err;

@@ -1934,71 +1934,61 @@ async function switchSessionAgent(pool, { sessionId, userId, pref }) {
 // or { ok: false, status, error }.
 async function resumePausedSession({ pool, config, user, sessionId }) {
   // Ownership FIRST: everything below is platform-wide bookkeeping (the
-  // global-cap probe can pause a third party's idle session, the per-user
-  // LRU one of the requester's own), and none of it may run for a request
-  // that was going to 404 anyway.
+  // global cap can pause a third party's idle session, the per-user one one
+  // of the requester's own), and none of it may run for a request that was
+  // going to 404 anyway.
   const { rows: ownRows } = await pool.query(
-    'SELECT id FROM chat_sessions WHERE id = $1 AND user_id = $2',
+    'SELECT id, app_id, status FROM chat_sessions WHERE id = $1 AND user_id = $2',
     [sessionId, user.id]
   );
-  if (!ownRows.length) return { ok: false, status: 404, error: 'Session not found or not paused' };
+  const own = ownRows[0];
+  if (!own || own.status !== 'paused') return { ok: false, status: 404, error: 'Session not found or not paused' };
 
-  // The platform-wide cap (session-lifecycle.claimGlobalSlot): an idle
-  // session elsewhere is paused to make room, or this is refused and
-  // the refusal recorded.
-  if (!(await sessionLifecycle.claimGlobalSlot({ pool, config, path: 'resume', userId: user.id, excludeSessionId: sessionId })).ok) {
-    return { ok: false, status: 429, error: sessionLifecycle.PLATFORM_AT_CAPACITY };
-  }
-
-  // Per-user cap counts only 'active' sessions (#193) — promoted ones
-  // are un-pausable while their PR is in a vote, so they're exempt.
-  // This also keeps the count consistent with the LRU eviction below,
-  // which has always only considered 'active' victims. The ceiling is
-  // per-requester (full admins get a raised cap; see
-  // services/session-caps.js) — raising it just means the LRU pause
-  // below fires less often for them.
+  // The proposal machine resumes it under the caps, counted under locks
+  // (the owner's row, the platform's slots): over one, it is refused, and a
+  // session to pause for it is asked to, once per cap, before it asks again.
+  // The per-user cap counts only 'active' sessions (#193); its ceiling is
+  // per-requester (full admins get a raised cap: services/session-caps.js).
   const caps = effectiveSessionCaps(config, user);
-  const { rows: countRows } = await pool.query(
-    `SELECT COUNT(*) as cnt FROM chat_sessions
-     WHERE user_id = $1 AND status = 'active'
-       AND source IS DISTINCT FROM 'imported'`,
-    [user.id]
-  );
-  if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
-    if (!config.sessionLruOnResume) {
-      sessionLifecycle.recordCapacityRefusal(pool, { cap: 'user', path: 'resume', userId: user.id });
-      return { ok: false, status: 429, error: `You already have ${caps.activeSessions} sessions in progress. Try again when one of them finishes.` };
-    }
-    // LRU: pause the user's least-recently-active 'active' session
-    // (not 'promoted' — those await merge votes) to free a slot.
-    // Skip any that are mid-turn; if none can be freed, 429.
-    const { freed } = await sessionLifecycle.freeUserSlot({
-      pool, userId: user.id, excludeSessionId: sessionId, includeHeadless: true,
+  const cap = {
+    user: caps.activeSessions,
+    global: config && config.maxGlobalSessions != null ? Number(config.maxGlobalSessions) : 100,
+  };
+  const platform = require('../workflow/platform.ts');
+  const tried = new Set();
+  for (;;) {
+    const out = await platform.resumeProposal({
+      sessionId: Number(sessionId), appId: own.app_id, from: 'paused', userId: user.id, caps: cap, source: { kind: 'route', name: 'resume' },
     });
-    if (!freed) {
+    if (out.status === 'accepted' || out.status === 'replayed' || out.status === 'pending') break;
+    const reason = out.reason;
+    if (reason === 'already_active') break;
+    if (reason === 'global_cap' && !tried.has(reason)) {
+      tried.add(reason);
+      const { freed } = await sessionLifecycle.freeGlobalSlot({ pool, graceMs: config && config.sessionPressureGraceMs, excludeSessionId: sessionId });
+      if (freed) continue;
+      await sessionLifecycle.recordCapacityRefusal(pool, { cap: 'global', path: 'resume', userId: user.id });
+      return { ok: false, status: 429, error: sessionLifecycle.PLATFORM_AT_CAPACITY };
+    }
+    if (reason === 'user_cap' && !tried.has(reason)) {
+      tried.add(reason);
+      if (!config.sessionLruOnResume) {
+        sessionLifecycle.recordCapacityRefusal(pool, { cap: 'user', path: 'resume', userId: user.id });
+        return { ok: false, status: 429, error: `You already have ${caps.activeSessions} sessions in progress. Try again when one of them finishes.` };
+      }
+      // LRU: their least recently active session nobody works on is paused
+      // to free a slot (never one up for a vote).
+      const { freed } = await sessionLifecycle.freeUserSlot({
+        pool, userId: user.id, excludeSessionId: sessionId, includeHeadless: true,
+      });
+      if (freed) continue;
       sessionLifecycle.recordCapacityRefusal(pool, { cap: 'user', path: 'resume', userId: user.id });
       return { ok: false, status: 429, error: sessionLifecycle.USER_SLOTS_BUSY };
     }
+    if (reason === 'global_cap') return { ok: false, status: 429, error: sessionLifecycle.PLATFORM_AT_CAPACITY };
+    if (reason === 'user_cap') return { ok: false, status: 429, error: sessionLifecycle.USER_SLOTS_BUSY };
+    return { ok: false, status: 404, error: 'Session not found or not paused' };
   }
-
-  const { rows } = await pool.query(
-    `UPDATE chat_sessions SET status = 'active', last_activity_at = NOW()
-     WHERE id = $1 AND user_id = $2 AND status = 'paused'
-     RETURNING id, app_id`,
-    [sessionId, user.id]
-  );
-  if (!rows.length) return { ok: false, status: 404, error: 'Session not found or not paused' };
-
-  const { rows: sessionRows } = await pool.query(
-    `SELECT a.slug as app_slug
-     FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
-     WHERE cs.id = $1`,
-    [sessionId]
-  );
-  const appSlug = sessionRows[0]?.app_slug;
-
-  const { pushSessionUpdate } = require('../services/ws');
-  pushSessionUpdate({ action: 'resumed', sessionId, appSlug });
   log.info('sessions', 'Session resumed', { sessionId });
 
   // #8: if the resumed session is behind main, kick off a silent
@@ -4316,6 +4306,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         }
       }
 
+      const { rows: [own] } = await pool.query(
+        'SELECT status FROM chat_sessions WHERE id = $1 AND user_id = $2', [sessionId, req.user.id]);
+      if (!own || !['active', 'paused', 'promoted'].includes(own.status)) {
+        return res.status(404).json({ error: 'Session not found or already archived' });
+      }
+
       // Release any in-flight bookkeeping first (archiving mid-turn).
       if (activeWorkers.has(sessionId)) {
         activeWorkers.delete(sessionId);
@@ -4323,7 +4319,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       }
 
       const { archived } = await sessionLifecycle.archiveSession({
-        pool, sessionId, userId: req.user.id, reason: 'manual',
+        pool, sessionId, userId: req.user.id, username: req.user.username, reason: 'manual', from: own.status,
       });
       if (!archived) return res.status(404).json({ error: 'Session not found or already archived' });
       res.json({ ok: true });
@@ -4564,11 +4560,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           return res.status(403).json({ error: CLI_CREDENTIAL_MANAGEMENT_ERROR });
         }
       }
-      const { unarchived, ccPurged, prReopened } = await sessionLifecycle.unarchiveSession({
+      const { unarchived, ccPurged } = await sessionLifecycle.unarchiveSession({
         pool, sessionId, userId: req.user.id,
       });
       if (!unarchived) return res.status(404).json({ error: 'Session not found or not archived' });
-      res.json({ ok: true, ccPurged: !!ccPurged, prReopened: !!prReopened });
+      // Its pull request is reopened by the proposal machine's own work,
+      // after this answer.
+      res.json({ ok: true, ccPurged: !!ccPurged });
     } catch (err) {
       log.error('sessions', 'Unarchive failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -4840,38 +4838,34 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     try {
       const sessionId = parseInt(req.params.id, 10);
 
+      const { rows: [own] } = await pool.query(
+        'SELECT id, status FROM chat_sessions WHERE id = $1 AND user_id = $2', [sessionId, req.user.id]);
+      if (!own) return res.status(404).json({ error: 'Session not found or cannot be paused' });
+      // Soft 200 if it's already paused so the UI can no-op the button click.
+      if (own.status === 'paused') return res.json({ ok: true, alreadyPaused: true });
+
       // Drop in-flight bookkeeping first so pausing mid-turn (the user
       // pausing to abort a running turn) releases the activeWorkers slot.
-      // pauseSession() tears down the container + staging itself.
       if (activeWorkers.has(sessionId)) {
         activeWorkers.delete(sessionId);
         workerProgress.clear(sessionId);
       }
 
-      const { paused } = await sessionLifecycle.pauseSession({
-        pool, sessionId, userId: req.user.id, reason: 'manual',
+      // Promoted: honor the user's intent to free the warm worker (it is the
+      // stop button), but leave the proposal up for its vote: no lifecycle
+      // move, only the worker.
+      if (own.status === 'promoted') {
+        workerProgress.clear(sessionId);
+        await worker.destroyWorker(worker.workerContainerName(sessionId)).catch(() => {});
+        return res.json({ ok: true, keptPromoted: true });
+      }
+      if (own.status !== 'active') return res.status(404).json({ error: 'Session not found or cannot be paused' });
+
+      const { paused, reason } = await sessionLifecycle.pauseSession({
+        pool, sessionId, userId: req.user.id, reason: 'manual', from: own.status,
       });
       if (!paused) {
-        // Either it doesn't exist, isn't ours, or is already paused/archived,
-        // or it's a promoted session (which pauseSession deliberately refuses
-        // to demote so its PR stays up for vote).
-        const { rows: check } = await pool.query(
-          `SELECT id, status FROM chat_sessions WHERE id = $1 AND user_id = $2`,
-          [sessionId, req.user.id]
-        );
-        // Soft 200 if it's already paused so the UI can no-op the button click.
-        if (check[0] && check[0].status === 'paused') return res.json({ ok: true, alreadyPaused: true });
-        // Promoted: honor the user's intent to free the warm worker (same
-        // teardown pauseSession does for 'active'), but leave status =
-        // 'promoted' so the PR keeps showing its voting buttons and stays
-        // votable. The vote endpoint and cast-vote handler key off the
-        // promoted status, so flipping it here would silently pull the PR
-        // from the vote — exactly the bug we're fixing.
-        if (check[0] && check[0].status === 'promoted') {
-          workerProgress.clear(sessionId);
-          await worker.destroyWorker(worker.workerContainerName(sessionId)).catch(() => {});
-          return res.json({ ok: true, keptPromoted: true });
-        }
+        if (reason === 'already_paused') return res.json({ ok: true, alreadyPaused: true });
         return res.status(404).json({ error: 'Session not found or cannot be paused' });
       }
       res.json({ ok: true });

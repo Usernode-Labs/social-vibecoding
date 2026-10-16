@@ -3691,13 +3691,12 @@ function buildTurnRunner({
       durableSteps.rethrowStop(err, 'build turn');
       turnRouted = { error: `dispatch: ${err.message}` };
     } finally {
+      // The build's session keeps its slot between its turns until the
+      // build ends (bug 22: paused after every turn, it read idle in the
+      // middle of the build and nothing took it back). The build's own end
+      // closes it or puts it up for a vote; one left open goes to rest on
+      // the proposal machine's idle check once nothing holds it.
       activeWorkers.delete(session.id);
-      if (!steps.stopped) {
-        await pool.query(
-          "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1 AND status = 'active'",
-          [session.id],
-        ).catch(() => {});
-      }
     }
     return { routed: turnRouted, stopped: turnStopped };
 
@@ -4109,13 +4108,10 @@ async function buildAndPropose({
   const fail = async (error) => {
     // Not this process's to fail any more: the build's next owner goes on.
     steps.fence();
-    // The bot's own failed attempt. Archived so it never reads as work
-    // under way; its branch stays on GitHub for a person to look at.
-    await pool.query(
-      `UPDATE chat_sessions SET status = 'archived', archived_at = NOW()
-        WHERE id = $1 AND user_id = $2 AND status IN ('active', 'paused')`,
-      [session.id, bot.id],
-    ).catch(() => {});
+    // The bot's own failed attempt. Closed so it never reads as work under
+    // way, the way every close goes (its worker, preview and pull request
+    // go: bug 15); its branch stays on GitHub for a person to look at.
+    await require('./session-lifecycle').closeOwnSession({ pool, sessionId: session.id, reason: 'bot-failed' }).catch(() => {});
     return {
       ok: false, sessionId: session.id, branchName: session.branch_name || null, error, ...specOut(), ...costsOut(),
       ...noChangeOut(),
@@ -4281,11 +4277,7 @@ async function buildAndPropose({
     // #4488: only the plan. Its session is put away as a finished attempt
     // is; the spec version it holds is what the requester is shown, and
     // what Build it builds from (presetSpec on a later build).
-    await pool.query(
-      `UPDATE chat_sessions SET status = 'archived', archived_at = NOW()
-        WHERE id = $1 AND user_id = $2 AND status IN ('active', 'paused')`,
-      [session.id, bot.id],
-    ).catch(() => {});
+    await require('./session-lifecycle').closeOwnSession({ pool, sessionId: session.id, reason: 'bot-plan-only' }).catch(() => {});
     if (!spec.ok) {
       return {
         ok: false, planned: false, sessionId: session.id, error: `no plan could be written (${spec.error || 'unknown'})`,
@@ -4619,13 +4611,9 @@ async function buildAndPropose({
 
   if (!propose) {
     steps.fence();
-    // Built, pushed, and put away: the session is archived exactly as a
+    // Built, pushed, and put away: the session is closed exactly as a
     // failed attempt is, and nothing is promoted, posted or shown.
-    await pool.query(
-      `UPDATE chat_sessions SET status = 'archived', archived_at = NOW()
-        WHERE id = $1 AND user_id = $2 AND status IN ('active', 'paused')`,
-      [session.id, bot.id],
-    ).catch(() => {});
+    await require('./session-lifecycle').closeOwnSession({ pool, sessionId: session.id, reason: 'not-proposed' }).catch(() => {});
     return {
       ok: true, sessionId: session.id, branchName: session.branch_name,
       sha: landedSha, commits: landedCommits, costUsd, ...specOut(), ...reviewOut, ...costsOut(), ...noChangeOut(),

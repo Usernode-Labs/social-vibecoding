@@ -703,23 +703,25 @@ async function verifyStagingEdge(session, hostname, stagingUrl) {
 // remain.
 
 // Tear down a session's preview: the single chokepoint every teardown caller
-// (merge, archive, idle reclaim, the stale-preview sweeper, a bench preview
-// that expired) funnels through. The preview machine retires it, by
-// identity (one it does not hold yet is adopted from the row first):
-// terminally once the row has left review (archived, merged, being merged,
-// deleted), otherwise as an idle reclaim, which it refuses while someone
-// works on the session or while the proposal is under review.
+// (a merge, idle reclaim, the stale-preview sweeper, a bench preview that
+// expired) funnels through. The preview machine retires it, by identity (one
+// it does not hold yet is adopted from the row first). Only the moves that
+// end a proposal retire it for good (`terminal`: a merge, a deleted session;
+// a close is the proposal machine's own message): every other retirement is
+// an idle reclaim, which the machine refuses while someone works on the
+// session or while the proposal is under review. The caller says which; the
+// row's status no longer decides it (it read 'merging' as an ending).
 //
 // Returns { removed: false, handedOff: true } when the machine took it (its
 // retirement removes the runtime, then the databases and Secrets, then the
 // row's pointers), or { removed: false, leaked: true, busy: true, refused }
 // when it refused: the preview is left as it is, and the row still names it.
-async function teardownStaging(session, app) {
-  const { rows: [row] } = await getPool().query('SELECT app_id, status FROM chat_sessions WHERE id = $1', [session.id]);
-  const terminal = !row || !['active', 'paused', 'promoted'].includes(row.status);
+async function teardownStaging(session, app, { terminal = null, reason = null } = {}) {
+  const { rows: [row] } = await getPool().query('SELECT app_id FROM chat_sessions WHERE id = $1', [session.id]);
+  const final = terminal == null ? !row : !!terminal;
   const out = await require('./preview-workflow').retire({
     session: { id: session.id, app_id: row?.app_id ?? session.app_id ?? app?.id },
-    reason: terminal ? (row?.status || 'deleted') : 'idle', terminal,
+    reason: reason || (final ? (row ? 'closed' : 'deleted') : 'idle'), terminal: final,
   });
   return out.taken ? { removed: false, handedOff: true } : { removed: false, leaked: true, busy: true, refused: out.reason };
 }

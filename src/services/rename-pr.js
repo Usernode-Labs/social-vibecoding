@@ -123,6 +123,10 @@ async function createManifestPR(config, pool, app, actor, opts) {
     [app.id, actor.id || null, branch, prData.number, prData.html_url, prTitle]
   );
   const sessionId = sessRows[0].id;
+  // Born in review: the proposal machine adopts it now (its review check
+  // armed). The leader's sweep adopts any row this missed.
+  await require('../workflow/platform.ts').proposalAdopted({ sessionId: sessionId, appId: app.id })
+    .catch((err) => log.warn('rename-pr', 'Could not hand a proposal born in review to the proposal machine', { sessionId: sessionId, err: err.message }));
   // Legacy rename-issue migration can only attribute very old rows to the
   // fallback label "Homeroom" (no user id). Interactive proposal issuers have
   // a real identity and receive the normal proposal-level assignment.
