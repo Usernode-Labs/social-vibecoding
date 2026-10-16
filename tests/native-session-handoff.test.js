@@ -802,6 +802,63 @@ test('transient native recovery failure preserves replay metadata and permits re
   assert.equal(await NativeChrome.restoreWebSession(), true);
 });
 
+// #5049: every renewal rotates the session, a window of 401s beside the
+// boot's first reads, so a new document (a cold start, a tapped link) must not
+// renew again inside the day. The stamp is bound to the stored attempt, so a
+// sign-out or another account renews at once.
+test('a new document inside the day does not renew again, unless forced or for another account', async () => {
+  const shared = new Map();
+  let calls = 0;
+  const load = () => loadNativeChrome({ info: recoveryInfo, sharedAttemptStorage: shared,
+    restoreImpl: async () => { calls++; return recoveredWebSession; } }).NativeChrome;
+  assert.equal(await load().restoreWebSession(), true);
+  assert.equal(calls, 1);
+
+  const next = load();
+  assert.equal(await next.restoreWebSession(), false, 'the next document reads the stamp');
+  assert.equal(calls, 1);
+  assert.equal(await next.restoreWebSession({ force: true }), true, 'a 401 still forces one');
+  assert.equal(calls, 2);
+
+  const key = 'usernode.native-session-v2.web-renewal';
+  const stamp = JSON.parse(shared.get(key));
+  shared.set(key, JSON.stringify({ ...stamp, at: Date.now() - 25 * 60 * 60 * 1000 }));
+  assert.equal(await load().restoreWebSession(), true, 'a day later it renews');
+  assert.equal(calls, 3);
+
+  const attemptKey = 'usernode.native-session-v2.attempt';
+  const attempt = JSON.parse(shared.get(attemptKey));
+  shared.set(attemptKey, JSON.stringify({ ...attempt, userId: '42',
+    attemptId: 'nsa_' + Buffer.alloc(32, 12).toString('base64url') }));
+  assert.equal(await load().restoreWebSession(), true, 'another account\'s attempt is not stamped');
+  assert.equal(calls, 4);
+
+  load().enterAnonymous();
+  assert.equal(shared.has(key), false, 'signing out takes the stamp with the attempt');
+});
+
+// #5049: frontend/src/lib/session-renewal-retry.ts resends a 401 that met a
+// rotation, and reads whether one happened from this count, which only a
+// restore that landed moves.
+test('the renewal count moves only when a restore lands, and names the one in flight', async () => {
+  const gate = deferred();
+  let fail = true;
+  const { NativeChrome } = loadNativeChrome({ info: recoveryInfo, restoreImpl: () => {
+    if (fail) return Promise.reject(new Error('offline'));
+    return gate.promise;
+  } });
+  const renewal = () => { const r = NativeChrome.webSessionRenewal(); return [r.epoch, r.settled]; };
+  assert.deepEqual(renewal(), [0, null]);
+  await assert.rejects(NativeChrome.restoreWebSession(), /offline/);
+  assert.equal(NativeChrome.webSessionRenewal().epoch, 0, 'a failed restore rotated nothing');
+  fail = false;
+  const run = NativeChrome.restoreWebSession();
+  assert.equal(NativeChrome.webSessionRenewal().settled, run);
+  gate.resolve(recoveredWebSession);
+  assert.equal(await run, true);
+  assert.deepEqual(renewal(), [1, null]);
+});
+
 function recoveryReader(restore, responses) {
   const sandbox = { NativeChrome: { restoreWebSession: restore }, App: {}, fetch: async () => responses.shift() };
   sandbox.window = sandbox;

@@ -69,6 +69,7 @@ import { initOffline } from './lib/offline';
 import { registerServiceWorker } from './lib/service-worker';
 import { applyShellSnapshot } from './lib/shell-snapshot-apply';
 import { installJoinRequired } from './lib/join-required';
+import { installSessionRenewalRetry } from './lib/session-renewal-retry';
 // Publishes window.UsernodeReact.devBoard at module scope. Imported for the
 // side effect, and imported HERE (rather than reached from a Shell island)
 // because the Dev surfaces are runtime-injected into an empty #app-content and
@@ -202,6 +203,10 @@ bootStep('initOffline', initOffline);
 // refused with `join_required` becomes a Join prompt and a retry
 // (./lib/join-required.ts), for every caller in both bundles.
 bootStep('installJoinRequired', () => installJoinRequired());
+// Before app.js's init (DOMContentLoaded) sends the boot's first reads: in the
+// mobile app a request refused 401 while the native bridge renewed the web
+// session is sent again once it lands (./lib/session-renewal-retry.ts, #5049).
+bootStep('installSessionRenewalRetry', () => installSessionRenewalRetry());
 
 // document.body is the hydration container, not a wrapper <div>, because the
 // body element itself is the flex column the layout depends on
