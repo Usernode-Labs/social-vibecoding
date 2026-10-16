@@ -5029,10 +5029,9 @@ export function DevWorkshop(): ReactNode {
         <section className="dev-ws-strip" data-ws-happening="">
           {/* ── Waiting on you ── (#4772) what needs the viewer's answer
               before it can move: Homeroom bot's plan for their request
-              waiting for Build it, its question to them, a back and forth
-              with it on a change or request, and a change of theirs that
-              needs a fix. One line each; its count asks for the viewer, so
-              it is in the accent. */}
+              waiting for Build it, its question to them, and a change of
+              theirs that needs a fix. One line each; its count asks for the
+              viewer, so it is in the accent. */}
           {waitingRows.length ? (
             <MineSection
               section="waiting"

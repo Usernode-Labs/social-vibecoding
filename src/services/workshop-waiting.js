@@ -1,7 +1,7 @@
 'use strict';
 
 // #4772: what Homeroom bot is waiting on ONE viewer for, on one project, for
-// the Workshop tab's "Waiting on you" (AppView._workshopView). Three kinds:
+// the Workshop tab's "Waiting on you" (AppView._workshopView). Two kinds:
 //
 //   - plans: the bot's plan for a request of theirs (homeroom_bot_requesters)
 //     that waits for their Build it: the request's newest run has
@@ -13,30 +13,20 @@
 //     that is still open (homeroom_bot_dm_messages.question_status). A
 //     question on the request's own discussion rides the request list as
 //     `botAwaits` already (homeroom-bot-addressed.js waitingOn).
-//   - talks: a change or a request whose discussion has messages from both
-//     the viewer and the bot, the last of them within TALK_DAYS: a back and
-//     forth they are in. `botLast` says who spoke last. A request the bot is
-//     reading, has queued or is building is the bot's turn, not the
-//     viewer's, so it is not listed (the readings of homeroom-bot-progress.js
-//     botWorkByIssue).
 //
-// Only the viewer's own: every row is a request recorded as theirs, a
-// question asked of them, or a thread they wrote in. Never throws: a read
-// that fails is nothing waiting, never a failed board.
+// A back and forth with the bot on a change or a request is not listed
+// (#5229): whoever spoke last, the viewer is not the one being waited on.
+// When they wrote last it is the bot's turn, and when the bot did, a real
+// question is already one of the kinds above.
+//
+// Only the viewer's own: every row is a request recorded as theirs or a
+// question asked of them. Never throws: a read that fails is nothing
+// waiting, never a failed board.
 
 const log = require('./logger');
 
-/** How recent a back and forth with the bot must be to be listed. */
-const TALK_DAYS = 3;
 /** The most of each kind one answer carries. */
 const MAX_EACH = 10;
-/**
- * How long a live build still counts as the bot's turn, the same window as
- * homeroom-bot.js ABANDONED_LIVE_WINDOW_DAYS. Read as a literal there rather
- * than required: homeroom-bot.js is a large module the unit test should not
- * load.
- */
-const BOT_HOLD_DAYS = 7;
 
 const PLANS_SQL = `
   SELECT q.issue_number, run.awaiting_go_at AS at
@@ -61,54 +51,18 @@ const QUESTIONS_SQL = `
    ORDER BY at DESC
    LIMIT $3`;
 
-// Both sides' newest message in each change's or request's own discussion.
-// A change counts while it is open (being built, paused, up for a vote or
-// going in); a request's state is the client's to read off its list.
-const TALKS_SQL = `
-  WITH talk AS (
-    SELECT m.thread_type, m.thread_ref,
-           MAX(m.created_at) FILTER (WHERE m.user_id = $2) AS mine_at,
-           MAX(m.created_at) FILTER (WHERE m.user_id = $3) AS bot_at
-      FROM chat_messages m
-     WHERE m.app_id = $1 AND m.thread_type IN ('session', 'issue')
-       AND m.msg_type = 'message'
-       AND m.deleted_at IS NULL AND m.moderation_hidden_at IS NULL
-       AND m.user_id IN ($2, $3)
-       AND m.created_at > NOW() - make_interval(days => $4)
-     GROUP BY m.thread_type, m.thread_ref
-  )
-  SELECT t.thread_type, t.thread_ref, GREATEST(t.mine_at, t.bot_at) AS at, (t.bot_at >= t.mine_at) AS bot_last
-    FROM talk t
-    LEFT JOIN chat_sessions cs ON t.thread_type = 'session' AND cs.id = t.thread_ref AND cs.app_id = $1
-   WHERE t.mine_at IS NOT NULL AND t.bot_at IS NOT NULL
-     AND (t.thread_type = 'issue' OR cs.status IN ('active', 'paused', 'promoted', 'merging'))
-     AND NOT (t.thread_type = 'issue' AND (
-       EXISTS (SELECT 1 FROM homeroom_bot_queue q
-                WHERE q.app_id = $1 AND q.issue_number = t.thread_ref
-                  AND (q.started_at IS NOT NULL
-                       OR (q.priority = 0 AND (q.held_until IS NULL OR q.held_until <= NOW()))))
-       OR EXISTS (SELECT 1 FROM homeroom_bot_runs r
-                WHERE r.app_id = $1 AND r.issue_number = t.thread_ref
-                  AND r.mode = 'live' AND r.verdict = 'ready' AND r.build_ok IS NULL
-                  AND r.proposal_session_id IS NULL
-                  AND (r.live_build_waiting_at IS NOT NULL OR r.build_session_id IS NOT NULL)
-                  AND r.created_at > NOW() - make_interval(days => $6))))
-   ORDER BY at DESC
-   LIMIT $5`;
-
 const iso = (v) => (v instanceof Date ? v.toISOString() : v ? new Date(v).toISOString() : null);
 
 /** Nothing waiting. */
 function none() {
-  return { plans: [], questions: [], talks: [] };
+  return { plans: [], questions: [] };
 }
 
 /**
- * What the bot waits on `userId` for on `appId` ({ plans, questions, talks },
- * newest first). `botId` is the bot's account (homeroom-bot-dm.js
- * botAccount); without it, or for the bot itself, there are no talks.
+ * What the bot waits on `userId` for on `appId` ({ plans, questions },
+ * newest first).
  */
-async function waitingOnViewer(pool, { appId, userId, botId = null }) {
+async function waitingOnViewer(pool, { appId, userId }) {
   const out = none();
   if (!appId || !userId) return out;
   try {
@@ -116,15 +70,6 @@ async function waitingOnViewer(pool, { appId, userId, botId = null }) {
     out.plans = plans.map((r) => ({ number: Number(r.issue_number), at: iso(r.at) }));
     const { rows: questions } = await pool.query(QUESTIONS_SQL, [appId, userId, MAX_EACH]);
     out.questions = questions.map((r) => ({ number: Number(r.issue_number), at: iso(r.at) }));
-    if (botId && Number(botId) !== Number(userId)) {
-      const { rows: talks } = await pool.query(TALKS_SQL, [appId, userId, botId, TALK_DAYS, MAX_EACH, BOT_HOLD_DAYS]);
-      out.talks = talks.map((r) => ({
-        type: r.thread_type === 'issue' ? 'issue' : 'session',
-        ref: Number(r.thread_ref),
-        at: iso(r.at),
-        botLast: !!r.bot_last,
-      }));
-    }
   } catch (err) {
     log.warn('workshop', 'Could not read what Homeroom bot waits on the viewer for', { appId, err: err.message });
     return none();
@@ -134,17 +79,15 @@ async function waitingOnViewer(pool, { appId, userId, botId = null }) {
 
 /**
  * The ?demo=1 staging answer (routes/issues.js): one of each on the mock
- * requests, so the Workshop's Waiting on you is reviewable in a preview. A
- * plan on 900016, a question on 900015, and a back and forth on 900002, in
- * which Homeroom bot spoke last.
+ * requests, so the Workshop's Waiting on you is reviewable in a preview: a
+ * plan on 900016 and a question on 900015.
  */
 function demoWaiting(now = Date.now()) {
   const ago = (h) => new Date(now - h * 3600 * 1000).toISOString();
   return {
     plans: [{ number: 900016, at: ago(1) }],
     questions: [{ number: 900015, at: ago(3) }],
-    talks: [{ type: 'issue', ref: 900002, at: ago(2), botLast: true }],
   };
 }
 
-module.exports = { TALK_DAYS, MAX_EACH, BOT_HOLD_DAYS, waitingOnViewer, demoWaiting, PLANS_SQL, QUESTIONS_SQL, TALKS_SQL };
+module.exports = { MAX_EACH, waitingOnViewer, demoWaiting, PLANS_SQL, QUESTIONS_SQL };
