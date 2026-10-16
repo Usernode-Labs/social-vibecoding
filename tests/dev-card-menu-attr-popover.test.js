@@ -203,7 +203,10 @@ test('the ⋯ row for an attribute is wired to open its picker', () => {
   const rows = attrRows(AppView);
   const assignee = rows.find((it) => it.icon === 'assignee');
   assert.ok(assignee, 'an assignee row is offered');
-  assert.match(assignee.label, /assign/i);
+  // #3676 reworded the row away from "Assign someone…": it now says what
+  // picking it does, "Suggest who takes it…" (unset) or "Vote on who takes
+  // it…" (set), so the label is pinned to the phrase both variants share.
+  assert.match(assignee.label, /takes it/i);
   assert.equal(typeof assignee.act, 'function', 'and it is not an inert label');
 });
 
