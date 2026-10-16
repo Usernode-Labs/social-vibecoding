@@ -1643,12 +1643,17 @@ function proposalHandoffRoutes(config) {
         if (!isSessionBusy(Number(session.id))
             && !localPipelineBusy
             && currentCheckedHead(session) === input.headSha
-            && publicSessionStatus(session).revisionState === 'ready') {
+            && publicSessionStatus(session).revisionState === 'ready'
+            && !(revisionKind === 'proposal' && session.handoff_head_sha !== input.headSha)) {
           // The head SHA is the build's idempotency key. A retry after the
           // original 202 response was lost must not tear down a healthy
           // preview and run the entire staging/check pipeline again. Failed
           // and interrupted states deliberately fall through so the same
           // commit can be retried without manufacturing a no-op commit.
+          // A promoted upload whose checks reached it before its submit (a
+          // recheck or a vote handed the reviewed head over) is adopted
+          // below, so its spec and history are kept; the revision it hands
+          // the machine joins the head it already serves.
           return res.status(200).json(publicSessionStatus(session));
         }
         if (isSessionBusy(Number(session.id)) || localPipelineBusy) {
@@ -1714,6 +1719,16 @@ function proposalHandoffRoutes(config) {
               await pool.query(`UPDATE chat_sessions SET spec_md = $1, spec_html = NULL WHERE id = $2`, [input.spec, session.id]);
             }
             await snapshotSpec(pool, session.id, spec, input.headSha);
+            // The upload is the branch's head (read above) and the head people
+            // vote on; this submit is what hands it to the checks, so the
+            // checks need not be on it yet. Requiring them to be deadlocked a
+            // promoted upload once the preview machine owned every run: the
+            // upload starts none (it only clears the verdict) and nothing but
+            // this submit hands the new head over (session 8465). The checks
+            // pin may be the one the upload recorded (nothing has run since)
+            // or the upload itself (a vote or recheck already handed it over),
+            // never a third commit, as cli-handoff-sync's promoted adoption
+            // installs its pins on the reviewed head alone.
             const adopted = await pool.query(
               `UPDATE chat_sessions
                   SET handoff_head_sha = $1,
@@ -1726,7 +1741,8 @@ function proposalHandoffRoutes(config) {
                 WHERE id = $2 AND status = $3 AND source = $4
                   AND handoff_uploaded_sha = $1
                   AND reviewed_head_sha IS NOT DISTINCT FROM $1
-                  AND checks_commit_sha IS NOT DISTINCT FROM $1
+                  AND (checks_commit_sha IS NOT DISTINCT FROM $1
+                       OR checks_commit_sha IS NOT DISTINCT FROM handoff_upload_checked_sha)
                   AND handoff_head_sha IS NOT DISTINCT FROM $5
                   AND handoff_upload_checked_sha IS NOT DISTINCT FROM $6`,
               [input.headSha, session.id, session.status, SOURCE,
