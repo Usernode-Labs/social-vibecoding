@@ -139,6 +139,79 @@ async function withdrawWhereAllClosed(pool, sessions, { known = new Set(), deps 
   return withdrawn;
 }
 
+// 16 Oct 2026 (V4): the people who asked the bot for requests somebody
+// else's merged change just shipped: each requester of a request the bot
+// had live runs on, beside the change that shipped it and whoever made it.
+// Not when the bot's own change merged (that is its own news, Live), nor
+// when the requester made it themselves, and never a first version. `$1` the app, `$2` the requests, `$3` the bot's
+// username.
+const DONE_ELSEWHERE_SQL = `
+  SELECT q.user_id, q.issue_number, q.issue_title, a.slug, a.name, d.username, d.pr_number
+    FROM homeroom_bot_requesters q
+    JOIN apps a ON a.id = q.app_id
+    JOIN LATERAL (
+      SELECT u.username, cs.pr_number
+        FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
+       WHERE cs.app_id = q.app_id AND cs.status = 'merged' AND u.username <> $3 AND cs.user_id <> q.user_id
+         AND (q.issue_number = ANY(cs.linked_issues) OR cs.created_from_issue_number = q.issue_number)
+       ORDER BY cs.merged_at DESC NULLS LAST, cs.id DESC
+       LIMIT 1
+    ) d ON TRUE
+   WHERE q.app_id = $1 AND q.issue_number = ANY($2::int[]) AND q.first_version IS NOT TRUE
+     AND EXISTS (SELECT 1 FROM homeroom_bot_runs r
+                  WHERE r.app_id = q.app_id AND r.issue_number = q.issue_number AND r.mode = 'live')
+     AND NOT EXISTS (SELECT 1 FROM chat_sessions b JOIN users bu ON bu.id = b.user_id
+                      WHERE b.app_id = q.app_id AND b.status = 'merged' AND bu.username = $3
+                        AND q.issue_number = ANY(b.linked_issues))`;
+
+/** Pure: what the bot says to whoever asked, when somebody else's change shipped their request. */
+function doneElsewhereText({ title, username }) {
+  const what = title ? `“${String(title).slice(0, 120)}”` : 'This request';
+  const who = username ? `a change by @${username}` : 'another change';
+  return `${what} was done another way: ${who} did what it asked. There's nothing more for me to build here.`;
+}
+
+/**
+ * Tell each person who asked the bot for one of `numbers` (just closed) that
+ * somebody else's change shipped it, once (rings as done another way:
+ * homeroom-bot-dm.js STORY_MOMENTS `request_closed`), and re-read their open
+ * tray. Best effort, never throws; resolves how many were told.
+ */
+async function tellDoneElsewhere(pool, { appId, numbers, deps = {} }) {
+  let told = 0;
+  try {
+    const { rows } = await pool.query(DONE_ELSEWHERE_SQL, [Number(appId), numbers, BOT_USERNAME]);
+    if (!rows.length) return 0;
+    const { rows: [bot] = [] } = await pool.query(
+      'SELECT id, username FROM users WHERE username = $1 AND is_synthetic = TRUE', [BOT_USERNAME],
+    );
+    if (!bot) return 0;
+    const dm = deps.dm || require('./homeroom-bot-dm');
+    const tray = deps.tray || require('./homeroom-bot-tray');
+    for (const row of rows) {
+      const n = Number(row.issue_number);
+      const sent = await dm.sendDm(pool, {
+        bot,
+        userId: Number(row.user_id),
+        content: doneElsewhereText({ title: row.issue_title, username: row.username }),
+        metadata: {
+          kind: 'request_closed', appSlug: row.slug, appName: row.name || row.slug, issueNumber: n,
+          requestTitle: row.issue_title || null, said: 'done_elsewhere', doneBy: row.username || null,
+        },
+        idempotencyKey: `hrbot-done-elsewhere-${Number(appId)}-${n}-${Number(row.user_id)}`,
+      }).catch((err) => {
+        log.warn('homeroom-bot-closed-requests', 'Could not tell a requester their request was done another way', { appId, n, err: err.message });
+        return null;
+      });
+      if (sent) told += 1;
+      tray.noteWorkChanged(Number(row.user_id));
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-closed-requests', 'Could not tell requesters their requests were done another way', { appId, err: err.message });
+  }
+  return told;
+}
+
 function wakeFor(appId, deps) {
   try {
     (deps.wake || require('./homeroom-bot').wake)({ appId: Number(appId) });
@@ -165,6 +238,9 @@ async function noteRequestsClosed(pool, { appId, closed, strict = false, deps = 
       log.info('homeroom-bot-closed-requests', 'Withdrew the bot\'s proposals for closed requests', { appId, closed: numbers, withdrawn });
       wakeFor(appId, deps);
     }
+    // 16 Oct 2026 (V4): whoever asked the bot for one of them hears it was
+    // done another way, when somebody else's merged change shipped it.
+    if (deps.tellDoneElsewhere !== false) await tellDoneElsewhere(pool, { appId: Number(appId), numbers, deps });
     return { withdrawn };
   } catch (err) {
     if (strict) throw err;
@@ -289,5 +365,5 @@ async function announceClosed(pool, { repo, appId, appSlug, closed, watcher, dep
 
 module.exports = {
   noteRequestsClosed, sweepClosedRequests, closeRequestRows, closedNote, REASON,
-  RECONCILE_LIMIT,
+  RECONCILE_LIMIT, DONE_ELSEWHERE_SQL, doneElsewhereText, tellDoneElsewhere,
 };

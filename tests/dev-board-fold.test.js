@@ -1645,9 +1645,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // already selected (#admin/reports/1, the staging fixture's fake report),
   // a route no other check reaches. 733 leaves 147 slots.
   //
+  // 733 → 735: +2 (16 Oct 2026, one track per request): a request's page
+  // says where Homeroom bot's work on it is (/dev/issues/900018, the
+  // staging mock it is building), and the bot's slots page under the
+  // Workshop (?ws=bot); two routes no other check reaches. 735 leaves 145
+  // slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 733);
+  checkCap.assertPinned(DAPP.tests.length, 735);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

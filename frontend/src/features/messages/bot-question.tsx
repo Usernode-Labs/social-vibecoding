@@ -7,6 +7,7 @@ import { t as translate } from '../../lib/i18n/runtime';
 import { InviteSheet } from '../first-session/made';
 import type { Made } from '../first-session/make';
 import { AnsweredChoices } from './bot-plan-view';
+import { useTrackOf } from './bot-track';
 import { answerBotQuestion, quoteInComposer, tapBotAction } from './store';
 import type { ConversationMessage, HomeroomBotAction, HomeroomBotMeta } from './types';
 
@@ -191,7 +192,16 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
   const [pressed, setPressed] = useState<HomeroomBotAction | null>(null);
   // #4231: the invite sheet, opened in place by Invite people.
   const [inviting, setInviting] = useState(false);
-  const actions = meta.actions || [];
+  // 16 Oct 2026 (C6): a step its request has moved past retires its button.
+  // "Read the plan" under the plan stopped meaning the next step once the
+  // build began, yet it was the last button in the thread and read as one;
+  // the request's card at the top of its thread says where it is now.
+  const track = useTrackOf(meta.appSlug || meta.appName ? {
+    appSlug: meta.appSlug, appName: meta.appName, issueNumber: meta.issueNumber, firstVersion: meta.firstVersion === true,
+  } : null);
+  const pastPlan = !!track && !['queued', 'planning', 'waiting'].includes(track.state);
+  const actions = (meta.actions || []).filter((action) => !(pastPlan && action.id === 'read_plan'));
+  if (!actions.length) return null;
   const invite = inviteMade(meta);
   const settled = meta.status === 'answered' || meta.status === 'closed';
   const open = !settled && !pressed && !message.deleted;

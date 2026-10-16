@@ -36,6 +36,21 @@
  * the screen with the list it drew; what is left here is the two PINNED
  * sections, which have their own row shapes.
  *
+ * ── Each pinned row sits in a React-owned slot ────────────────────────
+ *
+ * On touch each row hands its inner row node (never the slot — the node
+ * React places among its siblings in #notifications-saved /
+ * #notifications-invites) to PlatformUI.swipeActions from an effect, and the
+ * effect DETACHES. The kit wraps the node it is handed in a `.un-swipe`
+ * container it inserts in its place, so a row that React owned directly
+ * would leave React removing it from a parent it is no longer in: Unsave
+ * would throw NotFoundError, the island boundary would escalate, and the
+ * whole tree would drop while the sheet stayed painted — a sheet where
+ * nothing answers a tap (#5309). ScreenRow in ./notifications-sheet.tsx
+ * describes the same failure at length; the slot and the detach cleanup
+ * here are its pattern. The hairline between consecutive rows follows the
+ * slot's place in the list rather than the row's (app.css).
+ *
  * ── stopPropagation, everywhere ────────────────────────────────────────
  *
  * Every handler here stops the click. That is not defensive habit: each of
@@ -187,67 +202,70 @@ function Saved({ view, touch }: { view: SavedMessageView; touch: boolean }): Rea
   useEffect(() => {
     const el = ref.current;
     const ui = kit();
-    if (!touch || !el || !ui?.swipeActions) return;
-    ui.swipeActions(el, {
+    if (!touch || !el || !ui?.swipeActions) return undefined;
+    const swipe = ui.swipeActions(el, {
       actions: [{
         label: t('notifications:saved.unsave'),
         handler: () => controller()?._unsave(view.messageId),
       }],
     });
-  }, [touch, view.messageId]);
+    return () => swipe.detach();
+  }, [touch, view.messageId, t]);
 
   return (
-    <div
-      ref={ref}
-      data-saved-message={view.messageId}
-      className="notifications-row flex items-center gap-3 px-4 py-3"
-    >
-      <span
-        aria-hidden="true"
-        className="w-9 h-9 shrink-0 rounded-lg text-white flex items-center justify-center text-xs font-semibold"
-        style={{ backgroundColor: swatchFor(view.who.replace(/^@/, '')) }}
+    <div className="notifications-row-slot">
+      <div
+        ref={ref}
+        data-saved-message={view.messageId}
+        className="notifications-row flex items-center gap-3 px-4 py-3"
       >
-        {view.who.replace(/^@/, '').charAt(0).toUpperCase() || '?'}
-      </span>
-      <button
-        className="flex-1 min-w-0 text-left"
-        onClick={(e) => {
-          e.stopPropagation();
-          controller()?._onSavedClick(view.messageId);
-        }}
-      >
-        {/*
-            The spaces ride inside the neighbouring strings rather than as
-            whitespace-only children — see the note on <Meta> for why.
-        */}
-        <div className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
-          {/* The same mark the message's own save button carries — solid
-              here, because everything in this section is saved by
-              definition — so the two ends of the gesture read as one
-              feature. */}
-          <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3.5 h-3.5 align-[-2px] mr-1 text-violet-700 dark:text-violet-400" />
-          <RichMessage
-            id={view.line}
-            values={{ username: view.author, place: view.appName, when: view.time }}
-            components={[
-              <span className="font-bold text-zinc-900 dark:text-zinc-100" />,
-              <span />,
-              <time title={view.timeTitle} />,
-            ]}
-          />
-        </div>
-        <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100 line-clamp-2">{view.text}</div>
-      </button>
-      <button
-        data-saved-unsave={view.messageId}
-        className="shrink-0 h-8 px-3 rounded-full bg-zinc-100 text-xs font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
-        onClick={(e) => {
-          e.stopPropagation();
-          controller()?._unsave(view.messageId);
-        }}
-      >
-        {t('notifications:saved.unsave')}
-      </button>
+        <span
+          aria-hidden="true"
+          className="w-9 h-9 shrink-0 rounded-lg text-white flex items-center justify-center text-xs font-semibold"
+          style={{ backgroundColor: swatchFor(view.who.replace(/^@/, '')) }}
+        >
+          {view.who.replace(/^@/, '').charAt(0).toUpperCase() || '?'}
+        </span>
+        <button
+          className="flex-1 min-w-0 text-left"
+          onClick={(e) => {
+            e.stopPropagation();
+            controller()?._onSavedClick(view.messageId);
+          }}
+        >
+          {/*
+              The spaces ride inside the neighbouring strings rather than as
+              whitespace-only children — see the note on <Meta> for why.
+          */}
+          <div className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
+            {/* The same mark the message's own save button carries — solid
+                here, because everything in this section is saved by
+                definition — so the two ends of the gesture read as one
+                feature. */}
+            <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3.5 h-3.5 align-[-2px] mr-1 text-violet-700 dark:text-violet-400" />
+            <RichMessage
+              id={view.line}
+              values={{ username: view.author, place: view.appName, when: view.time }}
+              components={[
+                <span className="font-bold text-zinc-900 dark:text-zinc-100" />,
+                <span />,
+                <time title={view.timeTitle} />,
+              ]}
+            />
+          </div>
+          <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100 line-clamp-2">{view.text}</div>
+        </button>
+        <button
+          data-saved-unsave={view.messageId}
+          className="shrink-0 h-8 px-3 rounded-full bg-zinc-100 text-xs font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+          onClick={(e) => {
+            e.stopPropagation();
+            controller()?._unsave(view.messageId);
+          }}
+        >
+          {t('notifications:saved.unsave')}
+        </button>
+      </div>
     </div>
   );
 }
@@ -268,14 +286,15 @@ function SavedNotification({ view, touch }: { view: SavedNotificationView; touch
   useEffect(() => {
     const el = ref.current;
     const ui = kit();
-    if (!touch || !el || !ui?.swipeActions) return;
-    ui.swipeActions(el, {
+    if (!touch || !el || !ui?.swipeActions) return undefined;
+    const swipe = ui.swipeActions(el, {
       actions: [{
         label: t('notifications:saved.unsave'),
         handler: () => controller()?._unsaveNotification(view.id),
       }],
     });
-  }, [touch, view.id]);
+    return () => swipe.detach();
+  }, [touch, view.id, t]);
 
   // The second line, as the feed row drew it: the segments joined back into
   // one sentence, or the kind's own label when the row has no subject.
@@ -284,51 +303,53 @@ function SavedNotification({ view, touch }: { view: SavedNotificationView; touch
     : view.label;
 
   return (
-    <div
-      ref={ref}
-      data-saved-notification={view.id}
-      className="notifications-row flex items-center gap-3 px-4 py-3"
-    >
-      <span
-        aria-hidden="true"
-        className="w-9 h-9 shrink-0 rounded-lg bg-zinc-100 text-zinc-500 flex items-center justify-center dark:bg-zinc-800 dark:text-zinc-400"
+    <div className="notifications-row-slot">
+      <div
+        ref={ref}
+        data-saved-notification={view.id}
+        className="notifications-row flex items-center gap-3 px-4 py-3"
       >
-        {view.icon
-          ? <span className="text-base leading-none">{view.icon}</span>
-          : <BookmarkSolidIcon className="h-4 w-4" />}
-      </span>
-      <button
-        className="flex-1 min-w-0 text-left"
-        onClick={(e) => {
-          e.stopPropagation();
-          controller()?._onItemClick(view.id);
-        }}
-      >
-        {/* First line: the KIND and the SAVE time, with the same mark the
-            saved messages carry, so the section reads as one feature. */}
-        <div className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
-          <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3.5 h-3.5 align-[-2px] mr-1 text-violet-700 dark:text-violet-400" />
-          <RichMessage
-            id="notifications:saved.notificationLine"
-            values={{ kind: view.label, when: view.time }}
-            components={[
-              <span className="font-bold text-zinc-900 dark:text-zinc-100" />,
-              <time title={view.timeTitle} />,
-            ]}
-          />
-        </div>
-        <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100 line-clamp-2">{subject}</div>
-      </button>
-      <button
-        data-saved-notification-unsave={view.id}
-        className="shrink-0 h-8 px-3 rounded-full bg-zinc-100 text-xs font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
-        onClick={(e) => {
-          e.stopPropagation();
-          controller()?._unsaveNotification(view.id);
-        }}
-      >
-        {t('notifications:saved.unsave')}
-      </button>
+        <span
+          aria-hidden="true"
+          className="w-9 h-9 shrink-0 rounded-lg bg-zinc-100 text-zinc-500 flex items-center justify-center dark:bg-zinc-800 dark:text-zinc-400"
+        >
+          {view.icon
+            ? <span className="text-base leading-none">{view.icon}</span>
+            : <BookmarkSolidIcon className="h-4 w-4" />}
+        </span>
+        <button
+          className="flex-1 min-w-0 text-left"
+          onClick={(e) => {
+            e.stopPropagation();
+            controller()?._onItemClick(view.id);
+          }}
+        >
+          {/* First line: the KIND and the SAVE time, with the same mark the
+              saved messages carry, so the section reads as one feature. */}
+          <div className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
+            <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3.5 h-3.5 align-[-2px] mr-1 text-violet-700 dark:text-violet-400" />
+            <RichMessage
+              id="notifications:saved.notificationLine"
+              values={{ kind: view.label, when: view.time }}
+              components={[
+                <span className="font-bold text-zinc-900 dark:text-zinc-100" />,
+                <time title={view.timeTitle} />,
+              ]}
+            />
+          </div>
+          <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100 line-clamp-2">{subject}</div>
+        </button>
+        <button
+          data-saved-notification-unsave={view.id}
+          className="shrink-0 h-8 px-3 rounded-full bg-zinc-100 text-xs font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+          onClick={(e) => {
+            e.stopPropagation();
+            controller()?._unsaveNotification(view.id);
+          }}
+        >
+          {t('notifications:saved.unsave')}
+        </button>
+      </div>
     </div>
   );
 }
@@ -344,8 +365,8 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
   useEffect(() => {
     const el = ref.current;
     const ui = kit();
-    if (!touch || !el || !ui?.swipeActions) return;
-    ui.swipeActions(el, {
+    if (!touch || !el || !ui?.swipeActions) return undefined;
+    const swipe = ui.swipeActions(el, {
       actions: [
         {
           label: t('notifications:invite.accept'),
@@ -358,75 +379,78 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
         },
       ],
     });
-  }, [touch, view.appId, view.slug, view.kind]);
+    return () => swipe.detach();
+  }, [touch, view.appId, view.slug, view.kind, t]);
 
   return (
-    <div
-      ref={ref}
-      className="notifications-row flex items-start gap-3 px-4 py-3"
-      data-invite-app={view.appId}
-    >
-      <span
-        aria-hidden="true"
-        className="w-9 h-9 shrink-0 rounded-lg text-white flex items-center justify-center text-xs font-semibold"
-        style={{ backgroundColor: swatchFor(view.who.replace(/^@/, '')) }}
+    <div className="notifications-row-slot">
+      <div
+        ref={ref}
+        className="notifications-row flex items-start gap-3 px-4 py-3"
+        data-invite-app={view.appId}
       >
-        {view.who.replace(/^@/, '').charAt(0).toUpperCase() || '?'}
-      </span>
-      <div className="min-w-0 flex-1">
-      {/*
-          The spaces ride inside the neighbouring strings rather than as
-          whitespace-only children — see the note on <Meta> for why.
-      */}
-      <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100">
-        <RichMessage
-          id={view.line}
-          values={{ username: view.inviter, project: view.appName }}
-          components={[<span className="font-bold" />, <span className="font-bold" />]}
-        />
-      </div>
-      {/* The inviter's note, as an invite link's page shows it. */}
-      {view.note ? (
-        <p data-invite-note="" className="mt-0.5 text-sm leading-snug text-zinc-700 dark:text-zinc-200 line-clamp-3">
-          {t('notifications:invite.note', { note: view.note })}
-        </p>
-      ) : null}
-      <div className="text-xs text-zinc-500 dark:text-zinc-400">
-        <span aria-hidden="true">{`${view.icon} `}</span>
-        {view.members ? (
+        <span
+          aria-hidden="true"
+          className="w-9 h-9 shrink-0 rounded-lg text-white flex items-center justify-center text-xs font-semibold"
+          style={{ backgroundColor: swatchFor(view.who.replace(/^@/, '')) }}
+        >
+          {view.who.replace(/^@/, '').charAt(0).toUpperCase() || '?'}
+        </span>
+        <div className="min-w-0 flex-1">
+        {/*
+            The spaces ride inside the neighbouring strings rather than as
+            whitespace-only children — see the note on <Meta> for why.
+        */}
+        <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100">
           <RichMessage
-            id="notifications:invite.meta.membersWhen"
-            values={{ members: view.members, when: view.time }}
-            components={[<span data-invite-members="" />, <time title={view.timeTitle} />]}
+            id={view.line}
+            values={{ username: view.inviter, project: view.appName }}
+            components={[<span className="font-bold" />, <span className="font-bold" />]}
           />
-        ) : <time title={view.timeTitle}>{view.time}</time>}
-      </div>
-      <div className="flex gap-2 mt-2">
-        <Button
-          data-invite-accept={view.appId}
-          data-invite-slug={view.slug}
-          data-invite-kind={view.kind}
-          variant="pillAccent"
-          size="pill"
-          onClick={(e) => {
-            e.stopPropagation();
-            controller()?._acceptInvite(view.appId, view.slug, view.kind);
-          }}
-        >
-          {t('notifications:invite.accept')}
-        </Button>
-        <button
-          data-invite-decline={view.appId}
-          data-invite-kind={view.kind}
-          className="rounded-full bg-zinc-100 px-5 py-2.5 text-sm font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
-          onClick={(e) => {
-            e.stopPropagation();
-            controller()?._declineInvite(view.appId, view.kind);
-          }}
-        >
-          {t('notifications:invite.decline')}
-        </button>
-      </div>
+        </div>
+        {/* The inviter's note, as an invite link's page shows it. */}
+        {view.note ? (
+          <p data-invite-note="" className="mt-0.5 text-sm leading-snug text-zinc-700 dark:text-zinc-200 line-clamp-3">
+            {t('notifications:invite.note', { note: view.note })}
+          </p>
+        ) : null}
+        <div className="text-xs text-zinc-500 dark:text-zinc-400">
+          <span aria-hidden="true">{`${view.icon} `}</span>
+          {view.members ? (
+            <RichMessage
+              id="notifications:invite.meta.membersWhen"
+              values={{ members: view.members, when: view.time }}
+              components={[<span data-invite-members="" />, <time title={view.timeTitle} />]}
+            />
+          ) : <time title={view.timeTitle}>{view.time}</time>}
+        </div>
+        <div className="flex gap-2 mt-2">
+          <Button
+            data-invite-accept={view.appId}
+            data-invite-slug={view.slug}
+            data-invite-kind={view.kind}
+            variant="pillAccent"
+            size="pill"
+            onClick={(e) => {
+              e.stopPropagation();
+              controller()?._acceptInvite(view.appId, view.slug, view.kind);
+            }}
+          >
+            {t('notifications:invite.accept')}
+          </Button>
+          <button
+            data-invite-decline={view.appId}
+            data-invite-kind={view.kind}
+            className="rounded-full bg-zinc-100 px-5 py-2.5 text-sm font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+            onClick={(e) => {
+              e.stopPropagation();
+              controller()?._declineInvite(view.appId, view.kind);
+            }}
+          >
+            {t('notifications:invite.decline')}
+          </button>
+        </div>
+        </div>
       </div>
     </div>
   );

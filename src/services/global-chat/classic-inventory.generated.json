@@ -8181,6 +8181,21 @@
     {
       "source": "src/routes/issues.js",
       "method": "GET",
+      "path": "/api/apps/:slug/homeroom-bot/slots",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.apps.item.homeroom.bot.slots.8372e65f",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/app"
+    },
+    {
+      "source": "src/routes/issues.js",
+      "method": "GET",
       "path": "/api/apps/:slug/github-issues/:number",
       "expression": null,
       "status": "mapped",

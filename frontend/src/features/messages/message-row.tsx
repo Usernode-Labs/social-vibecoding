@@ -15,7 +15,8 @@ import {
 import type { ConversationKind, ConversationMessage, DiscussionMessage } from './types';
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar, senderName } from './format';
 import { issueRefHref } from './channels';
-import { BotActivityCard, isActivityMessage } from './bot-activity';
+import { isActivityMessage } from './bot-activity';
+import { BotCardOrTrack } from './bot-track';
 import { BotQuestion, botMeta } from './bot-question';
 import { BotPlanCard, BotTwoQuestions, isPlanMessage, isTwoQuestions } from './bot-plan';
 import { BotThanksCard, isThanksMessage } from './bot-thanks-card';
@@ -332,10 +333,12 @@ export const MessageRow = memo(function MessageRow({
         // #3736: the bot's activity card stands in place of its words, which
         // say the same for the inbox preview and the bell (./bot-activity.tsx).
         // #3770: a card with nothing on record keeps its words.
+        // 16 Oct 2026: its request's track, where the viewer's bot work has
+        // one (./bot-track.tsx).
         <>
           {/* B5: the bot's hello leads the first card it sends somebody. */}
           {message.metadata?.homeroomBot?.hello ? <p className="messages-bot-hello">{message.metadata.homeroomBot.hello}</p> : null}
-          <BotActivityCard message={message} words={words} />
+          <BotCardOrTrack message={message} words={words} />
         </>
       ) : isPlanMessage(message) ? (
         // B6: a first version's plan, and two questions at once, stand in

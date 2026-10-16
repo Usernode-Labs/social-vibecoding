@@ -4553,10 +4553,15 @@ async function buildAndPropose({
     // A turn a restart caught whose commit could not be pushed from its
     // worker either (durable-turn.js followTurn's `pushFailed`): its work is
     // in the worker, so it is a push failure, never "no change".
+    // 16 Oct 2026 (H2): nor is a commit the turn made that its own push did
+    // not land (worker.js unpushedCommit: ahead > 0, push_ok=0). It was
+    // recorded as "no change", which said the build had done nothing.
+    const unpushed = result.pushOk === false && Number(result.ahead) > 0;
     return {
       ...(await fail(result.pushFailed
         ? `couldn't push the build's commit (${result.pushFailed})`
-        : 'the build produced no change to propose')),
+        : unpushed ? 'couldn\'t push the build\'s commit'
+          : 'the build produced no change to propose')),
       costUsd,
     };
   }

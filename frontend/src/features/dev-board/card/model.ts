@@ -550,7 +550,7 @@ export interface DevWorkshopView {
    * Which place a `?ws=` deep link asked for; null for the viewer's own
    * choice. A topic's channel is `c:<handle>` (#4417).
    */
-  tab: 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | `c:${string}` | null;
+  tab: 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | 'bot' | `c:${string}` | null;
   /**
    * The models the ask box may talk to — the dev session's own list
    * (`DevChat.MODELS`), not a second one. Empty where DevChat is absent, and

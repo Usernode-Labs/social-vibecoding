@@ -3221,10 +3221,13 @@ const GroupChat = {
     } catch { /* it comes back on the next load, and can be dismissed again */ }
   },
 
-  // B9: the chat with Homeroom bot (See progress, Open chat).
-  openBotChat() {
+  // B9: the chat with Homeroom bot (See progress, Open chat). 16 Oct 2026
+  // (C4): See progress opens it at the request's own thread, its story.
+  openBotChat(issueNumber) {
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
-    if (messages && typeof messages.openBot === 'function') messages.openBot();
+    const n = Number(issueNumber);
+    if (messages && n && GroupChat.appSlug && typeof messages.openBotRequest === 'function') messages.openBotRequest(GroupChat.appSlug, n);
+    else if (messages && typeof messages.openBot === 'function') messages.openBot();
     else location.hash = '#messages';
   },
 

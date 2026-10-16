@@ -28,6 +28,8 @@ const BELL_LABELS = Object.freeze({
   stopped: 'Stopped',
   on_hold: 'On hold',
   live: 'Live',
+  // 16 Oct 2026: somebody else's change shipped what the bot was working on.
+  done_elsewhere: 'Done another way',
 });
 
 // Older moment names (rows and senders from before), as the moment they are.
@@ -43,8 +45,11 @@ const SAID_BY_MOMENT = Object.freeze({
   ready: Object.freeze(['ready', 'ready_group', 'ready_first', 'ready_broken']),
   stopped: Object.freeze(['build_time', 'build_restart', 'build_no_change', 'build_not_proposed', 'build_no_start',
     'build_other', 'update_failed', 'needs_look', 'checks', 'first_failed']),
-  on_hold: Object.freeze(['allowance', 'paused']),
+  // 16 Oct 2026: `slots`, a build held because the project's slots are all
+  // in use (homeroom-bot.js PROPOSALS_PER_APP_CAP), rings once.
+  on_hold: Object.freeze(['allowance', 'paused', 'slots']),
   live: Object.freeze(['live', 'live_soon', 'live_first', 'live_first_soon']),
+  done_elsewhere: Object.freeze(['done_elsewhere']),
 });
 
 // The notification kind each moment rings as, in the "Your builds" push
@@ -55,6 +60,7 @@ const MOMENT_KINDS = Object.freeze({
   stopped: 'build_stopped',
   on_hold: 'build_stopped',
   live: 'build_live',
+  done_elsewhere: 'build_live',
 });
 
 // `hrbot:<said>:<app>` rows from before "one story": the moment and variant
@@ -168,7 +174,11 @@ function saidFor(moment, metadata = {}) {
     if (first) return 'ready_first';
     return metadata?.group || metadata?.ready?.group ? 'ready_group' : 'ready';
   }
-  if (moment === 'on_hold') return kind === 'paused' ? 'paused' : 'allowance';
+  if (moment === 'on_hold') {
+    if (kind === 'paused') return 'paused';
+    return /^held_proposals/.test(String(kind || '')) ? 'slots' : 'allowance';
+  }
+  if (moment === 'done_elsewhere') return 'done_elsewhere';
   if (moment === 'needs_you') {
     if (kind === 'plan') return first ? 'plan_first' : 'plan';
     if (kind === 'question' && Array.isArray(metadata?.questions) && metadata.questions.length > 1) return 'questions';
@@ -220,6 +230,9 @@ function botNotificationDetail(metadata) {
   );
   if (deciders) out.d = deciders;
   if (metadata.oneMore === true) out.o = 1;
+  // Done another way: who shipped it.
+  const doneBy = oneLine(metadata.doneBy, 60);
+  if (doneBy) out.y = doneBy;
   const count = positiveInt(metadata.count);
   if (count) out.c = Math.min(count, 999);
   const broken = brokenCount(metadata);
@@ -250,6 +263,7 @@ function parseBotDetail(detail) {
       waiting: oneLine(raw.w, 120),
       deciders: oneLine(raw.d, 120),
       oneMore: raw.o === 1 || raw.o === true,
+      doneBy: oneLine(raw.y, 60),
       count: positiveInt(raw.c),
       broken: positiveInt(raw.b),
       issueNumber: positiveInt(raw.i),
@@ -325,6 +339,10 @@ function bodyFor(d) {
     case 'first_failed': return 'Stopped: I couldn\'t start building your first version. You can still post a request on its page.';
     case 'allowance': return 'On hold until Monday: your building time for this week is used up.';
     case 'paused': return 'On hold until Monday: I\'ve used my budget for this week.';
+    case 'slots': return 'Waiting for a slot: all of this project\'s are in use. I\'ll start when one frees.';
+    case 'done_elsewhere': return d.doneBy
+      ? `Done another way: a change by @${d.doneBy} did what you asked, so there's nothing more for me to build.`
+      : 'Done another way: another change did what you asked, so there\'s nothing more for me to build.';
     case 'live': return `It's live. Open ${app} to see it.`;
     case 'live_soon': return `It's going live now. Open ${app} in a few minutes to see it.`;
     case 'live_first': return `Your first version is live. Open ${app} to try it.`;

@@ -311,6 +311,12 @@ test('no nudge when a stop is waiting on the session, or when its push did not g
   assert.equal(h.calls.events.length, 1);
   assert.equal(h.calls.events[0].metadata.ended, 'not_pushed');
   assert.equal(h.calls.events[0].metadata.nudged, false);
+
+  // H2 (16 Oct 2026): a commit the turn made whose push did not land is a
+  // push failure, never "no change".
+  h = harness({ turns: [{ ...QUIT, pushOk: false, ahead: 2 }] });
+  out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS });
+  assert.equal(out.error, 'couldn\'t push the build\'s commit');
 });
 
 test('no nudge when less than three minutes of the build\'s clock are left; the nudge gets what is left', async () => {

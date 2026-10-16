@@ -2306,6 +2306,7 @@ const BOT_LABEL_IDS = {
   stopped: 'notifications:row.bot.label.stopped',
   on_hold: 'notifications:row.bot.label.onHold',
   live: 'notifications:row.bot.label.live',
+  done_elsewhere: 'notifications:row.bot.label.doneElsewhere',
 };
 // A row from before "one story": the moment each old token is.
 const BOT_LEGACY_MOMENTS = {

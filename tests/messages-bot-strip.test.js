@@ -85,7 +85,7 @@ test('the groups, in order, each request once', () => {
   assert.deepEqual(titles(model.done), ['Went live'], 'done is the last day only');
   // The Needs you button opens the request's thread at what waits.
   assert.deepEqual([model.needs[0].rootId, model.needs[0].focusId], [31, 40]);
-  assert.deepEqual(stripGroups(null), { needs: [], ready: [], progress: [], done: [] });
+  assert.deepEqual(stripGroups(null), { needs: [], ready: [], progress: [], held: [], done: [] });
 });
 
 // #4974: a reply on the request's discussion settles a need, and what the
@@ -164,7 +164,7 @@ test('a Needs you row opens on a tap and has ONE action; a Ready row Try it and,
   assert.match(source, /data-bot-strip-act="try" onClick=\{tryIt\}/);
 });
 
-test('the drawer lists every request in its group, a row each with its number and badge; Done today folded to its count', () => {
+test('the drawer lists every request in its group, a row each with its number and badge; Finished today folded to its count', () => {
   const asks = Array.from({ length: 5 }, (_, i) => past({ title: `Ask ${i}`, outcome: 'question' }));
   const readies = Array.from({ length: 4 }, (_, i) => past({ title: `Ready ${i}`, outcome: 'proposed' }));
   const total = working({ title: 'Show a total under the list', stage: 'building' });
@@ -179,15 +179,15 @@ test('the drawer lists every request in its group, a row each with its number an
   assert.equal((html.match(/data-bot-strip-row="needs"/g) || []).length, 5, 'no "+N more": the drawer scrolls');
   assert.equal((html.match(/data-bot-strip-row="ready"/g) || []).length, 4);
   assert.equal((html.match(/data-bot-strip-row="progress"/g) || []).length, 4, 'In progress is a row each');
-  assert.equal((html.match(/data-bot-strip-row="done"/g) || []).length, 0, 'Done today waits behind its count');
-  assert.match(html, /aria-expanded="false" data-bot-strip-done-toggle=""><span>Done today<\/span><span class="font-semibold tabular-nums" data-bot-strip-done-count="">· 2<\/span>/);
+  assert.equal((html.match(/data-bot-strip-row="done"/g) || []).length, 0, 'Finished today waits behind its count');
+  assert.match(html, /aria-expanded="false" data-bot-strip-done-toggle=""><span>Finished today<\/span><span class="font-semibold tabular-nums" data-bot-strip-done-count="">· 2<\/span>/);
   assert.equal((html.match(/data-bot-badge="needs"/g) || []).length, 5, 'each Needs you row wears the amber badge');
   assert.equal((html.match(/data-bot-badge="ready"/g) || []).length, 4);
   assert.equal((html.match(/data-bot-badge="progress"/g) || []).length, 4);
   assert.doesNotMatch(html, /data-bot-strip-more/);
   assert.match(html, new RegExp(`data-request-tag="${total.issueNumber}">#${total.issueNumber}</span><span class="truncate[^"]*">Show a total under the list</span>`), 'its number, then its title');
   assert.match(html, /first-letter:uppercase[^"]*" data-bot-strip-state="">building</, 'what it is doing, capitalised on screen');
-  assert.match(html, /5 need you<\/span>[\s\S]*4 ready to try[\s\S]*4 in progress[\s\S]*2 done today/);
+  assert.match(html, /5 need you<\/span>[\s\S]*4 ready to try[\s\S]*4 in progress[\s\S]*2 finished today/);
 });
 
 test('the Activity bar: zero parts left out, the need part in the need colour with its numbers, and a chevron', () => {
@@ -494,24 +494,29 @@ test('a finished request is ONE line: the project\'s small tile, how it ended, i
   assert.doesNotMatch(source, /grayscale/, 'finished is said by its ending, not by greying the row');
 });
 
-test('finished requests in a row fold into "N finished" with their badges; open, the rows sit to the right of the count', () => {
+test('finished requests in a row fold into "N requests finished", a row of its own with their badges; open, whole rows under it', () => {
   const { SettledRun } = loadTsx(NEWS);
   const items = [botMessage({ kind: 'merged', issueNumber: 21 }), botMessage({ kind: 'build_failed', issueNumber: 22 }), botMessage({ kind: 'merged', issueNumber: 23 })]
     .map((message) => ({ message, earlier: [], updates: null, focused: false }));
   items[1].earlier = [botMessage({ kind: 'activity', issueNumber: 22 })];
   const html = renderToHtml(createElement(SettledRun, { items }));
-  assert.match(html, new RegExp(`^<div class="messages-bot-news px-4 py-1" data-bot-settled-run="3" data-bot-settled-first="${items[0].message.id}">`));
+  // 16 Oct 2026: a row of its own, with its own tile, so it never reads as
+  // part of the row above it.
+  assert.match(html, new RegExp(`^<div class="messages-bot-news messages-bot-settled-run pb-1 pt-2" data-bot-settled-run="3" data-bot-settled-first="${items[0].message.id}">`));
+  assert.match(html, /<span class="flex h-9 w-9 shrink-0 [^"]*" aria-hidden="true" data-bot-settled-tile="">/, 'its own tile, in the tile column');
   for (const m of [items[0].message, items[1].message, items[1].earlier[0], items[2].message]) {
     assert.match(html, new RegExp(`<span id="messages-message-${m.id}" aria-hidden="true"></span>`), 'a link to a folded row lands on the line');
   }
-  assert.match(html, /aria-expanded="false" data-bot-settled-toggle=""><span>3 finished<\/span><svg /, 'the count first, and it is the control');
-  assert.match(html, /<div class="flex h-\[30px\] min-w-0 cursor-pointer items-center gap-1 overflow-hidden" aria-hidden="true" data-bot-settled-badges="">/);
+  assert.match(html, /aria-expanded="false" data-bot-settled-toggle=""><span>3 requests finished<\/span><svg /, 'the count first, and it is the control');
+  assert.match(html, /<div class="flex h-\[30px\] min-w-0 flex-1 items-center gap-1 overflow-hidden" data-bot-settled-badges="">/);
   assert.equal((html.match(/data-bot-final=/g) || []).length, 3, 'their badges after it');
+  assert.equal((html.match(/data-bot-settled-badge="\d+"/g) || []).length, 3, 'each badge opens its own request');
   assert.doesNotMatch(html, /<article /, 'folded: no rows');
   const source = read(NEWS);
   assert.match(source, /export const RUN_BADGES = 6;/);
-  assert.match(source, /open \? 'flex min-w-0 flex-1 flex-col sm:flex-row sm:items-start sm:gap-2' : 'flex min-w-0 flex-1 items-start gap-2'/, 'opened: to the right of the count, under it on a phone');
-  assert.match(source, /<BotNewsLine key=\{item\.message\.clientKey \|\| item\.message\.id\} message=\{item\.message\} earlier=\{item\.earlier\} updates=\{item\.updates\} focused=\{item\.focused\} nested \/>/);
+  assert.match(source, /<div className="mt-1 flex flex-col" data-bot-settled-rows="">/, 'opened: whole rows under it');
+  assert.match(source, /<BotNewsLine key=\{item\.message\.clientKey \|\| item\.message\.id\} message=\{item\.message\} earlier=\{item\.earlier\} updates=\{item\.updates\} focused=\{item\.focused\} \/>/);
+  assert.match(source, /data-bot-settled-badge=\{item\.message\.id\} onClick=\{\(\) => openItem\(item\)\}/);
   assert.match(source, /useEffect\(\(\) => \{ if \(focused\) setOpen\(true\); \}, \[focused\]\);/, 'a link into it opens it');
   // The transcript collects finished rows and draws two or more as one run.
   const screen = read('frontend/src/features/messages/index.tsx');
@@ -531,12 +536,12 @@ test('pressing "N finished" leaves it where it is on screen', () => {
   assert.match(source, /if \(count\.current && holdPlace\) putBack\.current = holdPlace\(count\.current\);\s*setOpen\(!open\);/);
 });
 
-test('Done today starts folded each time the drawer opens; pressed, its rows are one line each with how they ended', () => {
+test('Finished today starts folded each time the drawer opens; pressed, its rows are one line each with how they ended', () => {
   const source = read(STRIP);
   assert.match(source, /const \[doneOpen, setDoneOpen\] = useState\(false\);/);
   assert.match(source, /const choose = \(next: boolean\) => \{ setOpen\(next\); setDoneOpen\(false\); onRemember\?\.\(next\); \};/);
   assert.match(source, /\{doneOpen \? <ul data-bot-strip-group="done">\{model\.done\.map\(\(row\) => <DoneRow key=\{row\.key\} row=\{row\} onOpen=\{onOpen\} \/>\)\}<\/ul> : null\}/);
-  assert.match(source, /function DoneRow[\s\S]*?<SettledLine[\s\S]*?outcome=\{\(job as HomeroomBotPastJob\)\.outcome\} fallback=\{row\.state\}/);
+  assert.match(source, /function DoneRow[\s\S]*?<SettledLine[\s\S]*?outcome=\{row\.track \? trackEnding\(row\.track\) : \(job as HomeroomBotPastJob\)\.outcome\} fallback=\{row\.state\}/);
 });
 
 // ── 3. A request's number, in its own colour ─────────────────────────────

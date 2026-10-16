@@ -301,6 +301,7 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
     <PlanCardView
       appName={meta.appName || meta.appSlug || ''}
       plan={meta.plan}
+      request={meta.firstVersion || !(Number(meta.issueNumber) > 0) ? null : String(meta.requestTitle || meta.issueTitle || '')}
       state={planState(meta)}
       choices={meta.choices}
       busy={pressed && meta.status !== 'answered'}

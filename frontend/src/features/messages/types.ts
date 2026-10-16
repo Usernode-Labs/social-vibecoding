@@ -312,6 +312,91 @@ export interface HomeroomBotWork {
   now: HomeroomBotCurrentJob[];
   needsYou: HomeroomBotPastJob[];
   history: HomeroomBotPastJob[];
+  /**
+   * 16 Oct 2026: one track per request (services/homeroom-bot-track.js),
+   * which every surface draws. Absent from an older server's answer.
+   */
+  tracks?: BotTrack[];
+}
+
+/**
+ * Where a request the Homeroom bot has is, as one track every surface draws
+ * the same way (services/homeroom-bot-track.js). A loop: queued, planning,
+ * building, checks, vote, going live, live, going back to `waiting` (on the
+ * person) for a question and to `building` for its next try; or held at a
+ * limit, stopped, done another way, or closed. Codes only: the client words
+ * them (./bot-track.tsx).
+ */
+export type BotTrackState =
+  | 'queued' | 'planning' | 'waiting' | 'building' | 'checks' | 'vote' | 'going_live' | 'live'
+  | 'held' | 'stopped' | 'done_elsewhere' | 'closed';
+export type BotTrackStep = 'plan' | 'build' | 'checks' | 'vote' | 'live';
+
+export interface BotTrack {
+  key: string;
+  appSlug: string | null;
+  appName: string;
+  appUnnamed?: boolean;
+  iconUrl: string | null;
+  iconEmoji: string | null;
+  issueNumber: number | null;
+  title: string | null;
+  firstVersion: boolean;
+  state: BotTrackState;
+  /** The step of the five its bar lights, or null for one before them all. */
+  step: BotTrackStep | null;
+  /** Why it is where it is, as a code (bot.track.why.*), or null. */
+  why: string | null;
+  waitingOn: 'you' | 'group' | null;
+  /** The bot is working on it this minute. */
+  busy: boolean;
+  /** Which try it is on: 2 after its checks failed once and it built again. */
+  try: number;
+  /** When this try's work began: its clock. */
+  tryStartedAt: string | null;
+  /** When each try began, oldest first, for a request with more than one. */
+  tryStarts: string[];
+  since: string | null;
+  /** The root of its thread in the chat with the bot, when known. */
+  rootId: number | null;
+  /** Its message still waiting on the person, when there is one. */
+  askId: number | null;
+  /** Its change up for a vote, when there is one. */
+  proposalId: number | null;
+  /** The session its plan and change live in. */
+  sessionId: number | null;
+  links: HomeroomBotLinks;
+  held?: { limit: string; position: number | null; until: string | null };
+  queue?: { ahead: number };
+  doneBy?: { username: string | null; prNumber: number | null };
+  release?: ReleaseOutlook;
+}
+
+/** One request in the slots view: what it is, and its track. */
+export interface BotSlotEntry {
+  kind?: 'proposal' | 'build';
+  issueNumber: number | null;
+  title: string | null;
+  position?: number | null;
+  limit?: string | null;
+  since?: string | null;
+  until?: string | null;
+  track: BotTrack | null;
+}
+
+/** A project's bot slots (GET /api/apps/:slug/homeroom-bot/slots). */
+export interface BotSlotsView {
+  app: { slug: string; name: string };
+  botOn: boolean;
+  acts: boolean;
+  paused: boolean;
+  cap: number;
+  buildsAtOnce: number | null;
+  slots: BotSlotEntry[];
+  waiting: BotSlotEntry[];
+  onHold: BotSlotEntry[];
+  reading: number;
+  week: { limited: boolean; usedShare: number | null; usedUp: boolean; resetsAt: string | null } | null;
 }
 
 /**

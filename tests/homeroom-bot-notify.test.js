@@ -153,7 +153,7 @@ test('B4: the push and the bell keep one copy of the words', () => {
   const N = loadBell();
   // The bell's moment labels are catalog entries (notifications:row.bot.label.*):
   // each says exactly what the push module's label says.
-  const ids = { needs_you: 'needsYou', ready: 'ready', stopped: 'stopped', on_hold: 'onHold', live: 'live' };
+  const ids = { needs_you: 'needsYou', ready: 'ready', stopped: 'stopped', on_hold: 'onHold', live: 'live', done_elsewhere: 'doneElsewhere' };
   for (const [moment, label] of Object.entries(notifyCopy.BELL_LABELS)) {
     assert.equal(message(`notifications:row.bot.label.${ids[moment]}`), label, moment);
   }

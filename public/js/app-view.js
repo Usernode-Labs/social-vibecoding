@@ -5783,6 +5783,9 @@ const AppView = {
         canEdit: AppView._canEditIssueAuthor(issue),
       },
       status: AppView._requestStatusView(issue),
+      // 16 Oct 2026: where Homeroom bot's work on it is, as every surface
+      // draws it (routes/issues.js track): the page's track card.
+      track: issue.track || null,
     };
   },
 
@@ -10964,7 +10967,9 @@ const AppView = {
   // each directly (`?ws=needs`) because the platform's own rule is that a
   // screen only reachable by interacting needs a URL: the declared checks
   // select against it and the proposal screenshots are shot from it.
-  WORKSHOP_TABS: ['status', 'discussion', 'workshop', 'needs', 'all', 'plan'],
+  // `bot` (16 Oct 2026): Homeroom bot's slots, a page under the Workshop,
+  // as All items is (frontend/src/features/dev-board/workshop/bot-slots.tsx).
+  WORKSHOP_TABS: ['status', 'discussion', 'workshop', 'needs', 'all', 'plan', 'bot'],
   // #4417: the page is navigated by its PLACES now — the three pages, then
   // its channels — and a topic's channel is a place too: `c:<handle>`
   // (frontend/src/features/dev-board/workshop/places.ts). It is remembered,
@@ -21241,7 +21246,7 @@ const AppView = {
         return {
           key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.seeProgress'),
           title: PlatformI18n.t('changes:issue.action.seeProgressTitle'),
-          act: { fn: 'openBotChatFromRequest', args: [] },
+          act: { fn: 'openBotChatFromRequest', args: [n] },
         };
       }
       // What it is really doing: its plan waits for whoever asked for it,
@@ -21517,10 +21522,15 @@ const AppView = {
     }
   },
 
-  /** B8: "See progress": the viewer's chat with Homeroom bot, where the request's card is. */
-  openBotChatFromRequest() {
+  /**
+   * B8: "See progress": the viewer's chat with Homeroom bot. 16 Oct 2026
+   * (C4): at this request's own thread, its story, not the whole chat.
+   */
+  openBotChatFromRequest(issueNumber) {
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
-    if (messages && typeof messages.openBot === 'function') messages.openBot();
+    const slug = AppView.appData && AppView.appData.slug;
+    if (messages && slug && issueNumber && typeof messages.openBotRequest === 'function') messages.openBotRequest(slug, Number(issueNumber));
+    else if (messages && typeof messages.openBot === 'function') messages.openBot();
     else location.hash = '#messages';
   },
 
