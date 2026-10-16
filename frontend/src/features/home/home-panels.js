@@ -1107,4 +1107,15 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
   };
   document.addEventListener('sv:membership-changed', reread);
   document.addEventListener('sv:communities-joined', reread);
+  // An acknowledged app-visit upload (#5235, app-activity.js): the visit that
+  // credits a "Try apps" challenge is often counted as the person leaves the
+  // app, and the return-to-Home read can be answered first, before the credit
+  // lands. So the block reads again fresh now, even inside its minute. The
+  // same gate _watchLiveReads uses: only a block already painted, and only
+  // while Home is the screen showing it. A forced read already queues behind
+  // one in flight, so this and the return-to-Home read cannot hide each other.
+  document.addEventListener('sv:app-activity-recorded', () => {
+    if (!HomePanels._data || !window.App?._isScreenVisible?.('home-screen')) return;
+    HomePanels.ensureLoaded({ force: true, fresh: true });
+  });
 }

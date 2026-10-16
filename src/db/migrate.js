@@ -75,6 +75,7 @@ async function migrate(config) {
   await seedStagingSupportUser(pool);
   await seedStagingDuplicateUser(pool);
   await seedSelfApp(pool, config);
+  await seedStagingPrivateRequest(pool);
   // The Homeroom bot's first-version configurations (services/bot-configs.js):
   // the three it starts from, each written once; then, once, an untouched
   // seeded current version moved on to its next (two review rounds in 20
@@ -1378,6 +1379,36 @@ async function seedStagingAdminDetailsUser(pool) {
 // Every row belongs to fake 9003xx identities, never the viewer, and nothing
 // here is a signal the Support routes decide anything from. Fixed ids and
 // ON CONFLICT DO NOTHING keep it idempotent; strictly a no-op outside staging.
+// One private request (#5048) on the platform's own project, so a preview's
+// Workshop shows its Private requests section to the admins who open it.
+// private_requests is staging:private, so the copy has no rows of its own.
+// Fixed ids, owned by the staging demo user, idempotent, a no-op outside
+// staging.
+async function seedStagingPrivateRequest(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const { rows } = await pool.query(
+      'SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1'
+    );
+    if (!rows.length) return;
+    await pool.query(
+      `INSERT INTO private_requests (id, app_id, title, description, created_by, created_at, updated_at)
+       VALUES (900501, $1, 'Staging demo private request',
+               'Staging demo: a confidential request only platform admins can see.',
+               900001, NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day')
+       ON CONFLICT DO NOTHING`,
+      [rows[0].id]
+    );
+    await pool.query(
+      `INSERT INTO private_request_comments (id, private_request_id, user_id, body, created_at)
+       VALUES (900501, 900501, 900001, 'Staging demo comment on a private request.', NOW() - INTERVAL '1 day')
+       ON CONFLICT DO NOTHING`
+    );
+  } catch (err) {
+    log.warn('db', 'Staging private request seeding failed', { message: err.message });
+  }
+}
+
 async function seedStagingSupportUser(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
@@ -1750,7 +1781,7 @@ async function seedSelfApp(pool, config) {
   // DO UPDATE deliberately does NOT touch name — the reconcile below is
   // the single place the self-app display name is resolved from
   // dapp.json (so a merged self-app rename PR actually applies on the
-  // post-deploy reboot, same as child apps do in rebuildProduction).
+  // post-deploy reboot, same as child apps do in deployProduction).
   const { rows: selfRows } = await pool.query(
     `INSERT INTO apps
        (name, slug, repo_url, container_id, status, self_hosted,
@@ -1787,13 +1818,13 @@ async function seedSelfApp(pool, config) {
     await appManifest.reconcileAppIcon(pool, selfRows[0], manifest, repoRoot)
       .catch((err) => log.warn('db', 'Self-app icon reconcile failed', { err: err.message }));
     // And the `governance` block (issue #646). The self-app deploys via
-    // GitHub Actions (rebuildProduction never runs for it), so this
+    // GitHub Actions (deployProduction never runs for it), so this
     // boot-time reconcile is where a merged governance-change PR's
     // proposal-approval settings actually apply.
     await appManifest.reconcileAppGovernance(pool, selfRows[0], manifest)
       .catch((err) => log.warn('db', 'Self-app governance reconcile failed', { err: err.message }));
     // And the `topics` array (#4417), for the same reason: the self-app
-    // never runs rebuildProduction, so a merged topics PR's new topic,
+    // never runs deployProduction, so a merged topics PR's new topic,
     // rename, merge or archive applies on the post-deploy boot.
     await appManifest.reconcileAppTopics(pool, selfRows[0], manifest)
       .catch((err) => log.warn('db', 'Self-app topics reconcile failed', { err: err.message }));
@@ -2952,7 +2983,7 @@ async function seedStagingChatEditFixtures(pool, config) {
 // The key is STAGING_DEMO_PUBLIC_URL, which seedStagingPlatformEnv() also
 // declares and sets. That pairing is deliberate: because this is the
 // SELF-hosted app, voting the fixture through exercises the platform-env
-// apply branch (write via the platform-env DAO, no rebuildProduction) and
+// apply branch (write via the platform-env DAO, no deployProduction) and
 // the reviewer can see the change land on the matching row in the Platform
 // variables panel. A key nothing declares would still apply, but as an
 // orphan row — a worse demo of the normal case.
@@ -3566,7 +3597,7 @@ async function seedStagingAgentSession(pool, config) {
   // Put back on every boot, as the card's expiry is.
   await pool.query(
     `UPDATE chat_sessions SET check_state = 'skipped', check_error_detail = $2, test_results = '[]'::jsonb
-      WHERE id = $1`,
+      WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
     [STAGING_AGENT_CHANGE_ID, 'branch has no commits beyond main, so there is nothing to test']
   );
 
@@ -3815,7 +3846,7 @@ async function seedStagingAgentFailingChecks(pool, config) {
     `UPDATE chat_sessions
         SET check_state = 'failing', test_results = $2::jsonb, check_error_detail = NULL,
             checks_commit_sha = $3, checks_checked_at = NOW() - INTERVAL '1 minute'
-      WHERE id = $1`,
+      WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
     [STAGING_AGENT_FAILING_CHANGE_ID, JSON.stringify(STAGING_AGENT_FAILING_RESULTS), 'f'.repeat(40)]
   );
   log.info('db', 'Staging failing-checks agent fixture seeded', {
@@ -7245,7 +7276,7 @@ async function seedStagingVisuals(pool) {
           SET capture_state = 'partial',
               capture_detail = $1::jsonb,
               captured_at = NOW()
-        WHERE id = $2 AND capture_state IS NULL`,
+        WHERE id = $2 AND capture_state IS NULL AND NOT wf_holds('preview', 'session:' || id)`,
       [JSON.stringify({
         media: true,
         pathDefaulted: false,
@@ -7536,6 +7567,18 @@ async function seedStagingShotsNoticed(pool) {
       passed: true, mode: 'shots', runs: 1,
       stories: [{ id: 'board-sort', status: 'ready', files: files.length }],
       notices,
+      // #5063: the card's side-by-side view crops to the declared changes,
+      // so the demo run carries where they differ: the accent bar the after
+      // image draws between the header and the rows.
+      screens: [['desktop', 1280, 800], ['phone', 390, 844]].map(([viewport, width, height]) => ({
+        viewport,
+        shot: 'board-sort',
+        stories: ['board-sort'],
+        width,
+        heightBefore: height,
+        heightAfter: height,
+        regions: [{ story: 'board-sort', b: [0, 96, width, 32], a: [0, 96, width, 32], bMark: null, aMark: null }],
+      })),
     };
     const planHash = crypto.createHash('sha256')
       .update(`staging-shots-noticed:${files.map((file) => file.sha256).join(':')}`).digest('hex');
@@ -7576,6 +7619,7 @@ async function seedStagingShotsNoticed(pool) {
        SELECT $1::varchar, $2::int, $3::varchar, $4::varchar, $5::varchar, $6::jsonb, $7::jsonb, $8::jsonb,
               'verified', 'staging-fixture', NOW() - interval '3 hours', NOW() - interval '3 hours'
         WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $2::int AND app_id = 900106)
+          AND NOT wf_holds('shots', 'session:' || $2::int)
        ON CONFLICT (id) DO NOTHING`,
       [runId, id, baseSha, headSha, planHash, JSON.stringify(intent), JSON.stringify(verdict),
         JSON.stringify(cleaned)]
@@ -10998,7 +11042,10 @@ async function seedStagingMyOpenPr(pool, config) {
               checks_base_behind_by = $7,
               freshness_checked_at = NOW() - INTERVAL '2 minutes',
               freshness_error = $8,
-              check_state = COALESCE($9, check_state),
+              -- The preview machine's once it holds the row (its guard refuses
+              -- a write from here).
+              check_state = CASE WHEN wf_holds('preview', 'session:' || id) THEN check_state
+                                 ELSE COALESCE($9, check_state) END,
               checks_checked_at = CASE WHEN $9 IS NULL THEN checks_checked_at
                                        ELSE NOW() - INTERVAL '10 minutes' END
         WHERE id = $1`,
@@ -11101,7 +11148,7 @@ async function seedStagingImportedPrProposal(pool, config) {
                 imported_pr_author = 'octo-contributor', check_state = 'passing',
                 checks_commit_sha = $2, checks_checked_at = NOW(),
                 test_results = $3::jsonb
-          WHERE id = $1`,
+          WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
         [id1, headSha1, fixture1Results]
       );
     }
@@ -11160,10 +11207,29 @@ async function seedStagingImportedPrProposal(pool, config) {
                 imported_pr_author = 'octo-contributor', check_state = 'pending',
                 check_phase = 'testing',
                 checks_commit_sha = $2
-          WHERE id = $1`,
+          WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
         [id2, headSha2]
       );
     }
+    // Its run part-way through, with a unit suite it did not run again: the
+    // same commit passed it 25 minutes earlier on the same worker image and
+    // setup, and the run copied that pass (services/unit-suite-reuse.js). So
+    // the Checks step's Unit tests row reads "Reused: … (run 5e1f0c2a)".
+    // Re-stamped on every boot, so the age stays 25 minutes.
+    await pool.query(
+      `UPDATE chat_sessions
+          SET checks_progress = jsonb_build_object(
+                'ran', 312, 'passed', 312, 'failed', 0, 'expected', 840, 'done', false,
+                'unit', jsonb_build_object(
+                  'phase', 'done', 'ran', 23402, 'passed', 23380, 'failed', 0, 'skipped', 22,
+                  'expected', 23402, 'done', true, 'exitOk', true,
+                  'reused', jsonb_build_object(
+                    'runId', '5e1f0c2a-9311-4a7b-8c3d-000000009311', 'sessionId', id,
+                    'passedAt', to_char((NOW() - INTERVAL '25 minutes') AT TIME ZONE 'UTC',
+                                        'YYYY-MM-DD"T"HH24:MI:SS"Z"'))))
+        WHERE id = $1`,
+      [id2]
+    );
     // Tally reset: this row deliberately carries NO pr_votes. Post the
     // re-review note into the proposal's own thread (idempotent — only when
     // the thread has no message yet).
@@ -11236,7 +11302,7 @@ async function seedStagingImportedPrProposal(pool, config) {
                 checks_commit_sha = $2, checks_checked_at = NOW(),
                 staging_url = NULL, staging_container_id = NULL,
                 promoted_at = NOW()
-          WHERE id = $1`,
+          WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
         [id3, headSha3]
       );
     }
@@ -11386,7 +11452,7 @@ async function seedStagingChecksAdvisoryCard(pool, config) {
             SET check_state = $2, test_results = $3::jsonb,
                 checks_commit_sha = $4, checks_checked_at = NOW() - INTERVAL '6 minutes',
                 check_phase = NULL, check_error_detail = NULL
-          WHERE id = $1`,
+          WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
         [have[0].id, checkState, JSON.stringify(results), sha]
       );
       return have[0].id;
@@ -11560,7 +11626,7 @@ async function seedStagingExternalAgentProposal(pool, config) {
                 pr_body = $5,
                 check_state = 'passing', checks_commit_sha = $3,
                 checks_checked_at = NOW()
-          WHERE id = $1`,
+          WHERE id = $1 AND NOT wf_holds('preview', 'session:' || id)`,
         [id, row.agent, row.headSha, forkOwner, row.body]
       );
     }

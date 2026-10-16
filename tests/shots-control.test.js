@@ -463,55 +463,24 @@ test('a control only accepts an intent the author could have declared', () => {
   assert.equal(control({ intent: fixtures.intent() }).intent.stories[0].intent.baseState, 'present');
 });
 
-test('one registration owns a run id at a time', (t) => {
-  controlPlane._clearForTests();
-  t.after(() => controlPlane._clearForTests());
-  const options = {
-    runId: 'b'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {},
-    expiresAt: Date.now() + 10_000,
-  };
-  assert.throws(() => controlPlane.registerRun({ ...options, runId: 'not-a-run' }),
+test('a run\'s workspace is made only for a run id, and a lapsed one answers nothing', async () => {
+  // The workspace lives in Postgres (shot_run_control): which process
+  // serves a call does not matter, and the routes reach it only through
+  // withControl, which checks the run's session and that it is current
+  // (tests/shots-run-steps-postgres.test.js).
+  const pool = { query: async () => { throw new Error('nothing is written for an invalid run'); } };
+  await assert.rejects(controlPlane.create(pool, { runId: 'not-a-run', sessionId: 42, intent: fixtures.intent(), context: {}, expiresAt: Date.now() }),
     { code: 'invalid_shots_run', status: 400 });
-  assert.throws(() => controlPlane.registerRun({ ...options, runId: 'B'.repeat(32) }),
+  await assert.rejects(controlPlane.create(pool, { runId: 'B'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {}, expiresAt: Date.now() }),
     { code: 'invalid_shots_run' });
-
-  const first = controlPlane.registerRun(options);
-  assert.throws(() => controlPlane.registerRun(options), { code: 'shots_control_exists', status: 409 });
-  first.unregister();
-  const second = controlPlane.registerRun(options);
-  assert.notEqual(second.control, first.control);
-  // A stale unregister cannot remove the registration that replaced it.
-  first.unregister();
-  assert.equal(controlPlane.forRequest({ runId: options.runId, sessionId: 42 }), second.control);
-  second.unregister();
-  assert.throws(() => controlPlane.forRequest({ runId: options.runId, sessionId: 42 }),
-    { code: 'shots_control_not_found' });
-});
-
-test('a request reaches a control only for its own session while the run is live', (t) => {
-  controlPlane._clearForTests();
-  t.after(() => controlPlane._clearForTests());
-  const runId = 'c'.repeat(32);
-  const { control: live } = controlPlane.registerRun({
-    runId, sessionId: 42, intent: fixtures.intent(), context: {}, expiresAt: Date.now() + 10_000,
-  });
-  assert.equal(controlPlane.forRequest({ runId, sessionId: 42 }), live);
-  assert.equal(controlPlane.forRequest({ runId, sessionId: '42' }), live, 'a JWT claim may carry the id as text');
-  assert.throws(() => controlPlane.forRequest({ runId, sessionId: 43 }),
-    { code: 'shots_scope_mismatch', status: 403 });
-  assert.throws(() => controlPlane.forRequest({ runId, sessionId: undefined }),
-    { code: 'shots_scope_mismatch', status: 403 });
-  assert.throws(() => controlPlane.forRequest({ runId: 'd'.repeat(32), sessionId: 42 }),
+  await assert.rejects(controlPlane.withControl(pool, { runId: 'nope', sessionId: 42 }, () => {}),
     { code: 'shots_control_not_found', status: 410 });
-  assert.throws(() => controlPlane.forRequest({ sessionId: 42 }),
-    { code: 'shots_control_not_found', status: 410 });
-
-  const expiredRun = 'e'.repeat(32);
-  controlPlane.registerRun({
-    runId: expiredRun, sessionId: 42, intent: fixtures.intent(), context: {}, expiresAt: Date.now() - 1,
+  const lapsed = new controlPlane.RunControl({
+    runId: 'e'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {}, expiresAt: Date.now() - 1,
   });
-  assert.throws(() => controlPlane.forRequest({ runId: expiredRun, sessionId: 42 }),
-    { code: 'shots_control_expired', status: 410 });
+  assert.throws(() => lapsed.getContext(), { code: 'shots_control_expired', status: 410 });
+  assert.equal(controlPlane.dbSlot({ storyId: 'c1', viewport: 'desktop', side: 'base', variant: 'context' }), 'c1/desktop/base/context',
+    'a slot Postgres can hold (the in-memory key separates with NUL)');
 });
 
 test('saving the same image on both sides warns the agent while it can still retake them', () => {

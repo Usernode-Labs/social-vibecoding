@@ -29,8 +29,23 @@ process.env.ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt';
 require('./platform-keys').setPlatformKeys();
 
+// pool.end() resolves once its idle connections are handed their end, not
+// once their sockets close, so the teardown's DROP DATABASE ... WITH (FORCE)
+// can reach one still closing. The server then terminates it (57P01) and the
+// pool re-emits that as 'error', which without a listener is an
+// uncaughtException that fails whatever test is running (see the same race in
+// tests/username-invite-join-postgres.test.js). A drop DURING the checks is
+// still this file's failure: the final subtest asserts none was recorded.
+let closing = false;
+const dropped = [];
+const onPoolError = (err) => {
+  if (closing) return; // the teardown's own DROP closes this test's connections
+  dropped.push(`${err.code || ''} ${err.message}`);
+};
+
 test('the leader adopts only what no live process holds', { timeout: 120000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  admin.on('error', onPoolError);
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
     if (process.env.TEST_DATABASE_URL) throw err;
@@ -40,6 +55,7 @@ test('the leader adopts only what no live process holds', { timeout: 120000 }, a
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = '/' + name;
   const pool = new Pool({ connectionString: String(url), max: 6 });
+  pool.on('error', onPoolError);
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   require('../src/db/pool').getPool = () => pool;
@@ -71,6 +87,7 @@ test('the leader adopts only what no live process holds', { timeout: 120000 }, a
   const processes = require('../src/services/processes');
   await processes.start({ pool, role: 'all' });
   t.after(async () => {
+    closing = true; // from here a drop is this teardown's own doing
     processes._reset();
     require.cache[workerPath].exports = realWorker;
     await pool.end();
@@ -149,7 +166,7 @@ test('the leader adopts only what no live process holds', { timeout: 120000 }, a
     const warmThere = await idle('warm-there');
     const busyThere = await idle('busy-there');
     const stopped = await idle('stopped');
-    await pool.query(`INSERT INTO process_holds (process_id, kind, ref) VALUES ('pod-old', 'warm', $1), ('pod-old', 'shots', $2)`,
+    await pool.query(`INSERT INTO process_holds (process_id, kind, ref) VALUES ('pod-old', 'warm', $1), ('pod-old', 'session', $2)`,
       [String(warmThere), String(busyThere)]);
     await pool.query(`UPDATE platform_processes SET heartbeat_at = NOW() WHERE id = 'pod-old'`);
     const list = async () => [leftWarm, warmThere, busyThere, left].map((id) => ({ name: `usernode-worker-${id}`, sessionId: id, state: 'running' }))
@@ -218,5 +235,9 @@ test('the leader adopts only what no live process holds', { timeout: 120000 }, a
       await new Promise((r) => setImmediate(r));
       assert.ok(!adopted.includes(left));
     } finally { release(); }
+  });
+
+  await t.test('no database connection was dropped while the checks ran', () => {
+    assert.deepEqual(dropped, [], 'an idle connection was terminated mid-test: ' + dropped.join('; '));
   });
 });

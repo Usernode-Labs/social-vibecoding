@@ -1,10 +1,12 @@
 // Unit tests for #687 — checkAndMerge routes an IMPORTED merge through the
 // mock-GitHub client in staging (USERNODE_ENV === 'staging'), exercising
 // both outcomes without real credentials:
-//   - pinned sha matches the mock head → merge succeeds → shared finalizer runs;
+//   - pinned sha matches the mock head → merge succeeds → the merge is
+//     reported to the merge-followups workflow machine, like a native one;
 //   - pinned sha is stale (author pushed since the vote) → the mock refuses
 //     with a HeadMovedError, and checkAndMerge treats it as "head moved":
-//     releases the row to 'promoted', posts the re-review note, no rebuild.
+//     releases the row to 'promoted', posts the re-review note, reports no
+//     merge.
 // Native merges are unaffected (they never use the mock).
 //
 // Run with: node --test tests/pr-import-mock-merge.test.js
@@ -53,7 +55,7 @@ function loadVotes() {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
-    staging: require.resolve('../src/services/staging'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     docker: require.resolve('../src/services/docker'),
     resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
@@ -64,7 +66,6 @@ function loadVotes() {
     appAccess: require.resolve('../src/services/app-access'),
     governance: require.resolve('../src/services/governance'),
     mergeDebug: require.resolve('../src/services/merge-debug'),
-    worker: require.resolve('../src/services/worker'),
     subject: require.resolve('../src/routes/votes'),
   };
   const orig = {};
@@ -73,8 +74,7 @@ function loadVotes() {
   const realMergeCalls = [];
   const voteUpdates = [];
   const systemMessages = [];
-  const rebuildCalls = [];
-  const teardownCalls = [];
+  const reports = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => makeRecordingPool([]) });
@@ -89,9 +89,8 @@ function loadVotes() {
     invalidateIssuesCache() {},
     noteIssuesClosed() {},
   });
-  stub(ids.staging, {
-    rebuildProduction: async (_c, app) => { rebuildCalls.push(app && app.id); return { sha: 'deployedsha', containerId: 'ctr-1' }; },
-    teardownStaging: async (session) => { teardownCalls.push(session.id); },
+  stub(ids.platform, {
+    mergeConfirmed: async (m) => { reports.push(m); return { status: 'accepted', eventId: 1 }; },
   });
   stub(ids.docker, {});
   stub(ids.resolver, { checkAndResolveConflicts: async () => {}, resolveAndMaybeRetry: async () => ({ ok: true }), isResolving: () => false });
@@ -116,7 +115,6 @@ function loadVotes() {
     }),
   });
   stub(ids.mergeDebug, { startRun: async () => 1, step: async () => {}, endRun: async () => {} });
-  stub(ids.worker, { isInFlight: () => false, destroyCcVolume: async () => {}, retireWorker: async () => ({ deferred: false }) });
 
   delete require.cache[ids.subject];
   const subject = require(ids.subject);
@@ -125,7 +123,7 @@ function loadVotes() {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, realMergeCalls, voteUpdates, systemMessages, rebuildCalls, teardownCalls, restore };
+  return { subject, realMergeCalls, voteUpdates, systemMessages, reports, restore };
 }
 
 const PR = 9401;
@@ -140,8 +138,6 @@ function importedSession(headSha) {
 function mergeReadyPool() {
   return makeRecordingPool([
     [/SET status = 'merging'/, [{ id: 71 }]],
-    [/SELECT \* FROM apps WHERE id/, [{ id: 5, slug: 'demo', self_hosted: false }]],
-    [/SET\s+status = 'merged'/, { rows: [], rowCount: 1 }],
   ]);
 }
 
@@ -161,15 +157,16 @@ function withStagingEnv(fn) {
 test('checkAndMerge (mock): imported merge with a matching head succeeds via the mock', async () => {
   githubMock._resetForTests();
   await withStagingEnv(async () => {
-    const { subject, realMergeCalls, rebuildCalls, restore } = loadVotes();
+    const { subject, realMergeCalls, reports, restore } = loadVotes();
     const pool = mergeReadyPool();
     try {
       const head = githubMock.currentHead(PR);
       const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, importedSession(head), { force: true });
       assert.equal(r.merged, true, 'mock merge succeeded');
       assert.equal(realMergeCalls.length, 0, 'the REAL github.mergePR was never called');
-      assert.equal(rebuildCalls.length, 1, 'shared finalizer rebuilt production');
-      assert.ok(pool.queries.some((q) => /SET\s+status = 'merged'/.test(q.sql)), 'row marked merged');
+      assert.equal(reports.length, 1, 'the merge was reported to the merge-followups machine');
+      assert.equal(reports[0].sessionId, 71);
+      assert.ok(reports[0].mergeSha, 'with the mock merge commit');
     } finally { restore(); }
   });
 });
@@ -177,7 +174,7 @@ test('checkAndMerge (mock): imported merge with a matching head succeeds via the
 test('checkAndMerge (mock): a stale pinned head is refused (headMoved) and left recoverable', async () => {
   githubMock._resetForTests();
   await withStagingEnv(async () => {
-    const { subject, realMergeCalls, voteUpdates, systemMessages, rebuildCalls, restore } = loadVotes();
+    const { subject, realMergeCalls, voteUpdates, systemMessages, reports, restore } = loadVotes();
     const pool = mergeReadyPool();
     try {
       // Simulate: the vote was cast on an older commit; the mock head is now newer.
@@ -187,7 +184,7 @@ test('checkAndMerge (mock): a stale pinned head is refused (headMoved) and left 
       assert.equal(r.merged, false, 'nothing merged');
       assert.equal(r.headMoved, true, 'distinct head-moved outcome');
       assert.equal(realMergeCalls.length, 0, 'real client never used');
-      assert.equal(rebuildCalls.length, 0, 'no production rebuild on a refused merge');
+      assert.equal(reports.length, 0, 'no merge reported on a refused merge');
 
       assert.ok(
         pool.queries.some((q) => /SET status = 'promoted'\s+WHERE id = \$1 AND status = 'merging'/.test(q.sql)),

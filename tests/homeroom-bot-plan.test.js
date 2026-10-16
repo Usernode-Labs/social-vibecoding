@@ -275,7 +275,7 @@ test('B6: the plan card, drawn in every state', () => {
   assert.match(open, />My plan for Plant Pal<\/div>/, '#4046: its title, not a sentence ending in a colon');
   // Owner, 7 October: each line a row of its own, as PR 5's plan page draws
   // them: 15px over 22px, 12px above and below, a hairline between, no dot.
-  assert.match(open, /<ul class="mt-1 flex flex-col" data-bot-plan-lines=""><li class="py-3 text-\[0\.9375rem\] leading-\[22px\] text-zinc-900 dark:text-zinc-100">A list of your plants<\/li><li class="py-3 text-\[0\.9375rem\] leading-\[22px\] text-zinc-900 shadow-\[inset_0_1px_0_var\(--app-sheet-line\)\] dark:text-zinc-100">A Today view<\/li><\/ul>/);
+  assert.match(open, /<ul class="mt-1 flex flex-col" data-bot-plan-lines=""><li class="text-pretty py-3 text-\[0\.9375rem\] leading-\[22px\] text-zinc-900 dark:text-zinc-100">A list of your plants<\/li><li class="text-pretty py-3 text-\[0\.9375rem\] leading-\[22px\] text-zinc-900 shadow-\[inset_0_1px_0_var\(--app-sheet-line\)\] dark:text-zinc-100">A Today view<\/li><\/ul>/);
   assert.doesNotMatch(open, /rounded-full bg-zinc-400/, 'no dot before a line in the chat');
   assert.match(draw({ surface: 'app' }), /<li class="flex items-start gap-2\.5"><span aria-hidden="true" class="[^"]*rounded-full[^"]*"><\/span><span>A list of your plants<\/span><\/li>/,
     'the App tab\'s card keeps its dots');
@@ -286,6 +286,9 @@ test('B6: the plan card, drawn in every state', () => {
   assert.match(open, /<label class="flex min-h-\[44px\] cursor-pointer items-center gap-2\.5 py-2 [^"]*" data-bot-answer="default">/, '44px rows with no side padding');
   assert.match(open, /data-bot-answer="default"><input type="radio" class="sr-only" name="[^"]+" checked="" value="In the app"\/>/);
   assert.match(open, /data-bot-answer="other"><input type="radio" class="sr-only" name="[^"]+" value="Phone alert"\/>/);
+  // #5224: a clearer break before the first question, the hairline halfway
+  // between the last plan line and it.
+  assert.match(open, /class="mt-2 pt-5 shadow-\[inset_0_1px_0_var\(--app-sheet-line\)\]"/, 'the first question sits 20px under the hairline');
   assert.match(open, /<span class="font-semibold">In the app<\/span>/);
   assert.doesNotMatch(open, /suggested|aria-pressed/);
   // Build it is the one strong action, the width of the card; Change

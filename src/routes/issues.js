@@ -2,16 +2,13 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const github = require('../services/github');
-const { sendSystemMessage, pushAppUpdate, pushIssueUpdate } = require('../services/ws');
+const { sendSystemMessage, pushIssueUpdate } = require('../services/ws');
 const { getActiveUserStats } = require('../services/active-users');
 const notifications = require('../services/notifications');
-const { isAppLocked, hasAdminUpVote } = require('../services/admin-approval');
 const appManifest = require('../services/app-manifest');
 const appSecrets = require('../services/app-secrets');
 const platformEnv = require('../services/platform-env');
-const staging = require('../services/staging');
-const owedRedeploy = require('../services/owed-redeploy');
-const { encrypt, decrypt } = require('../services/secrets');
+const { encrypt } = require('../services/secrets');
 const { issueKindLimiter, governanceVoteLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const { weekStartUtc, countWeeklyBountiesUsed, WEEKLY_BOUNTY_LIMIT } = require('./kudos');
@@ -23,13 +20,6 @@ const communities = require('../services/communities');
 const appAdmins = require('../services/app-admins');
 const explicitApprovalCopy = require('../services/explicit-approval');
 const topicAttrs = require('../services/topic-attributes');
-// #2086: the featured-illustration governance kind. Its proposals are
-// opened by src/routes/app-illustrations.js (the bytes travel with the
-// save, which the generic create route below cannot carry, so the kind is
-// deliberately absent from VALID_KINDS); the apply lives here beside the
-// other governance kinds so the vote, sweeper and force-apply paths share
-// one gate.
-const illustrationProposals = require('../services/illustration-proposals');
 // #1112: the same in-process "a turn is running" predicate /api/sessions
 // reports as `busy`, so an issue's work-state chip and the session card it
 // points at can never disagree about whether an agent is actually running.
@@ -37,9 +27,11 @@ const { isSessionBusy } = require('../services/active-workers');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const challengeScorer = require('../services/topochain/challenge-scorer');
-// The workflow governance machine (WF_GOVERNANCE_ENABLED). Resolved per call:
-// the module is ESM loaded through type stripping, and server.js starts it.
+// The governance machine decides every governance proposal (vote, admin
+// apply, withdraw, a target closed elsewhere). Resolved per call: the module
+// is ESM loaded through type stripping, and server.js starts it.
 const workflow = () => require('../workflow/platform.ts');
+const { isGovernanceKind } = require('../services/governance-kinds');
 
 // #2089: the board search's server half. Shorter queries are not asked
 // (the browser applies the same floor); the hit list is capped because the
@@ -100,9 +92,8 @@ async function isIssueAuthor(pool, appId, parsed, issueNumber, user, currentBody
 }
 
 // Renames are no longer an issue kind — they open a dapp.json `name` PR
-// via POST /api/apps/:slug/rename (see src/routes/apps.js). The vote-apply
-// path below (maybeApplyRenameProposal) is retained only so any rename
-// issues already open at rollout can still resolve.
+// via POST /api/apps/:slug/rename (see src/routes/apps.js). The governance
+// machine still decides a rename issue opened before that.
 // maintenance_campaign (#853's generalization) is self-app-only,
 // admin-proposed fleet maintenance — see the create branch below and
 // services/fleet-maintenance.js for the engine the apply path starts.
@@ -989,8 +980,8 @@ function issueRoutes(config) {
 
       // Strip ciphertext from secret_change rows before serializing —
       // the value should never be readable from this endpoint, even
-      // by other admins. The committed value lands in app_secrets via
-      // maybeApplySecretChangeProposal once the vote passes.
+      // by other admins. The committed value lands in app_secrets when the
+      // governance machine applies the proposal.
       // Also attach the per-row dynamic merge gate (eased threshold +
       // visibility window) anchored on the issue's created_at, mirroring
       // the PR /promoted endpoint so governance pills get the same
@@ -1313,8 +1304,8 @@ function issueRoutes(config) {
         const key = typeof payload?.key === 'string' ? payload.key.trim() : '';
         const action = typeof payload?.action === 'string' ? payload.action : 'set';
         // Trimmed HERE, at proposal creation, not at apply. The apply path
-        // for a child app writes app_secrets with raw SQL (see
-        // maybeApplySecretChangeProposal below) and never reaches
+        // for a child app writes app_secrets with raw SQL (the governance
+        // machine's applySecret, src/workflow/governance-proposal/) and never reaches
         // appSecrets.setValue, so creation is the only boundary that covers
         // both stores — and normalizing before encrypt/valueLast4 keeps the
         // proposal card's preview identical to what will actually be stored.
@@ -1659,7 +1650,7 @@ function issueRoutes(config) {
       }
 
       // Enrolled now; a failure here is caught by the next vote or boot backfill.
-      if (workflow().governsKind(kind)) {
+      if (isGovernanceKind(kind)) {
         await workflow().fileProposal(rows[0].id, app.id).catch((err) =>
           log.warn('issues', 'Filing the governance proposal failed', { issueId: rows[0].id, err: err.message }));
       }
@@ -1682,7 +1673,9 @@ function issueRoutes(config) {
     }
   });
 
-  // Vote on an issue — for rename proposals, a passing up-vote auto-applies.
+  // Vote on an issue. A governance proposal's vote goes to the governance
+  // machine, which records it and applies the proposal when the vote decides
+  // it; a request's vote is recorded here.
   // #2525: same bucket as proposal votes — a changed issue vote posts a
   // system line into the issue's thread, so flipping is the spam shape.
   //
@@ -1732,7 +1725,7 @@ function issueRoutes(config) {
 
       // The governance machine records the vote, decides the toggle and the
       // No's line under its lock, and applies when the vote decides it.
-      if (workflow().governsKind(issue.kind)) {
+      if (isGovernanceKind(issue.kind)) {
         const reply = await workflow().voteOnProposal(issue, req.user,
           { vote, reason, requestKey: req.get('Idempotency-Key') || undefined });
         return res.status(reply.status).json(reply.body);
@@ -1792,23 +1785,7 @@ function issueRoutes(config) {
         metadata: { vote, issueId: issue.id, issueVoteId: recordedVotes[0]?.id || null },
       });
 
-      let voteSubject;
-      if (issue.kind === 'rename') {
-        voteSubject = `rename proposal "${issue.payload?.newName || issue.title}"`;
-      } else if (issue.kind === 'secret_change') {
-        const action = issue.payload?.action === 'delete' ? 'removal' : 'change';
-        voteSubject = `secret ${action} "${issue.payload?.key || issue.title}"`;
-      } else if (issue.kind === 'close_issue') {
-        voteSubject = `close proposal for issue #${issue.payload?.issueNumber || '?'}`;
-      } else if (issue.kind === 'maintenance_campaign') {
-        voteSubject = `maintenance campaign "${issue.payload?.title || issue.title}"`;
-      } else if (issue.kind === 'featured_illustration') {
-        voteSubject = issue.payload?.remove
-          ? 'the proposal to remove the featured illustration'
-          : 'the proposed featured illustration';
-      } else {
-        voteSubject = `issue: "${issue.title}"`;
-      }
+      const voteSubject = `issue: "${issue.title}"`;
       // #2603: with a line, the row is the person's sentence as well as their
       // tally — the same shape votes.js gives a proposal vote's thread line.
       await sendSystemMessage(pool, issue.app_id,
@@ -1822,41 +1799,16 @@ function issueRoutes(config) {
         { type: 'governance', ref: issue.id }
       );
 
-      // #1010: broadcast the VOTE before the apply, not after. A deciding
-      // up-vote on a governance proposal runs the whole apply (GitHub close
-      // + comment for close_issue — seconds of latency) inside this request,
-      // and the old ordering held this event behind all of it, so every other
-      // client's tally sat stale for the duration and none of them could
-      // derive the "being applied" state. The apply pushes its own events
-      // when it settles, so this one is purely "a vote landed".
       pushIssueUpdate({ action: 'voted', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id, vote });
 
       // "Vote on a change" counts a vote on a request too, now rather than
       // on the rule's next pass (#3569; challengeScorer.scoreOnVote). After
-      // the broadcast, so other people's tallies are not held behind it, and
-      // before the apply, so a slow GitHub call cannot keep it waiting. The
+      // the broadcast, so other people's tallies are not held behind it. The
       // retraction above is not a vote cast and returned before this. Never
       // throws.
       await challengeScorer.scoreOnVote(pool, config);
 
-      let renamed = null;
-      let secretChanged = null;
-      let issueClosed = null;
-      let campaignStarted = null;
-      let illustrationChanged = null;
-      if (vote === 'up' && issue.kind === 'rename') {
-        renamed = await maybeApplyRenameProposal(pool, issue);
-      } else if (vote === 'up' && issue.kind === 'secret_change') {
-        secretChanged = await maybeApplySecretChangeProposal(config, pool, issue);
-      } else if (vote === 'up' && issue.kind === 'close_issue') {
-        issueClosed = await maybeApplyCloseIssueProposal(pool, issue);
-      } else if (vote === 'up' && issue.kind === 'maintenance_campaign') {
-        campaignStarted = await maybeApplyMaintenanceCampaignProposal(config, pool, issue);
-      } else if (vote === 'up' && issue.kind === 'featured_illustration') {
-        illustrationChanged = await maybeApplyFeaturedIllustrationProposal(pool, issue);
-      }
-
-      res.json({ ok: true, renamed, secretChanged, issueClosed, campaignStarted, illustrationChanged });
+      res.json({ ok: true });
     } catch (err) {
       log.error('issues', 'Vote failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -2511,16 +2463,14 @@ function issueRoutes(config) {
       const myRemaining = Math.max(0, WEEKLY_BOUNTY_LIMIT - used);
 
       // #4772: what Homeroom bot waits on this viewer for here (its plans
-      // waiting for their Build it, its open questions to them, and the
-      // back and forths they are in with it), for the Workshop's Waiting on
-      // you. Best-effort: services/workshop-waiting.js never throws. The
+      // waiting for their Build it and its open questions to them), for the
+      // Workshop's Waiting on you. A back and forth with it is not listed
+      // (#5229). Best-effort: services/workshop-waiting.js never throws. The
       // staging demo shows one of each on the mock requests.
       const workshopWaiting = require('../services/workshop-waiting');
       const waitingOnYou = IS_STAGING && req.query.demo === '1'
         ? workshopWaiting.demoWaiting()
-        : await workshopWaiting.waitingOnViewer(pool, {
-          appId: app.id, userId: req.user.id, botId: (await botDm.botAccount(pool).catch(() => null))?.id || null,
-        });
+        : await workshopWaiting.waitingOnViewer(pool, { appId: app.id, userId: req.user.id });
 
       res.json({
         issues,
@@ -3272,11 +3222,8 @@ function issueRoutes(config) {
         return res.status(403).json({ error: 'Full admin access required' });
       }
 
-      // The workflow machine answers a closed proposal itself (a retry of an
-      // apply that succeeded replays its result); [main]'s path refuses here.
-      if (issue.status !== 'open' && !workflow().governsKind(issue.kind)) {
-        return res.status(409).json({ error: 'Issue is not open' });
-      }
+      // The machine answers a closed proposal itself (a retry of an apply
+      // that succeeded replays its result).
       if (issue.kind !== 'secret_change' && issue.kind !== 'close_issue'
           && issue.kind !== 'maintenance_campaign' && issue.kind !== 'featured_illustration') {
         return res.status(400).json({ error: 'Only secret-change, close-issue, maintenance-campaign, and featured-illustration proposals can be admin-applied' });
@@ -3291,39 +3238,19 @@ function issueRoutes(config) {
         issueId: issue.id, kind: issue.kind, by: req.user.username,
       });
 
-      if (workflow().governsKind(issue.kind)) {
-        const reply = await workflow().adminApplyProposal(issue, req.user, req.get('Idempotency-Key') || undefined);
-        return res.status(reply.status).json(reply.body);
-      }
-
-      const applied = issue.kind === 'close_issue'
-        ? await maybeApplyCloseIssueProposal(pool, issue, { force: true, forceBy: req.user })
-        : issue.kind === 'maintenance_campaign'
-          ? await maybeApplyMaintenanceCampaignProposal(config, pool, issue, { force: true, forceBy: req.user })
-          : issue.kind === 'featured_illustration'
-            ? await maybeApplyFeaturedIllustrationProposal(pool, issue, { force: true, forceBy: req.user })
-            : await maybeApplySecretChangeProposal(config, pool, issue, { force: true, forceBy: req.user });
-
-      pushIssueUpdate({ action: 'voted', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id });
-
-      res.json({
-        ok: true,
-        applied,
-        // BC alias for clients written when only secret_change existed.
-        secretChanged: issue.kind === 'secret_change' ? applied : null,
-      });
+      const reply = await workflow().adminApplyProposal(issue, req.user, req.get('Idempotency-Key') || undefined);
+      res.status(reply.status).json(reply.body);
     } catch (err) {
       log.error('issues', 'Admin force-apply failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
 
-  // Withdraw a governance proposal (secret_change / legacy rename). This was
-  // originally an unguarded "close any issue" route with no caller; it is now
-  // the creator-gated self-service withdraw for governance proposals (the
-  // PR-proposal equivalent is POST /api/sessions/:id/archive). Only the
-  // proposal's creator may withdraw, and only while it is still open, so a
-  // stale double-tap or a race against a passing vote is a harmless no-op.
+  // Withdraw a governance proposal: the creator-gated self-service withdraw
+  // (the PR-proposal equivalent is POST /api/sessions/:id/archive). Only the
+  // proposal's creator may withdraw; the governance machine decides it under
+  // the row lock, so a stale double-tap or a race against a passing vote
+  // answers 404 "Proposal not open".
   router.post('/api/issues/:id/close', sameOriginBrowserOnly, async (req, res) => {
     const issueId = positiveIssueId(req.params.id);
     if (!issueId) return res.status(404).json({ error: 'Issue not found' });
@@ -3350,55 +3277,11 @@ function issueRoutes(config) {
         return res.status(403).json({ error: 'Only the proposer can withdraw this proposal' });
       }
 
-      if (workflow().governsKind(issue.kind)) {
-        const reply = await workflow().withdrawProposal(issue, req.user);
-        return res.status(reply.status).json(reply.body);
+      if (!isGovernanceKind(issue.kind)) {
+        return res.status(400).json({ error: 'Only a governance proposal can be withdrawn here' });
       }
-
-      // Restrict to open proposals: a withdraw that loses the race against a
-      // passing vote (which flips status to 'closed') simply no-ops here.
-      const auditPayload = {
-        ...(issue.payload || {}),
-        withdrawnAt: new Date().toISOString(),
-        withdrawnBy: req.user.username,
-      };
-      const { rows } = await pool.query(
-        `UPDATE issues SET status = 'closed', payload = $2
-          WHERE id = $1 AND status = 'open'
-          RETURNING id, app_id`,
-        [issue.id, JSON.stringify(auditPayload)]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'Proposal not open' });
-
-      // Say the withdrawal in the proposal's governance thread (mirrors the
-      // create path).
-      const withdrewMsg = `${req.user.username} withdrew their proposal: "${issue.title}"`;
-      await sendSystemMessage(pool, issue.app_id, withdrewMsg, 'system',
-        null, { type: 'governance', ref: issue.id }).catch(() => {});
-
-      // Best-effort close the GitHub twin (legacy renames carry one;
-      // secret_change proposals have no twin, so this is skipped silently).
-      if (issue.github_issue_number) {
-        const [, owner, repo] = (issue.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-        const pat = process.env.GITHUB_BOT_TOKEN;
-        if (owner && repo && pat) {
-          try {
-            // The bot token's client from services/github.js (recorded and
-            // counted against the hourly budget).
-            const ok = await github.getOctokit(owner);
-            await ok.rest.issues.update({
-              owner, repo, issue_number: issue.github_issue_number, state: 'closed',
-            });
-          } catch (err) {
-            log.warn('issues', 'GitHub issue close on withdraw failed', {
-              issue: issue.github_issue_number, status: err.status, err: err.message || '(empty)',
-            });
-          }
-        }
-      }
-
-      pushIssueUpdate({ action: 'closed', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id });
-      res.json({ ok: true });
+      const reply = await workflow().withdrawProposal(issue, req.user);
+      res.status(reply.status).json(reply.body);
     } catch (err) {
       log.error('issues', 'Withdraw failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -3408,1002 +3291,30 @@ function issueRoutes(config) {
   return router;
 }
 
-// Check the up-vote tally against the active-user majority. If the threshold
-// is met, apply the rename atomically (inside a txn guarded by SELECT FOR
-// UPDATE on the issue row so two near-simultaneous tripping votes can't
-// double-apply).
-async function maybeApplyRenameProposal(pool, issue) {
-  const { majority } = await getActiveUserStats(pool, issue.app_id);
-
-  // #646: governance-aware gate. Down votes feed both governance gates,
-  // mirroring PRs; the window is anchored on the issue's created_at (no
-  // separate promote step exists). Under 'invited' only approver votes
-  // qualify; under at-least-N the gate is the clock-free count.
-  const governanceSvc = require('../services/governance');
-  const gate = await governanceSvc.governedGate(pool, issue.app_id, {
-    kind: 'issue', id: issue.id, openedAt: issue.created_at,
-  });
-  const upCount = gate.qualifiedYes;
-  const active = gate.activeCount;
-  const required = gate.required;
-  // Apply paths mirror PR merges (services/active-users.js → mergeGate):
-  // threshold met + window elapsed, OR the lazy-consensus clock elapsed
-  // (unopposed support below threshold — silence is consent). Not yet →
-  // leave the proposal open (the next vote, or the sweeper's
-  // window-elapsed pass, re-checks).
-  if (!gate.mergeable) {
-    return {
-      applied: false, upCount, majority, active,
-      required, windowEndsAt: gate.windowEndsAt,
-      waitingForWindow: (gate.thresholdMet || gate.lazyArmed) && !gate.windowElapsed,
-    };
-  }
-
-  // Locked apps additionally require at least one admin up vote (see
-  // services/admin-approval.js + the apps.locked column). The majority
-  // gate above still has to pass — the admin up is an extra condition.
-  if (await isAppLocked(pool, issue.app_id)) {
-    const adminUp = await hasAdminUpVote(pool, issue.id);
-    if (!adminUp) {
-      log.info('issues', 'Rename majority reached but app is locked; awaiting admin up', {
-        issueId: issue.id, upCount, majority,
-      });
-      return { applied: false, upCount, majority, active, awaitingAdmin: true };
-    }
-  }
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const { rows: lockRows } = await client.query(
-      'SELECT * FROM issues WHERE id = $1 FOR UPDATE',
-      [issue.id]
-    );
-    if (!lockRows.length || lockRows[0].status !== 'open') {
-      await client.query('ROLLBACK');
-      return { applied: false, upCount, majority, active };
-    }
-    const locked = lockRows[0];
-
-    const newName = (locked.payload?.newName || '').trim();
-    if (!newName) {
-      await client.query('ROLLBACK');
-      log.warn('issues', 'Rename proposal missing newName', { issueId: issue.id });
-      return { applied: false, upCount, majority, active };
-    }
-
-    const { rows: appRows } = await client.query(
-      'SELECT id, name, slug FROM apps WHERE id = $1 FOR UPDATE',
-      [locked.app_id]
-    );
-    if (!appRows.length) {
-      await client.query('ROLLBACK');
-      return { applied: false, upCount, majority, active };
-    }
-    const app = appRows[0];
-    const oldName = app.name;
-
-    await client.query('UPDATE apps SET name = $1 WHERE id = $2', [newName, app.id]);
-
-    const auditPayload = { ...locked.payload, appliedAt: new Date().toISOString(), appliedBy: 'group-vote', upCount, required, active };
-    await client.query(
-      `UPDATE issues SET status = 'closed', payload = $1 WHERE id = $2`,
-      [JSON.stringify(auditPayload), locked.id]
-    );
-
-    await client.query('COMMIT');
-
-    // Side effects (chat + GitHub + WS) are best-effort and live outside the txn.
-    const renamedMsg = `App renamed from "${oldName}" to "${newName}" by group vote (${upCount}/${required})`;
-    // The outcome, in the governance proposal's thread.
-    await sendSystemMessage(pool, app.id, renamedMsg, 'system',
-      null, { type: 'governance', ref: locked.id }).catch(() => {});
-
-    if (locked.github_issue_number) {
-      // Prefer the PAT (bot token) here — its scopes are known-good for
-      // issue mutation, whereas the GitHub App installation token may lack
-      // `Issues: Write`. Close BEFORE commenting so a stale "renamed"
-      // comment can't land on an issue we failed to close.
-      const { rows: r } = await pool.query('SELECT repo_url FROM apps WHERE id = $1', [app.id]);
-      const repoUrl = r[0]?.repo_url || '';
-      const [, owner, repo] = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-      const pat = process.env.GITHUB_BOT_TOKEN;
-
-      if (owner && repo && pat) {
-        try {
-          // The bot token's client from services/github.js (recorded and
-          // counted against the hourly budget).
-          const ok = await github.getOctokit(owner);
-
-          await ok.rest.issues.update({
-            owner, repo, issue_number: locked.github_issue_number, state: 'closed',
-          });
-          log.info('issues', 'GitHub issue closed', {
-            repo: `${owner}/${repo}`, issue: locked.github_issue_number,
-          });
-
-          // Best-effort audit comment after the close succeeds.
-          await ok.rest.issues.createComment({
-            owner, repo, issue_number: locked.github_issue_number,
-            body: github.safeMention(`Applied by group vote (${upCount}/${required}). App renamed to "${newName}".`),
-          }).catch((err) => log.warn('issues', 'Rename comment failed', {
-            issue: locked.github_issue_number, status: err.status, err: err.message,
-          }));
-        } catch (err) {
-          log.warn('issues', 'GitHub issue close failed', {
-            issue: locked.github_issue_number,
-            status: err.status,
-            err: err.message || '(empty)',
-          });
-        }
-      } else if (locked.github_issue_number) {
-        log.warn('issues', 'Skipping GitHub issue close (missing repo_url or GITHUB_BOT_TOKEN)', {
-          issue: locked.github_issue_number, repoUrl, hasPat: !!pat,
-        });
-      }
-    }
-
-    pushAppUpdate({ action: 'renamed', appId: app.id, slug: app.slug, oldName, newName });
-
-    log.info('issues', 'Rename applied', { appId: app.id, oldName, newName, upCount, active });
-    return { applied: true, newName, oldName, upCount, majority, active };
-  } catch (err) {
-    try { await client.query('ROLLBACK'); } catch {}
-    log.error('issues', 'Rename apply failed', { issueId: issue.id, err: err.message });
-    return { applied: false, error: err.message };
-  } finally {
-    client.release();
-  }
-}
-
 /**
- * Vote-apply path for `kind='featured_illustration'` issues (#2086). Same
- * shape as maybeApplyRenameProposal, the card it is modelled on: gate
- * check, lock the issue row, write the proposed record onto the app
- * (services/illustration-proposals.js applyProposal) and stamp the audit
- * payload, all in one transaction; then chat + WS outside it.
+ * Close proposals whose target was closed by other means (a merged PR
+ * carrying `Closes #N`, a close on GitHub): each open one for those numbers
+ * hears it from the governance machine (src/workflow/platform.ts
+ * targetsClosed), which supersedes it. Called from the merge path
+ * (routes/votes.js checkAndMerge, the merge-followups machine) and the
+ * post-merge issue-close watcher.
  *
- * `options.force` (admin force-apply, POST /api/issues/:id/admin-apply)
- * skips the majority and locked-app gates, like the other kinds.
+ * `cause` is { kind: 'pr-merge', prNumber } or { kind: 'github-close' }.
+ * Never throws unless `strict`, for a caller that retries on it (the
+ * merge-followups machine's work).
  */
-async function maybeApplyFeaturedIllustrationProposal(pool, issue, options = {}) {
-  const force = !!options.force;
-  const { majority } = await getActiveUserStats(pool, issue.app_id);
-
-  const governanceSvc = require('../services/governance');
-  const gate = await governanceSvc.governedGate(pool, issue.app_id, {
-    kind: 'issue', id: issue.id, openedAt: issue.created_at,
-  });
-  const upCount = gate.qualifiedYes;
-  const active = gate.activeCount;
-  const required = force ? upCount : gate.required;
-  if (!force && !gate.mergeable) {
-    return {
-      applied: false, upCount, majority, active,
-      required: gate.required, windowEndsAt: gate.windowEndsAt,
-      waitingForWindow: (gate.thresholdMet || gate.lazyArmed) && !gate.windowElapsed,
-    };
-  }
-
-  // Locked apps additionally require at least one admin up vote, the same
-  // rule as the rename path. An admin force-apply trivially satisfies it.
-  if (!force && await isAppLocked(pool, issue.app_id)) {
-    const adminUp = await hasAdminUpVote(pool, issue.id);
-    if (!adminUp) {
-      log.info('issues', 'Illustration majority reached but app is locked; awaiting admin up', {
-        issueId: issue.id, upCount, majority,
-      });
-      return { applied: false, upCount, majority, active, awaitingAdmin: true };
-    }
-  }
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const { rows: lockRows } = await client.query(
-      'SELECT * FROM issues WHERE id = $1 FOR UPDATE',
-      [issue.id]
-    );
-    if (!lockRows.length || lockRows[0].status !== 'open') {
-      await client.query('ROLLBACK');
-      return { applied: false, upCount, majority, active };
-    }
-    const locked = lockRows[0];
-
-    const { rows: appRows } = await client.query(
-      'SELECT id, slug, name FROM apps WHERE id = $1 FOR UPDATE',
-      [locked.app_id]
-    );
-    if (!appRows.length) {
-      await client.query('ROLLBACK');
-      return { applied: false, upCount, majority, active };
-    }
-    const app = appRows[0];
-
-    const illustration = await illustrationProposals.applyProposal(
-      client, app.id, locked.payload || {}, locked.id
-    );
-
-    const auditPayload = {
-      ...locked.payload,
-      appliedAt: new Date().toISOString(),
-      appliedBy: force ? `admin:${options.forceBy?.username || 'unknown'}` : 'group-vote',
-      upCount, required, active,
-    };
-    await client.query(
-      `UPDATE issues SET status = 'closed', payload = $1 WHERE id = $2`,
-      [JSON.stringify(auditPayload), locked.id]
-    );
-
-    await client.query('COMMIT');
-
-    // Side effects (chat + WS) are best-effort and live outside the txn.
-    const appliedHow = force
-      ? `by admin override (${options.forceBy?.username || 'admin'})`
-      : `by group vote (${upCount}/${required})`;
-    const msg = illustration
-      ? `Featured illustration changed ${appliedHow}`
-      : `Featured illustration removed ${appliedHow}`;
-    await sendSystemMessage(pool, app.id, msg, 'system',
-      null, { type: 'governance', ref: locked.id }).catch(() => {});
-
-    pushAppUpdate({ action: 'illustration_changed', appId: app.id, slug: app.slug, illustration });
-    pushIssueUpdate({ action: 'closed', appSlug: app.slug, appId: app.id, issueId: locked.id });
-
-    log.info('issues', 'Featured illustration proposal applied', {
-      appId: app.id, issueId: locked.id, removed: !illustration, force, upCount, active,
-    });
-    return { applied: true, illustration, upCount, majority, active };
-  } catch (err) {
-    try { await client.query('ROLLBACK'); } catch {}
-    log.error('issues', 'Illustration apply failed', { issueId: issue.id, err: err.message });
-    return { applied: false, error: err.message };
-  } finally {
-    client.release();
-  }
-}
-
-/**
- * Vote-apply path for `kind='secret_change'` issues. Same shape as
- * maybeApplyRenameProposal: count up-votes, lock the issue row, write
- * the change atomically, then trigger an async production rebuild so
- * the new value reaches the running container without a manual step.
- *
- * TWO STORES, ONE PATH. For an ordinary app the write lands in
- * `app_secrets` and is followed by a production rebuild. For the
- * SELF-HOSTED app it lands in `platform_env_values` through the
- * platform-env DAO and is followed by NOTHING: the platform's env is
- * materialized by its own deploy (scripts/dump-platform-env.js writes
- * /opt/usernode/.env), so the value goes live on the next deploy.
- * Calling staging.rebuildProduction() on the self-app row would try to
- * rebuild the platform as if it were a child container — exactly what
- * refuseIfSelfHosted() prevents on the direct route in routes/apps.js —
- * so the branch below skips it. That is not an optimization; it is the
- * whole reason this function has to know which app it is applying to.
- *
- * `options.force` (admin force-apply, POST /api/issues/:id/admin-apply):
- * skip the majority + locked-app gates entirely — the row lock below
- * still prevents a double-apply racing a vote-driven one. `options.forceBy`
- * is the admin user (id, username) named in the chat message, audit
- * payload, and GitHub comment so the override is visible.
- */
-async function maybeApplySecretChangeProposal(config, pool, issue, options = {}) {
-  const force = !!options.force;
-  const { majority } = await getActiveUserStats(pool, issue.app_id);
-
-  // Resolved BEFORE the transaction so both the write branch and the
-  // side-effect branch read the same flag. A missing row can't happen
-  // (the issue FKs to it) but degrade to the ordinary app path rather
-  // than throwing if it somehow does.
-  const { rows: appRows } = await pool.query(
-    'SELECT id, self_hosted FROM apps WHERE id = $1',
-    [issue.app_id]
-  );
-  const selfHosted = !!appRows[0]?.self_hosted;
-
-  // #646: governance-aware gate (down votes feed both gates, anchored
-  // on created_at). An admin force-apply skips it, like force-merge.
-  //
-  // A secret change carries a value the app or the platform is handed, so
-  // it is flagged like a protected dapp.json change (#788): no visibility
-  // window, no lazy consensus, and an up vote from someone other than its
-  // author whenever the community has more than one member
-  // (services/governance.js applyNoTimerMerge).
-  const governanceSvc = require('../services/governance');
-  const gate = await governanceSvc.governedGate(pool, issue.app_id, {
-    kind: 'issue', id: issue.id, openedAt: issue.created_at,
-    explicitApproval: true,
-    authorId: issue.created_by ?? null,
-  });
-  const upCount = gate.qualifiedYes;
-  const active = gate.activeCount;
-  const required = force ? upCount : gate.required;
-  // The threshold path only (the flag turns lazy consensus off); an admin
-  // force-apply skips it, like force-merge.
-  if (!force && !gate.mergeable) {
-    const floor = gate.memberFloor;
-    return {
-      applied: false, upCount, majority, active,
-      required: gate.required, windowEndsAt: gate.windowEndsAt,
-      waitingForWindow: (gate.thresholdMet || gate.lazyArmed) && !gate.windowElapsed,
-      ...(gate.thresholdMet && floor && floor.applies && !floor.met
-        ? { awaitingOtherMember: true } : {}),
-    };
-  }
-
-  // Locked apps additionally require at least one admin up vote (see
-  // services/admin-approval.js + the apps.locked column). Same rule as
-  // the rename path above. An admin force-apply trivially satisfies it.
-  if (!force && await isAppLocked(pool, issue.app_id)) {
-    const adminUp = await hasAdminUpVote(pool, issue.id);
-    if (!adminUp) {
-      log.info('issues', 'Secret-change majority reached but app is locked; awaiting admin up', {
-        issueId: issue.id, upCount, majority,
-      });
-      return { applied: false, upCount, majority, active, awaitingAdmin: true };
-    }
-  }
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const { rows: lockRows } = await client.query(
-      'SELECT * FROM issues WHERE id = $1 FOR UPDATE',
-      [issue.id]
-    );
-    if (!lockRows.length || lockRows[0].status !== 'open') {
-      await client.query('ROLLBACK');
-      return { applied: false, upCount, majority, active };
-    }
-    const locked = lockRows[0];
-    const payload = locked.payload || {};
-    const key = (payload.key || '').trim();
-    const action = payload.action === 'delete' ? 'delete' : 'set';
-    if (!key) {
-      await client.query('ROLLBACK');
-      log.warn('issues', 'Secret-change proposal missing key', { issueId: issue.id });
-      return { applied: false, upCount, majority, active };
-    }
-
-    // A declaration can change under an open proposal (the manifest edit
-    // that makes a key deploy-owned merges while the vote runs). Refuse
-    // rather than write, and CLOSE the issue — leaving it open would re-run
-    // this failure, and re-post its message, on every subsequent vote.
-    if (selfHosted && !platformEnv.isWritableKey(key)) {
-      const refusedPayload = {
-        key, action,
-        private: !!(payload.private || payload.sensitive),
-        sensitive: !!(payload.private || payload.sensitive),
-        valueLast4: null,
-        appliedAt: new Date().toISOString(),
-        appliedBy: 'refused:unwritable',
-        upCount, required, active,
-      };
-      await client.query(
-        `UPDATE issues SET status = 'closed', payload = $1 WHERE id = $2`,
-        [JSON.stringify(refusedPayload), locked.id]
-      );
-      await client.query('COMMIT');
-      log.warn('issues', 'Secret-change refused: key is not writable', {
-        issueId: issue.id, key,
-      });
-      const refusedMsg = `Proposal for "${key}" was closed without applying: that variable is `
-        + 'now set by the deploy from a GitHub secret and cannot be written here.';
-      await sendSystemMessage(pool, issue.app_id, refusedMsg, 'system',
-        null, { type: 'governance', ref: locked.id }).catch(() => {});
-      return { applied: false, refused: true, upCount, majority, active };
-    }
-
-    if (action === 'set') {
-      const valueEnc = payload.valueEnc || null;
-      const plaintext = valueEnc ? decrypt(valueEnc, config.dataEncryptionKey) : null;
-      if (!plaintext) {
-        await client.query('ROLLBACK');
-        log.warn('issues', 'Secret-change proposal could not decrypt value', { issueId: issue.id });
-        return { applied: false, upCount, majority, active };
-      }
-      if (selfHosted) {
-        // Through the DAO, not raw SQL: it re-encrypts with a fresh IV,
-        // re-checks isWritableKey, and derives `private` (and therefore
-        // whether a last-4 is kept) from the DECLARATION rather than from
-        // the proposal payload — so a proposal can't smuggle in a
-        // classification the manifest doesn't agree with.
-        await platformEnv.setValue(client, issue.app_id, key, plaintext, {
-          userId: locked.created_by || null,
-          dataKey: config.dataEncryptionKey,
-        });
-      } else {
-        // Read canonical `private`, fall back to `sensitive` for issues
-        // proposed by an older build before the field was renamed.
-        const isPrivate = !!(payload.private || payload.sensitive);
-        const valueLast4 = isPrivate ? null : plaintext.slice(-4);
-        // Re-encrypt to ensure the stored row uses a fresh IV (the
-        // payload ciphertext was captured at proposal time).
-        const reEnc = encrypt(plaintext, config.dataEncryptionKey);
-        await client.query(
-          `INSERT INTO app_secrets (app_id, key, value_enc, value_last4, updated_by)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (app_id, key)
-           DO UPDATE SET value_enc = EXCLUDED.value_enc,
-                         value_last4 = EXCLUDED.value_last4,
-                         updated_at = NOW(),
-                         updated_by = EXCLUDED.updated_by`,
-          [issue.app_id, key, reEnc, valueLast4, locked.created_by || null]
-        );
-      }
-    } else if (selfHosted) {
-      await platformEnv.deleteValue(client, issue.app_id, key);
-    } else {
-      await client.query(
-        'DELETE FROM app_secrets WHERE app_id = $1 AND key = $2',
-        [issue.app_id, key]
-      );
-    }
-
-    // Strip the ciphertext from the audit-trail payload so a closed
-    // issue doesn't leave behind any reversible data. The audit
-    // metadata (who, when, how many votes) is what matters here.
-    const auditPayload = {
-      key, action,
-      private: !!(payload.private || payload.sensitive),
-      sensitive: !!(payload.private || payload.sensitive),
-      valueLast4: payload.valueLast4 || null,
-      appliedAt: new Date().toISOString(),
-      appliedBy: force ? `admin:${options.forceBy?.username || 'unknown'}` : 'group-vote',
-      upCount, required, active,
-    };
-    await client.query(
-      `UPDATE issues SET status = 'closed', payload = $1 WHERE id = $2`,
-      [JSON.stringify(auditPayload), locked.id]
-    );
-    // The rebuild that carries the change to the running app is owed in the
-    // same commit (services/owed-redeploy.js), so a process that dies before
-    // giving it leaves it to the leader rather than losing it: nothing else
-    // would notice, since main_sha does not move for a secret. With the
-    // app-delivery machine on, the machine is asked for it instead, and
-    // nothing else deploys beside it.
-    const viaDelivery = !selfHosted && workflow().deliveryEnabled();
-    if (!selfHosted && !viaDelivery) await owedRedeploy.owe(client, issue.app_id, 'secret_change');
-
-    await client.query('COMMIT');
-
-    // Side effects (chat + redeploy + GitHub close) live outside the txn.
-    const verb = action === 'delete' ? 'removed' : 'set';
-    const appliedHow = force
-      ? `by admin override (${options.forceBy?.username || 'admin'})`
-      : `by group vote (${upCount}/${required})`;
-    // Say what actually happens next. Promising a redeploy the platform
-    // path deliberately doesn't perform is how someone concludes the
-    // feature is broken while watching for an immediate change.
-    const secretMsg = selfHosted
-      ? `Platform variable "${key}" ${verb} ${appliedHow}; takes effect on the platform's next deploy.`
-      : `Secret "${key}" ${verb} ${appliedHow}; redeploying…`;
-    // The outcome, in the governance proposal's thread.
-    await sendSystemMessage(pool, issue.app_id, secretMsg, 'system',
-      null, { type: 'governance', ref: locked.id }).catch(() => {});
-
-    if (selfHosted) {
-      // One event type for a platform-variable change regardless of which
-      // path wrote it, so the audit trail reads as one series. The value is
-      // never carried — only the key, its privacy flag and how it applied.
-      events.record(pool, {
-        type: events.EVENT_TYPES.PLATFORM_ENV_CHANGED,
-        userId: force ? (options.forceBy?.id || null) : (locked.created_by || null),
-        appId: issue.app_id,
-        metadata: {
-          key,
-          action: action === 'delete' ? 'clear' : 'set',
-          private: !!(payload.private || payload.sensitive),
-          appliedBy: force ? 'admin-force-apply' : 'group-vote',
-        },
-      });
-    } else {
-      // Auto-redeploy: same fan-out the drift poller and dev-chat merge use.
-      // Failures (including MissingSecretsError if the dapp still requires
-      // additional unset keys) propagate via the existing deploy-status
-      // broadcast and don't poison the vote-apply success.
-      //
-      // NEVER for the self-hosted row: rebuildProduction() would treat the
-      // platform like a child container (see this function's header).
-      //
-      // With the app-delivery machine on, a recorded request it runs (kept
-      // across a restart: the stored key is never left undeployed).
-      if (viaDelivery) {
-        workflow().requestDeploy(issue.app_id, 'secret_change').catch((err) => {
-          log.warn('issues', 'Post-secret-change redeploy request failed', { slug: issue.app_slug, err: err.message });
-        });
-      } else {
-        // Not awaited, and owed above: this run takes the mark whoever holds
-        // it, records the new container and clears it; if this process dies
-        // first, the leader's sweep runs it again (services/owed-redeploy.js).
-        void owedRedeploy.kick(config, pool, issue.app_id, {
-          takeover: true,
-          rebuild: (app) => staging.rebuildProduction(config, app),
-        });
-      }
-    }
-
-    if (locked.github_issue_number) {
-      const { rows: r } = await pool.query('SELECT repo_url FROM apps WHERE id = $1', [issue.app_id]);
-      const repoUrl = r[0]?.repo_url || '';
-      const [, owner, repo] = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-      const pat = process.env.GITHUB_BOT_TOKEN;
-      if (owner && repo && pat) {
-        try {
-          // The bot token's client from services/github.js (recorded and
-          // counted against the hourly budget).
-          const ok = await github.getOctokit(owner);
-          await ok.rest.issues.update({
-            owner, repo, issue_number: locked.github_issue_number, state: 'closed',
-          });
-          await ok.rest.issues.createComment({
-            owner, repo, issue_number: locked.github_issue_number,
-            body: github.safeMention(
-              force
-                ? `Applied by admin override (${options.forceBy?.username || 'admin'}). Secret "${key}" ${verb}.`
-                : `Applied by majority vote (${upCount}/${active}). Secret "${key}" ${verb}.`
-            ),
-          }).catch(() => {});
-        } catch (err) {
-          log.warn('issues', 'GitHub issue close (secret-change) failed', {
-            issue: locked.github_issue_number, err: err.message,
-          });
-        }
-      }
-    }
-
-    log.info('issues', 'Secret change applied', { appId: issue.app_id, key, action, upCount, active, force });
-    return { applied: true, key, action, upCount, majority, active, force };
-  } catch (err) {
-    try { await client.query('ROLLBACK'); } catch {}
-    log.error('issues', 'Secret-change apply failed', { issueId: issue.id, err: err.message });
-    return { applied: false, error: err.message };
-  } finally {
-    client.release();
-  }
-}
-
-/**
- * Auto-resolve open close-issue proposals whose target was closed by other
- * means (a merged PR carrying `Closes #N`, or a manual close on GitHub).
- * Called from the merge path (routes/votes.js checkAndMerge), the post-merge
- * issue-close watcher, and maybeApplyCloseIssueProposal's superseded guard.
- *
- * `cause` is { kind: 'pr-merge', prNumber } or { kind: 'github-close' } and
- * drives both the audit payload's supersededBy value and the chat wording.
- *
- * Race-safe: each row flips via a single `WHERE status = 'open'` UPDATE (the
- * same guard the withdraw route uses), so a concurrent vote-apply or
- * withdraw that wins produces zero rows here and no duplicate messages.
- * Best-effort throughout — never throws; callers must never be failed by it.
- * No GitHub writes (the issue is already closed; the proposer's reason is
- * NOT posted — the group never approved it) and no bounty changes.
- */
-// `strict`: a failure is thrown instead of logged (the merge-followups
-// workflow machine retries its work on it).
-async function resolveSupersededCloseProposals(pool, { appId, appSlug, numbers, cause, strict = false } = {}) {
+async function resolveSupersededCloseProposals(pool, { appId, numbers, cause, strict = false } = {}) {
   const nums = (Array.isArray(numbers) ? numbers : [])
     .map((n) => Number(n))
     .filter((n) => Number.isInteger(n) && n > 0);
-  const resolved = [];
-  if (!appId || !nums.length) return { resolved };
-
-  if (workflow().governanceEnabled()) {
-    try {
-      return { resolved: await workflow().targetsClosed(appId, nums, cause || { kind: 'github-close' }) };
-    } catch (err) {
-      if (strict) throw err;
-      log.warn('issues', 'Superseded close-proposal resolve failed', { appId, numbers: nums, err: err.message });
-      return { resolved };
-    }
-  }
-
+  if (!appId || !nums.length) return { resolved: [] };
   try {
-    const { rows } = await pool.query(
-      `SELECT id, app_id, payload FROM issues
-        WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open'
-          AND (payload->>'issueNumber')::int = ANY($2::int[])`,
-      [appId, nums]
-    );
-
-    const supersededBy = cause?.kind === 'pr-merge'
-      ? `pr-merge:#${cause.prNumber}`
-      : 'github-close';
-
-    for (const row of rows) {
-      const n = Number(row.payload?.issueNumber);
-      const auditPayload = {
-        ...(row.payload || {}),
-        supersededAt: new Date().toISOString(),
-        supersededBy,
-      };
-      const { rows: updated } = await pool.query(
-        `UPDATE issues SET status = 'closed', payload = $2
-          WHERE id = $1 AND status = 'open'
-          RETURNING id`,
-        [row.id, JSON.stringify(auditPayload)]
-      );
-      if (!updated.length) continue; // lost the race to a vote-apply/withdraw
-
-      resolved.push(row.id);
-      const msg = cause?.kind === 'pr-merge'
-        ? `Close proposal for issue #${n} resolved automatically: PR #${cause.prNumber} closed the issue`
-        : `Close proposal for issue #${n} resolved automatically: the issue was closed on GitHub`;
-      await sendSystemMessage(pool, row.app_id, msg, 'system',
-        null, { type: 'governance', ref: row.id }).catch(() => {});
-      // Same event the withdraw path emits — open clients drop the card and
-      // the target issue's row reverts to "Propose to close".
-      pushIssueUpdate({ action: 'closed', appSlug: appSlug || null, appId: row.app_id, issueId: row.id });
-      log.info('issues', 'Close proposal superseded', {
-        issueId: row.id, appId: row.app_id, target: n, supersededBy,
-      });
-    }
+    return { resolved: await workflow().targetsClosed(appId, nums, cause || { kind: 'github-close' }) };
   } catch (err) {
     if (strict) throw err;
-    log.warn('issues', 'Superseded close-proposal resolve failed', {
-      appId, numbers: nums, err: err.message,
-    });
+    log.warn('issues', 'Superseded close-proposal resolve failed', { appId, numbers: nums, err: err.message });
+    return { resolved: [] };
   }
-  return { resolved };
-}
-
-/**
- * Vote-apply path for `kind='close_issue'` issues. Same shape as
- * maybeApplyRenameProposal: gate check, lock the issue row, mark the
- * proposal closed atomically, then best-effort side effects (chat, GitHub
- * close + explanation comment, bounty voiding, cache/UI sync).
- *
- * Runs a SUPERSEDED GUARD first, on every invocation (including
- * non-mergeable sweeper calls): when a healthy cached open-issues fetch
- * shows the target is no longer open, the proposal is resolved as
- * superseded instead of applied — this doubles as the hourly catch-all for
- * issues closed by hand on GitHub.
- *
- * `options.force` (admin force-apply) skips the majority + locked-app gates,
- * like the secret-change path; the row lock still prevents a double-apply.
- */
-async function maybeApplyCloseIssueProposal(pool, issue, options = {}) {
-  const force = !!options.force;
-  const issueNumber = Number(issue.payload?.issueNumber);
-  if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
-    log.warn('issues', 'Close proposal missing issueNumber', { issueId: issue.id });
-    return { applied: false, error: 'missing issueNumber' };
-  }
-
-  // Repo coordinates for the superseded guard and the GitHub close below.
-  // (The vote route's issue row carries app_slug but not repo_url.)
-  const { rows: appRows } = await pool.query(
-    'SELECT slug, repo_url FROM apps WHERE id = $1',
-    [issue.app_id]
-  );
-  const appSlug = issue.app_slug || appRows[0]?.slug || null;
-  const parsed = parseOwnerRepo(appRows[0]?.repo_url);
-
-  // Superseded guard: a healthy fetch (no degradation note) that doesn't
-  // list the target means it was already closed by other means — retire the
-  // proposal instead of applying. A degraded fetch skips the guard and
-  // proceeds optimistically.
-  if (github.isEnabled() && parsed) {
-    const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
-    if (!ghResult.note) {
-      const stillOpen = (ghResult.issues || []).some((i) => i.number === issueNumber);
-      if (!stillOpen) {
-        await resolveSupersededCloseProposals(pool, {
-          appId: issue.app_id,
-          appSlug,
-          numbers: [issueNumber],
-          cause: { kind: 'github-close' },
-        });
-        return { applied: false, superseded: true };
-      }
-    }
-  }
-
-  // #646: governance-aware gate (down votes feed both gates, anchored
-  // on created_at). An admin force-apply skips it, like force-merge.
-  const { majority } = await getActiveUserStats(pool, issue.app_id);
-  const governanceSvc = require('../services/governance');
-  const gate = await governanceSvc.governedGate(pool, issue.app_id, {
-    kind: 'issue', id: issue.id, openedAt: issue.created_at,
-  });
-  const upCount = gate.qualifiedYes;
-  const active = gate.activeCount;
-  const required = force ? upCount : gate.required;
-  if (!force && !gate.mergeable) {
-    return {
-      applied: false, upCount, majority, active,
-      required: gate.required, windowEndsAt: gate.windowEndsAt,
-      waitingForWindow: (gate.thresholdMet || gate.lazyArmed) && !gate.windowElapsed,
-    };
-  }
-
-  // Locked apps additionally require at least one admin up vote — same rule
-  // as the rename/secret paths. An admin force-apply trivially satisfies it.
-  if (!force && await isAppLocked(pool, issue.app_id)) {
-    const adminUp = await hasAdminUpVote(pool, issue.id);
-    if (!adminUp) {
-      log.info('issues', 'Close-issue majority reached but app is locked; awaiting admin up', {
-        issueId: issue.id, upCount, majority,
-      });
-      return { applied: false, upCount, majority, active, awaitingAdmin: true };
-    }
-  }
-
-  const client = await pool.connect();
-  let locked;
-  try {
-    await client.query('BEGIN');
-
-    const { rows: lockRows } = await client.query(
-      'SELECT * FROM issues WHERE id = $1 FOR UPDATE',
-      [issue.id]
-    );
-    if (!lockRows.length || lockRows[0].status !== 'open') {
-      await client.query('ROLLBACK');
-      return { applied: false, upCount, majority, active };
-    }
-    locked = lockRows[0];
-
-    const auditPayload = {
-      ...(locked.payload || {}),
-      appliedAt: new Date().toISOString(),
-      appliedBy: force ? `admin:${options.forceBy?.username || 'unknown'}` : 'group-vote',
-      upCount, required, active,
-    };
-    await client.query(
-      `UPDATE issues SET status = 'closed', payload = $1 WHERE id = $2`,
-      [JSON.stringify(auditPayload), locked.id]
-    );
-
-    // Also close any internal open twin rows for the target (a platform-
-    // filed 'general' issue whose GitHub twin is the number being closed),
-    // so creator-attribution rows don't linger open.
-    await client.query(
-      `UPDATE issues SET status = 'closed'
-        WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open' AND id <> $3`,
-      [issue.app_id, issueNumber, locked.id]
-    );
-
-    await client.query('COMMIT');
-  } catch (err) {
-    try { await client.query('ROLLBACK'); } catch {}
-    log.error('issues', 'Close-issue apply failed', { issueId: issue.id, err: err.message });
-    return { applied: false, error: err.message };
-  } finally {
-    client.release();
-  }
-
-  // ---- Side effects: best-effort, outside the txn. ----
-
-  // #1010: announce the decision the moment it is DURABLE, ahead of the
-  // bounty/chat/GitHub tail below. Two reasons the old single broadcast at
-  // the very end wasn't enough: (1) it sat behind the GitHub close+comment
-  // round-trips, so every open card kept rendering the proposal as live for
-  // seconds after it was decided, and (2) it lived inside the
-  // `github.isEnabled() && parsed` branch — an app with GitHub off or an
-  // unparsable repo_url got NO event at all and its cards lingered until a
-  // manual reload. Same event shape the withdraw path emits, so clients need
-  // no new handling; the trailing `github_synced` push stays where it is
-  // (it additionally means "the open-issues cache is now correct").
-  try {
-    pushIssueUpdate({
-      action: 'closed', appSlug, appId: issue.app_id, issueId: locked.id,
-    });
-  } catch (err) {
-    log.warn('issues', 'Close-issue applied broadcast failed', {
-      issueId: locked.id, err: err.message,
-    });
-  }
-
-  // Void open bounties on the target: the issue is closing without a merged
-  // PR, so no one earns the kudos — and an 'open' row would linger forever
-  // and keep inflating the issue's bounty count (same rationale as the
-  // self-bounty voiding in routes/votes.js resolveIssueBounty). Allowance
-  // slots stay forfeited, consistent with existing policy.
-  try {
-    await pool.query(
-      `UPDATE issue_bounties SET status = 'voided', awarded_at = NOW()
-        WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open'`,
-      [issue.app_id, issueNumber]
-    );
-  } catch (err) {
-    log.warn('issues', 'Bounty voiding on close-issue apply failed', {
-      issueId: issue.id, issueNumber, err: err.message,
-    });
-  }
-
-  const appliedHow = force
-    ? `by admin override (${options.forceBy?.username || 'admin'})`
-    : `by group vote (${upCount}/${required})`;
-  const closedMsg = `Issue #${issueNumber} closed ${appliedHow}`;
-  // The outcome, in the proposal's governance thread AND the target
-  // issue's thread (mirrors the create path).
-  await sendSystemMessage(pool, issue.app_id, closedMsg, 'system',
-    null, { type: 'governance', ref: locked.id }).catch(() => {});
-  await sendSystemMessage(pool, issue.app_id, closedMsg, 'system',
-    null, { type: 'issue', ref: issueNumber }).catch(() => {});
-
-  // The Homeroom bot's proposals built for this request alone come down with
-  // it: one left up for a vote holds a slot of the bot's per-project cap for
-  // good, and could still merge what the group just voted to drop (#4968).
-  // After the line above, so the request's thread reads in order. Not
-  // awaited: a withdrawal takes a preview down and closes a pull request,
-  // which the GitHub close below has no reason to wait on. Never throws.
-  require('../services/homeroom-bot-closed-requests')
-    .noteRequestsClosed(pool, { appId: issue.app_id, closed: [issueNumber] })
-    .catch(() => {});
-
-  // GitHub: close FIRST, then comment (same ordering rationale as the
-  // rename path — a stale "closed by vote" comment must not land on an
-  // issue we failed to close). Both helpers route through getOctokit
-  // (PAT-preferred) and safeMention.
-  if (github.isEnabled() && parsed) {
-    try {
-      await github.closeIssue(parsed.owner, parsed.repo, issueNumber);
-
-      let commentBody = force
-        ? `Closed by admin override (${options.forceBy?.username || 'admin'}) on Homeroom.`
-        : `Closed by group vote (${upCount}/${required}) on Homeroom.`;
-      const reason = typeof locked.payload?.reason === 'string'
-        ? locked.payload.reason.trim() : '';
-      if (reason) {
-        let proposerName = null;
-        try {
-          const { rows: userRows } = await pool.query(
-            'SELECT username FROM users WHERE id = $1', [locked.created_by]
-          );
-          proposerName = userRows[0]?.username || null;
-        } catch {}
-        commentBody += `\n\n${proposerName || 'The proposer'}'s reason: ${reason}`;
-      }
-      await github.createIssueComment(parsed.owner, parsed.repo, issueNumber, commentBody)
-        .catch((err) => log.warn('issues', 'Close-issue comment failed', {
-          issue: issueNumber, status: err.status, err: err.message,
-        }));
-    } catch (err) {
-      log.warn('issues', 'GitHub issue close (close-issue vote) failed', {
-        issue: issueNumber, status: err.status, err: err.message || '(empty)',
-      });
-    }
-
-    // Cache/UI sync (mirrors the issue-close watcher's bustAndBroadcast):
-    // suppress the number so the eventually-consistent GitHub list can't
-    // resurrect it, bust the cache, and tell every open panel to refetch.
-    try {
-      github.noteIssuesClosed(parsed.owner, parsed.repo, [issueNumber]);
-      github.invalidateIssuesCache(parsed.owner, parsed.repo);
-      pushIssueUpdate({
-        action: 'github_synced',
-        appSlug,
-        appId: issue.app_id,
-        source: 'close_issue_vote',
-      });
-    } catch (err) {
-      log.warn('issues', 'Cache bust after close-issue apply failed', {
-        issueNumber, err: err.message,
-      });
-    }
-  }
-
-  log.info('issues', 'Close-issue proposal applied', {
-    issueId: issue.id, appId: issue.app_id, issueNumber, upCount, active, force,
-  });
-  return { applied: true, issueNumber, upCount, majority, active, force };
-}
-
-/**
- * Vote-apply path for `kind='maintenance_campaign'` issues (#853's
- * generalization). Same shape as maybeApplySecretChangeProposal: gate,
- * lock the issue row, write the outcome atomically — here that's the
- * maintenance_campaigns row — then start the campaign engine
- * (services/fleet-maintenance.js) fire-and-forget. The engine is
- * restart-proof (per-app state in maintenance_campaign_apps + boot
- * resume), so "started but the process died" is not a lost campaign.
- *
- * `options.force` (admin force-apply): skip the vote gate; the route
- * has already verified FULL platform-admin rights for this kind.
- */
-async function maybeApplyMaintenanceCampaignProposal(config, pool, issue, options = {}) {
-  const force = !!options.force;
-  const { majority } = await getActiveUserStats(pool, issue.app_id);
-
-  const governanceSvc = require('../services/governance');
-  const gate = await governanceSvc.governedGate(pool, issue.app_id, {
-    kind: 'issue', id: issue.id, openedAt: issue.created_at,
-  });
-  const upCount = gate.qualifiedYes;
-  const active = gate.activeCount;
-  const required = force ? upCount : gate.required;
-  if (!force && !gate.mergeable) {
-    return {
-      applied: false, upCount, majority, active,
-      required: gate.required, windowEndsAt: gate.windowEndsAt,
-      waitingForWindow: (gate.thresholdMet || gate.lazyArmed) && !gate.windowElapsed,
-    };
-  }
-
-  // Locked-app admin-up gate, parity with the other governance kinds.
-  if (!force && await isAppLocked(pool, issue.app_id)) {
-    const adminUp = await hasAdminUpVote(pool, issue.id);
-    if (!adminUp) {
-      return { applied: false, upCount, majority, active, awaitingAdmin: true };
-    }
-  }
-
-  let campaignId = null;
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const { rows: lockRows } = await client.query(
-      'SELECT * FROM issues WHERE id = $1 FOR UPDATE',
-      [issue.id]
-    );
-    if (!lockRows.length || lockRows[0].status !== 'open') {
-      await client.query('ROLLBACK');
-      return { applied: false, upCount, majority, active };
-    }
-    const locked = lockRows[0];
-    const payload = locked.payload || {};
-    const instructions = typeof payload.instructions === 'string' ? payload.instructions.trim() : '';
-    if (!instructions) {
-      await client.query('ROLLBACK');
-      log.warn('issues', 'Maintenance-campaign proposal missing instructions', { issueId: issue.id });
-      return { applied: false, upCount, majority, active };
-    }
-    const campaignTitle = (typeof payload.title === 'string' && payload.title.trim())
-      || locked.title.replace(/^Maintenance campaign:\s*/, '');
-    const targetFilter = Array.isArray(payload.targetFilter) && payload.targetFilter.length
-      ? payload.targetFilter : null;
-
-    const { rows: campRows } = await client.query(
-      `INSERT INTO maintenance_campaigns (issue_id, title, instructions, target_filter, status, created_by)
-       VALUES ($1, $2, $3, $4, 'running', $5)
-       RETURNING id`,
-      [locked.id, String(campaignTitle).slice(0, 300), instructions,
-        targetFilter ? JSON.stringify(targetFilter) : null, locked.created_by || null]
-    );
-    campaignId = campRows[0].id;
-
-    await client.query(
-      `UPDATE issues SET status = 'closed',
-          payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-        WHERE id = $1`,
-      [locked.id, JSON.stringify({
-        campaignId,
-        appliedAt: new Date().toISOString(),
-        appliedBy: force ? `admin:${options.forceBy?.username || 'admin'}` : 'vote',
-        upCount, required, active,
-      })]
-    );
-    await client.query('COMMIT');
-  } catch (err) {
-    try { await client.query('ROLLBACK'); } catch {}
-    log.error('issues', 'Maintenance-campaign apply failed', { issueId: issue.id, err: err.message });
-    return { applied: false, error: err.message };
-  } finally {
-    client.release();
-  }
-
-  const appliedHow = force
-    ? `by admin override (${options.forceBy?.username || 'admin'})`
-    : `by group vote (${upCount}/${required})`;
-  const startedMsg = `Maintenance campaign "${issue.payload?.title || issue.title}" approved ${appliedHow}. `
-    + 'The platform is now opening one PR per app. Progress is on the campaign dashboard.';
-  await sendSystemMessage(pool, issue.app_id, startedMsg, 'system',
-    null, { type: 'governance', ref: issue.id }).catch(() => {});
-
-  // Fire-and-forget: the engine owns its own error handling + resume.
-  const fleetMaintenance = require('../services/fleet-maintenance');
-  fleetMaintenance.runCampaign(config, pool, campaignId).catch((err) =>
-    log.error('issues', 'Campaign run failed after apply', { campaignId, err: err.message }));
-
-  log.info('issues', 'Maintenance-campaign proposal applied', {
-    issueId: issue.id, campaignId, upCount, active, force,
-  });
-  return { applied: true, campaignId, upCount, majority, active, force };
 }
 
 module.exports = {
@@ -4412,15 +3323,8 @@ module.exports = {
   shouldCreateGithubTwin,
   issueBodyWithScreenshots,
   MAX_GITHUB_ISSUE_BODY_CHARS,
-  // Exported so the stale-PR sweeper can fire window-elapsed governance
-  // applies (parity with PR window-elapsed merges).
-  maybeApplyRenameProposal,
-  maybeApplySecretChangeProposal,
-  maybeApplyCloseIssueProposal,
-  maybeApplyMaintenanceCampaignProposal,
-  maybeApplyFeaturedIllustrationProposal,
-  // Exported for the merge path and the issue-close watcher (auto-resolve
-  // of close proposals whose target was closed by other means).
+  // For the merge path and the issue-close watcher: close proposals whose
+  // target was closed by other means.
   resolveSupersededCloseProposals,
   // "In progress" derivation pieces, exported for unit tests.
   pickInProgressTarget,

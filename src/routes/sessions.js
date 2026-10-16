@@ -23,7 +23,6 @@ const topicAttrs = require('../services/topic-attributes');
 const agentSessions = require('../services/agent-sessions');
 const classicSessions = require('../services/classic-sessions');
 const { claimIssueForUser } = require('../services/issue-claims');
-const { appIdentityEnv } = require('../services/app-identity-env');
 const visuals = require('../services/visuals');
 const docker = require('../services/docker');
 const applicationRuntime = require('../services/application-runtime');
@@ -529,18 +528,15 @@ const PROCESS_BOOT_ID = String(Date.now());
 // sessionState.setPhaseResolver wiring that used to sit here.
 const stopRegistry = require('../services/stop-registry');
 
-// Per-session in-flight guard for on-demand staging rebuilds (the
-// ensure-staging route below). Repeated Preview clicks while a rebuild is
-// already running must not kick off a second concurrent docker build +
-// pg clone for the same session. Mirrors the stagingHealAttempts map the
-// sweeper uses in server.js. Cleared when the rebuild settles.
+// Coalesces repeated Preview clicks (the ensure-staging route below) while
+// one is still handing the rebuild to the preview machine, which builds it
+// once whoever asks. Only this process's clicks; cleared when the hand-off
+// settles.
 const ensureStagingInFlight = new Set();
 
-// #447: per-session in-flight guard for the manual "Re-run checks" route
-// below. Coalesces repeat clicks so one stuck proposal can't kick off
-// several concurrent staging rebuilds + capture runs. Cleared when the
-// recheck settles. (captureForSession is _inFlight-guarded internally too;
-// this just avoids a redundant rebuild on the rebuild path.)
+// #447: coalesces repeat clicks on the manual "Re-run checks" route below
+// while one is still handing the recheck to the preview machine (which joins
+// a run already going). Cleared when the hand-off settles.
 const recheckInFlight = new Set();
 
 // ── Staging mock data ──────────────────────────────────────────────────
@@ -6227,63 +6223,25 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         } catch {}
       }
 
-      // With WF_PREVIEWS_ENABLED on the preview machine builds a new attempt
-      // of the head (a build or run already going is the answer).
-      if (previewWorkflow.enabled()) {
-        const out = await previewWorkflow.request({
-          pool, session, head: commitHash === 'latest' ? null : commitHash, reason: 'deploy', actor: `user:${req.user.id}`,
-        });
-        if (out.status === 'rejected' && ['not_open', 'not_deployable', 'no_head'].includes(out.reason)) {
-          return res.status(409).json({ error: 'This session cannot deploy a preview now', reason: out.reason });
-        }
-        return res.json({ ok: true, status: 'deploying' });
+      // The exact head this deploy is for, resolved once: the branch's tip
+      // when it was read, else what the machine resolves for the row (its
+      // pin, its tip, its checks).
+      const head = await previewWorkflow.exactHead(pool, session, commitHash === 'latest' ? null : commitHash);
+      // A preview deployed by hand runs its checks as 'manual-recheck': the
+      // head is owed a unit suite that really runs (services/unit-suite-reuse.js).
+      // Recorded before the machine is asked, so a build or run already going
+      // that answers instead (it may have copied an earlier pass) is not
+      // taken as theirs.
+      await require('../services/unit-suite-reuse').markFreshOwed(pool, { sessionId: session.id, commitSha: head });
+      // The preview machine builds a new attempt of the head (a build or run
+      // already going is the answer).
+      const out = await previewWorkflow.request({
+        pool, session, head, reason: 'deploy', actor: `user:${req.user.id}`,
+      });
+      if (out.status === 'rejected' && ['not_open', 'not_deployable', 'no_head'].includes(out.reason)) {
+        return res.status(409).json({ error: 'This session cannot deploy a preview now', reason: out.reason });
       }
-
-      // Manual deployment can discover a newer branch head. Claim it before
-      // entering the coordinator, but never regress a concurrently changed pin.
-      if (require('../services/preview-lifecycle').enabled(config) && commitHash !== 'latest') {
-        const client = await pool.connect();
-        try {
-          await client.query('BEGIN');
-          const claim = await client.query(`SELECT id FROM chat_sessions
-            WHERE id = $1 AND checks_commit_sha IS NOT DISTINCT FROM $2::text
-            FOR UPDATE`, [session.id, session.checks_commit_sha || null]);
-          if (!claim.rows.length) throw require('../services/preview-lifecycle').cancelled();
-          await visuals.setChecksPending(client, session.id, commitHash, 'building', 'manual-recheck');
-          await client.query('COMMIT');
-        } catch (err) {
-          await client.query('ROLLBACK');
-          throw err;
-        } finally { client.release(); }
-      }
-
-      // Build and deploy staging (async — respond immediately)
-      res.json({ ok: true, status: 'deploying' });
-
-      staging.buildAndDeployStaging(config, session, app, commitHash)
-        .then(async (result) => {
-          await pool.query(
-            `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
-            [result.containerId, result.stagingUrl, session.id]
-          );
-          // Verify the edge only after staging_url is persisted — that is
-          // the point at which the hostname is a referenceable preview.
-          await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
-          // #461: run the proposal checks against the fresh build, matching
-          // every other staging-deploy path. Before this, a preview built
-          // via this button left check_state NULL — the promote path then
-          // skipped its own build+capture (staging_url already set) and the
-          // proposal sat merge-blocked on "still running its tests" until a
-          // sweep happened to heal it. Fire-and-forget; captureForSession
-          // owns all failure handling and is _inFlight-guarded.
-          visuals.captureForSession(config, session, app, commitHash === 'latest' ? null : commitHash, result, { send: null, trigger: 'manual-recheck' })
-            .catch((err) => log.warn('visuals', 'Deploy-staging capture failed (non-fatal)', {
-              sessionId: session.id, err: err.message,
-            }));
-        })
-        .catch((err) => {
-          log.error('sessions', 'Staging deploy failed', { sessionId: session.id, err: err.message });
-        });
+      return res.json({ ok: true, status: 'deploying' });
     } catch (err) {
       log.error('sessions', 'Deploy staging error', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -6539,53 +6497,47 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.json({ status: 'unavailable', reason: 'demo' });
       }
 
+      // From this press on the head is owed a unit suite that really runs
+      // (services/unit-suite-reuse.js): whichever run answers it, the one it
+      // is folded into below or its own, copies no earlier pass, and a
+      // verdict that carries a copied pass is not stored. Durable, and set
+      // before any of the answers below.
+      // On the head the request is for, read from the row now: a promoted
+      // proposal's reviewed head, not a checks pin an older run left.
+      const requestedHead = await stagingRecovery.requestedRecheckHead(pool, session);
+      await require('../services/unit-suite-reuse').markFreshOwed(pool, {
+        sessionId, commitSha: requestedHead,
+      });
+
       // Coalesce repeat clicks.
       if (recheckInFlight.has(sessionId)) {
         return res.json({ status: 'running' });
       }
-      // A local proposal submission holds a non-worker session operation
-      // through staging + capture. Starting a manual recheck inside that
-      // window would queue a second capture that can outlive the operation
-      // claim and overlap the next web coding turn. Treat every existing
-      // session-owned pipeline as the run the user is trying to request.
-      if (isSessionBusy(sessionId)
-          || staging.hasInFlightBuild(sessionId)
-          || visuals.hasInFlightCapture(sessionId)) {
+      // A turn or an operation holds the session (a local proposal
+      // submission among them): its own pipeline is the run the user is
+      // asking for. A build or checks run going is the preview machine's,
+      // which joins a recheck to it (or replaces it when its inputs changed).
+      //
+      // Folded into what holds the session, the head is still owed a unit
+      // suite that really runs (services/unit-suite-reuse.js): a verdict
+      // stored before this press no longer stands for it, so it reads
+      // pending (and merge-blocked) until one does, and once the session is
+      // idle again the owed run starts if nothing has answered it. The stale
+      // sweep, whose scope covers an owed head, re-drives it after a restart.
+      const busyNow = () => isSessionBusy(sessionId);
+      if (busyNow()) {
+        await require('../services/unit-suite-reuse').owePendingRun({
+          pool, visuals, stagingRecovery, config, session, busy: busyNow, head: requestedHead,
+        });
         return res.json({ status: 'running' });
       }
-      // The same holds for a run of this commit that another process
-      // launched and that is still on the cluster, running or finished but
-      // not yet read: the harvest collects it (services/check-harvest.js),
-      // and starting over would throw it away, or cancel it mid-run. Asked
-      // before the stamp below, which would set it back to "building". Its
-      // stored verdict clears its manifest, and a press after that starts a
-      // fresh run. `collecting` lets the client say why nothing new started.
       recheckInFlight.add(sessionId);
-      if (await require('../services/check-harvest').runToCollect(config, pool, sessionId, session.checks_commit_sha || null)) {
-        recheckInFlight.delete(sessionId);
-        return res.json({ status: 'running', checkState: 'pending', collecting: true });
-      }
-
-      // #607: stamp 'pending' + broadcast BEFORE responding so the client's
-      // immediate refresh deterministically sees the in-progress state (the
-      // fire-and-forget below re-stamps idempotently — same commit sha, so
-      // the failure-streak bookkeeping is preserved).
-      // (With WF_PREVIEWS_ENABLED on, the preview machine stamps it.)
-      if (!previewWorkflow.enabled()) {
-        const visualsService = require('../services/visuals');
-        await visualsService.setChecksPending(pool, sessionId, session.checks_commit_sha || null, 'building', 'manual-recheck')
-          .catch((err) => log.warn('sessions', 'recheck setChecksPending failed (non-fatal)', {
-            sessionId, err: err.message,
-          }));
-        visualsService.notifyChecksPending(sessionId, session.checks_commit_sha || null, 'building', 'manual-recheck');
-      }
 
       res.json({ status: 'running', checkState: 'pending' });
 
-      // Fire-and-forget. recheckSessionChecks rebuilds staging when the
-      // preview is missing (the rebuild re-runs the checks) or re-runs the
-      // checks directly against the live container otherwise. All progress +
-      // failure surfacing rides the existing capture/broadcast paths.
+      // Fire-and-forget: the preview machine rebuilds the preview when it is
+      // missing (the rebuild re-runs the checks) or re-runs the checks against
+      // the live one, and stamps and announces the pending state itself.
       stagingRecovery.recheckSessionChecks({ config, pool, session, reason: 'manual-recheck' })
         .catch((err) => {
           log.error('sessions', 'manual recheck failed', { sessionId, err: err.message });
@@ -8969,80 +8921,23 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
         // restart-resumed run reaches the same committed-and-pushed state, so
         // it must emit the same marker; without it, a proposal interrupted by
         // a platform restart silently loses its card even though the branch
-        // has a reviewable commit. Build best-effort and persist the marker
-        // whether or not staging succeeds, exactly like the live path.
-        const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
-        let stagingResult = null;
-        let stagingErr = null;
-        // With WF_PREVIEWS_ENABLED on the preview machine builds and checks it.
-        const previewHandedOff = await previewWorkflow.revision({
+        // has a reviewable commit. The preview machine builds and checks it
+        // (a failed hand-off is logged, not the run's failure: recovery hands
+        // a missing preview over later); the card says it is building, and
+        // the machine's own record of the build follows it.
+        await previewWorkflow.revision({
           pool, session, head: result.sha, source: 'turn', trigger: 'commit-push',
-        });
-        if (!previewHandedOff) {
-          // #461: pend the checks for the NEW commit before the build, so the
-          // previous commit's verdict (e.g. a stale 'passing') can't satisfy
-          // the merge gate while this build runs — or after it fails.
-          await visuals.setChecksPending(pool, session.id, result.sha, 'building', 'commit-push')
-            .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
-          try {
-            stagingResult = await staging.buildAndDeployStaging(config, session, app, result.sha);
-          } catch (e) {
-            stagingErr = e;
-          }
-        }
-        if (previewHandedOff) {
-          await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-             VALUES ($1, 'system', $2, $3)`,
-            [session.id, 'Building staging preview...',
-              JSON.stringify({ changesReady: true, stagingBuild: 'running', prNumber: null })]
-          ).catch(() => {});
-          dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}; the staging preview is building. `
-            + 'Headless mode: no PR was opened (it is created on a clone at propose time).'
-            + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
-            + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
-        } else if (stagingResult) {
-          await pool.query(
-            'UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3',
-            [stagingResult.containerId, stagingResult.stagingUrl, session.id]
-          ).catch(() => {});
-          await staging.verifyStagingEdge(session, stagingResult.hostname, stagingResult.stagingUrl).catch(() => {});
-          await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-             VALUES ($1, 'system', $2, $3)`,
-            [session.id, 'Staging preview built',
-              JSON.stringify({ stagingUrl: stagingResult.stagingUrl, changesReady: true, prNumber: null })]
-          ).catch(() => {});
-          // Before/after visuals: best-effort, never throws. There is no turn
-          // to stream to on a resumed run, so pass no `send`: the notifiers
-          // then publish to the bus and the global socket for open pages.
-          visuals.captureForSession(config, session, app, result.sha, stagingResult, { send: null, trigger: 'commit-push' })
-            .catch((err) => log.warn('visuals', 'Resumed headless capture failed (non-fatal)', { sessionId: session.id, err: err.message }));
-          dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}, and a staging preview was built. `
-            + 'Headless mode: no PR was opened (it is created on a clone at propose time).'
-            + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
-            + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
-        } else {
-          const { errMsg, errName, missingKeys } = describeStagingFailure(stagingErr);
-          await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-             VALUES ($1, 'system', $2, $3)`,
-            [session.id, 'Staging build failed',
-              JSON.stringify({ error: errMsg, changesReady: true, stagingFailed: true, stagingErrorName: errName, stagingMissingKeys: missingKeys, prNumber: null })]
-          ).catch(() => {});
-          // #461: record the failure as a terminal 'error' checks verdict
-          // (with reason + once-per-streak owner nudge) instead of leaving
-          // the pending state to look "still running" forever.
-          await stagingRecovery.recordStagingBootFailure({ config, pool, session, commitHash: result.sha, err: stagingErr })
-            .catch((e) => log.warn('staging', 'recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
-          log.warn('staging', 'Resumed headless staging build failed (non-fatal — commit pushed)', {
-            sessionId: session.id, errName, err: errMsg, missingKeys,
-          });
-          dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}. `
-            + 'Headless mode: no PR was opened. The staging preview could not be built, but the commit is reviewable: the "Changes ready" card still appears on a clone.'
-            + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
-            + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
-        }
+        }).catch((err) => log.warn('sessions', 'Preview hand-off failed', { sessionId: session.id, err: err.message }));
+        await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3)`,
+          [session.id, 'Building staging preview...',
+            JSON.stringify({ changesReady: true, stagingBuild: 'running', prNumber: null })]
+        ).catch(() => {});
+        dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}; the staging preview is building. `
+          + 'Headless mode: no PR was opened (it is created on a clone at propose time).'
+          + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
+          + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
       } else {
         outcome = session.spec_md ? 'spec' : 'question';
         dispatchSummary = (result.fatalError
@@ -11646,7 +11541,7 @@ async function runClaudeCodeTool({
   stopHandle,
   userApiKey,
   // #155/#183: headless auto sessions may commit + push their branch and
-  // deliberately build a staging preview, but must NOT open a PR — that
+  // deliberately hand it to the preview machine, but must NOT open a PR — that
   // happens later, lazily, when a dev chat cloned off the auto session is
   // proposed to the group. Swaps the success-path tail for the headless
   // variant (staging, no PR); everything else (worker exec, push
@@ -12971,103 +12866,14 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
       }
       await sendStatus('Changes committed and pushed (headless). Building staging preview (no PR yet)...');
 
-      const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
-      let stagingResult = null;
-      let stagingErr = null;
-      // With WF_PREVIEWS_ENABLED on the preview machine builds and checks it.
-      const previewHandedOff = await previewWorkflow.revision({
+      // The preview machine builds and checks it (a failed hand-off is
+      // logged, not the run's failure); the card says it is building, and
+      // the machine's own record of the build follows it.
+      await previewWorkflow.revision({
         pool, session, head: commitHash, source: 'turn', trigger: 'commit-push',
-      });
-      if (!previewHandedOff) {
-        // #461: pend the checks for the NEW commit before the build starts, so
-        // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
-        // the merge gate while this build runs — or after it fails.
-        await visuals.setChecksPending(pool, session.id, commitHash, 'building')
-          .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
-        try {
-          stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
-        } catch (e) {
-          stagingErr = e;
-        }
-      }
-
-      if (previewHandedOff) {
-        await sendStatus('Building staging preview...', { changesReady: true, stagingBuild: 'running', prNumber: null });
-        summaryParts.push('The staging preview is building; its checks run once it is up.');
-      } else if (stagingResult) {
-        await pool.query(
-          `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
-          [stagingResult.containerId, stagingResult.stagingUrl, session.id]
-        );
-        // Same edge verification as the interactive tail: persist
-        // staging_url first, then make the first real request through the
-        // edge before revealing the preview anywhere.
-        await staging.verifyStagingEdge(session, stagingResult.hostname, stagingResult.stagingUrl);
-        stagingUrl = stagingResult.stagingUrl;
-        // The stagingUrl metadata is what makes this row render as the
-        // "Changes ready" staging card (Preview / Test / Propose buttons)
-        // in every dev chat later cloned from this auto session. The
-        // explicit `changesReady: true` flag is what now DRIVES the card
-        // (rather than incidentally `stagingUrl`), so the card renders the
-        // same whether or not staging succeeded — see the failure branch.
-        await sendStatus('Staging preview built', { stagingUrl, changesReady: true, prNumber: null });
-        send('staging_ready', {
-          url: stagingUrl,
-          changesReady: true,
-          testingMd: session.testing_md || null,
-          testingPath: session.testing_path || null,
-        });
-        summaryParts.push(`Staging preview deployed: ${stagingUrl}`);
-
-        // #195: before/after visuals. Fire-and-forget AFTER staging_ready
-        // so the preview button is never delayed; captureForSession owns
-        // the UI-affecting heuristic and swallows every failure. No PR
-        // exists on the headless path — the stored artifacts surface in
-        // the PR body later via applyPrMetadata at promote time.
-        visuals.captureForSession(config, session, app, commitHash, stagingResult, { send, trigger: 'commit-push' })
-          .catch((err) => log.warn('visuals', 'Headless capture failed (non-fatal)', {
-            sessionId: session.id, err: err.message,
-          }));
-      } else {
-        // Non-fatal (#183): the pushed commit is this run's deliverable; a
-        // missing preview only degrades the review experience. Same
-        // tailored remediation as the interactive tail so manifest/secret
-        // problems surface in the Mayor's wrap-up summary — but isError
-        // stays false and the run's outcome is unchanged.
-        const { fix, missingKeys, errMsg, errName } = describeStagingFailure(stagingErr);
-        // The commit IS pushed and reviewable — `changesReady: true` makes
-        // the "Changes ready" card render (with a disabled Preview button +
-        // missing-secret hint) on any clone, exactly as the success branch
-        // does, instead of leaving a card-less "build failed" line. Headless
-        // never opens a PR, so prNumber/prUrl are null.
-        await sendStatus('Staging build failed', {
-          error: errMsg,
-          changesReady: true,
-          stagingFailed: true,
-          stagingErrorName: errName,
-          stagingMissingKeys: missingKeys,
-          prNumber: null,
-        });
-        send('staging_failed', {
-          error: errMsg,
-          errorName: errName,
-          missingKeys,
-          changesReady: true,
-          prNumber: null,
-        });
-        summaryParts.push(
-          `Staging preview failed to build (non-fatal: commit ${commitHash.substring(0, 8)} is pushed; `
-          + `a preview can be built from a cloned session).\n\n${fix}`
-        );
-        // #461: record the failure as a terminal 'error' checks verdict
-        // (with reason + once-per-streak owner nudge) instead of leaving
-        // the pending state to look "still running" forever.
-        await stagingRecovery.recordStagingBootFailure({ config, pool, session, commitHash, err: stagingErr })
-          .catch((e) => log.warn('staging', 'recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
-        log.error('staging', 'Headless staging build failed (non-fatal)', {
-          sessionId: session.id, slug: app.slug, errName, err: errMsg, missingKeys,
-        });
-      }
+      }).catch((err) => log.warn('sessions', 'Preview hand-off failed', { sessionId: session.id, err: err.message }));
+      await sendStatus('Building staging preview...', { changesReady: true, stagingBuild: 'running', prNumber: null });
+      summaryParts.push('The staging preview is building; its checks run once it is up.');
 
       summaryParts.push(
         'Headless mode: no PR was opened. A user can start a dev-chat session from this auto session '
@@ -13209,26 +13015,6 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
       await sendStatus('Building staging preview...');
       const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
 
-      // Staging build is a recoverable failure point: the commit + push +
-      // PR creation above already landed real-world artefacts, but the
-      // preview container can still fail to come up — most commonly when
-      // `dapp.json` is missing a `staging_default` for a private secret
-      // (`PrivateSecretMissingStagingDefaultError`) or when a required
-      // secret hasn't been set in Settings → Secrets
-      // (`MissingSecretsError`). Both are user-actionable: the first is a
-      // manifest edit the agent itself can apply; the second needs an
-      // admin to set the value in the platform UI.
-      //
-      // We catch here (rather than letting the throw escape to the
-      // generic chat-handler `catch`) so the failure flows back to the
-      // Mayor as a `tool_result` with `is_error: true`. That's what lets
-      // the wrap-up turn explain the fix to the user — and, when the
-      // user nudges the agent to retry, lets the next `dispatch_claude_code`
-      // see the failure context in chat history. Without this, the Mayor
-      // never finds out anything went wrong; the user sees a generic
-      // "Chat error" toast and has no breadcrumb to follow.
-      let stagingResult = null;
-      let stagingErr = null;
       // A promoted proposal's votes were on the previous version.
       const retireVotesForCommit = async () => {
         if (session.status !== 'promoted') return;
@@ -13256,205 +13042,38 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
         }
       };
 
-      // With WF_PREVIEWS_ENABLED on the preview machine builds and checks
-      // the commit; the turn ends without waiting for it, and the page hears
-      // staging_ready and the verdict over the WebSocket bus. A promoted
-      // proposal's reviewed head moves to the commit first: it is the pin the
-      // machine checks a revision against.
-      let previewHandedOff = false;
-      if (previewWorkflow.enabled()) {
-        await retireVotesForCommit();
-        previewHandedOff = await previewWorkflow.revision({
-          pool, session, head: commitHash, source: 'turn', trigger: 'commit-push',
+      // The preview machine builds and checks the commit; the turn ends
+      // without waiting for it, and the page hears staging_ready and the
+      // verdict over the WebSocket bus. A promoted proposal's reviewed head
+      // moves to the commit first: it is the pin the machine checks a
+      // revision against.
+      await retireVotesForCommit();
+      // Non-fatal: the commit is pushed, and recovery hands a preview that is
+      // missing to the machine later.
+      await previewWorkflow.revision({
+        pool, session, head: commitHash, source: 'turn', trigger: 'commit-push',
+      }).catch((err) => log.warn('sessions', 'Preview hand-off failed', { sessionId: session.id, err: err.message }));
+      // The "Changes ready" card renders from changesReady; its Preview
+      // button appears when the machine's staging_ready arrives. Behind the
+      // receipt the recovered tail writes this card under, as the other
+      // outcomes are.
+      const buildingCard = {
+        changesReady: true,
+        stagingBuild: 'running',
+        prNumber: session.pr_number || null,
+        prUrl: session.pr_url || null,
+      };
+      if (durableTurnId) {
+        const published = await publishStagingOutcome({
+          pool, sessionId: session.id, turnId: durableTurnId,
+          tailIdentity: { turnId: durableTurnId }, outcome: 'building', metadata: buildingCard,
         });
-      }
-      if (!previewHandedOff) {
-        // #461: pend the checks for the NEW commit before the build starts, so
-        // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
-        // the merge gate while this build runs — or after it fails.
-        await visuals.setChecksPending(pool, session.id, commitHash, 'building')
-          .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
-        try {
-          stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
-        } catch (e) {
-          stagingErr = e;
-        }
-      }
-
-      if (previewHandedOff) {
-        // The "Changes ready" card renders from changesReady; its Preview
-        // button appears when the machine's staging_ready arrives. Behind
-        // the receipt the recovered tail writes this card under, as the
-        // other outcomes are.
-        const buildingCard = {
-          changesReady: true,
-          stagingBuild: 'running',
-          prNumber: session.pr_number || null,
-          prUrl: session.pr_url || null,
-        };
-        if (durableTurnId) {
-          const published = await publishStagingOutcome({
-            pool, sessionId: session.id, turnId: durableTurnId,
-            tailIdentity: { turnId: durableTurnId }, outcome: 'building', metadata: buildingCard,
-          });
-          if (published.applied) send('status', { text: published.content, ...buildingCard });
-        } else {
-          await sendStatus('Building staging preview...', buildingCard);
-        }
-        summaryParts.push('The staging preview is building; its checks run once it is up.');
-      } else if (stagingResult) {
-        await pool.query(
-          `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
-          [stagingResult.containerId, stagingResult.stagingUrl, session.id]
-        );
-        // Tail milestone: the preview for THIS commit exists. A resumed
-        // tail re-checks its liveness before deciding to rebuild, so a
-        // healthy container is left alone rather than rebuilt for another
-        // ~5 minutes.
-        if (durableTurnId) {
-          await worker.noteTailMilestone(session.id, {
-            stagingUrl: stagingResult.stagingUrl,
-          }, { turnId: durableTurnId });
-        }
-
-        // Make one real end-to-end request through the edge now that
-        // staging_url is persisted and BEFORE emitting `staging_ready`
-        // (which reveals the preview button), so the reviewer's click
-        // doesn't pay the container's cold first request — and so a preview
-        // the edge can't actually route to is visible in the platform log
-        // rather than only to whoever clicks it. Bounded; never blocks the
-        // deploy.
-        await staging.verifyStagingEdge(session, stagingResult.hostname, stagingResult.stagingUrl);
-
-        stagingUrl = stagingResult.stagingUrl;
-        // `changesReady: true` is now what drives the "Changes ready" card
-        // (rather than incidentally `stagingUrl`), so the same card renders
-        // on the staging-failed branch below. prNumber/prUrl ride along so
-        // the card header + "View on GitHub" survive a reload from metadata.
-        const stagingCard = {
-          stagingUrl,
-          changesReady: true,
-          prNumber: session.pr_number || null,
-          prUrl: session.pr_url || null,
-        };
-        // Behind the receipt the recovered tail writes this card under, so
-        // a restart after it is on the transcript never posts a second one.
-        if (durableTurnId) {
-          const published = await publishStagingOutcome({
-            pool, sessionId: session.id, turnId: durableTurnId,
-            tailIdentity: { turnId: durableTurnId }, outcome: 'success', metadata: stagingCard,
-          });
-          if (published.applied) send('status', { text: published.content, ...stagingCard });
-        } else {
-          await sendStatus('Staging deployed!', stagingCard);
-        }
-        // #127: ship the session's testing guidance (this turn's block, or
-        // the kept-previous one off the session row) alongside the staging
-        // URL so the client can offer "Test this change" without a refetch.
-        send('staging_ready', {
-          url: stagingUrl,
-          changesReady: true,
-          testingMd: session.testing_md || null,
-          testingPath: session.testing_path || null,
-        });
-        summaryParts.push(`Staging redeployed: ${stagingUrl}`);
-
-        // #195: before/after visuals. Fire-and-forget AFTER staging_ready
-        // so the preview button is never delayed. When the capture lands
-        // it patches the PR body's "Before / after" block directly and
-        // emits visuals_ready (via this turn's send → SSE/WS/bus) so the
-        // staging card upgrades in place.
-        visuals.captureForSession(config, session, app, commitHash, stagingResult, { send, trigger: 'commit-push' })
-          .catch((err) => log.warn('visuals', 'Capture failed (non-fatal)', {
-            sessionId: session.id, err: err.message,
-          }));
-
-        await retireVotesForCommit();
-
-        if (session.pr_number && repoOwner && repoName) {
-          try {
-            const pat = process.env.GITHUB_BOT_TOKEN;
-            if (pat) {
-              // The bot token's client from services/github.js, so the
-              // request is recorded and counted against the hourly budget.
-              const ok = await github.getOctokit(repoOwner);
-              // #127: append the "How to test" section so the guidance is
-              // visible right where reviewers find the staging link.
-              const testingComment = prMetadata.buildTestingBlock(session.testing_md, session.testing_path);
-              await ok.rest.issues.createComment({
-                owner: repoOwner, repo: repoName,
-                issue_number: session.pr_number,
-                body: github.safeMention(`**Staging deployed!**\n\n${stagingResult.stagingUrl}\n\nCommit: ${commitHash.substring(0, 8)}${testingComment ? `\n\n${testingComment}` : ''}`),
-              });
-            }
-          } catch (commentErr) {
-            log.warn('sessions', 'Failed to comment on PR', { err: commentErr.message });
-          }
-        }
-
-        log.info('sessions', 'Full dev cycle complete', { sessionId: session.id, commitHash: commitHash.substring(0, 8) });
+        if (published.applied) send('status', { text: published.content, ...buildingCard });
       } else {
-        isError = true;
-
-        const { fix, missingKeys, errMsg, errName } = describeStagingFailure(stagingErr);
-
-        const message =
-          `Staging build failed.\n\n` +
-          `What still happened: commit ${commitHash.substring(0, 8)} was pushed to ${session.branch_name}` +
-          (session.pr_number ? ` and PR #${session.pr_number} was created/updated` : '') +
-          `. Only the staging preview container is missing, so there is no preview URL for this commit.\n\n` +
-          fix;
-
-        // The commit (and PR, if any) already landed — `changesReady: true`
-        // keeps the "Changes ready" card + Propose button on screen (with a
-        // disabled Preview button and the missing-secret hint), so a failed
-        // preview no longer hides a perfectly proposable change. Propose
-        // rebuilds staging itself (routes/votes.js), so this stays usable.
-        const failedCard = {
-          error: errMsg,
-          changesReady: true,
-          stagingFailed: true,
-          stagingErrorName: errName,
-          stagingMissingKeys: missingKeys,
-          prNumber: session.pr_number || null,
-          prUrl: session.pr_url || null,
-        };
-        // Same receipt as the success card: a restart after this card does
-        // not rebuild a preview known to fail, or post the card again.
-        if (durableTurnId) {
-          const published = await publishStagingOutcome({
-            pool, sessionId: session.id, turnId: durableTurnId,
-            tailIdentity: { turnId: durableTurnId }, outcome: 'failed', metadata: failedCard,
-            failure: { fix, missingKeys, errMsg, errName },
-          });
-          if (published.applied) send('status', { text: published.content, ...failedCard });
-        } else {
-          await sendStatus('Staging build failed', failedCard);
-        }
-        send('staging_failed', {
-          error: errMsg,
-          errorName: errName,
-          missingKeys,
-          changesReady: true,
-          prNumber: session.pr_number || null,
-          prUrl: session.pr_url || null,
-        });
-        summaryParts.push(message);
-
-        // #461: record the failure as a terminal 'error' checks verdict
-        // (with reason + once-per-streak owner nudge) instead of leaving
-        // the pending state to look "still running" forever.
-        await stagingRecovery.recordStagingBootFailure({ config, pool, session, commitHash, err: stagingErr })
-          .catch((e) => log.warn('staging', 'recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
-
-        log.error('staging', 'Staging build failed (surfaced to Mayor)', {
-          sessionId: session.id,
-          slug: app.slug,
-          errName,
-          err: errMsg,
-          missingKeys,
-        });
+        await sendStatus('Building staging preview...', buildingCard);
       }
+      summaryParts.push('The staging preview is building; its checks run once it is up.');
+      log.info('sessions', 'Full dev cycle complete', { sessionId: session.id, commitHash: commitHash.substring(0, 8) });
     }
 
     // Debit the daily ledger for whatever Claude Code spent — even when
@@ -13715,111 +13334,6 @@ function parseFileChanges(text) {
   return files;
 }
 
-async function buildStagingFromFiles(config, session, app, fileChanges, hash) {
-  const fs = require('fs');
-  const path = require('path');
-  const dbManager = require('../services/db-manager');
-
-  const containerName = `usernode-staging-${app.slug}--${session.id}`;
-  const imageName = `usernode-staging-${app.slug}-${session.id}:${hash.substring(0, 6)}`;
-
-  log.info('sessions', 'Building staging from chat files', { sessionId: session.id });
-
-  // Get the current production app's files as a base
-  const prodContainer = `usernode-app-${app.slug}`;
-  const tempDir = `/tmp/usernode-staging-build-${session.id}`;
-
-  await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
-  fs.mkdirSync(tempDir, { recursive: true });
-
-  // Copy files from production container as a base
-  try {
-    await docker.execFileAsync('docker', ['cp', `${prodContainer}:/app/.`, tempDir], { timeout: 30000 });
-  } catch (err) {
-    log.warn('sessions', 'Could not copy from production container, using empty base', { err: err.message });
-  }
-
-  // Remove node_modules from copy (we'll npm install fresh)
-  await docker.execFileAsync('rm', ['-rf', path.join(tempDir, 'node_modules')]).catch(() => {});
-
-  // Apply the AI's file changes on top
-  for (const file of fileChanges) {
-    const filePath = path.join(tempDir, file.path);
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, file.content);
-  }
-
-  // Ensure Dockerfile exists.
-  //
-  // This is the platform emitting a Dockerfile on an app's behalf, so it owes
-  // the same contract the app template does (services/template.js): a NUMERIC
-  // non-zero USER, and ownership of the copied tree. Kubernetes runs app and
-  // preview pods with runAsNonRoot and no runAsUser, so an image that names no
-  // user runs as root and the kubelet refuses to start it —
-  // `CreateContainerConfigError: container has runAsNonRoot and image will run
-  // as root`. This path builds for the Docker runtime, where that is not
-  // enforced, which is exactly why it drifted: it kept emitting the old shape
-  // long after the template stopped. `tests/generated-dockerfile-user.test.js`
-  // holds every generator here to the same rule so the two cannot diverge
-  // again (#2302).
-  if (!fs.existsSync(path.join(tempDir, 'Dockerfile'))) {
-    fs.writeFileSync(path.join(tempDir, 'Dockerfile'), `FROM node:22-alpine
-WORKDIR /app
-COPY --chown=1000:1000 package.json ./
-RUN npm install --production
-COPY --chown=1000:1000 . .
-EXPOSE 3000
-USER 1000:1000
-CMD ["node", "server.js"]
-`);
-  }
-
-  // Build
-  await docker.buildImage(tempDir, imageName);
-  await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
-
-  // Clone DB. cloneDatabase mints a fresh per-clone postgres role —
-  // see staging.js for the rationale (one-shot password, dropped on
-  // teardown, never persisted on the platform).
-  const prodDbName = dbManager.appDbName(app.slug);
-  const stagingDbName = dbManager.stagingDbName(app.slug, `s${session.id}`, hash);
-  const { password: stagingDbPassword, server: stagingDbServer } = await dbManager.cloneDatabase(prodDbName, stagingDbName);
-  const stagingDbUrl = dbManager.connectionUrl(stagingDbName, stagingDbPassword, { server: stagingDbServer });
-
-  // Stop old staging
-  await docker.stopAndRemove(containerName).catch(() => {});
-
-  // Run
-  const containerId = await docker.runContainer(containerName, {
-    image: imageName,
-    env: {
-      DATABASE_URL: stagingDbUrl,
-      ...appIdentityEnv(app, config),
-      PORT: '3000',
-    },
-    port: 3000,
-  });
-
-  await docker.waitForHealthy(containerName, 3000, '/health');
-
-  // Get the host port for local dev access
-  const hostPort = await docker.getHostPort(containerName, 3000);
-  // No Caddy route to register — the wildcard site maps this hostname to
-  // `containerName` (usernode-staging-<slug>--<id>) and issues TLS
-  // on-demand. See Caddyfile + services/caddy.js.
-  const hostname = caddy.stagingHostname(app.slug, `s${session.id}`);
-
-  const stagingUrl = hostPort
-    ? `http://localhost:${hostPort}`
-    : `https://${hostname}`;
-
-  // Edge verification happens in the caller (staging.verifyStagingEdge)
-  // AFTER the session's staging_url is persisted — that persist is what
-  // makes the hostname a referenceable preview. See staging.js for the full
-  // ordering rationale.
-
-  return { containerId, stagingUrl, hostname };
-}
 
 // The routes/sessions.js helpers a Mayor turn calls (services/mayor/turn.js,
 // #2779). Handed over rather than required from there, which would be a

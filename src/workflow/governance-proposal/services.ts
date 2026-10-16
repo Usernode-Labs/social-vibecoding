@@ -4,11 +4,12 @@
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import { backoff, closeAndComment, gone, missingSecrets, permanent } from '../github-work.ts';
+import { backoff, closeAndComment, gone, permanent } from '../github-work.ts';
 
-interface Deps { config: any; pool: Pool }
+// requestDeploy: platform.ts's, for the rebuild work left from before.
+interface Deps { config: any; pool: Pool; requestDeploy?: (appId: number, reason: string, o?: Record<string, unknown>) => Promise<number> }
 
-export function governanceServices({ config, pool }: Deps): Record<string, WorkHandler> {
+export function governanceServices({ config, pool, requestDeploy }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
   return {
     // Close a GitHub issue, then comment on it (github-work.ts). The
@@ -24,29 +25,19 @@ export function governanceServices({ config, pool }: Deps): Record<string, WorkH
       },
     },
 
-    // A secret change reaches the running app by a production rebuild.
+    // A secret change's own rebuild, as the machine recorded it before
+    // every deploy was app-delivery's. An item of it left from then deploys
+    // nothing: it asks app-delivery for the redeploy here, so it is asked
+    // whichever release applies its result (an older Pod's code would only
+    // mark it done), and answers `handOff`, which the machine reads as its
+    // follow-up now being app-delivery's (machine.ts). The request key is
+    // the item's, so a retry asks once.
     'app.rebuildProduction': {
-      maxAttempts: 3,
+      maxAttempts: 5,
       backoffMs: backoff,
-      leaseMs: 120000,
-      async run({ input }): Promise<Json> {
-        const { rows: [app] } = await pool.query('SELECT * FROM apps WHERE id = $1', [input.appId]);
-        if (!app) return { skipped: 'no_app' };
-        if (app.self_hosted) return { skipped: 'self_hosted' };
-        let result;
-        try {
-          result = await legacy('services/staging').rebuildProduction(config, app);
-        } catch (err) {
-          if (missingSecrets(err)) throw permanent((err as Error).message);
-          throw err;
-        }
-        if (result) {
-          await pool.query(
-            `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running', last_deploy_at = NOW()
-              WHERE id = $3`,
-            [result.containerId, result.sha || null, input.appId]);
-        }
-        return { containerId: result?.containerId ?? null };
+      async run({ input, workId }): Promise<Json> {
+        await requestDeploy!(Number(input.appId), 'secret_change', { requestKey: `handoff:${workId}` });
+        return { handOff: true };
       },
     },
 
@@ -64,6 +55,20 @@ export function governanceServices({ config, pool }: Deps): Record<string, WorkH
         if (!c) return { skipped: 'no_campaign' };
         const out = await legacy('services/fleet-maintenance').runCampaign(config, pool, c.id);
         return { campaignId: c.id, ...(out || {}) } as Json;
+      },
+    },
+
+    // A close vote closed a request: the Homeroom bot's proposals for it that
+    // are up for a vote are withdrawn once every request they are linked to
+    // is closed, and the bot is woken for the app. `strict`: a failure to
+    // read is thrown, and the item runs again.
+    'bot.requestsClosed': {
+      maxAttempts: 3,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        const out = await legacy('services/homeroom-bot-closed-requests')
+          .noteRequestsClosed(pool, { appId: input.appId, closed: input.closed, strict: true });
+        return { withdrawn: out?.withdrawn ?? [] };
       },
     },
 

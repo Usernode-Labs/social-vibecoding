@@ -385,7 +385,12 @@ async function deployShotsRuntime(config, params, deploy = applicationRuntime.de
   }
 }
 
-async function preparePair(config, { pool = getPool(config), run, session, app, onProgress = null }) {
+// `images`: both sides' images a previous attempt of the same run already
+// built (the shots machine's checkpoint), taken as they are; `onImages`
+// hears them once built, before anything else is done with them.
+async function preparePair(config, {
+  pool = getPool(config), run, session, app, onProgress = null, images = null, onImages = null,
+}) {
   if (!run?.id) throw new ShotsEnvironmentError('invalid_shots_run', 'Shots run is required.');
   const baseSha = exactSha(run.base_sha || run.baseSha, 'base SHA');
   const headSha = exactSha(run.head_sha || run.headSha, 'head SHA');
@@ -411,13 +416,15 @@ async function preparePair(config, { pool = getPool(config), run, session, app, 
     ).catch((error) => { throw platformFaultError(error, 'database'); });
     prepared = source;
     stage('build_revisions');
-    const [baseImage, headImage] = await allSettledValues([
-      buildRevision(config, { app, session, checkout: baseCheckout, onProgress }),
-      buildRevision(config, {
-        app, session, checkout: headCheckout,
-        reuseImageRef: session.staging_image_ref || null, onProgress,
-      }),
-    ]);
+    const [baseImage, headImage] = images?.base && images?.head ? [images.base, images.head]
+      : await allSettledValues([
+        buildRevision(config, { app, session, checkout: baseCheckout, onProgress }),
+        buildRevision(config, {
+          app, session, checkout: headCheckout,
+          reuseImageRef: session.staging_image_ref || null, onProgress,
+        }),
+      ]);
+    if (typeof onImages === 'function') await onImages({ base: baseImage, head: headImage });
     const kind = applicationRuntime.mode(config);
     return {
       runId: run.id,

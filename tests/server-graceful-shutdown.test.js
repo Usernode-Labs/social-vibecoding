@@ -189,20 +189,28 @@ test('the listener is closed BEFORE the pool — new work must not arrive mid-dr
 });
 
 test('a hanging pool.end() still reaches exit inside the bounded budget', async () => {
-  const { server, restore } = loadServer();
+  const { server, logs, restore } = loadServer();
   try {
     const listener = fakeListener();
     // A pool that never settles: the race against POOL_CLOSE_TIMEOUT_MS is
     // what stops it holding the process past the SIGKILL deadline.
     const pool = fakePool({ endImpl: () => new Promise(() => {}) });
 
-    const startedAt = Date.now();
     const order = await runCleanup(server, { listener, pool });
-    const elapsed = Date.now() - startedAt;
 
     assert.deepEqual(order, ['exit:0'], 'a stuck pool must not prevent exit');
-    assert.ok(elapsed < server.POOL_CLOSE_TIMEOUT_MS + 2000,
-      `cleanup took ${elapsed}ms; the pool close must be bounded`);
+    // Only the pool close has a time limit, so only it is timed here: the
+    // whole-run elapsed span also spent the slack on the announce race, the
+    // process-row release and the CI load between them. server.js measures
+    // the step itself and logs the "Pool closed" line with its durationMs.
+    const closed = logs.find((l) => l.msg === 'Pool closed');
+    assert.ok(closed, 'the race resolved through the timer, not the catch branch');
+    assert.ok(closed.data.durationMs < server.POOL_CLOSE_TIMEOUT_MS + 1000,
+      `the pool close took ${closed.data.durationMs}ms durationMs; it must stay within `
+      + `${server.POOL_CLOSE_TIMEOUT_MS}ms plus jitter for a late timer`);
+    assert.ok(closed.data.durationMs >= server.POOL_CLOSE_TIMEOUT_MS - 50,
+      `the pool close took ${closed.data.durationMs}ms durationMs; the timer must have `
+      + `ended the wait, not something resolving early`);
   } finally {
     restore();
   }
@@ -249,119 +257,24 @@ test('cleanup is idempotent — SIGTERM then SIGINT must not tear down twice', a
   }
 });
 
-test('shutdown marks an unfinished visual replay with its actual interruption reason before closing the pool', async () => {
-  const { server, restore } = loadServer();
-  const orchestrator = require('../src/services/shots-orchestrator');
-  const shotsState = require('../src/services/shots-state');
-  const lifecycle = require('../src/services/lifecycle');
-  const saved = {
-    keys: orchestrator.inFlightSnapshot, ids: orchestrator.inFlightRunSnapshot,
-    transition: shotsState.transitionRun, waitFor: lifecycle.waitFor,
-  };
-  const runId = 'a'.repeat(32);
-  const order = [];
-  const marks = [];
-  orchestrator.inFlightSnapshot = () => ['42:head'];
-  orchestrator.inFlightRunSnapshot = () => [runId];
-  lifecycle.waitFor = async () => false;
-  // Recorded, not asserted, in here: the shutdown handler settles every mark
-  // with Promise.allSettled, so an assertion thrown inside this stub would be
-  // swallowed and could never fail the test.
-  shotsState.transitionRun = async (_pool, id, next, patch) => {
-    order.push('marked');
-    marks.push({ id, next, patch });
-  };
-  try {
-    const pool = fakePool({ endImpl: async () => { order.push('poolEnd'); } });
-    await runCleanup(server, { listener: fakeListener(), pool });
-    assert.deepEqual(order, ['marked', 'poolEnd']);
-    assert.equal(marks.length, 1);
-    const [{ id, next, patch }] = marks;
-    assert.equal(id, runId);
-    assert.equal(next, 'failed');
-    assert.equal(patch.failureCode, 'shots_run_interrupted');
-    assert.equal(patch.failureReason, shotsState.SHUTDOWN_INTERRUPTED_REASON);
-    assert.match(patch.failureReason, /Homeroom restarted/);
-    // Tagged as a rollout, merged into the trace rather than replacing the
-    // run's diagnostics, so the retry sweep spends only the ceiling on it.
-    assert.deepEqual(patch.traceMerge, { interruptedBy: shotsState.SHUTDOWN_INTERRUPTION });
-    assert.equal(patch.traceSummary, undefined);
-  } finally {
-    orchestrator.inFlightSnapshot = saved.keys;
-    orchestrator.inFlightRunSnapshot = saved.ids;
-    shotsState.transitionRun = saved.transition;
-    lifecycle.waitFor = saved.waitFor;
-    restore();
-  }
+test('shutdown marks no shots run: they are the shots machine\'s, carried on by the next process', () => {
+  // src/workflow/shots/: a run's steps are work items (the agent's turn a
+  // durable step), so a release interrupts none and a shutdown has none to
+  // fail.
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'server.js'), 'utf8');
+  assert.doesNotMatch(src, /inFlightRunSnapshot|SHUTDOWN_INTERRUPTED_REASON|shots-orchestrator'\)\.inFlightSnapshot/);
 });
 
-test('shutdown marks the staging builds it is killing, before closing the pool', async () => {
-  // A deploy's SIGTERM kills the staging builds this process runs, and
-  // nothing on the cluster outlives a build (proposal 5125, 2026-09-26). The
-  // mark is what lets the next leader re-drive the run as it takes over.
-  const { server, restore } = loadServer();
-  const staging = require('../src/services/staging');
-  const recovery = require('../src/services/staging-recovery');
-  const lifecycle = require('../src/services/lifecycle');
-  const saved = { ids: staging.inFlightBuildSessionIds, mark: recovery.markInterruptedBuilds, waitFor: lifecycle.waitFor };
-  const order = [];
-  staging.inFlightBuildSessionIds = () => [5125, 5126];
-  lifecycle.waitFor = async () => true;
-  recovery.markInterruptedBuilds = async (pool, ids) => {
-    order.push('marked');
-    assert.ok(pool, 'marked through the shutdown pool');
-    assert.deepEqual(ids, [5125, 5126]);
-    return [5125];
-  };
-  try {
-    const pool = fakePool({ endImpl: async () => { order.push('poolEnd'); } });
-    await runCleanup(server, { listener: fakeListener(), pool });
-    assert.deepEqual(order, ['marked', 'poolEnd']);
-    const line = logs.find((l) => l.msg === 'Marked interrupted staging builds for re-drive on shutdown');
-    assert.deepEqual(line.data, { building: [5125, 5126], marked: 1, timedOut: false });
-  } finally {
-    staging.inFlightBuildSessionIds = saved.ids;
-    recovery.markInterruptedBuilds = saved.mark;
-    lifecycle.waitFor = saved.waitFor;
-    restore();
-  }
-});
-
-test('a failing build mark is logged and never holds the exit; no build, no write', async () => {
-  const { server, restore } = loadServer();
-  const staging = require('../src/services/staging');
-  const recovery = require('../src/services/staging-recovery');
-  const lifecycle = require('../src/services/lifecycle');
-  const saved = { ids: staging.inFlightBuildSessionIds, mark: recovery.markInterruptedBuilds, waitFor: lifecycle.waitFor };
-  lifecycle.waitFor = async () => true;
-  let calls = 0;
-  try {
-    staging.inFlightBuildSessionIds = () => [5125];
-    recovery.markInterruptedBuilds = async () => { calls += 1; throw new Error('database gone'); };
-    const order = await runCleanup(server, { listener: fakeListener(), pool: fakePool() });
-    assert.ok(order.includes('exit:0'));
-    assert.ok(logs.some((l) => l.level === 'warn' && l.msg === 'Could not mark interrupted staging builds'));
-
-    staging.inFlightBuildSessionIds = () => [];
-    await runCleanup(server, { listener: fakeListener(), pool: fakePool() });
-    assert.equal(calls, 1, 'nothing building, nothing marked');
-  } finally {
-    staging.inFlightBuildSessionIds = saved.ids;
-    recovery.markInterruptedBuilds = saved.mark;
-    lifecycle.waitFor = saved.waitFor;
-    restore();
-  }
-});
-
-test('shutdown hands its checks runs to the next harvest before closing the pool, and only on Kubernetes', async () => {
+test('shutdown hands its checks runs to the next leader before closing the pool', async () => {
   // 7 Oct 2026: the new leader's boot harvest ran while the rows the old
   // Pod had been harvesting still carried its heartbeat, so it seated
-  // neither, and the stale sweep started both runs over.
+  // neither, and the stale sweep started both runs over. The runs left to
+  // hand over are main-watch's (main-watch.adoptRun); a preview machine's
+  // run is its work item's, collected by that item's retry.
   const { server, restore } = loadServer();
-  const harvest = require('../src/services/check-harvest');
   const checkRuns = require('../src/services/check-runs');
   const lifecycle = require('../src/services/lifecycle');
-  const saved = { enabled: harvest.isEnabled, release: checkRuns.release, waitFor: lifecycle.waitFor };
+  const saved = { release: checkRuns.release, waitFor: lifecycle.waitFor };
   const order = [];
   lifecycle.waitFor = async () => true;
   checkRuns.release = async (pool) => {
@@ -370,20 +283,16 @@ test('shutdown hands its checks runs to the next harvest before closing the pool
     return 2;
   };
   try {
-    harvest.isEnabled = () => true;
-    let pool = fakePool({ endImpl: async () => { order.push('poolEnd'); } });
+    const pool = fakePool({ endImpl: async () => { order.push('poolEnd'); } });
     await runCleanup(server, { listener: fakeListener(), pool });
     assert.deepEqual(order, ['released', 'poolEnd']);
-    const line = logs.find((l) => l.msg === 'Handed this process\'s checks runs to the next harvest on shutdown');
+    const line = logs.find((l) => l.msg === 'Handed this process\'s checks runs to the next leader on shutdown');
     assert.deepEqual(line.data, { runs: 2, timedOut: false });
 
     order.length = 0;
-    harvest.isEnabled = () => false;
-    pool = fakePool({ endImpl: async () => { order.push('poolEnd'); } });
-    await runCleanup(server, { listener: fakeListener(), pool });
-    assert.deepEqual(order, ['poolEnd'], 'no Kubernetes capture runtime, no manifests to hand over');
+    await runCleanup(server, { listener: fakeListener(), pool: null });
+    assert.deepEqual(order, [], 'no pool, nothing to hand over through');
   } finally {
-    harvest.isEnabled = saved.enabled;
     checkRuns.release = saved.release;
     lifecycle.waitFor = saved.waitFor;
     restore();
@@ -424,7 +333,10 @@ test('a bot build under way does not hold the shutdown, and nothing is recorded 
     assert.deepEqual(order, ['exit:0']);
     assert.ok(elapsed < 2000, `cleanup took ${elapsed}ms; it must not wait for the bot`);
     assert.equal(ended, false, 'the build was still running when the exit came');
-    assert.deepEqual(writes, [], 'nothing is recorded for it: no incident, no run written');
+    // The shutdown's own hand-over of main-watch's checks runs
+    // (check-runs.release) is not about the build.
+    assert.deepEqual(writes.filter((w) => !/UPDATE check_runs SET owner/.test(w.sql)), [],
+      'nothing is recorded for it: no incident, no run written');
     assert.deepEqual(pool.events, ['end']);
   } finally {
     release({ acted: 'shadow_built' });
@@ -796,12 +708,11 @@ test('preStop, the drain and the rest of cleanup fit inside the platform Pod\'s 
   // Kubernetes counts the grace from the start of termination, preStop
   // included. After the drain, cleanup takes each of its bounded steps in
   // turn: the handler drain and the worker wait (together), the Mayor's
-  // turns ended, the shots mark, the build marks, the checks hand-over and
+  // turns ended, the build marks, the checks hand-over and
   // this process's row, the pool close; then the leader lock: a second is
   // allowed for that.
   const afterDrainMs = serverModule.DRAIN_TIMEOUT_MS
     + 3000
-    + serverModule.SHOTS_SHUTDOWN_MARK_TIMEOUT_MS
     + 3 * serverModule.BUILD_SHUTDOWN_MARK_TIMEOUT_MS
     + serverModule.POOL_CLOSE_TIMEOUT_MS
     + 1000;
@@ -848,7 +759,7 @@ test('the gate: once shutdown has begun the bot dispatches nothing, its build la
 
 // docs/plans/draining-releases.md: on the platform's own Kubernetes Pods a
 // release no longer cuts the work the Pod started. It stops leading at once,
-// keeps its listener open (a shots worker calls it by its own address) and
+// keeps its listener open (a request it still answers) and
 // finishes what it holds; only then does it close, hand over what is left and
 // exit.
 test('a Pod a release replaced resigns at once, keeps listening while it finishes what it holds, then exits', async () => {
@@ -881,7 +792,7 @@ test('a Pod a release replaced resigns at once, keeps listening while it finishe
 test('a Pod a release replaced hands over what it still holds at its drain deadline', async () => {
   const { server, logs } = loadServer();
   const processes = require('../src/services/processes');
-  const release = processes.hold('staging_build', 5151);
+  const release = processes.hold('sync', 5151);
   try {
     const startedAt = Date.now();
     const order = await runCleanup(server, {
@@ -892,7 +803,7 @@ test('a Pod a release replaced hands over what it still holds at its drain deadl
     assert.ok(Date.now() - startedAt < 15000, 'bounded by the deadline, not by the work');
     const handed = logs.find((l) => l.msg === "Drain deadline passed; handing the rest of this process's work over");
     assert.ok(handed, 'it says it is handing the work over');
-    assert.deepEqual(handed.data.holds, [{ kind: 'staging_build', ref: '5151' }], 'and what it held');
+    assert.deepEqual(handed.data.holds, [{ kind: 'sync', ref: '5151' }], 'and what it held');
   } finally {
     release();
   }

@@ -893,11 +893,10 @@ async function run(config, job, { isInFlight = null } = {}) {
 //   - its name parses as a staging clone (app_<slug>_staging_s<id>_<tag>);
 //   - the embedded session has no live preview (staging_url IS NULL, or the
 //     session row is gone entirely);
-//   - no staging build is in flight for that session (staging.js
-//     hasInFlightBuild — a build's clone exists before staging_url points
-//     at it);
+//   - the preview machine does not hold the session (a build's clone exists
+//     before staging_url points at it);
 //   - no client backend is currently connected to it (belt-and-braces for
-//     anything the in-flight check doesn't model; autovacuum workers don't
+//     anything the checks above don't model; autovacuum workers don't
 //     count or an orphan being vacuumed would be immortal).
 //
 // Deliberately NOT keyed on the staging_url-derived hash: a session with a
@@ -932,23 +931,27 @@ function orphanDbSweepDue(nowMs = Date.now()) {
   return nowMs - _lastOrphanDbSweepStartedAt >= interval;
 }
 
+// The sessions the preview machine holds: their attempts' databases exist
+// before staging_url points at them, and the machine retires them itself.
+const MACHINE_HELD_SESSIONS_SQL = `SELECT substr(key, length('session:') + 1)::int AS id FROM wf_instances
+   WHERE machine = 'preview' AND state NOT IN ('retired', 'detached', '(none)')`;
+
 /**
  * Pure classification, extracted for testability. Returns the subset of
  * `dbNames` that are safe to drop.
  *
  * @param dbNames           all datnames to consider
- * @param liveSessionIds    Set<number> of sessions with staging_url set
+ * @param liveSessionIds    Set<number> of sessions with staging_url set, or
+ *                          held by the preview machine (a build under way)
  * @param connectedDbNames  Set<string> of datnames with client backends
- * @param hasInFlightBuild  (sessionId: number) => boolean
  */
-function selectOrphanDbs({ dbNames, liveSessionIds, connectedDbNames, hasInFlightBuild }) {
+function selectOrphanDbs({ dbNames, liveSessionIds, connectedDbNames }) {
   const orphans = [];
   for (const name of dbNames) {
     const m = STAGING_DB_NAME_RE.exec(name);
     if (!m) continue;                                // not a staging clone — never touch
     const sessionId = Number(m[1]);
-    if (liveSessionIds.has(sessionId)) continue;     // live preview
-    if (hasInFlightBuild && hasInFlightBuild(sessionId)) continue; // mid-build clone
+    if (liveSessionIds.has(sessionId)) continue;     // live preview, or one being built
     if (connectedDbNames.has(name)) continue;        // someone is using it
     orphans.push(name);
   }
@@ -971,15 +974,13 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
     if (isStagingEnv()) return summary;
 
     const pool = getPool(config);
-    const staging = require('./staging');
 
     const [dbs, live, connected] = await Promise.all([
       pool.query(`SELECT datname FROM pg_database WHERE datname LIKE '%\\_staging\\_%'`),
       // A session the preview machine holds keeps its databases: its attempts
       // exist before staging_url points at them, and it retires them itself.
       pool.query(`SELECT id FROM chat_sessions WHERE staging_url IS NOT NULL
-                  UNION SELECT substr(key, length('session:') + 1)::int FROM wf_instances
-                   WHERE machine = 'preview' AND state NOT IN ('retired', 'detached', '(none)')`),
+                  UNION ${MACHINE_HELD_SESSIONS_SQL}`),
       pool.query(`SELECT DISTINCT datname FROM pg_stat_activity
                   WHERE backend_type = 'client backend' AND datname IS NOT NULL`),
     ]);
@@ -990,7 +991,6 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
       dbNames: dbs.rows.map((r) => r.datname),
       liveSessionIds,
       connectedDbNames: new Set(connected.rows.map((r) => r.datname)),
-      hasInFlightBuild: staging.hasInFlightBuild,
     });
 
     // The preview server, when there is one (STAGING_DB_ADMIN_URL): the same
@@ -1009,7 +1009,6 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
           dbNames: there.dbNames,
           liveSessionIds,
           connectedDbNames: there.connectedDbNames,
-          hasInFlightBuild: staging.hasInFlightBuild,
         })) onPreviewServer.add(name);
       } catch (err) {
         log.warn('staging-reap', 'Could not list the preview database server; skipping it this pass', { err: err.message });
@@ -1047,23 +1046,15 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
     for (const item of batch) {
       const { dbName } = item;
       try {
-        const lifecycle = require('./preview-lifecycle');
-        if (lifecycle.enabled(config)) {
-          const sessionId = Number(STAGING_DB_NAME_RE.exec(dbName)[1]);
-          await require('./build-retention-guard').withResourceUse(config,
-            require('./advisory-locks').PREVIEW_LIFECYCLE_LOCK, sessionId, async () => {
-              // The census predates lock acquisition. Recheck durable ownership
-              // and connections after every competing build/capture has stopped.
-              const { rows } = await pool.query(
-                'SELECT 1 FROM chat_sessions WHERE id = $1 AND staging_url IS NOT NULL', [sessionId]);
-              if (rows.length || await hasSessions(item)) return;
-              await dropOrphan(item);
-              summary.dropped++;
-            });
-        } else {
-          await dropOrphan(item);
-          summary.dropped++;
-        }
+        // The census is a few seconds old by now: a preview the machine
+        // started building meanwhile, or a connection, keeps the database.
+        const sessionId = Number(STAGING_DB_NAME_RE.exec(dbName)[1]);
+        const { rows } = await pool.query(
+          `SELECT 1 FROM chat_sessions WHERE id = $1 AND staging_url IS NOT NULL
+           UNION ALL SELECT 1 FROM (${MACHINE_HELD_SESSIONS_SQL}) held WHERE held.id = $1`, [sessionId]);
+        if (rows.length || await hasSessions(item)) continue;
+        await dropOrphan(item);
+        summary.dropped++;
       } catch (err) {
         summary.failed++;
         log.warn('staging-reap', 'Orphan staging-DB drop failed', {
@@ -1121,7 +1112,6 @@ async function previewServerDrainStatus(config, { now = Date.now(), force = fals
     if (!force && now - _lastDrainStatusAt < DRAIN_STATUS_INTERVAL_MS) return null;
     _lastDrainStatusAt = now;
     const pool = getPool(config);
-    const staging = require('./staging');
     const stagingRecovery = require('./staging-recovery');
     const { rows } = await pool.query(
       `SELECT id, staging_url, staging_runtime_kind, staging_runtime_name, staging_container_id,
@@ -1133,7 +1123,7 @@ async function previewServerDrainStatus(config, { now = Date.now(), force = fals
     );
     const status = { previews: [], unread: 0, buildsInFlight: 0, shotsRuns: 0, shotsDatabases: 0 };
     for (const session of rows) {
-      if (session.building || staging.hasInFlightBuild(Number(session.id))) status.buildsInFlight += 1;
+      if (session.building) status.buildsInFlight += 1;
       if (!session.staging_runtime_name && !session.staging_container_id) continue;
       const state = await stagingRecovery.inspectPreviewRuntime(session, config);
       if (!state) { status.unread += 1; continue; }
@@ -1191,21 +1181,20 @@ function pressureSweepDue(nowMs = Date.now()) {
  * reclaimed to free connections, idle-longest first.
  *
  * Everything excluded here is excluded because tearing it down would break
- * something a person is looking at: a session with a worker turn in flight
- * or a build running, and any preview backing a live merge vote (the same
- * VOTE_BACKED_STATUSES the stale pass respects — a reviewer arriving at a
- * dead link is worse than a tight connection budget).
+ * something a person is looking at: a session with a worker turn in flight,
+ * and any preview backing a live merge vote (the same VOTE_BACKED_STATUSES
+ * the stale pass respects — a reviewer arriving at a dead link is worse than
+ * a tight connection budget). A preview the machine is building or checking
+ * refuses the retirement itself (staging.teardownStaging reports it busy).
  *
  * @param rows              [{ id, status, last_activity_at }], any order
  * @param isBusy            (sessionId) => boolean
- * @param hasInFlightBuild  (sessionId) => boolean
  */
-function selectPressureVictims({ rows, isBusy = null, hasInFlightBuild = null }) {
+function selectPressureVictims({ rows, isBusy = null }) {
   return rows
     .filter((r) => {
       if (VOTE_BACKED_STATUSES.has(String(r.status))) return false;
       if (isBusy && isBusy(Number(r.id))) return false;
-      if (hasInFlightBuild && hasInFlightBuild(Number(r.id))) return false;
       return true;
     })
     .sort((a, b) => new Date(a.last_activity_at || 0) - new Date(b.last_activity_at || 0));
@@ -1267,7 +1256,6 @@ async function sweepConnectionPressure(config, { limit = null, server = null } =
     if (!before || !before.saturated) return summary;
     summary.saturated = true;
 
-    const staging = require('./staging');
     const activeWorkers = require('./active-workers');
     const sessionLifecycle = require('./session-lifecycle');
 
@@ -1301,7 +1289,6 @@ async function sweepConnectionPressure(config, { limit = null, server = null } =
     const eligible = selectPressureVictims({
       rows,
       isBusy: activeWorkers.isSessionBusy,
-      hasInFlightBuild: staging.hasInFlightBuild,
     });
     const victims = [];
     for (const row of eligible) {
@@ -1380,6 +1367,7 @@ async function reapOne(item, config = {}) {
   if (!exists) return { outcome: 'skipped_gone' };
 
   const linked = namesPreview(item, item.session);
+  // A preview the machine holds is the machine's to retire, by identity.
   if (!linked && item.sessionId && await require('./preview-workflow').held(item.sessionId)) {
     return { outcome: 'skipped_workflow' };
   }

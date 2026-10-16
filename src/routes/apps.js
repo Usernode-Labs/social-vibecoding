@@ -18,7 +18,6 @@ const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 const renamePr = require('../services/rename-pr');
 const topicsPr = require('../services/topics-pr');
 const places = require('../services/places');
-const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const appCreationOwner = require('../services/app-creation-owner');
 const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter, firstSessionMomentLimiter } = require('../middleware/rate-limits');
@@ -509,7 +508,7 @@ function isPlatformRepo(parsed, config) {
 }
 
 // SELF-HOSTING.md sub-step 2h: the platform's deploy is GHA-driven, not
-// staging.rebuildProduction-driven, so /redeploy and /check-updates don't
+// app-delivery-driven, so /redeploy and /check-updates don't
 // apply to the self-app row and are refused with an explanatory 403.
 //
 // The secrets routes used to be refused here too, on the grounds that the
@@ -1700,9 +1699,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // `audience` (services/communities.js) rides along, the same column
       // the /api/apps list carries, so the app's own screens can tell a
       // project that is just its creator's from a group's: the preview
-      // banner and the vote picker word themselves by it.
+      // banner and the vote picker word themselves by it. `template` is
+      // what it started from, for its `exampleChange` below.
       const { rows } = await pool.query(
-        `SELECT ${appAccess.nonSecretAppColumnList()},
+        `SELECT ${appAccess.nonSecretAppColumnList()}, template,
                 ${communities.audienceSql('apps', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = apps.community_id)')}
                   AS audience
            FROM apps WHERE slug = $1`,
@@ -1894,6 +1894,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         staging_sample: stagingSample,
         creationPhase: phaseEntry ? phaseEntry.phase : null,
         first_version: firstVersion,
+        // A change somebody could ask Homeroom bot for in this app, from
+        // its ready-made starter (services/app-templates.js exampleChange),
+        // or null: the first-session walk's Homeroom bot card offers it.
+        exampleChange: appTemplates.exampleChangeOf(appRow.template),
         missingSecrets,
         // Reviewer copy needs to distinguish an advisory shots run from
         // a real vote/merge gate. This is a platform rollout flag, not an app
@@ -2574,8 +2578,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // one proposal: a `secret-declare/*` PR appending the declaration, plus
   // the value, which either lands immediately (a full admin, who may
   // already write values directly) or waits in
-  // `pending_secret_declarations` until routes/votes.js finalizeMerge()
-  // applies it.
+  // `pending_secret_declarations` until the merge applies it (the
+  // merge-followups workflow machine).
   //
   // Scope follows `self_hosted`, exactly like the value routes above:
   // a child app's key goes in `secrets`, the platform's in `platform_env`
@@ -2838,11 +2842,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  // Trigger a fresh `rebuildProduction`. Used after admins fix missing
-  // secrets to retry a deploy from `awaiting_secrets`/`error` (also used
-  // by the secret_change vote-apply path). Returns immediately; the
-  // rebuild streams progress via the existing `app_redeploy_status` WS
-  // event so the UI's version pill flips to its yellow spinning state.
+  // Ask app delivery for a fresh deploy. Used after admins fix missing
+  // secrets to retry a deploy from `awaiting_secrets`/`error`. Returns once
+  // the request is recorded; the app-delivery machine runs it (one deploy
+  // of an app at a time, kept across a restart), writes the result, and
+  // pushes `app_redeploy_status` so the version pill spins. Asked for by
+  // hand, so it retries even a commit the automatic paths have stopped
+  // retrying (deploy-failure.js waitsForNewCommit).
   router.post('/api/apps/:slug/redeploy', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
@@ -2853,30 +2859,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (!app.repo_url) {
         return res.status(400).json({ error: 'This app is not backed by a GitHub repo' });
       }
-      // With the app-delivery machine on, the deploy is a recorded request
-      // it runs (one at a time per app, kept across a restart), and it
-      // writes the result.
-      const workflow = require('../workflow/platform.ts');
-      if (workflow.deliveryEnabled()) {
-        await workflow.requestDeploy(app.id, 'redeploy');
-        return res.json({ ok: true });
-      }
-      // Fire-and-forget: same fan-out as the drift-poller and dev-chat
-      // merge paths use. Errors land on the deploy-status broadcast. Asked
-      // for by hand, so it retries even a commit the automatic paths have
-      // stopped retrying (deploy-failure.js waitsForNewCommit).
-      staging.rebuildProduction(config, app, { retrySameCommit: true })
-        .then(async ({ containerId, sha }) => {
-          await pool.query(
-            `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running',
-                             last_deploy_at = NOW()
-             WHERE id = $3`,
-            [containerId, sha || null, app.id]
-          );
-        })
-        .catch((err) => {
-          log.warn('apps', 'Manual redeploy failed', { slug: app.slug, err: err.message });
-        });
+      await require('../workflow/platform.ts').requestDeploy(app.id, 'redeploy');
       res.json({ ok: true });
     } catch (err) {
       log.error('apps', 'Redeploy kickoff failed', { slug: req.params.slug, message: err.message });
@@ -2917,7 +2900,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // immediately — the PR drops into the existing vote panel as a promoted
   // chat_sessions row and, when it reaches majority and merges, the prod
   // rebuild re-reads dapp.json and reconciles apps.name (see
-  // services/app-manifest.js reconcileAppName + staging.rebuildProduction).
+  // services/app-manifest.js reconcileAppName + staging.deployProduction).
   // This replaces the old issue-based rename proposal in routes/issues.js.
   router.post('/api/apps/:slug/rename', drainGuard, issueCreateLimiter, async (req, res) => {
     const newName = typeof req.body?.newName === 'string' ? req.body.newName.trim() : '';
@@ -2977,8 +2960,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // applying any group-voted change (PR merge, rename proposal, secret
   // change) additionally requires at least one admin yes/up vote on top
   // of the existing active-user majority — enforced in routes/votes.js
-  // (checkAndMerge) and routes/issues.js (maybeApplyRenameProposal /
-  // maybeApplySecretChangeProposal) via services/admin-approval.js.
+  // (checkAndMerge, via services/admin-approval.js) and by the governance
+  // machine for governance proposals (src/workflow/governance-proposal/).
   //
   // The home-card lock icon is the canonical UI affordance. We post a
   // system chat message + broadcast `app_update` so every viewer's card

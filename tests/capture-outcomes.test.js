@@ -136,9 +136,12 @@ test('the evidence kill switch stops v2 without reviving legacy review media', a
   }), false);
 });
 
-test('UI-affecting captures persist a missing evidence declaration before choosing legacy media', () => {
+test('UI-affecting captures report a change that owes a declaration, before choosing legacy media', () => {
+  // The checks run reports it; the preview machine tells the shots machine
+  // (UiUndeclared), whose slot says a declaration is needed.
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/visuals.js'), 'utf8');
-  assert.match(src, /config\.shots\?\.collect && uiAffecting[\s\S]*requireIntentForUiChange/);
+  assert.match(src, /config\.shots\?\.collect && uiAffecting && opts\.workflow\?\.report\)[\s\S]*report\.uiAffecting = true/);
+  assert.doesNotMatch(src, /requireIntentForUiChange/);
 });
 
 // ── capture.js resolveTargets: the still-only flag ─────────────────────
@@ -325,24 +328,6 @@ test('storeArtifacts attributes a companion still to its parent route, mobile fr
   assert.equal(stored.captures[0].path, '/board?demo=1');
   assert.equal(stored.captures[0].viewport, 'mobile');
   assert.equal(stored.captures[0].scenarioId, 'board.main');
-});
-
-test('a fresh run removes cached evidence and tells open clients to clear their tiles', async () => {
-  const queries = [];
-  const events = [];
-  const pool = {
-    query: async (sql, params) => {
-      queries.push({ sql, params });
-      return { rowCount: 1, rows: [] };
-    },
-  };
-  await visuals.resetShots(
-    pool, { id: 7, pr_number: null }, null, null,
-    (type, data) => events.push({ type, data })
-  );
-  assert.match(queries[0].sql, /^DELETE FROM session_visuals/);
-  assert.deepEqual(queries[0].params, [7]);
-  assert.deepEqual(events, [{ type: 'visuals_ready', data: { sessionId: 7, visuals: null } }]);
 });
 
 test('every live session-event reader accepts the null payload that clears stale tiles', () => {

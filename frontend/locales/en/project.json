@@ -527,6 +527,54 @@
     "text": "Build it",
     "description": "Button on a new request's row in the \"New for you\" card on the Workshop tab of a project's page: starts building it, by asking Homeroom bot or with the viewer's own coding agent, whichever the request's own page offers."
   },
+  "workshop.private.title": {
+    "text": "Private requests",
+    "description": "Small-caps label over the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
+  },
+  "workshop.private.note": {
+    "text": "Only platform admins can see these. They are kept in Homeroom, never on GitHub.",
+    "description": "Grey line under the label of the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
+  },
+  "workshop.private.badge": {
+    "text": "Private",
+    "description": "Short badge, beside a lock, on each row of the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
+  },
+  "workshop.private.someone": {
+    "text": "Someone",
+    "description": "Stands in for the author's name when the account is gone, in the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
+  },
+  "workshop.private.comments_one": {
+    "text": "{{count}} comment",
+    "description": "How many comments a private request has, on its row in the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
+  },
+  "workshop.private.comments_other": {
+    "text": "{{count}} comments",
+    "description": "How many comments a private request has, on its row in the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
+  },
+  "workshop.private.noComments": {
+    "text": "No comments yet.",
+    "description": "Shown under an opened private request with no comments, in the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
+  },
+  "workshop.private.commentPlaceholder": {
+    "text": "Add a comment for the admins",
+    "description": "Placeholder of the comment box under an opened private request, in the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
+  },
+  "workshop.private.comment": {
+    "text": "Comment",
+    "description": "Button that posts the comment typed under an opened private request, in the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub. \"Comment\" is a verb."
+  },
+  "workshop.private.close": {
+    "text": "Close request",
+    "description": "Button that closes an opened private request (it is done or no longer needed), in the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
+  },
+  "workshop.private.loadFailed": {
+    "text": "Couldn't load the comments.",
+    "description": "Error under an opened private request when its comments could not be loaded, in the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
+  },
+  "workshop.private.actionFailed": {
+    "text": "That didn't work. Try again.",
+    "description": "Error under an opened private request when posting a comment or closing it failed, in the \"Private requests\" section of a project's Workshop page, shown only to platform admins. A private request is one only platform admins can see, kept in Homeroom and never posted on GitHub."
+  },
   "since.none": {
     "text": "Nothing new since you were last here.",
     "description": "Line in the Since your last visit section of a project's Workshop tab when nobody else has done anything since this person's last visit."
@@ -2814,6 +2862,14 @@
   "topic.run.unit.passed_other": {
     "text": "{{passed}} passed",
     "description": "Result at the end of the Unit tests row when the tests finished with no failure. {{passed}} is how many tests passed, already formatted (\"13,214\"). {{count}} is the same number, for the plural."
+  },
+  "topic.run.unit.reused_one": {
+    "text": "Reused: {{passed}} passed {{when}} (run {{run}})",
+    "description": "Result at the end of the Unit tests row when this run did not run the unit tests again but reused an earlier pass of the same commit. {{passed}} is how many tests passed then, already formatted (\"13,214\"); {{count}} is the same number, for the plural. {{when}} is how long ago that was (for example \"12m ago\"), {{run}} the start of that run's id (for example \"832c9d27\")."
+  },
+  "topic.run.unit.reused_other": {
+    "text": "Reused: {{passed}} passed {{when}} (run {{run}})",
+    "description": "Result at the end of the Unit tests row when this run did not run the unit tests again but reused an earlier pass of the same commit. {{passed}} is how many tests passed then, already formatted (\"13,214\"); {{count}} is the same number, for the plural. {{when}} is how long ago that was (for example \"12m ago\"), {{run}} the start of that run's id (for example \"832c9d27\")."
   },
   "topic.run.unit.passedFailed_one": {
     "text": "{{passed}} passed · {{failed}} failed",

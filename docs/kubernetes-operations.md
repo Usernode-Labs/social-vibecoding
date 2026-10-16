@@ -274,22 +274,12 @@ The platform setting takes effect when the updated server is deployed. Existing
 child-app repositories and previews built from older commits retain their own
 server code; changing the scaffold does not retrofit them.
 
-## Coordinated preview lifecycle
+## Coordinated preview lifecycle (retired)
 
-`platform.previewLifecycleEnabled` (default `false`) sets
-`PREVIEW_LIFECYCLE_ENABLED`. With it enabled, builds, captures and teardown share
-one PostgreSQL advisory lock per session, across platform Pods. A durable
-`preview_operations` row records the desired revision, run UUID, phase and
-outcome. Advancing the session's checks/imported head cancels the old owner;
-the successor waits for its capture and unit-suite consumers to stop before
-changing the preview. Cancellation is not an app test failure.
-
-Capture and unit-suite Jobs carry `social.usernode.io/preview-run-id`. The owner
-requests foreground deletion and confirms Job/Pod termination. API errors keep
-replacement blocked; a DELETE acknowledgement alone does not establish that
-the browser stopped. After a platform restart, a successor for a NEWER revision
-stops orphaned check Jobs before using the preview; a run for the revision the
-session is still waiting on is harvested instead (below).
+`PREVIEW_LIFECYCLE_ENABLED` and its per-session advisory lock are gone: the
+preview machine (below) owns every build, checks run and teardown, one at a time
+per session, as durable work. Its `preview_operations` table is dropped (a
+rollback past the preview machine's deletion recreates it empty).
 
 ## Preview cleanup
 
@@ -520,113 +510,54 @@ two to thirty minutes apart). What people see has not changed with that: the
 proposal's checks read "Couldn't finish" and the step is shown as the
 author's, as for any checks error, although nothing is asked of them.
 
-## Harvesting check runs across platform rollouts
+## Check runs across platform rollouts
 
 Every merge to the self-app rolls the platform Deployment, and every checks
 run in flight at that moment loses the process that was streaming its capture
 and unit-suite Jobs. The Jobs themselves belong to the cluster and finish
-regardless. `services/check-harvest.js` reads them rather than starting over.
+regardless, and they are read rather than started over.
 
-Each run writes a manifest row to `check_runs` (session, commit, owner
-`hostname:pid`, launch context) before its Jobs are created and heartbeats it
-every `CHECK_RUN_HEARTBEAT_MS` (15s). A row with no heartbeat for
-`CHECK_RUN_ORPHAN_MS` (60s) is an orphan. The leader sweeps once at boot —
-before the stuck-checks reconcile, so a harvestable run is never re-driven as
-stuck — and every `CHECK_HARVEST_SWEEP_MS` (30s) after, at most
-`CHECK_HARVEST_CONCURRENCY` (3) adoptions at a time. An orphan is:
+A preview checks run is the preview machine's `checks.run` work item. Each run
+writes a manifest row to `check_runs` (session, commit, launch context, the
+work item's key) before its Jobs are created and heartbeats it every
+`CHECK_RUN_HEARTBEAT_MS` (15s). When the item's claim is lost (its process
+died, or its lease ran out), the retry of the same item collects the Jobs the
+manifest names (`check-harvest.collectForWorkflow`): a finished Job's log is
+read, a running one is waited on, and the output goes through the same
+settlement a live run ends with. It runs the checks again only when there is
+nothing to read, and never settles without a unit suite that blocks merges.
+A run that starts stops the still-running Jobs of the session's runs for other
+commits (background deletion; their input Secrets go with them).
 
-- **settled** when its Jobs are found by the `preview-run-id` label: a finished
-  Job's log is read, a running one is waited on with progress re-published to
-  the proposal card, and the output goes through the same settlement a live
-  run ends with (same parse, verdict, stores, commit guards, broadcasts);
-- **re-driven immediately** when there is nothing to read — the process died
-  before creating the Jobs, or the Jobs are gone (TTL, or cancelled);
-- **moot** when the session no longer wants the run — decided meanwhile, head
-  moved, session closed, or (under the preview lifecycle) a newer run owns it.
+The repo's unit suite usually starts with the preview build: the machine's
+`checks.unitEarly` launches it under an id derived from the attempt
+(`sv-unit-early-…` Jobs), and the checks run against that attempt reads it,
+from its own process or after a restart. It does not start for a head whose
+last checks errored, or while the cluster already runs as many unit suites as
+the checks queue admits (`EARLY_UNIT_SUITE=0` turns it off). The attempt's
+retirement deletes its Jobs.
 
-A platform process that shuts down hands its rows over first: it stamps
-their heartbeat as long past, so the next leader's boot sweep seats them at
-once instead of a minute later. A run whose process died without doing so is
-still covered: before the stale sweep starts a session over, it looks for that
-session's current run on the cluster. If the capture Job is still running, or
-the run finished less than `CHECKS_STALE_MS` ago, the harvest settles it
-instead. A run that starts stops the still-running Jobs of the session's runs
-for other commits (background deletion; their input Secrets go with them).
-Runs for the same commit are left to finish, because their verdict still
-counts.
-
-The paths that start a run ask the same question first (`runToCollect`): a
-manual "Re-run checks" (or `recheck_change`), a promote or vote-time kick, a
-recheck that would rebuild the preview, the sweeper's preview heal, boot
-recovery, and every capture under the preview lifecycle. While the session
-still waits on that commit's verdict and its run is on the cluster, nothing new
-starts; the button and the tool say the run is still going. Once the verdict is
-stored the manifest is gone and a re-run starts fresh. Only a run whose inputs
-changed (new capture routes or shots for the same commit) replaces it.
-
-Under `PREVIEW_LIFECYCLE_ENABLED` the harvester adopts the run's
-`preview_operations` row first and writes through the same ownership check a
-live run does; a request for a newer revision aborts the harvest. A capture
-for the same revision finds the run under the lifecycle lock and leaves it:
-it cancels only other commits' check Jobs and does not take the row. A build,
-or a forced capture, still cancels every check Job of the session. Outside the
-Kubernetes capture runtime the harvester is a no-op. The stale sweep
-(`CHECKS_STALE_MS`) remains the backstop for rows with no manifest at all.
+The main-watch suite after a direct merge keeps its own hand-over: a platform
+process that shuts down stamps its `check_runs` rows' heartbeat as long past,
+so the next leader adopts them at once instead of a minute later.
 
 Every capture rechecks the exact deployed revision, image, environment
 fingerprint, completed rollout, application health and public edge before
-starting. Check results and screenshot transactions verify the current run and
-revision under a session row lock. Newer revisions cannot publish older output;
-same-commit recovery after a rebuild can replace an infrastructure-error verdict.
-Manual reruns, unit checks, browser checks, screenshots, PR visuals, progress and
-automatic merging remain supported. Docker retains its existing lifecycle.
-
-Kubernetes rebuilds reconcile the existing Ingress and Service instead of
-deleting them first. This removes the missing-host TLS routing window, but does
-not promise uninterrupted interactive previews during application/database
-replacement. Already-started image builds and database preparation settle before
-ownership passes; obsolete captures are cancelled explicitly. Build artifacts
-remain subject to normal retention. This change does not add Envoy retries.
-
-### Activation and rollback
-
-Apply the additive schema migration with the release. **Do not use an ordinary
-rolling flag change:** a flag-off Pod can bypass the coordinator even if it runs
-the new binary. The chart defaults off to make this transition explicit.
-
-1. Schedule a brief platform maintenance window and pause proposal mutations.
-   Through the installation's GitOps owner, scale the platform to zero and
-   confirm all platform Pods have terminated. Keep app previews and PostgreSQL
-   running; do not delete the preview Ingresses.
-2. With platform replicas still zero, set `platform.previewLifecycleEnabled: true`
-   and select the coordinator-capable release. Confirm the schema hook succeeded.
-3. Restore the normal replica count and resume mutations. Verify a new revision
-   supersedes an active capture, both old check Jobs stop, and the new run
-   produces checks/screenshots for its own revision. Further releases may roll
-   normally while every participating Pod keeps coordination enabled.
-
-Rollback across this boundary uses the same stop-all-platform-Pods procedure.
-Before starting a flag-off/older release, terminate outstanding capture and
-unit-suite Jobs and confirm their Pods have stopped. Retain the additive table.
-The mixed-mode restriction also applies to manually started platform processes.
-
-For local validation, `tests/preview-lifecycle.test.js` uses independent real
-PostgreSQL connections and an isolated temporary schema. Set
-`PREVIEW_LIFECYCLE_TEST_DATABASE_URL` to a disposable test database, or use the
-existing `SQL_CHECK_CONNECTION_URL` supplied by the unit runner. It never falls
-back to the application's `DATABASE_URL`. Kubernetes termination and cancellation
-are covered by `tests/kubernetes-preview-cancellation.test.js` with API doubles.
+starting. Newer revisions cannot publish older output. Kubernetes rebuilds
+reconcile the existing Ingress and Service instead of deleting them first,
+which removes the missing-host TLS routing window; it does not promise
+uninterrupted interactive previews during application/database replacement.
 
 ## Check Jobs, their input Secrets and the worker quota
 
 A checks run creates a capture Job and a unit-suite Job in the worker namespace,
 each with an input Secret the Job owns. Once the run's verdict is stored and
 its `check_runs` manifest cleared, the run deletes its finished Jobs with
-background propagation, which takes their Pods and Secrets too; the harvester
-does the same after settling an orphan. The Jobs' `ttlSecondsAfterFinished`
+background propagation, which takes their Pods and Secrets too; a run
+collected after a lost claim does the same once it settles. The Jobs' `ttlSecondsAfterFinished`
 (3600 s) covers everything else: superseded or failed runs, the main-watch
 suite, and whatever a crash leaves. Keep it at least that long, because it is
-how late a harvest can still read a run after a slow leader handover.
+how late a retry can still read a run after a slow leader handover.
 
 `services/check-retention.js` removes what no owner will. On the leader, every
 15 minutes and at most 50 deletions a pass, it deletes:
@@ -646,163 +577,130 @@ worker env Secrets; they are object counts, so headroom costs nothing.
 
 ## Workflow governance machine
 
-`platform.workflowGovernanceEnabled` (default `false`) becomes `WF_GOVERNANCE_ENABLED`.
-When it is on, the governance-proposal machine in `src/workflow/` decides governance
-proposals. The governance-apply ticker and the stale sweeper's Pass 0b then leave those
-proposals alone. `docs/workflows.md` explains the machine and where it runs.
+The governance-proposal machine in `src/workflow/` decides every governance proposal.
+It has no flag: its old paths (the governance-apply ticker, the stale sweeper's
+Pass 0b, the apply functions in `routes/issues.js`) are deleted.
+`docs/workflows.md` explains the machine and where it runs.
 
-- **Where it runs.** The machine runs inside the platform Pod; there is no extra
+- **Where it runs.** The machine runs inside the platform Pods; there is no extra
   workload. Every Pod listens for outcomes and runs pipeline slots, so it applies its
-  own votes; only the advisory-lock leader runs the timer and service loops and the
-  boot backfill.
-- **Schema.** The schema it needs (`wf_*` tables and triggers) is additive and ships
-  with every release, whether the flag is on or off.
-
-### Activation and rollback
-
-Unlike the coordinated preview lifecycle, an ordinary rolling change is safe in both
-directions. No maintenance window or scale-to-zero is needed.
-
-1. **Set the value.** Set `platform.workflowGovernanceEnabled: true` in the platform's
-   values in the infra repository. Argo CD rolls the Deployment with the same image.
-2. **During the rollout overlap.**
-   - The old Pod may still be the leader and apply proposals the old way.
-   - The machine and the old apply functions both lock the proposal's row, so
-     whichever commits first applies it. The machine ends the other's instance
-     `superseded` (`closed_outside`).
-   - The new Pod applies its own votes and withdrawals at once: its pipeline slots run
-     before it is leader. Only what the leader's loops do (timers, follow-up work, and
-     enrolling proposals opened before the flag) waits until it is elected. A route on
-     a proposal not enrolled yet enrolls it itself.
-3. **Verify.**
-   - **The new Pod's log.** It shows `Workflow runtime started` and, on the leader,
-     `Enrolled open governance proposals` with a count.
-   - **Admin → Workflows.** It lists the enrolled proposals, and its problems panel
-     is empty.
-   - **Votes.** A vote on a test proposal answers at once.
-4. **Watch for old writers.** In production the ownership trigger logs instead of
-   refusing (`WF_OWNERSHIP_MODE` defaults to `log`). Over the following days, the
-   problems panel in Admin → Workflows should show no "written outside its machine"
-   line. One lists the column, how often, and its latest writes: the row, the
-   connection's `application_name` and the statement, which name the code path that
-   still writes a governance proposal outside the machine (`wf_ownership_violations`).
-
-**Rollback.** Set the value back to `false` and let Argo CD roll the Deployment.
-- **What happens to the proposals.** The old paths decide them again. The trigger
-  stops guarding them as soon as the new Pods record the flag off.
-- **Turning it on again later is safe.** A proposal decided or deleted in the
-  meantime ends its instance without being applied twice.
+  own votes; only the leader runs the timer and service loops and the boot backfill.
+- **A runtime that fails to start ends the process.** With no other path for a
+  governance proposal, a Pod without the workflow runtime exits at boot and
+  Kubernetes restarts it, rather than serving without it.
+- **A leader whose workflow loops fail to start stops itself** (through its drain, as on
+  SIGTERM), so another process leads: the timers and work of every governance proposal
+  run only there.
+- **Ownership is enforced.** A write to an enrolled governance proposal's status or audit
+  keys from outside the machine is refused (`WF_OWNERSHIP_VIOLATION`). A row is enrolled
+  when it is filed, or
+  by the leader's boot backfill if filing failed.
+- **Rolling back past this release.** Code from before it still reads
+  `WF_GOVERNANCE_ENABLED`, and without it its old paths would try to decide proposals the
+  guard now refuses to let them write, so every enrolled proposal would stall. Keep
+  `platform.workflowGovernanceEnabled: true` in the infra values (this chart no longer
+  reads it) until no rollback target predates this release.
+- **Verify after a release.** The Pod's log shows `Workflow runtime started` and, on
+  the leader, `Enrolled open governance proposals` when there were any; Admin →
+  Workflows lists the enrolled proposals and its problems panel is empty.
 
 ## Workflow merge-followups machine
 
-`platform.workflowMergeFollowupsEnabled` (default `false`) becomes
-`WF_MERGE_FOLLOWUPS_ENABLED`. When it is on, what follows a merge (production delivery,
-preview teardown, included changes, closing requests, the announcements) is durable work
-of the merge-followups machine, and a change reads live only once production runs it.
-`merge-followup-recovery` and the boot resume of issue-close watches stand down.
+The merge-followups machine in `src/workflow/merge-followups/` runs what follows a merge
+(the production deploy, preview teardown, included changes, closing requests, the
+announcements) as durable work, and a change reads live only once production runs it. It
+has no flag: the old merge tail (`finalizeMerge` and its follow-ups), the
+`merge-followup-recovery` sweep and the boot resume of issue-close watches are deleted.
 `docs/workflows.md` explains the machine.
 
-### Activation and rollback
-
-An ordinary rolling change, safe in both directions.
-
-1. **Set the value.** Set `platform.workflowMergeFollowupsEnabled: true` in the
-   platform's values in the infra repository. Argo CD rolls the Deployment.
-2. **During the rollout overlap.**
-   - An old Pod may still merge the old way. Once a new Pod has recorded the flag, the
-     ownership trigger logs such an old merge in `wf_ownership_violations`, which is
-     `log` mode in production. The old merge tail then runs as before.
-   - A merge on a new Pod is reported to the machine and finished by the leader's loops.
-3. **Verify.**
-   - **The new Pod's log.** It shows `Workflow runtime started` with `merge-followups`.
-   - **Admin → Workflows.** The next merge appears as `merge-followups / session:<id>`
-     and reaches `live`, and its problems panel is empty.
-   - **The proposal's thread.** It says "is live" after the deploy, not before.
-
-**Rollback.** Set the value back to `false`.
-- **New merges** take the old tail again.
-- **Merges the machine already accepted** still finish: the runtime keeps running while
-  they have work left, and stops on a later boot once nothing is left.
+- **A merge is only reported.** `checkAndMerge` appends `Merged` right after GitHub's
+  merge. A report that failed leaves the row `merging`, and the stuck-merge sweep finds
+  the merge on GitHub and reports it again.
+- **Ownership is enforced.** Only the machine moves a proposal into `merged`, and a write
+  to a merged row's `merged_at`, `merge_commit_sha`, `included_in_session_id` or `live_at`
+  from outside it is refused (`WF_OWNERSHIP_VIOLATION`).
+- **Rolling back past this release.** Code from before it still reads
+  `WF_MERGE_FOLLOWUPS_ENABLED`; with it off, its old merge tail would move rows into
+  `merged` itself. Keep `platform.workflowMergeFollowupsEnabled: true` in the infra values
+  (this chart no longer reads it) until no rollback target predates this release. The
+  instances this release writes are version 5, which older code leaves alone: such a
+  merge finishes once the release comes back.
+- **Verify after a release.** The Pod's log shows `Workflow runtime started` with
+  `merge-followups`; the next merge appears in Admin → Workflows as
+  `merge-followups / session:<id>` and reaches `live`, and the proposal's thread says "is
+  live" after the deploy, not before.
 
 ## Workflow app-delivery machine
 
-`platform.workflowAppDeliveryEnabled` (default `false`) becomes `WF_APP_DELIVERY_ENABLED`.
-It needs `platform.workflowMergeFollowupsEnabled`: without it the machine does not run,
-the boot logs why, and Admin → Workflows lists the flag under "Needs a person". When it
-runs, every production deploy of an app is a request to the app-delivery machine, run one
-at a time per app, and the version pill's "deploying" is `apps.deploy_state`, read by every
-Pod. `docs/workflows.md` explains the machine.
+The app-delivery machine in `src/workflow/app-delivery/` runs every production deploy of
+an app, one at a time per app and at most four at a time in the leading process, for everyone who
+asks (a merge, a secret change, the drift poller, Check for updates, Redeploy, heal, a
+rollover whose image is gone, a demo reset). It has no flag: each caller used to deploy
+itself, in its own process, with "deploying" in that process's memory; now it records a
+request and the machine deploys. `docs/workflows.md` explains the machine.
 
-### Activation and rollback
-
-An ordinary rolling change, safe in both directions.
-
-1. **Set the value** in the platform's values in the infra repository, once merge
-   follow-ups is on. Argo CD rolls the Deployment.
-2. **During the rollout overlap.** An old Pod still deploys the old way. The cross-process
-   build lock keeps its deploy and the machine's from running on one app at once.
-3. **Verify.**
-   - **The new Pod's log.** `Workflow runtime started` lists `app-delivery`.
-   - **Admin → Workflows.** The next deploy appears as `app-delivery / app:<id>`,
-     `deploying`, then `idle`, and its problems panel is empty.
-   - **The version pill** spins during the deploy after a page reload, too.
-
-**Rollback.** Set the value back to `false`. Callers deploy themselves again. Requests the
-machine already accepted still run: the runtime keeps running while it has a deploy or a
-request left, and stops on a later boot once nothing is left. A retry of a merge's
-delivery or of a secret change's redeploy is then the machine's own deploy again.
-
-Rolling the **release** back (to code from before this machine) is different: the
-merge-followups and governance-proposal instances this release wrote are version 3, and
-older code leaves an instance a newer version wrote alone. With those flags on, such an
-instance waits until the release comes back.
+- **Where the deploys run.** `app.deploy` is a work item, which only the leader runs:
+  with the web and conductor split, the conductor Pod. Each deploy clones the app into
+  that Pod's `/tmp` and builds there, as previews do.
+- **"Deploying" is durable.** It is `apps.deploy_state`, read by every Pod and after a
+  restart; a deploy whose process died is retried after its lease. A deploy that never
+  answers (a hung build or lock) is ended by an admin in Admin → Workflows (`EndDeploy`).
+- **Ownership is enforced.** A write to `apps.deploy_state`, `deploy_started_at` or
+  `deploy_from_sha` from outside the machine is refused (`WF_OWNERSHIP_VIOLATION`).
+- **During the rollout that brings it.** An old Pod still deploys the old way; the
+  cross-process build lock keeps its deploy and the machine's from running on one app at
+  once, and each reads the other's "deploying".
+- **Rolling back past this release.** Older code deploys in each caller again. It still
+  runs a deploy app delivery had under way (it registers the machine while one is), but a
+  request left open after a failed deploy waits: the merge or secret change that asked is
+  version 5, which older code leaves alone, so it is answered once the release comes back.
+  Nothing in the infra values needs keeping for it (`workflowAppDeliveryEnabled` stays as
+  it is until the values are cleaned up).
+- **Verify after a release.** The Pod's log shows `Workflow runtime started` with
+  `app-delivery`; the next deploy appears in Admin → Workflows as
+  `app-delivery / app:<id>`, `deploying`, then `idle`, and the version pill spins during
+  the deploy after a page reload, too.
 
 ## Workflow preview machine
 
-`platform.workflowPreviewsEnabled` (default `false`) becomes `WF_PREVIEWS_ENABLED`. When
-it is on, every source of a preview or a checks run asks the preview machine, which builds,
-checks and retires previews as durable work, and records who is working on a session.
-The stuck-checks sweep, the harvest, the by-name reap and the orphan-database sweep leave
-the sessions it holds alone. It needs no other workflow flag. `docs/workflows.md` explains
-the machine.
+The preview machine in `src/workflow/preview/` builds, checks and retires every
+proposal's preview, and the App bench studio's previews, as durable work, and records
+who is working on a session. It has no flag: its old paths (the per-process build queue,
+the preview lifecycle, the check harvest's sweep, the in-memory capture seat, the early
+unit suite's module, the turn tails' own builds) are deleted. `docs/workflows.md`
+explains the machine.
 
-**On the cluster.** A preview keeps its per-session Deployment, Service and Ingress
-(`sv-preview-<appId>-s<sessionId>`). Each attempt has its own env Secret
-(`<name>-env-a<n>`) and database (one per claim of its build, should a build be claimed
-again after a crash), and the Deployment carries the annotation
-`social.usernode.io/preview-attempt`: the newest attempt that wrote it and which claim of
-its build, as `n.k` (a bare `n` is claim 0). The attempt's Secret carries the same
-annotation, so an older claim never writes its database back into it. A failed rollout
-restores the template that served, so the older revision keeps serving. Each platform
-process also holds one more database connection, for its presence lock.
-
-### Activation and rollback
-
-1. **Set the value** in the platform's values in the infra repository. Argo CD rolls the
-   Deployments.
-2. **While the replaced Pods drain.** A Pod the release replaced finishes the previews it
-   was building the old way, for up to `platform.drainMinutes`. Once a new Pod has recorded
-   the flag, the ownership trigger logs such writes in `wf_ownership_violations` (`log`
-   mode in production).
-   - **Where the work runs.** The machine's builds and checks runs are its work items,
-     which only the leader runs: with the web and conductor split, the conductor Pod.
-     Each build clones the proposal into that Pod's `/tmp` and follows its rollout there,
-     so size `platform.conductor.resources` for the previews built at once.
-3. **Verify.**
-   - **The new Pod's log.** `Workflow runtime started` lists `preview`.
-   - **Admin → Workflows.** The next revision appears as `preview / session:<id>`, goes
-     through `preparing` and `checking`, and settles; the problems panel is empty.
-   - **The cluster.** `kubectl -n social-apps get secrets` shows `-env-a<n>` Secrets, only
-     for attempts that serve or are being prepared.
-
-**Rollback.** Set the value back to `false`. The next boot hands every session the machine
-holds back to the old paths (`Detach`): its work is cancelled, what it built stays (its
-databases follow the old naming, so the orphan sweep collects them once unlinked), and the
-old paths own the sessions again. Turning it on again later adopts each session from its
-row. The old paths delete a preview's `-env` Secret only: a held session's `-env-a<n>`
-Secrets stay until the machine retires the preview again, or are deleted by hand: list
-them with `kubectl -n social-apps get secrets -l social.usernode.io/session-id=<id>` and
-delete only the `-env-a<n>` ones (the `-env` Secret is the old paths' preview's).
+- **Where the work runs.** Its builds and checks runs are work items, which only the
+  leader runs: with the web and conductor split, the conductor Pod. Each build clones the
+  proposal into that Pod's `/tmp` and follows its rollout there, so size
+  `platform.conductor.resources` for the previews built at once.
+- **On the cluster.** A preview keeps its per-session Deployment, Service and Ingress
+  (`sv-preview-<appId>-s<sessionId>`). Each attempt has its own env Secret
+  (`<name>-env-a<n>`) and database (one per claim of its build, should a build be claimed
+  again after a crash), and the Deployment carries the annotation
+  `social.usernode.io/preview-attempt`: the newest attempt that wrote it and which claim
+  of its build, as `n.k` (a bare `n` is claim 0). The attempt's Secret carries the same
+  annotation, so an older claim never writes its database back into it. A failed rollout
+  restores the template that served, so the older revision keeps serving. Each platform
+  process also holds one more database connection, for its presence lock.
+- **The sweeps only observe.** The boot heal and the sweeper's heal report a runtime
+  that is gone or stale to the machine, the stuck-checks sweep hands it a row with no
+  verdict, and the reapers ask it to retire; each leaves a session it is building,
+  checking or retrying alone. The orphan-database sweep keeps every database of a
+  session it holds.
+- **Ownership is enforced.** A write to a held session's preview or checks columns from
+  outside the machine is refused (`WF_OWNERSHIP_VIOLATION`). The staging seeds in
+  `migrate.js` leave a row it holds alone.
+- **Rolling back past this release.** Code from before it still reads
+  `WF_PREVIEWS_ENABLED` and `PREVIEW_LIFECYCLE_ENABLED`; with the first off it would hand
+  every session back to paths the guard now refuses. Keep
+  `platform.workflowPreviewsEnabled: true` in the infra values (this chart no longer reads
+  it) until no rollback target predates this release.
+- **Verify after a release.** The Pod's log shows `Workflow runtime started` listing
+  `preview`; Admin → Workflows shows each new revision as `preview / session:<id>` going
+  through `preparing` and `checking` to `settled`, with an empty problems panel; and
+  `kubectl -n social-apps get secrets` shows `-env-a<n>` Secrets only for attempts that
+  serve or are being prepared.
 
 ## Read-only inventory and logs
 

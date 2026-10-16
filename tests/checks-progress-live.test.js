@@ -391,9 +391,14 @@ test('maybeRunUnitSuite observes its container and reports once more at the end'
   assert.match(src, /\.\.\.\(summary \? \{ summary \} : \{\}\),/, 'the TAP summary rides the row');
 });
 
-test('the run state merges both containers into one snapshot, throttles, and is silent once closed', async () => {
+test('the run state merges both containers into one snapshot, throttles, and is silent once closed', (t) => {
+  // The injected clock and the mocked setTimeout together make the throttle
+  // deterministic: the test moves the clock and fires the timer instead of
+  // racing real time.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let clock = 1000; // well past lastFlushAt's initial 0
   const flushed = [];
-  const state = visuals.makeChecksProgressState({ expected: 3, flush: (s) => flushed.push(s), minGapMs: 30 });
+  const state = visuals.makeChecksProgressState({ expected: 3, flush: (s) => flushed.push(s), minGapMs: 30, now: () => clock });
   state.observeUnit({ phase: 'installing', ran: 0, passed: 0, failed: 0, expected: null, done: false });
   assert.equal(flushed.length, 1, 'the first observation flushes at once');
   assert.equal(flushed[0].unit.phase, 'installing');
@@ -401,7 +406,8 @@ test('the run state merges both containers into one snapshot, throttles, and is 
   state.observeCapture(`__USERNODE_TEST__ index=0 status=pass loadStatus=200`);
   state.observeUnit({ phase: 'running', ran: 40, passed: 40, failed: 0, expected: 100, done: false });
   assert.equal(flushed.length, 1, 'inside the gap: coalesced');
-  await new Promise((r) => setTimeout(r, 60));
+  clock += 30;
+  t.mock.timers.tick(30);
   assert.equal(flushed.length, 2, 'one timer flush carries both');
   assert.equal(flushed[1].ran, 1);
   assert.equal(flushed[1].unit.ran, 40);
@@ -409,7 +415,8 @@ test('the run state merges both containers into one snapshot, throttles, and is 
   assert.equal(flushed.length, 3, 'a done from either side flushes immediately');
   state.observeCapture(`__USERNODE_TEST__ index=1 status=fail loadStatus=200`);
   state.close();
-  await new Promise((r) => setTimeout(r, 60));
+  clock += 60;
+  t.mock.timers.tick(60);
   assert.equal(flushed.length, 3, 'close drops the pending timer');
   state.observeCapture(`__USERNODE_TESTS_DONE__ ran=2 expected=3 deadline=0`);
   state.observeUnit({ phase: 'running', ran: 1, passed: 1, failed: 0, expected: null, done: false });
@@ -689,9 +696,8 @@ test('the finished build rides every testing-half snapshot, from the timings sta
 // ── 2d. the fifth step: the hand-off to the checks ──────────────────────
 //
 // The container answering its healthcheck is not the checks starting. The
-// caller still verifies the edge and announces the preview, and
-// captureForSession may park the run behind an earlier capture on the same
-// proposal — on the self-app, minutes. The bar used to read 4/4 under a
+// preview machine still verifies the edge and announces the preview, and
+// the checks run may wait for a checks slot — minutes, under load. The bar used to read 4/4 under a
 // title still saying "Preparing the staging preview…" for all of it.
 
 test('the build opens prepare_checks when the container is up, and the capture closes it at the testing flip', async () => {
@@ -701,71 +707,46 @@ test('the build opens prepare_checks when the container is up, and the capture c
   const saved = ws.broadcastGlobal;
   const seen = [];
   ws.broadcastGlobal = (e) => seen.push(e);
-  const poolMod = require('../src/db/pool');
-  const savedGetPool = poolMod.getPool;
-  poolMod.getPool = () => pool;
   try {
     const deployedAt = Date.now() - 5000;
     const timings = { sourceFetchMs: 2000, imageBuildMs: 5000, cloneMs: 2000, cloneVia: 'template', healthMs: 9000, totalMs: 18000, deployedAt };
     const stagingResult = { timings };
-    // Not queued: the step is open, nothing marks a wait.
-    visuals.reportPrepareChecks({}, { id: 7 }, stagingResult);
-    assert.equal(seen.length, 1);
-    assert.equal(seen[0].checkPhase, 'building');
-    assert.equal(seen[0].progress.build.step, 'prepare_checks');
-    assert.equal(seen[0].progress.build.startedAt, new Date(deployedAt).toISOString());
-    assert.equal('queued' in seen[0].progress.build, false);
-    assert.deepEqual(seen[0].progress.build.steps.map((s) => s.key), ['source_fetch', 'image_build', 'clone', 'health']);
-    assert.equal(seen[0].progress.build.totalMs, 18000, 'the build total is the four steps; the hand-off is not in it');
-    // Queued behind an earlier run: the step says so, and the timings remember it.
-    visuals.reportPrepareChecks({}, { id: 7 }, stagingResult, { queued: true });
-    assert.equal(seen[1].progress.build.queued, true);
-    assert.equal(timings.prepareChecksVia, 'queued');
-    // The flip to testing closes it, with its time and its reason, under the testing phase.
+    // The flip to testing closes it, with its time, under the testing phase.
     await visuals.finishPrepareChecks(pool, { id: 7 }, 'abc', stagingResult, 'pr-import');
     assert.ok(Number.isFinite(timings.prepareChecksMs) && timings.prepareChecksMs >= 5000, 'measured from deployedAt');
-    const closing = seen[2];
+    const closing = seen[0];
     assert.equal(closing.checkPhase, 'testing');
     assert.equal(closing.commitSha, 'abc');
     assert.equal(closing.checkTrigger, 'pr-import');
     assert.equal(closing.progress.build.step, 'done');
-    assert.deepEqual(closing.progress.build.steps[4], { key: 'prepare_checks', ms: timings.prepareChecksMs, via: 'queued' });
-    assert.equal(closing.progress.build.totalMs, 18000);
+    assert.deepEqual(closing.progress.build.steps.map((s) => s.key), ['source_fetch', 'image_build', 'clone', 'health', 'prepare_checks']);
+    assert.equal(closing.progress.build.steps[4].ms, timings.prepareChecksMs);
+    assert.equal(closing.progress.build.totalMs, 18000, 'the build total is the four steps; the hand-off is not in it');
     assert.match(calls[calls.length - 1].sql, /jsonb_build_object\('build', \$2::jsonb/);
     // Idempotent: a second close keeps the first measurement.
     const first = timings.prepareChecksMs;
     await visuals.finishPrepareChecks(pool, { id: 7 }, 'abc', stagingResult, 'pr-import');
     assert.equal(timings.prepareChecksMs, first);
+    // A run that waits for a checks slot closes it under 'queued' instead.
+    await visuals.finishPrepareChecks(pool, { id: 7 }, 'abc', { timings: { ...timings } }, 'pr-import', 'queued');
+    assert.equal(seen[seen.length - 1].checkPhase, 'queued');
     // And the finished build rides the testing-half snapshots with all five.
     const state = visuals.makeChecksProgressState({ expected: 2, flush: () => {}, build: visuals.buildProgressFromTimings(timings) });
     assert.equal(state.snapshot().build.steps.length, 5);
     // A run with no build (a re-check against a live preview) reports nothing:
     // a lone fifth step over four "todo" ones would claim a build that never ran.
     seen.length = 0;
-    visuals.reportPrepareChecks({}, { id: 7 }, null, { queued: true });
     await visuals.finishPrepareChecks(pool, { id: 7 }, 'abc', null, 'manual-recheck');
     assert.equal(seen.length, 0);
   } finally {
     ws.broadcastGlobal = saved;
-    poolMod.getPool = savedGetPool;
   }
   const src = read('src/services/visuals.js');
-  // Queued: reported from the re-queue branch, before it returns. #2038 put
-  // the supersede check between the park and the report, so the window is
-  // wider — the ORDER is what this pins, not the distance.
-  assert.match(src, /_queued\.set\(key, \{ config, session, app, commitHash, stagingResult, trigger, force \}\);[\s\S]*?reportPrepareChecks\(config, session, stagingResult, \{ queued: true \}\);\n\s+return;/);
-  // #2038: and a run for a DIFFERENT commit does not wait at all. The suite
-  // that is going is testing the old head, and storeChecks only writes when
-  // checks_commit_sha still matches the commit its run started on — which
-  // setChecksPending has already moved — so letting it finish writes the
-  // verdict nowhere and leaves the row 'pending' until the stale sweeper
-  // notices. It is aborted instead, and its finally block drains the queue.
-  assert.match(src, /running\.commitHash !== commitHash/,
-    'the supersede is keyed on the commit having moved, not on any run existing');
-  assert.match(src, /running\.operation\.abort\(lifecycle\.cancelled\(\)\)/,
-    'and it actually aborts the in-flight operation');
   // Closed right after the phase flips, before anything slow (the compare, the capture image).
   assert.match(src, /notifyChecksPending\(session\.id, commitHash, 'testing', trigger\);[\s\S]{0,800}await finishPrepareChecks\(pool, session, commitHash, stagingResult, trigger\);/);
+  // Or when the run starts waiting for a checks slot.
+  assert.match(src, /notifyChecksPending\(session\.id, commitHash, 'queued', trigger\);\n\s+await finishPrepareChecks\(pool, session, commitHash, stagingResult, trigger, 'queued'\);/);
+  // Opened by the build itself, once the container is up.
   assert.match(read('src/services/staging.js'), /timings\.deployedAt = deployedAt;\n\s+reportBuildStep\(config, session, 'prepare_checks', timings, deployedAt\);/);
 });
 
@@ -858,8 +839,7 @@ test('#2170: the verdict keeps the finished build and the checking time on the r
   // The stamp the subtraction reads is the one captureForSession writes as
   // the testing half opens, and every run that reaches a verdict opens so.
   const src = read('src/services/visuals.js');
-  assert.match(src, /setChecksPending\(pool, session\.id, commitHash, 'testing', trigger\)/);
-  // A preview machine's run stamps the same clock as its testing half opens.
+  assert.match(src, /await setChecksPhase\(pool, session\.id, commitHash, 'testing'\)/);
   assert.match(src, /function setChecksPhase[\s\S]*?checks_checked_at = CASE WHEN \$3::text = 'testing' THEN NOW\(\) ELSE checks_checked_at END/);
   // An error verdict has no run to cost — it still clears the snapshot, and
   // so does the next run's start (tests/set-checks-pending.test.js).
@@ -1072,10 +1052,15 @@ test('an integration supersedes a check run rather than queueing behind it', () 
   // its verdict is keyed to the commit it started on, so letting it finish
   // writes a verdict nowhere.
   //
-  // The repair path must wait for actual termination before moving the branch.
+  // The head the repair pushes reaches the preview machine as a new
+  // revision, which cancels the run of the old one: the queue has nothing
+  // of its own to stop before it moves the branch.
   const queue = read('src/services/merge-queue.js');
-  assert.match(queue, /await require\('\.\/preview-lifecycle'\)\.supersede\(config, session\.id, measured\.headSha\)/,
-    'the queue must await the supersede operation');
+  assert.doesNotMatch(queue, /preview-lifecycle|\.supersede\(/, 'no second owner stops the run');
+  const machine = read('src/workflow/preview/machine.ts');
+  const obsolete = machine.slice(machine.indexOf('function obsolete('), machine.indexOf('function obsolete(') + 1200);
+  assert.match(obsolete, /if \(d\.run\) \{\n\s+cancel\.push\(\{ kind: WORK\.run, key: d\.run\.key \}\);/,
+    'a newer revision cancels the run in flight');
   assert.doesNotMatch(read('src/services/sync-main.js'), /carryChecks/,
     'the carry-or-not workaround belongs to the deleted vote-carry path');
 });

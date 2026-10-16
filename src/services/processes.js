@@ -47,23 +47,18 @@ const WRITE_RETRY_MS = [500, 2000, 5000];
 
 const KINDS = Object.freeze([
   'session',        // a turn or an operation on a dev session (active-workers.js)
-  'staging_build',  // a preview build (staging.js)
-  'capture',        // a checks capture (visuals.js)
   'sync',           // a sync of a session's branch with main (sync-main.js)
   'handoff',        // a hand-off pipeline (handoff-pipeline.js)
-  'shots',          // a before & after shots run, by session (shots-orchestrator.js)
   'teardown',       // an app being torn down (app-teardown.js)
   'deploy',         // a production deploy, by app slug (app-deploy-status.js)
   'agent_turn',     // the Mayor's turn in an agent session (mayor/agent-turn.js)
   'app_creation',   // an app being created (app-creation-owner.js)
-  'redeploy',       // an owed redeploy being given (owed-redeploy.js)
   'shots_eval',     // a shots eval trial (shots-eval-runner.js)
   'global_turn',    // a Global Chat turn (routes/global-chat.js)
   'bench_trial',    // a bench trial run here (bench/lane.js)
   'dm_defer',       // a DM answer this process will ask again, by message id: a MARKER (homeroom-bot-mayor.js)
   'dm_answer',      // that answer being asked again now, by message id (homeroom-bot-mayor.js)
   'app_heal',       // an app being healed, by slug (app-heal.js)
-  'drift_rebuild',  // an app being rebuilt from main, by app id (main-drift-poller.js)
   'warm',           // a session's worker this process keeps warm (worker.js): a MARKER
   'merge_pass',     // an app's merge queue pass, by app id (merge-queue.js)
   'merge_resolve',  // a proposal's conflict resolution in that pass, by session id (merge-queue.js)

@@ -22,7 +22,7 @@
 import { createHash } from 'node:crypto';
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type {
-  Check, DomainWrite, Event, Json, Machine, Outcome, Push, TimerRequest, TransitionContext, Tx, WorkRef,
+  Check, DomainWrite, Event, Json, Machine, MessageRequest, Outcome, Push, TimerRequest, TransitionContext, Tx, WorkRef,
   WorkRequest, WorkResultPayload,
 } from '../kernel/index.ts';
 import { chatLine, sessionEvent, sessionUpdate, toUser } from '../pushes.ts';
@@ -37,6 +37,9 @@ export const sessionKey = (sessionId: number) => `session:${sessionId}`;
 
 export const WORK = Object.freeze({
   prepare: 'preview.prepare',
+  // The repo's unit suite, started with the build of an attempt and read by
+  // the checks run against it (services.ts).
+  unitEarly: 'checks.unitEarly',
   run: 'checks.run',
   cancel: 'checks.cancel',
   publish: 'checks.publish',
@@ -44,8 +47,9 @@ export const WORK = Object.freeze({
   dropClaims: 'preview.dropClaims',
   retire: 'preview.retire',
   // Hand-offs to flows later steps migrate (the boundary list's "hand-off"
-  // entries): shots beside the checks, a verdict's merge kick, bot note and
-  // shots, and the bot's note that a change's preview will not start.
+  // entries): a verdict's merge kick and bot note, and the bot's note that a
+  // change's preview will not start. `preview.ready` is left only for the
+  // items an older release queued (it hands their head to the shots machine).
   ready: 'preview.ready',
   followUps: 'verdict.followUps',
   stopped: 'preview.stopped',
@@ -57,11 +61,13 @@ export type Verdict = 'passing' | 'failing' | 'skipped' | 'error';
 
 // An attempt: its number, the head it builds, and its database. Attempt 0
 // is a preview [main] built before the flag, adopted with [main]'s names.
+// `previewOnly`: a preview with no checks (the App bench's studio previews):
+// it serves, and nothing runs against it.
 // `dbs`: the database each claim of its build clones into, the first being
 // `db` (a claim that runs again never re-clones the database a claim before
 // it may have deployed: its pods would lose it). The one that serves is the
 // receipt's.
-export interface Attempt { n: number; head: string; db: string; dbs?: string[] }
+export interface Attempt { n: number; head: string; db: string; dbs?: string[]; previewOnly?: boolean }
 // An attempt that serves, as its prepare reported it.
 export interface Served extends Attempt {
   url: string;
@@ -102,6 +108,7 @@ export interface Data {
   pending: { head: string; trigger: string | null } | null;  // a revision that arrived during an idle retirement
   closedAt: string | null;
   operations: Operation[];
+  previewOnly?: boolean;         // a session previewed with no checks (the App bench): every attempt is
 }
 
 const STATES = ['idle', 'preparing', 'checking', 'deferred', 'settled', 'failed', 'retiring', 'retired', 'detached'] as const;
@@ -131,7 +138,10 @@ const text = (v: unknown, what: string, max: number) => {
   return v.trim().slice(0, max);
 };
 
-const REQUEST_REASONS: ReadonlySet<string> = new Set(['ensure', 'deploy']);
+// ensure: the Preview click; deploy: a new attempt; preview: a preview with
+// no checks run against it (a studio build of the App bench).
+const REQUEST_REASONS: ReadonlySet<string> = new Set(['ensure', 'deploy', 'preview']);
+const optInt = (v: unknown, what: string) => (v == null ? null : int(v, what));
 
 const EVENTS = {
   // A head announced by any source (a turn, an upload, an update, a sync,
@@ -162,13 +172,17 @@ const EVENTS = {
   // The branch moved on to code nothing checks yet (a CLI upload before it
   // is submitted, an update to a paused proposal): the verdict no longer
   // describes it, and whatever ran for the old head is obsolete.
-  ChecksCleared: (p: any) => ({ reason: word(p?.reason, 'reason') }),
+  ChecksCleared: (p: any) => ({ reason: word(p?.reason, 'reason'), sessionId: optInt(p?.sessionId, 'sessionId') }),
   // An observer found the serving runtime gone or broken.
   PreviewLost: (p: any) => {
     if (!Number.isInteger(p?.attempt) || p.attempt < 0) throw new Error('attempt must be an attempt number');
     return { attempt: p.attempt as number, detail: optWord(p?.detail) };
   },
-  RetireRequested: (p: any) => ({ reason: word(p?.reason, 'reason'), terminal: p?.terminal === true }),
+  // `sessionId` names a session the machine does not hold yet: the retire
+  // (or the clear above) adopts it from its row first, so the machine is the
+  // only thing that tears down a preview or clears a verdict.
+  RetireRequested: (p: any) => ({ reason: word(p?.reason, 'reason'), terminal: p?.terminal === true,
+    sessionId: optInt(p?.sessionId, 'sessionId') }),
   // An old flow starts or ends work on the session that keeps no record of
   // its own (services/active-workers.js): recorded, never refused.
   OperationStarted: (p: any) => ({
@@ -176,7 +190,6 @@ const EVENTS = {
     holder: text(p?.holder, 'holder', 200),
   }),
   OperationEnded: (p: any) => ({ id: text(p?.id, 'id', 80) }),
-  Detach: () => ({}),
   AdminRetry: () => ({}),
   AdminRetire: () => ({}),
   // An admin ends a build or a run that never answers (a hung build, a lock
@@ -235,10 +248,20 @@ interface Step {
   work?: WorkRequest[];
   cancel?: WorkRef[];
   push?: Push[];
+  messages?: MessageRequest[];
   timer?: TimerRequest | null;
 }
 const step = (s: Step): Outcome<PState> =>
-  ({ next: { name: s.name, data: s.data }, writes: s.writes, work: s.work, cancel: s.cancel, push: s.push, timer: s.timer });
+  ({ next: { name: s.name, data: s.data }, writes: s.writes, work: s.work, cancel: s.cancel, push: s.push, messages: s.messages, timer: s.timer });
+
+// To the shots machine (src/workflow/shots/): a head is ready to be shot
+// (its preview serves, or its checks settled), an imported proposal's
+// preview will not start, a UI change has no declaration, the proposal left
+// review.
+const toShots = (d: Data, type: string, payload: Record<string, Json> = {}): MessageRequest =>
+  ({ to: { machine: 'shots', key: `session:${d.sessionId}` }, event: { type, payload: { sessionId: d.sessionId, ...payload } }, appId: d.appId });
+const told = (o: Outcome<PState>, ...messages: MessageRequest[]): Outcome<PState> =>
+  ({ ...o, messages: [...(o.messages || []), ...messages] });
 
 const prepareKey = (n: number) => `prepare:${n}`;
 // Unique per decision: attempt 0 (a preview [main] built) can be adopted
@@ -277,7 +300,7 @@ function obsolete(d: Data, ctx: TransitionContext, deps: Deps): { cancel: WorkRe
   const work: WorkRequest[] = [];
   const retiring = [...d.retiring];
   if (d.preparing) {
-    cancel.push({ kind: WORK.prepare, key: prepareKey(d.preparing.n) });
+    cancel.push({ kind: WORK.prepare, key: prepareKey(d.preparing.n) }, { kind: WORK.unitEarly, key: unitEarlyKey(d.preparing.n) });
     const r = retire(d, d.preparing, ctx, deps, true);
     retiring.push(r.entry);
     work.push(r.work);
@@ -307,32 +330,46 @@ function retire(d: Data, a: Attempt, ctx: TransitionContext, deps: Deps, cancell
   };
 }
 
+const unitEarlyKey = (n: number) => `unit-early:${n}`;
+const earlyOf = (a: Attempt): WorkRef => ({ kind: WORK.unitEarly, key: unitEarlyKey(a.n) });
+
 const pendingWrite = (d: Data, head: string, phase: 'building' | 'testing', trigger: string | null): DomainWrite =>
   ({ type: 'pending', sessionId: d.sessionId, head, phase, trigger });
 
 // Prepare attempt n+1 of `head`. What serves keeps serving until it is ready.
-function begin(s: Live, head: string, trigger: string | null, ctx: TransitionContext, deps: Deps): Outcome<PState> {
+function begin(s: Live, head: string, trigger: string | null, ctx: TransitionContext, deps: Deps,
+  only = false): Outcome<PState> {
   const d0 = s.data;
+  const previewOnly = only || !!d0.previewOnly;
   const old = obsolete(d0, ctx, deps);
   const n = d0.last + 1;
   const dbs = attemptDbs(d0.appSlug, d0.sessionId, d0.seed, n);
-  const attempt: Attempt = { n, head, db: dbs[0]!, dbs };
+  const attempt: Attempt = { n, head, db: dbs[0]!, dbs, ...(previewOnly ? { previewOnly: true } : {}) };
   const sameHead = d0.head === head;
   const d: Data = {
-    ...d0, head, trigger, last: n, preparing: attempt, run: null, verdict: null,
+    ...d0, head, trigger, last: n, preparing: attempt, run: null, verdict: null, ...(previewOnly ? { previewOnly: true } : {}),
     failure: sameHead ? d0.failure : null, platformFault: sameHead ? d0.platformFault : false,
     streak: sameHead ? d0.streak : 0, firstFailureAt: sameHead ? d0.firstFailureAt : null,
     retiring: old.retiring, exit: null, pending: null,
   };
+  // The unit suite starts with the build rather than after it (its own Jobs,
+  // under the attempt's early run id): not for a preview with no checks, and
+  // not for a head whose last checks errored, mostly a preview that does not
+  // boot, where nothing would ever read it.
+  const early: WorkRequest[] = previewOnly || d.streak > 0 ? []
+    : [{ kind: WORK.unitEarly, key: unitEarlyKey(n), input: { sessionId: d.sessionId, appId: d.appId, n, head, trigger } }];
   return step({
     name: 'preparing', data: d,
     cancel: old.cancel,
-    writes: [pendingWrite(d, head, 'building', trigger)],
+    // A preview with no checks has no checks state to write, and nobody to
+    // tell it is being built.
+    writes: previewOnly ? [] : [pendingWrite(d, head, 'building', trigger),
+      { type: 'buildStarted', sessionId: d.sessionId, appId: d.appId, head }],
     work: [...old.work, { kind: WORK.prepare, key: prepareKey(n), input: {
       sessionId: d.sessionId, appId: d.appId, n, head, db: attempt.db, dbs, trigger,
       serving: d.serving ? { n: d.serving.n, head: d.serving.head, runtimeName: d.serving.runtimeName } : null,
-    } }],
-    push: [checksPending(d, ctx, head, 'building', trigger)],
+    } }, ...early],
+    push: previewOnly ? [] : [checksPending(d, ctx, head, 'building', trigger)],
     timer: null,
   });
 }
@@ -372,7 +409,7 @@ function errorTimer(d: Data, f: Facts, deps: Deps, ctx: TransitionContext, strea
 // shots. One item per run.
 const followUps = (d: Data, run: Run, state: string, deferred = false): WorkRequest => ({
   kind: WORK.followUps, key: `follow-ups:${run.key}`,
-  input: { sessionId: d.sessionId, appId: d.appId, head: run.head, state, deferred, trigger: d.trigger },
+  input: { sessionId: d.sessionId, appId: d.appId, head: run.head, state, deferred, trigger: d.trigger, shotsTold: true },
 });
 
 // ── Adoption ────────────────────────────────────────────────────────────
@@ -411,9 +448,12 @@ function fromRow(d: Data, f: Facts, head: string, trigger: string | null, ctx: T
   const live: Live = { name: 'idle', data: d };
   if (!d.serving || d.serving.head !== head) return begin(live, head, trigger, ctx, deps);
   const checks = f.session!.checks;
-  const verdict = checks.commitSha === head ? verdictOf(checks.state) : null;
+  // Not a verdict a person asked to have checked again (services/unit-suite-
+  // reuse.js): that head is run, as theirs.
+  const owed = f.session!.unitFreshSha === head;
+  const verdict = checks.commitSha === head && !owed ? verdictOf(checks.state) : null;
   if (verdict) return step({ name: 'settled', data: { ...d, head, verdict }, timer: null });
-  return startRun({ name: 'settled', data: { ...d, head } }, trigger, ctx);
+  return startRun({ name: 'settled', data: { ...d, head } }, owed ? 'manual-recheck' : trigger, ctx);
 }
 
 // Where an adopted row stands, without starting anything (an operation's
@@ -491,7 +531,13 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
     to: (s, e, f, ctx) => {
       const live: Live = restarts(s) ? { name: 'idle', data: adopt(e, f, priorOf(s)) } : s;
-      const carried = carry(restarts(s) ? fromRowVerdict(live.data, f) : s, e.payload);
+      // A green verdict is not carried from, or to, a head a person asked to
+      // have checked again (services/unit-suite-reuse.js): the merged head
+      // is checked, and the request stays owed until its suite runs.
+      const owedCarry = !!f.session!.unitFreshSha
+        && (f.session!.unitFreshSha === e.payload.carryFrom || f.session!.unitFreshSha === e.payload.head);
+      const carried = e.payload.carryFrom && owedCarry ? null
+        : carry(restarts(s) ? fromRowVerdict(live.data, f) : s, e.payload);
       if (carried) return carried;
       if (restarts(s)) return fromRow(live.data, f, e.payload.head, e.payload.trigger, ctx, deps);
       return begin(s, e.payload.head, e.payload.trigger, ctx, deps);
@@ -508,18 +554,19 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       if (e.payload.reason === 'deploy' && (f.session!.isHeadless || !['active', 'promoted'].includes(f.session!.status))) {
         return reject('not_deployable');
       }
-      if (e.payload.reason === 'ensure' && !restarts(s)
+      if (e.payload.reason !== 'deploy' && !restarts(s)
           && s.data.serving?.head === e.payload.head && s.data.head === e.payload.head) return reject('already_serving');
       return ok();
     },
     to: (s, e, f, ctx) => {
       const trigger = 'manual-recheck';
+      const only = e.payload.reason === 'preview';
       if (restarts(s)) {
         const d = adopt(e, f, priorOf(s));
         if (e.payload.reason === 'ensure') return fromRow(d, f, e.payload.head, trigger, ctx, deps);
-        return begin({ name: 'idle', data: d }, e.payload.head, trigger, ctx, deps);
+        return begin({ name: 'idle', data: d }, e.payload.head, trigger, ctx, deps, only);
       }
-      return begin(s, e.payload.head, trigger, ctx, deps);
+      return begin(s, e.payload.head, trigger, ctx, deps, only);
     },
   };
 
@@ -545,6 +592,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
         writes: [{ type: 'skipped', ...base, reason: e.payload.reason, expected: f.session!.checks.commitSha }],
         work: [followUps(d, run, 'skipped')],
         push: [checksReady(d, ctx, e.payload.head, 'skipped')],
+        messages: [toShots(d, 'HeadReady', { head: e.payload.head })],
         timer: null,
       });
     },
@@ -563,27 +611,68 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
   };
 
+  // The head a person's recheck is for: the row's pin when it has one (a
+  // promoted proposal's reviewed head, an imported or CLI proposal's
+  // submitted head), read under the row's lock, else the head held (a
+  // native proposal being worked on: the newest wins). A request recorded
+  // for that head (services/unit-suite-reuse.js) is never moved onto an
+  // older one, and is answered by a run of that head.
+  const requestedHead = (s: Live, f: Facts): string | null => f.session?.pin ?? s.data.head ?? null;
+
   const recheck: Entry = {
-    guard: (s) => (s.data.head ? ok() : reject('no_head')),
+    guard: (s) => (s.data.previewOnly ? reject('preview_only') : s.data.head ? ok() : reject('no_head')),
     to: (s, e, f, ctx) => {
       const trigger = recheckTrigger(e.payload.reason, e.payload.trigger);
       const d: Data = s.data;
+      // A person's: of the head they asked about, which may be newer than
+      // the one held.
+      const head = trigger === 'manual-recheck' ? requestedHead(s, f) ?? d.head! : d.head!;
       // Nothing serves the head: build it.
-      if (!d.serving || d.serving.head !== d.head) return begin(s, d.head!, trigger, ctx, deps);
+      if (head !== d.head || !d.serving || d.serving.head !== d.head) return begin(s, head, trigger, ctx, deps);
       return startRun(s, trigger, ctx);
     },
+  };
+
+  // A person's recheck ("Run checks again", trigger 'manual-recheck') that
+  // comes during a build or run (services/unit-suite-reuse.js). When that
+  // build or run is of the head they asked about (requestedHead), it joins
+  // it, and is recorded here, under the row's lock, as owed a unit suite
+  // that really runs on that head: the run's verdict is then refused if it
+  // copied a pass, and their own run follows. When it is of an older head
+  // (the proposal's pin has moved on), it is obsolete: the requested head is
+  // built and checked instead, as theirs, and the older run neither moves
+  // nor answers their request. Any other recheck that would join is refused
+  // as before.
+  const manualJoin = (e: Event<any>) => recheckTrigger(e.payload.reason, e.payload.trigger) === 'manual-recheck';
+  const joinOwed = (s: Live, f: Facts, ctx: TransitionContext): Outcome<PState> => {
+    const going = s.name === 'checking' ? s.data.run!.head : s.data.preparing!.head;
+    const wanted = f.session?.pin ?? going;
+    if (wanted !== going) return begin(s, wanted, 'manual-recheck', ctx, deps);
+    return step({ name: s.name, data: s.data, writes: [{ type: 'owed', sessionId: s.data.sessionId, head: going }] });
+  };
+  const joining: Entry = {
+    guard: (s, e) => (manualJoin(e) ? ok() : reject('run_outstanding')),
+    to: (s, e, f, ctx) => joinOwed(s, f, ctx),
   };
 
   // During a run, a recheck whose inputs changed (the proposal's capture
   // routes or its shots: staging-recovery's REPLACING_RECHECK_REASONS)
   // replaces it, since the run going answers the old question; any other
-  // recheck joins it. (A build in progress runs its checks with what the row
-  // says once it is up, so it needs nothing.)
+  // recheck joins it (a person's is recorded on the run's head: joining
+  // above). (A build in progress runs its checks with what the row says once
+  // it is up, so it needs nothing more.)
   const replacing: Entry = {
-    guard: (s, e) => (REPLACING_REASONS.has(e.payload.reason) ? ok() : reject('run_outstanding')),
+    guard: (s, e) => (REPLACING_REASONS.has(e.payload.reason) || manualJoin(e) ? ok() : reject('run_outstanding')),
     to: (s, e, f, ctx) => {
+      if (!REPLACING_REASONS.has(e.payload.reason)) return joinOwed(s, f, ctx);
+      const trigger = recheckTrigger(e.payload.reason, e.payload.trigger);
+      // A person's (a same-commit resubmission is one): of the head the
+      // proposal is pinned to. A run of an older head is not replaced by
+      // another run of it; the pinned head is built and checked as theirs.
+      const wanted = trigger === 'manual-recheck' ? f.session?.pin ?? s.data.run!.head : s.data.run!.head;
+      if (wanted !== s.data.run!.head) return begin(s, wanted, 'manual-recheck', ctx, deps);
       const old = obsolete(s.data, ctx, deps);
-      const o = startRun({ name: s.name, data: { ...s.data, run: null } }, recheckTrigger(e.payload.reason, e.payload.trigger), ctx,
+      const o = startRun({ name: s.name, data: { ...s.data, run: null } }, trigger, ctx,
         { work: old.work });
       return { ...o, cancel: old.cancel };
     },
@@ -609,18 +698,36 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
   };
   const adminRetire: Entry = { to: (s, e, f, ctx) => toRetiring(s, 'admin', true, ctx, deps) };
 
-  const detach: Entry = {
-    to: (s: Live) => {
-      const d = s.data;
-      const cancel: WorkRef[] = [
-        ...(d.preparing ? [{ kind: WORK.prepare, key: prepareKey(d.preparing.n) }] : []),
-        ...(d.run ? [{ kind: WORK.run, key: d.run.key }] : []),
-        ...d.retiring.map((a) => ({ kind: WORK.retireAttempt, key: a.key })),
-        ...(d.exit ? [{ kind: WORK.retire, key: d.exit.key }] : []),
-      ];
-      return step({ name: 'detached', data: { ...d, preparing: null, run: null, retiring: [], exit: null, pending: null,
-        operations: [] }, cancel, timer: null });
+  // A session the machine does not hold yet (or no longer: retired, or
+  // handed back before its old paths were deleted), asked to retire its
+  // preview or clear its verdict: adopted from its row, then the same as for
+  // one it holds. Nothing else tears a preview down or clears a verdict.
+  const adopting = (e: Event<any>, f: Facts, ctx: TransitionContext): Check => {
+    if (e.payload.sessionId == null) return reject('no_instance');
+    if (ctx.key !== sessionKey(e.payload.sessionId)) return reject('key_mismatch');
+    return f.session && f.app ? ok() : reject('no_session');
+  };
+  const retireAdopting: Entry = {
+    guard: (s, e, f, ctx) => {
+      const c = adopting(e, f, ctx);
+      if (c !== true || e.payload.terminal) return c;
+      if (['promoted', 'merging'].includes(f.session!.status)) return reject('under_review');
+      const x = f.session!;
+      return x.turnRunning || x.localTurnRunning || x.shotsRunning ? reject('worked_on') : ok();
     },
+    to: (s, e, f, ctx) => {
+      const d = adopt(e, f, priorOf(s));
+      if (d.serving) return toRetiring({ name: 'idle', data: d }, e.payload.reason, e.payload.terminal, ctx, deps);
+      // Nothing it can name serves: whatever the row still points at goes.
+      return step({ name: e.payload.terminal ? 'retired' : 'idle',
+        data: { ...d, ...(e.payload.terminal ? { closedAt: ctx.now.toISOString() } : {}) },
+        writes: [{ type: 'unpublished', sessionId: d.sessionId }], timer: null,
+        messages: e.payload.terminal ? [toShots(d, 'Closed', { reason: e.payload.reason })] : [] });
+    },
+  };
+  const clearAdopting: Entry = {
+    guard: (s, e, f, ctx) => adopting(e, f, ctx),
+    to: (s, e, f, ctx) => (cleared.to as any)(standing(adopt(e, f, priorOf(s)), f), e, f, ctx),
   };
 
   const retryDue: Entry = {
@@ -633,8 +740,12 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     to: (s, e, f, ctx) => {
       if (s.name === 'retiring') return toRetiring(s, s.data.exit.reason, s.data.exit.terminal, ctx, deps, s.data.exit.attempts || []);
       if (!s.data.head) return step({ name: s.name, data: s.data });
-      return s.name === 'failed' || !s.data.serving || s.data.serving.head !== s.data.head
-        ? begin(s, s.data.head, 'manual-recheck', ctx, deps)
+      // A person's retry ('manual-recheck'): of the head the proposal is
+      // pinned to (services/unit-suite-reuse.js), which may be newer than the
+      // one held.
+      const head = requestedHead(s, f) ?? s.data.head;
+      return head !== s.data.head || s.name === 'failed' || !s.data.serving || s.data.serving.head !== s.data.head
+        ? begin(s, head, 'manual-recheck', ctx, deps)
         : startRun(s, 'manual-recheck', ctx);
     },
   };
@@ -687,6 +798,8 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       PreviewRequested: request,
       ChecksSkipped: skipped,
       OperationStarted: opStarted,
+      RetireRequested: retireAdopting,
+      ChecksCleared: clearAdopting,
     },
     idle: {
       ...created, ...ops,
@@ -696,19 +809,19 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ChecksCleared: cleared,
       PreviewLost: notHere('not_serving'),
       RetireRequested: { guard: (s, e) => (e.payload.terminal ? ok() : reject('already_idle')), to: retire.to },
-      Detach: detach, AdminRetry: adminRetry, AdminRetire: adminRetire, AdminEnd: notHere('nothing_running'),
+      AdminRetry: adminRetry, AdminRetire: adminRetire, AdminEnd: notHere('nothing_running'),
       RetryDue: notHere('not_waiting'),
       ...works('idle'),
     },
     preparing: {
       ...created, ...ops,
       ChecksSkipped: notHere('in_progress'),
-      RecheckRequested: notHere('run_outstanding'),
+      RecheckRequested: joining,
       ConflictResolved: notHere('not_deferred'),
       ChecksCleared: cleared,
       PreviewLost: notHere('preparing'),
       RetireRequested: retire,
-      Detach: detach, AdminRetry: notHere('in_progress'), AdminRetire: adminRetire, AdminEnd: adminEnd,
+      AdminRetry: notHere('in_progress'), AdminRetire: adminRetire, AdminEnd: adminEnd,
       RetryDue: notHere('not_waiting'),
       ...works('preparing'),
     },
@@ -720,7 +833,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ChecksCleared: cleared,
       PreviewLost: lost,
       RetireRequested: retire,
-      Detach: detach, AdminRetry: notHere('in_progress'), AdminRetire: adminRetire, AdminEnd: adminEnd,
+      AdminRetry: notHere('in_progress'), AdminRetire: adminRetire, AdminEnd: adminEnd,
       RetryDue: notHere('not_waiting'),
       ...works('checking'),
     },
@@ -735,7 +848,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ChecksCleared: cleared,
       PreviewLost: lost,
       RetireRequested: retire,
-      Detach: detach, AdminRetry: adminRetry, AdminRetire: adminRetire, AdminEnd: notHere('nothing_running'),
+      AdminRetry: adminRetry, AdminRetire: adminRetire, AdminEnd: notHere('nothing_running'),
       RetryDue: notHere('not_waiting'),
       ...works('deferred'),
     },
@@ -747,7 +860,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ChecksCleared: cleared,
       PreviewLost: lost,
       RetireRequested: retire,
-      Detach: detach, AdminRetry: adminRetry, AdminRetire: adminRetire, AdminEnd: notHere('nothing_running'),
+      AdminRetry: adminRetry, AdminRetire: adminRetire, AdminEnd: notHere('nothing_running'),
       RetryDue: { guard: (s, e, f) => (s.data.verdict !== 'error' ? reject('not_error') : (retryDue.guard as any)(s, e, f)), to: retryDue.to },
       ...works('settled'),
     },
@@ -759,7 +872,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ChecksCleared: cleared,
       PreviewLost: lost,
       RetireRequested: retire,
-      Detach: detach, AdminRetry: adminRetry, AdminRetire: adminRetire, AdminEnd: notHere('nothing_running'),
+      AdminRetry: adminRetry, AdminRetire: adminRetire, AdminEnd: notHere('nothing_running'),
       RetryDue: retryDue,
       ...works('failed'),
     },
@@ -782,9 +895,9 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       PreviewLost: notHere('retiring'),
       RetireRequested: {
         guard: (s, e) => (e.payload.terminal && !s.data.exit.terminal ? ok() : reject('already_retiring')),
-        to: (s, e) => step({ name: 'retiring', data: { ...s.data, exit: { ...s.data.exit, reason: e.payload.reason, terminal: true }, pending: null } }),
+        to: (s, e) => step({ name: 'retiring', data: { ...s.data, exit: { ...s.data.exit, reason: e.payload.reason, terminal: true }, pending: null },
+          messages: [toShots(s.data, 'Closed', { reason: e.payload.reason })] }),
       },
-      Detach: detach,
       AdminRetry: { guard: (s) => (s.data.exit.failed ? ok() : reject('in_progress')), to: adminRetry.to },
       AdminRetire: notHere('already_retiring'),
       AdminEnd: notHere('retiring'),
@@ -795,23 +908,18 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       '*': notHere('retired'),
       ...created, ...ops,
       ChecksSkipped: skipped,
+      ChecksCleared: clearAdopting,
       ...works('retired'),
     },
+    // Handed back before the old paths were deleted (no Detach any more): an
+    // instance in it starts again from its row, like a retired one.
     detached: {
+      '*': notHere('detached'),
       ...created,
       ChecksSkipped: skipped,
       OperationStarted: opStarted,
-      OperationEnded: notHere('detached'),
-      RecheckRequested: notHere('detached'),
-      ConflictResolved: notHere('detached'),
-      ChecksCleared: notHere('detached'),
-      PreviewLost: notHere('detached'),
-      RetireRequested: notHere('detached'),
-      Detach: notHere('detached'),
-      AdminRetry: notHere('detached'),
-      AdminRetire: notHere('detached'),
-      AdminEnd: notHere('detached'),
-      RetryDue: notHere('detached'),
+      RetireRequested: retireAdopting,
+      ChecksCleared: clearAdopting,
       ...works('detached'),
     },
   };
@@ -836,6 +944,7 @@ function toRetiring(s: Live, reason: string, terminal: boolean, ctx: TransitionC
     exit: { reason, terminal, key, attempts: [...attempts.values()] }, pending: null };
   return step({
     name: 'retiring', data: d,
+    messages: terminal ? [toShots(d, 'Closed', { reason })] : [],
     cancel: [...old.cancel, ...d0.retiring.map((a) => ({ kind: WORK.retireAttempt, key: a.key }))],
     writes: [{ type: 'unpublished', sessionId: d.sessionId }],
     work: [...old.work.filter((w) => w.kind !== WORK.retireAttempt), { kind: WORK.retire, key, input: {
@@ -870,6 +979,14 @@ export interface RunResult {
   capture?: { state: string; detail: Json } | null;
   visuals?: Json;               // the run's media, grouped as getForSession groups it (null: none)
   reason?: string;              // blocked
+  // The repo unit suite (services/unit-suite-reuse.js): confirmed not to
+  // apply to the head; the check key a copied pass earns the proposal; the
+  // check key of a suite that ran and passed, whose recorded pass may be
+  // copied once its history row is written with the verdict.
+  unitSuiteAbsent?: boolean;
+  unitEarned?: string | null;
+  unitObserved?: string | null;
+  uiUndeclared?: string | null; // a head whose change touches the UI and declares no visible changes
 }
 
 function workResult(name: Name, outcome: 'succeeded' | 'failed' | 'exhausted', deps: Deps): Entry {
@@ -889,7 +1006,12 @@ function workResult(name: Name, outcome: 'succeeded' | 'failed' | 'exhausted', d
       // Everything else only has to happen; a retired attempt leaves the list.
       const d = s.data;
       const retiring = p.kind === WORK.retireAttempt ? d.retiring.filter((a) => a.key !== p.workKey) : d.retiring;
-      return step({ name, data: { ...d, retiring } });
+      // An item an older release queued, before the shots machine was told
+      // by message: its handler hands its head over (services.ts).
+      const r = (outcome === 'succeeded' ? p.result : null) as { handOff?: string; stopped?: string | null } | null;
+      const messages = r?.handOff ? [toShots(d, 'HeadReady', { head: r.handOff })]
+        : r && 'stopped' in r ? [toShots(d, 'PreviewStopped', { head: r.stopped ?? null })] : [];
+      return step({ name, data: { ...d, retiring }, messages });
     },
   };
 }
@@ -912,24 +1034,32 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
     const previous = d0.serving && d0.serving.n !== served.n ? d0.serving : null;
     const gone = previous ? retire(d0, previous, ctx, deps) : null;
     const d: Data = { ...d0, preparing: null, serving: served, retiring: gone ? [...d0.retiring, gone.entry] : d0.retiring };
-    const testing = f.session?.testing ?? { md: null, path: null };
-    return startRun({ name: 'preparing', data: d }, d0.trigger, ctx, {
-      writes: [{ type: 'published', sessionId: d.sessionId, served: served as unknown as Json }],
-      work: [
-        ...(gone ? [gone.work] : []),
-        ...(leftovers.length ? [{ kind: WORK.dropClaims, key: `drop-claims:${served.n}`,
-          input: { sessionId: d.sessionId, dbs: leftovers } }] : []),
-        { kind: WORK.ready, key: `ready:${served.n}`, input: { sessionId: d.sessionId, head: served.head } },
-      ],
-      push: [
-        sessionEvent(route(d), 'staging_ready', seq(ctx, 3),
-          { url: served.url, testingMd: testing.md, testingPath: testing.path }),
-        sessionUpdate({ action: 'staging_ready', sessionId: d.sessionId, appId: d.appId, appSlug: d.appSlug }),
-      ],
-    });
+    const dropped = leftovers.length ? [{ kind: WORK.dropClaims, key: `drop-claims:${served.n}`,
+      input: { sessionId: d.sessionId, dbs: leftovers } }] : [];
+    const up = [
+      sessionEvent(route(d), 'staging_ready', seq(ctx, 3),
+        { url: served.url, testingMd: f.session?.testing?.md ?? null, testingPath: f.session?.testing?.path ?? null }),
+      sessionUpdate({ action: 'staging_ready', sessionId: d.sessionId, appId: d.appId, appSlug: d.appSlug }),
+    ];
+    // A preview with no checks serves, and that is all.
+    if (attempt.previewOnly) {
+      return step({
+        name: 'settled', data: { ...d, verdict: null },
+        writes: [{ type: 'published', sessionId: d.sessionId, served: served as unknown as Json }],
+        work: [...(gone ? [gone.work] : []), ...dropped],
+        push: up,
+        timer: null,
+      });
+    }
+    return told(startRun({ name: 'preparing', data: d }, d0.trigger, ctx, {
+      writes: [{ type: 'published', sessionId: d.sessionId, appId: d.appId, served: served as unknown as Json, note: true }],
+      work: [...(gone ? [gone.work] : []), ...dropped],
+      push: up,
+    }), toShots(d, 'HeadReady', { head: served.head }));
   }
   // The attempt failed: what serves keeps serving (on Docker it was
-  // removed first). The attempt's own resources are retired.
+  // removed first). The attempt's own resources are retired, and its early
+  // unit suite stops (nothing will read it).
   const ended = outcome === 'ended';
   const detail = ended ? 'An admin ended the build'
     : r?.detail || e.payload.error?.message || 'The preview could not be prepared';
@@ -944,6 +1074,18 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
   const failedAttempt = retire(d0, attempt, ctx, deps, ended);
   const removed = servingRemoved && d0.serving ? retire(d0, d0.serving, ctx, deps) : null;
   d.retiring = [...d0.retiring, failedAttempt.entry, ...(removed ? [removed.entry] : [])];
+  // A preview with no checks: no verdict to store, no author to tell, no
+  // retry of its own (whoever asked for it reads the failure).
+  if (attempt.previewOnly) {
+    return step({
+      name: 'failed', data: { ...d, verdict: null, platformFault: false, streak: 0, firstFailureAt: null },
+      cancel: [...(ended ? [{ kind: WORK.prepare, key: prepareKey(attempt.n) }] : []), earlyOf(attempt)],
+      writes: servingRemoved && d0.serving ? [{ type: 'unpublished', sessionId: d.sessionId }] : [],
+      work: [failedAttempt.work, ...(removed ? [removed.work] : [])],
+      push: [sessionEvent(route(d), 'staging_failed', seq(ctx, 3), { error: detail, errorName: 'PreviewFailed', missingKeys: [] })],
+      timer: null,
+    });
+  }
   const writes: DomainWrite[] = [{
     type: 'prepareFailed', eventId: e.id, sessionId: d.sessionId, appId: d.appId, userId: d.userId, head: attempt.head,
     detail, infrastructure, platformFault: !!r?.platformFault, aboutMain: r?.aboutMain ?? null, sync: !!r?.sync,
@@ -951,11 +1093,16 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
   }];
   if (servingRemoved && d0.serving) writes.push({ type: 'unpublished', sessionId: d.sessionId });
   const work: WorkRequest[] = [failedAttempt.work, ...(removed ? [removed.work] : [])];
-  if (streakBefore === 0) work.push({ kind: WORK.stopped, key: `stopped:${attempt.n}`, input: { sessionId: d.sessionId } });
+  const messages: MessageRequest[] = [];
+  if (streakBefore === 0) {
+    work.push({ kind: WORK.stopped, key: `stopped:${attempt.n}`,
+      input: { sessionId: d.sessionId, imported: f.session?.source === 'imported', shotsTold: true } });
+    if (f.session?.source === 'imported') messages.push(toShots(d, 'PreviewStopped', { head: attempt.head }));
+  }
   return step({
     name: 'failed', data: d,
-    cancel: ended ? [{ kind: WORK.prepare, key: prepareKey(attempt.n) }] : undefined,
-    writes, work,
+    cancel: [...(ended ? [{ kind: WORK.prepare, key: prepareKey(attempt.n) }] : []), earlyOf(attempt)],
+    writes, work, messages,
     push: [
       checksReady(d, ctx, attempt.head, 'error'),
       sessionEvent(route(d), 'staging_failed', seq(ctx, 3),
@@ -983,6 +1130,7 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
         followUps(d, run, 'pending', true),
       ],
       push: [checksPending(d, ctx, run.head, 'deferred', d0.trigger), ...visualsReady],
+      messages: [toShots(d, 'HeadReady', { head: run.head }), ...undeclared(d, r)],
       timer: null,
     });
   }
@@ -1007,16 +1155,42 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
     firstFailureAt: state === 'error' ? (d0.firstFailureAt ?? ctx.now.toISOString()) : null,
   };
   const results = blocked ? [] : ((r!.results ?? []) as unknown[]);
+  const unitSuiteAbsent = !blocked && r!.unitSuiteAbsent === true;
+  // A person asked for this head's checks again and is owed a run whose repo
+  // unit suite really runs (services/unit-suite-reuse.js): a verdict that
+  // does not answer them is not stored (check-store's fence: the same rule,
+  // read from the same row under the same lock). A run that was not theirs
+  // (started before the request came, which then joined it: its unit suite
+  // copied from an earlier pass, or its settlement not told the suite was
+  // owed) is followed at once by the run they asked for, a run of its own.
+  // Their own run, refused (the request could not be read when it settled),
+  // is left pending for the stale sweep, whose scope covers an owed head,
+  // rather than run again and again here.
+  const owed = !!f.session && f.session.unitFreshSha === run.head;
+  const answer = store.unitAnswer({ state, results, unitSuiteAbsent });
+  const refused = owed && (state === 'error' ? answer.reused : answer.unanswered);
   // The settlement is stored only while the row is open and its checks are
   // about this run's head (check-store's fence); a verdict nobody stores sets
   // nothing off.
-  const stores = !!f.session && OPEN.has(f.session.status) && f.session.checks.commitSha === run.head;
+  const stores = !refused && !!f.session && OPEN.has(f.session.status) && f.session.checks.commitSha === run.head;
+  const recorded = state !== 'error' && !blocked;
   const settle = {
     type: 'settled', ...base, state, detail, platformFault,
     results: results as Json, console: blocked ? null : (r!.console ?? null),
     history: state === 'error' || blocked ? [] : (r!.history ?? []), capture: blocked ? null : (r!.capture ?? null),
     media: !blocked && !!visuals,
+    ...(unitSuiteAbsent ? { unitSuiteAbsent: true } : {}),
+    ...(recorded && r!.unitEarned ? { unitEarned: r!.unitEarned } : {}),
+    ...(recorded && r!.unitObserved ? { unitObserved: r!.unitObserved } : {}),
   };
+  if (refused && d0.trigger !== 'manual-recheck' && d0.serving && d0.serving.head === run.head) {
+    return startRun({ name: 'checking', data: { ...d0, run: null } }, 'manual-recheck', ctx, { writes: [settle] });
+  }
+  if (refused) {
+    return step({
+      name: 'settled', data: { ...d0, run: null, verdict: null }, writes: [settle], timer: null,
+    });
+  }
   return step({
     name: 'settled', data: d,
     cancel: ended ? [{ kind: WORK.run, key: run.key }] : undefined,
@@ -1029,9 +1203,15 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
       ] : []),
     ],
     push: stores ? [checksReady(d, ctx, run.head, state, results), ...visualsReady] : [],
+    messages: [...(stores ? [toShots(d, 'HeadReady', { head: run.head })] : []), ...undeclared(d, r)],
     timer: state === 'error' ? errorTimer(d, f, deps, ctx, streakBefore) : null,
   });
 }
+
+// A run that found a UI change with no declaration of visible changes
+// (visuals.captureForSession) tells the shots machine, whose slot says so.
+const undeclared = (d: Data, r: RunResult | null): MessageRequest[] =>
+  (r?.uiUndeclared ? [toShots(d, 'UiUndeclared', { head: r.uiUndeclared })] : []);
 
 function retired(s: Live, e: Event<WorkResultPayload>, outcome: string, ctx: TransitionContext, deps: Deps): Outcome<PState> {
   const d0 = s.data;
@@ -1054,13 +1234,28 @@ export function preview(deps: Deps): Machine<PState, Facts> {
   const produced = (e: Event<any>): Check => (PRODUCERS.has(e.source.kind) ? ok() : reject('not_a_producer'));
   const system = (e: Event<any>): Check => (e.source.kind === 'system' || e.source.kind === 'message' ? ok() : reject('internal_only'));
   const admin = (e: Event<any>): Check => (e.source.kind === 'admin' ? ok() : reject('admin_only'));
-  const timer = (e: Event<any>): Check => (e.source.kind === 'timer' ? ok() : reject('timer_only'));
+  // RetryDue: the error lane's own timer, or a release (platform.ts
+  // retryPlatformFaults): a boot is when a fix to the platform's own fault
+  // most often arrives, so it does not wait for the scheduled retry.
+  const retry = (e: Event<any>): Check => (e.source.kind === 'timer' || e.source.kind === 'system' ? ok() : reject('timer_only'));
 
   return defineMachine<PState, Facts>({
     name: MACHINE,
-    version: 1,
+    // 2: the old preview paths are deleted. A retire or a clear adopts a
+    // session from its row (create events), a preview-only request (the App
+    // bench), a release retries the platform's faults (RetryDue from the
+    // system), no Detach. 3: the shots machine is told by message (a head
+    // ready, a preview that will not start, a UI change undeclared, the
+    // proposal closed) instead of starting shots itself. 4: a person's
+    // request for a fresh unit suite (services/unit-suite-reuse.js) is read
+    // with the facts and decides a run's settlement (refused, or followed by
+    // their own run; the earned gate and the observed pass written with it):
+    // a version-3 runtime would store a copied pass for an owed head. An
+    // older Pod leaves the instances this version wrote alone during the
+    // rollout; this version takes over the ones an older one wrote.
+    version: 4,
     events: EVENTS,
-    create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted'],
+    create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted', 'RetireRequested', 'ChecksCleared'],
     terminal: ['retired'],
     decode: (row) => ({ name: row.state, data: row.data } as PState),
     facts: (tx, state, event) => {
@@ -1082,11 +1277,10 @@ export function preview(deps: Deps): Machine<PState, Facts> {
       RetireRequested: system,
       OperationStarted: system,
       OperationEnded: system,
-      Detach: system,
       AdminRetry: admin,
       AdminRetire: admin,
       AdminEnd: admin,
-      RetryDue: timer,
+      RetryDue: retry,
     },
     transitions: transitions(deps) as any,
     writes: WRITES,
@@ -1104,17 +1298,83 @@ export function preview(deps: Deps): Machine<PState, Facts> {
 
 // ── Domain writes ───────────────────────────────────────────────────────
 
+// What a note about a proposal names it by.
+async function proposalOf(tx: Tx, sessionId: number) {
+  const { rows: [row] } = await tx.query('SELECT source, pr_number, pr_title FROM chat_sessions WHERE id = $1', [sessionId]);
+  return row || null;
+}
+const prLabel = (row: { pr_number: number | null; pr_title: string | null }) =>
+  (row.pr_title ? `PR #${row.pr_number}: ${row.pr_title}` : `PR #${row.pr_number}`);
+
+// A system line in a proposal's discussion thread, pushed to the app's room.
+async function threadNote(tx: Tx, ctx: any, appId: number, sessionId: number, body: string, metadata: Json) {
+  const { rows: [row] } = await tx.query(
+    `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
+     VALUES ($1, $2, 'system', $3, 'session', $4)
+     RETURNING id, app_id, content, msg_type, metadata, thread_type, thread_ref, created_at`,
+    [appId, body, JSON.stringify(metadata), sessionId]);
+  ctx.push(chatLine(row));
+}
+
+// Whether the dev chat's last line about the preview is a build still
+// running (the card a turn posts), with nothing after it that ended it.
+async function buildCardOpen(tx: Tx, sessionId: number): Promise<boolean> {
+  const { rows: [last] } = await tx.query(
+    `SELECT metadata->>'stagingBuild' AS build FROM chat_session_messages
+      WHERE session_id = $1 AND role = 'system'
+        AND (metadata ? 'stagingBuild' OR metadata ? 'stagingUrl' OR metadata ? 'stagingFailed')
+      ORDER BY id DESC LIMIT 1`, [sessionId]);
+  return last?.build === 'running';
+}
+
 const WRITES = {
   // checks_commit_sha, 'pending', the phase and the trigger.
   pending: (tx: Tx, w: any) => store.setChecksPending(tx, w.sessionId, w.head, w.phase, w.trigger),
 
-  // The prepare's receipt, in one statement.
-  published: (tx: Tx, w: any) => tx.query(
-    `UPDATE chat_sessions SET staging_url = $2, staging_container_id = $3, staging_image_ref = $4, staging_build_ref = $5,
-            staging_runtime_kind = $6, staging_runtime_name = $7, staging_commit_sha = $8
-      WHERE id = $1`,
-    [w.sessionId, w.served.url, w.served.containerId, w.served.imageRef, w.served.buildRef,
-      w.served.runtimeKind, w.served.runtimeName, w.served.head]),
+  // An imported proposal's thread hears that its preview is being built
+  // (#866: it has no dev chat). Once per head: a rebuild of the same head
+  // after a failure says nothing new.
+  async buildStarted(tx: Tx, w: any, ctx: any) {
+    const row = await proposalOf(tx, w.sessionId);
+    if (row?.source !== 'imported') return;
+    const { rows: [last] } = await tx.query(
+      `SELECT metadata->>'stagingBuild' AS build, metadata->>'headSha' AS head FROM chat_messages
+        WHERE thread_type = 'session' AND thread_ref = $1 AND metadata ? 'stagingBuild'
+        ORDER BY id DESC LIMIT 1`, [w.sessionId]);
+    if (last?.build === 'started' && last.head === w.head) return;
+    await threadNote(tx, ctx, w.appId, w.sessionId,
+      `A staging preview for ${prLabel(row)} is being built. This usually takes a few minutes. `
+        + 'The automated checks run against it, and a Preview button appears on this proposal when it\'s ready.',
+      { stagingBuild: 'started', headSha: w.head, prNumber: row.pr_number ?? null });
+  },
+
+  // The prepare's receipt, in one statement; then, for a proposal (not a
+  // preview with no checks), the line that says it is up: the dev chat's
+  // "Staging deployed!" (what a tab that watched it build already shows, and
+  // what closes a "Building staging preview..." card on a reload), or an
+  // imported proposal's thread note.
+  async published(tx: Tx, w: any, ctx: any) {
+    await tx.query(
+      `UPDATE chat_sessions SET staging_url = $2, staging_container_id = $3, staging_image_ref = $4, staging_build_ref = $5,
+              staging_runtime_kind = $6, staging_runtime_name = $7, staging_commit_sha = $8
+        WHERE id = $1`,
+      [w.sessionId, w.served.url, w.served.containerId, w.served.imageRef, w.served.buildRef,
+        w.served.runtimeKind, w.served.runtimeName, w.served.head]);
+    if (!w.note) return;
+    const row = await proposalOf(tx, w.sessionId);
+    if (!row) return;
+    if (row.source === 'imported') {
+      // The URL rides in metadata: the Preview button is the way in.
+      await threadNote(tx, ctx, w.appId, w.sessionId,
+        `The staging preview for ${prLabel(row)} is ready. Use the Preview button on this proposal to try the change. `
+          + 'Automated checks are running against it now.',
+        { stagingBuild: 'ready', headSha: w.served.head, stagingUrl: w.served.url, prNumber: row.pr_number ?? null });
+      return;
+    }
+    await tx.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', 'Staging deployed!', $2)`,
+      [w.sessionId, JSON.stringify({ stagingUrl: w.served.url, prNumber: row.pr_number ?? null })]);
+  },
 
   async unpublished(tx: Tx, w: any) {
     await tx.query(
@@ -1128,6 +1388,13 @@ const WRITES = {
   // (check_error_notified_at), unless the cause is infrastructure, the
   // author's thread line and notification.
   async prepareFailed(tx: Tx, w: any, ctx: any) {
+    // A "Building staging preview..." card a turn left open in the dev chat
+    // is closed by its outcome, every time (the note below is once a streak).
+    if (w.source !== 'imported' && await buildCardOpen(tx, w.sessionId)) {
+      await tx.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', 'Staging build failed', $2)`,
+        [w.sessionId, JSON.stringify({ stagingFailed: true, error: w.detail, changesReady: true, prNumber: w.prNumber ?? null })]);
+    }
     const stored = await store.storeChecks(tx, w.sessionId, w.head,
       { state: 'error', results: [], ...(w.platformFault ? { platformFault: true } : {}) }, w.detail);
     if (!stored || w.infrastructure) return;
@@ -1164,15 +1431,36 @@ const WRITES = {
   // row has since left.
   async settled(tx: Tx, w: any) {
     const stored = await store.storeChecks(tx, w.sessionId, w.head,
-      { state: w.state, results: w.results, ...(w.platformFault ? { platformFault: true } : {}) }, w.detail);
+      { state: w.state, results: w.results, ...(w.platformFault ? { platformFault: true } : {}),
+        ...(w.unitSuiteAbsent ? { unitSuiteAbsent: true } : {}) }, w.detail);
     if (!stored) { await dropMedia(tx, w.sessionId); return; }
     if (w.console) await store.storeConsoleCheck(tx, w.sessionId, w.console, w.head);
     if (w.capture) await store.storeCaptureOutcome(tx, w.sessionId, w.capture.state, w.capture.detail, w.head);
     if (w.media) await publishMedia(tx, w.sessionId, w.runId); else await dropMedia(tx, w.sessionId);
-    if (Array.isArray(w.history) && w.history.length) {
-      await store.recordRun(tx, w.appId, w.history, { sessionId: w.sessionId });
+    const history = Array.isArray(w.history) ? w.history : [];
+    if (history.length) {
+      await store.recordRun(tx, w.appId, history, { sessionId: w.sessionId });
+    }
+    // A unit suite copied from an earlier pass of the commit observed nothing
+    // new, so it moves no counts, but its proposal earns the gate that pass
+    // earns: a later head of it that fails the suite is blocked, as it would
+    // be had the suite run here (services/unit-suite-reuse.js).
+    if (w.unitEarned) await store.recordEarned(tx, w.appId, w.sessionId, [w.unitEarned]);
+    // A suite that ran and passed is in the app's history now, written above
+    // in this transaction (every row: no cap here): the pass its run
+    // recorded may be copied. Only when its passing row is among those.
+    if (w.unitObserved && history.some((h: any) => h && h.checkKey === w.unitObserved
+        && (Number.isInteger(h.passes) ? h.passes > 0 : !!h.passed))) {
+      await store.markUnitPassObserved(tx, { appId: w.appId, sessionId: w.sessionId, commitSha: w.head });
     }
   },
+
+  // A person's request for a fresh unit suite, joined to the build or run of
+  // `head` (services/unit-suite-reuse.js): the same column the
+  // 'manual-recheck' pending stamp sets.
+  owed: (tx: Tx, w: any) => tx.query(
+    `UPDATE chat_sessions SET unit_suite_fresh_sha = lower($2::text)
+      WHERE id = $1 AND status IN ('active', 'paused', 'promoted', 'merging')`, [w.sessionId, w.head]),
 
   // No verdict for the branch's code: what the CLI upload route cleared.
   cleared: (tx: Tx, w: any) => tx.query(

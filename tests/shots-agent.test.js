@@ -372,17 +372,13 @@ test('the worker runs a shots turn on its pinned model, and every other turn on 
   }
 });
 
-test('Kubernetes shots tools call the Pod that owns their in-memory run control', () => {
-  assert.equal(worker.shotsControlUrl({ podIp: '10.20.30.40', port: '3000', fallback: 'http://service:3000' }),
-    'http://10.20.30.40:3000');
-  assert.equal(worker.shotsControlUrl({ podIp: '2001:db8::7', port: '3000', fallback: 'http://service:3000' }),
-    'http://[2001:db8::7]:3000');
-  assert.equal(worker.shotsControlUrl({ podIp: 'not-an-ip', fallback: 'http://service:3000' }),
-    'http://service:3000');
+test('shots tools call the platform through its shared address: any web process answers them', () => {
+  // The run's control plane is in Postgres (services/shots-control.js), so
+  // a shots turn calls the same internal address as every other turn.
   const source = fs.readFileSync(require.resolve('../src/services/worker'), 'utf8');
-  const chart = fs.readFileSync(path.join(__dirname, '../deploy/helm/social-vibecoding-platform/templates/platform.yaml'), 'utf8');
-  assert.match(source, /PLATFORM_URL: mode === 'shots' \? shotsControlUrl\(\) : PLATFORM_INTERNAL_URL/);
-  assert.match(chart, /name: POD_IP\s+valueFrom: \{fieldRef: \{fieldPath: status\.podIP\}\}/);
+  assert.match(source, /PLATFORM_URL: PLATFORM_INTERNAL_URL,/);
+  assert.doesNotMatch(source, /shotsControlUrl/);
+  assert.equal(worker.shotsControlUrl, undefined);
 });
 
 test('the worker records clips only when the run needs them', async () => {

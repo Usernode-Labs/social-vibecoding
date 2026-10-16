@@ -676,3 +676,104 @@ test('no state of the card says "Visual change preview"', () => {
     }
   }
 });
+
+// #5063: the change page's side-by-side view crops both sides to the
+// screen's declared changes (the numbered outlines, with a margin), and a
+// crop wider than it is tall stacks the sides, before above after. The
+// proposal card has no side-by-side view, so it never crops.
+test('the change page\'s side-by-side view crops to the declared changes and stacks a wide crop', () => {
+  const value = shots({
+    screens: [{
+      viewport: 'desktop', shot: 'dialog', stories: ['dialog'],
+      width: 1000, heightBefore: 500, heightAfter: 500,
+      regions: [{ story: 'dialog', b: [100, 50, 200, 40], a: [100, 50, 250, 40], bMark: null, aMark: null }],
+    }],
+  });
+  const card = AppView.shotsHtml(value, { sessionId: 42 });
+  assert.doesNotMatch(card, /shots-crop|data-shots-stack/, 'the proposal card does not crop');
+  const thread = AppView.shotsHtml(value, { sessionId: 42, thread: true });
+  assert.match(thread, /<div class="shots-stage" data-shots-stack="1">/, 'the crop is wider than it is tall: before above after');
+  const styleOf = (which) => new RegExp(`<span class="shots-flip-side shots-flip-${which}" data-shots-crop="1" style="([^"]*)"`).exec(thread)[1];
+  // The crop is never below half the screen's width nor a fifth of it tall,
+  // so a small change keeps its surroundings; both sides read the same part.
+  for (const which of ['after', 'before']) {
+    assert.equal(styleOf(which),
+      '--shots-shape:1000 / 500;--shots-crop-shape:500 / 200;--shots-crop-x:0.000%;--shots-crop-y:0.000%;--shots-crop-w:200.000%;--shots-crop-h:250.000%',
+      `${which}: centred on the change, at the shared size`);
+  }
+  const after = /<span class="shots-flip-side shots-flip-after" data-shots-crop="1"[^>]*>([\s\S]*?)<\/span>\s*<span class="shots-flip-side shots-flip-before"/.exec(thread)[1];
+  assert.match(after, /<span class="shots-crop"><img /, 'the img and the outlines move together in a crop wrapper');
+  assert.match(after, /class="shots-box-n">1<\/span>/, 'the numbered outline is still there');
+  // The markup keeps --shots-shape first, so a repaint renders the same
+  // whole-screen fallback for screens without a crop.
+  assert.match(thread, /<div class="shots-stage" data-shots-stack="1">[\s\S]*?<span class="shots-flip-side shots-flip-after" data-shots-crop="1"/);
+});
+
+test('a crop taller than it is wide stays side by side, only zoomed in', () => {
+  const value = shots({
+    claims: [{ ...shots().claims[0], viewports: ['phone'] }],
+    artifacts: [
+      { id: id('3'), storyId: 'dialog', viewport: 'phone', side: 'base', variant: 'context', media: 'png', url: url('3') },
+      { id: id('4'), storyId: 'dialog', viewport: 'phone', side: 'head', variant: 'context', media: 'png', url: url('4') },
+    ],
+    screens: [{
+      viewport: 'phone', shot: 'dialog', stories: ['dialog'],
+      width: 390, heightBefore: 844, heightAfter: 844,
+      regions: [{ story: 'dialog', b: [0, 100, 390, 400], a: [0, 100, 390, 400], bMark: null, aMark: null }],
+    }],
+  });
+  const thread = AppView.shotsHtml(value, { sessionId: 42, thread: true });
+  assert.match(thread, /data-shots-crop="1"/);
+  assert.match(thread, /--shots-crop-shape:390 \/ 448;/);
+  assert.doesNotMatch(thread, /data-shots-stack/, 'a tall crop stays beside each other');
+  assert.match(thread, /<div class="shots-stage">/, 'the stage keeps its plain markup');
+});
+
+test('a screen with no declared outline, or a crop that covers it, keeps the whole-screen layout', () => {
+  const withRegions = (regions) => shots({
+    screens: [{
+      viewport: 'desktop', shot: 'dialog', stories: ['dialog'],
+      width: 1000, heightBefore: 500, heightAfter: 500, regions,
+    }],
+  });
+  const cases = [
+    ['no screens at all', shots()],
+    ['no regions', withRegions([])],
+    ['only differences no declared change accounts for',
+      withRegions([{ story: null, b: [0, 0, 1000, 20], a: [0, 0, 1000, 10], bMark: null, aMark: null }])],
+    ['a region that covers most of the screen',
+      withRegions([{ story: 'dialog', b: [0, 0, 1000, 400], a: [0, 0, 1000, 400], bMark: null, aMark: null }])],
+  ];
+  for (const [name, value] of cases) {
+    const thread = AppView.shotsHtml(value, { sessionId: 42, thread: true });
+    assert.doesNotMatch(thread, /shots-crop|data-shots-stack/, name);
+  }
+  // A first version's after-only shots have no before to crop.
+  const newApp = shots({
+    afterOnly: true,
+    artifacts: shots().artifacts.filter((artifact) => artifact.side !== 'base'),
+    screens: [{
+      viewport: 'desktop', shot: 'dialog', stories: ['dialog'],
+      width: 1000, heightBefore: 500, heightAfter: 500,
+      regions: [{ story: 'dialog', b: [100, 50, 200, 40], a: [100, 50, 250, 40], bMark: null, aMark: null }],
+    }],
+  });
+  assert.doesNotMatch(AppView.shotsHtml(newApp, { sessionId: 42, thread: true }), /shots-crop|data-shots-stack/, 'after only: no crop');
+});
+
+test('the crop is CSS: it applies while both sides show, stacked or beside each other', () => {
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
+  assert.match(css, /\.shots-crop \{ position: absolute; inset: 0; display: block; \}/,
+    'a cropped side shows the whole screen on a Before or After pick');
+  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage > \.shots-flip-side\[data-shots-crop\] \{ overflow: hidden; aspect-ratio: var\(--shots-crop-shape, 16 \/ 10\); width: min\(calc\(50cqw - 6px\), calc\(100cqh \* \(var\(--shots-crop-shape, 16 \/ 10\)\)\)\); \}/);
+  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-flip-side\[data-shots-crop\] > \.shots-crop \{ inset: auto; left: var\(--shots-crop-x, 0\); top: var\(--shots-crop-y, 0\); width: var\(--shots-crop-w, 100%\); height: auto; aspect-ratio: var\(--shots-shape, 16 \/ 10\); \}/);
+  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage\[data-shots-stack\] \{ grid-template-columns: minmax\(0, 1fr\); grid-template-rows: minmax\(0, 1fr\) minmax\(0, 1fr\); column-gap: 0; row-gap: 12px; \}/);
+  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage\[data-shots-stack\] > \.shots-flip-after \{ grid-area: 2 \/ 1; \}/);
+  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage\[data-shots-stack\] \.shots-flip-chip-after \{ left: 10px; top: calc\(50% \+ 16px\); \}/);
+  for (const [viewport, width] of [['phone', 420], ['desktop', 720]]) {
+    assert.match(css, new RegExp(`@container \\(min-width: ${width}px\\) \\{[^@]*?\\.shots-viewer:has\\(\\.shots-side-auto:checked\\) \\.shots-view\\[data-shots-viewport="${viewport}"\\] \\.shots-stage > \\.shots-flip-side\\[data-shots-crop\\]`),
+      `${viewport}: the automatic side by side crops too`);
+    assert.match(css, new RegExp(`\\.shots-viewer:has\\(\\.shots-side-auto:checked\\) \\.shots-view\\[data-shots-viewport="${viewport}"\\] \\.shots-stage\\[data-shots-stack\\] \\{ grid-template-columns`),
+      `${viewport}: the automatic side by side stacks a wide crop`);
+  }
+});

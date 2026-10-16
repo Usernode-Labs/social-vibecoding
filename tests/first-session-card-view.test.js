@@ -221,24 +221,8 @@ test('the switch is the shell\'s tab strip, worn like the App tab\'s Preview | L
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-// Ready-made starters that reached main after the pictures were drawn (the
-// polls, find-a-time, sign-ups and challenges, 15 Oct 2026). Until theirs are
-// drawn they have no picture, so their made screen shows today's card with no
-// Invite | App switch. The follow-up that draws them empties this list.
-const NO_PICTURE_YET = new Set([
-  'poll-dinner', 'poll-spending', 'poll-movies',
-  'find-a-time-book-club', 'find-a-time-game-night', 'find-a-time-trip',
-  'signup-shifts', 'signup-rsvp',
-  'challenge-miles', 'challenge-steps', 'challenge-books',
-]);
-const PICTURED = appTemplates.READY_IDS.filter((id) => !NO_PICTURE_YET.has(id));
-
 test('every ready-made app has an example picture on disk: its screen at a phone\'s size, small enough for a first session', () => {
-  for (const id of NO_PICTURE_YET) {
-    assert.ok(appTemplates.isReadyMade(id), `${id}: still a ready-made starter`);
-    assert.equal(appTemplates.get(id).exampleScreen, undefined, `${id}: no picture yet, so no switch`);
-  }
-  for (const id of PICTURED) {
+  for (const id of appTemplates.READY_IDS) {
     const entry = appTemplates.get(id);
     assert.equal(entry.exampleScreen, `/illustrations/starters/${id}.png`, id);
     const file = path.join(ROOT, 'public', entry.exampleScreen);
@@ -256,9 +240,9 @@ test('every ready-made app has an example picture on disk: its screen at a phone
   }
   // No picture without an entry, and the script that draws them knows every one.
   const committed = fs.readdirSync(path.join(ROOT, 'public/illustrations/starters')).sort();
-  assert.deepEqual(committed, PICTURED.map((id) => `${id}.png`).sort());
+  assert.deepEqual(committed, appTemplates.READY_IDS.map((id) => `${id}.png`).sort());
   const { SAMPLES, PHONE } = require('../scripts/render-starter-examples');
-  assert.deepEqual(Object.keys(SAMPLES).sort(), [...PICTURED].sort());
+  assert.deepEqual(Object.keys(SAMPLES).sort(), [...appTemplates.READY_IDS].sort());
   assert.deepEqual(PHONE, { width: 390, height: 844, scale: 2 });
   // Served to anyone, as the challenge artwork beside it is.
   assert.match(read('src/middleware/auth.js'), /'\/illustrations\/',/);

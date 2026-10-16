@@ -1,5 +1,7 @@
 /**
- * Profile's two lists of rows (UI overhaul): "Your work", then "More".
+ * Profile's lists of rows (UI overhaul, regrouped by the navigation review):
+ * "Your work", then "Rewards" and "Account" side by side with it on a wide
+ * window, and a Settings card of its own at the foot on a phone.
  *
  * ── Your work ──────────────────────────────────────────────────────────
  *
@@ -15,20 +17,37 @@
  *   Your votes      "Latest: …": what you voted on. It was a filter of Kudos ›
  *                   My history.
  *
- * ── More ───────────────────────────────────────────────────────────────
+ * ── Rewards ────────────────────────────────────────────────────────────
  *
- * App slots, Challenges & standings, Kudos, Friends and Settings, each with a
- * line that says what is behind it. App slots (#3250) is the one place the
- * allowance shows outside the create dialog, so a "your app quota changed"
- * notice has somewhere to point: "1 of 2 app slots used", from the session's
- * allowance store. A plain click opens the create dialog in place, whose
- * allowance card offers "Request more" once one slot or none is left (#23);
- * a modified click keeps `#create`. Friends was a section of its own under these rows
- * (#2386); it is a row now, with the one number it is allowed ("1 request
- * waiting": friends themselves are never counted), and it opens the same
- * section as a card over this screen (./friends-sheet.tsx), at its own
- * address, `#profile?friends`. "Your contributions", the newest merged
- * changes under everything, is gone: Your changes lists them all.
+ * Challenges & standings and Kudos, the two rows about how you are doing,
+ * each with a line that says what is behind it. They were the head of the
+ * old "More" list, mixed in with app slots, friends and settings; the
+ * navigation review split them out under their own heading.
+ *
+ * ── Account ────────────────────────────────────────────────────────────
+ *
+ * Friends and App slots, the rows about the account itself. App slots (#3250)
+ * is the one place the allowance shows outside the create dialog, so a "your
+ * app quota changed" notice has somewhere to point: "1 of 2 app slots used",
+ * from the session's allowance store. A plain click opens the create dialog in
+ * place, whose allowance card offers "Request more" once one slot or none is
+ * left (#23); a modified click keeps `#create`. Friends was a section of its
+ * own under these rows (#2386); it is a row now, with the one number it is
+ * allowed ("1 request waiting": friends themselves are never counted), and it
+ * opens the same section as a card over this screen (./friends-sheet.tsx), at
+ * its own address, `#profile?friends`. "Your contributions", the newest
+ * merged changes under everything, is gone: Your changes lists them all.
+ *
+ * ── Settings (a phone's entrance) ──────────────────────────────────────
+ *
+ * Wherever the sidebar shows its gear (from 768px, features/nav/tab-bar.tsx
+ * with app.css's media query), Profile does not repeat it: the gear opens
+ * Settings. A phone has neither, so its Settings row is the only entrance,
+ * and it stays — its own one-row card at the foot, because GroupedList's
+ * separators are `:not(:last-child)` and a row hidden inside the Account card
+ * would leave a stray hairline behind. Admin & moderation, the native node /
+ * wallet / staking rows and Log out are in Settings
+ * (features/settings/account-rows.tsx).
  *
  * ── How the rows got here ──────────────────────────────────────────────
  *
@@ -94,7 +113,9 @@ export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
   const t = useMessages('profile');
   return (
     <section id="profile-work" className="mt-2">
-      <SectionHeader>{t('profile:work.heading')}</SectionHeader>
+      {/* The right column's first label: `lg:pt-0` lines it up with the top
+          of the profile card beside it. */}
+      <SectionHeader className="lg:pt-0">{t('profile:work.heading')}</SectionHeader>
       <GroupedList className="mx-0" tone="plane">
         <ListRow
           as="a"
@@ -131,44 +152,14 @@ export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
   );
 }
 
-export function MorePanel({ rows }: {
+export function RewardsPanel({ rows }: {
   rows: ProfileRows;
 }): ReactNode {
-  // A CAPABILITY, published rather than fetched: App.renderAdminButton in
-  // public/js/app.js writes it after the session resolves. The Admin console
-  // is a Settings row now; the flag only decides whether the Settings row's
-  // own line mentions it.
-  const isAdmin = useVisibility('switcher-row-admin', false);
-  // The wallet is a Settings row only in the native app (its store reveals
-  // it with the bridge's capability), so the line names it only there.
-  const wallet = (useStoreState(walletSheetStore) as { visible: boolean }).visible;
-  const allowance = useAppAllowance();
-  const slotsLine = appSlotsLine(allowance.quota, allowance.requestedAt as string | null);
   const t = useMessages('profile');
-  // One whole message per combination of what this viewer's Settings holds.
-  const settingsLine = wallet
-    ? (isAdmin ? t('profile:more.settings.hintWalletAdmin') : t('profile:more.settings.hintWallet'))
-    : (isAdmin ? t('profile:more.settings.hintAdmin') : t('profile:more.settings.hint'));
   return (
-    <section id="profile-more" className="mt-2">
-      {/* SectionHeader's own `px-4`, on the rows' content edge (#2832). */}
-      <SectionHeader>{t('profile:more.heading')}</SectionHeader>
+    <section id="profile-rewards" className="mt-2">
+      <SectionHeader>{t('profile:rewards.heading')}</SectionHeader>
       <GroupedList className="mx-0" tone="plane">
-        <ListRow
-          as="a"
-          id="profile-row-app-slots"
-          href="#create"
-          onClick={(event) => {
-            if (!plainClick(event)) return;
-            event.preventDefault();
-            (window as unknown as { App?: { showCreateModal?: () => void } }).App?.showCreateModal?.();
-          }}
-          leading={<IconTile size="sm"><AppWindowIcon /></IconTile>}
-          title={t('profile:more.appSlots.title')}
-          titleClassName={TITLE}
-          subtitle={slotsLine || t('profile:more.appSlots.hint')}
-          subtitleClassName={SUBTITLE}
-        />
         <ListRow
           as="a"
           id="profile-row-challenges"
@@ -191,6 +182,21 @@ export function MorePanel({ rows }: {
           subtitle={t('profile:more.kudos.hint')}
           subtitleClassName={SUBTITLE}
         />
+      </GroupedList>
+    </section>
+  );
+}
+
+export function AccountPanel({ rows }: {
+  rows: ProfileRows;
+}): ReactNode {
+  const allowance = useAppAllowance();
+  const slotsLine = appSlotsLine(allowance.quota, allowance.requestedAt as string | null);
+  const t = useMessages('profile');
+  return (
+    <section id="profile-account" className="mt-2">
+      <SectionHeader>{t('profile:account.heading')}</SectionHeader>
+      <GroupedList className="mx-0" tone="plane">
         <ListRow
           as="a"
           id="profile-row-friends"
@@ -206,6 +212,45 @@ export function MorePanel({ rows }: {
           subtitle={rows.friends || t('profile:more.friends.hint')}
           subtitleClassName={SUBTITLE}
         />
+        <ListRow
+          as="a"
+          id="profile-row-app-slots"
+          href="#create"
+          onClick={(event) => {
+            if (!plainClick(event)) return;
+            event.preventDefault();
+            (window as unknown as { App?: { showCreateModal?: () => void } }).App?.showCreateModal?.();
+          }}
+          leading={<IconTile size="sm"><AppWindowIcon /></IconTile>}
+          title={t('profile:more.appSlots.title')}
+          titleClassName={TITLE}
+          subtitle={slotsLine || t('profile:more.appSlots.hint')}
+          subtitleClassName={SUBTITLE}
+        />
+      </GroupedList>
+    </section>
+  );
+}
+
+export function SettingsPanel(): ReactNode {
+  // A CAPABILITY, published rather than fetched: App.renderAdminButton in
+  // public/js/app.js writes it after the session resolves. The Admin console
+  // is a Settings row now; the flag only decides whether the Settings row's
+  // own line mentions it.
+  const isAdmin = useVisibility('switcher-row-admin', false);
+  // The wallet is a Settings row only in the native app (its store reveals
+  // it with the bridge's capability), so the line names it only there.
+  const wallet = (useStoreState(walletSheetStore) as { visible: boolean }).visible;
+  const t = useMessages('profile');
+  // One whole message per combination of what this viewer's Settings holds.
+  const settingsLine = wallet
+    ? (isAdmin ? t('profile:more.settings.hintWalletAdmin') : t('profile:more.settings.hintWallet'))
+    : (isAdmin ? t('profile:more.settings.hintAdmin') : t('profile:more.settings.hint'));
+  return (
+    // The sidebar's gear is Settings' entrance from 768px (tab-bar.tsx with
+    // app.css's media query); a phone has neither, so the row hides with it.
+    <section id="profile-settings" className="mt-6 md:hidden">
+      <GroupedList className="mx-0" tone="plane">
         <ListRow
           as="a"
           id="profile-row-settings"

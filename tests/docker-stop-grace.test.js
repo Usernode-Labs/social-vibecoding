@@ -178,17 +178,37 @@ test('a stop that burns the whole grace reports forceKilled=true', async () => {
   }
 });
 
-test('staging call sites pass the short grace', () => {
-  // Cross-file consistency: the constant existing is useless if the three
-  // throwaway-container call sites don't actually use it.
+// Cross-file consistency: the constant existing is useless if the
+// throwaway-container call sites don't actually use it. Two of staging.js's
+// three are gone with the old preview paths: the replacement before a
+// deploy is the deploy's own reconciliation now, and the teardown is the
+// preview machine's retirement (src/workflow/preview/services.ts WORK.retire).
+// What is left in staging.js is the failed-build cleanup.
+test('the failed-build cleanup in staging.js passes the short grace', () => {
   const fs = require('fs');
   const path = require('path');
   const src = fs.readFileSync(
     path.join(__dirname, '..', 'src', 'services', 'staging.js'), 'utf8'
   );
-  const shortGraceOptions = src.match(/stopTimeoutSec: docker\.STAGING_STOP_GRACE_SEC/g) || [];
-  assert.ok(shortGraceOptions.length >= 3,
-    'expected all staging removal paths to retain the short grace');
+  const cleanup = src.slice(src.indexOf('const failedContainer = err.servingRemoved'));
+  assert.match(cleanup.slice(0, 600), /docker\.stopAndRemove\(failedContainer, \{\s*stopTimeoutSec: docker\.STAGING_STOP_GRACE_SEC/,
+    'the discarded container of a failed build goes with the short grace');
+});
+
+// A merge retires its preview, and before #767 the removal alone cost a flat
+// ~10.9s on every merge, waiting out a SIGTERM the container never received.
+test("the preview machine's retirement of a Docker preview passes the short grace", () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'workflow', 'preview', 'services.ts'), 'utf8'
+  );
+  const start = src.indexOf('[WORK.retire]: {');
+  assert.ok(start > 0, 'the retirement work handler exists');
+  const retire = src.slice(start, src.indexOf('[WORK.dropClaims]', start));
+  assert.match(retire, /application-runtime'\)\.remove\(/, 'a Docker preview is removed through the runtime');
+  assert.match(retire, /stopTimeoutSec: (legacy\('services\/docker'\)|docker\(\)|docker)\.STAGING_STOP_GRACE_SEC/,
+    "a retired preview has nothing to drain: the short grace, not a live app's 5s default");
 });
 
 // ── #851: stopAndRemove must report whether the container is actually gone ──

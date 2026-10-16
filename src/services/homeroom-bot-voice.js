@@ -616,6 +616,25 @@ async function askState(pool, sessionId) {
   return { queued: by.queued || 0, running: (by.taken || 0) > 0 };
 }
 
+/**
+ * Whether a turn, an operation or a before & after shots run holds the
+ * change's session now, as the follow-up's own start reads it
+ * (homeroom-bot-followup.js turnRunningOn). A read that fails says no.
+ */
+async function changeBusy(pool, sessionId, deps = {}) {
+  try {
+    return await require('./homeroom-bot-followup').turnRunningOn({
+      pool,
+      session: { id: Number(sessionId) },
+      worker: deps.worker || require('./worker'),
+      activeWorkers: deps.activeWorkers || require('./active-workers').activeWorkers,
+      shotsRunning: deps.shotsRunning || null,
+    });
+  } catch {
+    return false;
+  }
+}
+
 /** The facts a turn in `place` starts from, as a block of plain lines. */
 async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} }) {
   const lines = [];
@@ -636,7 +655,7 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
       `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs WHERE proposal_session_id = $1 AND verdict = 'revise'`, [change.id],
     );
     const asks = await askState(pool, change.id);
-    const busy = await followup.turnRunningOn(pool, change.id).catch(() => false);
+    const busy = await changeBusy(pool, change.id, deps);
     lines.push(`The change${place.type === 'issue' ? ' you built for this request' : ''}: change ${change.id}${change.pr_number ? ` (PR #${change.pr_number})` : ''}, "${clip(change.title, 160)}", ${own ? 'built by you' : 'built by somebody else'}, status ${change.status}${request ? `, for request #${request}` : ''}.`);
     if (change.check_state) lines.push(`Its checks: ${change.check_state}.`);
     if (own) {
@@ -858,7 +877,7 @@ async function recordAsk(pool, {
         place?.type || null, place?.ref == null ? null : Number(place.ref), messageId || null],
     );
     const running = (await askState(pool, sessionId)).running
-      || await require('./homeroom-bot-followup').turnRunningOn(pool, sessionId).catch(() => false);
+      || await changeBusy(pool, sessionId, deps);
     // Its follow-up first in the queue: null when one has it claimed now
     // (it takes this ask after), undefined when it could not be queued.
     const first = await botModule(deps).enqueueFront(pool, {
@@ -1800,6 +1819,7 @@ module.exports = {
   systemPrompt,
   toolsFor,
   changeGate,
+  factsFor,
   recordAsk,
   takeAsks,
   releaseAsks,

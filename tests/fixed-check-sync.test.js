@@ -420,6 +420,122 @@ test('once per proposal, never while off, and only what syncOne would sync', asy
   assert.equal(calls.sync.length, 0, 'none of those synced anything');
 });
 
+// ── selectOwn / syncBeforeFix: the bot's own failing proposals (#5220) ──
+//
+// Before the bot's fix turn is spent, its proposal is judged alone: main
+// passing every failing check now is the evidence, where the sweep needs a
+// second proposal failing the same check to say the check, not the change,
+// is what broke.
+
+test('selectOwn picks a single proposal failing a check main passes, where select calls it own_failure', () => {
+  const out = subject.selectOwn(verdict(1, [DOMAIN]), new Set([key(DOMAIN)]));
+  assert.deepEqual(out.candidate, { id: 1, head: HEAD, keys: [key(DOMAIN)] });
+  const swept = subject.select([verdict(1, [DOMAIN])], new Set([key(DOMAIN)]));
+  assert.deepEqual(swept.candidates, []);
+  assert.equal(swept.skipped[1], 'own_failure');
+});
+
+test('selectOwn keeps the sweep\'s skips: imported, a moved head, an already-tried head or key, and checks main fails', () => {
+  for (const [row, why] of [
+    [verdict(1, [DOMAIN], { source: 'imported' }), 'imported'],
+    [verdict(1, [DOMAIN], { reviewed_head_sha: NEW_HEAD }), 'head_moved'],
+    [verdict(1, [DOMAIN], { fixed_check_sync_head: HEAD.toUpperCase() }), 'already_tried'],
+    [verdict(1, [DOMAIN], { fixed_check_sync_keys: [key(DOMAIN)] }), 'already_tried'],
+    [verdict(1, [{ ...DOMAIN, advisory: true }]), 'nothing_fixed'],
+  ]) {
+    assert.deepEqual(subject.selectOwn(row, new Set([key(DOMAIN)])), { why }, why);
+  }
+  assert.deepEqual(subject.selectOwn(verdict(1, [DOMAIN]), new Set()), { why: 'main_fails' },
+    'a check the proposal added, or that main still fails, is never a sync');
+  assert.deepEqual(subject.selectOwn(verdict(1, [], { check_state: 'passing' }), new Set()), {},
+    'a passing verdict is neither a candidate nor a skip');
+});
+
+test('selectOwn keeps the unit-suite rule: main watch green, the per-tip key, MAX_UNIT_SYNCS', () => {
+  const ran = '2026-10-10T08:46:04.000Z';
+  const row = verdict(1, [UNIT], { checks_checked_at: ran });
+  const greenAfter = { passing: true, at: Date.parse('2026-10-10T11:01:15Z') };
+  assert.deepEqual(subject.selectOwn(row, new Set(), greenAfter).candidate,
+    { id: 1, head: HEAD, keys: [subject.UNIT_KEY] });
+  assert.equal(subject.selectOwn(row, new Set(), { passing: true, at: Date.parse('2026-10-10T08:00:00Z') }).why,
+    'unit_suite_only');
+  const used = verdict(1, [UNIT], {
+    checks_checked_at: ran,
+    fixed_check_sync_keys: [subject.UNIT_KEY, subject.unitSyncKey('c'.repeat(40)), subject.unitSyncKey('d'.repeat(40))],
+  });
+  assert.equal(subject.selectOwn(used, new Set(), greenAfter).why, 'already_tried');
+});
+
+// syncBeforeFix reads one row (ownVerdict), decides, and claims on the head
+// the sweep claims. The pool below answers ownVerdict's query for one
+// proposal, and what main passes and main watch say for its app.
+function ownPool({ verdictRow = null } = {}) {
+  const pool = makePool();
+  const query = pool.query.bind(pool);
+  pool.query = async (sql, params) => {
+    const text = String(sql);
+    if (/FROM chat_sessions cs\s+WHERE cs\.id = \$1/.test(text) && /fixed_check_sync_head/.test(text)) {
+      pool.queries.push({ sql: text, params });
+      return { rows: verdictRow ? [verdictRow] : [] };
+    }
+    if (/WITH recent AS/.test(text)) return { rows: [{ ...DOMAIN, status: 'pass' }] };
+    if (/FROM apps WHERE id = \$1/.test(text)) {
+      return { rows: [{ main_check_state: null, main_check_at: null, main_check_sha: null, main_sha: null }] };
+    }
+    return query(sql, params);
+  };
+  return pool;
+}
+
+const OWN_ROW = {
+  app_id: 12, id: 7504, source: 'cli_handoff', check_state: 'failing',
+  checks_commit_sha: HEAD, reviewed_head_sha: HEAD, checks_checked_at: '2026-10-15T10:00:00Z',
+  fixed_check_sync_head: null, fixed_check_sync_keys: null,
+  failing: [{ ...DOMAIN, advisory: false }],
+};
+
+test('syncBeforeFix syncs a behind, clean proposal of the bot\'s own, claimed on the same head, as bot_fix', async () => {
+  const pool = ownPool({ verdictRow: OWN_ROW });
+  const { deps, calls } = makeDeps();
+  const out = await subject.syncBeforeFix({ config: { c: 1 }, pool, sessionId: 7504, head: HEAD.toUpperCase() }, deps);
+  assert.deepEqual(out, { synced: true, why: null, sha: NEW_HEAD });
+  const claim = pool.queries.find((q) => /SET fixed_check_sync_head = \$2/.test(q.sql));
+  assert.deepEqual(claim.params, [7504, HEAD, [key(DOMAIN)]],
+    'the sweep\'s own column and key: the sweep, the hand-off and this never sync one head twice');
+  assert.equal(calls.sync[0].opts.trigger, 'bot_fix');
+  assert.equal(calls.reconcile.length, 1, 'its new head is run, keeping its votes');
+});
+
+test('syncBeforeFix declines what the sweep would, and never throws', async () => {
+  const { deps } = makeDeps();
+  assert.deepEqual(await subject.syncBeforeFix({ config: {}, pool: ownPool({ verdictRow: null }), sessionId: 7504, head: HEAD }, deps),
+    { synced: false, why: 'gone' });
+  assert.deepEqual(await subject.syncBeforeFix({ config: {}, pool: ownPool(), sessionId: 7504, head: null }, deps),
+    { synced: false, why: 'no_verdict' });
+  // The verdict is about the head the fix round is due on; an older one says
+  // nothing about the current code.
+  assert.deepEqual(await subject.syncBeforeFix({ config: {}, pool: ownPool({ verdictRow: { ...OWN_ROW, checks_commit_sha: NEW_HEAD } }), sessionId: 7504, head: HEAD }, deps),
+    { synced: false, why: 'head_moved' });
+  const level = makeDeps({ measured: { headSha: HEAD, behindBy: 0, mergesClean: true } });
+  assert.deepEqual(await subject.syncBeforeFix({ config: {}, pool: ownPool({ verdictRow: OWN_ROW }), sessionId: 7504, head: HEAD }, level.deps),
+    { synced: false, why: 'level' }, 'a change level with main has nothing to gain');
+  const conflict = makeDeps({ measured: { headSha: HEAD, behindBy: 3, mergesClean: false } });
+  assert.deepEqual(await subject.syncBeforeFix({ config: {}, pool: ownPool({ verdictRow: OWN_ROW }), sessionId: 7504, head: HEAD }, conflict.deps),
+    { synced: false, why: 'conflict' }, 'a conflict is a person\'s to resolve');
+  const down = { async query() { throw new Error('db down'); } };
+  assert.deepEqual(await subject.syncBeforeFix({ config: {}, pool: down, sessionId: 7504, head: HEAD }, deps),
+    { synced: false, why: 'threw' }, 'never throws');
+  const before = process.env.FIXED_CHECK_SYNC_ENABLED;
+  try {
+    process.env.FIXED_CHECK_SYNC_ENABLED = '0';
+    assert.deepEqual(await subject.syncBeforeFix({ config: {}, pool: ownPool({ verdictRow: OWN_ROW }), sessionId: 7504, head: HEAD }, deps),
+      { synced: false, why: 'disabled' });
+  } finally {
+    if (before === undefined) delete process.env.FIXED_CHECK_SYNC_ENABLED;
+    else process.env.FIXED_CHECK_SYNC_ENABLED = before;
+  }
+});
+
 // ── sweep: every app, at most MAX_SYNCS_PER_PASS ─────────────────────────
 
 test('a sweep syncs at most MAX_SYNCS_PER_PASS and never throws', async () => {

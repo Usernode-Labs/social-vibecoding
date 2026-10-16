@@ -1,15 +1,18 @@
 // Tests for the boot-time GitHub-reconciliation sweep (recoverStuckMerges).
 // It must:
 //   1. Heal a 'promoted'/'merging' session that GitHub reports as merged →
-//      flip it to 'merged' (this is what un-sticks whiteboard #41/#44/#52/#54).
+//      report the merge to the merge-followups workflow machine
+//      (platform.ts mergeObserved), which moves it to 'merged' and runs every
+//      follow-up (this is what un-sticks whiteboard #41/#44/#52/#54). The
+//      sweep never writes the merged status itself.
 //   2. Demote a 'merging' session GitHub never merged (crash mid-merge) back
 //      to 'promoted' so the next vote/retry can redrive.
 //   3. Leave a genuinely-open 'promoted' session (not merged on GitHub) alone.
 //
 // server.js only boots when run as the entry point (require.main guard), so
 // requiring it here exposes recoverStuckMerges without starting servers. The
-// db/pool + github modules are required lazily inside the function, so we
-// stub them via require.cache right before invoking it.
+// db/pool, github and workflow platform modules are required lazily inside
+// the function, so we stub them via require.cache right before invoking it.
 //
 // Run with: node --test tests/recover-stuck-merges.test.js
 
@@ -41,6 +44,7 @@ try {
 
 const poolId = require.resolve('../src/db/pool');
 const githubId = require.resolve('../src/services/github');
+const platformId = require.resolve('../src/workflow/platform.ts');
 
 function stub(id, exports) {
   const prev = require.cache[id];
@@ -49,12 +53,14 @@ function stub(id, exports) {
 }
 
 // Builds a fake pool over a set of open-PR rows. Records UPDATEs so the test
-// can assert the status transitions. The 'merged' UPDATE returns rowCount 1
-// (the function logs a heal only when a row actually transitioned).
+// can assert the status transitions, and (through the platform stub in
+// withStubs) every merge reported to the merge-followups machine.
 function makePool(rows) {
   const updates = [];
+  const reports = [];
   return {
     updates,
+    reports,
     async query(sql, params = []) {
       const s = String(sql);
       if (/SELECT cs\.id[\s\S]*FROM chat_sessions cs/i.test(s) && /status IN \('promoted', 'merging'\)/.test(s)) {
@@ -64,7 +70,7 @@ function makePool(rows) {
         return { rows: selected, rowCount: selected.length };
       }
       if (/SET\s+status = 'merged'/.test(s)) {
-        updates.push({ to: 'merged', id: params[0], mergedAt: params[1], sha: params[2] });
+        updates.push({ to: 'merged', id: params[0] });
         return { rows: [], rowCount: 1 };
       }
       if (/SET status = 'promoted'/.test(s)) {
@@ -95,30 +101,36 @@ const GH = {
 function withStubs(pool, githubExports, fn) {
   const prevPool = stub(poolId, { getPool: () => pool });
   const prevGithub = stub(githubId, githubExports);
+  const prevPlatform = stub(platformId, {
+    mergeObserved: async (m) => { pool.reports.push(m); return { status: 'accepted', eventId: 1 }; },
+  });
   return Promise.resolve()
     .then(fn)
     .finally(() => {
       if (prevPool) require.cache[poolId] = prevPool; else delete require.cache[poolId];
       if (prevGithub) require.cache[githubId] = prevGithub; else delete require.cache[githubId];
+      if (prevPlatform) require.cache[platformId] = prevPlatform; else delete require.cache[platformId];
     });
 }
 
-test('recoverStuckMerges heals merged-on-GitHub rows, demotes stuck merging, leaves open promoted', async () => {
-  const pool = makePool(ROWS.map((r) => ({ ...r })));
+test('recoverStuckMerges reports merged-on-GitHub rows, demotes stuck merging, leaves open promoted', async () => {
+  const pool = makePool(ROWS.map((r) => ({ ...r, app_id: 5 })));
   const getPRCalls = [];
-  await withStubs(pool, {
+  const out = await withStubs(pool, {
     isEnabled: () => true,
     getPR: async (owner, repo, prNumber) => {
       getPRCalls.push(prNumber);
       return GH[prNumber];
     },
   }, () => recoverStuckMerges({}));
+  assert.equal(out, undefined, 'the sweep answers nothing');
 
-  // Row 1 healed to merged, carrying GitHub's merged_at + sha.
-  const heal = pool.updates.find((u) => u.id === 1);
-  assert.ok(heal && heal.to === 'merged', 'merged-on-GitHub row flipped to merged');
-  assert.equal(heal.sha, 'sha52');
-  assert.equal(heal.mergedAt, '2026-06-13T14:40:19Z');
+  // Row 1 reported to the merge-followups machine, carrying GitHub's
+  // merged_at + sha; the machine moves the status, not the sweep.
+  assert.deepEqual(pool.reports, [{
+    sessionId: 1, appId: 5, mergeSha: 'sha52', mergedAt: '2026-06-13T14:40:19Z',
+  }]);
+  assert.ok(!pool.updates.some((u) => u.to === 'merged'), 'the sweep never writes the merged status');
 
   // Row 2 (merging, not merged on GitHub) demoted to promoted.
   const demote = pool.updates.find((u) => u.id === 2);
@@ -192,8 +204,8 @@ test('periodic reconciliation revisits a demoted attempt that GitHub completed l
     },
   }, () => recoverStuckMerges({}, { attemptedOnly: true }));
   assert.deepEqual(lookedUp, [52]);
-  assert.equal(pool.updates.length, 1);
-  assert.equal(pool.updates[0].id, attempted.id);
+  assert.deepEqual(pool.reports.map((m) => m.sessionId), [attempted.id]);
+  assert.deepEqual(pool.updates, []);
 });
 
 // ── GitHub's hourly budget (9 Oct 2026) ─────────────────────────────────────
@@ -296,105 +308,4 @@ test('the timer revisits an old attempt once an hour, a recent one or a merging 
   lookedUp.length = 0;
   await withStubs(pool, github, () => recoverStuckMerges({}, { now }));
   assert.deepEqual(lookedUp.sort(), [51, 52, 53], 'the boot scan looks every open row up');
-});
-
-// ── What a healed merge still owes (legacy path) ───────────────────────────
-// A child app's finalizer spends minutes in its production rebuild, and a
-// restart cut it off there: the heal used to record the status and nothing
-// else. tests/recover-stuck-merges-postgres.test.js runs the follow-ups
-// themselves against the full schema; these pin the order and the switch.
-
-const votes = require('../src/routes/votes');
-const platformId = require.resolve('../src/workflow/platform.ts');
-
-function withMergeFollowups(t, { machine = false } = {}) {
-  const seen = [];
-  const saved = {
-    apply: votes.applyDeclaredValues, run: votes.runOwedMergeFollowups, resume: votes.resumeOwedMergeFollowups,
-  };
-  votes.applyDeclaredValues = async ({ session }) => { seen.push(['apply', session.id, session.app_id]); };
-  votes.runOwedMergeFollowups = async (_config, _pool, id) => { seen.push(['followups', id]); return { ran: true }; };
-  votes.resumeOwedMergeFollowups = async () => { seen.push(['resume']); return [77]; };
-  const prevPlatform = require.cache[platformId];
-  stub(platformId, {
-    mergeFollowupsEnabled: () => machine,
-    mergeObserved: async (m) => { seen.push(['observed', m.sessionId]); },
-  });
-  t.after(() => {
-    Object.assign(votes, { applyDeclaredValues: saved.apply, runOwedMergeFollowups: saved.run, resumeOwedMergeFollowups: saved.resume });
-    if (prevPlatform) require.cache[platformId] = prevPlatform; else delete require.cache[platformId];
-  });
-  return seen;
-}
-
-test('a healed merge gets its declared values before it is recorded, then its follow-ups, its watch among them', async (t) => {
-  const seen = withMergeFollowups(t);
-  const pool = makePool([{ ...ROWS[0], app_id: 5 }]);
-  const order = [];
-  const query = pool.query;
-  pool.query = async (sql, params) => {
-    if (/SET\s+status = 'merged'/.test(String(sql))) {
-      order.push(...seen.map((s) => s[0]), 'recorded');
-      assert.match(String(sql), /merge_followups_due_at = NOW\(\)/, 'owing its follow-ups from the status move');
-    }
-    return query(sql, params);
-  };
-  const out = await withStubs(pool, {
-    isEnabled: () => true,
-    getPR: async () => GH[52],
-  }, () => recoverStuckMerges({}));
-  assert.deepEqual(order, ['resume', 'apply', 'recorded']);
-  assert.deepEqual(seen, [['resume'], ['apply', 1, 5], ['followups', 1]]);
-  assert.deepEqual(out.followedUp.sort(), [1, 77], 'the boot\'s issue-close resume leaves these to the heal');
-});
-
-test('with the merge-followups machine on, the heal reports the merge and runs no legacy follow-up', async (t) => {
-  const seen = withMergeFollowups(t, { machine: true });
-  const pool = makePool([{ ...ROWS[0], app_id: 5 }]);
-  const out = await withStubs(pool, {
-    isEnabled: () => true,
-    getPR: async () => GH[52],
-  }, () => recoverStuckMerges({}));
-  assert.deepEqual(seen, [['observed', 1]]);
-  assert.deepEqual(pool.updates, [], 'the machine moves the status');
-  assert.deepEqual(out.followedUp, []);
-});
-
-test('owed follow-ups are resumed without GitHub, and a demoted claim owes none', async (t) => {
-  const seen = withMergeFollowups(t);
-  const pool = makePool([ROWS[1]]);
-  const out = await withStubs(pool, { isEnabled: () => false, getPR: async () => assert.fail('no lookup') }, () => recoverStuckMerges({}));
-  assert.deepEqual(seen, [['resume']]);
-  assert.deepEqual(out.followedUp, [77]);
-});
-
-test('the boot resumes the issue-close watches after the heal, leaving out what it followed up', () => {
-  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'server.js'), 'utf8');
-  const boot = src.indexOf("checkHarvest.sweep(config, { reason: 'boot' })");
-  const heal = src.indexOf('.then(() => recoverStuckMerges(config))', boot);
-  const resume = src.indexOf('resumeIssueCloseWatches(config, { skip: reconciled?.followedUp })', heal);
-  const next = src.indexOf('.then(() => reconcileEligibleMerges(config))', heal);
-  assert.ok(boot > 0 && heal > boot && resume > heal && next > resume, 'chained after the heal, before the merge reconcile');
-  const gate = src.indexOf('if (config.wfMergeFollowupsEnabled) return;', heal);
-  assert.ok(gate > heal && gate < resume, 'and only with the merge-followups machine off');
-  assert.equal(src.match(/(?<!function )resumeIssueCloseWatches\(config/g).length, 1, 'and nowhere beside it');
-});
-
-test('resumeIssueCloseWatches leaves the sessions it is told the heal already watches', async (t) => {
-  const { resumeIssueCloseWatches } = require('../server');
-  const watcher = require('../src/services/issue-close-watcher');
-  const saved = watcher.watchIssuesClosedAfterMerge;
-  const watched = [];
-  watcher.watchIssuesClosedAfterMerge = async (args) => { watched.push(args.prNumber); };
-  t.after(() => { watcher.watchIssuesClosedAfterMerge = saved; });
-  const pool = {
-    async query() {
-      return { rows: [
-        { id: 1, pr_number: 11, linked_issues: [], repo_url: 'https://github.com/acme/a', app_slug: 'a', app_id: 1 },
-        { id: 2, pr_number: 22, linked_issues: [], repo_url: 'https://github.com/acme/a', app_slug: 'a', app_id: 1 },
-      ] };
-    },
-  };
-  await withStubs(pool, { isEnabled: () => true }, () => resumeIssueCloseWatches({}, { skip: [1] }));
-  assert.deepEqual(watched, [22]);
 });

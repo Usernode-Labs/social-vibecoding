@@ -65,14 +65,14 @@ test('how many processes may drain at once comes from PLATFORM_DRAINING_MAX', ()
 
 test('a held Map holds each key until it is deleted, whatever is set under it meanwhile', () => {
   processes._reset();
-  const m = processes.heldMap('capture');
+  const m = processes.heldMap('shots_eval');
   m.set('7', { a: 1 });
   m.set('7', { a: 2 });
-  assert.equal(processes.heldHere('capture', 7), true);
+  assert.equal(processes.heldHere('shots_eval', 7), true);
   assert.equal(processes.localCount(), 1);
   assert.equal(m.delete('8'), false);
   assert.equal(m.delete('7'), true);
-  assert.equal(processes.heldHere('capture', 7), false);
+  assert.equal(processes.heldHere('shots_eval', 7), false);
   m.set('9', {}); m.set('10', {});
   m.clear();
   assert.equal(processes.localCount(), 0, 'clear releases every key');
@@ -80,14 +80,14 @@ test('a held Map holds each key until it is deleted, whatever is set under it me
 
 test('a held Map can map its keys to refs, and a key with no ref is kept but holds nothing', () => {
   processes._reset();
-  const m = processes.heldMap('shots', (key) => String(key).split(':')[0]);
+  const m = processes.heldMap('shots_eval', (key) => String(key).split(':')[0]);
   m.set('42:abc', 1);
   m.set('42:def', 2);
-  assert.equal(processes.heldHere('shots', 42), true);
+  assert.equal(processes.heldHere('shots_eval', 42), true);
   m.delete('42:abc');
-  assert.equal(processes.heldHere('shots', 42), true, 'the other head still holds the session');
+  assert.equal(processes.heldHere('shots_eval', 42), true, 'the other head still holds the session');
   m.delete('42:def');
-  assert.equal(processes.heldHere('shots', 42), false);
+  assert.equal(processes.heldHere('shots_eval', 42), false);
   const n = processes.heldMap('session', () => null);
   n.set('x', 1);
   assert.equal(n.get('x'), 1);

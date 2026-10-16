@@ -76,7 +76,7 @@ test('processes and their holds, against the full schema', { timeout: 120000 }, 
     await pool.query(`UPDATE platform_processes SET host = $1 WHERE id = 'predecessor'`, [require('node:os').hostname()]);
     const kube = process.env.KUBERNETES_SERVICE_HOST;
     process.env.KUBERNETES_SERVICE_HOST = '10.0.0.1';
-    const early = processes.hold('staging_build', 11);
+    const early = processes.hold('sync', 11);
     try {
       await processes.start({ pool, role: 'all' });
     } finally {
@@ -89,7 +89,7 @@ test('processes and their holds, against the full schema', { timeout: 120000 }, 
     const late = processes.hold('session', 12);
     await processes.flush();
     const { rows } = await pool.query('SELECT kind, ref FROM process_holds WHERE process_id = $1 ORDER BY kind', [processes.ID]);
-    assert.deepEqual(rows.map((r) => `${r.kind}:${r.ref}`), ['session:12', 'staging_build:11']);
+    assert.deepEqual(rows.map((r) => `${r.kind}:${r.ref}`), ['session:12', 'sync:11']);
     early(); late();
     await processes.flush();
     const { rows: none } = await pool.query('SELECT 1 FROM process_holds WHERE process_id = $1', [processes.ID]);
@@ -110,11 +110,11 @@ test('processes and their holds, against the full schema', { timeout: 120000 }, 
   });
 
   await t.test('another live process\'s holds are seen; a gone one\'s are not', async () => {
-    await other('pod-old', { state: 'draining', holds: [['session', 30], ['shots', 31]], drainStartedAt: new Date() });
+    await other('pod-old', { state: 'draining', holds: [['session', 30], ['sync', 31]], drainStartedAt: new Date() });
     await other('pod-dead', { ageSeconds: processes.LIVE_SECONDS + 30, holds: [['session', 32]] });
     await processes.refreshMirror();
     assert.equal(processes.heldElsewhere('session', 30), true);
-    assert.equal(processes.heldAnywhere('shots', 31), true);
+    assert.equal(processes.heldAnywhere('sync', 31), true);
     assert.equal(processes.heldElsewhere('session', 32), false, 'a process that stopped beating holds nothing');
     assert.deepEqual(processes.refsElsewhere('session'), ['30']);
     assert.deepEqual(await processes.holders('session', 30), ['pod-old']);
@@ -134,13 +134,13 @@ test('processes and their holds, against the full schema', { timeout: 120000 }, 
   });
 
   await t.test('the beat writes every hold again: a write the database lost comes back', async () => {
-    const release = processes.hold('capture', 40);
+    const release = processes.hold('sync', 40);
     await processes.flush();
     await pool.query('DELETE FROM process_holds WHERE process_id = $1', [processes.ID]);
     await pool.query(`INSERT INTO process_holds (process_id, kind, ref) VALUES ($1, 'session', '41')`, [processes.ID]);
     await processes.beat();
     const { rows } = await pool.query('SELECT kind, ref FROM process_holds WHERE process_id = $1', [processes.ID]);
-    assert.deepEqual(rows.map((r) => `${r.kind}:${r.ref}`), ['capture:40'], 'what this process holds, and only that');
+    assert.deepEqual(rows.map((r) => `${r.kind}:${r.ref}`), ['sync:40'], 'what this process holds, and only that');
     // A row the leader reaped while this process stalled comes back too.
     await pool.query('DELETE FROM platform_processes WHERE id = $1', [processes.ID]);
     await processes.beat();

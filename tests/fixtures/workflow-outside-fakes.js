@@ -96,6 +96,50 @@ module.exports = function install(fakes) {
       return 'projects/test/messages/1';
     },
   }) });
+  // A before & after shots run's steps (services/shots-orchestrator.js): its
+  // copies are builds and runtimes, its agent a turn in a worker. Each is
+  // recorded; the copies stop at `shots.copies.built`, after their images
+  // are built (handed over for the step's checkpoint) and before anything
+  // else, and they write the agent's workspace as the real step does; the
+  // agent saves a before and an after into it.
+  const shotsFile = (runId, side) => pool().query(
+    `INSERT INTO shot_run_files (run_id, slot, story_id, viewport, side, variant, media, content_type, data, bytes, sha256)
+     VALUES ($1, $2, 'c1', 'desktop', $3, 'context', 'png', 'image/png', $4, 3, $5) ON CONFLICT DO NOTHING`,
+    [runId, `c1/desktop/${side}/context`, side, Buffer.from(side), side === 'base' ? 'b'.repeat(64) : 'd'.repeat(64)]);
+  const pool = () => require(path.join(SRC, 'db/pool')).getPool();
+  outside(fakes, 'services/shots-orchestrator', {
+    keep: ['platformFault', 'visibleError', 'exactSha', 'headForSession', 'loadSession', 'publicSessionAndApp'],
+    overrides: {
+      async resolveRevision(_pool, { sessionId, headSha }) {
+        await fakes.record('shots.revision', { sessionId, headSha });
+        return { baseSha: '0'.repeat(40), headSha };
+      },
+      async buildCopies(_config, db, o) {
+        await fakes.record('shots.copies', { runId: o.runId, reused: !!o.images, fresh: !!o.fresh });
+        if (!o.images && o.onImages) await o.onImages({ base: { imageRef: 'img:b', imageDigest: 'sha256:b' }, head: { imageRef: 'img:h', imageDigest: 'sha256:h' } });
+        await fakes.pause('shots.copies.built');
+        await db.query(
+          `INSERT INTO shot_run_control (run_id, session_id, intent, context, expires_at)
+           VALUES ($1, $2, $3::jsonb, '{}'::jsonb, NOW() + INTERVAL '1 hour') ON CONFLICT DO NOTHING`,
+          [o.runId, o.sessionId, JSON.stringify(o.intent)]);
+        return { fixtureFingerprint: 'fp', baseImageDigest: 'sha256:b', headImageDigest: 'sha256:h', afterOnly: false };
+      },
+      async dispatchAgent(_config, _db, o) {
+        await fakes.record('shots.agent', { runId: o.runId });
+        await shotsFile(o.runId, 'base');
+        await shotsFile(o.runId, 'head');
+        return { agent: { outcome: 'completed' }, passed: true, readyCount: 1, failedCount: 0, skippedAny: false,
+          verdict: { passed: true, mode: 'shots', runs: 1, stories: [{ id: 'c1', status: 'ready', files: 2 }] },
+          manifestHash: 'e'.repeat(64), slots: ['c1/desktop/base/context', 'c1/desktop/head/context'], trace: {} };
+      },
+      async compareScreens(_db, { verdict }) { return verdict; },
+      async cleanupRun(_config, db, o) {
+        await fakes.record('shots.cleanup', { runId: o.runId });
+        await db.query('DELETE FROM shot_run_control WHERE run_id = $1', [o.runId]);
+        return { cleaned: true, version: 2 };
+      },
+    },
+  });
   // Not an outside service, a probe: whether the Workshop hears a board
   // change in this process (its listener is registered by server.js only).
   const themes = require(path.join(SRC, 'services/workshop-themes'));

@@ -422,9 +422,14 @@ test('the button and the automatic pass take the same selection', () => {
     'the confirmation says what it leaves alone');
 });
 
-test('the leak event type is declared alongside the reap one', () => {
-  assert.match(eventsJs, /STAGING_TEARDOWN_LEAKED: 'staging_teardown_leaked'/);
-  const stagingJs = read('src/services/staging.js');
-  assert.match(stagingJs, /EVENT_TYPES\.STAGING_TEARDOWN_LEAKED/,
-    'the chokepoint records the leak — it is the only place that knows');
+test('a leaking retirement is not done, and no leak event is recorded instead', () => {
+  assert.doesNotMatch(eventsJs, /STAGING_TEARDOWN_LEAKED/);
+  // The teardown chokepoint hands every preview to the preview machine, so
+  // the place that knows about a leak is the machine's retirement: it
+  // looks again after the deletes and fails (to be retried) while anything
+  // is still there, instead of recording a leak and moving on.
+  const services = read('src/workflow/preview/services.ts');
+  const retire = services.slice(services.indexOf('[WORK.retire]: {'));
+  assert.match(retire.slice(0, retire.indexOf('\n    },\n')),
+    /if \(left\.length\) throw new Error\(`Still present after retirement/);
 });

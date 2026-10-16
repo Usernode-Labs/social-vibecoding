@@ -30,7 +30,7 @@ const initialBack = { ...ui.backButtonStore.get() };
 const initialTitle = { ...ui.headerTitleStore.get() };
 const initialImprove = { ...ui.improveStore.get() };
 
-function harness({ improveAvailable = true } = {}) {
+function harness({ improveAvailable = true, phone = false } = {}) {
   ui.backButtonStore.set(initialBack);
   ui.headerTitleStore.set(initialTitle);
   // Target availability is held steady, as it is on these two platform
@@ -60,6 +60,8 @@ function harness({ improveAvailable = true } = {}) {
     localStorage: { getItem: () => null, setItem() {} },
     document: { getElementById: node, querySelector: () => null, querySelectorAll: () => [], addEventListener() {} },
     addEventListener() {},
+    // A desktop unless `phone` (no matchMedia reads as the desktop).
+    ...(phone ? { matchMedia: () => ({ matches: false, addEventListener() {} }) } : {}),
     PlatformUI: { transition: (fn, options) => transitions.push({ fn, options }) },
     Home: { _apps: [{ slug: 'notes', name: 'Notes' }], load() {}, publishImproveTarget() {} },
     AppView: { close() {}, _teardownDevRoots() {}, _unmountAppFrame() {}, _retireAppFrame() {} },
@@ -351,12 +353,19 @@ test('a tab root shows nothing; a sub-page shows an arrow to its tab', () => {
     assert.equal(ui.backButtonStore.get().mode, 'arrow', `${screen} has a level above`);
     assert.equal(ui.backButtonStore.get().href, href, `${screen} goes up to its tab`);
   }
-  // …and the app view gets the ✕ instead (#2718), which is the same
-  // guarantee in a different glyph: leaving somebody else's program is not
-  // going up a level, so the slot says "step out" rather than "go up".
-  h.App._showOnlyScreen('browse-screen');
-  h.App._showOnlyScreen('app-view');
+  // …and on a phone the app view gets the ✕ instead (#2718), which is the
+  // same guarantee in a different glyph: leaving somebody else's program is
+  // not going up a level, so the slot says "step out" rather than "go up".
+  const phone = harness({ phone: true });
+  phone.App._showOnlyScreen('browse-screen');
+  phone.App._showOnlyScreen('app-view');
   assert.equal(ui.backButtonStore.get().mode, 'close', 'an app view offers the way out');
+  // On a desktop the rail stays beside the app and is the way out, as on a
+  // root: the corner is empty for the sidebar toggle.
+  const desktop = harness();
+  desktop.App._showOnlyScreen('browse-screen');
+  desktop.App._showOnlyScreen('app-view');
+  assert.equal(ui.backButtonStore.get().mode, 'none', 'the rail beside the app is the way out');
 });
 
 test('Home and Discover are reachable from the bar, on every platform screen', () => {

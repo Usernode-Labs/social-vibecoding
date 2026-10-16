@@ -2,7 +2,8 @@
 
 // The preview machine (src/workflow/preview/) against the full PostgreSQL
 // schema: admission, supersession, publication, settlement, the error lane,
-// deferral, retirement, detaching, and who is working on a session
+// deferral, retirement, adopting a session from its row, preview-only
+// requests, a release's retry of the platform's faults, and who is working on a session
 // (workflow-foundation's design-previews-and-checks.md). Work kinds are
 // faked here, each recording what it was asked; services.ts has its own
 // tests.
@@ -106,8 +107,12 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     ok: true, url: `https://pv--s${input.sessionId}.apps.test`, runtimeKind: 'kubernetes',
     runtimeName: `sv-preview-1-s${input.sessionId}`, containerId: null, imageRef: `img@sha256:${input.n}`, buildRef: `b-${input.n}`,
   });
+  // These apps have no repo unit suite, and their runs say so as a real run
+  // does (visuals.settleCaptureRun's `unitSuiteAbsent`), which is what
+  // answers a person's "Run checks again" (rules/check-store.ts unitAnswer).
   const verdict = (state, extra = {}) => () => ({
-    outcome: 'verdict', state, results: [{ index: 0, name: 'Loads /', status: state === 'passing' ? 'pass' : 'fail' }],
+    outcome: 'verdict', state, unitSuiteAbsent: true,
+    results: [{ index: 0, name: 'Loads /', status: state === 'passing' ? 'pass' : 'fail' }],
     console: { state: 'clean', errors: [] }, history: [{ checkKey: 'k1', name: 'Loads /', path: '/', passes: 1, fails: 0 }],
     capture: { state: 'console_only', detail: { media: false } }, visuals: false, ...extra,
   });
@@ -174,7 +179,12 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     const publish = (await workOf(s, WORK.publish))[0];
     assert.equal(publish.input.state, 'passing', 'the platform-variables check refreshes on a verdict (review finding 4)');
     const kinds = (await workOf(s)).map((w) => w.kind).sort();
-    assert.deepEqual(kinds, [WORK.followUps, WORK.run, WORK.publish, WORK.prepare, WORK.ready].sort());
+    assert.deepEqual(kinds, [WORK.followUps, WORK.run, WORK.publish, WORK.prepare, WORK.unitEarly].sort());
+    // The shots machine hears the head: when the preview served, and when
+    // the verdict settled (messages, not hand-off work).
+    const { rows: told } = await pool.query(
+      `SELECT type, payload FROM wf_events WHERE machine = 'shots' AND key = $1 ORDER BY id`, [sessionKey(s.id)]);
+    assert.deepEqual(told.map((e) => [e.type, e.payload.head]), [['HeadReady', SHA('a')], ['HeadReady', SHA('a')]]);
   });
 
   await t.test('P2 the same head joins; a stale producer is refused; a newer head cancels the attempt and retires it', async () => {
@@ -253,7 +263,8 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal(r.staging_commit_sha, SHA('a'));
     assert.deepEqual([r.check_state, r.checks_commit_sha, r.consecutive_check_failures], ['error', SHA('b'), 1]);
     assert.ok(r.check_error_notified_at, 'the author was told once');
-    const { rows: lines } = await pool.query(`SELECT content FROM chat_session_messages WHERE session_id = $1`, [s.id]);
+    const notes = `SELECT content FROM chat_session_messages WHERE session_id = $1 AND metadata ? 'checkError'`;
+    const { rows: lines } = await pool.query(notes, [s.id]);
     assert.equal(lines.length, 1);
     assert.match(lines[0].content, /Container exited with code 1/);
     assert.ok(i.deadline_at, 'a promoted row is in the error lane');
@@ -264,7 +275,7 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     await settle();
     assert.equal((await instance(s)).data.streak, 2);
     assert.equal((await row(s.id)).consecutive_check_failures, 2);
-    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM chat_session_messages WHERE session_id = $1`, [s.id])).rows[0].n, 1);
+    assert.equal((await pool.query(notes, [s.id])).rows.length, 1);
     work.answer.set(WORK.prepare, prepareOk);
     await send(s, 'RecheckRequested', { reason: 'manual' }, { kind: 'route' });
     await settle();
@@ -360,30 +371,169 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     await settle();
   });
 
-  await t.test('P8 detach cancels everything; the next event adopts the row again', async () => {
-    const s = await proposal(await app(), { status: 'active' });
-    await submit(s, SHA('4'));
-    await rt.drain();
-    await send(s, 'Detach');
-    await rt.drain();
-    assert.equal((await instance(s)).state, 'detached');
-    assert.deepEqual((await workOf(s, WORK.prepare)).map((w) => w.result), [{ cancelled: true }]);
-    // [main] built a preview meanwhile; the next event adopts it as attempt 0.
-    await pool.query(
-      `UPDATE chat_sessions SET staging_url = 'https://legacy', staging_runtime_name = 'sv-preview-legacy',
-              staging_runtime_kind = 'kubernetes', staging_commit_sha = $2, checks_commit_sha = $2, check_state = 'passing'
-        WHERE id = $1`, [s.id, SHA('5')]);
-    const same = await submit(s, SHA('5'));
-    await rt.drain();
-    assert.equal((await outcome(same)).state_after, 'settled', 'the adopted verdict for the served head stands');
-    const i = await instance(s);
-    assert.equal(i.data.serving.n, 0);
-    assert.equal(i.data.last, 1, 'numbering continues');
-    await submit(s, SHA('6'));
+  await t.test('P8 a retire or a clear adopts a session the machine does not hold, from its row', async () => {
+    // A preview built before the machine (attempt 0, [main]'s names) on a
+    // row nobody has enrolled: an exit retires it by its old name.
+    const s = await proposal(await app(), { status: 'archived', extra: {
+      staging_url: 'https://legacy', staging_runtime_name: 'sv-preview-legacy', staging_runtime_kind: 'kubernetes',
+      staging_commit_sha: SHA('5'), checks_commit_sha: SHA('5'), check_state: 'passing' } });
+    assert.equal(await instance(s), undefined);
+    const exit = await send(s, 'RetireRequested', { reason: 'archived', terminal: true, sessionId: s.id });
     await settle();
-    const retired = await workOf(s, WORK.retireAttempt);
-    assert.deepEqual(retired.map((w) => [w.input.n, w.input.db]),
-      [[0, `app_${s.app.slug.replace(/-/g, '_')}_staging_s${s.id}_555555`]], 'the adopted preview is retired by its [main] name');
+    assert.equal((await outcome(exit)).result, 'accepted');
+    assert.equal((await instance(s)).state, 'retired');
+    assert.deepEqual((await workOf(s, WORK.retire))[0].input.attempts.map((a) => [a.n, a.db]),
+      [[0, `app_${s.app.slug.replace(/-/g, '_')}_staging_s${s.id}_555555`]], 'retired by its [main] name');
+    assert.equal((await row(s.id)).staging_url, null);
+    // An idle retire of a row under review is refused, as for one held.
+    const promoted = await proposal(await app(), { status: 'promoted' });
+    const refused = await send(promoted, 'RetireRequested', { reason: 'idle', terminal: false, sessionId: promoted.id });
+    await rt.drain();
+    assert.equal((await outcome(refused)).reason, 'under_review');
+    // Nothing serves: the row's leftover pointers go, and nothing is built.
+    const bare = await proposal(await app(), { status: 'active', extra: { staging_url: 'https://half' } });
+    await send(bare, 'RetireRequested', { reason: 'idle', terminal: false, sessionId: bare.id });
+    await settle();
+    assert.equal((await instance(bare)).state, 'idle');
+    assert.equal((await row(bare.id)).staging_url, null);
+    assert.deepEqual(await workOf(bare, WORK.prepare), []);
+    // A clear on a row the machine does not hold: the verdict goes, through it.
+    const clr = await proposal(await app(), { status: 'paused', extra: { checks_commit_sha: SHA('6'), check_state: 'failing' } });
+    await send(clr, 'ChecksCleared', { reason: 'paused-update', sessionId: clr.id }, { kind: 'route' });
+    await rt.drain();
+    assert.equal((await row(clr.id)).check_state, null);
+    assert.ok(await instance(clr), 'adopted');
+    // An event that names no session cannot adopt one.
+    const anon = await proposal(await app(), { status: 'active' });
+    const none = await send(anon, 'RetireRequested', { reason: 'idle', terminal: false });
+    await rt.drain();
+    assert.equal((await outcome(none)).reason, 'no_instance');
+  });
+
+  await t.test('P24 a preview-only request builds and serves, runs no checks, and writes no verdict', async () => {
+    const s = await proposal(await app(), { status: 'paused', extra: { is_headless: true } });
+    const ask = await send(s, 'PreviewRequested', { sessionId: s.id, head: SHA('7'), reason: 'preview' }, { kind: 'route' });
+    await settle();
+    assert.equal((await outcome(ask)).result, 'accepted');
+    let i = await instance(s);
+    assert.deepEqual([i.state, i.data.verdict, i.data.previewOnly, i.data.serving.head], ['settled', null, true, SHA('7')]);
+    assert.deepEqual(await workOf(s, WORK.run), [], 'no checks run');
+    let r = await row(s.id);
+    assert.equal(r.staging_commit_sha, SHA('7'));
+    assert.deepEqual([r.check_state, r.checks_commit_sha], [null, null], 'no checks state written');
+    assert.equal(heard(s, 'staging_ready').length, 1);
+    const recheck = await send(s, 'RecheckRequested', { reason: 'manual' }, { kind: 'route' });
+    await rt.drain();
+    assert.equal((await outcome(recheck)).reason, 'preview_only');
+    // A failed build: no verdict, no note to anyone, no retry of its own.
+    work.answer.set(WORK.prepare, () => ({ ok: false, detail: 'Image build failed' }));
+    const s2 = await proposal(await app(), { status: 'paused', extra: { is_headless: true } });
+    await send(s2, 'PreviewRequested', { sessionId: s2.id, head: SHA('8'), reason: 'preview' }, { kind: 'route' });
+    await settle();
+    i = await instance(s2);
+    assert.deepEqual([i.state, i.data.failure, i.deadline_at], ['failed', 'Image build failed', null]);
+    r = await row(s2.id);
+    assert.deepEqual([r.check_state, r.check_error_notified_at], [null, null]);
+    assert.deepEqual(await workOf(s2, WORK.stopped), []);
+    assert.equal(heard(s2, 'staging_failed').length, 1);
+    work.answer.set(WORK.prepare, prepareOk);
+  });
+
+  await t.test('P25 a release retries a platform fault at once; a proposal\'s own failure waits for its timer', async () => {
+    const s = await proposal(await app(), { pin: SHA('9') });
+    work.answer.set(WORK.prepare, () => ({ ok: false, detail: 'The preview database server refused', platformFault: true }));
+    await submit(s, SHA('9'));
+    await settle();
+    assert.equal((await instance(s)).state, 'failed');
+    work.answer.set(WORK.prepare, prepareOk);
+    const now = await send(s, 'RetryDue', {}, { kind: 'system', name: 'release-retry' });
+    await settle();
+    assert.equal((await outcome(now)).result, 'accepted');
+    assert.equal((await instance(s)).state, 'settled');
+    const byRoute = await send(s, 'RetryDue', {}, { kind: 'route' });
+    await rt.drain();
+    assert.equal((await outcome(byRoute)).reason, 'timer_only');
+  });
+
+  await t.test('P26 the unit suite starts with each build, goes with a superseded one, and not for a failing head', async () => {
+    const s = await proposal(await app(), { status: 'active' });
+    await submit(s, SHA('1'));
+    await rt.drain();
+    let early = await workOf(s, WORK.unitEarly);
+    assert.deepEqual(early.map((w) => [w.work_key, w.input.n, w.input.head]), [['unit-early:1', 1, SHA('1')]]);
+    await submit(s, SHA('2'));   // before the first build ran
+    await rt.drain();
+    early = await workOf(s, WORK.unitEarly);
+    assert.deepEqual(early.map((w) => w.work_key), ['unit-early:1', 'unit-early:2']);
+    assert.deepEqual(early[0].result, { cancelled: true }, 'the superseded attempt\'s suite is cancelled');
+    await settle();
+    assert.equal((await instance(s)).state, 'settled');
+
+    // A head whose build failed is built again with no early suite.
+    work.answer.set(WORK.prepare, () => ({ ok: false, detail: 'Image build failed' }));
+    const s2 = await proposal(await app(), { pin: SHA('3') });
+    await submit(s2, SHA('3'));
+    await settle();
+    assert.equal((await instance(s2)).state, 'failed');
+    work.answer.set(WORK.prepare, prepareOk);
+    await due(s2);
+    await rt.fireTimers();
+    await settle();
+    assert.equal((await instance(s2)).state, 'settled');
+    assert.deepEqual((await workOf(s2, WORK.unitEarly)).map((w) => w.work_key), ['unit-early:1']);
+
+    // A preview with no checks has no suite to start.
+    const s3 = await proposal(await app(), { status: 'paused', extra: { is_headless: true } });
+    await send(s3, 'PreviewRequested', { sessionId: s3.id, head: SHA('4'), reason: 'preview' }, { kind: 'route' });
+    await settle();
+    assert.deepEqual(await workOf(s3, WORK.unitEarly), []);
+  });
+
+  await t.test('P27 the lines people read: the dev chat\'s outcome rows and an imported proposal\'s thread notes', async () => {
+    const card = (s) => pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', 'Building staging preview...', '{"stagingBuild":"running","changesReady":true}')`, [s.id]);
+    const devChat = async (s) => (await pool.query(
+      `SELECT content, metadata FROM chat_session_messages WHERE session_id = $1 AND role = 'system' ORDER BY id`, [s.id])).rows;
+
+    // A native proposal: the preview that serves is a row, with its URL.
+    const s = await proposal(await app(), { status: 'active' });
+    await card(s);
+    await submit(s, SHA('5'));
+    await settle();
+    let rows = await devChat(s);
+    assert.deepEqual(rows.map((r) => r.content), ['Building staging preview...', 'Staging deployed!']);
+    assert.equal(rows[1].metadata.stagingUrl, `https://pv--s${s.id}.apps.test`);
+
+    // A failed build closes the open card once; the streak's note says why.
+    work.answer.set(WORK.prepare, () => ({ ok: false, detail: 'Image build failed' }));
+    const s2 = await proposal(await app(), { pin: SHA('6') });
+    await card(s2);
+    await submit(s2, SHA('6'));
+    await settle();
+    await due(s2);
+    await rt.fireTimers();
+    await settle();
+    assert.equal((await instance(s2)).data.streak, 2, 'it was built twice');
+    work.answer.set(WORK.prepare, prepareOk);
+    rows = await devChat(s2);
+    assert.deepEqual(rows.filter((r) => r.content === 'Staging build failed').map((r) => [r.metadata.stagingFailed, r.metadata.error]),
+      [[true, 'Image build failed']], 'once: the retry finds no open card');
+    assert.equal(rows.filter((r) => r.metadata.checkError).length, 1, 'the note to the author, once a streak');
+
+    // An imported pull request has no dev chat: its thread hears both ends.
+    const s3 = await proposal(await app(), { source: 'imported', pin: SHA('7'), extra: { pr_title: 'Fix the footer' } });
+    pushed.length = 0;
+    await submit(s3, SHA('7'));
+    await settle();
+    const { rows: notes } = await pool.query(
+      `SELECT content, metadata FROM chat_messages WHERE thread_type = 'session' AND thread_ref = $1 ORDER BY id`, [s3.id]);
+    assert.deepEqual(notes.map((n) => [n.metadata.stagingBuild, n.metadata.headSha]), [['started', SHA('7')], ['ready', SHA('7')]]);
+    assert.match(notes[0].content, new RegExp(`PR #${s3.pr_number}: Fix the footer`));
+    assert.equal(notes[1].metadata.stagingUrl, `https://pv--s${s3.id}.apps.test`);
+    assert.equal(pushed.filter((p) => p.kind === 'room' && p.data.type === 'chat'
+      && p.data.thread?.ref === s3.id).length, 2, 'both pushed to the app\'s room');
+    assert.deepEqual(await devChat(s3), [], 'nothing in a dev chat it does not have');
   });
 
   await t.test('P10 a head with nothing beyond main settles skipped without a build, and kicks the queue', async () => {
@@ -411,20 +561,6 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     await rt.drain();
     assert.equal((await outcome(stale)).state_after, 'preparing', 'a carry from a head that is not the settled one is checked');
     await settle();
-  });
-
-  await t.test('P12 detached and re-enabled with nothing rebuilt: the instance\'s own attempt is kept, by its own name', async () => {
-    work.answer.set(WORK.run, verdict('passing'));
-    const s = await proposal(await app(), { status: 'active' });
-    await submit(s, SHA('d'));
-    await settle();
-    const before = (await instance(s)).data.serving;
-    await send(s, 'Detach');
-    await rt.drain();
-    await submit(s, SHA('e'));
-    await settle();
-    const retired = (await workOf(s, WORK.retireAttempt)).map((w) => [w.input.n, w.input.db]);
-    assert.deepEqual(retired, [[before.n, before.db]], 'the attempt it built is retired, under the name it was built with');
   });
 
   await t.test('P13 code nothing checks yet clears the verdict through the machine and cancels the old run', async () => {
@@ -460,9 +596,16 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal((await outcome(ensure)).reason, 'already_serving');
     await send(s, 'PreviewRequested', { sessionId: s.id, head: SHA('7'), reason: 'deploy' }, { kind: 'route' });
     await rt.drain();
+    // A person's recheck joins the build going, recorded on its head as owed
+    // a fresh unit suite (services/unit-suite-reuse.js); a system one is
+    // refused as joined.
     const busy = await send(s, 'RecheckRequested', { reason: 'manual' }, { kind: 'route' });
     await rt.drain();
-    assert.equal((await outcome(busy)).reason, 'run_outstanding');
+    assert.deepEqual([(await outcome(busy)).result, (await outcome(busy)).state_after], ['accepted', 'preparing']);
+    assert.equal((await row(s.id)).unit_suite_fresh_sha, SHA('7'));
+    const sweep = await send(s, 'RecheckRequested', { reason: 'stuck-checks-sweep' });
+    await rt.drain();
+    assert.equal((await outcome(sweep)).reason, 'run_outstanding');
     await settle();
     const i = await instance(s);
     assert.equal(i.data.serving.n, 2, 'deploy built a new attempt of the same head');
@@ -702,7 +845,11 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     const first = (await instance(s)).data.run.key;
     const joins = await send(s, 'RecheckRequested', { reason: 'manual' }, { kind: 'route' });
     await rt.drain();
-    assert.equal((await outcome(joins)).reason, 'run_outstanding');
+    assert.equal((await outcome(joins)).state_after, 'checking');
+    assert.equal((await instance(s)).data.run.key, first, 'a person\'s recheck joins the run (recorded as owed on its head)');
+    const system = await send(s, 'RecheckRequested', { reason: 'stuck-checks-sweep' });
+    await rt.drain();
+    assert.equal((await outcome(system)).reason, 'run_outstanding');
     const replaces = await send(s, 'RecheckRequested', { reason: 'testing-update' }, { kind: 'system' });
     await rt.drain();
     assert.equal((await outcome(replaces)).state_after, 'checking');

@@ -432,9 +432,9 @@ async function heldFirstVersion(pool, found, { deps = {} } = {}) {
 
 /**
  * Pure: where one request (or fix) stands, from its stateRows row: one of
- * CARD_STAGES. A merged change is live once its chip says so (the app
- * answered after the merge: homeroom-bot-dm.js liveAfterMerge), approved
- * until then. A request held for its project's first version
+ * CARD_STAGES. A merged change is live once its chip says so (production
+ * runs it: homeroom-bot-dm.js noteProposalMerged, asked by the
+ * merge-followups machine at live), approved until then. A request held for its project's first version
  * (`held_first_version`, stateRows) waits for it, whatever it came to
  * before it was queued again.
  */

@@ -477,7 +477,9 @@ module.exports = function install(world) {
         const { harness } = realWorker.resolveTurnBackend(agentBackend, agentHarness);
         const { rows: [t] } = await pool.query('SELECT status, step FROM crash_world_turns WHERE journal = $1', [journal]);
         const where = await sessionWorld(sid);
-        await world.record('turn.follow', { step: t?.step || null, at: t ? t.status : 'missing', sessionId: sid }, where.appId);
+        // Named by journal, so a turn held until a process follows it
+        // (crash_world_turns holdUntil 'followed') is released by this record.
+        await world.record('turn.follow', { step: t?.step || null, at: t ? t.status : 'missing', journal, sessionId: sid }, where.appId);
         const { state, missing } = await consume(sid, journal, { backend: agentBackend, harness, turnId, onProgress, dispatched: providerWasDispatched === true });
         if (!missing && (state.rawStdout || state.execExitSeen)) state.providerDispatched = true;
         // The follower has read the turn's end; nothing of it is kept yet.

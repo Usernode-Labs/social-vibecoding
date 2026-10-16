@@ -242,16 +242,20 @@ test('no dapp.json setting reaches the row: allowConsoleErrors changes nothing',
   assert.doesNotMatch(src, /allowConsoleErrors\s*[?&|]/, 'the row reads no per-check opt-out');
 });
 
-test('settlement carries the row and records it in the guarded history block', () => {
+test('settlement carries the row and returns it among the verdict\'s history rows', () => {
   // Source pin, like the asset-route row's: the settlement half is shared
-  // with the harvester, so the wiring has to live in settleCaptureRun.
+  // with the harvester, so the wiring has to live in settleCaptureRun. The
+  // settlement stores nothing: its history rows go back to the machine,
+  // whose settling transition records them.
   const fs = require('node:fs');
   const path = require('node:path');
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'visuals.js'), 'utf8');
   const body = src.slice(src.indexOf('async function settleCaptureRun('));
   assert.match(body, /const renderOutcome = shotsOnly \? null : await renderHealth\.maybeBuildRenderHealthRow\(\{/);
   assert.match(body, /if \(renderOutcome\) extraRows\.push\(renderOutcome\.row\);/);
-  assert.match(body, /if \(renderOutcome\) historyRows\.push\(renderOutcome\.history\);/);
+  assert.match(body, /historyRowsOf\(checksResult, \{[^}]*\brenderOutcome\b[^}]*\}\)/);
+  const rowsOf = src.slice(src.indexOf('function historyRowsOf('));
+  assert.match(rowsOf, /if \(renderOutcome\) rows\.push\(renderOutcome\.history\);/);
   assert.ok(body.indexOf('extraRows.push(renderOutcome.row)') < body.indexOf('classifyTests(parsedTests'),
     'the row is in place before the verdict is taken');
 });

@@ -40,7 +40,7 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
   const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
   await pool.query(schema);
   await pool.query(schema);
-  // The flag, as platform.ts syncSettings records it at boot.
+  // The machine's guard, as platform.ts syncSettings records it at every boot.
   const setFlag = (on) => pool.query(on
     ? `INSERT INTO wf_settings (key, value) VALUES ('enabled:governance-proposal', '1') ON CONFLICT DO NOTHING`
     : `DELETE FROM wf_settings WHERE key = 'enabled:governance-proposal'`);
@@ -91,15 +91,14 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
       return work.result[kind] || { ok: true };
     },
   });
-  // Whether a secret change asks app-delivery for its redeploy (its flag, per process).
-  const delivery = { on: false };
-  const machine = governanceProposal({ dataKey: DATA_KEY, notifiers, delivery: () => delivery.on });
+  const machine = governanceProposal({ dataKey: DATA_KEY, notifiers });
   // What browsers hear: published in the transition's transaction.
   const pushed = [];
   const rt = createRuntime({
     pool, machines: [machine], pollMs: 50, publish: async (q, list) => { pushed.push(...list); },
     services: { 'github.closeIssue': fake('github.closeIssue'), 'app.rebuildProduction': fake('app.rebuildProduction'),
-      'governance.checkTarget': fake('governance.checkTarget'), 'campaign.run': fake('campaign.run') },
+      'governance.checkTarget': fake('governance.checkTarget'), 'campaign.run': fake('campaign.run'),
+      'bot.requestsClosed': fake('bot.requestsClosed') },
   });
   runtimes.push(rt);
 
@@ -201,7 +200,7 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
       `SELECT work_key, input FROM wf_work WHERE machine = $1 AND key = $2 AND kind = 'campaign.run'`, [MACHINE, issueKey(c.id)]);
     assert.deepEqual([run.work_key, run.input], ['campaign', { issueId: c.id }]);
     assert.ok(!notified.some((n) => n.type === 'startCampaign'));
-    // secret_change: the secret, the rebuild as work, and no ciphertext left behind.
+    // secret_change: the secret, the redeploy asked of app-delivery, and no ciphertext left behind.
     const valueEnc = secrets.encrypt('hunter2-value', DATA_KEY);
     const sec = await issue(a, author, 'secret_change', { key: 'API_KEY', action: 'set', valueEnc, valueLast4: 'alue' });
     await file(sec);
@@ -210,7 +209,7 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     const stored = (await pool.query('SELECT * FROM app_secrets WHERE app_id = $1 AND key = $2', [a.id, 'API_KEY'])).rows[0];
     assert.equal(secrets.decrypt(stored.value_enc, DATA_KEY), 'hunter2-value');
     assert.equal((await row(sec)).payload.valueEnc, undefined);
-    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_work WHERE key = $1 AND kind = 'app.rebuildProduction'`, [issueKey(sec.id)])).rows[0].n, 1);
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_events WHERE machine = 'app-delivery' AND key = $1`, [`app:${a.id}`])).rows[0].n, 1);
     const { rows: history } = await pool.query(`SELECT data FROM wf_instances WHERE key = $1`, [issueKey(sec.id)]);
     assert.doesNotMatch(JSON.stringify(history), /hunter2|valueEnc/, 'the instance never holds the secret');
     // featured_illustration whose image is gone: refused, not stuck.
@@ -219,6 +218,78 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     await vote(ill, voter, 'up');
     assert.equal((await inst(ill)).state, 'refused');
     assert.match((await row(ill)).payload.appliedBy, /^refused:(no_image|image_unavailable)$/);
+  });
+
+  await t.test('a close vote asks for the bot\'s proposals on the closed request as durable work', async () => {
+    const a = await app();
+    const c = await issue(a, await user(), 'close_issue', { issueNumber: 77, issueTitle: 'Done' });
+    await file(c);
+    await vote(c, await user(), 'up');
+    await settle();
+    assert.equal((await inst(c)).state, 'applied');
+    const { rows: [w] } = await pool.query(
+      `SELECT work_key, input FROM wf_work WHERE machine = $1 AND key = $2 AND kind = 'bot.requestsClosed'`, [MACHINE, issueKey(c.id)]);
+    assert.deepEqual([w.work_key, w.input], ['bot', { appId: a.id, closed: [77] }]);
+    assert.ok(work.calls.some((x) => x.kind === 'bot.requestsClosed' && x.input.closed[0] === 77), 'and it ran');
+  });
+
+  await t.test('a featured illustration is published, kept or removed with the transition', async () => {
+    const [author, voter] = [await user(), await user()];
+    const hex = (ch) => ch.repeat(32);
+    // A new image: the pending bytes move into app_illustrations under the
+    // ids the card previewed, and the record is written onto the app.
+    const a = await app();
+    const proposed = { url: `/app-illustrations/${hex('b')}`, darkUrl: `/app-illustrations/${hex('c')}`, zoom: 1.4, x: 10, y: -5, tint: 'blue' };
+    const ill = await issue(a, author, 'featured_illustration', { proposed, current: null, remove: false });
+    await pool.query(
+      `INSERT INTO app_illustration_proposals (issue_id, app_id, id, content_type, data, dark_id, dark_content_type, dark_data)
+       VALUES ($1, $2, $3, 'image/png', $4, $5, 'image/webp', $6)`,
+      [ill.id, a.id, hex('b'), Buffer.from('new-light'), hex('c'), Buffer.from('new-dark')]);
+    await file(ill);
+    await vote(ill, voter, 'up');
+    assert.equal((await inst(ill)).state, 'applied');
+    const stored = (await pool.query('SELECT * FROM app_illustrations WHERE app_id = $1', [a.id])).rows[0];
+    assert.deepEqual([stored.id, stored.content_type, stored.data.toString(), stored.dark_id, stored.dark_content_type, stored.dark_data.toString()],
+      [hex('b'), 'image/png', 'new-light', hex('c'), 'image/webp', 'new-dark']);
+    assert.deepEqual((await pool.query('SELECT featured_illustration FROM apps WHERE id = $1', [a.id])).rows[0].featured_illustration, proposed);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app_illustration_proposals WHERE issue_id = $1', [ill.id])).rows[0].n, 0);
+    assert.match((await lines(ill)).at(-1), /Featured illustration changed by group vote \(1\/1\)/);
+    assert.ok(pushed.some((p) => p.data?.action === 'illustration_changed' && p.data.appId === a.id), 'open clients hear the app changed');
+    // A reframe keeps the app's current image: its bytes are read from the
+    // app's own row.
+    const reframed = { ...proposed, darkUrl: null, zoom: 2 };
+    const keep = await issue(a, author, 'featured_illustration', { proposed: reframed, current: proposed, remove: false });
+    await file(keep);
+    await vote(keep, voter, 'up');
+    assert.equal((await inst(keep)).state, 'applied');
+    const kept = (await pool.query('SELECT * FROM app_illustrations WHERE app_id = $1', [a.id])).rows[0];
+    assert.deepEqual([kept.id, kept.data.toString()], [hex('b'), 'new-light']);
+    assert.deepEqual((await pool.query('SELECT featured_illustration FROM apps WHERE id = $1', [a.id])).rows[0].featured_illustration, reframed);
+    // A removal clears the record and its bytes.
+    const remove = await issue(a, author, 'featured_illustration', { proposed: null, current: reframed, remove: true });
+    await file(remove);
+    await vote(remove, voter, 'up');
+    assert.equal((await inst(remove)).state, 'applied');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app_illustrations WHERE app_id = $1', [a.id])).rows[0].n, 0);
+    assert.equal((await pool.query('SELECT featured_illustration FROM apps WHERE id = $1', [a.id])).rows[0].featured_illustration, null);
+    assert.match((await lines(remove)).at(-1), /Featured illustration removed by group vote/);
+  });
+
+  await t.test('a platform variable a vote sets goes through the platform-env store, with no rebuild', async () => {
+    const platformApp = await app({ selfHosted: true });
+    const v = await issue(platformApp, await user(), 'secret_change',
+      { key: 'SOME_TUNABLE', action: 'set', valueEnc: secrets.encrypt('tuned', DATA_KEY), valueLast4: 'uned' });
+    await file(v);
+    await vote(v, await user(), 'up');
+    await settle();
+    assert.equal((await inst(v)).state, 'applied');
+    const { rows: [stored] } = await pool.query(
+      'SELECT value_enc FROM platform_env_values WHERE app_id = $1 AND key = $2', [platformApp.id, 'SOME_TUNABLE']);
+    assert.equal(secrets.decrypt(stored.value_enc, DATA_KEY), 'tuned', 'written by the platform-env store');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app_secrets WHERE app_id = $1', [platformApp.id])).rows[0].n, 0,
+      'app_secrets is for child apps only');
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_events WHERE machine = 'app-delivery' AND key = $1`,
+      [`app:${platformApp.id}`])).rows[0].n, 0, 'the platform is never redeployed for it');
   });
 
   await t.test('G4 applied at most once across concurrent votes, timers and admin force', async () => {
@@ -311,6 +382,12 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     await vote(i, voter, 'up');
     const s = await inst(i);
     assert.deepEqual([s.state, s.data.evaluation.waiting], ['open', 'awaiting_admin']);
+    // A view-only admin is not a privileged approver (#311): their Up counts
+    // as a vote, never as the admin's.
+    const viewOnly = await user({ admin: true });
+    await pool.query('UPDATE users SET admin_readonly = TRUE WHERE id = $1', [viewOnly.id]);
+    await vote(i, viewOnly, 'up');
+    assert.deepEqual([(await inst(i)).state, (await inst(i)).data.evaluation.waiting], ['open', 'awaiting_admin']);
     await vote(i, adminUser, 'up');
     assert.equal((await inst(i)).state, 'applied');
   });
@@ -348,9 +425,8 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     assert.equal((await pool.query('SELECT name FROM apps WHERE id = $1', [a.id])).rows[0].name, 'By the rules');
   });
 
-  await t.test('with app delivery on, a secret change asks it for the redeploy and records its answer', async () => {
-    delivery.on = true;
-    try {
+  await t.test('a secret change asks app-delivery for the redeploy and records its answer', async () => {
+    {
       const [author, voter] = [await user(), await user()];
       const a = await app();
       const sec = await issue(a, author, 'secret_change', { key: 'API_KEY', action: 'set', valueEnc: secrets.encrypt('v', DATA_KEY) });
@@ -380,22 +456,43 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
       await rt.drain();
       const done = Object.values(await followup()).filter((f) => f.kind === 'app-delivery').map((f) => f.status);
       assert.deepEqual(done, ['retried', 'done']);
-      // Another secret change whose redeploy failed, retried with app delivery
-      // turned off since: the rebuild is this machine's own work again.
+      // A rebuild recorded before every deploy was app-delivery's: its item
+      // left at the release hands the redeploy to app-delivery, and an admin's
+      // retry of one that failed asks app-delivery too.
       const sec2 = await issue(a, author, 'secret_change', { key: 'API_KEY2', action: 'set', valueEnc: secrets.encrypt('w', DATA_KEY) });
       await file(sec2);
       await vote(sec2, voter, 'up');
-      await rt.append(machine, issueKey(sec2.id), { type: 'DeliveryFailed', payload: { message: 'the build failed' } },
-        { requestKey: `t-${++rk}`, appId: a.id, source: { kind: 'message', from: { machine: 'app-delivery', key: `app:${a.id}`, eventId: 1 } } });
-      await rt.drain();
-      delivery.on = false;
+      const asBefore = async (i, status) => {
+        const c = await pool.connect();
+        try {
+          await c.query('BEGIN');
+          await c.query("SET LOCAL app.wf_writer = 'transition'");
+          await c.query(`UPDATE wf_instances SET data = jsonb_set(data, '{followups,rebuild}', $3::jsonb) WHERE machine = $1 AND key = $2`,
+            [MACHINE, issueKey(i.id), JSON.stringify({ kind: 'app.rebuildProduction', input: { appId: a.id }, status })]);
+          if (status === 'pending') {
+            await c.query(`INSERT INTO wf_work (machine, key, kind, work_key, input) VALUES ($1, $2, 'app.rebuildProduction', 'rebuild', $3)`,
+              [MACHINE, issueKey(i.id), JSON.stringify({ appId: a.id })]);
+          }
+          await c.query('COMMIT');
+        } catch (err) { await c.query('ROLLBACK'); throw err; } finally { c.release(); }
+      };
+      await asBefore(sec2, 'pending');
       const before = (await asked()).length;
-      await send(sec2, 'RetryFollowup', { workKey: 'rebuild' }, { source: { kind: 'admin' } });
+      work.result['app.rebuildProduction'] = { handOff: true };
+      try { await settle(); } finally { delete work.result['app.rebuildProduction']; }
+      assert.equal((await asked()).length, before + 1, 'handed to app-delivery');
+      assert.deepEqual((await inst(sec2)).data.followups.rebuild, { kind: 'app-delivery', input: { appId: a.id }, status: 'pending' });
+      const sec3 = await issue(a, author, 'secret_change', { key: 'API_KEY3', action: 'set', valueEnc: secrets.encrypt('x', DATA_KEY) });
+      await file(sec3);
+      await vote(sec3, voter, 'up');
+      await asBefore(sec3, 'exhausted');
+      const prior = (await asked()).length;
+      await send(sec3, 'RetryFollowup', { workKey: 'rebuild' }, { source: { kind: 'admin' } });
       await rt.drain();
-      assert.equal((await asked()).length, before, 'nothing asked of a machine that no longer runs');
-      assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_work WHERE key = $1 AND kind = 'app.rebuildProduction'`,
-        [issueKey(sec2.id)])).rows[0].n, 1);
-    } finally { delivery.on = false; }
+      assert.equal((await asked()).length, prior + 1, 'the retry asks app-delivery');
+      assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_work WHERE key = $1 AND kind = 'app.rebuildProduction' AND status = 'queued'`,
+        [issueKey(sec3.id)])).rows[0].n, 0, 'no rebuild of its own');
+    }
   });
 
   await t.test('G9 refusals close the proposal with their reason instead of leaving it open', async () => {
@@ -572,17 +669,15 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
       deps: { github: { async closeIssue() {} }, ws: { async sendSystemMessage() {}, pushIssueUpdate() {} } } });
     assert.equal((await row(twin)).status, 'closed');
     assert.equal((await row(held)).status, 'open', 'decided by its vote');
-    // The rename migration and the revert's sha backfill ask the same question.
-    for (const f of ['src/services/rename-pr.js', 'src/routes/votes.js']) {
-      assert.match(require('node:fs').readFileSync(require.resolve(`../${f}`), 'utf8'), /NOT wf_holds\('(governance-proposal|merge-followups)'/, f);
-    }
+    // The revert's sha backfill asks the same question.
+    assert.match(require('node:fs').readFileSync(require.resolve('../src/routes/votes.js'), 'utf8'), /NOT wf_holds\('merge-followups'/);
     // With the machine off, it holds nothing.
     await pool.query(`DELETE FROM wf_settings WHERE key = 'enabled:governance-proposal'`);
     try { assert.equal(await holds(issueKey(held.id)), false); }
     finally { await pool.query(`INSERT INTO wf_settings (key, value) VALUES ('enabled:governance-proposal', '1')`); }
   });
 
-  await t.test('G13 an enrolled row is owned: legacy writes are refused, unenrolled rows are not', async () => {
+  await t.test('G13 an enrolled row is owned: writes from outside are refused in every mode, unenrolled rows are not', async () => {
     const a = await app({ approvals: 5 });
     const author = await user();
     const enrolled = await issue(a, author, 'rename', { newName: 'E' });
@@ -592,10 +687,8 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     await assert.rejects(pool.query(`UPDATE issues SET payload = payload || '{"appliedAt": "x"}' WHERE id = $1`, [enrolled.id]), /payload.appliedAt/);
     await pool.query(`UPDATE issues SET status = 'closed' WHERE id = $1`, [legacy.id]);
     await pool.query(`UPDATE issues SET title = 'retitled' WHERE id = $1`, [enrolled.id]);
-    // With the flag off, [main]'s writers have every row back.
-    await setFlag(false);
-    await pool.query(`UPDATE issues SET payload = payload || '{"appliedAt": "x"}' WHERE id = $1`, [enrolled.id]);
-    await setFlag(true);
+    // There is no mode that lets such a write through: no log of them either.
+    assert.equal((await pool.query(`SELECT to_regclass('wf_ownership_violations') AS t`)).rows[0].t, null);
     // The trigger's kinds are services/governance-kinds.js's.
     const { rows: [trg] } = await pool.query(
       `SELECT pg_get_triggerdef(oid) AS def FROM pg_trigger WHERE tgname = 'issues_wf_governance_owned'`);
@@ -617,73 +710,26 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     assert.equal(await inst(general), undefined);
   });
 
-  await t.test('flag off, then on: a row decided or deleted meanwhile ends its instance, never applied twice', async () => {
+  await t.test('a row deleted under an open proposal (its app deleted) ends the instance when its timer fires', async () => {
     const a = await app({ approvals: 5 });
     const author = await user();
-    const decided = await issue(a, author, 'rename', { newName: 'Twice?' });
     const deleted = await issue(a, author, 'close_issue', { issueNumber: 31, issueTitle: 'q' });
     const untouched = await issue(a, author, 'close_issue', { issueNumber: 32, issueTitle: 'r' });
-    for (const i of [decided, deleted, untouched]) await file(i);
-    // Off: [main]'s apply path closes one row (the trigger lets it), an app
-    // deletion removes another.
-    await setFlag(false);
-    await pool.query(`UPDATE issues SET status = 'closed', payload = payload || '{"appliedAt": "then", "appliedBy": "group-vote"}' WHERE id = $1`, [decided.id]);
-    await pool.query('UPDATE apps SET name = $2 WHERE id = $1', [a.id, 'Twice?']);
+    for (const i of [deleted, untouched]) await file(i);
     await pool.query('DELETE FROM issues WHERE id = $1', [deleted.id]);
-    // On again: the pending timers fire.
-    await setFlag(true);
     await pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition';
       UPDATE wf_instances SET deadline_at = now() - interval '1 second'
-       WHERE key IN ('${issueKey(decided.id)}', '${issueKey(deleted.id)}', '${issueKey(untouched.id)}'); COMMIT`);
+       WHERE key IN ('${issueKey(deleted.id)}', '${issueKey(untouched.id)}'); COMMIT`);
     await rt.fireTimers();
-    await pool.query('UPDATE apps SET approvals_required = 1 WHERE id = $1', [a.id]);
-    const late = await vote(decided, await user(), 'up');
     await rt.drain();
-    assert.deepEqual([(await inst(decided)).state, (await inst(decided)).data.audit.supersededBy], ['superseded', 'closed_outside']);
     assert.deepEqual([(await inst(deleted)).state, (await inst(deleted)).data.audit.supersededBy], ['superseded', 'issue_gone']);
     assert.equal((await inst(untouched)).state, 'open', 'a row nobody touched carries on');
-    assert.equal(late.reason, 'not_open', 'no vote lands on it');
-    const r = await row(decided);
-    assert.deepEqual([r.payload.appliedAt, r.payload.supersededAt], ['then', undefined], 'the row keeps what [main] wrote');
-    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM chat_messages WHERE thread_type = 'governance' AND thread_ref = $1`, [decided.id])).rows[0].n, 0);
   });
 
-  await t.test('a legacy apply racing the machine (a rolling deploy): the issue row is locked, the loser stands down', async () => {
-    // Production logs ownership violations instead of refusing them, so while
-    // old and new Pods overlap, [main]'s apply can write an enrolled row.
-    await pool.query(`INSERT INTO wf_settings (key, value) VALUES ('ownership_mode', 'log')`);
-    try {
-      const voter = await user();
-      const a = await app({ approvals: 1, members: [voter] });
-      const i = await issue(a, await user(), 'rename', { newName: 'By the machine' });
-      await file(i);
-      // [main]'s apply holds the row (FOR UPDATE, then its writes) while a
-      // deciding vote reaches the machine.
-      const legacy = await pool.connect();
-      try {
-        await legacy.query('BEGIN');
-        await legacy.query('SELECT id FROM issues WHERE id = $1 FOR UPDATE', [i.id]);
-        await send(i, 'VoteCast', { userId: voter.id, username: voter.username, vote: 'up' }, { actor: `user:${voter.id}` });
-        const draining = rt.drain();
-        await new Promise((r) => setTimeout(r, 300));
-        await legacy.query('UPDATE apps SET name = $2 WHERE id = $1', [a.id, 'By main']);
-        await legacy.query(`UPDATE issues SET status = 'closed', payload = payload || '{"appliedBy": "group-vote"}' WHERE id = $1`, [i.id]);
-        await legacy.query('COMMIT');
-        await draining;
-      } finally { legacy.release(); }
-      const s = await inst(i);
-      assert.deepEqual([s.state, s.data.audit.supersededBy], ['superseded', 'closed_outside']);
-      assert.equal((await pool.query('SELECT name FROM apps WHERE id = $1', [a.id])).rows[0].name, 'By main', 'applied once, by [main]');
-      assert.equal((await row(i)).payload.appliedBy, 'group-vote');
-    } finally {
-      await pool.query(`DELETE FROM wf_settings WHERE key = 'ownership_mode'`);
-    }
-  });
-
-  await t.test('a vote waiting on [main]\'s lock on the row reads the votes [main] committed meanwhile', async () => {
-    // Old and new Pods overlap: [main] records a vote and holds the row
-    // while it decides. The same voter's second Up on the machine must see
-    // that vote (a retraction), not the votes from before it waited.
+  await t.test('a vote waiting on another transaction\'s lock on the row reads the votes it committed meanwhile', async () => {
+    // Another transaction records a vote and holds the row. The same
+    // voter's second Up on the machine must see that vote (a retraction),
+    // not the votes from before it waited.
     const [author, v1, v2] = [await user(), await user(), await user()];
     const a = await app({ approvals: 2, members: [v1, v2] });
     const i = await issue(a, author, 'rename', { newName: 'Not twice' });
@@ -708,7 +754,7 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
 
   await t.test('a vote waiting on the row lock reads the app\'s settings as they are after it', async () => {
     // A settings change committed while the vote waited for the row lock
-    // (here by a transaction holding it, as [main]'s apply does) decides it.
+    // (here by a transaction holding it) decides it.
     const [author, v1] = [await user(), await user()];
     const a = await app({ approvals: 1, members: [v1] });
     const i = await issue(a, author, 'rename', { newName: 'Not yet' });
@@ -748,15 +794,12 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     const campaign = await vote(c, v1, 'up');
     const camp = (await pool.query('SELECT id FROM maintenance_campaigns WHERE issue_id = $1', [c.id])).rows[0];
     assert.equal(campaign.reply.result.campaignId, camp.id);
-    // A row closed outside the machine records no vote and does not answer `toggled`.
+    // A row closed outside the machine (only the transition's own marker
+    // gets past the guard now) records no vote and does not answer `toggled`.
     const outside = await issue(a, author, 'rename', { newName: 'Outside' });
     await file(outside);
-    await pool.query(`INSERT INTO wf_settings (key, value) VALUES ('ownership_mode', 'log')`);
-    try {
-      await pool.query(`UPDATE issues SET status = 'closed' WHERE id = $1`, [outside.id]);
-    } finally {
-      await pool.query(`DELETE FROM wf_settings WHERE key = 'ownership_mode'`);
-    }
+    await pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition';
+      UPDATE issues SET status = 'closed' WHERE id = ${outside.id}; COMMIT`);
     const late = await vote(outside, v1, 'up');
     assert.deepEqual(late.reply, { result: { applied: false, superseded: true } });
     assert.equal((await pool.query('SELECT 1 FROM issue_votes WHERE issue_id = $1', [outside.id])).rowCount, 0);

@@ -1503,22 +1503,6 @@
     "text": "Homeroom bot asked you",
     "description": "Small status tag on a row under Waiting on you on a project's Workshop tab. On a request of the viewer's: Homeroom bot asked the viewer a question about it and waits for their answer. \"Homeroom bot\" is the platform's builder bot, a name."
   },
-  "workshop.row.tag.botReplied": {
-    "text": "With Homeroom bot · it replied {{ago}}",
-    "description": "Small status tag on a row under Waiting on you on a project's Workshop tab, on a change or request where the viewer and Homeroom bot are talking in its discussion and Homeroom bot wrote last. {{ago}} is a time such as \"2h ago\". \"Homeroom bot\" is the platform's builder bot, a name."
-  },
-  "workshop.row.tag.botRepliedNow": {
-    "text": "With Homeroom bot · it replied",
-    "description": "The same tag as \"With Homeroom bot · it replied 2h ago\", when the time it replied is not known."
-  },
-  "workshop.row.tag.youReplied": {
-    "text": "With Homeroom bot · you replied {{ago}}",
-    "description": "Small status tag on a row under Waiting on you on a project's Workshop tab, on a change or request where the viewer and Homeroom bot are talking in its discussion and the viewer wrote last. {{ago}} is a time such as \"1d ago\". \"Homeroom bot\" is the platform's builder bot, a name."
-  },
-  "workshop.row.tag.youRepliedNow": {
-    "text": "With Homeroom bot · you replied",
-    "description": "The same tag as \"With Homeroom bot · you replied 1d ago\", when the time is not known."
-  },
   "countdown.daysHours": {
     "text": "~{{days}}d {{hours}}h",
     "description": "Short countdown on a proposal's card showing roughly how long until its voting window ends, for example \"~2d 5h\". {{days}} and {{hours}} are numbers; \"d\" and \"h\" abbreviate days and hours. Keep the leading \"~\" (about)."
@@ -3579,6 +3563,14 @@
     "text": "npm test finished: {{count}} failed",
     "description": "One short line under the \"Checks\" label on a proposal's page about the project's own unit tests, which run beside the browser checks. \"npm test\" is the command that runs them and is not translated. The tests finished with failures; {{count}} is how many failed."
   },
+  "progress.unit.sub.reused_one": {
+    "text": "npm test reused: {{count}} passed {{when}} (run {{run}})",
+    "description": "One short line under the \"Checks\" label on a proposal's page about the project's own unit tests. \"npm test\" is the command that runs them and is not translated. This run did not run them again: the same commit already passed them in an earlier run, which is reused. {{count}} is how many passed then, {{when}} how long ago (for example \"12m ago\"), {{run}} the start of that run's id (for example \"832c9d27\")."
+  },
+  "progress.unit.sub.reused_other": {
+    "text": "npm test reused: {{count}} passed {{when}} (run {{run}})",
+    "description": "One short line under the \"Checks\" label on a proposal's page about the project's own unit tests. \"npm test\" is the command that runs them and is not translated. This run did not run them again: the same commit already passed them in an earlier run, which is reused. {{count}} is how many passed then, {{when}} how long ago (for example \"12m ago\"), {{run}} the start of that run's id (for example \"832c9d27\")."
+  },
   "progress.unit.sentence.finishedPassed_one": {
     "text": "The repo unit suite (npm test) finished: {{count}} passed.",
     "description": "Sentence in the checks note on a proposal's page about the project's own unit tests, which run beside the browser checks. \"npm test\" is the command that runs them and is not translated. The tests finished without a failure; {{count}} is how many passed. \"repo\" is the project's code repository."
@@ -3594,6 +3586,14 @@
   "progress.unit.sentence.finishedPassedSkipped_other": {
     "text": "The repo unit suite (npm test) finished: {{count}} passed, {{skipped}} skipped.",
     "description": "Sentence in the checks note on a proposal's page about the project's own unit tests, which run beside the browser checks. \"npm test\" is the command that runs them and is not translated. The tests finished without a failure; {{count}} is how many passed and {{skipped}} how many were left out on purpose."
+  },
+  "progress.unit.sentence.reused_one": {
+    "text": "The repo unit suite (npm test) did not run again: this commit passed it {{when}} in run {{run}}, with {{count}} test, on the same image and setup, and that pass is reused.",
+    "description": "Sentence in the checks note on a proposal's page about the project's own unit tests. \"npm test\" is the command that runs them and is not translated. This run did not run them again: the same commit already passed them in an earlier run, with the same test machine image and setup, and that pass is reused. {{count}} is how many tests passed then, {{when}} how long ago (for example \"12m ago\"), {{run}} the start of that run's id (for example \"832c9d27\"). \"repo\" is the project's code repository."
+  },
+  "progress.unit.sentence.reused_other": {
+    "text": "The repo unit suite (npm test) did not run again: this commit passed it {{when}} in run {{run}}, with {{count}} tests, on the same image and setup, and that pass is reused.",
+    "description": "Sentence in the checks note on a proposal's page about the project's own unit tests. \"npm test\" is the command that runs them and is not translated. This run did not run them again: the same commit already passed them in an earlier run, with the same test machine image and setup, and that pass is reused. {{count}} is how many tests passed then, {{when}} how long ago (for example \"12m ago\"), {{run}} the start of that run's id (for example \"832c9d27\"). \"repo\" is the project's code repository."
   },
   "progress.unit.sentence.finishedFailed_one": {
     "text": "The repo unit suite (npm test) finished with failures: {{count}} failed, {{passed}} passed.",

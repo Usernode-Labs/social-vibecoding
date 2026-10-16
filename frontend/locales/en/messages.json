@@ -3239,6 +3239,14 @@
     "text": "Load earlier replies",
     "description": "Button in the thread side pane: fetches the replies before the ones shown."
   },
+  "replies.discussion.from": {
+    "text": "In the request's discussion",
+    "description": "Line under the name of a message from a request's public discussion, shown inside that request's thread in the chat with Homeroom bot: tapping it opens the request page, where the message can be replied to. Used once on each such message."
+  },
+  "replies.discussion.more": {
+    "text": "Earlier messages are on the request's discussion",
+    "description": "Link at the top of a request's thread in the chat with Homeroom bot: the request's public discussion has more messages than the newest ones shown here, and opening it shows them all."
+  },
   "replies.app.placeholder": {
     "text": "Reply in thread…",
     "description": "Placeholder of the message box in a thread under a message of a project's channel."

@@ -635,7 +635,7 @@ function visibleChangesSubmissionFields(result = {}) {
 // the new SHA. This is best-effort after a Git push: metadata storage must not
 // falsely report that code which already landed did not land.
 async function applyShotsRevision({
-  pool, config, session, headSha, visibleChanges, headChanged = false,
+  pool, config, session, headSha, visibleChanges, headChanged = false, pin = null, from = null,
 }) {
   const submitted = visibleChanges !== undefined;
   if (!config?.shots?.collect) {
@@ -651,7 +651,10 @@ async function applyShotsRevision({
   const intent = submitted ? visibleChanges : storedVisibleChanges(session);
   try {
     if (headChanged && shotsState.validSha(headSha)) {
-      await shotsState.markStaleForHead(pool, Number(session.id), headSha);
+      // Appended before the head is written (applyHeadChange, the reviewed
+      // head's reconcile, below): `from` lets the shots machine tell this
+      // move from one a newer move overtook.
+      await shotsState.markStaleForHead(pool, Number(session.id), headSha, null, { pin, from });
     }
     if (!intent) {
       const required = session.shots_detail?.required === true;
@@ -665,7 +668,7 @@ async function applyShotsRevision({
       pool,
       Number(session.id),
       intent,
-      shotsState.validSha(headSha) ? { headSha } : {}
+      shotsState.validSha(headSha) ? { headSha, pin, from } : {}
     );
     session.shots_state = result.state;
     session.shots_detail = result.detail;
@@ -1317,8 +1320,13 @@ async function resubmitUnchanged(ctx, headSha, via) {
   const { pool, config, gh, session, sessionId, owner, repo } = ctx;
   const base = unchanged(session, headSha, via);
   const applied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
+  // The head did not move, but another writer may have moved it since this
+  // request read the row: the declaration names the revision column and the
+  // head it read there, so a newer move refuses it (shots/machine.ts staleHead).
+  const pin = String(session.source) === 'imported' ? 'imported' : 'reviewed';
   const shotsApplied = await applyShotsRevision({
     pool, config, session, headSha, visibleChanges: ctx.visibleChanges,
+    pin, from: (pin === 'imported' ? session.imported_pr_head_sha : session.reviewed_head_sha) || null,
   });
   // Same-commit resubmits are also how a title correction arrives — the
   // update that should have carried it may already have landed (#1199's
@@ -1377,9 +1385,15 @@ async function resubmitUnchanged(ctx, headSha, via) {
   // so no reviewer is waiting on a new preview of it.
   const recovery = ctx.recovery || require('./staging-recovery');
   try {
+    // 'shots-update' only when the shots are ALL that changed. New testing
+    // routes, or an explicit `recheck: true`, ask for a fresh verdict even
+    // when the shots changed too: 'testing-update' reads as a manual re-run,
+    // so the unit suite runs again rather than reusing an earlier pass of
+    // this commit (services/unit-suite-reuse.js).
+    const shotsOnly = shotsApplied.changed && !applied.changed && !ctx.recheck;
     const run = recovery.recheckSessionChecks({
       config, pool, session,
-      reason: shotsApplied.changed ? 'shots-update' : 'testing-update',
+      reason: shotsOnly ? 'shots-update' : 'testing-update',
     });
     if (run && typeof run.catch === 'function') {
       run.catch((err) => log.warn('proposal-update', 'testing-metadata recheck failed (non-fatal)', {
@@ -1449,21 +1463,14 @@ function ownershipGate(session, user) {
   return null;
 }
 
-// Is the platform itself mid-write on this proposal? Same four questions the
-// commit-upload route asks, and for the same reason: a staging build or a
-// screenshot capture in flight is pinned to the CURRENT head, and moving the
-// branch underneath it produces a preview of one commit labelled with
-// another.
+// Is the platform itself mid-write on this proposal? The questions the
+// commit-upload route asks: a turn or an operation, or a hand-off being
+// adopted. A build or checks run of the current head needs no refusal: the
+// new head reaches the preview machine as a revision, which cancels it.
 function defaultBusyCheck(session) {
   const { isSessionBusy } = require('./active-workers');
-  const staging = require('./staging');
-  const visuals = require('./visuals');
   const { hasInFlightHandoffPipeline } = require('./handoff-pipeline');
-  const id = Number(session.id);
-  return isSessionBusy(id)
-    || hasInFlightHandoffPipeline(session.id)
-    || staging.hasInFlightBuild(id)
-    || visuals.hasInFlightCapture(session.id);
+  return isSessionBusy(Number(session.id)) || hasInFlightHandoffPipeline(session.id);
 }
 
 // ── The bot-owned branch ───────────────────────────────────────────────
@@ -1648,6 +1655,7 @@ async function advanceAppRepoBranch(ctx) {
   const shotsApplied = await applyShotsRevision({
     pool, config, session, headSha: verified.headSha,
     visibleChanges: ctx.visibleChanges, headChanged: liveHead !== verified.headSha,
+    pin: String(session.source) === 'imported' ? 'imported' : 'reviewed', from: liveHead,
   });
   // And the submitted title: stored for the promote-time lazy PR creation
   // when the row has no PR yet, or a rename of the existing PR when it does.
@@ -1935,7 +1943,7 @@ function sessionParts(ctx) {
 }
 
 async function settleActiveSession({ config, pool, session, sessionId, headSha, parts }) {
-  const { visuals, pipeline } = parts;
+  const { pipeline } = parts;
   const { beginHandoffPipeline, startHandoffPipeline, OWNED_SOURCE_SQL } = pipeline;
 
   // Guarded on `status = 'active'`: a manual pause or archive between the
@@ -1943,19 +1951,14 @@ async function settleActiveSession({ config, pool, session, sessionId, headSha, 
   // write that re-arms a check pipeline for a session that is no longer live.
   // Guarded on `checks_commit_sha` as well — the value read UNDER THE LOCK, so
   // a newer head that took the session while this push was in flight keeps it
-  // rather than being regressed to an older commit's pending state.
+  // rather than being regressed to an older commit. The verdict and the
+  // preview are the preview machine's: the hand-off below gives it the head.
   const adopted = await pool.query(
     `UPDATE chat_sessions
-        SET check_state = CASE WHEN $4::boolean THEN check_state ELSE 'pending' END,
-            checks_commit_sha = CASE WHEN $4::boolean THEN checks_commit_sha ELSE $1 END,
-            check_error_detail = CASE WHEN $4::boolean THEN check_error_detail END,
-            staging_container_id = CASE WHEN $4::boolean THEN staging_container_id END,
-            staging_url = CASE WHEN $4::boolean THEN staging_url END,
-            last_activity_at = NOW()
-      WHERE id = $2 AND status = 'active' AND ${OWNED_SOURCE_SQL}
-        AND checks_commit_sha IS NOT DISTINCT FROM $3`,
-    // $4: the preview machine owns the verdict and the preview; the claim stays.
-    [headSha, sessionId, session.checks_commit_sha || null, require('./preview-workflow').enabled()]
+        SET last_activity_at = NOW()
+      WHERE id = $1 AND status = 'active' AND ${OWNED_SOURCE_SQL}
+        AND checks_commit_sha IS NOT DISTINCT FROM $2`,
+    [sessionId, session.checks_commit_sha || null]
   );
   if (!adopted.rowCount) {
     await settlePausedSession({ pool, session, sessionId, headSha, parts });
@@ -1963,15 +1966,6 @@ async function settleActiveSession({ config, pool, session, sessionId, headSha, 
   }
 
   await recordChangesReadyCard({ pool, session, sessionId, headSha });
-
-  const pending = require('./preview-workflow').enabled() ? true
-    : await visuals.setChecksPending(pool, sessionId, headSha, 'building', 'commit-push')
-      .catch((err) => {
-        log.warn('proposal-update', 'setChecksPending failed (non-fatal)', { sessionId, err: err.message });
-        return true;
-      });
-  if (pending === false) return { rebuilding: false };
-  try { visuals.notifyChecksPending(sessionId, headSha, 'building', 'commit-push'); } catch { /* notify only */ }
 
   const app = {
     id: session.app_id,
@@ -2009,34 +2003,13 @@ async function settleActiveSession({ config, pool, session, sessionId, headSha, 
 // looking like it had never been checked at all.
 async function settlePausedSession({ pool, session, sessionId, headSha, parts }) {
   const { lifecycle: sessionLifecycle, pushSessionUpdate } = parts;
-  // A session the preview machine holds has its verdict cleared by it.
-  const machineHeld = await require('./preview-workflow').held(sessionId);
-  // The same column list the CLI commit-upload route clears for a commit
-  // nothing has run yet, minus the 'pending' verdict itself — nothing IS
-  // running, and a 'pending' no pipeline will ever resolve is a spinner
-  // forever. NULL check_state is the honest "no verdict for the current code",
-  // and it blocks merge, which is the correct answer here.
-  await pool.query(
-    `UPDATE chat_sessions
-        SET check_state = NULL, check_phase = NULL,
-            check_error_detail = NULL, check_error_notified_at = NULL,
-            check_next_retry_at = NULL,
-            test_results = '[]'::jsonb, checks_checked_at = NULL,
-            consecutive_check_failures = 0,
-            first_check_failure_at = NULL, last_check_failure_at = NULL,
-            capture_state = NULL, capture_detail = NULL, captured_at = NULL,
-            last_activity_at = NOW()
-      WHERE id = $1 AND status = 'paused' AND NOT $2::boolean`,
-    [sessionId, machineHeld]
-  ).catch((err) => log.warn('proposal-update', 'could not clear the stale verdict', {
-    sessionId, err: err.message,
-  }));
-  if (machineHeld) {
-    await pool.query(`UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 AND status = 'paused'`, [sessionId])
-      .catch(() => {});
-    await require('./preview-workflow').clear({ session: { ...session, id: sessionId }, reason: 'paused-update' })
-      .catch((err) => log.warn('proposal-update', 'could not clear the stale verdict', { sessionId, err: err.message }));
-  }
+  // No verdict for the current code: the preview machine clears it (NULL
+  // check_state, not a 'pending' no run will resolve; it blocks merge, which
+  // is the correct answer here). checks_commit_sha stays, as said above.
+  await pool.query(`UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 AND status = 'paused'`, [sessionId])
+    .catch(() => {});
+  await require('./preview-workflow').clear({ session: { ...session, id: sessionId }, reason: 'paused-update' })
+    .catch((err) => log.warn('proposal-update', 'could not clear the stale verdict', { sessionId, err: err.message }));
 
   await recordChangesReadyCard({ pool, session, sessionId, headSha });
 
@@ -2199,7 +2172,7 @@ async function advanceForkHead(ctx) {
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
   const shotsApplied = await applyShotsRevision({
     pool, config, session, headSha: liveHead,
-    visibleChanges: ctx.visibleChanges, headChanged: oldHead !== liveHead,
+    visibleChanges: ctx.visibleChanges, headChanged: oldHead !== liveHead, pin: 'imported', from: oldHead,
   });
   // The request linkage (#1310). On an imported row this stores the DB half
   // only — the close watcher and the Dev board read it — and applyLinkedIssues

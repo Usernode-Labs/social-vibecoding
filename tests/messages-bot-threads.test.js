@@ -336,3 +336,43 @@ test('"done already" is one message: Propose to close is decided, Tell me what\'
   const source = read('frontend/src/features/messages/bot-question.tsx');
   assert.match(source, /if \(action\.type === 'reply'\) \{\s*quoteInComposer\(message, conversationId\);\s*return;\s*\}/);
 });
+
+// ── 7. The request's discussion rides along (#5219) ───────────────────────
+
+test('a discussion message is drawn as a row that opens the request, with no actions', () => {
+  const { DiscussionRow } = loadTsx('frontend/src/features/messages/message-row.tsx');
+  const discussion = {
+    id: 11, source: 'discussion', sender: ADA, content: 'Could the reminder go out the evening before too?',
+    createdAt: '2026-10-09T11:40:00.000Z', editedAt: null,
+  };
+  const html = renderToHtml(createElement(DiscussionRow, { message: discussion, appSlug: 'plant-pal', issueNumber: 4 }));
+  assert.match(html, /id="messages-discussion-11"/);
+  assert.match(html, /data-discussion-message-id="11"/);
+  assert.match(html, /href="#app\/plant-pal\/dev\/issues\/4">In the request&#x27;s discussion</,
+    'the line under the name is the way to the request page');
+  assert.match(html, /Could the reminder go out the evening before too\?/);
+  assert.doesNotMatch(html, /<button|data-msgx|messages-actions/, 'no actions: taking part happens on the request page');
+  const empty = renderToHtml(createElement(DiscussionRow, { message: { ...discussion, content: '' }, appSlug: 'plant-pal', issueNumber: 4 }));
+  assert.doesNotMatch(empty, /messages-markdown/, 'no empty text block');
+});
+
+test('the thread pane reads the two lists as one transcript, counted together, and the composer stays', () => {
+  const screen = read('frontend/src/features/messages/index.tsx');
+  assert.match(screen, /const merged: MergedRow\[\] = \[/, 'the two lists become one');
+  assert.match(screen, /merged\.sort\(\(a, b\) => \(a\.message\.createdAt < b\.message\.createdAt \? -1/);
+  assert.match(screen, /row\.kind === 'reply' && row\.message\.id < 0/, 'a reply still in flight stays last');
+  assert.match(screen, /t\('messages:replies\.count', \{ count: merged\.length \}\)/, 'the count is of both');
+  assert.match(screen, /discussion\?\.more \? <a className="messages-load-older" href=\{issueRefHref\(discussion\.appSlug/);
+  assert.match(screen, /<MessageComposer threadRootId=\{rootId\} \/>/,
+    'the composer is untouched: replies still go in the private thread');
+  const store = read('frontend/src/features/messages/store.ts');
+  assert.match(store, /discussion: null/, 'a loading thread carries no discussion');
+  assert.match(store, /discussion: page\.discussion/, 'a loaded one carries it');
+  const api = read('frontend/src/features/messages/api.ts');
+  assert.match(api, /discussion: DiscussionState \| null/, 'the client reads the field off the response');
+});
+
+test('the discussion\'s words are in the catalog, in English', () => {
+  assert.equal(catalog('messages:replies.discussion.from'), 'In the request\'s discussion');
+  assert.equal(catalog('messages:replies.discussion.more'), 'Earlier messages are on the request\'s discussion');
+});

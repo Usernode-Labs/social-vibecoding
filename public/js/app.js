@@ -1614,10 +1614,15 @@ const App = {
   _applyLaunchShot() {
     let shot = null;
     let settled = false;
+    let failed = false;
     try {
       const params = new URLSearchParams(location.search);
       shot = params.get('shot');
       settled = params.get('settle') === '1';
+      // #4813: the paired failed state. On the base commit `failed=1` is
+      // ignored and the spinner stays up; on this commit it synthesises the
+      // failed card, so the before/after capture observes the actual change.
+      failed = params.get('failed') === '1';
     } catch (err) { /* ignore */ }
     // #1945: `?shot=app-tone-dark` / `?shot=app-tone-light` — a running app
     // whose page is that tone, so the bar above it can be seen taking it.
@@ -1639,6 +1644,13 @@ const App = {
     if (settled) {
       setTimeout(() => {
         try { AppView.showSettledLaunchShot(); } catch (err) { /* ignore */ }
+      }, 50);
+      return;
+    }
+    // #4813: the failed launch card, same 50ms defer as the settled state.
+    if (failed) {
+      setTimeout(() => {
+        try { AppView.showLaunchFailedShot(); } catch (err) { /* ignore */ }
       }, 50);
       return;
     }
@@ -2768,9 +2780,9 @@ const App = {
   // of the yellow + spinner state. Reacts to BOTH the start broadcast
   // (deploying:true → render the deploying pill) and the end
   // broadcast (deploying:false → re-fetch the version so the new
-  // SHA shows up). The server emits these from staging.js around
-  // every rebuildProduction call, so all entry paths (dev-chat
-  // merge, drift poller, manual check-updates) are covered.
+  // SHA shows up). The app-delivery workflow machine pushes these
+  // around every production deploy, so all entry paths (a merge, the
+  // drift poller, manual check-updates) are covered.
   handleAppRedeployStatus(data) {
     if (!data || !data.appSlug) return;
     const slug = data.appSlug;
@@ -4017,6 +4029,14 @@ const App = {
   // caught up by the drawer's stale-revision indicator
   // (renderPlatformVersionPill) or by pull-to-refresh (_refreshOrReload).
   handleVoteUpdate(data) {
+    // #5233: a merge lands while the viewer is anywhere but the board itself
+    // — the app tab, the proposal's own page, Home — and the board's cached
+    // lists still hold it as open. The helper checks which app the lists
+    // belong to, so it is called whatever is showing here; the burst below
+    // covers the board showing live.
+    if (data.merged && typeof AppView !== 'undefined' && AppView.noteSessionMerged) {
+      AppView.noteSessionMerged(data.sessionId, data.appSlug);
+    }
     // Refresh the proposals tab / inline chat vote state if we're in this
     // app's Dev view, and the work drawer and Home, which track tallies:
     // once for the burst this event arrives in, which usually also carries
@@ -5142,6 +5162,9 @@ const App = {
             return;
           }
           App.navigateToMessages(null, null, agent);
+          // The pane does not open the conversation it is already showing
+          // again, so a `?flow=` link to that one is handed to it here.
+          if (agent.kind === 'agent') window.UsernodeReact?.agentSession?.applyHandoff?.(agent.id);
           return;
         }
         // #2783: `#messages/channel/<handle>` is where a `#name` channel
@@ -5929,6 +5952,43 @@ const App = {
     try { window.UsernodeReact?.communityScope?.setScope(slug || null); } catch (_) { /* no bundle yet */ }
   },
 
+  // THE TAB FOLLOWS THE APP BESIDE IT. With the rail docked beside a running
+  // app (_railBesideApp), the Communities tab is on screen next to that app,
+  // and it read as the last project page left, often another app's: the
+  // whiteboard's tile beside the tier list. So opening an app makes the tab
+  // that app's community, and a press on it goes to that app's Workshop
+  // (resumeWorkshopView). A view already inside this app is kept, so the tab
+  // still returns to the card you were reading there. Its name and icon come
+  // from the record the app view opened with, filled in for a community the
+  // switcher's list does not hold (one you use but are not in).
+  _scopeToRunningApp() {
+    const slug = App.currentApp;
+    if (!slug || App.embeddedPanel) return;
+    let rec = null;
+    try {
+      rec = (typeof AppView !== 'undefined'
+        && ((AppView.appData?.slug === slug ? AppView.appData : null)
+          || AppView.launchRecordFor?.(slug))) || null;
+    } catch (_) { /* no record: the store keeps what it knows */ }
+    if (rec?.self_hosted) return;
+    if (App._readWorkshopView()?.slug !== slug) {
+      try {
+        localStorage.setItem(App._WORKSHOP_VIEW_KEY,
+          JSON.stringify({ slug, path: `/app/${encodeURIComponent(slug)}/workshop` }));
+      } catch (_) { /* the tab still shows it; the press keeps the old view */ }
+    }
+    if (rec?.name) {
+      try {
+        window.UsernodeReact?.communityScope?.describe?.(slug, {
+          name: rec.name,
+          iconUrl: rec.icon_url || undefined,
+          iconEmoji: rec.icon_emoji || undefined,
+        });
+      } catch (_) { /* no bundle yet */ }
+    }
+    App._publishCommunityScope(slug);
+  },
+
   _readWorkshopView() {
     try {
       const v = JSON.parse(localStorage.getItem(App._WORKSHOP_VIEW_KEY) || 'null');
@@ -6070,14 +6130,18 @@ const App = {
     // that settles which screen is showing, so it is where a step is
     // reported. Optional call: several suites run this method alone.
     App._reportNavigation?.(screen, inApp);
-    // …UNLESS THE VIEWER PINNED IT (#3319). Settings → Theme's "Keep sidebar
-    // open in apps" keeps the desktop rail docked beside a running app. Off
-    // by default, and desktop only: below 768px the bar is the phone's
-    // bottom bar, and an app keeps the whole screen there whatever is stored.
-    // `rail-pinned` on the body is what app.css keys the frame's own padding
-    // off (no gutter around somebody's program).
-    const railPinned = inApp && !App.embeddedPanel && App._railPinned() && !App._isPhoneLayout();
+    // …EXCEPT ON A DESKTOP, WHERE THE RAIL STAYS BESIDE IT. The rail is
+    // docked beside a running app by default now, and the header's corner is
+    // the sidebar toggle rather than a ✕ (_railBesideApp says when, and
+    // _backSlotFor agrees). Settings → Theme's "Keep sidebar open in apps"
+    // (#3319) switches it off for the old full-window app. Below 768px the
+    // bar is the phone's bottom bar, and an app keeps the whole screen there
+    // whatever is stored. `rail-pinned` on the body is what app.css keys the
+    // frame's own padding off (no gutter around somebody's program).
+    const railPinned = inApp && App._railBesideApp();
     document.body?.classList?.toggle('rail-pinned', railPinned);
+    // …and its Communities tab names this app's community (_scopeToRunningApp).
+    if (railPinned && !App.chromeless) App._scopeToRunningApp();
     App._watchRailBreakpoint();
     App.Visibility.publish(
       'platform-tabs',
@@ -6206,17 +6270,31 @@ const App = {
   // ── "Keep sidebar open in apps" (#3319) ─────────────────────────────
   //
   // A per-browser display preference, like the theme: localStorage, read at
-  // every _syncPlatformTabs. Every access is guarded — storage throws in a
-  // private window or with site data blocked, and that must read as "off",
-  // the old behaviour, never as a broken router.
+  // every _syncPlatformTabs. ON BY DEFAULT now: nothing stored keeps the rail
+  // beside a running app on the desktop, and '0' is the viewer switching it
+  // off. A '1' stored while it was opt-in still reads as on. Every access is
+  // guarded — storage throws in a private window or with site data blocked,
+  // and that must read as the default, never as a broken router.
   RAIL_PINNED_KEY: 'usernode:rail-pinned',
 
   _railPinned() {
     try {
-      return window.localStorage?.getItem(App.RAIL_PINNED_KEY) === '1';
+      return window.localStorage?.getItem(App.RAIL_PINNED_KEY) !== '0';
     } catch (_) {
-      return false;
+      return true;
     }
+  },
+
+  // Whether a running app has the rail docked beside it, and so the sidebar
+  // toggle in the header's corner where the ✕ was. One predicate, because
+  // the rail (_syncPlatformTabs) and the back slot (_backSlotFor) are two
+  // answers to it and have to agree. Desktop only: on a phone an app keeps
+  // the whole screen and its ✕. Never in the side panel's document, which
+  // draws no chrome. And not for a private member's first app, which has
+  // no way out but the mark menu's "Go to Homeroom" (_privateNoClose).
+  _railBesideApp() {
+    return !App.embeddedPanel && App._railPinned() && !App._isPhoneLayout()
+      && !App._privateNoClose();
   },
 
   // Written by the Settings switch (features/settings/sections/theme.tsx),
@@ -6224,15 +6302,26 @@ const App = {
   // the moment the viewer goes back to it.
   setRailPinned(on) {
     try {
-      if (on) window.localStorage?.setItem(App.RAIL_PINNED_KEY, '1');
-      else window.localStorage?.removeItem(App.RAIL_PINNED_KEY);
+      if (on) window.localStorage?.removeItem(App.RAIL_PINNED_KEY);
+      else window.localStorage?.setItem(App.RAIL_PINNED_KEY, '0');
     } catch (_) { /* unwritable storage: the switch simply does not stick */ }
+    App._resyncRailBesideApp();
+  },
+
+  // Re-decide the rail, and with it a running app's corner: the toggle where
+  // the rail stays, the ✕ where the app takes the window. The back slot is
+  // otherwise published only on a screen swap or a tab switch, and neither
+  // happens when the switch is flipped or the window crosses 768px.
+  _resyncRailBesideApp() {
     App._syncPlatformTabs();
+    if (App._revealedScreen === 'app-view' && App.currentTab === 'app') {
+      App.setBackIcon(...App._backSlotFor('app-view'));
+    }
   },
 
   // A window resized across 768px inside an app changes the answer above
-  // (a pinned rail on the desktop, the full-screen app on a phone), so the
-  // breakpoint re-decides too. Installed once, lazily, where it is needed.
+  // (the rail beside it on the desktop, the full-screen app on a phone), so
+  // the breakpoint re-decides too. Installed once, lazily, where it is needed.
   _railBreakpointWatched: false,
   _watchRailBreakpoint() {
     if (App._railBreakpointWatched) return;
@@ -6240,7 +6329,7 @@ const App = {
     try {
       const mql = window.matchMedia?.('(min-width: 768px)');
       mql?.addEventListener?.('change', () => {
-        if (App._railPinned()) App._syncPlatformTabs();
+        if (App._railPinned()) App._resyncRailBesideApp();
       });
     } catch (_) { /* no matchMedia: nothing to watch */ }
   },
@@ -8519,6 +8608,11 @@ const App = {
       // an invite link landed them in is where they are, and the mark menu's
       // "Go to Homeroom" is the way on (_privateNoClose).
       if (App._privateNoClose()) return ['none'];
+      // ON A DESKTOP THE RAIL STAYS BESIDE THE APP, and the corner is the
+      // sidebar toggle instead of a ✕: the rail's tabs are the way out, as
+      // they are from every other screen. _syncPlatformTabs asks the same
+      // predicate, so the ✕ and the rail never show together.
+      if (App._railBesideApp()) return ['none'];
       // The ✕'s DESTINATION is the page the app was opened from (App.closeApp
       // traverses back to it; this is the href a modified click follows), and
       // Home when there is none. The table holds the glyph; this holds the
@@ -8833,10 +8927,10 @@ const App = {
       // the default for everything that was not Home, and the reset was
       // written before an app had a slot of its own. Its href is where
       // App.closeApp goes: the page the app was opened from. A private
-      // member's first app has none: the table's own answer for it, so the
-      // two writers agree (_backSlotFor, _privateNoClose).
-      if (App._privateNoClose()) App.setBackIcon(...App._backSlotFor('app-view'));
-      else App.setBackIcon('close', App._closeAppHref());
+      // member's first app has none, and a desktop with the rail beside the
+      // app has the sidebar toggle instead: the table's own answers, so the
+      // two writers agree (_backSlotFor, _privateNoClose, _railBesideApp).
+      App.setBackIcon(...App._backSlotFor('app-view'));
       AppView.renderAppTab();
       if (opening && AppView.appData?.slug === App.currentApp
           && App._isScreenVisible?.('app-view')) {
@@ -9037,7 +9131,14 @@ App._applyBootScreen = function _applyBootScreen() {
   // that carries it is installed by the bundle, which has not evaluated yet,
   // and lighting a tab before hydration would be a first render that
   // disagrees with the prerender.
-  if (target === 'app-view' || target.startsWith('auth-')) {
+  //
+  // …EXCEPT AN APP ON A DESKTOP, whose rail stays beside it
+  // (_railBesideApp): hiding it here would only have the router bring it
+  // back, sliding the app a rail's width right under the reader. A private
+  // member's first app is the one desktop app without it; App.user is not
+  // known yet, so theirs is taken away by the router instead.
+  const railStays = target === 'app-view' && App._railBesideApp();
+  if ((target === 'app-view' && !railStays) || target.startsWith('auth-')) {
     App.Visibility.publish('platform-tabs', false);
   }
 };

@@ -169,8 +169,11 @@ function harness({
   row = checksRow(), revisions = 0, comments = [], proposalThread = [],
   result = { lastResultText: '```json\n{"action":"revise","reply":"Renamed the control.","summary":"The text-size button now says \\"Text size\\"."}\n```', pushOk: true, sha: NEW_HEAD },
   routed = null, sync = { synced: false, why: 'level' },
+  // #5220: the pre-turn sync (syncBeforeFix). Not synced unless a test says
+  // so, so the fix turn runs as before in the tests above.
+  fixSync = { synced: false, why: 'own_failure' },
 } = {}) {
-  const calls = { queries: [], exec: [], loop: null, posts: [], onProposal: [], reconciled: [], seen: [], sync: [] };
+  const calls = { queries: [], exec: [], loop: null, posts: [], onProposal: [], reconciled: [], seen: [], sync: [], fixSync: [] };
   const pool = {
     async query(sql, params) {
       const s = String(sql);
@@ -225,9 +228,15 @@ function harness({
     sessionLifecycle: {},
     domain: 'app.onhomeroom.com',
     votes: { async reconcileNativeReviewedHead(args) { calls.reconciled.push(args); return { enforced: true }; } },
-    // Before a hand-off (fixed-check-sync.js syncBeforeHandOff): level with
-    // main unless a test says otherwise, so nothing is synced.
+    // Before its fix turn (#5220) and before a hand-off
+    // (fixed-check-sync.js syncBeforeHandOff): level with main unless a test
+    // says otherwise, so nothing is synced.
     fixedCheckSync: {
+      async syncBeforeFix(args) {
+        calls.fixSync.push({ sessionId: args.sessionId, head: args.head });
+        if (fixSync instanceof Error) throw fixSync;
+        return fixSync;
+      },
       async syncBeforeHandOff(args) {
         calls.sync.push({ sessionId: args.sessionId, head: args.head });
         if (sync instanceof Error) throw sync;
@@ -389,6 +398,58 @@ test('the bot asks fixed-check-sync for the sync, once per proposal, on the fail
   assert.match(src, /cause: parsed\?\.action === 'person' \? parsed\.cause : null,\n {2}\}\);\n\}/);
 });
 
+// #5220: before the fix turn is spent, a failure that looks like main's
+// staleness brings the change up to date with main once (fixed-check-sync.js
+// syncBeforeFix), and the votes keep counting, where a fix turn's revision
+// would clear them.
+test('a failure that looks like main\'s is synced before the fix turn: no turn spent, one line where the votes are', async (t) => {
+  const h = harness({ fixSync: { synced: true, why: null, sha: NEW_HEAD } });
+  const out = await run(t, h);
+  assert.equal(out.acted, 'checks_synced');
+  assert.equal(out.verdict, 'answer', 'an answer, not a revise: it counts toward no MAX_REVISIONS');
+  assert.equal(h.calls.exec.length, 0, 'no fix turn: main may already have fixed it');
+  assert.deepEqual(h.calls.fixSync, [{ sessionId: 5001, head: HEAD }], 'asked on the failing head the round is due on');
+  assert.deepEqual(h.calls.onProposal.map((p) => p.kind), ['checks_synced'], 'one line where the group votes');
+  assert.equal(h.calls.onProposal[0].text, followup.checksSyncedText({ failingCount: 1 }));
+  assert.equal(h.calls.posts.length, 0, 'nothing on the request, on GitHub or in the DM');
+  assert.equal(h.calls.reconciled.length, 0, 'the sync starts the new head\'s run itself, keeping the votes');
+  const insert = insertOf(h);
+  assert.equal(insert.params[4], 'answer');
+  assert.equal(insert.params[14], null, 'no turn ran, so nothing was spent');
+  assert.equal(insert.params[21], HEAD, 'the failing head is marked looked at; the synced one gets its own round');
+  assert.equal(insert.params[9], 'Brought up to date with main before fixing its checks; its checks run again.',
+    'the ledger says what happened instead of a fix');
+  assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31),
+    'the round is done: the queue row goes');
+});
+
+test('when the pre-turn sync declines, the fix turn runs as before', async (t) => {
+  const h = harness();
+  const out = await run(t, h);
+  assert.equal(out.acted, 'checks_revise');
+  assert.equal(h.calls.exec.length, 1);
+  assert.deepEqual(h.calls.fixSync, [{ sessionId: 5001, head: HEAD }], 'it was asked first, and said no');
+  assert.deepEqual(h.calls.sync, [], 'a turn that revises never reaches the hand-off sync');
+});
+
+test('no pre-turn sync when only the shots showed something not working', async (t) => {
+  const h = harness({ row: brokenRow() });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'revise');
+  assert.deepEqual(h.calls.fixSync, [], 'a sync cannot fix what its shots show');
+});
+
+test('the pre-turn sync is not asked for a recovered turn, and the infra early return stands before it', () => {
+  const src = read('src/services/homeroom-bot.js');
+  const pre = src.slice(src.indexOf('// #5220: before its own fix turn'), src.indexOf('const handOff = async ('));
+  assert.match(pre, /if \(!recovered && failing\.length && !broken\.length\) \{/);
+  assert.match(pre, /\.syncBeforeFix\(\{ config, pool, sessionId: session\.id, head \}\)\)/);
+  assert.ok(src.indexOf('.syncBeforeFix({ config, pool, sessionId: session.id, head }))') < src.indexOf('const handOff = async ('),
+    'the sync comes before the hand-off path');
+  const infra = src.slice(src.indexOf('if (!recovered && followup.checksLookLikeInfra(checks))'), src.indexOf('// #5220: before its own fix turn'));
+  assert.match(infra, /return \{ ran: false, reason: 'checks_infra' \};/, 'a platform fault returns before the sync is asked');
+});
+
 test('a person the change needs is still a person: only cause not_change goes to admins', () => {
   assert.equal(followup.parseFollowUp('```json\n{"action":"person","cause":"not_change","reply":"x"}\n```').cause, 'not_change');
   assert.equal(followup.parseFollowUp('```json\n{"action":"person","cause":"bogus","reply":"x"}\n```').cause, null);
@@ -506,39 +567,48 @@ test('a failing verdict on the bot\'s proposal queues its issue; anything else d
   assert.equal(await bot.noteProposalChecks({ async query() { throw new Error('down'); } }, { sessionId: 1 }), false, 'never throws');
 });
 
-test('every settled failing verdict reaches the bot, from each place a verdict settles', () => {
-  const visuals = read('src/services/visuals.js');
-  assert.match(visuals, /function noteBotChecksAfterChecks\(pool, session, state\) \{\n\s+if \(!session\?\.id\) return;/);
-  // B4: a passing or skipped one is the bot's change being ready to try.
-  assert.match(visuals, /if \(state === 'passing' \|\| state === 'skipped'\) \{[\s\S]*?noteChangeReady\(pool, session\.id\)[\s\S]*?return;\n\s+\}\n\s+if \(state !== 'failing'\) return;/);
-  assert.match(read('src/services/staging-recovery.js'), /visuals\.noteBotChecksAfterChecks\?\.\(pool, session, 'skipped'\);/);
-  assert.match(visuals, /require\('\.\/homeroom-bot'\)\.noteProposalChecks\(pool, \{ sessionId: session\.id \}\)/);
-  assert.match(visuals, /maybeAutoMergeAfterChecks\(config, getPool\(config\), session, completed\.state\);\n\s+noteBotChecksAfterChecks\(getPool\(config\), session, completed\.state\);/);
-  assert.match(visuals, /maybeAutoMergeAfterChecks\(config, pool, session, checksResult\.state\);\n\s+noteBotChecksAfterChecks\(pool, session, checksResult\.state\);/);
-  assert.match(read('src/services/check-harvest.js'), /visuals\.noteBotChecksAfterChecks\?\.\(pool, session, settled\.result\.state\);/);
+test('every settled verdict reaches the bot, through the preview machine\'s follow-ups', () => {
+  // The machine is where every verdict settles: a run's (live or collected),
+  // and a skipped one (staging-recovery hands it over). Each queues the
+  // follow-ups work with its state.
+  const machine = read('src/workflow/preview/machine.ts');
+  assert.match(machine, /kind: WORK\.followUps, key: `follow-ups:\$\{run\.key\}`,\n\s+input: \{ sessionId: d\.sessionId, appId: d\.appId, head: run\.head, state, deferred, trigger: d\.trigger, shotsTold: true \},/);
+  assert.match(machine, /work: \[followUps\(d, run, 'skipped'\)\]/);
+  assert.match(machine, /followUps\(d, run, state\),/);
+  assert.match(read('src/services/staging-recovery.js'),
+    /async function recordChecksSkipped\(\{ session, commitSha, reason \}\) \{\n\s+await workflow\(\)\.skipped\(\{ session, head: commitSha, reason \}\)/);
+  // B4: a passing or skipped one is the bot's change being ready to try; a
+  // failing one is the bot's to fix.
+  const services = read('src/workflow/preview/services.ts');
+  const work = services.slice(services.indexOf('[WORK.followUps]: {'), services.indexOf('[WORK.stopped]: {'));
+  assert.match(work, /if \(!deferred\) \{\n\s+if \(state === 'passing' \|\| state === 'skipped'\) \{\n\s+await legacy\('services\/homeroom-bot-dm'\)\.noteChangeReady\(pool, sessionId\);/);
+  assert.match(work, /\} else if \(state === 'failing'\) \{\n\s+await legacy\('services\/homeroom-bot'\)\.noteProposalChecks\(pool, \{ sessionId \}\);/);
   const schema = read('src/db/schema.sql');
   assert.match(schema, /ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha TEXT;/);
 });
 
-test('a failing verdict hook costs an error verdict nothing, and a passing one only the ready check', async () => {
-  const visuals = require('../src/services/visuals');
+test('the follow-ups cost an error verdict nothing, and a passing one only the ready check and the merge re-read', async () => {
+  const { previewServices } = require('../src/workflow/preview/services.ts');
+  const { WORK } = require('../src/workflow/preview/machine.ts');
   const asked = [];
   const pool = { async query(sql) { asked.push(String(sql)); return { rows: [] }; } };
-  visuals.noteBotChecksAfterChecks(pool, { id: 5001 }, 'error');
-  await new Promise((r) => setImmediate(r));
+  const followUps = (state) => previewServices({ config: {}, pool })[WORK.followUps]
+    .run({ input: { sessionId: 5001, appId: 9, head: null, state } });
+  await followUps('error');
   assert.equal(asked.length, 0);
-  // B4: passing asks whether the change is ready to try, and nothing else
-  // (with what its before & after shots on that head say).
-  visuals.noteBotChecksAfterChecks(pool, { id: 5001 }, 'passing');
-  for (let i = 0; i < 20 && !asked.length; i += 1) await new Promise((r) => setImmediate(r));
-  assert.deepEqual(asked.map((s) => s.replace(/\s+/g, ' ').trim()),
-    ['SELECT status, check_state, approval_epoch, source, reviewed_head_sha, imported_pr_head_sha, '
+  // B4: passing asks whether the change is ready to try (with what its
+  // before & after shots on that head say), and whether it is still up for
+  // the merge queue.
+  await followUps('passing');
+  assert.deepEqual(asked.map((s) => s.replace(/\s+/g, ' ').trim()), [
+    'SELECT status, check_state, approval_epoch, source, reviewed_head_sha, imported_pr_head_sha, '
       + 'checks_commit_sha, handoff_head_sha, checks_checked_at, shots_state, shots_run_id, shots_detail, shots_updated_at, '
       + 'pr_title, pr_title_fallback, session_title '
-      + 'FROM chat_sessions WHERE id = $1']);
+      + 'FROM chat_sessions WHERE id = $1',
+    'SELECT status FROM chat_sessions WHERE id = $1',
+  ]);
   asked.length = 0;
-  visuals.noteBotChecksAfterChecks(pool, { id: 5001 }, 'failing');
-  for (let i = 0; i < 20 && !asked.length; i += 1) await new Promise((r) => setImmediate(r));
+  await followUps('failing');
   assert.ok(asked.some((s) => /AS looked/.test(s)), 'a failing one is looked up');
 });
 

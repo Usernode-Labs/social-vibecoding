@@ -187,9 +187,9 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "c6b99ca4735605a08367",
+      "fingerprint": "f8846f57b8bf055ee97d",
       "count": 1,
-      "preview": "`SELECT ${appAccess.nonSecretAppColumnList()}, ${communities.audienceSql('apps', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = apps.communit"
+      "preview": "`SELECT ${appAccess.nonSecretAppColumnList()}, template, ${communities.audienceSql('apps', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = app"
     },
     {
       "source": "src/routes/chat.js",
@@ -446,7 +446,7 @@
     {
       "source": "src/routes/proposal-handoff.js",
       "kind": "structural-template",
-      "fingerprint": "de2bbf1356dca5b8a5e8",
+      "fingerprint": "c9542dc200bfb852bb1e",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5, ${summaryFreshness.INVALIDATE_SQL}, handoff_upload_checked_sha = checks_comm"
     },
@@ -915,14 +915,14 @@
     {
       "source": "src/services/cli-handoff-sync.js",
       "kind": "structural-template",
-      "fingerprint": "1cb21f929c7ffb55e776",
+      "fingerprint": "52c3cd6afa2038c4a4d1",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET handoff_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, handoff_uploaded_sha = $1, handoff_local_commit_sha = NULL, handoff_upload_"
     },
     {
       "source": "src/services/cli-handoff-sync.js",
       "kind": "structural-template",
-      "fingerprint": "6aa68d0ba5c2b91bab8a",
+      "fingerprint": "a671844386ab2ffa9f61",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET handoff_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, handoff_uploaded_sha = $1, handoff_local_commit_sha = NULL, handoff_upload_"
     },
@@ -1342,30 +1342,23 @@
     {
       "source": "src/services/pr-import-sync.js",
       "kind": "structural-template",
-      "fingerprint": "3fbf8ad01e0ab8c1af71",
-      "count": 1,
-      "preview": "`UPDATE chat_sessions SET imported_pr_head_sha = $1, ${summaryFreshness.invalidateHeadMoveSql('$1')}, stale_notified_at = NULL, approval_epoch = approval_epoch "
-    },
-    {
-      "source": "src/services/pr-import-sync.js",
-      "kind": "structural-template",
       "fingerprint": "dd7dfd2983ae4a231fb1",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET pr_body = $1, ${summaryFreshness.INVALIDATE_SQL} WHERE id = $2`"
     },
     {
-      "source": "src/services/preview-lifecycle.js",
-      "kind": "runtime-built-identifier",
-      "fingerprint": "4ec7c53222c8a758c722",
-      "count": 5,
-      "preview": "sql"
+      "source": "src/services/pr-import-sync.js",
+      "kind": "structural-template",
+      "fingerprint": "f146527ae546b17d9370",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET imported_pr_head_sha = $1, ${summaryFreshness.invalidateHeadMoveSql('$1')}, stale_notified_at = NULL, approval_epoch = approval_epoch "
     },
     {
       "source": "src/services/proposal-update.js",
       "kind": "structural-template",
-      "fingerprint": "55e4f495d28528be3946",
+      "fingerprint": "08e55ff95611f82c37a8",
       "count": 1,
-      "preview": "`UPDATE chat_sessions SET check_state = CASE WHEN $4::boolean THEN check_state ELSE 'pending' END, checks_commit_sha = CASE WHEN $4::boolean THEN checks_commit_"
+      "preview": "`UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 AND status = 'active' AND ${OWNED_SOURCE_SQL} AND checks_commit_sha IS NOT DISTINCT FROM $2`"
     },
     {
       "source": "src/services/proposal-update.js",
@@ -1403,6 +1396,20 @@
       "preview": "`SELECT ${appAccess.nonSecretAppColumnList()} FROM apps WHERE id = $1`"
     },
     {
+      "source": "src/services/shots-control.js",
+      "kind": "structural-template",
+      "fingerprint": "36a17722f351328f3ee1",
+      "count": 1,
+      "preview": "`SELECT * FROM shot_run_control WHERE run_id = $1${lock ? ' FOR UPDATE' : ''}`"
+    },
+    {
+      "source": "src/services/shots-control.js",
+      "kind": "structural-template",
+      "fingerprint": "fa1766456316830cbe95",
+      "count": 1,
+      "preview": "`SELECT slot, story_id, viewport, side, variant, media, content_type, data, width, height, bytes, sha256 FROM shot_run_files WHERE run_id = $1 ${slots ? 'AND sl"
+    },
+    {
       "source": "src/services/shots-demo-states.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
@@ -1433,14 +1440,7 @@
     {
       "source": "src/services/shots-state.js",
       "kind": "structural-template",
-      "fingerprint": "5b50577c563dc7e02307",
-      "count": 1,
-      "preview": "`UPDATE shot_runs SET ${sets.join(', ')} WHERE id = $1 RETURNING *`"
-    },
-    {
-      "source": "src/services/shots-state.js",
-      "kind": "structural-template",
-      "fingerprint": "a62f8e8d30850ad9425e",
+      "fingerprint": "1f1db1e09f25c5c1c7be",
       "count": 1,
       "preview": "`SELECT r.*, COALESCE(( SELECT jsonb_agg(jsonb_build_object( 'id', a.id, 'storyId', a.story_id, 'viewport', a.viewport, 'side', a.side, 'variant', a.variant, 'm"
     },
@@ -1727,14 +1727,7 @@
     {
       "source": "src/workflow/merge-followups/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "c914efdf0597f6339694",
-      "count": 1,
-      "preview": "`SELECT r.id FROM shot_runs r WHERE r.session_id = $1 AND ${LIVE_SHOTS_RUN} ORDER BY r.created_at DESC LIMIT 1`"
-    },
-    {
-      "source": "src/workflow/merge-followups/facts.ts",
-      "kind": "structural-template",
-      "fingerprint": "fa05f9e0f0982408d8c9",
+      "fingerprint": "47283bf2682e5af97edf",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.status, cs.user_id, cs.pr_number, cs.pr_title, cs.linked_issues, cs.agent_session_id, cs.active_turn IS NOT NULL AS active_turn, cs"
     },
@@ -1755,7 +1748,7 @@
     {
       "source": "src/workflow/preview/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "3ed3ffeecbde5a9523e0",
+      "fingerprint": "3fdb0ac002f0301bdf3e",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.shared_at, cs.branch_name, cs.pr_number, cs.imported_pr_head_sha, cs.reviewed_hea"
     },
@@ -1786,6 +1779,20 @@
       "fingerprint": "3d75b43305f5bf9b3142",
       "count": 1,
       "preview": "`SELECT u.username, pv.vote, pv.reason FROM pr_votes pv JOIN users u ON u.id = pv.user_id JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = $"
+    },
+    {
+      "source": "src/workflow/shots/facts.ts",
+      "kind": "structural-template",
+      "fingerprint": "7c099c2f55e9a8c649b2",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.app_id, cs.status, cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha, cs.checks_commit_sha, cs.handoff_head_sha, cs.staging_commit_sha,"
+    },
+    {
+      "source": "src/workflow/shots/machine.ts",
+      "kind": "structural-template",
+      "fingerprint": "67a25f6c533ca0d9c435",
+      "count": 1,
+      "preview": "`UPDATE shot_runs SET ${sets.join(', ')} WHERE id = $1`"
     }
   ]
 }

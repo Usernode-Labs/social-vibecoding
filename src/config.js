@@ -796,36 +796,6 @@ function load() {
     // The Workshop theme sweep (services/workshop-themes.js): re-checks every
     // app opened in the last week, re-drafting themes at most daily.
     workshopSweepIntervalMs: parseInt(process.env.WORKSHOP_THEMES_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),
-    // #1010: how often the FAST governance-apply ticker runs. The hourly
-    // sweeper above also applies window-elapsed governance proposals, but an
-    // hour of dead air after a close proposal's countdown reaches zero is
-    // exactly the "did my vote do anything?" confusion this ticker removes —
-    // and it is what makes the client's derived "Closing issue…" spinner
-    // honest rather than a promise nothing keeps. Deliberately gate-first and
-    // DB-only (no GitHub traffic for rows that aren't ready), and on its own
-    // knob so it can't be silently disabled along with the stale-PR sweeper.
-    // Default 60s; set to 0 to disable (the hourly catch-all still runs).
-    governanceApplyTickMs: parseInt(process.env.GOVERNANCE_APPLY_TICK_MS || String(60 * 1000), 10),
-    // Workflow foundation (src/workflow/): with WF_GOVERNANCE_ENABLED on,
-    // the governance-proposal machine decides governance proposals and the
-    // ticker above and the sweeper's Pass 0b leave them alone. Off by default.
-    wfGovernanceEnabled: ['1', 'true'].includes(process.env.WF_GOVERNANCE_ENABLED),
-    // With WF_MERGE_FOLLOWUPS_ENABLED on, a merge hands what follows it
-    // (delivery, preview teardown, included changes, closing requests, the
-    // announcements) to the merge-followups machine, and a change reads
-    // live only once production runs it. Off by default.
-    wfMergeFollowupsEnabled: ['1', 'true'].includes(process.env.WF_MERGE_FOLLOWUPS_ENABLED),
-    // With WF_APP_DELIVERY_ENABLED on (and WF_MERGE_FOLLOWUPS_ENABLED, which
-    // it needs), every production deploy of an app is asked of the
-    // app-delivery machine: one at a time per app, recorded, and the
-    // "deploying" state is durable. Off by default.
-    wfAppDeliveryEnabled: ['1', 'true'].includes(process.env.WF_APP_DELIVERY_ENABLED),
-    // With WF_PREVIEWS_ENABLED on, a proposal's preview and its required
-    // checks are the preview machine's: every source asks it, one build and
-    // one checks run at a time, and what serves, what is built and which
-    // revision the verdict is for are durable. It also records who is working
-    // on a session. Off by default.
-    wfPreviewsEnabled: ['1', 'true'].includes(process.env.WF_PREVIEWS_ENABLED),
     // How many 'error' verdicts in a row the checks' error lane re-runs on
     // its own (staging-recovery.checkMaxAutoRetries, CHECK_MAX_AUTO_RETRIES).
     checkMaxAutoRetries: (() => {
@@ -838,11 +808,6 @@ function load() {
     // pool of two (the outcome listener and one working connection).
     wfPoolMax: parseInt(process.env.WF_POOL_MAX || (IS_STAGING() ? '2' : '6'), 10),
     wfSlots: parseInt(process.env.WF_SLOTS || (IS_STAGING() ? '1' : '4'), 10),
-    // What a write to a machine-owned column outside the pipeline does:
-    // 'raise' everywhere but production, where it is logged to
-    // wf_ownership_violations until no legacy writer is left.
-    wfOwnershipMode: process.env.WF_OWNERSHIP_MODE
-      || ((process.env.NODE_ENV === 'production' && !IS_STAGING()) ? 'log' : 'raise'),
     // Demand-driven global-cap eviction. When a new session is needed but
     // the platform is at maxGlobalSessions, we pause the globally least-
     // recently-active session that has been idle longer than this grace

@@ -158,7 +158,12 @@ function router(start, opts = {}) {
       addEventListener() {}, dispatchEvent() {},
     },
     addEventListener() {},
-    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    // "Keep sidebar open in apps" OFF: on a desktop the rail otherwise stays
+    // beside a running app and its corner is the sidebar toggle, not the ✕
+    // (tests/nav-rail-pinned.test.js). This is the ✕ a phone always has.
+    localStorage: {
+      getItem: (k) => (k === 'usernode:rail-pinned' ? '0' : null), setItem() {}, removeItem() {},
+    },
     PlatformUI: new Proxy({
       transition(fn, o) {
         transitions.push(o?.type || 'none');

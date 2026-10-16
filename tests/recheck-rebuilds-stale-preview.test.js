@@ -8,9 +8,11 @@
 //      the preview stays at the pre-sync commit while the branch tip and its
 //      dapp.json move on; a recheck then tested the new head's checks against
 //      the old build and reported failures that were not the proposal's
-//      (#1710 collected seven that way). The build now stamps the clone's
-//      HEAD on the row (staging_commit_sha), and the recheck path hands the
-//      row's own head pin to stagingNeedsRebuild, which compares the two.
+//      (#1710 collected seven that way). The preview machine now stamps the
+//      head it built on the row (staging_commit_sha) when it publishes, and
+//      its recheck builds the head before it runs anything when what serves
+//      is of another commit; a Preview click hands the row's own head pin to
+//      stagingNeedsRebuild, which compares the two.
 //   2. The preview's CPU ceiling is 4, on both runtimes: docker read
 //      STAGING_CPUS (2) and kubernetes ignored it with a hard-coded 1.
 //
@@ -109,56 +111,63 @@ test('previewIsOfAnotherCommit and recheckHeadSha read the row pins', () => {
   assert.equal(rec.recheckHeadSha({}), null);
 });
 
-// ── 1b. the recheck path takes the rebuild branch ──────────────────────
+// ── 1b. the machine's recheck takes the rebuild branch ─────────────────
+//
+// recheckSessionChecks only hands the recheck over
+// (tests/staging-recovery-checks-verdicts.test.js); the machine decides,
+// in its recheck transition (src/workflow/preview/machine.ts), between a
+// build of the head and a run against what serves.
 
-for (const status of ['promoted', 'paused']) {
-  test(`recheckSessionChecks rebuilds a stale ${status} preview, and re-runs a current preview directly`, async () => {
-    const { subject, restore } = loadRecovery(running);
-    const visuals = require('../src/services/visuals');
-    const saved = {
-      setChecksPending: visuals.setChecksPending,
-      notifyChecksPending: visuals.notifyChecksPending,
-      captureForSession: visuals.captureForSession,
-      storeChecksSkipped: visuals.storeChecksSkipped,
-      maybeAutoMergeAfterChecks: visuals.maybeAutoMergeAfterChecks,
-    };
-    let captured = 0;
-    let skippedReason = null;
-    visuals.setChecksPending = async () => true;
-    visuals.notifyChecksPending = () => {};
-    visuals.captureForSession = async () => { captured += 1; };
-    visuals.storeChecksSkipped = async (_pool, _id, _sha, reason) => { skippedReason = reason; return true; };
-    visuals.maybeAutoMergeAfterChecks = () => {};
-    const pool = { query: async () => ({ rows: [], rowCount: 1 }) };
-    try {
-      // The sync carried checks_commit_sha to the merge commit; the preview is
-      // still of the commit before it. No repo_url, so the rebuild branch
-      // short-circuits to 'skipped' — which is how we see it was taken.
-      const behind = { ...LIVE, app_id: 9, app_slug: 'app', status, source: 'native',
-        staging_commit_sha: 'pre-sync', checks_commit_sha: 'sync-commit' };
-      assert.equal(await subject.recheckSessionChecks({ config: null, pool, session: behind, reason: 'manual-recheck' }), 'skipped');
-      assert.equal(captured, 0, 'the old build was not tested');
-      assert.match(String(skippedReason), /GitHub is not configured/);
-      // Same commit: the healthy preview is re-run directly, as before.
-      const current = { ...behind, staging_commit_sha: 'sync-commit' };
-      assert.equal(await subject.recheckSessionChecks({ config: null, pool, session: current, reason: 'manual-recheck' }), 'rechecked');
-      assert.equal(captured, 1);
-    } finally {
-      Object.assign(visuals, saved);
-      restore();
-    }
-  });
+const { preview, WORK } = require('../src/workflow/preview/machine.ts');
+const machine = preview({ maxRetries: 5, retireAfterMs: 60000 });
+const SYNC = 'b'.repeat(40);
+const PRE_SYNC = 'a'.repeat(40);
+
+function settledOn(servingHead) {
+  return {
+    name: 'settled',
+    data: {
+      sessionId: 1, appId: 9, appSlug: 'app', userId: 3, seed: 100, head: SYNC, trigger: 'commit-push', last: 1,
+      preparing: null,
+      serving: { n: 1, head: servingHead, db: 'app_app_staging_s1_aaaaaa', url: 'https://x.example',
+        runtimeKind: 'kubernetes', runtimeName: 'sv-preview-9-s1', containerId: null, imageRef: null, buildRef: null },
+      run: null, verdict: 'passing', failure: null, platformFault: false, streak: 0, firstFailureAt: null,
+      episode: 0, retiring: [], exit: null, pending: null, closedAt: null, operations: [],
+    },
+  };
 }
+const ctx = { machine: 'preview', key: 'session:1', appId: 9, version: 4, now: new Date('2026-10-15T12:00:00Z') };
+const recheck = (state) => {
+  const entry = machine.entryFor(state.name, 'RecheckRequested');
+  const event = { id: 7, type: 'RecheckRequested', payload: { reason: 'manual-recheck', trigger: 'manual-recheck' }, source: { kind: 'route' } };
+  return entry.to(state, event, { session: null, app: null, alive: new Set() }, ctx);
+};
+
+test('the machine\'s recheck rebuilds a stale preview at the head, and re-runs a current preview directly', () => {
+  // A clean sync carried the head to the merge commit; what serves is
+  // still the commit before it. The head is built before anything runs.
+  const stale = recheck(settledOn(PRE_SYNC));
+  assert.equal(stale.next.name, 'preparing');
+  assert.deepEqual(stale.work.filter((w) => w.kind === WORK.prepare).map((w) => w.input.head), [SYNC]);
+  assert.equal(stale.work.filter((w) => w.kind === WORK.run).length, 0, 'the old build is not tested');
+  // Same commit: the healthy preview is re-run directly.
+  const current = recheck(settledOn(SYNC));
+  assert.equal(current.next.name, 'checking');
+  assert.deepEqual(current.work.map((w) => [w.kind, w.input.head]), [[WORK.run, SYNC]]);
+  assert.equal(current.work.filter((w) => w.kind === WORK.prepare).length, 0);
+});
 
 // ── 1c. the stamp ──────────────────────────────────────────────────────
 
-test('the build stamps the clone HEAD on the row and teardown clears it', () => {
-  const staging = read('src/services/staging.js');
-  assert.match(staging, /staging_runtime_kind = \$3, staging_runtime_name = \$4,\n\s+staging_commit_sha = \$6 WHERE id = \$5`,\n\s+\[build\.imageRef, build\.buildRef, deployed\.runtimeKind, deployed\.runtimeName, session\.id,\n\s+resolvedRevision \|\| null\]/);
-  assert.match(staging, /commitSha: resolvedRevision \|\| null,/, 'and hands it back to the caller');
-  assert.match(staging, /staging_runtime_kind = NULL, staging_runtime_name = NULL,\n\s+staging_commit_sha = NULL WHERE id = \$1`/);
+test('publishing stamps the built head on the row and unpublishing clears it', () => {
+  const machineSrc = read('src/workflow/preview/machine.ts');
+  assert.match(machineSrc, /staging_runtime_kind = \$6, staging_runtime_name = \$7, staging_commit_sha = \$8\n\s+WHERE id = \$1`,\n\s+\[w\.sessionId, w\.served\.url, w\.served\.containerId, w\.served\.imageRef, w\.served\.buildRef,\n\s+w\.served\.runtimeKind, w\.served\.runtimeName, w\.served\.head\]/);
+  assert.match(machineSrc, /staging_runtime_kind = NULL, staging_runtime_name = NULL, staging_commit_sha = NULL\n\s+WHERE id = \$1`/);
+  assert.match(read('src/services/staging.js'), /commitSha: resolvedRevision \|\| null,/, 'the build hands back the commit it cloned');
   assert.match(read('src/db/schema.sql'), /ALTER TABLE chat_sessions\s+ADD COLUMN IF NOT EXISTS staging_commit_sha VARCHAR\(64\);/);
-  assert.match(read('src/services/staging-recovery.js'), /stagingNeedsRebuild\(session, \{ config, headSha: recheckHeadSha\(session\) \}\)/);
+  // A Preview click judges the preview against the head the row is about.
+  assert.match(read('src/routes/sessions.js'),
+    /const headSha = stagingRecovery\.recheckHeadSha\(session\);\n\s+if \(await stagingRecovery\.stagingNeedsRebuild\(session, \{ config, headSha \}\)\)/);
 });
 
 // ── 2. the CPU ceiling reaches both runtimes ───────────────────────────

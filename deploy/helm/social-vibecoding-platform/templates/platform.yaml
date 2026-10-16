@@ -161,12 +161,7 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             {{- end }}
             - {name: PORT, value: "3000"}
             - {name: APP_RUNTIME, value: kubernetes}
-            - {name: PREVIEW_LIFECYCLE_ENABLED, value: {{ .Values.platform.previewLifecycleEnabled | default false | quote }}}
             - {name: SHOTS_ENABLED, value: {{ .Values.platform.shotsEnabled | quote }}}
-            - {name: WF_GOVERNANCE_ENABLED, value: {{ .Values.platform.workflowGovernanceEnabled | quote }}}
-            - {name: WF_MERGE_FOLLOWUPS_ENABLED, value: {{ .Values.platform.workflowMergeFollowupsEnabled | quote }}}
-            - {name: WF_APP_DELIVERY_ENABLED, value: {{ .Values.platform.workflowAppDeliveryEnabled | quote }}}
-            - {name: WF_PREVIEWS_ENABLED, value: {{ .Values.platform.workflowPreviewsEnabled | quote }}}
             - {name: WORKER_RUNTIME, value: kubernetes}
             - {name: CAPTURE_RUNTIME, value: kubernetes}
             {{- $previewCluster := "" }}

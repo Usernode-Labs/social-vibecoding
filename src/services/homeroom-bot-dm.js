@@ -2484,7 +2484,8 @@ async function noteChangeReady(pool, sessionId, deps = {}) {
 }
 
 /**
- * A proposal's before & after shots settled (shots-state.noteSettled: a run
+ * A proposal's before & after shots settled (the shots machine's
+ * bot.shotsSettled work, src/workflow/shots/: a run
  * published or failed, was waived, or will not start). A change of the
  * bot's that passed its checks was waiting on them: it is ready to try now,
  * or, when they show part of it failing or could not reach part of it for
@@ -3141,11 +3142,6 @@ async function sweepUnproposedBuilds(pool, deps = {}) {
   }
 }
 
-// #7 (WP3): how many times, and how far apart, a merged app's health is read
-// before its requester is told it is live now.
-const LIVE_PROBES = 3;
-const LIVE_PROBE_WAIT_MS = 5000;
-
 /**
  * #8 (WP3): one of the bot's proposals was promoted, merged, or closed:
  * whoever asked for the request it answers has their activity tray read
@@ -3203,56 +3199,9 @@ function mergedText({ line, appName, live, platform = false, card = true, change
   return line ? `${line}\n\n${said}` : said;
 }
 
-/**
- * #7 (WP3): whether a child app answers its health check after the merge
- * deployed `sha` (staging.rebuildProduction, which already waited for the
- * rollout). Read a few times, a few seconds apart, before it says no. No
- * config, no deployed SHA, or the platform's own app: no.
- */
-async function liveAfterMerge(config, app, { sha = null, deps = {} } = {}) {
-  if (!config || !app || app.self_hosted || !sha) return false;
-  const runtime = deps.applicationRuntime || require('./application-runtime');
-  const sleep = deps.sleep || ((ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref?.(); }));
-  let ref;
-  try { ref = runtime.productionRef(config, app); } catch { return false; }
-  for (let attempt = 1; attempt <= LIVE_PROBES; attempt += 1) {
-    if (await Promise.resolve(runtime.probeHealth(config, ref, { timeoutMs: 3000 })).catch(() => false)) return true;
-    if (attempt < LIVE_PROBES) await sleep(LIVE_PROBE_WAIT_MS);
-  }
-  log.warn('homeroom-bot-dm', 'A merged app did not answer its health check; saying it will be live soon', { app: app.slug, sha });
-  return false;
-}
-
 function noteChatLive(pool, run, deps = {}) {
   return require('./homeroom-bot-chat').noteRequestStatus(pool,
     { appId: run.app_id, issueNumber: Number(run.issue_number), status: 'live', deps: deps.strict ? { strict: true } : {} });
-}
-
-// WP-F: how often, and how far apart, a merged app that did not answer yet
-// is read again before its chat chip says Live. One that never answers keeps
-// the chip it had: it is not live.
-const LATE_LIVE_TRIES = 5;
-const LATE_LIVE_WAIT_MS = 60 * 1000;
-
-/** The chip's Live, later: read the app again a few times, a minute apart. Never throws. */
-function laterChatLive(pool, run, { config, sha, deps = {} }) {
-  if (!config || !sha) return;
-  const later = deps.later || ((fn, ms) => { setTimeout(fn, ms).unref?.(); });
-  let tries = 0;
-  const again = async () => {
-    tries += 1;
-    try {
-      if (await liveAfterMerge(config, { ...run, id: run.app_id }, { sha, deps })) {
-        await noteChatLive(pool, run);
-        void timeline.record(pool, { runId: run.run_id, stage: 'live', detail: { late: true } });
-        return;
-      }
-    } catch (err) {
-      log.warn('homeroom-bot-dm', 'Could not read a merged app again', { app: run.slug, err: err.message });
-    }
-    if (tries < LATE_LIVE_TRIES) later(again, LATE_LIVE_WAIT_MS);
-  };
-  later(again, LATE_LIVE_WAIT_MS);
 }
 
 /**
@@ -3289,23 +3238,20 @@ async function announceFirstVersion(pool, run, { live = false, deps = {} } = {})
 }
 
 /**
- * A proposal the bot built is merged: its requester hears it in their DM.
- * #7 (WP3): `sha` is what the merge deployed (routes/votes.js finalizeMerge),
- * and "live now" waits for the app to answer its health check on it
- * (liveAfterMerge). The news carries a button that opens the app
+ * A proposal the bot built is live: its requester hears it in their DM.
+ * Asked by the merge-followups workflow machine once production runs a
+ * build containing the change. The news carries a button that opens the app
  * (openAppAction) and the proposal's card, and records the app's address as
  * its link. The button is the message's own, so it is there even when the
  * card cannot be (a project the bot cannot see). Its ready card says it is
  * live by itself: that card reads where the change stands each time it is
  * read (readyStates), and this news landing is one of those times.
  *
- * `live: true` is the merge-followups workflow machine's word that production
- * runs a build containing the change: then nothing is probed, and nothing is
- * re-read later. Its durable work also passes `deps.strict`: the chip and the
+ * The machine's durable work passes `deps.strict`: the chip and the
  * first-version line throw what they could not write, so the work is retried
  * (the DM itself is sent once, by its idempotency key).
  */
-async function noteProposalMerged(pool, session, { config = null, sha = null, live: known = null, deps = {} } = {}) {
+async function noteProposalMerged(pool, session, { deps = {} } = {}) {
   // What was still asked of it goes: it can no longer change.
   if (session?.id) await (deps.voice || require('./homeroom-bot-voice')).dropAsks(pool, session.id);
   if (!session?.id) return null;
@@ -3318,19 +3264,13 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, li
   );
   if (!rows.length) return null;
   const run = rows[0];
-  // A first version's timeline (first-version-timeline.js): merged now, and
-  // live once its app answers on what was deployed, below.
+  // A first version's timeline (first-version-timeline.js): merged, and live.
   void timeline.record(pool, { runId: run.run_id, stage: 'merged', sessionId: session.id });
   const platform = !!run.self_hosted;
-  const live = known === true ? true : await liveAfterMerge(config, { ...run, id: run.app_id }, { sha, deps });
-  // B9: the chat message it was asked in, if it was, says it is live, once
-  // it is (WP-F): an app that did not answer yet is asked again a little
-  // later. The platform's own app has no health check to read here, so its
-  // chip moves on the merge, as it always did.
-  if (live || platform) await noteChatLive(pool, run, deps);
-  else laterChatLive(pool, run, { config, sha, deps });
-  // Live now; one that did not answer yet is recorded live by the later look.
-  if (live || platform) void timeline.record(pool, { runId: run.run_id, stage: 'live', sessionId: session.id });
+  const live = true;
+  // B9: the chat message it was asked in, if it was, says it is live.
+  await noteChatLive(pool, run, deps);
+  void timeline.record(pool, { runId: run.run_id, stage: 'live', sessionId: session.id });
   const requester = await requesterOf(pool, run.app_id, run.issue_number);
   // #8: their activity tray reads again, whether or not the DM says it.
   if (requester) require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);
@@ -3463,9 +3403,16 @@ async function newestOpenQuestion(pool, userId, { appId = null, issueNumber = nu
   return rows[0] || null;
 }
 
+/**
+ * The tail of every mirrored DM answer's text ("(Sent|Answered in a chat
+ * with Homeroom bot.)"), shared with conversations.js requestDiscussion so
+ * both read one constant.
+ */
+const MIRRORED_FROM_DM = 'in a chat with Homeroom bot.)';
+
 /** The text a DM answer is posted on the request with. */
 function mirroredText(content, { question = false } = {}) {
-  return `${clip(content, 3500)}\n\n(${question ? 'Answered' : 'Sent'} in a chat with Homeroom bot.)`;
+  return `${clip(content, 3500)}\n\n(${question ? 'Answered' : 'Sent'} ${MIRRORED_FROM_DM}`;
 }
 
 /**
@@ -5377,13 +5324,11 @@ module.exports = {
   firstVersionText,
   announceFirstVersion,
   // #7, #8, #20 (WP3)
-  LIVE_PROBES,
-  LIVE_PROBE_WAIT_MS,
   hasProposalCard,
   mergedText,
-  liveAfterMerge,
   noteProposalChanged,
   isBotDirect,
+  MIRRORED_FROM_DM,
   mirroredText,
   noteUserMessage,
   normalizeBrief,

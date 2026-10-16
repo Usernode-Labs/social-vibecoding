@@ -1696,7 +1696,7 @@ async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
   proposalSessionId = null, sender = null, threadMessage = null, dm = null, untag = null, onlyProposal = false,
-  skipIssueThread = false, skipGithub = false, homeroomText = null,
+  skipIssueThread = false, skipGithub = false, homeroomText = null, strict = false,
 }) {
   // Answered where it was asked: a reply to people who wrote only in the
   // change's own discussion is said there alone, with no GitHub comment and
@@ -1727,11 +1727,16 @@ async function post({
   // twice. The row is pending until the post has gone out, so the build's
   // "said once" (homeroom-bot.js runPosted) never counts a post half sent.
   // ("looking" is claimed by its insert, once per issue, and is not taken up.)
+  // A durable caller (`strict`) is told the lookup failed: taken for "none",
+  // its retry would insert a second post and say again what went out.
   const had = runId && kind !== 'looking' ? (await pool.query(
     `SELECT id, github_comment_id, thread_message_id, created_at FROM homeroom_bot_posts
       WHERE run_id = $1 AND kind = $2 AND pending IS TRUE ORDER BY id DESC LIMIT 1`,
     [runId, kind],
-  ).catch(() => ({ rows: [] }))).rows[0] || null : null;
+  ).catch((err) => {
+    if (strict) throw err;
+    return { rows: [] };
+  })).rows[0] || null : null;
   let postId = had ? had.id : null;
   if (!postId) {
     const { rows } = await pool.query(
@@ -1746,6 +1751,11 @@ async function post({
   }
   let comment = had?.github_comment_id ? { id: had.github_comment_id } : null;
   let message = had?.thread_message_id ? { id: had.thread_message_id } : null;
+  // `strict` (a durable caller that retries: the merge-followups machine's
+  // bot.announceLive work): what could not be said is thrown at the end,
+  // with the post left pending, so the retry takes the row up and says only
+  // what is missing.
+  const failed = [];
   // Its thread message went out before the restart: so did what it tagged.
   const messageSentBefore = !!message;
   if (!noComment && !comment) {
@@ -1756,6 +1766,8 @@ async function post({
         comment = await github.createIssueComment(repo.owner, repo.repo, issueNumber, text);
       } catch (err) {
         log.warn('homeroom-bot', 'GitHub comment failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+        // An issue that is gone (deleted, transferred) has nobody to tell.
+        if (err.status !== 404 && err.status !== 410) failed.push(`the GitHub comment (${err.message})`);
       }
     }
     if (comment?.id != null) {
@@ -1812,6 +1824,7 @@ async function post({
         : await inThread(threadText, { type: 'issue', ref: issueNumber });
     } catch (err) {
       log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+      failed.push(`the thread message (${err.message})`);
     }
     if (message?.id != null) {
       await pool.query('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', [postId, message.id]).catch(() => {});
@@ -1845,6 +1858,17 @@ async function post({
     } catch (err) {
       log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
     }
+  }
+  if (strict && failed.length) {
+    // What did go out is recorded once more (its own write may have failed),
+    // the post left pending, so the retry says only the rest.
+    await pool.query(
+      `UPDATE homeroom_bot_posts SET github_comment_id = COALESCE($2, github_comment_id),
+              thread_message_id = COALESCE($3, thread_message_id)
+        WHERE id = $1`,
+      [postId, comment?.id ?? null, message?.id ?? null],
+    ).catch(() => {});
+    throw new Error(`Could not post the ${kind} note on request #${issueNumber}: ${failed.join(', ')}`);
   }
   await pool.query(
     `UPDATE homeroom_bot_posts SET github_comment_id = $2, thread_message_id = $3, pending = NULL
@@ -1895,13 +1919,13 @@ async function postOnProposal({ pool, ws, app, issueNumber, runId = null, kind, 
  * request (a GitHub comment and the bot's bubble in its Homeroom thread):
  * "It's live. {title} is in {project} now." Untagged: whoever asked for it
  * hears it in their chat with the bot (homeroom-bot-dm.js
- * noteProposalMerged), and its voters by their own ping. Called beside that
- * DM wherever a merged change is told to whoever asked for it
- * (routes/votes.js finalizeMerge, included-changes.js), and said once per
- * change (its run's `live` post). Never throws; resolves what was posted,
- * or null.
+ * noteProposalMerged), and its voters by their own ping. Asked beside that
+ * DM once a merged or included change is live (the merge-followups workflow
+ * machine's bot.announceLive work), and said once per change (its run's
+ * `live` post). Resolves what was posted, or null; never throws unless
+ * `strict`.
  */
-async function announceLive(pool, { session, deps = {} } = {}) {
+async function announceLive(pool, { session, deps = {}, strict = false } = {}) {
   if (!session?.id) return null;
   try {
     const { rows } = await pool.query(
@@ -1916,9 +1940,11 @@ async function announceLive(pool, { session, deps = {} } = {}) {
     );
     const run = rows[0];
     if (!run) return null;
+    // Said once: a post still pending (cut short, or a part of it failed)
+    // is taken up again by post(), which sends only what is missing.
     const { rows: said } = await pool.query(
       `SELECT 1 FROM homeroom_bot_posts
-        WHERE app_id = $1 AND issue_number = $2 AND run_id = $3 AND kind = 'live' LIMIT 1`,
+        WHERE app_id = $1 AND issue_number = $2 AND run_id = $3 AND kind = 'live' AND pending IS NOT TRUE LIMIT 1`,
       [run.app_id, run.issue_number, run.run_id],
     );
     if (said.length) return null;
@@ -1944,8 +1970,12 @@ async function announceLive(pool, { session, deps = {} } = {}) {
       sender: bot,
       senderId: bot.id,
       skipGithub: !repo,
+      strict,
     });
   } catch (err) {
+    // The merge-followups machine's work asks it strictly: a failure is
+    // retried there.
+    if (strict) throw err;
     log.warn('homeroom-bot', 'Could not say on its request that a change is live', { sessionId: session.id, err: err.message });
     return null;
   }
@@ -3582,22 +3612,15 @@ const SHOTS_WAIT_MS = 6 * 60_000;
  * there was none, 'finished' or 'timeout'; never throws.
  */
 async function waitOutShotsRun(sessionId, deps = {}) {
-  let run = null;
+  let waited = 'idle';
   try {
-    run = (deps.shotsRunFor || require('./shots-orchestrator').inFlightRunFor)(Number(sessionId));
-  } catch { run = null; }
-  if (!run) return 'idle';
-  log.info('homeroom-bot', 'Turn waits for the before & after shots running on its session', { sessionId });
-  let timer = null;
-  const finished = await Promise.race([
-    Promise.resolve(run).then(() => true, () => true),
-    new Promise((resolve) => {
-      timer = setTimeout(() => resolve(false), deps.shotsWaitMs ?? SHOTS_WAIT_MS);
-      if (typeof timer.unref === 'function') timer.unref();
-    }),
-  ]);
-  clearTimeout(timer);
-  return finished ? 'finished' : 'timeout';
+    const wait = deps.shotsWait || require('./shots-state').waitForShotsRun;
+    const running = deps.shotsRunning || require('./shots-state').shotsRunning;
+    if (!(await running(Number(sessionId)))) return 'idle';
+    log.info('homeroom-bot', 'Turn waits for the before & after shots running on its session', { sessionId });
+    waited = await wait(Number(sessionId), { timeoutMs: deps.shotsWaitMs ?? SHOTS_WAIT_MS });
+  } catch { waited = 'idle'; }
+  return waited;
 }
 
 function buildTurnRunner({

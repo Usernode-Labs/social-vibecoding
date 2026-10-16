@@ -39,7 +39,6 @@ async function readPins(pool, sessionId) {
 
 async function adoptActive({ config, pool, session, headSha, deps }) {
   const pipeline = deps.pipeline || require('./handoff-pipeline');
-  const visuals = deps.visuals || require('./visuals');
   const { rows } = await pool.query(
     `UPDATE chat_sessions
         SET handoff_head_sha = $1,
@@ -47,12 +46,7 @@ async function adoptActive({ config, pool, session, headSha, deps }) {
             handoff_uploaded_sha = $1,
             handoff_local_commit_sha = NULL,
             handoff_upload_checked_sha = NULL,
-            -- $7: the preview machine owns the verdict and the preview.
-            check_state = CASE WHEN $7::boolean THEN check_state ELSE 'pending' END,
-            checks_commit_sha = CASE WHEN $7::boolean THEN checks_commit_sha ELSE $1 END,
-            check_error_detail = CASE WHEN $7::boolean THEN check_error_detail END,
-            staging_container_id = CASE WHEN $7::boolean THEN staging_container_id END,
-            staging_url = CASE WHEN $7::boolean THEN staging_url END,
+            -- The verdict and the preview are the preview machine's.
             last_activity_at = NOW()
       WHERE id = $2 AND status = 'active' AND source = 'cli_handoff'
         AND branch_name IS NOT DISTINCT FROM $3
@@ -62,7 +56,7 @@ async function adoptActive({ config, pool, session, headSha, deps }) {
       RETURNING *`,
     [headSha, session.id, session.branch_name || null,
       session.handoff_head_sha || null, session.handoff_uploaded_sha || null,
-      session.checks_commit_sha || null, require('./preview-workflow').enabled()]
+      session.checks_commit_sha || null]
   );
   if (!rows.length) {
     const current = await readPins(pool, session.id);
@@ -74,30 +68,11 @@ async function adoptActive({ config, pool, session, headSha, deps }) {
 
   const fresh = rows[0];
   if (session.shots_state || session.shots_detail) {
-    await require('./shots-state').markStaleForHead(pool, session.id, headSha)
+    await require('./shots-state').markStaleForHead(pool, session.id, headSha, null, { pin: 'handoff' })
       .catch((err) => log.warn('cli-handoff-sync', 'could not invalidate prior-head before & after shots', {
         sessionId: session.id, headSha, err: err.message,
       }));
   }
-  const pending = require('./preview-workflow').enabled() ? true : await visuals.setChecksPending(
-    pool, session.id, headSha, 'building', 'sync-main'
-  ).catch((err) => {
-    // The atomic adoption above already removed the old verdict and pinned
-    // it to this exact SHA. Keep the rebuild moving; captureForSession stamps
-    // the testing phase again, and a failed preview receives a terminal
-    // error through the ordinary handoff pipeline.
-    log.warn('cli-handoff-sync', 'could not stamp sync-main build phase', {
-      sessionId: session.id, headSha, err: err.message,
-    });
-    return true;
-  });
-  if (pending === false) {
-    return { ok: false, reason: 'session_state_changed', headSha };
-  }
-  try {
-    visuals.notifyChecksPending(session.id, headSha, 'building', 'sync-main');
-  } catch (_) { /* notification only */ }
-
   const app = {
     id: session.app_id,
     slug: session.app_slug,
@@ -136,8 +111,6 @@ async function adoptPromoted({ config, pool, session, headSha, deps }) {
             handoff_uploaded_sha = $1,
             handoff_local_commit_sha = NULL,
             handoff_upload_checked_sha = NULL,
-            staging_container_id = CASE WHEN $6::boolean THEN staging_container_id END,
-            staging_url = CASE WHEN $6::boolean THEN staging_url END,
             last_activity_at = NOW()
       WHERE id = $2 AND status = 'promoted' AND source = 'cli_handoff'
         AND branch_name IS NOT DISTINCT FROM $3
@@ -146,8 +119,7 @@ async function adoptPromoted({ config, pool, session, headSha, deps }) {
         AND reviewed_head_sha = $1
       RETURNING *`,
     [headSha, session.id, session.branch_name || null,
-      session.handoff_head_sha || null, session.handoff_uploaded_sha || null,
-      require('./preview-workflow').enabled()]
+      session.handoff_head_sha || null, session.handoff_uploaded_sha || null]
   );
   if (!rows.length) {
     const current = await readPins(pool, session.id);

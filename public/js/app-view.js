@@ -1911,9 +1911,14 @@ const AppView = {
   //            already painting.
   //   20000ms  swap the cover note to a "taking longer" line. Only reachable
   //            when the cap was skipped because the mint hadn't settled.
+  //   45000ms  fail the launch (#4813): the cover becomes the failed card —
+  //            "Couldn't open this app" with a Try again that re-points the
+  //            same frame. Only reachable while a cover is still up, which
+  //            after the 2s cap means a frame whose src never went out.
   LAUNCH_SPINNER_MS: 500,
   LAUNCH_REVEAL_CAP_MS: 2000,
   LAUNCH_SLOW_MS: 20000,
+  LAUNCH_FAIL_MS: 45000,
   // Keep in sync with `.app-launch-cover` / `#app-iframe` transition
   // durations in public/css/app.css.
   LAUNCH_FADE_MS: 160,
@@ -1927,6 +1932,11 @@ const AppView = {
   // Set by beginLaunch to the exact (launchId, slug, src) it mounted, read
   // ONCE by renderAppTab to decide adopt-vs-rebuild.
   _launchAdopt: null,
+  // Set by beginLaunch to the (launchId, slug) a Try again (#4813) may
+  // re-run. Never cleared by the teardowns — a retry is honoured only while
+  // its launchId is still the current one, so a superseded launch's retry
+  // goes inert on its own.
+  _launchRetry: null,
 
   _reduceMotion() {
     try {
@@ -2209,10 +2219,13 @@ const AppView = {
       <div class="app-launch-host w-full h-full">
         ${AppView._appIframeHtml({ hidden: faded })}${cover ? AppView._coverHtml(cover) : ''}
       </div>`;
+      // #4813: the twin remembers what it mounted — retryLaunch must be able
+      // to tell the frame it is pointing at is still the failed launch's app.
+      dom._slug = slug;
       return !!dom._el('app-iframe');
     },
     keeps() { return false; },
-    slug() { return ''; },
+    slug() { return AppView._appFrameDom._slug || ''; },
     activate() { return !!AppView._appFrameDom._el('app-iframe'); },
     // No-ops: in a DOM-only shell the next #app-content write is what removes
     // the frame, exactly as it always was.
@@ -2263,6 +2276,24 @@ const AppView = {
     coverNote(text) {
       const note = AppView._appFrameDom._el('app-launch-cover-note');
       if (note) note.textContent = text || '';
+    },
+    // #4813: the failed launch card, as the React store's `failed` field
+    // renders it — the spinner hides, the note carries the failure title,
+    // and the cover is marked so the reveal cap's readers can see it. With
+    // `false` the card goes away and "Opening…" comes back.
+    coverFailed(failed) {
+      const cover = AppView._appFrameDom._el('app-launch-cover');
+      if (!cover || !cover.dataset) return;
+      const note = AppView._appFrameDom._el('app-launch-cover-note');
+      const spinner = AppView._appFrameDom._el('app-launch-cover-spinner');
+      if (failed) {
+        cover.dataset.launchFailed = 'true';
+        spinner?.classList.add('hidden');
+        if (note) note.textContent = PlatformI18n.t('agent:appFrame.cover.failed.title');
+      } else {
+        delete cover.dataset.launchFailed;
+        if (note) note.textContent = PlatformI18n.t('agent:appFrame.cover.opening');
+      }
     },
     reveal({ reduceMotion = false } = {}) {
       const dom = AppView._appFrameDom;
@@ -2490,6 +2521,19 @@ const AppView = {
     const iframe = frame.frame();
     if (!iframe) return false;
 
+    // A Try again (#4813) may re-run this launch while it is still the one
+    // on screen — superseded by nothing.
+    AppView._launchRetry = { launchId, slug };
+    AppView._pointLaunch(slug, frame, iframe, launchId);
+    return true;
+  },
+
+  // The token/src tail of beginLaunch, shared with retryLaunch (#4813):
+  // resolve or reuse the mint, then point the frame at the app. On retry the
+  // frame is the element already there — assigning `src` again is a
+  // navigation of the same element, not a remount and not a reload of the
+  // shell.
+  _pointLaunch(slug, frame, iframe, launchId) {
     const proceed = (src) => {
       if (launchId !== AppView._launchId) return;
       if (!src || !iframe.isConnected) return;
@@ -2528,6 +2572,38 @@ const AppView = {
       // cap deliberately does not (see _watchLaunchLoad).
       AppView._watchLaunchLoad(iframe, launchId);
     }
+  },
+
+  // The launch failed (#4813): keep the cover up and turn it into the failed
+  // card. The timers go first, so the 2s reveal cap cannot strip the failed
+  // cover; the frame's load handler stays installed, so an app that does
+  // finish loading after all still reveals as usual.
+  _failLaunch() {
+    AppView._clearLaunchTimers();
+    AppView._appFrame().coverFailed(true);
+  },
+
+  // Try again (#4813): re-run the pointing half of the launch on the SAME
+  // frame, in place. The failed card drops, the cover returns to
+  // "Opening…", and the ladder re-arms off the fresh src assignment. No
+  // remount, no page reload — the user stays exactly where they are.
+  //
+  // Honoured only while the failed launch is still the one on screen: a
+  // superseded launch's retry goes inert through the launchId check, and the
+  // screenshot state never sets _launchRetry at all.
+  retryLaunch() {
+    const retry = AppView._launchRetry;
+    if (!retry || retry.launchId !== AppView._launchId) return false;
+    const frame = AppView._appFrame();
+    const iframe = frame.frame();
+    if (!iframe || frame.slug() !== retry.slug || !frame.hasCover()) return false;
+    AppView._launchId += 1;
+    const launchId = AppView._launchId;
+    AppView._clearLaunchTimers();
+    AppView._launchAdopt = null;
+    AppView._launchRetry = { launchId, slug: retry.slug };
+    frame.coverFailed(false);
+    AppView._pointLaunch(retry.slug, frame, iframe, launchId);
     return true;
   },
 
@@ -2556,8 +2632,11 @@ const AppView = {
     iframe.onerror = () => {
       if (!iframe.getAttribute('src')) return;
       if (!current()) return;
-      // Nothing better to show than the app's own frame: it will render
-      // whatever the origin returned (its own error page, usually).
+      // #4813: the App tab's cover keeps its failed card up instead — a
+      // frame the browser reports as errored is the one case where
+      // "nothing better to show" is no longer the honest answer. The
+      // landing viewer keeps the old reveal.
+      if (isReactCover) { AppView._failLaunch(); return; }
       reveal();
     };
 
@@ -2588,6 +2667,13 @@ const AppView = {
       if (isReactCover) { AppView._appFrame().coverNote(text); return; }
       const note = document.getElementById(`${coverId}-note`);
       if (note) note.textContent = text;
+    });
+    // #4813: past the 20s "taking longer" note, a launch whose src still
+    // never went out fails into the "Couldn't open this app" card. Only a
+    // cover still up qualifies — the 2s cap has long since revealed a frame
+    // whose src went out, and this rung is a no-op for it.
+    at(AppView.LAUNCH_FAIL_MS, () => {
+      if (isReactCover && AppView._appFrame().hasCover()) AppView._failLaunch();
     });
   },
 
@@ -2758,6 +2844,36 @@ const AppView = {
     AppView._setSurface('app');
     App._setScreenVisible('home-screen', false);
     App._setScreenVisible('app-view', true);
+  },
+
+  // #4813: the resolved half of `?shot=app-launching&failed=1`. The launch
+  // surface with the failed card up — icon and name, then "Couldn't open
+  // this app" with its Try again. Synthesised like the tone shots above and
+  // for the same reason: the state is what the shell paints, so no project
+  // has to fail to open on the database the shot runs against. The frame is
+  // mounted with its cover and NO src, so no origin loads, and
+  // `_launchRetry` is deliberately never set: Try again has nothing behind
+  // it here, and the test pins that it does nothing.
+  showLaunchFailedShot() {
+    const slug = 'staging-demo-launch';
+    AppView.appData = {
+      slug,
+      name: 'Staging demo app',
+      icon_emoji: '🚀',
+      status: 'running',
+      url: location.origin,
+      self_hosted: false,
+    };
+    AppView._teardownDevRoots();
+    AppView._teardownLaunch();
+    AppView._issueStateSource = null;
+    const frame = AppView._appFrame();
+    frame.mount({ slug, cover: AppView._coverDescriptor(AppView.appData), faded: true });
+    frame.coverFailed(true);
+    AppView._setSurface('app');
+    App._setScreenVisible('home-screen', false);
+    App._setScreenVisible('app-view', true);
+    window.UsernodeReact?.nav?.setScreen?.('app-view');
   },
 
   // #1945: `?shot=app-tone-dark` / `?shot=app-tone-light`. A running app whose
@@ -8805,6 +8921,38 @@ const AppView = {
     const t = AppView._devTopic;
     return !!t && (t.kind === 'proposal' || t.kind === 'session') && Number(t.id) === id;
   },
+  // #5233: a proposal has just merged (the vote_update carrying
+  // `merged: true`), and the board's cached lists must agree. The server's
+  // open-proposals list already leaves merged rows out, so the stale card
+  // was pure cache. This patches the cached row's status to 'merged' — every
+  // later paint from these lists, a board reopen's included, drops it from
+  // Waiting for approval — and, while the board they belong to is NOT
+  // showing live (the board's own burst refresh covers that), re-reads its
+  // proposals + merged parts in the background, so the row is in Done when
+  // the board next paints. Writes caches only, and never repaints: an open
+  // proposal page is undisturbed (_topicRowFor also looks in _merged, so it
+  // still finds the row there after the partial load moves it).
+  //
+  // `appSlug` decides whose lists these are (_devDataSlug names the app the
+  // last load was made for), so a merge on one app never touches another's
+  // caches, and a board that has not loaded whole once does nothing here —
+  // its own whole load on open is already correct.
+  noteSessionMerged(sessionId, appSlug) {
+    if (!appSlug || AppView._devDataSlug !== appSlug) return false;
+    const id = Number(sessionId);
+    if (!Number.isFinite(id)) return false;
+    const row = (AppView._proposals || []).find((p) => p && Number(p.id) === id);
+    if (row && (row.status === 'promoted' || row.status === 'merging')) {
+      row.status = 'merged';
+    }
+    if (!AppView._devDataReady) return false;
+    if (!AppView.appData || AppView.appData.slug !== appSlug) return false;
+    if (typeof App !== 'undefined' && App.currentTab === 'dev' && App.currentSubTab === 'forum') return false;
+    // A partial load replaces _proposals and _merged in the same run; `fresh`
+    // queues it behind any run in flight so it reads after this merge write.
+    AppView._loadDevData({ fresh: true, parts: ['promoted', 'merged'] }).catch(() => {});
+    return true;
+  },
   _repaintTopicIfShowing(sessionId) {
     const t = AppView._devTopic;
     if (!t || t.kind !== 'proposal' || Number(t.id) !== Number(sessionId)) return;
@@ -10614,12 +10762,13 @@ const AppView = {
   /**
    * #4772: what Homeroom bot waits on the viewer for on this project, for
    * the Workshop's Waiting on you: Map(item key, as _workshopItemKey makes
-   * it → { why: 'plan' | 'question' | 'talk', at, botLast }), one reason an
-   * item, the first that applies. From the request list's `waitingOnYou`
-   * (services/workshop-waiting.js: its plans waiting for their Build it, its
-   * open questions in their DM, the back and forths they are in with it)
-   * and, on a request of theirs, the bot's question on its discussion that
-   * nobody has answered (`botAwaits`, #4530).
+   * it → { why: 'plan' | 'question', at }), one reason an item, the first
+   * that applies. From the request list's `waitingOnYou`
+   * (services/workshop-waiting.js: its plans waiting for their Build it and
+   * its open questions in their DM) and, on a request of theirs, the bot's
+   * question on its discussion that nobody has answered (`botAwaits`,
+   * #4530). A back and forth with the bot is not a reason (#5229), so a
+   * `talks` list an older response still carries is ignored.
    */
   _workshopWaitingOn() {
     const out = new Map();
@@ -10638,12 +10787,6 @@ const AppView = {
         if (asked && asked.kind === 'question' && issue.created_by_username === me) {
           put(`issue:${issue.number}`, { why: 'question', at: null });
         }
-      }
-    }
-    if (w && typeof w === 'object') {
-      for (const t of list(w.talks)) {
-        if (!t || !n(t.ref)) continue;
-        put(`${t.type === 'issue' ? 'issue' : 'session'}:${n(t.ref)}`, { why: 'talk', at: t.at || null, botLast: !!t.botLast });
       }
     }
     return out;
@@ -10706,11 +10849,7 @@ const AppView = {
   _workshopWaitingTag(w) {
     if (w.why === 'plan') return { label: PlatformI18n.t('changes:workshop.row.tag.planWaits'), tone: 'warn' };
     if (w.why === 'question') return { label: PlatformI18n.t('changes:workshop.row.tag.botAsked'), tone: 'warn' };
-    const ago = AppView._workshopAgo(w.at);
-    if (w.botLast) {
-      return { label: ago ? PlatformI18n.t('changes:workshop.row.tag.botReplied', { ago }) : PlatformI18n.t('changes:workshop.row.tag.botRepliedNow'), tone: 'warn' };
-    }
-    return { label: ago ? PlatformI18n.t('changes:workshop.row.tag.youReplied', { ago }) : PlatformI18n.t('changes:workshop.row.tag.youRepliedNow'), tone: 'plain' };
+    return null;
   },
 
   /**
@@ -13336,6 +13475,17 @@ const AppView = {
       return 4;
     };
 
+    // #5233: only what the server's own open-proposals list can hold buckets
+    // into In review. GET /api/apps/:slug/promoted returns status IN
+    // ('promoted','merging') (src/routes/votes.js), so a cached row whose
+    // status has since been patched to 'merged' (noteSessionMerged, on its
+    // vote_update) must leave the column on every paint from these lists —
+    // otherwise a reopened board keeps the merged card under Waiting for
+    // approval until its whole reload lands. A row with no status at all is
+    // kept, so synthetic fixtures and demo rows behave as before.
+    const openProposals = proposals.filter(
+      (p) => !p.status || p.status === 'promoted' || p.status === 'merging'
+    );
     // Issue numbers an open promoted proposal card (Column 3) addresses.
     // #1251: these used to be dropped from BOTH issue columns so they
     // wouldn't "double up" with the proposal card — but the board is the
@@ -13345,9 +13495,11 @@ const AppView = {
     // findable nowhere on the board — it survived only as a "Closes #N"
     // chip on the proposal card. It now stays on the board, in the In
     // progress column: an open proposal IS work under way, and the two
-    // cards never share a column, so nothing doubles up within one.
+    // cards never share a column, so nothing doubles up within one. Built
+    // from the same filtered list, so a merged proposal releases its issue
+    // back to wherever the issue itself says it belongs.
     const linked = new Set();
-    for (const p of proposals) {
+    for (const p of openProposals) {
       const arr = Array.isArray(p.linked_issues) ? p.linked_issues : [];
       for (const n of arr) {
         const num = parseInt(n, 10);
@@ -13374,7 +13526,7 @@ const AppView = {
     col2.sort((a, b) => issueT(b) - issueT(a));
 
     const review = [];
-    for (const p of proposals) review.push({ kind: 'proposal', item: p, _r: pinRank(p), _t: prT(p) });
+    for (const p of openProposals) review.push({ kind: 'proposal', item: p, _r: pinRank(p), _t: prT(p) });
     // Governance proposals have no merge or check state, so they sort in the
     // normal (unpinned) tier alongside non-pipeline PRs.
     for (const g of gov) review.push({ kind: 'gov', item: g, _r: 4, _t: govT(g) });
@@ -18335,9 +18487,22 @@ const AppView = {
     const phase = typeof u.phase === 'string' ? u.phase : 'running';
     const done = !!u.done;
     const counts = { count: ran, expected, passed, failed, skipped };
+    // A pass copied from an earlier run of the same commit instead of running
+    // the suite again (services/unit-suite-reuse.js): when that run passed,
+    // and which run it was, by the start of its id.
+    const from = done && u.exitOk !== false && u.reused && typeof u.reused === 'object' ? u.reused : null;
+    const reused = from ? {
+      when: from.passedAt ? relTime(from.passedAt) : '',
+      run: from.runId ? String(from.runId).slice(0, 8) : '?',
+      runId: from.runId ? String(from.runId) : null,
+      at: from.passedAt ? String(from.passedAt) : null,
+    } : null;
     let sub;
     let sentence;
-    if (done && u.notRun === true) {
+    if (reused) {
+      sub = PlatformI18n.t('changes:progress.unit.sub.reused', { count: passed, when: reused.when, run: reused.run });
+      sentence = PlatformI18n.t('changes:progress.unit.sentence.reused', { count: passed, when: reused.when, run: reused.run });
+    } else if (done && u.notRun === true) {
       // Its Job was refused or its setup stopped before any test ran
       // (services/unit-suite.js notRunOutcome): no test failed, and the
       // verdict says why once it lands.
@@ -18361,7 +18526,7 @@ const AppView = {
       sub = failed ? PlatformI18n.t('changes:progress.unit.sub.soFarFailed', counts) : PlatformI18n.t('changes:progress.unit.sub.soFar', counts);
       sentence = failed ? PlatformI18n.t('changes:progress.unit.sentence.soFarFailed', counts) : PlatformI18n.t('changes:progress.unit.sentence.soFar', counts);
     }
-    return { bar: { phase, ran, passed, failed, skipped, expected, done }, sub, sentence };
+    return { bar: { phase, ran, passed, failed, skipped, expected, done, ...(reused ? { reused } : {}) }, sub, sentence };
   },
 
   _checksStatusNotes(pr) {
@@ -18942,8 +19107,9 @@ const AppView = {
   GOV_APPLY_SLOW_MS: 12000,
   GOV_APPLY_STALLED_MS: 60000,
   // How long past a merge window's end the DERIVED state still reads as
-  // "actively closing". The governance-apply ticker runs every ~60s, so a
-  // healthy apply lands well inside this; past it something is wrong
+  // "actively closing". The governance machine applies at the window's end
+  // (a timer, with a backstop every ten minutes), so a healthy apply lands
+  // well inside this; past it something is wrong
   // (GitHub unreachable) and the calmer "will retry automatically" copy is
   // the honest one.
   GOV_APPLY_DERIVED_GRACE_MS: 120000,
@@ -23760,8 +23926,8 @@ const AppView = {
   // CSS (:has() over the radios), so the card still needs no script.
   //
   // A screen is { viewport, afterHtml, beforeHtml, afterChip, beforeChip,
-  // notesHtml, zoomable }. Three options the card leaves off, so its markup
-  // is what it always was:
+  // notesHtml, zoomable, stacked }. Three options the card leaves off, so
+  // its markup is what it always was:
   //   sideBySide — a third side option: before and after at once, in the
   //                same fixed stage.
   //   autoSide   — start side by side when the viewer has room for that
@@ -23924,7 +24090,7 @@ const AppView = {
         : '';
       return `<figure class="shots-view" data-shots-screen="${attr(screen.viewport)}" data-shots-viewport="${attr(screen.viewport)}">
         <div class="shots-bar">${barLead}<span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">${PlatformI18n.htmlText('changes:shots.viewer.before')}</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">${PlatformI18n.htmlText('changes:shots.viewer.after')}</label>${both}</span>${sizeSwitch}${zoomSwitch}${stepping ? stepper(screenIndex) : ''}</div>
-        <div class="shots-stage">
+        <div class="shots-stage"${screen.stacked ? ' data-shots-stack="1"' : ''}>
           ${screen.afterHtml || ''}
           ${screen.beforeHtml || ''}
           <label for="${sideId('before')}" class="shots-flip-to shots-flip-to-before" title="${PlatformI18n.htmlText('changes:shots.viewer.clickBefore')}" aria-hidden="true"></label><label for="${sideId('after')}" class="shots-flip-to shots-flip-to-after" title="${PlatformI18n.htmlText('changes:shots.viewer.clickAfter')}" aria-hidden="true"></label>
@@ -24093,6 +24259,55 @@ const AppView = {
       return w > 0 && h > 0 ? `${Math.round(w)} / ${Math.round(h)}` : (narrow ? '390 / 844' : '16 / 10');
     };
     const sizeName = AppView._shotsSizeName;
+    // #5063: the change page's side-by-side view crops both sides to the
+    // screen's declared changes (the numbered outlines, with a margin), so
+    // a small change reads large. A crop wider than it is tall stacks the
+    // two sides, before above after, instead of beside each other. The crop
+    // is CSS over the existing stills: no new image. The proposal card has
+    // no side-by-side view, and an HTML spec's screens crop themselves.
+    const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
+    const cropOf = (screen) => {
+      const width = Number(screen.width);
+      const hBefore = Number(screen.heightBefore);
+      const hAfter = Number(screen.heightAfter);
+      if (!(width > 0 && hBefore > 0 && hAfter > 0)) return null;
+      const unionOf = (which) => {
+        const rects = (Array.isArray(screen.regions) ? screen.regions : [])
+          .filter((region) => region && numberOf(region.story) > 0)
+          .map((region) => {
+            const box = which === 'base' ? region.b : region.a;
+            const mark = which === 'base' ? region.bMark : region.aMark;
+            if (Array.isArray(box)) return box;
+            if (Array.isArray(mark)) return [mark[0], mark[1], mark[2], 0];
+            return null;
+          })
+          .filter((box) => Array.isArray(box) && box.length === 4);
+        if (!rects.length) return null;
+        return rects.reduce((u, box) => [
+          Math.min(u[0], box[0]), Math.min(u[1], box[1]),
+          Math.max(u[0] + u[2], box[0] + box[2]) - Math.min(u[0], box[0]),
+          Math.max(u[1] + u[3], box[1] + box[3]) - Math.min(u[1], box[1]),
+        ]);
+      };
+      // A side whose region sits on the other side only (an added row) reads
+      // the same part of its own still.
+      const uBefore = unionOf('base') || unionOf('head');
+      const uAfter = unionOf('head') || unionOf('base');
+      if (!uBefore || !uAfter) return null;
+      const height = Math.min(hBefore, hAfter);
+      // 24px of margin each way; never below half the screen's width or a
+      // fifth of it tall, so a tiny change still shows its surroundings.
+      const cw = clamp(Math.round(Math.max(uBefore[2], uAfter[2]) + 48), Math.round(width / 2), width);
+      const ch = clamp(Math.round(Math.max(uBefore[3], uAfter[3]) + 48), Math.round(width / 5), height);
+      // A crop that would cover most of the screen shows no more than the
+      // whole screen does: keep today's whole-screen layout.
+      if (cw * ch >= 0.8 * width * height) return null;
+      const at = (u, h) => ({
+        x: clamp(Math.round(u[0] + u[2] / 2 - cw / 2), 0, width - cw),
+        y: clamp(Math.round(u[1] + u[3] / 2 - ch / 2), 0, h - ch),
+      });
+      return { cw, ch, stacked: cw > ch, before: at(uBefore, hBefore), after: at(uAfter, hAfter) };
+    };
 
     // The switches are radios before the screens and labels on each screen,
     // so the viewer needs no script: the side is one pair for every screen,
@@ -24164,11 +24379,21 @@ const AppView = {
       const narrow = Number(screen.width) > 0 ? Number(screen.width) < 600 : /phone|mobile/i.test(screen.viewport);
       const described = onScreen.map((claim) => claim.claim || '').join(' ');
       const drawn = { base: outlines(screen, 'base'), head: outlines(screen, 'head') };
+      // The crop applies only while both sides show at once, and only on the
+      // change page's card: a Before or After pick keeps the whole screen, a
+      // new app's first version has no before to crop, and the proposal card
+      // has no side-by-side view.
+      const crop = thread && !afterOnly && before && after ? cropOf(screen) : null;
       const side = (which, artifact, altId) => {
         const cls = which === 'base' ? 'shots-flip-before' : 'shots-flip-after';
         if (!artifact) return `<span class="shots-flip-side ${cls} shots-flip-missing">${PlatformI18n.htmlText(which === 'base' && afterOnly ? 'changes:shots.screen.nothingBefore' : 'changes:shots.screen.noShot')}</span>`;
         const shape = shapeOf(artifact, screen.width, which === 'base' ? screen.heightBefore : screen.heightAfter, narrow);
-        return `<span class="shots-flip-side ${cls}" style="--shots-shape:${shape}"><img src="${attr(shotsUrl(artifact.url))}" alt="${attr(PlatformI18n.t(altId, { changes: described }))}" loading="lazy">${drawn[which]}</span>`;
+        const inner = `<img src="${attr(shotsUrl(artifact.url))}" alt="${attr(PlatformI18n.t(altId, { changes: described }))}" loading="lazy">${drawn[which]}`;
+        if (!crop) return `<span class="shots-flip-side ${cls}" style="--shots-shape:${shape}">${inner}</span>`;
+        const at = which === 'base' ? crop.before : crop.after;
+        const pct = (value, total) => `${(value / total * 100).toFixed(3)}%`;
+        const style = `--shots-shape:${shape};--shots-crop-shape:${crop.cw} / ${crop.ch};--shots-crop-x:${pct(-at.x, crop.cw)};--shots-crop-y:${pct(-at.y, crop.ch)};--shots-crop-w:${pct(screen.width, crop.cw)};--shots-crop-h:${pct(which === 'base' ? screen.heightBefore : screen.heightAfter, crop.ch)}`;
+        return `<span class="shots-flip-side ${cls}" data-shots-crop="1" style="${style}"><span class="shots-crop">${inner}</span></span>`;
       };
       const changes = onScreen.map((claim) => {
         const n = numberOf(claim.id);
@@ -24193,6 +24418,7 @@ const AppView = {
         beforeHtml: side('base', before, absent ? 'changes:shots.screen.altBeforeAbsent' : 'changes:shots.screen.altBefore'),
         afterChip: PlatformI18n.t('changes:shots.viewer.chipAfter'),
         beforeChip: absent ? PlatformI18n.t('changes:shots.viewer.chipBeforeAbsent') : PlatformI18n.t('changes:shots.viewer.chipBefore'),
+        stacked: !!crop && crop.stacked,
         notesHtml: `${changes ? `<ol class="shots-changes">${changes}</ol>` : ''}${keys ? `<div class="shots-keys">${keys}</div>` : ''}${thread ? '' : `<div class="shots-view-meta">${meta}</div>`}`,
       };
     });

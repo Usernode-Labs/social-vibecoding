@@ -597,6 +597,12 @@ let platformFault = null;
 let lastVolumeSweepAt = 0;
 // When it last looked for live builds nothing finished.
 let lastLiveSweepAt = 0;
+// When it last looked for asks the voice queued that nothing ran (#5217),
+// and the session that was re-queued when: an ask whose change refuses
+// every turn is put back by the sweep, and this keeps that at one re-queue
+// per STRANDED_ASK_MS rather than one per pass.
+let lastAskSweepAt = 0;
+const askNudges = new Map();
 // Apps whose issues changed since the last pass (wake), and whether a full
 // reconcile was asked for (the mode was switched on, say). Read and cleared
 // at the top of every pass; only meaningful on the Pod running the loop.
@@ -1097,8 +1103,10 @@ function suggestedAnswers(raw, fallback = null) {
 }
 
 // B6: a plan its person sees before anything is built: at most this many
-// bullets, each at most this long (the prompt asks for 80), and at most two
-// questions, each with two to four answers (the suggested one first).
+// bullets, each at most this long (the prompts ask for 40 for a first
+// version, 60 for a complicated change; the clip is a last resort), and at
+// most two questions, each with two to four answers (the suggested one
+// first).
 const MAX_PLAN_BULLETS = 5;
 const PLAN_BULLET_MAX = 120;
 const MAX_PLAN_QUESTIONS = 2;
@@ -1658,6 +1666,21 @@ async function refreshApp(pool, app, {
       appId: app.id, openNumbers: issues.map((issue) => Number(issue.number)), deps: { github },
     });
     if (withdrawn.length) capRoom = await capRoomFor(pool, bot, app.id, settings);
+  }
+
+  // A request closed by hand on GitHub also closes the platform's own row
+  // for it, which the tray's Needs you reads (pastRuns' request_closed):
+  // nothing else closes that row on a GitHub-side close, so the request
+  // kept showing there for good (#5218). Whole, fresh list only, like the
+  // sweep; not gated on capRoom — it only closes rows GitHub confirms
+  // closed, and only for requests the bot tracks, so it changes nothing a
+  // held request or a full cap was protecting. The rest of this refresh
+  // does not read what it did.
+  if (!fetched?.note && !fetched?.truncatedList) {
+    await closedRequests().closeRequestRows(pool, {
+      appId: app.id, appSlug: app.slug, repoUrl: app.repo_url,
+      openNumbers: issues.map((issue) => Number(issue.number)), deps: { github },
+    });
   }
 
   // #3264: on a live app (capRoom is set only there) a person's reply in the
@@ -5534,6 +5557,12 @@ async function runFollowUp(pool, config, {
     log.info('homeroom-bot', 'Activity on a bot proposal\'s issue, but nobody said anything new', {
       app: app.slug, issueNumber, sessionId: proposal.id,
     });
+    // #5217: an ask recorded after this run took its asks (or while the row
+    // was claimed) is stranded by this very return: the row is gone and
+    // nothing re-queues it. Put it back, so its next follow-up takes it.
+    // Guarded: with the voice off, asks are never taken, and a requeue here
+    // would bring the issue back every pass.
+    if (voiceOnChange) await requeueAsks();
     return { ran: false, reason: 'no_new_replies' };
   }
 
@@ -6040,12 +6069,14 @@ async function noteProposalChecks(pool, { sessionId } = {}) {
 
 /**
  * ONE turn on the bot's own proposal to fix its failing checks, or the
- * hand-off to a person when it may not or cannot; before the first hand-off
- * of a red check, a change behind main is brought up to date with it once
- * instead, and its checks run again (handOff). Every outcome that spent
- * a turn, and every hand-off, records the head it looked at, so the same
- * failing head is never looked at twice; a platform fault records nothing
- * of the kind and keeps the queue row, as a triage's does.
+ * hand-off to a person when it may not or cannot; before the turn itself,
+ * a failure that looks like main's staleness brings the change up to date
+ * with main instead of spending the turn (checks_synced, #5220), and before
+ * the first hand-off of a red check, a change behind main is brought up to
+ * date with it once instead, and its checks run again (handOff). Every
+ * outcome that spent a turn, and every hand-off, records the head it looked
+ * at, so the same failing head is never looked at twice; a platform fault
+ * records nothing of the kind and keeps the queue row, as a triage's does.
  *
  * #4533: `recovered` is a fix turn restart recovery followed to its end
  * ({ turn, mark, mode }, finishRecoveredFollowUp): no turn is run, and
@@ -6085,6 +6116,41 @@ async function runChecksFix(pool, config, {
   }
 
   let runId = null;
+  // #5220: before its own fix turn, a failure that looks like main's
+  // staleness brings the change up to date with main once
+  // (fixed-check-sync.js syncBeforeFix), so the paid turn is not spent on
+  // something main has already fixed, and the votes the change has keep
+  // counting. The same safe rule the sweep decides, without its need for a
+  // second proposal failing the same check; not when the turn was a
+  // restart recovery (it has run already), nor for what its shots showed
+  // not working, which no sync changes.
+  if (!recovered && failing.length && !broken.length) {
+    const synced = await Promise.resolve()
+      .then(() => (deps.fixedCheckSync || require('./fixed-check-sync'))
+        .syncBeforeFix({ config, pool, sessionId: session.id, head }))
+      .catch(() => null);
+    if (synced?.synced) {
+      runId = await insertRun(pool, {
+        ...billingOf(item, runMode),
+        readReason: readReasonOf(item),
+        appId: app.id, issueNumber, mode: runMode, verdict: 'answer',
+        reason: 'Brought up to date with main before fixing its checks; its checks run again.',
+        buildNote: 'Brought up to date with main before fixing its checks; its checks run again.',
+        threadSeenAt, model, durationMs: Date.now() - startedMs,
+        proposalSessionId: session.id, checksHeadSha: head,
+      });
+      await recordSnapshot(runId);
+      await dropRow();
+      await live.postOnProposal({
+        pool, ws: deps.ws, app, issueNumber, runId, kind: 'checks_synced', bot, sessionId: session.id,
+        text: followup.checksSyncedText({ failingCount: failing.length }),
+      }).catch((err) => log.warn('homeroom-bot', 'Checks sync note failed', { app: app.slug, issueNumber, err: err.message }));
+      log.info('homeroom-bot', 'Synced its proposal with main before fixing its failing checks', {
+        app: app.slug, issueNumber, sessionId: session.id, head, sha: synced.sha || null, runId,
+      });
+      return { ran: true, verdict: 'answer', runId, acted: 'checks_synced' };
+    }
+  }
   const handOff = async ({ why, verdict, extra = {}, notChange = false, cause = null }) => {
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
@@ -6910,13 +6976,27 @@ async function finishBuiltFirstVersion(pool, config, { runId, user, bot, deps = 
       && Number(finish.session_id) === Number(run.build_session_id)
       && ['promoted', 'merging'].includes(run.session_status));
     if (!recovering) {
+      // #5211 (15 Oct 2026): the checks below run after this tap's read,
+      // against the live database. While one is under way, another tap can
+      // claim the run and put its proposal up, which this tap's checks then
+      // read as a reason to start over (its whyNotBuild finds the proposal
+      // and skips). Every refusal they make is looked at once more first:
+      // a claim set since the read, any outcome but failed, is another tap
+      // finishing it, answered already. An outcome of failed is the start
+      // over that tap already spent, and the refusal stands.
+      const refusal = async (why, detail = null) => {
+        const fresh = await finishableRun(pool, run.id);
+        const freshFinish = fresh?.build_finish && typeof fresh.build_finish === 'object' ? fresh.build_finish : null;
+        if (freshFinish && freshFinish.outcome !== 'failed') return { ok: true, already: true, app };
+        return { ok: false, why, ...(detail ? { detail } : {}), app };
+      };
       const why = whyNotFinish(run, { userId: user.id, botId: bot.id });
-      if (why) return { ok: false, why, app };
+      if (why) return refusal(why);
       const settings = await readSettings(pool);
-      if (!live.isLiveFor(settings, app)) return { ok: false, why: 'not_live', app };
+      if (!live.isLiveFor(settings, app)) return refusal('not_live');
       const repo = parseRepo(run.repo_url);
       const github = deps.github || require('./github');
-      if (!repo || typeof github.isEnabled !== 'function' || !github.isEnabled()) return { ok: false, why: 'no_github', app };
+      if (!repo || typeof github.isEnabled !== 'function' || !github.isEnabled()) return refusal('no_github');
       // What the build pushed is still there, as it was: a branch deleted, or
       // moved by somebody since, is not what was built.
       const head = await Promise.resolve()
@@ -6925,9 +7005,9 @@ async function finishBuiltFirstVersion(pool, config, { runId, user, bot, deps = 
           log.info('homeroom-bot', 'Try again: the built branch could not be read', { runId: run.id, err: err.message });
           return null;
         });
-      if (!head) return { ok: false, why: 'branch_gone', app };
+      if (!head) return refusal('branch_gone');
       if (run.build_sha && String(head).toLowerCase() !== String(run.build_sha).toLowerCase()) {
-        return { ok: false, why: 'branch_moved', app };
+        return refusal('branch_moved');
       }
       // The backstop every proposal of the bot's meets (whyNotBuild): another
       // proposal of the request, another build of it under way, or its issue
@@ -6935,7 +7015,7 @@ async function finishBuiltFirstVersion(pool, config, { runId, user, bot, deps = 
       const skip = await whyNotBuild(pool, {
         runId: run.id, botId: bot.id, appId: app.id, issueNumber: Number(run.issue_number), github, repo,
       });
-      if (skip) return { ok: false, why: 'skip', detail: skip, app };
+      if (skip) return refusal('skip', skip);
     }
     const { rows: claimed } = await pool.query(
       `UPDATE homeroom_bot_runs
@@ -9004,8 +9084,8 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
 // after the first was merged, and the next request waited behind it.
 
 /**
- * Called by the merge (routes/votes.js finalizeMerge) once `session` is
- * merged. Only for a proposal of the bot's. Never throws; resolves what it
+ * Called by the merge-followups workflow machine's bot.requestMerged work
+ * once `session` is merged. Only for a proposal of the bot's. Never throws; resolves what it
  * did ({ skipped, stopped, withdrawn, dequeued }), or null.
  *
  * `deps.before` (the merge's time) leaves alone the builds, proposals and
@@ -9678,6 +9758,75 @@ async function buildsNow(pool) {
 
 // ── The work loop ───────────────────────────────────────────────────────
 
+// #5217: an ask the voice queued that nothing ran. recordAsk puts its
+// follow-up first in the queue, but that answers null when a row for the
+// app and issue is already claimed (the running turn re-queues the asks
+// waiting when it ends), and several ends of the loop delete the row
+// without that requeue: runFollowUp's no_new_replies return, and
+// runTriage's not_open, has_proposal and claim-race returns. Nothing in
+// the loop read homeroom_bot_change_asks on its own, so such an ask sat
+// 'queued' until somebody else's words brought the change up again (in
+// the report, for five hours with the change idle and every check passing).
+// This sweep, on the refresh cadence, puts the follow-up back itself.
+const STRANDED_ASK_MS = 30 * 60 * 1000;
+
+/**
+ * Re-queue the follow-up of every stranded ask: a 'queued' ask on the
+ * bot's own promoted change, older than STRANDED_ASK_MS, younger than
+ * 7 days, whose app and issue have no queue row at all (a claimed row
+ * means a turn is on it, and that turn re-queues the asks waiting when it
+ * ends; a row held for the payer's week is left to that too). At most one
+ * re-queue per STRANDED_ASK_MS per change, so an ask that is refunded on
+ * every refusal (a busy change) does not come back every pass. Returns
+ * how many were re-queued; never throws.
+ */
+async function sweepStrandedAsks(pool, bot, settings, deps = {}) {
+  const now = deps.now ? deps.now() : Date.now();
+  if (!voiceModule(deps).voiceOn(settings, { type: 'session' }) || !bot?.id) return 0;
+  const { rows } = await pool.query(
+    `SELECT k.app_id, k.issue_number, k.session_id,
+            (ARRAY_AGG(k.asker_id ORDER BY k.id))[1] AS asker_id
+       FROM homeroom_bot_change_asks k
+       JOIN chat_sessions cs ON cs.id = k.session_id
+      WHERE k.status = 'queued'
+        AND k.created_at < NOW() - make_interval(secs => $1)
+        AND k.created_at > NOW() - INTERVAL '7 days'
+        AND cs.user_id = $2 AND cs.status = 'promoted' AND cs.is_headless = FALSE
+        AND k.issue_number = ANY(cs.linked_issues)
+        AND NOT EXISTS (SELECT 1 FROM homeroom_bot_queue q
+                         WHERE q.app_id = k.app_id AND q.issue_number = k.issue_number)
+      GROUP BY k.app_id, k.issue_number, k.session_id`,
+    [STRANDED_ASK_MS / 1000, Number(bot.id)],
+  );
+  let queued = 0;
+  for (const row of rows) {
+    const key = Number(row.session_id);
+    const last = askNudges.get(key) || 0;
+    if (now - last < STRANDED_ASK_MS) continue;
+    askNudges.set(key, now);
+    try {
+      const made = await enqueueFront(pool, {
+        appId: row.app_id, issueNumber: row.issue_number, userId: row.asker_id, reason: 'voice_update',
+      });
+      if (!made) continue;
+      queued += 1;
+      log.info('homeroom-bot', 'Re-queued a change\'s update nobody ran', {
+        appId: Number(row.app_id), issueNumber: Number(row.issue_number), sessionId: key,
+      });
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not re-queue a change\'s update nobody ran', {
+        sessionId: key, err: err.message,
+      });
+    }
+  }
+  // One change's nudge matters only until its next one is due: forget the
+  // old ones, so the map stays small.
+  for (const [key, at] of askNudges) {
+    if (now - at >= STRANDED_ASK_MS * 2) askNudges.delete(key);
+  }
+  return queued;
+}
+
 /**
  * One pass: take the loop lock, refresh the queue when due, drain up to
  * `concurrency` app batches, release. Returns what it did so a test can
@@ -9826,6 +9975,19 @@ async function runOnce(pool, config, deps = {}) {
       // #4242: and a build that succeeded and became no proposal is said.
       const unproposed = await (deps.dm || require('./homeroom-bot-dm')).sweepUnproposedBuilds?.(pool, { ws: deps.ws || null });
       if (unproposed) out.unproposedLooked = unproposed;
+    }
+
+    // And an update the voice queued that nothing ran comes back, on the
+    // same cadence (#5217). Before the fault check: the row it queues is
+    // dispatched by this same pass below.
+    if (now - lastAskSweepAt >= REFRESH_INTERVAL_MS) {
+      lastAskSweepAt = now;
+      try {
+        const stranded = await sweepStrandedAsks(pool, bot, settings, deps);
+        if (stranded) out.strandedAsks = stranded;
+      } catch (err) {
+        log.warn('homeroom-bot', 'Stranded-ask sweep failed', { err: err.message });
+      }
     }
 
     // Inside a platform-fault backoff nothing is dispatched (#3122). A wake
@@ -11135,6 +11297,8 @@ module.exports = {
   pickLive,
   personKeyOf,
   enqueueFront,
+  sweepStrandedAsks,
+  STRANDED_ASK_MS,
   billingOf,
   readReasonOf,
   readFingerprintOf,
@@ -11174,6 +11338,7 @@ module.exports = {
   _resetForTests() {
     lastRefreshAt = 0; triagePromptCache = null; stopped = false; passInFlight = false; lastPass = null;
     appBackoff.clear(); followUpBackoff.clear(); lastRefusals = []; platformFault = null; lastVolumeSweepAt = 0; lastLiveSweepAt = 0;
+    lastAskSweepAt = 0; askNudges.clear();
     inFlight.clear(); budgetPausedUntil = 0; platformSlugsCache = null;
     readsInFlight.clear(); lastReads.clear();
     passStartedAt = null; liveDispatchRunning = false; liveDispatchAgain = false; liveDispatchDone = Promise.resolve();

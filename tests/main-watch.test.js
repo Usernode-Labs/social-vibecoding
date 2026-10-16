@@ -791,7 +791,7 @@ test('the leader re-drives at boot and on a timer', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   const lead = server.slice(server.indexOf('async function becomeLeader()'));
   assert.match(lead, /\.then\(\(\) => mainWatch\.resumeInterrupted\(config\)\)/, 'in the boot recovery chain');
-  assert.match(lead, /checkHarvest\.start\(config\);\s*mainWatch\.start\(config\);/, 'beside the harvest ticker');
+  assert.match(lead, /\.catch\(\(err\) => \{[\s\S]{0,200}?\}\);\s*mainWatch\.start\(config\);/, 'right after the boot recovery chain');
   const stop = mainWatch.start(config, { intervalMs: 60 * 60 * 1000 });
   assert.equal(typeof stop, 'function');
   stop();
@@ -806,7 +806,9 @@ test('the route and the gate read the same module', () => {
   assert.match(apps, /main-check\/resume/);
   assert.match(apps, /mainWatch\.resume\(/);
   assert.match(votes, /mergePause\(/);
-  assert.match(votes, /afterMerge\(/);
+  // The run after a merge is the merge-followups machine's main.check work.
+  const services = fs.readFileSync(path.join(__dirname, '..', 'src', 'workflow', 'merge-followups', 'services.ts'), 'utf8');
+  assert.match(services, /legacy\('services\/main-watch'\)\.afterMerge\(/);
 });
 
 test('the schema carries the pause column and the backfill for the derived pauses', () => {

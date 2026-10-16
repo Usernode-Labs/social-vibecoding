@@ -429,3 +429,46 @@ test('a turn that only queued a change, or only offered something, never opens b
   assert.match(src, /never say it is done, since it is not made yet/);
   assert.match(src, /next: 'It is not made yet, so never say it is done\./);
 });
+
+test('a change something is running on reads busy, in a turn\'s facts and when an ask is recorded', async () => {
+  // turnRunningOn takes one options object. Both paths once passed it the
+  // pool and an id, so it threw, the throw read as "free", and a running
+  // turn, operation or shots run on the change was never seen.
+  const change = { id: 70, app_id: 9, user_id: 1, status: 'promoted', is_headless: false, linked_issues: [], title: 'Blue header' };
+  const pool = ({ activeTurn = null } = {}) => ({
+    async query(sql) {
+      if (/FROM chat_sessions cs WHERE cs\.id/.test(sql)) return { rows: [change] };
+      if (/SELECT active_turn FROM chat_sessions/.test(sql)) return { rows: [{ active_turn: activeTurn }] };
+      if (/INSERT INTO homeroom_bot_change_asks/.test(sql)) return { rows: [{ id: 501 }] };
+      if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(sql)) return { rows: [{ n: 0 }] };
+      return { rows: [] };
+    },
+  });
+  const busyDeps = (over = {}) => ({
+    ...deps(),
+    botSvc: { async enqueueFront() { return true; } },
+    worker: { isInFlight: () => false },
+    activeWorkers: new Set(),
+    shotsRunning: async () => false,
+    ...over,
+  });
+  const facts = (p, d) => voice.factsFor(p, {
+    app: APP, place: { type: 'session', ref: 70 }, bot: BOT, settings: LIVE, speaker: EVAN, deps: d,
+  });
+  const ask = async (p, d) => (await voice.recordAsk(p, {
+    appId: 9, sessionId: 70, issueNumber: 12, askerId: 2, instruction: 'make it blue', force: true, deps: d,
+  })).running;
+
+  assert.match(await facts(pool(), busyDeps()), /Nothing is running on it now\./);
+  assert.equal(await ask(pool(), busyDeps()), false);
+  const held = [
+    ['a worker turn in this process', pool(), busyDeps({ activeWorkers: new Set([70]) })],
+    ['its executing worker', pool(), busyDeps({ worker: { isInFlight: (id) => Number(id) === 70 } })],
+    ['a shots run', pool(), busyDeps({ shotsRunning: async (id) => id === 70 })],
+    ['a turn on its row', pool({ activeTurn: { turnId: 't1' } }), busyDeps()],
+  ];
+  for (const [what, p, d] of held) {
+    assert.match(await facts(p, d), /A run on it is going right now\./, what);
+    assert.equal(await ask(p, d), true, what);
+  }
+});

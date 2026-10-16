@@ -53,8 +53,12 @@ export function ProfileScreen() {
             the cards here are hand-drawn as well as grouped, so the gutter is
             the column's and the lists pass `mx-0`.
           - `pb-8`, Workshop's foot.
+          - `lg:max-w-5xl`: the base column is still Workshop's, and it
+            widens at `lg` for the own profile's two columns
+            (profile-view.tsx's grid); everything else on the screen stays
+            in the base width.
       */}
-      <div id="profile-root" className="max-w-2xl mx-auto px-4 pt-5 pb-8">
+      <div id="profile-root" className="max-w-2xl lg:max-w-5xl mx-auto px-4 pt-5 pb-8">
         <ProfileRoot />
       </div>
     </main>

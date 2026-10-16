@@ -70,67 +70,28 @@ test('what Homeroom bot waits on the viewer for, read off the real tables', { ti
        ($1, 14, 'live', 'ready', NOW() - INTERVAL '2 hours', TRUE)`, [appId],
   );
 
-  // Talks: change A, where both Ada and the bot wrote, the bot last; change
-  // B, merged; change C, where only Ada wrote; request #9, Ada last.
-  const session = async (status) => (await pool.query(
-    'INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, $3) RETURNING id', [appId, ada, status],
+  // #5229: a back and forth with the bot is not waiting on Ada, whoever
+  // wrote last. Change A, where the bot wrote last, and request #9, where
+  // Ada did, are both recent and both open.
+  const a = (await pool.query(
+    'INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, $3) RETURNING id', [appId, ada, 'promoted'],
   )).rows[0].id;
-  const a = await session('promoted');
-  const b = await session('merged');
-  const c = await session('active');
-  const say = (who, type, ref, minutesAgo, extra = '') => pool.query(
-    `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, created_at${extra ? ', deleted_at' : ''})
-     VALUES ($1, $2, 'hi', $3, $4, NOW() - make_interval(mins => $5)${extra ? ', NOW()' : ''})`,
+  const say = (who, type, ref, minutesAgo) => pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, created_at)
+     VALUES ($1, $2, 'hi', $3, $4, NOW() - make_interval(mins => $5))`,
     [appId, who, type, ref, minutesAgo],
   );
   await say(ada, 'session', a, 120);
   await say(bot, 'session', a, 60);
-  await say(ada, 'session', b, 120);
-  await say(bot, 'session', b, 60);
-  await say(ada, 'session', c, 30);
-  await say(bot, 'session', c, 10, 'deleted');
   await say(bot, 'issue', 9, 300);
   await say(ada, 'issue', 9, 200);
-  // Older than the window: not a back and forth any more.
-  await say(ada, 'issue', 10, 60 * 24 * 5);
-  await say(bot, 'issue', 10, 60 * 24 * 5);
 
-  // #5005: a request the bot holds (queued, reading or building) is the
-  // bot's turn, not Ada's. #20 queued (priority 0, unstarted), #21 a live
-  // build waiting its turn, #22 the bot reading it. #23 is queued but held,
-  // and #24's build is finished: both of those still wait on her.
-  const sayBoth = (ref, minutesAgo) => Promise.all([say(ada, 'issue', ref, minutesAgo), say(bot, 'issue', ref, minutesAgo - 5)]);
-  await sayBoth(20, 90);
-  await sayBoth(21, 100);
-  await sayBoth(22, 110);
-  await sayBoth(23, 70);
-  await sayBoth(24, 80);
-  await pool.query(
-    `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, enqueued_at) VALUES
-       ($1, 20, 0, NOW() - INTERVAL '10 minutes'),
-       ($1, 22, 0, NOW() - INTERVAL '30 minutes'),
-       ($1, 23, 0, NOW() - INTERVAL '40 minutes')`, [appId],
-  );
-  await pool.query(`UPDATE homeroom_bot_queue SET started_at = NOW() - INTERVAL '5 minutes' WHERE app_id = $1 AND issue_number = 22`, [appId]);
-  await pool.query(`UPDATE homeroom_bot_queue SET held_until = NOW() + INTERVAL '1 day' WHERE app_id = $1 AND issue_number = 23`, [appId]);
-  await pool.query(
-    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, live_build_waiting_at) VALUES
-       ($1, 21, 'live', 'ready', NOW() - INTERVAL '15 minutes')`, [appId],
-  );
-  await pool.query(
-    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_ok) VALUES
-       ($1, 24, 'live', 'ready', TRUE)`, [appId],
-  );
-
-  const out = await waiting.waitingOnViewer(pool, { appId, userId: ada, botId: bot });
+  const out = await waiting.waitingOnViewer(pool, { appId, userId: ada });
+  assert.deepEqual(Object.keys(out).sort(), ['plans', 'questions'], 'no conversation kind');
   assert.deepEqual(out.plans.map((p) => p.number), [13]);
   assert.deepEqual(out.questions, []);
-  assert.deepEqual(out.talks.map((x) => [x.type, x.ref, x.botLast]), [
-    ['session', a, true], ['issue', 23, true], ['issue', 24, true], ['issue', 9, false],
-  ]);
-  assert.ok(out.talks.every((x) => typeof x.at === 'string'));
 
-  const forSam = await waiting.waitingOnViewer(pool, { appId, userId: sam, botId: bot });
+  const forSam = await waiting.waitingOnViewer(pool, { appId, userId: sam });
   assert.deepEqual(forSam.plans.map((p) => p.number), [15]);
-  assert.deepEqual(forSam.talks, [], 'Ada\'s conversations are not Sam\'s');
+  assert.deepEqual(forSam.questions, []);
 });

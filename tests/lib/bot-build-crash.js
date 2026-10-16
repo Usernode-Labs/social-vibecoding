@@ -20,6 +20,17 @@
 // child that dispatched it is still alive. So a turn under way at a kill
 // keeps going, and the next child finds it running, or finished and pushed.
 //
+// A turn whose plan carries `holdUntil` is not finished by its time at all:
+//   'followed'  finished only once a process has attached to follow it (a
+//               turn.follow effect naming its journal), so the next child
+//               always finds it still running;
+//   'killed'    finished only once the child that dispatched it has recorded
+//               its kill (a killed effect of its pid, no older than the
+//               turn's dispatch), which is the point that turns the platform's
+//               push proxy down — so its push is always refused.
+// Either way a held turn is finished anyway 30 s after it was dispatched, so
+// a follower that never comes cannot hold the test open.
+//
 // Kill points: the child counts the build's durable saves (every write of
 // the work item's checkpoint) and the fakes' own points (a turn about to be
 // dispatched, a turn dispatched, the promote route between GitHub's pull
@@ -89,12 +100,13 @@ function journalLines({ mode, text, threadId, ahead = 0, sha = '', pushOk = true
 }
 
 /**
- * Finish every coding turn whose time is up (or that was stopped): its
- * journal is written, and a build turn's commits are made on what it
- * started from and pushed, fast-forward only, as the worker's runner pushes.
- * Runs in the test process, whatever became of the child that dispatched
- * the turn. A turn whose plan says `pushNeedsPlatform` pushes through the
- * platform's push proxy, so its push fails while no workflow process is up
+ * Finish every coding turn whose time is up (or that was stopped, or whose
+ * plan's `holdUntil` is satisfied — see the header): its journal is written,
+ * and a build turn's commits are made on what it started from and pushed,
+ * fast-forward only, as the worker's runner pushes. Runs in the test
+ * process, whatever became of the child that dispatched the turn. A turn
+ * whose plan says `pushNeedsPlatform` pushes through the platform's push
+ * proxy, so its push fails while no workflow process is up
  * (crash_world_platform): it commits, and its journal says push_ok=0.
  * Resolves how many it finished.
  */
@@ -104,8 +116,20 @@ async function settleTurns(pool) {
   try {
     await client.query('BEGIN');
     const { rows: [{ up: platformUp }] } = await client.query('SELECT up FROM crash_world_platform');
+    // A held turn's own trigger (its `holdUntil`), not its time, releases it;
+    // the 30 s ceiling finishes it anyway, so a hold is never forever.
     const { rows } = await client.query(
-      `SELECT * FROM crash_world_turns WHERE status = 'running' AND (due_at <= clock_timestamp() OR stopped)
+      `SELECT * FROM crash_world_turns WHERE status = 'running' AND (
+          stopped
+          OR (plan->>'holdUntil' IS NULL AND due_at <= clock_timestamp())
+          OR (plan->>'holdUntil' = 'followed' AND EXISTS (
+                SELECT 1 FROM crash_world_effects e
+                WHERE e.kind = 'turn.follow' AND e.data->>'journal' = crash_world_turns.journal))
+          OR (plan->>'holdUntil' = 'killed' AND EXISTS (
+                SELECT 1 FROM crash_world_effects e
+                WHERE e.kind = 'killed' AND e.pid = crash_world_turns.pid
+                  AND e.at >= crash_world_turns.dispatched_at))
+          OR (plan->>'holdUntil' IS NOT NULL AND dispatched_at <= clock_timestamp() - interval '30 seconds'))
         ORDER BY id LIMIT 8 FOR UPDATE SKIP LOCKED`);
     for (const t of rows) {
       const plan = t.plan || {};
@@ -271,9 +295,14 @@ function forkChild({ databaseUrl, config, env = {}, label = '' }) {
   };
 }
 
-async function until(check, what, timeoutMs = 30000, everyMs = 40) {
+// `signal` (an AbortSignal) stops the wait: once it is aborted, `until`
+// resolves null instead of polling on — a wait that lost a race to another
+// outcome is not left polling, and its timeout, if it came to one, is never
+// thrown.
+async function until(check, what, timeoutMs = 30000, everyMs = 40, { signal } = {}) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
+    if (signal?.aborted) return null;
     const v = await check();
     if (v) return v;
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);

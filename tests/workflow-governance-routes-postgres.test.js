@@ -1,6 +1,6 @@
 'use strict';
 
-// The governance routes with WF_GOVERNANCE_ENABLED on (src/routes/issues.js
+// The governance routes (src/routes/issues.js
 // handing off to src/workflow/platform.ts), against the full PostgreSQL
 // schema and a running workflow runtime: the vote, withdraw and admin-apply
 // routes answer with the shapes the client reads, the create route and the
@@ -77,7 +77,7 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     getIssue: async () => ({ state: 'open' }),
   });
   const config = {
-    databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfGovernanceEnabled: true,
+    databaseUrl: String(url), dataEncryptionKey: 'synthetic-key',
     wfPoolMax: 4, wfSlots: 2, wfOwnershipMode: 'raise',
   };
   // What the machine tells browsers arrives on the WebSocket bus's channel,
@@ -307,4 +307,16 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
     assert.equal(r.body.renamed.upCount, 1);
     assert.equal((await instance(i)).state, 'open');
   });
+});
+
+// The machine is the only path for a governance proposal, so a process
+// whose workflow runtime fails to start exits (start()'s catch ends it) and
+// is restarted, rather than serving votes nothing would decide.
+test('a failed workflow runtime start ends the process, and failed leader loops stop it', () => {
+  const server = fs.readFileSync(require.resolve('../server.js'), 'utf8');
+  assert.match(server, /await require\('\.\/src\/workflow\/platform\.ts'\)\.startWorkflow\(config, \{ loops: !runsClusterMaintenance\(\) \}\);/);
+  assert.doesNotMatch(server, /\.startWorkflow\([^;]*\)\s*\.catch\(/, 'nothing swallows the failure');
+  // A leader whose loops fail stops through its own drain, so another leads.
+  const loops = server.slice(server.indexOf('.startWorkflowLoops()'));
+  assert.match(loops.slice(0, 400), /process\.kill\(process\.pid, 'SIGTERM'\)/);
 });

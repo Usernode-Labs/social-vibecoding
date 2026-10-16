@@ -969,8 +969,9 @@ test('the Dev lander needs no back arrow, because the rail is beside it', () => 
   const sessionBranch = appViewJs.slice(session, appViewJs.indexOf('\n    }', session));
   assert.match(sessionBranch, /App\.setBackIcon\?\.\('arrow', '#messages'\);/,
     'and a session leads with a real ← up to Messages (#2770)');
-  // The ✕ is the app TAB's alone, and it lands wherever the visit began.
-  assert.match(read('public/js/app.js'), /App\.setBackIcon\('close', App\._closeAppHref\(\)\);/);
+  // The ✕ is the app TAB's alone (on a phone, or with the rail not kept
+  // beside it), and it lands wherever the visit began.
+  assert.match(read('public/js/app.js'), /return \['close', App\._closeAppHref\(\)\];/);
   // An arrow WITH an href is what turns the phone's back gesture on — still
   // true, and still what the session sub-view relies on.
   assert.match(read('frontend/src/features/header/native-back-navigation.ts'),
@@ -993,7 +994,8 @@ test('the app\'s own Workshop keeps the rail, and lights the tab it came through
   const body = sync.slice(0, sync.indexOf('\n  },\n'));
   assert.match(body, /const inApp = screen === 'app-view' && App\.currentTab === 'app';/,
     'the app itself covers the rail; its Workshop does not');
-  // …unless the viewer pinned it (#3319, tests/nav-rail-pinned.test.js).
+  // …except on a desktop, where the rail stays beside it by default (#3319,
+  // tests/nav-rail-pinned.test.js).
   assert.match(body, /!!screen && !App\.chromeless && \(!inApp \|\| railPinned\),/);
   // The Workshop tab is lit, so the rail knows where you are — except on the
   // app's DISCUSSION, which is a row in the Messages inbox and lights that

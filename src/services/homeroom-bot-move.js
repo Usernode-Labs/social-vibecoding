@@ -224,7 +224,7 @@ async function proposeClose(pool, { app, user, issueNumber, issueTitle, reason, 
   await ws.sendSystemMessage(pool, app.id, said, 'system', null, { type: 'issue', ref: n }).catch(() => {});
   try {
     const workflow = deps.workflow || require('../workflow/platform.ts');
-    if (workflow.governsKind('close_issue')) await workflow.fileProposal(id, app.id);
+    await workflow.fileProposal(id, app.id);
   } catch (err) {
     // The next vote, or the boot backfill, files it (routes/issues.js).
     log.warn('homeroom-bot-move', 'Filing the close proposal failed', { issueId: id, err: err.message });

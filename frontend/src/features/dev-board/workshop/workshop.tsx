@@ -103,6 +103,7 @@ import { PlacesTray, useEdgeSwipe } from './places-tray';
 import { ProjectPlaces } from './project-places';
 import { clearPlace, publishPlace, publishSide, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
 import { PlanPage } from './plan-page';
+import { PrivateRequests } from './private-requests';
 import { Diagram, decisionDiagram, readDiagram, type DecisionFacts, type DiagramRecord, type DiagramSource } from '../../../lib/diagram/diagram';
 import { TouchesPicture, readTouches, touchesSaid, type Touches } from './touches';
 import { PageBack } from './page-back';
@@ -1261,9 +1262,12 @@ type Fact = { key: string; tone: string | undefined; text: string; topic?: boole
  * approval") is the eyebrow.
  */
 const SAID_ELSEWHERE = new Set(['needs_vote', 'tally', 'approvals']);
-function factsFor(row: QueueRow, voted: string | null): Fact[] {
+export function factsFor(row: QueueRow, voted: string | null): Fact[] {
   const out: Fact[] = [];
   const st = row.card.pill ? row.card.pill.state : null;
+  // The count the card shows once it is answered (#5236), and the snapshot
+  // it keeps when nothing fresher can be said.
+  const now = answeredCount(row, voted);
   // A no vote (and a "Not approved") is the blocked tone, not the ok one:
   // #4568. The existing factTone map gives the red classes.
   if (voted) out.push({ key: 'voted', tone: voted === 'no' ? 'blocked' : 'ok', text: youAnswered(row, voted) });
@@ -1271,13 +1275,16 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
     // The count in the change page's own words: an at-least-N rule's pill
     // reads "1 of 2 approvals" there (AppView.statusPillState), and every
     // rule's count reads the same way here.
-    out.push({ key: 'tally', tone: undefined, text: translate('project:needsYou.fact.approvals', { yes: st.yes, count: st.majority }) });
+    const yes = now && 'yes' in now ? now.yes : st.yes;
+    const majority = now && 'yes' in now ? now.majority : st.majority;
+    out.push({ key: 'tally', tone: undefined, text: translate('project:needsYou.fact.approvals', { yes, count: majority }) });
   } else if (row.tally) {
     // The Communities feed's rows (#3488): the counts, without a threshold
     // it has not worked out for each project. A zero says nothing.
+    const tally = now && 'tally' in now ? now.tally : row.tally;
     const said = factsLine([
-      row.tally.yes ? translate('project:needsYou.fact.yes', { count: row.tally.yes }) : '',
-      row.tally.no ? translate('project:needsYou.fact.no', { count: row.tally.no }) : '',
+      tally.yes ? translate('project:needsYou.fact.yes', { count: tally.yes }) : '',
+      tally.no ? translate('project:needsYou.fact.no', { count: tally.no }) : '',
     ]);
     if (said) out.push({ key: 'tally', tone: undefined, text: said });
   }
@@ -1289,6 +1296,36 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
     }
   }
   return out.slice(0, 5);
+}
+
+/**
+ * The count on an item the viewer has just answered (#5236). The pin holds
+ * the row as it was BEFORE the vote, so a card's own numbers never move once
+ * it is answered — `castVote` bumps `yes_count`/`no_count` only, and the pill
+ * reads `qualified_yes_count`, which the server sets fresh on open rows. So
+ * the count is read fresh where it can be, on the same seam the end card
+ * uses (`outcomeFor`): on a project's own feed, the board rows the vote's
+ * own refresh brought back (AppView._needsOutcome) — the server stays the
+ * authority, and the old number shows until it has arrived. On the
+ * Communities feed there is no fresh read for another project's change, so
+ * the snapshot tally gains the viewer's one side; that is safe because the
+ * feed only lists changes the viewer had not voted on yet. Null when the
+ * card was not answered here (`voted`) or nothing fresher can be said:
+ * callers keep the snapshot they had.
+ */
+function answeredCount(row: QueueRow, voted: string | null)
+  : { yes: number; majority: number } | { tally: { yes: number; no: number } } | null {
+  if (!voted) return null;
+  const ref = row.askAbout;
+  if (row.card.pill) {
+    const raw = ref && ref.kind === 'proposal' ? callAppView('_needsOutcome', 'proposal', ref.ref) : null;
+    const now = raw && typeof raw === 'object' ? raw as Fresh : null;
+    return now ? { yes: now.yes, majority: now.majority } : null;
+  }
+  if (row.tally) {
+    return { tally: { yes: row.tally.yes + (voted === 'yes' ? 1 : 0), no: row.tally.no + (voted === 'no' ? 1 : 0) } };
+  }
+  return null;
 }
 
 /**
@@ -1426,6 +1463,9 @@ function labelTally(a: { tally?: string }): string {
  */
 function tallyLine(row: QueueRow, voted: string | null): string {
   const st = row.card.pill ? row.card.pill.state : null;
+  // The count the sheet shows once it is answered (#5236), the same fresh
+  // read `factsFor` takes; the snapshot when nothing fresher can be said.
+  const now = answeredCount(row, voted);
   if (approves(row)) {
     // The pill's own word, when it is not the wait itself. It arrives from
     // AppView.statusPillState already worded, so it is a parameter.
@@ -1440,13 +1480,15 @@ function tallyLine(row: QueueRow, voted: string | null): string {
   }
   if (!st) {
     if (!row.tally) return '';
-    const { yes, no } = row.tally;
+    const { yes, no } = now && 'tally' in now ? now.tally : row.tally;
     if (!yes && !no) return translate('project:needsYou.voteSub.nobody');
     return translate('project:needsYou.voteSub.counts', { yes, no });
   }
+  const yes = now && 'yes' in now ? now.yes : st.yes;
+  const majority = now && 'yes' in now ? now.majority : st.majority;
   return st.label && !st.plainVote
-    ? translate('project:needsYou.voteSub.ofNeededState', { count: st.yes, needed: st.majority, state: st.label })
-    : translate('project:needsYou.voteSub.ofNeeded', { count: st.yes, needed: st.majority });
+    ? translate('project:needsYou.voteSub.ofNeededState', { count: yes, needed: majority, state: st.label })
+    : translate('project:needsYou.voteSub.ofNeeded', { count: yes, needed: majority });
 }
 
 /* ── The picture: two stills, cropped to what changed ───────────────── */
@@ -5029,10 +5071,9 @@ export function DevWorkshop(): ReactNode {
         <section className="dev-ws-strip" data-ws-happening="">
           {/* ── Waiting on you ── (#4772) what needs the viewer's answer
               before it can move: Homeroom bot's plan for their request
-              waiting for Build it, its question to them, a back and forth
-              with it on a change or request, and a change of theirs that
-              needs a fix. One line each; its count asks for the viewer, so
-              it is in the accent. */}
+              waiting for Build it, its question to them, and a change of
+              theirs that needs a fix. One line each; its count asks for the
+              viewer, so it is in the accent. */}
           {waitingRows.length ? (
             <MineSection
               section="waiting"
@@ -5242,6 +5283,11 @@ export function DevWorkshop(): ReactNode {
           </section>
         </>
       ) : null}
+      {/* ── PRIVATE REQUESTS ── (#5048) last on the tab, for admins only and
+          only when there are some: the requests kept off GitHub. Last so
+          the parts above keep their order for everyone. See
+          ./private-requests.tsx. */}
+      {slug ? <PrivateRequests slug={slug} /> : null}
       </>
       ) : null}
 

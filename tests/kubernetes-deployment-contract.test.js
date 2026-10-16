@@ -220,18 +220,13 @@ test('Kubernetes enables before & after shots by default with one explicit kill 
     'Helm default treats boolean false as empty and would defeat the kill switch');
 });
 
-test('Kubernetes passes the workflow flags through, off by default', () => {
+test('Kubernetes passes no workflow flag: every machine is the only path for what it decides', () => {
   const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
   const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
-  assert.match(values, /workflowGovernanceEnabled: false/);
-  assert.match(platform,
-    /name: WF_GOVERNANCE_ENABLED, value: \{\{ \.Values\.platform\.workflowGovernanceEnabled \| quote \}\}/);
-  assert.match(values, /workflowMergeFollowupsEnabled: false/);
-  assert.match(platform,
-    /name: WF_MERGE_FOLLOWUPS_ENABLED, value: \{\{ \.Values\.platform\.workflowMergeFollowupsEnabled \| quote \}\}/);
-  assert.match(values, /workflowPreviewsEnabled: false/);
-  assert.match(platform,
-    /name: WF_PREVIEWS_ENABLED, value: \{\{ \.Values\.platform\.workflowPreviewsEnabled \| quote \}\}/);
+  assert.doesNotMatch(platform, /WF_GOVERNANCE_ENABLED|WF_PREVIEWS_ENABLED|PREVIEW_LIFECYCLE_ENABLED/);
+  assert.doesNotMatch(platform, /WF_MERGE_FOLLOWUPS_ENABLED|WF_APP_DELIVERY_ENABLED|WF_OWNERSHIP_MODE/);
+  assert.doesNotMatch(values, /workflowPreviewsEnabled|previewLifecycleEnabled|workflowGovernanceEnabled/);
+  assert.doesNotMatch(values, /workflowMergeFollowupsEnabled|workflowAppDeliveryEnabled/);
 });
 
 test('Kubernetes workflow resolves all three images before publishing a release', () => {

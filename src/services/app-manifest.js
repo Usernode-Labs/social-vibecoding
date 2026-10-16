@@ -6,7 +6,7 @@
  *
  * Lives in the dapp repo root, alongside Dockerfile and package.json. The
  * platform reads it from the freshly-cloned working tree on every deploy
- * (createApp / buildAndDeployStaging / rebuildProduction) so the manifest
+ * (createApp / buildAndDeployStaging / deployProduction) so the manifest
  * is always the current code's source of truth. It is NEVER snapshotted
  * into the platform DB — staleness is a guaranteed pain we don't want.
  *
@@ -387,7 +387,10 @@ function normalizeVisualScenario(test) {
 // leading slash, no scheme/whitespace/markup). `name` falls back to the
 // path. `expectSelector` / `expectText` are optional presence assertions;
 // `allowConsoleErrors` opts a test out of the baseline no-console-errors
-// rule (for a route that legitimately logs errors). `visual: true` requires
+// rule (for a route that legitimately logs errors). `coldLoad: true` gives
+// the check a page load of its own instead of a hash switch on a page loaded
+// for another check (for a screen only a load of its address draws).
+// `visual: true` requires
 // a stable `id`, a presence assertion, and at least one repository-relative
 // `impact` glob; malformed visual metadata is ignored without dropping the
 // underlying check. Invalid entries are dropped, duplicate (name+path) pairs
@@ -435,6 +438,11 @@ function readTestsWithMeta(parsed) {
       expectText: typeof t.expectText === 'string' && t.expectText.trim()
         ? t.expectText.trim().slice(0, MAX_TEST_TEXT_LEN) : null,
       allowConsoleErrors: !!t.allowConsoleErrors,
+      // A check whose screen only a load of its address draws (a one-time
+      // deep link scripted at boot) asks for its own load rather than a
+      // hash switch on a shared page (capture.js groupTests). Kept only
+      // when set, so every other entry reads exactly as before.
+      ...(t.coldLoad === true ? { coldLoad: true } : {}),
       ...(visual || {}),
     });
   }
@@ -1374,7 +1382,7 @@ async function reconcileAppName(pool, app, manifest) {
 
 /**
  * #4417: reconcile dapp.json's `topics` into the app's category registry,
- * on the rebuild a merged topics PR triggers (staging.rebuildProduction),
+ * on the rebuild a merged topics PR triggers (staging.deployProduction),
  * on an import's first deploy, and at boot for the platform's own app.
  *
  * Each topic is the registry row whose category_key is its `id`, origin
@@ -1896,7 +1904,7 @@ function describeRulesColumn(v) {
  * the platform's own app is the primary consumer (its apply point is
  * boot: db/migrate.js seedSelfApp calls this next to the name/icon
  * reconciles, since the self-app deploys via GitHub Actions and never
- * runs rebuildProduction).
+ * runs deployProduction).
  *
  * Best-effort like its siblings: callers fire-and-log; a failure here
  * must never fail the deploy.
