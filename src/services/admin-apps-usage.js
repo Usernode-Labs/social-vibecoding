@@ -139,8 +139,9 @@ function appView(row, top) {
   };
 }
 
-/** The platform-wide line above the table. Pure. */
-function totals(apps) {
+/** The same figures for any subset of the rows (the whole list, the platform,
+ * the other apps). Pure. */
+function figures(apps) {
   const sum = (k) => apps.reduce((n, a) => n + (a[k] || 0), 0);
   return {
     apps: apps.length,
@@ -150,6 +151,19 @@ function totals(apps) {
     proposed: sum('proposed'),
     merged: sum('merged'),
     requests: sum('requests'),
+  };
+}
+
+/** The platform-wide line above the table, and the same split into the
+ * platform and the other apps. Pure. */
+function totals(apps) {
+  const all = figures(apps);
+  return {
+    ...all,
+    split: {
+      platform: figures(apps.filter((a) => a.platform)),
+      apps: figures(apps.filter((a) => !a.platform)),
+    },
   };
 }
 

@@ -48,17 +48,21 @@ export interface AppUsage {
   openRequests: number;
 }
 
+export interface Figures {
+  apps: number;
+  usedApps: number;
+  builtApps: number;
+  seconds: number;
+  proposed: number;
+  merged: number;
+  requests: number;
+}
+
 export interface AppsUsagePayload {
   days: number;
   windows: number[];
-  totals: {
-    apps: number;
-    usedApps: number;
-    builtApps: number;
-    seconds: number;
-    proposed: number;
-    merged: number;
-    requests: number;
+  totals: Figures & {
+    split: { platform: Figures; apps: Figures };
   };
   apps: AppUsage[];
 }
@@ -81,6 +85,7 @@ const UsageUI = Object.freeze({
   tile: 'rounded-xl bg-zinc-100 dark:bg-zinc-800 p-3',
   tileFigure: 'text-xl font-semibold text-zinc-900 dark:text-zinc-100 tabular-nums',
   tileLabel: 'text-xs text-zinc-500 dark:text-zinc-400',
+  tileSplit: 'mt-1 text-xs text-zinc-500 dark:text-zinc-400 tabular-nums',
   row: 'rounded-xl bg-zinc-100 dark:bg-zinc-800',
   rowButton: 'w-full text-left p-3 rounded-xl hover:bg-zinc-200/60 dark:hover:bg-zinc-700/50 transition-colors',
   rowHead: 'flex flex-wrap items-center justify-between gap-2',
@@ -154,11 +159,30 @@ function when(iso: string | null): string {
   return new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-function Tile({ id, figure, label }: { id: string; figure: string; label: string }) {
+/**
+ * The platform / apps split under each total, in the tile's own format.
+ * Null when there is no payload yet, so the tile draws as it does while
+ * loading. Pure.
+ */
+export function tileSplits(t: AppsUsagePayload['totals'] | null): Record<string, string> | null {
+  if (!t || !t.split) return null;
+  const { platform: p, apps: o } = t.split;
+  return {
+    apps: `${p.apps} platform · ${o.apps} apps`,
+    used: `${p.usedApps} platform · ${o.usedApps} apps`,
+    built: `${p.builtApps} platform · ${o.builtApps} apps`,
+    time: `Platform ${formatDuration(p.seconds)} · apps ${formatDuration(o.seconds)}`,
+    merged: `Platform ${p.merged} / ${p.proposed} · apps ${o.merged} / ${o.proposed}`,
+    requests: `Platform ${p.requests} · apps ${o.requests}`,
+  };
+}
+
+function Tile({ id, figure, label, detail }: { id: string; figure: string; label: string; detail?: string | null }) {
   return (
     <div className={UsageUI.tile} data-tile={id}>
       <div className={UsageUI.tileFigure}>{figure}</div>
       <div className={UsageUI.tileLabel}>{label}</div>
+      {detail ? <div className={UsageUI.tileSplit} data-tile-split>{detail}</div> : null}
     </div>
   );
 }
@@ -254,6 +278,7 @@ function AppsUsageSection() {
 
   const windows = data?.windows?.length ? data.windows : [7, 30, 90];
   const t = data?.totals;
+  const splits = tileSplits(t || null);
   const shown = data ? sortApps(filterApps(data.apps, query), sort) : [];
 
   return (
@@ -270,12 +295,12 @@ function AppsUsageSection() {
           and how much it was used and built in the chosen window.
         </p>
         <div className={UsageUI.tiles} id="admin-apps-usage-totals">
-          <Tile id="apps" figure={t ? String(t.apps) : '–'} label="apps" />
-          <Tile id="used" figure={t ? String(t.usedApps) : '–'} label="used in this window" />
-          <Tile id="built" figure={t ? String(t.builtApps) : '–'} label="with changes proposed or merged" />
-          <Tile id="time" figure={t ? formatDuration(t.seconds) : '–'} label="time spent in apps" />
-          <Tile id="merged" figure={t ? `${t.merged} / ${t.proposed}` : '–'} label="merged / proposed" />
-          <Tile id="requests" figure={t ? String(t.requests) : '–'} label="requests filed" />
+          <Tile id="apps" figure={t ? String(t.apps) : '–'} label="apps" detail={splits?.apps} />
+          <Tile id="used" figure={t ? String(t.usedApps) : '–'} label="used in this window" detail={splits?.used} />
+          <Tile id="built" figure={t ? String(t.builtApps) : '–'} label="with changes proposed or merged" detail={splits?.built} />
+          <Tile id="time" figure={t ? formatDuration(t.seconds) : '–'} label="time spent in apps" detail={splits?.time} />
+          <Tile id="merged" figure={t ? `${t.merged} / ${t.proposed}` : '–'} label="merged / proposed" detail={splits?.merged} />
+          <Tile id="requests" figure={t ? String(t.requests) : '–'} label="requests filed" detail={splits?.requests} />
         </div>
       </div>
 
