@@ -92,7 +92,7 @@ test('promote announces in the proposal thread, and nowhere thread-less', () => 
     name: 'proposing',
     data: { sessionId: 10, appId: 5, imported: false, slot: 'held', answer: null, reason: null, claim: null,
       promoting: { n: 1, by: 1, byName: 'alice', prior: 'active', expectedHead: null, viaAgent: false },
-      pr: { running: 'open:1', next: null }, n: 1 },
+      pr: { running: 'open:1', next: [] }, doomed: [], n: 1 },
   };
   const event = {
     id: 51, type: 'WorkSucceeded',

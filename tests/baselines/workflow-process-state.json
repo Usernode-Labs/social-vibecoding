@@ -84,9 +84,8 @@
       "services | uses src/services/limits.js:resolveBillingPath": "reads who pays for the model call that titles a new pull request (review.open), from the owner's stored keys, as the promote route did; no process state",
       "services | uses src/services/pr-metadata.js:applyPrMetadata": "creates the proposal's pull request, or backfills its title, on GitHub (review.open), the promote route's lazy creation cut out of the route that ran it before its claim",
       "services | uses src/services/proposal-update.js:updateLinkedIssues": "links the session's originating request to its pull request on GitHub (review.open), the promote route's #2500 backfill, cut out of the route",
-      "services | uses src/services/worker.js:destroyCcVolume": "destroys a closed proposal's Claude Code volume at once when the close asked (cc.purge), as finalizeArchivedSession did with purgeCc",
-      "services | uses src/services/worker.js:destroyWorker": "destroys the proposal's worker container (worker.destroy: a pause, an unpromote, a close), the call pauseSession and finalizeArchivedSession made after their writes",
-      "services | uses src/services/worker.js:workerContainerName": "the name of a session's worker container, from its id (pure)"
+      "services | uses src/services/worker.js:removeCcVolume": "removes a closed proposal's Claude Code volume at once when the close asked (cc.purge), as finalizeArchivedSession did with purgeCc; strict, so a refused removal is tried again",
+      "services | uses src/services/worker.js:removeWorker": "removes the proposal's worker container (worker.destroy: a pause, an unpromote, a close), the call pauseSession and finalizeArchivedSession made after their writes; strict, so a refused removal is tried again"
     }
   },
   "handOff": {
@@ -370,9 +369,8 @@
       "services | uses src/services/limits.js:resolveBillingPath",
       "services | uses src/services/pr-metadata.js:applyPrMetadata",
       "services | uses src/services/proposal-update.js:updateLinkedIssues",
-      "services | uses src/services/worker.js:destroyCcVolume",
-      "services | uses src/services/worker.js:destroyWorker",
-      "services | uses src/services/worker.js:workerContainerName"
+      "services | uses src/services/worker.js:removeCcVolume",
+      "services | uses src/services/worker.js:removeWorker"
     ]
   }
 }

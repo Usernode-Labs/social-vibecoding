@@ -5620,6 +5620,35 @@ async function destroyWorker(containerName) {
   log.info('worker', 'Worker destroyed', { containerName });
 }
 
+// The proposal machine's teardown work (src/workflow/proposal/services.ts):
+// unlike destroyWorker / destroyCcVolume it throws when the runtime refuses,
+// so its durable work item is tried again rather than reporting a removal
+// that did not happen. Already gone is success.
+async function removeWorker(sessionId) {
+  if (!Number.isSafeInteger(sessionId) || sessionId <= 0) throw new Error('invalid_session');
+  if (usesKubernetesWorkers()) {
+    await kubernetes.deleteWorker(kubernetesWorkerConfig(), sessionId, { deleteVolume: false });
+  } else {
+    const result = await docker.stopAndRemove(workerContainerName(sessionId));
+    if (!result.removed) throw new Error('worker_removal_failed');
+  }
+  _warmRegistry.delete(sessionId);
+  log.info('worker', 'Worker destroyed', { sessionId });
+}
+async function removeCcVolume(sessionId) {
+  if (!Number.isSafeInteger(sessionId) || sessionId <= 0) throw new Error('invalid_session');
+  if (usesKubernetesWorkers()) {
+    await kubernetes.deleteWorker(kubernetesWorkerConfig(), sessionId, { deleteVolume: true });
+  } else {
+    try {
+      await docker.execFileAsync('docker', ['volume', 'rm', '-f', ccVolumeName(sessionId)], { timeout: 10000 });
+    } catch (err) {
+      if (!/no such volume/i.test(String(err.stderr || err.message))) throw new Error('volume_removal_failed');
+    }
+  }
+  _warmRegistry.delete(sessionId);
+}
+
 // Account erasure must not use the best-effort archive helpers: a failed
 // runtime/volume removal remains a durable retry task.
 async function eraseAccountWorkspace(sessionId) {
@@ -5944,6 +5973,8 @@ module.exports = {
   listOrphanWorkers,
   destroyWorker,
   destroyCcVolume,
+  removeWorker,
+  removeCcVolume,
   listWorkerVolumes,
   eraseAccountWorkspace,
   setAccountDeletionGuard,

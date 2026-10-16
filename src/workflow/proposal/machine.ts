@@ -223,7 +223,7 @@ const EVENTS = {
   ReviewCheck: () => ({}),
   Close: (p: any) => ({ ...session(p), from: from(p), reason: word(p?.reason, 'reason'),
     userId: optInt(p?.userId, 'userId'), username: text(p?.username, 100), purgeCc: !!p?.purgeCc }),
-  Reopen: (p: any) => ({ ...session(p), from: from(p), userId: int(p?.userId, 'userId') }),
+  Reopen: (p: any) => ({ ...session(p), from: from(p), userId: int(p?.userId, 'userId'), ...deadline(p) }),
   // The merge (routes/votes.js checkAndMerge, step 6's) asks for the
   // proposal at the head and epoch it gated on; the vote gate is read again
   // here unless an admin forces it.
@@ -696,6 +696,9 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
     () => (s.data.slot === 'released' ? ok() : reject('already_active')),
     () => read(s, e),
     () => owner(e, f),
+    // The worker of the pause it comes back from is being destroyed: it
+    // waits for that, never races it.
+    () => (f.tearingDown ? reject('tearing_down') : ok()),
     () => {
       const caps = e.payload.caps;
       if (!caps || !f.caps) return ok();
@@ -716,6 +719,9 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
     () => (s.name === 'closed' ? ok() : reject('not_closed')),
     () => read(s, e),
     () => owner(e, f),
+    // Its worker or its CC volume is being removed: it waits for that (a
+    // purge reports `cc_purged` once done), never races it.
+    () => (f.tearingDown ? reject('tearing_down') : ok()),
   )],
   ['MergeClaim', (s, e, f) => all(
     () => (s.name === 'in_review' ? ok() : reject(s.name === 'merging' ? 'in_progress' : 'not_in_review')),
@@ -834,7 +840,8 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
       if (!Number.isInteger(id) || id <= 0) return Promise.resolve(NO_FACTS);
       const p = event.payload as any;
       const reviewOpened = event.type === 'WorkSucceeded' && p?.kind === WORK.open && state.name === 'proposing';
-      return readFacts(tx, id, event, { now: ctx.now, reviewOpened });
+      const teardownKinds = event.type === 'Resume' ? [...SPARE_WORKER] : event.type === 'Reopen' ? [...SPARE_ALL] : undefined;
+      return readFacts(tx, id, event, { now: ctx.now, reviewOpened, teardownKinds });
     },
     authorize: {
       Adopted: system,

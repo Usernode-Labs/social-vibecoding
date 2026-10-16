@@ -201,8 +201,8 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
         // this claim) keeps its worker.
         const i = await lifecycle(Number(input.sessionId));
         if (i?.state === 'underway' && i.data?.slot === 'held') return { skipped: 'held' };
-        const worker = legacy('services/worker');
-        await worker.destroyWorker(worker.workerContainerName(Number(input.sessionId)));
+        // Strict: a removal the runtime refused throws, and is tried again.
+        await legacy('services/worker').removeWorker(Number(input.sessionId));
         return { destroyed: true };
       },
     },
@@ -214,7 +214,7 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
       async run({ input }): Promise<Json> {
         // Reopened since: its memory stays.
         if ((await lifecycle(Number(input.sessionId)))?.state !== 'closed') return { skipped: 'reopened' };
-        await legacy('services/worker').destroyCcVolume(Number(input.sessionId));
+        await legacy('services/worker').removeCcVolume(Number(input.sessionId));
         return { purged: true };
       },
     },

@@ -419,7 +419,7 @@ function opened({ imported = false, result, failed = null, electorate = 1 }) {
   const state = { name: 'proposing', data: {
     sessionId: 7, appId: 5, imported, slot: imported ? 'none' : 'released', reason: null, claim: null, n: 1,
     promoting: { n: 1, by: 3, byName: 'evan', prior: 'paused', expectedHead: null, viaAgent: false },
-    answer: null, pr: { running: 'open:1', next: null },
+    answer: null, pr: { running: 'open:1', next: [] }, doomed: [],
   } };
   const payload = { kind: WORK.open, workKey: 'open:1', workId: 9, attempt: 1,
     ...(failed ? { error: failed } : { result }) };

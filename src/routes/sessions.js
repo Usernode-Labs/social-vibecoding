@@ -4563,9 +4563,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           return res.status(403).json({ error: CLI_CREDENTIAL_MANAGEMENT_ERROR });
         }
       }
-      const { unarchived, ccPurged } = await sessionLifecycle.unarchiveSession({
+      const { unarchived, ccPurged, busy } = await sessionLifecycle.unarchiveSession({
         pool, sessionId, userId: req.user.id,
       });
+      if (busy) return res.status(503).json({ error: 'The session is still being closed. Try again shortly.' });
       if (!unarchived) return res.status(404).json({ error: 'Session not found or not archived' });
       // Its pull request is reopened by the proposal machine's own work,
       // after this answer.

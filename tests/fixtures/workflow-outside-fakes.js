@@ -167,7 +167,9 @@ module.exports = function install(fakes) {
   // runtime is outside); everything else in the module is real.
   const worker = require(path.join(SRC, 'services/worker'));
   fakes.stub(path.join(SRC, 'services/worker'), {
-    ...worker, async destroyWorker(name) { await fakes.record('worker.destroy', { name }); },
+    ...worker,
+    async destroyWorker(name) { await fakes.record('worker.destroy', { name }); },
+    async removeWorker(sessionId) { await fakes.record('worker.destroy', { name: worker.workerContainerName(sessionId) }); },
   });
   // Not an outside service, a probe: whether the Workshop hears a board
   // change in this process (its listener is registered by server.js only).

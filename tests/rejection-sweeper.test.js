@@ -82,7 +82,7 @@ test('the proposal machine\'s review check closes a voted-down proposal with the
   const state = {
     name: 'in_review',
     data: { sessionId: 7, appId: 5, imported: false, slot: 'held', promoting: null, answer: null, reason: null,
-      claim: null, pr: { running: null, next: null }, n: 1 },
+      claim: null, pr: { running: null, next: [] }, doomed: [], n: 1 },
   };
   const event = { id: 41, type: 'ReviewCheck', payload: {}, source: { kind: 'timer' } };
   const ctx = { now: new Date(openedMs + 8 * DAY), key: sessionKey(7) };

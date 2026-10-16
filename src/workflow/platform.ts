@@ -852,9 +852,27 @@ export function pauseProposal(p: { sessionId: number; appId?: number | null; rea
 }
 export function resumeProposal(p: { sessionId: number; appId?: number | null; from: string; userId?: number | null;
   caps: { user: number; global: number } | null; source?: Source }) {
-  return proposalEvent('Resume', { from: p.from, userId: p.userId ?? null, caps: p.caps },
+  return afterTeardown(p.sessionId, () => proposalEvent('Resume', { from: p.from, userId: p.userId ?? null, caps: p.caps },
     { sessionId: p.sessionId, appId: p.appId, source: p.source || sys('resume'), actor: p.userId ? `user:${p.userId}` : null,
-      deadlineMs: ANSWER_MS }) as Promise<EventOutcome>;
+      deadlineMs: ANSWER_MS }) as Promise<EventOutcome>);
+}
+
+// A resume or a reopen refused while the session's worker or CC volume is
+// still being removed (`tearing_down`) is asked again once a removal has
+// reported (the instance's list of them changes), or a second on (a removal
+// that failed and waits to be tried again can be cancelled). Past
+// TEARDOWN_WAIT_MS the refusal stands.
+const TEARDOWN_WAIT_MS = 30000;
+const TEARDOWN_RECHECK_MS = 1000;
+async function afterTeardown(sessionId: number, ask: () => Promise<EventOutcome>): Promise<EventOutcome> {
+  const until = Date.now() + TEARDOWN_WAIT_MS;
+  for (;;) {
+    const out = await ask();
+    if (out.status !== 'rejected' || out.reason !== 'tearing_down' || Date.now() >= until) return out;
+    const seen = JSON.stringify((await proposalInstance(sessionId))?.data?.doomed || []);
+    await runtime!.waitFor(proposalMachine(), proposalKey(sessionId),
+      (x) => JSON.stringify(x.data?.doomed || []) !== seen, TEARDOWN_RECHECK_MS);
+  }
 }
 export function closeProposal(p: { sessionId: number; appId?: number | null; reason: string; from: string; userId?: number | null;
   username?: string | null; purgeCc?: boolean; db?: Queryable; requestKey?: string; source?: Source; waitMs?: number }): Promise<EventOutcome | number> {
@@ -863,8 +881,9 @@ export function closeProposal(p: { sessionId: number; appId?: number | null; rea
       actor: p.userId ? `user:${p.userId}` : null });
 }
 export function reopenProposal(p: { sessionId: number; appId?: number | null; userId: number; from: string }) {
-  return proposalEvent('Reopen', { from: p.from, userId: p.userId },
-    { sessionId: p.sessionId, appId: p.appId, source: { kind: 'route', name: 'reopen' }, actor: `user:${p.userId}` }) as Promise<EventOutcome>;
+  return afterTeardown(p.sessionId, () => proposalEvent('Reopen', { from: p.from, userId: p.userId },
+    { sessionId: p.sessionId, appId: p.appId, source: { kind: 'route', name: 'reopen' }, actor: `user:${p.userId}`,
+      deadlineMs: ANSWER_MS }) as Promise<EventOutcome>);
 }
 
 // The merge (step 6's) asks for the proposal at the head and epoch it gated

@@ -278,9 +278,17 @@ async function unarchiveSession({ pool, sessionId, userId = null }) {
   const out = await platform().reopenProposal({
     sessionId: Number(sessionId), appId: row.app_id, userId: Number(userId ?? row.user_id), from: row.status,
   });
-  if (!accepted(out)) return { unarchived: false };
-  log.info('session-lifecycle', 'Session unarchived', { sessionId, ccPurged: !!row.cc_purged });
-  return { unarchived: true, ccPurged: !!row.cc_purged };
+  if (!accepted(out)) {
+    // Its teardown still running, or not applied in time: not reopened, and
+    // asking again later may.
+    const busy = out?.reason === 'tearing_down' || out?.reason === 'expired' || out?.status === 'pending';
+    return { unarchived: false, ...(busy ? { busy: true } : {}) };
+  }
+  // Read after the reopen: a purge it waited for has recorded its end.
+  const { rows: [after] } = await pool.query('SELECT cc_purged FROM chat_sessions WHERE id = $1', [sessionId]);
+  const ccPurged = !!(after ? after.cc_purged : row.cc_purged);
+  log.info('session-lifecycle', 'Session unarchived', { sessionId, ccPurged });
+  return { unarchived: true, ccPurged };
 }
 
 // ── A flow's own sessions (the Homeroom bot's, a bench trial's) ─────────

@@ -13,7 +13,12 @@
 //     transaction-scoped advisory lock: two such moves for one owner wait for
 //     each other, so neither counts the other out (R5);
 //   - for a merge claim and the review check, the vote gate (rules/pr-gate.ts),
-//     so a vote committed before the decision is counted (R1, R2).
+//     so a vote committed before the decision is counted (R1, R2);
+//   - for a move that brings the session back (a resume, a reopen), the
+//     teardown work still owed for it, its rows locked: one not claimed yet
+//     cannot be claimed before the move cancels it (the claim skips locked
+//     rows), and one already under way (or done and not yet reported) is
+//     read as such, so the move waits for it rather than racing it.
 
 import type { Event, Tx } from '../kernel/index.ts';
 import { readPrGate } from '../rules/pr-gate.ts';
@@ -91,9 +96,12 @@ export interface Facts {
   interestAt: string | null;
   // review.open's success: the electorate, stamped as it goes up for a vote.
   electorate: number | null;
+  // Resume, Reopen: teardown work (a worker destroy, a CC purge) under way
+  // or done and not reported yet.
+  tearingDown: boolean;
 }
 
-export const NO_FACTS: Facts = { row: null, caps: null, gate: null, interestAt: null, electorate: null };
+export const NO_FACTS: Facts = { row: null, caps: null, gate: null, interestAt: null, electorate: null, tearingDown: false };
 
 // The platform-wide slot count's lock: every move into a slot takes it, for
 // the length of its transaction.
@@ -200,6 +208,19 @@ export interface ReadOptions {
   // A work result for the open review (its result is stamped with the
   // electorate).
   reviewOpened?: boolean;
+  // The teardown work a move that brings the session back waits for.
+  teardownKinds?: string[];
+}
+
+// Teardown work outstanding for the session, its rows locked (see the top).
+async function readTeardown(tx: Tx, sessionId: number, kinds: string[]): Promise<boolean> {
+  const { rows } = await tx.query(
+    `SELECT status, lease_until > now() AS live FROM wf_work
+      WHERE machine = 'proposal' AND key = $1 AND kind = ANY($2::text[]) AND status IN ('queued', 'running', 'reported')
+        FOR UPDATE`, [`session:${sessionId}`, kinds]);
+  // A running item whose lease lapsed belongs to a process that went: it is
+  // claimed again only after this move, which cancels it.
+  return rows.some((r: any) => r.status === 'reported' || (r.status === 'running' && r.live));
 }
 
 export async function readFacts(tx: Tx, sessionId: number, event: Event<any>, o: ReadOptions): Promise<Facts> {
@@ -222,5 +243,6 @@ export async function readFacts(tx: Tx, sessionId: number, event: Event<any>, o:
   }
   if (event.type === 'ReviewCheck') out.interestAt = await readInterest(tx, row);
   if (o.reviewOpened) out.electorate = await readElectorate(tx, row.appId);
+  if (o.teardownKinds?.length) out.tearingDown = await readTeardown(tx, row.id, o.teardownKinds);
   return out;
 }

@@ -283,10 +283,12 @@ test('archiveSession: a refused close (not the owner, a newer move, past closing
       { archived: false, reason: 'session_state_changed' });
     assert.equal(pool.calls.length, 0);
   } finally { restore(); }
+  // A close recorded and not applied yet (a slow pipeline) closes once it
+  // is: a close carries no deadline.
   const pending = loadWithStubs({ closeProposal: { status: 'pending', reason: null } });
   try {
     assert.deepEqual(await pending.subject.archiveSession({ pool: makePool(), sessionId: 7, from: 'active' }),
-      { archived: false, reason: 'pending' });
+      { archived: true, pending: true });
   } finally { pending.restore(); }
 });
 
@@ -328,6 +330,14 @@ test('unarchiveSession: reopens from what was read and surfaces ccPurged', async
       pool: unarchivePool({ status: 'archived', user_id: 2, app_id: 5, cc_purged: false }), sessionId: 1, userId: 2,
     }), { unarchived: false });
   } finally { refused.restore(); }
+  // Its worker or CC volume still being removed (the machine waited, then
+  // refused): not reopened, and the route says to try again.
+  const tearing = loadWithStubs({ reopenProposal: REJECTED('tearing_down') });
+  try {
+    assert.deepEqual(await tearing.subject.unarchiveSession({
+      pool: unarchivePool({ status: 'archived', user_id: 2, app_id: 5, cc_purged: false }), sessionId: 1, userId: 2,
+    }), { unarchived: false, busy: true });
+  } finally { tearing.restore(); }
 });
 
 // ── A flow's own sessions (takeSlot / restSession / closeOwnSession) ─────

@@ -40,7 +40,7 @@ function state(name, over = {}) {
     name,
     data: {
       sessionId: 5, appId: 1, imported: false, slot: 'none', promoting: null, answer: null,
-      reason: name === 'closed' ? 'manual' : null, claim: null, pr: { running: null, next: null }, n: 3, ...over,
+      reason: name === 'closed' ? 'manual' : null, claim: null, pr: { running: null, next: [] }, doomed: [], n: 3, ...over,
     },
   };
 }

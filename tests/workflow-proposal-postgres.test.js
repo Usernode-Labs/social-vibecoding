@@ -843,14 +843,14 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     const github = require('../src/services/github');
     const worker = require('../src/services/worker');
     const seen = [];
-    const saved = new Map([[github, ['isEnabled', 'closePR']], [worker, ['destroyWorker', 'destroyCcVolume']]]);
+    const saved = new Map([[github, ['isEnabled', 'closePR']], [worker, ['removeWorker', 'removeCcVolume']]]);
     const restore = [];
     for (const [mod, names] of saved) for (const n of names) restore.push([mod, n, mod[n]]);
     tt.after(() => { for (const [mod, n, fn] of restore) mod[n] = fn; });
     github.isEnabled = () => true;
     github.closePR = async (owner, repo, number) => { seen.push(['closePR', number]); };
-    worker.destroyWorker = async (name) => { seen.push(['destroyWorker', name]); };
-    worker.destroyCcVolume = async (id) => { seen.push(['destroyCcVolume', id]); };
+    worker.removeWorker = async (id) => { seen.push(['removeWorker', id]); };
+    worker.removeCcVolume = async (id) => { seen.push(['removeCcVolume', id]); };
     const svc = proposalServices({ config: {}, pool });
     const run = (kind, input) => svc[kind].run({ input, key: 'k', attempt: 1 });
 
@@ -877,7 +877,59 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     await send(gone, 'Adopted');
     await settle();
     assert.deepEqual(await run(WORK.purge, { sessionId: gone.id }), { purged: true });
-    assert.deepEqual(seen.map((x) => x[0]), ['closePR', 'destroyWorker', 'destroyCcVolume']);
+    assert.deepEqual(seen.map((x) => x[0]), ['closePR', 'removeWorker', 'removeCcVolume']);
     assert.equal(seen[0][1], 91);
+
+    // A removal the runtime refused fails the attempt (it is tried again);
+    // it never reports a worker destroyed that is still there (review 2.2).
+    worker.removeWorker = async () => { throw new Error('kubernetes unavailable'); };
+    await assert.rejects(run(WORK.destroy, { sessionId: paused.id }), /kubernetes unavailable/);
+  });
+
+  await t.test('P32 a resume or a reopen waits for teardown already under way, never races it (review 2.1)', async () => {
+    defaults();
+    // The worker of the pause is being destroyed when its owner comes back.
+    let release;
+    work.gate.set(WORK.destroy, new Promise((r) => { release = r; }));
+    const s = await session();
+    await send(s, 'Pause', { from: 'active', reason: 'manual', userId: s.owner.id }, route);
+    await rt.drain();
+    const running = rt.runServices();
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(ofKey(s, WORK.destroy).length, 1, 'the destroy is under way');
+    const early = await send(s, 'Resume', { from: 'paused', userId: s.owner.id, caps: { user: 100, global: 100 } }, route);
+    await rt.drain();
+    assert.equal((await outcome(early)).reason, 'tearing_down');
+    assert.equal((await row(s)).status, 'paused');
+    release();
+    await running;
+    await settle();
+    const late = await send(s, 'Resume', { from: 'paused', userId: s.owner.id, caps: { user: 100, global: 100 } }, route);
+    await settle();
+    assert.equal((await outcome(late)).result, 'accepted', 'once the destroy reported, the session comes back');
+    assert.equal((await row(s)).status, 'active');
+
+    // A reopen while the CC volume is being purged: the purge finishes and
+    // records itself, then the reopen goes ahead.
+    defaults();
+    work.answer.set(WORK.purge, { purged: true });
+    let purged;
+    work.gate.set(WORK.purge, new Promise((r) => { purged = r; }));
+    const c = await session({ status: 'paused', pr: false });
+    await send(c, 'Close', { from: 'paused', reason: 'manual', userId: c.owner.id, purgeCc: true }, route);
+    await rt.drain();
+    const purging = rt.runServices();
+    await new Promise((r) => setTimeout(r, 50));
+    const reopenEarly = await send(c, 'Reopen', { from: 'archived', userId: c.owner.id }, route);
+    await rt.drain();
+    assert.equal((await outcome(reopenEarly)).reason, 'tearing_down');
+    purged();
+    await purging;
+    await settle();
+    assert.equal((await row(c)).cc_purged, true, 'the purge that ran is recorded');
+    const reopen = await send(c, 'Reopen', { from: 'archived', userId: c.owner.id }, route);
+    await settle();
+    assert.equal((await outcome(reopen)).result, 'accepted');
+    assert.equal((await row(c)).cc_purged, true, 'a reopened session says its memory went');
   });
 });

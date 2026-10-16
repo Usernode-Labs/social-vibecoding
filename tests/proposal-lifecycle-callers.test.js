@@ -163,3 +163,13 @@ test('a preview teardown nobody called final is final for a proposal that has en
   const staging = read('src/services/staging.js');
   assert.match(staging, /terminal == null \? \(!row \|\| row\.status === 'archived' \|\| row\.status === 'merged'\) : !!terminal/);
 });
+
+test('a resume or a reopen refused while teardown runs is asked again once it reports, for a bounded time (second review)', () => {
+  const platform = read('src/workflow/platform.ts');
+  assert.match(platform, /return afterTeardown\(p\.sessionId, \(\) => proposalEvent\('Resume'/);
+  assert.match(platform, /return afterTeardown\(p\.sessionId, \(\) => proposalEvent\('Reopen'/);
+  const fn = platform.slice(platform.indexOf('async function afterTeardown('), platform.indexOf('export function closeProposal('));
+  assert.match(fn, /out\.reason !== 'tearing_down' \|\| Date\.now\(\) >= until\) return out/);
+  assert.doesNotMatch(fn, /setTimeout/, 'it waits on the instance, not on a timer of its own');
+  assert.match(read('src/routes/sessions.js'), /if \(busy\) return res\.status\(503\)/);
+});
