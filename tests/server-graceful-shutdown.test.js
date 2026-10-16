@@ -189,20 +189,28 @@ test('the listener is closed BEFORE the pool — new work must not arrive mid-dr
 });
 
 test('a hanging pool.end() still reaches exit inside the bounded budget', async () => {
-  const { server, restore } = loadServer();
+  const { server, logs, restore } = loadServer();
   try {
     const listener = fakeListener();
     // A pool that never settles: the race against POOL_CLOSE_TIMEOUT_MS is
     // what stops it holding the process past the SIGKILL deadline.
     const pool = fakePool({ endImpl: () => new Promise(() => {}) });
 
-    const startedAt = Date.now();
     const order = await runCleanup(server, { listener, pool });
-    const elapsed = Date.now() - startedAt;
 
     assert.deepEqual(order, ['exit:0'], 'a stuck pool must not prevent exit');
-    assert.ok(elapsed < server.POOL_CLOSE_TIMEOUT_MS + 2000,
-      `cleanup took ${elapsed}ms; the pool close must be bounded`);
+    // Only the pool close has a time limit, so only it is timed here: the
+    // whole-run elapsed span also spent the slack on the announce race, the
+    // process-row release and the CI load between them. server.js measures
+    // the step itself and logs the "Pool closed" line with its durationMs.
+    const closed = logs.find((l) => l.msg === 'Pool closed');
+    assert.ok(closed, 'the race resolved through the timer, not the catch branch');
+    assert.ok(closed.data.durationMs < server.POOL_CLOSE_TIMEOUT_MS + 1000,
+      `the pool close took ${closed.data.durationMs}ms durationMs; it must stay within `
+      + `${server.POOL_CLOSE_TIMEOUT_MS}ms plus jitter for a late timer`);
+    assert.ok(closed.data.durationMs >= server.POOL_CLOSE_TIMEOUT_MS - 50,
+      `the pool close took ${closed.data.durationMs}ms durationMs; the timer must have `
+      + `ended the wait, not something resolving early`);
   } finally {
     restore();
   }
