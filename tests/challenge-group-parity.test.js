@@ -1,19 +1,26 @@
-// Challenge group parity: Home's Challenges block and the Challenges tab (S10).
+// Challenge category parity: Home's Challenges block and the Challenges tab.
 //
-// WHAT THIS PINS. Home's block shows the tab's list, so the two surfaces must
-// group the same challenges under the same headings in the same order. Each
-// controller keeps its own copy of the group table and the rank rule, because
-// both run as import-free classic scripts (vm-based tests load them that way,
-// and home-panels.js has its imports stripped there):
+// WHAT THIS PINS. Since the Semi design (2026-10-16) the two surfaces no longer
+// draw the same groups in the same order: the tab lists First challenges, Next
+// challenges and Done; Home shows a few of them, chosen its own way. What they
+// still share is how they READ a challenge, and a challenge must read the same
+// on both:
 //
-//   * TopochainChallenges.GROUPS / OTHER_GROUP / _groupRankOf / _setupFinished
+//   * is it a First challenge? (category ONBOARDING, trimmed, any case)
+//   * does it count by the week? (category WEEKLY: its rail says "this week")
+//   * has the viewer finished it? (their own `progress.done`, else the
+//     organiser's `completed`)
+//
+// Each controller keeps its own copy of those rules, because both run as
+// import-free classic scripts (vm-based tests load them that way, and
+// home-panels.js has its imports stripped there):
+//
+//   * TopochainChallenges._categoryOf / _isWeekly / _isDone
 //     (frontend/src/features/leaderboard/topochain-challenges.js)
-//   * HomePanels.CHALLENGE_GROUPS / OTHER_GROUP / groupRankOf / setupFinished
+//   * HomePanels.groupOf / orderDone
 //     (frontend/src/features/home/home-panels.js)
 //
-// This fails the moment either copy drifts: a heading renamed on one side, a
-// group's order changed, or the "finished First challenges goes last" rule
-// changed in only one file.
+// This fails the moment either copy drifts.
 //
 // Run with: node --test tests/challenge-group-parity.test.js
 'use strict';
@@ -26,7 +33,7 @@ const vm = require('node:vm');
 
 const { PANELS_SRC } = require('./helpers/home-modules');
 const { installPanelsStore } = require('./helpers/home-grid-store');
-const { englishPlatformI18n, message } = require('./lib/platform-i18n');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const TAB_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend/src/features/leaderboard/topochain-challenges.js'), 'utf8'
@@ -77,153 +84,39 @@ function loadHome() {
 const TAB = loadTab();
 const HOME = loadHome();
 
-// Both tables hold message ids as their `heading` now: Home's are
-// `home:challenges.group.*` and the tab's `leaderboard:challenges.group.*`.
-// They are two places, so each has its own entries. What must agree is every
-// other field exactly, and the words each id says.
-const said = (table) => JSON.parse(JSON.stringify(table),
-  (key, value) => (key === 'heading' ? message(value) : value));
-
-test('the two group tables are the same table', () => {
-  assert.deepEqual(plain(HOME.CHALLENGE_GROUPS), {
-    ONBOARDING: { key: 'setup', heading: 'home:challenges.group.setup', order: 0 },
-    WEEKLY: { key: 'week', heading: 'home:challenges.group.week', order: 1 },
-    PERSISTENT: { key: 'always', heading: 'home:challenges.group.always', order: 2 },
-  }, 'Home holds the ids of its own headings');
-  assert.deepEqual(plain(HOME.OTHER_GROUP), { key: 'other', heading: 'home:challenges.group.other', order: 3 });
-  assert.deepEqual(plain(TAB.GROUPS), {
-    ONBOARDING: { key: 'setup', heading: 'leaderboard:challenges.group.setup', order: 0 },
-    WEEKLY: { key: 'week', heading: 'leaderboard:challenges.group.week', order: 1 },
-    PERSISTENT: { key: 'always', heading: 'leaderboard:challenges.group.always', order: 2 },
-  }, 'the tab holds the ids of its own');
-  assert.deepEqual(plain(TAB.OTHER_GROUP), { key: 'other', heading: 'leaderboard:challenges.group.other', order: 3 });
-  // The same table once each id is read: keys, order and words, exactly.
-  assert.deepEqual(said(HOME.CHALLENGE_GROUPS), said(TAB.GROUPS));
-  assert.deepEqual(said(HOME.OTHER_GROUP), said(TAB.OTHER_GROUP));
-  assert.deepEqual(said(TAB.GROUPS), {
-    ONBOARDING: { key: 'setup', heading: 'First challenges', order: 0 },
-    WEEKLY: { key: 'week', heading: 'This week', order: 1 },
-    PERSISTENT: { key: 'always', heading: 'Always open', order: 2 },
-  }, 'the owner-decided headings, with the keys unchanged');
-  assert.deepEqual(said(TAB.OTHER_GROUP), { key: 'other', heading: 'Season challenges', order: 3 });
+// [label, viewer done (null: no progress), organiser completed]
+const CASES = [
+  ['ONBOARDING', false, false], [' onboarding ', true, false], ['Onboarding', null, true],
+  ['WEEKLY', false, false], ['weekly', true, false], [' Weekly', null, false],
+  ['PERSISTENT', false, true], ['COMMUNITY', null, false], ['', false, false], [null, null, null],
+];
+const tabRow = ([label, done, completed], id) => ({
+  id, card_preview: { label }, completed: completed === true, ...(done == null ? {} : { progress: { done } }),
+});
+const homeRow = ([label, done, completed], id) => ({
+  id, label, completed: completed === true, ...(done == null ? {} : { progress: { done, current: null, target: null } }),
 });
 
-test('the two rank rules agree for every group, setup unfinished and finished', () => {
-  const groups = (tbl, other) => [tbl.ONBOARDING, tbl.WEEKLY, tbl.PERSISTENT, other, null];
-  const tabGroups = groups(TAB.GROUPS, TAB.OTHER_GROUP);
-  const homeGroups = groups(HOME.CHALLENGE_GROUPS, HOME.OTHER_GROUP);
-  // `undefined` and a truthy non-boolean too: both rules read `=== true`.
-  for (const finished of [false, true, undefined, 1]) {
-    const tabRanks = tabGroups.map((g) => TAB._groupRankOf(g, finished));
-    const homeRanks = homeGroups.map((g) => HOME.groupRankOf(g, finished));
-    assert.deepEqual(homeRanks, tabRanks, `setupFinished=${String(finished)}`);
-  }
-  assert.deepEqual(tabGroups.map((g) => TAB._groupRankOf(g, false)), [0, 1, 2, 3, 3],
-    'unfinished: First challenges leads; no group ranks as Season challenges');
-  assert.deepEqual(tabGroups.map((g) => TAB._groupRankOf(g, true)), [4, 1, 2, 3, 3],
-    'finished: only First challenges moves, to the end');
+test('a First challenge on the tab is a First challenge on Home', () => {
+  CASES.forEach((c, i) => {
+    assert.equal(HOME.groupOf(homeRow(c, i)).key === 'setup', TAB._categoryOf(tabRow(c, i)) === 'ONBOARDING',
+      `label ${JSON.stringify(c[0])}`);
+  });
+  assert.equal(TAB._groupOf(tabRow(['onboarding', false, false], 1)).key, 'first', 'and an open one heads the tab');
+  assert.equal(TAB._groupOf(tabRow(['onboarding', true, false], 1)).key, 'done', 'a finished one is Done there');
 });
 
-test('the two "setup finished" rules agree, each fed rows in its own shape', () => {
-  // [label, done] per card; each surface gets the same challenges in its shape.
-  const cases = [
-    { name: 'no setup cards, no summary', cards: [['WEEKLY', true]], onboarding: null },
-    { name: 'setup half done, no summary', cards: [['ONBOARDING', true], ['ONBOARDING', false]], onboarding: null },
-    { name: 'setup all done, no summary', cards: [['ONBOARDING', true], ['onboarding', true], ['WEEKLY', false]], onboarding: null },
-    { name: 'locked summary over done cards', cards: [['ONBOARDING', true]], onboarding: { unlocked: false } },
-    { name: 'unlocked summary over unfinished cards', cards: [['ONBOARDING', false]], onboarding: { unlocked: true } },
-    { name: 'empty list, unlocked summary', cards: [], onboarding: { unlocked: true } },
-  ];
-  for (const { name, cards, onboarding } of cases) {
-    const tabList = cards.map(([label, done], i) => ({ id: i + 1, card_preview: { label }, progress: { done } }));
-    const homeRows = cards.map(([label, done], i) => ({ id: i + 1, label, progress: { done } }));
-    assert.equal(HOME.setupFinished(homeRows, onboarding), TAB._setupFinished(tabList, onboarding), name);
-  }
+test('a weekly challenge is weekly on both surfaces', () => {
+  CASES.forEach((c, i) => {
+    assert.equal(HOME.groupOf(homeRow(c, i)).key === 'week', TAB._isWeekly(tabRow(c, i)), `label ${JSON.stringify(c[0])}`);
+  });
 });
 
-// The ORDER, fed the payload each surface really gets. The tab's public list
-// (src/routes/topochain/public.js) is sorted display_order then id and
-// attaches the signed-in viewer's `progress` to every card, as Home's rows do
-// (my_done), so both surfaces sink a card the viewer finished, in every group
-// (#2490). Both carry the organiser's `completed` flag too, which neither
-// reads while a row has progress. On the tab `featured` arrives on the
-// viewer's personalization row (`_mine`); Home's rows carry `featured` and
-// `display_order` themselves, in whatever sequence the server sent them.
-test('Home orders the same challenges in the tab\'s sequence, each fed its real payload shape', () => {
-  // [id, label, display_order, viewer done, organiser completed, featured]
-  const cards = [
-    [1, 'ONBOARDING', 0, true, false, false],
-    [2, 'ONBOARDING', 1, true, false, false],
-    [3, 'WEEKLY', 0, true, false, false],
-    [4, 'WEEKLY', 1, false, false, false],
-    [8, 'WEEKLY', 2, false, true, false],
-    [5, 'PERSISTENT', 0, true, false, false],
-    [6, 'PERSISTENT', 1, false, false, false],
-    [9, 'PERSISTENT', 3, false, false, true],
-    [7, 'COMMUNITY', 0, false, false, false],
-  ];
-  const publicOrder = cards.slice().sort((a, b) => (a[2] - b[2]) || (a[0] - b[0]));
-  const tabIds = (list, onboarding) => {
-    TAB._challenges = list.map(([id, label, , done, completed]) => ({
-      id, card_preview: { label }, completed, progress: { done },
-    }));
-    TAB._mine = new Map(list.map(([id, , , , completed, featured]) => [id, { id, completed, featured }]));
-    TAB._onboarding = onboarding;
-    try {
-      return plain(TAB._ordered().map((c) => c.id));
-    } finally {
-      TAB._challenges = [];
-      TAB._mine = new Map();
-      TAB._onboarding = null;
-    }
-  };
-  const homeIds = (list, onboarding) => plain([...HOME.orderRows(
-    list.slice().reverse().map(([id, label, display_order, done, completed, featured]) => ({
-      id, label, display_order, featured, completed, progress: { done, current: null, target: null },
-    })),
-    onboarding,
-  )].map((c) => c.id));
-
-  const setupOpen = publicOrder.map((c) => (c[0] === 2 ? [c[0], c[1], c[2], false, c[4], c[5]] : c));
-  for (const [name, list, onboarding] of [
-    ['unlocked summary', publicOrder, { unlocked: true }],
-    ['locked summary', publicOrder, { unlocked: false }],
-    ['no summary, setup all done', publicOrder, null],
-    ['no summary, setup half done', setupOpen, null],
-  ]) {
-    assert.deepEqual(homeIds(list, onboarding), tabIds(list, onboarding), name);
-  }
-  assert.deepEqual(tabIds(publicOrder, { unlocked: true }), [4, 8, 3, 9, 6, 5, 7, 1, 2],
-    "the viewer's own progress decides on every card: a finished card sinks inside its group and "
-    + 'an organiser-closed one the viewer never did does not; featured lifts; finished First challenges goes last');
-  assert.deepEqual(tabIds(setupOpen, null), [2, 1, 4, 8, 3, 9, 6, 5, 7],
-    'setup unfinished leads, its open card first');
-
-  // Collapsed (#2490): that list with its unfinished cards first, cut to four.
-  // A finished card only takes a slot the unfinished ones leave. The tab's own
-  // order is the oracle, so the pick cannot drift from the list it picks from.
-  const collapsed = (list) => {
-    const out = HOME.visibleSlots({
-      key: 'challenges',
-      onboarding: { unlocked: true },
-      challenges: list.map(([id, label, display_order, done, completed, featured]) => ({
-        id, label, display_order, featured, completed, progress: { done, current: null, target: null },
-      })),
-    });
-    return { ids: plain([...out.rows].map((c) => c.id)), doneFrom: out.doneFrom };
-  };
-  const pick = (list) => {
-    const finished = new Set(list.filter((c) => c[3]).map((c) => c[0]));
-    const order = tabIds(list, { unlocked: true });
-    return [...order.filter((id) => !finished.has(id)), ...order.filter((id) => finished.has(id))].slice(0, 4);
-  };
-  const busy = collapsed(publicOrder);
-  assert.deepEqual(busy.ids, pick(publicOrder));
-  assert.deepEqual(busy.ids, [4, 8, 9, 6], 'five unfinished cards: the first four draw, and no finished one');
-  assert.equal(busy.doneFrom, null);
-  const nearlyDone = publicOrder.map((c) => ([4, 8, 6].includes(c[0]) ? [c[0], c[1], c[2], true, c[4], c[5]] : c));
-  const light = collapsed(nearlyDone);
-  assert.deepEqual(light.ids, pick(nearlyDone));
-  assert.deepEqual(light.ids, [9, 7, 3, 4], "two unfinished cards, then the first two finished in the tab's order");
-  assert.equal(light.doneFrom, 2);
+test('a challenge the viewer finished is finished on both surfaces', () => {
+  TAB._mine = new Map();
+  CASES.forEach((c, i) => {
+    assert.equal(HOME.orderDone(homeRow(c, i)), TAB._isDone(tabRow(c, i)), `case ${JSON.stringify(c)}`);
+  });
+  assert.equal(TAB._isDone(tabRow(['WEEKLY', false, true], 1)), false,
+    'the viewer’s own progress outranks the organiser’s flag');
 });

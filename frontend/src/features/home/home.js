@@ -1776,13 +1776,12 @@ const Home = {
     resolver?.resolve?.();
   },
 
-  // Per-visit only, like the widgets' own expand flag: a viewer who opened
-  // the full grid once should not have every later visit start scrolled past
-  // two sections, and a preference this cheap is not worth a write.
+  // Per-visit only: a viewer who opened the full grid once should not have
+  // every later visit start scrolled past two sections, and a preference
+  // this cheap is not worth a write.
   // Whether "Show all N apps" has been pressed this visit. Per-visit state,
   // deliberately not persisted: the collapsed grid is the contract, and an
-  // expansion the viewer forgot about would quietly eat the fold forever —
-  // the same reasoning as HomePanels._expanded.
+  // expansion the viewer forgot about would quietly eat the fold forever.
   //
   // `?shot=home-apps` pins it ON before the first paint. Every row past the
   // budget is unreachable to a still frame and to a declared check otherwise,

@@ -6,18 +6,19 @@
  * ./challenges-pane.tsx is its only writer now, and this is what
  * ./topochain-challenges.js pushes into.
  *
- * FOUR descriptors rather than one, because the pane has four independent
- * render rates and always did — `_renderShell()`, `_renderGrid()`,
- * `_renderDetailOverlay()` and `_renderProfileOverlay()` were four separate
- * innerHTML writes into three separate hosts. Keeping them apart preserves
- * that: paging the participant breakdown re-renders the detail panel without
- * touching the grid underneath it, which is what stops a "Load more" click
- * from re-keying (and so re-mounting) the cards behind the overlay.
+ * THREE descriptors rather than one, because the pane has independent
+ * render rates and always did — `_renderShell()`, `_renderGrid()` and
+ * `_renderDetailOverlay()` were separate innerHTML writes into separate
+ * hosts. Keeping them apart preserves that: the block-production step
+ * re-renders the detail page without touching the grid underneath it, so
+ * the cards behind the page are never re-keyed. (A fourth, the profile
+ * overlay the participant list opened, retired with that list on
+ * 2026-10-16.)
  *
- * `detail` and `profile` double as the overlays' VISIBILITY. Both roots used
- * to be `classList.toggle('hidden', …)`-ed by the controller; now that the
- * whole subtree is React-owned, `null` means hidden and a descriptor means
- * shown, so the two can never disagree.
+ * `detail` doubles as the page's VISIBILITY. Its root used to be
+ * `classList.toggle('hidden', …)`-ed by the controller; now that the whole
+ * subtree is React-owned, `null` means hidden and a descriptor means shown,
+ * so the two can never disagree.
  *
  * PLANTED, not imported, and here that is not merely for consistency with
  * ./kudos-pane-store.js and ./topochain-standings-store.js — it is forced.
@@ -43,8 +44,6 @@ export const topochainChallengesStore = createStore({
   mounted: false,
   /** The #tc-se-grid descriptor (see gridView), or null before the first load. */
   grid: null,
-  /** The detail overlay descriptor (see detailView), or null when it is closed. */
+  /** The detail page descriptor (see detailView), or null when it is closed. */
   detail: null,
-  /** The profile overlay descriptor (see profileView), or null when closed. */
-  profile: null,
 });

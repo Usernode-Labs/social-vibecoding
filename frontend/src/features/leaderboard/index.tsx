@@ -4,19 +4,21 @@
 //
 // ── What the screen is ─────────────────────────────────────────────────
 //
-// One screen, four top-level SECTIONS, one pane visible at a time:
+// One screen, three top-level SECTIONS, one pane visible at a time:
 //
-//   topochain   #topochain-leaderboard-root   TopochainLeaderboard
-//   kudos       #leaderboard-root             Leaderboard itself
 //   challenges  #challenges-root              TopochainChallenges   (default)
-//   seasons     #leaderboard-history-root     LeaderboardHistory    ("History")
+//   topochain   #topochain-leaderboard-root   TopochainLeaderboard  ("Standings")
+//   kudos       #leaderboard-root             Leaderboard itself
 //
 // The two Topochain-domain sections share one event selection, rendered into
-// #leaderboard-event-bar by TopochainEventContext and hidden on Kudos.
+// #leaderboard-event-bar by TopochainEventContext and hidden on Kudos. Only
+// Standings draws it (./event-bar.tsx): the Challenges tab has no event to
+// choose. The History tab (`seasons`) is gone with the seasons it listed
+// (2026-10-16); #leaderboard/seasons lands on Challenges.
 //
 // ── What this island owns, and what it does not ────────────────────────
 //
-// It owns the FRAME — the <main>, the column, the five hosts — and
+// It owns the FRAME — the <main>, the column, the four hosts — and
 // the SECTION TAB STRIP, which is the one piece of DOM that actually changes
 // hands here. Everything below a host is still the owning module's innerHTML,
 // exactly as in chunks A–E: React owns the container, the module owns the
@@ -78,7 +80,6 @@ import { EventBar } from './event-bar';
 import { KudosPane } from './kudos-pane';
 import { TopochainStandingsPane } from './topochain-standings';
 import { ChallengesPane } from './challenges-pane';
-import { HistoryPane } from './history-pane';
 import { topochainChallengesStore } from './topochain-challenges-store.js';
 
 // The strip, in TAB ORDER. Moved here verbatim from the template that
@@ -93,40 +94,30 @@ import { topochainChallengesStore } from './topochain-challenges-store.js';
 // keys and labels are as they were. #2374 then made the first tab the default
 // section too, behind a bare #leaderboard.
 //
-// The navigation prototype names this page's segments Challenges, Standings,
-// History and Kudos, and two of those are this change:
+// The navigation prototype names this page's segments Challenges, Standings
+// and Kudos. The standings tab is labelled "Standings", the prototype's word
+// and the one the Me row that leads here uses ("Challenges & standings"). It
+// was "Leaderboard" because it was the screen's own title too; the screen's
+// <h2> is gone (the bar names the tab now, see Leaderboard._syncTitle), so the
+// label no longer has to double as one. Its KEY stays `topochain` — every
+// hash alias and dapp.json check speaks in keys.
 //
-//   * HISTORY is new — the seasons that have ended and who won them
-//     (./history.js). It sits right after the standings because it IS past
-//     standings, and last because it is the least-visited; #1917's order for
-//     the other three is kept.
-//   * the standings tab is labelled "Standings", the prototype's word and the
-//     one the Me row that leads here uses ("Challenges & standings"). It was
-//     "Leaderboard" because it was the screen's own title too; the screen's
-//     <h2> is gone (the bar names the tab now, see Leaderboard._syncTitle),
-//     so the label no longer has to double as one. Its KEY stays `topochain`
-//     — every hash alias and dapp.json check speaks in keys.
-//
-// History's key is `seasons`, not `history`: #leaderboard/history has long
-// been the Kudos pane's "My history" sub-view, and a deep link must keep
-// meaning what it meant.
+// The Semi design (2026-10-16) put Standings second, beside the challenges
+// whose points it ranks, and retired the History tab: the tab is the
+// challenges running now, with no seasons to look back on.
 const SECTION_TABS = [
   { key: 'challenges', label: 'leaderboard:tabs.challenges' },
-  { key: 'kudos', label: 'leaderboard:tabs.kudos' },
   { key: 'topochain', label: 'leaderboard:tabs.standings' },
-  { key: 'seasons', label: 'leaderboard:tabs.history' },
+  { key: 'kudos', label: 'leaderboard:tabs.kudos' },
 ];
 
-// Four labels at the strip's px-4 are wider than a 390px phone's column, so
-// the triggers tighten to px-2 below `sm` — the same track, the same face —
+// The triggers tighten to px-2 below `sm` — the same track, the same face —
 // and the list scrolls sideways rather than wrapping on anything narrower
 // still (a 320px phone). Complete literals, for Tailwind's extractor.
 //
 // The scrollbar stays hidden, so the scroll is shown instead (QA 2026-09-24
 // Q21): useScrollFade fades whichever edge has more beyond it and brings the
-// selected tab into view. At 360px the strip used to end on "Histo" with
-// nothing to say it went on. (px-2, not px-2.5, since the same fix: at 390
-// the four labels overflowed their track by 4px.)
+// selected tab into view.
 const STRIP_TAB = 'inline-flex items-center justify-center h-8 px-2 sm:px-4 rounded-full text-sm font-semibold transition-colors shrink-0';
 const STRIP_LIST = `${SECTION_TABS_LIST} max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`;
 
@@ -166,13 +157,13 @@ export function LeaderboardScreen() {
           platform bar is `rounded-b-2xl -mb-2`, so every screen root starts
           8px UNDER it; `pt-5` is those 8 plus the 12px of air Workshop, Me
           and Messages leave above their first element. `p-4` left the tab
-          strip 8px from the bar. It is the frame's, so all four tabs step
+          strip 8px from the bar. It is the frame's, so all three tabs step
           down together and the strip never jumps between them. `px-4`/`pb-4`
           are the 16px gutter and foot this frame always had.
       */}
       {/*
           `[scrollbar-gutter:stable]` on the scroller above: Kudos and
-          Standings run past the fold and Challenges and History do not, so
+          Standings run past the fold and Challenges often does not, so
           with a classic (non-overlay) scrollbar the centered column — strip
           included — shifted half a scrollbar's width left on the long tabs
           and back on the short ones. Reserving the gutter on every tab keeps
@@ -281,16 +272,6 @@ export function LeaderboardScreen() {
         */}
         <div id="challenges-root" className="w-full">
           <ChallengesPane />
-        </div>
-        {/*
-            The History pane (#leaderboard/seasons): the seasons that have
-            ended. React-owned end to end from the start — ./history-pane.tsx
-            is its only writer — and shipped EMPTY and hidden like the two
-            non-default roots above, with a CONSTANT className that
-            `_applySection()` toggles `hidden` on.
-        */}
-        <div id="leaderboard-history-root" className="hidden w-full">
-          <HistoryPane />
         </div>
       </div>
     </main>

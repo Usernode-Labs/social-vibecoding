@@ -54,7 +54,6 @@ function loadLeaderboard(App, { hash = '#leaderboard/challenges', detail = null 
     TopochainChallenges: { open() {}, close() {}, _detailChallenge: detail },
     TopochainLeaderboard: { open() {}, close() {} },
     TopochainEventContext: { open() {}, close() {} },
-    LeaderboardHistory: { open() {}, close() {} },
     location,
     history: { replaceState: (_s, _t, url) => { location.hash = url; } },
     document: { getElementById: el },
@@ -84,10 +83,10 @@ test('every address titles the bar with the label of the tab it shows', () => {
     .map((m) => [m[1], m[2]]));
   // The strip's labels are catalog entries; the table holds their ids.
   assert.deepEqual(labels, {
-    challenges: 'leaderboard:tabs.challenges', kudos: 'leaderboard:tabs.kudos',
-    topochain: 'leaderboard:tabs.standings', seasons: 'leaderboard:tabs.history',
+    challenges: 'leaderboard:tabs.challenges', topochain: 'leaderboard:tabs.standings',
+    kudos: 'leaderboard:tabs.kudos',
   });
-  assert.deepEqual(Object.values(labels).map((id) => message(id)), ['Challenges', 'Kudos', 'Standings', 'History']);
+  assert.deepEqual(Object.values(labels).map((id) => message(id)), ['Challenges', 'Standings', 'Kudos']);
   for (const [key, id] of Object.entries(labels)) {
     assert.equal(App._leaderboardTitle(key), message(id), `#leaderboard/${key} says "${message(id)}"`);
   }
@@ -96,6 +95,10 @@ test('every address titles the bar with the label of the tab it shows', () => {
   assert.equal(App._leaderboardTitle(undefined), 'Challenges', 'a bare #leaderboard is Challenges (#2374)');
   assert.equal(App._leaderboardTitle('users', 'dana'), '@dana', 'a person outranks the section');
   assert.ok(!/topochain: 'Topochain'/.test(appJs), 'no word the strip does not use');
+  // The History tab retired (the Semi design, 2026-10-16): its address lands
+  // on Challenges, so nothing titles a page "History" any more.
+  assert.equal(App._leaderboardTitle('seasons'), 'Challenges', 'the retired History address says Challenges');
+  assert.doesNotMatch(appJs, /seasons: 'shell:title\.leaderboard\.history'/);
 });
 
 test('a tab press re-titles the bar, although it never reaches the router', async () => {
@@ -106,13 +109,16 @@ test('a tab press re-titles the bar, although it never reaches the router', asyn
   for (const [section, title, hash] of [
     ['kudos', 'Kudos', '#leaderboard/prs'],
     ['topochain', 'Standings', '#leaderboard/topochain'],
-    ['seasons', 'History', '#leaderboard/seasons'],
     ['challenges', 'Challenges', '#leaderboard/challenges'],
   ]) {
     Leaderboard._setSection(section);
     assert.equal(App.titles.at(-1), title, `${section}: the bar follows the tab`);
     assert.equal(location.hash, hash, 'and the address is rewritten in place, as before');
   }
+  const before = App.titles.length;
+  Leaderboard._setSection('seasons');
+  assert.equal(App.titles.length, before, 'the retired History section is not a section: nothing changes');
+  assert.equal(Leaderboard.section, 'challenges');
   Leaderboard._setSub('users');
   assert.equal(App.titles.at(-1), 'Kudos');
   Leaderboard.openProfile('dana');

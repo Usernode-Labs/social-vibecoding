@@ -368,7 +368,6 @@ function loadLeaderboard({ isRestoring = false, open = true, hash = '#leaderboar
     TopochainChallenges: { open() {}, close() {} },
     TopochainLeaderboard: { open() {}, close() {} },
     TopochainEventContext: { open() {}, close() {} },
-    LeaderboardHistory: { open() {}, close() {} },
     location,
     history: { replaceState: write('replace'), pushState: write('push') },
     document: { getElementById: () => ({ classList: { toggle() {}, contains: () => false } }) },

@@ -38,7 +38,7 @@ import { useStoreState } from '../../../lib/use-store-state';
 import { panelsStore, type HomePanelsState, type PanelStamps } from '../panels-store';
 import { ChallengesPanel } from './challenges';
 import { DiscoverPanel } from './discover';
-import { BrowseLink, LeaderboardLink, SectionHeading, stampProps } from './ui';
+import { BrowseLink, SectionHeading, SeeAllLink, stampProps } from './ui';
 
 /**
  * One host. `slot` names WHICH block it is for — it rides along from the grid
@@ -46,14 +46,12 @@ import { BrowseLink, LeaderboardLink, SectionHeading, stampProps } from './ui';
  * feature already selects on.
  *
  * `label` is the area's name, drawn ABOVE the block (see `SectionHeading`).
- * It is a CONSTANT per section, never read off the view model: this host is
- * prerendered with `children` null, so anything data-derived in the heading
- * would differ between the built document and the first client render, which
- * is a hydration mismatch and a console error on `#home`. A `trailing` slot
- * used to sit beside it, carrying the challenges counter on the one condition
- * that its null state matched the prerender's; the counter is the season progress
- * inside the card now (see ./challenges.tsx), and with no second caller the
- * slot went with it. Every heading is constants again.
+ * This host is prerendered with its view null, and the first client render
+ * has to agree with that document or hydration mismatches, which is a
+ * console error on `#home` and a failed proposal check. So whatever the
+ * heading draws BEFORE a view exists is a constant: Discover's label always
+ * is, and Challenges' is "Challenges" with no link until its view arrives
+ * (ChallengesSectionView below).
  *
  * The heading lives INSIDE the section, so a block with nothing to show takes
  * its label down with it rather than leaving a label over a gap.
@@ -118,29 +116,33 @@ export function DiscoverSectionView({ painted, discover }: HomePanelsState) {
   );
 }
 
-// No mirrored attributes: `data-rows` / `data-fill` describe the block's
-// COMPOSITION and are selected on the article itself, which is where the
-// string renderer put them too.
+// No mirrored attributes: `data-rows` describes the block's COMPOSITION and
+// is selected on the article itself, which is where the string renderer put
+// it too.
+//
+// THE HEADING NAMES WHAT THE BLOCK HOLDS: "First challenges", "Next
+// challenges", or "Challenges" over its one line (HomePanels.challengesView),
+// with "See all" beside it in every mode but "No challenges right now".
+//
+// WHY THIS CANNOT MISMATCH HYDRATION. The heading element is the same static
+// `h2.home-area-label` in every state; only its text and its link follow the
+// view, and both fall back to the prerender's own values while there is no
+// view: "Challenges" and no link. The view is null in the prerender and stays
+// null until HomePanels.render() pushes one after `/api/home-panels`
+// answers, which is long after hydration, the same moment the cards under the
+// heading appear. So the first client render draws exactly the document the
+// shell ships, and the content-named heading is an ordinary update after it.
+// It is also what the loading state looks like: "Challenges" with no link
+// until the data lands. (The counter that once rode here was dropped with the
+// season progress; see ./challenges.tsx.)
 export function ChallengesSectionView({ painted, challenges }: HomePanelsState) {
   const t = useMessages('home');
   return (
     <Section
       id="home-challenges-section"
       slot="challenges"
-      label={t('home:challenges.heading')}
-      // NO TRAILING COUNTER. "· 1 of 6 · 3,900 pts left" rode here, shrunk to
-      // 12px because at the label's own size it pushed "Challenges" into an
-      // ellipsis on a phone — a fix that left a heading carrying the area's
-      // name, a counter, a leaderboard link and the ⋮, four things deep, with
-      // the counter the only one of them that was about the DATA.
-      //
-      // It is the season progress at the top of the card now (see
-      // ./challenges.tsx). That is a better home for it on both counts: the
-      // heading goes back to naming its area, and the fact the block exists to
-      // state becomes the first thing inside the block rather than a footnote
-      // above it. Nothing data-derived is left in this heading, which also
-      // means there is nothing here that could disagree with the prerender.
-      action={<LeaderboardLink />}
+      label={challenges ? challenges.heading : t('home:challenges.heading')}
+      action={challenges?.seeAll ? <SeeAllLink /> : null}
       painted={painted}
     >
       {challenges ? <ChallengesPanel view={challenges} /> : null}

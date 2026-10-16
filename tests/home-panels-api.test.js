@@ -402,8 +402,8 @@ test('GET /api/home-panels: the collapsed rows come back whole, and totals repor
   const { app } = makeApp({ season: SEASON, rows }, { user: USER });
   const { body } = await get(app, '/api/home-panels');
   const panel = body.panels[0];
-  assert.equal(panel.challenges.length, 8, 'every row: the client draws four of them');
-  assert.equal(panel.total, 8, 'so the client can say "See all 8 challenges"');
+  assert.equal(panel.challenges.length, 8, 'every row: the client picks what it draws');
+  assert.equal(panel.total, 8, 'the true open count, past the row page');
   // The tab's in-group sort keys after done-ness, additive on the row.
   assert.deepEqual(panel.challenges.map((c) => c.display_order), [1, 2, 3, 4, 5, 6, 7, 8]);
   assert.deepEqual(panel.challenges.map((c) => c.featured),
@@ -632,10 +632,10 @@ test('the totals query asks for the open rewards, and the row query asks for up 
   assert.doesNotMatch(outerWhere, /c\.completed = FALSE/,
     'the outer WHERE is the expanded scope; open-only lives in the FILTERs');
   const rowQuery = calls.find((c) => c.sql.includes('LIMIT $3'));
-  // The block still draws four rows (HomePanels.ROW_SLOTS), but WHICH four is
-  // the Challenges tab's order, which the client settles after the query
-  // (S10). So the collapsed query asks for the expanded list's ceiling, and
-  // the four-row CHALLENGE_ROW_LIMIT is gone.
+  // The client picks what Home draws (HomePanels.challengesView: the First
+  // challenges, or three Next ones furthest along) after the query, so the
+  // collapsed query asks for the expanded list's ceiling, and the four-row
+  // CHALLENGE_ROW_LIMIT is gone.
   assert.equal(rowQuery.params[2], 40);
   const route = read('src/routes/home-panels.js');
   assert.match(route, /const CHALLENGE_EXPANDED_LIMIT = 40;/);
@@ -671,8 +671,8 @@ test('GET /api/home-panels: ?demo=1 is a no-op outside staging', async () => {
 });
 
 // HomePanels as the browser runs it, for the demo payload's drawn rows: the
-// four-row cap and the tab's order are the client's (S10), so what the demo
-// route shows is only readable through it.
+// pick and its order are the client's, so what the demo route shows is only
+// readable through it.
 function loadHomePanels() {
   const vm = require('node:vm');
   const { PANELS_SRC } = require('./helpers/home-modules');
@@ -703,11 +703,11 @@ function loadHomePanels() {
 }
 
 // The demo payload is what the before/after screenshots and the dapp.json
-// check actually render (/?demo=1), so the states a reviewer is meant to
-// compare have to survive the four-slot budget — not merely exist in the
-// fixture and fall off the bottom. The budget is the client's (S10), so the
-// payload goes through HomePanels to see the four it draws.
-test('GET ?demo=1 in staging draws its unfinished rows first, then one finished row (#2490)', async () => {
+// checks actually render (/?demo=1), so the states a reviewer is meant to
+// compare have to be among the cards the client draws, not merely exist in
+// the fixture. The pick is the client's, so the payload goes through
+// HomePanels to see what it draws.
+test('GET ?demo=1 in staging draws three Next challenges, furthest along first', async () => {
   const prev = process.env.USERNODE_ENV;
   process.env.USERNODE_ENV = 'staging';
   let body;
@@ -720,27 +720,16 @@ test('GET ?demo=1 in staging draws its unfinished rows first, then one finished 
   const p = body.panels[0];
   assert.equal(p.demo, true);
   assert.equal(p.challenges.length, 5, 'every open row, as the real builder sends them');
-  const out = loadHomePanels().visibleSlots({ key: 'challenges', ...p });
-  const drawn = [...out.rows];
-  assert.equal(drawn.length, 4, 'the collapsed block draws four rows');
-
-  // #2490: This week, Always open and Season challenges each give their
-  // unfinished row, and the one slot left goes to a finished row, which the
-  // block draws last, under its Done header.
-  assert.deepEqual(drawn.map((c) => c.id), [900512, 900510, 900513, 900511]);
-  assert.deepEqual(drawn.map((c) => !!c.progress.done), [false, false, false, true],
-    'no finished row above an unfinished one');
-  assert.equal(out.doneFrom, 3, 'the finished fill starts at the fourth row');
-
-  // Every state the rail draws is still on screen in one shot: part-filled,
-  // not started, the empty counted track, and finished.
-  const partial = drawn.find((c) => c.metric && !c.progress.done
-    && c.progress.current > 0);
-  assert.ok(partial, 'the part-filled bar keeps its slot');
-  assert.ok(drawn.some((c) => !c.metric && !c.progress.done), 'a yes-or-no challenge not started');
-  assert.ok(drawn.some((c) => c.metric && c.progress.current === 0), 'the empty 0-of-5 track');
-  assert.ok(!drawn.some((c) => c.id === 900516), 'the finished numeric is the row past the cap');
-  assert.equal(p.done, 2, 'the header counter agrees with the glyphs');
+  const view = loadHomePanels().challengesView({ key: 'challenges', ...p });
+  assert.equal(view.mode, 'next', 'the demo has no First challenges');
+  assert.equal(view.heading, 'Next challenges');
+  // The part-filled This week row leads (4 of 8), then the two not started,
+  // in the tab's order: Always open before the rest. The finished rows are
+  // never drawn under Next (#2490).
+  assert.deepEqual([...view.rows].map((r) => r.id), ['900512', '900510', '900513']);
+  assert.deepEqual([...view.rows].map((r) => r.stateLabel),
+    ['4/8 Apps tested this week', 'Not started', '0/5 Kudos'],
+    'part-filled, a yes-or-no not started, and the empty counted track, in one shot');
 });
 
 // Old clients cannot save a preference that the current UI cannot restore.
@@ -870,7 +859,7 @@ const openNarrowing = (calls) => {
   ];
 };
 
-test('GET without expand keeps the strict open filter, and leaves the four-row cap to the client', async () => {
+test('GET without expand keeps the strict open filter, and leaves the pick to the client', async () => {
   const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   const { body } = await get(app, '/api/home-panels');
   for (const sql of openNarrowing(calls)) assert.match(sql, /c\.completed = FALSE/);
@@ -1017,31 +1006,29 @@ test('demoChallengesPanel: the few / none variants, and no standings preview', (
   assert.equal(none.leaderboard, undefined);
 
   // No variant → the default: every open row (five), of which the client
-  // draws four.
+  // draws the three Next ones.
   const base = demoChallengesPanel({ username: 'tester' });
   assert.equal(base.challenges.length, 5);
   const HP = loadHomePanels();
-  assert.equal(HP.challengesView({ key: 'challenges', ...base }).rows.length, 4);
-  assert.equal(base.total, 7);
-  // Four drawn of seven, so the default demo route KEEPS the toggle — the
-  // other half of the #1824 pair the checks navigate to.
-  assert.equal(base.all_total, 7);
-  assert.equal(demoChallengesPanel({ expanded: true, username: 'tester' }).all_total, 7);
+  const view = (payload) => HP.challengesView({ key: 'challenges', ...payload });
+  assert.equal(view(base).rows.length, 3);
+  assert.equal(view(base).seeAll, true);
   assert.equal(base.leaderboard, undefined);
-  // The two #1824 checks, as the client decides them: the default route draws
-  // the toggle, the `few` route does not.
-  assert.equal(HP.challengesView({ key: 'challenges', ...base }).expandable, true);
-  assert.equal(HP.challengesView({ key: 'challenges', ...few }).expandable, false);
+  // The short list draws both its cards; the empty one draws one line with
+  // no See all.
+  assert.equal(view(few).rows.length, 2);
+  assert.equal(view(few).mode, 'next');
+  assert.equal(view(none).mode, 'none');
+  assert.equal(view(none).seeAll, false);
+  assert.equal(view(none).note.title, 'No challenges right now');
 
   // An unknown value falls through to that default rather than erroring.
   assert.equal(demoChallengesPanel({ variant: 'wat' }).challenges.length, 5);
 });
 
 // /?demo=1 is where the card artwork is reviewed (and dapp.json's check looks
-// for it), so the demo rows carry slugs the client registry actually draws —
-// and one of the four collapsed rows carries none, so the kind-icon fallback
-// is on the same screen.
-test('demoChallengesPanel: registry artwork on the rows, with one fallback in the collapsed four', () => {
+// for it), so the demo rows carry slugs the client registry actually draws.
+test('demoChallengesPanel: registry artwork on the rows, and on every card drawn', () => {
   const { demoChallengesPanel } = require('../src/routes/home-panels');
   const registry = read('frontend/src/lib/challenge-illustrations.ts');
   const members = new Set([...registry.matchAll(/^\s*'([a-z0-9-]+)': \{ label:/gm)].map((m) => m[1]));
@@ -1054,39 +1041,31 @@ test('demoChallengesPanel: registry artwork on the rows, with one fallback in th
       assert.ok(members.has(c.illustration), `demo row ${c.id}: ${c.illustration} is a registry slug`);
     }
   }
-  // The four the client DRAWS, not the payload: the collapsed payload also
-  // carries the finished numeric row, which has artwork of its own and is cut
-  // (#2490: unfinished rows take the slots first).
-  const drawn = [...loadHomePanels().visibleSlots({
+  // The three the client DRAWS, not the payload: every one of them has
+  // artwork, which dapp.json's illustration check looks for. The kind-icon
+  // fallback row (900511) is finished, so it is never a Next challenge.
+  const drawn = [...loadHomePanels().challengesView({
     key: 'challenges', ...demoChallengesPanel({ username: 'tester' }),
   }).rows];
-  assert.equal(drawn.length, 4, 'the collapsed block draws four');
-  assert.ok(drawn.some((c) => c.illustration), 'the collapsed route draws artwork');
-  assert.ok(drawn.some((c) => c.illustration === null), 'and keeps one fallback in view');
+  assert.equal(drawn.length, 3, 'three Next challenges');
+  assert.ok(drawn.every((c) => c.illustration), 'the default route draws artwork on every card');
 });
 
-// The preview is where Home's group headers are reviewed. Every group is
-// headed (S10). The four the collapsed block draws are one unfinished row from
-// each of This week, Always open and Season challenges, then a finished one
-// under Done (#2490); the short list spans the first two.
-test('demoChallengesPanel: the drawn four sit under three group headers and Done, the short list under two', () => {
+// Home draws no group headers any more (the Semi design): the demo routes
+// are named by what they hold. Both carry no First challenge, so both are
+// "Next challenges"; the server's payload is unchanged.
+test('demoChallengesPanel: both demo routes read as Next challenges, with no group header', () => {
   const { demoChallengesPanel } = require('../src/routes/home-panels');
   const HP = loadHomePanels();
   const labels = (opts) => [...new Set(demoChallengesPanel({ username: 'tester', ...opts })
     .challenges.map((c) => c.label))].sort();
   assert.deepEqual(labels({}), ['COMMUNITY', 'PERSISTENT', 'WEEKLY'], 'what the server sends');
   assert.deepEqual(labels({ variant: 'few' }), ['PERSISTENT', 'WEEKLY']);
-  const headings = (opts) => [...HP.challengesView({
-    key: 'challenges', ...demoChallengesPanel({ username: 'tester', ...opts }),
-  }).groups].map((g) => g.heading);
-  assert.deepEqual(headings({}), ['This week', 'Always open', 'Season challenges', 'Done'],
-    'what the collapsed block draws');
-  assert.deepEqual(headings({ variant: 'few' }), ['This week', 'Always open']);
-  // Expanded, the binary and the numeric DONE rows sit side by side, so a
-  // group header must not fall between them.
-  const rows = demoChallengesPanel({ username: 'tester' }).challenges;
-  const labelOf = (id) => rows.find((c) => c.id === id).label;
-  assert.equal(labelOf(900511), labelOf(900516), 'the two done rows share a group');
+  for (const opts of [{}, { variant: 'few' }]) {
+    const view = HP.challengesView({ key: 'challenges', ...demoChallengesPanel({ username: 'tester', ...opts }) });
+    assert.equal(view.heading, 'Next challenges');
+    assert.equal('groups' in view, false, 'no group headers');
+  }
 });
 
 test('the demo variants are staging-only, like ?demo=1 itself', async () => {
@@ -1124,28 +1103,25 @@ test('dapp.json checks the new state, and the reader keeps it', () => {
   // it is quiet and shows nothing else.
   assert.match(none.expectSelector, /data-rows="0"/);
   assert.doesNotMatch(none.expectSelector, /data-fill|home-panel-lb-row/);
-  assert.equal(none.expectText, 'No challenges are running right now');
+  assert.equal(none.expectText, 'No challenges right now');
 
   // The #911 check must keep running unchanged: four challenges leave no room
   // to fill, so that payload's markup is untouched by this change.
   assert.ok(kept.some((t) => t.path === '/?demo=1' && /home-challenge-card \[role=progressbar\]/.test(t.expectSelector)),
     'the existing challenges-widget check still runs');
 
-  // #1824, both directions. The `few` route shows every challenge it has, so
-  // its block must draw its cards and NO expand toggle; the default route is
-  // truncated, so it must still carry one. A check on only the first would
-  // pass just as well if the toggle were deleted outright. (The all-shown
-  // check used to select the footer's "Open challenges" door; that copy is
-  // gone, and so is the footer when the toggle is.)
+  // Home shows a pick, not the whole list: Next challenges is the open ones,
+  // at most three. The in-place "See all N" toggle is gone (See all is a link
+  // to the Challenges tab now), so the two checks assert the pick itself: the
+  // `few` route's two open challenges both show, and the default route stops
+  // at three with the furthest along first.
   const allShown = kept.find((t) => t.path === '/?demo=1&challenges=few');
   assert.ok(allShown, 'the all-shown check must survive the manifest reader');
   assert.match(allShown.expectSelector, /home-challenge-card/);
-  assert.doesNotMatch(allShown.expectSelector, /home-panel-open/);
-  assert.match(allShown.expectSelector, /:not\(:has\(\.home-panel-expand\)\)/,
-    'it asserts the ABSENCE of the toggle, which is the whole fix');
+  assert.match(allShown.expectSelector, /data-rows="2"/);
   assert.ok(kept.some((t) => t.path === '/?demo=1'
-    && /home-panel-expand/.test(t.expectSelector)),
-    'and a truncated list still declares the toggle it keeps');
+    && /data-rows="3"/.test(t.expectSelector) && /:first-child/.test(t.expectSelector)),
+    'and the default route declares the cap of three, furthest along first');
 });
 
 // QA 2026-09-24 Q17: Home's season progress counts every challenge in the

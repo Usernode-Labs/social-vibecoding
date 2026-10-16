@@ -769,12 +769,13 @@ test('the profile no longer fetches the season challenge list via the old route'
   assert.doesNotMatch(body, /fetchJson\('\/challenges-api\/seasons/,
     'no seasons round before the real requests');
   assert.match(profileJs, /\/challenges-api\/me\/ranking\?season_id=active/);
-  // The breakdown left with the points it breaks down: the Challenges tab's
-  // standing card reads it (features/leaderboard/my-standing.js), with the
-  // same two trims.
+  // The breakdown left with the points it breaks down, and since the Semi
+  // design (2026-10-16) nothing draws points by event at all: the Challenges
+  // tab's standing card (features/leaderboard/my-standing.js) reads only the
+  // ranking.
   assert.doesNotMatch(body, /\/challenges-api\/me\/breakdown/, 'Me draws no breakdown any more');
   const standing = fs.readFileSync(
     path.join(__dirname, '..', 'frontend/src/features/leaderboard/my-standing.js'), 'utf8');
-  assert.match(standing, /\/challenges-api\/me\/breakdown\?season_id=active&include_activity=0&include_progress=0/,
-    'the breakdown skips the activity and progress lists nothing draws');
+  assert.doesNotMatch(standing, /\/challenges-api\/me\/breakdown/, 'nor does the standing card');
+  assert.match(standing, /\/challenges-api\/me\/ranking\?season_id=active/);
 });

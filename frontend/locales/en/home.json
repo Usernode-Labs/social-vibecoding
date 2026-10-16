@@ -649,7 +649,43 @@
   },
   "challenges.heading": {
     "text": "Challenges",
-    "description": "Heading of the section of Home that lists the season's challenges: tasks that earn points."
+    "description": "Heading of the section of Home about challenges (tasks that earn points), while it loads and when it shows one line because no challenge is open."
+  },
+  "challenges.headingFirst": {
+    "text": "First challenges",
+    "description": "Heading of Home's Challenges section while the viewer still has a first challenge to finish: the section then lists those first challenges."
+  },
+  "challenges.headingNext": {
+    "text": "Next challenges",
+    "description": "Heading of Home's Challenges section once the viewer's first challenges are done: the section then lists up to 3 open challenges, the ones the viewer is furthest along first."
+  },
+  "challenges.seeAll.text": {
+    "text": "See all",
+    "description": "Link at the right end of the Challenges heading on Home: goes to the Challenges tab, which lists every challenge."
+  },
+  "challenges.seeAll.label": {
+    "text": "See all challenges",
+    "description": "Accessible name of the \"See all\" link beside the Challenges heading on Home: goes to the Challenges tab, which lists every challenge."
+  },
+  "challenges.allDone.title": {
+    "text": "All done for this week",
+    "description": "Title of the one card in Home's Challenges section when nothing is open because the viewer finished every challenge of this week."
+  },
+  "challenges.allDone.text_one": {
+    "text": "{{count}} challenge starts again on Monday.",
+    "description": "Line under \"All done for this week\" on Home. {{count}} is how many weekly challenges there are; their counts start again on Monday."
+  },
+  "challenges.allDone.text_other": {
+    "text": "{{count}} challenges start again on Monday.",
+    "description": "Line under \"All done for this week\" on Home. {{count}} is how many weekly challenges there are; their counts start again on Monday."
+  },
+  "challenges.none.title": {
+    "text": "No challenges right now",
+    "description": "Title of the one card in Home's Challenges section when no challenge is open."
+  },
+  "challenges.none.text": {
+    "text": "New ones will show up here.",
+    "description": "Line under \"No challenges right now\" on Home: new challenges will appear in this section."
   },
   "challenges.fallbackTitle": {
     "text": "Challenges",
@@ -658,90 +694,6 @@
   "panels.fallbackTitle": {
     "text": "Widget",
     "description": "Title of a block on the Home screen whose own title is missing. A block of Home, not the phone's home-screen widget."
-  },
-  "challenges.open.label": {
-    "text": "Open challenges",
-    "description": "Link at the right end of the \"Challenges\" heading on Home, and its accessible name: goes to the Challenges tab of the Leaderboard screen. \"Open\" is a verb."
-  },
-  "challenges.open.tip": {
-    "text": "Go to the Challenges tab on the Leaderboard screen",
-    "description": "Tooltip of the \"Open challenges\" link on Home."
-  },
-  "challenges.empty.text": {
-    "text": "No challenges are running right now",
-    "description": "Shown in Home's Challenges section between seasons. The line is a button that goes to the Challenges tab."
-  },
-  "challenges.empty.tip": {
-    "text": "Go to the Challenges tab on the Leaderboard screen",
-    "description": "Tooltip of the \"No challenges are running right now\" line on Home."
-  },
-  "challenges.empty.label": {
-    "text": "No challenges are running right now. Go to the Challenges tab on the Leaderboard screen",
-    "description": "Accessible name of the \"No challenges are running right now\" line on Home: the state, then what pressing it does."
-  },
-  "challenges.fold.showLess": {
-    "text": "Show less",
-    "description": "Button under Home's list of challenges when it is unfolded: folds it back to the first few."
-  },
-  "challenges.fold.seeAllCount_one": {
-    "text": "See all {{count}} challenge",
-    "description": "Button under Home's list of challenges: unfolds the whole list. {{count}} is how many challenges are open."
-  },
-  "challenges.fold.seeAllCount_other": {
-    "text": "See all {{count}} challenges",
-    "description": "Button under Home's list of challenges: unfolds the whole list. {{count}} is how many challenges are open."
-  },
-  "challenges.fold.seeAll": {
-    "text": "See all challenges",
-    "description": "Button under Home's list of challenges when their number is not known: unfolds the whole list."
-  },
-  "challenges.fold.collapseTip": {
-    "text": "Collapse this widget",
-    "description": "Tooltip of the \"Show less\" button under Home's list of challenges. \"Widget\" means this block of the Home screen."
-  },
-  "challenges.fold.expandTip": {
-    "text": "Show every challenge in this widget",
-    "description": "Tooltip of the \"See all challenges\" button on Home. \"Widget\" means this block of the Home screen."
-  },
-  "challenges.group.setup": {
-    "text": "First challenges",
-    "description": "Heading over the group of a new member's first challenges, in Home's Challenges section."
-  },
-  "challenges.group.week": {
-    "text": "This week",
-    "description": "Heading over the group of challenges that end with the current week, in Home's Challenges section."
-  },
-  "challenges.group.always": {
-    "text": "Always open",
-    "description": "Heading over the group of challenges with no deadline, in Home's Challenges section. \"Open\" is an adjective: available."
-  },
-  "challenges.group.other": {
-    "text": "Season challenges",
-    "description": "Heading over the season's remaining challenges, in Home's Challenges section."
-  },
-  "challenges.group.done": {
-    "text": "Done",
-    "description": "Heading over the challenges the viewer has completed, in Home's Challenges section."
-  },
-  "challenges.group.noDeadline": {
-    "text": "no deadline",
-    "description": "Small note at the right of the \"Always open\" heading in Home's Challenges section, where other groups show the time left. Lower case, like the times it stands in for."
-  },
-  "challenges.timeLeft.hours_one": {
-    "text": "{{count}}h left",
-    "description": "Time remaining for a challenge or a group of challenges on Home, under a day. {{count}} is a number of hours; \"h\" abbreviates hours."
-  },
-  "challenges.timeLeft.hours_other": {
-    "text": "{{count}}h left",
-    "description": "Time remaining for a challenge or a group of challenges on Home, under a day. {{count}} is a number of hours; \"h\" abbreviates hours."
-  },
-  "challenges.timeLeft.days_one": {
-    "text": "{{count}}d left",
-    "description": "Time remaining for a challenge or a group of challenges on Home. {{count}} is a number of days; \"d\" abbreviates days."
-  },
-  "challenges.timeLeft.days_other": {
-    "text": "{{count}}d left",
-    "description": "Time remaining for a challenge or a group of challenges on Home. {{count}} is a number of days; \"d\" abbreviates days."
   },
   "challenges.row.done": {
     "text": "Done",
@@ -763,13 +715,21 @@
     "text": "{{current}}/{{target}} {{unit}}",
     "description": "Progress shown on a challenge's card on Home: {{current}} done out of the {{target}} needed. {{unit}} is the organisers' own word for what is counted, such as \"apps\"."
   },
+  "challenges.row.countOfThisWeek": {
+    "text": "{{current}}/{{target}} this week",
+    "description": "Progress shown on a weekly challenge's card on Home: {{current}} done this week out of the {{target}} needed. The count starts again every Monday."
+  },
+  "challenges.row.countOfUnitThisWeek": {
+    "text": "{{current}}/{{target}} {{unit}} this week",
+    "description": "Progress shown on a weekly challenge's card on Home: {{current}} done this week out of the {{target}} needed. {{unit}} is the organisers' own word for what is counted, such as \"apps tried\". The count starts again every Monday."
+  },
   "challenges.row.earned_one": {
-    "text": "Earned {{points}} pts",
-    "description": "Line on a completed challenge's card on Home. {{points}} is the points it paid, already formatted (\"1,500\"); \"pts\" abbreviates points. {{count}} is the same number, for the plural."
+    "text": "{{points}} pts",
+    "description": "Points a completed challenge paid, at the right of its title on its card on Home, in green. {{points}} is the points it paid, already formatted (\"1,500\"); \"pts\" abbreviates points. {{count}} is the same number, for the plural."
   },
   "challenges.row.earned_other": {
-    "text": "Earned {{points}} pts",
-    "description": "Line on a completed challenge's card on Home. {{points}} is the points it paid, already formatted (\"1,500\"); \"pts\" abbreviates points. {{count}} is the same number, for the plural."
+    "text": "{{points}} pts",
+    "description": "Points a completed challenge paid, at the right of its title on its card on Home, in green. {{points}} is the points it paid, already formatted (\"1,500\"); \"pts\" abbreviates points. {{count}} is the same number, for the plural."
   },
   "challenges.reward.points_one": {
     "text": "{{points}} pts",
@@ -778,18 +738,6 @@
   "challenges.reward.points_other": {
     "text": "{{points}} pts",
     "description": "A challenge's reward on its card on Home. {{points}} is the number of points as the organisers wrote it; \"pts\" abbreviates points. {{count}} is the same number, for the plural."
-  },
-  "challenges.summary.progress": {
-    "text": "{{done}} of {{total}}",
-    "description": "Summary of Home's Challenges block: {{done}} challenges completed out of {{total}}."
-  },
-  "challenges.summary.withPointsLeft_one": {
-    "text": "{{done}} of {{total}} · {{points}} pts left",
-    "description": "Summary of Home's Challenges block: {{done}} challenges completed out of {{total}}, and {{points}} points still to be earned, already formatted (\"1,500\"). {{count}} is the same number of points, for the plural."
-  },
-  "challenges.summary.withPointsLeft_other": {
-    "text": "{{done}} of {{total}} · {{points}} pts left",
-    "description": "Summary of Home's Challenges block: {{done}} challenges completed out of {{total}}, and {{points}} points still to be earned, already formatted (\"1,500\"). {{count}} is the same number of points, for the plural."
   },
   "tone.cream": {
     "text": "Cream",

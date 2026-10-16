@@ -1,11 +1,11 @@
 /**
- * The bordered block every home panel is drawn in, and the controls its bar
- * and footer carry.
+ * The bordered block every home panel is drawn in, its section heading, and
+ * the links that heading carries.
  *
- * A like-for-like port of `HomePanels._panelShell` / `_leaderboardLink` /
- * `_panelFooter` — same classes, same `data-*`, same order —
- * so app.css's `--home-panel-max-h` cap, the dapp.json checks and the
- * screenshot assertions all keep matching. What changed is who owns the
+ * Began as a like-for-like port of `HomePanels._panelShell` /
+ * `_leaderboardLink` / `_panelFooter` — same classes, same `data-*`, same
+ * order — so the dapp.json checks and the screenshot assertions kept
+ * matching. What changed is who owns the
  * listeners: they were eight `querySelectorAll` sweeps in `HomePanels._wire`,
  * re-run after every paint because the paint had just destroyed the nodes they
  * were on, and they are props here.
@@ -17,8 +17,6 @@
  */
 
 import type { ReactNode } from 'react';
-
-import { ChevronDownIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
 import { t as message } from '../../../lib/i18n/runtime';
@@ -254,7 +252,7 @@ export function BrowseLink() {
 }
 
 /**
- * The bordered block: body, optional footer, and nothing else.
+ * The bordered block: its body, and nothing else.
  *
  * IT HAS NO TITLE BAR ANY MORE. The bar held the block's title until the
  * heading moved out above the card, and then its controls followed (see
@@ -262,17 +260,16 @@ export function BrowseLink() {
  * is gone with it, along with the `user-select` and cursor rules app.css kept
  * for a strip that was once a drag handle.
  *
- * `flex-none` on the footer and `.home-panel-rows` on the list are what made
- * app.css's height cap clip rather than grow; `.home-panel--expanded` lifts
- * the cap entirely.
+ * The footer went too: it held Challenges' "See all N challenges" toggle,
+ * and "See all" is a link in that section's heading now. So did the
+ * `expanded` flag and its `home-panel--expanded` class, with the in-place
+ * expansion they drew.
  */
 export function PanelShell({
-  panelKey, expanded, stamps, footer, plate = 'card', children,
+  panelKey, stamps, plate = 'card', children,
 }: {
   panelKey: string;
-  expanded: boolean;
   stamps?: PanelStamps;
-  footer?: ReactNode;
   /**
    * WHAT THE BLOCK SITS ON. Two answers:
    *
@@ -298,99 +295,45 @@ export function PanelShell({
     : '';
   return (
     <article
-      className={`home-panel${expanded ? ' home-panel--expanded' : ''}${plateClass}`}
+      className={`home-panel${plateClass}`}
       data-panel={panelKey}
       {...stampProps(stamps)}
     >
       {children}
-      {footer || null}
     </article>
   );
 }
 
 /**
- * THE AREA'S WAY IN (#980, renamed #1916). `BrowseLink` verbatim — same 12px
- * link, same seat in the section heading — because it answers the same
- * question on the same screen. It renders in EVERY branch and at every width:
- * between seasons, where the block draws no footer at all, it is the only
- * control the area has.
+ * THE AREA'S WAY IN: "See all", at the right end of the Challenges heading,
+ * to the Challenges tab of the Leaderboard screen. It replaced two controls
+ * (the Semi design, 2026-10-16): the heading's "Open challenges" (#980,
+ * #1916), and the footer's "See all N challenges" / "Show less", which grew
+ * the block in place. The block now shows a short pick, and everything else
+ * is on the tab.
  *
- * It reads "Open challenges" and lands on the Challenges tab of the
- * Leaderboard screen (#1916): the area is called Challenges, so a link out of
- * it that named a different thing read as a way somewhere else. It is still
- * the home screen's door to that screen — the standings are one tab over.
+ * A REAL LINK, `<a href="#leaderboard/challenges">`: it goes somewhere, so
+ * it is announced as a link, opens in a new tab on a modified click, and its
+ * hash navigation gives the tab a history entry the device's back gesture
+ * returns from. The visible "See all" leans on the heading beside it, so the
+ * accessible name says what it is all of ("See all challenges") and starts
+ * with the visible words, which keeps a voice command that reads them
+ * working. Drawn as `BrowseLink` is, the other section heading's link on this
+ * screen, with no glyph, so the two line up.
  *
- * NO CHEVRON, as `BrowseLink` has none: the two links sit at the right end of
- * two section headings on one screen, and a glyph behind only one of them
- * pushed its label out of line with the other's. And it is the area's ONLY
- * way out: the footer's second "Open challenges" is gone (see `PanelFooter`).
+ * ChallengesSectionView renders it only when the view says `seeAll`: never
+ * while loading, and not under "No challenges right now", where there is
+ * nothing behind it.
  */
-export function LeaderboardLink() {
+export function SeeAllLink() {
   const t = useMessages('home');
   return (
-    <button
-      type="button"
-      className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
-      title={t('home:challenges.open.tip')}
-      aria-label={t('home:challenges.open.label')}
-      onClick={(e) => {
-        e.stopPropagation();
-        panels()?.goToChallenges?.();
-      }}
+    <a
+      href="#leaderboard/challenges"
+      className="home-panel-see-all shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+      aria-label={t('home:challenges.seeAll.label')}
     >
-      <span className="whitespace-nowrap">{t('home:challenges.open.label')}</span>
-    </button>
-  );
-}
-
-/**
- * The Challenges footer: the expand/collapse toggle, and nothing else.
- *
- * It used to carry a second control at its right end, "Open challenges",
- * landing on the same `#leaderboard/challenges` as the heading's link. Two
- * doors to one tab, one card apart, read as two destinations, so the footer's
- * went and the heading's `LeaderboardLink` is the area's one way out.
- *
- * THE FOOTER IS CONDITIONAL (#1824). The toggle used to render whenever the
- * block had any rows, so a season with three challenges drew "See all 3
- * challenges" under all three of them — a control whose label was false and
- * whose click refetched the same list. `expandable` is the view's answer to
- * "would expanding show a row that is not already on screen?", and when it is
- * no, ChallengesPanel draws no footer at all: with the door gone, the toggle
- * is all a footer would hold. The count in the label is `total` for the same
- * reason it always was: the toggle only appears when there is more than is
- * drawn, so the number is never the number already on screen.
- */
-export function PanelFooter({
-  panelKey, total, expanded,
-}: { panelKey: string; total: number; expanded: boolean }) {
-  const t = useMessages('home');
-  const label = expanded
-    ? t('home:challenges.fold.showLess')
-    : (total ? t('home:challenges.fold.seeAllCount', { count: total }) : t('home:challenges.fold.seeAll'));
-  // No side inset and no rule above: the block sits on the page ground, so
-  // the toggle starts at the heading's left edge like the cards above it, and
-  // `pt-2` is the second half of the 14px step from the body's `pb-1.5`.
-  return (
-    <div className="home-panel-footer flex-none flex items-center gap-2 pt-2">
-      <button
-        type="button"
-        className="home-panel-expand flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap un-touch-target"
-        data-panel-key={panelKey}
-        aria-expanded={expanded}
-        title={expanded ? t('home:challenges.fold.collapseTip') : t('home:challenges.fold.expandTip')}
-        onClick={(e) => {
-          e.stopPropagation();
-          panels()?.toggleExpanded?.(panelKey);
-        }}
-      >
-        <ChevronDownIcon
-          className={`w-3 h-3 shrink-0 transition-transform${expanded ? ' rotate-180' : ''}`}
-          strokeWidth="2.5"
-          aria-hidden="true"
-        />
-        <span className="whitespace-nowrap">{label}</span>
-      </button>
-    </div>
+      <span className="whitespace-nowrap">{t('home:challenges.seeAll.text')}</span>
+    </a>
   );
 }

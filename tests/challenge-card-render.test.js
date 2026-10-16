@@ -7,8 +7,8 @@
 // asserted on the markup they end up in:
 //   * the rail is its own full-width row, holding the state only, and its
 //     label `truncate`s;
-//   * the meta line under the title ("5d left · 500 pts") is one line: the
-//     deadline never shrinks and the reward truncates after it;
+//   * the title and its points share one line ("Try apps   500 pts"): the
+//     title truncates and the points keep their width; nothing about time;
 //   * the rail is a progressbar, with aria-valuenow ONLY when the fill is a
 //     number (indeterminate otherwise), and draws a bar only when counted;
 //   * the tile draws a template's illustration only when the registry
@@ -183,16 +183,16 @@ test('artwork that fails to load puts back the tile it replaced, through state',
   assert.doesNotMatch(fn, /currentTarget|\.style\.|\.remove\(\)/, 'no write to the node: the card is a React island');
 });
 
-const META_OPEN = '<div class="flex min-w-0 items-baseline gap-1.5 text-[0.8125rem] leading-5">';
-const DEADLINE = (t) => `<span class="shrink-0 text-zinc-500 dark:text-zinc-400">${t}</span>`;
-const DOT = '<span aria-hidden="true" class="shrink-0 text-zinc-400 dark:text-zinc-500">·</span>';
-const REWARD = (t) => `<span class="min-w-0 truncate font-medium text-amber-800 dark:text-amber-300">${t}</span>`;
-const EARNED = (t) => `<span class="min-w-0 truncate font-medium text-emerald-700 dark:text-emerald-400">${t}</span>`;
+const TITLE_LINE = '<div class="flex min-w-0 items-baseline gap-2">';
+const TITLE = (t) => `<div class="min-w-0 flex-1 truncate text-base font-medium leading-6 text-zinc-900 dark:text-zinc-100">${t}</div>`;
+const POINTS = (t) => `<span class="max-w-[55%] shrink-0 truncate text-[0.8125rem] font-medium leading-5 text-amber-800 dark:text-amber-300">${t}</span>`;
+const POINTS_EARNED = (t) => `<span class="max-w-[55%] shrink-0 truncate text-[0.8125rem] font-medium leading-5 text-emerald-700 dark:text-emerald-400">${t}</span>`;
 
-test('ChallengeCard is one card for both surfaces: tile, title, meta line and a clean rail', () => {
+test('ChallengeCard is one card for both surfaces: tile, the title with its points, and a clean rail', () => {
   const view = {
     goal: 'Try apps', task: 'Open three apps', reward: '500 pts', icon: '🧪',
-    state: 'progress', stateLabel: '2/3 tried', fill: 2 / 3, counted: true, deadline: '5d left', earned: null,
+    state: 'progress', stateLabel: '2/3 tried', fill: 2 / 3, counted: true, deadline: '5d left',
+    cadence: 'next count 9:37', earned: null,
   };
   const html = renderToHtml(createElement(Card.ChallengeCard, {
     view, className: 'home-challenge-card', 'data-challenge-id': '7',
@@ -201,21 +201,20 @@ test('ChallengeCard is one card for both surfaces: tile, title, meta line and a 
   assert.match(html, /data-challenge-id="7"/);
   assert.match(html, />🧪<\/span>/, 'the kind icon sits in the tile');
   assert.doesNotMatch(html, /Open three apps/, 'the card holds no description, even when handed one');
+  assert.doesNotMatch(html, /5d left|next count/, 'nor a deadline or a next count: the card tells no time');
   assert.doesNotMatch(html, /<p /);
   assert.doesNotMatch(html, /title=/, 'no tooltips');
 
-  // Title, then ONE meta line — the deadline beside the reward.
-  assert.ok(html.includes(
-    '<div class="min-w-0"><div class="truncate text-base font-medium leading-6 text-zinc-900 dark:text-zinc-100">Try apps</div>'
-    + `${META_OPEN}${DEADLINE('5d left')}${DOT}${REWARD('500 pts')}</div></div>`),
-  'the title, then "5d left · 500 pts" on one line');
+  // ONE line: the title, and the points at its right.
+  assert.ok(html.includes(`${TITLE_LINE}${TITLE('Try apps')}${POINTS('500 pts')}</div>`),
+    'the title, then "500 pts" on the same line');
 
   // Title and rail are one group, centred beside the tile rather than
   // stretched to its edges, and the rail is the group's last row.
   assert.match(html, /<div class="flex min-w-0 flex-1 flex-col gap-2">/);
   assert.doesNotMatch(html, /justify-between|self-stretch/);
   const railAt = html.indexOf('role="progressbar"');
-  assert.ok(html.indexOf('500 pts') < railAt, 'the reward is above the rail');
+  assert.ok(html.indexOf('500 pts') < railAt, 'the points are above the rail');
   assert.doesNotMatch(html.slice(railAt), /pts/, 'the rail holds the state and nothing else');
   assert.doesNotMatch(html.slice(html.indexOf('flex min-w-0 flex-1 flex-col')), /flex-wrap|p-0\.5|bg-zinc-100/,
     'no capsule around the rail (the tile keeps its own neutral face)');
@@ -223,83 +222,49 @@ test('ChallengeCard is one card for both surfaces: tile, title, meta line and a 
   assert.match(html, /style="width:max\(0\.375rem, 67%\)"/);
 });
 
-test('the meta line drops what it does not have, and never holds a stray dot', () => {
+test('the points: amber to earn, emerald once earned, and nothing when there are none', () => {
   const base = { goal: 'Try Three Apps', icon: null, state: 'new', stateLabel: 'Not started', fill: 0, earned: null };
-  const rewardOnly = card({ ...base, reward: '500 pts', deadline: null });
-  assert.ok(rewardOnly.includes(`${META_OPEN}${REWARD('500 pts')}</div>`), 'no deadline: the reward alone');
-  const deadlineOnly = card({ ...base, reward: null, deadline: '23h left' });
-  assert.ok(deadlineOnly.includes(`${META_OPEN}${DEADLINE('23h left')}</div>`), 'no reward: the deadline alone');
-  const neither = card({ ...base, reward: null, deadline: null });
-  assert.doesNotMatch(neither, /items-baseline/, 'neither: no meta line at all');
-  assert.doesNotMatch(neither, /·/);
+  assert.ok(card({ ...base, reward: 'Up to 1,000 pts' }).includes(`${TITLE('Try Three Apps')}${POINTS('Up to 1,000 pts')}</div>`),
+    'the reward on offer, in amber, as the organiser wrote it');
+  const neither = card({ ...base, reward: null });
+  assert.ok(neither.includes(`${TITLE_LINE}${TITLE('Try Three Apps')}</div>`), 'no reward: the title alone');
+  assert.doesNotMatch(neither, /text-amber-800|text-emerald-700/);
 
-  const done = card({
-    ...base, state: 'done', stateLabel: 'Done', fill: 1, counted: true,
-    reward: '900 pts', earned: 'Earned 900 pts', deadline: null,
-  });
-  assert.ok(done.includes(`${META_OPEN}${EARNED('Earned 900 pts')}</div>`),
-    'a finished challenge says what was earned, in emerald, with no deadline');
-  assert.doesNotMatch(done, /text-amber-800/, 'not the reward on offer');
+  const done = card({ ...base, state: 'done', stateLabel: 'Done', fill: 1, counted: true, reward: '900 pts', earned: '900 pts' });
+  assert.ok(done.includes(`${TITLE('Try Three Apps')}${POINTS_EARNED('900 pts')}</div>`),
+    'a finished challenge says what was earned, in emerald, without the word "Earned"');
+  assert.doesNotMatch(done, /text-amber-800|Earned/, 'not the reward on offer');
   assert.doesNotMatch(done, /style="width/, 'and its rail draws no bar');
 
-  const zero = card({ ...base, stateLabel: '0/3 Apps tried', counted: true, reward: '500 pts', deadline: '17d left' });
+  const zero = card({ ...base, stateLabel: '0/3 Apps tried', counted: true, reward: '500 pts' });
   assert.match(zero, /style="width:0\.375rem"/, 'the stub at 0 of 3');
   assert.match(zero, />0\/3 Apps tried</);
 });
 
-// #3185: a challenge the background scorer counts says when it next counts,
-// because its count only moves when a run writes credits. It is the view's
-// `cadence`, composed by the controller, and the card puts it at the end of
-// the meta line it already has, never as a row of its own.
-const CADENCE = (t) => `<span class="min-w-0 flex-1 truncate text-zinc-500 dark:text-zinc-400">${t}</span>`;
-
-test('a scored card says when it next counts, at the end of the meta line, with no new row', () => {
-  const base = {
-    goal: 'Try Three Apps', reward: '500 pts', icon: null, state: 'progress', stateLabel: '1/3 Apps tried',
-    fill: 1 / 3, counted: true, deadline: null, earned: null,
-  };
-  const html = card({ ...base, cadence: 'next count 10:42' });
-  assert.ok(html.includes(`${META_OPEN}${REWARD('500 pts')}${DOT}${CADENCE('next count 10:42')}</div>`),
-    'after the reward, behind a dot, in the deadline’s quiet ink');
-  const railAt = html.indexOf('role="progressbar"');
-  assert.ok(html.indexOf('next count') < railAt, 'above the rail, in the title group');
-  assert.match(html, /aria-valuetext="1\/3 Apps tried"/, 'the rail still speaks the count alone');
-
-  // The same number of rows as a card with nothing to say: the timing adds none.
-  const plain = card(base);
-  const rows = (h) => (h.match(/<div/g) || []).length;
-  assert.equal(rows(html), rows(plain), 'no extra element, so no extra height');
-  assert.doesNotMatch(plain, /next count|-mt-1/, 'no cadence, nothing said');
-  assert.equal(card({ ...base, cadence: null }), plain, 'null says nothing');
-  assert.equal(card({ ...base, cadence: '' }), plain, 'nor does an empty string');
+test('the title gives way on a narrow line, never the points', () => {
+  const title = TITLE('').split('"')[1].split(' ');
+  for (const c of ['min-w-0', 'flex-1', 'truncate']) assert.ok(title.includes(c), `the title has ${c}`);
+  const points = POINTS('').split('"')[1].split(' ');
+  assert.ok(points.includes('shrink-0'), 'the points keep their width');
+  assert.ok(points.includes('max-w-[55%]') && points.includes('truncate'),
+    'only organiser prose too long for half the line truncates, so it can never squeeze the title out');
+  assert.match(CARD_SRC, /const POINTS = '[^']*';/, 'complete literals the compiler can find');
 });
 
-test('the timing is what gives way on a narrow line, never the reward', () => {
-  // flex-1 is basis 0: the cadence takes only the room the deadline and the
-  // reward leave, and truncates first.
-  const full = renderToHtml(createElement(Card.ChallengeMeta, { deadline: '5d left', text: '500 pts', cadence: 'next count 9:37' }));
-  assert.equal(full, `${META_OPEN}${DEADLINE('5d left')}${DOT}${REWARD('500 pts')}${DOT}${CADENCE('next count 9:37')}</div>`);
-  assert.ok(CADENCE('').includes('flex-1') && !REWARD('').includes('flex-1'));
-  assert.equal(renderToHtml(createElement(Card.ChallengeMeta, { cadence: 'counting now' })),
-    `${META_OPEN}${CADENCE('counting now')}</div>`, 'alone, it is the line, with no stray dot');
-});
-
-test('the detail page draws the same rail and meta line at page size', () => {
+test('the detail page draws the same rail and its points line at page size', () => {
   const lg = classOf(rail({ state: 'progress', label: '180/500 blocks', fill: 0.36, name: 'x', counted: true, size: 'lg' }),
     'role="progressbar"').split(' ');
   for (const c of ['h-10', 'text-[0.9375rem]', 'rounded-[0.75rem]', 'w-full', 'min-w-0', 'overflow-hidden']) {
     assert.ok(lg.includes(c), `lg rail has ${c}`);
   }
   assert.ok(!lg.includes('h-9') && !lg.includes('rounded-[0.6875rem]'), 'one size, not both');
-  const meta = renderToHtml(createElement(Card.ChallengeMeta, { deadline: '3d left', text: '720 pts so far', size: 'lg' }));
-  assert.equal(meta, `<div class="flex min-w-0 items-baseline gap-1.5 text-sm leading-5">${DEADLINE('3d left')}${DOT}${REWARD('720 pts so far')}</div>`);
-  assert.equal(renderToHtml(createElement(Card.ChallengeMeta, { text: 'Earned 900 pts', earned: true })),
-    `${META_OPEN}${EARNED('Earned 900 pts')}</div>`, 'the card size is the card’s line, unchanged');
+  assert.equal(renderToHtml(createElement(Card.ChallengeMeta, { text: '720 pts so far', size: 'lg' })),
+    '<div class="min-w-0 truncate text-sm font-medium leading-5 text-amber-800 dark:text-amber-300">720 pts so far</div>');
+  assert.equal(renderToHtml(createElement(Card.ChallengeMeta, { text: '900 pts', earned: true })),
+    '<div class="min-w-0 truncate text-[0.8125rem] font-medium leading-5 text-emerald-700 dark:text-emerald-400">900 pts</div>');
   assert.equal(renderToHtml(createElement(Card.ChallengeMeta, {})), '', 'nothing to say, no line');
-  assert.equal(renderToHtml(createElement(Card.ChallengeMeta, { text: '500 pts', cadence: 'next count 9:37', size: 'lg' })),
-    `<div class="flex min-w-0 items-baseline gap-1.5 text-sm leading-5">${REWARD('500 pts')}${DOT}${CADENCE('next count 9:37')}</div>`,
-    'the timing rides the page-size meta line too');
-  assert.equal(Card.ProgressCadence, undefined, 'the row under the rail is gone');
+  assert.equal(renderToHtml(createElement(Card.ChallengeMeta, { deadline: '3d left', cadence: 'next count 9:37' })), '',
+    'a deadline or a next count handed along says nothing');
 });
 
 test('a card that opens something is a keyboard-reachable button, so it takes the kit press (#1918)', () => {

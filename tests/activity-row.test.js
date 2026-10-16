@@ -1,8 +1,9 @@
 'use strict';
-// #3648: every points activity says when it happened. The profile overlay's
-// and the standings drill-down's activity lists showed only the reason and
-// the points; both now draw ./activity-row.tsx, which adds the day and time
-// from the `activity_at` both APIs already return.
+// #3648: every points activity says when it happened. The standings
+// drill-down's activity list showed only the reason and the points; it draws
+// ./activity-row.tsx, which adds the day and time from the `activity_at` the
+// API already returns. (The Challenges tab's profile overlay drew it too,
+// until the overlay retired with the Semi design, 2026-10-16.)
 //
 // The expectations are built with the same Intl options in the test's own
 // timezone, so the suite holds wherever it runs; the date-only case is read
@@ -10,10 +11,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { englishPlatformI18n } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
 
 const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
 
@@ -89,37 +88,14 @@ test('the row renders the reason, the date and the points', () => {
   assert.match(html, /\+250/);
 });
 
-test('both activity lists draw the shared row and pass activity_at through', () => {
-  for (const f of ['challenges-pane.tsx', 'topochain-standings.tsx']) {
-    const src = read(`frontend/src/features/leaderboard/${f}`);
-    assert.match(src, /import \{ ActivityRow \} from '\.\/activity-row';/, `${f} imports the row`);
-    assert.match(src, /<ActivityRow [^>]*at=\{a\.at\}/, `${f} hands it the timestamp`);
-  }
-  for (const f of ['topochain-challenges.js', 'topochain-leaderboard.js']) {
-    const src = read(`frontend/src/features/leaderboard/${f}`);
-    assert.match(src, /at: a\.activity_at \|\| null,/, `${f} passes activity_at through`);
-  }
-});
-
-test('the profile view carries each activity timestamp', () => {
-  const src = read('frontend/src/features/leaderboard/topochain-challenges.js');
-  const sandbox = { window: {}, console };
-  vm.createContext(sandbox);
-  sandbox.PlatformI18n = englishPlatformI18n();
-  vm.runInContext(src, sandbox, { filename: 'topochain-challenges.js' });
-  const TC = sandbox.window.TopochainChallenges;
-  TC._profileUserId = 7;
-  TC._profileLoading = false;
-  TC._profileError = null;
-  TC._profile = {
-    display_name: 'Marlee', total_points: 6278, extra_points: 6278,
-    activities: [
-      { description: 'Sent feedback on RecipeBot', points: 250, activity_at: '2026-10-02T16:32:00.000Z' },
-      { description: 'Tried Chess', points: 10 },
-    ],
-  };
-  const view = TC.profileView();
-  assert.equal(view.activities[0].at, '2026-10-02T16:32:00.000Z');
-  assert.equal(view.activities[0].points, '+250');
-  assert.equal(view.activities[1].at, null);
+test('the standings drill-down draws the shared row and passes activity_at through', () => {
+  const src = read('frontend/src/features/leaderboard/topochain-standings.tsx');
+  assert.match(src, /import \{ ActivityRow \} from '\.\/activity-row';/, 'the drill-down imports the row');
+  assert.match(src, /<ActivityRow [^>]*at=\{a\.at\}/, 'and hands it the timestamp');
+  assert.match(read('frontend/src/features/leaderboard/topochain-leaderboard.js'), /at: a\.activity_at \|\| null,/,
+    'its view module passes activity_at through');
+  // The Challenges tab's profile overlay, the other list, retired with the
+  // participants it was opened from.
+  assert.doesNotMatch(read('frontend/src/features/leaderboard/challenges-pane.tsx'), /ActivityRow/);
+  assert.doesNotMatch(read('frontend/src/features/leaderboard/topochain-challenges.js'), /profileView|activity_at/);
 });

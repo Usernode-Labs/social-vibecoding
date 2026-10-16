@@ -5048,6 +5048,16 @@ const App = {
             challengeId: App._numericSegment(parts[3]),
           }
           : null;
+        // #leaderboard/seasons was the History tab, retired with the seasons
+        // it listed (2026-10-16). An old link lands on Challenges, its address
+        // rewritten first so Leaderboard._syncHash finds nothing to heal.
+        if (parts[1] === 'seasons') {
+          try {
+            history.replaceState(null, '', '#leaderboard/challenges');
+          } catch (err) { /* non-fatal: navigation below still works */ }
+          App.navigateToLeaderboard('challenges', null, null);
+          return;
+        }
         App.navigateToLeaderboard(parts[1], profileUser, challengeTarget);
         return;
       }
@@ -6928,7 +6938,7 @@ const App = {
       Kudos sub-views (#leaderboard/prs, /users, /history) fell through to
       "Leaderboard". It is one entry per ADDRESS now, each the label of the
       tab that address shows (frontend/src/features/leaderboard/index.tsx's
-      SECTION_TABS); `seasons` is the History tab. And it is no longer only
+      SECTION_TABS). And it is no longer only
       the ENTRY's title: a tab press rewrites the address with replaceState
       and never comes back through here, so Leaderboard._syncTitle asks this
       same method on every section change. One table, both paths.
@@ -6942,7 +6952,6 @@ const App = {
     users: 'shell:title.leaderboard.kudos',
     history: 'shell:title.leaderboard.kudos',
     topochain: 'shell:title.leaderboard.standings',
-    seasons: 'shell:title.leaderboard.history',
   },
 
   _leaderboardTitle(sub, profileUser) {
@@ -6960,8 +6969,7 @@ const App = {
       Leaderboard.openProfile(profileUser);
     } else if (!sub && window.Leaderboard?._setSection) {
       Leaderboard._setSection('challenges');
-    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges'
-                || sub === 'seasons')
+    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges')
                && window.Leaderboard?._setSection) {
       // Register the challenge deep link BEFORE the section mounts (#982).
       // Selecting the event first means the pane's very first fetch is
