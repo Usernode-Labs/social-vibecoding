@@ -116,12 +116,12 @@ test('two platform processes see each other\'s holds and stops', { timeout: 1200
   // A process that dies holding something holds nothing once its beat lapses.
   await pool.query(
     `INSERT INTO platform_processes (id, heartbeat_at) VALUES ('crashed', NOW())`);
-  await pool.query(`INSERT INTO process_holds (process_id, kind, ref) VALUES ('crashed', 'shots', '11')`);
+  await pool.query(`INSERT INTO process_holds (process_id, kind, ref) VALUES ('crashed', 'sync', '11')`);
   await fresh.ask({ op: 'refresh' });
-  assert.equal(await fresh.ask({ op: 'heldElsewhere', kind: 'shots', ref: 11 }), true);
+  assert.equal(await fresh.ask({ op: 'heldElsewhere', kind: 'sync', ref: 11 }), true);
   await pool.query(`UPDATE platform_processes SET heartbeat_at = NOW() - interval '10 minutes' WHERE id = 'crashed'`);
   await fresh.ask({ op: 'refresh' });
-  assert.equal(await fresh.ask({ op: 'heldElsewhere', kind: 'shots', ref: 11 }), false);
-  assert.deepEqual(await fresh.ask({ op: 'holders', kind: 'shots', ref: 11 }), []);
+  assert.equal(await fresh.ask({ op: 'heldElsewhere', kind: 'sync', ref: 11 }), false);
+  assert.deepEqual(await fresh.ask({ op: 'holders', kind: 'sync', ref: 11 }), []);
   await fresh.ask({ op: 'stop' }).catch(() => {});
 });

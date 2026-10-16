@@ -6,7 +6,7 @@
 // the merge or a turn committed meanwhile would be missing).
 
 import type { Tx } from '../kernel/index.ts';
-import { LIVE_SHOTS_RUN, operationsLiveSql, previewWorkingSql } from '../session-work.ts';
+import { SHOTS_LIVE_STATES, operationsLiveSql, previewWorkingSql, shotsRunningSql } from '../session-work.ts';
 
 export interface Session {
   id: number;
@@ -21,7 +21,7 @@ export interface Session {
   // The commit its vote is on (an import's PR head, else the reviewed head).
   head: string | null;
   // Work under way on it that a merge carrying it must not cut across: a
-  // live shots run (LIVE_SHOTS_RUN), or checks running (a check_runs
+  // shots run under way (shotsRunningSql), or checks running (a check_runs
   // manifest heartbeated in the last minute, or a pending verdict younger
   // than the ten minutes after which the sweeps call it stuck; with the
   // preview machine, its build or run under way: session-work.ts).
@@ -53,15 +53,14 @@ export interface App {
 
 export interface Facts { session: Session | null; app: App | null }
 
-// A shots run still using its proposal's worker: src/workflow/session-work.ts.
-export { LIVE_SHOTS_RUN };
-
-// The newest such run of one change, or null: worker.retire's read.
+// The run of one change's shots still under way, or null: worker.retire's
+// read (src/workflow/session-work.ts).
 export async function liveShotsRun(db: Pick<Tx, 'query'>, sessionId: number): Promise<string | null> {
   const { rows: [r] } = await db.query(
-    `SELECT r.id FROM shot_runs r WHERE r.session_id = $1 AND ${LIVE_SHOTS_RUN} ORDER BY r.created_at DESC LIMIT 1`,
-    [sessionId]);
-  return r ? String(r.id) : null;
+    `SELECT w.data->'run'->>'id' AS id FROM wf_instances w
+      WHERE w.machine = 'shots' AND w.key = $1 AND w.state = ANY($2::text[])`,
+    [`session:${sessionId}`, [...SHOTS_LIVE_STATES]]);
+  return r ? String(r.id || 'run') : null;
 }
 
 export function parseRepo(url: unknown): { owner: string; repo: string } | null {
@@ -78,7 +77,7 @@ export async function readFacts(tx: Tx, sessionId: number, { lock }: { lock: boo
     `SELECT cs.id, cs.app_id, cs.status, cs.user_id, cs.pr_number, cs.pr_title, cs.linked_issues,
             cs.agent_session_id, cs.active_turn IS NOT NULL AS active_turn, cs.is_headless,
             CASE WHEN cs.source = 'imported' THEN cs.imported_pr_head_sha ELSE cs.reviewed_head_sha END AS head,
-            EXISTS (SELECT 1 FROM shot_runs r WHERE r.session_id = cs.id AND ${LIVE_SHOTS_RUN}) AS shots_running,
+            ${shotsRunningSql('cs.id')} AS shots_running,
             (EXISTS (SELECT 1 FROM check_runs k WHERE k.session_id = cs.id AND k.heartbeat_at > NOW() - INTERVAL '60 seconds')
               OR (cs.check_state = 'pending' AND cs.checks_checked_at > NOW() - INTERVAL '10 minutes')
               OR ${previewWorkingSql('cs.id')}) AS checks_running,

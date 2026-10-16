@@ -1,13 +1,16 @@
 'use strict';
 
-// End-to-end coordinator for a proposal's before/after shots. The platform
-// builds the exact before (base) and after (head) revisions with fixture data
-// and signed-in fixture users; the shots agent follows each declared change
-// on both and saves what it sees through RunControl; this module then
-// publishes every change that has a complete before/after set.
+// The I/O of a proposal's before/after shots: building the exact before
+// (base) and after (head) copies with fixture data and signed-in fixture
+// users, the shots agent's turn (it follows each declared change on both and
+// saves what it sees through the run's control plane, services/shots-control),
+// comparing the two sides, and removing the copies. The shots machine
+// (src/workflow/shots/) runs each as a work item and decides everything
+// between them; a shots eval's trial (shots-eval-runner.js) runs them one
+// after the other in its own runner (executeRun).
 
 const appManifest = require('./app-manifest');
-const crypto = require('node:crypto');
+const fs = require('node:fs/promises');
 const os = require('node:os');
 const github = require('./github');
 const log = require('./logger');
@@ -20,7 +23,6 @@ const shotsHomeTile = require('./shots-home-tile');
 const shotsStarter = require('./shots-starter');
 const environment = require('./shots-environment');
 const identities = require('./shots-identities');
-const lifecycle = require('./lifecycle');
 const planContract = require('./visible-changes');
 const previewClock = require('./preview-clock');
 const state = require('./shots-state');
@@ -30,8 +32,6 @@ const worker = require('./worker');
 const { SAMPLE_FILES } = require('../../worker/shots-samples');
 
 const ACTIVE_STATES = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
-const CLOSED_STATUSES = new Set(['merged', 'archived']);
-const SHOTS_STOPPED_REASON = 'Stopped before it finished. No shots were taken for this commit; take them again from the proposal.';
 
 // How the worker saw the shots agent's process end when the agent never
 // reported it (shots-agent.js EXIT_CAUSES), for the causes that say nothing
@@ -53,7 +53,6 @@ function agentDiedRetryable(error) {
 // record was already held. Nothing ran, so the run waits for the agent to
 // be free and dispatches again, at most MAX_AGENT_BUSY_RETRIES times.
 const MAX_AGENT_BUSY_RETRIES = 2;
-const AGENT_BUSY_RETRY_PROGRESS = 'The proposal\u2019s agent was busy, so the shots didn\u2019t start. Trying again\u2026';
 
 function agentBusyRetryable(error) {
   if (!error) return false;
@@ -88,20 +87,8 @@ function platformFault(error, { now = Date.now() } = {}) {
   return null;
 }
 
-// Runs a person stopped while this process executes them. The stop already
-// made the run terminal in the database; this keeps its runner from handing
-// the shots agent another turn before a state transition refuses it.
-const stopRequested = new Set();
 const DIFF_CONTEXT_CHARS = 8_000;
-// `${sessionId}:${headSha}` -> the run's promise. Each is this process's
-// hold on the session's shots (services/processes.js): another platform
-// process sees the run (inFlightRunFor) and a draining one finishes it.
-const inFlight = require('./processes').heldMap('shots', (key) => String(key).split(':')[0]);
-const inFlightRunIds = new Map();
-const liveHeartbeats = new Map();
 const HEARTBEAT_INTERVAL_MS = 30_000;
-const SHOTS_PROCESS_ID = crypto.randomBytes(8).toString('hex');
-const SHOTS_PROCESS_STARTED_AT = new Date().toISOString();
 const MAX_AGENT_EVENTS = 128;
 const SESSION_IDLE_WAIT_MS = 120_000;
 const SHOTS_RECOVERY_WAIT_MS = 240_000;
@@ -133,7 +120,6 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
     phase, writeStartedAt: null, lastSucceededAt: null,
     lastErrorAt: null, lastErrorCode: null,
   };
-  liveHeartbeats.set(runId, live);
   const flush = () => {
     if (stopped || typeof stateService.heartbeatRun !== 'function') return;
     if (writing) { pending = true; return; }
@@ -143,8 +129,6 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
         pending = false;
         const patch = {
           heartbeat: {
-            processId: SHOTS_PROCESS_ID,
-            processStartedAt: SHOTS_PROCESS_STARTED_AT,
             host: os.hostname().replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 128),
             buildSha: exactSha(process.env.GIT_SHA),
             poolTotal: Number.isInteger(pool.totalCount) ? pool.totalCount : null,
@@ -213,34 +197,7 @@ function startRunHeartbeat(pool, runId, stateService, observer = null, intervalM
     stop() {
       stopped = true;
       clearInterval(timer);
-      if (liveHeartbeats.get(runId) === live) liveHeartbeats.delete(runId);
     },
-  };
-}
-
-// This private observer is evaluated by the process answering diagnostics,
-// rather than copied from the run's last successful database heartbeat. A
-// different process ID on the same host proves a restart; an in-progress
-// write on the owner distinguishes a blocked heartbeat from a stopped owner.
-function liveRunObserver(runId, pool) {
-  const live = liveHeartbeats.get(runId) || null;
-  return {
-    observedAt: new Date().toISOString(),
-    host: os.hostname().replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 128),
-    processId: SHOTS_PROCESS_ID,
-    processStartedAt: SHOTS_PROCESS_STARTED_AT,
-    buildSha: exactSha(process.env.GIT_SHA),
-    ownsRun: !!live,
-    heartbeatWrite: live ? {
-      phase: live.phase,
-      startedAt: live.writeStartedAt,
-      lastSucceededAt: live.lastSucceededAt,
-      lastErrorAt: live.lastErrorAt,
-      lastErrorCode: live.lastErrorCode,
-    } : null,
-    poolTotal: Number.isInteger(pool?.totalCount) ? pool.totalCount : null,
-    poolIdle: Number.isInteger(pool?.idleCount) ? pool.idleCount : null,
-    poolWaiting: Number.isInteger(pool?.waitingCount) ? pool.waitingCount : null,
   };
 }
 
@@ -1159,36 +1116,6 @@ function traceSummary(metrics, extra = {}) {
   };
 }
 
-function notifyShots(session, app, shotsState, extra = {}) {
-  try {
-    require('./ws').pushVoteUpdate({
-      sessionId: Number(session.id),
-      appId: app?.id || session.app_id || null,
-      appSlug: app?.slug || session.app_slug || null,
-      merged: false,
-      action: 'shots',
-      shotsState: shotsState,
-      ...extra,
-    });
-  } catch (_) { /* live refresh is best-effort; durable state is authoritative */ }
-  notifyConversations(session.id);
-}
-
-// A conversation shows its active change's running preview (and its Stop),
-// so the owners of the open conversations on this change re-read them.
-function notifyConversations(changeId) {
-  let pool;
-  try { pool = require('../db/pool').getPool(); } catch (_) { return; }
-  if (!pool || typeof pool.query !== 'function') return;
-  pool.query(
-    `SELECT id, user_id FROM agent_sessions WHERE active_change_id = $1 AND status = 'open'`,
-    [Number(changeId)]
-  ).then(({ rows }) => {
-    const ws = require('./ws');
-    for (const row of rows) ws.pushToUser(row.user_id, { type: 'agent_session_changed', agentSessionId: row.id });
-  }).catch(() => { /* the conversation catches up on its next read */ });
-}
-
 async function failCurrentRun(pool, runId, error, stateService = state, runTrace = null) {
   try {
     const current = await stateService.getRun(pool, runId);
@@ -1214,103 +1141,81 @@ async function failCurrentRun(pool, runId, error, stateService = state, runTrace
   }
 }
 
-async function executeRun(config, options, injected = {}) {
+// ── The run's I/O, one step at a time ───────────────────────────────────
+//
+// Each is a work item of the shots machine (src/workflow/shots/services.ts):
+// safe to run again after a crash, which is what a retried item does, and
+// keeping nothing in this process between steps. Their results are JSON;
+// the machine decides on them.
+
+// How long the agent's control plane stays open past the agent's own clock:
+// a call the agent made just before its turn was stopped still lands.
+const CONTROL_SLACK_MS = 60_000;
+
+// Whether run `runId` is still the proposal's run under way, in one of
+// `states` (its row's): a step of a run that ended stops instead of going on.
+async function runCurrent(pool, runId, states) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM shot_runs r JOIN chat_sessions cs ON cs.id = r.session_id AND cs.shots_run_id = r.id
+      WHERE r.id = $1 AND r.state = ANY($2::text[])`, [runId, states]);
+  return rows.length > 0;
+}
+
+// The exact before revision of a head (shots.revision).
+async function resolveRevision(pool, { sessionId, headSha }, githubService = github) {
+  const row = await loadSession(pool, sessionId);
+  const revision = await resolveRevisionContext(row, headSha, githubService);
+  return { baseSha: revision.baseSha, headSha: revision.headSha };
+}
+
+// Remove everything the copies of run `runId` may have left: both runtimes
+// and databases, the hosted fixture, the clone source. By the run's own
+// names, so it finds what a process that died left.
+function removeCopies(config, { runId, appSlug }) {
+  return require('./shots-gc').cleanupRunResources(config, { id: runId, app_slug: appSlug });
+}
+
+/**
+ * The before and after copies of a run, serving and seeded, with the
+ * agent's workspace written for them (shots.copies). `images`: both sides'
+ * images an earlier attempt already built, reused; `onImages` hears them
+ * once built (the machine's checkpoint). `fresh`: nothing of this run's
+ * copies can exist yet; otherwise what an earlier attempt left is removed
+ * first, so the copies are made from the start. The local checkouts go
+ * before it returns; the copies stay for the agent. `current`: whether the
+ * run is still under way, asked between phases; once it is not, the copies
+ * stop there and it resolves `{ stale: true }` (what they made is the
+ * run's cleanup's to remove).
+ */
+async function buildCopies(config, pool, {
+  runId, sessionId, kind = 'run', intent: rawIntent, baseSha, headSha, budgetMs,
+  images = null, onImages = null, onProgress = null, fresh = true, current = null,
+}, injected = {}) {
   const deps = {
-    state: injected.state || state,
     environment: injected.environment || environment,
     identities: injected.identities || identities,
-    shotsAgent: injected.shotsAgent || shotsAgent,
-    shotsControl: injected.shotsControl || shotsControl,
     shotsStarter: injected.shotsStarter || shotsStarter,
-    worker: injected.worker || worker,
-    waitForSessionIdle: injected.waitForSessionIdle || waitForSessionIdle,
-    // A shots eval's trial is not its proposal's shots, so it tells nobody
-    // watching the proposal (shots-eval-runner.js passes a no-op).
-    notifyShots: injected.notifyShots || notifyShots,
+    shotsHomeTile: injected.shotsHomeTile || shotsHomeTile,
+    github: injected.github || github,
+    removeCopies: injected.removeCopies || removeCopies,
   };
-  const { pool, revision, onProgress = null } = options;
-  let run = options.run;
-  let session = options.session;
-  let app = options.app;
-  let pair = null;
-  let registration = null;
-  let failurePhase = 'load_run';
-  let temporaryWorkerAttempted = false;
-  const metrics = newRunMetrics();
-  metrics.planSource = 'shots_agent';
-  const agentBudgetMs = config.shots?.maxAgentMs || 480_000;
-  metrics.agentActivity.budgetMs = agentBudgetMs;
-  const progress = (message) => {
-    if (typeof onProgress === 'function') onProgress(message);
-  };
-  const stage = (name) => progress({ stage: name });
-
+  const row = await loadSession(pool, sessionId);
+  const { session, app } = publicSessionAndApp(row);
+  const intent = planContract.parseIntent(rawIntent);
+  const revision = await resolveRevisionContext(session, headSha, deps.github, { baseSha });
+  const run = { id: runId, base_sha: revision.baseSha, head_sha: revision.headSha, intent };
+  const ended = async () => typeof current === 'function' && !(await current());
+  if (await ended()) return { stale: true };
+  if (!fresh) {
+    const left = await deps.removeCopies(config, { runId, appSlug: app.slug });
+    if (left.length) {
+      throw Object.assign(new ShotsOrchestrationError('shots_copies_left',
+        'What an earlier attempt left of these copies could not be removed.'), { shotsPlatformFault: 'database' });
+    }
+  }
+  const pair = await deps.environment.preparePair(config, { pool, run, session, app, onProgress, images, onImages });
   try {
-    if (!run || !session || !app) {
-      const current = await deps.state.getRun(pool, options.runId);
-      const row = await loadSession(pool, current.session_id);
-      ({ session, app } = publicSessionAndApp(row));
-      run = current;
-    }
-    if (run.current_run_id && run.current_run_id !== run.id) {
-      throw new ShotsOrchestrationError('stale_shots_operation', 'A newer run took over these before/after shots before this one started.');
-    }
-    const intent = planContract.parseIntent(run.intent || intentForSession(session));
-    if (run.state === 'not_required') return deps.state.getForSession(pool, session.id, { headSha: run.head_sha });
-    if (intent.impact === 'none') {
-      // State settles these as not_required; a legacy row must not start an
-      // agent with nothing to shoot.
-      throw new ShotsOrchestrationError(
-        'visible_changes_conflict',
-        'This proposal declares no visible change, so there is nothing to shoot.'
-      );
-    }
-
-    failurePhase = 'wait_for_idle';
-    stage(failurePhase);
-    const idleStartedAt = Date.now();
-    const runBudgetMs = config.shots?.maxRunMs || 1_440_000;
-    const idleTimeoutMs = Math.min(runBudgetMs, SESSION_IDLE_WAIT_MS);
-    const recoveryTimeoutMs = Math.min(runBudgetMs, SHOTS_RECOVERY_WAIT_MS);
-    let recoveryWaitReported = false;
-    try {
-      metrics.idleWait = await deps.waitForSessionIdle(pool, session.id, {
-        timeoutMs: idleTimeoutMs,
-        recoveryTimeoutMs,
-        workerService: deps.worker,
-        onObservation: (observation) => {
-          metrics.idleWait = observation;
-          if (observation.waitClass === 'shots_recovery' && !recoveryWaitReported) {
-            recoveryWaitReported = true;
-            progress('Waiting for the interrupted shots agent to finish cleaning up…');
-          }
-        },
-      });
-    } catch (error) {
-      if (error?.detail?.idleWait) metrics.idleWait = error.detail.idleWait;
-      throw error;
-    } finally {
-      addTiming(metrics, 'idleWait', idleStartedAt);
-    }
-    // A timeout stops the prior turn and leaves its worker stop marker. This
-    // is a new run, so retire that marker once, after the prior turn is idle
-    // and before this run provisions; a stop during setup still wins.
-    deps.worker.clearPendingStop(session.id);
-    progress('Building the exact before and after versions…');
-    failurePhase = 'prepare_pair';
-    stage(failurePhase);
-    const provisioningStartedAt = Date.now();
-    if (run.state === 'planned') {
-      await deps.state.transitionRun(pool, run.id, 'provisioning', { startedAt: new Date() });
-    } else if (run.state !== 'provisioning') {
-      throw new ShotsOrchestrationError(
-        'stale_shots_operation', 'This run is no longer available to build.'
-      );
-    }
-    deps.notifyShots(session, app, 'provisioning');
-    pair = await deps.environment.preparePair(config, { pool, run, session, app, onProgress });
-    failurePhase = 'exploration_reset';
-    stage(failurePhase);
+    if (await ended()) return { stale: true };
     const exploration = await deps.environment.resetPair(config, pair, { onProgress });
     const expectedProvenance = {
       baseSha: run.base_sha,
@@ -1322,39 +1227,15 @@ async function executeRun(config, options, injected = {}) {
     if (!sameProvenance(exploration, expectedProvenance)) {
       throw new ShotsOrchestrationError('shots_provenance_mismatch', 'The before and after builds did not match their fixture and images.');
     }
-    failurePhase = 'mint_fixture_identities';
-    stage(failurePhase);
-    // The guest browser is not signed in. Only a view-public child app also
-    // gets the guest token its own address would give such a visitor; the
-    // token joins the others, so it reaches the worker and is masked with
-    // them, and never enters the brief.
-    const guest = await deps.identities.shotsGuestIdentity(pool, app, {
-      selfApp: app.slug === config.selfAppSlug,
-    });
-    const authTokens = {
-      ...await deps.identities.mintShotsAuthTokens(pool, app.id),
-      ...(guest.token ? { guest: guest.token } : {}),
-    };
-    failurePhase = 'persist_exploration';
-    stage(failurePhase);
-    await deps.state.transitionRun(pool, run.id, 'exploring', {
-      fixtureFingerprint: pair.fixtureFingerprint,
-      baseImageDigest: pair.sides.base.imageDigest,
-      headImageDigest: pair.sides.head.imageDigest,
-    });
-    addTiming(metrics, 'provisioning', provisioningStartedAt);
-    deps.notifyShots(session, app, 'exploring');
-    stage('exploring');
-
+    const selfApp = app.slug === config.selfAppSlug;
+    const guest = await deps.identities.shotsGuestIdentity(pool, app, { selfApp });
     // Each side's tile on Homeroom's home screen, from its own dapp.json. A
     // tile that cannot be drawn leaves the brief without one; it never stops
     // the run.
     let homeTiles = null;
-    try { homeTiles = await shotsHomeTile.tilesForPair(pair, app); }
+    try { homeTiles = await deps.shotsHomeTile.tilesForPair(pair, app); }
     catch (error) {
-      log.warn('shots', 'Could not draw the home tiles for a shots run', {
-        sessionId: session.id, runId: run.id, error: error.message,
-      });
+      log.warn('shots', 'Could not draw the home tiles for a shots run', { sessionId, runId, error: error.message });
     }
     // A project's first version: its before build is still the starter
     // template's placeholder, read from the two checkouts' own sentinel
@@ -1362,619 +1243,407 @@ async function executeRun(config, options, injected = {}) {
     // Homeroom itself never ships the starter. A read that fails takes both
     // sides, as every run did before.
     let afterOnly = false;
-    if (app.slug !== config.selfAppSlug) {
+    if (!selfApp) {
       try { afterOnly = await deps.shotsStarter.beforeIsStarter(pair); }
       catch (error) {
-        log.warn('shots', 'Could not tell whether the before build is the starter', {
-          sessionId: session.id, runId: run.id, error: error.message,
-        });
+        log.warn('shots', 'Could not tell whether the before build is the starter', { sessionId, runId, error: error.message });
       }
     }
-    metrics.afterOnly = afterOnly;
     const context = shotsBrief({
       run, session, revision, pair, deployment: exploration, intent,
       guestKind: guest.kind,
       homeTile: shotsHomeTile.briefEntry(homeTiles),
-      selfApp: app.slug === config.selfAppSlug,
-      childApp: app.slug !== config.selfAppSlug,
+      selfApp,
+      childApp: !selfApp,
       afterOnly,
     });
-    const navigationHints = {
-      intentPaths: intent.stories.map((story) => story.intent.startPath),
-      testingPaths: context.changeContext.testingPaths,
-      declaredPaths: context.declaredChecks.map((check) => check.path),
+    const agent = {
+      origins: exploration.origins,
+      phoneTestCode: exploration.phoneTestCode || null,
+      navigationHints: {
+        intentPaths: intent.stories.map((story) => story.intent.startPath),
+        testingPaths: context.changeContext.testingPaths,
+        declaredPaths: context.declaredChecks.map((check) => check.path),
+      },
+      recordClips: planContract.clipSize(intent) != null,
+      // The desktop browsers record at the other motion screens' size and
+      // the phone browsers at the phone motion screens' size, each its own.
+      clipSize: planContract.clipSize(intent, { phone: false }),
+      phoneClipSize: planContract.clipSize(intent, { phone: true }),
+      phonePersonas: planContract.phonePersonas(intent),
+      // A child app's pages load /usernode-bridge|native|tailwind/ from the
+      // platform, which the edge routes in production; the shots browser's
+      // proxy does the same. The platform serves its own.
+      platformAssets: !selfApp,
+      selfApp,
     };
-    const recordClips = planContract.clipSize(intent) != null;
-    // The desktop browsers record at the other motion screens' size and the
-    // phone browsers at the phone motion screens' size, each its own.
-    const clipSize = planContract.clipSize(intent, { phone: false });
-    const phoneClipSize = planContract.clipSize(intent, { phone: true });
-    const phonePersonas = planContract.phonePersonas(intent);
-    failurePhase = 'register_control';
-    stage(failurePhase);
-    registration = deps.shotsControl.registerRun({
-      runId: run.id,
-      sessionId: session.id,
-      intent,
-      context,
-      expiresAt: Date.now() + runBudgetMs,
-      homeTiles,
-      afterOnly,
+    if (await ended()) return { stale: true };
+    await shotsControl.create(pool, {
+      runId, sessionId, kind, intent, context, homeTiles, afterOnly, agent,
+      expiresAt: Date.now() + (Number(budgetMs) || 480_000) + CONTROL_SLACK_MS,
     });
-
-    const agentStartedAt = Date.now();
-    const dispatchOnce = async () => {
-      if (stopRequested.has(run.id)) {
-        throw new ShotsOrchestrationError('shots_stopped', SHOTS_STOPPED_REASON);
-      }
-      metrics.agentAttempts += 1;
-      const dispatchTrace = {
-        requestedBackend: 'claude_code',
-        requestedModel: safeModelId(shotsAgent.agentModel(config)),
-        budgetMs: agentBudgetMs,
-      };
-      metrics.agentDispatches.push(dispatchTrace);
-      const dispatchStartedAt = Date.now();
-      if (metrics.agentActivity.firstAtMs.dispatch == null) {
-        metrics.agentActivity.firstAtMs.dispatch = Math.max(0, dispatchStartedAt - metrics.startedAtMs);
-      }
-      try {
-        // Provisioning is platform work; the agent's budget starts here and
-        // is shared by the first dispatch and any backend fallback.
-        const remainingMs = agentBudgetMs - (Date.now() - agentStartedAt);
-        dispatchTrace.timeoutMs = Math.max(0, remainingMs);
-        if (remainingMs <= 0) {
-          throw new ShotsOrchestrationError(
-            'shots_agent_timeout', 'The shots agent ran out of time.'
-          );
-        }
-        if (shotsAgent.temporaryShotsWorker(session)) temporaryWorkerAttempted = true;
-        const dispatched = await deps.shotsAgent.dispatch(config, {
-          pool,
-          session,
-          runId: run.id,
-          origins: exploration.origins,
-          authTokens,
-          navigationHints,
-          recordClips,
-          clipSize,
-          phoneClipSize,
-          // A phone browser for each persona with a phone screen, as the
-          // brief's screenBrowsers names them.
-          phonePersonas,
-          // A child app's pages load /usernode-bridge|native|tailwind/ from
-          // the platform, which the edge routes in production; the shots
-          // browser's proxy does the same. The platform serves its own.
-          platformAssets: app.slug !== config.selfAppSlug,
-          onProgress: (line) => progress(`Shots agent: ${line}`),
-          onShotsDiagnostic: (event) => {
-            recordAgentDiagnostic(metrics, event);
-            options.onAgentDiagnostic?.(agentActivitySummary(metrics), event?.kind);
-          },
-          resumeThreadId: null,
-          timeoutMs: remainingMs,
-        }, injected.agentDependencies || {});
-        addAgentUsage(metrics, dispatched);
-        dispatchTrace.backend = String(dispatched.backend || dispatchTrace.requestedBackend).slice(0, 64);
-        dispatchTrace.model = safeModelId(dispatched.model);
-        if (dispatched.fallbackReason) dispatchTrace.fallbackReason = String(dispatched.fallbackReason).slice(0, 64);
-        dispatchTrace.outcome = 'completed';
-        metrics.agentFinalResponse = agentFinalResponseSummary(
-          dispatched.result, authTokens, exploration.origins, exploration.phoneTestCode
-        );
-        metrics.agentFinalResponses.push({
-          dispatch: metrics.agentDispatches.length, ...metrics.agentFinalResponse,
-        });
-        options.onAgentFinalResponse?.(metrics.agentFinalResponse);
-        return { dispatched, error: null };
-      } catch (error) {
-        if (error?.shotsBackend) dispatchTrace.backend = String(error.shotsBackend).slice(0, 64);
-        if (error?.shotsModel) dispatchTrace.model = safeModelId(error.shotsModel);
-        dispatchTrace.outcome = 'failed';
-        dispatchTrace.code = errorCode(error);
-        // How the agent's process ended, when it did not report it itself
-        // (shots-agent.js): its exit code and the worker's reason.
-        if (Number.isSafeInteger(error?.shotsExitCode)) dispatchTrace.exitCode = error.shotsExitCode;
-        if (shotsAgent.EXIT_CAUSES.has(error?.shotsExitCause)) dispatchTrace.exitCause = error.shotsExitCause;
-        return { dispatched: null, error };
-      } finally {
-        metrics.timingsMs.agentExploration += Math.max(0, Date.now() - dispatchStartedAt);
-      }
+    return {
+      fixtureFingerprint: pair.fixtureFingerprint,
+      baseImageDigest: pair.sides.base.imageDigest,
+      headImageDigest: pair.sides.head.imageDigest,
+      afterOnly,
     };
+  } finally {
+    // The checkouts are this process's; the copies are the run's.
+    if (pair.rootDir) await fs.rm(pair.rootDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
 
-    // The session was idle before the copies were built, minutes ago; a
-    // turn may have taken it since. Wait for it again right before each
-    // dispatch, within what is left of the agent's budget (#4575).
-    const waitIdleBeforeDispatch = async () => {
-      const remainingMs = agentBudgetMs - (Date.now() - agentStartedAt);
-      if (remainingMs <= 0) return;
-      const waitStartedAt = Date.now();
-      try {
-        metrics.dispatchIdleWait = await deps.waitForSessionIdle(pool, session.id, {
-          timeoutMs: Math.min(remainingMs, SESSION_IDLE_WAIT_MS),
-          recoveryTimeoutMs: Math.min(remainingMs, SHOTS_RECOVERY_WAIT_MS),
-          workerService: deps.worker,
-          onObservation: (observation) => { metrics.dispatchIdleWait = observation; },
-        });
-      } catch (error) {
-        if (error?.detail?.idleWait) metrics.dispatchIdleWait = error.detail.idleWait;
-        throw error;
-      } finally {
-        addTiming(metrics, 'idleWait', waitStartedAt);
-      }
-    };
-    const dispatchWhenIdle = async () => {
-      for (let busyRetries = 0; ; busyRetries += 1) {
-        await waitIdleBeforeDispatch();
-        const outcome = await dispatchOnce();
-        if (!agentBusyRetryable(outcome.error) || stopRequested.has(run.id)
-            || busyRetries >= MAX_AGENT_BUSY_RETRIES
-            || agentBudgetMs - (Date.now() - agentStartedAt) < MIN_AGENT_RETRY_MS) {
-          return outcome;
-        }
-        metrics.agentBusyRetries += 1;
-        log.warn('shots', 'The proposal\'s agent was busy at dispatch; waiting to dispatch again', {
-          sessionId: session.id, runId: run.id, code: errorCode(outcome.error),
-          persistCode: outcome.error?.persistCode || null,
-        });
-        progress(AGENT_BUSY_RETRY_PROGRESS);
-      }
-    };
+// What a dispatch error says, as the machine decides on it: another turn
+// took the agent (`busy`), the agent's process died under it for a reason
+// that says nothing about the proposal (`died`), it ran out of time, or it
+// failed.
+function agentErrorOf(error) {
+  if (!error) return null;
+  const code = errorCode(error);
+  return {
+    code,
+    message: visibleError(error),
+    busy: agentBusyRetryable(error),
+    died: agentDiedRetryable(error),
+    timedOut: code === 'shots_agent_timeout',
+    ...(shotsAgent.EXIT_CAUSES.has(error?.shotsExitCause) ? { exitCause: error.shotsExitCause } : {}),
+    ...(Number.isSafeInteger(error?.shotsExitCode) ? { exitCode: error.shotsExitCode } : {}),
+    ...(platformFault(error) ? { platformFault: platformFault(error) } : {}),
+  };
+}
 
-    failurePhase = 'agent_exploration';
-    stage(failurePhase);
-    progress('The shots agent is taking before/after shots…');
-    let agentOutcome = await dispatchWhenIdle();
-    // A Stop kills the shots agent mid-turn; its error is that stop.
-    if (agentOutcome.error && stopRequested.has(run.id)) {
-      throw new ShotsOrchestrationError('shots_stopped', SHOTS_STOPPED_REASON);
+// The same for the worker's result of a turn a restart caught and the work
+// followed to its end (durable-turn.js): it says how its process ended,
+// never why in words.
+function followedErrorOf(result) {
+  if (!shotsAgent.failedResult(result)) return null;
+  const exitCause = shotsAgent.EXIT_CAUSES.has(result?.markerlessCause) ? result.markerlessCause : null;
+  const error = Object.assign(new ShotsOrchestrationError('shots_agent_failed',
+    'The shots agent stopped with an error before it finished.'), { shotsExitCause: exitCause });
+  return agentErrorOf(error);
+}
+
+// What a run adds up to once its agent's turn has ended: the summary of its
+// workspace, without the bytes.
+function verdictOf(summary) {
+  const s = summary.summary;
+  const reasons = [...new Set(s.stories.map((story) => story.reason).filter(Boolean))];
+  return {
+    passed: s.verdict.passed === true,
+    readyCount: s.readyCount,
+    failedCount: s.failedCount,
+    verdict: s.verdict,
+    manifestHash: s.manifestHash,
+    slots: s.files.map((file) => shotsControl.dbSlot(file)),
+    reasons,
+    skippedAny: summary.skippedAny,
+    counts: summary.counts,
+    // A run that publishes nothing says why: each failed change's claim, or
+    // what each skipped change lacked.
+    failedReason: s.failedCount ? shotsFiles.failedReason(summary.intent, s.stories) : null,
+    incompleteReason: reasons.join(' ').slice(0, 1800) || 'The shots agent did not save a before and after shot.',
+    lastToolFailure: summary.lastToolFailure,
+  };
+}
+
+/**
+ * The shots agent's turn on run `runId`'s copies (shots.agent), as a
+ * durable step on `steps` (services/durable-steps.js over the work item's
+ * checkpoint): attached to the turn a restart caught, or started on what is
+ * left of its clock (services/durable-turn.js). Resolves how the turn ended
+ * and what the run's workspace adds up to, for the machine to decide on.
+ */
+async function dispatchAgent(config, pool, {
+  runId, sessionId, budgetMs, steps = null, key = 'agent', onProgress = null, signal = null, current = null,
+}, injected = {}) {
+  const deps = {
+    shotsAgent: injected.shotsAgent || shotsAgent,
+    identities: injected.identities || identities,
+    worker: injected.worker || worker,
+    durableTurn: injected.durableTurn || require('./durable-turn'),
+    durableSteps: injected.durableSteps || require('./durable-steps'),
+  };
+  const control = await shotsControl.read(pool, runId);
+  if (!control?.agent) {
+    throw new ShotsOrchestrationError('shots_control_not_found', 'The copies these shots were to be taken on are gone.');
+  }
+  const a = control.agent;
+  const row = await loadSession(pool, sessionId);
+  const { session, app } = publicSessionAndApp(row);
+  const metrics = newRunMetrics();
+  metrics.planSource = 'shots_agent';
+  metrics.agentActivity.budgetMs = budgetMs;
+  const guest = await deps.identities.shotsGuestIdentity(pool, app, { selfApp: a.selfApp === true });
+  const authTokens = {
+    ...await deps.identities.mintShotsAuthTokens(pool, app.id),
+    ...(guest.token ? { guest: guest.token } : {}),
+  };
+  await shotsControl.extend(pool, runId, Date.now() + budgetMs + CONTROL_SLACK_MS);
+  // A turn stopped on its clock leaves the worker's stop marker; this is a
+  // new turn.
+  deps.worker.clearPendingStop?.(sessionId);
+  let progressAt = 0;
+  const onShotsDiagnostic = (event) => {
+    recordAgentDiagnostic(metrics, event);
+    if (Date.now() - progressAt < 5000) return;
+    progressAt = Date.now();
+    shotsControl.noteProgress(pool, runId, { agentActivity: agentActivitySummary(metrics) }).catch(() => {});
+  };
+  const dispatchTrace = { requestedBackend: 'claude_code', requestedModel: safeModelId(shotsAgent.agentModel(config)), budgetMs };
+  metrics.agentDispatches.push(dispatchTrace);
+  metrics.agentAttempts += 1;
+  // A run that ended (`signal`: its step was cancelled; `current`: its row
+  // says so) starts no turn: a stop, so nothing is reported for it.
+  const stopIfEnded = async () => {
+    if (signal?.aborted || (typeof current === 'function' && !(await current()))) {
+      throw new (require('./durable-steps').StepsStopped)('the shots run ended before its agent was dispatched');
     }
-    // The agent's process died under it (its container ran out of memory or
-    // went away): nothing about the proposal. Start it once more on the same
-    // copies with the budget that is left; what it already saved stays saved,
-    // and its brief's progress says so.
-    if (agentDiedRetryable(agentOutcome.error)
-        && agentBudgetMs - (Date.now() - agentStartedAt) >= MIN_AGENT_RETRY_MS) {
-      log.warn('shots', 'The shots agent\'s process died; dispatching it once more', {
-        sessionId: session.id, runId: run.id, exitCause: agentOutcome.error.shotsExitCause,
+  };
+  await stopIfEnded();
+  const dispatch = async (extra = {}, { budgetMs: left = budgetMs } = {}) => {
+    await stopIfEnded();
+    dispatchTrace.timeoutMs = left;
+    try {
+      const dispatched = await deps.shotsAgent.dispatch(config, {
+        pool, session, runId,
+        origins: a.origins,
+        authTokens,
+        navigationHints: a.navigationHints,
+        recordClips: a.recordClips === true,
+        clipSize: a.clipSize,
+        phoneClipSize: a.phoneClipSize,
+        phonePersonas: a.phonePersonas || [],
+        platformAssets: a.platformAssets === true,
+        onProgress: onProgress ? (line) => onProgress(`Shots agent: ${line}`) : null,
+        onShotsDiagnostic,
+        resumeThreadId: null,
+        timeoutMs: left,
+        ...(extra.holdTurnRecord ? { holdTurnRecord: true } : {}),
+        ...(typeof extra.onTurnRecord === 'function' ? { onTurnRecord: extra.onTurnRecord } : {}),
+      }, injected.agentDependencies || {});
+      addAgentUsage(metrics, dispatched);
+      dispatchTrace.backend = String(dispatched.backend || 'claude_code').slice(0, 64);
+      dispatchTrace.model = safeModelId(dispatched.model);
+      dispatchTrace.outcome = 'completed';
+      return { result: dispatched.result };
+    } catch (error) {
+      dispatchTrace.outcome = 'failed';
+      dispatchTrace.code = errorCode(error);
+      return { result: null, agentError: agentErrorOf(error) };
+    }
+  };
+  const turn = await deps.durableTurn.runTurn(steps || deps.durableSteps.none(), key, {
+    pool, session, mode: 'shots', budgetMs, dispatch,
+    stop: () => deps.worker.stopTurn(sessionId),
+    onProgress,
+  });
+  const routed = turn.routed || {};
+  let error = routed.agentError || null;
+  if (!error && typeof routed.error === 'string') error = { code: 'shots_agent_failed', message: routed.error, busy: false, died: false };
+  if (!error && turn.followed) error = followedErrorOf(routed.result);
+  if (turn.stopped && !error?.busy) error = { ...(error || {}), code: 'shots_agent_timeout', message: 'The shots agent ran out of time.', timedOut: true };
+  const finalResponse = agentFinalResponseSummary(routed.result || null, authTokens, a.origins, a.phoneTestCode);
+  if (finalResponse) metrics.agentFinalResponses.push({ dispatch: 1, ...finalResponse });
+  metrics.timingsMs.agentExploration = Math.max(0, Date.now() - metrics.startedAtMs);
+  const summary = await shotsControl.summaryFor(pool, runId);
+  if (!summary) throw new ShotsOrchestrationError('shots_control_not_found', 'The copies these shots were to be taken on are gone.');
+  return {
+    agent: error ? { outcome: error.busy ? 'busy' : error.died ? 'died' : error.timedOut ? 'timed_out' : 'failed', ...error }
+      : { outcome: 'completed' },
+    followed: !!turn.followed,
+    ...verdictOf({ ...summary, intent: control.intent }),
+    trace: { ...traceSummary(metrics), ...(finalResponse ? { agentFinalResponse: finalResponse } : {}) },
+  };
+}
+
+/**
+ * Where each ready change's before and after screens differ, so the card
+ * can outline it, with the changes whose screens came out the same marked
+ * so (shots.publish). Resolves the verdict to store. A screen that cannot be
+ * compared is shown without outlines; it never holds the run back.
+ */
+async function compareScreens(pool, { runId, verdict }, injected = {}) {
+  const diff = injected.shotsDiff || shotsDiff;
+  const control = await shotsControl.read(pool, runId);
+  if (!control || verdict.afterOnly) return verdict;
+  const ready = control.intent.stories.filter((story) => verdict.stories
+    .some((result) => result.id === story.id && result.status === 'ready'));
+  const slots = [];
+  for (const story of ready) {
+    for (const viewport of story.viewports) {
+      for (const side of ['base', 'head']) {
+        for (const variant of ['context', 'focus', 'animation']) {
+          slots.push(shotsControl.dbSlot({ storyId: story.id, viewport: viewport.name, side, variant }));
+        }
+      }
+    }
+  }
+  try {
+    const files = await shotsControl.filesFor(pool, runId, slots);
+    const screens = await diff.screensFor(ready, files);
+    let stories = verdict.stories;
+    if (typeof diff.unchangedStories === 'function') {
+      stories = shotsFiles.markUnchanged(stories, diff.unchangedStories(screens));
+    }
+    return { ...verdict, screens, stories };
+  } catch (error) {
+    log.warn('shots', 'Could not compare the before and after screens', {
+      runId, error: String(error?.message || error).slice(0, 300),
+    });
+    return verdict;
+  }
+}
+
+// Another run of the proposal is under way (the shots machine's instance).
+async function newerRunUnderWay(pool, sessionId, runId) {
+  const { SHOTS_LIVE_STATES } = require('../workflow/session-work.ts');
+  const { rows } = await pool.query(
+    `SELECT 1 FROM wf_instances WHERE machine = 'shots' AND key = 'session:' || $1::text
+        AND state = ANY($2::text[]) AND data->'run'->>'id' IS DISTINCT FROM $3`,
+    [sessionId, SHOTS_LIVE_STATES, runId]);
+  return rows.length > 0;
+}
+
+/**
+ * Everything a run left (shots.cleanup): its agent's turn when it may still
+ * be at it (`stopTurn`: the run ended while the agent worked), its copies,
+ * its workspace, and, when `worker` says so, the temporary worker an
+ * imported or merged proposal's agent ran in. Throws while anything is
+ * left (its turn's record included), so the work is tried again.
+ */
+async function cleanupRun(config, pool, {
+  runId, sessionId, appSlug, worker: dropWorker = false, stopTurn = false,
+}, injected = {}) {
+  const workerApi = injected.worker || worker;
+  let turnHeld = false;
+  if (stopTurn) {
+    // Only this run's own turn: its record names the run (the dispatch's
+    // telemetry id). Stopped, then its record released, as a turn whose
+    // step ended would have it. A record that could not be released holds
+    // the proposal's agent: the cleanup is tried again until it is, as it
+    // is when the record cannot be read.
+    const activeTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (activeTurn && activeTurn.mode === 'shots' && activeTurn.telemetryCorrelationId === runId) {
+      await workerApi.stopTurn(sessionId).catch((error) => {
+        log.warn('shots', 'Could not stop the shots agent of a run that ended', { sessionId, runId, error: error.message });
       });
-      progress('The shots agent stopped unexpectedly; starting it once more…');
-      agentOutcome = await dispatchWhenIdle();
-      if (agentOutcome.error && stopRequested.has(run.id)) {
-        throw new ShotsOrchestrationError('shots_stopped', SHOTS_STOPPED_REASON);
-      }
+      const released = await workerApi.finishTurn(sessionId, {
+        turnId: turnLifecycle.turnIdentity(activeTurn), journal: activeTurn.journal || null,
+      });
+      turnHeld = released === false;
     }
+  }
+  const left = await (injected.removeCopies || removeCopies)(config, { runId, appSlug });
+  if (left.length) {
+    throw new ShotsOrchestrationError('shots_cleanup_incomplete',
+      `The copies could not all be removed: ${left.map((err) => err.message).slice(0, 3).join('; ')}`);
+  }
+  if (turnHeld) {
+    throw new ShotsOrchestrationError('shots_cleanup_incomplete',
+      'The shots agent\'s turn record could not be released.');
+  }
+  // The temporary worker goes unless a newer run of the proposal is under
+  // way in it (this cleanup waited for its copies, or for a retry).
+  if (dropWorker && !(await newerRunUnderWay(pool, sessionId, runId))) await workerApi.destroyCcVolume(sessionId);
+  await shotsControl.remove(pool, runId);
+  // The run's row says so (the retention prune reads it).
+  return { cleaned: true, version: environment.RESOURCE_CLEANUP_VERSION };
+}
 
-    // Publish every change with a complete before/after set, even when the
-    // turn ran out of time or another change was skipped. Only a run with
-    // nothing to publish fails, and it says why for each change.
-    const summary = registration.control.summary();
-    if (!summary.verdict.passed) {
-      const reasons = [...new Set(summary.stories.map((story) => story.reason).filter(Boolean))];
-      if (agentOutcome.error && !registration.control.skipped.size && !registration.control.skippedAll) {
-        throw agentOutcome.error;
-      }
-      // A change the agent tried and found broken on the after build is the
-      // change not working, not shots that could not be taken: its own code,
-      // and the verdict is kept so every reader can say which change failed
-      // (shots-state.brokenOnHead, the Homeroom bot's fix round).
-      if (summary.failedCount) {
-        const failure = new ShotsOrchestrationError('shots_change_failed', shotsFiles.failedReason(intent, summary.stories));
-        failure.hardVerdict = summary.verdict;
-        throw failure;
-      }
-      const incomplete = new ShotsOrchestrationError(
-        'shots_capture_incomplete',
-        reasons.join(' ').slice(0, 1800) || 'The shots agent did not save a before and after shot.'
-      );
-      // Each change's own reason is kept too, so whoever can supply the
-      // data it lacked hears which change it was (shots-state.skippedOnHead).
-      incomplete.hardVerdict = summary.verdict;
-      throw incomplete;
+// ── A shots eval's trial, in its runner's process ───────────────────────
+
+/**
+ * A shots eval's trial (shots-eval-runner.js): the same steps as a
+ * proposal's run, one after the other in this process, on the trial's own
+ * rows (`injected.state`, its adapter). Nobody waits on a trial, and its
+ * runner has its own queue and recovery.
+ */
+async function executeRun(config, options, injected = {}) {
+  const deps = {
+    state: injected.state || state,
+    waitForSessionIdle: injected.waitForSessionIdle || waitForSessionIdle,
+    worker: injected.worker || worker,
+  };
+  const { pool, session, app, onProgress = null } = options;
+  const run = options.run;
+  const agentBudgetMs = config.shots?.maxAgentMs || 480_000;
+  const runBudgetMs = config.shots?.maxRunMs || 1_440_000;
+  const progress = (message) => { if (typeof onProgress === 'function') onProgress(message); };
+  let failurePhase = 'wait_for_idle';
+  let copiesBuilt = false;
+  try {
+    const intent = planContract.parseIntent(run.intent);
+    progress({ stage: failurePhase });
+    await deps.waitForSessionIdle(pool, session.id, {
+      timeoutMs: Math.min(runBudgetMs, SESSION_IDLE_WAIT_MS),
+      recoveryTimeoutMs: Math.min(runBudgetMs, SHOTS_RECOVERY_WAIT_MS),
+      workerService: deps.worker,
+    });
+    failurePhase = 'prepare_pair';
+    progress({ stage: failurePhase });
+    if (run.state === 'planned') await deps.state.transitionRun(pool, run.id, 'provisioning', { startedAt: new Date() });
+    copiesBuilt = true;
+    const copies = await buildCopies(config, pool, {
+      runId: run.id, sessionId: session.id, kind: 'trial', intent, baseSha: run.base_sha, headSha: run.head_sha,
+      budgetMs: agentBudgetMs, onProgress,
+    }, injected);
+    await deps.state.transitionRun(pool, run.id, 'exploring', copies);
+    failurePhase = 'agent_exploration';
+    progress({ stage: failurePhase });
+    const agentStartedAt = Date.now();
+    const left = () => agentBudgetMs - (Date.now() - agentStartedAt);
+    let out = await dispatchAgent(config, pool, { runId: run.id, sessionId: session.id, budgetMs: agentBudgetMs }, injected);
+    for (let busy = 0; out.agent.outcome === 'busy' && busy < MAX_AGENT_BUSY_RETRIES && left() >= MIN_AGENT_RETRY_MS; busy += 1) {
+      await deps.waitForSessionIdle(pool, session.id, { timeoutMs: Math.min(left(), SESSION_IDLE_WAIT_MS), workerService: deps.worker });
+      out = await dispatchAgent(config, pool, { runId: run.id, sessionId: session.id, budgetMs: left() }, injected);
     }
-    // Where each change's before and after screens differ, so the card can
-    // outline it. A screen that cannot be compared is shown without outlines;
-    // it never holds the run back. An after-only run has nothing to compare,
-    // and its card shows each after screen on its own.
-    if (!afterOnly) {
-      try {
-        const ready = intent.stories.filter((story) => summary.stories
-          .some((result) => result.id === story.id && result.status === 'ready'));
-        const diff = deps.shotsDiff || shotsDiff;
-        summary.verdict.screens = await diff.screensFor(ready, summary.files);
-        // A change whose screens show no difference anywhere says so on its
-        // card, as a byte-identical pair already does (shots-files.summarize).
-        if (typeof diff.unchangedStories === 'function') {
-          summary.verdict.stories = shotsFiles.markUnchanged(
-            summary.verdict.stories, diff.unchangedStories(summary.verdict.screens)
-          );
-          summary.stories = summary.verdict.stories;
-        }
-      } catch (error) {
-        log.warn('shots', 'Could not compare the before and after screens', {
-          runId: run.id, error: String(error?.message || error).slice(0, 300),
-        });
+    if (out.agent.outcome === 'died' && left() >= MIN_AGENT_RETRY_MS) {
+      out = await dispatchAgent(config, pool, { runId: run.id, sessionId: session.id, budgetMs: left() }, injected);
+    }
+    options.onAgentFinalResponse?.(out.trace.agentFinalResponse || null);
+    if (!out.passed) {
+      if (out.agent.outcome !== 'completed' && !out.skippedAny) {
+        throw Object.assign(new ShotsOrchestrationError(out.agent.code || 'shots_agent_failed', out.agent.message || 'The shots agent stopped.'),
+          { shotsPlatformFault: out.agent.platformFault?.kind });
       }
+      const failure = out.failedCount
+        ? new ShotsOrchestrationError('shots_change_failed', out.failedReason)
+        : new ShotsOrchestrationError('shots_capture_incomplete', out.incompleteReason);
+      failure.hardVerdict = out.verdict;
+      throw failure;
     }
     failurePhase = 'persist_shots';
-    stage(failurePhase);
-    await deps.state.transitionRun(pool, run.id, 'reviewing', {
-      hardVerdict: summary.verdict,
-      planHash: summary.manifestHash,
-      traceSummary: traceSummary(metrics, {
-        planHash: summary.manifestHash, runs: 1, stories: summary.verdict.stories,
-      }),
-    });
-    deps.notifyShots(session, app, 'reviewing');
-    const artifactPersistStartedAt = Date.now();
-    failurePhase = 'store_artifacts';
-    stage(failurePhase);
-    await deps.state.storeArtifacts(pool, run.id, summary.files, {
-      headSha: run.head_sha,
-      planHash: summary.manifestHash,
-    });
-    addTiming(metrics, 'artifactPersist', artifactPersistStartedAt);
-    metrics.artifactBytes = summary.files.reduce((sum, file) => sum + file.bytes, 0);
-
-    // Attempt teardown before publication. A failed cleanup remains pending
-    // for terminal recovery without discarding the useful shots.
+    const verdict = intent.stories.length ? await compareScreens(pool, { runId: run.id, verdict: out.verdict }, injected) : out.verdict;
+    await deps.state.transitionRun(pool, run.id, 'reviewing', { hardVerdict: verdict, planHash: out.manifestHash, traceSummary: out.trace });
+    const files = await shotsControl.filesFor(pool, run.id, out.slots);
+    await deps.state.storeArtifacts(pool, run.id, files, { headSha: run.head_sha, planHash: out.manifestHash });
     failurePhase = 'cleanup';
-    stage(failurePhase);
-    const cleanupStartedAt = Date.now();
-    const cleanupResult = await deps.environment.cleanupPair(config, pair);
-    addTiming(metrics, 'cleanup', cleanupStartedAt);
-    pair = null;
-    const finalTrace = traceSummary(metrics, {
-      planHash: summary.manifestHash,
-      runs: 1,
-      stories: summary.verdict.stories,
-      terminalFailureClass: null,
-      // Publishing useful shots must not hide an incomplete resource cleanup.
-      // Terminal recovery retries failures; old unversioned markers are rechecked.
-      cleanupComplete: cleanupResult?.cleaned === true,
-      cleanupVersion: cleanupResult?.cleaned === true ? environment.RESOURCE_CLEANUP_VERSION : null,
+    await cleanupRun(config, pool, { runId: run.id, sessionId: session.id, appSlug: app.slug }, injected).catch((error) => {
+      log.warn('shots', 'A trial\'s copies could not all be removed', { runId: run.id, error: error.message });
     });
-    failurePhase = 'verify';
-    stage(failurePhase);
-    await deps.state.transitionRun(pool, run.id, 'verified', {
-      hardVerdict: summary.verdict,
-      planHash: summary.manifestHash,
-      traceSummary: finalTrace,
-    });
-    const { agentFinalResponses: _privateResponses, ...logFinalTrace } = finalTrace;
-    log.info('shots', 'Before/after shots published', {
-      sessionId: session.id,
-      runId: run.id,
-      trace: logFinalTrace,
-    });
-    deps.notifyShots(session, app, 'verified');
-    progress('Before/after shots are ready.');
+    copiesBuilt = false;
+    await deps.state.transitionRun(pool, run.id, 'verified', { hardVerdict: verdict, planHash: out.manifestHash, traceSummary: out.trace });
     return deps.state.getForSession(pool, session.id, { headSha: run.head_sha });
   } catch (error) {
-    const control = registration?.control;
-    const toolFailure = control?.lastToolFailure;
-    const detail = boundedErrorDetail(error);
-    // A stop ends the run as the person asked; nothing takes it again.
-    const fault = run && stopRequested.has(run.id) ? null : platformFault(error);
-    const failureTrace = traceSummary(metrics, {
+    await failCurrentRun(pool, run.id, error, deps.state, {
       terminalFailureClass: errorCode(error),
-      ...(fault ? { platformFault: fault } : {}),
-      ...(metrics.agentFinalResponse ? { agentFinalResponse: metrics.agentFinalResponse } : {}),
-      failure: {
-        phase: failurePhase,
-        code: errorCode(error),
-        message: visibleError(error),
-        ...(toolFailure ? {
-          tool: toolFailure.operation,
-          toolCode: errorCode(toolFailure.error),
-          toolMessage: visibleError(toolFailure.error),
-        } : {}),
-        ...(detail ? { detail } : {}),
-      },
-      ...(control ? { control: {
-        savedFiles: control.saved.size,
-        skippedChanges: control.skipped.size,
-        ...(control.failed?.size ? { failedChanges: control.failed.size } : {}),
-        notedChanges: control.notes.size,
-        ...(control.notices?.length ? { notedProblems: control.notices.length } : {}),
-        // Requests held or failed and sample files uploaded, all changes together.
-        ...(control.conditions?.size ? {
-          notedConditions: [...control.conditions.values()].reduce((sum, list) => sum + list.length, 0),
-        } : {}),
-        skippedAll: control.skippedAll ? true : false,
-      } } : {}),
-    });
-    const failed = await failCurrentRun(
-      pool,
-      run?.id || options.runId,
-      error,
-      deps.state,
-      failureTrace
-    );
-    if (failed && session && app) {
-      deps.notifyShots(session, app, 'failed', { failureCode: errorCode(error) });
-    }
-    // The final model answer is for the proposal owner and app managers only;
-    // do not copy its potentially app-derived text into the general log ring.
-    const {
-      agentFinalResponse: _privateResponse,
-      agentFinalResponses: _privateResponses,
-      ...logTrace
-    } = failureTrace;
-    log.warn('shots', 'Before/after run ended without shots', {
-      sessionId: session?.id || null,
-      runId: run?.id || options.runId || null,
-      code: errorCode(error),
-      trace: logTrace,
+      failure: { phase: failurePhase, code: errorCode(error), message: visibleError(error) },
     });
     throw error;
   } finally {
-    registration?.unregister();
-    if (run) stopRequested.delete(run.id);
-    try {
-      if (pair) {
-        const cleanupStartedAt = Date.now();
-        try { await deps.environment.cleanupPair(config, pair); }
-        finally {
-          addTiming(metrics, 'cleanup', cleanupStartedAt);
-          log.info('shots', 'Before/after build cleanup finished', {
-            sessionId: session?.id || null,
-            runId: run?.id || options.runId || null,
-            cleanupMs: metrics.timingsMs.cleanup,
-          });
-        }
-      }
-    } finally {
-      if (temporaryWorkerAttempted) {
-        try {
-          await deps.worker.destroyCcVolume(session.id);
-          log.info('shots', 'Temporary preview worker released', {
-            sessionId: session.id, runId: run?.id || options.runId || null,
-          });
-        } catch (error) {
-          // Cleanup must not replace the run's outcome. The Kubernetes
-          // error is still logged so operators can investigate a leak.
-          log.warn('shots', 'Temporary preview worker cleanup failed', {
-            sessionId: session.id, runId: run?.id || options.runId || null,
-            error: error.message,
-          });
-        }
-      }
+    if (copiesBuilt) {
+      await cleanupRun(config, pool, { runId: run.id, sessionId: session.id, appSlug: app.slug }, injected).catch((error) => {
+        log.warn('shots', 'A trial\'s copies could not all be removed', { runId: run.id, error: error.message });
+      });
+    }
+    if (shotsAgent.temporaryShotsWorker(session)) {
+      await deps.worker.destroyCcVolume(session.id).catch(() => {});
     }
   }
-}
-
-// #2601/#2558: the human sentence for each refusal, for the proposal to
-// carry and for the log line. `already_running` and `not_required` are not
-// here on purpose — neither is a run that failed to start, and a run with a
-// state of its own says more than any note could.
-const NOT_STARTED_REASONS = Object.freeze({
-  disabled: 'Before & after shots are not being taken on this deployment, so nothing picked this one up.',
-  missing_intent: 'This proposal has no declared change recorded, so there was nothing to shoot.',
-  no_revision: 'The proposal revision to preview could not be resolved, so the run never started.',
-  no_staging_preview: 'No staging preview was built for this commit, so there was nothing to take before & after shots of.',
-});
-
-// Store the refusal on the proposal and say so at info level. Both halves
-// are best-effort: a refusal that cannot be written down must not turn into
-// an exception on a fire-and-forget scheduling path.
-async function noteNotStarted(pool, sessionId, reason, injected = {}) {
-  const text = NOT_STARTED_REASONS[reason] || null;
-  log.info('shots', 'Before & after shots run not started', { sessionId, reason });
-  if (!text) return;
-  try {
-    await (injected.state || state).recordNotStarted(pool, sessionId, text);
-  } catch (error) {
-    log.warn('shots', 'Could not record why the before & after shots run did not start', {
-      sessionId, reason, error: error.message,
-    });
-  }
-}
-
-async function scheduleForSession(config, options, injected = {}) {
-  const { pool, sessionId, headSha = null, trigger = 'preview-ready',
-    onProgress = null } = options;
-  if (!config.shots?.execute) {
-    await noteNotStarted(pool, sessionId, 'disabled', injected);
-    return { scheduled: false, reason: 'disabled' };
-  }
-  // A draining process would start the run only for its shutdown handler
-  // to fail it seconds later, spending one of the proposal's automatic
-  // retries on nothing. Nothing is written: no claim row exists yet, so the
-  // next leader's unstarted-claim sweep (shots-gc.recoverUnstarted) starts
-  // it once that process is serving.
-  if ((injected.isShuttingDown || lifecycle.isShuttingDown)()) {
-    log.info('shots', 'Before & after shots run not started: the server is shutting down', { sessionId, trigger });
-    return { scheduled: false, reason: 'shutting_down' };
-  }
-  const session = await loadSession(pool, sessionId);
-  // Closed changes do not start automatic shots runs. A proposal owner or
-  // manager may still deliberately rerun a merged change to diagnose an old
-  // failure; its temporary shots worker does not recreate a retained PVC.
-  if (CLOSED_STATUSES.has(session.status)
-      && !(session.status === 'merged' && trigger === 'manual-rerun')) {
-    return { scheduled: false, reason: 'closed' };
-  }
-  const intent = intentForSession(session);
-  if (!intent) {
-    await noteNotStarted(pool, sessionId, 'missing_intent', injected);
-    return { scheduled: false, reason: 'missing_intent' };
-  }
-  // An explicit head is a fence, not permission to revive a former commit.
-  // The session is reloaded here because the author route and the checks
-  // hand-off both observed it earlier, before this asynchronous launch.
-  if (headSha && exactSha(headSha) !== headForSession(session)) {
-    return { scheduled: false, reason: 'head_moved' };
-  }
-  const revision = await resolveRevisionContext(session, headSha, injected.github || github);
-  const key = `${sessionId}:${revision.headSha}`;
-  if (inFlight.has(key)) return { scheduled: false, reason: 'already_running', promise: inFlight.get(key) };
-  const heuristicUi = uiFileHeuristic(revision.files);
-  const created = await (injected.state || state).createRun(pool, {
-    sessionId,
-    baseSha: revision.baseSha,
-    headSha: revision.headSha,
-    intent,
-    trigger,
-    heuristicUi,
-  });
-  const run = created.run;
-  notifyShots(session, publicSessionAndApp(session).app, run.state);
-  require('./pr-metadata').syncShotsPrBlock(pool, sessionId).catch((error) => {
-    log.warn('shots', 'Could not publish the authenticated shots link to the PR', {
-      sessionId, runId: run.id, error: error.message,
-    });
-  });
-  if (run.state === 'not_required') {
-    return { scheduled: false, reason: 'not_required', runId: run.id };
-  }
-  if (!created.created && run.state !== 'planned') {
-    return { scheduled: false, reason: run.state, runId: run.id };
-  }
-  // Claim the durable planned row before handing work to an asynchronous
-  // runner. A checks hand-off, the recovery sweep and an author submission
-  // may all arrive together, including on different server pods. Only one
-  // planned -> provisioning transition may own the paired environments.
-  try {
-    await (injected.state || state).transitionRun(pool, run.id, 'provisioning', {
-      startedAt: new Date(),
-    });
-  } catch (error) {
-    if (['invalid_shots_transition', 'stale_shots_operation'].includes(error?.code)) {
-      return { scheduled: false, reason: 'already_running', runId: run.id };
-    }
-    throw error;
-  }
-  const { session: sessionValue, app } = publicSessionAndApp(session);
-  // The run is under way, so whatever an earlier attempt recorded about it
-  // not starting is no longer true (#2601/#2558).
-  await (injected.state || state).clearNotStarted(pool, sessionId).catch(() => {});
-  const heartbeat = startRunHeartbeat(
-    pool, run.id, injected.state || state, onProgress,
-    injected.heartbeatIntervalMs || HEARTBEAT_INTERVAL_MS
-  );
-  const promise = executeRun(config, {
-    pool,
-    run: { ...run, state: 'provisioning' },
-    session: sessionValue,
-    app,
-    revision,
-    onProgress: heartbeat.onProgress,
-    onAgentDiagnostic: heartbeat.onAgentDiagnostic,
-    onAgentFinalResponse: heartbeat.onAgentFinalResponse,
-  }, injected).catch((error) => {
-    log.warn('shots', 'Before & after shots run failed', {
-      sessionId,
-      runId: run.id,
-      code: errorCode(error),
-      error: visibleError(error),
-    });
-    throw error;
-  }).finally(() => {
-    heartbeat.stop();
-    inFlight.delete(key);
-    inFlightRunIds.delete(key);
-  });
-  // Attach a rejection observer now so fire-and-forget callers never create
-  // an unhandled rejection; callers that need completion may still await the
-  // original promise returned below.
-  promise.catch(() => {});
-  inFlight.set(key, promise);
-  inFlightRunIds.set(key, run.id);
-  return { scheduled: true, runId: run.id, promise };
-}
-
-function inFlightSnapshot() {
-  return [...inFlight.keys()];
-}
-
-function inFlightRunSnapshot() {
-  return [...inFlightRunIds.values()];
-}
-
-// The running shots run on a change, whatever its head, or null. Settles
-// (never rejects) when the run ends.
-// A run another platform process holds settles when its hold goes.
-function inFlightRunFor(sessionId) {
-  const prefix = `${Number(sessionId)}:`;
-  for (const [key, promise] of inFlight) {
-    if (key.startsWith(prefix)) return promise.then(() => {}, () => {});
-  }
-  const processes = require('./processes');
-  if (processes.heldElsewhere('shots', Number(sessionId))) {
-    return processes.whenReleasedElsewhere('shots', Number(sessionId));
-  }
-  return null;
-}
-
-// A person's Stop on the change's running before/after shots. The run is
-// failed at once, with its own code, so the proposal reads "stopped" and an
-// automatic trigger for the same head does not start it again (a person's
-// Rerun still does). The shots agent is killed only when the change's
-// worker is running a shots turn: never a coding turn. Whatever step the
-// runner is inside ends at its next state transition, which the failed run
-// refuses, and its temporary environments are released then.
-async function stopForSession(pool, sessionId, injected = {}) {
-  const stateService = injected.state || state;
-  const workerApi = injected.worker || worker;
-  const session = await loadSession(pool, sessionId);
-  const runId = session.shots_run_id;
-  if (!runId) return { stopped: false, reason: 'not_running' };
-  const run = await stateService.getRun(pool, runId);
-  if (!run || run.current_run_id !== run.id || !ACTIVE_STATES.has(run.state)) {
-    return { stopped: false, reason: 'not_running' };
-  }
-  try {
-    await stateService.transitionRun(pool, run.id, 'failed', {
-      failureCode: 'shots_stopped',
-      failureReason: SHOTS_STOPPED_REASON,
-    });
-  } catch (error) {
-    if (['invalid_shots_transition', 'stale_shots_operation'].includes(error?.code)) {
-      return { stopped: false, reason: 'not_running' };
-    }
-    throw error;
-  }
-  await stopHere({ sessionId, runId: run.id, headSha: run.head_sha }, workerApi);
-  // A run another platform process executes (one finishing its work after a
-  // release, say): it does the same there, told over the bus.
-  if (!inFlight.has(`${Number(sessionId)}:${run.head_sha}`) && require('./processes').heldElsewhere('shots', Number(sessionId))) {
-    require('./ws-bus').publish('shots_stop', null, { sessionId: Number(sessionId), runId: run.id, headSha: run.head_sha });
-  }
-  log.info('shots', 'Before/after shots stopped', { sessionId, runId: run.id, from: run.state });
-  notifyShots(session, publicSessionAndApp(session).app, 'failed', { failureCode: 'shots_stopped' });
-  return { stopped: true, runId: run.id };
-}
-
-// What a stop does to the run in this process: its runner hands the shots
-// agent no further turn, and the agent's turn ends. Only for a run this
-// process executes; never a coding turn.
-async function stopHere({ sessionId, runId, headSha }, workerApi = worker) {
-  let acted = false;
-  if (inFlight.has(`${Number(sessionId)}:${headSha}`)) { stopRequested.add(runId); acted = true; }
-  if (workerApi.getActiveTurnMode(sessionId) === 'shots') {
-    acted = true;
-    await workerApi.stopTurn(sessionId).catch((error) => {
-      log.warn('shots', 'Could not stop the shots agent', { sessionId, runId, error: error.message });
-    });
-  }
-  return acted;
-}
-
-// The bus's `shots_stop` (services/ws.js): another process stopped a run this
-// one executes. The run is already failed in the database.
-function receiveStop(payload) {
-  const sessionId = Number(payload?.sessionId);
-  const runId = payload?.runId;
-  if (!Number.isInteger(sessionId) || runId == null || typeof payload?.headSha !== 'string') return Promise.resolve(false);
-  return stopHere({ sessionId, runId, headSha: payload.headSha }).then((stopped) => {
-    if (stopped) log.info('shots', 'Stopped a before/after shots run another process was asked to stop', { sessionId, runId });
-    return stopped;
-  });
 }
 
 module.exports = {
-  receiveStop,
   ShotsOrchestrationError,
   exactSha,
   headForSession,
@@ -1991,7 +1660,9 @@ module.exports = {
   sameProvenance,
   waitForSessionIdle,
   agentBusyRetryable,
+  agentDiedRetryable,
   MAX_AGENT_BUSY_RETRIES,
+  MIN_AGENT_RETRY_MS,
   platformFault,
   visibleError,
   newRunMetrics,
@@ -2001,16 +1672,13 @@ module.exports = {
   traceSummary,
   progressPhase,
   startRunHeartbeat,
-  liveRunObserver,
-  notifyShots,
   failCurrentRun,
+  runCurrent,
+  resolveRevision,
+  buildCopies,
+  agentErrorOf,
+  dispatchAgent,
+  compareScreens,
+  cleanupRun,
   executeRun,
-  scheduleForSession,
-  noteNotStarted,
-  NOT_STARTED_REASONS,
-  inFlightSnapshot,
-  inFlightRunSnapshot,
-  inFlightRunFor,
-  stopForSession,
-  SHOTS_STOPPED_REASON,
 };

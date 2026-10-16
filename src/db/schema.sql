@@ -10077,6 +10077,67 @@ CREATE INDEX IF NOT EXISTS idx_shot_diagnostic_artifacts_run
   ON shot_diagnostic_artifacts(run_id, attempt);
 COMMENT ON TABLE shot_diagnostic_artifacts IS 'staging:private';
 
+-- The shots agent's workspace for one run (a proposal's, or a shots eval's
+-- trial): its brief, and what it has said so far through its tools (the
+-- changes it skipped, its notes, the problems and conditions it noted).
+-- Written by the agent's tool calls, through whichever web process serves
+-- them (routes/internal.js, services/shots-control.js), so a restart of the
+-- process that started the run loses nothing and the agent never has to
+-- reach one particular Pod. The shots machine reads it once the agent's
+-- turn has ended (src/workflow/shots/). `kind`: 'run' is checked against
+-- the proposal's current run, 'trial' against nothing more (its runner owns
+-- it). Removed with the run's copies.
+CREATE TABLE IF NOT EXISTS shot_run_control (
+  run_id             VARCHAR(32) PRIMARY KEY CHECK (run_id ~ '^[0-9a-f]{32}$'),
+  kind               VARCHAR(8) NOT NULL DEFAULT 'run' CHECK (kind IN ('run', 'trial')),
+  session_id         INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  intent             JSONB NOT NULL,
+  context            JSONB NOT NULL,
+  home_tiles         JSONB,
+  after_only         BOOLEAN NOT NULL DEFAULT FALSE,
+  -- What the agent's dispatch needs beyond the brief: the copies' internal
+  -- addresses and the phone sign-in code their fixture copies accept.
+  agent              JSONB,
+  -- What the agent is doing now (its last tool, its provider calls), for
+  -- the owner's diagnostics only: nothing decides on it.
+  progress           JSONB,
+  expires_at         TIMESTAMPTZ NOT NULL,
+  skipped            JSONB NOT NULL DEFAULT '{}'::jsonb,
+  failed             JSONB NOT NULL DEFAULT '[]'::jsonb,
+  notes              JSONB NOT NULL DEFAULT '{}'::jsonb,
+  notices            JSONB NOT NULL DEFAULT '[]'::jsonb,
+  conditions         JSONB NOT NULL DEFAULT '{}'::jsonb,
+  skipped_all        TEXT,
+  skipped_all_failed BOOLEAN NOT NULL DEFAULT FALSE,
+  last_tool_failure  JSONB,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_shot_run_control_session ON shot_run_control(session_id);
+COMMENT ON TABLE shot_run_control IS 'staging:private';
+
+-- Every shot and clip the agent saved for a run, one row per slot (saving
+-- the same slot again replaces it). Published by copying the ready ones
+-- into shot_artifacts in the transition that publishes the run.
+CREATE TABLE IF NOT EXISTS shot_run_files (
+  run_id        VARCHAR(32) NOT NULL REFERENCES shot_run_control(run_id) ON DELETE CASCADE,
+  slot          VARCHAR(200) NOT NULL,
+  story_id      VARCHAR(96) NOT NULL,
+  viewport      VARCHAR(32) NOT NULL,
+  side          VARCHAR(8) NOT NULL CHECK (side IN ('base', 'head')),
+  variant       VARCHAR(16) NOT NULL CHECK (variant IN ('focus', 'context', 'animation')),
+  media         VARCHAR(8) NOT NULL CHECK (media IN ('png', 'webm')),
+  content_type  VARCHAR(32) NOT NULL,
+  data          BYTEA NOT NULL,
+  width         INTEGER CHECK (width IS NULL OR width > 0),
+  height        INTEGER CHECK (height IS NULL OR height > 0),
+  bytes         INTEGER NOT NULL CHECK (bytes >= 0),
+  sha256        VARCHAR(64) NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  saved_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (run_id, slot)
+);
+COMMENT ON TABLE shot_run_files IS 'staging:private';
+
 -- #2377: experimental Global Chat. These records are deliberately separate
 -- from repository-development chat_sessions and user_agent_preferences: the
 -- inexpensive global assistant may discover and operate the product, while
@@ -13970,6 +14031,42 @@ CREATE TRIGGER chat_sessions_wf_preview_owned
     'staging_runtime_name', 'staging_commit_sha', 'checks_commit_sha', 'check_state',
     'test_results', 'check_error_detail', 'consecutive_check_failures', 'check_next_retry_at',
     'console_check_state', 'capture_state');
+
+-- shots (src/workflow/shots/) owns a proposal's before & after shots once it
+-- holds the proposal: the slot on chat_sessions and every run row. Every
+-- writer is the machine's transition (the declarations, the runs, the
+-- waivers); the retention prune and the cascades only delete. A staging seed
+-- inserts its fixture runs for proposals the machine does not hold.
+DROP TRIGGER IF EXISTS chat_sessions_wf_shots_owned ON chat_sessions;
+CREATE TRIGGER chat_sessions_wf_shots_owned
+  BEFORE UPDATE ON chat_sessions
+  FOR EACH ROW
+  WHEN (OLD.shots_state IS DISTINCT FROM NEW.shots_state
+        OR OLD.shots_run_id IS DISTINCT FROM NEW.shots_run_id
+        OR OLD.shots_detail IS DISTINCT FROM NEW.shots_detail
+        OR OLD.shots_updated_at IS DISTINCT FROM NEW.shots_updated_at)
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=shots/session:',
+    'shots_state', 'shots_run_id', 'shots_detail', 'shots_updated_at');
+
+CREATE OR REPLACE FUNCTION wf_guard_shot_runs() RETURNS TRIGGER AS $$
+BEGIN
+  IF current_setting('app.wf_writer', true) = 'transition' THEN
+    RETURN NEW;
+  END IF;
+  -- A deleted account's waiver (ON DELETE SET NULL) is not the run moving.
+  IF TG_OP = 'UPDATE' AND (to_jsonb(NEW) - 'override_user_id') = (to_jsonb(OLD) - 'override_user_id') THEN
+    RETURN NEW;
+  END IF;
+  IF wf_holds('shots', 'session:' || NEW.session_id) THEN
+    RAISE EXCEPTION 'WF_OWNERSHIP_VIOLATION: % on shot_runs of a proposal the shots machine holds', TG_OP;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS shot_runs_wf_shots_owned ON shot_runs;
+CREATE TRIGGER shot_runs_wf_shots_owned
+  BEFORE INSERT OR UPDATE ON shot_runs
+  FOR EACH ROW EXECUTE FUNCTION wf_guard_shot_runs();
 
 -- A checks run's media (screenshots, recordings) while the run is under
 -- way: its handler stores them here under the run's id, and the transition

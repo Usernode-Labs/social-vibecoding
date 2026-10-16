@@ -115,10 +115,6 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       if (!oversize) void Promise.resolve(require('../routes/sessions').receiveSessionStop?.(payload))
         .catch((err) => log.warn('ws', 'A stop for a turn here failed', { err: err.message }));
       return;
-    case 'shots_stop':
-      if (!oversize) void require('./shots-orchestrator').receiveStop(payload)
-        .catch((err) => log.warn('ws', 'A stop for a shots run here failed', { err: err.message }));
-      return;
     case 'turn_byok':
       if (!oversize) require('./worker').receiveTurnByok(payload);
       return;

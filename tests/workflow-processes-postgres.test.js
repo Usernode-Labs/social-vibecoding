@@ -60,6 +60,8 @@ test('workflow machines in a process of their own, and through its crash', { tim
 
   // The configuration, as config.js reads it; the child adds the database URL.
   const flags = { dataEncryptionKey: DATA_KEY, wfPoolMax: 4, wfSlots: 2,
+    // Before & after shots taken (their steps are faked).
+    shots: { execute: true, collect: true, maxAgentMs: 480000, maxRunMs: 1440000 },
     // Phone push on, to a fake Firebase (the fixture fakes its library).
     mobilePushEnabled: true, mobilePushEnvironment: 'production', firebaseProjectId: 'social-test',
     firebaseServiceAccountJsonB64: Buffer.from(JSON.stringify({
@@ -286,24 +288,62 @@ test('workflow machines in a process of their own, and through its crash', { tim
   await t.test('a shots run still working in a worker keeps a merge from retiring it, whichever process runs it', async () => {
     const a = await app({ selfHosted: true });
     const s = await proposal(a);
-    // The run's own row, heartbeated (shots-orchestrator.js renews updated_at
-    // every 30 s). It can be in the web process, a follower, or one that died.
-    const runId = crypto.randomBytes(16).toString('hex');
-    await pool.query(
-      `INSERT INTO shot_runs (id, session_id, base_sha, head_sha, intent, state, trace_summary)
-       VALUES ($1, $2, $3, $4, '{}', 'exploring', '{"progress": {}}')`, [runId, s.id, SHA('0'), SHA('1')]);
+    // A run under way is the shots machine's state (src/workflow/session-work.ts
+    // shotsRunningSql), whichever process runs it, and across its restarts.
+    const asWriter = async (fn) => {
+      const c = await pool.connect();
+      try { await c.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`); await fn(c); await c.query('COMMIT'); } finally { c.release(); }
+    };
+    const shots = (state) => (c) => c.query(
+      `INSERT INTO wf_instances (machine, key, state, data, version, machine_version)
+       VALUES ('shots', $1, $2, $3::jsonb, 1, 1)
+       ON CONFLICT (machine, key) DO UPDATE SET state = EXCLUDED.state`,
+      [`session:${s.id}`, state, JSON.stringify({ sessionId: s.id, run: { id: 'r'.repeat(32) } })]);
+    await asWriter(shots('taking_shots'));
     await platform.mergeConfirmed({ sessionId: s.id, appId: a.id, mergeSha: SHA('c'), force: false, tally: { yes: 1, required: 1, active: 1 } });
     const retires = async () => (await pool.query(
       `SELECT work_key, status FROM wf_work WHERE machine = 'merge-followups' AND key = $1 AND kind = 'worker.retire' ORDER BY created_at`,
       [mergeKey(s)])).rows;
     await procs.until(async () => (await retires()).length === 2, 'the retire to name the run and ask again later');
     const removed = async () => (await procs.effects(pool, 'docker.removeVolume')).filter((e) => e.data.name.endsWith(`-${s.id}`));
-    assert.deepEqual(await removed(), [], 'the worker is kept while the run is heard from');
+    assert.deepEqual(await removed(), [], 'the worker is kept while the run is under way');
     // The run ends; the retire asked again (made due now) removes the worker.
-    await pool.query(`UPDATE shot_runs SET state = 'failed', completed_at = NOW() WHERE id = $1`, [runId]);
+    await asWriter(shots('published'));
     await pool.query(`UPDATE wf_work SET due_at = NOW() WHERE machine = 'merge-followups' AND key = $1 AND kind = 'worker.retire' AND status = 'queued'`,
       [mergeKey(s)]);
     await procs.until(async () => (await removed()).length === 1, 'the worker to go once the run ended');
+  });
+
+  await t.test('shots, restarted: killed while building the copies, the next process carries the run on without building its images again', async () => {
+    const a = await app();
+    const head = SHA('5');
+    const { rows: [s] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, reviewed_head_sha, staging_commit_sha, staging_url)
+       VALUES ($1, $2, 'promoted', $3, $3, 'https://preview.test') RETURNING *`, [a.id, author.id, head]);
+    const intent = { version: 1, impact: 'ui', rationale: null, stories: [{ id: 'c1', claim: 'The card shows a badge', persona: 'member',
+      viewports: [{ name: 'desktop', width: 1280, height: 800 }],
+      intent: { startPath: '/', steps: ['Open it'], baseState: 'present', animation: 'none' } }] };
+    await procs.arm(pool, 'shots.copies.built');
+    // The web side appends the declaration; the workflow process decides it.
+    await platform.shotsDeclared({ sessionId: s.id, appId: a.id, intent });
+    await procs.reached(pool, 'shots.copies.built');
+    await workflow.kill();
+    await procs.expireLeases(pool);
+    await startWorkflow();
+    await procs.release(pool, 'shots.copies.built');
+    await procs.until(async () => (await instance('shots', `session:${s.id}`))?.state === 'published', 'the run to publish');
+    const copies = await procs.effects(pool, 'shots.copies');
+    assert.deepEqual(copies.map((c) => c.data.reused), [false, true], 'the images the first process built are reused');
+    assert.equal(copies[1].data.fresh, false, 'and what it left is removed before the copies are made again');
+    assert.equal(new Set(copies.map((c) => c.pid)).size, 2);
+    assert.equal((await procs.effects(pool, 'shots.agent')).length, 1, 'the agent took the shots once');
+    const { rows: runs } = await pool.query('SELECT id, state FROM shot_runs WHERE session_id = $1', [s.id]);
+    assert.deepEqual(runs.map((r) => r.state), ['verified']);
+    const { rows: [{ n }] } = await pool.query('SELECT count(*)::int AS n FROM shot_artifacts WHERE run_id = $1', [runs[0].id]);
+    assert.equal(n, 2);
+    const { rows: [row] } = await pool.query('SELECT shots_state, shots_run_id FROM chat_sessions WHERE id = $1', [s.id]);
+    assert.deepEqual(row, { shots_state: 'verified', shots_run_id: runs[0].id });
+    await procs.until(async () => (await procs.effects(pool, 'shots.cleanup')).length === 1, 'its copies to go');
   });
 
   await t.test('a change whose head moved since the carrier listed its commits is not marked as carried', async () => {

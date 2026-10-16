@@ -449,7 +449,7 @@ test('a change something is running on reads busy, in a turn\'s facts and when a
     botSvc: { async enqueueFront() { return true; } },
     worker: { isInFlight: () => false },
     activeWorkers: new Set(),
-    shotsRunFor: () => null,
+    shotsRunning: async () => false,
     ...over,
   });
   const facts = (p, d) => voice.factsFor(p, {
@@ -464,7 +464,7 @@ test('a change something is running on reads busy, in a turn\'s facts and when a
   const held = [
     ['a worker turn in this process', pool(), busyDeps({ activeWorkers: new Set([70]) })],
     ['its executing worker', pool(), busyDeps({ worker: { isInFlight: (id) => Number(id) === 70 } })],
-    ['a shots run', pool(), busyDeps({ shotsRunFor: (id) => (id === 70 ? { runId: 'r1' } : null) })],
+    ['a shots run', pool(), busyDeps({ shotsRunning: async (id) => id === 70 })],
     ['a turn on its row', pool({ activeTurn: { turnId: 't1' } }), busyDeps()],
   ];
   for (const [what, p, d] of held) {

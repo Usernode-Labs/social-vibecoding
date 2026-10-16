@@ -66,8 +66,6 @@ stub('../src/services/check-runs', {
 const notes = [];
 stub('../src/services/homeroom-bot-dm', { ...require('../src/services/homeroom-bot-dm'),
   async noteChangeStopped(pool, sessionId, o) { notes.push(['bot', sessionId, o.why]); } });
-stub('../src/services/shots-orchestrator', { ...require('../src/services/shots-orchestrator'),
-  async noteNotStarted(pool, sessionId, reason) { notes.push(['shots', sessionId, reason]); } });
 const suites = { launched: [], running: 0, jobs: new Set() };
 stub('../src/services/unit-suite', { ...require('../src/services/unit-suite'),
   isEnabled: () => true,
@@ -235,13 +233,18 @@ test('a reclaimed build clones into its own claim\'s database, never the one a c
 });
 
 
-test('a preview that will not start tells the bot, and an imported pull request\'s shots too', async () => {
+test('a preview that will not start tells the bot; an older item hands an imported pull request\'s shots over', async () => {
   notes.length = 0;
-  await handlers[WORK.stopped].run(ctx({ sessionId: 5, imported: false }));
+  assert.deepEqual(await handlers[WORK.stopped].run(ctx({ sessionId: 5, imported: false, shotsTold: true })), { noted: true });
   assert.deepEqual(notes, [['bot', 5, 'preview']]);
   notes.length = 0;
-  await handlers[WORK.stopped].run(ctx({ sessionId: 6, imported: true }));
-  assert.deepEqual(notes, [['bot', 6, 'preview'], ['shots', 6, 'no_staging_preview']]);
+  // The shots machine hears it from the transition (PreviewStopped); an
+  // item an older release queued says so in its result instead.
+  assert.deepEqual(await handlers[WORK.stopped].run(ctx({ sessionId: 6, imported: true, shotsTold: true })), { noted: true });
+  assert.deepEqual(await handlers[WORK.stopped].run(ctx({ sessionId: 6, imported: true })), { noted: true, stopped: null });
+  assert.deepEqual(notes, [['bot', 6, 'preview'], ['bot', 6, 'preview']]);
+  // And an older release's `preview.ready` hands its head over, doing nothing itself.
+  assert.deepEqual(await handlers[WORK.ready].run(ctx({ sessionId: 6, head })), { handOff: head });
 });
 
 test('the unit suite starts with the build, under the attempt\'s own id, unless it is off, joined or the cluster is full', async () => {

@@ -580,7 +580,7 @@ async function runAgentTurn({
   // depend on the active change, which a tool in an earlier round can move.
   const toolOffer = async () => {
     const change = await d.dispatch.loadActiveChange(pool, { agentSessionId, userId: user.id });
-    const dispatchable = d.dispatch.canDispatch(change, d.dispatchDeps);
+    const dispatchable = await d.dispatch.canDispatch(change, d.dispatchDeps);
     let prodEligible = false;
     if (change) {
       try { prodEligible = await d.debugAccess.isEligible(pool, change.id); } catch { prodEligible = false; }

@@ -83,9 +83,8 @@ export function mergeFollowupsServices({ config, pool, requestDeploy }: Deps): R
     },
 
     // Its worker and Claude Code volume go, unless a shots run is still
-    // working in them: then it says which, and the machine asks again later
-    // (worker.js's in-memory hold is not read: it lives in whichever process
-    // runs the shots run, and a restart forgets it).
+    // under way in them (the shots machine's instance says): then it says
+    // which, and the machine asks again later.
     [WORK.retire]: {
       maxAttempts: 5,
       backoffMs: backoff,

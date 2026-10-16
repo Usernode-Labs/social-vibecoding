@@ -350,6 +350,11 @@ async function dispatchClaude(config, options, deps) {
     telemetryAttemptNumber: 1,
     onProgress,
     onShotsDiagnostic: options.onShotsDiagnostic,
+    // A run's turn is a durable step (services/durable-turn.js): its record
+    // is kept until the step has saved what the turn did, and the step
+    // hears which record is its own.
+    ...(options.holdTurnRecord ? { holdTurnRecord: true } : {}),
+    ...(typeof options.onTurnRecord === 'function' ? { onTurnRecord: options.onTurnRecord } : {}),
   }), {
     timeoutMs: options.timeoutMs || config.shots?.maxAgentMs || 480_000,
     onTimeout: async () => {

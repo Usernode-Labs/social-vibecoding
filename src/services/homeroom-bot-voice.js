@@ -628,7 +628,7 @@ async function changeBusy(pool, sessionId, deps = {}) {
       session: { id: Number(sessionId) },
       worker: deps.worker || require('./worker'),
       activeWorkers: deps.activeWorkers || require('./active-workers').activeWorkers,
-      shotsRunFor: deps.shotsRunFor || null,
+      shotsRunning: deps.shotsRunning || null,
     });
   } catch {
     return false;

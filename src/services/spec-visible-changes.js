@@ -14,7 +14,8 @@
 // valid declaration gives null: no declaration is better than a broken one.
 // It never derives impact "none": a spec without a changes list may just be
 // a markdown spec, and "none" would also switch off the changed-file backstop
-// (shots-state.requireIntentForUiChange) that marks a UI change as owing shots.
+// (the checks run's UiUndeclared, src/workflow/shots/) that marks a UI change
+// as owing shots.
 
 const contract = require('./visible-changes');
 const specHtml = require('./spec-html');

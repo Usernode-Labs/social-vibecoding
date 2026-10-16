@@ -20,7 +20,8 @@ test('the Workshop board-change hook arms its reconcile on the platform pool', (
     /ws\.onBoardChange\(\(info\) => workshopThemes\.noteBoardChange\(getPool\(config\), info\)\)/);
 });
 
-test('no shots run on a change reads as none', () => {
-  const orchestrator = require('../src/services/shots-orchestrator');
-  assert.equal(orchestrator.inFlightRunFor(987654), null);
+test('no shots run on a change reads as none', async () => {
+  // Read from the shots machine's instance: none, with no runtime here.
+  const shotsState = require('../src/services/shots-state');
+  assert.equal(await shotsState.waitForShotsRun(987654, { timeoutMs: 10 }).catch(() => 'idle'), 'idle');
 });

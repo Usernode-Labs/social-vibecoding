@@ -161,12 +161,10 @@ test('drain budget stays inside the compose stop_grace_period', () => {
   const poolMatch = serverJs.match(/const POOL_CLOSE_TIMEOUT_MS = (\d+);/);
   assert.ok(poolMatch, 'POOL_CLOSE_TIMEOUT_MS constant not found in server.js');
   const poolMs = Number(poolMatch[1]);
-  const evidenceMatch = serverJs.match(/const SHOTS_SHUTDOWN_MARK_TIMEOUT_MS = (\d+);/);
-  assert.ok(evidenceMatch, 'SHOTS_SHUTDOWN_MARK_TIMEOUT_MS constant not found in server.js');
-  const shotsMs = Number(evidenceMatch[1]);
-  assert.ok(drainMs + shotsMs + poolMs < graceMs,
-    `Drain, evidence marking and pool close (${drainMs + shotsMs + poolMs}ms) must stay below ` +
-    `stop_grace_period (${graceMs}ms)`);
+  // (Before & after shots are the shots machine's: a shutdown marks none.)
+  assert.doesNotMatch(serverJs, /SHOTS_SHUTDOWN_MARK_TIMEOUT_MS/);
+  assert.ok(drainMs + poolMs < graceMs,
+    `Drain and pool close (${drainMs + poolMs}ms) must stay below stop_grace_period (${graceMs}ms)`);
 });
 
 // #767: the app-container stop grace is a separate budget from the

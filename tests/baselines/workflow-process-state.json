@@ -58,6 +58,18 @@
       "services | uses src/services/app-teardown.js:removeRuntimeIfDeleted": "removes the runtime a deploy put back for an app deleted while it deployed (the row is gone, or its teardown holds it in any process): the deploy's own cleanup, moved out of heal's recovery",
       "services | uses src/services/deploy-failure.js:isRootImageRefusal": "whether a failed deploy's image runs as root, from the error (pure): the same commit fails that way every time, so it is an answer, not a retry",
       "services | uses src/services/deploy-failure.js:ROOT_IMAGE_FIX": "the words saying what to change in the Dockerfile (a constant), the answer a merge's thread shows"
+    },
+    "shots": {
+      "services | uses src/services/shots-orchestrator.js:resolveRevision": "shots.revision: the head's exact before revision from GitHub, cut out of scheduleForSession's in-process run (the step now reads nothing of a process's memory)",
+      "services | uses src/services/shots-orchestrator.js:buildCopies": "shots.copies: the two copies (checkouts, image builds, clones, runtimes, fixtures) and the agent's workspace in Postgres, cut out of executeRun's one-process run; named by the run, with its images in the item's checkpoint",
+      "services | uses src/services/shots-orchestrator.js:dispatchAgent": "shots.agent: the shots agent's turn in the proposal's worker as a durable step (durable-turn.js), cut out of executeRun's one-process run; its control plane is the run's workspace in Postgres, not a process's registry",
+      "services | uses src/services/shots-orchestrator.js:compareScreens": "shots.publish: where the ready changes' before and after screens differ, from the files in the run's workspace, cut out of executeRun's one-process run",
+      "services | uses src/services/shots-orchestrator.js:cleanupRun": "shots.cleanup: everything a run left (its turn, copies, workspace, a temporary worker), by the run's names, cut out of executeRun's finally block and the recovery sweep's cleanup half",
+      "services | uses src/services/shots-orchestrator.js:platformFault": "a step's failure classified as the platform's own fault (pure, on the error), so the machine takes the run again once; cut out of executeRun's catch",
+      "services | uses src/services/shots-orchestrator.js:visibleError": "a step's failure in the words the proposal shows (pure), cut out of executeRun's catch",
+      "services | uses src/services/durable-steps.js:durable": "the agent step's durable context over the work item's own checkpoint (the kernel's), which durable-turn.js keeps the turn's record and clock in; no state outside the item",
+      "services | uses src/services/pr-metadata.js:syncShotsPrBlock": "github.prShotsBlock: the pull request description's shots block (GitHub), cut out of scheduleForSession's floating promise; now durable work at a run's start and when the slot settles",
+      "services | uses src/services/shots-orchestrator.js:runCurrent": "whether a step's run is still the proposal's run under way (its row and the slot), so copies of a run that ended stop at their next phase and an agent step whose run ended starts no turn; a read, no state"
     }
   },
   "handOff": {
@@ -66,16 +78,16 @@
       "services | uses src/services/conflict-resolver.js:checkAndResolveConflicts": "a passing or skipped verdict drives the app's merge queue (verdict.followUps), which keeps in-process state; goes when the merge step (attempt, queue, conflicts) migrates the queue",
       "services | uses src/services/homeroom-bot-dm.js:noteChangeReady": "the Homeroom bot hears that its change is ready to try (verdict.followUps); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)",
       "services | uses src/services/homeroom-bot-dm.js:noteChangeStopped": "the Homeroom bot hears that its change's preview will not start (preview.stopped); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)",
-      "services | uses src/services/homeroom-bot.js:noteProposalChecks": "the Homeroom bot queues a turn to fix its proposal's failing checks (verdict.followUps); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)",
-      "services | uses src/services/shots-orchestrator.js:noteNotStarted": "an imported pull request whose preview will not start: its planned before & after shots are told there is nothing to take shots of (preview.stopped); goes with the step that migrates shots",
-      "services | uses src/services/shots-orchestrator.js:scheduleForSession": "before & after shots for the head once its checks settle (verdict.followUps); goes when the shots step migrates them",
-      "services | uses src/services/visuals.js:startShotsIfIdle": "before & after shots started beside the checks once the preview serves (preview.ready); goes when the shots step migrates them"
+      "services | uses src/services/homeroom-bot.js:noteProposalChecks": "the Homeroom bot queues a turn to fix its proposal's failing checks (verdict.followUps); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)"
     },
     "governance-proposal": {
       "services | uses src/services/homeroom-bot-closed-requests.js:noteRequestsClosed": "a close vote closed a request: the Homeroom bot's proposals for it are withdrawn and the bot is woken (bot.requestsClosed work, taken over from the deleted close-issue apply); goes when the last step migrates the bot's wake"
     },
     "merge-followups": {
       "services | uses src/services/homeroom-bot-live.js:announceLive": "the request's \"It's live\" on GitHub and in its thread, once a change the bot built is live (bot.announceLive work, taken over from the deleted merge tail); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)"
+    },
+    "shots": {
+      "services | uses src/services/homeroom-bot-dm.js:noteShotsSettled": "bot.shotsSettled: tells the Homeroom bot a change of its is ready to try (or goes back to it) once its shots settled; was shots-state.noteSettled's setImmediate after commit; goes with the step that migrates the bot's wake (the rest)"
     }
   },
   "machines": {
@@ -173,6 +185,7 @@
       "shared | uses src/services/github.js:isEnabled"
     ],
     "platform": [
+      "web | state src/workflow/platform.ts#cutOffWatch",
       "web | state src/workflow/platform.ts#deliveries",
       "web | state src/workflow/platform.ts#kernelPool",
       "web | state src/workflow/platform.ts#log",
@@ -180,6 +193,8 @@
       "web | state src/workflow/platform.ts#merges",
       "web | state src/workflow/platform.ts#previews",
       "web | state src/workflow/platform.ts#runtime",
+      "web | state src/workflow/platform.ts#shotRuns",
+      "web | timer src/workflow/platform.ts#watchShotsCutOff setInterval",
       "web | uses src/db/pool.js:getPool",
       "web | uses src/routes/votes.js:VOTE_REASON_MAX",
       "web | uses src/routes/votes.js:VOTE_REASON_REQUIRED",
@@ -293,8 +308,6 @@
       "services | uses src/services/kubernetes.js:restorePreviewAttempt",
       "services | uses src/services/platform-env-check.js:refreshPlatformEnvCheck",
       "services | uses src/services/pr-metadata.js:buildVisualsBlock",
-      "services | uses src/services/shots-orchestrator.js:noteNotStarted",
-      "services | uses src/services/shots-orchestrator.js:scheduleForSession",
       "services | uses src/services/staging.js:prepareAttempt",
       "services | uses src/services/staging.js:verifyStagingEdge",
       "services | uses src/services/unit-suite.js:isEnabled",
@@ -304,8 +317,28 @@
       "services | uses src/services/visuals.js:getForSession",
       "services | uses src/services/visuals.js:notifyChecks",
       "services | uses src/services/visuals.js:patchPrBody",
-      "services | uses src/services/visuals.js:startShotsIfIdle",
       "services | uses src/services/visuals.js:summarizeBootFailure"
+    ],
+    "shots": [
+      "ownership | chat_sessions.shots_detail ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
+      "ownership | chat_sessions.shots_detail ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
+      "ownership | chat_sessions.shots_run_id ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
+      "ownership | chat_sessions.shots_run_id ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
+      "ownership | chat_sessions.shots_state ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
+      "ownership | chat_sessions.shots_state ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
+      "ownership | chat_sessions.shots_updated_at ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
+      "ownership | chat_sessions.shots_updated_at ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
+      "services | uses src/services/durable-steps.js:durable",
+      "services | uses src/services/homeroom-bot-dm.js:noteShotsSettled",
+      "services | uses src/services/pr-metadata.js:syncShotsPrBlock",
+      "services | uses src/services/shots-orchestrator.js:buildCopies",
+      "services | uses src/services/shots-orchestrator.js:cleanupRun",
+      "services | uses src/services/shots-orchestrator.js:compareScreens",
+      "services | uses src/services/shots-orchestrator.js:dispatchAgent",
+      "services | uses src/services/shots-orchestrator.js:platformFault",
+      "services | uses src/services/shots-orchestrator.js:resolveRevision",
+      "services | uses src/services/shots-orchestrator.js:runCurrent",
+      "services | uses src/services/shots-orchestrator.js:visibleError"
     ]
   }
 }

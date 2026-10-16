@@ -1217,9 +1217,11 @@ async function becomeLeader() {
   // next release reset: due at once if it never ran.
   leaderTimers.every('cli-auth-cleanup', runCliAuthCleanup, 6 * 60 * 60 * 1000, { durable: getPool(config) });
 
-  // Before & after shots is private, revision-scoped data. Recover runs whose
-  // worker died, remove their deterministic paired runtimes/databases, and
-  // enforce the shorter failed-media and bounded audit-retention windows.
+  // Before & after shots is private, revision-scoped data: enforce the
+  // shorter failed-media and bounded audit-retention windows, and remove
+  // copies and checkouts nothing owns any more. Runs themselves are the
+  // shots machine's (src/workflow/shots/), which settles and cleans up every
+  // run it starts.
   const shotsGc = require('./src/services/shots-gc');
   let shotsGcRunning = false;
   const runShotsGc = () => {
@@ -1228,69 +1230,14 @@ async function becomeLeader() {
     return shotsGc.sweep(config, getPool(config))
       .then((counts) => {
         if (Object.values(counts).some((count) => count > 0)) {
-          log.info('shots', 'Retention/recovery sweep completed', counts);
+          log.info('shots', 'Retention sweep completed', counts);
         }
       })
-      .catch((err) => log.warn('shots', 'Retention/recovery sweep failed', { err: err.message }))
+      .catch((err) => log.warn('shots', 'Retention sweep failed', { err: err.message }))
       .finally(() => { shotsGcRunning = false; });
   };
   // Six-hourly on the durable clock, like the cleanup above.
   leaderTimers.every('shots-gc', runShotsGc, 6 * 60 * 60 * 1000, { durable: getPool(config) });
-  // Shots runs execute after their scheduling HTTP request has returned.
-  // A platform rollout can terminate that process mid-build; heartbeats stop
-  // then, and this short recovery poll releases the abandoned proposal slot.
-  // The six-hour sweep above still owns retention and orphan-file pruning.
-  const recoverInterruptedShots = () => {
-    if (shotsGcRunning) return undefined;
-    shotsGcRunning = true;
-    return shotsGc.recoverInterrupted(config, getPool(config))
-      .then(({ failed, cancelled, cleanupRetried }) => {
-        if (failed || cancelled || cleanupRetried) {
-          log.warn('shots', 'Interrupted before & after shots runs recovered', {
-            failed, cancelled, cleanupRetried,
-          });
-        }
-      })
-      .catch((err) => log.warn('shots', 'Interrupted shots recovery failed', { err: err.message }))
-      .finally(() => { shotsGcRunning = false; });
-  };
-  leaderTimers.every('shots-recover-interrupted', recoverInterruptedShots, 2 * 60 * 1000);
-  // Recover intent-only proposals separately from the six-hour retention
-  // sweep. A missed checks hand-off should start within minutes, while the
-  // durable run claim ensures this cannot duplicate a live runner.
-  const runUnstartedShots = () => shotsGc.recoverUnstarted(config, getPool(config))
-    .then(({ scheduled }) => {
-      if (scheduled) log.info('shots', 'Recovered unstarted before & after shots claims', { scheduled });
-    })
-    .catch((err) => log.warn('shots', 'Unstarted shots recovery failed', { err: err.message }));
-  runUnstartedShots();
-  leaderTimers.every('shots-recover-unstarted', runUnstartedShots, 2 * 60 * 1000);
-  // A rollout interrupts runs through no fault of the proposal; start the
-  // same head again (bounded) rather than waiting for someone to click Retry.
-  // Its own, shorter timer: the run is marked interrupted as the old process
-  // exits, the sweep waits 30 seconds past that, and a card that says "trying
-  // again" should not then sit for up to two more minutes. The query is one
-  // indexed read that usually finds nothing.
-  let shotsRetryRunning = false;
-  const retryInterruptedShots = () => {
-    if (shotsRetryRunning) return undefined;
-    shotsRetryRunning = true;
-    return shotsGc.retryInterrupted(config, getPool(config))
-      .then((result) => {
-        if (result?.scheduled) log.info('shots', 'Retried interrupted before & after shots runs', result);
-      })
-      .catch((err) => log.warn('shots', 'Interrupted shots retry failed', { err: err.message }))
-      // A run a platform step failed (the copies' database, a clone, GitHub's
-      // hourly limit, the shots agent's exit) is taken again once, the same way.
-      .then(() => shotsGc.retryPlatformFaults(config, getPool(config)))
-      .then((result) => {
-        if (result?.scheduled) log.info('shots', 'Retried before & after shots runs a platform fault ended', result);
-      })
-      .catch((err) => log.warn('shots', 'Platform-fault shots retry failed', { err: err.message }))
-      .finally(() => { shotsRetryRunning = false; });
-  };
-  retryInterruptedShots();
-  leaderTimers.every('shots-retry-interrupted', retryInterruptedShots, 30 * 1000);
 
   // #616: ensure the read-only prod-debug Postgres role (fresh in-memory
   // password every boot) and refresh its deny-listed grants so tables
@@ -1868,7 +1815,6 @@ module.exports = {
   get DRAIN_TIMEOUT_MS() { return DRAIN_TIMEOUT_MS; },
   get POOL_CLOSE_TIMEOUT_MS() { return POOL_CLOSE_TIMEOUT_MS; },
   get SUCCESSOR_ANNOUNCE_TIMEOUT_MS() { return SUCCESSOR_ANNOUNCE_TIMEOUT_MS; },
-  get SHOTS_SHUTDOWN_MARK_TIMEOUT_MS() { return SHOTS_SHUTDOWN_MARK_TIMEOUT_MS; },
   get BUILD_SHUTDOWN_MARK_TIMEOUT_MS() { return BUILD_SHUTDOWN_MARK_TIMEOUT_MS; },
   get SUCCESSOR_WAIT_MS() { return SUCCESSOR_WAIT_MS; },
   shutdownDrainMs: (...args) => shutdownDrainMs(...args),
@@ -2707,7 +2653,7 @@ const ORPHAN_MIN_AGE_MS = 2 * 60 * 1000;
 // (holders), and a session whose holders cannot be read is left for the next
 // pass.
 const LEFT_WARM_SWEEP_MS = 5 * 60 * 1000;
-const HELD_WORKER_KINDS = ['warm', 'session', 'shots', 'sync'];
+const HELD_WORKER_KINDS = ['warm', 'session', 'sync'];
 
 async function sweepLeftWarmWorkers(config, { list = () => worker.listOrphanWorkers(), adopt = adoptOrphanWorker } = {}) {
   const pool = getPool(config);
@@ -2753,9 +2699,12 @@ async function sweepOrphanTurns(config, { adopt = adoptOrphanWorker } = {}) {
            WHERE h.kind = ANY($3::text[]) AND h.ref = cs.id::text
              AND p.heartbeat_at > NOW() - make_interval(secs => $4))
         -- What adoption leaves as it is, and so would come back every pass:
-        -- a headless run (resumeHeadlessRuns carries it), and a durable
-        -- build's session (its build carries it, wherever it runs).
+        -- a headless run (resumeHeadlessRuns carries it), a durable build's
+        -- session (its build carries it, wherever it runs), and a shots
+        -- agent's turn (the shots machine's agent step follows it).
         AND cs.is_headless IS NOT TRUE
+        AND NOT EXISTS (SELECT 1 FROM wf_instances w
+                         WHERE w.machine = 'shots' AND w.key = 'session:' || cs.id AND w.state = 'taking_shots')
         AND NOT (cs.workflow_owner IS NOT NULL AND EXISTS (
           SELECT 1 FROM wf_instances w
            WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
@@ -2764,12 +2713,12 @@ async function sweepOrphanTurns(config, { adopt = adoptOrphanWorker } = {}) {
       ORDER BY cs.id
       LIMIT 20`,
     [[...turnLifecycle.RECOVERABLE_PHASES], new Date(Date.now() - ORPHAN_MIN_AGE_MS).toISOString(),
-      ['session', 'shots', 'sync'], processes.LIVE_SECONDS],
+      ['session', 'sync'], processes.LIVE_SECONDS],
   );
   let adopted = 0;
   for (const { id } of rows) {
     // What this process holds, whether or not its write has landed yet.
-    if (['session', 'shots', 'sync'].some((kind) => processes.heldHere(kind, id))) continue;
+    if (['session', 'sync'].some((kind) => processes.heldHere(kind, id))) continue;
     if (activeWorkersSvc.isSessionBusyHere(id) || worker.getActiveTurnMode(id)) continue;
     const name = worker.workerContainerName(id);
     let state;
@@ -2994,9 +2943,9 @@ async function abandonCodexAttempt(pool, sessionId, turn, { label, errorDetail }
 // answers to exists only in that process's control registry. Resumed, the
 // agent retries tool calls that can no longer succeed, holding the session
 // busy and spending the user's model credit with no bound. End it instead,
-// without chat narration — shots turns never write chat rows, and the
-// shots GC fails the run itself with a retryable reason once the
-// run goes idle.
+// without chat narration — shots turns never write chat rows. A turn the
+// shots machine's run follows is left to it (adoptOrphanWorker): only a
+// turn with no run taking shots is ended here.
 async function abandonOrphanShotsTurn({
   pool, sessionId, containerName, activeTurn, containerRunning, retryRuntimeRecovery,
 }) {
@@ -3173,7 +3122,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   // exactly: a session whose holders cannot be read is retried, not taken.
   let holders;
   try {
-    holders = await processes.holders(['session', 'shots', 'sync'], sessionId, pool);
+    holders = await processes.holders(['session', 'sync'], sessionId, pool);
   } catch (err) {
     throw retryRuntimeRecovery(`could not read who holds the session: ${err.message}`);
   }
@@ -3288,6 +3237,13 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   }
 
   if (session.active_turn?.mode === 'shots') {
+    // The shots machine's agent step follows its turn through a restart
+    // (services/durable-turn.js): left to it while its run is taking shots.
+    const shots = await require('./src/workflow/platform.ts').shotsInstance(sessionId).catch(() => null);
+    if (shots?.state === 'taking_shots') {
+      log.info('server', 'A shots turn its run follows; not adopting it', { containerName, sessionId });
+      return;
+    }
     await abandonOrphanShotsTurn({
       pool, sessionId, containerName,
       activeTurn: session.active_turn,
@@ -6298,11 +6254,10 @@ function shutdownDrainMs() {
 
 // Budget for closing the pg pool after the handler drain (#767). Sits
 // INSIDE the same compose stop_grace_period as DRAIN_TIMEOUT_MS —
-// tests/caddy-deploy-grace.test.js pins drain + evidence marking + pool close
+// tests/caddy-deploy-grace.test.js pins drain + pool close
 // below grace — so a
 // pool that refuses to settle can never push the exit past the SIGKILL.
 const POOL_CLOSE_TIMEOUT_MS = 1000;
-const SHOTS_SHUTDOWN_MARK_TIMEOUT_MS = 1000;
 const BUILD_SHUTDOWN_MARK_TIMEOUT_MS = 1000;
 
 // ── The process being replaced tells its tabs where traffic went (#2545) ─
@@ -6553,17 +6508,14 @@ async function cleanup() {
     also: () => inflightRequests.pending() === 0,
   });
 
-  const shotsRuns = require('./src/services/shots-orchestrator').inFlightSnapshot;
   const startingCount = getActiveWorkerCount();
-  const startingShots = shotsRuns();
   log.info('server', 'Shutdown initiated, draining handlers', {
     activeWorkers: startingCount,
-    activeShotsRuns: startingShots.slice(0, 20),
     timeoutMs: DRAIN_TIMEOUT_MS,
   });
 
   const [drained] = await Promise.all([
-    lifecycle.waitFor(() => getActiveWorkerCount() === 0 && shotsRuns().length === 0, {
+    lifecycle.waitFor(() => getActiveWorkerCount() === 0, {
       timeoutMs: DRAIN_TIMEOUT_MS, intervalMs: 500,
     }),
     announced,
@@ -6572,10 +6524,9 @@ async function cleanup() {
   if (!drained) {
     log.warn('server', 'Drain timeout — exiting with in-flight work', {
       remainingWorkers: getActiveWorkerCount(),
-      remainingShotsRuns: shotsRuns().slice(0, 20),
     });
-  } else if (startingCount > 0 || startingShots.length > 0) {
-    log.info('server', 'All handlers and before & after shots runs drained');
+  } else if (startingCount > 0) {
+    log.info('server', 'All handlers drained');
   }
   if (!(await handlersDrained)) {
     log.warn('server', 'Drain deadline passed with requests or background work in flight', {
@@ -6588,37 +6539,6 @@ async function cleanup() {
   }
   await pushStop;
   await agentTurnsEnded;
-
-  // A planned replay is hosted by this server process. If it is still active
-  // when the drain expires, record the actual shutdown now so its owner can
-  // retry immediately. The recovery sweep remains the fallback for SIGKILL,
-  // crashes, and a database that cannot accept this bounded write.
-  const interruptedShots = require('./src/services/shots-orchestrator').inFlightRunSnapshot();
-  if (interruptedShots.length && shutdownPool) {
-    const shotsState = require('./src/services/shots-state');
-    let markTimer = null;
-    const marking = Promise.allSettled(interruptedShots.map((runId) =>
-      shotsState.transitionRun(shutdownPool, runId, 'failed', {
-        failureCode: 'shots_run_interrupted',
-        failureReason: shotsState.SHUTDOWN_INTERRUPTED_REASON,
-        // A rollout, not the run: the automatic retry does not count it
-        // against the tighter budget for unexplained interruptions.
-        traceMerge: { interruptedBy: shotsState.SHUTDOWN_INTERRUPTION },
-      })
-    ));
-    const result = await Promise.race([
-      marking,
-      new Promise((resolve) => {
-        markTimer = setTimeout(() => resolve(null), SHOTS_SHUTDOWN_MARK_TIMEOUT_MS);
-      }),
-    ]);
-    if (markTimer) clearTimeout(markTimer);
-    log.info('server', 'Marked active before & after shots runs interrupted on shutdown', {
-      attempted: interruptedShots.length,
-      marked: result?.filter((entry) => entry.status === 'fulfilled').length || 0,
-      timedOut: result === null,
-    });
-  }
 
   // The checks runs this process launched go on without it: their Jobs
   // belong to the cluster. Their rows still carry this process's heartbeat,

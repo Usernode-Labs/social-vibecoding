@@ -49,12 +49,12 @@ A stop for something another process runs travels to it over the WebSocket
 bus (`ws-bus.js`), and the holder does exactly what a stop in its own process
 does: a turn (`session_stop`, acted on by the process with the turn's stop
 handle, while the one asked still takes its durable path: the stamp, and the
-kill inside the worker), a shots run (`shots_stop`), a bench trial or run
+kill inside the worker), a bench trial or run
 (`bench_cancel`, from wherever the trial's slot is counted to wherever its
 build executes). A worker turn in flight holds its session whatever started
 it (the warm registry's `inFlight`), so the shots agent and an eval trial are
 seen too. What a worker turn calls back (the Anthropic proxy, its
-BYOK spend, a shots eval's bill) reaches whichever Pod the Service picks, so
+BYOK spend, a shots eval's bill, a shots agent's tool calls) reaches whichever Pod the Service picks, so
 those read the turn from the database when it is not in this process.
 
 ## Draining
@@ -84,8 +84,9 @@ always had: a minute's drain, the lock released last.
    leader work.
 3. Tell open tabs where traffic went and close their sockets, so they
    reconnect to the new Pod. The listener stays open: Kubernetes has already
-   taken this Pod out of the Service, and a shots worker calls the Pod that
-   runs its run by its own address.
+   taken this Pod out of the Service, and a request it still answers
+   finishes. (A shots agent calls the Service: its run's control plane is in
+   Postgres, `services/shots-control.js`.)
 4. Wait until this process holds nothing, has no background work registered
    (`inflight-work.js`), no running workflow work and no request still
    answering; or until the drain deadline (`PLATFORM_DRAIN_TIMEOUT_MS`,
