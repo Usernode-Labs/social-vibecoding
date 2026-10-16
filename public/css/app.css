@@ -4814,16 +4814,17 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    list with min-height: 0 and overflow: hidden — so content CLIPPED at the
    ceiling instead of growing the tile, with .home-panel--expanded lifting it.
 
-   A section grows. What bounds the collapsed block is the MARKUP:
-   visibleSlots() draws at most HomePanels.ROW_SLOTS challenge rows and the
-   footer's "See all N challenges" is the way past them.
+   A section grows. What bounds the Challenges block is the MARKUP:
+   HomePanels.challengesView draws a short pick (every First challenge, or
+   at most three Next ones) and "See all" in its heading goes to the
+   Challenges tab.
 
    THE LEADERBOARD FILL (.home-panel-fill) was a standings preview under the
    challenge rows, and it is REMOVED — two labelled lists with two different
    tap destinations inside one card called Challenges. The standings are a
    screen, and the section's heading carries the one tap to it. Its rules are
-   gone from this file; `.home-panel-lb-browse`, the heading's link, is a
-   different thing and stays.
+   gone from this file, and so is the heading's own "Open challenges" link
+   (`.home-panel-lb-browse`), replaced by "See all" (`.home-panel-see-all`).
 
    NO WIDTH CAP any more. It was --home-panel-max-w, half of .home-column
    (512px of 1024px), and the argument for it was "a widget is not a section":
@@ -4915,10 +4916,10 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    existed to make a block CLIP inside the two-app-row rectangle it occupied
    on the launcher canvas.
 
-   A section has no rectangle. What bounds the collapsed block now is the
-   MARKUP: visibleSlots() renders at most ROW_SLOTS challenge rows and the
-   footer's "See all N challenges" is the way past them, so there is nothing
-   left for a second, invisible mechanism to bound. Keeping the cap after the
+   A section has no rectangle. What bounds the Challenges block now is the
+   MARKUP: HomePanels.challengesView draws a short pick and "See all" goes to
+   the Challenges tab, so there is nothing left for a second, invisible
+   mechanism to bound. Keeping the cap after the
    fill stopped being leftover-sized would have clipped the standings preview
    the Challenges area now exists to show. */
 .home-panel {
@@ -5039,28 +5040,11 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    hook the declared checks select on, and needs no rule: the block is one flat
    column now and the progress is just its first band. */
 
-/* The footer bar: the expand/collapse toggle, drawn only when it has rows to
-   reveal (the way out is the section heading's link alone). It carries no
-   rule and no inset (see ui.tsx's PanelFooter); the height keeps the toggle
-   on one steady line. */
-.home-panel-footer {
-  min-height: 1.625rem; /* 26px */
-}
-
-/* EXPANDED: every challenge the season has, including the organiser-finished
-   ones the collapsed view filters out. The COUNT is markup — visibleSlots()
-   returns all of them rather than the first ROW_SLOTS — and this rule is the
-   CSS half: the rows list stops clipping, so a list longer than the flex
-   layout budgeted for is drawn rather than cut.
-
-   `max-height: none` sat here too, lifting --home-panel-max-h. Both are gone
-   with the cap (see .home-panel above): a section grows to its content, so
-   there is nothing left to lift. Deliberately NOT a scroll container either
-   way: a nested scroller inside the page scroller is the touch trap this
-   block has avoided from the start. */
-.home-panel--expanded .home-panel-rows {
-  overflow: visible;
-}
+/* The footer bar (`.home-panel-footer`, the "See all N challenges" / "Show
+   less" toggle) and `.home-panel--expanded .home-panel-rows`, which stopped
+   the rows list clipping while the block was expanded in place, are gone
+   with the toggle: the block shows a short pick and "See all" in its heading
+   goes to the Challenges tab (the Semi design, 2026-10-16). */
 
 /* `.home-panel-slot` — the in-grid drag host — is gone with the placement.
    It spanned real cells so app icons flowed around a widget the iOS way, and

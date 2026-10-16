@@ -1,7 +1,7 @@
 {
   "tabs.challenges": {
     "text": "Challenges",
-    "description": "Tab at the top of the Leaderboard screen: the season's challenges, tasks that earn points."
+    "description": "Tab at the top of the Leaderboard screen: the challenges running now, tasks that earn points."
   },
   "tabs.kudos": {
     "text": "Kudos",
@@ -10,10 +10,6 @@
   "tabs.standings": {
     "text": "Standings",
     "description": "Tab at the top of the Leaderboard screen: the ranking of participants by points."
-  },
-  "tabs.history": {
-    "text": "History",
-    "description": "Tab at the top of the Leaderboard screen: past seasons and who won them."
   },
   "eventBar.label": {
     "text": "Event",
@@ -38,10 +34,6 @@
   "eventBar.option.past": {
     "text": "{{event}} (past)",
     "description": "Option in the event drop-down on the Leaderboard screen: {{event}} is the name of an event that has ended."
-  },
-  "eventBar.pastSeasons": {
-    "text": "Past seasons →",
-    "description": "Link under the event drop-down on the Challenges tab: goes to the History tab. Keep the arrow."
   },
   "eventBar.noneSelected": {
     "text": "No event selected.",
@@ -92,8 +84,8 @@
     "description": "Accessible name of the grey placeholder shown on the Challenges tab while the challenges are being fetched."
   },
   "challenges.empty": {
-    "text": "No challenges for this event yet.",
-    "description": "Shown on the Challenges tab when the chosen event has no challenges."
+    "text": "No challenges right now.",
+    "description": "Shown on the Challenges tab when no challenge is running."
   },
   "challenges.loadFailed": {
     "text": "Failed to load challenges.",
@@ -107,70 +99,6 @@
     "text": "Finish Getting started to unlock the rest of the season.",
     "description": "Note under the list on the Challenges tab while the member's first challenges are unfinished. \"Getting started\" is the title of the card of first steps on Home."
   },
-  "challenges.group.setup": {
-    "text": "First challenges",
-    "description": "Heading on the Challenges tab over a new member's first challenges, and the first line of such a challenge's page."
-  },
-  "challenges.group.week": {
-    "text": "This week",
-    "description": "Heading on the Challenges tab over the challenges that end with the current week, and the first line of such a challenge's page."
-  },
-  "challenges.group.always": {
-    "text": "Always open",
-    "description": "Heading on the Challenges tab over the challenges with no deadline, and the first line of such a challenge's page. \"Open\" is an adjective: available."
-  },
-  "challenges.group.other": {
-    "text": "Season challenges",
-    "description": "Heading on the Challenges tab over the season's remaining challenges, and the first line of such a challenge's page."
-  },
-  "challenges.group.completed": {
-    "text": "Completed",
-    "description": "Heading on the Challenges tab over the challenges the viewer has finished, when the list is not divided into groups."
-  },
-  "challenges.group.meta.allDone_one": {
-    "text": "{{done}}/{{count}} done",
-    "description": "At the right of a group's heading on the Challenges tab when every challenge in it is finished. {{done}} and {{count}} are the same number: finished out of total."
-  },
-  "challenges.group.meta.allDone_other": {
-    "text": "{{done}}/{{count}} done",
-    "description": "At the right of a group's heading on the Challenges tab when every challenge in it is finished. {{done}} and {{count}} are the same number: finished out of total."
-  },
-  "challenges.group.meta.timed": {
-    "text": "{{done}}/{{total}} · {{timeLeft}}",
-    "description": "At the right of a group's heading on the Challenges tab: how many of its challenges are finished, then the time remaining. {{timeLeft}} is a finished phrase such as \"5d left\". Only the separator is translated."
-  },
-  "challenges.group.meta.noDeadline": {
-    "text": "{{done}}/{{total}} · no deadline",
-    "description": "At the right of a group's heading on the Challenges tab, for a group that never ends: {{done}} of its {{total}} challenges are finished."
-  },
-  "challenges.group.timed": {
-    "text": "{{group}} · {{timeLeft}}",
-    "description": "First line of a challenge's page: the name of its group, then the time that group has left. {{group}} is the group's heading (\"This week\") and {{timeLeft}} a finished phrase such as \"5d left\". Only the separator is translated."
-  },
-  "challenges.timeLeft.hours_one": {
-    "text": "{{count}}h left",
-    "description": "Time remaining for a challenge or a group of challenges on the Challenges tab, under a day. {{count}} is a number of hours; \"h\" abbreviates hours."
-  },
-  "challenges.timeLeft.hours_other": {
-    "text": "{{count}}h left",
-    "description": "Time remaining for a challenge or a group of challenges on the Challenges tab, under a day. {{count}} is a number of hours; \"h\" abbreviates hours."
-  },
-  "challenges.timeLeft.days_one": {
-    "text": "{{count}}d left",
-    "description": "Time remaining for a challenge or a group of challenges on the Challenges tab, a day or more. {{count}} is a number of days; \"d\" abbreviates days."
-  },
-  "challenges.timeLeft.days_other": {
-    "text": "{{count}}d left",
-    "description": "Time remaining for a challenge or a group of challenges on the Challenges tab, a day or more. {{count}} is a number of days; \"d\" abbreviates days."
-  },
-  "challenges.ends": {
-    "text": "ends {{when}}",
-    "description": "On a challenge's page, beside the time left: the moment it ends. {{when}} is a weekday, date and time such as \"Mon 12 Oct, 02:00\". Lower case: it follows other facts on the line."
-  },
-  "challenges.endsTitle": {
-    "text": "Ends {{when}}",
-    "description": "Tooltip of the time left at the right of a group's heading on the Challenges tab: the moment the group ends. {{when}} is a weekday, date and time such as \"Mon 12 Oct, 02:00\"."
-  },
   "challenges.points_one": {
     "text": "{{points}} pts",
     "description": "What a challenge pays, on its card and page, and what a participant has earned in it. {{points}} is a number of points, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
@@ -178,14 +106,6 @@
   "challenges.points_other": {
     "text": "{{points}} pts",
     "description": "What a challenge pays, on its card and page, and what a participant has earned in it. {{points}} is a number of points, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
-  },
-  "challenges.earned_one": {
-    "text": "Earned {{points}} pts",
-    "description": "On a finished challenge's card and page. {{points}} is the points the viewer earned in it, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
-  },
-  "challenges.earned_other": {
-    "text": "Earned {{points}} pts",
-    "description": "On a finished challenge's card and page. {{points}} is the points the viewer earned in it, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
   },
   "challenges.soFar_one": {
     "text": "{{points}} pts so far",
@@ -211,17 +131,33 @@
     "text": "{{challenge}}: {{state}}",
     "description": "Accessible name of a challenge's progress bar. {{challenge}} is the challenge's title and {{state}} what the bar shows (\"Done\", \"3/5 changes\")."
   },
-  "challenges.cadence.next": {
-    "text": "next count {{when}}",
-    "description": "On a challenge whose progress is counted at intervals: when the next count happens. {{when}} is a time, or a date and time. \"Count\" is a noun. Lower case."
+  "challenges.rail.count": {
+    "text": "{{current}}/{{target}} {{unit}}",
+    "description": "Label in the progress bar of a challenge counted in steps, e.g. \"1/3 apps tried\". {{current}} is how many the viewer has, {{target}} how many it takes, {{unit}} the organiser's own word for what is counted, shown as written."
   },
-  "challenges.cadence.now": {
-    "text": "counting now",
-    "description": "On a challenge whose progress is counted at intervals: a count is under way at this moment. Lower case."
+  "challenges.rail.countThisWeek": {
+    "text": "{{current}}/{{target}} {{unit}} this week",
+    "description": "Label in the progress bar of a weekly challenge counted in steps, e.g. \"0/2 accepted this week\"; the count starts again each Monday. {{current}} is how many the viewer has this week, {{target}} how many it takes, {{unit}} the organiser's own word for what is counted, shown as written."
   },
-  "challenges.cadence.last": {
-    "text": "last count {{when}}",
-    "description": "On a challenge whose progress is counted at intervals: when the last count happened, shown when the next one is overdue. {{when}} is a time, or a date and time. \"Count\" is a noun. Lower case."
+  "challenges.rail.fraction": {
+    "text": "{{current}}/{{target}}",
+    "description": "Label in the progress bar of a challenge counted in steps when the organiser named no unit, e.g. \"1/3\". {{current}} is how many the viewer has, {{target}} how many it takes."
+  },
+  "challenges.rail.fractionThisWeek": {
+    "text": "{{current}}/{{target}} this week",
+    "description": "Label in the progress bar of a weekly challenge counted in steps when the organiser named no unit, e.g. \"0/2 this week\"; the count starts again each Monday. {{current}} is how many the viewer has this week, {{target}} how many it takes."
+  },
+  "challenges.heading.first": {
+    "text": "First challenges",
+    "description": "Heading over the Challenges tab's first group: the challenges a newcomer does first."
+  },
+  "challenges.heading.next": {
+    "text": "Next challenges",
+    "description": "Heading over the Challenges tab's group of every other challenge still open."
+  },
+  "challenges.heading.done": {
+    "text": "Done",
+    "description": "Heading over the Challenges tab's last group: the challenges the viewer has finished."
   },
   "challenges.locked.title_one": {
     "text": "{{count}} challenge unlocks after Getting started",
@@ -247,101 +183,21 @@
     "text": "{{names}} and {{count}} more",
     "description": "Under the title of the locked-challenges card: the names of some hidden challenges, then how many more there are. {{names}} is the names, already joined with commas."
   },
-  "challenges.intro.title": {
-    "text": "How challenges work",
-    "description": "Title of the explainer card at the top of the Challenges tab, its accessible name, and the link that brings the card back once closed."
-  },
-  "challenges.intro.close": {
-    "text": "Close How challenges work",
-    "description": "Accessible name of the × button on the \"How challenges work\" card: hides the card. \"Close\" is a verb; keep the card's title as it is translated there."
-  },
-  "challenges.intro.counts.title": {
-    "text": "Do it, and it counts",
-    "description": "First row of the \"How challenges work\" card: doing what a challenge asks is enough, nothing has to be claimed."
-  },
-  "challenges.intro.counts.text": {
-    "text": "Complete challenges.",
-    "description": "Under \"Do it, and it counts\" on the \"How challenges work\" card. An instruction."
-  },
-  "challenges.intro.points.title": {
-    "text": "Earn points",
-    "description": "Second row of the \"How challenges work\" card."
-  },
-  "challenges.intro.points.text": {
-    "text": "Each card shows what it earns. Points add up in standings.",
-    "description": "Under \"Earn points\" on the \"How challenges work\" card. \"Card\" is a challenge's card; \"standings\" is the ranking on the Standings tab."
-  },
-  "challenges.intro.weekly.title": {
-    "text": "New ones each week",
-    "description": "Third row of the \"How challenges work\" card: new challenges arrive every week."
-  },
-  "challenges.intro.weekly.text": {
-    "text": "This week starts again on Monday. Always open has no deadline.",
-    "description": "Under \"New ones each week\" on the \"How challenges work\" card. \"This week\" and \"Always open\" are the names of two groups of challenges; use the same words as their headings."
-  },
-  "progress.plain_one": {
-    "text": "<0>{{done}}/{{count}}</0><1>done</1>",
-    "description": "At the top of a list of challenges, on the Challenges tab and on Home: how many the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it."
-  },
-  "progress.plain_other": {
-    "text": "<0>{{done}}/{{count}}</0><1>done</1>",
-    "description": "At the top of a list of challenges, on the Challenges tab and on Home: how many the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it."
-  },
   "progress.plainLabel_one": {
     "text": "{{done}} of {{count}} done",
-    "description": "Accessible name of the progress bar at the top of a list of challenges, on the Challenges tab and on Home. {{done}} is the number finished and {{count}} how many there are."
+    "description": "The summary over the Challenges tab's grid when the viewer's points are not known, and the accessible name of its progress bar. {{done}} is the number finished and {{count}} how many there are."
   },
   "progress.plainLabel_other": {
     "text": "{{done}} of {{count}} done",
-    "description": "Accessible name of the progress bar at the top of a list of challenges, on the Challenges tab and on Home. {{done}} is the number finished and {{count}} how many there are."
+    "description": "The summary over the Challenges tab's grid when the viewer's points are not known, and the accessible name of its progress bar. {{done}} is the number finished and {{count}} how many there are."
   },
-  "progress.first_one": {
-    "text": "<0>{{done}}/{{count}}</0><1>done in First challenges</1>",
-    "description": "At the top of a list of challenges, on the Challenges tab and on Home: how many the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it. Used while a new member's first challenges are unfinished; \"First challenges\" is that group's name, as its heading says it."
+  "progress.summary_one": {
+    "text": "<0>{{points}}</0> · {{done}} of {{count}} done",
+    "description": "The summary line over the Challenges tab's grid, e.g. \"3,500 pts · 4 of 11 done\". <0> wraps the points, drawn in bold. {{points}} is the viewer's points, already written out (\"3,500 pts\"); {{done}} is how many challenges they finished and {{count}} how many there are."
   },
-  "progress.first_other": {
-    "text": "<0>{{done}}/{{count}}</0><1>done in First challenges</1>",
-    "description": "At the top of a list of challenges, on the Challenges tab and on Home: how many the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it. Used while a new member's first challenges are unfinished; \"First challenges\" is that group's name, as its heading says it."
-  },
-  "progress.firstLabel_one": {
-    "text": "{{done}} of {{count}} done in First challenges",
-    "description": "Accessible name of the progress bar at the top of a list of challenges, on the Challenges tab and on Home. {{done}} is the number finished and {{count}} how many there are. Used while a new member's first challenges are unfinished; \"First challenges\" is that group's name."
-  },
-  "progress.firstLabel_other": {
-    "text": "{{done}} of {{count}} done in First challenges",
-    "description": "Accessible name of the progress bar at the top of a list of challenges, on the Challenges tab and on Home. {{done}} is the number finished and {{count}} how many there are. Used while a new member's first challenges are unfinished; \"First challenges\" is that group's name."
-  },
-  "progress.season_one": {
-    "text": "<0>{{done}}/{{count}}</0><1>done in {{season}}</1>",
-    "description": "At the top of a list of challenges, on the Challenges tab and on Home: how many the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it. {{season}} is the season's name."
-  },
-  "progress.season_other": {
-    "text": "<0>{{done}}/{{count}}</0><1>done in {{season}}</1>",
-    "description": "At the top of a list of challenges, on the Challenges tab and on Home: how many the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it. {{season}} is the season's name."
-  },
-  "progress.seasonLabel_one": {
-    "text": "{{done}} of {{count}} done in {{season}}",
-    "description": "Accessible name of the progress bar at the top of a list of challenges, on the Challenges tab and on Home. {{done}} is the number finished and {{count}} how many there are. {{season}} is the season's name."
-  },
-  "progress.seasonLabel_other": {
-    "text": "{{done}} of {{count}} done in {{season}}",
-    "description": "Accessible name of the progress bar at the top of a list of challenges, on the Challenges tab and on Home. {{done}} is the number finished and {{count}} how many there are. {{season}} is the season's name."
-  },
-  "progress.event_one": {
-    "text": "<0>{{done}}/{{count}}</0><1>done in this event</1>",
-    "description": "At the top of the Challenges tab's list, once an event is chosen in the drop-down above it: how many of that event's challenges the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it. The event is not named here on purpose: its name can be the season's."
-  },
-  "progress.event_other": {
-    "text": "<0>{{done}}/{{count}}</0><1>done in this event</1>",
-    "description": "At the top of the Challenges tab's list, once an event is chosen in the drop-down above it: how many of that event's challenges the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it. The event is not named here on purpose: its name can be the season's."
-  },
-  "progress.eventLabel_one": {
-    "text": "{{done}} of {{count}} done in this event",
-    "description": "Accessible name of the progress bar at the top of the Challenges tab's list, once an event is chosen in the drop-down above it. {{done}} is the number of that event's challenges finished and {{count}} how many there are."
-  },
-  "progress.eventLabel_other": {
-    "text": "{{done}} of {{count}} done in this event",
-    "description": "Accessible name of the progress bar at the top of the Challenges tab's list, once an event is chosen in the drop-down above it. {{done}} is the number of that event's challenges finished and {{count}} how many there are."
+  "progress.summary_other": {
+    "text": "<0>{{points}}</0> · {{done}} of {{count}} done",
+    "description": "The summary line over the Challenges tab's grid, e.g. \"3,500 pts · 4 of 11 done\". <0> wraps the points, drawn in bold. {{points}} is the viewer's points, already written out (\"3,500 pts\"); {{done}} is how many challenges they finished and {{count}} how many there are."
   },
   "challenges.detail.header": {
     "text": "Challenge",
@@ -364,68 +220,8 @@
     "description": "Link on the page of the feedback challenge: opens the list of feedback the viewer has sent."
   },
   "challenges.detail.requirements": {
-    "text": "Requirements",
-    "description": "Heading on a challenge's page over what must be done to complete it."
-  },
-  "challenges.detail.scoring": {
-    "text": "Scoring",
-    "description": "Heading on a challenge's page over how its points are awarded."
-  },
-  "challenges.detail.participants": {
-    "text": "Participants",
-    "description": "Heading on a challenge's page over the list of people who have scored in it."
-  },
-  "challenges.detail.participantsCount_one": {
-    "text": "Participants · {{number}}",
-    "description": "Heading on a challenge's page over the list of people who have scored in it. {{number}} is how many there are, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
-  },
-  "challenges.detail.participantsCount_other": {
-    "text": "Participants · {{number}}",
-    "description": "Heading on a challenge's page over the list of people who have scored in it. {{number}} is how many there are, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
-  },
-  "challenges.detail.pointsBetween_one": {
-    "text": "{{points}} pts between them",
-    "description": "Beside the \"Participants\" heading on a challenge's page: the total everyone has earned in it. {{points}} is that total, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
-  },
-  "challenges.detail.pointsBetween_other": {
-    "text": "{{points}} pts between them",
-    "description": "Beside the \"Participants\" heading on a challenge's page: the total everyone has earned in it. {{points}} is that total, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
-  },
-  "challenges.detail.showAll_one": {
-    "text": "Show all {{number}} →",
-    "description": "Link under the list of participants on a challenge's page when the rest fit in one more page. {{number}} is how many participants there are, already formatted (\"1,500\"); {{count}} is the same number, for the plural. Keep the arrow."
-  },
-  "challenges.detail.showAll_other": {
-    "text": "Show all {{number}} →",
-    "description": "Link under the list of participants on a challenge's page when the rest fit in one more page. {{number}} is how many participants there are, already formatted (\"1,500\"); {{count}} is the same number, for the plural. Keep the arrow."
-  },
-  "challenges.detail.showMore": {
-    "text": "Show more →",
-    "description": "Link under the list of participants on a challenge's page: fetches the next page. Keep the arrow."
-  },
-  "challenges.detail.loadingParticipants": {
-    "text": "Loading participants",
-    "description": "Accessible name of the grey placeholder shown on a challenge's page while its participants are being fetched."
-  },
-  "challenges.detail.noParticipants": {
-    "text": "No participants yet.",
-    "description": "Shown on a challenge's page when nobody has scored in it."
-  },
-  "challenges.detail.breakdownFailed": {
-    "text": "Failed to load the breakdown.",
-    "description": "Error shown on a challenge's page when its list of participants could not be fetched and the server gave no reason."
-  },
-  "challenges.detail.anonymous": {
-    "text": "Anonymous",
-    "description": "Stands in for a participant's name on a challenge's page and in the profile opened from it, when they have no public name."
-  },
-  "challenges.detail.nonPodium": {
-    "text": "{{name}}<0> (non-podium)</0>",
-    "description": "A participant's row on a challenge's page, for somebody who takes part but is excluded from the prize ranking. {{name}} is their name; the note in the tag is shown in lighter ink."
-  },
-  "challenges.detail.pointsRate": {
-    "text": "{{points}} · {{rate}}%",
-    "description": "At the right of a participant's row on a challenge's page: their points, then their success rate. {{points}} is a finished phrase such as \"1,500 pts\" and {{rate}} a percentage number."
+    "text": "What counts",
+    "description": "Heading on a challenge's page over the organiser's words on what counts towards it and how."
   },
   "challenges.countNote.onPropose": {
     "text": "Counts when you press Propose to group, which puts your change to a vote.",
@@ -462,46 +258,6 @@
   "challenges.countNote.other_other": {
     "text": "This challenge counts up to {{cap}}, and you have {{cap}}. More before it ends don't add to it.",
     "description": "Note on the page of a challenge once the viewer has reached its limit. {{cap}} is the most the challenge counts, already formatted (\"1,500\"); {{count}} is the same number, for the plural. \"More\" means more of whatever the challenge counts."
-  },
-  "challenges.profile.loading": {
-    "text": "Loading the profile",
-    "description": "Accessible name of the grey placeholder shown while a participant's profile, opened from a challenge's page, is being fetched."
-  },
-  "challenges.profile.loadFailed": {
-    "text": "Failed to load this profile.",
-    "description": "Error shown when a participant's profile, opened from a challenge's page, could not be fetched and the server gave no reason."
-  },
-  "challenges.profile.rank": {
-    "text": "Rank",
-    "description": "Label of a figure in a participant's profile opened from a challenge's page: their position in the ranking."
-  },
-  "challenges.profile.totalPoints": {
-    "text": "Total points",
-    "description": "Label of a figure in a participant's profile opened from a challenge's page."
-  },
-  "challenges.profile.extraPoints": {
-    "text": "Extra points",
-    "description": "Label of a figure in a participant's profile opened from a challenge's page: bonus points awarded outside the challenges."
-  },
-  "challenges.profile.producedBlocks": {
-    "text": "Produced blocks",
-    "description": "Label of a figure in a participant's profile opened from a challenge's page: how many blocks of the blockchain their node produced."
-  },
-  "challenges.profile.wonSlots": {
-    "text": "VRF won slots",
-    "description": "Label of a figure in a participant's profile opened from a challenge's page: how many block-producing slots they won. VRF is the name of the lottery mechanism; keep it."
-  },
-  "challenges.profile.successRate": {
-    "text": "Success rate",
-    "description": "Label of a figure in a participant's profile opened from a challenge's page: the share of their won slots in which a block was produced."
-  },
-  "challenges.profile.activities": {
-    "text": "Activities",
-    "description": "Heading in a participant's profile opened from a challenge's page, over the list of things they earned points for."
-  },
-  "challenges.profile.noActivities": {
-    "text": "No activities recorded.",
-    "description": "Shown in a participant's profile opened from a challenge's page when nothing they did is recorded."
   },
   "bp.checking": {
     "text": "Checking your block-production status…",
@@ -603,29 +359,21 @@
     "text": "Your standing",
     "description": "Accessible name of the card at the top of the Challenges tab that shows the viewer's rank and points this season."
   },
-  "standing.thisSeason": {
-    "text": "This season",
-    "description": "Title of the \"Your standing\" card when the season's name is not known."
+  "standing.rankOf_one": {
+    "text": "<0>#{{rank}}</0> of {{number}} person",
+    "description": "The \"Your standing\" card at the top of the Challenges tab, e.g. \"#22 of 161 people\". <0> wraps the viewer's place, drawn large. {{rank}} is the place, {{number}} how many people the standings rank, already formatted (\"1,284\"); {{count}} is the same number, for the plural."
   },
-  "standing.takingPart_one": {
-    "text": "{{number}} taking part",
-    "description": "Under the season's name on the \"Your standing\" card. {{number}} is how many people take part in the season, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  "standing.rankOf_other": {
+    "text": "<0>#{{rank}}</0> of {{number}} people",
+    "description": "The \"Your standing\" card at the top of the Challenges tab, e.g. \"#22 of 161 people\". <0> wraps the viewer's place, drawn large. {{rank}} is the place, {{number}} how many people the standings rank, already formatted (\"1,284\"); {{count}} is the same number, for the plural."
   },
-  "standing.takingPart_other": {
-    "text": "{{number}} taking part",
-    "description": "Under the season's name on the \"Your standing\" card. {{number}} is how many people take part in the season, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  "standing.rank": {
+    "text": "<0>#{{rank}}</0>",
+    "description": "The \"Your standing\" card's place when the number of people ranked is not known, e.g. \"#22\". <0> wraps it, drawn large. {{rank}} is the place."
   },
   "standing.yourStanding": {
     "text": "Your standing",
-    "description": "Under the season's name on the \"Your standing\" card when the number of participants is not known."
-  },
-  "standing.pointsYou_one": {
-    "text": "{{points}} pts · you",
-    "description": "Under the viewer's rank on the \"Your standing\" card: their points, marked as their own. {{points}} is a number, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
-  },
-  "standing.pointsYou_other": {
-    "text": "{{points}} pts · you",
-    "description": "Under the viewer's rank on the \"Your standing\" card: their points, marked as their own. {{points}} is a number, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+    "description": "On the \"Your standing\" card, in place of the rank, when the viewer has points the ranking does not show yet."
   },
   "standing.pending_one": {
     "text": "{{points}} pts earned, not in the standings yet",
@@ -634,22 +382,6 @@
   "standing.pending_other": {
     "text": "{{points}} pts earned, not in the standings yet",
     "description": "On the \"Your standing\" card when the viewer has earned points that the ranking does not show yet. {{points}} is a number, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
-  },
-  "standing.updateNote": {
-    "text": "Standings update every few hours. Your rank can change at each update as other people earn points, even if you did nothing; points from challenges you just finished appear then too.",
-    "description": "Note on the \"Your standing\" card and on the Standings tab: the ranking is recalculated periodically, and a rank moves with other people's points, not only the viewer's own activity."
-  },
-  "standing.byEvent": {
-    "text": "Points by event",
-    "description": "Link on the \"Your standing\" card that unfolds the list of where the viewer's points came from."
-  },
-  "standing.eventPoints_one": {
-    "text": "{{points}} pts",
-    "description": "At the right of a row in the \"Points by event\" list on the \"Your standing\" card. {{points}} is a number, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
-  },
-  "standing.eventPoints_other": {
-    "text": "{{points}} pts",
-    "description": "At the right of a row in the \"Points by event\" list on the \"Your standing\" card. {{points}} is a number, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
   },
   "standing.token.withheld": {
     "text": "Token allocation withheld",
@@ -886,62 +618,6 @@
   "activity.dayTimeFull": {
     "text": "{{day}}, {{time}}",
     "description": "Tooltip of an activity's date in a participant's list. {{day}} is a full date such as \"Monday, October 12, 2026\" and {{time}} a time of day. Only the separator is translated."
-  },
-  "history.loading": {
-    "text": "Loading past seasons",
-    "description": "Accessible name of the grey placeholder shown on the History tab while past seasons are being fetched."
-  },
-  "history.loadFailed": {
-    "text": "Couldn’t load past seasons. Try again later.",
-    "description": "Error shown on the History tab when past seasons could not be fetched."
-  },
-  "history.empty": {
-    "text": "No season has ended yet. When one does, its winners are listed here.",
-    "description": "Shown on the History tab before any season has ended."
-  },
-  "history.fallbackName": {
-    "text": "Season",
-    "description": "Stands in for a season's name on the History tab when it has none."
-  },
-  "history.ended": {
-    "text": "ended {{date}}",
-    "description": "At the right of a season's name on the History tab. {{date}} is a month, or a month and year, such as \"March\" or \"March 2025\". Lower case."
-  },
-  "history.won_one": {
-    "text": "{{name}} won with {{points}} pts",
-    "description": "Result line of a past season on the History tab. {{name}} is the winner's name and {{points}} their points, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
-  },
-  "history.won_other": {
-    "text": "{{name}} won with {{points}} pts",
-    "description": "Result line of a past season on the History tab. {{name}} is the winner's name and {{points}} their points, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
-  },
-  "history.noWinner": {
-    "text": "No winner was recorded",
-    "description": "Result line of a past season on the History tab when the season has no recorded winner."
-  },
-  "history.youFinished": {
-    "text": "you finished #{{rank}}",
-    "description": "Added to a past season's result line on the History tab: the viewer's final position. {{rank}} is that position. Lower case: it follows the winner."
-  },
-  "history.youTookPart": {
-    "text": "you took part",
-    "description": "Added to a past season's result line on the History tab when the viewer took part but has no final position. Lower case: it follows the winner."
-  },
-  "history.factPair": {
-    "text": "{{first}} · {{second}}",
-    "description": "Joins the two parts of a past season's result line on the History tab (\"Ada won with 1,500 pts · you finished #4\"). {{first}} and {{second}} are each already a complete phrase. Use the separator your language uses between such facts."
-  },
-  "history.eventWinners": {
-    "text": "Event winners",
-    "description": "Accessible name of the list of chips under a past season on the History tab: one per event, with its winner."
-  },
-  "history.eventWinner": {
-    "text": "{{event}} · {{winner}}",
-    "description": "Chip under a past season on the History tab: an event's name and who won it. Only the separator is translated."
-  },
-  "history.eventNoWinner": {
-    "text": "{{event}} · no winner",
-    "description": "Chip under a past season on the History tab, for an event that has no recorded winner. {{event}} is the event's name."
   },
   "kudos.loading": {
     "text": "Loading the leaderboard",
@@ -1394,22 +1070,6 @@
   "kudos.budget.tipBountiesUtc_other": {
     "text": "{{remaining}} of {{limit}} thanks and {{bountiesRemaining}} of {{count}} bounties left this week. Resets Monday 00:00 UTC.",
     "description": "Tooltip of the two weekly allowances in the menu, thanks (kudos) and bounties, when the reset time cannot be shown in the viewer's own time zone. Keep \"00:00 UTC\"."
-  },
-  "progress.points_one": {
-    "text": "<0>{{earned}} of {{total}} pts</0><1>earned</1>",
-    "description": "Second line of the challenge progress at the top of a list of challenges, on the Challenges tab and on Home: the points the viewer has earned out of the points those challenges offer. {{earned}} and {{total}} are numbers of points, already formatted (\"1,000\"); {{count}} is the total, for the plural; \"pts\" abbreviates points. The first tag shows the figures in bold; the second holds the word beside them."
-  },
-  "progress.points_other": {
-    "text": "<0>{{earned}} of {{total}} pts</0><1>earned</1>",
-    "description": "Second line of the challenge progress at the top of a list of challenges, on the Challenges tab and on Home: the points the viewer has earned out of the points those challenges offer. {{earned}} and {{total}} are numbers of points, already formatted (\"1,000\"); {{count}} is the total, for the plural; \"pts\" abbreviates points. The first tag shows the figures in bold; the second holds the word beside them."
-  },
-  "progress.pointsLabel_one": {
-    "text": "{{earned}} of {{total}} pts earned",
-    "description": "Accessible name of the points bar under the challenge progress, on the Challenges tab and on Home. {{earned}} is the points the viewer has earned and {{total}} the points the challenges offer, both already formatted (\"1,000\"); {{count}} is the total, for the plural; \"pts\" abbreviates points."
-  },
-  "progress.pointsLabel_other": {
-    "text": "{{earned}} of {{total}} pts earned",
-    "description": "Accessible name of the points bar under the challenge progress, on the Challenges tab and on Home. {{earned}} is the points the viewer has earned and {{total}} the points the challenges offer, both already formatted (\"1,000\"); {{count}} is the total, for the plural; \"pts\" abbreviates points."
   },
   "kudos.status.goingLiveTitle": {
     "text": "{{release}}.",

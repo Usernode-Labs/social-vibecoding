@@ -140,11 +140,12 @@ test('one entry point reaches all three surfaces', () => {
   // the destination, which is the half that owns the hash.
   const ui = fs.readFileSync(
     path.join(root, 'frontend/src/features/home/panels/ui.tsx'), 'utf8');
-  // #1916: the link reads "Open challenges" and lands on the screen's
-  // Challenges tab, one tab from the standings.
-  assert.match(ui, /className="home-panel-lb-browse[^"]*"[\s\S]*?aria-label=\{t\('home:challenges\.open\.label'\)\}/,
-    'the area\u2019s title bar carries the link');
-  assert.equal(message('home:challenges.open.label'), 'Open challenges');
+  // The Semi design: the link reads "See all" (named "See all challenges")
+  // and is a real link to the screen's Challenges tab, one tab from the
+  // standings. It replaced #1916's "Open challenges".
+  assert.match(ui, /href="#leaderboard\/challenges"\s+className="home-panel-see-all[^"]*"\s+aria-label=\{t\('home:challenges\.seeAll\.label'\)\}/,
+    'the area\u2019s heading carries the link');
+  assert.equal(message('home:challenges.seeAll.label'), 'See all challenges');
   assert.match(panels, /goToChallenges\(\) \{[\s\S]*?location\.hash = '#leaderboard\/challenges'/,
     'which is a real hash navigation onto the Leaderboard screen');
   assert.match(panels, /goToLeaderboard\(kind\) \{[\s\S]*?location\.hash = kind === 'kudos' \? '#leaderboard\/users' : '#leaderboard\/topochain'/,
@@ -249,10 +250,13 @@ test('TopochainChallenges defines the expected surface', () => {
     'open()', 'close()', 'str(', 'fetchJson(', '_eventId()', 'loadChallenges()',
     '_renderGrid()', 'gridView(', 'cardView(', 'openChallengeDetail(',
     'closeChallengeDetail()', '_renderDetailOverlay()', 'detailView()',
-    'openUserProfile(', 'closeUserProfile()', '_renderProfileOverlay()',
-    'profileView()',
   ]) {
     assert.ok(challengesJs.includes(member), `TopochainChallenges defines ${member}`);
+  }
+  // The participant list and the profile overlay it opened retired with the
+  // Semi design (2026-10-16).
+  for (const member of ['openUserProfile(', 'closeUserProfile()', '_renderProfileOverlay()', 'profileView()', '_loadBreakdown(']) {
+    assert.ok(!challengesJs.includes(member), `TopochainChallenges no longer defines ${member}`);
   }
   // The hero and the event list moved to the shared context module.
   assert.ok(!challengesJs.includes('_renderHero()'),
@@ -288,8 +292,7 @@ test('all three modules fetch from the /api/v4 endpoints the brief specifies', (
   assert.match(leaderboardJs, /\/api\/v4\/users\/.*\/profile/, 'drill-down can load a profile');
 
   assert.match(challengesJs, /\/api\/v4\/season-events\/.*\/challenges`/, 'grid loads challenges');
-  assert.match(challengesJs, /\/challenges\/\$\{encodeURIComponent\(challenge\.id\)\}\/breakdown/, 'detail overlay loads the challenge breakdown');
-  assert.match(challengesJs, /\/api\/v4\/users\/\$\{encodeURIComponent\(userId\)\}\/profile/, 'profile overlay loads /users/:id/profile');
+  assert.doesNotMatch(challengesJs, /\/breakdown`|\/users\/\$\{/, 'the detail page reads no breakdown and no profile');
   // The one non-/api/v4 read: the session-scoped decoration layer.
   assert.match(challengesJs, /\/challenges-api\/challenges\?season_event_id=/,
     'the grid decorates with the viewer\'s own points from the session-authed route');
@@ -359,110 +362,42 @@ test('admin-authored copy is escaped in text AND attribute contexts', () => {
   }
 });
 
-// ITERATION 03 (S3): Challenges says the event in its own season line, so the
-// shared bar draws only the picker there. Standings keeps its hero.
-test('the event bar draws no hero on the Challenges tab, and names its picker', () => {
-  // Two events of the running season, so Challenges has a choice to offer
-  // (#3049: with one, it draws no picker at all — see the tests below).
-  const props = {
-    mounted: true,
-    history: true,
-    options: [{ id: 7, label: 'Season 2 (season)' }, { id: 8, label: 'Season 2 Beta' }],
-    placeholder: null,
-    selectedId: 7,
-    hero: {
-      kind: 'event', name: 'Season 2', statusLabel: 'season', statusClass: '',
-      description: null, dates: 'Sep 1, 2026 – Sep 30, 2026', participants: null,
-      seasonNote: true, fallbackNote: false,
-    },
-  };
-  const file = 'frontend/src/features/leaderboard/event-bar.tsx';
-  const challenges = renderComponent(file, 'EventBarView', { ...props, section: 'challenges' });
-  assert.match(challenges, /<select[^>]*id="tc-ev-select"/, 'the picker stays');
-  assert.match(challenges, /<select[^>]*aria-label="Event"/, 'named without its visible label');
-  assert.match(challenges, /id="tc-ev-hero"/, 'the hero host stays, empty');
-  assert.doesNotMatch(challenges, /<h2/, 'but no hero card');
-  assert.doesNotMatch(challenges, /tc-ev-season-note/);
-  const standings = renderComponent(file, 'EventBarView', { ...props, section: 'topochain' });
-  assert.match(standings, /<h2[^>]*>Season 2<\/h2>/, 'Standings keeps the hero');
-  assert.match(standings, /id="tc-ev-season-note"/);
-});
-
-// Issue #3049: the Challenges tab named the season three times (the picker,
-// the standing card, the progress line) and listed every past season in its
-// picker beside the History tab that exists for them. Challenges now offers
-// the CURRENT season's events only, draws no picker when that leaves one, and
-// hands the rest to History through a single link. Standings is unchanged.
+// The Semi design (2026-10-16): the Challenges tab has no event to choose, so
+// the shared bar draws nothing there, not a picker, not a hero and not the
+// way to past seasons it offered (#3049) before the History tab retired.
+// Standings keeps the full picker and its hero.
+const BAR_TSX = 'frontend/src/features/leaderboard/event-bar.tsx';
 const SEASONED = {
   mounted: true,
   history: true,
   options: [
-    { id: 7, label: 'Season 2 (season)', seasonId: 2 },
-    { id: 8, label: 'Season 2 Beta', seasonId: 2 },
-    { id: 3, label: 'Season 1 (season)', seasonId: 1 },
-    { id: 4, label: 'Season 1 Beta (past)', seasonId: 1 },
+    { id: 7, label: 'Season 2 (season)' },
+    { id: 8, label: 'Season 2 Beta' },
+    { id: 3, label: 'Season 1 (season)' },
   ],
   placeholder: null,
   selectedId: 7,
-  currentSeasonId: 2,
   hero: {
     kind: 'event', name: 'Season 2', statusLabel: 'season', statusClass: '',
     description: null, dates: 'Sep 1, 2026 – Sep 30, 2026', participants: null,
     seasonNote: true, fallbackNote: false,
   },
 };
-const BAR_TSX = 'frontend/src/features/leaderboard/event-bar.tsx';
 
-test('#3049: the Challenges picker offers the current season only, and links past seasons to History', () => {
-  const html = renderComponent(BAR_TSX, 'EventBarView', { ...SEASONED, section: 'challenges' });
-  assert.match(html, /<option value="7"[^>]*>Season 2 \(season\)/);
-  assert.match(html, /<option value="8"[^>]*>Season 2 Beta/);
-  assert.doesNotMatch(html, /Season 1/, 'no past season in the Challenges picker');
-  assert.match(html, /<button[^>]*id="tc-ev-past-seasons"[^>]*>Past seasons →<\/button>/,
-    'one link to History instead');
-  const bar = fs.readFileSync(path.join(root, BAR_TSX), 'utf8');
-  assert.match(bar, /Leaderboard\?\._setSection\?\.\('seasons'\)/,
-    'the link takes the tab strip\'s own path to History');
-
+test('the event bar draws nothing on the Challenges tab; Standings keeps its picker and hero', () => {
+  assert.equal(renderComponent(BAR_TSX, 'EventBarView', { ...SEASONED, section: 'challenges' }), '',
+    'no picker, no hero, no past seasons: no gap between the strip and the board either');
   const standings = renderComponent(BAR_TSX, 'EventBarView', { ...SEASONED, section: 'topochain' });
-  assert.match(standings, /<option value="3"[^>]*>Season 1 \(season\)/, 'Standings keeps every season');
-  assert.doesNotMatch(standings, /tc-ev-past-seasons/, 'and needs no link');
-});
-
-test('#3049: with one current-season event, Challenges draws no picker — the progress line names it', () => {
-  const one = { ...SEASONED, options: SEASONED.options.filter((o) => o.id !== 8) };
-  const html = renderComponent(BAR_TSX, 'EventBarView', { ...one, section: 'challenges' });
-  assert.doesNotMatch(html, /tc-ev-select/, 'no one-option picker repeating the season name');
-  assert.match(html, /id="tc-ev-past-seasons"/, 'the way to past seasons stays');
-
-  // No past season either: nothing at all, so no gap between the strip and the board.
-  const alone = { ...one, options: one.options.filter((o) => o.seasonId === 2) };
-  assert.equal(renderComponent(BAR_TSX, 'EventBarView', { ...alone, section: 'challenges' }), '');
-  // Standings still gets its picker and hero for the same viewer.
-  assert.match(renderComponent(BAR_TSX, 'EventBarView', { ...alone, section: 'topochain' }), /tc-ev-select/);
-});
-
-test('#3049: a past-season selection made on Standings stays listed on Challenges, with the way back', () => {
-  const html = renderComponent(BAR_TSX, 'EventBarView',
-    { ...SEASONED, selectedId: 4, section: 'challenges' });
-  assert.match(html, /<option value="4"[^>]*>Season 1 Beta \(past\)/, 'the selection is never a blank control');
-  assert.match(html, /<option value="7"[^>]*>Season 2 \(season\)/, 'and the current season is one pick away');
-  assert.doesNotMatch(html, /<option value="3"/, 'the other past events are still History\'s');
-});
-
-test('#3049: an unknown current season filters nothing, and a reloading list draws no placeholder picker', () => {
-  const unknown = { ...SEASONED, currentSeasonId: null };
-  const html = renderComponent(BAR_TSX, 'EventBarView', { ...unknown, section: 'challenges' });
-  assert.match(html, /<option value="3"/, 'an older server without season_id keeps the old picker');
-  assert.doesNotMatch(html, /tc-ev-past-seasons/);
-  const loading = { ...SEASONED, options: [], placeholder: 'Loading…', selectedId: null };
-  assert.equal(renderComponent(BAR_TSX, 'EventBarView', { ...loading, section: 'challenges' }), '');
-
-  // The context supplies both halves: each option's season and the season
-  // pickDefault opens on.
-  assert.match(contextJs, /seasonId: Number\.isInteger\(ev\.season_id\) \? ev\.season_id : null,/);
-  assert.match(contextJs, /currentSeasonId: TopochainEventContext\._currentSeasonId\(events\),/);
-  assert.match(contextJs, /TopochainEvents\.pickDefault\(events\)/);
+  assert.match(standings, /<select[^>]*id="tc-ev-select"/, 'Standings keeps the picker');
+  assert.match(standings, /<select[^>]*aria-label="Event"/, 'named without its visible label');
+  assert.match(standings, /<option value="3"[^>]*>Season 1 \(season\)/, 'with every season');
+  assert.match(standings, /<h2[^>]*>Season 2<\/h2>/, 'and its hero');
+  assert.match(standings, /id="tc-ev-season-note"/);
+  assert.doesNotMatch(standings, /tc-ev-past-seasons|Past seasons/, 'the way to History is gone with it');
+  const bar = fs.readFileSync(path.join(root, BAR_TSX), 'utf8');
+  assert.doesNotMatch(bar, /_setSection\?\.\('seasons'\)|challengesChoices|currentSeasonId/,
+    'nothing filters by season or hands off to History any more');
+  assert.doesNotMatch(contextJs, /currentSeasonId|_currentSeasonId/, 'and the context computes no current season for it');
 });
 
 // Issue #2495: the picker reaches standings other than the ones on screen, so
@@ -544,7 +479,7 @@ test('the challenges module builds descriptors, not HTML — so there is nothing
     + 'surviving into a descriptor would double-encode in the renderer');
   assert.match(challengesJs, /str\(s\) \{\s*\n\s*return String\(s == null \? '' : s\)/,
     'str() keeps esc()\'s null→empty coercion');
-  for (const field of ['cp.goal', 'p.display_name', 'e.display_name']) {
+  for (const field of ['cp.goal', 'dm.requirements']) {
     assert.ok(new RegExp(`str\\(${field.replace('.', '\\.')}`).test(challengesJs),
       `${field} passes through str() in topochain-challenges.js`);
   }

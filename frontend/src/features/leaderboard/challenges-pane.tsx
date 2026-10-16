@@ -4,11 +4,11 @@
 // ── What this renders ──────────────────────────────────────────────────
 //
 // Everything `TopochainChallenges._renderShell()` used to innerHTML into
-// #challenges-root: the grid host, and the challenge detail page and profile
-// overlay that sit on top of it. The descriptors come from ./topochain-challenges-store.js,
-// which that module fills; nothing here decides anything. The completed
-// split, the groups and their headers' words, the summary tally, the
-// deep-link resolution, the scheme guard on the CTA — all of it stays in the .js, which is both the island rule's
+// #challenges-root: the grid host, and the challenge detail page that takes
+// its place. The descriptors come from ./topochain-challenges-store.js,
+// which that module fills; nothing here decides anything. The groups and
+// their headings' words, the summary tally, the deep-link resolution, the
+// scheme guard on the CTA — all of it stays in the .js, which is both the island rule's
 // "converted markup is like-for-like" and what keeps
 // tests/challenge-deep-link.test.js able to run the real controller in a vm.
 //
@@ -21,25 +21,17 @@
 // public/index.html and change the structural baseline. The store's header
 // says the same thing from the other end.
 //
-// ── Two things that are NOT portals ────────────────────────────────────
+// ── The detail page is not an overlay ──────────────────────────────────
 //
-// The profile overlay is a `fixed inset-0 z-50` child of #challenges-root,
-// which is where the markup put it and where it still is. They cover the viewport by position,
-// not by parentage, so there is nothing for a portal to solve — and a portal
-// would put React-managed nodes outside the island, which is the one thing
-// the island rule is about.
-//
-// The profile overlay's backdrop dismiss keeps its original test verbatim:
-// `e.target.id === <the overlay root>`, not `e.target === e.currentTarget`.
-// The detail page is not an overlay at all: it is a level of the screen, in
-// flow (see PAGE below).
+// It is a level of the screen, in flow (see PAGE below). The Semi design
+// (2026-10-16) also retired the participants list and the profile overlay
+// it opened, so nothing on this tab covers the viewport any more.
 //
 // ── Whitespace ─────────────────────────────────────────────────────────
 //
 // Where the old strings put a bare space between two interpolations, the
-// space is baked into a neighbouring string instead — the participant row's
-// points-and-rate and the card rail's label are composed in
-// ./topochain-challenges.js for exactly that reason. `{' '}` is not available
+// space is baked into a neighbouring string instead — the card rail's label
+// is composed in ./topochain-challenges.js for exactly that reason. `{' '}` is not available
 // here (tests/shell-build.test.js rejects it: adjacent text children are
 // React #418 in a hydrating tree).
 
@@ -48,16 +40,14 @@ import type { ReactNode } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { SectionHeading } from '@/components/ui/field';
+import { SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
 import { resolveIllustration } from '../../lib/challenge-illustrations';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
-import { ActivityRow } from './activity-row';
 import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
-import { ChallengesIntro } from './challenges-intro';
-import { GroupHeader } from './group-header';
 import { LockedChallengesCard } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
 import type { ChallengeState } from './challenge-card';
@@ -72,17 +62,13 @@ import { YourStanding } from './your-standing';
 const controller = () => (window as {
   TopochainChallenges?: {
     _openIdx(idx: number): void;
-    _toggleGroup(key: string): void;
     _toOnboarding(eventId: number): void;
-    _moreBreakdown(): void;
     requestBlockProduction(): void;
     retryBpState(): void;
     openWallet(): void;
     closeChallengeDetail(): void;
     _backFromDetail(): void;
     handleBack(): boolean;
-    closeUserProfile(): void;
-    openUserProfile(userId: number): void;
   };
 }).TopochainChallenges;
 
@@ -105,31 +91,19 @@ type CardView = {
   illustrationTone: string | null;
   // From TopochainChallenges._stateOf: the rail's state, its one short line,
   // its fill (null = indeterminate), whether it is counted (a bar, from zero),
-  // and "Earned N pts" on a finished challenge the viewer scored on.
+  // and "500 pts" on a finished challenge the viewer scored on.
   state: ChallengeState;
   stateLabel: string;
   fill: number | null;
   counted: boolean;
   earned: string | null;
-  // "5d left" (TopochainChallenges._deadlineOf); null when done, and null
-  // under a group header that carries the clock.
-  deadline: string | null;
-  // "next count 10:42" (TopochainChallenges._cadenceOf), the meta line's last
-  // part, on a challenge the background scorer counts; null says nothing.
-  cadence: string | null;
 };
 
-// `meta`, `allDone` and `collapsed` are a grouped grid's header
-// (TopochainChallenges._groupedGridView); an ungrouped grid's groups carry
-// only a heading, or none.
+// One of TopochainChallenges.gridView's groups: First challenges, Next
+// challenges or Done, each under its heading.
 type GroupView = {
   key: string;
   heading: string | null;
-  meta?: string | null;
-  // #3203: "Ends Mon 12 Oct, 02:00", the header clock's moment, as its tooltip.
-  metaTitle?: string | null;
-  allDone?: boolean;
-  collapsed?: boolean;
   cards: CardView[];
 };
 
@@ -149,14 +123,6 @@ type GridView =
     lockedNames?: string[];
     groups: GroupView[];
   };
-
-type EntryRow = { key: string; userId: number; name: string; nonPodium: boolean; points: string };
-
-type EntriesView =
-  | { kind: 'loading' }
-  | { kind: 'error'; message: string }
-  | { kind: 'empty' }
-  | { kind: 'list'; hasMore: boolean; rows: EntryRow[] };
 
 // `route` is one of the shell's own hash routes (#2893): it navigates in
 // place, never in a new tab — see TopochainChallenges.ctaView.
@@ -185,53 +151,31 @@ type BlockProductionView =
 
 type DetailView = {
   key: string;
-  eyebrow: string | null;
   goal: string;
-  task: string | null;
-  // #3253/#3248: under the task, what the scoring rule counts (a proposal
+  // The points under the title: earned (emerald), so far, or on offer.
+  amount: { text: string; earned: boolean } | null;
+  // #3253/#3248: under the points, what the scoring rule counts (a proposal
   // once it is put to the vote; nothing past a counted measure's target).
   countNote?: string | null;
   // The template's illustration slug and an upload's tone, for the artwork
   // well (see DetailPage).
   illustration: string | null;
   illustrationTone: string | null;
-  deadline: string | null;
-  // #3203: "ends Mon 12 Oct, 02:00" (TopochainChallenges._endsText), the
-  // moment this challenge closes in the viewer's zone; null when done.
-  ends?: string | null;
-  amount: { text: string; earned: boolean } | null;
   state: ChallengeState;
   stateLabel: string;
   fill: number | null;
   counted: boolean;
-  cadence: string | null;
   cta: CtaView | null;
   // #3186: the Me screen's "Your feedback", on the feedback challenge only.
   feedbackLink?: boolean;
   blockProduction?: BlockProductionView | null;
-  description: string | null;
+  // The organiser's requirements, under "What counts".
   requirements: string | null;
-  scoring: string | null;
-  participants: string;
-  pointsTotal: string | null;
-  moreLabel: string;
-  entries: EntriesView;
 };
-
-type ProfileView =
-  | { kind: 'loading' }
-  | { kind: 'error'; message: string }
-  | {
-    kind: 'profile';
-    name: string;
-    stats: { label: string; value: string }[];
-    activities: { key: string; text: string; points: string; at: string | null; precision?: 'day' | 'instant' | null }[] | null;
-  };
 
 // ── Class strings ───────────────────────────────────────────────────────
 //
-// The grid, overlays and rows are carried over verbatim from the retired
-// templates. The card itself is ./challenge-card.tsx's `ChallengeCard`, the
+// The grid is carried over verbatim from the retired templates. The card itself is ./challenge-card.tsx's `ChallengeCard`, the
 // same one Home's Challenges block draws; this file only gives it the
 // `tc-se-card` root class and the featured ring. That ring is also the only
 // source of the `ring-violet-500/40` sentinel tests/tailwind-build.test.js
@@ -240,12 +184,18 @@ type ProfileView =
 // Columns by the CONTAINER, not the viewport. The screen caps content at
 // max-w-5xl, so the old `sm:grid-cols-2 lg:grid-cols-3` left a 204px card body
 // at three columns and 180px at two on a 640px window — narrow enough that
-// the title, the "5d left · 500 pts" line and the rail label all truncate.
+// the title, its points and the rail label all truncate.
 // A column is never narrower than 21rem
 // while there are two or more; below that the grid is one full-width column.
 const GRID = 'grid gap-3 grid-cols-[repeat(auto-fill,minmax(min(21rem,100%),1fr))]';
 const CARD_FEATURED = ' ring-1 ring-violet-500/40';
-const GROUP_HEADING = 'text-sm font-semibold text-zinc-500 dark:text-zinc-400 mt-6 mb-2';
+// A group's heading is the shell's label over a card group (AGENTS.md, "Type
+// and colour"): grouped-list's SectionHeader, 12px small caps, set flush with
+// the grid's edge rather than the inset-list gutter it is drawn for.
+// The first heading sits right under the summary's own `mb-4`; each later one
+// stands 24px clear of the grid above it.
+const GROUP_HEADING_FIRST = 'px-1 pt-0 pb-2';
+const GROUP_HEADING = 'px-1 pt-6 pb-2';
 const GRID_ERROR = 'rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 '
   + 'dark:border-red-900 text-red-700 dark:text-red-300 px-4 py-3 text-sm';
 
@@ -262,46 +212,23 @@ const GRID_ERROR = 'rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-20
 // which the declared screenshot check selects on.
 const PAGE = 'mx-auto w-full max-w-lg';
 const PAGE_BODY = 'flex flex-col gap-3.5 pb-8';
-const EYEBROW = 'min-w-0 truncate text-[0.8125rem] font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400';
 const PAGE_TITLE = 'text-[1.625rem] font-semibold leading-tight tracking-tight text-balance text-zinc-900 dark:text-zinc-100';
 const PROSE = 'text-sm text-zinc-600 dark:text-zinc-400';
 const NOTE = 'text-[0.8125rem] text-zinc-500 dark:text-zinc-400';
 // The artwork well: the registry's tone class sets `--tint-art` for both
 // themes, so the one background reads it in either.
 const WELL = 'flex h-56 w-full items-center justify-center rounded-2xl bg-[var(--tint-art)]';
-// The detail page's own section labels are @/components/ui/field's
+// The detail page's own section label is @/components/ui/field's
 // SectionHeading — the platform's heading for "a label tight above the block
-// it names", which is what Requirements, Scoring and the participants line all
-// are. Not grouped-list's SectionHeader: that one is the label that FLOATS in
-// the gutter above a card group, and this page has no gutter and no cards —
-// its sections sit flush on the screen's own surface.
+// it names", which is what "What counts" is. Not grouped-list's
+// SectionHeader (the grid's group labels): that one is the label over a card
+// group, and this page has no cards — its section sits flush on the screen's
+// own surface.
 const CTA_LINK = 'flex h-12 w-full items-center justify-center rounded-[0.875rem] bg-violet-600 px-4 '
   + 'text-[0.9375rem] font-semibold text-white transition-colors hover:bg-violet-500';
 // #3186: the quieter link under the action, in the "See all" ink Me uses.
 const FEEDBACK_LINK = 'self-center inline-flex min-h-[44px] items-center px-3 text-sm font-medium '
   + 'text-violet-700 hover:underline dark:text-violet-400';
-
-const OVERLAY = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4';
-// Split either side of the max-width, so the profile panel still renders its
-// class attribute in the order the markup shipped rather than with the width
-// tacked on the end.
-const PANEL_HEAD = 'bg-white dark:bg-zinc-900 rounded-xl p-6 w-full';
-const PANEL_TAIL = 'max-h-[85vh] overflow-y-auto shadow-xl border border-zinc-200 '
-  + 'dark:border-zinc-800';
-const CLOSE_X = 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 text-xl leading-none dark:text-zinc-400';
-// A row is a button: the name and points are one control that opens the
-// participant's profile, reachable by keyboard as well as by touch.
-//
-// The BOX is split off the hook and the affordances so the loading
-// placeholder (EntriesSkeleton) can stand at the row's real height, outdent
-// and padding without also claiming to be a row: `tc-se-entry` is a selector
-// hook, and a placeholder that can be hovered or pressed is a row with
-// nothing behind it. The rendered string is unchanged.
-const ENTRY_BOX = '-mx-2 flex min-h-11 w-[calc(100%+1rem)] items-center justify-between gap-3 rounded-lg px-2';
-const ENTRY_ROW = `tc-se-entry ${ENTRY_BOX} `
-  + 'text-left text-sm font-medium cursor-pointer hover:bg-zinc-200/60 disabled:cursor-default dark:hover:bg-zinc-800';
-// × as a character, not `&times;` — the entity was HTML source; this is text.
-const TIMES = '×';
 
 // ── Grid ────────────────────────────────────────────────────────────────
 
@@ -330,11 +257,11 @@ function Card({ view }: { view: CardView }): ReactNode {
  * is CHALLENGE_CARD_FACE, the shared card's own face, exported from
  * ./challenge-card.tsx so this cannot drift from the thing it stands in for.
  * Inside it are that card's three parts at their own sizes: the 5rem artwork
- * tile (IconTile `xl`), the title with its meta line, and the rail at the
- * card's 36px height and 11px corners.
+ * tile (IconTile `xl`), the title with its points at the right, and the rail
+ * at the card's 36px height and 11px corners.
  *
- * The season progress leads, because it leads the loaded grid: its one line
- * over its segment track, at the same `mb-4`. Without it the whole grid jumps
+ * The summary leads, because it leads the loaded grid: its one line over its
+ * one bar, at the same `mb-4`. Without it the whole grid jumps
  * up by that block's height the moment the payload lands, which is the shift
  * a skeleton exists to hold open.
  *
@@ -355,9 +282,9 @@ function GridSkeleton(): ReactNode {
           <div key={i} className={CHALLENGE_CARD_FACE}>
             <Skeleton shape="block" className="h-20 w-20 rounded-2xl" />
             <div className="flex min-w-0 flex-1 flex-col gap-2">
-              <div className="min-w-0">
+              <div className="flex min-w-0 items-center justify-between gap-2">
                 <Skeleton className={i % 2 ? 'w-32' : 'w-40'} />
-                <Skeleton shape="muted" className="mt-1.5 w-24" />
+                <Skeleton shape="muted" className="w-12" />
               </div>
               <Skeleton shape="block" className="h-9 w-full rounded-[0.6875rem]" />
             </div>
@@ -383,9 +310,8 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
   return (
     <>
       {/*
-          The progress Home's block shares ("3/9 done in this event" over one
-          segment per challenge). The id rides its text line, where the
-          declared dapp.json check anchors.
+          One line, "3,500 pts · 4 of 11 done", over one bar. The id rides
+          its text line, where the declared dapp.json check anchors.
       */}
       <SeasonProgress id="tc-se-challenge-summary" view={view.progress} className="mb-4" />
       {view.onboardingEventId != null ? (
@@ -397,42 +323,20 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
         </button>
       ) : null}
       {/*
-          Fragment, not a wrapping <div>: the two grids and the subheading
-          between them were siblings in the string this replaces, and a
-          container here would take the heading's `mt-6` out of the same
-          margin context.
-
-          A group with a `meta` belongs to a grouped grid and gets the board's
-          header, a disclosure over the group's own grid. A collapsed grid
-          keeps its cards, because the header's aria-controls names it, and is
-          hidden twice: the attribute says what it means, and the `hidden`
-          class is what hides it, since `grid` sets a display that outranks
-          the attribute's preflight rule.
+          First challenges, Next challenges, then Done, each a heading over
+          its own grid. Fragment, not a wrapping <div>: the headings and grids
+          are siblings in the pane's one column.
       */}
-      {view.groups.map((g) => (g.meta && g.heading ? (
+      {view.groups.map((g, n) => (
         <Fragment key={g.key}>
-          <GroupHeader
-            heading={g.heading}
-            meta={g.meta}
-            metaTitle={g.metaTitle}
-            allDone={!!g.allDone}
-            expanded={!g.collapsed}
-            controlsId={`tc-se-group-${g.key}`}
-            onToggle={() => controller()?._toggleGroup(g.key)}
-            className="mt-3 mb-2 first:mt-0"
-          />
-          <div id={`tc-se-group-${g.key}`} className={g.collapsed ? `hidden ${GRID}` : GRID} hidden={!!g.collapsed}>
+          {g.heading ? (
+            <SectionHeader className={n ? GROUP_HEADING : GROUP_HEADING_FIRST}>{g.heading}</SectionHeader>
+          ) : null}
+          <div id={`tc-se-group-${g.key}`} className={GRID}>
             {g.cards.map((c) => <Card key={c.key} view={c} />)}
           </div>
         </Fragment>
-      ) : (
-        <Fragment key={g.key}>
-          {g.heading ? <div className={GROUP_HEADING}>{g.heading}</div> : null}
-          <div className={GRID}>
-            {g.cards.map((c) => <Card key={c.key} view={c} />)}
-          </div>
-        </Fragment>
-      )))}
+      ))}
       {/*
           After the challenges, what Getting started still hides and what
           opens it: the locked placeholder, whose first line IS the unlock
@@ -554,79 +458,6 @@ function BlockProductionStep({ view }: { view: BlockProductionView }): ReactNode
   );
 }
 
-/**
- * The participant list's loading state, at the ENTRY row's own geometry.
- *
- * ENTRY_BOX is the real row's box — the 44px minimum height, the outdent and
- * the padding that let a row's hover reach past the page's text column — so
- * the names arrive where the placeholders stood. No `tc-se-entry` and no
- * hover: see the note on that constant.
- *
- * Three rows, because the list itself is short: the detail page shows the
- * leading few and puts the rest behind "Show all N →".
- */
-function EntriesSkeleton(): ReactNode {
-  const t = useMessages('leaderboard');
-  return (
-    <SkeletonGroup label={t('leaderboard:challenges.detail.loadingParticipants')} className="flex flex-col">
-      {Array.from({ length: 3 }, (_, i) => (
-        <div key={i} className={ENTRY_BOX}>
-          <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
-          <Skeleton shape="muted" className="w-16" />
-        </div>
-      ))}
-    </SkeletonGroup>
-  );
-}
-
-function Entries({ view, moreLabel }: { view: EntriesView; moreLabel: string }): ReactNode {
-  const t = useMessages('leaderboard');
-  if (view.kind === 'loading') return <EntriesSkeleton />;
-  if (view.kind === 'error') return <p className={PROSE}>{view.message}</p>;
-  if (view.kind === 'empty') return <p className={PROSE}>{t('leaderboard:challenges.detail.noParticipants')}</p>;
-  return (
-    <>
-      <ul className="flex flex-col">
-        {view.rows.map((row) => (
-          <li key={row.key}>
-            <button
-              type="button"
-              className={ENTRY_ROW}
-              disabled={!Number.isInteger(row.userId)}
-              onClick={() => {
-                if (Number.isInteger(row.userId)) controller()?.openUserProfile(row.userId);
-              }}
-            >
-              <span className="min-w-0 truncate text-zinc-900 dark:text-zinc-100">
-                {row.nonPodium ? (
-                  /* The leading space lived between the two spans in the old
-                     string; it is inside this one now, for the reason the header
-                     gives. One message holds the name and the note. */
-                  <RichMessage
-                    id="leaderboard:challenges.detail.nonPodium"
-                    values={{ name: row.name }}
-                    components={[<span className="font-normal text-zinc-500 dark:text-zinc-400" />]}
-                  />
-                ) : row.name}
-              </span>
-              <span className="shrink-0 tabular-nums text-zinc-700 dark:text-zinc-300">{row.points}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
-      {view.hasMore ? (
-        <button
-          id="tc-se-breakdown-more"
-          className="self-start text-[0.8125rem] font-medium text-violet-700 hover:underline dark:text-violet-400"
-          onClick={() => controller()?._moreBreakdown()}
-        >
-          {moreLabel}
-        </button>
-      ) : null}
-    </>
-  );
-}
-
 function PageSection({ heading, children }: { heading: string; children: string }): ReactNode {
   return (
     // No `gap-1` any more: SectionHeading's own `mb-1` is that gap, and the two
@@ -659,28 +490,26 @@ function ArtworkWell({ slug, tone }: { slug: string | null; tone: string | null 
   );
 }
 
-// The board's order, below the platform header that carries the way back and
-// the name: the category, the title with the card's meta line ("3d left · 720
-// pts so far", plus "next count 9:37" on a challenge the background scorer
-// counts) and the task, the artwork well, the clean rail, the action, then the reading — description,
-// Requirements, Scoring — and Participants under a rule. The board's
-// "Next: …" hint under the action is deliberately absent (owner decision).
+// The page, below the platform header that carries the way back: the title,
+// its points ("500 pts", "320 pts so far", emerald once earned) and what the
+// rule counts, the artwork well, the clean rail, the action, then "What
+// counts". The Semi design (2026-10-16) left out the category eyebrow, the
+// deadline and the time of the next count, the task line, the description,
+// Scoring and the participants list (with the profile overlay it opened):
+// the card's title says what to do and "What counts" says how it is counted.
+// The board's "Next: …" hint under the action is deliberately absent (owner
+// decision).
 export function DetailPage({ view }: { view: DetailView }): ReactNode {
   const t = useMessages('leaderboard');
   return (
     <>
       <div className="flex flex-col gap-1.5">
-        {view.eyebrow ? <div className={EYEBROW}>{view.eyebrow}</div> : null}
         <h2 id="tc-se-detail-title" tabIndex={-1} className={PAGE_TITLE}>{view.goal}</h2>
         <ChallengeMeta
           size="lg"
-          deadline={view.deadline}
-          ends={view.ends}
           text={view.amount ? view.amount.text : null}
           earned={!!view.amount?.earned}
-          cadence={view.cadence}
         />
-        {view.task ? <p className={PROSE}>{view.task}</p> : null}
         {view.countNote ? <p className={NOTE}>{view.countNote}</p> : null}
       </div>
       <ArtworkWell slug={view.illustration} tone={view.illustrationTone} />
@@ -702,88 +531,7 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
           {t('leaderboard:challenges.detail.seeFeedback')}
         </a>
       ) : null}
-      {view.description ? <p className={PROSE}>{view.description}</p> : null}
       {view.requirements ? <PageSection heading={t('leaderboard:challenges.detail.requirements')}>{view.requirements}</PageSection> : null}
-      {view.scoring ? <PageSection heading={t('leaderboard:challenges.detail.scoring')}>{view.scoring}</PageSection> : null}
-      <section className="flex flex-col gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
-        <div className="flex items-baseline justify-between gap-3">
-          {/* `mb-0`: this heading is an ITEM on a shared baseline with the
-              points total, not a block with its own bottom gap — the section's
-              `gap-2` already spaces it off the entries. */}
-          <SectionHeading className="shrink-0 mb-0" title={view.participants} />
-          {view.pointsTotal ? (
-            <span className="min-w-0 truncate text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{view.pointsTotal}</span>
-          ) : null}
-        </div>
-        <Entries view={view.entries} moreLabel={view.moreLabel} />
-      </section>
-    </>
-  );
-}
-
-// ── Profile overlay ─────────────────────────────────────────────────────
-
-/**
- * The profile overlay's loading state, at the PANEL's own three parts.
- *
- * A bare "Loading…" in a 28rem panel said nothing about what was coming, and
- * the panel then grew by the name, the stat grid and the activity list all at
- * once, under a close button that had already moved. These are those three,
- * in that order and at their spacing: the name, four stats in the real
- * two-column grid, the "Activities" label, and three rows with a figure at
- * the right end where the real ones carry their points.
- */
-function ProfileSkeleton(): ReactNode {
-  const t = useMessages('leaderboard');
-  return (
-    <SkeletonGroup label={t('leaderboard:challenges.profile.loading')}>
-      <Skeleton shape="block" className="h-5 w-40 mb-3" />
-      <div className="grid grid-cols-2 gap-2 mb-4">
-        {Array.from({ length: 4 }, (_, i) => (
-          <div key={i}>
-            <Skeleton shape="muted" className="w-16" />
-            <Skeleton className="mt-1.5 w-12" />
-          </div>
-        ))}
-      </div>
-      <Skeleton shape="muted" className="w-16 mb-2" />
-      <div className="space-y-2">
-        {Array.from({ length: 3 }, (_, i) => (
-          <div key={i} className="flex items-center justify-between gap-3">
-            <Skeleton className={i % 2 ? 'w-32' : 'w-40'} />
-            <Skeleton shape="muted" className="w-10" />
-          </div>
-        ))}
-      </div>
-    </SkeletonGroup>
-  );
-}
-
-function ProfileBody({ view }: { view: ProfileView }): ReactNode {
-  const t = useMessages('leaderboard');
-  if (view.kind === 'loading') return <ProfileSkeleton />;
-  if (view.kind === 'error') return <p className="text-sm text-zinc-500 dark:text-zinc-400">{view.message}</p>;
-  return (
-    <>
-      <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 mb-3">{view.name}</h2>
-      <div className="grid grid-cols-2 gap-2 text-xs mb-4">
-        {view.stats.map((s) => (
-          <div key={s.label}>
-            <span className="text-zinc-500 dark:text-zinc-400">{s.label}</span>
-            <div className="font-mono">{s.value}</div>
-          </div>
-        ))}
-      </div>
-      <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">{t('leaderboard:challenges.profile.activities')}</div>
-      {view.activities ? (
-        <ul className="space-y-1">
-          {view.activities.map((a) => (
-            <ActivityRow key={a.key} text={a.text} points={a.points} at={a.at} precision={a.precision} />
-          ))}
-        </ul>
-      ) : (
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('leaderboard:challenges.profile.noActivities')}</p>
-      )}
     </>
   );
 }
@@ -810,9 +558,7 @@ export function ChallengesPane(): ReactNode {
     mounted: boolean;
     grid: GridView | null;
     detail: DetailView | null;
-    profile: ProfileView | null;
   };
-  const t = useMessages('leaderboard');
 
   // A page is a level of the screen, so the screen's scroller is the page's:
   // it opens at its top, and going back up returns the grid to where it was
@@ -848,21 +594,17 @@ export function ChallengesPane(): ReactNode {
   }, [state.mounted, openKey]);
 
   // A page moves focus to its title when it opens, so a keyboard or a screen
-  // reader starts at the top of the new level, and Escape goes back up. With
-  // the profile overlay stacked on the page, Escape closes that first.
+  // reader starts at the top of the new level, and Escape goes back up.
   const detailKey = state.detail ? state.detail.key : null;
-  const profileOpen = !!state.profile;
   useEffect(() => {
     if (detailKey == null) return undefined;
-    if (!profileOpen) document.getElementById('tc-se-detail-title')?.focus({ preventScroll: true });
+    document.getElementById('tc-se-detail-title')?.focus({ preventScroll: true });
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      if (profileOpen) controller()?.closeUserProfile();
-      else controller()?.handleBack();
+      if (e.key === 'Escape') controller()?.handleBack();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [detailKey, profileOpen]);
+  }, [detailKey]);
 
   // The prerender state, and the state before the pane's first open.
   if (!state.mounted) return null;
@@ -871,15 +613,10 @@ export function ChallengesPane(): ReactNode {
     <>
       <div id="tc-se-grid" className={state.detail ? 'hidden' : undefined}>
         {/*
-            What challenges are for, above everything else on the tab, until
-            the viewer closes it on this device (./challenges-intro.tsx). It
-            is inside the grid so a challenge's page hides it too.
-        */}
-        <ChallengesIntro />
-        {/*
-            The viewer's own standing leads the rest of the tab, as the
-            prototype's Challenges page does — the points, rank, breakdown and
+            The viewer's own standing leads the tab, as the prototype's
+            Challenges page does — the rank, the people it is among and the
             token allocation the Me screen used to carry (./your-standing.tsx).
+            It is inside the grid so a challenge's page hides it too.
         */}
         <YourStanding />
         <Grid view={state.grid} />
@@ -893,34 +630,6 @@ export function ChallengesPane(): ReactNode {
       >
         <div id="tc-se-detail-panel" className={PAGE_BODY}>
           {state.detail ? <DetailPage key={state.detail.key} view={state.detail} /> : null}
-        </div>
-      </div>
-      {/* User profile overlay */}
-      <div
-        id="tc-se-profile-overlay"
-        className={state.profile ? OVERLAY : `hidden ${OVERLAY}`}
-        onClick={(e) => {
-          if ((e.target as HTMLElement).id === 'tc-se-profile-overlay') {
-            controller()?.closeUserProfile();
-          }
-        }}
-      >
-        <div id="tc-se-profile-panel" className={`${PANEL_HEAD} max-w-md ${PANEL_TAIL}`}>
-          {state.profile ? (
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex-1 min-w-0">
-                <ProfileBody view={state.profile} />
-              </div>
-              <button
-                id="tc-se-profile-close"
-                className={`${CLOSE_X} shrink-0`}
-                aria-label={t('core:common.close')}
-                onClick={() => controller()?.closeUserProfile()}
-              >
-                {TIMES}
-              </button>
-            </div>
-          ) : null}
         </div>
       </div>
     </>

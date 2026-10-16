@@ -554,7 +554,7 @@ test('the Communities screen has no toggle: Needs you is a row that opens a page
 
 test('Home\'s Browse all links carry the accent, not the header\'s periwinkle', () => {
   const ui = read('frontend/src/features/home/panels/ui.tsx');
-  for (const cls of ['home-panel-browse', 'home-panel-lb-browse']) {
+  for (const cls of ['home-panel-browse', 'home-panel-see-all']) {
     const tag = ui.slice(ui.indexOf(`className="${cls} `), ui.indexOf('"', ui.indexOf(`className="${cls} `) + 12));
     assert.match(tag, /text-\[color:var\(--accent\)\]/, `${cls} is the accent`);
     assert.doesNotMatch(tag, /brand-ink/);

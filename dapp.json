@@ -751,10 +751,9 @@
       "expectSelector": "#profile-screen:not(.hidden) #profile-work #profile-row-proposals[href=\"#profile/your-changes\"] + #profile-row-feedback[href=\"#profile/your-requests\"] + #profile-row-votes[href=\"#profile/your-votes\"]"
     },
     {
-      "name": "A History tab after Standings lists the seasons that ended, with each season's and each event's winner",
+      "name": "The retired History address opens the Challenges tab, and the tabs are Challenges, Standings and Kudos",
       "path": "/?demo=1#leaderboard/seasons",
-      "expectText": "won with",
-      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"topochain\"] + [data-standings-tab=\"seasons\"][aria-current=\"page\"]) #leaderboard-history-root:not(.hidden) #lb-history-seasons [data-history-season] [data-history-result]"
+      "expectSelector": "#leaderboard-screen:not(.hidden):has([data-standings-tab=\"challenges\"][aria-current=\"page\"] + [data-standings-tab=\"topochain\"] + [data-standings-tab=\"kudos\"]):not(:has([data-standings-tab=\"seasons\"])) #challenges-root #tc-se-challenge-summary"
     },
     {
       "name": "A person's page carries Message beside their name, which opens a direct message",
@@ -926,26 +925,28 @@
       "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card [role=progressbar][aria-valuetext]"
     },
     {
-      "name": "Challenges: the season progress leads the flat block, above the shared challenge cards",
+      "name": "Challenges: Home names the block by what it holds, with no season progress above the cards",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section > h2.home-area-label + article.home-panel > .home-panel-season + .home-panel-body .home-challenge-card [role=progressbar]"
+      "expectSelector": "#home-challenges-section:not(:has(.home-panel-season)) > h2.home-area-label + article.home-panel > .home-panel-body .home-challenge-card [role=progressbar]",
+      "expectText": "Next challenges"
     },
     {
       "name": "Challenges: with nothing running it says so, and shows only that (#947)",
       "path": "/?demo=1&challenges=none",
       "expectSelector": "#home-body [data-panel-slot=\"challenges\"] article.home-panel[data-rows=\"0\"] .home-panel-row",
-      "expectText": "No challenges are running right now"
+      "expectText": "No challenges right now"
     },
     {
-      "name": "Challenges: a block showing every challenge there is draws no \"see all\" (#1824)",
+      "name": "Challenges: with two open, Next challenges shows just those two",
       "path": "/?demo=1&challenges=few",
-      "expectSelector": "#home-challenges-section article.home-panel:not(:has(.home-panel-expand)) > .home-panel-body .home-challenge-card"
+      "expectSelector": "#home-challenges-section article.home-panel[data-rows=\"2\"] > .home-panel-body .home-challenge-card",
+      "expectText": "Next challenges"
     },
     {
-      "name": "Challenges: a truncated list still draws the toggle that opens the rest (#1824)",
+      "name": "Challenges: Next challenges shows at most three, the furthest along first",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section article.home-panel > .home-panel-footer > .home-panel-expand[aria-expanded=\"false\"]",
-      "expectText": "See all 7 challenges"
+      "expectSelector": "#home-challenges-section article.home-panel[data-rows=\"3\"]:not(:has(.home-panel-expand)) .home-panel-rows > .home-challenge-card[data-challenge-id=\"900512\"]:first-child",
+      "expectText": "4/8 Apps tested this week"
     },
     {
       "name": "Challenges: a Home card with an illustration draws its artwork (Iteration 03)",
@@ -953,9 +954,9 @@
       "expectSelector": "#home-body.home-column #home-challenges-section .home-challenge-card img[src^=\"/illustrations/challenges/\"]"
     },
     {
-      "name": "Challenges: on Home, finished challenges sit last under a Done header, after every unfinished one (#2490)",
+      "name": "Challenges: on Home, Next challenges lists only unfinished ones, under no group headers",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section .home-panel-rows:has(> h3.home-challenge-done-head + .home-challenge-card):not(:has(> h3.home-challenge-done-head ~ .home-challenge-card [role=progressbar]:not([aria-valuetext=\"Done\"])))"
+      "expectSelector": "#home-challenges-section .home-panel-rows:not(:has(h3)):not(:has(.home-challenge-card [role=progressbar][aria-valuetext=\"Done\"])) > .home-challenge-card"
     },
     {
       "name": "Dev board: one composite status pill and a menu trigger per card (card-as-pointer)",
@@ -3233,10 +3234,10 @@
       "expectText": "Waiting for your approval."
     },
     {
-      "name": "The Challenges area is the way to the Leaderboard screen",
+      "name": "The Challenges area's See all opens the Challenges tab",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section > h2.home-area-label .home-panel-lb-browse[aria-label=\"Open challenges\"]",
-      "expectText": "Open challenges"
+      "expectSelector": "#home-challenges-section > h2.home-area-label > a.home-panel-see-all[href=\"#leaderboard/challenges\"][aria-label=\"See all challenges\"]",
+      "expectText": "See all"
     },
     {
       "name": "Admin & moderation console page renders at #admin (#818)",

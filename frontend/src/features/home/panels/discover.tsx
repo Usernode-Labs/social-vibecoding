@@ -332,7 +332,6 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
   return (
     <PanelShell
       panelKey={view.key}
-      expanded={false}
       plate="none"
       stamps={{ featured: view.featured.length, popular: view.popular.length }}
     >

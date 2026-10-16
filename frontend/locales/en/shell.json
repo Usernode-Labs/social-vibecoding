@@ -319,10 +319,6 @@
     "text": "Standings",
     "description": "Title shown in the header bar, and as the browser tab's title, on the Standings tab of the leaderboard screen: the ranking of members by points."
   },
-  "title.leaderboard.history": {
-    "text": "History",
-    "description": "Title shown in the header bar, and as the browser tab's title, on the History tab of the leaderboard screen: past seasons and their results."
-  },
   "title.profile": {
     "text": "Profile",
     "description": "Title shown in the header bar, and as the browser tab's title, on the signed-in person's own profile screen. A noun."
