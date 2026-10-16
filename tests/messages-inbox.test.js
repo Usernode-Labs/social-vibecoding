@@ -96,10 +96,10 @@ test('an agent chat falls back to when it was created', () => {
   assert.deepEqual(merged.map((e) => e.key), ['agent:new', 'agent:old']);
 });
 
-test('the sections are Agents and People, and there are no filter chips', () => {
+test('the sections are Agents and Direct messages, and there are no filter chips', () => {
   assert.deepEqual([...inbox.INBOX_SECTIONS], ['agents', 'people']);
   assert.deepEqual(inbox.INBOX_SECTIONS.map((section) => message(`messages:inbox.section.${section}`)),
-    ['Agents', 'People']);
+    ['Agents', 'Direct messages'], 'People\'s section is headed Direct messages (16 Oct 2026)');
   assert.equal(inbox.INBOX_FILTERS, undefined, 'the chips went: the headings say which is which');
   assert.equal(inbox.admits, undefined);
   assert.doesNotMatch(SCREEN, /InboxFilters|setFilter|messages-filter/);
