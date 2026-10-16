@@ -13549,9 +13549,9 @@ async function seedStagingTopochain(pool, config) {
            (${base + 13}, $1, $2, 'COMMUNITY', 180, 'Voted on a proposal (5 of 5).',
             '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '5 hours', 900514),
            -- A day-grained credit, as the app-use scorer writes them (#3570):
-           -- noon-UTC pinned and USE_APPS_MINUTES, so the standings drill-down
-           -- shows the "(counted for the whole day)" date line. On 900500,
-           -- a binary challenge whose done state one row already fixed, so no
+           -- noon-UTC pinned and USE_APPS_MINUTES, so a day-counted date line
+           -- sits in the seeded ledger beside the timed ones. On 900500, a
+           -- binary challenge whose done state one row already fixed, so no
            -- other seeded state moves.
            (${base + 14}, $1, $2, 'COMMUNITY', 10,
             '[staging demo] Used apps across a day (counted as a daily total).',
@@ -13601,6 +13601,41 @@ async function seedStagingTopochain(pool, config) {
     log.info('db', 'Topochain staging viewer credits seeded', {
       viewers: viewerRows.length,
     });
+
+    // ─── Day-grained credits on the season event (3) ───────────────────
+    // The standings drill-down (routes/topochain/public.js) lists a player's
+    // user_activities on the event it is opened from, and opens only for a
+    // row it can identify — on the season standings event, by Discord
+    // handle. The three players who have one (shots_fixture_ada, _bo and
+    // _cy, from the deployed shots states in services/shots-demo-states.js,
+    // which run on both copies of a shots pair) each carry two timed credits
+    // there; one day-grained credit beside them is what a reviewer of the
+    // whole-day date note compares it against. Written the way the app-use
+    // scorer writes its credits (#3570): the window's day pinned to noon
+    // UTC, USE_APPS_MINUTES in the metadata, timestamp_precision 'day', and
+    // the challenge's own reward, so the API reports precision 'day' and the
+    // row's date line carries no invented clock time. Players are named by
+    // their fixed user ids from the users block above: 900505 is
+    // participant-6, 900506 participant-5, 900501 participant-2.
+    await pool.query(
+      `INSERT INTO user_activities
+         (id, user_id, season_event_id, activity_type, points, description,
+          metadata, activity_at, challenge_id)
+       VALUES
+         (900515, 900505, 900501, 'bug', 250,
+          '[staging demo] Used apps across a day (counted as a daily total).',
+          '{"source_key": "window:staging-demo-1", "rule_id": 900571, "measure": "USE_APPS_MINUTES", "timestamp_precision": "day"}'::jsonb,
+          date_trunc('day', NOW() - INTERVAL '3 days', 'UTC') + INTERVAL '12 hours', 900505),
+         (900516, 900506, 900501, 'onchain', 100,
+          '[staging demo] Used apps across a day (counted as a daily total).',
+          '{"source_key": "window:staging-demo-2", "rule_id": 900571, "measure": "USE_APPS_MINUTES", "timestamp_precision": "day"}'::jsonb,
+          date_trunc('day', NOW() - INTERVAL '4 days', 'UTC') + INTERVAL '12 hours', 900506),
+         (900517, 900501, 900501, 'bug', 250,
+          '[staging demo] Used apps across a day (counted as a daily total).',
+          '{"source_key": "window:staging-demo-3", "rule_id": 900571, "measure": "USE_APPS_MINUTES", "timestamp_precision": "day"}'::jsonb,
+          date_trunc('day', NOW() - INTERVAL '2 days', 'UTC') + INTERVAL '12 hours', 900505)
+       ON CONFLICT (id) DO NOTHING`
+    );
   } catch (err) {
     log.warn('db', 'Topochain staging viewer-credit seeding failed', {
       message: err.message,

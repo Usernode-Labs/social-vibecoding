@@ -26,13 +26,6 @@
     {
       "source": "src/db/migrate.js",
       "kind": "structural-template",
-      "fingerprint": "0c1464d259b25f669f6c",
-      "count": 1,
-      "preview": "`INSERT INTO user_activities (id, user_id, season_event_id, activity_type, points, description, metadata, activity_at, challenge_id) VALUES (${base}, $1, $2, 'c"
-    },
-    {
-      "source": "src/db/migrate.js",
-      "kind": "structural-template",
       "fingerprint": "5827127ec18b1ca8f607",
       "count": 1,
       "preview": "`INSERT INTO topic_attribute_votes (app_id, target_type, target_ref, field, value, user_id, created_at) VALUES ($1, 'proposal', $2, $3, $4, $5, ${when}) ON CONF"
@@ -71,6 +64,13 @@
       "fingerprint": "ddac26545fc20b07434f",
       "count": 1,
       "preview": "`INSERT INTO token_allocation (id, user_id, season_id, total_points, total_season_tokens, allocated_tokens, description, created_at, updated_at) VALUES (${base}"
+    },
+    {
+      "source": "src/db/migrate.js",
+      "kind": "structural-template",
+      "fingerprint": "e7a70a62646896e431cd",
+      "count": 1,
+      "preview": "`INSERT INTO user_activities (id, user_id, season_event_id, activity_type, points, description, metadata, activity_at, challenge_id) VALUES (${base}, $1, $2, 'c"
     },
     {
       "source": "src/db/reindex-after-host-move.js",
