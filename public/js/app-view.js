@@ -5202,18 +5202,29 @@ const AppView = {
 
   // #4367: the session a change's pull request number names on this app, or
   // null — from the server, which applies the proposal page's own visibility.
+  //
+  // #5049: only the server's 404 says the number names no change. A refusal,
+  // a 5xx or a dropped connection says nothing about the change, and a null
+  // sends the page to the project's hub, so such an answer is asked once
+  // more before it counts as a miss.
   async _sessionIdForChange(pr) {
     const slug = App.currentApp || AppView.appData?.slug;
     if (!slug || !pr) return null;
-    try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/changes/${Number(pr)}${AppView._demoQS()}`);
-      if (!res.ok) return null;
-      const data = await res.json();
-      const id = Number(data && data.sessionId);
-      return Number.isInteger(id) && id > 0 ? id : null;
-    } catch {
-      return null;
-    }
+    const ask = async () => {
+      try {
+        const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/changes/${Number(pr)}${AppView._demoQS()}`);
+        if (res.status === 404) return null;
+        if (!res.ok) return undefined;
+        const data = await res.json();
+        const id = Number(data && data.sessionId);
+        return Number.isInteger(id) && id > 0 ? id : null;
+      } catch {
+        return undefined;
+      }
+    };
+    const first = await ask();
+    if (first !== undefined) return first;
+    return (await ask()) ?? null;
   },
 
   // #4367: once the open change is known to have a pull request, its address

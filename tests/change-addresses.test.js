@@ -163,7 +163,7 @@ test('a later address write keeps the PR number the page found (switchTab writes
 
 // ── The topic page (public/js/app-view.js) ──────────────────────────────
 
-function loadAppView({ pathname = '/app/notes/dev/proposals/7296', fetchAnswer = null } = {}) {
+function loadAppView({ pathname = '/app/notes/dev/proposals/7296', fetchAnswer = null, answers = null } = {}) {
   const calls = [];
   const location = { pathname, search: '', hash: '' };
   const history = {
@@ -186,9 +186,14 @@ function loadAppView({ pathname = '/app/notes/dev/proposals/7296', fetchAnswer =
     location, history, URLSearchParams,
     fetch: async (url) => {
       fetched.push(url);
+      if (answers) {
+        const next = answers.shift();
+        if (next instanceof Error) throw next;
+        return { status: next.status, ok: next.status < 400, json: async () => next.body || {} };
+      }
       return fetchAnswer
-        ? { ok: true, json: async () => fetchAnswer }
-        : { ok: false, json: async () => ({}) };
+        ? { status: 200, ok: true, json: async () => fetchAnswer }
+        : { status: 404, ok: false, json: async () => ({ error: 'Change not found' }) };
     },
   };
   c.window = c;
@@ -233,6 +238,22 @@ test('the topic page looks a PR number up on the server, and a miss is no sessio
   assert.deepEqual(hit.fetched, ['/api/apps/notes/changes/4509']);
   const miss = loadAppView();
   assert.equal(await miss.av._sessionIdForChange(4509), null);
+  assert.equal(miss.fetched.length, 1, 'a 404 is the answer: asked once');
+});
+
+// #5049: in the mobile app the boot's first reads can meet the web session's
+// renewal and be refused 401 with nothing wrong. Only a 404 says the number
+// names no change; anything else is asked once more before the page falls
+// back to the hub.
+test('a refusal or an error is asked once more before it counts as a miss', async () => {
+  const refused = loadAppView({ answers: [{ status: 401 }, { status: 200, body: { sessionId: 7296 } }] });
+  assert.equal(await refused.av._sessionIdForChange(4509), 7296);
+  assert.equal(refused.fetched.length, 2);
+  const dropped = loadAppView({ answers: [new Error('network'), { status: 200, body: { sessionId: 7296 } }] });
+  assert.equal(await dropped.av._sessionIdForChange(4509), 7296);
+  const failing = loadAppView({ answers: [{ status: 503 }, { status: 503 }] });
+  assert.equal(await failing.av._sessionIdForChange(4509), null, 'twice: the miss, as before');
+  assert.equal(failing.fetched.length, 2, 'and never a third time');
 });
 
 test('a changes/<N> link with no change on this app falls back like any missing topic', () => {

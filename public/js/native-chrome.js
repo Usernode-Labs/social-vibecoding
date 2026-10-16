@@ -481,6 +481,22 @@
 
     _webRecovery: null,
     _lastWebRenewal: 0,
+    // How many times this document's web session has been restored (#5049).
+    // The server ROTATES the session on every restore, deleting the old token
+    // before the app has installed the new cookie, so a request that reached
+    // it in between was refused 401 with nothing wrong. A request that saw
+    // this count move while it was out was such a request:
+    // frontend/src/lib/session-renewal-retry.ts sends it again.
+    _webSessionEpoch: 0,
+
+    /**
+     * Where the web session's renewal stands, for a request deciding whether
+     * its 401 is the renewal's: `epoch` counts the restores this document has
+     * had, `settled` is the restore still running (null when none is).
+     */
+    webSessionRenewal() {
+      return { epoch: NativeChrome._webSessionEpoch, settled: NativeChrome._webRecovery };
+    },
 
     restoreWebSession({ force = false } = {}) {
       const bridge = window.usernode;
@@ -513,6 +529,7 @@
           protocol: 2, userId: result.userId, attemptId: result.attemptId, desiredRuntime: 'running',
         });
         NativeChrome._lastWebRenewal = Date.now();
+        NativeChrome._webSessionEpoch += 1;
         return true;
       })().finally(() => {
         if (NativeChrome._webRecovery === run) NativeChrome._webRecovery = null;

@@ -802,6 +802,28 @@ test('transient native recovery failure preserves replay metadata and permits re
   assert.equal(await NativeChrome.restoreWebSession(), true);
 });
 
+// #5049: frontend/src/lib/session-renewal-retry.ts resends a 401 that met a
+// rotation, and reads whether one happened from this count, which only a
+// restore that landed moves.
+test('the renewal count moves only when a restore lands, and names the one in flight', async () => {
+  const gate = deferred();
+  let fail = true;
+  const { NativeChrome } = loadNativeChrome({ info: recoveryInfo, restoreImpl: () => {
+    if (fail) return Promise.reject(new Error('offline'));
+    return gate.promise;
+  } });
+  const renewal = () => { const r = NativeChrome.webSessionRenewal(); return [r.epoch, r.settled]; };
+  assert.deepEqual(renewal(), [0, null]);
+  await assert.rejects(NativeChrome.restoreWebSession(), /offline/);
+  assert.equal(NativeChrome.webSessionRenewal().epoch, 0, 'a failed restore rotated nothing');
+  fail = false;
+  const run = NativeChrome.restoreWebSession();
+  assert.equal(NativeChrome.webSessionRenewal().settled, run);
+  gate.resolve(recoveredWebSession);
+  assert.equal(await run, true);
+  assert.deepEqual(renewal(), [1, null]);
+});
+
 function recoveryReader(restore, responses) {
   const sandbox = { NativeChrome: { restoreWebSession: restore }, App: {}, fetch: async () => responses.shift() };
   sandbox.window = sandbox;
