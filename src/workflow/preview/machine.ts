@@ -357,7 +357,7 @@ function begin(s: Live, head: string, trigger: string | null, ctx: TransitionCon
   // not for a head whose last checks errored, mostly a preview that does not
   // boot, where nothing would ever read it.
   const early: WorkRequest[] = previewOnly || d.streak > 0 ? []
-    : [{ kind: WORK.unitEarly, key: unitEarlyKey(n), input: { sessionId: d.sessionId, appId: d.appId, n, head } }];
+    : [{ kind: WORK.unitEarly, key: unitEarlyKey(n), input: { sessionId: d.sessionId, appId: d.appId, n, head, trigger } }];
   return step({
     name: 'preparing', data: d,
     cancel: old.cancel,
@@ -448,9 +448,12 @@ function fromRow(d: Data, f: Facts, head: string, trigger: string | null, ctx: T
   const live: Live = { name: 'idle', data: d };
   if (!d.serving || d.serving.head !== head) return begin(live, head, trigger, ctx, deps);
   const checks = f.session!.checks;
-  const verdict = checks.commitSha === head ? verdictOf(checks.state) : null;
+  // Not a verdict a person asked to have checked again (services/unit-suite-
+  // reuse.js): that head is run, as theirs.
+  const owed = f.session!.unitFreshSha === head;
+  const verdict = checks.commitSha === head && !owed ? verdictOf(checks.state) : null;
   if (verdict) return step({ name: 'settled', data: { ...d, head, verdict }, timer: null });
-  return startRun({ name: 'settled', data: { ...d, head } }, trigger, ctx);
+  return startRun({ name: 'settled', data: { ...d, head } }, owed ? 'manual-recheck' : trigger, ctx);
 }
 
 // Where an adopted row stands, without starting anything (an operation's
@@ -528,7 +531,13 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
     to: (s, e, f, ctx) => {
       const live: Live = restarts(s) ? { name: 'idle', data: adopt(e, f, priorOf(s)) } : s;
-      const carried = carry(restarts(s) ? fromRowVerdict(live.data, f) : s, e.payload);
+      // A green verdict is not carried from, or to, a head a person asked to
+      // have checked again (services/unit-suite-reuse.js): the merged head
+      // is checked, and the request stays owed until its suite runs.
+      const owedCarry = !!f.session!.unitFreshSha
+        && (f.session!.unitFreshSha === e.payload.carryFrom || f.session!.unitFreshSha === e.payload.head);
+      const carried = e.payload.carryFrom && owedCarry ? null
+        : carry(restarts(s) ? fromRowVerdict(live.data, f) : s, e.payload);
       if (carried) return carried;
       if (restarts(s)) return fromRow(live.data, f, e.payload.head, e.payload.trigger, ctx, deps);
       return begin(s, e.payload.head, e.payload.trigger, ctx, deps);
@@ -602,27 +611,68 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
   };
 
+  // The head a person's recheck is for: the row's pin when it has one (a
+  // promoted proposal's reviewed head, an imported or CLI proposal's
+  // submitted head), read under the row's lock, else the head held (a
+  // native proposal being worked on: the newest wins). A request recorded
+  // for that head (services/unit-suite-reuse.js) is never moved onto an
+  // older one, and is answered by a run of that head.
+  const requestedHead = (s: Live, f: Facts): string | null => f.session?.pin ?? s.data.head ?? null;
+
   const recheck: Entry = {
     guard: (s) => (s.data.previewOnly ? reject('preview_only') : s.data.head ? ok() : reject('no_head')),
     to: (s, e, f, ctx) => {
       const trigger = recheckTrigger(e.payload.reason, e.payload.trigger);
       const d: Data = s.data;
+      // A person's: of the head they asked about, which may be newer than
+      // the one held.
+      const head = trigger === 'manual-recheck' ? requestedHead(s, f) ?? d.head! : d.head!;
       // Nothing serves the head: build it.
-      if (!d.serving || d.serving.head !== d.head) return begin(s, d.head!, trigger, ctx, deps);
+      if (head !== d.head || !d.serving || d.serving.head !== d.head) return begin(s, head, trigger, ctx, deps);
       return startRun(s, trigger, ctx);
     },
+  };
+
+  // A person's recheck ("Run checks again", trigger 'manual-recheck') that
+  // comes during a build or run (services/unit-suite-reuse.js). When that
+  // build or run is of the head they asked about (requestedHead), it joins
+  // it, and is recorded here, under the row's lock, as owed a unit suite
+  // that really runs on that head: the run's verdict is then refused if it
+  // copied a pass, and their own run follows. When it is of an older head
+  // (the proposal's pin has moved on), it is obsolete: the requested head is
+  // built and checked instead, as theirs, and the older run neither moves
+  // nor answers their request. Any other recheck that would join is refused
+  // as before.
+  const manualJoin = (e: Event<any>) => recheckTrigger(e.payload.reason, e.payload.trigger) === 'manual-recheck';
+  const joinOwed = (s: Live, f: Facts, ctx: TransitionContext): Outcome<PState> => {
+    const going = s.name === 'checking' ? s.data.run!.head : s.data.preparing!.head;
+    const wanted = f.session?.pin ?? going;
+    if (wanted !== going) return begin(s, wanted, 'manual-recheck', ctx, deps);
+    return step({ name: s.name, data: s.data, writes: [{ type: 'owed', sessionId: s.data.sessionId, head: going }] });
+  };
+  const joining: Entry = {
+    guard: (s, e) => (manualJoin(e) ? ok() : reject('run_outstanding')),
+    to: (s, e, f, ctx) => joinOwed(s, f, ctx),
   };
 
   // During a run, a recheck whose inputs changed (the proposal's capture
   // routes or its shots: staging-recovery's REPLACING_RECHECK_REASONS)
   // replaces it, since the run going answers the old question; any other
-  // recheck joins it. (A build in progress runs its checks with what the row
-  // says once it is up, so it needs nothing.)
+  // recheck joins it (a person's is recorded on the run's head: joining
+  // above). (A build in progress runs its checks with what the row says once
+  // it is up, so it needs nothing more.)
   const replacing: Entry = {
-    guard: (s, e) => (REPLACING_REASONS.has(e.payload.reason) ? ok() : reject('run_outstanding')),
+    guard: (s, e) => (REPLACING_REASONS.has(e.payload.reason) || manualJoin(e) ? ok() : reject('run_outstanding')),
     to: (s, e, f, ctx) => {
+      if (!REPLACING_REASONS.has(e.payload.reason)) return joinOwed(s, f, ctx);
+      const trigger = recheckTrigger(e.payload.reason, e.payload.trigger);
+      // A person's (a same-commit resubmission is one): of the head the
+      // proposal is pinned to. A run of an older head is not replaced by
+      // another run of it; the pinned head is built and checked as theirs.
+      const wanted = trigger === 'manual-recheck' ? f.session?.pin ?? s.data.run!.head : s.data.run!.head;
+      if (wanted !== s.data.run!.head) return begin(s, wanted, 'manual-recheck', ctx, deps);
       const old = obsolete(s.data, ctx, deps);
-      const o = startRun({ name: s.name, data: { ...s.data, run: null } }, recheckTrigger(e.payload.reason, e.payload.trigger), ctx,
+      const o = startRun({ name: s.name, data: { ...s.data, run: null } }, trigger, ctx,
         { work: old.work });
       return { ...o, cancel: old.cancel };
     },
@@ -690,8 +740,12 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     to: (s, e, f, ctx) => {
       if (s.name === 'retiring') return toRetiring(s, s.data.exit.reason, s.data.exit.terminal, ctx, deps, s.data.exit.attempts || []);
       if (!s.data.head) return step({ name: s.name, data: s.data });
-      return s.name === 'failed' || !s.data.serving || s.data.serving.head !== s.data.head
-        ? begin(s, s.data.head, 'manual-recheck', ctx, deps)
+      // A person's retry ('manual-recheck'): of the head the proposal is
+      // pinned to (services/unit-suite-reuse.js), which may be newer than the
+      // one held.
+      const head = requestedHead(s, f) ?? s.data.head;
+      return head !== s.data.head || s.name === 'failed' || !s.data.serving || s.data.serving.head !== s.data.head
+        ? begin(s, head, 'manual-recheck', ctx, deps)
         : startRun(s, 'manual-recheck', ctx);
     },
   };
@@ -762,7 +816,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     preparing: {
       ...created, ...ops,
       ChecksSkipped: notHere('in_progress'),
-      RecheckRequested: notHere('run_outstanding'),
+      RecheckRequested: joining,
       ConflictResolved: notHere('not_deferred'),
       ChecksCleared: cleared,
       PreviewLost: notHere('preparing'),
@@ -925,6 +979,13 @@ export interface RunResult {
   capture?: { state: string; detail: Json } | null;
   visuals?: Json;               // the run's media, grouped as getForSession groups it (null: none)
   reason?: string;              // blocked
+  // The repo unit suite (services/unit-suite-reuse.js): confirmed not to
+  // apply to the head; the check key a copied pass earns the proposal; the
+  // check key of a suite that ran and passed, whose recorded pass may be
+  // copied once its history row is written with the verdict.
+  unitSuiteAbsent?: boolean;
+  unitEarned?: string | null;
+  unitObserved?: string | null;
   uiUndeclared?: string | null; // a head whose change touches the UI and declares no visible changes
 }
 
@@ -1094,16 +1155,42 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
     firstFailureAt: state === 'error' ? (d0.firstFailureAt ?? ctx.now.toISOString()) : null,
   };
   const results = blocked ? [] : ((r!.results ?? []) as unknown[]);
+  const unitSuiteAbsent = !blocked && r!.unitSuiteAbsent === true;
+  // A person asked for this head's checks again and is owed a run whose repo
+  // unit suite really runs (services/unit-suite-reuse.js): a verdict that
+  // does not answer them is not stored (check-store's fence: the same rule,
+  // read from the same row under the same lock). A run that was not theirs
+  // (started before the request came, which then joined it: its unit suite
+  // copied from an earlier pass, or its settlement not told the suite was
+  // owed) is followed at once by the run they asked for, a run of its own.
+  // Their own run, refused (the request could not be read when it settled),
+  // is left pending for the stale sweep, whose scope covers an owed head,
+  // rather than run again and again here.
+  const owed = !!f.session && f.session.unitFreshSha === run.head;
+  const answer = store.unitAnswer({ state, results, unitSuiteAbsent });
+  const refused = owed && (state === 'error' ? answer.reused : answer.unanswered);
   // The settlement is stored only while the row is open and its checks are
   // about this run's head (check-store's fence); a verdict nobody stores sets
   // nothing off.
-  const stores = !!f.session && OPEN.has(f.session.status) && f.session.checks.commitSha === run.head;
+  const stores = !refused && !!f.session && OPEN.has(f.session.status) && f.session.checks.commitSha === run.head;
+  const recorded = state !== 'error' && !blocked;
   const settle = {
     type: 'settled', ...base, state, detail, platformFault,
     results: results as Json, console: blocked ? null : (r!.console ?? null),
     history: state === 'error' || blocked ? [] : (r!.history ?? []), capture: blocked ? null : (r!.capture ?? null),
     media: !blocked && !!visuals,
+    ...(unitSuiteAbsent ? { unitSuiteAbsent: true } : {}),
+    ...(recorded && r!.unitEarned ? { unitEarned: r!.unitEarned } : {}),
+    ...(recorded && r!.unitObserved ? { unitObserved: r!.unitObserved } : {}),
   };
+  if (refused && d0.trigger !== 'manual-recheck' && d0.serving && d0.serving.head === run.head) {
+    return startRun({ name: 'checking', data: { ...d0, run: null } }, 'manual-recheck', ctx, { writes: [settle] });
+  }
+  if (refused) {
+    return step({
+      name: 'settled', data: { ...d0, run: null, verdict: null }, writes: [settle], timer: null,
+    });
+  }
   return step({
     name: 'settled', data: d,
     cancel: ended ? [{ kind: WORK.run, key: run.key }] : undefined,
@@ -1159,9 +1246,14 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     // bench), a release retries the platform's faults (RetryDue from the
     // system), no Detach. 3: the shots machine is told by message (a head
     // ready, a preview that will not start, a UI change undeclared, the
-    // proposal closed) instead of starting shots itself. An older Pod leaves
-    // the instances this version wrote alone during the rollout.
-    version: 3,
+    // proposal closed) instead of starting shots itself. 4: a person's
+    // request for a fresh unit suite (services/unit-suite-reuse.js) is read
+    // with the facts and decides a run's settlement (refused, or followed by
+    // their own run; the earned gate and the observed pass written with it):
+    // a version-3 runtime would store a copied pass for an owed head. An
+    // older Pod leaves the instances this version wrote alone during the
+    // rollout; this version takes over the ones an older one wrote.
+    version: 4,
     events: EVENTS,
     create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted', 'RetireRequested', 'ChecksCleared'],
     terminal: ['retired'],
@@ -1339,15 +1431,36 @@ const WRITES = {
   // row has since left.
   async settled(tx: Tx, w: any) {
     const stored = await store.storeChecks(tx, w.sessionId, w.head,
-      { state: w.state, results: w.results, ...(w.platformFault ? { platformFault: true } : {}) }, w.detail);
+      { state: w.state, results: w.results, ...(w.platformFault ? { platformFault: true } : {}),
+        ...(w.unitSuiteAbsent ? { unitSuiteAbsent: true } : {}) }, w.detail);
     if (!stored) { await dropMedia(tx, w.sessionId); return; }
     if (w.console) await store.storeConsoleCheck(tx, w.sessionId, w.console, w.head);
     if (w.capture) await store.storeCaptureOutcome(tx, w.sessionId, w.capture.state, w.capture.detail, w.head);
     if (w.media) await publishMedia(tx, w.sessionId, w.runId); else await dropMedia(tx, w.sessionId);
-    if (Array.isArray(w.history) && w.history.length) {
-      await store.recordRun(tx, w.appId, w.history, { sessionId: w.sessionId });
+    const history = Array.isArray(w.history) ? w.history : [];
+    if (history.length) {
+      await store.recordRun(tx, w.appId, history, { sessionId: w.sessionId });
+    }
+    // A unit suite copied from an earlier pass of the commit observed nothing
+    // new, so it moves no counts, but its proposal earns the gate that pass
+    // earns: a later head of it that fails the suite is blocked, as it would
+    // be had the suite run here (services/unit-suite-reuse.js).
+    if (w.unitEarned) await store.recordEarned(tx, w.appId, w.sessionId, [w.unitEarned]);
+    // A suite that ran and passed is in the app's history now, written above
+    // in this transaction (every row: no cap here): the pass its run
+    // recorded may be copied. Only when its passing row is among those.
+    if (w.unitObserved && history.some((h: any) => h && h.checkKey === w.unitObserved
+        && (Number.isInteger(h.passes) ? h.passes > 0 : !!h.passed))) {
+      await store.markUnitPassObserved(tx, { appId: w.appId, sessionId: w.sessionId, commitSha: w.head });
     }
   },
+
+  // A person's request for a fresh unit suite, joined to the build or run of
+  // `head` (services/unit-suite-reuse.js): the same column the
+  // 'manual-recheck' pending stamp sets.
+  owed: (tx: Tx, w: any) => tx.query(
+    `UPDATE chat_sessions SET unit_suite_fresh_sha = lower($2::text)
+      WHERE id = $1 AND status IN ('active', 'paused', 'promoted', 'merging')`, [w.sessionId, w.head]),
 
   // No verdict for the branch's code: what the CLI upload route cleared.
   cleared: (tx: Tx, w: any) => tx.query(

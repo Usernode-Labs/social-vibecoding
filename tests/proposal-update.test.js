@@ -1757,6 +1757,38 @@ test('a same-commit resubmit with new routes stores them and forces a fresh capt
     'the recheck is handed the row that already says the new routes');
 });
 
+test('a same-commit resubmit that changes the shots ALONE is a shots-update; with new routes or recheck: true it is a manual testing-update', async (t) => {
+  // 'testing-update' reads as "Run checks again" (manual-recheck), which
+  // never reuses an earlier unit-suite pass (services/unit-suite-reuse.js);
+  // 'shots-update' reads as an automatic re-run, which may.
+  const shotsStateModule = require('../src/services/shots-state');
+  t.mock.method(shotsStateModule, 'recordIntent', async () => ({
+    state: 'planned', detail: { required: true }, runId: 'shots-run', unchanged: false, required: true,
+  }));
+  const SHOTS = { version: 1, impact: 'none', rationale: 'A new rationale for the shots.', stories: [] };
+  const reasonFor = async (params) => {
+    const log = {};
+    const rechecks = [];
+    const session = nativeSession({ testing_paths: [{ path: '/', viewport: 'desktop' }], testing_path: '/' });
+    const d = deps({
+      session,
+      pool: testingPool(session, log),
+      gh: { getBranchSha: async () => FORK_HEAD },
+      recovery: { recheckSessionChecks: async (args) => { rechecks.push(args); return 'rechecked'; } },
+    }, log);
+    const result = await svc.updateProposalFromForkBranch({ ...d, config: { shots: { collect: true } } }, {
+      user: USER, session, branch: 'fix/failing-check', origin: 'https://usernode.test', ...params,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(rechecks.length, 1, JSON.stringify(params));
+    return rechecks[0].reason;
+  };
+  assert.equal(await reasonFor({ visibleChanges: SHOTS }), 'shots-update', 'shots alone');
+  assert.equal(await reasonFor({ visibleChanges: SHOTS, testing: TESTING }), 'testing-update', 'shots and routes together');
+  assert.equal(await reasonFor({ visibleChanges: SHOTS, recheck: true }), 'testing-update', 'shots and an explicit recheck');
+  assert.equal(await reasonFor({ testing: TESTING }), 'testing-update', 'routes alone');
+});
+
 test('a same-commit resubmit of the SAME routes stays the no-op it always was', async () => {
   const log = {};
   const rechecks = [];

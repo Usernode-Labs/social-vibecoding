@@ -66,9 +66,10 @@ stub('../src/services/check-runs', {
 const notes = [];
 stub('../src/services/homeroom-bot-dm', { ...require('../src/services/homeroom-bot-dm'),
   async noteChangeStopped(pool, sessionId, o) { notes.push(['bot', sessionId, o.why]); } });
-const suites = { launched: [], running: 0, jobs: new Set() };
+const suites = { launched: [], running: 0, jobs: new Set(), asked: [], reusable: null };
 stub('../src/services/unit-suite', { ...require('../src/services/unit-suite'),
   isEnabled: () => true,
+  async reusablePass(o) { suites.asked.push(o); return suites.reusable; },
   async maybeRunUnitSuite(o) { suites.launched.push(o); return null; } });
 stub('../src/services/checks-queue', { ...require('../src/services/checks-queue'), maxConcurrentRuns: () => 2 });
 const realVisuals = require('../src/services/visuals');
@@ -268,6 +269,7 @@ test('the unit suite starts with the build, under the attempt\'s own id, unless 
   const o = suites.launched[0];
   assert.deepEqual([o.ref, o.previewRunId, o.jobNamePrefix, o.strict], [head, id, 'sv-unit-early', true],
     'the head itself, under the attempt\'s id and a Job name of its own');
+  assert.equal(o.commitSha, head, 'its pass is recorded for reuse, for the commit it judged (services/unit-suite-reuse.js)');
 
   suites.jobs.add(id);
   assert.deepEqual(await workers[WORK.unitEarly].run(ctx(input)), { started: true, runId: id, joined: true },
@@ -294,6 +296,31 @@ test('the unit suite starts with the build, under the attempt\'s own id, unless 
   await workers[WORK.retire].run(ctx({ sessionId: 5, appId: 2, appSlug: 'shop', runtimeName: 'sv-preview-2-s5', runtimeKind: 'kubernetes',
     attempts: [{ n: 3, db: 'db3' }] }));
   assert.ok(calls.some((c) => c[0] === 'delete-jobs' && c[1] === id), 'and with the whole preview');
+});
+
+// services/unit-suite-reuse.js: a head whose suite already passed under the
+// same conditions, when nobody asked for a fresh run, has its pass copied by
+// the checks run, so no early Jobs are started for it.
+test('the unit suite does not start with the build for a head whose pass the checks run will copy', async () => {
+  const k8s = require('../src/services/kubernetes');
+  k8s.findCheckJobs = async () => ({ unitSuites: [] });
+  k8s.countRunningUnitSuiteJobs = async () => 0;
+  const workers = previewServices({ config: { captureRuntime: 'kubernetes', workerRuntime: 'kubernetes', kubernetes: {} }, pool });
+  suites.preparing = true;
+  suites.launched.length = 0;
+  suites.asked.length = 0;
+  suites.reusable = { reused: { runId: 'run-a', sessionId: 4, passedAt: new Date().toISOString() } };
+  const input = { sessionId: 5, appId: 2, n: 7, head, trigger: 'stuck-sweep' };
+  assert.deepEqual(await workers[WORK.unitEarly].run(ctx(input)), { started: false, why: 'reused' });
+  assert.equal(suites.launched.length, 0);
+  assert.deepEqual([suites.asked[0].commitSha, suites.asked[0].trigger, suites.asked[0].sessionId, suites.asked[0].appId],
+    [head, 'stuck-sweep', 5, 2], 'asked with the head, the trigger of the run it is for, and the proposal');
+  // Nothing to copy (a person's request among the reasons): the suite starts.
+  suites.reusable = null;
+  assert.equal((await workers[WORK.unitEarly].run(ctx({ ...input, trigger: 'manual-recheck' }))).started, true);
+  assert.equal(suites.asked[1].trigger, 'manual-recheck');
+  assert.equal(suites.launched.length, 1);
+  suites.preparing = false;
 });
 
 test('a run claimed again asks for its checks slot as of the place the earlier claim had', async () => {

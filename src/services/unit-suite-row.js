@@ -155,6 +155,50 @@ function unitSuiteFailures(testResults, { max = 2 } = {}) {
   return { count, first: (details.length ? details : grouped).slice(0, max) };
 }
 
+// Where a stored run's unit-suite row came from when the run copied an
+// earlier pass of the same commit instead of running the suite
+// (services/unit-suite-reuse.js): `{ runId, sessionId, passedAt }`, or null
+// for a suite this run ran itself. `testResults` is a stored run's rows,
+// as an array or its JSON text.
+function reusedFrom(testResults) {
+  let rows = testResults;
+  if (typeof rows === 'string') {
+    try { rows = JSON.parse(rows); } catch { return null; }
+  }
+  if (!Array.isArray(rows)) return null;
+  const row = rows.find(isUnitSuiteRow);
+  const r = row && row.status === 'pass' && row.reused && typeof row.reused === 'object' ? row.reused : null;
+  if (!r) return null;
+  return {
+    runId: r.runId ? String(r.runId) : null,
+    sessionId: Number.isInteger(Number(r.sessionId)) && Number(r.sessionId) > 0 ? Number(r.sessionId) : null,
+    passedAt: r.passedAt ? String(r.passedAt) : null,
+  };
+}
+
+// The check_error_detail of a run stored as an 'error' because a person
+// asked for the unit suite again ("Run checks again") and the run came back
+// without a unit-suite verdict: its runner did not start or package.json
+// could not be read (visuals.settleCaptureRun). The browser checks may all
+// have passed; nothing in the change is known to be wrong, and the error
+// lane runs the checks again.
+const MISSING_UNIT_DETAIL = 'The unit suite asked for with "Run checks again" did not run, so the checks will run again.';
+function missingUnitError(session) {
+  return !!session && session.check_state === 'error' && session.check_error_detail === MISSING_UNIT_DETAIL;
+}
+
+// Is this stored verdict one the merge gate must not take yet? A person
+// asked for the head's checks again (chat_sessions.unit_suite_fresh_sha
+// names it) and no verdict whose unit suite really ran has been stored
+// since: storeChecks clears the request when one is (services/unit-suite-
+// reuse.js). Whatever the stored row says, copied pass or an older real
+// one, it is not the answer they asked for. `row` carries
+// unit_suite_fresh_sha and checks_commit_sha.
+function freshSuiteOwed(row) {
+  if (!row || !row.unit_suite_fresh_sha || !row.checks_commit_sha) return false;
+  return String(row.unit_suite_fresh_sha).toLowerCase() === String(row.checks_commit_sha).toLowerCase();
+}
+
 module.exports = {
   UNIT_CHECK_NAME,
   UNIT_CHECK_PATH,
@@ -175,4 +219,8 @@ module.exports = {
   isPlatformNotRun,
   notRunError,
   unitSuiteFailures,
+  reusedFrom,
+  freshSuiteOwed,
+  MISSING_UNIT_DETAIL,
+  missingUnitError,
 };

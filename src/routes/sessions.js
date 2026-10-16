@@ -6223,10 +6223,20 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         } catch {}
       }
 
+      // The exact head this deploy is for, resolved once: the branch's tip
+      // when it was read, else what the machine resolves for the row (its
+      // pin, its tip, its checks).
+      const head = await previewWorkflow.exactHead(pool, session, commitHash === 'latest' ? null : commitHash);
+      // A preview deployed by hand runs its checks as 'manual-recheck': the
+      // head is owed a unit suite that really runs (services/unit-suite-reuse.js).
+      // Recorded before the machine is asked, so a build or run already going
+      // that answers instead (it may have copied an earlier pass) is not
+      // taken as theirs.
+      await require('../services/unit-suite-reuse').markFreshOwed(pool, { sessionId: session.id, commitSha: head });
       // The preview machine builds a new attempt of the head (a build or run
       // already going is the answer).
       const out = await previewWorkflow.request({
-        pool, session, head: commitHash === 'latest' ? null : commitHash, reason: 'deploy', actor: `user:${req.user.id}`,
+        pool, session, head, reason: 'deploy', actor: `user:${req.user.id}`,
       });
       if (out.status === 'rejected' && ['not_open', 'not_deployable', 'no_head'].includes(out.reason)) {
         return res.status(409).json({ error: 'This session cannot deploy a preview now', reason: out.reason });
@@ -6487,6 +6497,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.json({ status: 'unavailable', reason: 'demo' });
       }
 
+      // From this press on the head is owed a unit suite that really runs
+      // (services/unit-suite-reuse.js): whichever run answers it, the one it
+      // is folded into below or its own, copies no earlier pass, and a
+      // verdict that carries a copied pass is not stored. Durable, and set
+      // before any of the answers below.
+      // On the head the request is for, read from the row now: a promoted
+      // proposal's reviewed head, not a checks pin an older run left.
+      const requestedHead = await stagingRecovery.requestedRecheckHead(pool, session);
+      await require('../services/unit-suite-reuse').markFreshOwed(pool, {
+        sessionId, commitSha: requestedHead,
+      });
+
       // Coalesce repeat clicks.
       if (recheckInFlight.has(sessionId)) {
         return res.json({ status: 'running' });
@@ -6495,7 +6517,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // submission among them): its own pipeline is the run the user is
       // asking for. A build or checks run going is the preview machine's,
       // which joins a recheck to it (or replaces it when its inputs changed).
-      if (isSessionBusy(sessionId)) {
+      //
+      // Folded into what holds the session, the head is still owed a unit
+      // suite that really runs (services/unit-suite-reuse.js): a verdict
+      // stored before this press no longer stands for it, so it reads
+      // pending (and merge-blocked) until one does, and once the session is
+      // idle again the owed run starts if nothing has answered it. The stale
+      // sweep, whose scope covers an owed head, re-drives it after a restart.
+      const busyNow = () => isSessionBusy(sessionId);
+      if (busyNow()) {
+        await require('../services/unit-suite-reuse').owePendingRun({
+          pool, visuals, stagingRecovery, config, session, busy: busyNow, head: requestedHead,
+        });
         return res.json({ status: 'running' });
       }
       recheckInFlight.add(sessionId);

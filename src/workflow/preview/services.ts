@@ -219,10 +219,22 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
         const [row, a] = await Promise.all([session(input.sessionId), app(input.appId)]);
         const repo = repoOf(a?.repo_url);
         if (!row || !repo) return { started: false, why: 'gone' };
+        // Not for a head whose suite already passed under the same
+        // conditions, when nobody asked for a fresh run: the checks run
+        // copies that pass instead (services/unit-suite-reuse.js), and these
+        // Jobs would be thrown away. Asked with the trigger of the run this
+        // build is for; the lookup reads the proposal's own request.
+        const reusable = await unitSuite.reusablePass({
+          config, pool, appId: input.appId, sessionId: input.sessionId, repoOwner: repo.owner, repoName: repo.repo,
+          commitSha: input.head, trigger: input.trigger ?? null,
+        });
+        if (reusable) return { started: false, why: 'reused' };
+        // `commitSha`: this item follows the suite to its end, so its pass is
+        // recorded for reuse, for the commit it judged.
         await unitSuite.maybeRunUnitSuite({
           config, pool, appId: input.appId, sessionId: input.sessionId, repoOwner: repo.owner, repoName: repo.repo,
           ref: input.head, prNumber: Number(row.pr_number) || null,
-          signal, previewRunId: runId, jobNamePrefix: 'sv-unit-early', strict: true,
+          signal, previewRunId: runId, jobNamePrefix: 'sv-unit-early', commitSha: input.head, strict: true,
         }).catch(() => null);
         return { started: true, runId };
       },

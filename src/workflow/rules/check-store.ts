@@ -14,6 +14,9 @@ export interface CheckResult {
   state: 'passing' | 'failing' | 'skipped' | 'error' | string;
   results?: unknown[];
   platformFault?: boolean;
+  // The run confirmed the repo unit suite does not apply to this head
+  // (unitAnswer below).
+  unitSuiteAbsent?: boolean;
 }
 
 // The stages a 'pending' run can be in. 'building' and 'testing' are the two
@@ -92,12 +95,57 @@ interface StoreOptions {
   onTrim?: (t: { dropped: number; kept: number }) => void;
 }
 
+// ── The repo unit suite and a person's "Run checks again" ───────────────
+//
+// A person who asks for a head's checks again is owed a unit suite that
+// really runs on it (chat_sessions.unit_suite_fresh_sha, set by the
+// 'manual-recheck' pending stamp below and by the routes that take the
+// request; services/unit-suite-reuse.js). What a verdict's unit-suite row
+// says about that request:
+//   * `reused`: the row was copied from an earlier pass of the commit
+//     instead of the suite running. Never the answer: refused, error or not.
+//   * `unanswered`: no answer at all, a copied row, or no unit-suite row
+//     while the suite was not confirmed absent (`unitSuiteAbsent`, which
+//     visuals.settleCaptureRun sets only with evidence). A verdict that is
+//     not an error is refused for it, so an owed head never stores a pass
+//     nothing will run again.
+//   * `ran`: the suite ran (pass or fail), or was confirmed absent: the
+//     request is answered and the marker cleared. A suite that could not
+//     run, on an 'error' verdict, is not: the error lane runs it again.
+// While the head is not owed a fresh run, none of this changes anything.
+
+// The unit suite's row, as services/unit-suite-row.js isUnitSuiteRow knows
+// it (its index -3, or its name and path); tests/unit-suite-reuse.test.js
+// pins that the two agree.
+const UNIT_ROW_INDEX = -3;
+const UNIT_ROW_NAME = 'Repo unit suite (npm test) passes';
+const UNIT_ROW_PATH = 'package.json';
+export function isUnitSuiteRow(r: unknown): boolean {
+  const x = r as { index?: unknown; name?: unknown; path?: unknown } | null;
+  return !!x && typeof x === 'object'
+    && (x.index === UNIT_ROW_INDEX || (x.name === UNIT_ROW_NAME && x.path === UNIT_ROW_PATH));
+}
+
+export function unitAnswer(result: CheckResult | null | undefined): { reused: boolean; unanswered: boolean; ran: boolean } {
+  const rows = Array.isArray(result?.results) ? result!.results! : [];
+  const row = rows.find(isUnitSuiteRow) as { reused?: unknown; couldNotRun?: unknown } | undefined;
+  const absent = result?.unitSuiteAbsent === true;
+  const reused = !!(row && row.reused);
+  return {
+    reused,
+    unanswered: reused || (!row && !absent),
+    ran: row ? (!reused && !(row.couldNotRun && result?.state === 'error')) : absent,
+  };
+}
+
 // Latest-only checks snapshot, tied to the commit it describes (staleness
-// signal for the merge gate).
+// signal for the merge gate). Fenced on a person's "Run checks again" too
+// (unitAnswer above).
 export async function storeChecks(db: Queryable, sessionId: number, commitSha: string | null, result: CheckResult,
   errorDetail: string | null = null, opts: StoreOptions = {}): Promise<boolean> {
   const serialized = serializeTestResults(result.results);
   if (serialized.dropped && opts.onTrim) opts.onTrim({ dropped: serialized.dropped, kept: serialized.kept });
+  const { reused: unitReused, unanswered, ran: unitRan } = unitAnswer(result);
   if (result && result.state === 'error') {
     // A build/boot/capture failure — record a TERMINAL 'error' verdict plus
     // the failure-streak bookkeeping that powers the sweeper's backoff and
@@ -123,6 +171,8 @@ export async function storeChecks(db: Queryable, sessionId: number, commitSha: s
               check_phase = NULL,
               check_error_detail = COALESCE($5, check_error_detail),
               check_error_platform = $6::boolean,
+              unit_suite_fresh_sha = CASE WHEN $8::boolean AND lower(unit_suite_fresh_sha) = lower($3::text)
+                                          THEN NULL ELSE unit_suite_fresh_sha END,
               consecutive_check_failures = consecutive_check_failures + 1,
               first_check_failure_at = COALESCE(first_check_failure_at, NOW()),
               last_check_failure_at = NOW(),
@@ -130,8 +180,10 @@ export async function storeChecks(db: Queryable, sessionId: number, commitSha: s
                 secs => LEAST(120 * power(2, LEAST(consecutive_check_failures, 10)), 1800)::double precision)
         WHERE id = $4
           AND status IN ('active', 'paused', 'promoted', 'merging')
+          AND NOT ($7::boolean AND COALESCE(lower(unit_suite_fresh_sha) = lower($3::text), false))
           AND checks_commit_sha IS NOT DISTINCT FROM $3::text`,
-      [result.state, serialized.json, commitSha || null, sessionId, errorDetail, result.platformFault === true]
+      [result.state, serialized.json, commitSha || null, sessionId, errorDetail, result.platformFault === true,
+        unitReused, unitRan]
     );
     return write.rowCount !== 0;
   }
@@ -150,7 +202,10 @@ export async function storeChecks(db: Queryable, sessionId: number, commitSha: s
   // UPDATE reads the row's old value on its right-hand side, so it is
   // NOW() minus that even though the same statement overwrites it. The
   // counts are not kept — test_results carries the verdict — and the next
-  // run's setChecksPending clears the whole thing, as it always did.
+  // run's setChecksPending clears the whole thing, as it always did. One
+  // exception: a unit suite this run copied from an earlier pass of the
+  // commit (services/unit-suite-reuse.js) keeps its snapshot, which says so,
+  // because the card has no other place that reads a passing row.
   const write = await db.query(
     `UPDATE chat_sessions
        SET check_state = $1, test_results = $2, checks_commit_sha = $3::text, checks_checked_at = NOW(),
@@ -158,10 +213,14 @@ export async function storeChecks(db: Queryable, sessionId: number, commitSha: s
            checks_progress = NULLIF(jsonb_strip_nulls(jsonb_build_object(
              'build', CASE WHEN checks_progress #>> '{build,step}' = 'done'
                            THEN checks_progress -> 'build' END,
+             'unit', CASE WHEN checks_progress #> '{unit,reused}' IS NOT NULL
+                          THEN checks_progress -> 'unit' END,
              'checksMs', ROUND(EXTRACT(EPOCH FROM (NOW() - checks_checked_at)) * 1000)::bigint
            )), '{}'::jsonb),
            check_error_detail = NULL,
            check_error_platform = false,
+           unit_suite_fresh_sha = CASE WHEN $6::boolean AND lower(unit_suite_fresh_sha) = lower($3::text)
+                                       THEN NULL ELSE unit_suite_fresh_sha END,
            consecutive_check_failures = 0,
            first_check_failure_at = NULL,
            last_check_failure_at = NULL,
@@ -169,8 +228,9 @@ export async function storeChecks(db: Queryable, sessionId: number, commitSha: s
            check_error_notified_at = NULL
      WHERE id = $4
        AND status IN ('active', 'paused', 'promoted', 'merging')
+       AND NOT ($5::boolean AND COALESCE(lower(unit_suite_fresh_sha) = lower($3::text), false))
        AND checks_commit_sha IS NOT DISTINCT FROM $3::text`,
-    [result.state, serialized.json, commitSha || null, sessionId]
+    [result.state, serialized.json, commitSha || null, sessionId, unanswered, unitRan]
   );
   return write.rowCount !== 0;
 }
@@ -204,6 +264,9 @@ export async function storeChecksSkipped(db: Queryable, sessionId: number, commi
            check_phase = NULL,
            check_error_detail = $2,
            check_error_platform = false,
+           -- Nothing to run: a fresh unit suite owed by a person's request
+           -- (services/unit-suite-reuse.js) is moot.
+           unit_suite_fresh_sha = NULL,
            consecutive_check_failures = 0,
            first_check_failure_at = NULL,
            last_check_failure_at = NULL,
@@ -252,6 +315,11 @@ export async function setChecksPending(db: Queryable, sessionId: number, commitS
        SET check_state = 'pending', checks_commit_sha = $2::text, checks_checked_at = NOW(),
            check_phase = $3::text,
            check_trigger = $4::text,
+           -- A person asked for this run ("Run checks again"): its head is
+           -- owed a unit suite that really runs (services/unit-suite-reuse.js),
+           -- until one settles (storeChecks).
+           unit_suite_fresh_sha = CASE WHEN $4::text = 'manual-recheck' AND $2::text IS NOT NULL
+                                       THEN lower($2::text) ELSE unit_suite_fresh_sha END,
            checks_progress = NULL,
            check_next_retry_at = NULL,
            checks_base_sha = COALESCE(
@@ -409,31 +477,58 @@ export async function recordRun(db: Queryable, appId: number, rows: HistoryRow[]
          ELSE 0 END`,
     params
   );
-  const own = Number.isSafeInteger(Number(sessionId)) && Number(sessionId) > 0 ? Number(sessionId) : null;
   const passed = capped
     .filter((r) => (Number.isInteger(r.passes) ? r.passes! > 0 : !!r.passed))
     .map((r) => String(r.checkKey));
-  if (own && passed.length) {
-    // Only what a merge has not already made blocking for everybody, so
-    // the list stays the handful of new or backlog checks, not the suite.
-    // A row already folded in after its merge is left alone.
-    await db.query(
-      `UPDATE chat_sessions cs
-          SET checks_earned_keys = NULLIF(ARRAY(
-                SELECT DISTINCT k
-                  FROM unnest(COALESCE(cs.checks_earned_keys, '{}'::text[]) || $3::text[]) AS k
-                 WHERE NOT EXISTS (
-                   SELECT 1 FROM app_check_history h
-                    WHERE h.app_id = $2 AND h.check_key = k AND h.merged_pass_at IS NOT NULL)
-                 ORDER BY k), '{}'::text[])
-        WHERE cs.id = $1 AND cs.app_id = $2 AND cs.checks_earned_settled_at IS NULL`,
-      [own, appId, passed]
-    );
-  }
+  await recordEarned(db, appId, sessionId, passed);
   await db.query(
     `DELETE FROM app_check_history
       WHERE app_id = $1 AND last_seen_at < NOW() - make_interval(days => $2)`,
     [appId, pruneAfterDays]
   );
   return capped.length;
+}
+
+// Add `keys` to the proposal's own earned checks (checks_earned_keys): they
+// block its later heads, and everybody's once it merges. Only what a merge
+// has not already made blocking for everybody, so the list stays the handful
+// of new or backlog checks, not the suite; a row already folded in after its
+// merge is left alone. recordRun calls it for the checks a run passed. A run
+// that copied an earlier unit-suite pass of its commit instead of running it
+// (services/unit-suite-reuse.js) calls it alone: the proposal earns the gate
+// that pass earns, and the app's counts, which the pass moved when it ran,
+// are not moved again. Throws on a database error, as recordRun does.
+export async function recordEarned(db: Queryable, appId: number, sessionId: number | null, keys: string[]): Promise<boolean> {
+  const own = Number.isSafeInteger(Number(sessionId)) && Number(sessionId) > 0 ? Number(sessionId) : null;
+  const list = (keys || []).filter(Boolean).map(String);
+  if (!appId || !own || !list.length) return false;
+  await db.query(
+    `UPDATE chat_sessions cs
+        SET checks_earned_keys = NULLIF(ARRAY(
+              SELECT DISTINCT k
+                FROM unnest(COALESCE(cs.checks_earned_keys, '{}'::text[]) || $3::text[]) AS k
+               WHERE NOT EXISTS (
+                 SELECT 1 FROM app_check_history h
+                  WHERE h.app_id = $2 AND h.check_key = k AND h.merged_pass_at IS NOT NULL)
+               ORDER BY k), '{}'::text[])
+      WHERE cs.id = $1 AND cs.app_id = $2 AND cs.checks_earned_settled_at IS NULL`,
+    [own, appId, list]
+  );
+  return true;
+}
+
+// The unit-suite passes this proposal's run recorded for `commitSha`
+// (unit_suite_passes, services/unit-suite-reuse.js) may now be copied: the
+// verdict that carries their row was stored and the row's observation is in
+// the app's history, in the same transaction. A pass whose run errored, was
+// discarded or whose history row was not written stays unobserved, and is
+// never copied.
+export async function markUnitPassObserved(db: Queryable, { appId, sessionId, commitSha }:
+  { appId: number; sessionId: number; commitSha: string }): Promise<number> {
+  if (!appId || !sessionId || !/^[0-9a-f]{40}$/i.test(String(commitSha || ''))) return 0;
+  const { rowCount } = await db.query(
+    `UPDATE unit_suite_passes SET observed_at = NOW()
+      WHERE app_id = $1 AND session_id = $2 AND commit_sha = $3 AND observed_at IS NULL`,
+    [appId, sessionId, String(commitSha).toLowerCase()]);
+  return rowCount || 0;
 }

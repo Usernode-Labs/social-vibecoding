@@ -658,6 +658,10 @@ function checksSnapshot(session, runtime, options = {}) {
       && ranOnCommit.toLowerCase() !== currentHead.toLowerCase()),
     inFlight: runtime.inFlight,
     stalled,
+    // The unit suite's pass was copied from an earlier run of this commit
+    // instead of being run again (services/unit-suite-reuse.js):
+    // `{ runId, sessionId, passedAt }`, or null.
+    unitSuiteReused: require('../services/unit-suite-row').reusedFrom(session.test_results),
     activity: {
       session: runtime.session,
       pipeline: runtime.pipeline,
