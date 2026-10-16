@@ -549,6 +549,18 @@ module.exports = function install(world) {
     async listWorkerVolumes() { return []; },
     async evictWorker(sessionId) { await world.record('worker.evict', { sessionId: Number(sessionId) }); },
     async destroyWorker(name) { await world.record('worker.destroy', { name }); },
+    // The proposal machine's fenced removals (a pause, a close): ask to
+    // proceed, as worker.js does, then remove.
+    async removeWorker(sessionId, { proceed = async () => true } = {}) {
+      if (!(await proceed())) return { skipped: true };
+      await world.record('worker.remove', { sessionId: Number(sessionId) });
+      return { removed: true };
+    },
+    async removeCcVolume(sessionId, { proceed = async () => true } = {}) {
+      if (!(await proceed())) return { skipped: true };
+      await world.record('worker.removeCcVolume', { sessionId: Number(sessionId) });
+      return { removed: true };
+    },
     async stopWorker(name) { await world.record('worker.stop', { name }); },
     async retireWorker(sessionId) { await world.record('worker.retire', { sessionId: Number(sessionId) }); },
     holdWorker() { return () => {}; },
