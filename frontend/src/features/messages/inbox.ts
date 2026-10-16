@@ -217,15 +217,22 @@ export function buildInbox(input: {
 
 /**
  * Which of a section's entries are drawn: Agents its newest AGENTS_SHOWN
- * until "Show N more" is pressed, and the open one wherever it sits; every
- * other section all of them. A search shows every match. Pure.
+ * until "Show N more" is pressed, the open one wherever it sits, and every
+ * one `keep` names (a change waiting on you, an agent at work: nothing that
+ * asks for you is folded away); every other section all of them. A search
+ * shows every match. Pure.
  */
 export function shownInSection<T extends InboxEntry>(section: InboxSection, entries: T[], {
-  expanded = false, searching = false, openKey = null,
-}: { expanded?: boolean; searching?: boolean; openKey?: string | null } = {}): { shown: T[]; hidden: number } {
+  expanded = false, searching = false, openKey = null, keep = null,
+}: {
+  expanded?: boolean;
+  searching?: boolean;
+  openKey?: string | null;
+  keep?: ((entry: T) => boolean) | null;
+} = {}): { shown: T[]; hidden: number } {
   if (section !== 'agents' || expanded || searching || entries.length <= AGENTS_SHOWN) {
     return { shown: entries, hidden: 0 };
   }
-  const shown = entries.filter((entry, i) => i < AGENTS_SHOWN || entry.key === openKey);
+  const shown = entries.filter((entry, i) => i < AGENTS_SHOWN || entry.key === openKey || !!keep?.(entry));
   return { shown, hidden: entries.length - shown.length };
 }

@@ -917,6 +917,17 @@ function ConversationList() {
     return open?.kind === 'chat' && open.id === entry.key.slice('agent:'.length);
   };
   const openKey = found.find(isOpen)?.key || null;
+  // An agent row that asks for you is never behind "Show N more": a change
+  // waiting on you ("Needs you") or an agent at work.
+  const asksForYou = (entry: { kind: string; key: string }) => {
+    if (entry.kind === 'session') {
+      const session = bySession.get(entry.key.slice('session:'.length));
+      return !!session && (session.awaitingInput || session.busy);
+    }
+    if (entry.kind === 'mayor') return !!byMayor.get(entry.key.slice('mayor:'.length))?.busy;
+    if (entry.kind === 'agent') return !!byAgent.get(entry.key.slice('agent:'.length))?.busy;
+    return false;
+  };
 
   // 16 Oct 2026: what the Homeroom bot's row says. What waits on you and
   // what it is doing, in the words of its chat's own activity bar
@@ -1033,7 +1044,9 @@ function ConversationList() {
             "Show N more". */}
         {INBOX_SECTIONS.map((section) => {
           const entries = found.filter((entry) => entry.section === section);
-          const { shown, hidden } = shownInSection(section, entries, { expanded: agentsExpanded, searching, openKey });
+          const { shown, hidden } = shownInSection(section, entries, {
+            expanded: agentsExpanded, searching, openKey, keep: asksForYou,
+          });
           // The archived chats are reached past the open ones: under all of
           // them, once "Show N more" has shown the rest.
           const archive = section === 'agents' && showArchivedToggle && !hidden;

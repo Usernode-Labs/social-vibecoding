@@ -22719,6 +22719,10 @@ html.un-kb #platform-parked {
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-more-channels-glyph { flex: 0 0 22px; }
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-session > a { min-height: 40px; gap: 10px; padding: 0 10px; border-radius: 10px; }
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-session > a > :first-child { width: 22px; height: 22px; border-radius: 6px; }
+  /* A change in flight is one line too: its title and the pill that says
+     where it stands (Working, Needs you, Ready); its app and time line goes. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-session > a > .min-w-0 > :first-child { font-size: 15px; font-weight: 400; }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-session > a > .min-w-0 > :first-child ~ * { display: none; }
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-session-active > a { background: var(--lit-tint); color: var(--lit-ink); }
 
   /* THE RESUME STRIP GIVES WAY TO THE STRIP'S APPS ON THE DESKTOP (#2802,

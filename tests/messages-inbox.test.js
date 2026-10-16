@@ -299,6 +299,11 @@ test('one row shape per kind, under three headed sections; Agents shows its newe
   assert.deepEqual([newest.shown.map((x) => x.key), newest.hidden], [['a', 'b', 'c'], 2], 'the newest three, and how many more');
   const open = inbox.shownInSection('agents', agents, { openKey: 'e' });
   assert.deepEqual([open.shown.map((x) => x.key), open.hidden], [['a', 'b', 'c', 'e'], 1], 'and the open one wherever it sits');
+  const waiting = inbox.shownInSection('agents', agents, { keep: (x) => x.key === 'd' });
+  assert.deepEqual([waiting.shown.map((x) => x.key), waiting.hidden], [['a', 'b', 'c', 'd'], 1],
+    'and whatever asks for you: nothing waiting on you is folded away');
+  assert.match(SCREEN, /return !!session && \(session\.awaitingInput \|\| session\.busy\);/);
+  assert.match(SCREEN, /expanded: agentsExpanded, searching, openKey, keep: asksForYou,/);
   assert.equal(inbox.shownInSection('agents', agents, { expanded: true }).hidden, 0, 'Show N more shows the rest');
   assert.equal(inbox.shownInSection('agents', agents, { searching: true }).hidden, 0, 'a search shows every match');
   assert.equal(inbox.shownInSection('people', agents).hidden, 0, 'People shows all of them');
@@ -337,6 +342,8 @@ test('on a desktop the column draws its rows as the Communities column does', ()
   assert.match(rule('.messages-conversation-active'), /background: var\(--lit-tint\); color: var\(--lit-ink\);/, 'the open one lit like a place');
   assert.match(css, new RegExp(`${P.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\.messages-bot-row \\.messages-row-preview \\{ display: block;`),
     'the bot keeps its second line');
+  assert.match(css, /\.messages-inbox-session > a > \.min-w-0 > :first-child ~ \* \{ display: none; \}/,
+    'a change in flight is one line: its title and its pill');
 });
 
 // ── The agent half has to ask for itself (#2718 review) ────────────────
