@@ -151,8 +151,8 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
 // 8 October (C1-story): "Welcome to Homeroom" over the picture, one headline,
 // "For example" over the make screen's three examples (Evan's, #4354; their
 // rows are pinned by the templates test below), then one "Continue" (#5251,
-// the navigation review: no separate Sign in, the email decides) and the line
-// under it, which names the waitlist's waves.
+// the navigation review: no separate Sign in, the email decides), the line
+// under it, and the waitlist's waves set apart in a pill.
 test('the story: label, headline, "For example" and the three examples, then one Continue and the waves line', () => {
   const html = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {} });
   // Each row: its emoji (the tier list draws a chart, no text), title and line.
@@ -165,10 +165,11 @@ test('the story: label, headline, "For example" and the three examples, then one
     'For example',
     ...TEMPLATE_ROWS,
     message('auth:story.continue'),
+    message('auth:story.email'),
     message('auth:story.waves'),
   ]);
   assert.match(html, /<a href="#signup" data-landing-story-start="" class="pill">Continue<\/a>/);
-  assert.match(html, /<p data-landing-story-waves=""[^>]*>New or returning, it’s the same button\. We let people in in waves\.<\/p>/);
+  assert.match(html, /<p data-landing-story-how=""[^>]*>Sign in or join with your email\.<\/p><p class="flex justify-center"><span data-landing-story-waves="" class="[^"]*bg-amber-500\/10[^"]*">We let new people in in waves\.<\/span><\/p>/);
   assert.doesNotMatch(html, /data-landing-story-signin|Already have an account|Get started/);
   // In a phone browser too, the story fills the screen and its foot is at the foot.
   const css = read('public/css/app.css');

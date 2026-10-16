@@ -6,8 +6,8 @@
  * One centred group under the landing's logo bar: the picture, the small
  * caps "Welcome to Homeroom", one headline, the small caps "For example"
  * over the make screen's three examples (to show, not to press). At the
- * foot, one "Continue" button and, under it, one line saying it is the same
- * button new or returning and that people are let in in waves (#5251, the
+ * foot, one "Continue" button, under it "Sign in or join with your email."
+ * and, set apart as a small tinted pill, "We let new people in in waves." (#5251, the
  * navigation review of 15 October 2026: "Get started" beside "Already have
  * an account? Sign in" made people decide which they were, for what is one
  * form, and nothing mentioned the waitlist most of them land on). On a
@@ -205,8 +205,16 @@ export function Story({ primaryClass, welcomeEmail = null, onStart }: {
         <a href="#signup" data-landing-story-start="" className={primaryClass} onClick={(e) => { e.preventDefault(); onStart(); }}>
           {t('auth:story.continue')}
         </a>
-        <p data-landing-story-waves="" className="mt-1 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400 text-balance">
-          {t('auth:story.waves')}
+        <p data-landing-story-how="" className="mt-1 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400 text-balance">
+          {t('auth:story.email')}
+        </p>
+        {/* The waitlist, said apart from the line above and drawn in the
+            notice's amber tint (@/components/ui/alert.tsx): it is the one
+            thing a new person should know before they press Continue. */}
+        <p className="flex justify-center">
+          <span data-landing-story-waves="" className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[13px] leading-5 font-semibold text-amber-800 dark:text-amber-300">
+            {t('auth:story.waves')}
+          </span>
         </p>
       </div>
     </div>
