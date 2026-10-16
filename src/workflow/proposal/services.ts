@@ -19,6 +19,9 @@ const quick = (attempt: number) => Math.min(20 * 1000, 2000 * 2 ** (attempt - 1)
 
 export function proposalServices({ config, pool }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
+  // The proposal machine's instance of the session: what it decided last.
+  const lifecycle = async (id: number) => (await pool.query(
+    `SELECT state, data FROM wf_instances WHERE machine = 'proposal' AND key = $1`, [`session:${id}`])).rows[0] || null;
   const session = async (id: number) => (await pool.query(
     `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [id])).rows[0] || null;
@@ -151,8 +154,12 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
       async run({ input }): Promise<Json> {
         const gh = github();
         if (!gh.isEnabled()) return { skipped: 'github_disabled' };
+        // Closed while GitHub was opening its pull request: the number it has now.
+        let number = input.number;
+        if (number == null) number = (await session(Number(input.sessionId)))?.pr_number ?? null;
+        if (number == null) return { none: true };
         try {
-          await gh.closePR(input.owner, input.repo, input.number);
+          await gh.closePR(input.owner, input.repo, number);
         } catch (err) {
           if (gone(err)) return { gone: true };
           throw err;
@@ -190,6 +197,10 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
       maxAttempts: 5,
       backoffMs: (n) => Math.min(10 * 60 * 1000, 15 * 1000 * 2 ** (n - 1)),
       async run({ input }): Promise<Json> {
+        // A session that took its slot back since (a cancel that came after
+        // this claim) keeps its worker.
+        const i = await lifecycle(Number(input.sessionId));
+        if (i?.state === 'underway' && i.data?.slot === 'held') return { skipped: 'held' };
         const worker = legacy('services/worker');
         await worker.destroyWorker(worker.workerContainerName(Number(input.sessionId)));
         return { destroyed: true };
@@ -201,6 +212,8 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
       maxAttempts: 5,
       backoffMs: (n) => Math.min(10 * 60 * 1000, 15 * 1000 * 2 ** (n - 1)),
       async run({ input }): Promise<Json> {
+        // Reopened since: its memory stays.
+        if ((await lifecycle(Number(input.sessionId)))?.state !== 'closed') return { skipped: 'reopened' };
         await legacy('services/worker').destroyCcVolume(Number(input.sessionId));
         return { purged: true };
       },

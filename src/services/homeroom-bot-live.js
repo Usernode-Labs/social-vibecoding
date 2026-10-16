@@ -3852,6 +3852,8 @@ async function proposedAlready(pool, sessionId) {
 // unkept, a build still refused ends as it always has: built, not proposed,
 // its session left for a person to propose.
 const PROPOSE_RETRY_MS = Object.freeze([2000, 5000, 15000]);
+// How long a promote GitHub has not answered yet (202) is waited on.
+const PROPOSE_SETTLE_MS = 10 * 60 * 1000;
 
 /** What a refused proposal throws while its build has a try left. Never a stop. */
 class ProposalDeferred extends Error {
@@ -3874,10 +3876,14 @@ function proposalUnavailable(out) {
  * refused and `steps` will be tried again; a stop ends the waits. `waits`
  * are a test's own (buildAndPropose's `deps.proposeRetryMs`).
  */
-async function promoteOwnBuild({ pool, steps, waits = PROPOSE_RETRY_MS, ...args }) {
+async function promoteOwnBuild({ pool, steps, waits = PROPOSE_RETRY_MS, settleMs = PROPOSE_SETTLE_MS, ...args }) {
   for (let i = 0; ; i += 1) {
     // eslint-disable-next-line no-await-in-loop
-    const out = await promoteAsBot(args);
+    let out = await promoteAsBot(args);
+    // 202: accepted, and GitHub has not answered yet. It goes up (or is
+    // refused) without another ask, so its answer is waited for here.
+    // eslint-disable-next-line no-await-in-loop
+    if (out.status === 202) out = await steps.race(require('../workflow/platform.ts').promoteSettled({ sessionId: args.sessionId, waitMs: settleMs }));
     if (!proposalUnavailable(out)) return out;
     const why = out.body?.error || out.body?.message || `promotion answered ${out.status}`;
     if (i >= waits.length) {

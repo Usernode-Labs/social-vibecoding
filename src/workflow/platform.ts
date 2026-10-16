@@ -693,29 +693,34 @@ type ProposalAppend = {
   sessionId: number; appId?: number | null; source?: Source; actor?: string | null; requestKey?: string;
   // Inside a caller's transaction: appended there, applied once it commits.
   db?: Queryable; waitMs?: number;
+  // How long the caller waits for it: past that the machine refuses it
+  // (`expired`), so an answer the caller gave up on is never applied later.
+  deadlineMs?: number;
 };
 
-// The proposal machine's events decoded at the append, also in a process
-// that does not run the machines (a script, a test that appends in its own
-// transaction): its deps decide nothing at an append.
-let decoding: ReturnType<typeof proposal> | null = null;
+// What a caller that acts on the answer waits for it.
+const ANSWER_MS = 8000;
 
 async function proposalEvent(type: string, payload: Record<string, unknown>, o: ProposalAppend): Promise<EventOutcome | number> {
+  // In a process that does not run the machines (a script, a test that
+  // appends in its own transaction), the events are decoded by a copy of the
+  // machine: its deps decide nothing at an append.
   if (o.db && !proposals) {
-    decoding ||= proposal(proposalDeps({}));
-    return appendEvent(o.db, decoding, proposalKey(o.sessionId), { type, payload: { sessionId: o.sessionId, ...payload } }, {
+    return appendEvent(o.db, proposal(proposalDeps({})), proposalKey(o.sessionId), { type, payload: { sessionId: o.sessionId, ...payload } }, {
       requestKey: o.requestKey || `${type}:${o.sessionId}:${randomUUID()}`,
       source: o.source || sys(type), actor: o.actor ?? undefined, appId: o.appId ?? undefined,
     });
   }
   const m = proposalMachine();
-  const event = { type, payload: { sessionId: o.sessionId, ...payload } };
+  const event = { type, payload: { sessionId: o.sessionId, ...payload,
+    ...(o.deadlineMs ? { deadline: new Date(Date.now() + o.deadlineMs).toISOString() } : {}) } };
   const opts = {
     requestKey: o.requestKey || `${type}:${o.sessionId}:${randomUUID()}`,
     source: o.source || sys(type), actor: o.actor ?? undefined, appId: o.appId ?? undefined,
   };
   if (o.db) return runtime!.append(m, proposalKey(o.sessionId), event, { ...opts, db: o.db });
-  return runtime!.appendAndWait(m, proposalKey(o.sessionId), event, { ...opts, waitMs: o.waitMs ?? 5000 });
+  return runtime!.appendAndWait(m, proposalKey(o.sessionId), event,
+    { ...opts, waitMs: o.waitMs ?? (o.deadlineMs ? o.deadlineMs + 3000 : 5000) });
 }
 
 // The proposal machine's instance of a session: its state and data, or null.
@@ -800,16 +805,31 @@ function promoteRefusal(reason: string | null | undefined, cap: number): Reply {
 // What a promote came to: refused at once, or answered once GitHub has
 // reported (200, or the refusal it ended in), or 202 while it still goes up.
 async function promoteAnswer(outcome: EventOutcome, p: { sessionId: number; cap: number; waitMs?: number }): Promise<Reply> {
-  const pending = { status: 202, body: { ok: true, pending: true, message: 'Being put up for a vote.' } };
   if (outcome.status === 'rejected') return promoteRefusal(outcome.reason, p.cap);
   if (outcome.status === 'faulted') return { status: 500, body: { error: 'Internal server error' } };
   const n = (outcome.reply as any)?.promoting ?? null;
-  if (outcome.status === 'pending' || n == null) return pending;
+  if (outcome.status === 'pending' || n == null) return PROMOTE_PENDING;
   const i = await runtime!.waitFor(proposalMachine(), proposalKey(p.sessionId),
     (x) => x.state !== 'proposing' || x.data?.promoting?.n !== n, p.waitMs ?? 20000);
-  if (i?.state === 'proposing' && i.data?.promoting?.n === n) return pending;
+  if (i?.state === 'proposing' && i.data?.promoting?.n === n) return PROMOTE_PENDING;
   const a = i?.data?.answer;
   if (!a || a.n !== n) return PROMOTE_REFUSALS.get('session_state_changed')!;
+  return answerReply(a);
+}
+
+const PROMOTE_PENDING: Reply = { status: 202, body: { ok: true, pending: true, message: 'Being put up for a vote.' } };
+
+// A promote that answered 202, waited on until GitHub has reported: what its
+// latest promote came to, or 202 again past `waitMs`.
+export async function promoteSettled(p: { sessionId: number; waitMs: number }): Promise<Reply> {
+  const i = await runtime!.waitFor(proposalMachine(), proposalKey(p.sessionId), (x) => x.state !== 'proposing', p.waitMs);
+  if (!i || i.state === 'proposing') return PROMOTE_PENDING;
+  const a = i.data?.answer;
+  if (!a) return PROMOTE_REFUSALS.get('session_state_changed')!;
+  return answerReply(a);
+}
+
+function answerReply(a: any): Reply {
   if (a.ok) return { status: 200, body: { ok: true, prNumber: a.prNumber ?? null, prUrl: a.prUrl ?? null, prTitle: a.prTitle ?? null } };
   if (a.code === 'branch_head_changed') return { status: 409, body: { error: 'branch_head_changed', message: a.message } };
   if (a.code === 'session_state_changed') return PROMOTE_REFUSALS.get('session_state_changed')!;
@@ -821,18 +841,20 @@ async function promoteAnswer(outcome: EventOutcome, p: { sessionId: number; cap:
 // names what its caller read (`from`): one a newer move overtook is refused.
 export function unpromoteProposal(p: { sessionId: number; appId?: number | null; userId: number; username?: string | null; from: string }) {
   return proposalEvent('Unpromote', { from: p.from, userId: p.userId, username: p.username ?? null },
-    { sessionId: p.sessionId, appId: p.appId, source: { kind: 'route', name: 'unpromote' }, actor: `user:${p.userId}` }) as Promise<EventOutcome>;
+    { sessionId: p.sessionId, appId: p.appId, source: { kind: 'route', name: 'unpromote' }, actor: `user:${p.userId}`,
+      deadlineMs: ANSWER_MS }) as Promise<EventOutcome>;
 }
 export function pauseProposal(p: { sessionId: number; appId?: number | null; reason: string; from: string; userId?: number | null;
   db?: Queryable; requestKey?: string; source?: Source; waitMs?: number }): Promise<EventOutcome | number> {
   return proposalEvent('Pause', { from: p.from, reason: p.reason, userId: p.userId ?? null },
     { sessionId: p.sessionId, appId: p.appId, db: p.db, requestKey: p.requestKey, source: p.source || sys(`pause-${p.reason}`), waitMs: p.waitMs,
-      actor: p.userId ? `user:${p.userId}` : null });
+      actor: p.userId ? `user:${p.userId}` : null, deadlineMs: p.db ? undefined : ANSWER_MS });
 }
 export function resumeProposal(p: { sessionId: number; appId?: number | null; from: string; userId?: number | null;
   caps: { user: number; global: number } | null; source?: Source }) {
   return proposalEvent('Resume', { from: p.from, userId: p.userId ?? null, caps: p.caps },
-    { sessionId: p.sessionId, appId: p.appId, source: p.source || sys('resume'), actor: p.userId ? `user:${p.userId}` : null }) as Promise<EventOutcome>;
+    { sessionId: p.sessionId, appId: p.appId, source: p.source || sys('resume'), actor: p.userId ? `user:${p.userId}` : null,
+      deadlineMs: ANSWER_MS }) as Promise<EventOutcome>;
 }
 export function closeProposal(p: { sessionId: number; appId?: number | null; reason: string; from: string; userId?: number | null;
   username?: string | null; purgeCc?: boolean; db?: Queryable; requestKey?: string; source?: Source; waitMs?: number }): Promise<EventOutcome | number> {
@@ -852,7 +874,7 @@ export function claimMerge(p: { sessionId: number; appId?: number | null; head: 
   explicitApproval?: boolean; explicitReason?: string | null }) {
   return proposalEvent('MergeClaim', { head: p.head, epoch: p.epoch, force: !!p.force,
     explicitApproval: !!p.explicitApproval, explicitReason: p.explicitReason ?? null },
-  { sessionId: p.sessionId, appId: p.appId, source: sys('merge') }) as Promise<EventOutcome>;
+  { sessionId: p.sessionId, appId: p.appId, source: sys('merge'), deadlineMs: ANSWER_MS }) as Promise<EventOutcome>;
 }
 export function releaseMerge(p: { sessionId: number; appId?: number | null; claim: number | null; reason: string }) {
   return proposalEvent('MergeReleased', { claim: p.claim, reason: p.reason },
@@ -870,11 +892,11 @@ export function moveReviewHead(p: { sessionId: number; appId?: number | null; co
   from: string | null; to: string; keepVotes: boolean; fixOnly?: boolean; reason?: string | null }) {
   return proposalEvent('ReviewHeadMoved', { column: p.column, from: p.from, to: p.to, keepVotes: !!p.keepVotes,
     fixOnly: !!p.fixOnly, reason: p.reason ?? null },
-  { sessionId: p.sessionId, appId: p.appId, source: sys('review-head') }) as Promise<EventOutcome>;
+  { sessionId: p.sessionId, appId: p.appId, source: sys('review-head'), deadlineMs: ANSWER_MS }) as Promise<EventOutcome>;
 }
 export function clearProposalApprovals(p: { sessionId: number; appId?: number | null; reason?: string | null }) {
   return proposalEvent('ApprovalsCleared', { reason: p.reason ?? null },
-    { sessionId: p.sessionId, appId: p.appId, source: sys('approvals-cleared') }) as Promise<EventOutcome>;
+    { sessionId: p.sessionId, appId: p.appId, source: sys('approvals-cleared'), deadlineMs: ANSWER_MS }) as Promise<EventOutcome>;
 }
 
 // ── The admin console ───────────────────────────────────────────────────

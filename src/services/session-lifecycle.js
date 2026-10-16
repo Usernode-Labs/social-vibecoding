@@ -258,6 +258,9 @@ async function archiveSession({ pool, sessionId, userId = null, reason = 'manual
   const out = await platform().closeProposal({
     sessionId: Number(sessionId), reason, from, userId, username, purgeCc, waitMs,
   });
+  // Recorded and not yet applied (a slow pipeline): it closes once it is,
+  // unless a newer move overtakes it.
+  if (out?.status === 'pending') return { archived: true, pending: true };
   if (!accepted(out)) return { archived: false, reason: out?.reason || out?.status || null };
   log.info('session-lifecycle', 'Session archived', { sessionId, reason, purgeCc });
   return { archived: true, appSlug: await appSlugOf(pool, sessionId) };

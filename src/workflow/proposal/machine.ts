@@ -68,6 +68,9 @@ export interface Promoting {
   prior: 'active' | 'paused';
   expectedHead: string | null;
   viaAgent: boolean;
+  // The head the row named when it was asked: one a push moved meanwhile
+  // (a reconcile while it went up) is the head it goes up on.
+  headAt: string | null;
 }
 // What the last promote came to, for the route that waits on it.
 export interface Answer {
@@ -88,8 +91,13 @@ export interface Data {
   answer: Answer | null;
   reason: string | null;                       // closed: why
   claim: { n: number; at: string } | null;     // merging: the merge attempt that holds it
-  // The GitHub move under way (its work key), and the one to run after it.
-  pr: { running: string | null; next: WorkRequest | null };
+  // The GitHub move under way (its work key), and the ones to run after it,
+  // in order.
+  pr: { running: string | null; next: WorkRequest[] };
+  // Work that tears the session down (its worker, its CC volume) not yet
+  // reported: a resume or a reopen cancels it, so it never hits a session
+  // that came back.
+  doomed: { kind: string; key: string }[];
   n: number;
 }
 
@@ -149,6 +157,19 @@ const int = (v: unknown, what: string) => {
   return v as number;
 };
 const optInt = (v: unknown, what: string) => (v == null ? null : int(v, what));
+const count = (v: unknown, what: string) => {
+  if (!Number.isInteger(v) || (v as number) < 0) throw new Error(`${what} must be a whole number`);
+  return v as number;
+};
+// When its caller stops waiting for it: an event applied after that is
+// refused (`expired`), so a caller that gave up never has it applied behind
+// its back (a merge claim left 'merging', a head move it read as refused).
+const deadline = (p: any) => {
+  if (p?.deadline == null) return {};
+  const at = Date.parse(String(p.deadline));
+  if (!Number.isFinite(at)) throw new Error('deadline must be a time');
+  return { deadline: new Date(at).toISOString() };
+};
 const optSha = (v: unknown, what: string) => {
   if (v == null) return null;
   const s = String(v).toLowerCase();
@@ -184,19 +205,20 @@ const EVENTS = {
       head: optSha(p.pr.head, 'pr.head'),
     };
     return { ...session(p), from: from(p), userId: int(p?.userId, 'userId'), username: text(p?.username, 100),
-      cap: int(p?.cap, 'cap'), pr, expectedHead: optSha(p?.expectedHead, 'expectedHead'), viaAgent: !!p?.viaAgent,
+      cap: count(p?.cap, 'cap'), pr, expectedHead: optSha(p?.expectedHead, 'expectedHead'), viaAgent: !!p?.viaAgent,
       ...ownOperation(p) };
   },
-  Unpromote: (p: any) => ({ ...session(p), from: from(p), userId: int(p?.userId, 'userId'), username: text(p?.username, 100) }),
+  Unpromote: (p: any) => ({ ...session(p), from: from(p), userId: int(p?.userId, 'userId'), username: text(p?.username, 100), ...deadline(p) }),
   Pause: (p: any) => {
     const reason = word(p?.reason, 'reason');
     if (!PAUSE_REASONS.has(reason)) throw new Error(`reason ${reason} is not a pause`);
-    return { ...session(p), from: from(p), reason, userId: optInt(p?.userId, 'userId') };
+    return { ...session(p), from: from(p), reason, userId: optInt(p?.userId, 'userId'), ...deadline(p) };
   },
   // `caps`: the owner's slot ceiling and the platform's; null for a flow
   // that keeps its own (the Homeroom bot's triage, a bench trial).
   Resume: (p: any) => ({ ...session(p), from: from(p), userId: optInt(p?.userId, 'userId'),
-    caps: p?.caps == null ? null : { user: int(p.caps.user, 'caps.user'), global: int(p.caps.global, 'caps.global') } }),
+    caps: p?.caps == null ? null : { user: count(p.caps.user, 'caps.user'), global: count(p.caps.global, 'caps.global') },
+    ...deadline(p) }),
   IdleCheck: () => ({}),
   ReviewCheck: () => ({}),
   Close: (p: any) => ({ ...session(p), from: from(p), reason: word(p?.reason, 'reason'),
@@ -208,7 +230,7 @@ const EVENTS = {
   MergeClaim: (p: any) => {
     if (!Number.isInteger(p?.epoch) || p.epoch < 0) throw new Error('epoch must be the approval epoch the merge gated on');
     return { ...session(p), head: optSha(p?.head, 'head'), epoch: p.epoch as number, force: !!p?.force,
-      explicitApproval: !!p?.explicitApproval, explicitReason: text(p?.explicitReason, 64) };
+      explicitApproval: !!p?.explicitApproval, explicitReason: text(p?.explicitReason, 64), ...deadline(p) };
   },
   // The attempt ended without merging (`claim`: its claim; null: recovery's,
   // for a claim whose process is gone).
@@ -230,9 +252,9 @@ const EVENTS = {
     const to = optSha(p.to, 'to');
     if (!to) throw new Error('to is required');
     return { ...session(p), column: p.column as 'reviewed' | 'imported', from: optSha(p.from, 'from'), to,
-      keepVotes: !!p.keepVotes, fixOnly: !!p.fixOnly, reason: text(p.reason, 200) };
+      keepVotes: !!p.keepVotes, fixOnly: !!p.fixOnly, reason: text(p.reason, 200), ...deadline(p) };
   },
-  ApprovalsCleared: (p: any) => ({ ...session(p), reason: text(p?.reason, 200) }),
+  ApprovalsCleared: (p: any) => ({ ...session(p), reason: text(p?.reason, 200), ...deadline(p) }),
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -258,7 +280,7 @@ function timerFor(s: Live, f: Facts, ctx: TransitionContext, deps: Deps): TimerR
 function adopt(sessionId: number, row: Row): Live {
   const data: Data = {
     sessionId, appId: row.appId, imported: row.imported, slot: row.imported ? 'none' : 'held',
-    promoting: null, answer: null, reason: null, claim: null, pr: { running: null, next: null }, n: 0,
+    promoting: null, answer: null, reason: null, claim: null, pr: { running: null, next: [] }, doomed: [], n: 0,
   };
   switch (row.status) {
     case 'paused': return { name: 'underway', data: { ...data, slot: 'released' } };
@@ -270,16 +292,30 @@ function adopt(sessionId: number, row: Row): Live {
   }
 }
 
-// A GitHub move: run now, or after the one under way reports.
+// A GitHub move: run now, or after the ones before it report. A close or a
+// reopen says where the pull request should end up, so it replaces a close
+// or a reopen still waiting (an open waiting keeps its place).
 function prMove(d: Data, w: WorkRequest): { data: Data; work: WorkRequest[] } {
-  if (d.pr.running) return { data: { ...d, pr: { running: d.pr.running, next: w } }, work: [] };
-  return { data: { ...d, pr: { running: w.key, next: null } }, work: [w] };
+  if (!d.pr.running) return { data: { ...d, pr: { running: w.key, next: [] } }, work: [w] };
+  const settles = w.kind === WORK.close || w.kind === WORK.reopen;
+  const kept = settles ? d.pr.next.filter((x) => x.kind === WORK.open) : d.pr.next;
+  return { data: { ...d, pr: { running: d.pr.running, next: [...kept, w] } }, work: [] };
 }
 // The move under way reported: the next one starts.
 function prDone(d: Data, key: string): { data: Data; work: WorkRequest[] } {
   if (d.pr.running !== key) return { data: d, work: [] };
-  const next = d.pr.next;
-  return { data: { ...d, pr: { running: next ? next.key : null, next: null } }, work: next ? [next] : [] };
+  const [next, ...rest] = d.pr.next;
+  return { data: { ...d, pr: { running: next ? next.key : null, next: rest } }, work: next ? [next] : [] };
+}
+
+// Teardown work (the worker, the CC volume), remembered until it reports.
+function doom(d: Data, w: WorkRequest): Data {
+  return { ...d, doomed: [...(d.doomed || []), { kind: w.kind, key: w.key }] };
+}
+// ... and cancelled by a move that brings the session back.
+function spare(d: Data, kinds: ReadonlySet<string>): { data: Data; cancel: { kind: string; key: string }[] } {
+  const cancel = (d.doomed || []).filter((x) => kinds.has(x.kind));
+  return { data: { ...d, doomed: (d.doomed || []).filter((x) => !kinds.has(x.kind)) }, cancel };
 }
 
 const repoInput = (f: Facts) => (f.row?.repo && f.row.prNumber
@@ -290,6 +326,11 @@ const slotFor = (d: Data, prior: string | null = null): Slot =>
   (d.imported ? 'none' : prior === 'active' ? 'held' : 'released');
 
 const busy = (r: Row) => r.activeTurn || r.workedOn;
+// 'active' and 'paused' are one reading of an underway proposal for a move
+// that does not depend on its slot (a close, a promote): a slot given back
+// meanwhile (the idle check) does not overtake it.
+const UNDERWAY: ReadonlySet<string> = new Set(['active', 'paused']);
+const sameReading = (now: string, read: string) => now === read || (UNDERWAY.has(now) && UNDERWAY.has(read));
 // What may still move its branch under a promote or an unpromote (facts.ts).
 const moving = (r: Row) => r.moving;
 const label = (r: Row) => (r.prTitle ? `“${r.prTitle}”` : 'This change');
@@ -350,8 +391,8 @@ const OUTCOMES: ReadonlyMap<string, string> = new Map([
 const promote: Handler = (s, e, f) => {
   const p = e.payload;
   const n = s.data.n + 1;
-  const promoting: Promoting = { n, by: p.userId, byName: p.username, prior: p.from === 'paused' ? 'paused' : 'active',
-    expectedHead: p.expectedHead, viaAgent: p.viaAgent };
+  const promoting: Promoting = { n, by: p.userId, byName: p.username, prior: statusOf(s) === 'paused' ? 'paused' : 'active',
+    expectedHead: p.expectedHead, viaAgent: p.viaAgent, headAt: f.row!.head };
   const moved = prMove({ ...s.data, n, promoting, answer: null },
     { kind: WORK.open, key: `open:${n}`, input: { sessionId: s.data.sessionId, n, userId: p.userId, expectedHead: p.expectedHead,
       imported: s.data.imported } });
@@ -367,7 +408,8 @@ function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
     const code = p.error?.code || 'github_unavailable';
     const back: Live = { name: 'underway', data: { ...done.data, slot: slotFor(s.data, promoting.prior), promoting: null,
       answer: { n: promoting.n, ok: false, code, message: p.error?.message?.slice(0, 500) ?? null } } };
-    return step(back, { work: done.work, timer: timerFor(back, f, ctx, deps) });
+    // A page that stopped waiting (the route answered 202) reads it again.
+    return step(back, { work: done.work, timer: timerFor(back, f, ctx, deps), push: [board(f, 'promote_failed', { error: code })] });
   }
   const r = (p.result || {}) as any;
   const row = f.row!;
@@ -376,7 +418,10 @@ function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
   const d: Data = { ...done.data, slot: 'none', promoting: null,
     answer: { n: promoting.n, ok: true, prNumber, prUrl: r.prUrl ?? null, prTitle } };
   const next: Live = { name: 'in_review', data: d };
-  const head = typeof r.head === 'string' ? r.head.toLowerCase() : null;
+  // A push a reconcile installed while it went up stands: the head GitHub
+  // read before it is not written over it.
+  const read = typeof r.head === 'string' ? r.head.toLowerCase() : null;
+  const head = row.head && row.head !== promoting.headAt ? row.head : read;
   const work = [...done.work];
   if (row.ownerSynthetic) work.push(botNote(d, promoting.n));
   return step(next, {
@@ -399,14 +444,15 @@ function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
 
 const unpromote: Handler = (s, e, f, ctx, deps) => {
   const n = s.data.n + 1;
-  const next: Live = { name: 'underway', data: { ...s.data, n, slot: slotFor(s.data) } };
+  const destroy = destroyWorker(s.data, n);
+  const next: Live = { name: 'underway', data: { ...(s.data.imported ? s.data : doom(s.data, destroy)), n, slot: slotFor(s.data) } };
   const who = e.payload.username || 'The author';
   return step(next, {
     writes: [
       { type: 'unpromoted', sessionId: s.data.sessionId },
       line(e, s.data, `${who} moved ${prLabel(f.row!)} back to Underway. Its votes were cleared, and it goes up for a fresh vote when it is proposed again`),
     ],
-    work: s.data.imported ? [] : [destroyWorker(s.data, n)],
+    work: s.data.imported ? [] : [destroy],
     push: [board(f, 'unpromoted'), votes(f)],
     timer: timerFor(next, f, ctx, deps),
   });
@@ -414,18 +460,25 @@ const unpromote: Handler = (s, e, f, ctx, deps) => {
 
 const pause: Handler = (s, e, f) => {
   const n = s.data.n + 1;
-  return step({ name: 'underway', data: { ...s.data, n, slot: 'released' } }, {
-    work: [destroyWorker(s.data, n)], push: [board(f, 'paused')], timer: null,
+  const destroy = destroyWorker(s.data, n);
+  return step({ name: 'underway', data: { ...doom(s.data, destroy), n, slot: 'released' } }, {
+    work: [destroy], push: [board(f, 'paused')], timer: null,
   });
 };
+
+const SPARE_WORKER: ReadonlySet<string> = new Set([WORK.destroy]);
+const SPARE_ALL: ReadonlySet<string> = new Set([WORK.destroy, WORK.purge]);
 
 const resume: Handler = (s, e, f, ctx, deps) => {
   // An imported proposal holds no slot (one left 'paused' by [main] reads
   // 'active' again, as imports always do).
-  const next: Live = { name: 'underway', data: { ...s.data, slot: s.data.imported ? 'none' : 'held' } };
+  // A worker destroy still owed from the pause it comes back from goes.
+  const spared = spare(s.data, SPARE_WORKER);
+  const next: Live = { name: 'underway', data: { ...spared.data, slot: s.data.imported ? 'none' : 'held' } };
   // last_activity_at moves with it: the idle timer runs from now.
   const timer = deps.idleMs > 0 && !s.data.imported ? { at: later(ctx, deps.idleMs), event: { type: 'IdleCheck' } } : null;
-  return step(next, { writes: [{ type: 'resumed', sessionId: s.data.sessionId }], push: [board(f, 'resumed')], timer });
+  return step(next, { writes: [{ type: 'resumed', sessionId: s.data.sessionId }], push: [board(f, 'resumed')], timer,
+    cancel: spared.cancel });
 };
 
 // Closed, for any reason, by one path (R3): the database's part commits with
@@ -437,14 +490,22 @@ function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner
   let d: Data = { ...s.data, n, reason, promoting: null, claim: null,
     answer: s.name === 'proposing' && s.data.promoting
       ? { n: s.data.promoting.n, ok: false, code: 'session_state_changed' } : s.data.answer };
-  const work: WorkRequest[] = [destroyWorker(d, n), botNote(d, n)];
-  const pr = repoInput(f);
+  const destroy = destroyWorker(d, n);
+  d = doom(d, destroy);
+  const work: WorkRequest[] = [destroy, botNote(d, n)];
+  // Its pull request is closed; one GitHub is still opening for it (a
+  // promote under way) is closed once it has, by the number it then has.
+  const pr = repoInput(f) || (s.name === 'proposing' && row.repo ? { owner: row.repo.owner, repo: row.repo.repo, number: null } : null);
   if (pr) {
     const moved = prMove(d, { kind: WORK.close, key: `close:${n}`, input: { sessionId: d.sessionId, ...pr } });
     d = moved.data;
     work.push(...moved.work);
   }
-  if (more.purgeCc) work.push({ kind: WORK.purge, key: `purge:${n}`, input: { sessionId: d.sessionId } });
+  if (more.purgeCc) {
+    const purge = { kind: WORK.purge, key: `purge:${n}`, input: { sessionId: d.sessionId } };
+    d = doom(d, purge);
+    work.push(purge);
+  }
   const writes: DomainWrite[] = [{ type: 'closed', eventId: e.id, sessionId: d.sessionId, appId: d.appId,
     outcome: OUTCOMES.get(reason) || 'closed', agentSessionId: row.agentSessionId, prNumber: row.prNumber }];
   if (row.prNumber) writes.push(line(e, d, closedLine(row, reason, !!more.byOwner)));
@@ -461,7 +522,10 @@ const closeEvent: Handler = (s, e, f) =>
 
 const reopen: Handler = (s, e, f, ctx, deps) => {
   const n = s.data.n + 1;
-  let d: Data = { ...s.data, n, reason: null, slot: slotFor(s.data) };
+  // Its worker's destroy and its CC volume's purge, if still owed, go: the
+  // session is back.
+  const spared = spare(s.data, SPARE_ALL);
+  let d: Data = { ...spared.data, n, reason: null, slot: slotFor(s.data) };
   const pr = repoInput(f);
   let work: WorkRequest[] = [];
   if (pr) ({ data: d, work } = prMove(d, { kind: WORK.reopen, key: `reopen:${n}`, input: { sessionId: d.sessionId, ...pr } }));
@@ -469,7 +533,7 @@ const reopen: Handler = (s, e, f, ctx, deps) => {
   const row = f.row!;
   const push = [board(f, 'unarchived')];
   if (row.linkedIssues.length) push.push(issueUpdate({ action: 'updated', source: 'session_unarchived', appSlug: row.appSlug, appId: row.appId }));
-  return step(next, { work, push, timer: timerFor(next, f, ctx, deps) });
+  return step(next, { work, push, timer: timerFor(next, f, ctx, deps), cancel: spared.cancel });
 };
 
 const claim: Handler = (s, e, f, ctx) => {
@@ -561,13 +625,17 @@ function workDone(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps
     return opened(s, e, f, ctx, deps);
   }
   const done = PR_MOVES.has(p.kind) ? prDone(s.data, p.workKey) : { data: s.data, work: [] };
+  done.data = { ...done.data, doomed: (done.data.doomed || []).filter((x) => x.key !== p.workKey || x.kind !== p.kind) };
   const writes: DomainWrite[] = [];
   // A reopen GitHub refused for good (the pull request is closed for good):
-  // the row forgets it, so the next promote opens a fresh one.
-  if (p.kind === WORK.reopen && e.type === 'WorkSucceeded' && (p.result as any)?.cleared && s.name === 'underway') {
+  // the row forgets it (whatever has happened since: the write is fenced by
+  // the number), so the next promote opens a fresh one.
+  if (p.kind === WORK.reopen && e.type === 'WorkSucceeded' && (p.result as any)?.cleared) {
     writes.push({ type: 'prCleared', sessionId: s.data.sessionId, prNumber: (p.result as any).prNumber });
   }
-  if (p.kind === WORK.purge && e.type === 'WorkSucceeded') writes.push({ type: 'ccPurged', sessionId: s.data.sessionId });
+  if (p.kind === WORK.purge && e.type === 'WorkSucceeded' && (p.result as any)?.purged && s.name === 'closed') {
+    writes.push({ type: 'ccPurged', sessionId: s.data.sessionId });
+  }
   return step({ name: s.name, data: done.data } as Live, { writes, work: done.work });
 }
 
@@ -588,7 +656,7 @@ const all = (...checks: (() => Check)[]): Check => {
 const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: TransitionContext) => Check>([
   ['Promote', (s, e, f) => all(
     () => (s.name === 'underway' ? ok() : reject('session_state_changed')),
-    () => read(s, e),
+    () => (sameReading(statusOf(s), e.payload.from) ? ok() : reject('session_state_changed')),
     () => owner(e, f),
     () => (f.row!.headless ? reject('headless') : ok()),
     () => (moving(f.row!) ? reject('busy') : ok()),
@@ -641,7 +709,7 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
   ['Close', (s, e, f) => all(
     () => (['underway', 'proposing', 'in_review'].includes(s.name) ? ok()
       : reject(s.name === 'closed' ? 'already_closed' : s.name === 'merging' ? 'merging' : 'merged')),
-    () => read(s, e, 'overtaken'),
+    () => (sameReading(statusOf(s), e.payload.from) ? ok() : reject('overtaken')),
     () => owner(e, f),
   )],
   ['Reopen', (s, e, f) => all(
@@ -693,6 +761,9 @@ const CREATE = ['Adopted', 'Promote', 'Unpromote', 'Pause', 'Resume', 'Close', '
 // A row merge-followups has moved into 'merged' is merged, whatever this
 // instance last decided: the move is that machine's, and its Merged message
 // may still be on its way.
+const expired = (e: Event<any>, ctx: TransitionContext) =>
+  typeof e.payload?.deadline === 'string' && ctx.now.getTime() > Date.parse(e.payload.deadline);
+
 const mergedAway = (s: Live, e: Event<any>, f: Facts) =>
   f.row?.status === 'merged' && s.name !== 'merged' && e.type !== 'Merged';
 
@@ -700,6 +771,7 @@ function transitions(deps: Deps) {
   const entry = (type: string) => ({
     guard: (s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Check => {
       if (!f.row) return reject('session_not_found');
+      if (expired(e, ctx)) return reject('expired');
       if (mergedAway(s, e, f) && !type.startsWith('Work')) return reject('merged');
       const g = GUARDS.get(type);
       return g ? g(s, e, f, ctx) : ok();
@@ -720,6 +792,7 @@ function transitions(deps: Deps) {
     guard: (_s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Check => {
       if (!f.row) return reject('session_not_found');
       if (ctx.key !== sessionKey(e.payload.sessionId)) return reject('key_mismatch');
+      if (expired(e, ctx)) return reject('expired');
       if (type === 'Adopted') return ok();
       const a = adopt(e.payload.sessionId, f.row);
       if (a.name === 'merged') return type === 'Merged' ? ok() : reject('merged');

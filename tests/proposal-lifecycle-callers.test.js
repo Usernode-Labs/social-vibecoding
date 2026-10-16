@@ -128,3 +128,38 @@ test('a resume reads that the session is the caller\'s and paused before it evic
   assert.match(fn, /reason === 'user_cap'/);
   assert.match(fn, /reason === 'global_cap'/);
 });
+
+// ── After the adversarial review (design §9.1) ──────────────────────────
+
+test('a promote GitHub has not answered yet (202) is waited on, never read as refused or as up for a vote (review 3)', () => {
+  const live = read('src/services/homeroom-bot-live.js');
+  const fn = live.slice(live.indexOf('async function promoteOwnBuild('), live.indexOf('async function buildAndPropose('));
+  assert.match(fn, /out\.status === 202\) out = await steps\.race\(require\('\.\.\/workflow\/platform\.ts'\)\.promoteSettled\(/);
+  assert.match(read('src/routes/votes.js'), /req\.user\.is_synthetic \? \{ waitMs: 120000 \}/, 'the bot\'s own promote waits longer');
+  const mcp = read('src/services/mcp-tools.js');
+  assert.equal((mcp.match(/status === 202 \? goingUpSentence\(/g) || []).length, 3, 'each connector tool that promotes says it is being put up');
+});
+
+test('a move its caller waits on carries a deadline, and a resume not applied in time is not reported as done (review 4)', () => {
+  const platform = read('src/workflow/platform.ts');
+  for (const name of ['unpromoteProposal', 'resumeProposal', 'claimMerge', 'moveReviewHead', 'clearProposalApprovals']) {
+    const at = platform.indexOf(`export function ${name}(`);
+    assert.ok(at > 0, name);
+    assert.match(platform.slice(at, platform.indexOf('\nexport ', at + 10)), /deadlineMs: ANSWER_MS/, name);
+  }
+  const sessions = read('src/routes/sessions.js');
+  assert.match(sessions, /if \(out\.status === 'pending'\) return \{ ok: false, status: 503/);
+  assert.doesNotMatch(sessions, /out\.status === 'replayed' \|\| out\.status === 'pending'\) break/);
+});
+
+test('sessions are adopted on a host with the idle pause off (review 8); caps lock the owner without blocking its rows\' inserts (review 9)', () => {
+  const server = read('server.js');
+  const fn = server.slice(server.indexOf('function startSessionAutoPauseSweeper('), server.indexOf('sessionSweeperHandle = setInterval(singleFlight(\'session-sweeper\''));
+  assert.match(fn, /singleFlight\('proposal-adopt'[\s\S]*adoptProposals\(\)/);
+  assert.match(read('src/workflow/proposal/facts.ts'), /FROM users WHERE id = \$1 FOR NO KEY UPDATE/);
+});
+
+test('a preview teardown nobody called final is final for a proposal that has ended, not one being merged (review 11)', () => {
+  const staging = read('src/services/staging.js');
+  assert.match(staging, /terminal == null \? \(!row \|\| row\.status === 'archived' \|\| row\.status === 'merged'\) : !!terminal/);
+});

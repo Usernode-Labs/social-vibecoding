@@ -109,10 +109,10 @@ const fakePool = {
     if (/SELECT cs\.\*, a\.slug as app_slug, a\.repo_url/i.test(String(sql))) {
       return { rows: [fx.sessionRow].filter(Boolean) };
     }
-    // teardownStaging re-reads the row for its app, and to know whether it
-    // is gone (then the retirement is for good).
-    if (/SELECT app_id FROM chat_sessions WHERE id = \$1/i.test(String(sql))) {
-      return { rows: fx.sessionRow ? [{ app_id: fx.sessionRow.app_id }] : [] };
+    // teardownStaging re-reads the row for its app, and to know whether the
+    // proposal has ended (gone, closed, merged: then the retirement is for good).
+    if (/SELECT app_id, status FROM chat_sessions WHERE id = \$1/i.test(String(sql))) {
+      return { rows: fx.sessionRow ? [{ app_id: fx.sessionRow.app_id, status: fx.sessionRow.status }] : [] };
     }
     return { rows: [], rowCount: 1 };
   },
@@ -228,8 +228,7 @@ function assertNothingInline() {
 test('teardownStaging: a merged session is retired for good, and the hand-off is all it does', async () => {
   const staging = setup();
 
-  // The caller says it is for good (merge-followups' teardown work); the
-  // row's status no longer decides it.
+  // The caller says it is for good (merge-followups' teardown work).
   const result = await staging.teardownStaging(SESSION(), APP, { terminal: true, reason: 'merged' });
 
   assert.deepEqual(result, { removed: false, handedOff: true });
@@ -244,6 +243,17 @@ test('teardownStaging: a session still open is retired as idle, not for good', a
   await staging.teardownStaging(SESSION(), APP);
 
   assert.deepEqual(fx.retires, [{ session: { id: 4242, app_id: 10 }, reason: 'idle', terminal: false }]);
+});
+
+test('teardownStaging: a proposal that has ended (closed, merged) is retired for good when the caller does not say (review 11)', async () => {
+  for (const status of ['archived', 'merged']) {
+    const staging = setup();
+    fx.sessionRow.status = status;
+
+    await staging.teardownStaging(SESSION(), APP);
+
+    assert.deepEqual(fx.retires, [{ session: { id: 4242, app_id: 10 }, reason: 'closed', terminal: true }], status);
+  }
 });
 
 test('teardownStaging: a row being merged is not read as an ending; only the caller says so', async () => {

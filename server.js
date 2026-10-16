@@ -5181,10 +5181,21 @@ const FRESHNESS_REFRESH_COOLDOWN_MS = Math.max(
   60 * 1000
 );
 
+// Every session the proposal machine does not hold yet is adopted (one
+// created since the leader started): its idle check and its hourly review
+// check are the machine's timers, armed on adoption.
+const adoptProposals = () => require('./src/workflow/platform.ts').adoptProposals()
+  .catch((err) => log.warn('server', 'Adopting sessions for the proposal machine failed', { err: err.message }));
+
 function startSessionAutoPauseSweeper(config) {
   if (sessionSweeperHandle) return;
   if (!config.sessionAutopauseIdleMs || config.sessionAutopauseIdleMs <= 0) {
     log.info('server', 'Session auto-pause sweeper disabled', { reason: 'SESSION_AUTOPAUSE_IDLE_MS<=0' });
+    // A proposal's review check (the stale warning and close) still needs
+    // the machine to hold it, so adoption runs without the sweeper.
+    sessionSweeperHandle = setInterval(singleFlight('proposal-adopt', async () => {
+      if (!lifecycle.isShuttingDown()) await adoptProposals();
+    }), config.sessionSweepIntervalMs).unref();
     return;
   }
   const pool = getPool(config);
@@ -5209,8 +5220,7 @@ function startSessionAutoPauseSweeper(config) {
     // SESSION_AUTOPAUSE_IDLE_MS (src/workflow/proposal/, IdleCheck: never
     // mid-turn, never under a durable build, never a staging fixture). The
     // pause itself is the machine's, decided under the session's lock.
-    await require('./src/workflow/platform.ts').adoptProposals()
-      .catch((err) => log.warn('server', 'Adopting sessions for the proposal machine failed', { err: err.message }));
+    await adoptProposals();
 
     // Pass 2: staging GC. Reclaim the staging container + cloned DB from
     // sessions cold past the (much longer) staging-idle window. Skips

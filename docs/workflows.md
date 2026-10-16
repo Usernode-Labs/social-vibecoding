@@ -862,7 +862,10 @@ on, `reviewed_head_sha` and `approval_epoch`.
   its reason recorded; reopened to `underway`).
 - **Every move is an event that names what its caller read** (`from`, the status it saw; a
   head move names the head): one a newer move overtook is refused rather than undoing it.
-  The decoders require it, so a caller that leaves it out fails at the append.
+  The decoders require it, so a caller that leaves it out fails at the append. A move whose
+  caller acts on the answer (a merge claim, a head move, a pause, a resume, an unpromote)
+  carries a deadline a few seconds out: past it the machine refuses it (`expired`), so an
+  answer the caller stopped waiting for never applies later. A close carries none.
 - **Promote** (the button, the connector's tools, the local CLI, the Homeroom bot, an import
   going straight to a vote in its own transaction): under the owner's promoted cap, counted
   under a lock on their `users` row; refused while somebody works on the session, and for a

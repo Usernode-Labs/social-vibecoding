@@ -226,7 +226,9 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     const turning = await session();
     await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"t1"}'::jsonb WHERE id = $1`, [turning.id]);
     reasons.push((await outcome(await promote(turning).then(async (id) => { await settle(); return id; }))).reason);
-    reasons.push((await outcome(await promote(s, { from: 'paused' }).then(async (id) => { await settle(); return id; }))).reason);
+    // A stale read: one that names a status the proposal is not in (an
+    // underway one reads the same, active or paused: review 5).
+    reasons.push((await outcome(await promote(s, { from: 'promoted' }).then(async (id) => { await settle(); return id; }))).reason);
     reasons.push((await outcome(await promote(s, { pr: { state: 'closed', merged: true, draft: false, head: SHA('a') } }).then(async (id) => { await settle(); return id; }))).reason);
     const imported = await session({ source: 'imported' });
     reasons.push((await outcome(await promote(imported, { pr: { state: 'open', draft: true, merged: false, head: SHA('a') } }).then(async (id) => { await settle(); return id; }))).reason);
@@ -686,5 +688,196 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     await asTransition((c) => c.query(`UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`, [s.id]));
     const ok = await votes.recordVote({ pool, session: s, userId: u.id, vote: 'yes', headSha: SHA('a'), revisionEnforced: false });
     assert.equal(ok.rowCount, 1);
+  });
+
+  // ── After the adversarial review (design §9.1) ──────────────────────
+
+  const ofKey = (s, kind) => work.calls.filter((c) => c.kind === kind && c.input.sessionId === s.id);
+
+  await t.test('P24 a close while a proposal with no pull request yet goes up: the PR GitHub then opens is closed, by the number it has by then (review 1)', async () => {
+    defaults();
+    let release;
+    work.gate.set(WORK.open, new Promise((r) => { release = r; }));
+    const s = await session({ pr: false });
+    await promote(s);
+    await rt.drain();
+    const running = rt.runServices();
+    await new Promise((r) => setTimeout(r, 50));
+    const closeId = await send(s, 'Close', { from: 'active', reason: 'manual', userId: s.owner.id }, route);
+    await rt.drain();
+    assert.equal((await outcome(closeId)).result, 'accepted');
+    assert.equal((await workOf(s, WORK.close)).length, 0, 'the close waits for the open under way');
+    release();
+    await running;
+    await settle();
+    const [closed] = ofKey(s, WORK.close);
+    assert.ok(closed, 'the pull request opened after the close is closed');
+    assert.equal(closed.input.number, null, 'its number is read when the close runs (pr.close resolves it from the row)');
+    assert.equal(closed.input.repo, s.app.slug);
+  });
+
+  await t.test('P25 a worker destroy (and a CC purge) still owed is cancelled by the move that brings the session back (review 2)', async () => {
+    defaults();
+    const s = await session();
+    await send(s, 'Pause', { from: 'active', reason: 'manual', userId: s.owner.id }, route);
+    await rt.drain();
+    assert.deepEqual((await instance(s)).data.doomed.map((d) => d.kind), [WORK.destroy]);
+    await send(s, 'Resume', { from: 'paused', userId: s.owner.id, caps: { user: 100, global: 100 } }, route);
+    await settle();
+    assert.equal(ofKey(s, WORK.destroy).length, 0, 'a resumed session\'s worker is never destroyed by the pause before it');
+    assert.deepEqual((await instance(s)).data.doomed, []);
+    // A close with its CC volume purged, then a reopen before either ran.
+    const c = await session({ status: 'paused' });
+    await send(c, 'Close', { from: 'paused', reason: 'manual', userId: c.owner.id, purgeCc: true }, route);
+    await rt.drain();
+    await send(c, 'Reopen', { from: 'archived', userId: c.owner.id }, route);
+    await settle();
+    assert.equal(ofKey(c, WORK.destroy).length + ofKey(c, WORK.purge).length, 0);
+    assert.equal((await row(c)).cc_purged, false);
+    // One that ran is done: it reports and leaves the list.
+    const p = await session();
+    await send(p, 'Pause', { from: 'active', reason: 'manual', userId: p.owner.id }, route);
+    await settle();
+    assert.equal(ofKey(p, WORK.destroy).length, 1);
+    assert.deepEqual((await instance(p)).data.doomed, []);
+  });
+
+  await t.test('P26 a move its caller stopped waiting for is refused once past its deadline, never applied late (review 4)', async () => {
+    defaults();
+    const past = new Date(Date.now() - 1000).toISOString();
+    const s = await session({ status: 'promoted', promotedAgo: 0 });
+    const claimLate = await send(s, 'MergeClaim', { head: SHA('a'), epoch: 0, deadline: past });
+    const headLate = await send(s, 'ReviewHeadMoved', { column: 'reviewed', from: SHA('a'), to: SHA('b'), keepVotes: false, deadline: past });
+    const unpromoteLate = await send(s, 'Unpromote', { from: 'promoted', userId: s.owner.id, deadline: past }, route);
+    const u = await session();
+    const pauseLate = await send(u, 'Pause', { from: 'active', reason: 'lru', deadline: past });
+    await settle();
+    for (const id of [claimLate, headLate, unpromoteLate, pauseLate]) assert.equal((await outcome(id)).reason, 'expired');
+    assert.equal((await row(s)).status, 'promoted');
+    assert.equal((await row(s)).reviewed_head_sha, SHA('a'));
+    assert.equal((await row(u)).status, 'active');
+    const inTime = await send(s, 'MergeClaim', { head: SHA('a'), epoch: 0, force: true, deadline: new Date(Date.now() + 60000).toISOString() });
+    await settle();
+    assert.equal((await outcome(inTime)).result, 'accepted');
+  });
+
+  await t.test('P27 a close names the proposal underway whichever slot it read: an idle pause between the read and the close does not lose it (review 5)', async () => {
+    defaults();
+    const s = await session();
+    await send(s, 'Pause', { from: 'active', reason: 'auto-idle' });
+    await settle();
+    assert.equal((await row(s)).status, 'paused');
+    const closeId = await send(s, 'Close', { from: 'active', reason: 'proposal-replaced' });
+    await settle();
+    assert.equal((await outcome(closeId)).result, 'accepted');
+    assert.equal((await row(s)).status, 'archived');
+    // A promote likewise.
+    const p = await session({ status: 'paused' });
+    const id = await promote(p, { from: 'active' });
+    await settle();
+    assert.equal((await outcome(id)).result, 'accepted');
+  });
+
+  await t.test('P28 a PR closed for good is forgotten even when a promote follows the reopen at once (review 6)', async () => {
+    defaults();
+    let release;
+    work.gate.set(WORK.close, new Promise((r) => { release = r; }));
+    const s = await session({ status: 'paused' });
+    const dead = s.pr_number;
+    await send(s, 'Close', { from: 'paused', reason: 'manual', userId: s.owner.id }, route);
+    await rt.drain();
+    const running = rt.runServices();
+    await new Promise((r) => setTimeout(r, 50));
+    await send(s, 'Reopen', { from: 'archived', userId: s.owner.id }, route);
+    await rt.drain();
+    work.answer.set(WORK.reopen, (input) => ({ cleared: true, prNumber: input.number }));
+    let seen;
+    work.answer.set(WORK.open, async () => { seen = (await row(s)).pr_number; return { head: SHA('a'), prNumber: 78 }; });
+    const id = await promote({ ...s, status: 'paused' });
+    await rt.drain();
+    assert.equal((await outcome(id)).result, 'accepted');
+    release();
+    await running;
+    await settle();
+    assert.deepEqual(ofKey(s, WORK.close).concat(ofKey(s, WORK.reopen), ofKey(s, WORK.open)).map((c) => c.kind),
+      [WORK.close, WORK.reopen, WORK.open], 'the queued reopen is kept, then the open runs');
+    assert.notEqual(dead, null);
+    assert.equal(seen, null, 'the open finds no dead PR on the row, so it opens a fresh one');
+    assert.equal((await instance(s)).state, 'in_review');
+  });
+
+  await t.test('P29 a head a reconcile installed while it went up stands over the one GitHub read before (review 7)', async () => {
+    defaults();
+    let release;
+    work.gate.set(WORK.open, new Promise((r) => { release = r; }));
+    const s = await session({ status: 'paused' });
+    await promote(s);
+    await rt.drain();
+    const running = rt.runServices();
+    await new Promise((r) => setTimeout(r, 50));
+    const moved = await send(s, 'ReviewHeadMoved', { column: 'reviewed', from: SHA('a'), to: SHA('b'), keepVotes: false });
+    await rt.drain();
+    assert.equal((await outcome(moved)).result, 'accepted');
+    release();
+    await running;
+    await settle();
+    assert.equal((await row(s)).status, 'promoted');
+    assert.equal((await row(s)).reviewed_head_sha, SHA('b'), 'the push stands');
+    const kicks = (await sentTo(s, 'preview')).filter((m) => m.type === 'RevisionSubmitted' && m.payload.trigger === 'promote-kick');
+    assert.deepEqual(kicks.map((k) => k.payload.head), [SHA('b')]);
+  });
+
+  await t.test('P30 a cap configured as zero refuses the move; it is never a bad payload (review 10)', async () => {
+    defaults();
+    const s = await session();
+    const id = await promote(s, { cap: 0 });
+    const p = await session({ status: 'paused' });
+    const r = await send(p, 'Resume', { from: 'paused', userId: p.owner.id, caps: { user: 0, global: 100 } }, route);
+    await settle();
+    assert.equal((await outcome(id)).reason, 'promoted_cap');
+    assert.equal((await outcome(r)).reason, 'user_cap');
+  });
+
+  await t.test('P31 the real handlers: a close resolves the PR number GitHub gave since; a destroy spares a held session; a purge spares a reopened one (review 1, 2)', async (tt) => {
+    const { proposalServices } = require('../src/workflow/proposal/services.ts');
+    const github = require('../src/services/github');
+    const worker = require('../src/services/worker');
+    const seen = [];
+    const saved = new Map([[github, ['isEnabled', 'closePR']], [worker, ['destroyWorker', 'destroyCcVolume']]]);
+    const restore = [];
+    for (const [mod, names] of saved) for (const n of names) restore.push([mod, n, mod[n]]);
+    tt.after(() => { for (const [mod, n, fn] of restore) mod[n] = fn; });
+    github.isEnabled = () => true;
+    github.closePR = async (owner, repo, number) => { seen.push(['closePR', number]); };
+    worker.destroyWorker = async (name) => { seen.push(['destroyWorker', name]); };
+    worker.destroyCcVolume = async (id) => { seen.push(['destroyCcVolume', id]); };
+    const svc = proposalServices({ config: {}, pool });
+    const run = (kind, input) => svc[kind].run({ input, key: 'k', attempt: 1 });
+
+    // Closed while GitHub opened it: the number is the one the row has now.
+    const s = await session({ pr: false });
+    assert.deepEqual(await run(WORK.close, { sessionId: s.id, owner: 'acme', repo: s.app.slug, number: null }), { none: true });
+    await pool.query('UPDATE chat_sessions SET pr_number = 91 WHERE id = $1', [s.id]);
+    assert.deepEqual(await run(WORK.close, { sessionId: s.id, owner: 'acme', repo: s.app.slug, number: null }), { closed: true });
+
+    // A destroy claimed before the resume that cancelled it.
+    const held = await session();
+    await send(held, 'Adopted');
+    await settle();
+    assert.deepEqual(await run(WORK.destroy, { sessionId: held.id }), { skipped: 'held' });
+    const paused = await session({ status: 'paused' });
+    await send(paused, 'Adopted');
+    await settle();
+    assert.deepEqual(await run(WORK.destroy, { sessionId: paused.id }), { destroyed: true });
+
+    // A purge claimed before the reopen that cancelled it.
+    assert.deepEqual(await run(WORK.purge, { sessionId: paused.id }), { skipped: 'reopened' });
+    const gone = await session({ status: 'archived' });
+    await pool.query('UPDATE chat_sessions SET archived_at = NOW() WHERE id = $1', [gone.id]);
+    await send(gone, 'Adopted');
+    await settle();
+    assert.deepEqual(await run(WORK.purge, { sessionId: gone.id }), { purged: true });
+    assert.deepEqual(seen.map((x) => x[0]), ['closePR', 'destroyWorker', 'destroyCcVolume']);
+    assert.equal(seen[0][1], 91);
   });
 });

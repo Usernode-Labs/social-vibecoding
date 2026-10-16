@@ -1960,7 +1960,10 @@ async function resumePausedSession({ pool, config, user, sessionId }) {
     const out = await platform.resumeProposal({
       sessionId: Number(sessionId), appId: own.app_id, from: 'paused', userId: user.id, caps: cap, source: { kind: 'route', name: 'resume' },
     });
-    if (out.status === 'accepted' || out.status === 'replayed' || out.status === 'pending') break;
+    if (out.status === 'accepted' || out.status === 'replayed') break;
+    // Not applied in time: past its deadline the machine refuses it, so the
+    // session is still paused.
+    if (out.status === 'pending') return { ok: false, status: 503, error: 'Could not resume the session just now. Try again shortly.' };
     const reason = out.reason;
     if (reason === 'already_active') break;
     if (reason === 'global_cap' && !tried.has(reason)) {

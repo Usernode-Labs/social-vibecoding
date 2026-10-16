@@ -2583,6 +2583,9 @@ function voteRoutes(config) {
         // #3893: work an agent put up for its owner tells them so.
         viaAgent: promotedByOwnersAgent(req),
         ownOperation: req.cliHandoffOperation || null,
+        // The Homeroom bot's own promote, a step of its build, waits for
+        // GitHub's answer longer than a person's click does.
+        ...(req.user && req.user.is_synthetic ? { waitMs: 120000 } : {}),
       });
       if (reply.status === 200) log.info('votes', 'Session promoted', { sessionId: session.id });
       return res.status(reply.status).json(reply.body);

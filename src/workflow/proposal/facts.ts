@@ -159,7 +159,9 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
 
 // The caps' counts, under the owner's lock (and the platform's, `global`).
 async function readCaps(tx: Tx, row: Row, global: boolean): Promise<Caps> {
-  if (row.userId != null) await tx.query('SELECT 1 FROM users WHERE id = $1 FOR UPDATE', [row.userId]);
+  // FOR NO KEY UPDATE: serializes the owner's moves into a slot or review
+  // without queueing behind the rows that reference the user.
+  if (row.userId != null) await tx.query('SELECT 1 FROM users WHERE id = $1 FOR NO KEY UPDATE', [row.userId]);
   if (global) await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [GLOBAL_SLOTS_LOCK]);
   const { rows: [c] } = await tx.query(
     `SELECT (SELECT COUNT(*)::int FROM chat_sessions cs
