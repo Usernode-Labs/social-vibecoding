@@ -22,6 +22,8 @@
 
 import type { Event, Tx } from '../kernel/index.ts';
 import { readPrGate } from '../rules/pr-gate.ts';
+import { readClaimFacts } from '../rules/merge-claim.ts';
+import type { ClaimFacts } from '../rules/merge-claim.ts';
 import type { GovernedGate } from '../rules/governance-gate.ts';
 import { appMetaFromRow, governanceFromRow } from '../rules/governance-gate.ts';
 import { electorate } from '../rules/electorate.ts';
@@ -80,6 +82,19 @@ export interface Row {
   // A durable build (the Homeroom bot's, a bench trial's) holds it.
   buildHold: boolean;
   pendingSecret: boolean;
+  // The merge and a sync with main: the verdict's commit and state, the
+  // once-records of the platform's own syncs, the mirror's last measurement
+  // (head and main), the epoch rule C spent its resolution on, and whether
+  // its head lives on its author's fork (nowhere to push a resolution).
+  checkState: string | null;
+  checksCommitSha: string | null;
+  bootFailureSyncHead: string | null;
+  fixedCheckSyncHead: string | null;
+  fixedCheckSyncKeys: string[];
+  integrationHead: string | null;
+  integrationMain: string | null;
+  integrationResolvedEpoch: number | null;
+  forkHead: boolean;
 }
 
 export interface Caps {
@@ -96,12 +111,14 @@ export interface Facts {
   interestAt: string | null;
   // review.open's success: the electorate, stamped as it goes up for a vote.
   electorate: number | null;
+  // merge.gate found it ready: what the claim reads again under the lock.
+  claim: ClaimFacts | null;
   // Resume, Reopen: teardown work (a worker destroy, a CC purge) under way
   // or done and not reported yet.
   tearingDown: boolean;
 }
 
-export const NO_FACTS: Facts = { row: null, caps: null, gate: null, interestAt: null, electorate: null, tearingDown: false };
+export const NO_FACTS: Facts = { row: null, caps: null, gate: null, interestAt: null, electorate: null, tearingDown: false, claim: null };
 
 // The platform-wide slot count's lock: every move into a slot takes it, for
 // the length of its transaction.
@@ -125,6 +142,8 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
             cs.branch_name, cs.reviewed_head_sha, cs.imported_pr_head_sha, cs.approval_epoch, cs.promoted_at,
             cs.created_at, cs.stale_notified_at, cs.last_activity_at, cs.linked_issues, cs.agent_session_id,
             cs.requires_explicit_approval, cs.explicit_approval_reason, cs.merge_attempt_at,
+            cs.check_state, cs.checks_commit_sha, cs.boot_failure_sync_head, cs.fixed_check_sync_head, cs.fixed_check_sync_keys,
+            cs.integration_head_sha, cs.integration_main_sha, cs.integration_resolved_epoch, cs.imported_pr_head_repo,
             (cs.shots_state IS NOT NULL OR cs.shots_detail IS NOT NULL
               OR EXISTS (SELECT 1 FROM wf_instances sh WHERE sh.machine = 'shots' AND sh.key = 'session:' || cs.id)) AS shots,
             cs.active_turn IS NOT NULL AS active_turn,
@@ -162,7 +181,28 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
     activeTurn: !!r.active_turn, workedOn: !!r.local_turn || !!r.operations,
     moving: !!r.active_turn || !!r.local_turn || !!r.moving_operations, shotsRunning: !!r.shots_running,
     buildHold: !!r.build_hold, pendingSecret: !!r.pending_secret,
+    checkState: r.check_state ?? null, checksCommitSha: sha(r.checks_commit_sha),
+    bootFailureSyncHead: sha(r.boot_failure_sync_head), fixedCheckSyncHead: sha(r.fixed_check_sync_head),
+    fixedCheckSyncKeys: Array.isArray(r.fixed_check_sync_keys) ? r.fixed_check_sync_keys.map(String) : [],
+    integrationHead: sha(r.integration_head_sha), integrationMain: sha(r.integration_main_sha),
+    integrationResolvedEpoch: r.integration_resolved_epoch == null ? null : Number(r.integration_resolved_epoch),
+    forkHead: imported && forkOf(r),
   };
+}
+
+// An imported head on its author's fork (services/proposal-update.js
+// branchHomeOf): a resolution has nowhere to be pushed.
+const PLATFORM_BRANCHES = ['usernode/from-', 'usernode/patch-'];
+function forkOf(r: any): boolean {
+  const name = (v: unknown) => {
+    const m = /^([a-z0-9._-]+)\/([a-z0-9._-]+?)(?:\.git)?$/.exec(String(v ?? '').trim().toLowerCase());
+    return m ? `${m[1]}/${m[2]}` : null;
+  };
+  const head = name(r.imported_pr_head_repo);
+  const m = /github\.com[/:]([^/]+)\/([^/#?]+?)(?:\.git)?\/?$/i.exec(String(r.repo_url ?? ''));
+  const appRepo = m ? name(`${m[1]}/${m[2]}`) : null;
+  if (head && appRepo) return head !== appRepo;
+  return !PLATFORM_BRANCHES.some((p) => String(r.branch_name ?? '').startsWith(p));
 }
 
 // The caps' counts, under the owner's lock (and the platform's, `global`).
@@ -210,6 +250,9 @@ export interface ReadOptions {
   reviewOpened?: boolean;
   // The teardown work a move that brings the session back waits for.
   teardownKinds?: string[];
+  // merge.gate found it ready: the claim's inputs (an admin's force skips
+  // the votes; the protected-settings check is the one the gate made live).
+  claim?: { force: boolean; result: { explicitApproval?: boolean; explicitReason?: string | null } };
 }
 
 // Teardown work outstanding for the session, its rows locked (see the top).
@@ -247,5 +290,15 @@ export async function readFacts(tx: Tx, sessionId: number, event: Event<any>, o:
   if (event.type === 'ReviewCheck') out.interestAt = await readInterest(tx, row);
   if (o.reviewOpened) out.electorate = await readElectorate(tx, row.appId);
   if (o.teardownKinds?.length) out.tearingDown = await readTeardown(tx, row.id, o.teardownKinds);
+  if (o.claim && row.status === 'promoted') {
+    out.claim = await readClaimFacts(tx, row.id);
+    if (!o.claim.force) {
+      out.gate = await readPrGate(tx, {
+        sessionId: row.id, appId: row.appId, openedAt: row.promotedAt || row.createdAt,
+        explicitApproval: !!o.claim.result?.explicitApproval, explicitReason: o.claim.result?.explicitReason ?? null,
+        authorId: row.userId, now: o.now,
+      });
+    }
+  }
   return out;
 }

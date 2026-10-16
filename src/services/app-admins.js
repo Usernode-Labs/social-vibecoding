@@ -241,7 +241,7 @@ function pickBlocks(blocks, reasons) {
 // force-merge.
 //
 // A GitHub TRANSPORT failure throws instead, so the caller can pick its
-// own fallback explicitly (checkAndMerge keeps the stored column).
+// own fallback explicitly (evaluateMergeGate keeps the stored column).
 async function detectExplicitApprovalChange(app, { headRef } = {}) {
   // eslint-disable-next-line global-require
   const github = require('./github');
@@ -287,7 +287,7 @@ async function detectExplicitApprovalChange(app, { headRef } = {}) {
 }
 
 // Persist the flag and its primary reason on a session row. Best-effort
-// at every stamping point except checkAndMerge's authoritative
+// at every stamping point except evaluateMergeGate's authoritative
 // re-verify — a failure to record it must never break a promote or a
 // push. An unknown reason is stored as NULL rather than invented; every
 // surface then says the generic sentence.
@@ -307,7 +307,7 @@ async function stampExplicitApproval(pool, sessionId, changed, reason = null) {
 
 // The ref detectExplicitApprovalChange should diff for a given session row: the
 // imported-PR head sha for imported proposals, the branch name for
-// native ones. Shared by refreshExplicitApproval, checkAndMerge's live
+// native ones. Shared by refreshExplicitApproval, evaluateMergeGate's live
 // re-verify, and the sweeper's stale-flag re-check.
 function headRefForSession(session) {
   return session?.source === 'imported'
@@ -338,7 +338,7 @@ async function refreshExplicitApproval(pool, app, session) {
 // The stale-PR sweeper's re-verify (server.js Pass 0). Re-detects rows
 // whose stored flag is NULL (never classified — the original backfill)
 // or TRUE (may have gone stale: main moved, a sync rewrote the branch —
-// a below-threshold flagged row never reaches checkAndMerge's live
+// a below-threshold flagged row never reaches evaluateMergeGate's live
 // re-check, so without this it stays flagged forever). FALSE rows are
 // skipped with no GitHub call: they're the bulk of a sweep page, and a
 // head change re-stamps them on its own paths — this keeps the

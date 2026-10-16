@@ -9565,7 +9565,7 @@ const DevChat = {
   // _syncState is the server-derived sync indicator (NOT a per-tab
   // flag): null when idle, { sessionId, phase, since } while a sync
   // runs anywhere (this tab, another tab, the resume auto-trigger or
-  // the conflict-resolver), and { sessionId, terminal, ok, message }
+  // the merge queue's conflict lane), and { sessionId, terminal, ok, message }
   // once it finishes. Fed by WS sync_status events, openSession's
   // status check, the poll fallback, and optimistically by the click.
   _syncState: null,
@@ -9992,6 +9992,10 @@ const DevChat = {
           ok: false,
           message: data.error || PlatformI18n.t('devchat:banner.sync.failedHttp', { status: resp.status }),
         });
+      } else if (data.pending) {
+        // Still running past the route's wait: the WS terminal event and
+        // the poll fallback end it, not this answer.
+        DevChat._startSyncPolling(Number(sessionId));
       } else {
         // The POST response is the authoritative final result —
         // applied idempotently with the WS terminal event. Refresh
@@ -10041,7 +10045,7 @@ const DevChat = {
 
   // Called by App.handleSessionUpdate when an action='sync_status'
   // event arrives (from this tab's click, another tab, the resume
-  // auto-trigger or the conflict-resolver). No-op when the event is
+  // auto-trigger or the merge queue's conflict lane). No-op when the event is
   // for a session that isn't open — list rows are out of scope (#252).
   applySyncStatusUpdate(data) {
     const sessionId = Number(data.sessionId);
@@ -10080,7 +10084,9 @@ const DevChat = {
         if (!res.ok) return;
         const { sync } = await res.json();
         if (sync && sync.phase) {
-          if (DevChat._syncState && !DevChat._syncState.terminal
+          // 'starting' is all a poll knows of a sync under way (the live
+          // phase comes by push): it never overwrites one heard.
+          if (DevChat._syncState && !DevChat._syncState.terminal && sync.phase !== 'starting'
               && DevChat._syncState.phase !== sync.phase) {
             DevChat._syncState = { ...DevChat._syncState, phase: sync.phase };
             DevChat._applySyncBanner();

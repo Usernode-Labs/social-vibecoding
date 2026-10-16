@@ -31,7 +31,7 @@
 // built for it alone (withdrawBotProposals below).
 
 // Everything here is best-effort. watchIssuesClosedAfterMerge is
-// fired-and-forgotten from the merge path (routes/votes.js checkAndMerge)
+// fired-and-forgotten from the merge path (the merge-followups machine)
 // and must never block, slow down, or roll back the merge flow — failures
 // are logged and abandoned.
 

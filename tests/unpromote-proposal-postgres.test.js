@@ -198,9 +198,24 @@ test('unpromote against a real PostgreSQL, through the proposal machine', { time
   const lines = async (id) => (await pool.query(
     `SELECT content, thread_type, thread_ref FROM chat_messages WHERE thread_type = 'session' AND thread_ref = $1 ORDER BY id`,
     [id])).rows;
-  // The merge's claim, as checkAndMerge asks for it (an admin's force skips
-  // the vote gate, which is not what this file is about).
-  const claim = async (s) => platform.claimMerge({ sessionId: s.id, appId: app.id, head: SHA, epoch: 0, force: true });
+  // A merge claim (MergeClaim, as an older release's merge asks for it
+  // during a rollout; an admin's force skips the vote gate, which is not what
+  // this file is about), appended and waited for.
+  const { appendEvent } = require('../src/workflow/kernel/index.ts');
+  const { proposal, sessionKey } = require('../src/workflow/proposal/machine.ts');
+  const decoder = proposal({ idleMs: 0, exemptFixtures: false, reviewCheckMs: 0, staleNotifyMs: 0, staleGraceMs: 0 });
+  let claims = 0;
+  const claim = async (s) => {
+    const id = await appendEvent(pool, decoder, sessionKey(s.id),
+      { type: 'MergeClaim', payload: { sessionId: s.id, head: SHA, epoch: 0, force: true } },
+      { requestKey: `claim-${s.id}-${++claims}`, source: { kind: 'system', name: 'merge' }, appId: app.id });
+    for (let i = 0; i < 200; i++) {
+      const { rows: [e] } = await pool.query('SELECT result, reason FROM wf_events WHERE id = $1', [id]);
+      if (e && e.result && e.result !== 'pending') return { status: e.result, reason: e.reason };
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    return { status: 'pending' };
+  };
   const until = async (check, what) => {
     const deadline = Date.now() + 10000;
     while (!(await check())) {

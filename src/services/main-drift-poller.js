@@ -32,7 +32,6 @@
 const log = require('./logger');
 const { getPool } = require('../db/pool');
 const github = require('./github');
-const { checkAndResolveConflicts } = require('./conflict-resolver');
 const releaseWatch = require('./release-watch');
 const deployFailure = require('./deploy-failure');
 const githubBudget = require('./github-budget');
@@ -234,9 +233,10 @@ async function requestDriftDeploy(config, pool, app, remoteSha, { manual }) {
     appId: app.id, slug: app.slug, from: app.main_sha.slice(0, 7), to: remoteSha.slice(0, 7),
   });
   await require('../workflow/platform.ts').requestDeploy(app.id, manual ? 'check_updates' : 'drift');
-  // main moved out-of-band: promoted PRs on this app may now conflict.
-  checkAndResolveConflicts(config, { app_id: app.id }).catch((err) => {
-    log.error('drift-poller', 'Post-drift conflict resolution failed', { slug: app.slug, err: err.message });
+  // main moved out-of-band: the app's merge queue looks again (a proposal
+  // may conflict now, or merge).
+  await require('../workflow/platform.ts').wantMerge({ appId: app.id, reason: 'drift' }).catch((err) => {
+    log.error('drift-poller', 'Post-drift merge ask failed', { slug: app.slug, err: err.message });
   });
   return { status: 'deploy_requested', slug: app.slug, from: app.main_sha, to: remoteSha };
 }

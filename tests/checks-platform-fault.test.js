@@ -298,7 +298,7 @@ test('a recorded gate gives way to the row: a platform fault stored since reads 
 
 test('the merge gate and every row that feeds the card read the three columns the rule needs', () => {
   const votes = read('src/routes/votes.js');
-  const gate = votes.slice(votes.indexOf('async function checkAndMerge('));
+  const gate = votes.slice(votes.indexOf('async function evaluateMergeGate('));
   assert.match(gate, /check_error_detail, checks_commit_sha, check_phase,\n\s+check_error_platform, consecutive_check_failures, first_check_failure_at/);
   assert.match(gate, /const platformRetry = checkState === 'error' && checkRows\[0\]\?\.check_error_platform === true\n\s+&& require\('\.\.\/services\/staging-recovery'\)\.errorWithinAutoRetries\(checkRows\[0\]\);/);
   assert.match(gate, /&& !rolloutRetry && !platformRetry\) \? 'blocked' : 'active'/);

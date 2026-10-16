@@ -5,7 +5,7 @@
 // This Set tracks sessions whose Claude Code worker is mid-exec right
 // now. It used to live as a module-local `const activeWorkers = new Set()`
 // inside routes/sessions.js, but the sync-main flow (now extracted into
-// services/sync-main.js so the conflict-resolver can drive it without a
+// services/sync-main.js so the proposal machine's sync can drive it without a
 // route-requires-route cycle) also needs to add/remove from the same
 // registry. Hoisting it into this tiny shared module keeps a single
 // process-wide instance that both the route handlers and the service

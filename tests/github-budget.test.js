@@ -229,6 +229,14 @@ test('an error that lost its headers still reads, from the recorded window or "w
 test('other refusals are not called a used-up budget', () => {
   const secondary = rateLimited({ remaining: '17', message: 'You have exceeded a secondary rate limit.' });
   assert.equal(budget.isRateLimitError(secondary), false, 'a per-minute limit is not the hourly one');
+  // It is GitHub's secondary limit, temporary all the same (the merge reads
+  // it so, routes/votes.js attemptMerge): by Retry-After or by its wording.
+  assert.equal(budget.isSecondaryRateLimitError(secondary), true);
+  const retryAfter = Object.assign(new Error('Forbidden'), { status: 403, response: { headers: { 'retry-after': '30', 'x-ratelimit-remaining': '900' } } });
+  assert.equal(budget.isSecondaryRateLimitError(retryAfter), true);
+  assert.equal(budget.isSecondaryRateLimitError(Object.assign(new Error('Resource not accessible by integration'), { status: 403 })), false,
+    'a 403 that is a permission is no limit');
+  assert.equal(budget.isSecondaryRateLimitError(null), false);
   const notFound = Object.assign(new Error('Not Found'), { status: 404 });
   assert.equal(budget.rateLimitNotice(notFound), null);
   assert.equal(budget.rateLimitNotice(null), null);
@@ -375,9 +383,9 @@ test('the timer-driven GitHub callers ask before they spend', () => {
   assert.match(audit.slice(0, audit.indexOf('\n}\n')), /githubBudget\.budgetAllows\('background'\)/, 'the boot privacy audit');
   const headSync = server.slice(server.indexOf('// Pass 6: imported-PR head sync'));
   assert.match(headSync.slice(0, 1800), /if \(!githubBudget\.budgetAllows\('background'\)\) break;/, 'the imported-PR head sync');
-  const recover = server.slice(server.indexOf('async function recoverStuckMerges'));
-  assert.match(recover.slice(0, recover.indexOf('\n}\n')), /if \(!githubBudget\.budgetAllows\('background'\)\) \{/,
-    'the merge recovery sweep (tests/recover-stuck-merges.test.js runs it)');
+  const observe = server.slice(server.indexOf('async function observeMergedOnGithub'));
+  assert.match(observe.slice(0, observe.indexOf('\n}\n')), /if \(!githubBudget\.budgetAllows\('background'\)\) \{/,
+    'the boot\'s merged-by-hand lookup');
 });
 
 test('the Homeroom bot\'s pass waits for the reset, with the wait as its retry', async (t) => {

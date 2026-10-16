@@ -26,8 +26,9 @@ import { MACHINE as PREVIEW, preview, sessionKey as previewKey } from './preview
 import { PREPARE_LEASE_MS, previewServices } from './preview/services.ts';
 import { LIVE as SHOTS_LIVE, MACHINE as SHOTS, sessionKey as shotsKey, shots } from './shots/machine.ts';
 import { shotsServices } from './shots/services.ts';
-import { MACHINE as PROPOSAL, proposal, sessionKey as proposalKey } from './proposal/machine.ts';
+import { ATTENTION as PROPOSAL_ATTENTION, MACHINE as PROPOSAL, proposal, sessionKey as proposalKey } from './proposal/machine.ts';
 import { proposalServices } from './proposal/services.ts';
+import { MACHINE as QUEUE, appKey as queueKey, mergeQueue } from './merge-queue/machine.ts';
 
 const pg = createRequire(import.meta.url)('pg');
 
@@ -44,13 +45,14 @@ let deliveries: ReturnType<typeof appDelivery> | null = null;
 let previews: ReturnType<typeof preview> | null = null;
 let shotRuns: ReturnType<typeof shots> | null = null;
 let proposals: ReturnType<typeof proposal> | null = null;
+let queues: ReturnType<typeof mergeQueue> | null = null;
 let log: Logger | null = null;
 
 // What the ownership triggers read, synced on every boot: enabled:<machine>
 // for every machine (wf_holds reads it). Every machine is the only path for
 // what it decides, so its guard is always on and always refuses a write
 // from outside it.
-const MACHINES = [MACHINE, MERGE, DELIVERY, PREVIEW, SHOTS, PROPOSAL];
+const MACHINES = [MACHINE, MERGE, DELIVERY, PREVIEW, SHOTS, PROPOSAL, QUEUE];
 
 export async function syncSettings(pool: Pool): Promise<void> {
   for (const name of MACHINES) {
@@ -119,7 +121,8 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     runBudgetMs: Number(config.shots?.maxRunMs) || 1_440_000,
   });
   proposals = proposal(proposalDeps(config));
-  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals];
+  queues = mergeQueue();
+  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues];
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
     ...appDeliveryServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
@@ -140,6 +143,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     previews = null;
     shotRuns = null;
     proposals = null;
+    queues = null;
     throw err;
   }
   runtime = started;
@@ -176,7 +180,43 @@ export async function startWorkflowLoops(): Promise<void> {
   for (const r of rows) await file(r.id, r.app_id, { kind: 'system', name: 'backfill' });
   if (rows.length) log!.info('workflow', 'Enrolled open governance proposals', { count: rows.length });
   await adoptProposals();
+  await rearmWaitingProposals();
+  await adoptMergeQueues();
   await retryPlatformFaults();
+}
+
+// Every app with a proposal in review gets its merge queue's look at boot:
+// a proposal that became mergeable while no process ran (its window
+// elapsed, the electorate shrank) merges now. Once per release (the request
+// key names the build); the queue's own state carries everything else.
+export async function adoptMergeQueues(): Promise<number> {
+  if (!runtime || !queues) return 0;
+  const { rows } = await kernelPool!.query(`SELECT DISTINCT app_id FROM chat_sessions WHERE status = 'promoted'`);
+  const release = String(process.env.GIT_SHA || 'dev').slice(0, 40);
+  for (const r of rows) {
+    await runtime.append(queues, queueKey(r.app_id), { type: 'MergeWanted', payload: { appId: r.app_id, reason: 'boot' } },
+      { requestKey: `boot:${release}:${r.app_id}`, source: { kind: 'system', name: 'boot' }, appId: r.app_id })
+      .catch((err: Error) => log!.warn('workflow', 'Could not ask an app\'s merge queue at boot', { appId: r.app_id, message: err.message }));
+  }
+  return rows.length;
+}
+
+// A proposal waiting on GitHub with no clock (a claim an older release made,
+// whose machine set none) gets its clock again, so GitHub is asked what
+// happened. Once per release, like the queues' look.
+export async function rearmWaitingProposals(): Promise<number> {
+  if (!runtime || !proposals) return 0;
+  const { rows } = await kernelPool!.query(
+    `SELECT key, app_id FROM wf_instances
+      WHERE machine = $1 AND state IN ('merging', 'unconfirmed') AND deadline_at IS NULL`, [PROPOSAL]);
+  const release = String(process.env.GIT_SHA || 'dev').slice(0, 40);
+  for (const r of rows) {
+    const sessionId = Number(String(r.key).split(':')[1]);
+    await runtime.append(proposals, r.key, { type: 'Rearm', payload: { sessionId } },
+      { requestKey: `rearm:${release}:${sessionId}`, source: { kind: 'system', name: 'boot' }, appId: r.app_id })
+      .catch((err: Error) => log!.warn('workflow', 'Could not re-arm a proposal at boot', { sessionId, message: err.message }));
+  }
+  return rows.length;
 }
 
 // Every proposal in review or being merged (their review check) and every
@@ -241,6 +281,7 @@ export async function stopWorkflow(): Promise<void> {
   previews = null;
   shotRuns = null;
   proposals = null;
+  queues = null;
   await r?.stop();
   await kernelPool?.end();
   kernelPool = null;
@@ -383,23 +424,10 @@ export async function targetsClosed(appId: number, numbers: number[], cause: { k
 
 const count = (n: unknown) => (Number.isInteger(n) && (n as number) >= 0 ? n as number : null);
 
-// GitHub merged a proposal: the merge itself (routes/votes.js checkAndMerge)
-// reports it and waits briefly for the status move. Resolves the outcome;
-// 'pending' still means the merge is recorded once the event is processed.
-export async function mergeConfirmed(m: {
-  sessionId: number; appId: number; mergeSha: string | null; force: boolean; forcedBy?: string | null;
-  tally: { yes: unknown; required: unknown; active: unknown };
-}): Promise<EventOutcome> {
-  return runtime!.appendAndWait(merges!, sessionKey(m.sessionId), { type: 'Merged', payload: {
-    sessionId: m.sessionId, mergeSha: m.mergeSha, mergedAt: new Date().toISOString(), force: !!m.force,
-    forcedBy: m.forcedBy || null, observedBy: 'merge',
-    tally: { yes: count(m.tally.yes) ?? 0, required: count(m.tally.required), active: count(m.tally.active) },
-  } }, { requestKey: `merged:${m.sessionId}:merge`, source: { kind: 'system', name: 'merge' }, appId: m.appId, waitMs: 5000 });
-}
-
-// Recovery found on GitHub a merge whose own report was lost (a crash
-// between GitHub's answer and the append). The tally is read again: the
-// counted Yes votes on the version that merged, and the app's active members.
+// A merge found on GitHub that no attempt here reported (somebody merged the
+// pull request by hand while it was up for a vote: the leader's boot looks).
+// The tally is read again: the counted Yes votes on the version that merged,
+// and the app's active members.
 export async function mergeObserved(m: { sessionId: number; appId: number; mergeSha: string | null; mergedAt: string | null }): Promise<number> {
   const pool = kernelPool!;
   const { countedVotePredicateSql } = legacy('services/pr-vote-revision');
@@ -676,7 +704,70 @@ function proposalDeps(config: any) {
     reviewCheckMs: ms(config.staleSweepIntervalMs, 60 * 60 * 1000),
     staleNotifyMs: ms(config.prStaleNotifyMs, 0),
     staleGraceMs: ms(config.prStaleGraceMs, 0),
+    shotsEnforced: !!config.shots?.enforce,
   };
+}
+
+// ── The merge (step 6) ──────────────────────────────────────────────────
+
+// Something may make an app's proposals mergeable (a vote, main green, main
+// moved, an admin resuming merges): the app's merge queue looks. In a
+// caller's transaction (`db`) it is appended there.
+export async function wantMerge(p: { appId: number; sessionId?: number | null; reason: string; db?: Queryable }): Promise<void> {
+  if (!Number.isInteger(Number(p.appId)) || Number(p.appId) <= 0) return;
+  const appId = Number(p.appId);
+  const event = { type: 'MergeWanted', payload: { appId, sessionId: p.sessionId ?? null, reason: p.reason } };
+  const opts = { requestKey: `want:${appId}:${randomUUID()}`, source: { kind: 'system' as const, name: p.reason }, appId };
+  if (p.db && !queues) {
+    await appendEvent(p.db, mergeQueue(), queueKey(appId), event, opts);
+    return;
+  }
+  if (!runtime || !queues) throw new Error('The workflow runtime is not running in this process');
+  await runtime.append(queues, queueKey(appId), event, p.db ? { ...opts, db: p.db } : opts);
+}
+
+// An admin forces the merge of a proposal in review (M4): the force lasts
+// until it merges, closes, leaves review or its author pushes new code.
+export function forceMerge(p: { sessionId: number; appId: number; from: string; userId?: number | null; username?: string | null }) {
+  return proposalEvent('ForceMerge', { from: p.from, userId: p.userId ?? null, username: p.username ?? null },
+    { sessionId: p.sessionId, appId: p.appId, source: { kind: 'route', name: 'admin-merge' }, actor: p.userId ? `user:${p.userId}` : null }) as Promise<EventOutcome>;
+}
+
+// A sync with main, for `reason` (proposal/machine.ts SYNC_REASONS). The
+// machine decides whether it may run; `wait`: resolve once it has ended,
+// with its outcome (`lastSync`), up to `waitMs`.
+export async function requestSync(p: {
+  sessionId: number; appId: number; reason: string; head?: string | null; keys?: string[] | null; userId?: number | null;
+  wait?: boolean; waitMs?: number; source?: Source;
+}): Promise<EventOutcome & { lastSync?: any; sync?: number | null }> {
+  const out = await proposalEvent('SyncRequested', {
+    reason: p.reason, head: p.head ?? null, keys: p.keys ?? null, userId: p.userId ?? null,
+  }, { sessionId: p.sessionId, appId: p.appId, source: p.source || sys(`sync-${p.reason}`), actor: p.userId ? `user:${p.userId}` : null }) as EventOutcome;
+  const n = (out.reply as any)?.sync ?? null;
+  if ((out.status !== 'accepted' && out.status !== 'replayed') || !p.wait || n == null) return { ...out, sync: n };
+  const last = await waitForSync(p.sessionId, n, p.waitMs);
+  return { ...out, sync: n, ...(last ? { lastSync: last } : {}) };
+}
+
+// Wait for the sync `n` of a session to end (up to `waitMs`): its outcome,
+// or null when it has not ended by then.
+export async function waitForSync(sessionId: number, n: number, waitMs = 25 * 60 * 1000): Promise<any | null> {
+  const done = (i: { state: string; data: any }) => !i.data?.sync || i.data.sync.n !== n;
+  const i = await runtime!.waitFor(proposalMachine(), proposalKey(sessionId), done, waitMs).catch(() => null) as any;
+  return i?.data?.lastSync && i.data.lastSync.n === n ? i.data.lastSync : null;
+}
+
+// Wait (up to `waitMs`) for a proposal to be merged: true once it is.
+export async function waitForMerge(sessionId: number, waitMs: number): Promise<boolean> {
+  const i = await runtime!.waitFor(proposalMachine(), proposalKey(sessionId), (x) => x.state === 'merged', waitMs).catch(() => null);
+  return i?.state === 'merged';
+}
+
+// The sync the proposal machine runs for a session, if any (the status
+// route's reload recovery).
+export async function syncUnderWay(sessionId: number): Promise<{ n: number; reason: string; at: string } | null> {
+  const i = await proposalInstance(sessionId);
+  return i?.data?.sync ?? null;
 }
 
 function proposalMachine() {
@@ -886,24 +977,6 @@ export function reopenProposal(p: { sessionId: number; appId?: number | null; us
       deadlineMs: ANSWER_MS }) as Promise<EventOutcome>);
 }
 
-// The merge (step 6's) asks for the proposal at the head and epoch it gated
-// on; the vote gate is read again under the lock unless an admin forces it.
-// The outcome's reply names the claim, which a release gives back.
-export function claimMerge(p: { sessionId: number; appId?: number | null; head: string | null; epoch: number; force?: boolean;
-  explicitApproval?: boolean; explicitReason?: string | null }) {
-  return proposalEvent('MergeClaim', { head: p.head, epoch: p.epoch, force: !!p.force,
-    explicitApproval: !!p.explicitApproval, explicitReason: p.explicitReason ?? null },
-  { sessionId: p.sessionId, appId: p.appId, source: sys('merge'), deadlineMs: ANSWER_MS }) as Promise<EventOutcome>;
-}
-export function releaseMerge(p: { sessionId: number; appId?: number | null; claim: number | null; reason: string }) {
-  return proposalEvent('MergeReleased', { claim: p.claim, reason: p.reason },
-    { sessionId: p.sessionId, appId: p.appId, source: sys('merge-released') }) as Promise<EventOutcome>;
-}
-export function abandonMerge(p: { sessionId: number; appId?: number | null; from: string; reason: string }) {
-  return proposalEvent('MergeAbandoned', { from: p.from, reason: p.reason },
-    { sessionId: p.sessionId, appId: p.appId, source: sys('merge-abandoned') }) as Promise<EventOutcome>;
-}
-
 // The revision the group votes on moved (Q3): the caller read `from` in the
 // column it names and found `to`. The reply carries the epoch after it and
 // whether the description is stale now.
@@ -928,6 +1001,15 @@ const ADMIN_EVENTS = new Map<string, ReadonlySet<string>>([
   [DELIVERY, new Set(['EndDeploy'])],
   [PREVIEW, new Set(['AdminRetry', 'AdminRetire', 'AdminEnd'])],
 ]);
+
+// The states a machine names as waiting on something outside (its
+// `attention`), for Admin → Workflows' "Needs a person". Read from the
+// machines' own declarations, so it answers with the runtime off too.
+const ATTENTION = new Map<string, Readonly<Record<string, string>>>([[PROPOSAL, PROPOSAL_ATTENTION]]);
+export function attentionStates(): { machine: string; state: string; says: string }[] {
+  return [...ATTENTION].flatMap(([machineName, states]) =>
+    Object.entries(states).map(([state, says]) => ({ machine: machineName, state, says })));
+}
 
 export function adminEvents(): Record<string, string[]> {
   return Object.fromEntries([...ADMIN_EVENTS].map(([m, types]) => [m, [...types]]));

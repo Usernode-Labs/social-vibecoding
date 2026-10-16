@@ -260,6 +260,17 @@ const step = (s: Step): Outcome<PState> =>
 // review.
 const toShots = (d: Data, type: string, payload: Record<string, Json> = {}): MessageRequest =>
   ({ to: { machine: 'shots', key: `session:${d.sessionId}` }, event: { type, payload: { sessionId: d.sessionId, ...payload } }, appId: d.appId });
+// To the app's merge queue (src/workflow/merge-queue/): a proposal in review
+// passed (or skipped) its checks, so it may merge now.
+export const mergeWanted = (d: Data, f: Facts, state: string): MessageRequest[] =>
+  ((state === 'passing' || state === 'skipped') && f.session?.status === 'promoted'
+    ? [{ to: { machine: 'merge-queue', key: `app:${d.appId}` }, event: { type: 'MergeWanted', payload: { appId: d.appId, sessionId: d.sessionId, reason: 'checks' } }, appId: d.appId }]
+    : []);
+// To the proposal machine: a promoted proposal's preview will not start
+// because main moved underneath it, and a sync with main is the fix
+// (services/boot-failure-sync.js plan, measured in the prepare work).
+const bootFailureSync = (d: Data, head: string): MessageRequest =>
+  ({ to: { machine: 'proposal', key: `session:${d.sessionId}` }, event: { type: 'SyncRequested', payload: { sessionId: d.sessionId, reason: 'boot_failure', head } }, appId: d.appId });
 const told = (o: Outcome<PState>, ...messages: MessageRequest[]): Outcome<PState> =>
   ({ ...o, messages: [...(o.messages || []), ...messages] });
 
@@ -592,7 +603,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
         writes: [{ type: 'skipped', ...base, reason: e.payload.reason, expected: f.session!.checks.commitSha }],
         work: [followUps(d, run, 'skipped')],
         push: [checksReady(d, ctx, e.payload.head, 'skipped')],
-        messages: [toShots(d, 'HeadReady', { head: e.payload.head })],
+        messages: [toShots(d, 'HeadReady', { head: e.payload.head }), ...mergeWanted(d, f, 'skipped')],
         timer: null,
       });
     },
@@ -1093,7 +1104,7 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
   }];
   if (servingRemoved && d0.serving) writes.push({ type: 'unpublished', sessionId: d.sessionId });
   const work: WorkRequest[] = [failedAttempt.work, ...(removed ? [removed.work] : [])];
-  const messages: MessageRequest[] = [];
+  const messages: MessageRequest[] = r?.sync && attempt.head ? [bootFailureSync(d, attempt.head)] : [];
   if (streakBefore === 0) {
     work.push({ kind: WORK.stopped, key: `stopped:${attempt.n}`,
       input: { sessionId: d.sessionId, imported: f.session?.source === 'imported', shotsTold: true } });
@@ -1203,7 +1214,7 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
       ] : []),
     ],
     push: stores ? [checksReady(d, ctx, run.head, state, results), ...visualsReady] : [],
-    messages: [...(stores ? [toShots(d, 'HeadReady', { head: run.head })] : []), ...undeclared(d, r)],
+    messages: [...(stores ? [toShots(d, 'HeadReady', { head: run.head }), ...mergeWanted(d, f, state)] : []), ...undeclared(d, r)],
     timer: state === 'error' ? errorTimer(d, f, deps, ctx, streakBefore) : null,
   });
 }
@@ -1257,7 +1268,9 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     // a version-3 runtime would store a copied pass for an owed head. An
     // older Pod leaves the instances this version wrote alone during the
     // rollout; this version takes over the ones an older one wrote.
-    version: 4,
+    // 5: a passing verdict asks the merge queue, and a boot failure main
+    // caused asks the proposal for a sync, by message.
+    version: 5,
     events: EVENTS,
     create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted', 'RetireRequested', 'ChecksCleared'],
     terminal: ['retired'],

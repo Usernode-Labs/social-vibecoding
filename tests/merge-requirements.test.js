@@ -665,7 +665,6 @@ function loadVotes(over) {
     github: require.resolve('../src/services/github'),
     platform: require.resolve('../src/workflow/platform.ts'),
     docker: require.resolve('../src/services/docker'),
-    resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
     activeUsers: require.resolve('../src/services/active-users'),
     notifications: require.resolve('../src/services/notifications'),
@@ -691,9 +690,6 @@ function loadVotes(over) {
     abandonMerge: async () => ({ status: 'accepted', eventId: 4 }),
   });
   stub(ids.docker, {});
-  stub(ids.resolver, {
-    checkAndResolveConflicts: async () => {}, resolveAndMaybeRetry: async () => ({ ok: true }), isResolving: () => false,
-  });
   stub(ids.ws, {
     sendSystemMessage: async () => {}, pushNotificationToUser() {}, pushVoteUpdate() {},
     pushSessionUpdate() {}, pushIssueUpdate() {}, broadcastGlobalScoped() {},
@@ -772,7 +768,7 @@ for (const c of DRIFT) {
     const { subject, restore } = loadVotes(c.load || {});
     try {
       const { pool, saved } = makePool({ ...c.world, sessionId: 7, appId: 5 });
-      const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
+      const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, pool, session, {});
       assert.equal(r.merged, false, 'precondition: this world must not merge');
       assert.ok(saved.length, 'the run recorded what it did');
 
@@ -795,7 +791,7 @@ test('a passing run records every gate as done', async () => {
   const { subject, restore } = loadVotes({});
   try {
     const { pool, saved } = makePool({ yes: 4, no: 0, sessionId: 7, appId: 5 });
-    await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
+    await subject.evaluateMergeGate({ jwtSecret: 's' }, pool, session, {});
     assert.ok(saved.length, 'the run recorded what it did');
     const list = requirements.describe(saved[saved.length - 1]);
     const byKey = Object.fromEntries(list.map((g) => [g.key, g.state]));
@@ -816,7 +812,7 @@ test('a clean head behind main passes the integration gate as it stands', async 
   const { subject, restore } = loadVotes({ measured: { behindBy: 3, mergesClean: true, conflictPaths: [] } });
   try {
     const { pool, saved } = makePool({ yes: 4, no: 0, sessionId: 7, appId: 5 });
-    await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
+    await subject.evaluateMergeGate({ jwtSecret: 's' }, pool, session, {});
     const list = requirements.describe(saved[saved.length - 1]);
     const integration = list.find((g) => g.key === 'integration');
     assert.equal(integration.state, 'done');
@@ -837,7 +833,7 @@ test('a red main stops the run at main_healthy, for the admin', async () => {
       }
       return inner(sql, params);
     };
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, session, {});
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, pool, session, {});
     assert.equal(r.merged, false);
     assert.equal(r.blockReason, 'main_failing');
     const list = requirements.describe(saved[saved.length - 1]);
@@ -860,7 +856,7 @@ test('the recording is descriptive only — a failed write never blocks a merge'
   } };
   const { subject, restore } = loadVotes({});
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, failing, session, {});
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, failing, session, {});
     assert.ok(r && typeof r === 'object', 'the merge ran to a verdict despite the write failing');
   } finally {
     restore();

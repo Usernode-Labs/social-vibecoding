@@ -60,8 +60,6 @@ const KINDS = Object.freeze([
   'dm_answer',      // that answer being asked again now, by message id (homeroom-bot-mayor.js)
   'app_heal',       // an app being healed, by slug (app-heal.js)
   'warm',           // a session's worker this process keeps warm (worker.js): a MARKER
-  'merge_pass',     // an app's merge queue pass, by app id (merge-queue.js)
-  'merge_resolve',  // a proposal's conflict resolution in that pass, by session id (merge-queue.js)
 ]);
 const KNOWN = new Set(KINDS);
 // What a process has rather than does: another process reads it (a worker

@@ -148,76 +148,9 @@ test('a measurement that fails, or reads another head, never syncs and never thr
   assert.equal((await subject.plan({ pool: makePool(), sessionId: 6912, commitHash: HEAD }, deps)).why, 'head_moved');
 });
 
-// ── run: wait, claim, sync, start the new head's run ─────────────────────
-
-test('the sync claims the head, runs as the platform, and starts the new head\'s run', async () => {
-  const pool = makePool();
-  const { deps, calls } = makeDeps();
-  const out = await subject.run({ config: { c: 1 }, pool, sessionId: 6912, commitHash: HEAD }, deps);
-  assert.deepEqual(out, { synced: true, why: null, sha: NEW_HEAD });
-  const claim = pool.queries.find((q) => /SET boot_failure_sync_head = \$2/.test(q.sql));
-  assert.ok(claim, 'the head is claimed before the sync');
-  assert.match(claim.sql, /status = 'promoted'/);
-  assert.match(claim.sql, /checks_commit_sha = \$2/, 'only while the row still describes the failed head');
-  assert.match(claim.sql, /boot_failure_sync_head IS DISTINCT FROM \$2/, 'once per head');
-  assert.deepEqual(claim.params, [6912, HEAD]);
-  assert.equal(calls.sync.length, 1);
-  assert.equal(calls.sync[0].opts.trigger, 'boot_failure');
-  assert.equal(calls.sync[0].opts.sessionRow.behind_main, 2,
-    'the measured count, so the sync narrates in the timeline');
-  assert.equal(calls.reconcile.length, 1, 'the merge queue\'s own follow-up: re-pin and run');
-  assert.equal(calls.reconcile[0].fresh, true);
-  assert.equal(calls.reconcile[0].notify, false);
-  assert.equal(calls.measure.length, 2, 'measured before the claim and again for the pushed head');
-});
-
-test('a session in the middle of a turn is waited for, not interrupted', async () => {
-  const pool = makePool();
-  const { deps, calls } = makeDeps({ busy: (_id, c) => c.sleeps < 3 });
-  const out = await subject.run({ config: {}, pool, sessionId: 6912, commitHash: HEAD }, deps);
-  assert.equal(out.synced, true);
-  assert.equal(calls.sleeps, 3);
-  const never = makeDeps({ busy: () => true });
-  const gaveUp = await subject.run({ config: {}, pool: makePool(), sessionId: 6912, commitHash: HEAD }, never.deps);
-  assert.deepEqual(gaveUp, { synced: false, why: 'busy' });
-  assert.equal(never.calls.sync.length, 0);
-  assert.equal(never.calls.sleeps, Math.ceil(subject.IDLE_WAIT_MS / subject.IDLE_POLL_MS));
-});
-
-test('no sync when the merge queue holds it, the claim is lost, or the head moved while it waited', async () => {
-  let r = makeDeps({ integrating: true });
-  assert.deepEqual(await subject.run({ config: {}, pool: makePool(), sessionId: 6912, commitHash: HEAD }, r.deps),
-    { synced: false, why: 'integrating' });
-  assert.equal(r.calls.sync.length, 0);
-
-  r = makeDeps();
-  assert.deepEqual(await subject.run({ config: {}, pool: makePool({ claimWins: false }), sessionId: 6912, commitHash: HEAD }, r.deps),
-    { synced: false, why: 'claimed' });
-  assert.equal(r.calls.sync.length, 0);
-
-  r = makeDeps();
-  const pool = makePool({ current: row({ checks_commit_sha: NEW_HEAD }) });
-  assert.deepEqual(await subject.run({ config: {}, pool, sessionId: 6912, commitHash: HEAD }, r.deps),
-    { synced: false, why: 'head_moved' });
-  assert.ok(!pool.queries.some((q) => /boot_failure_sync_head = \$2/.test(q.sql)), 'nothing claimed');
-});
-
-test('a sync that pushes nothing, or throws, starts no run', async () => {
-  for (const syncResult of [
-    { ok: false, syncResult: 'conflict', pushOk: false },
-    { ok: true, syncResult: 'already_synced', pushOk: false },
-    { ok: true, syncResult: 'clean', pushOk: false },
-  ]) {
-    const { deps, calls } = makeDeps({ syncResult });
-    const out = await subject.run({ config: {}, pool: makePool(), sessionId: 6912, commitHash: HEAD }, deps);
-    assert.equal(out.synced, false, syncResult.syncResult);
-    assert.equal(calls.reconcile.length, 0);
-  }
-  const { deps, calls } = makeDeps({ syncThrows: new Error('system token budget exhausted') });
-  assert.deepEqual(await subject.run({ config: {}, pool: makePool(), sessionId: 6912, commitHash: HEAD }, deps),
-    { synced: false, why: 'sync_threw' });
-  assert.equal(calls.reconcile.length, 0);
-});
+// The sync itself (its once-per-head record written with its own work, the
+// wait for nobody working on the session, the new head's run) is the
+// proposal machine's: tests/workflow-merge-postgres.test.js M8.
 
 // ── afterBootFailure: the entry staging-recovery calls ───────────────────
 
@@ -234,31 +167,15 @@ test('only a preview that failed to START is considered, never a failed build', 
   assert.equal(calls.measure.length, 0);
 });
 
-test('a start failure that applies returns the plan at once and syncs in the background', async () => {
+test('a start failure that applies returns the plan, and starts nothing itself', async () => {
   const pool = makePool();
-  let release;
-  const gate = new Promise((resolve) => { release = resolve; });
   const { deps, calls } = makeDeps();
-  deps.syncMain.runSyncMain = async (config, p, id, opts) => {
-    calls.sync.push({ id, opts });
-    await gate;
-    return { ok: true, syncResult: 'clean', pushOk: true, sha: NEW_HEAD };
-  };
   const found = await subject.afterBootFailure({
     config: {}, pool, session: row(), commitHash: HEAD, err: { healthcheckFailed: true },
   }, deps);
   assert.deepEqual(found, { sync: true, why: null, behindBy: 2 }, 'the row stays inside the module');
-  // A backoff retry while the first is still going does not start a second.
-  await subject.afterBootFailure({
-    config: {}, pool, session: row(), commitHash: HEAD, err: { healthcheckFailed: true },
-  }, deps);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(calls.sync.length, 1);
-  assert.ok(subject._pending.has(6912));
-  release();
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.ok(!subject._pending.has(6912));
-  assert.equal(calls.reconcile.length, 1);
+  assert.equal(calls.sync.length, 0, 'the preview machine asks the proposal machine for the sync');
+  assert.ok(!pool.queries.some((q) => /boot_failure_sync_head = \$2/.test(q.sql)), 'nothing claimed here');
 });
 
 // ── what the author reads ────────────────────────────────────────────────

@@ -74,6 +74,9 @@ const HEAD = 'a'.repeat(40);
 const NEW_HEAD = 'b'.repeat(40);
 const key = (c) => appManifest.checkKey(c.name, c.path);
 const result = (c, status, extra = {}) => ({ ...c, status, ...extra });
+// The proposal machine's write of a check sync's once-record.
+const CLAIM_SQL = fs.readFileSync(path.join(ROOT, 'src/workflow/proposal/machine.ts'), 'utf8')
+  .match(/`(UPDATE chat_sessions\s+SET fixed_check_sync_head[\s\S]*?WHERE id = \$1)`/)[1];
 
 test('main passes what the newest merged run of it passed, and a stuck proposal is claimed once', async (t) => {
   assert.equal((DDL.match(/fixed_check_sync_/g) || []).length, 2, 'both claim columns come from schema.sql');
@@ -114,13 +117,12 @@ test('main passes what the newest merged run of it passed, and a stuck proposal 
       const { candidates } = subject.select(rows, passes);
       assert.deepEqual(candidates.map((c) => c.id), [10, 11]);
 
-      // The claim, through syncOne's own statement: once per head.
-      const claimSql = fs.readFileSync(path.join(ROOT, 'src/services/fixed-check-sync.js'), 'utf8')
-        .match(/`(UPDATE chat_sessions\s+SET fixed_check_sync_head[\s\S]*?RETURNING id)`/)[1];
-      const first = await client.query(claimSql, [10, HEAD, [key(DOMAIN)]]);
-      assert.equal(first.rows.length, 1, 'claimed');
-      const second = await client.query(claimSql, [10, HEAD, [key(DOMAIN)]]);
-      assert.equal(second.rows.length, 0, 'and not twice for the same head');
+      // The once-record, through the proposal machine's own statement (its
+      // fixedCheckClaim write, made with the sync's work: once per head is
+      // the machine's guard, tests/workflow-merge-postgres.test.js M8).
+      const claimSql = CLAIM_SQL;
+      await client.query(claimSql, [10, HEAD, [key(DOMAIN)]]);
+      await client.query(claimSql, [10, HEAD, [key(DOMAIN)]]);
       const { rows: [after] } = await client.query('SELECT fixed_check_sync_head, fixed_check_sync_keys FROM chat_sessions WHERE id = 10');
       assert.equal(after.fixed_check_sync_head, HEAD);
       assert.deepEqual(after.fixed_check_sync_keys, [key(DOMAIN)]);
@@ -172,12 +174,15 @@ test('ownVerdict returns what decideRow reads, and a syncBeforeFix claim blocks 
       assert.deepEqual(picked.candidate, { id: 10, head: HEAD, keys: [key(DOMAIN)] },
         'judged alone: one proposal failing a check main passes is enough');
 
+      // The proposal machine accepts the sync and writes its once-record.
       const deps = {
         integration: { measure: async () => ({ headSha: HEAD, behindBy: 3, mergesClean: true }) },
-        syncMain: { runSyncMain: async () => ({ ok: true, syncResult: 'clean', pushOk: true, sha: NEW_HEAD }) },
-        activeWorkers: { isSessionBusy: () => false },
-        mergeQueue: { isIntegratingSession: () => false },
-        votes: () => ({ reconcileNativeReviewedHead: async () => ({}) }),
+        platform: () => ({
+          requestSync: async (p) => {
+            await client.query(CLAIM_SQL, [p.sessionId, p.head, p.keys]);
+            return { status: 'accepted', sync: 1, lastSync: { n: 1, outcome: 'clean', sha: NEW_HEAD } };
+          },
+        }),
       };
       const out = await subject.syncBeforeFix({ config: {}, pool: client, sessionId: 10, head: HEAD }, deps);
       assert.deepEqual(out, { synced: true, why: null, sha: NEW_HEAD });

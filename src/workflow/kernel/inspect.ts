@@ -28,13 +28,18 @@ function eventRow(r: any) {
   };
 }
 
-export interface ProblemOptions { overdueMs?: number; longRunningMs?: number; limit?: number }
+// A state a machine names as waiting on something outside (`attention`).
+export interface AttentionState { machine: string; state: string; says: string }
+export interface ProblemOptions { overdueMs?: number; longRunningMs?: number; limit?: number; attention?: AttentionState[] }
 
 // Everything that needs a person: faulted or stalled instances, held events,
-// deadlines that did not fire, exhausted or long-running work.
+// deadlines that did not fire, exhausted or long-running work, and instances
+// in a state their machine names as waiting on something outside.
 export async function problems(db: Queryable, opts: ProblemOptions = {}) {
   const limit = opts.limit ?? 100;
-  const [flagged, overdue, work] = await Promise.all([
+  const attention = opts.attention || [];
+  const says = new Map(attention.map((a) => [`${a.machine}\u0000${a.state}`, a.says]));
+  const [flagged, overdue, work, waiting] = await Promise.all([
     db.query(
       `SELECT i.*, (SELECT count(*) FROM wf_events e
                      WHERE e.machine = i.machine AND e.key = i.key AND e.status = 'held') AS held
@@ -52,6 +57,12 @@ export async function problems(db: Queryable, opts: ProblemOptions = {}) {
                AND w.created_at > now() - interval '30 days')
            OR (w.status = 'running' AND a.started_at < now() - make_interval(secs => $1::float8 / 1000))
         ORDER BY w.created_at DESC LIMIT $2`, [opts.longRunningMs ?? 15 * 60000, limit]),
+    attention.length
+      ? db.query(
+        `SELECT i.* FROM wf_instances i
+           JOIN unnest($1::text[], $2::text[]) AS a(machine, state) ON a.machine = i.machine AND a.state = i.state
+          ORDER BY i.updated_at LIMIT $3`, [attention.map((a) => a.machine), attention.map((a) => a.state), limit])
+      : Promise.resolve({ rows: [] as any[] }),
   ]);
   return {
     flagged: flagged.rows.map((r) => ({ ...instanceRow(r), heldEvents: Number(r.held) })),
@@ -61,6 +72,7 @@ export async function problems(db: Queryable, opts: ProblemOptions = {}) {
       status: r.status, attempts: r.attempt_count, lastError: r.last_error, result: r.result,
       createdAt: r.created_at, startedAt: r.started_at, serviceId: r.service_id,
     })),
+    waiting: waiting.rows.map((r) => ({ ...instanceRow(r), says: says.get(`${r.machine}\u0000${r.state}`) || null })),
   };
 }
 

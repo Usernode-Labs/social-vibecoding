@@ -312,7 +312,7 @@ test('shouldCreateGithubTwin: false for maintenance_campaign', () => {
 
 // Load the engine with github/llm and every promote-path collaborator
 // stubbed via require.cache.
-function loadFleet({ llmScript = [], files = {}, gh = {}, checkAndMerge } = {}) {
+function loadFleet({ llmScript = [], files = {}, gh = {}, merged = true } = {}) {
   const ids = {
     github: require.resolve('../src/services/github'),
     llm: require.resolve('../src/services/llm'),
@@ -324,7 +324,7 @@ function loadFleet({ llmScript = [], files = {}, gh = {}, checkAndMerge } = {}) 
     visuals: require.resolve('../src/services/visuals'),
     staging: require.resolve('../src/services/staging'),
     stagingRecovery: require.resolve('../src/services/staging-recovery'),
-    votes: require.resolve('../src/routes/votes'),
+    platform: require.resolve('../src/workflow/platform.ts'),
     subject: require.resolve('../src/services/fleet-maintenance'),
   };
   const orig = {};
@@ -399,11 +399,12 @@ function loadFleet({ llmScript = [], files = {}, gh = {}, checkAndMerge } = {}) 
     verifyStagingEdge: async () => {},
   });
   stub(ids.stagingRecovery, { recordStagingBootFailure: async () => {} });
-  stub(ids.votes, {
-    checkAndMerge: async (config, pool, session, opts) => {
-      spies.merges.push({ session, opts });
-      return checkAndMerge ? checkAndMerge(session) : { merged: true };
-    },
+  // A force is the proposal machine's (ForceMerge); the app's merge queue
+  // merges it, and mergeGreen waits a little for that.
+  stub(ids.platform, {
+    proposalAdopted: async () => ({ status: 'accepted' }),
+    forceMerge: async (f) => { spies.merges.push(f); return { status: 'accepted' }; },
+    waitForMerge: async () => merged,
   });
 
   delete require.cache[ids.subject];
@@ -800,8 +801,8 @@ test('mergeGreen: force-merges green sessions sequentially, records merged state
     });
     assert.deepEqual(results, [{ slug: 'cool-app', prNumber: 88, merged: true }]);
     assert.equal(spies.merges.length, 1);
-    assert.equal(spies.merges[0].opts.force, true, 'platform vote is the authority');
-    assert.equal(spies.merges[0].opts.forceBy.username, 'boss');
+    assert.equal(spies.merges[0].sessionId, 501, 'forced: the platform vote is the authority');
+    assert.equal(spies.merges[0].username, 'boss');
     const upd = pool.issued(/SET state = 'merged'/);
     assert.deepEqual(upd.params, [101]);
   } finally { restore(); }

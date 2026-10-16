@@ -623,6 +623,20 @@ function isRateLimitError(err) {
   return /\bAPI rate limit exceeded\b/i.test(String(err.message || err));
 }
 
+/**
+ * Whether `err` is GitHub's secondary (per-minute, abuse) limit: a 403 or a
+ * 429 that says Retry-After, with requests still left in the hour, or GitHub's
+ * "secondary rate limit" wording when the headers are gone. Temporary like
+ * the hourly limit, and never a refusal of what was asked.
+ */
+function isSecondaryRateLimitError(err) {
+  if (!err) return false;
+  const status = Number(err.status || (err.response && err.response.status)) || 0;
+  const get = headerGetter(err.response && err.response.headers);
+  if ((status === 403 || status === 429) && get('retry-after') != null && String(get('retry-after')).trim() !== '') return true;
+  return /\bsecondary rate limit\b/i.test(String(err.message || err));
+}
+
 // When the budget that refused `err` resets, in ms from now, or null when
 // nothing says. The error's own header first, then the bot token's recorded
 // window (the credential nearly every refusal comes from).
@@ -697,6 +711,7 @@ module.exports = {
   backgroundHold,
   budgetAllows,
   isRateLimitError,
+  isSecondaryRateLimitError,
   rateLimitNotice,
   rateLimitRetryAfterSeconds,
   githubUnavailableBody,

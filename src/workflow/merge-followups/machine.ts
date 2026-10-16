@@ -49,7 +49,7 @@ export const WORK = Object.freeze({
 // Post-commit kicks into flows not migrated yet. What browsers hear is a
 // push, published with the transition (thread lines, the vote card, the
 // version pill, the bell).
-export const NOTIFIERS = ['kickQueue', 'boardChange', 'badgeSync'] as const;
+export const NOTIFIERS = ['boardChange', 'badgeSync'] as const;
 
 const DELIVERY = 'app-delivery' as const;
 const deliveryKey = (appId: number) => `app:${appId}`;
@@ -307,6 +307,12 @@ function toProposal(d: Data): NonNullable<Outcome['messages']>[number] {
   return { to: { machine: 'proposal', key: `session:${d.sessionId}` }, event: { type: 'Merged', payload: { sessionId: d.sessionId } }, appId: d.appId };
 }
 
+// The app's merge queue (src/workflow/merge-queue/): something may merge
+// now (this merge moved main; its check found main green).
+function toQueue(d: Data, reason: string): NonNullable<Outcome['messages']>[number] {
+  return { to: { machine: 'merge-queue', key: `app:${d.appId}` }, event: { type: 'MergeWanted', payload: { appId: d.appId, reason } }, appId: d.appId };
+}
+
 function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFState> {
   const s = f.session!;
   const app = f.app!;
@@ -322,14 +328,15 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
   // process: its release booting appends Deployed. On Docker hosts the host
   // deployer is told to fetch at once rather than on its poll.
   const work: WorkRequest[] = app.selfHosted ? [{ kind: WORK.nudge, key: 'nudge', input: { sha: d.mergeSha, prNumber: d.prNumber } }] : [];
-  const messages = [toProposal(d), ...(d.delivery ? [deliveryRequest(d, reuseOf(f))] : [])];
+  // The app's merge queue: the next merge (a message, not a kick: it cannot
+  // be lost).
+  const messages = [toProposal(d), ...(d.delivery ? [deliveryRequest(d, reuseOf(f))] : []), toQueue(d, 'merged')];
   work.push(...settleWork(d, s.linkedIssues, false, { teardown: app.selfHosted }));
   if (d.repo && d.prNumber) {
     work.push({ kind: WORK.find, key: 'included', input: { sessionId: d.sessionId, appId: d.appId, prNumber: d.prNumber, ...d.repo } });
   }
   if (d.mergeSha) work.push({ kind: WORK.mainCheck, key: 'main-check', input: { appId: d.appId, sessionId: d.sessionId, prNumber: d.prNumber, mergeSha: d.mergeSha } });
-  const notify: Notification[] = [{ type: 'kickQueue', appId: d.appId, excludeSessionId: d.sessionId },
-    { type: 'badgeSync', sessionId: d.sessionId }];
+  const notify: Notification[] = [{ type: 'badgeSync', sessionId: d.sessionId }];
   // The requests it closes stop showing as open in every web process at
   // once, and the lists re-read (GitHub closes `Closes #N` late);
   // issues.closeAfterMerge makes sure they close.
@@ -613,7 +620,9 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
     // app-delivery (an app.deliver item from before hands off to it), the
     // request's "It's live" (bot.announceLive), the issue lists' push at the
     // merge. 6: the proposal machine hears the move into 'merged' (Merged).
-    version: 6,
+    // 7: the proposal machine reports the merge (Merged, by message); the
+    // merge queue hears every merge and main's verdict on it.
+    version: 7,
     events: EVENTS,
     create: ['Merged', 'Included'],
     terminal: ['live'],
@@ -623,7 +632,9 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
       ? readFacts(tx, event.payload.sessionId, { lock: true })
       : Promise.resolve({ session: null, app: null })),
     authorize: {
-      Merged: system,
+      // The proposal machine's merge (or an older release's checkAndMerge,
+      // and its recovery, during a rollout).
+      Merged: (e) => ((e.source.kind === 'message' && e.source.from.machine === 'proposal') || e.source.kind === 'system' ? ok() : reject('internal_only')),
       Included: ownMessage,
       // A deploy anyone made: the platform's release booting (system), or
       // app-delivery's for merges whose own request it did not answer.

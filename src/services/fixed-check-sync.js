@@ -14,7 +14,7 @@
 // nobody presses on the Homeroom bot's. They waited until somebody noticed.
 //
 // The merge queue does not bring a clean proposal up to date, on purpose
-// (services/merge-queue.js): a proposal is judged on its own head, and a
+// (the merge-queue machine, src/workflow/merge-queue/): a proposal is judged on its own head, and a
 // sync plus a full re-run per open proposal per merge is the herd #2100
 // removed. services/boot-failure-sync.js is the first exception, for a
 // preview that will not start because main moved. This is the second, and
@@ -107,15 +107,11 @@ function keyOf(r) {
   return appManifest.checkKey(r.name, r.path);
 }
 
-// Required lazily: a sync needs the worker and the merge queue loaded, and
-// the pure selection below needs neither.
+// Required lazily: the pure selection below needs neither.
 function defaultDeps() {
   return {
     get integration() { return require('./integration'); },
-    get syncMain() { return require('./sync-main'); },
-    get activeWorkers() { return require('./active-workers'); },
-    get mergeQueue() { return require('./merge-queue'); },
-    votes: () => require('../routes/votes'),
+    platform: () => require('../workflow/platform.ts'),
   };
 }
 
@@ -340,34 +336,23 @@ async function loadRow(pool, sessionId) {
   return rows[0] || null;
 }
 
-// The one write that makes this once per head and once per check.
-// Conditional on the row still describing the failing commit, so a push that
-// landed meanwhile, or a second process, finds nothing to claim.
-async function claim(pool, sessionId, head, keys) {
-  const { rows } = await pool.query(
-    `UPDATE chat_sessions
-        SET fixed_check_sync_head = $2,
-            fixed_check_sync_keys = ARRAY(
-              SELECT DISTINCT k FROM unnest(COALESCE(fixed_check_sync_keys, '{}'::text[]) || $3::text[]) AS k ORDER BY k)
-      WHERE id = $1 AND status = 'promoted' AND check_state = 'failing'
-        AND LOWER(checks_commit_sha) = $2
-        AND fixed_check_sync_head IS DISTINCT FROM $2
-      RETURNING id`,
-    [sessionId, head, keys]
-  );
-  return rows.length > 0;
-}
+const REASONS = new Map([['fixed_on_main', 'fixed_check'], ['bot_handoff', 'bot_handoff'], ['bot_fix', 'bot_fix']]);
 
 /**
- * Bring one stuck proposal up to date with main and start the run for its
- * new head. Skips rather than waits when its session is busy: the next pass
- * finds it again. Never throws; resolves to what happened.
+ * Bring one stuck proposal up to date with main: measured from the mirror
+ * here (only a head behind main that merges with it cleanly), then asked of
+ * the proposal machine (src/workflow/proposal/, SyncRequested), which decides
+ * under the proposal's lock whether it may (in review, the failing commit
+ * still its head, nobody working on it, not synced for this head yet),
+ * writes the once-record with the sync's own work, runs the sync and starts
+ * the new head's checks. `wait`: resolve once the sync has ended (the
+ * Homeroom bot); else once it is asked for (the sweep). Never throws;
+ * resolves { synced, why, sha?, requested? }.
  */
-async function syncOne({ config, pool, candidate }, deps = defaultDeps()) {
+async function syncOne({ config, pool, candidate, wait = true }, deps = defaultDeps()) {
   const id = Number(candidate.id);
+  void config;
   try {
-    if (deps.activeWorkers.isSessionBusy(id)) return { synced: false, why: 'busy' };
-    if (deps.mergeQueue.isIntegratingSession(id)) return { synced: false, why: 'integrating' };
     const row = await loadRow(pool, id);
     if (!row || row.status !== 'promoted') return { synced: false, why: 'gone' };
     if (!sameSha(row.checks_commit_sha, candidate.head)) return { synced: false, why: 'head_moved' };
@@ -379,7 +364,6 @@ async function syncOne({ config, pool, candidate }, deps = defaultDeps()) {
     // It already contains main and still fails: the failure is its own.
     if (behindBy === 0) return { synced: false, why: 'level' };
     if (measured.mergesClean !== true) return { synced: false, why: 'conflict' };
-    if (!(await claim(pool, id, candidate.head, candidate.keys))) return { synced: false, why: 'claimed' };
 
     const trigger = candidate.trigger || 'fixed_on_main';
     log.info('fixed-check-sync', trigger === BOT_HANDOFF_TRIGGER
@@ -389,38 +373,21 @@ async function syncOne({ config, pool, candidate }, deps = defaultDeps()) {
         : 'A proposal fails only checks main now passes; syncing it', {
       sessionId: id, headSha: candidate.head, behindBy, checks: candidate.keys.length, trigger,
     });
-    const result = await deps.syncMain.runSyncMain(config, pool, id, {
-      // As boot-failure-sync: behind_main is a turn's count, which a
-      // proposal untouched since promotion may never have had, so the sync
-      // is told the measured one and says what it is doing.
-      sessionRow: { ...row, behind_main: behindBy },
-      trigger,
+    const out = await deps.platform().requestSync({
+      sessionId: id, appId: row.app_id, reason: REASONS.get(trigger) || 'fixed_check',
+      head: String(candidate.head).toLowerCase(), keys: candidate.keys, wait,
     });
-    const pushed = !!result && result.pushOk
-      && (result.syncResult === 'clean' || result.syncResult === 'resolved');
+    if (out.status === 'rejected') return { synced: false, why: out.reason === 'already_tried' ? 'already_tried' : (out.reason || 'claimed') };
+    if (out.status !== 'accepted' && out.status !== 'replayed') return { synced: false, why: 'threw' };
+    if (!wait) return { synced: false, requested: true, why: null };
+    const done = out.lastSync;
+    if (!done) return { synced: false, why: 'threw' };
+    const pushed = done.outcome === 'clean' || done.outcome === 'resolved';
     if (!pushed) {
-      log.info('fixed-check-sync', 'Sync for a check main fixed pushed nothing', {
-        sessionId: id, syncResult: result ? result.syncResult : null,
-      });
-      return { synced: false, why: (result && result.syncResult) || 'not_pushed' };
+      log.info('fixed-check-sync', 'Sync for a check main fixed pushed nothing', { sessionId: id, outcome: done.outcome });
+      return { synced: false, why: done.outcome === 'unresolvable' ? 'conflict' : done.outcome === 'level' ? 'level' : 'not_pushed' };
     }
-    // What the merge queue does after its own sync: measure the pushed head
-    // so the columns describe it, then install it as the reviewed revision
-    // and start its run. A mechanical merge keeps the approvals.
-    try {
-      const fresh = await loadRow(pool, id);
-      if (fresh && fresh.status === 'promoted') {
-        await deps.integration.measure({ pool, session: fresh }, { force: true }).catch(() => {});
-        await deps.votes().reconcileNativeReviewedHead({
-          config, pool, session: fresh, fresh: true, notify: false,
-        });
-      }
-    } catch (err) {
-      log.warn('fixed-check-sync', 'Synced, but could not start the new head\'s run', {
-        sessionId: id, err: err.message,
-      });
-    }
-    return { synced: true, why: null, sha: result.sha || null };
+    return { synced: true, why: null, sha: done.sha || null };
   } catch (err) {
     log.warn('fixed-check-sync', 'Sync for a check main fixed failed', { sessionId: id, err: err.message });
     return { synced: false, why: 'threw' };
@@ -528,8 +495,9 @@ async function sweep({ config, pool, shouldStop = () => false }, deps = defaultD
     result.candidates += picked.candidates.length;
     for (const candidate of picked.candidates) {
       if (shouldStop() || result.synced.length >= MAX_SYNCS_PER_PASS) break;
-      const done = await syncOne({ config, pool, candidate }, deps);
-      if (done.synced) result.synced.push(candidate.id);
+      // Asked, not waited for: the proposal machine runs the sync.
+      const done = await syncOne({ config, pool, candidate, wait: false }, deps);
+      if (done.synced || done.requested) result.synced.push(candidate.id);
       else result.skipped[candidate.id] = done.why;
     }
   }
@@ -557,6 +525,8 @@ const DECLINED_WORDS = {
   not_failing: 'its checks are not failing',
   busy: 'a turn was running on it',
   integrating: 'it was being merged',
+  merging: 'it was being merged',
+  in_progress: 'another sync was already under way',
   unmeasured: 'how far behind main it is could not be measured',
   level: 'it is already up to date with main',
   conflict: 'main does not merge into it cleanly',

@@ -1,4 +1,5 @@
-// checkAndMerge under direct-merge lanes (services/merge-queue.js).
+// The merge gate (routes/votes.js evaluateMergeGate) under direct-merge
+// lanes (the app's merge queue, src/workflow/merge-queue/).
 //
 // The integration gate used to refuse any head behind main, post "syncing
 // automatically", and hand the proposal to a queue that spent a worker
@@ -61,7 +62,6 @@ function loadVotes({ measured }) {
     github: require.resolve('../src/services/github'),
     platform: require.resolve('../src/workflow/platform.ts'),
     docker: require.resolve('../src/services/docker'),
-    resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
     activeUsers: require.resolve('../src/services/active-users'),
     notifications: require.resolve('../src/services/notifications'),
@@ -70,7 +70,6 @@ function loadVotes({ measured }) {
     appAccess: require.resolve('../src/services/app-access'),
     stagingRecovery: require.resolve('../src/services/staging-recovery'),
     integration: require.resolve('../src/services/integration'),
-    mergeQueue: require.resolve('../src/services/merge-queue'),
     syncMain: require.resolve('../src/services/sync-main'),
     subject: require.resolve('../src/routes/votes'),
   };
@@ -100,11 +99,6 @@ function loadVotes({ measured }) {
     abandonMerge: async () => ({ status: 'accepted', eventId: 4 }),
   });
   stub(ids.docker, {});
-  stub(ids.resolver, {
-    checkAndResolveConflicts: async () => {},
-    resolveAndMaybeRetry: async () => ({ ok: true }),
-    isResolving: () => false,
-  });
   stub(ids.ws, {
     sendSystemMessage: async (_pool, _appId, content) => { systemMessages.push(content); },
     pushNotificationToUser() {},
@@ -140,7 +134,6 @@ function loadVotes({ measured }) {
       return m ? { owner: m[1], repo: m[2] } : null;
     },
   });
-  stub(ids.mergeQueue, { enqueue: (_config, appId) => { enqueued.push(appId); } });
   // The old gate's remedy. Under direct lanes the gate never calls it.
   stub(ids.syncMain, {
     runSyncMain: async (args) => { syncCalls.push(args); return { ok: true, syncResult: 'clean', behind: 0 }; },
@@ -180,7 +173,8 @@ function poolWith({ checks = {}, main = null } = {}) {
   ]);
 }
 
-const claimed = (p) => p.claims.length > 0;
+// Ready: the proposal machine claims it under its lock (the gate only measures).
+const claimed = (r) => r.ready === true;
 
 // ── the integration gate ─────────────────────────────────────────────────
 
@@ -190,18 +184,16 @@ test('a clean head 12 commits behind main merges as it stands: no sync, no queue
   });
   const p = poolWith();
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
-    assert.equal(r.merged, true);
-    assert.ok(claimed(p), 'claimed the merge');
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
+    assert.equal(r.ready, true);
+    assert.ok(claimed(r), 'claimed the merge');
     // The claim clears whatever the lane had written (nothing blocks it any
     // more), but that is the proposal machine's claim transition now
     // (its 'claimed' write empties integration_block_reasons), not a
     // setBlockReasons call from checkAndMerge.
-    assert.deepEqual(blockReasonWrites, [], 'checkAndMerge writes no block reasons on a clean claim');
-    assert.deepEqual(p.claims.map(({ sessionId, head, epoch, force }) => ({ sessionId, head, epoch, force })),
-      [{ sessionId: 7, head: HEAD, epoch: 3, force: false }], 'claimed at the head and epoch the gate read');
+    assert.deepEqual(blockReasonWrites, [], 'the gate writes no block reasons on a clean head');
+    assert.deepEqual({ head: r.head, epoch: r.epoch }, { head: HEAD, epoch: 3 }, 'ready at the head and epoch the gate read');
     assert.equal(syncCalls.length, 0, 'the gate does not bring the head up to date first');
-    assert.equal(enqueued.length, 0, 'nothing is queued for integration');
     assert.ok(!systemMessages.some((m) => /syncing|bringing .* up to date/i.test(m)),
       'no "syncing automatically" — the sentence that used to be a promise nobody kept');
     // Measured now, not remembered off the row: a cached behind_main of 0
@@ -217,12 +209,11 @@ test('a measured conflict is refused and handed to the conflict lane, with the a
   });
   const p = poolWith();
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
     assert.equal(r.merged, false);
     assert.equal(r.blockReason, 'conflict');
     assert.deepEqual(r.conflictPaths, ['dapp.json', 'src/app.js']);
-    assert.ok(!claimed(p), 'never claimed the merge');
-    assert.deepEqual(enqueued, [5], 'the conflict lane is asked to look at the app');
+    assert.ok(!claimed(r), 'never claimed the merge');
     assert.equal(syncCalls.length, 0, 'the gate itself resolves nothing; the lane spends the turn');
     const msg = systemMessages.find((m) => /conflicts with main/.test(m));
     assert.ok(msg, 'posted the conflict');
@@ -238,7 +229,7 @@ test("a conflict the lane already gave up on says so: the author's, not the plat
   });
   const p = poolWith();
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, {
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, {
       ...session, integration_block_reasons: ['unresolvable'],
     });
     assert.equal(r.blockReason, 'conflict');
@@ -252,8 +243,8 @@ test('a measurement that cannot run does not block the merge: GitHub is the real
   const { subject, restore } = loadVotes({ measured: new Error('mirror fetch: connection reset') });
   const p = poolWith();
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
-    assert.equal(r.merged, true, 'failing closed here would wedge every merge behind a git hiccup');
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
+    assert.equal(r.ready, true, 'failing closed here would wedge every merge behind a git hiccup');
   } finally { restore(); }
 });
 
@@ -272,7 +263,7 @@ test('checks deferred while the head conflicted start now that it measures clean
     },
   });
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
     assert.equal(r.merged, false);
     assert.equal(r.checksBlocked, true, 'no verdict yet: the gate still holds');
     assert.equal(r.checkState, 'pending');
@@ -293,7 +284,7 @@ test('checks deferred on a head that STILL conflicts are left alone: the conflic
     },
   });
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
     assert.equal(r.blockReason, 'conflict');
     assert.equal(recheckCalls.length, 0, 'a run now would only defer again');
   } finally { restore(); }
@@ -323,13 +314,13 @@ test("a red main pauses this proposal's merge too, whatever its own checks said 
   });
   const p = poolWith({ main: RED_MAIN });
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
     assert.equal(r.merged, false);
     assert.equal(r.blockReason, 'main_failing');
     assert.equal(r.mainCheck.paused, true);
     assert.equal(r.mainCheck.sha, MAIN_SHA);
     assert.equal(r.mainCheck.failingTest, 'votes › tally', 'the block names the culprit');
-    assert.ok(!claimed(p), 'never claimed the merge');
+    assert.ok(!claimed(r), 'never claimed the merge');
   } finally { restore(); }
 });
 
@@ -345,9 +336,9 @@ test('level with main, clean, and its own unit suite green on this head: it merg
     main: RED_MAIN,
   });
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
-    assert.equal(r.merged, true, 'the pass-through');
-    assert.ok(claimed(p));
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
+    assert.equal(r.ready, true, 'the pass-through');
+    assert.ok(claimed(r));
     const rec = p.queries.find((q) => /merge_requirements\s*=/.test(q.sql));
     assert.ok(rec, 'the requirements record was written');
     assert.match(rec.params.join(' '), /level_and_green/, 'and the pass-through is named in it, not silently waved');
@@ -365,9 +356,9 @@ test('the pass-through needs all three: level, clean, and a green suite of its o
     const { subject, restore } = loadVotes({ measured });
     const p = poolWith({ checks, main: RED_MAIN });
     try {
-      const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+      const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
       assert.equal(r.merged, false, why);
-      assert.ok(!claimed(p), why);
+      assert.ok(!claimed(r), why);
     } finally { restore(); }
   }
 });
@@ -378,7 +369,7 @@ test('a first red under confirmation pauses the same way, and says the pause is 
   });
   const p = poolWith({ main: { ...RED_MAIN, main_check_state: 'confirming' } });
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
     assert.equal(r.blockReason, 'main_failing', 'a genuine red must not let untested merges through for five more minutes');
     assert.equal(r.mainCheck.confirming, true);
   } finally { restore(); }
@@ -391,7 +382,7 @@ test('a run that could not happen does not lift a pause it found; a green verdic
     const p = poolWith({
       main: { ...RED_MAIN, main_check_state: 'error', main_check_sha: 'c'.repeat(40), main_check_paused_sha: MAIN_SHA },
     });
-    const r = await loaded.subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    const r = await loaded.subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
     assert.equal(r.blockReason, 'main_failing', 'a run that says nothing about main cannot lift the pause');
     assert.equal(r.mainCheck.pausedSha, MAIN_SHA);
   } finally { loaded.restore(); }
@@ -401,8 +392,8 @@ test('a run that could not happen does not lift a pause it found; a green verdic
     const p = poolWith({
       main: { ...RED_MAIN, main_check_state: 'passing', main_check_sha: 'c'.repeat(40), main_check_paused_sha: null },
     });
-    const r = await loaded.subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
-    assert.equal(r.merged, true, 'green cleared the column');
+    const r = await loaded.subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session });
+    assert.equal(r.ready, true, 'green cleared the column');
   } finally { loaded.restore(); }
 });
 
@@ -417,8 +408,8 @@ test('an admin resuming merges on that exact red sha lets the merge through; a f
         main_check_resumed_sha: MAIN_SHA,
       },
     });
-    const r = await loaded.subject.checkAndMerge({ jwtSecret: 's' }, resumed, { ...session });
-    assert.equal(r.merged, true, 'the resume is the admin taking responsibility for this main');
+    const r = await loaded.subject.evaluateMergeGate({ jwtSecret: 's' }, resumed, { ...session });
+    assert.equal(r.ready, true, 'the resume is the admin taking responsibility for this main');
   } finally { loaded.restore(); }
 
   loaded = loadVotes({ measured });
@@ -430,7 +421,7 @@ test('an admin resuming merges on that exact red sha lets the merge through; a f
         main_check_resumed_sha: MAIN_SHA,
       },
     });
-    const r = await loaded.subject.checkAndMerge({ jwtSecret: 's' }, moved, { ...session });
+    const r = await loaded.subject.evaluateMergeGate({ jwtSecret: 's' }, moved, { ...session });
     assert.equal(r.blockReason, 'main_failing', 'a resume is for one sha; the next red main is a new question');
   } finally { loaded.restore(); }
 });
@@ -446,8 +437,8 @@ test('a main that was never watched, is green, or is mid-run does not pause anyt
       measured: { behindBy: 0, aheadBy: 1, mergesClean: true, conflictPaths: [] },
     });
     try {
-      const r = await subject.checkAndMerge({ jwtSecret: 's' }, poolWith({ main }), { ...session });
-      assert.equal(r.merged, true, `main ${main ? main.main_check_state : 'unwatched'} merges`);
+      const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, poolWith({ main }), { ...session });
+      assert.equal(r.ready, true, `main ${main ? main.main_check_state : 'unwatched'} merges`);
     } finally { restore(); }
   }
 });
@@ -460,8 +451,8 @@ test('admin force-merge skips the integration and main_healthy gates alike', asy
     main: { main_check_state: 'failing', main_check_sha: MAIN_SHA, main_check_resumed_sha: null },
   });
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session }, { force: true });
-    assert.equal(r.merged, true);
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, p, { ...session }, { force: true });
+    assert.equal(r.ready, true);
     assert.equal(measureCalls.length, 0, 'GitHub refuses a genuinely unmergeable head on its own');
     assert.ok(!p.queries.some((q) => /SELECT main_check_state/.test(q.sql)), 'main is not consulted under force');
   } finally { restore(); }

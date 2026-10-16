@@ -2989,7 +2989,8 @@ function issueRoutes(config) {
   // off-chain pledge (no tokens) that debits the giver's SHARED weekly kudos
   // allowance (the same WEEKLY_KUDOS_LIMIT cap PR kudos uses, counted across
   // both ledgers). When a merged PR closes this issue, the open bounty is
-  // awarded to that PR's author (see routes/votes.js checkAndMerge).
+  // awarded to that PR's author (src/workflow/rules/bounties.ts, in the
+  // merge-followups machine's transaction).
   //
   // The same pledge can also be made at issue-CREATION time, from the Send
   // Feedback dialog's "Put a kudos bounty on this" checkbox — both surfaces
@@ -3331,7 +3332,7 @@ function issueRoutes(config) {
  * carrying `Closes #N`, a close on GitHub): each open one for those numbers
  * hears it from the governance machine (src/workflow/platform.ts
  * targetsClosed), which supersedes it. Called from the merge path
- * (routes/votes.js checkAndMerge, the merge-followups machine) and the
+ * (the merge-followups machine) and the
  * post-merge issue-close watcher.
  *
  * `cause` is { kind: 'pr-merge', prNumber } or { kind: 'github-close' }.

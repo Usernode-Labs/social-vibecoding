@@ -198,9 +198,9 @@ test('server.js sweepers use the shared busy predicate, not bare isInFlight', ()
   const machine = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/proposal/machine.ts'), 'utf8');
   assert.match(machine, /const busy = \(r: Row\) => r\.activeTurn \|\| r\.workedOn;/);
   const idle = machine.slice(machine.indexOf('const idleCheck: Handler'), machine.indexOf('const reviewCheck: Handler'));
-  assert.match(idle, /if \(busy\(row\) \|\| row\.shotsRunning \|\| row\.buildHold/, 'the idle pause skips a session somebody works on');
+  assert.match(idle, /if \(busy\(row\) \|\| s\.data\.sync \|\| row\.shotsRunning \|\| row\.buildHold/, 'the idle pause skips a session somebody works on, or that a sync is asked for');
   const review = machine.slice(machine.indexOf('const reviewCheck: Handler'));
-  assert.match(review.slice(0, 600), /if \(busy\(row\)\) return step\(s, \{ timer: again \}\);/,
+  assert.match(review.slice(0, review.indexOf('\n};\n')), /if \(busy\(row\)\) return step\(s, \{ timer: again \}\);/,
     'stale proposal archival waits while somebody works on it');
   const facts = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/proposal/facts.ts'), 'utf8');
   assert.match(facts, /activeTurn: !!r\.active_turn, workedOn: !!r\.local_turn \|\| !!r\.operations,/,

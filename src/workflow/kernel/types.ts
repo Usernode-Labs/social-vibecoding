@@ -150,6 +150,10 @@ export interface MachineDefinition<S extends State = State, F = unknown> {
   // (was this vote a retraction?) needs no query.
   reply?: (tx: Tx, event: Event<any>, after: S, ctx: TransitionContext, facts: F) => Promise<Json | undefined>;
   notifiers?: Record<string, Notifier>;
+  // States in which an instance waits on something nobody inside the
+  // platform can hurry, each with the words Admin → Workflows shows beside
+  // it under "Needs a person" (a merge GitHub has not answered).
+  attention?: Record<string, string>;
 }
 
 export interface WorkContext {

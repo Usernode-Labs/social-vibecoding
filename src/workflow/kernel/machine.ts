@@ -59,6 +59,7 @@ export interface Machine<S extends State = State, F = unknown> {
   readonly transitions: ReadonlyMap<string, ReadonlyMap<string, TableEntry<S, F>>>;
   readonly writes: ReadonlyMap<string, WriteHandler>;
   readonly notifiers: ReadonlyMap<string, Notifier>;
+  readonly attention: ReadonlyMap<string, string>;
   readonly decode: MachineDefinition<S, F>['decode'];
   readonly facts?: MachineDefinition<S, F>['facts'];
   readonly project?: MachineDefinition<S, F>['project'];
@@ -109,6 +110,8 @@ export function defineMachine<S extends State, F>(def: MachineDefinition<S, F>):
       for (const type of own.keys()) if (!row.has(type)) fail(`state ${state} neither handles nor ignores ${type}`);
     }
   }
+  const attention = toMap(def.attention);
+  for (const state of attention.keys()) if (!states.has(state)) fail(`attention state ${state} is not declared`);
   for (const c of create) {
     const entry = transitions.get(NONE)?.get(c);
     if (!entry || isIgnored(entry)) fail(`creating event ${c} has no transition from ${NONE}`);
@@ -120,6 +123,7 @@ export function defineMachine<S extends State, F>(def: MachineDefinition<S, F>):
     states, create, terminal, events, authorize, transitions,
     writes: toMap(def.writes),
     notifiers: toMap(def.notifiers),
+    attention,
     decode: def.decode,
     facts: def.facts,
     project: def.project,

@@ -4,8 +4,8 @@
 //   - github.mergePR forwards an optional `sha` to octokit.rest.pulls.merge,
 //     and surfaces GitHub's 409 (only when a sha was pinned) as a distinct
 //     HeadMovedError; generic calls without a sha keep the raw error.
-//   - checkAndMerge pins imported rows to imported_pr_head_sha and native rows
-//     to reviewed_head_sha; imported head-moved recovery stays unchanged.
+//   - the merge gate re-pins an imported row from the mirror before it is
+//     found ready (the pinned merge itself: tests/merge-attempt.test.js).
 //
 // Everything after GitHub's merge (the deploy, the teardown, the merge line)
 // belongs to the merge-followups workflow machine, the same for native and
@@ -127,7 +127,7 @@ test('mergePR: a 409 WITHOUT a pinned sha is NOT reinterpreted', async () => {
   }
 });
 
-// ── checkAndMerge: imported sha pinning, head-moved recovery ──────────
+// ── the merge gate: an imported row's pin ──────────────────────────────
 
 // Loads routes/votes with collaborators stubbed. `mergeImpl` lets each test
 // script GitHub's merge behaviour; every other collaborator is a no-op so
@@ -140,7 +140,6 @@ function loadVotes({ mergeImpl, reconcileImpl = null }) {
     github: require.resolve('../src/services/github'),
     platform: require.resolve('../src/workflow/platform.ts'),
     docker: require.resolve('../src/services/docker'),
-    resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
     activeUsers: require.resolve('../src/services/active-users'),
     notifications: require.resolve('../src/services/notifications'),
@@ -195,11 +194,6 @@ function loadVotes({ mergeImpl, reconcileImpl = null }) {
     abandonMerge: async (r) => { claims.push(['abandon', r]); return { status: 'accepted', reply: {} }; },
   });
   stub(ids.docker, {});
-  stub(ids.resolver, {
-    checkAndResolveConflicts: async (_c, trigger) => { requeues.push(trigger); },
-    resolveAndMaybeRetry: async () => ({ ok: true }),
-    isResolving: () => false,
-  });
   stub(ids.ws, {
     sendSystemMessage: async (_pool, _appId, content, _t, meta, thread) => { systemMessages.push({ content, thread, meta }); },
     pushNotificationToUser() {},
@@ -266,96 +260,32 @@ function mergeReadyPool() {
   return makeRecordingPool([]);
 }
 
-// The merge claim the proposal machine was asked to give back, by reason.
-const released = (claims) => claims.filter(([k]) => k === 'release').map(([, r]) => [r.claim, r.reason]);
+// The merge gate re-pins an imported row from the mirror before it is found
+// ready: the merge is offered the commit the platform's own sync pushed, not
+// the one the poller last saw (#2100, #2095). GitHub's half of the merge
+// (the pinned sha, a 409) is tests/merge-attempt.test.js.
 
-test('checkAndMerge: imported, native, and CLI handoff merges pin their reviewed head SHA', async () => {
-  const { subject, mergeCalls, reports, restore } = loadVotes({
-    mergeImpl: () => ({ sha: 'squashsha', merged: true }),
-  });
-  try {
-    await subject.checkAndMerge({ jwtSecret: 's' }, mergeReadyPool(), { ...importedSession }, { force: true });
-    await subject.checkAndMerge({ jwtSecret: 's' }, mergeReadyPool(), { ...cliSession }, { force: true });
-    await subject.checkAndMerge({ jwtSecret: 's' }, mergeReadyPool(), { ...nativeSession }, { force: true });
-
-    const imported = mergeCalls.find((c) => c.prNumber === 31);
-    const cli = mergeCalls.find((c) => c.prNumber === 32);
-    const native = mergeCalls.find((c) => c.prNumber === 30);
-    assert.equal(imported.sha, 'reviewedhead', 'imported merge pins the reviewed head sha');
-    assert.equal(cli.sha, cliSession.reviewed_head_sha,
-      'CLI handoff merge pins its reviewed head sha');
-    assert.equal(native.sha, nativeSession.reviewed_head_sha,
-      'native merge pins its reviewed head sha');
-    assert.equal(subject.reviewedHeadForSession(cliSession), cliSession.reviewed_head_sha);
-    // All three are reported to the merge-followups machine the same way.
-    assert.deepEqual(reports.map((m) => [m.sessionId, m.mergeSha]),
-      [[12, 'squashsha'], [13, 'squashsha'], [11, 'squashsha']]);
-  } finally {
-    restore();
-  }
-});
-
-test('checkAndMerge: head-moved 409 leaves the imported row recoverable and does not error', async () => {
-  const { subject, voteUpdates, systemMessages, reports, claims, restore } = loadVotes({
-    mergeImpl: () => { throw new (require('../src/services/github').HeadMovedError)(); },
-  });
-  const pool = mergeReadyPool();
-  try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, { ...importedSession }, { force: true });
-
-    assert.equal(r.merged, false, 'nothing merged');
-    assert.equal(r.headMoved, true, 'distinct head-moved outcome');
-
-    // The merge claim is given back (the proposal machine returns it to
-    // review), a recoverable state for the sync poller to pick up.
-    assert.deepEqual(released(claims), [[1, 'head_moved']], 'the claim it was granted is released');
-
-    // Never marked merged, never reported as a merge.
-    assert.ok(!pool.queries.some((q) => /SET\s+status = 'merged'/.test(q.sql)), 'never marked merged');
-    assert.equal(reports.length, 0, 'no merge reported on a refused merge');
-
-    // A head-moved notice, and a headMoved vote_update — but no mergeFailed.
-    assert.ok(systemMessages.some((m) => /updated on GitHub/i.test(m.content)));
-    assert.ok(voteUpdates.some((u) => u.headMoved === true));
-    assert.ok(!voteUpdates.some((u) => u.mergeFailed), 'a head move is not a merge failure');
-  } finally {
-    restore();
-  }
-});
-
-// ── #2100 / #2095: the imported pin follows the mirror, not the poller ──
-//
-// The merge queue pushes a sync commit onto an imported branch and then
-// calls checkAndMerge. The pin used to advance only when the poller's next
-// getPR noticed, so the merge offered GitHub the PRE-sync commit, got a 409,
-// told the group "the PR was updated on GitHub", and — once the poller did
-// catch up — read the platform's own commit as an author push and cleared
-// the votes. Two re-pin points make that loop unreachable.
-
-test('checkAndMerge: an imported row is re-pinned from the mirror before the merge is offered', async () => {
+test('the gate: an imported row is re-pinned from the mirror before it is found ready', async () => {
   const SYNCED = 's'.repeat(40);
   const { subject, mergeCalls, reconcileCalls, restore } = loadVotes({
     mergeImpl: () => ({ sha: 'squashsha', merged: true }),
     reconcileImpl: ({ session }) => {
-      // What applyHeadChange does on a mechanical move: install the live head
-      // on the row AND on the in-memory session the caller carries on with.
       session.imported_pr_head_sha = SYNCED;
       return { reconciled: true, changed: true, headSha: SYNCED, kind: 'mechanical', votesKept: true };
     },
   });
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, mergeReadyPool(), { ...importedSession }, { force: true });
-    assert.equal(r.merged, true);
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, mergeReadyPool(), { ...importedSession }, { force: true });
+    assert.equal(r.ready, true);
     assert.equal(reconcileCalls[0].checks, 'defer',
       'the rebuild is left to the checks gate, which rebuilds exactly the pinned head');
-    assert.equal(mergeCalls[0].sha, SYNCED,
-      'GitHub is offered the commit the queue just pushed, not the one the poller last saw');
+    assert.deepEqual(mergeCalls, [], 'the gate never asks GitHub to merge');
   } finally {
     restore();
   }
 });
 
-test('checkAndMerge: an authored push found at the door returns the imported row to review, and merges nothing', async () => {
+test('the gate: an authored push found at the door returns the imported row to review', async () => {
   const PUSHED = 'p'.repeat(40);
   const { subject, mergeCalls, restore } = loadVotes({
     mergeImpl: () => ({ sha: 'squashsha', merged: true }),
@@ -365,73 +295,11 @@ test('checkAndMerge: an authored push found at the door returns the imported row
     },
   });
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, mergeReadyPool(), { ...importedSession }, { force: true });
-    assert.equal(r.merged, false);
+    const r = await subject.evaluateMergeGate({ jwtSecret: 's' }, mergeReadyPool(), { ...importedSession }, { force: true });
+    assert.notEqual(r.ready, true);
     assert.equal(r.reviewReset, true, 'same shape as the native return-to-review');
     assert.equal(r.reviewedHeadSha, PUSHED);
-    assert.deepEqual(mergeCalls, [], 'nothing is offered to GitHub on a revision nobody has reviewed');
-  } finally {
-    restore();
-  }
-});
-
-test('checkAndMerge: a 409 on an imported row re-pins with votes intact and retries, instead of waiting for the poller', async () => {
-  const SYNCED = 's'.repeat(40);
-  const { subject, voteUpdates, systemMessages, requeues, claims, restore } = loadVotes({
-    mergeImpl: () => { throw new (require('../src/services/github').HeadMovedError)(); },
-    reconcileImpl: ({ session }, n) => {
-      // First call (at the door): the mirror had not seen the push yet.
-      if (n === 1) return { reconciled: true, changed: false, headSha: session.imported_pr_head_sha };
-      // Second call (409 handler): it has now, and it was the platform's sync.
-      session.imported_pr_head_sha = SYNCED;
-      return { reconciled: true, changed: true, headSha: SYNCED, kind: 'mechanical', votesKept: true };
-    },
-  });
-  const pool = mergeReadyPool();
-  try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool, { ...importedSession }, { force: true });
-    assert.equal(r.merged, false);
-    assert.equal(r.headMoved, true);
-    assert.equal(r.votesKept, true, 'the same outcome the native path has had since #955');
-    assert.equal(r.reviewedHeadSha, SYNCED);
-    assert.deepEqual(released(claims), [[1, 'head_moved']], 'the claim is released');
-    assert.ok(systemMessages.some((m) => /Existing votes were kept and the merge retries automatically/.test(m.content)));
-    assert.ok(!systemMessages.some((m) => /updated on GitHub since the vote/.test(m.content)),
-      'the group is not told the author changed something the platform changed');
-    assert.deepEqual(requeues.map((t) => t.app_id), [5], 'the merge is re-attempted against the corrected pin now');
-    assert.ok(voteUpdates.some((u) => u.headMoved === true));
-  } finally {
-    restore();
-  }
-});
-
-test('checkAndMerge: a 409 the mirror contradicts is an ordinary merge conflict, not a head move', async () => {
-  // GitHub also answers 409 for a plain conflict. If the branch still sits on
-  // the pinned commit there was no revision change, and the row must not be
-  // told its head moved — the native branch has routed this the same way.
-  const { subject, systemMessages, restore } = loadVotes({
-    mergeImpl: () => { throw new (require('../src/services/github').HeadMovedError)(); },
-    reconcileImpl: ({ session }) => ({ reconciled: true, changed: false, headSha: session.imported_pr_head_sha }),
-  });
-  try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, mergeReadyPool(), { ...importedSession }, { force: true });
-    assert.notEqual(r.headMoved, true, 'not reported as a head move');
-    assert.ok(!systemMessages.some((m) => /updated on GitHub|head changed/i.test(m.content)));
-  } finally {
-    restore();
-  }
-});
-
-test('checkAndMerge: a fork-hosted imported head still defers to the poller on a 409', async () => {
-  const { subject, systemMessages, requeues, restore } = loadVotes({
-    mergeImpl: () => { throw new (require('../src/services/github').HeadMovedError)(); },
-  });
-  try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, mergeReadyPool(), { ...importedSession }, { force: true });
-    assert.equal(r.headMoved, true);
-    assert.notEqual(r.votesKept, true);
-    assert.ok(systemMessages.some((m) => /updated on GitHub since the vote/.test(m.content)));
-    assert.deepEqual(requeues, [], 'nothing to retry against until the poller has re-pinned it');
+    assert.deepEqual(mergeCalls, []);
   } finally {
     restore();
   }

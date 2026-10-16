@@ -216,19 +216,11 @@ const {
   countedVotePredicateSql,
 } = require('../services/pr-vote-revision');
 const notifications = require('../services/notifications');
-// runSyncMain + persistBehindMain now live in services/sync-main.js so
-// the conflict-resolver can drive a sync turn without a route-requires-
-// route cycle. Re-exported below for backwards compatibility. Route
-// handlers call through the module object (syncMainSvc.*) so tests can
-// monkey-patch individual functions, mirroring how worker.isInFlight
-// is stubbed in the route suites.
+// A sync with main is the proposal machine's (src/workflow/proposal/,
+// branch.sync: services/sync-main.js runSyncWork); the routes ask for one.
+// persistBehindMain is re-exported for the build turn's tail.
 const syncMainSvc = require('../services/sync-main');
-const {
-  runSyncMain, persistBehindMain,
-  // #955: the post-sync review advance now covers every native proposal, not
-  // just CLI handoffs. Both names are the same function; the historical one is
-  // kept because callers and tests import it from here.
-} = syncMainSvc;
+const { persistBehindMain } = syncMainSvc;
 
 // Track sessions with active Claude Code workers. The Set lives in a
 // shared module so services/sync-main.js writes to the same instance
@@ -2002,18 +1994,23 @@ async function resumePausedSession({ pool, config, user, sessionId }) {
   // run this only when the session has a known positive drift
   // count from a prior turn; sessions that never ran a turn
   // have behind_main=0 and the next /chat turn will populate it.
+  // How far behind main it is: the mirror's measurement when there is one,
+  // else the last turn's count.
   const { rows: driftRows } = await pool.query(
-    'SELECT behind_main FROM chat_sessions WHERE id = $1',
+    'SELECT COALESCE(integration_behind_by, behind_main) AS behind FROM chat_sessions WHERE id = $1',
     [sessionId]
   );
-  if ((driftRows[0]?.behind_main || 0) > 0) {
-    // Fire-and-forget. Failures are logged but don't bubble up;
-    // the user explicitly clicking "Sync with main" later will
-    // re-attempt with full surface area for errors.
-    runSyncMain(config, pool, sessionId, { trigger: 'resume_autosync' }).catch((err) => {
-      log.warn('sessions', 'Background sync-on-resume failed', {
-        sessionId, err: err.message,
-      });
+  if ((driftRows[0]?.behind || 0) > 0) {
+    // Asked of the proposal machine, not waited for: the sync is its work,
+    // and a refusal (somebody working on it) is logged. The user clicking
+    // "Sync with main" later asks again with the answer in front of them.
+    require('../workflow/platform.ts').requestSync({
+      sessionId: Number(sessionId), appId: own.app_id, reason: 'resume', userId: user.id,
+      source: { kind: 'route', name: 'resume' },
+    }).then((out) => {
+      if (out.status === 'rejected') log.info('sessions', 'Sync-on-resume not started', { sessionId, reason: out.reason });
+    }).catch((err) => {
+      log.warn('sessions', 'Background sync-on-resume failed', { sessionId, err: err.message });
     });
   }
   return { ok: true };
@@ -4948,21 +4945,40 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         });
       }
 
-      // #252: a regular chat turn holds the worker — dispatching a sync
-      // now would just trip execInWorker's "a turn is already in
-      // flight" guard with a raw 500. Surface it as a friendly 409
-      // instead. When the in-flight turn IS a sync, fall through:
-      // runSyncMain coalesces and this caller joins the running sync.
-      if (!syncMainSvc.getSyncState(sessionId)
-          && isSessionBusy(sessionId)) {
+      // The proposal machine decides whether it may run (nobody else
+      // working on it, not being merged) and runs it; this waits for it. A
+      // sync already under way is joined.
+      const platform = require('../workflow/platform.ts');
+      let out = await platform.requestSync({
+        sessionId, appId: session.app_id, reason: 'person', userId: req.user.id, wait: true,
+        source: { kind: 'route', name: 'sync-main' },
+      });
+      if (out.status === 'rejected' && out.reason === 'in_progress') {
+        const running = await platform.syncUnderWay(sessionId);
+        const i = running ? await platform.waitForSync(sessionId, running.n) : null;
+        out = { ...out, status: 'accepted', lastSync: i };
+      }
+      if (out.status === 'rejected') {
+        const busy = out.reason === 'busy';
         return res.status(409).json({
-          error: 'Claude is still working in this session. Wait for the turn to finish before syncing.',
-          busy: true,
+          error: busy ? 'Claude is still working in this session. Wait for the turn to finish before syncing.'
+            : out.reason === 'merging' ? 'This change is being merged.'
+              : `This change can't be synced now (${out.reason}).`,
+          ...(busy ? { busy: true } : {}),
         });
       }
-
-      const result = await syncMainSvc.runSyncMain(config, pool, sessionId, { sessionRow: session });
-      res.json(result);
+      // Not ended within the wait (or ended by a close or a merge): still
+      // under way as far as this answer knows, never "done".
+      const done = out.status === 'pending' ? null : out.lastSync;
+      if (!done) return res.status(202).json({ ok: false, pending: true, message: 'The sync with main is still running.' });
+      if (done.outcome === 'error' || done.outcome === 'over_budget' || done.outcome === 'gone') {
+        return res.status(done.outcome === 'gone' ? 409 : 500).json({ error: done.message || 'Sync with main failed' });
+      }
+      const syncResult = done.outcome === 'unresolvable' ? 'conflict' : done.outcome === 'not_pushed' ? 'clean' : done.outcome;
+      res.json({
+        ok: done.outcome !== 'unresolvable', syncResult, sha: done.sha || null, pushOk: done.pushOk ?? done.outcome !== 'not_pushed',
+        behind: done.behind || 0, conflictFiles: done.conflictFiles || [], message: done.message,
+      });
     } catch (err) {
       log.error('sessions', 'sync-main failed', { sessionId, err: err.message });
       res.status(500).json({ error: err.message || 'Internal server error' });
@@ -5911,7 +5927,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // instead of restarting it on every 3s poll.
     const estimate = workerProgress.get(sessionId)?.estimate || null;
 
-    // #239: whether the auto-conflict-resolver currently has a resolve
+    // #239: whether the merge queue's conflict lane currently has a resolve
     // in flight for this session. The client's "resolving merge
     // conflicts" banner used to poll this as its reload-recovery and
     // missed-WS-event safety net; that banner was retired in #962, so
@@ -5919,7 +5935,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // the session for admin/debug tooling and future surfaces — the
     // per-proposal badge derives the same state from the WS
     // `resolving` broadcasts + the merge_conflict_state snapshot.
-    const { isResolving } = require('../services/conflict-resolver');
+    const sync = await syncMainSvc.getSyncState(pool, sessionId);
 
     // Merge lifecycle status ('promoted' | 'merging' | 'merged' | …).
     // The self-app "Platform updating…" banner's restore path used to
@@ -5992,8 +6008,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       spend: busy ? workerProgress.get(sessionId)?.spend || null : null,
       agentBackend: progressAgentBackend,
       agentModel: progressAgentModel,
-      resolving: isResolving(sessionId),
-      sync: syncMainSvc.getSyncState(sessionId),
+      resolving: !!sync && sync.reason === 'conflict',
+      sync,
       status: mergeStatus,
       runner, runnerLabel, localAgent: attached,
       ...(delivery !== undefined ? { delivery } : {}),
@@ -6553,7 +6569,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 }
 
 // Thin alias so existing in-file callers keep working unchanged.
-// New callers (conflict-resolver, etc.) should `require('../services/limits')`
+// New callers should `require('../services/limits')`
 // directly and call `limits.checkBudget(pool, userId)`.
 async function checkBudget(pool, userId) {
   return limits.checkBudget(pool, userId);
@@ -11179,7 +11195,7 @@ async function publishStagingOutcome({
 async function retireVotesForNewCommit({ pool, session, sessionId = session.id, commitHash }) {
   // #788: the new commit may have added or removed a name in dapp.json's
   // `admins` block. Best-effort (swallows GitHub failures) and re-verified
-  // authoritatively in checkAndMerge.
+  // authoritatively in evaluateMergeGate.
   await require('../services/app-admins').refreshExplicitApproval(pool, session, session);
   const { sendSystemMessage, pushVoteUpdate } = require('../services/ws');
   return require('../services/vote-revision').retireAndRecheck(
@@ -13356,7 +13372,7 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, receiveSessionStop, changePlanFor, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, receiveSessionStop, changePlanFor, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
 // #4524: the topic page's fast open asks GET /api/apps/:slug/proposals/:id
 // for its item beside the board load, and production serves an active or
 // paused session there when it is the viewer's own or shared. The demo rows

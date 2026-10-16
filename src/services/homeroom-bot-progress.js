@@ -395,7 +395,7 @@ function leftOverQueue(row) {
  * Pure (N5): whether a proposal's check verdict is about the head up for
  * approval: its reviewed head (an imported pull request's own head), from a
  * requestRows row. True when either is not recorded, as before this was
- * read. The merge gate asks the same (merge-queue.js effortOf).
+ * read. The merge queue asks the same (src/workflow/merge-queue/facts.ts).
  */
 function checksOnHead(row) {
   const head = row?.proposal_source === 'imported' ? row?.imported_pr_head_sha : row?.reviewed_head_sha;

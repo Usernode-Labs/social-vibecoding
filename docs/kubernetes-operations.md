@@ -613,9 +613,11 @@ has no flag: the old merge tail (`finalizeMerge` and its follow-ups), the
 `merge-followup-recovery` sweep and the boot resume of issue-close watches are deleted.
 `docs/workflows.md` explains the machine.
 
-- **A merge is only reported.** `checkAndMerge` appends `Merged` right after GitHub's
-  merge. A report that failed leaves the row `merging`, and the stuck-merge sweep finds
-  the merge on GitHub and reports it again.
+- **A merge is only reported.** The proposal machine's merge attempt (`merge.attempt`)
+  tells merge-followups `Merged` in the transition that records GitHub's answer. An
+  answer that never came leaves the proposal `merging` (`unconfirmed`), and it asks
+  GitHub again until GitHub says; each boot also looks on GitHub for merges of promoted
+  rows (`observeMergedOnGithub`).
 - **Ownership is enforced.** Only the machine moves a proposal into `merged`, and a write
   to a merged row's `merged_at`, `merge_commit_sha`, `included_in_session_id` or `live_at`
   from outside it is refused (`WF_OWNERSHIP_VIOLATION`).

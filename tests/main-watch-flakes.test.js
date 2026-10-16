@@ -36,7 +36,7 @@ const stub = (rel, exports) => {
   require.cache[file] = { id: file, filename: file, loaded: true, exports };
 };
 stub('../src/services/ws', { sendSystemMessage: async () => {}, pushSessionUpdate: () => {}, pushIssueUpdate: () => {} });
-stub('../src/services/merge-queue', { enqueue: (config, appId) => { enqueued.push(appId); } });
+stub('../src/workflow/platform.ts', { wantMerge: async ({ appId }) => { enqueued.push(appId); } });
 const github = {
   enabled: true,
   fail: false,

@@ -17481,7 +17481,7 @@ const AppView = {
     // The one thing blocking the merge, when something is (a key of
     // VOTING_BLOCKER_IDS) — said inside the "reached" sentence, or as a
     // note after the others so the explainer never implies a countdown will
-    // merge straight past a blocked gate. Ordered by checkAndMerge's own
+    // merge straight past a blocked gate. Ordered by the merge gate's own
     // gate precedence (conflict → checks → behind → lock).
     let blocker = '';
     const mcs = pr.merge_conflict_state;
@@ -23712,7 +23712,7 @@ const AppView = {
   // #47: "CI for proposals" checks badge — the pass/fail status of the
   // proposal's automated tests against its staging build (check_state from
   // GET /api/apps/:slug/promoted). Unlike the advisory console badge this
-  // mirrors a real merge gate (votes.checkAndMerge blocks a non-'passing'
+  // mirrors a real merge gate (votes.evaluateMergeGate blocks a non-'passing'
   // proposal), so the badge is the user-facing signal for "can this land".
   //   passing → green ✓        failing → amber ⚠ · N
   //   pending → grey spinner    error  → red ⚠ couldn't run

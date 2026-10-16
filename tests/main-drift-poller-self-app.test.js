@@ -23,7 +23,6 @@ const ids = {
   logger: require.resolve('../src/services/logger'),
   pool: require.resolve('../src/db/pool'),
   github: require.resolve('../src/services/github'),
-  conflictResolver: require.resolve('../src/services/conflict-resolver'),
   releaseWatch: require.resolve('../src/services/release-watch'),
   platform: require.resolve('../src/workflow/platform.ts'),
   mainWatch: require.resolve('../src/services/main-watch'),
@@ -65,8 +64,8 @@ stub(ids.github, {
 const requested = [];
 stub(ids.platform, {
   requestDeploy: async (appId, reason) => { requested.push([appId, reason]); return 1; },
+  wantMerge: async () => {},
 });
-stub(ids.conflictResolver, { checkAndResolveConflicts: async () => {} });
 // main's unit suite on a new main (services/main-watch.js) is its own concern.
 stub(ids.mainWatch, { afterMerge: async () => {} });
 

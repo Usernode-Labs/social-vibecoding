@@ -285,13 +285,15 @@ function makePool({ current = fullRow(), claimWins = true } = {}) {
   };
 }
 
+// The sync is the proposal machine's (platform.ts requestSync): it decides
+// whether it may run (nobody working on it, not being merged, not synced for
+// this head yet), writes the once-record with the sync's own work, runs it
+// and starts the new head's run (tests/workflow-merge-postgres.test.js M8).
 function makeDeps({
   measured = { headSha: HEAD, behindBy: 5, mergesClean: true },
-  busy = false,
-  integrating = false,
-  syncResult = { ok: true, syncResult: 'clean', pushOk: true, sha: NEW_HEAD },
+  answer = { status: 'accepted', sync: 1, lastSync: { n: 1, outcome: 'clean', sha: NEW_HEAD } },
 } = {}) {
-  const calls = { measure: [], sync: [], reconcile: [] };
+  const calls = { measure: [], sync: [] };
   const deps = {
     integration: {
       measure: async ({ session }, options) => {
@@ -299,13 +301,8 @@ function makeDeps({
         return measured;
       },
     },
-    syncMain: {
-      runSyncMain: async (config, pool, id, opts) => { calls.sync.push({ id, opts }); return syncResult; },
-    },
-    activeWorkers: { isSessionBusy: () => busy },
-    mergeQueue: { isIntegratingSession: () => integrating },
-    votes: () => ({
-      reconcileNativeReviewedHead: async (args) => { calls.reconcile.push(args); return {}; },
+    platform: () => ({
+      requestSync: async (p) => { calls.sync.push(p); return typeof answer === 'function' ? answer(p) : answer; },
     }),
   };
   return { deps, calls };
@@ -313,50 +310,39 @@ function makeDeps({
 
 const CANDIDATE = { id: 7504, head: HEAD, keys: [key(DOMAIN)] };
 
-test('a stuck proposal is claimed, synced as the platform, and its new head run, keeping its votes', async () => {
+test('a stuck proposal behind main and clean is asked of the proposal machine, on its head, with its checks', async () => {
   const pool = makePool();
   const { deps, calls } = makeDeps();
   const out = await subject.syncOne({ config: { c: 1 }, pool, candidate: CANDIDATE }, deps);
   assert.deepEqual(out, { synced: true, why: null, sha: NEW_HEAD });
-  const claim = pool.queries.find((q) => /SET fixed_check_sync_head = \$2/.test(q.sql));
-  assert.ok(claim, 'the head and the checks are claimed before the sync');
-  assert.match(claim.sql, /fixed_check_sync_head IS DISTINCT FROM \$2/, 'once per head');
-  assert.match(claim.sql, /LOWER\(checks_commit_sha\) = \$2/, 'only while the row still describes that head');
-  assert.match(claim.sql, /status = 'promoted' AND check_state = 'failing'/);
-  assert.deepEqual(claim.params, [7504, HEAD, [key(DOMAIN)]]);
-  assert.equal(calls.sync.length, 1);
-  assert.equal(calls.sync[0].opts.trigger, 'fixed_on_main');
-  assert.equal(calls.sync[0].opts.sessionRow.behind_main, 5, 'the measured count, so the sync narrates');
-  assert.equal(calls.reconcile.length, 1, 'the merge queue\'s own follow-up: re-pin and run');
-  assert.equal(calls.reconcile[0].notify, false);
-  const claimAt = pool.queries.indexOf(claim);
-  assert.ok(claimAt > 0, 'measured first, then claimed');
+  assert.equal(calls.measure.length, 1, 'measured first');
+  assert.deepEqual(calls.sync.map(({ sessionId, reason, head, keys, wait }) => ({ sessionId, reason, head, keys, wait })),
+    [{ sessionId: 7504, reason: 'fixed_check', head: HEAD, keys: [key(DOMAIN)], wait: true }]);
+  assert.ok(!pool.queries.some((q) => /SET fixed_check_sync_head/.test(q.sql)), 'the once-record is the machine\'s to write');
 });
 
-test('busy, integrating, level with main, conflicting or claimed elsewhere: nothing is synced', async () => {
+test('level with main, conflicting, a moved head, or refused by the proposal machine (tried, busy): nothing is synced', async () => {
   for (const [opts, poolOpts, why] of [
-    [{ busy: true }, {}, 'busy'],
-    [{ integrating: true }, {}, 'integrating'],
     [{ measured: { headSha: HEAD, behindBy: 0, mergesClean: true } }, {}, 'level'],
     [{ measured: { headSha: HEAD, behindBy: 3, mergesClean: false } }, {}, 'conflict'],
     [{ measured: { headSha: NEW_HEAD, behindBy: 3, mergesClean: true } }, {}, 'head_moved'],
     [{ measured: { error: 'mirror down' } }, {}, 'unmeasured'],
-    [{}, { claimWins: false }, 'claimed'],
+    [{ answer: { status: 'rejected', reason: 'already_tried' } }, {}, 'already_tried'],
+    [{ answer: { status: 'rejected', reason: 'busy' } }, {}, 'busy'],
     [{}, { current: fullRow({ checks_commit_sha: NEW_HEAD }) }, 'head_moved'],
     [{}, { current: fullRow({ status: 'merged' }) }, 'gone'],
   ]) {
     const { deps, calls } = makeDeps(opts);
     const out = await subject.syncOne({ config: {}, pool: makePool(poolOpts), candidate: CANDIDATE }, deps);
     assert.deepEqual(out, { synced: false, why }, why);
-    assert.equal(calls.sync.length, 0, `${why}: no sync`);
+    if (!opts.answer) assert.equal(calls.sync.length, 0, `${why}: never asked`);
   }
 });
 
 test('a sync that pushes nothing reports it and starts no run', async () => {
-  const { deps, calls } = makeDeps({ syncResult: { syncResult: 'conflict', pushOk: false } });
+  const { deps } = makeDeps({ answer: { status: 'accepted', sync: 2, lastSync: { n: 2, outcome: 'unresolvable' } } });
   const out = await subject.syncOne({ config: {}, pool: makePool(), candidate: CANDIDATE }, deps);
   assert.deepEqual(out, { synced: false, why: 'conflict' });
-  assert.equal(calls.reconcile.length, 0);
 });
 
 // ── syncBeforeHandOff: the Homeroom bot's one sync before a person ───────
@@ -383,11 +369,8 @@ test('before the bot hands red checks to a person, its proposal is synced with m
   const { deps, calls } = makeDeps();
   const out = await subject.syncBeforeHandOff({ config: { c: 1 }, pool, sessionId: 7504, head: HEAD.toUpperCase() }, deps);
   assert.deepEqual(out, { synced: true, why: null, sha: NEW_HEAD });
-  const claim = pool.queries.find((q) => /SET fixed_check_sync_head = \$2/.test(q.sql));
-  assert.deepEqual(claim.params, [7504, HEAD, [subject.BOT_HANDOFF_KEY]],
-    'claimed on the head the sweep claims, so the two never both sync it; a sweep\'s key is no reason not to');
-  assert.equal(calls.sync[0].opts.trigger, 'bot_handoff');
-  assert.equal(calls.reconcile.length, 1, 'its new head is run, keeping its votes');
+  assert.deepEqual([calls.sync[0].reason, calls.sync[0].head, calls.sync[0].keys], ['bot_handoff', HEAD, [subject.BOT_HANDOFF_KEY]],
+    'on the head the sweep syncs, so the two never both sync it; a sweep\'s key is no reason not to');
 });
 
 test('once per proposal, never while off, and only what syncOne would sync', async () => {
@@ -499,11 +482,8 @@ test('syncBeforeFix syncs a behind, clean proposal of the bot\'s own, claimed on
   const { deps, calls } = makeDeps();
   const out = await subject.syncBeforeFix({ config: { c: 1 }, pool, sessionId: 7504, head: HEAD.toUpperCase() }, deps);
   assert.deepEqual(out, { synced: true, why: null, sha: NEW_HEAD });
-  const claim = pool.queries.find((q) => /SET fixed_check_sync_head = \$2/.test(q.sql));
-  assert.deepEqual(claim.params, [7504, HEAD, [key(DOMAIN)]],
-    'the sweep\'s own column and key: the sweep, the hand-off and this never sync one head twice');
-  assert.equal(calls.sync[0].opts.trigger, 'bot_fix');
-  assert.equal(calls.reconcile.length, 1, 'its new head is run, keeping its votes');
+  assert.deepEqual([calls.sync[0].reason, calls.sync[0].head, calls.sync[0].keys], ['bot_fix', HEAD, [key(DOMAIN)]],
+    'the sweep\'s own head and key: the sweep, the hand-off and this never sync one head twice');
 });
 
 test('syncBeforeFix declines what the sweep would, and never throws', async () => {
@@ -556,8 +536,9 @@ test('a sweep syncs at most MAX_SYNCS_PER_PASS and never throws', async () => {
   const { deps, calls } = makeDeps();
   const out = await subject.sweep({ config: {}, pool }, deps);
   assert.equal(out.candidates, 6);
-  assert.deepEqual(out.synced, [1, 2, 3, 4]);
+  assert.deepEqual(out.synced, [1, 2, 3, 4], 'asked for, not waited for');
   assert.equal(calls.sync.length, subject.MAX_SYNCS_PER_PASS);
+  assert.ok(calls.sync.every((c) => c.wait === false));
 
   const broken = { async query() { throw new Error('connection terminated'); } };
   assert.deepEqual(await subject.sweep({ config: {}, pool: broken }, deps),

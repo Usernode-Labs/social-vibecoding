@@ -42,9 +42,10 @@ require.cache[require.resolve('../src/services/ws')] = {
     pushSessionUpdate: () => {},
   },
 };
-require.cache[require.resolve('../src/services/merge-queue')] = {
-  id: 'merge-queue', filename: 'merge-queue', loaded: true,
-  exports: { enqueue: (config, appId) => { enqueued.push(appId); } },
+// The app's merge queue is asked by message (platform.ts wantMerge).
+require.cache[require.resolve('../src/workflow/platform.ts')] = {
+  id: 'platform', filename: 'platform', loaded: true,
+  exports: { wantMerge: async ({ appId }) => { enqueued.push(appId); } },
 };
 
 const unitSuite = require('../src/services/unit-suite');

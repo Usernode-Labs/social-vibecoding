@@ -13,9 +13,9 @@
 // error) is redacted the same way the /status ring buffer redacts it.
 //
 // Threading model: startRun() returns a numeric runId (the row's BIGSERIAL
-// id). Callers thread that id into step()/endRun() and — for the resolver →
-// checkAndMerge re-entry — down through the options objects as `debugRunId`
-// so a conflict-resolution sync and its retried merge land in ONE run.
+// id). Callers thread that id into step()/endRun() and — for a gate run
+// inside a larger one — down through the options objects as `debugRunId`
+// so nested steps land in ONE run.
 
 const { getPool } = require('../db/pool');
 const log = require('./logger');
@@ -40,8 +40,8 @@ function resolvePool(poolOrConfig) {
 // Start a run. Returns a Promise<number|null> — the new run's id, or null
 // if the insert failed (callers treat null as "debug capture is off" and
 // simply pass it to step()/endRun(), which no-op on a null runId). Cheap
-// single INSERT; the two top-level entry points (checkAndMerge and the
-// resolver's per-PR resolve) await it once to obtain the id to thread.
+// single INSERT; the top-level entry point (the merge gate,
+// routes/votes.js evaluateMergeGate) awaits it once to obtain the id to thread.
 // `startedAt` (a Date) backdates the run to work it covers that began before
 // it was opened: a checks run's preview build (#4696). Absent, it is now.
 async function startRun(poolOrConfig, { appId, sessionId, prNumber, kind, trigger, startedAt } = {}) {

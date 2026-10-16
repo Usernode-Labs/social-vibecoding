@@ -7,7 +7,6 @@ const log = require('../services/logger');
 const github = require('../services/github');
 const githubMock = require('../services/github-mock');
 const docker = require('../services/docker');
-const { checkAndResolveConflicts, isResolving } = require('../services/conflict-resolver');
 const { sendSystemMessage, pushNotificationToUser } = require('../services/ws');
 const { getActiveUserStats, isUserActive } = require('../services/active-users');
 const notifications = require('../services/notifications');
@@ -503,7 +502,7 @@ function stagingMockProposals(viewer) {
     // so the conflicting-file list renders at a realistic length. This is a
     // PREDICTION, which is why it sets `mergeability` and NOT
     // merge_conflict_state — nothing has attempted a merge, so the
-    // conflict-resolver must not see this row as one it can drain.
+    // merge queue must not read this row as a conflict to resolve.
     {
       ...mk(9000034, 900134,
         '[Mock] Freshness test: conflicts with main in seven files',
@@ -561,7 +560,7 @@ function stagingMockProposals(viewer) {
     },
     // (f) #2061: what a proposal still NEEDS, rather than only what is
     // currently wrong with it. Each carries a merge_requirements record in
-    // exactly the shape checkAndMerge writes, so the card's checklist — and
+    // exactly the shape the merge gate writes, so the card's checklist — and
     // the three declared checks over it — are reviewable on ?demo=1 without
     // manufacturing a locked app or an unset platform variable.
     //
@@ -1907,7 +1906,7 @@ async function reconcileNativeReviewedHead({
     // where that is the safe direction.
     //
     // The mirror is a cache of a repository, not the authority on it. The
-    // authority is the exact-sha merge at the end of checkAndMerge, which
+    // authority is the exact-sha merge the proposal machine asks GitHub for, which
     // pins to the revision recorded here: if the head has moved and this
     // read did not notice, GitHub refuses the merge with a 409 and the
     // proposal comes straight back round to be reconciled properly. Nothing
@@ -2308,11 +2307,14 @@ async function recordVote({
 }
 
 // After a vote has been answered (#2782): the fresh GitHub read the route used
-// to await, then the majority check. The order matters — checkAndMerge's own
-// reconcile is a non-fresh one that joins any fetch already in flight, and it
-// relied on "every interactive vote performs a fresh read" (its comment says
-// so). Running that read here, before it, keeps the guarantee; it just no
-// longer sits between the click and the answer.
+// to await, then the app's merge queue is asked to look at the proposal. The
+// order matters — the merge gate's own reconcile is a non-fresh one that
+// joins any fetch already in flight, and it relies on "every interactive vote
+// performs a fresh read". Running that read here, before it, keeps the
+// guarantee; it just no longer sits between the click and the answer. A
+// release drains it (the in-flight registry); a crash in between loses only
+// the ask, and the proposal's review check asks again within the hour for
+// any proposal whose gate is met.
 //
 // A read that finds an authored push bumps the epoch, retiring the vote just
 // recorded along with every other vote on the old code, posts the "please
@@ -2334,7 +2336,8 @@ async function settleVoteInBackground({ config, pool, session, revision }) {
       });
     }
   }
-  return checkAndMerge(config, pool, session);
+  await require('../workflow/platform.ts').wantMerge({ appId: session.app_id, sessionId: session.id, reason: 'vote' });
+  return { asked: true };
 }
 
 // The background merge/rejection sweep has no user vote event to refresh a
@@ -3144,7 +3147,7 @@ function voteRoutes(config) {
       //     authored, bumps the epoch — which retires this vote with every
       //     other one on the old code. A mechanical sync keeps it, exactly as
       //     the in-request read would have.
-      //   - The merge itself never trusted this read: checkAndMerge
+      //   - The merge itself never trusted this read: the merge gate
       //     reconciles again, re-checks the shots gate at the exact
       //     head, and merges only the pinned sha.
       const revision = await reconcileNativeReviewedHead({
@@ -3183,7 +3186,7 @@ function voteRoutes(config) {
       // Was this a new vote, or a flip? Distinguishing matters because
       // without this, a user mashing "Yes" would post the same
       // "X voted yes on PR #N" line to group chat every time AND fire a
-      // fresh checkAndMerge on every click — which, before the merge
+      // fresh merge gate on every click — which, before the merge
       // concurrency guard, caused 7× parallel GitHub merges + docker
       // rebuilds stepping on each other's tempdirs and container names.
       // The DB upsert itself is still safe (UNIQUE(session_id,user_id))
@@ -3211,7 +3214,7 @@ function voteRoutes(config) {
       // #2038: "unchanged" means the same person voting the same way on the
       // same PROPOSAL. Keying it on the commit made a re-vote after a
       // mechanical sync look like a change, re-posting to group chat and
-      // re-entering checkAndMerge for a click that moved nothing.
+      // re-entering the merge gate for a click that moved nothing.
       const sameSide = previousVote === vote
         && prevRows[0]?.approval_epoch != null
         && prevRows[0].approval_epoch === prevRows[0].current_epoch;
@@ -3386,17 +3389,10 @@ function voteRoutes(config) {
         { type: 'session', ref: session.id }
       );
 
-      // Broadcast the new tally *before* we try to merge, and respond
-      // to the voter right away. checkAndMerge can take 30+ seconds on
-      // the majority path (GitHub merge + prod rebuild + staging
-      // teardown) and blocking on it here meant:
-      //   - every other user's vote count sat stale until merge
-      //     finished, which looked like "votes don't update live",
-      //   - the voter's own UI sat mid-click with a spinning button
-      //     while the merge ran, sometimes for the full 30s.
-      // The merge itself still runs atomically (checkAndMerge claims
-      // the session via 'promoted' → 'merging'), so kicking it into
-      // the background doesn't change correctness.
+      // Broadcast the new tally *before* the merge is asked for, and
+      // respond to the voter right away: the merge is the app's merge
+      // queue's (src/workflow/merge-queue/), which tells every client
+      // when the proposal merges.
       const { pushVoteUpdate } = require('../services/ws');
       pushVoteUpdate({ sessionId: session.id, appSlug: session.app_slug, merged: false });
       log.info('votes', 'Vote cast', { sessionId: session.id, vote, userId: req.user.id });
@@ -3441,16 +3437,10 @@ function voteRoutes(config) {
       await challengeScorer.scoreOnVote(pool, config);
       res.json({ ok: true, merged: false, ...readyCard });
 
-      // The live head read the response no longer waits on, then the
-      // majority check. If it turns into a merge, a second broadcast flips
-      // the PR out of the vote panel and updates the "merged" list. Held in
-      // the in-flight registry so a shutdown's drain lets it finish.
+      // The live head read the response no longer waits on, then the ask
+      // for a merge. Held in the in-flight registry so a shutdown's drain
+      // lets it finish.
       inflightWork.track('vote-settle', settleVoteInBackground({ config, pool, session, revision }))
-        .then((mergeResult) => {
-          if (mergeResult?.merged) {
-            pushVoteUpdate({ sessionId: session.id, appSlug: session.app_slug, merged: true });
-          }
-        })
         .catch((err) => {
           log.error('votes', 'Background merge failed', { sessionId: session.id, err: err.message });
         });
@@ -3836,7 +3826,7 @@ function voteRoutes(config) {
            cs.console_check_state, cs.console_errors, cs.console_checked_at,
            -- #47: "CI for proposals" check snapshot for the checks badge +
            -- per-test detail block. Unlike the console snapshot this GATES
-           -- merge (checkAndMerge blocks a non-'passing' proposal).
+           -- merge (the merge gate blocks a non-'passing' proposal).
            cs.check_state, cs.test_results, cs.checks_checked_at,
            cs.checks_commit_sha,
            -- #1442: the freshness cache. behind_main above is now written
@@ -4003,11 +3993,11 @@ function voteRoutes(config) {
         // (in-memory build map + the captured checks error) rather than
         // persisting a staging_state column that a crash could strand.
         Object.assign(row, stagingService.previewDisplayState(row));
-        // #239: surface in-flight auto-conflict-resolution so the vote
-        // panel can render a "Resolving conflicts…" badge. Process-local
-        // map lookup (no SQL) — authoritative in the single-process
-        // platform, and self-healing on every panel refresh.
-        row.resolving = isResolving(row.id);
+        // #239: an automatic conflict resolution under way, so the vote
+        // panel can render a "Resolving conflicts…" badge: the proposal
+        // machine's sync, projected as the row's `integrating` reason.
+        row.resolving = Array.isArray(row.integration_block_reasons)
+          && row.integration_block_reasons.includes('integrating');
       }
       const shotsBySession = config.shots?.present
         ? await shotsView.getForSessions(pool, rows, req.params.slug)
@@ -4783,7 +4773,7 @@ function voteRoutes(config) {
         );
 
         // The ledger too (services/merge-requirements.js): the card's
-        // "Waiting on the group" line reads the checkAndMerge recording,
+        // "Waiting on the group" line reads the merge gate's recording,
         // which a vote does not supersede — withLiveApprovals reconciles
         // its waiting approvals step against the columns just attached.
         const mainCheck = await require('../services/main-watch').mergePause(pool, gatedApp.id);
@@ -4986,10 +4976,10 @@ function voteRoutes(config) {
   // the active-user majority. The frontend gates this behind a
   // ConfirmModal so a misclick can't accidentally bypass voting.
   //
-  // The actual merge pipeline (atomic 'promoted → merging' claim,
-  // GitHub merge, prod rebuild, staging teardown, broadcasts) is the
-  // same `checkAndMerge` path the regular vote route uses — we just
-  // pass `force: true` to skip the early gates. The chat message
+  // The merge is the same one a vote asks for (the app's merge queue,
+  // then the proposal machine's claim and GitHub's merge), forced: the
+  // vote and checks gates are skipped, shots are not, and the force lasts
+  // through a conflict resolution until it merges (M4). The chat message
   // distinguishes the override so users see who did it and why a PR
   // landed without the usual tally.
   router.post('/api/sessions/:id/admin-merge', drainGuard, sameOriginBrowserOnly, async (req, res) => {
@@ -5056,26 +5046,16 @@ function voteRoutes(config) {
         });
       }
 
-      // Respond immediately; the merge itself runs in the background
-      // exactly like the regular vote-driven path. Clients refresh via
-      // the `pushVoteUpdate` broadcasts emitted by checkAndMerge.
       log.info('votes', 'Admin force-merge requested', {
         sessionId: session.id, by: req.user.username,
       });
+      const out = await require('../workflow/platform.ts').forceMerge({
+        sessionId: session.id, appId: session.app_id, from: session.status, userId: req.user.id, username: req.user.username,
+      });
+      if (out.status === 'rejected') {
+        return res.status(409).json({ error: out.reason || 'not_in_review' });
+      }
       res.json({ ok: true, queued: true });
-
-      inflightWork.track('force-merge', checkAndMerge(config, pool, session, { force: true, forceBy: req.user }))
-        .then((mergeResult) => {
-          if (mergeResult?.merged) {
-            const { pushVoteUpdate } = require('../services/ws');
-            pushVoteUpdate({ sessionId: session.id, appSlug: session.app_slug, merged: true });
-          }
-        })
-        .catch((err) => {
-          log.error('votes', 'Admin force-merge failed', {
-            sessionId: session.id, err: err.message,
-          });
-        });
     } catch (err) {
       log.error('votes', 'Admin force-merge route failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -5085,19 +5065,23 @@ function voteRoutes(config) {
   return router;
 }
 
-// `options.force` (admin force-merge): skip the vote-count, locked-app
-// admin-yes, and behind_main gates entirely and proceed straight to the
-// claim+merge pipeline. The atomic `promoted → merging` claim still
-// races against any concurrent vote-driven merge, so we won't double-
-// merge. `options.forceBy` is the admin user object (id, username) used
-// for the "merged by <admin> overriding vote" chat message.
-async function checkAndMerge(config, pool, session, options = {}) {
-  // `options.autoResolve` (default true): when a merge is blocked by a
-  // conflict / behind-main, kick off the worker-based auto-resolver
-  // (sync with main + retry). The resolver re-invokes checkAndMerge with
-  // autoResolve:false so its own conflict paths don't re-trigger the
-  // resolver — this bounds the resolve+retry to a single cycle.
-  const { force = false, forceBy = null, autoResolve = true } = options;
+// The merge gate (the proposal machine's `merge.gate` work): everything a
+// proposal must satisfy before GitHub is asked to merge it, measured now,
+// with what it needs from outside the database (the live revision, the
+// protected-settings check, the mirror's merge, the platform variables).
+// It decides nothing: a proposal it finds ready is claimed by the proposal
+// machine, which reads every deciding input again under the proposal's lock
+// (src/workflow/proposal/facts.ts). What it finds is written for the card
+// (merge_requirements) and, where somebody has to act, said in the thread.
+//
+// `options.force` (an admin's force merge): the vote, the lock's admin Yes
+// and every gate after them are skipped; shots are not.
+async function evaluateMergeGate(config, pool, session, options = {}) {
+  const { force = false, forceBy = null } = options;
+  // A red main lets through only a head level with main, merging clean and
+  // green on its own tree: the claim reads the pause again, and this says
+  // whether this head is one of those.
+  let mainPassThrough = false;
 
   // Legacy native rows may predate reviewed_head_sha. Establish their live
   // GitHub revision before looking at votes (and clear any unbound legacy
@@ -5281,9 +5265,8 @@ async function checkAndMerge(config, pool, session, options = {}) {
   // sub-threshold vote and would bury the interesting attempts. A run opens
   // only once a merge actually has a shot (majority reached, or a
   // force-merge), so the /debug list reads as real merge attempts — the
-  // ones that either merge or get blocked. When the conflict-resolver
-  // re-enters us (autoResolve:false) it passes its own run id so the retry
-  // merge nests under the resolution run instead of spawning a duplicate.
+  // ones that either merge or get blocked. A caller that already has a run
+  // passes its id (debugRunId) so these steps nest under it.
   const md = require('../services/merge-debug');
   let debugRunId = options.debugRunId || null;
   const ownDebugRun = !debugRunId;
@@ -5471,7 +5454,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // the message was a promise nobody was keeping, and the proposal sat
     // drifting with no actor at all. That was #2038's F2.
     //
-    // Under direct-merge lanes (services/merge-queue.js) the gate asks one
+    // Under direct-merge lanes (the merge-queue machine, src/workflow/merge-queue/) the gate asks one
     // question: does this head merge cleanly with main RIGHT NOW? Clean
     // merges as it stands, however far behind. A conflict is refused and
     // handed to the conflict lane, whose resolution pushes a new head that
@@ -5480,20 +5463,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // Measured, not remembered: the old gate read session.behind_main off a
     // row that could be hours old, and a cached 0 let a genuinely-behind
     // proposal through to a 405 that nobody expected.
-    // Required lazily and only where used. services/merge-queue pulls in the
-    // worker and docker chain, and this gate runs on every vote — including
-    // in unit suites that drive checkAndMerge with those collaborators
-    // deliberately absent.
     const integrationSvc = require('../services/integration');
-    const enqueueIntegration = () => {
-      try {
-        require('../services/merge-queue').enqueue(config, session.app_id);
-      } catch (err) {
-        log.warn('votes', 'Could not enqueue for integration', {
-          sessionId: session.id, err: err.message,
-        });
-      }
-    };
     const measured = await integrationSvc.measureDeduped(
       { pool, session }, { force: true }
     ).catch((err) => {
@@ -5517,7 +5487,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
       const n = (measured.conflictPaths || []).length;
       const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
       // Who resolves it, in the words the card uses: the conflict lane's
-      // verdict on this head, read off the row (services/merge-queue.js
+      // verdict on this head, read off the row (the merge-queue machine
       // writes it; services/merge-requirements.js reads it). The approvals
       // gate has passed, so an 'awaiting_approval' left from before the
       // vote is stale here and is not repeated.
@@ -5548,9 +5518,8 @@ async function checkAndMerge(config, pool, session, options = {}) {
       gateSave();
       dend('conflict_resolving', 'Conflicts with main: queued for integration.');
       // 'conflict' is derivable by the browser from the columns it already
-      // reads, so the server does not restate it — only 'integrating' is its
-      // to report, and the queue sets that when it actually starts.
-      if (autoResolve) enqueueIntegration();
+      // reads, so the server does not restate it. The app's merge queue
+      // hears the refusal and takes the head to its conflict lane.
       return {
         merged: false, yesCount, needed: required,
         blockReason: 'conflict', conflictPaths: measured.conflictPaths,
@@ -5926,6 +5895,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
           mainCheck: mainHealth,
         };
       }
+      mainPassThrough = true;
       dstep({
         phase: 'gate:main_healthy',
         message: `Main's unit suite is red (since ${since}), but this head is level with main and its own checks passed on this exact tree; merging it re-tests main.`,
@@ -5954,541 +5924,183 @@ async function checkAndMerge(config, pool, session, options = {}) {
       });
     }
   }
-  // For admin force-merge we deliberately skip the behind_main pre-check
-  // — GitHub will still reject the merge if there's a real conflict,
-  // and the catch-block below surfaces that the same way it does for
-  // votes. Admins overriding the vote can decide whether to push the
-  // branch sync themselves.
-
-  // Majority reached. Try to claim the merge by atomically flipping
-  // status 'promoted' → 'merging'. Only one concurrent caller will
-  // win this; everyone else bails out. This guards against the
-  // previous bug where hammering "Yes" fired N parallel merge+rebuild
-  // pipelines that stomped on each other (GitHub lock, /tmp/usernode-
-  // rebuild-* git clone races, duplicate `docker run --name ...`, etc).
-  // Force-merge skips the gate block above, so its run opens here.
+  // Ready: the claim is the proposal machine's, under its lock.
   await startDebugIfNeeded();
   if (force) {
     dstep({ phase: 'gate:majority', message: `Force-merge by ${forceBy?.username || 'an admin'}, bypassing the vote/checks gates.`, detail: { yesCount, majority, forced: true } });
   }
-
-  // The claim is the proposal machine's (Q2): it moves the proposal into
-  // 'merging' only while it is in review at the head and epoch the gate
-  // above read, and, unless an admin forces it, while the vote gate read
-  // again under its lock still says merge (R1, bugs 1 and 2). Exactly one
-  // of two concurrent attempts wins it. Its transition clears what blocked
-  // the card and tells every client the proposal is merging.
-  const workflow = require('../workflow/platform.ts');
-  const claimed = await workflow.claimMerge({
-    sessionId: session.id, appId: session.app_id,
-    head: gatedAt && /^[0-9a-f]{40}$/i.test(String(gatedAt.head || '')) ? String(gatedAt.head).toLowerCase() : null,
-    epoch: Number.isInteger(Number(gatedAt?.approval_epoch)) ? Number(gatedAt.approval_epoch) : 0,
-    force, explicitApproval, explicitReason: explicitApprovalReason,
-  });
-  // #2061 — gate 7 starts here, and until now none of its outcomes were
-  // written anywhere a card could read: they are reached only inside a merge
-  // attempt, which either succeeded or logged and moved on. That is why
-  // "checks are running, so it merges next" was a guess the reader had to
-  // make rather than something the card could say.
   gateTrace.stop('github', 'active', { note: 'merging now' });
   gateSave();
-  if (claimed.status !== 'accepted' && claimed.status !== 'replayed') {
-    const why = claimed.status === 'rejected' ? claimed.reason : claimed.status;
-    log.info('votes', 'Merge not claimed', { sessionId: session.id, why });
-    if (why === 'in_progress' || why === 'pending') {
-      dstep({ phase: 'claim', message: 'Merge already claimed by another request, so skipping.' });
-      dend('noop', 'Another request is already merging this proposal.');
-      return { merged: false, inProgress: true };
-    }
-    dstep({ phase: 'claim', level: 'warn', message: `The proposal could not be claimed for the merge (${why}).`, detail: { why } });
-    gateTrace.revise('github', 'waiting', { note: 'the votes or the revision changed before the merge; it is looked at again' });
-    gateSave();
-    dend('deferred', `Not claimed: ${why}.`);
-    return { merged: false, needed: required, yesCount, claimRefused: why };
+  dend('merging', `Gate passed${force ? ` (force by ${forceBy?.username || 'admin'})` : ''}; the proposal machine claims and merges it.`);
+  return {
+    ready: true,
+    head: gatedAt && /^[0-9a-f]{40}$/i.test(String(gatedAt.head || '')) ? String(gatedAt.head).toLowerCase() : null,
+    epoch: Number.isInteger(Number(gatedAt?.approval_epoch)) ? Number(gatedAt.approval_epoch) : 0,
+    explicitApproval, explicitReason: explicitApprovalReason,
+    mainPassThrough,
+    tally: { yes: yesCount, required, active: activeCount },
+  };
+}
+
+function sessionLabel(session) {
+  return session.pr_title ? `PR #${session.pr_number}: ${session.pr_title}` : `PR #${session.pr_number}`;
+}
+
+// What a merge refusal was about, from GitHub's answer and the pull request
+// as it stands now (null when GitHub could not be read).
+function refusalKind(err, pr) {
+  const msg = String((err && err.message) || '').toLowerCase();
+  if (pr && pr.draft === true) return 'draft';
+  if (/base branch was modified/.test(msg)) return 'base_moved';
+  if (pr && (pr.mergeable === false || pr.mergeable_state === 'dirty')) return 'conflict';
+  if (/merge conflict/.test(msg)) return 'conflict';
+  if (pr && pr.mergeable_state === 'blocked') return 'blocked';
+  if (/not mergeable/.test(msg) && (!pr || pr.mergeable == null)) return 'conflict';
+  return 'blocked';
+}
+
+// The GitHub half of a merge (the proposal machine's `merge.attempt` work):
+// GitHub is asked to merge the pull request at exactly `head`, and the answer
+// is one named outcome:
+//   merged     { sha, mergedAt?, observed? }
+//   head_moved { votesKept, reviewedHeadSha, message }  the branch moved since the vote
+//   unverified { message }        a 409 whose revision GitHub would not confirm
+//   reopened   {}                 closed on GitHub, reopened: it can be merged again
+//   closed     { message }        closed on GitHub, and could not be reopened
+//   refused    { kind, message }  conflict | draft | blocked | base_moved
+// It never asks twice: once it has asked (its checkpoint), a retry reads the
+// pull request first, so a lost answer is observed rather than misread as a
+// refusal (merge trace bug 1). An error that is no answer from GitHub (the
+// network, a 5xx, its rate limit) is thrown: the work is tried again,
+// observing first.
+async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, checkpoint = async () => {} } = {}) {
+  const { rows: [session] = [] } = await pool.query(
+    `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.self_hosted AS app_self_hosted
+       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [sessionId]);
+  if (!session) return { outcome: 'gone' };
+  const isImported = session.source === 'imported';
+  const useMockMerge = isImported && usesMockGithubForImports();
+  const client = useMockMerge ? githubMock : github;
+  if (!(client.isEnabled() || useMockMerge) || !session.repo_url || !session.pr_number) {
+    // No GitHub, or no pull request (a local stack): nothing to ask.
+    return { outcome: 'merged', sha: null, noGithub: true };
   }
-  const claim = claimed.reply?.claim ?? null;
-  dstep({ phase: 'claim', message: 'Claimed merge (promoted → merging).' });
-  // Gives the claim back: the attempt ended without merging.
-  const releaseClaim = (reason) => workflow.releaseMerge({ sessionId: session.id, appId: session.app_id, claim, reason })
-    .catch((err) => log.warn('votes', 'Could not release the merge claim', { sessionId: session.id, err: err.message }));
+  // GitHub is there and the proposal has a pull request: a repository this
+  // cannot read is a refusal, never a merge nobody asked GitHub for.
+  const [, owner, repo] = String(session.repo_url).match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/) || [];
+  if (!owner || !repo) {
+    return { outcome: 'refused', kind: 'blocked', message: `${sessionLabel(session)} was not merged: its repository address (${String(session.repo_url).slice(0, 200)}) could not be read.` };
+  }
+  const pinned = head || reviewedHeadForSession(session) || null;
+  const label = sessionLabel(session);
+  const readPr = () => client.getPR(owner, repo, session.pr_number).catch(() => null);
+  const refused = (err, pr) => {
+    const kind = refusalKind(err, pr);
+    const said = String((err && err.message) || '').slice(0, 300);
+    const owner_ = session.user_id ? `<@${session.user_id}>` : 'the session owner';
+    const message = kind === 'conflict'
+      ? `${label} hit a conflict with main during a merge attempt. Homeroom resolves it automatically when it can; if it can't, ${owner_} can run "Sync with main" from the session's dev-chat.`
+      : kind === 'draft'
+        ? `${label} wasn't merged: it is a draft on GitHub. Its author has to mark it ready for review, and it merges then.`
+        : kind === 'base_moved'
+          ? `${label} wasn't merged on this attempt: main moved while GitHub was merging it. It is tried again.`
+          : `${label} wasn't merged: GitHub refused it (${said || 'no reason given'}). It is tried again when its commit, main or its votes change.`;
+    return { outcome: 'refused', kind, message, githubMessage: said || null };
+  };
+  const unanswered = (err) => !err || !Number.isInteger(err.status) || err.status >= 500 || err.status === 429;
+  // GitHub's hourly limit used up (a 403 or a 429 saying no requests are
+  // left) or its secondary limit (Retry-After): it did not merge, and it is
+  // not a refusal of this head. The proposal goes back to review with
+  // nothing remembered against it, and the queue's next look asks again.
+  const githubBudget = require('../services/github-budget');
+  const throttled = (err) => githubBudget.isRateLimitError(err) || githubBudget.isSecondaryRateLimitError(err);
+  const limited = (err) => ({ outcome: 'rate_limited', message: githubBudget.rateLimitNotice(err) || null });
 
-  log.info('votes',
-    force ? 'Admin force-merge invoked, merging' : 'Majority reached, merging',
-    {
-      sessionId: session.id, yesCount, needed: required,
-      ...(force && forceBy ? { forcedBy: forceBy.username } : {}),
-    });
-
-  let mergeCommitSha = null;
-  // Tracks whether the irreversible GitHub merge has already happened. Once
-  // it has, a failure in any LATER step (prod rebuild, staging teardown,
-  // bounty payout, …) must NOT roll the session back to 'promoted' — the PR
-  // is merged on GitHub and re-opening it for voting is the bug behind
-  // "merged PRs still show up for voting" (the rebuild can keep failing —
-  // e.g. a newly-required secret with no production value — yet the merge is
-  // done). See the catch block below.
-  let githubMerged = false;
-  let releaseMergeLock = null;
-
-  try {
-    releaseMergeLock = await require('../services/merge-finalization-lock').acquire(pool, session.id);
-    // Merge PR on GitHub
-    // Pin every GitHub merge to the exact reviewed commit so GitHub refuses
-    // (409) if the head moved. Imported staging previews still use their
-    // existing in-memory mock; native proposals always use the real client.
-    const isImported = session.source === 'imported';
-    const useMockMerge = isImported && usesMockGithubForImports();
-    const mergeClient = useMockMerge ? githubMock : github;
-    if ((mergeClient.isEnabled() || useMockMerge) && session.repo_url && session.pr_number) {
-      const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-      if (owner && repo) {
-        const pinnedSha = reviewedHeadForSession(session);
-        dstep({ phase: 'github_merge', message: `Calling GitHub merge for PR #${session.pr_number}…`, detail: { owner, repo, pinnedSha, mock: useMockMerge } });
-        let mergeData;
-        try {
-          mergeData = await mergeClient.mergePR(owner, repo, session.pr_number, pinnedSha);
-        } catch (err) {
-          // Head moved between the review and the merge. Do NOT error the proposal: release
-          // the 'merging' claim back to 'promoted' so the row stays recoverable
-          // (recoverStuckMerges understands both states). Both sources re-pin
-          // from the mirror right here: native rows always did; imported rows
-          // used to be left to the sync poller, which read the platform's own
-          // sync commit as an author push and cleared the votes (#2100). An
-          // imported head the mirror cannot see (author's fork) is still left
-          // to the poller. Return a distinct { headMoved } outcome; nothing
-          // merged.
-          if (err && err.headMoved) {
-            let nativeRefresh = null;
-            let importedRefresh = null;
-            if (isImported) {
-              importedRefresh = await require('../services/pr-import-sync').reconcileImportedHead({
-                config, pool, session, checks: 'defer', notify: false,
-              });
-              // The mirror says the branch still sits on the pinned commit:
-              // this 409 was GitHub's word for an ordinary conflict, not a
-              // head move. Same routing as the native branch below.
-              if (importedRefresh.reconciled && !importedRefresh.changed
-                  && sameSha(importedRefresh.headSha, pinnedSha)) {
-                err.headMoved = false;
-                err.status = 405;
-                throw err;
-              }
-            } else {
-              // The line below says the votes were cleared, so the
-              // reconciler does not say it a second time (#3411).
-              nativeRefresh = await reconcileNativeReviewedHead({
-                config, pool, session, fresh: true, notify: false,
-                announceClearedVotes: false,
-              }).catch((syncErr) => {
-                log.warn('votes', 'Native head-moved reconciliation failed', {
-                  sessionId: session.id, err: syncErr.message,
-                });
-                return null;
-              });
-
-              // GitHub also uses 409 for an ordinary merge conflict. If a
-              // fresh read says the native PR is still on the exact pinned
-              // SHA, this was not a revision change; route it through the
-              // existing conflict recovery path instead of clearing review.
-              if (!nativeRefresh?.blocked && nativeRefresh?.headSha === pinnedSha) {
-                err.headMoved = false;
-                err.status = 405;
-                throw err;
-              }
-
-              // A 409 plus an unverifiable revision is ambiguous. Release the
-              // claim and fail closed without claiming either a head move or a
-              // merge conflict; a later vote/sweep can retry the live read.
-              if (!nativeRefresh || nativeRefresh.blocked || !nativeRefresh.headSha) {
-                await releaseClaim('revision_unverified');
-                try {
-                  const { pushVoteUpdate } = require('../services/ws');
-                  // merging:false + merged:false is the terminal "attempt
-                  // ended, no deploy coming" shape — clients un-latch the
-                  // self-app "Platform updating…" banner off it (see
-                  // handleVoteUpdate). Every terminal broadcast must carry
-                  // merging:false or self-app tabs stay read-only waiting
-                  // for a SHA flip that never comes.
-                  pushVoteUpdate({
-                    sessionId: session.id, appSlug: session.app_slug,
-                    merged: false, merging: false,
-                    selfHosted: !!session.app_self_hosted,
-                  });
-                } catch (_) { /* ws failures non-fatal */ }
-                const reason = nativeRefresh?.reason
-                  || 'GitHub could not verify the pull request revision after refusing the merge.';
-                await sendSystemMessage(pool, session.app_id,
-                  `PR #${session.pr_number} was not merged because its current GitHub revision could not be verified. Please retry after GitHub is reachable.`,
-                  'system', null, { type: 'session', ref: session.id }
-                ).catch(() => {});
-                dstep({
-                  phase: 'github_merge', level: 'warn',
-                  message: 'GitHub refused the merge and the live native revision could not be verified.',
-                  detail: { revisionBlocked: true, pinnedSha, reason },
-                });
-                gateTrace.revise('github', 'active', {
-                  note: 'waiting for GitHub to confirm the current revision',
-                });
-                gateSave();
-                dend('deferred', 'Merge deferred: the current GitHub revision could not be verified.');
-                return {
-                  merged: false,
-                  revisionBlocked: true,
-                  transient: !!nativeRefresh?.transient,
-                  error: reason,
-                };
-              }
-            }
-            await releaseClaim('head_moved');
-            try {
-              const { pushVoteUpdate } = require('../services/ws');
-              // merging:false ends the merge attempt for clients: the
-              // merging:true broadcast above armed the self-app "Platform
-              // updating…" banner, and no deploy — hence no SHA flip —
-              // follows an aborted merge. A head move is deliberately NOT
-              // flagged mergeFailed; the client un-latches off the
-              // merging:false + merged:false shape itself.
-              pushVoteUpdate({
-                sessionId: session.id, appSlug: session.app_slug,
-                merged: false, merging: false, headMoved: true,
-                selfHosted: !!session.app_self_hosted,
-              });
-            } catch (_) { /* ws failures non-fatal */ }
-            // #955: the head may have moved because the PLATFORM synced this
-            // branch with main. Those approvals survived the refresh, so this
-            // is a re-pin and an immediate retry — not a return to review.
-            const refreshed = isImported
-              ? (importedRefresh?.reconciled && importedRefresh.changed ? importedRefresh : null)
-              : nativeRefresh;
-            const votesKept = !!refreshed?.votesKept;
-            const refreshedHeadSha = refreshed?.headSha || null;
-            const movedLabel = session.pr_title
-              ? `PR #${session.pr_number}: ${session.pr_title}`
-              : `PR #${session.pr_number}`;
-            const movedMessage = (isImported && !refreshed)
-              ? `${movedLabel} wasn't merged, because the PR was updated on GitHub since the vote, so GitHub declined to merge the older commit. It'll be re-checked against the new commit and can merge again once it passes.`
-              : votesKept
-                ? `${movedLabel} wasn't merged on this attempt: it had just been synced with main, so the merge is now pinned to commit ${String(refreshedHeadSha).slice(0, 8)}. Existing votes were kept and the merge retries automatically.`
-                : `${movedLabel} wasn't merged, because its GitHub head changed after review. Earlier-revision votes were cleared and the new commit is being checked; please re-review it.`;
-            await sendSystemMessage(pool, session.app_id,
-              movedMessage,
-              'system', null, { type: 'session', ref: session.id }
-            ).catch(() => {});
-            dstep({ phase: 'github_merge', level: 'warn', message: (isImported && !refreshed)
-              ? 'GitHub refused the merge: the PR head moved since the reviewed commit. Released the merge claim; the sync poller will pick up the new head.'
-              : votesKept
-                ? 'GitHub refused the merge: the pinned commit was superseded by the platform\'s own sync. Re-pinned to it with votes intact and re-queued the merge.'
-                : 'GitHub refused the merge: the PR head moved since review. Released the merge claim and reset the proposal to the new revision.', detail: { headMoved: true, votesKept, pinnedSha, refreshedHeadSha } });
-            dend('deferred', (isImported && !refreshed)
-              ? 'Head moved since the reviewed commit, so it is deferred to the sync poller.'
-              : votesKept
-                ? 'Superseded by the platform\'s own sync commit, so it is re-queued with votes intact.'
-                : 'Head moved since review, so it returned to review on the new commit.');
-            // #2061: gate 7 was marked 'active — merging now' at the claim,
-            // and the claim has just been released. Whatever the card reads
-            // next must not still say the merge is under way (readRequirements
-            // also retires a recording whose head or epoch moved on, but the
-            // fork-hosted imported case moves neither).
-            gateTrace.revise('github', votesKept ? 'active' : 'waiting', {
-              note: (isImported && !refreshed)
-                ? 'GitHub declined the reviewed commit because the branch moved; waiting for the new head to be picked up'
-                : votesKept
-                  ? `re-pinned to the synced commit ${String(refreshedHeadSha).slice(0, 8)}; the merge retries automatically`
-                  : 'the branch moved after review, so it is back to review on the new commit',
-            });
-            gateSave();
-            if (votesKept) {
-              // Re-drive the app drain so the merge is re-attempted against the
-              // corrected pin instead of waiting for the hourly sweeper. It
-              // cannot loop: the pin now equals the live head, so the retry
-              // either merges or blocks on a real gate (usually checks).
-              checkAndResolveConflicts(config, { app_id: session.app_id }).catch((e) => {
-                log.warn('votes', 'Post-sync merge re-kick failed', {
-                  sessionId: session.id, err: e.message,
-                });
-              });
-            }
-            return {
-              merged: false, headMoved: true, needed: required, yesCount,
-              ...(votesKept ? { votesKept: true } : {}),
-              ...(refreshedHeadSha ? { reviewedHeadSha: refreshedHeadSha } : {}),
-            };
-          }
-          throw err;
-        }
-        // #11: capture the squash-merge commit SHA so future vote-to-undo
-        // can `git revert <sha>` against main. The Octokit `pulls.merge`
-        // response shape is { sha, merged: true, message }.
-        mergeCommitSha = mergeData?.sha || null;
-        githubMerged = true;
-        dstep({ phase: 'github_merge', message: `GitHub merged PR #${session.pr_number}${mergeCommitSha ? ` as commit ${String(mergeCommitSha).slice(0, 9)}` : ''}.`, detail: { sha: mergeCommitSha } });
-      }
-    } else {
-      dstep({ phase: 'github_merge', message: 'GitHub not enabled or PR-less, so skipping the GitHub merge call.' });
-    }
-
-    // Everything after GitHub's merge belongs to the merge-followups
-    // workflow machine (src/workflow/merge-followups/): the status move,
-    // delivery, teardown, included changes, requests and the announcements,
-    // each durable. The merge reports it and waits briefly for the status
-    // move.
-    const handed = await require('../workflow/platform.ts').mergeConfirmed({
-      sessionId: session.id, appId: session.app_id, mergeSha: mergeCommitSha,
-      force, forcedBy: forceBy?.username || null,
-      tally: { yes: yesCount, required, active: activeCount },
-    });
-    if (handed.status === 'rejected' || handed.status === 'faulted') {
-      log.error('votes', 'The merge-followups machine refused a confirmed merge', {
-        sessionId: session.id, status: handed.status, reason: handed.reason,
-      });
-    }
-    dstep({
-      phase: 'merged',
-      message: `Merged${mergeCommitSha ? ` (commit ${String(mergeCommitSha).slice(0, 9)})` : ''}. Delivery and the follow-ups are the merge-followups workflow's (${handed.status}).`,
-      detail: { sha: mergeCommitSha, workflowEvent: handed.eventId, outcome: handed.status },
-    });
-    gateTrace.revise('github', 'done', { note: 'merged' });
-    gateSave();
-    dend('merged', `Merged${force ? ` (force by ${forceBy?.username || 'admin'})` : ''}.`);
-    return { merged: true, ...(handed.status === 'pending' ? { followupsPending: true } : {}) };
-  } catch (err) {
-    log.error('votes', 'Merge failed', { sessionId: session.id, err: err.message, githubMerged });
-    dstep({ phase: 'merge_error', level: 'error', message: `Merge step threw: ${err.message}`, detail: { githubMerged, status: err.status || null } });
-
-    // The GitHub merge is irreversible. If it succeeded, the only step
-    // after it is reporting it to the merge-followups machine: a report that
-    // failed leaves the row 'merging', and recoverStuckMerges finds the
-    // merge on GitHub and reports it again. Rolling the session back to
-    // 'promoted' would show a merged PR as "up for voting" forever (any
-    // "retry" merge 405s: GitHub has nothing left to merge). The pre-merge
-    // conflict/behind_main handling further down is premised on the merge
-    // NOT having happened, so we return early.
-    if (githubMerged) {
-      dend('merged', 'Merged on GitHub; recovery records the merge.');
-      return { merged: true, followupsPending: true };
-    }
-
-    // GitHub merge did NOT happen (conflict, auth, transient API error).
-    // Release the 'merging' claim so a subsequent vote (or retry) can
-    // try again. Without this the session would be stuck in 'merging'
-    // forever on any transient failure.
-    await releaseClaim('merge_failed');
-
-    // #9: detect GitHub's "merge conflict" rejection specifically.
-    // Octokit returns status 405 with a message containing "merge
-    // conflict" or "not mergeable" when `pulls.merge` is called on
-    // an unmergeable PR. Computed before the mergeFailed broadcast
-    // below so the broadcast can flag whether the auto-resolver is
-    // about to kick in (#239).
-    const msg = String(err.message || '').toLowerCase();
-    const isConflict =
-      err.status === 405 ||
-      msg.includes('merge conflict') ||
-      msg.includes('not mergeable') ||
-      msg.includes('pull request is not mergeable');
-
-    // A 405 on a CLOSED PR is not a merge conflict — GitHub reports
-    // closed PRs as permanently unmergeable ('dirty'), so handing this
-    // to the auto-resolver spins forever (session 2398 / PR #26:
-    // withdraw closed the PR, re-promote never reopened it, every merge
-    // 405'd and every resolve ended still_conflicting). Distinguish the
-    // two with one PR GET: closed-unmerged → reopen and fall through to
-    // the normal conflict handling; reopen refused → terminal pr_closed
-    // (off the vote panel, honest group-chat message, no resolver). A
-    // transient GET failure falls through to the conflict path unchanged.
-    if (isConflict && github.isEnabled() && session.repo_url && session.pr_number) {
-      const [, prOwner, prRepo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-      let prState = null;
-      if (prOwner && prRepo) {
-        try {
-          prState = await github.getPR(prOwner, prRepo, session.pr_number);
-        } catch (e) {
-          log.warn('votes', 'PR state check after merge 405 failed', {
-            sessionId: session.id, pr: session.pr_number, err: e.message,
-          });
-        }
-      }
-      if (prState && prState.state === 'closed' && !prState.merged) {
-        try {
-          await github.reopenPR(prOwner, prRepo, session.pr_number);
-          dstep({ phase: 'reopened_closed_pr', message: `PR #${session.pr_number} was closed on GitHub. Reopened it; continuing with the normal conflict handling.` });
-        } catch (reopenErr) {
-          const closedLabel = session.pr_title
-            ? `PR #${session.pr_number}: ${session.pr_title}`
-            : `PR #${session.pr_number}`;
-          // Off the vote for good, so no vote or sweep picks again a
-          // proposal whose PR can never merge: the proposal machine moves it
-          // back to Underway (its votes voided: bug 19; an imported one
-          // stays as imported rows always are), says so in its thread and
-          // un-latches every client. The owner can re-propose from dev-chat.
-          void closedLabel;
-          await workflow.abandonMerge({ sessionId: session.id, appId: session.app_id, from: 'promoted', reason: 'pr_closed' })
-            .catch((e) => log.warn('votes', 'Could not take a closed PR off the vote', { sessionId: session.id, err: e.message }));
-          dstep({
-            phase: 'pr_closed', level: 'error',
-            message: `PR #${session.pr_number} is closed on GitHub and couldn't be reopened: ${reopenErr.message}`,
-            detail: {},
-          });
-          gateTrace.revise('github', 'blocked', {
-            note: 'the pull request is closed on GitHub and could not be reopened',
-          });
-          gateSave();
-          dend('pr_closed', `PR #${session.pr_number} is closed on GitHub (reopen failed).`);
-          return { merged: false, error: err.message, conflict: false, prClosed: true };
-        }
-      }
-    }
-
-    // Terminal counter-event to the `merging:true` broadcast above: this
-    // merge attempt is over and nothing merged. Every client surface
-    // that advanced to "Merging…" needs it to fall back — the vote
-    // panel, the session header pill, the proposal's own state badge —
-    // so the shape (`merging:false` + `merged:false`) is the contract,
-    // not an optimization. (It also un-latched the platform-wide
-    // "Platform updating…" banner until #1015 removed it.)
-    //
-    // #239: `resolving` rides along when the failure is a conflict AND
-    // the auto-resolver is about to be fired below, so the proposal's
-    // badge reads "Resolving conflicts…" rather than a bare failure
-    // while the resolver spends 1–2 minutes fixing the branch. The
-    // resolver's own start broadcast can lag by a few seconds
-    // (pollMergeable runs first), so this flag closes the gap.
+  if (resumeFrom && resumeFrom.asked) {
+    // It asked before, and never heard: GitHub says what happened.
+    let pr;
     try {
-      const { pushVoteUpdate } = require('../services/ws');
-      pushVoteUpdate({
-        sessionId: session.id,
-        appSlug: session.app_slug,
-        merged: false,
-        merging: false,
-        mergeFailed: true,
-        resolving: isConflict && autoResolve,
-        selfHosted: !!session.app_self_hosted,
-      });
-    } catch (_) { /* ws failures non-fatal */ }
+      pr = await client.getPR(owner, repo, session.pr_number);
+    } catch (err) {
+      if (err && (err.status === 404 || err.status === 410)) return { outcome: 'closed', message: `${label} is gone from GitHub.` };
+      throw err;
+    }
+    if (pr && pr.merged) return { outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, observed: true };
+  }
+  await checkpoint({ asked: true });
 
-    // The pre-merge gate in checkAndMerge catches
-    // the common case (our recorded behind_main > 0), but races
-    // (another PR merging in the window between our last sync and
-    // the vote crossing threshold) can slip past it. When that
-    // happens, our local behind_main is stale (= 0) but the branch
-    // really is behind main, so we:
-    //   1. Bump behind_main to at least 1 so the dev-chat banner
-    //      reappears for the owner. The next worker turn will
-    //      recompute the exact count.
-    //   2. Broadcast session_update(behind_main) so any open dev-chat
-    //      banner refreshes in place.
-    //   3. Post a tailored group-chat message that matches the
-    //      pre-merge gate's wording, so the user knows it's a
-    //      "owner needs to click Sync" situation rather than a
-    //      mysterious GitHub blowup.
-    if (isConflict) {
-      try {
-        const { rows: bumpRows } = await pool.query(
-          `UPDATE chat_sessions
-             SET behind_main = GREATEST(behind_main, 1),
-                 -- #361: a real merge-time conflict — reflect it on the
-                 -- card immediately (conflict_files fills in on the next
-                 -- sync, which captures the --diff-filter=U set).
-                 merge_conflict_state = 'conflict',
-                 conflict_checked_at = NOW()
-           WHERE id = $1 RETURNING behind_main`,
-          [session.id]
-        );
-        const newBehind = bumpRows[0]?.behind_main || 1;
-        try {
-          const { pushSessionUpdate } = require('../services/ws');
-          pushSessionUpdate({
-            action: 'behind_main',
-            sessionId: session.id,
-            appSlug: session.app_slug,
-            behindMain: newBehind,
-          });
-        } catch (_) { /* ws failures non-fatal */ }
-      } catch (_) { /* DB bump failures non-fatal — chat msg still goes out */ }
-
-      const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
-      const label = session.pr_title
-        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
-        : `PR #${session.pr_number || session.id}`;
-      // Honest wording: the auto-resolver drain only picks up proposals
-      // that are vote-eligible to merge, so "syncing automatically" was a
-      // false promise for anything below the gate. On the FORCED path the
-      // resolve really is about to run (dispatched directly below), so the
-      // message can promise it; otherwise lead with the creator's "Sync
-      // with main", which is the path that always works.
-      await sendSystemMessage(pool, session.app_id,
-        (force && autoResolve)
-          ? `${label} hit a conflict with main during an admin merge. Resolving the conflict automatically and retrying the merge.`
-          : `${label} hit a conflict with main during a merge attempt. ${owner}: finish the merge by running "Sync with main" from the session's dev-chat. (Auto-resolution retries only when the proposal is eligible to merge on votes.)`,
-        'system', null, { type: 'session', ref: session.id }
-      );
-      // Auto-heal the conflict the same way the behind_main gate does.
-      // autoResolve guards against the resolver's own retry re-entering
-      // this path (it calls checkAndMerge with autoResolve:false).
-      if (autoResolve) {
-        if (force) {
-          // Force-carry-through: an admin explicitly asked for this merge,
-          // so the recovery must not be handed to the gate-filtered app
-          // drain (which re-applies the vote check the admin just bypassed
-          // and skips anything below threshold — the "starts auto merging,
-          // then nothing" dead end). Resolve THIS session directly — same
-          // worker sync the owner's "Sync with main" runs — and retry the
-          // merge with the force intent preserved.
-          const { resolveAndMaybeRetry } = require('../services/conflict-resolver');
-          resolveAndMaybeRetry(config, { sessionId: session.id }, {
-            mergeOnly: false, force: true, forceBy, trigger: 'force',
-          }).catch((e) => {
-            log.error('votes', 'Auto-resolve (forced merge conflict) failed', {
-              sessionId: session.id, err: e.message,
-            });
-          });
-        } else {
-          // Same app-level drain as the behind_main path — serialized,
-          // one-proposal-at-a-time-per-app resolution.
-          checkAndResolveConflicts(config, { app_id: session.app_id }).catch((e) => {
-            log.error('votes', 'Auto-resolve (merge conflict) failed', {
-              sessionId: session.id, err: e.message,
-            });
-          });
-        }
+  const merge = async () => {
+    const data = await client.mergePR(owner, repo, session.pr_number, pinned);
+    return { outcome: 'merged', sha: (data && data.sha) || null };
+  };
+  try {
+    return await merge();
+  } catch (err) {
+    if (throttled(err)) return limited(err);
+    if (err && err.headMoved) {
+      // GitHub answers 409 for a moved head and for a merge it will not make:
+      // a fresh read of the branch says which.
+      if (isImported) {
+        const refresh = await require('../services/pr-import-sync').reconcileImportedHead({
+          config, pool, session, checks: 'defer', notify: false,
+        });
+        if (refresh.reconciled && !refresh.changed && sameSha(refresh.headSha, pinned)) return refused(err, await readPr());
+        const moved = refresh.reconciled && refresh.changed ? refresh : null;
+        return {
+          outcome: 'head_moved', votesKept: !!moved?.votesKept, reviewedHeadSha: moved?.headSha || null,
+          message: !moved
+            ? `${label} wasn't merged, because the PR was updated on GitHub since the vote, so GitHub declined to merge the older commit. It'll be re-checked against the new commit and can merge again once it passes.`
+            : moved.votesKept
+              ? `${label} wasn't merged on this attempt: it had just been synced with main, so the merge is now pinned to commit ${String(moved.headSha).slice(0, 8)}. Existing votes were kept and the merge retries automatically.`
+              : `${label} wasn't merged, because its GitHub head changed after review. Earlier-revision votes were cleared and the new commit is being checked; please re-review it.`,
+        };
       }
-    } else {
-      await sendSystemMessage(pool, session.app_id,
-        `Failed to merge PR #${session.pr_number || session.id}: ${err.message}`,
-        'system', null, { type: 'session', ref: session.id }
-      );
+      // The line the machine writes says the votes were cleared, so the
+      // reconciler does not say it a second time (#3411).
+      const refresh = await reconcileNativeReviewedHead({
+        config, pool, session, fresh: true, notify: false, announceClearedVotes: false,
+      }).catch(() => null);
+      if (refresh && !refresh.blocked && refresh.headSha === pinned) return refused(err, await readPr());
+      if (!refresh || refresh.blocked || !refresh.headSha) {
+        return {
+          outcome: 'unverified',
+          message: `${label} was not merged because its current GitHub revision could not be verified. Please retry after GitHub is reachable.`,
+        };
+      }
+      return {
+        outcome: 'head_moved', votesKept: !!refresh.votesKept, reviewedHeadSha: refresh.headSha,
+        message: refresh.votesKept
+          ? `${label} wasn't merged on this attempt: it had just been synced with main, so the merge is now pinned to commit ${String(refresh.headSha).slice(0, 8)}. Existing votes were kept and the merge retries automatically.`
+          : `${label} wasn't merged, because its GitHub head changed after review. Earlier-revision votes were cleared and the new commit is being checked; please re-review it.`,
+      };
     }
-    if (isConflict) {
-      dstep({
-        phase: 'conflict_detected', level: 'warn',
-        message: 'GitHub rejected the merge as a conflict. '
-          + (!autoResolve ? 'auto-resolver not run (resolver re-entry).'
-            : force ? 'per-session resolver dispatched directly with the force intent preserved.'
-              : 'auto-resolver queued.'),
-        detail: { autoResolve, forced: !!force },
-      });
-      // A refusal the platform will not resolve is the author's to sync; the
-      // gate's default actor ('auto') read as "Nothing needs you" over a red ✕.
-      gateTrace.revise('github', autoResolve ? 'active' : 'blocked', {
-        note: autoResolve
-          ? 'GitHub refused the merge, so the platform is resolving it automatically'
-          : 'GitHub refused the merge',
-        ...(autoResolve ? {} : { actor: 'author' }),
-      });
-      gateSave();
-      dend(autoResolve ? 'conflict_resolving' : 'conflict_failed', 'Merge conflict at GitHub.');
-    } else {
-      gateTrace.revise('github', 'blocked', { note: 'the merge failed' });
-      gateSave();
-      dend('error', `Merge failed: ${err.message}`);
+    if (unanswered(err)) throw err;
+    const pr = await readPr();
+    if (pr && pr.merged) return { outcome: 'merged', sha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null, observed: true };
+    if (pr && pr.state === 'closed') {
+      try {
+        await client.reopenPR(owner, repo, session.pr_number);
+        return { outcome: 'reopened' };
+      } catch (reopenErr) {
+        // Only GitHub's refusal is "closed for good": no answer is asked again.
+        if (throttled(reopenErr)) return limited(reopenErr);
+        if (unanswered(reopenErr)) throw reopenErr;
+        return { outcome: 'closed', message: `PR #${session.pr_number} is closed on GitHub and couldn't be reopened: ${reopenErr.message}` };
+      }
     }
-    return { merged: false, error: err.message, conflict: isConflict };
-  } finally {
-    if (releaseMergeLock) await releaseMergeLock().catch((err) => {
-      log.warn('votes', 'Could not release merge finalization lock', {
-        sessionId: session.id, err: err.message,
-      });
-    });
+    // A draft of ours goes up for review again and is merged once more; an
+    // imported one is its author's to mark ready.
+    if (pr && pr.draft === true && !isImported && typeof client.markPrReadyForReview === 'function') {
+      try {
+        await client.markPrReadyForReview(owner, repo, session.pr_number, pr);
+        return await merge();
+      } catch (again) {
+        if (throttled(again)) return limited(again);
+        if (!again?.headMoved && unanswered(again)) throw again;
+        return refused(again, await readPr());
+      }
+    }
+    return refused(err, pr);
   }
 }
 
@@ -6507,7 +6119,7 @@ async function checkAndOpenRevert(config, pool, session, decider) {
   // how many votes the revert PR will need to actually land. The
   // locked-app admin-yes gate is NOT applied here: it's a merge-time
   // control and is enforced when the revert PR's own merge vote is
-  // tallied (checkAndMerge), exactly like a forward proposal.
+  // tallied (the merge gate), exactly like a forward proposal.
   const { active: activeCount, majority } = await getActiveUserStats(pool, session.app_id);
 
   // Atomic claim — race-safe against parallel undo requests. We mark
@@ -6782,16 +6394,15 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
   }
 }
 
-// checkAndMerge is exported (in addition to voteRoutes) so the
-// auto-conflict-resolver can re-attempt a merge for an already-approved
-// PR after it syncs cleanly with main. Consumers should lazy-require
-// this module from inside a function to avoid the votes <-> conflict-
-// resolver circular-require load-order trap.
+// evaluateMergeGate and attemptMerge are the proposal machine's merge work
+// (src/workflow/proposal/services.ts merge.gate, merge.attempt).
 // createRevertPR is exported for tests (tests/github-mention-safety.test.js
 // asserts its PR body never carries a live @mention).
 module.exports = {
   voteRoutes,
-  checkAndMerge,
+  evaluateMergeGate,
+  attemptMerge,
+  refusalKind,
   createRevertPR,
   // Focused revision-safety tests exercise the reconciliation without
   // driving the full HTTP router.

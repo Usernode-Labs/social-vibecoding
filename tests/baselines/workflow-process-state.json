@@ -17,6 +17,7 @@
     "preview": {
       "services | uses src/services/application-runtime.js:mode": "which runtime this platform deploys to, from the configuration (pure)",
       "services | uses src/services/application-runtime.js:remove": "removes a Docker preview's container by name (local development and tests), for a retirement",
+      "services | uses src/services/boot-failure-sync.js:afterBootFailure": "measures whether a preview that will not start is behind main and merges with it cleanly (preview.prepare), so the failure note can say so and the machine can ask the proposal for its one sync; the plan half of the boot-failure sync cut out of the in-process job that also ran it, keeping nothing",
       "services | uses src/services/boot-failure-sync.js:explain": "the wording of what a sync with main will do about a failed boot (pure)",
       "services | uses src/services/caddy.js:USERNODE_DOMAIN": "the platform's domain, a constant, for the PR body's media links",
       "services | uses src/services/check-harvest.js:collectForWorkflow": "a lost checks run's Jobs read to the end by its retry, outside the harvest's seat and lifecycle adoption (collect mode, nothing stored)",
@@ -74,7 +75,12 @@
       "services | uses src/services/shots-orchestrator.js:runCurrent": "whether a step's run is still the proposal's run under way (its row and the slot), so copies of a run that ended stop at their next phase and an agent step whose run ended starts no turn; a read, no state"
     },
     "proposal": {
+      "services | uses src/config.js:usesMockGithubForImports": "whether this is a staging preview, whose imported pull requests are read from the mock GitHub (merge.observe), the client choice checkAndMerge made in the vote route before; pure, reads the environment",
+      "services | uses src/routes/votes.js:attemptMerge": "asks GitHub to merge the reviewed head once (merge.attempt) and names what it answered, the GitHub half of checkAndMerge cut out of the vote route and the merge-queue tick that ran it; a retry reads the pull request first from the item's checkpoint, never asks twice",
+      "services | uses src/routes/votes.js:evaluateMergeGate": "measures the merge gate (merge.gate): the tally, the checks, the shots, the main pass-through, the PR's own state, the gate half of checkAndMerge cut out of the vote route and the merge-queue tick; reads and records a debug run, keeps nothing",
       "services | uses src/services/app-admins.js:refreshExplicitApproval": "reads the pull request's diff from GitHub and stamps whether it changes a protected dapp.json block (#788), as the promote route did after its claim; review.open runs it once the proposal is claimed for review",
+      "services | uses src/services/durable-steps.js:durable": "the sync's durable context over the work item's own checkpoint (branch.sync), which durable-turn.js keeps the worker turn's record in so a restart follows the turn instead of starting a second one; no state outside the item",
+      "services | uses src/services/github-mock.js (whole module)": "the staging previews' mock GitHub for imported pull requests (merge.observe), as checkAndMerge used it; production never takes this branch, and the mock's head map is per-process on purpose (a reviewer drives it by hand)",
       "services | uses src/services/github.js (whole module)": "the GitHub client handed to proposal-update.updateLinkedIssues (review.open), which writes a session's originating request into its pull request's Closes lines; no process state",
       "services | uses src/services/github.js:closePR": "closes a closed proposal's pull request on GitHub (pr.close), the call finalizeArchivedSession made best-effort after the archive; one API call",
       "services | uses src/services/github.js:getPR": "reads the pull request as GitHub has it (review.open: merged, closed, a draft, its head; pr.reopen: closed for good), outside the promote route that read it before its claim",
@@ -84,14 +90,13 @@
       "services | uses src/services/limits.js:resolveBillingPath": "reads who pays for the model call that titles a new pull request (review.open), from the owner's stored keys, as the promote route did; no process state",
       "services | uses src/services/pr-metadata.js:applyPrMetadata": "creates the proposal's pull request, or backfills its title, on GitHub (review.open), the promote route's lazy creation cut out of the route that ran it before its claim",
       "services | uses src/services/proposal-update.js:updateLinkedIssues": "links the session's originating request to its pull request on GitHub (review.open), the promote route's #2500 backfill, cut out of the route",
+      "services | uses src/services/sync-main.js:runSyncWork": "brings the proposal's branch level with main (branch.sync): measures, runs the worker's sync turn as a durable step, records what came of it, the work the conflict resolver's and the sync route's in-process jobs did; the turn is followed after a restart",
       "services | uses src/services/worker.js:removeCcVolume": "removes a closed proposal's Claude Code volume at once when the close asked (cc.purge), as finalizeArchivedSession did with purgeCc; strict, so a refused removal is tried again",
       "services | uses src/services/worker.js:removeWorker": "removes the proposal's worker container (worker.destroy: a pause, an unpromote, a close), the call pauseSession and finalizeArchivedSession made after their writes; strict, so a refused removal is tried again"
     }
   },
   "handOff": {
     "preview": {
-      "services | uses src/services/boot-failure-sync.js:afterBootFailure": "a promoted proposal behind main whose preview fails to start is synced with main, once per head (preview.prepare); goes with the merge step (the attempt, the queue and conflicts, with sync with main: the proposal lifecycle step left it there, Q5)",
-      "services | uses src/services/conflict-resolver.js:checkAndResolveConflicts": "a passing or skipped verdict drives the app's merge queue (verdict.followUps), which keeps in-process state; goes when the merge step (attempt, queue, conflicts) migrates the queue",
       "services | uses src/services/homeroom-bot-dm.js:noteChangeReady": "the Homeroom bot hears that its change is ready to try (verdict.followUps); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)",
       "services | uses src/services/homeroom-bot-dm.js:noteChangeStopped": "the Homeroom bot hears that its change's preview will not start (preview.stopped); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)",
       "services | uses src/services/homeroom-bot.js:noteProposalChecks": "the Homeroom bot queues a turn to fix its proposal's failing checks (verdict.followUps); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)"
@@ -137,8 +142,6 @@
     "merge-followups": [
       "notifiers | notifier badgeSync",
       "notifiers | notifier boardChange",
-      "notifiers | notifier kickQueue",
-      "notifiers | uses src/services/conflict-resolver.js:checkAndResolveConflicts",
       "notifiers | uses src/services/mobile-push.js:scheduleBadgeSync",
       "notifiers | uses src/services/ws.js:noteBoardChange",
       "ownership | chat_sessions.included_in_session_id ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
@@ -190,6 +193,7 @@
       "web | state src/workflow/platform.ts#merges",
       "web | state src/workflow/platform.ts#previews",
       "web | state src/workflow/platform.ts#proposals",
+      "web | state src/workflow/platform.ts#queues",
       "web | state src/workflow/platform.ts#runtime",
       "web | state src/workflow/platform.ts#shotRuns",
       "web | uses src/db/pool.js:getPool",
@@ -279,7 +283,6 @@
       "services | uses src/services/check-harvest.js:collectForWorkflow",
       "services | uses src/services/check-runs.js:finish",
       "services | uses src/services/checks-queue.js:maxConcurrentRuns",
-      "services | uses src/services/conflict-resolver.js:checkAndResolveConflicts",
       "services | uses src/services/db-manager.js:databaseExists",
       "services | uses src/services/db-manager.js:dropDatabase",
       "services | uses src/services/deploy-failure.js:bootFailureIsInfrastructure",
@@ -345,6 +348,14 @@
       "ownership | chat_sessions.approval_epoch ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
       "ownership | chat_sessions.archived_at ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
       "ownership | chat_sessions.archived_at ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
+      "ownership | chat_sessions.boot_failure_sync_head ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
+      "ownership | chat_sessions.boot_failure_sync_head ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
+      "ownership | chat_sessions.fixed_check_sync_head ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
+      "ownership | chat_sessions.fixed_check_sync_head ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
+      "ownership | chat_sessions.fixed_check_sync_keys ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
+      "ownership | chat_sessions.fixed_check_sync_keys ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
+      "ownership | chat_sessions.integration_resolved_epoch ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
+      "ownership | chat_sessions.integration_resolved_epoch ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
       "ownership | chat_sessions.merge_attempt_at ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
       "ownership | chat_sessions.merge_attempt_at ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
       "ownership | chat_sessions.promoted_at ← src/db/migrate.js#seedStagingImportedPrProposal",
@@ -358,7 +369,12 @@
       "ownership | chat_sessions.status ← src/db/migrate.js#seedStagingRestartEligibleMerge",
       "ownership | chat_sessions.status ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
       "ownership | chat_sessions.status ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
+      "services | uses src/config.js:usesMockGithubForImports",
+      "services | uses src/routes/votes.js:attemptMerge",
+      "services | uses src/routes/votes.js:evaluateMergeGate",
       "services | uses src/services/app-admins.js:refreshExplicitApproval",
+      "services | uses src/services/durable-steps.js:durable",
+      "services | uses src/services/github-mock.js (whole module)",
       "services | uses src/services/github.js (whole module)",
       "services | uses src/services/github.js:closePR",
       "services | uses src/services/github.js:getPR",
@@ -369,6 +385,7 @@
       "services | uses src/services/limits.js:resolveBillingPath",
       "services | uses src/services/pr-metadata.js:applyPrMetadata",
       "services | uses src/services/proposal-update.js:updateLinkedIssues",
+      "services | uses src/services/sync-main.js:runSyncWork",
       "services | uses src/services/worker.js:removeCcVolume",
       "services | uses src/services/worker.js:removeWorker"
     ]

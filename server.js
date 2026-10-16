@@ -166,7 +166,6 @@ const { createLeadership, withMigrationLock } = require('./src/services/leadersh
 const { publicApiCors } = require('./src/middleware/public-cors');
 const { responseCompression } = require('./src/middleware/response-compression');
 const { trustedProxyClientIp } = require('./src/services/client-ip');
-const { currentVotePredicateSql } = require('./src/services/pr-vote-revision');
 
 const config = loadConfig();
 log.setLevel(config.logLevel);
@@ -677,7 +676,7 @@ app.use(voteRoutes(config));
 app.use(shotsRoutes(config));
 // Demo mode: a creator's synthetic partner proposes, votes and resets, on a
 // demo-mode app only (routes/demo-mode.js). Mounted beside the vote routes
-// it borrows recordVote/checkAndMerge from.
+// it borrows recordVote from.
 app.use(demoModeRoutes(config));
 // "Suggest this back": a remix's owner sends the copy's changes to the app
 // it was copied from, as a proposal there (routes/suggest-back.js).
@@ -1553,25 +1552,15 @@ async function becomeLeader() {
     pool: require('./src/db/pool').getPool(config),
   });
 
-  // Reconcile open PR sessions ('promoted'/'merging') against GitHub's
-  // actual merge state. Reports to the merge-followups machine a merge
-  // GitHub made whose own report was lost (a crash between GitHub's answer
-  // and the append) — it would otherwise stay 'promoted' and keep showing
-  // as "up for voting" forever — and demotes 'merging' rows GitHub never merged (crash mid-merge) back to
-  // 'promoted' so the next vote/retry can redrive. See the function body.
-  // #390: after the GitHub-state reconcile completes (which demotes
-  // crash-stuck 'merging' rows back to 'promoted' so they're eligible
-  // again this same boot), re-drive the per-app drain for every app with
-  // open proposals so any PR that crossed the vote-majority threshold
-  // while the process was down — or whose background merge was lost to the
-  // restart — actually merges now instead of waiting for a fresh vote.
-  // Both stay off the critical path so the server still comes up
-  // immediately, like the other recovery steps below. (A checks run a
-  // rollout interrupted is the preview machine's work: claimed again once
-  // its lease lapses, and its Jobs are collected rather than started over.)
+  // A pull request merged by hand on GitHub while it was up for a vote is
+  // recorded (merge-followups runs every follow-up). The merge itself, its
+  // recovery after a crash and the app's merge queue are the workflow
+  // machines' (src/workflow/proposal/, src/workflow/merge-queue/), which the
+  // leader's boot adopted above. (A checks run a rollout interrupted is the
+  // preview machine's work: claimed again once its lease lapses, and its
+  // Jobs are collected rather than started over.)
   const mainWatch = require('./src/services/main-watch');
-  recoverStuckMerges(config)
-    .then(() => reconcileEligibleMerges(config))
+  observeMergedOnGithub(config)
     // #447: after reconciling merge state, hand the preview machine any
     // proposal whose checks were never recorded or were left 'pending' from
     // before it held the row. Off the critical path. (The machine retries
@@ -1587,7 +1576,7 @@ async function becomeLeader() {
     // live run's and are left alone.
     .then(() => mainWatch.resumeInterrupted(config))
     .catch((err) => {
-      log.warn('server', 'Stuck-merge recovery / eligible-merge reconcile failed', {
+      log.warn('server', 'Boot merge observation / stuck-check reconcile failed', {
         err: err.message,
       });
     });
@@ -1627,18 +1616,10 @@ async function becomeLeader() {
     () => mergeDebug.pruneOldRuns(getPool(config), MERGE_DEBUG_RETENTION_DAYS).catch(() => {}),
     6 * 60 * 60 * 1000, { durable: getPool(config) });
 
-  // #451: periodic auto-merge safety net. The boot sequence above runs
-  // reconcileEligibleMerges / reconcileStuckChecks exactly once; the live
-  // triggers (a vote landing, a checks verdict turning green — see
-  // services/visuals.js, services/conflict-resolver.js, routes/votes.js)
-  // cover the common case, but a lost broadcast or a crash between the
-  // checks-store and its drain trigger could still leave a PR that has both
-  // a winning vote AND passing checks sitting in review until the next
-  // restart. Re-run the same idempotent, bounded reconcilers on a slow
-  // interval so a genuinely-ready proposal can never stall indefinitely.
-  // Off the critical path, single-flight per app inside the drain, and a
-  // no-op when GitHub isn't wired up. Tunable via ELIGIBLE_MERGE_SWEEP_MS.
-  startEligibleMergeSweeper(config);
+  // #451: stuck checks handed to the preview machine again on a slow
+  // interval (a merge needs no sweep: every ask is a message to the app's
+  // merge queue, and the review check asks hourly).
+  startStuckChecksSweeper(config);
 
   // Title auto-heal: retry LLM title generation for PRs/feedback issues
   // that were filed with the fallback template while the Anthropic API was
@@ -1779,9 +1760,8 @@ if (require.main === module) {
 
 // Test-only surface (#183): the orphan-adoption + recovered-turn finalize
 // internals, so the headless-recovery guards stay covered by node --test.
-// `recoverStuckMerges` rides along so the GitHub-reconciliation sweep stays
-// covered too, and `reconcileEligibleMerges` (#390) so the boot-time
-// auto-merge eligibility sweep is covered. `cleanup` + `__setShutdownTargets`
+// `observeMergedOnGithub` rides along so the boot's merged-by-hand lookup
+// stays covered too. `cleanup` + `__setShutdownTargets`
 // (#767) let tests drive the graceful-shutdown sequence against a stubbed
 // listener and pool without booting a server. Not used by any runtime caller.
 module.exports = {
@@ -1810,8 +1790,7 @@ module.exports = {
   buildRecoveryStopHandle,
   finalizeRecoveredTurn,
   restoreMissingQuickReplies,
-  recoverStuckMerges,
-  reconcileEligibleMerges,
+  observeMergedOnGithub,
   reconcileStuckChecks,
   cleanup,
   // Getters, not values: this module.exports literal is evaluated long
@@ -1909,269 +1888,62 @@ async function auditExistingRepoPrivacy(pool) {
   });
 }
 
-// Reconcile open PR sessions against GitHub's actual merge state.
-// See the call site for rationale.
+// A pull request merged on GitHub by hand while it was up for a vote: the
+// leader's boot asks GitHub about every proposal in review and reports a
+// merge it finds (merge-followups records it and runs every follow-up). It
+// decides nothing else: a merge the platform attempted is the proposal
+// machine's, which asks GitHub itself about an answer it lost
+// (`unconfirmed`, observe-first), so nothing is ever demoted from here.
 //
-// Two failure modes are healed here:
-//   1. A session merged on GitHub whose post-merge step (prod rebuild,
-//      etc.) failed, leaving the row stuck in 'promoted'/'merging' even
-//      though the PR is merged. Such a row keeps appearing in the Dev
-//      forum's vote panel forever (GET /api/apps/:slug/promoted returns
-//      `status IN ('promoted','merging')`). This is the whiteboard
-//      #41/#44/#52/#54 bug.
-//   2. A crash mid-merge that left a row in 'merging'. If GitHub never
-//      merged it, flip it back to 'promoted' so the next vote/retry can
-//      redrive (the original recoverStuckMerges behavior).
-//
-// We ask GitHub the truth rather than guessing. Bounded concurrency keeps
-// the boot scan cheap; genuinely-open PRs simply report merged=false and
-// are left untouched (only 'merging' rows are demoted to 'promoted').
-//
-// Every lookup spends GitHub's hourly budget, and on 9 Oct 2026 this sweep
-// was one of the callers refused when the bot token ran out (21 refusals in
-// a minute). So:
-//   - It is background work: it asks services/github-budget.js before each
-//     lookup and stops for the hour once the reserve is reached.
-//   - A refusal for the hourly limit ends the sweep: every remaining lookup
-//     would be refused too, and still counted.
-//   - The timer sweep (attemptedOnly) revisits a demoted attempt every time
-//     for its first hour, while GitHub may still report a merge the platform
-//     lost, and once an hour after that. A merge attempt is never cleared,
-//     so every open proposal that ever tried to merge used to cost one
-//     lookup per sweep, every four minutes, for as long as it stayed open.
-//     A row still 'merging' is looked up every time.
-const RECENT_MERGE_ATTEMPT_MS = 60 * 60 * 1000;
-const OLD_MERGE_ATTEMPT_RECHECK_MS = 60 * 60 * 1000;
-// sessionId -> when the timer sweep last looked up its old attempt.
-const oldMergeAttemptLookedUpAt = new Map();
-
-async function recoverStuckMerges(config, { attemptedOnly = false, now = Date.now } = {}) {
+// Every lookup spends GitHub's hourly budget (9 Oct 2026: this sweep was
+// one of the callers refused when the bot token ran out), so it is
+// background work: it asks services/github-budget.js before each lookup,
+// and a refusal for the hourly limit ends it.
+async function observeMergedOnGithub(config) {
   const { getPool } = require('./src/db/pool');
   const github = require('./src/services/github');
   const githubBudget = require('./src/services/github-budget');
-  const mergeLock = require('./src/services/merge-finalization-lock');
+  if (!github.isEnabled()) return;
   const pool = getPool(config);
   const workflow = require('./src/workflow/platform.ts');
-
   let rows;
   try {
     ({ rows } = await pool.query(
-      `SELECT cs.id, cs.app_id, cs.status, cs.pr_number, cs.merge_commit_sha,
-              cs.merge_attempt_at,
-              a.repo_url
-         FROM chat_sessions cs
-         JOIN apps a ON a.id = cs.app_id
-        WHERE cs.status IN ('promoted', 'merging')
-          AND (NOT $1::boolean OR cs.status = 'merging' OR cs.merge_attempt_at IS NOT NULL)`,
-      [attemptedOnly]
+      `SELECT cs.id, cs.app_id, cs.pr_number, a.repo_url
+         FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+        WHERE cs.status = 'promoted' AND cs.pr_number IS NOT NULL`
     ));
   } catch (err) {
-    log.warn('server', 'recoverStuckMerges query failed', { err: err.message });
+    log.warn('server', 'Merged-by-hand lookup failed', { err: err.message });
     return;
   }
-  if (!rows.length) return;
-
-  // Without GitHub auth the outcome is unknown. Keep the claim until a
-  // later sweep can ask GitHub; a blind demotion can reopen a merged PR.
-  if (!github.isEnabled()) {
-    const merging = rows.filter((row) => row.status === 'merging').length;
-    if (merging) log.warn('server', 'Cannot reconcile merging sessions without GitHub auth', { count: merging });
-    return;
-  }
-
-  // An old attempt the timer looked up within the hour waits its turn.
-  let deferred = 0;
-  if (attemptedOnly) {
-    const listed = new Set(rows.map((row) => row.id));
-    for (const id of oldMergeAttemptLookedUpAt.keys()) {
-      if (!listed.has(id)) oldMergeAttemptLookedUpAt.delete(id);
-    }
-    rows = rows.filter((row) => {
-      if (row.status === 'merging' || !row.merge_attempt_at) return true;
-      if (now() - new Date(row.merge_attempt_at).getTime() < RECENT_MERGE_ATTEMPT_MS) return true;
-      const last = oldMergeAttemptLookedUpAt.get(row.id);
-      if (last && now() - last < OLD_MERGE_ATTEMPT_RECHECK_MS) { deferred++; return false; }
-      return true;
-    });
-    if (!rows.length) return;
-  }
-
-  log.info('server', 'Reconciling open PR sessions against GitHub', { count: rows.length, deferred });
-
-  const CONCURRENCY = 4;
   const queue = rows.slice();
-  let healed = 0;
-  let demoted = 0;
-  let errors = 0;
+  let found = 0;
   let held = 0;
-  let stoppedForLimit = false;
-
   async function worker() {
-    while (queue.length) {
-      if (!githubBudget.budgetAllows('background')) {
-        held += queue.length;
-        queue.length = 0;
-        break;
-      }
-      const row = queue.shift();
-      const release = await mergeLock.acquire(pool, row.id, { tryOnly: true });
-      if (!release) continue; // A live process still owns this merge.
-      try {
-        const oldAttempt = !row.merge_attempt_at
-          || Date.now() - new Date(row.merge_attempt_at).getTime() >= 5 * 60 * 1000;
-        const m = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-        if (!m || !row.pr_number) {
-          // The repository or PR identity is missing; there is no safe
-          // inference about the irreversible GitHub operation.
-          continue;
-        }
-        const [, owner, repo] = m;
-        try {
-          const pr = await github.getPR(owner, repo, row.pr_number);
-          if (attemptedOnly) oldMergeAttemptLookedUpAt.set(row.id, now());
-          if (pr && pr.merged) {
-            // The merge-followups machine records the merge and runs every
-            // follow-up the lost report would have (F2), not only the status.
-            await workflow.mergeObserved({
-              sessionId: row.id, appId: row.app_id,
-              mergeSha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null,
-            });
-            healed++;
-            log.info('server', 'Reported a merged-on-GitHub session to the merge-followups machine', {
-              sessionId: row.id, prNumber: row.pr_number, repo: `${owner}/${repo}`, mergeSha: pr.merge_commit_sha || null,
-            });
-          } else if (row.status === 'merging' && oldAttempt) {
-            // Not merged on GitHub and stuck in 'merging' (crash mid-merge):
-            // the claim goes back to review so the next vote or retry can
-            // drive it again. The proposal machine gives it back only if the
-            // claim is still that old one (a new attempt's is left alone).
-            const out = await workflow.releaseMerge({ sessionId: row.id, appId: row.app_id, claim: null, reason: 'stuck' })
-              .catch(() => null);
-            if (out && (out.status === 'accepted' || out.status === 'replayed')) demoted++;
-          }
-          // Not merged + 'promoted' == genuinely open proposal: leave alone.
-        } catch (err) {
-          errors++;
-          if (githubBudget.isRateLimitError(err)) {
-            // The hour is used up: the rest of the queue would be refused
-            // too. The next sweep after the reset picks them up.
-            if (!stoppedForLimit) {
-              stoppedForLimit = true;
-              log.warn('server', 'recoverStuckMerges: GitHub\'s hourly limit is used up; stopping until the next sweep', {
-                sessionId: row.id, prNumber: row.pr_number, repo: `${owner}/${repo}`,
-                left: queue.length,
-              });
-            }
-            held += queue.length;
-            queue.length = 0;
-          } else {
-            log.warn('server', 'recoverStuckMerges: GitHub lookup failed', {
-              sessionId: row.id, prNumber: row.pr_number,
-              repo: `${owner}/${repo}`, err: err.message,
-            });
-          }
-          // A failed lookup is not proof the merge failed. The next timer
-          // sweep retries without changing this session's status.
-        }
-      } finally {
-        await release();
-      }
-    }
-  }
-
-  try {
-    await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
-  } catch (err) {
-    log.warn('server', 'recoverStuckMerges reconciliation failed', { err: err.message });
-  }
-  log.info('server', 'PR session reconciliation complete', {
-    scanned: rows.length, healed, demoted, errors,
-    ...(held ? { heldForGithubBudget: held } : {}),
-  });
-}
-
-// Boot-time auto-merge reconcile sweep (#390). recoverStuckMerges above
-// reconciles each open session's status against GitHub's actual merge
-// state, but it deliberately leaves genuinely-open 'promoted' rows alone
-// (see its body: "Not merged + 'promoted' == genuinely open proposal:
-// leave alone"). It never re-checks whether a proposal has crossed the
-// vote-majority threshold.
-//
-// Auto-merge is otherwise PURELY event-driven: a merge is only attempted
-// in the background of a live vote (routes/votes.js fires checkAndMerge
-// fire-and-forget). So a proposal that crossed threshold while the process
-// was down — or whose background merge was lost to a restart mid-flight,
-// or that became eligible because the active-user count (and thus the
-// majority) dropped — sits in the Dev vote panel forever until someone
-// happens to cast a fresh vote. That is the "auto-merge stops after
-// restart/update" bug.
-//
-// The fix re-drives the existing per-app drain (checkAndResolveConflicts →
-// drainApp) once at boot for every app that has any open proposal. The
-// drain re-reads everything from Postgres, only ever touches PRs already
-// at/above the active-user majority (the same bar checkAndMerge gates on,
-// so nothing below threshold is resolved pre-emptively — #380), merges
-// them in the normal priority order, and inherits the normal single-flight
-// + Phase 1/Phase 2 conflict handling. It is idempotent and safe to run on
-// every boot. Bounded cross-app concurrency keeps a many-app fleet from
-// fanning out unbounded GitHub calls; per-app work is already serialized
-// by the drain's own single-flight.
-async function reconcileEligibleMerges(config) {
-  const github = require('./src/services/github');
-  // Without GitHub auth the drain's per-session resolve is a no-op
-  // (github_disabled_or_no_pr merges nothing), so skip the work entirely —
-  // matches the no-auth short-circuit in recoverStuckMerges above.
-  if (!github.isEnabled()) return;
-
-  const { getPool } = require('./src/db/pool');
-  const { checkAndResolveConflicts } = require('./src/services/conflict-resolver');
-  const pool = getPool(config);
-
-  let rows;
-  try {
-    ({ rows } = await pool.query(
-      `SELECT DISTINCT app_id FROM chat_sessions WHERE status = 'promoted'`
-    ));
-  } catch (err) {
-    log.warn('server', 'reconcileEligibleMerges query failed', { err: err.message });
-    return;
-  }
-  if (!rows.length) return;
-
-  log.info('server', 'Reconciling eligible auto-merges on startup', { apps: rows.length });
-
-  const CONCURRENCY = 4;
-  const queue = rows.slice();
-  let drained = 0;
-  let errors = 0;
-
-  async function worker() {
-    // A drain started now would die with the process; the next leader's boot
-    // reconcile takes every app with open proposals.
     while (queue.length && !lifecycle.isShuttingDown()) {
-      const { app_id: appId } = queue.shift();
+      if (!githubBudget.budgetAllows('background')) { held += queue.length; queue.length = 0; break; }
+      const row = queue.shift();
+      const m = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      if (!m) continue;
       try {
-        await checkAndResolveConflicts(config, { app_id: appId });
-        drained++;
+        const pr = await github.getPR(m[1], m[2], row.pr_number);
+        if (pr && pr.merged) {
+          await workflow.mergeObserved({
+            sessionId: row.id, appId: row.app_id, mergeSha: pr.merge_commit_sha || null, mergedAt: pr.merged_at || null,
+          });
+          found++;
+        }
       } catch (err) {
-        // checkAndResolveConflicts swallows drainApp errors internally, so
-        // this is belt-and-braces; never let one app's failure abort the rest.
-        errors++;
-        log.warn('server', 'reconcileEligibleMerges: drain failed', {
-          appId, err: err.message,
-        });
+        if (githubBudget.isRateLimitError(err)) { held += queue.length; queue.length = 0; break; }
+        log.warn('server', 'Merged-by-hand lookup: GitHub lookup failed', { sessionId: row.id, err: err.message });
       }
     }
   }
-
-  try {
-    await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
-  } catch (err) {
-    log.warn('server', 'reconcileEligibleMerges sweep failed', { err: err.message });
-  }
-  log.info('server', 'Eligible auto-merge reconciliation complete', {
-    apps: rows.length, drained, errors,
+  await Promise.all(Array.from({ length: 4 }, () => worker())).catch((err) => {
+    log.warn('server', 'Merged-by-hand lookup stopped', { err: err.message });
   });
+  if (rows.length) log.info('server', 'Merged-by-hand lookup complete', { scanned: rows.length, found, ...(held ? { held } : {}) });
 }
 
 // #447: how long a 'pending' check may sit before it's treated as stuck.
@@ -2252,40 +2024,29 @@ async function reconcileStuckChecks(config) {
   });
 }
 
-// #451: how often the auto-merge safety-net sweep runs. A few minutes is
-// well below the cost of letting a ready proposal linger but far above the
-// per-pass work (one indexed query per app with an open proposal, then the
-// single-flight drain). Tunable via ELIGIBLE_MERGE_SWEEP_MS; floored so a
-// mis-set tiny value can't busy-loop the drain.
+// #451: how often stuck checks are handed to the preview machine again. A
+// few minutes is well below the cost of a check left pending; floored so a
+// mis-set tiny value cannot busy-loop it. (Merges are the merge queue's:
+// src/workflow/merge-queue/.) Tunable via ELIGIBLE_MERGE_SWEEP_MS.
 const ELIGIBLE_MERGE_SWEEP_MS = Math.max(
   parseInt(process.env.ELIGIBLE_MERGE_SWEEP_MS || String(4 * 60 * 1000), 10) || (4 * 60 * 1000),
   30 * 1000
 );
 
-// #451: periodic re-drive of the boot-time auto-merge reconcilers. Both
-// reconcileEligibleMerges (merge any promoted PR that now has votes + passing
-// checks) and reconcileStuckChecks (re-run checks left 'pending'/NULL by a
-// mid-capture restart, so they reach a terminal verdict the eligible-merge
-// pass can then act on) are idempotent and bounded, so re-running them on a
-// timer is safe. Guards: skip when GitHub isn't enabled (both are no-ops
-// then), never overlap a still-running sweep, and swallow all errors so the
-// timer can't crash the process. A leader timer (services/leader-timers.js):
-// no pass starts once shutdown has begun, and one under way is drained.
-function startEligibleMergeSweeper(config) {
+// Re-drive reconcileStuckChecks (re-run checks left 'pending'/NULL by a
+// mid-capture restart) on a leader timer: idempotent and bounded, skipped
+// when GitHub is not enabled, never overlapping, never throwing.
+function startStuckChecksSweeper(config) {
   const github = require('./src/services/github');
   let running = false;
-  leaderTimers.every('eligible-merge-sweep', () => {
+  leaderTimers.every('stuck-checks-sweep', () => {
     if (running) return undefined;
     if (!github.isEnabled()) return undefined;
     running = true;
     return Promise.resolve()
-      // A merge request may outlive a leader rollout. Revisit attempts even
-      // after demotion, since GitHub may report their merge a little later.
-      .then(() => recoverStuckMerges(config, { attemptedOnly: true }))
       .then(() => reconcileStuckChecks(config))
-      .then(() => reconcileEligibleMerges(config))
       .catch((err) => {
-        log.warn('server', 'Eligible-merge sweep tick failed', { err: err.message });
+        log.warn('server', 'Stuck-checks sweep tick failed', { err: err.message });
       })
       .finally(() => { running = false; });
   }, ELIGIBLE_MERGE_SWEEP_MS);
@@ -2302,7 +2063,7 @@ const TITLE_HEAL_SWEEP_MS = Math.max(
 );
 
 // Periodic re-drive of title generation for fallback-titled PRs and
-// feedback issues. Same guard shape as startEligibleMergeSweeper: never
+// feedback issues. Same guard shape as startStuckChecksSweeper: never
 // overlap a still-running pass, swallow all errors, unref'd timer. An
 // early first pass (~90s after boot) covers the common "credits restored,
 // platform redeployed" sequence so placeholders heal right away instead
@@ -3239,6 +3000,16 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       config, pool, staging, broadcastGlobal, session, sessionId, containerName, containerState,
     });
     return;
+  }
+
+  if (session.active_turn?.mode === 'sync') {
+    // The proposal machine's sync follows its turn through a restart
+    // (its branch.sync work over services/durable-turn.js): left to it.
+    const syncing = await require('./src/workflow/platform.ts').syncUnderWay(sessionId).catch(() => null);
+    if (syncing) {
+      log.info('server', 'A sync turn its proposal follows; not adopting it', { containerName, sessionId });
+      return;
+    }
   }
 
   if (session.active_turn?.mode === 'shots') {
@@ -4822,28 +4593,16 @@ async function resumeDetachedTurnInner({
       }
       terminalLine = '[done]';
     } else if (recoveryActiveTurn.mode === 'sync') {
-      // A sync turn is system work: it posts its own status rows via
-      // sync-main's sendStatus and has no Mayor reply on the live path
-      // either, so there is no wrap-up. What it does have is a caller that
-      // died with the previous process: the merge-queue pass that
-      // dispatched it, which would have cleared the 'integrating' it had
-      // recorded on the row and then attempted the merge. Without that,
-      // the card kept saying "bringing up to date with main" until some
-      // unrelated trigger happened by — and a proposal whose verdict
-      // carried onto the merged head, with nothing left to rebuild, had no
-      // trigger left at all. So the recovered turn hands the proposal back
-      // to the queue itself.
-      log.info('server', 'Recovered sync turn — handing back to the integration queue', {
-        sessionId,
-      });
+      // A sync turn an older release dispatched (the proposal machine's own
+      // syncs are followed by their work item, and never reach here: see
+      // the guard above). System work with no wrap-up: its row is told it is
+      // no longer integrating, and the app's merge queue looks again.
+      log.info('server', 'Recovered an older release\'s sync turn; asking the merge queue to look again', { sessionId });
       terminalLine = '[done]';
       await require('./src/services/integration').setBlockReasons(pool, sessionId, []);
       if (session.status === 'promoted' && session.app_id != null) {
-        require('./src/services/conflict-resolver')
-          .checkAndResolveConflicts(config, { app_id: session.app_id })
-          .catch((err) => log.warn('server', 'post-recovery queue kick failed', {
-            sessionId, err: err.message,
-          }));
+        await require('./src/workflow/platform.ts').wantMerge({ appId: session.app_id, sessionId, reason: 'recovered-sync' })
+          .catch((err) => log.warn('server', 'post-recovery merge ask failed', { sessionId, err: err.message }));
       }
     } else {
       const { outcome: finalizeOutcome, summary } = await finalizeRecoveredTurn({
@@ -5761,8 +5520,9 @@ function startSessionAutoPauseSweeper(config) {
   }), config.sessionSweepIntervalMs).unref();
 }
 
-// Window-elapsed merges + reversible-archive hard GC.
-//   Pass 0 (merge): a promoted PR whose window has elapsed is merged.
+// Revisions refreshed + reversible-archive hard GC.
+//   Pass 0 (revisions): a promoted PR's reviewed head and protected-settings
+//     flag read again (a merge is the merge queue's: src/workflow/merge-queue/).
 //   Pass 3 (GC): archived sessions past ARCHIVED_RETENTION_MS get their
 //     CC volume purged so memory stops occupying disk, and a merged
 //     change's Kubernetes worker volume that outlived its merge is freed.
@@ -5788,100 +5548,44 @@ function startStalePrSweeper(config) {
     notifyMs: config.prStaleNotifyMs, graceMs: config.prStaleGraceMs,
     retentionMs: config.archivedRetentionMs, intervalMs: config.staleSweepIntervalMs,
   });
-  const {
-    checkAndMerge,
-    reconcilePromotedSweepHead,
-  } = require('./src/routes/votes');
-  const governance = require('./src/services/governance');
+  const { reconcilePromotedSweepHead } = require('./src/routes/votes');
   const appAdmins = require('./src/services/app-admins');
   leaderTimers.every('stale-pr-sweep', async () => {
     if (lifecycle.isShuttingDown()) return;
 
-    // Pass 0: window-elapsed merges. A promoted PR can become mergeable
-    // purely through the passage of time, with no further vote to drive
-    // checkAndMerge — either the threshold path (eased Yes threshold met,
-    // minimum visibility window elapses) or the lazy-consensus path (below
-    // threshold but unopposed Yes lead, its count-based clock elapses —
-    // silence is consent). This pass re-checks each promoted PR's gate and
-    // fires the merge once its window has elapsed. Latency is bounded by
-    // staleSweepIntervalMs (default 1h) — acceptable; see SPEC "Post-window
-    // latency". checkAndMerge re-validates and claims atomically, so a
-    // racing vote can't double-merge.
+    // Pass 0: the revisions of proposals in review, refreshed. A native PR
+    // branch can be updated outside Homeroom (a push nobody announced), and
+    // a protected-settings flag can go stale once main moves. (A proposal
+    // that becomes mergeable with time, its window elapsing, is the
+    // proposal machine's hourly review check's: it asks the app's merge
+    // queue. A merge is never started from here.)
     try {
       const { rows } = await pool.query(
-        `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.self_hosted AS app_self_hosted,
-                (SELECT COUNT(*)::int FROM pr_votes pv
-                  WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-                    AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
-                (SELECT COUNT(*)::int FROM pr_votes pv
-                  WHERE pv.session_id = cs.id AND pv.vote = 'no'
-                    AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
+        `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.self_hosted AS app_self_hosted
            FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
           WHERE cs.status = 'promoted' AND cs.is_headless = FALSE
-            AND (cs.behind_main IS NULL OR cs.behind_main = 0)
           LIMIT 100`
       );
       for (const session of rows) {
         if (activeWorkersSvc.isSessionBusy(session.id)) continue;
         try {
-          // Native PR branches can be updated outside Homeroom. Refresh their
-          // immutable reviewed revision before any timed governance decision,
-          // including automatic rejection. Imported proposals retain their
-          // existing imported-head synchronization behavior.
-          const sweepRevision = await reconcilePromotedSweepHead({
-            config, pool, session,
-          });
+          const sweepRevision = await reconcilePromotedSweepHead({ config, pool, session });
           if (sweepRevision.blocked) {
-            log.warn('server', 'Window-elapsed sweep skipped: native revision unavailable', {
-              sessionId: session.id,
-              transient: !!sweepRevision.transient,
-              reason: sweepRevision.reason,
+            log.warn('server', 'Revision sweep skipped: native revision unavailable', {
+              sessionId: session.id, transient: !!sweepRevision.transient, reason: sweepRevision.reason,
             });
             continue;
           }
           // #788: backfill the explicit-approval flag for never-classified
-          // rows AND re-verify rows stored TRUE (a flag can go stale once
-          // main moves or a sync rewrites the branch); FALSE rows are
-          // skipped. All the policy lives in
-          // services/app-admins.js sweepExplicitApproval.
-          session.requires_explicit_approval =
-            await appAdmins.sweepExplicitApproval(pool, session);
-          // #646: governance-aware gate — honors the app's approver
-          // policy + at-least-N mode (governance/electorate lookups are
-          // TTL-cached in the service, so no per-app cache needed here).
-          // #788: plus the no-timer modifier for a flagged proposal, so
-          // the sweeper can never auto-merge one on a clock, and the
-          // member floor: never on its author's Yes alone either.
-          const gate = await governance.governedGate(pool, session.app_id, {
-            kind: 'pr', id: session.id,
-            openedAt: session.promoted_at || session.created_at,
-            explicitApproval: !!session.requires_explicit_approval,
-            authorId: session.user_id ?? null,
-            // #2038: scoped by approval epoch inside the gate.
-          });
-          // A row that became mergeable merges: the proposal machine reads the
-          // gate again under its lock when checkAndMerge claims it (R1).
-          if (gate.mergeable) {
-            const result = await checkAndMerge(config, pool, session);
-            if (result?.merged) {
-              log.info('server', 'Window-elapsed PR merged by sweeper', {
-                sessionId: session.id, yesCount: session.yes_count,
-              });
-            }
-            continue;
-          }
-          // A proposal the group is voting down is the proposal machine's to
-          // close: its hourly review check reads the gate under the
-          // proposal's lock (src/workflow/proposal/, ReviewCheck), so a Yes
-          // or an unpromote committed meanwhile is counted (bug 3).
+          // rows AND re-verify rows stored TRUE (services/app-admins.js
+          // sweepExplicitApproval).
+          await appAdmins.sweepExplicitApproval(pool, session);
         } catch (err) {
-          log.warn('server', 'Window-elapsed merge check failed', {
-            sessionId: session.id, err: err.message,
-          });
+          log.warn('server', 'Revision sweep failed for a proposal', { sessionId: session.id, err: err.message });
         }
       }
     } catch (err) {
-      log.warn('server', 'Window-elapsed merge sweep failed', { err: err.message });
+      log.warn('server', 'Revision sweep failed', { err: err.message });
     }
 
     // Pass 1 and Pass 2 (warn the author of a proposal nobody has looked at
@@ -6530,10 +6234,10 @@ function closeListener(timeoutMs) {
 }
 
 // What of this process's background work is its leader work: a leader
-// timer's tick (services/leader-timers.js) and a merge pass (merge-queue.js).
-// The lock goes only once they are done, or at the drain deadline: the new
-// leader would run the same sweep, or the same app's merges, beside them.
-const isLeaderWork = (name) => name.startsWith('timer:') || name === 'merge-queue';
+// timer's tick (services/leader-timers.js). The lock goes only once they are
+// done, or at the drain deadline: the new leader would run the same sweep
+// beside them.
+const isLeaderWork = (name) => name.startsWith('timer:');
 
 // A release replaced this process: stop leading, send its tabs to the new
 // Pod, and finish what it holds (services/processes.js), its background work

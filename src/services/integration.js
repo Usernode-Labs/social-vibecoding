@@ -442,38 +442,6 @@ async function clearApprovals(pool, sessionId, reason) {
   return epoch;
 }
 
-// ── The conflict lane's one pre-approval resolution ─────────────────────
-
-/**
- * Record that the queue spent a resolution on this proposal's current
- * authored head. "Current authored head" IS the approval epoch: an authored
- * push bumps it, the platform's own mechanical or resolved moves do not
- * (routes/votes.js reconcileNativeReviewedHead), so stamping the epoch ties
- * the resolution to the author's work rather than to a commit that the
- * resolution itself is about to replace. Never throws.
- */
-async function markResolutionSpent(pool, sessionId) {
-  try {
-    await pool.query(
-      `UPDATE chat_sessions SET integration_resolved_epoch = approval_epoch WHERE id = $1`,
-      [sessionId]
-    );
-  } catch (err) {
-    log.warn('integration', 'resolution stamp failed', { sessionId, err: err.message });
-  }
-}
-
-/**
- * Has this authored head already had its pre-approval resolution?
- * Reads the two columns off a row; a row that predates the stamp has not.
- */
-function resolutionSpent(session) {
-  const s = session || {};
-  const spent = intOrNull(s.integration_resolved_epoch);
-  if (spent == null) return false;
-  return spent === (intOrNull(s.approval_epoch) ?? 0);
-}
-
 // Registered once at boot (server.js) with the platform config in scope; see
 // measure() for the one transition that calls it.
 let _onBecameClean = null;
@@ -495,8 +463,6 @@ module.exports = {
   setBlockReasons,
   classifyHeadMove,
   clearApprovals,
-  markResolutionSpent,
-  resolutionSpent,
   onBecameClean,
   currentVotePredicateSql,
   MEASURE_TTL_MS,

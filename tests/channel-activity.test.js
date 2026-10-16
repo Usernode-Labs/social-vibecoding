@@ -114,8 +114,6 @@ test('a proposal\'s own notices that only ever went to the channel now go to its
   const thread = /'system', null, \{ type: 'session', ref: session\.id \}/;
   const votes = read('src/routes/votes.js');
   for (const lead of [
-    'hit a conflict with main during a merge attempt',
-    'Failed to merge PR #',
     'Please open the revert PR manually.`,\n        \'system\'',
     'Most likely later commits depend on it.',
     'proposed undoing ${label}. Opened revert PR',
@@ -134,10 +132,12 @@ test('a proposal\'s own notices that only ever went to the channel now go to its
   // proposal machine's lines now (MergeAbandoned, Close), and every line it
   // writes goes into the proposal's thread.
   const pm = read('src/workflow/proposal/machine.ts');
-  assert.match(pm, /const abandoned: Handler = [\s\S]{0,400}line\(e, s\.data, `\$\{prLabel\(f\.row!\)\} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel\./);
+  assert.match(pm, /const abandoned: Handler = [\s\S]{0,800}line\(e, s\.data, `\$\{prLabel\(f\.row!\)\} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel\./);
   assert.match(pm, /if \(row\.prNumber\) writes\.push\(line\(e, d, closedLine\(row, reason, !!more\.byOwner\)\)\);/);
-  assert.match(pm, /async function writeLine\(tx: Tx, w: any, ctx: WriteContext\) \{\n {2}const \{ rows: \[row\] \} = await tx\.query\(\n {4}`INSERT INTO chat_messages \(app_id, content, msg_type, metadata, thread_type, thread_ref\)\n {5}VALUES \(\$1, \$2, \$3, \$4, 'session', \$5\)/);
-  assert.match(read('src/services/merge-queue.js'), /sendSystemMessage\(pool, session\.app_id, content, 'conflict', null, \{ type: 'session', ref: session\.id \}\)/);
+  assert.match(pm, /async function writeLine\(tx: Tx, w: any, ctx: WriteContext\) \{\n[\s\S]{0,600}?\n {2}const \{ rows: \[row\] \} = await tx\.query\(\n {4}`INSERT INTO chat_messages \(app_id, content, msg_type, metadata, thread_type, thread_ref\)\n {5}VALUES \(\$1, \$2, \$3, \$4, 'session', \$5\)/);
+  // The conflict lane's "could not be resolved automatically" is the
+  // proposal machine's line too (its sync's outcome).
+  assert.match(pm, /writes\.push\(\{ type: 'line', eventId: e\.id, appId: d\.appId, sessionId: d\.sessionId, msgType: 'conflict'/);
   assert.match(read('src/services/rename-pr.js'), /\{ vote: \{ sessionId, prNumber: prData\.number \} \},\n {4}\{ type: 'session', ref: sessionId \}/);
   const fleet = read('src/services/fleet-maintenance.js');
   assert.match(fleet, /\{ vote: \{ sessionId, prNumber: prData\.number \} \},\n {4}\{ type: 'session', ref: sessionId \}/);

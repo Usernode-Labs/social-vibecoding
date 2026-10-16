@@ -1075,8 +1075,8 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS transcript_shared_at
 -- #361: persisted merge-conflict snapshot so proposal cards can render a
 -- rich merge-status badge (clean | behind | conflict | resolving |
 -- failed) without a live GitHub call per render. Derived/written by
--- services/sync-main.js (persistConflictState) and
--- services/conflict-resolver.js; `behind` is derived when behind_main>0
+-- services/sync-main.js (persistConflictState), the sync the proposal
+-- machine runs; `behind` is derived when behind_main>0
 -- and the branch still merges cleanly. conflict_files holds the file
 -- paths that contained conflict markers on the last detection, and
 -- conflict_checked_at is when the snapshot was last computed.
@@ -1113,7 +1113,7 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_checked_at T
 --   checks_commit_sha : the commit the results describe (staleness signal).
 --   checks_checked_at : when the suite last ran.
 -- Unlike the advisory console columns above, check_state GATES merge:
--- routes/votes.js checkAndMerge blocks a non-'passing' proposal (admin
+-- the merge gate (routes/votes.js evaluateMergeGate) blocks a non-'passing' proposal (admin
 -- force-merge still bypasses). The console_* columns are kept written in
 -- parallel for one release so a rolling deploy's old readers still work.
 -- #447: 'pending' is only ever advanced out by the same captureForSession
@@ -1123,7 +1123,7 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_checked_at T
 -- checks_checked_at is older than CHECKS_STALE_MS (default 10m) is now treated
 -- as STUCK and
 -- re-run: by server.js reconcileStuckChecks (boot + session-sweeper Pass 4),
--- by a vote that reaches threshold (checkAndMerge stale-pending kick), by any
+-- by a vote that reaches threshold (the merge gate's stale-pending kick), by any
 -- staging rebuild (staging-recovery.rebuildSessionStaging now re-runs checks),
 -- and by the manual POST /api/sessions/:id/recheck ("Re-run checks" button).
 -- #461: 'skipped' is a TERMINAL, GATE-PASSING verdict recorded when the
@@ -1870,7 +1870,7 @@ CREATE INDEX IF NOT EXISTS chat_sessions_archived_idx ON chat_sessions(status, a
 -- Exact merge timestamp. Historically chat_sessions only recorded the
 -- terminal `status = 'merged'` with no time, so "merges over time" could
 -- not be charted (see the note in routes/kudos.js leaderboard query).
--- Set in routes/votes.js checkAndMerge() at the moment the PR lands (both
+-- Set by the merge-followups machine at the moment the PR lands (both
 -- vote-driven and admin force-merge paths). NULL for rows merged before
 -- this column existed; the events backfill approximates those with
 -- promoted_at. Covered by the table-level staging:private comment, so it
@@ -1958,7 +1958,7 @@ COMMENT ON TABLE chat_session_agent_model_costs IS 'staging:private';
 --   votes_required        = the majority threshold needed to merge
 --   active_users_at_merge = the active-user count the threshold was
 --                           derived from (the "/ M" denominator context)
--- Both set in routes/votes.js checkAndMerge() at the moment the PR lands
+-- Both set by the merge-followups machine at the moment the PR lands
 -- (vote-driven, admin force-merge, and revert-PR paths all flow through
 -- there). NULL for rows merged before these columns existed; the boot-time
 -- backfill in db/migrate.js reconstructs them from the merge announcement
@@ -2003,14 +2003,14 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_promote INTEG
 --     the column (the full list rides on the merge debug step).
 -- Stamped at promote, at manifest-PR creation, and on every head change
 -- (native new-commit vote reset + imported-PR head sync);
--- re-verified authoritatively in checkAndMerge just before the gate.
+-- re-verified authoritatively by the merge gate (evaluateMergeGate).
 -- Covered by the table-level staging:private comment.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS requires_explicit_approval BOOLEAN;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS explicit_approval_reason   VARCHAR(32);
 -- The platform's own manifest PRs that were open before visibility,
 -- governance and secret-declaration PRs were flagged at creation. Their
 -- branch prefix says what they change (services/rename-pr.js), so they are
--- stamped here rather than left to merge on a timer until checkAndMerge's
+-- stamped here rather than left to merge on a timer until the merge gate's
 -- live re-check reaches them. Idempotent: a stamped row is skipped, so
 -- this touches nothing after its first boot.
 UPDATE chat_sessions
@@ -3045,7 +3045,7 @@ COMMENT ON TABLE pr_kudos IS 'staging:private';
 -- enforces, counted across BOTH tables — see src/routes/kudos.js). When a
 -- merged PR closes the issue (via its chat_sessions.linked_issues link),
 -- the open bounty flips to 'awarded' and is credited to that PR's author —
--- see the payout block in routes/votes.js checkAndMerge.
+-- see src/workflow/rules/bounties.ts (the merge-followups machine).
 --
 -- Keyed by (app_id, github_issue_number) — NOT the internal `issues` table —
 -- because the Open Issues section lists the repo's GitHub issues, which may
@@ -9149,9 +9149,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS waitlist_signups_phone_row_unique
 --
 -- Why NOT reuse merge_conflict_state / conflict_files for the predicted
 -- conflict: those two mean "a merge was actually attempted and this is what
--- happened", which is what conflict-resolver.js's `unblocked` query and the
+-- happened", which is what the merge queue and the
 -- merge gate both key off. A PREDICTION is a different claim, so it gets its
--- own columns and the resolver never sees it.
+-- own columns and the queue never reads it.
 --
 --   checks_base_sha            main's head at the moment this proposal's
 --                              checks snapshot was opened. The missing
@@ -9410,12 +9410,12 @@ END $$;
 
 -- ── What a proposal still needs before it merges ───────────────────────
 --
--- A recording of what checkAndMerge actually did on its last run: an ordered
+-- A recording of what the merge gate actually did on its last run: an ordered
 -- list of the gates it cleared and the one that refused, written from the same
 -- call sites that already narrate into merge_debug_runs.
 --
 -- It is a DESCRIPTION, never an input. Nothing reads it to decide whether a
--- proposal may merge — checkAndMerge re-evaluates everything from scratch
+-- proposal may merge — the merge gate re-evaluates everything from scratch
 -- every time — so a stale or missing record costs a card its checklist and
 -- costs the merge nothing. services/merge-gate.js turns it, plus that file's
 -- static gate order, into the list the card renders.
@@ -9437,7 +9437,7 @@ CREATE INDEX IF NOT EXISTS chat_sessions_integration_measured_idx
 --
 -- A proposal that merges cleanly with main merges as it stands: being
 -- behind is no longer a reason to bring it up to date first, and the
--- platform's own sync no longer precedes a merge (services/merge-queue.js).
+-- platform's own sync no longer precedes a merge (the merge-queue machine, src/workflow/merge-queue/).
 -- Only a measured CONFLICT costs a worker turn, and the conflict lane
 -- admits one pre-approval resolution per authored head — the author's work
 -- gets one chance to be made mergeable before anyone has voted on it, and
@@ -14040,9 +14040,12 @@ CREATE TRIGGER chat_sessions_wf_shots_owned
 -- which merge-followups makes with the merge) and the columns that move with
 -- it: when it went up for a vote, when it closed, its stale warning, its
 -- merge attempt, the electorate it opened with, and what the group votes on
--- (the reviewed head and the approval epoch). INSERTs are not guarded: a
--- session is created where it always was, and a row born in review is
--- adopted in the inserting transaction.
+-- (the reviewed head and the approval epoch). Since the merge (step 6) it
+-- also owns the once-records of the platform's own syncs with main, written
+-- with the sync's work (a boot failure's head, a fixed check's head and keys,
+-- rule C's one resolution per epoch). INSERTs are not guarded: a session is
+-- created where it always was, and a row born in review is adopted in the
+-- inserting transaction.
 DROP TRIGGER IF EXISTS chat_sessions_wf_proposal_owned ON chat_sessions;
 CREATE TRIGGER chat_sessions_wf_proposal_owned
   BEFORE UPDATE ON chat_sessions
@@ -14054,10 +14057,15 @@ CREATE TRIGGER chat_sessions_wf_proposal_owned
         OR OLD.merge_attempt_at IS DISTINCT FROM NEW.merge_attempt_at
         OR OLD.active_users_at_promote IS DISTINCT FROM NEW.active_users_at_promote
         OR OLD.approval_epoch IS DISTINCT FROM NEW.approval_epoch
-        OR OLD.reviewed_head_sha IS DISTINCT FROM NEW.reviewed_head_sha)
+        OR OLD.reviewed_head_sha IS DISTINCT FROM NEW.reviewed_head_sha
+        OR OLD.boot_failure_sync_head IS DISTINCT FROM NEW.boot_failure_sync_head
+        OR OLD.fixed_check_sync_head IS DISTINCT FROM NEW.fixed_check_sync_head
+        OR OLD.fixed_check_sync_keys IS DISTINCT FROM NEW.fixed_check_sync_keys
+        OR OLD.integration_resolved_epoch IS DISTINCT FROM NEW.integration_resolved_epoch)
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=proposal/session:',
     'status', 'promoted_at', 'archived_at', 'stale_notified_at', 'merge_attempt_at',
-    'active_users_at_promote', 'approval_epoch', 'reviewed_head_sha');
+    'active_users_at_promote', 'approval_epoch', 'reviewed_head_sha',
+    'boot_failure_sync_head', 'fixed_check_sync_head', 'fixed_check_sync_keys', 'integration_resolved_epoch');
 
 CREATE OR REPLACE FUNCTION wf_guard_shot_runs() RETURNS TRIGGER AS $$
 BEGIN

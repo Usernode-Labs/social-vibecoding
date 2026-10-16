@@ -70,7 +70,19 @@ module.exports = function install(fakes) {
         const closed = (await fakes.read('github.closePR')).filter((r) => r.number === number).length
           > (await fakes.read('github.reopenPR')).filter((r) => r.number === number).length;
         const head = (await fakes.read('github.prHead')).filter((h) => h.number === number).pop()?.sha || 'c'.repeat(40);
+        const merge = (await fakes.read('github.merge')).find((m) => m.number === number);
+        if (merge) return { number, state: 'closed', merged: true, merge_commit_sha: merge.sha, merged_at: merge.at, draft: false, head: { sha: head } };
         return { number, state: closed ? 'closed' : 'open', merged: false, draft: !ready, node_id: `PR_${number}`, head: { sha: head } };
+      },
+      // GitHub merges the pull request at the pinned head, then its answer
+      // may never arrive: the `github.merge.done` point is between the two.
+      async mergePR(owner, repo, number, sha) {
+        if ((await fakes.read('github.merge')).some((m) => m.number === number)) {
+          throw Object.assign(new Error('Pull Request is not mergeable'), { status: 405 });
+        }
+        await fakes.record('github.merge', { repo: `${owner}/${repo}`, number, head: sha, sha: '9'.repeat(40), at: new Date().toISOString() });
+        await fakes.pause('github.merge.done');
+        return { sha: '9'.repeat(40), merged: true };
       },
       async reopenPR(owner, repo, number) { await fakes.record('github.reopenPR', { repo: `${owner}/${repo}`, number }); },
       // The draft marked ready; `github.ready.done` is after GitHub did it,
@@ -174,6 +186,30 @@ module.exports = function install(fakes) {
       if (!(await proceed())) return { skipped: true };
       await fakes.record('worker.destroy', { name: worker.workerContainerName(sessionId) });
       return { removed: true };
+    },
+  });
+  // The merge gate (routes/votes.js evaluateMergeGate) reads the mirror, the
+  // live revision and the protected-settings check from GitHub: its I/O is
+  // faked to "ready at the row's head" (the claim still reads every deciding
+  // input under the lock, for real). GitHub's merge (attemptMerge) is real.
+  const votes = require(path.join(SRC, 'routes/votes'));
+  fakes.stub(path.join(SRC, 'routes/votes'), {
+    ...votes,
+    async evaluateMergeGate(_config, _pool, session) {
+      await fakes.record('merge.gate', { sessionId: session.id });
+      return { ready: true, head: session.reviewed_head_sha, epoch: Number(session.approval_epoch) || 0,
+        explicitApproval: false, explicitReason: null, mainPassThrough: false, tally: { yes: 1, required: 1, active: 1 } };
+    },
+  });
+  // A sync with main is a worker turn: faked at its core (services/sync-main.js
+  // runSyncWork), which stops at `sync.turn` while it runs.
+  const syncMain = require(path.join(SRC, 'services/sync-main'));
+  fakes.stub(path.join(SRC, 'services/sync-main'), {
+    ...syncMain,
+    async runSyncWork(_config, _db, o) {
+      await fakes.record('sync.run', { sessionId: o.sessionId, reason: o.reason });
+      await fakes.pause('sync.turn');
+      return { outcome: 'clean', sha: 'd'.repeat(40), message: 'Merged main cleanly.' };
     },
   });
   // Not an outside service, a probe: whether the Workshop hears a board

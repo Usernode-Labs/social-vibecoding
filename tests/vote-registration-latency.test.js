@@ -89,7 +89,6 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
     github: require.resolve('../src/services/github'),
     staging: require.resolve('../src/services/staging'),
     docker: require.resolve('../src/services/docker'),
-    resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
     activeUsers: require.resolve('../src/services/active-users'),
     notifications: require.resolve('../src/services/notifications'),
@@ -125,11 +124,6 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
   });
   stub(ids.staging, { rebuildProduction: async () => ({ ok: true }), teardownStaging: async () => {} });
   stub(ids.docker, {});
-  stub(ids.resolver, {
-    checkAndResolveConflicts: async () => {},
-    resolveAndMaybeRetry: async () => ({ ok: true }),
-    isResolving: () => false,
-  });
   stub(ids.ws, {
     sendSystemMessage: async (_pool, appId, content, msgType, metadata) => {
       systemMessages.push({ appId, content, msgType, metadata });
@@ -194,6 +188,10 @@ function loadVotes({ pool, mirror, move = 'authored' }) {
   // the head and, unless the move keeps the approvals, moves the epoch on,
   // in one statement. The stub applies it to the pool's epoch the same way.
   stub(ids.platform, {
+    // After the fresh read, the vote asks the app's merge queue: the merge
+    // gate is the proposal machine's work from there (counted as the merge
+    // check here).
+    wantMerge: async () => { gateCalls.push(Date.now()); },
     moveReviewHead: async (m) => {
       headMoves.push(m);
       if (!m.keepVotes) pool.state.epoch += 1;
@@ -280,11 +278,8 @@ test('a Yes is recorded and answered while the repository fetch is still outstan
     assert.equal(ctx.gateCalls.length, 0, 'the merge check waits for the fresh read');
 
     mirror.fetches[0].resolve('/tmp/mirror');
-    // checkAndMerge's own non-fresh reconcile follows.
-    await until(() => mirror.calls.length >= 2);
-    assert.equal(mirror.calls[1].fresh, false);
-    mirror.fetches[1].resolve('/tmp/mirror');
     await until(() => ctx.gateCalls.length >= 1);
+    assert.equal(mirror.calls.length, 1, 'the merge gate\'s own read is its work\'s, not the vote\'s');
     assert.equal(pool.state.epoch, 2, 'an unmoved head clears nothing');
   });
 });
@@ -301,8 +296,6 @@ test('a mirror that never answers cannot hold a vote hostage', async () => {
     // Fail the fetch: the vote stands, and the merge check still runs on
     // the stored revision (the exact-sha merge is its guard).
     mirror.fetches[0].reject(new Error('network down'));
-    await until(() => mirror.calls.length >= 2);
-    mirror.fetches[1].reject(new Error('network down'));
     await until(() => ctx.gateCalls.length >= 1);
     assert.equal(pool.inserted.length, 1);
     assert.equal(pool.state.epoch, 2);
@@ -408,7 +401,7 @@ test('an authored push found after the vote clears the approvals and skips the m
     assert.equal(pool.state.epoch, 3, 'the epoch the vote was stamped with no longer counts');
     assert.deepEqual(headMoves.map(({ sessionId, column, from, to, keepVotes }) => ({ sessionId, column, from, to, keepVotes })),
       [{ sessionId: 7, column: 'reviewed', from: HEAD, to: PUSHED, keepVotes: false }], 'the machine moves the head and clears the approvals');
-    assert.equal(mirror.calls.length, 1, 'fresh read only; checkAndMerge never ran');
+    assert.equal(mirror.calls.length, 1, 'fresh read only; nothing is asked of the merge queue');
     assert.equal(mirror.calls[0].fresh, true);
     assert.equal(gateCalls.length, 0);
     assert.deepEqual(revisions, [{ head: PUSHED, source: 'reviewed-head' }], 'the machine checks the pushed head');
@@ -430,13 +423,11 @@ test('a mechanical sync found after the vote keeps it and goes on to the merge c
     });
     await until(() => mirror.calls.length >= 1);
     mirror.fetches[0].resolve('/tmp/mirror');
-    await until(() => mirror.calls.length >= 2);
-    mirror.fetches[1].resolve('/tmp/mirror');
     await settled;
     assert.equal(pool.state.epoch, 2, 'a sync that changed nothing keeps every vote');
     assert.equal(headMoves.length, 1);
     assert.equal(headMoves[0].keepVotes, true, 'the machine is asked to keep the votes');
-    assert.equal(gateCalls.length, 1, 'and the majority is checked');
+    assert.equal(gateCalls.length, 1, 'and the merge queue is asked');
   } finally {
     restore();
   }

@@ -34,6 +34,14 @@ test('a complete table defines a machine', () => {
   assert.deepEqual(m.entryFor('closed', 'WorkSucceeded'), { ignore: 'unexpected_work_result' });
 });
 
+test('a state named as waiting on something outside (`attention`) is a declared one, and is read as a Map', () => {
+  const m = defineMachine({ ...base(), attention: { open: 'waits on GitHub' } });
+  assert.ok(m.attention instanceof Map);
+  assert.equal(m.attention.get('open'), 'waits on GitHub');
+  assert.equal(defineMachine(base()).attention.size, 0);
+  assert.throws(() => defineMachine({ ...base(), attention: { waiting: 'x' } }), /attention state waiting is not declared/);
+});
+
 test('every state must handle or ignore every declared event', () => {
   const def = base();
   delete def.transitions.open.Open;

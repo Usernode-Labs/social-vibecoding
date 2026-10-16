@@ -46,7 +46,6 @@ function loadVotes({ row = null, gateApp = { id: 1, slug: 'demo' }, staging = fa
     github: require.resolve('../src/services/github'),
     staging: require.resolve('../src/services/staging'),
     docker: require.resolve('../src/services/docker'),
-    resolver: require.resolve('../src/services/conflict-resolver'),
     ws: require.resolve('../src/services/ws'),
     activeUsers: require.resolve('../src/services/active-users'),
     notifications: require.resolve('../src/services/notifications'),
@@ -93,7 +92,6 @@ function loadVotes({ row = null, gateApp = { id: 1, slug: 'demo' }, staging = fa
   stub(ids.github, { isEnabled: () => false });
   stub(ids.staging, {});
   stub(ids.docker, {});
-  stub(ids.resolver, { checkAndResolveConflicts: async () => {}, isResolving: () => false });
   stub(ids.ws, { broadcast() {}, getReactionsForMessages: async () => ({}) });
   // The #3669 enrichment calls the real gate math (mergeGate / atLeastGate /
   // oppositionWindowMs / requiredVotes); only the DB-reading electorate

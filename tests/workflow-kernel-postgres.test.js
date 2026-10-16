@@ -936,7 +936,7 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     } finally {
       await pool.query(`DELETE FROM wf_settings WHERE key = 'ownership_mode'`);
     }
-    assert.deepEqual(Object.keys(await inspect.problems(pool)).sort(), ['flagged', 'overdueDeadlines', 'work']);
+    assert.deepEqual(Object.keys(await inspect.problems(pool)).sort(), ['flagged', 'overdueDeadlines', 'waiting', 'work']);
   });
 
   await t.test('K17 appendAndWait answers with the outcome, or pending within its budget', async () => {

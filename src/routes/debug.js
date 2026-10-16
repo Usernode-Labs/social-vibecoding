@@ -16,7 +16,7 @@ const STATUS_VALUES = new Set([
   'running', 'merged', 'blocked', 'conflict_resolving',
   'conflict_failed', 'awaiting_github', 'noop', 'error',
   // The proposal's PR is closed on GitHub and couldn't be reopened —
-  // terminal, distinct from a conflict (conflict-resolver / checkAndMerge).
+  // terminal, distinct from a conflict (the proposal machine's merge attempt).
   'pr_closed',
 ]);
 const KIND_VALUES = new Set(['merge', 'conflict_resolution', 'checks']);

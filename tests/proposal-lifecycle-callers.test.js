@@ -46,7 +46,7 @@ function calls(text, name) {
 // A status move that names no `from` fails at the append (the machine's
 // decoders require it). This finds the call that would, before it runs.
 const MOVES = ['archiveSession', 'pauseSession', 'closeProposal', 'pauseProposal', 'resumeProposal', 'reopenProposal',
-  'unpromoteProposal', 'promoteProposal', 'promoteInTransaction', 'abandonMerge'];
+  'unpromoteProposal', 'promoteProposal', 'promoteInTransaction', 'forceMerge'];
 
 test('every proposal move in the platform names what its caller read (`from`)', () => {
   const files = [...sources('src'), 'server.js'];
@@ -142,7 +142,7 @@ test('a promote GitHub has not answered yet (202) is waited on, never read as re
 
 test('a move its caller waits on carries a deadline, and a resume not applied in time is not reported as done (review 4)', () => {
   const platform = read('src/workflow/platform.ts');
-  for (const name of ['unpromoteProposal', 'resumeProposal', 'claimMerge', 'moveReviewHead', 'clearProposalApprovals']) {
+  for (const name of ['unpromoteProposal', 'resumeProposal', 'moveReviewHead', 'clearProposalApprovals']) {
     const at = platform.indexOf(`export function ${name}(`);
     assert.ok(at > 0, name);
     assert.match(platform.slice(at, platform.indexOf('\nexport ', at + 10)), /deadlineMs: ANSWER_MS/, name);

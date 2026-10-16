@@ -70,7 +70,7 @@ const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 // has — and files it as an imported
 // proposal owned by the partner, already promoted. Imported is the right
 // source: the preview, checks, head-sync and merge machinery all key off it
-// (services/pr-import-sync.js, checkAndMerge) and none of it needs a
+// (services/pr-import-sync.js, evaluateMergeGate) and none of it needs a
 // dev-chat worker. Then it does the one thing pr-import's own straight-to-
 // vote path does not: the pr_proposed fan-out, which is the notification the
 // viewer is waiting for.
@@ -108,8 +108,8 @@ const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 // way out, and the app's settings dialog says the rule is in force while
 // demo mode is on.
 //
-// demo/vote records the partner's vote through recordVote and hands the
-// session to checkAndMerge, exactly as routes/votes.js does for a person.
+// demo/vote records the partner's vote through recordVote and asks the
+// app's merge queue (platform.wantMerge), exactly as routes/votes.js does for a person.
 // demo/reset tears the partner's proposals down, held ones included, puts
 // main back to the commit demo mode was switched on at, and rebuilds
 // production. GET demo lists what would silently spoil a take — the
@@ -230,7 +230,7 @@ function demoModeRoutes(config) {
   }
 
   // The partner's proposal that is open now, with the app columns
-  // checkAndMerge reads off the session (routes/votes.js selects the same).
+  // evaluateMergeGate reads off the session (routes/votes.js selects the same).
   async function openDemoSession(app, partner) {
     const { rows } = await pool.query(
       `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
@@ -263,7 +263,7 @@ function demoModeRoutes(config) {
   // The partner's vote: the same write a person's click makes
   // (routes/votes.js), stamped with the reviewed head and the approval
   // epoch, under the row lock. No pre-vote reconciliation — the head is the
-  // platform's own and nothing else writes that branch; checkAndMerge
+  // platform's own and nothing else writes that branch; evaluateMergeGate
   // re-verifies it regardless. True when it counted.
   //
   // No "somebody voted on your proposal" notification: the author IS the
@@ -292,10 +292,8 @@ function demoModeRoutes(config) {
   // After a vote, the merge check — off the request, as routes/votes.js
   // runs it for a person's vote.
   function mergeCheckAfterVote(app, session) {
-    votes.checkAndMerge(config, pool, session)
-      .then((result) => {
-        if (result?.merged) ws.pushVoteUpdate({ sessionId: session.id, appSlug: app.slug, merged: true });
-      })
+    void ws;
+    require('../workflow/platform.ts').wantMerge({ appId: app.id, sessionId: session.id, reason: 'demo-vote' })
       .catch((err) => log.error('demo-mode', 'Background merge failed', {
         sessionId: session.id, err: err.message,
       }));
