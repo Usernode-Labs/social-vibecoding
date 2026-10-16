@@ -3260,8 +3260,10 @@ const CHECKS_PROGRESS_MIN_GAP_MS = 1000;
 // and handed to `flush` at most once per CHECKS_PROGRESS_MIN_GAP_MS. A
 // `done` from either side flushes at once. `close()` drops any pending
 // timer and makes every later observation a no-op: the verdict write that
-// follows it must be the last thing anyone hears about this run.
-function makeChecksProgressState({ expected, flush, minGapMs = CHECKS_PROGRESS_MIN_GAP_MS, build = null, shards = 1 }) {
+// follows it must be the last thing anyone hears about this run. The clock
+// (`now`, defaulting to Date.now) can be injected for tests so the throttle
+// gap is driven, not raced against real time.
+function makeChecksProgressState({ expected, flush, minGapMs = CHECKS_PROGRESS_MIN_GAP_MS, build = null, shards = 1, now = Date.now }) {
   const tracker = makeChecksProgressTracker(expected, { shards });
   let unit = null;
   let lastFlushAt = 0;
@@ -3275,12 +3277,12 @@ function makeChecksProgressState({ expected, flush, minGapMs = CHECKS_PROGRESS_M
   const doFlush = () => {
     timer = null;
     if (closed) return;
-    lastFlushAt = Date.now();
+    lastFlushAt = now();
     try { flush(snapshot()); } catch { /* best-effort */ }
   };
   const schedule = (urgent) => {
     if (closed) return;
-    const gap = Date.now() - lastFlushAt;
+    const gap = now() - lastFlushAt;
     if (urgent || gap >= minGapMs) {
       if (timer) { clearTimeout(timer); timer = null; }
       doFlush();

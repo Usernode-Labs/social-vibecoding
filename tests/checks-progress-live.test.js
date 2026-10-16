@@ -391,9 +391,14 @@ test('maybeRunUnitSuite observes its container and reports once more at the end'
   assert.match(src, /\.\.\.\(summary \? \{ summary \} : \{\}\),/, 'the TAP summary rides the row');
 });
 
-test('the run state merges both containers into one snapshot, throttles, and is silent once closed', async () => {
+test('the run state merges both containers into one snapshot, throttles, and is silent once closed', (t) => {
+  // The injected clock and the mocked setTimeout together make the throttle
+  // deterministic: the test moves the clock and fires the timer instead of
+  // racing real time.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let clock = 1000; // well past lastFlushAt's initial 0
   const flushed = [];
-  const state = visuals.makeChecksProgressState({ expected: 3, flush: (s) => flushed.push(s), minGapMs: 30 });
+  const state = visuals.makeChecksProgressState({ expected: 3, flush: (s) => flushed.push(s), minGapMs: 30, now: () => clock });
   state.observeUnit({ phase: 'installing', ran: 0, passed: 0, failed: 0, expected: null, done: false });
   assert.equal(flushed.length, 1, 'the first observation flushes at once');
   assert.equal(flushed[0].unit.phase, 'installing');
@@ -401,7 +406,8 @@ test('the run state merges both containers into one snapshot, throttles, and is 
   state.observeCapture(`__USERNODE_TEST__ index=0 status=pass loadStatus=200`);
   state.observeUnit({ phase: 'running', ran: 40, passed: 40, failed: 0, expected: 100, done: false });
   assert.equal(flushed.length, 1, 'inside the gap: coalesced');
-  await new Promise((r) => setTimeout(r, 60));
+  clock += 30;
+  t.mock.timers.tick(30);
   assert.equal(flushed.length, 2, 'one timer flush carries both');
   assert.equal(flushed[1].ran, 1);
   assert.equal(flushed[1].unit.ran, 40);
@@ -409,7 +415,8 @@ test('the run state merges both containers into one snapshot, throttles, and is 
   assert.equal(flushed.length, 3, 'a done from either side flushes immediately');
   state.observeCapture(`__USERNODE_TEST__ index=1 status=fail loadStatus=200`);
   state.close();
-  await new Promise((r) => setTimeout(r, 60));
+  clock += 60;
+  t.mock.timers.tick(60);
   assert.equal(flushed.length, 3, 'close drops the pending timer');
   state.observeCapture(`__USERNODE_TESTS_DONE__ ran=2 expected=3 deadline=0`);
   state.observeUnit({ phase: 'running', ran: 1, passed: 1, failed: 0, expected: null, done: false });
