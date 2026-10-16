@@ -163,9 +163,13 @@
     "text": "{{number}} done",
     "description": "Small line under \"Your requests\" on the viewer's profile. {{number}} is how many of their requests are finished, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
   },
-  "more.heading": {
-    "text": "More",
-    "description": "Heading over the second list of rows on the viewer's own profile."
+  "rewards.heading": {
+    "text": "Rewards",
+    "description": "Heading over Challenges & standings and Kudos on the viewer's own profile."
+  },
+  "account.heading": {
+    "text": "Account",
+    "description": "Heading over Friends and App slots on the viewer's own profile."
   },
   "more.appSlots.title": {
     "text": "App slots",

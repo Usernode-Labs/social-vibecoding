@@ -732,10 +732,10 @@
     },
     {
       "id": "profile.feedback-list",
-      "name": "Me: Your work leads, then More (Challenges & standings, Kudos, Friends, Settings); the feedback challenge's card lists what you sent with its status (#3186, UI overhaul)",
+      "name": "Me: Your work leads, then Rewards (Challenges & standings, Kudos); Account holds Friends and App slots; the feedback challenge's card lists what you sent with its status (#3186, UI overhaul, navigation review)",
       "path": "/?demo=1#profile?feedback",
       "expectText": "Counted",
-      "expectSelector": "body:has(#profile-feedback-sheet a[data-feedback-status=\"received\"] ~ a[data-feedback-status=\"counted\"]) #profile-work + #profile-more #profile-row-challenges + #profile-row-kudos + #profile-row-friends[href=\"#profile?friends\"] + #profile-row-settings",
+      "expectSelector": "body:has([data-feedback-status=\"received\"]~[data-feedback-status=\"counted\"]):has(#profile-work+#profile-rewards #profile-row-challenges+#profile-row-kudos):has(#profile-row-friends+#profile-row-app-slots):has(#profile-settings #profile-row-settings)",
       "visual": true,
       "impact": [
         "frontend/src/features/profile/feedback-sheet.tsx",

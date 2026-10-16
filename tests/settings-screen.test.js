@@ -675,7 +675,9 @@ test('Settings is reached from the Me tab, by a real anchor', () => {
   // Settings went into it; #2718 took the platform's destinations back out,
   // because the menu holds the APP's options now and the tab bar carries the
   // platform's places. It is a Profile row again — one entrance, two hops
-  // from anywhere: the Me tab, then the row.
+  // from anywhere: the Me tab, then the row. (The navigation review keeps it
+  // off the page where the sidebar's gear already opens Settings; on a
+  // phone, which has no gear, this row is the entrance.)
   const panel = read('frontend/src/features/profile/account-panel.tsx');
   assert.match(panel, /id="profile-row-settings"[\s\S]{0,120}href="#settings"/,
     'navigation rides the anchor hash, like Challenges beside it');

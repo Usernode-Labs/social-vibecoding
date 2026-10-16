@@ -1,9 +1,10 @@
-// The Me page as the navigation prototype draws it (`scrMe`), as the UI
-// overhaul left it: the profile card, three stat cards, then "Your work" and
-// "More", lists whose rows say what is behind them — shaped in
+// The Me page as the navigation prototype draws it (`scrMe`), regrouped by
+// the navigation review: the profile card, three stat cards, then "Your
+// work", "Rewards" (Challenges & standings, Kudos) and "Account" (Friends,
+// App slots), lists whose rows say what is behind them — shaped in
 // frontend/src/features/profile/profile-store.js and drawn by
-// profile-view.tsx. "Your contributions", which closed the page, is gone:
-// Your changes lists every merged change.
+// profile-view.tsx, two columns on a wide window. "Your contributions",
+// which closed the page, is gone: Your changes lists every merged change.
 //
 // Pinned here: what each part SAYS for real data and for missing data, that
 // every part of the older, longer Profile still has a home, and that the
@@ -95,7 +96,7 @@ test('the card\'s one line of facts: @handle, building since, apps', () => {
   assert.equal(identityView({ user: { username: 'evan' }, data: null }).sub, null);
 });
 
-test('the page renders its four parts in order', () => {
+test('the page renders its six parts in order', () => {
   const state = {
     open: true,
     data: { ranking: { season_name: 'Season 3', rank: 3 }, summary: SUMMARY, ownerPublicProfile: null },
@@ -107,13 +108,20 @@ test('the page renders its four parts in order', () => {
     stubs: { './profile-store.js': { ...real, profileStore: { get: () => state, subscribe: () => () => {} } } },
   });
   const html = renderToHtml(createElement(mod.ProfileRoot, {}));
-  const order = ['id="profile-identity-card"', 'id="profile-stats"', 'id="profile-work"', 'id="profile-more"']
+  const order = ['id="profile-identity-card"', 'id="profile-stats"', 'id="profile-work"',
+    'id="profile-rewards"', 'id="profile-account"', 'id="profile-settings"']
     .map((needle) => html.indexOf(needle));
-  assert.ok(order.every((i) => i >= 0), 'all four parts render');
-  assert.deepEqual([...order].sort((a, b) => a - b), order, 'card, stats, Your work, More');
+  assert.ok(order.every((i) => i >= 0), 'all six parts render');
+  assert.deepEqual([...order].sort((a, b) => a - b), order,
+    'card, stats, Your work, Rewards, Account, Settings');
+  // The who block holds the card and its numbers alone, nothing between.
+  const between = html.slice(html.indexOf('id="profile-identity-card"'), html.indexOf('id="profile-stats"'));
+  assert.ok(!/id="profile-(work|rewards|account|settings)|id="profile-row-/.test(between),
+    'the identity card and the stat cards stay adjacent');
   assert.match(html, /id="profile-edit-btn"/);
   assert.ok(!/profile-contributions|data-contribution=/.test(html), 'Your contributions is gone');
   assert.ok(!/id="profile-friends"/.test(html), 'Friends is a row, not a section, until it is opened');
+  assert.ok(!/id="profile-more"/.test(html), 'the "More" list is regrouped away');
   assert.ok(!/Log out|profile-row-admin|data-completed-challenge|Points breakdown/.test(html),
     'nothing that moved elsewhere is drawn twice');
 });
@@ -142,18 +150,18 @@ test('Me sits in the Workshop tab\'s frame, and its labels on the rows\' edge (#
   const workshop = read('frontend/src/features/workshop/index.tsx');
   assert.match(workshop, /className="max-w-2xl mx-auto pb-8"/, 'Workshop\'s column is still the reference');
   assert.match(workshop, /<div className="pt-5" aria-hidden="true" \/>/, 'and it still steps down pt-5 before its first element');
-  for (const cls of ['max-w-2xl', 'mx-auto', 'px-4', 'pt-5', 'pb-8']) {
+  for (const cls of ['max-w-2xl', 'lg:max-w-5xl', 'mx-auto', 'px-4', 'pt-5', 'pb-8']) {
     assert.ok(classes.includes(cls), `#profile-root carries ${cls}`);
   }
   assert.ok(!classes.includes('max-w-3xl') && !classes.includes('p-4'),
     'not the wider column, nor the p-4 that left the card 8px under the bar');
 
-  // Both section labels are SectionHeader at its own px-4 — on the rows'
+  // The section labels are SectionHeader at its own px-4 — on the rows'
   // content edge, as Settings and Discover set theirs — not the px-1 that
   // sat them 12px left of the cards' rows.
   const html = renderToHtml(createElement(view.ProfileRoot, {}));
-  const headings = [...html.matchAll(/<h2 class="([^"]*)">(Your work|More)<\/h2>/g)];
-  assert.deepEqual(headings.map((m) => m[2]), ['Your work', 'More']);
+  const headings = [...html.matchAll(/<h2 class="([^"]*)">(Your work|Rewards|Account)<\/h2>/g)];
+  assert.deepEqual(headings.map((m) => m[2]), ['Your work', 'Rewards', 'Account']);
   for (const [, cls, label] of headings) {
     const list = cls.split(/\s+/);
     assert.ok(list.includes('px-4') && !list.includes('px-1'), `"${label}" sits on the rows' edge: ${cls}`);
