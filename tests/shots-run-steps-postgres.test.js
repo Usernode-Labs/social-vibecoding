@@ -400,6 +400,27 @@ test('the steps of a shots run against the full PostgreSQL schema', { timeout: 1
     assert.equal(finishes, 2);
   });
 
+  await t.test('a turn record that could not be read fails the cleanup too: its turn may still hold the agent', async () => {
+    const s = await proposal();
+    const id = await prepared(s);
+    await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`,
+      [s.id, JSON.stringify({ mode: 'shots', telemetryCorrelationId: id, turnId: 't-3' })]);
+    let fail = true;
+    const flaky = { query: (sql, values) => {
+      if (fail && /SELECT active_turn FROM chat_sessions/.test(sql)) { fail = false; return Promise.reject(new Error('connection reset')); }
+      return pool.query(sql, values);
+    } };
+    const stops = [];
+    const worker = { stopTurn: async (sid) => { stops.push(sid); }, destroyCcVolume: async () => {}, finishTurn: async () => true };
+    await assert.rejects(orchestrator.cleanupRun({}, flaky, { runId: id, sessionId: s.id, appSlug: s.app.slug, stopTurn: true },
+      { worker, removeCopies: async () => [] }), /connection reset/);
+    assert.equal((await pool.query('SELECT 1 FROM shot_run_control WHERE run_id = $1', [id])).rowCount, 1, 'nothing reported cleaned');
+    const done = await orchestrator.cleanupRun({}, flaky, { runId: id, sessionId: s.id, appSlug: s.app.slug, stopTurn: true },
+      { worker, removeCopies: async () => [] });
+    assert.equal(done.cleaned, true);
+    assert.deepEqual(stops, [s.id], 'the next attempt stops its turn');
+  });
+
   await t.test('a cleanup that comes late keeps the temporary worker a newer run of the proposal is under way in', async () => {
     const s = await proposal({ source: 'imported' });
     const id = runId();

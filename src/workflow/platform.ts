@@ -659,9 +659,9 @@ export async function shotsDeclared(d: { sessionId: number; appId?: number | nul
 }
 
 // The proposal's head moved: shots of other heads stop counting. `pin`:
-// the revision column the caller moved (and `from`, the head it held, when
-// the caller appends before it writes), so an event a newer move overtook
-// is refused instead of taking the slot back (shots/machine.ts staleHead).
+// the revision column the caller moved (and `from`, the head the caller
+// read there), so an event a newer move overtook is refused instead of
+// taking the slot back (shots/machine.ts staleHead).
 export async function shotsHeadMoved(sessionId: number, head: string, reason: string | null = null,
   f: HeadFence = {}): Promise<number> {
   return runtime!.append(shotsMachine(), shotsKey(sessionId),

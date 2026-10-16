@@ -1611,9 +1611,12 @@ function proposalHandoffRoutes(config) {
         }
         let shotsApplied = null;
         if (currentCheckedHead(session) === input.headSha && input.visibleChanges !== undefined) {
+          // Fenced against the hand-off's head as this request read it: a
+          // newer hand-off refuses a declaration for this one.
           shotsApplied = await applyShotsRevision({
             pool, config, session, headSha: input.headSha,
             visibleChanges: input.visibleChanges,
+            pin: 'handoff', from: session.handoff_head_sha || null,
           });
         }
         if (revisionKind === 'proposal'

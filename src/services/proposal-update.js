@@ -1320,8 +1320,13 @@ async function resubmitUnchanged(ctx, headSha, via) {
   const { pool, config, gh, session, sessionId, owner, repo } = ctx;
   const base = unchanged(session, headSha, via);
   const applied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
+  // The head did not move, but another writer may have moved it since this
+  // request read the row: the declaration names the revision column and the
+  // head it read there, so a newer move refuses it (shots/machine.ts staleHead).
+  const pin = String(session.source) === 'imported' ? 'imported' : 'reviewed';
   const shotsApplied = await applyShotsRevision({
     pool, config, session, headSha, visibleChanges: ctx.visibleChanges,
+    pin, from: (pin === 'imported' ? session.imported_pr_head_sha : session.reviewed_head_sha) || null,
   });
   // Same-commit resubmits are also how a title correction arrives — the
   // update that should have carried it may already have landed (#1199's

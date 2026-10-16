@@ -134,8 +134,8 @@ const intentOf = (v: unknown) => {
 };
 
 const session = (p: any) => ({ sessionId: int(p?.sessionId, 'sessionId') });
-// The proposal's revision column the head event's caller moved, and the head
-// it held before when the caller appends before it writes (see staleHead).
+// The proposal's revision column the head event's caller moved or read, and
+// the head the caller read there (see staleHead).
 const PINS: ReadonlySet<string> = new Set(['imported', 'reviewed', 'handoff']);
 const fence = (p: any) => {
   if (p?.pin != null && !PINS.has(p.pin)) throw new Error('pin must be imported, reviewed or handoff');
@@ -774,9 +774,9 @@ const workDone: Handler = (s, e, f, ctx, deps) => {
 // past. Two callers can move the same proposal at once (two import passes,
 // an update and a sync): the one that wrote its column first may append
 // last, and its head would take the slot back. The event names the column
-// its caller moved (`pin`); once that column holds another head, it is
-// stale, unless that head is the one the caller replaced (`from`: it
-// appends before it writes).
+// its caller moved or read (`pin`); once that column holds another head, it
+// is stale, unless that head is the one the caller read there (`from`: a
+// caller that appends before it writes, or that moved nothing).
 function staleHead(e: Event<any>, f: Facts): boolean {
   const { head, pin, from } = e.payload;
   if (!head || !pin || !f.session) return false;

@@ -900,4 +900,37 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
     assert.equal((await outcome(back)).result, 'accepted');
     assert.equal((await instance(s)).data.head, SHA('b'));
   });
+
+  await t.test('S33 a same-head resubmission read before an import moved the proposal does not take its shots back', async () => {
+    defaults();
+    const shotsState = require('../src/services/shots-state');
+    const proposalUpdate = require('../src/services/proposal-update');
+    // The declaring wrappers, against this runtime.
+    shotsState._setWorkflowForTests({
+      async shotsDeclared(d) {
+        const id = await rt.append(machine, sessionKey(d.sessionId),
+          { type: 'Declared', payload: { sessionId: d.sessionId, head: d.head, intent: d.intent, pin: d.pin, from: d.from } },
+          { requestKey: `t-${++rk}`, source: route, appId: d.appId });
+        await settle();
+        const { rows: [e] } = await pool.query('SELECT result, reason, reply FROM wf_events WHERE id = $1', [id]);
+        return { status: e.result, reason: e.reason, reply: e.reply };
+      },
+    });
+    t.after(() => shotsState._setWorkflowForTests(null));
+    const s = await proposal({ source: 'imported', head: SHA('b'), ready: true });
+    await declare(s, INTENT(), SHA('b'));
+    await settle();
+    const [published] = await runs(s);
+    assert.equal(published.state, 'verified');
+    // The resubmit read the row while it still said A.
+    const read = { ...(await row(s)), imported_pr_head_sha: SHA('a') };
+    const result = await proposalUpdate.applyShotsRevision({
+      pool, config: { shots: { collect: true } }, session: read, headSha: SHA('a'),
+      visibleChanges: INTENT('ui', 'An older claim'), pin: 'imported', from: read.imported_pr_head_sha,
+    });
+    assert.equal(result.accepted, false, 'refused: a newer revision replaced it');
+    const i = await instance(s);
+    assert.deepEqual([i.state, i.data.head], ['published', SHA('b')]);
+    assert.deepEqual([(await row(s)).shots_state, (await runs(s))[0].state], ['verified', 'verified']);
+  });
 });

@@ -161,8 +161,8 @@ async function recordIntentInTransaction(client, sessionId, rawIntent, options =
 // The proposal's head moved to `headSha`: shots of other heads stop
 // counting (the shots machine ends a run of another head). `fence.pin`
 // names the revision column the caller moved ('imported', 'reviewed',
-// 'handoff'), and `fence.from` the head it held when the caller appends
-// before it writes: a move a newer one overtook is then refused.
+// 'handoff'), and `fence.from` the head the caller read there (when it
+// appends before it writes): a move a newer one overtook is then refused.
 async function markStaleForHead(pool, sessionId, headSha, reason = null, fence = {}) {
   if (!validSha(headSha)) throw new ShotsStateError('invalid_shots_revision', 'A valid head SHA is required.', 400);
   await workflow().shotsHeadMoved(Number(sessionId), headSha, reason, { pin: fence.pin || null, from: fence.from || null });

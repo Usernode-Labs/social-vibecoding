@@ -1521,8 +1521,9 @@ async function cleanupRun(config, pool, {
     // Only this run's own turn: its record names the run (the dispatch's
     // telemetry id). Stopped, then its record released, as a turn whose
     // step ended would have it. A record that could not be released holds
-    // the proposal's agent: the cleanup is tried again until it is.
-    const activeTurn = await turnLifecycle.loadActiveTurn(pool, sessionId).catch(() => null);
+    // the proposal's agent: the cleanup is tried again until it is, as it
+    // is when the record cannot be read.
+    const activeTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
     if (activeTurn && activeTurn.mode === 'shots' && activeTurn.telemetryCorrelationId === runId) {
       await workerApi.stopTurn(sessionId).catch((error) => {
         log.warn('shots', 'Could not stop the shots agent of a run that ended', { sessionId, runId, error: error.message });
