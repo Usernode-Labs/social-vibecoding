@@ -1118,7 +1118,7 @@
     {
       "source": "src/services/homeroom-bot-tray.js",
       "kind": "structural-template",
-      "fingerprint": "00627c5ee84ef0b80a80",
+      "fingerprint": "38a972aa978bf0a467cf",
       "count": 1,
       "preview": "`SELECT r.id, r.app_id, r.issue_number, r.verdict, r.build_ok, r.build_error, r.cap_suppressed, r.proposal_session_id, cs.pr_number AS proposal_pr_number, r.cre"
     },

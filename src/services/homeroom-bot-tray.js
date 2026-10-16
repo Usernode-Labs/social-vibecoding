@@ -487,10 +487,14 @@ async function pastRuns(pool, { userId, limit = RUN_LIMIT }) {
             r.build_no_change->'turns'->-1->>'said' AS no_change_said,
             -- #4539: the request's own state, newest row by id (issues is not
             -- unique on (app_id, github_issue_number), so a join could
-            -- duplicate rows). Null reads as not closed.
-            (SELECT ri.status = 'closed' FROM issues ri
-              WHERE ri.app_id = r.app_id AND ri.github_issue_number = r.issue_number
-              ORDER BY ri.id DESC LIMIT 1) AS request_closed,
+            -- duplicate rows). Or the bot's own record of its close, for a
+            -- request with no row of ours (Suggest an improvement, a comment
+            -- pin): homeroom-bot-closed-requests.js recordClosed.
+            (COALESCE((SELECT ri.status = 'closed' FROM issues ri
+                         WHERE ri.app_id = r.app_id AND ri.github_issue_number = r.issue_number
+                         ORDER BY ri.id DESC LIMIT 1), FALSE)
+                OR EXISTS (SELECT 1 FROM homeroom_bot_closed_requests cr
+                            WHERE cr.app_id = r.app_id AND cr.issue_number = r.issue_number AND cr.closed_at IS NOT NULL)) AS request_closed,
             (r.plan IS NOT NULL AND r.plan->'chosen' IS NULL AND r.build_ok IS FALSE
               AND r.build_session_id IS NULL AND r.proposal_session_id IS NULL) AS plan_only,
             -- Merged but not live yet (live_at) reads as merging: going live.

@@ -10552,6 +10552,28 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_requesters (
 );
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_requesters_user
   ON homeroom_bot_requesters(user_id);
+
+-- 16 Oct 2026: which of the requests the bot tracks have closed, whether or
+-- not Homeroom keeps a row of its own for them (issues). A request filed
+-- through Suggest an improvement or a comment pin has none, so its close
+-- reached nothing the bot reads: #4752 stayed in the Needs you of its
+-- requester's activity drawer days after it closed. Written when a merged
+-- change or a passed close vote closes one (noteRequestsClosed), and by the
+-- refresh's reconcile once GitHub confirms a close by hand
+-- (homeroom-bot-closed-requests.js closeRequestRows), which also writes a row
+-- with no `closed_at` for a request it asked about that was not closed, so
+-- the next refresh asks about the others first. A request back on the open
+-- list loses its row. Read beside issues.status wherever the bot decides a
+-- request is closed (the tray, the track, progress, the abandoned builds).
+CREATE TABLE IF NOT EXISTS homeroom_bot_closed_requests (
+  app_id         INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number   INTEGER NOT NULL,
+  -- When it was seen closed; NULL: GitHub did not report it closed when the
+  -- reconcile last asked (checked_at).
+  closed_at      TIMESTAMPTZ,
+  checked_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, issue_number)
+);
 -- B4: what the person asked for, in their own words: their message to the
 -- bot that the request was filed from, the description they wrote when they
 -- asked for a change, or a first version's brief. Their activity card leads
