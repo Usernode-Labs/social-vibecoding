@@ -75,6 +75,7 @@ test('rules are ordered: understand, scope, prove, hand off', () => {
     /Work only on the branch you were given/,
     /Run the tests that cover/,
     /exercise the app's existing main flow/,
+    /A timeout, a network failure or a server error is not an answer/,
     /Browser features that need a user gesture/,
     /Do not change a lockfile/,
     /A test or check you add must fail/,
@@ -153,5 +154,17 @@ test('#3426: a feature that needs a user gesture is started in a tap handler', (
   ].join('\n'));
   for (const commits of ['agent', 'harness']) {
     assert.ok(buildContract.buildContractBlock({ commits }).includes(buildContract.RULES.userGesture));
+  }
+});
+
+test('#5305: a timeout, a network failure or a server error never decides for good', () => {
+  // The platform's own boot read a 2 s timeout of /api/auth/me as signed
+  // out, for the rest of that page's life.
+  assert.equal(buildContract.RULES.failureIsNotAnswer, [
+    '- A timeout, a network failure or a server error is not an answer. Never turn one into a lasting decision',
+    '  (signed out, empty, gone): retry it or show that it failed, and let only a real "no" decide.',
+  ].join('\n'));
+  for (const commits of ['agent', 'harness']) {
+    assert.ok(buildContract.buildContractBlock({ commits }).includes(buildContract.RULES.failureIsNotAnswer));
   }
 });

@@ -26,6 +26,10 @@
 // unmerged feature inside its own proposal (#34). Each of those maps to a
 // rule here.
 //
+// The rule that a failure is not an answer came from Homeroom itself (#5305,
+// 16 Oct 2026): the client's boot treated a 2 s timeout of /api/auth/me as
+// signed out, for good, for that page.
+//
 // Rules are pre-wrapped lines, joined as written, so a test can pin a rule's
 // exact text and a prompt reads the same everywhere it appears.
 
@@ -54,6 +58,10 @@ const RULES = Object.freeze({
   existingFlow: [
     '- If you change code the whole app relies on (its main loop, shared state, routing, server setup or',
     "  startup), exercise the app's existing main flow afterwards, not only the part you added.",
+  ].join('\n'),
+  failureIsNotAnswer: [
+    '- A timeout, a network failure or a server error is not an answer. Never turn one into a lasting decision',
+    '  (signed out, empty, gone): retry it or show that it failed, and let only a real "no" decide.',
   ].join('\n'),
   userGesture: [
     '- Browser features that need a user gesture (sound through an AudioContext, notification permission,',
@@ -102,7 +110,7 @@ const RULES = Object.freeze({
 // to prove the change, then the hand-off.
 const ORDER = Object.freeze([
   'readInstructions', 'readBeforeWrite', 'keepSmall', 'unrelatedProblems', 'ownBranchOnly',
-  'runTests', 'existingFlow', 'userGesture', 'lockfiles', 'checksProve', 'realCodePath', 'existingChecks',
+  'runTests', 'existingFlow', 'failureIsNotAnswer', 'userGesture', 'lockfiles', 'checksProve', 'realCodePath', 'existingChecks',
   'realDatabase', 'noReports', 'bugFirst', 'COMMIT', 'stopIfUnsafe',
 ]);
 
