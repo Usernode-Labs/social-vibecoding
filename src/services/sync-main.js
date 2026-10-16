@@ -91,6 +91,22 @@ async function persistConflictState(pool, session, { state, files }) {
   }
 }
 
+// A platform sync's wait for the session to be free (the old boot-failure
+// sync's waitForIdle): somebody's turn, a local agent's, or a live operation
+// on the session, read as the proposal machine reads them.
+const IDLE_POLL_MS = 3000;
+const IDLE_WAIT_MS = 10 * 60 * 1000;
+async function sessionBusy(pool, sessionId) {
+  const { operationsLiveSql } = require('../workflow/session-work.ts');
+  const { rows: [r] } = await pool.query(
+    `SELECT cs.active_turn IS NOT NULL
+            OR EXISTS (SELECT 1 FROM local_agent_turns t
+                        WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
+            OR ${operationsLiveSql('cs.id')} AS busy
+       FROM chat_sessions cs WHERE cs.id = $1`, [sessionId]);
+  return !!r?.busy;
+}
+
 // Read by GET /api/sessions/:id/status for reload recovery and the client's
 // poll fallback: the proposal machine's sync under way, or null.
 async function getSyncState(pool, sessionId) {
@@ -98,6 +114,9 @@ async function getSyncState(pool, sessionId) {
     const { rows: [i] } = await pool.query(
       `SELECT data->'sync' AS sync FROM wf_instances WHERE machine = 'proposal' AND key = $1`, [`session:${Number(sessionId)}`]);
     const sync = i && i.sync && typeof i.sync === 'object' ? i.sync : null;
+    // The live phase travels by push (broadcastSyncStatus); a poll knows only
+    // that a sync runs ('starting'), which the client never lets overwrite
+    // a phase it heard.
     return sync ? { phase: 'starting', startedAt: sync.at ? Date.parse(sync.at) : null, reason: sync.reason || null } : null;
   } catch {
     return null;
@@ -150,13 +169,27 @@ const TRIGGERS = new Map([
  * Throws when the machinery under it failed (the worker, the budget, the
  * push of a hand-off's revision), which the machine backs off from.
  */
-async function runSyncWork(config, pool, { sessionId, reason, measureFirst = false, steps }, injected = {}) {
+async function runSyncWork(config, pool, {
+  sessionId, reason, measureFirst = false, waitForIdle = false, githubConflict = false, last = true, steps,
+}, injected = {}) {
   const deps = {
     worker, limits, events, integration: require('./integration'), durableTurn: require('./durable-turn'),
     votes: () => require('../routes/votes'), prImportSync: () => require('./pr-import-sync'),
+    sessionBusy, sleep: (ms) => new Promise((r) => setTimeout(r, ms)), now: Date.now,
     ...injected,
   };
   const id = Number(sessionId);
+  // A platform sync for a head (a boot failure, a failing check) waits for
+  // whoever is working on the session, up to IDLE_WAIT_MS, as the old one
+  // did; still busy, it did nothing (the machine gives the once-record back).
+  if (waitForIdle && !steps.has('started')) {
+    const until = deps.now() + IDLE_WAIT_MS;
+    while (await deps.sessionBusy(pool, id)) {
+      if (steps.stopped) throw Object.assign(new Error('stopped'), { code: 'steps_stopped' });
+      if (deps.now() >= until) return { outcome: 'busy' };
+      await deps.sleep(IDLE_POLL_MS);
+    }
+  }
   let session = await loadSession(pool, id);
   if (!session) return { outcome: 'gone' };
   if (!session.repo_url || !session.branch_name) return { outcome: 'gone' };
@@ -183,7 +216,9 @@ async function runSyncWork(config, pool, { sessionId, reason, measureFirst = fal
   }
   // The merge queue's conflict lane: a head that merges cleanly by now is
   // the direct lane's (a sibling's merge moved main), not a resolution's.
-  if (reason === 'conflict' && measured.mergesClean === true && !steps.has('started')) return { outcome: 'clean_now' };
+  // (Unless GitHub refused it as a conflict the mirror does not see: then
+  // the turn merges main all the same.)
+  if (reason === 'conflict' && measured.mergesClean === true && !githubConflict && !steps.has('started')) return { outcome: 'clean_now' };
   // #361: housekeeping is billed to the system budget; an exhausted one is
   // an answer (the card says so), not a failure to back off from.
   if (!steps.has('started')) {
@@ -216,8 +251,14 @@ async function runSyncWork(config, pool, { sessionId, reason, measureFirst = fal
     } catch (_) { /* persistence failure is non-fatal */ }
   };
   let progressMsgId = steps.get('progressRow') || null;
+  // A restart follows the turn from its journal's start: a line already in
+  // the row is not added twice.
+  const seen = new Set(steps.get('progressSeen') || []);
   const appendProgress = async (text) => {
     if (!emitActivity) return;
+    if (seen.has(text)) return;
+    seen.add(text);
+    await steps.set('progressSeen', [...seen]).catch(() => {});
     send('cc_progress', { text });
     try {
       if (progressMsgId == null) {
@@ -300,7 +341,9 @@ async function runSyncWork(config, pool, { sessionId, reason, measureFirst = fal
     return await steps.once('after', async () => {
       session = (await loadSession(pool, id)) || session;
       await persistBehindMain(pool, session, result.behind || 0);
-      await deps.limits.recordSystemSpend(pool, Math.round((result.costUsd || 0) * 100));
+      // Each effect that must not happen twice is its own step: an after-block
+      // run again (a retry, a lost lease) bills and says it once.
+      await steps.once('after:spend', () => deps.limits.recordSystemSpend(pool, Math.round((result.costUsd || 0) * 100)));
       const syncResult = result.syncResult || (result.exitCode === 0 ? 'clean' : 'conflict');
       const message = syncResult === 'already_synced'
         ? 'Already up to date with main, so there is nothing to merge.'
@@ -347,11 +390,14 @@ async function runSyncWork(config, pool, { sessionId, reason, measureFirst = fal
         }
       }
       if (emitActivity) {
-        await sendStatus(message, { syncMain: { syncResult, behind: result.behind || 0, sha: result.sha || null, pushOk: !!result.pushOk } });
-        events.record(pool, {
-          type: events.EVENT_TYPES.SYNC_MAIN,
-          userId: session.user_id, appId: session.app_id, sessionId: session.id,
-          metadata: { syncResult, behind: result.behind || 0, sha: result.sha || null, pushOk: !!result.pushOk, trigger: TRIGGERS.get(reason) || reason },
+        await steps.once('after:said', async () => {
+          await sendStatus(message, { syncMain: { syncResult, behind: result.behind || 0, sha: result.sha || null, pushOk: !!result.pushOk } });
+          events.record(pool, {
+            type: events.EVENT_TYPES.SYNC_MAIN,
+            userId: session.user_id, appId: session.app_id, sessionId: session.id,
+            metadata: { syncResult, behind: result.behind || 0, sha: result.sha || null, pushOk: !!result.pushOk, trigger: TRIGGERS.get(reason) || reason },
+          });
+          return true;
         });
       }
       broadcastSyncStatus(session, syncResult === 'conflict' ? 'failed' : 'done', { syncResult, message });
@@ -365,11 +411,12 @@ async function runSyncWork(config, pool, { sessionId, reason, measureFirst = fal
     });
   } catch (err) {
     if (err && (err.stopped === true || err.code === 'steps_stopped')) throw err;
-    if (emitActivity) {
+    // Said only when no attempt follows: a retry may still succeed.
+    if (emitActivity && last) {
       await sendStatus(`Sync with main failed: ${err.message}`,
         { syncMain: { syncResult: 'error', behind, sha: null, pushOk: false } }).catch(() => {});
     }
-    broadcastSyncStatus(session, 'failed', { message: err.message });
+    if (last) broadcastSyncStatus(session, 'failed', { message: err.message });
     log.warn('sync-main', 'Sync with main failed', { sessionId: id, reason, err: err.message });
     throw err;
   } finally {
@@ -382,5 +429,7 @@ module.exports = {
   persistBehindMain,
   persistConflictState,
   getSyncState,
+  sessionBusy,
   SYNC_BUDGET_MS,
+  IDLE_WAIT_MS,
 };

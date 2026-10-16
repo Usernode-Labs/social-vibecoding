@@ -538,6 +538,45 @@ test('POST /sync-main: joins a sync already under way, and answers with its outc
   });
 });
 
+test('POST /sync-main: a sync still running is never reported done; an exhausted budget is an error; conflicts carry their files (review: sync 1, 2)', async () => {
+  poolQueryHandler = async (sql) => {
+    if (/FROM chat_sessions cs JOIN apps a/.test(sql)) return { rows: [activeSessionRow(44)] };
+    return { rows: [] };
+  };
+  const answers = [
+    { status: 'pending' },
+    { status: 'accepted', lastSync: null },
+    { status: 'accepted', lastSync: { n: 1, outcome: 'over_budget', message: 'The platform\'s daily budget is spent.' } },
+    { status: 'accepted', lastSync: { n: 2, outcome: 'unresolvable', message: 'Could not resolve.', behind: 3, pushOk: false, conflictFiles: ['src/app.js'] } },
+  ];
+  await withPlatform({ requestSync: async () => answers.shift() }, async () => {
+    const server = await startServer();
+    try {
+      const port = server.address().port;
+      const post = async () => {
+        const res = await fetch(`http://127.0.0.1:${port}/api/sessions/44/sync-main`, { method: 'POST' });
+        return { status: res.status, body: await res.json() };
+      };
+      for (const pending of [await post(), await post()]) {
+        assert.equal(pending.status, 202);
+        assert.equal(pending.body.pending, true);
+        assert.equal(pending.body.ok, false, 'not done');
+      }
+      const budget = await post();
+      assert.equal(budget.status, 500);
+      assert.match(budget.body.error, /budget/);
+      const conflict = await post();
+      assert.equal(conflict.status, 200);
+      assert.equal(conflict.body.ok, false);
+      assert.equal(conflict.body.syncResult, 'conflict');
+      assert.deepEqual(conflict.body.conflictFiles, ['src/app.js']);
+      assert.equal(conflict.body.behind, 3);
+    } finally {
+      server.close();
+    }
+  });
+});
+
 test('GET /status: exposes the in-flight sync state, and null when idle', async () => {
   poolQueryHandler = async (sql) => {
     if (/SELECT user_id, status, shared_at FROM chat_sessions/.test(sql)) {

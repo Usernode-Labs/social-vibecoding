@@ -180,6 +180,7 @@ export async function startWorkflowLoops(): Promise<void> {
   for (const r of rows) await file(r.id, r.app_id, { kind: 'system', name: 'backfill' });
   if (rows.length) log!.info('workflow', 'Enrolled open governance proposals', { count: rows.length });
   await adoptProposals();
+  await rearmWaitingProposals();
   await adoptMergeQueues();
   await retryPlatformFaults();
 }
@@ -196,6 +197,24 @@ export async function adoptMergeQueues(): Promise<number> {
     await runtime.append(queues, queueKey(r.app_id), { type: 'MergeWanted', payload: { appId: r.app_id, reason: 'boot' } },
       { requestKey: `boot:${release}:${r.app_id}`, source: { kind: 'system', name: 'boot' }, appId: r.app_id })
       .catch((err: Error) => log!.warn('workflow', 'Could not ask an app\'s merge queue at boot', { appId: r.app_id, message: err.message }));
+  }
+  return rows.length;
+}
+
+// A proposal waiting on GitHub with no clock (a claim an older release made,
+// whose machine set none) gets its clock again, so GitHub is asked what
+// happened. Once per release, like the queues' look.
+export async function rearmWaitingProposals(): Promise<number> {
+  if (!runtime || !proposals) return 0;
+  const { rows } = await kernelPool!.query(
+    `SELECT key, app_id FROM wf_instances
+      WHERE machine = $1 AND state IN ('merging', 'unconfirmed') AND deadline_at IS NULL`, [PROPOSAL]);
+  const release = String(process.env.GIT_SHA || 'dev').slice(0, 40);
+  for (const r of rows) {
+    const sessionId = Number(String(r.key).split(':')[1]);
+    await runtime.append(proposals, r.key, { type: 'Rearm', payload: { sessionId } },
+      { requestKey: `rearm:${release}:${sessionId}`, source: { kind: 'system', name: 'boot' }, appId: r.app_id })
+      .catch((err: Error) => log!.warn('workflow', 'Could not re-arm a proposal at boot', { sessionId, message: err.message }));
   }
   return rows.length;
 }

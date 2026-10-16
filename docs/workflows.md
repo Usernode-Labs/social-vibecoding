@@ -634,7 +634,12 @@ proposal machine, which decides under its own lock:
 
 A pass tries each candidate once; an ask during a pass makes one more pass after it. What
 is under way, what the pass tried and what is owed are the instance's data, never process
-memory. A slot it waits on for 30 minutes is looked at again (`Check`).
+memory. A slot it waits on for 30 minutes from when it was given is looked at again
+(`Check`), and freed when its proposal no longer holds it. While nothing is under way and
+its line is not empty it sweeps the line every four minutes (`Sweep`, the old eligible-merge
+sweep), and a proposal going up for a vote asks it, so a vote window that elapses, a
+conflict before any vote, a decline for a turn that has since ended and a back-off that
+ran out are all looked at.
 
 ### merge-followups
 
@@ -949,23 +954,36 @@ on, `reviewed_head_sha` and `approval_epoch`, and what makes each platform sync 
   first and never asks twice. Merged: merge-followups is told. Refused: the reason is
   written once per head (a conflict is marked on the row at once), and the head is not
   asked again until it, main or the votes change; a base that moved is tried once more, a
-  native draft is readied and tried once more, an imported draft is reported. The head
+  native draft is readied and tried once more, an imported draft is reported (a base that
+  moved twice is not remembered against the head: the next ask tries it). The head
   moved: back to review, with the votes kept or cleared as the reconcile decides. GitHub
   never answered: `unconfirmed` (still `merging` on the row), and the instance's clock asks
   GitHub every minute, doubling to ten, until it says; there is no override, and Admin →
   Workflows lists it under "Needs a person". A pull
-  request closed for good takes the proposal off the vote (voiding the votes). An admin's
-  force (`ForceMerge`) lasts until it merges, leaves review or its author pushes. A claim
+  request closed for good takes the proposal off the vote (voiding the votes, and ending a
+  force with it). An admin's force (`ForceMerge`) lasts until it merges, leaves review or
+  its author pushes. Once GitHub merged it, merge-followups is told again every five
+  minutes (doubling to thirty) until the row reads `merged`, since an older release's pod
+  may refuse the message during a rollout; a second `Merged` is ignored there. A merge
+  that lands any other way while the gate, an attempt or a sync runs ends them and tells
+  the queue. A claim
   an older release made (`MergeClaim`, during a rollout) is asked about on GitHub once it
-  is five minutes old. Every other exit from review voids the votes.
+  is five minutes old, and each boot re-arms a proposal waiting on GitHub with no clock
+  (`Rearm`). Every other exit from review voids the votes.
 - **Sync with main** is a move of this machine too (`SyncRequested`: a person's Sync, the
   resume auto-sync, the queue's conflict lane, a boot failure, a check main fixed, the
   Homeroom bot's fix or hand-off). Under the lock it refuses a sync while one runs, while
   the proposal is merging or somebody works on it, and checks each reason's own rule (the
   failing head still the head, not tried for this head yet, one resolution per authored
   head before approval, not a fork's head, not a head it already gave up on against this
-  main, not inside a failure's backoff). What makes it once is written in the same
-  transaction as its work, so a restart resumes the sync instead of reading it as tried.
+  main, not inside a failure's backoff). A platform sync for a head (a boot failure, a
+  failing check) is not refused while somebody works on the session: its work waits for
+  them, up to ten minutes. While a sync is asked for, the session is neither promoted nor
+  paused. What makes it once is written in the same transaction as its work, so a restart
+  resumes the sync instead of reading it as tried, and given back when the sync did nothing
+  to the branch (unmeasured, out of budget, still busy, failed), so it may be asked again.
+  A conflict GitHub reported on a head the mirror measures clean is the conflict lane's,
+  and its sync runs the turn all the same.
   `branch.sync` (`sync-main.runSyncWork`) measures, runs the worker's sync turn as a
   durable turn over the item's checkpoint (a restart follows the turn the worker still
   runs), and records what came of it; a sync that failed backs off 2 minutes doubling to

@@ -573,5 +573,214 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     assert.equal(calls(WORK.sync).length, 0, 'never ran');
   });
 
+  // ── After the adversarial review ────────────────────────────────────
+
+  await t.test('M15 a merge that lands while the gate or a sync runs ends the queue\'s slot at once (review: queue 1)', async () => {
+    defaults();
+    const s = await proposalRow();
+    await vote(s, await user(), 'yes');
+    await want(s.app, { sessionId: s.id });
+    await rt.drain();
+    assert.ok((await qInst(s.app)).data.attempt, 'the gate is asked for');
+    // Merged by hand on GitHub, found by the boot observer: merge-followups
+    // moves it into merged and tells the proposal.
+    await toProposal(s, 'Merged', {});
+    await rt.drain();
+    const gate = (await pool.query(`SELECT status FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3`,
+      [MACHINE, sessionKey(s.id), WORK.gate])).rows[0];
+    assert.equal(gate.status, 'settled', 'the gate is cancelled');
+    await rt.drain();
+    assert.equal((await qInst(s.app)).data.attempt, null, 'the queue heard');
+
+    const c = await proposalRow({ clean: false });
+    await vote(c, await user(), 'yes');
+    await want(c.app);
+    await rt.drain();
+    assert.ok((await qInst(c.app)).data.resolution, 'a resolution is asked for');
+    await toProposal(c, 'Merged', {});
+    await rt.drain();
+    await rt.drain();
+    assert.equal((await qInst(c.app)).data.resolution, null, 'the conflict lane is free again');
+    await settle();
+    assert.equal(calls(WORK.sync).length, 0, 'the sync never ran on a merged branch');
+  });
+
+  await t.test('M16 the queue\'s guard frees a slot its proposal no longer holds, and its deadline is not pushed back by asks (review: queue 1, 2)', async () => {
+    defaults();
+    const s = await proposalRow();
+    await vote(s, await user(), 'yes');
+    let release;
+    work.hold.set(WORK.gate, new Promise((r) => { release = r; }));
+    await want(s.app, { sessionId: s.id });
+    await rt.drain();
+    const first = (await qInst(s.app)).deadline_at;
+    assert.ok(first, 'the guard is set with the slot');
+    await new Promise((r) => setTimeout(r, 20));
+    await want(s.app);
+    await want(s.app);
+    await rt.drain();
+    assert.equal(new Date((await qInst(s.app)).deadline_at).getTime(), new Date(first).getTime(), 'asks while working leave it where it was');
+    // The proposal lost its attempt some other way (its row written by an
+    // older release): the guard frees the slot and looks at the line again.
+    await asTransition((x) => x.query(`UPDATE wf_instances SET state = 'closed', data = data - 'attempt' WHERE machine = $1 AND key = $2`,
+      [MACHINE, sessionKey(s.id)]));
+    await due(QUEUE, appKey(s.app.id));
+    await rt.fireTimers();
+    await rt.drain();
+    const q = await qInst(s.app);
+    assert.equal(q.data.attempt, null);
+    release();
+    await settle();
+  });
+
+  await t.test('M17 an idle queue with a line sweeps it: what nobody asks about is looked at (review: queue 3, 6)', async () => {
+    defaults();
+    const s = await proposalRow();
+    await want(s.app);
+    await settle();
+    const q = await qInst(s.app);
+    assert.equal(q.state, 'idle');
+    assert.ok(q.deadline_at, 'a sweep is due');
+    // A Yes nobody announced (a vote window that elapsed reads the same).
+    await vote(s, await user(), 'yes');
+    await fire(QUEUE, appKey(s.app.id));
+    assert.equal(calls(WORK.attempt).length, 1, 'the sweep merged it');
+    const empty = await proposalRow();
+    await toProposal(empty, 'Close', { from: 'promoted', reason: 'manual' }, { kind: 'route' });
+    await settle();
+    await want(empty.app);
+    await settle();
+    assert.equal((await qInst(empty.app)).deadline_at, null, 'an empty line sets no sweep');
+  });
+
+  await t.test('M18 GitHub\'s conflict on a head the mirror measures clean goes to the conflict lane, and the turn runs (review: queue 4, attempt 6)', async () => {
+    defaults();
+    const s = await proposalRow();
+    await vote(s, await user(), 'yes');
+    work.answer.set(WORK.attempt, { outcome: 'refused', kind: 'conflict', message: 'conflict' });
+    work.answer.set(WORK.sync, { outcome: 'level', message: 'Already up to date.' });
+    await want(s.app, { sessionId: s.id });
+    await settle();
+    const syncs = calls(WORK.sync);
+    assert.equal(syncs.length, 1, 'a resolution is asked for');
+    assert.equal(syncs[0].input.githubConflict, true, 'the turn runs although the mirror says clean');
+    assert.ok((await pInst(s)).data.gaveUp, 'nothing a sync changes: the head is left alone against this main');
+    await want(s.app);
+    await settle();
+    assert.equal(calls(WORK.sync).length, 1, 'not asked again for that head');
+  });
+
+  await t.test('M19 main moved under the merge: asked once more at once, and a second refusal is not remembered for the head (review: queue 5, attempt 5)', async () => {
+    defaults();
+    const s = await proposalRow();
+    await vote(s, await user(), 'yes');
+    let n = 0;
+    work.answer.set(WORK.attempt, () => (++n === 1 ? { outcome: 'refused', kind: 'base_moved', message: 'Base branch was modified.' } : { outcome: 'merged', sha: SHA('7') }));
+    await want(s.app, { sessionId: s.id });
+    await settle();
+    assert.equal(calls(WORK.attempt).length, 2);
+    assert.equal((await sentTo('merge-followups', sessionKey(s.id))).length, 1, 'merged on the second ask');
+
+    defaults();
+    const t2 = await proposalRow();
+    await vote(t2, await user(), 'yes');
+    work.answer.set(WORK.attempt, { outcome: 'refused', kind: 'base_moved', message: 'Base branch was modified.' });
+    await want(t2.app, { sessionId: t2.id });
+    await settle();
+    assert.equal(calls(WORK.attempt).length, 2, 'once more, not more');
+    assert.equal((await pInst(t2)).state, 'in_review');
+    assert.equal((await pInst(t2)).data.refused ?? null, null, 'not a refusal of this head');
+    await want(t2.app);
+    await settle();
+    assert.equal(calls(WORK.attempt).length, 4, 'the next ask tries it again');
+  });
+
+  await t.test('M20 a force ends with a pull request closed for good, and never applies after it is proposed again (review: attempt 3)', async () => {
+    defaults();
+    const s = await proposalRow();
+    await toProposal(s, 'ForceMerge', { from: 'promoted', userId: s.owner.id, username: 'admin' }, { kind: 'route' });
+    work.answer.set(WORK.attempt, { outcome: 'closed', message: 'closed' });
+    await settle();
+    const i = await pInst(s);
+    assert.equal(i.state, 'underway');
+    assert.equal(i.data.force ?? null, null, 'the force went with it');
+    assert.equal(i.data.attempt ?? null, null);
+  });
+
+  await t.test('M21 merge-followups is told again until the row reads merged (an older pod may refuse it in a rollout) (review: attempt 1)', async () => {
+    defaults();
+    const s = await proposalRow();
+    await vote(s, await user(), 'yes');
+    await want(s.app, { sessionId: s.id });
+    await settle();
+    assert.equal((await sentTo('merge-followups', sessionKey(s.id))).length, 1);
+    assert.ok((await pInst(s)).deadline_at, 'its clock is set');
+    await fire(MACHINE, sessionKey(s.id));
+    const told = await sentTo('merge-followups', sessionKey(s.id));
+    assert.equal(told.length, 2, 'told again');
+    assert.equal(told[1].payload.mergeSha, SHA('9'), 'the same merge');
+    // Recorded: merge-followups moved the row; the clock stops asking.
+    await asTransition((x) => x.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [s.id]));
+    await fire(MACHINE, sessionKey(s.id));
+    assert.equal((await sentTo('merge-followups', sessionKey(s.id))).length, 2);
+  });
+
+  await t.test('M22 a proposal an older release left merging with no clock gets one again at boot (review: attempt 2)', async () => {
+    defaults();
+    const s = await proposalRow({ status: 'merging' });
+    await toProposal(s, 'Adopted', {});
+    await rt.drain();
+    await asTransition((x) => x.query(`UPDATE wf_instances SET deadline_at = NULL, deadline_event = NULL, data = data - 'claim' WHERE machine = $1 AND key = $2`,
+      [MACHINE, sessionKey(s.id)]));
+    await toProposal(s, 'Rearm', {});
+    await rt.drain();
+    assert.ok((await pInst(s)).deadline_at, 'GitHub is asked what happened once the claim is old');
+    await fire(MACHINE, sessionKey(s.id));
+    assert.equal(calls(WORK.observe).length, 1);
+  });
+
+  await t.test('M23 a platform sync that did nothing gives its once-record back; one that ran keeps it (review: sync 6)', async () => {
+    defaults();
+    const s = await proposalRow({ checks: 'error' });
+    work.answer.set(WORK.sync, { outcome: 'unmeasured' });
+    await toProposal(s, 'SyncRequested', { reason: 'boot_failure', head: SHA('a') });
+    await rt.drain();
+    assert.equal((await row(s)).boot_failure_sync_head, SHA('a'), 'written with the sync\'s own work');
+    await settle();
+    assert.equal((await row(s)).boot_failure_sync_head, null, 'given back: it may be asked again for this head');
+    work.answer.set(WORK.sync, { outcome: 'clean', sha: SHA('5') });
+    await toProposal(s, 'SyncRequested', { reason: 'boot_failure', head: SHA('a') });
+    await settle();
+    assert.equal((await row(s)).boot_failure_sync_head, SHA('a'), 'once per head');
+  });
+
+  await t.test('M24 while a sync is asked for, nothing pauses the session or promotes it; a platform sync waits for a turn rather than refusing (review: sync 5, 7)', async () => {
+    defaults();
+    const s = await proposalRow({ status: 'active' });
+    let release;
+    work.hold.set(WORK.sync, new Promise((r) => { release = r; }));
+    await toProposal(s, 'SyncRequested', { reason: 'person' }, { kind: 'route' });
+    await rt.drain();
+    assert.ok((await pInst(s)).data.sync);
+    const pause = await toProposal(s, 'Pause', { from: 'active', reason: 'auto-idle' });
+    await rt.drain();
+    assert.equal((await outcome(pause)).reason, 'worked_on');
+    release();
+    await settle();
+
+    defaults();
+    const b = await proposalRow({ checks: 'error' });
+    await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"t"}'::jsonb WHERE id = $1`, [b.id]);
+    const asked = await toProposal(b, 'SyncRequested', { reason: 'boot_failure', head: SHA('a') });
+    await rt.drain();
+    assert.equal((await outcome(asked)).result, 'accepted', 'a turn running is waited for, in the work');
+    assert.equal((await pool.query(`SELECT input FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3`,
+      [MACHINE, sessionKey(b.id), WORK.sync])).rows[0].input.waitForIdle, true);
+    const person = await toProposal(b, 'SyncRequested', { reason: 'person' }, { kind: 'route' });
+    await rt.drain();
+    assert.equal((await outcome(person)).reason, 'in_progress');
+    await settle();
+  });
+
   void DAY;
 });

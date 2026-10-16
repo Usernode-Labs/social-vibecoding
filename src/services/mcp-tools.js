@@ -4672,7 +4672,7 @@ function registerTools(server, ctx) {
     const body = result.body || {};
     const conflictFiles = (Array.isArray(body.conflictFiles) ? body.conflictFiles : [])
       .slice(0, MAX_LIST_ITEMS).map((f) => untrusted(f, MAX_TITLE_CHARS));
-    const synced = body.ok !== false;
+    const synced = body.ok !== false && !body.pending;
     return toolResult({
       changeId,
       synced,
@@ -4680,7 +4680,9 @@ function registerTools(server, ctx) {
       behind: Number(body.behind) || 0,
       pushed: body.pushOk === true,
       conflictFiles,
-      nextStep: synced
+      nextStep: body.pending
+        ? 'The sync with main is still running. get_change reports when it has ended.'
+        : synced
         ? 'The change is up to date with main. Its checks run again on the new commit; get_change reports them.'
         : 'The conflicts with main could not be resolved, so the branch is unchanged. Dispatch the coding agent '
           + 'to resolve them, or try sync_change again.',

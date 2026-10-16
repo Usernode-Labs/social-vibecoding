@@ -4967,12 +4967,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           ...(busy ? { busy: true } : {}),
         });
       }
-      if (out.status === 'pending') return res.status(202).json({ ok: true, pending: true });
-      const done = out.lastSync;
-      if (!done) return res.status(202).json({ ok: true, pending: true });
-      if (done.outcome === 'error') return res.status(500).json({ error: done.message || 'Sync with main failed' });
+      // Not ended within the wait (or ended by a close or a merge): still
+      // under way as far as this answer knows, never "done".
+      const done = out.status === 'pending' ? null : out.lastSync;
+      if (!done) return res.status(202).json({ ok: false, pending: true, message: 'The sync with main is still running.' });
+      if (done.outcome === 'error' || done.outcome === 'over_budget' || done.outcome === 'gone') {
+        return res.status(done.outcome === 'gone' ? 409 : 500).json({ error: done.message || 'Sync with main failed' });
+      }
       const syncResult = done.outcome === 'unresolvable' ? 'conflict' : done.outcome === 'not_pushed' ? 'clean' : done.outcome;
-      res.json({ ok: done.outcome !== 'unresolvable', syncResult, sha: done.sha || null, pushOk: done.outcome !== 'not_pushed', message: done.message });
+      res.json({
+        ok: done.outcome !== 'unresolvable', syncResult, sha: done.sha || null, pushOk: done.pushOk ?? done.outcome !== 'not_pushed',
+        behind: done.behind || 0, conflictFiles: done.conflictFiles || [], message: done.message,
+      });
     } catch (err) {
       log.error('sessions', 'sync-main failed', { sessionId, err: err.message });
       res.status(500).json({ error: err.message || 'Internal server error' });

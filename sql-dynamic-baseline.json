@@ -1410,6 +1410,13 @@
       "preview": "`SELECT r.*, s.shots_run_id AS current_run_id, s.shots_state AS current_shots_state, s.shots_detail AS current_shots_detail FROM shot_runs r JOIN chat_sessions "
     },
     {
+      "source": "src/services/sync-main.js",
+      "kind": "structural-template",
+      "fingerprint": "ffc12ef2b720fa34fbf2",
+      "count": 1,
+      "preview": "`SELECT cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'ru"
+    },
+    {
       "source": "src/services/topochain/challenge-onboarding.js",
       "kind": "structural-template",
       "fingerprint": "0d73f67849537e7007aa",

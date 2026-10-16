@@ -111,6 +111,11 @@ export interface Attempt {
   epoch: number;
   tally: Json;                       // the gate's count, for the merged line
   observeTries: number;
+  baseRetried?: boolean;             // GitHub said main moved: asked once more
+  // merged: what merge-followups was told, said again until the row reads
+  // merged (an older release's pod may refuse the message during a rollout).
+  report?: Json | null;
+  resends?: number;
 }
 // A sync with main under way, and the last one's outcome (for whoever waits).
 export interface Sync {
@@ -120,8 +125,19 @@ export interface Sync {
   queueN: number | null;
   approved: boolean;
   at: string;
+  // A platform sync's once-record (boot failure, failing check): the head it
+  // was written for, and what the row held before, put back when the sync
+  // did nothing (it may then be asked again for that head).
+  claimHead?: string | null;
+  prev?: { bootHead?: string | null; fixedHead?: string | null; fixedKeys?: string[] } | null;
+  // GitHub refused the head as a conflict the mirror measures clean: the
+  // turn runs anyway.
+  githubConflict?: boolean;
 }
-export interface SyncOutcome { n: number; reason: string; outcome: string; sha: string | null; message: string | null }
+export interface SyncOutcome {
+  n: number; reason: string; outcome: string; sha: string | null; message: string | null;
+  behind?: number; pushOk?: boolean; conflictFiles?: string[];
+}
 
 export interface Data {
   sessionId: number;
@@ -202,6 +218,13 @@ export const OBSERVE_MAX_MS = 10 * 60 * 1000;
 // A sync whose machinery broke is not asked again for two minutes, doubling
 // to half an hour.
 export const SYNC_BACKOFF_MS = 2 * 60 * 1000;
+// A merge merge-followups has not recorded yet is told again after this,
+// doubling to the max (MERGED_RESEND_MAX_MS).
+export const MERGED_RESEND_MS = 5 * 60 * 1000;
+export const MERGED_RESEND_MAX_MS = 30 * 60 * 1000;
+// The outcomes of a sync that did nothing to the branch: a platform sync's
+// once-record is put back, so it may be asked again for that head.
+const NOTHING_RAN: ReadonlySet<string> = new Set(['unmeasured', 'over_budget', 'gone', 'error', 'busy', 'not_pushed']);
 export const SYNC_BACKOFF_MAX_MS = 30 * 60 * 1000;
 // Why a sync with main is asked for.
 export const SYNC_REASONS: ReadonlySet<string> = new Set([
@@ -342,10 +365,13 @@ const EVENTS = {
     const keys = p?.keys == null ? null : (Array.isArray(p.keys) ? p.keys : [])
       .map((k: unknown) => text(k, 300)).filter(Boolean) as string[];
     return { ...session(p), reason, head: optSha(p?.head, 'head'), keys, queueN: optInt(p?.queueN, 'queueN'),
-      approved: !!p?.approved, userId: optInt(p?.userId, 'userId') };
+      approved: !!p?.approved, userId: optInt(p?.userId, 'userId'), githubConflict: !!p?.githubConflict };
   },
   // The timer: ask GitHub again whether an unanswered merge happened.
   ObserveDue: () => ({}),
+  // The boot's look at an instance waiting with no deadline (one an older
+  // release wrote): its clock is armed again.
+  Rearm: (p: any) => ({ ...session(p) }),
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -366,8 +392,13 @@ function timerFor(s: Live, f: Facts, ctx: TransitionContext, deps: Deps): TimerR
   }
   // A claim an older release made (its own attempt, in its process): GitHub
   // is asked about it once it is old enough that its process is gone.
-  if (s.name === 'merging' && !s.data.attempt && s.data.claim) {
-    return { at: new Date(Math.max(Date.parse(s.data.claim.at) + CLAIM_STALE_MS, ctx.now.getTime() + 1000)), event: { type: 'ObserveDue' } };
+  if (s.name === 'merging' && !s.data.attempt) {
+    const at = s.data.claim?.at ? Date.parse(s.data.claim.at) : ctx.now.getTime();
+    return { at: new Date(Math.max(at + CLAIM_STALE_MS, ctx.now.getTime() + 1000)), event: { type: 'ObserveDue' } };
+  }
+  if (s.name === 'merging' && s.data.attempt?.stage === 'merged') {
+    const tries = s.data.attempt.resends || 0;
+    return { at: later(ctx, Math.min(MERGED_RESEND_MAX_MS, MERGED_RESEND_MS * 2 ** tries)), event: { type: 'ObserveDue' } };
   }
   if (s.name === 'unconfirmed') {
     const tries = s.data.attempt?.observeTries || 0;
@@ -544,7 +575,10 @@ function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
     push: [board(f, 'promoted')],
     // The preview machine builds and checks the reviewed head (it joins a
     // build or a verdict it already has for it).
-    messages: head ? [toPreview(d, 'RevisionSubmitted', { head, source: d.imported ? 'imported' : 'promote', trigger: 'promote-kick' })] : [],
+    // The app's merge queue hears it is in line (it sweeps its line from
+    // then on, so a conflict before any vote is looked at too).
+    messages: [...(head ? [toPreview(d, 'RevisionSubmitted', { head, source: d.imported ? 'imported' : 'promote', trigger: 'promote-kick' })] : []),
+      toQueue(d, 'MergeWanted', { reason: 'promoted' })],
     timer: timerFor(next, f, ctx, deps),
   });
 }
@@ -599,16 +633,7 @@ function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner
       ? { n: s.data.promoting.n, ok: false, code: 'session_state_changed' } : s.data.answer };
   // A gate or a sync under way is ended with it (the worker's removal below
   // stops a sync's turn); the queue that asked for it hears.
-  const cancel: { kind: string; key: string }[] = [];
-  const told: MessageRequest[] = [];
-  if (s.data.attempt?.stage === 'gate') {
-    cancel.push({ kind: WORK.gate, key: `gate:${s.data.attempt.n}` });
-    told.push(ended(s.data, s.data.attempt, 'declined', { reason: 'closed' }));
-  }
-  if (s.data.sync) {
-    cancel.push({ kind: WORK.sync, key: `sync:${s.data.sync.n}` });
-    told.push(...resolved(s.data, s.data.sync, 'closed'));
-  }
+  const { told, cancel } = endSlots(s.data, 'declined', { reason: 'closed' });
   const destroy = destroyWorker(d, n);
   d = doom(d, destroy);
   const work: WorkRequest[] = [destroy, botNote(d, n)];
@@ -677,8 +702,12 @@ const released: Handler = (s, e, f, ctx, deps) => {
 // Off the vote for good: its pull request is closed on GitHub and could not
 // be reopened. Every exit from review voids the votes (Q4, bug 19).
 const abandoned: Handler = (s, e, f, ctx, deps) => {
-  const next: Live = { name: 'underway', data: { ...s.data, claim: null, slot: slotFor(s.data) } };
+  // Its force, its gate or attempt and its sync end with it (a force never
+  // outlives the proposal it was given to).
+  const { told, cancel } = endSlots(s.data, 'declined', { reason: 'closed' });
+  const next: Live = { name: 'underway', data: { ...s.data, claim: null, slot: slotFor(s.data), force: null, attempt: null, sync: null } };
   return step(next, {
+    messages: told, cancel,
     writes: [
       { type: 'abandoned', sessionId: s.data.sessionId },
       line(e, s.data, `${prLabel(f.row!)} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel. Re-propose it from the session's dev-chat.`),
@@ -688,10 +717,30 @@ const abandoned: Handler = (s, e, f, ctx, deps) => {
   });
 };
 
+// The merge queue's slots this proposal holds, ended: its gate or attempt
+// and its sync are cancelled, and the queue that asked for them hears (a
+// stage already reported, unconfirmed or merged, has told it).
+function endSlots(d: Data, outcome: string, extra: Record<string, Json> = {}): { told: MessageRequest[]; cancel: { kind: string; key: string }[] } {
+  const told: MessageRequest[] = [];
+  const cancel: { kind: string; key: string }[] = [];
+  const a = d.attempt;
+  if (a?.stage === 'gate') cancel.push({ kind: WORK.gate, key: `gate:${a.n}` });
+  if (a?.stage === 'merge') cancel.push({ kind: WORK.attempt, key: `attempt:${a.n}` });
+  if (a && (a.stage === 'gate' || a.stage === 'merge')) told.push(ended(d, a, outcome, extra));
+  if (d.sync) {
+    cancel.push({ kind: WORK.sync, key: `sync:${d.sync.n}` });
+    told.push(...resolved(d, d.sync, outcome));
+  }
+  return { told, cancel };
+}
+
+// merge-followups moved it into merged (its own merge, a merge by hand, a
+// change carried by another's): whatever the queue asked of it ends.
 const merged: Handler = (s) => {
+  const { told, cancel } = endSlots(s.data, 'merged');
   const out: Live = { name: 'merged', data: { ...s.data, claim: null, promoting: null, force: null, sync: null,
     attempt: s.data.attempt ? { ...s.data.attempt, stage: 'merged' } : null } };
-  return step(out, { timer: null });
+  return step(out, { timer: null, messages: told, cancel });
 };
 
 // ── The merge (step 6) ──────────────────────────────────────────────────
@@ -766,13 +815,20 @@ function gated(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: D
 // reads merging until merge-followups' Merged arrives.
 function mergedOnGithub(s: Live, f: Facts, ctx: TransitionContext, r: any, observedBy: string): Outcome<PState> {
   const a = s.data.attempt;
-  const d = { ...s.data, attempt: a ? { ...a, stage: 'merged' as const } : null };
-  const messages: MessageRequest[] = [toFollowups(d, {
+  const report: Record<string, Json> = {
     mergeSha: r?.sha ?? null, mergedAt: r?.mergedAt || ctx.now.toISOString(), force: !!a?.force,
     forcedBy: a?.forcedBy ?? null, observedBy, tally: (a?.tally ?? null) as Json,
-  })];
-  if (a) messages.push(ended(d, a, 'merged'));
-  return step({ name: 'merging', data: d }, { messages, timer: null });
+  };
+  const merging: Attempt = a ? { ...a, stage: 'merged', report, resends: 0 }
+    : { n: s.data.n, queueN: 0, force: false, forcedBy: null, stage: 'merged', head: f.row?.head ?? null, epoch: f.row?.epoch ?? 0,
+      tally: null, observeTries: 0, report, resends: 0 };
+  const d = { ...s.data, attempt: merging };
+  const messages: MessageRequest[] = [toFollowups(d, report)];
+  if (a && a.stage !== 'unconfirmed') messages.push(ended(d, a, 'merged'));
+  const next: Live = { name: 'merging', data: d };
+  // Told again until the row reads merged (an older release's pod may
+  // refuse the message during a rollout; a second Merged is ignored).
+  return step(next, { messages, timer: { at: later(ctx, MERGED_RESEND_MS), event: { type: 'ObserveDue' } } });
 }
 
 // Back to review after an attempt that did not merge (its votes kept).
@@ -819,15 +875,25 @@ function attempted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, dep
     }
     case 'gone': return backToReview(s, e, f, ctx, deps, { outcome: 'gone' });
     default: {
-      // Refused: named once per head, so a refusal the queue meets again
-      // says nothing new (merge trace bug 2).
       const kind = String(r?.kind || 'blocked');
+      // Main moved between the gate and GitHub's merge: asked once more at
+      // once (Q4), still claimed.
+      if (kind === 'base_moved' && !a.baseRetried) {
+        const n = s.data.n + 1;
+        const again: Attempt = { ...a, n, baseRetried: true };
+        return step({ name: 'merging', data: { ...s.data, n, attempt: again } }, {
+          work: [{ kind: WORK.attempt, key: `attempt:${n}`, input: { sessionId: s.data.sessionId, n, head: f.row!.head } }],
+        });
+      }
+      // Refused: named once per head, so a refusal the queue meets again
+      // says nothing new (merge trace bug 2). Main moving twice is not a
+      // refusal of this head: the next ask tries it again.
       const said = s.data.refused && s.data.refused.head === f.row!.head && s.data.refused.kind === kind;
       const writes: DomainWrite[] = kind === 'conflict' ? [{ type: 'conflictMarked', sessionId: s.data.sessionId }] : [];
       return backToReview(s, e, f, ctx, deps, {
         outcome: 'refused', extra: { kind }, line: said ? null : (r?.message || null), writes,
         push: { mergeFailed: true, resolving: kind === 'conflict' },
-        refused: { head: f.row!.head, main: f.row!.integrationMain, kind },
+        refused: kind === 'base_moved' ? undefined : { head: f.row!.head, main: f.row!.integrationMain, kind },
       });
     }
   }
@@ -835,7 +901,12 @@ function attempted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, dep
 
 // The clock: GitHub is asked whether an unanswered merge happened (an
 // attempt of this machine's, or a claim an older release made).
-const observeDue: Handler = (s, e, f, ctx) => {
+const observeDue: Handler = (s, e, f, ctx, deps) => {
+  const a = s.data.attempt;
+  if (a?.stage === 'merged') {
+    const next: Live = { name: 'merging', data: { ...s.data, attempt: { ...a, resends: (a.resends || 0) + 1 } } };
+    return step(next, { messages: [toFollowups(s.data, (a.report || {}) as Record<string, Json>)], timer: timerFor(next, f, ctx, deps) });
+  }
   const n = s.data.n + 1;
   return step({ name: s.name, data: { ...s.data, n } } as Live, {
     work: [{ kind: WORK.observe, key: `observe:${n}`, input: { sessionId: s.data.sessionId } }],
@@ -876,7 +947,11 @@ function syncRefusal(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): 
   if (s.name !== 'underway' && s.name !== 'in_review') return s.name === 'closed' ? 'closed' : 'not_underway';
   if (s.data.sync) return 'in_progress';
   if (s.data.attempt) return 'merging';
-  if (row.activeTurn || moving(row)) return 'busy';
+  // A platform sync for a head (a boot failure, a failing check) waits in its
+  // work for whoever is working on the session (sync-main.waitForIdle), as
+  // the old one did; a person's and the queue's are refused.
+  const waits = p.reason === 'boot_failure' || CHECK_SYNCS.has(p.reason);
+  if (!waits && (row.activeTurn || moving(row))) return 'busy';
   if (!row.branch || !row.repo) return 'no_branch';
   if (p.reason === 'boot_failure' || CHECK_SYNCS.has(p.reason)) {
     if (s.name !== 'in_review') return 'not_promoted';
@@ -909,7 +984,10 @@ const syncRequested: Handler = (s, e, f, ctx) => {
   }
   const n = s.data.n + 1;
   const row = f.row!;
-  const sync: Sync = { n, reason: p.reason, head: row.integrationHead || row.head || null, queueN: p.queueN ?? null, approved: !!p.approved, at: ctx.now.toISOString() };
+  const sync: Sync = { n, reason: p.reason, head: row.integrationHead || row.head || null, queueN: p.queueN ?? null, approved: !!p.approved, at: ctx.now.toISOString(),
+    claimHead: p.head ?? null, githubConflict: !!p.githubConflict,
+    prev: p.reason === 'boot_failure' ? { bootHead: row.bootFailureSyncHead }
+      : CHECK_SYNCS.has(p.reason) ? { fixedHead: row.fixedCheckSyncHead, fixedKeys: row.fixedCheckSyncKeys } : null };
   // What makes it once: written with the sync's own work, so a restart in
   // between resumes the sync instead of reading it as tried (merge trace
   // bug 9).
@@ -927,7 +1005,8 @@ const syncRequested: Handler = (s, e, f, ctx) => {
     writes,
     push: p.reason === 'conflict' ? [votes(f, { integrating: true })] : [],
     work: [{ kind: WORK.sync, key: `sync:${n}`, input: { sessionId: s.data.sessionId, n, reason: p.reason,
-      measureFirst: p.reason === 'boot_failure' || CHECK_SYNCS.has(p.reason) } }],
+      measureFirst: p.reason === 'boot_failure' || CHECK_SYNCS.has(p.reason), waitForIdle: p.reason === 'boot_failure' || CHECK_SYNCS.has(p.reason),
+      githubConflict: !!p.githubConflict } }],
   });
 };
 
@@ -937,7 +1016,8 @@ function synced(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outco
   const r = (e.type === 'WorkSucceeded' ? e.payload.result : null) as any;
   const outcome = r ? String(r.outcome || 'done') : 'error';
   let d: Data = { ...s.data, sync: null,
-    lastSync: { n: sync.n, reason: sync.reason, outcome, sha: r?.sha ?? null, message: r?.message ?? (e.payload as any)?.error?.message ?? null } };
+    lastSync: { n: sync.n, reason: sync.reason, outcome, sha: r?.sha ?? null, message: r?.message ?? (e.payload as any)?.error?.message ?? null,
+      behind: Number(r?.behind) || 0, pushOk: !!r?.pushOk, conflictFiles: Array.isArray(r?.conflictFiles) ? r.conflictFiles.slice(0, 200) : [] } };
   const writes: DomainWrite[] = [];
   if (!r) {
     const failures = (s.data.backoff?.failures || 0) + 1;
@@ -946,6 +1026,17 @@ function synced(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outco
     d = { ...d, backoff: null };
   }
   if (outcome === 'unresolvable') d = { ...d, gaveUp: { head: r.headBefore ?? sync.head, main: r.mainSha ?? null } };
+  // GitHub said conflict, and the branch already holds main: nothing a sync
+  // does changes that, so the lane leaves this head alone against this main.
+  if (sync.githubConflict && (outcome === 'level' || outcome === 'clean_now')) d = { ...d, gaveUp: { head: sync.head, main: f.row!.integrationMain } };
+  // A platform sync that did nothing to the branch gives its once-record
+  // back: it may be asked again for this head.
+  if (NOTHING_RAN.has(outcome) && sync.claimHead && sync.prev) {
+    if (sync.reason === 'boot_failure') writes.push({ type: 'bootFailureRelease', sessionId: d.sessionId, head: sync.claimHead, prev: sync.prev.bootHead ?? null });
+    else if (CHECK_SYNCS.has(sync.reason)) {
+      writes.push({ type: 'fixedCheckRelease', sessionId: d.sessionId, head: sync.claimHead, prevHead: sync.prev.fixedHead ?? null, prevKeys: sync.prev.fixedKeys || [] });
+    }
+  }
   if (sync.reason === 'conflict') {
     const reasons = outcome === 'unresolvable' ? ['unresolvable'] : outcome === 'over_budget' ? ['budget'] : [];
     writes.push({ type: 'blockReasons', sessionId: d.sessionId, reasons });
@@ -981,7 +1072,7 @@ const idleCheck: Handler = (s, e, f, ctx, deps) => {
   if (deps.idleMs <= 0 || s.data.imported) return step(s, { timer: null });
   const last = row.lastActivityAt ? Date.parse(row.lastActivityAt) : 0;
   if (ctx.now.getTime() - last < deps.idleMs) return step(s, { timer: { at: new Date(last + deps.idleMs), event: { type: 'IdleCheck' } } });
-  if (busy(row) || row.shotsRunning || row.buildHold || (deps.exemptFixtures && row.fixture)) {
+  if (busy(row) || s.data.sync || row.shotsRunning || row.buildHold || (deps.exemptFixtures && row.fixture)) {
     return step(s, { timer: { at: later(ctx, IDLE_RECHECK_MS), event: { type: 'IdleCheck' } } });
   }
   return pause(s, e, f, ctx, deps);
@@ -1069,7 +1160,7 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
     () => (sameReading(statusOf(s), e.payload.from) ? ok() : reject('session_state_changed')),
     () => owner(e, f),
     () => (f.row!.headless ? reject('headless') : ok()),
-    () => (moving(f.row!) ? reject('busy') : ok()),
+    () => (moving(f.row!) || s.data.sync ? reject('busy') : ok()),
     () => (f.caps && f.caps.promoted >= e.payload.cap ? reject('promoted_cap') : ok()),
     () => {
       const pr = e.payload.pr;
@@ -1099,8 +1190,8 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
     () => (s.data.slot === 'held' ? ok() : reject('already_paused')),
     () => read(s, e),
     () => owner(e, f),
-    () => (SYSTEM_PAUSES.has(e.payload.reason) && (busy(f.row!) || f.row!.shotsRunning || f.row!.buildHold) ? reject('worked_on') : ok()),
-    () => (REST_PAUSES.has(e.payload.reason) && f.row!.activeTurn ? reject('worked_on') : ok()),
+    () => (SYSTEM_PAUSES.has(e.payload.reason) && (busy(f.row!) || f.row!.shotsRunning || f.row!.buildHold || s.data.sync) ? reject('worked_on') : ok()),
+    () => (REST_PAUSES.has(e.payload.reason) && (f.row!.activeTurn || s.data.sync) ? reject('worked_on') : ok()),
   )],
   ['Resume', (s, e, f) => all(
     // A closed proposal is reopened, never resumed (bug 21).
@@ -1179,8 +1270,9 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
   }],
   ['ObserveDue', (s, e, f, ctx) => {
     if (s.name === 'unconfirmed') return ok();
-    if (s.name === 'merging' && !s.data.attempt && s.data.claim
-      && ctx.now.getTime() - Date.parse(s.data.claim.at) >= CLAIM_STALE_MS) return ok();
+    if (s.name === 'merging' && s.data.attempt?.stage === 'merged') return ok();
+    if (s.name === 'merging' && !s.data.attempt
+      && ctx.now.getTime() - (s.data.claim?.at ? Date.parse(s.data.claim.at) : 0) >= CLAIM_STALE_MS) return ok();
     return reject('not_waiting');
   }],
 ]);
@@ -1191,6 +1283,7 @@ const HANDLERS = new Map<string, Handler>([
   ['MergeClaim', claim], ['MergeReleased', released], ['MergeAbandoned', abandoned], ['Merged', merged],
   ['ReviewHeadMoved', headMoved], ['ApprovalsCleared', approvalsCleared],
   ['MergeRequested', mergeRequested], ['ForceMerge', forceMerge], ['SyncRequested', syncRequested], ['ObserveDue', observeDue],
+  ['Rearm', (s, e, f, ctx, deps) => step(s, { timer: timerFor(s, f, ctx, deps) })],
   ['WorkSucceeded', workDone], ['WorkFailed', workDone], ['WorkExhausted', workDone],
 ]);
 // The events that may create the instance (every one but the clock's): the
@@ -1314,6 +1407,7 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
       SyncRequested: (e: Event<any>): Check => (ROUTE_OR_SYSTEM.has(e.source.kind)
         || (e.source.kind === 'message' && (e.source.from.machine === QUEUE || e.source.from.machine === 'preview')) ? ok() : reject('not_a_producer')),
       ObserveDue: timer,
+      Rearm: system,
     },
     transitions: transitions(deps) as any,
     writes: WRITES,
@@ -1472,4 +1566,12 @@ const WRITES = {
       WHERE id = $1`, [w.sessionId, w.head, w.keys || []]),
   resolutionSpent: async (tx: Tx, w: any) => tx.query(
     'UPDATE chat_sessions SET integration_resolved_epoch = approval_epoch WHERE id = $1', [w.sessionId]),
+  // A once-record given back (P6): only while it still names the head its
+  // sync was for, so a later claim stands.
+  bootFailureRelease: async (tx: Tx, w: any) => tx.query(
+    'UPDATE chat_sessions SET boot_failure_sync_head = $3 WHERE id = $1 AND boot_failure_sync_head = $2',
+    [w.sessionId, w.head, w.prev]),
+  fixedCheckRelease: async (tx: Tx, w: any) => tx.query(
+    `UPDATE chat_sessions SET fixed_check_sync_head = $3, fixed_check_sync_keys = $4::text[]
+      WHERE id = $1 AND fixed_check_sync_head = $2`, [w.sessionId, w.head, w.prevHead, w.prevKeys || []]),
 };

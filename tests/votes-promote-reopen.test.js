@@ -443,12 +443,14 @@ test('in review: the reviewed head goes to the preview machine, a native one as 
   // #3173 / #3043: a change submitted with its preview gone gets it back
   // and its checks re-run on the reviewed commit; the preview machine joins
   // a build or a verdict it already has for that head.
+  // The app's merge queue hears it is in line too (it sweeps the line from
+  // then on, so a conflict before any vote is looked at).
   const native = opened({ result: { head: HEAD } });
-  assert.deepEqual(native.messages.map((m) => [m.to.machine, m.event.type, m.event.payload.head, m.event.payload.source]),
-    [['preview', 'RevisionSubmitted', HEAD, 'promote']]);
+  assert.deepEqual(native.messages.map((m) => [m.to.machine, m.event.type, m.event.payload.head ?? m.event.payload.reason, m.event.payload.source]),
+    [['preview', 'RevisionSubmitted', HEAD, 'promote'], ['merge-queue', 'MergeWanted', 'promoted', undefined]]);
   const imported = opened({ imported: true, result: { head: HEAD } });
-  assert.deepEqual(imported.messages.map((m) => [m.to.machine, m.event.type, m.event.payload.head, m.event.payload.source]),
-    [['preview', 'RevisionSubmitted', HEAD, 'imported']]);
+  assert.deepEqual(imported.messages.map((m) => [m.to.machine, m.event.type, m.event.payload.head ?? m.event.payload.reason, m.event.payload.source]),
+    [['preview', 'RevisionSubmitted', HEAD, 'imported'], ['merge-queue', 'MergeWanted', 'promoted', undefined]]);
 });
 
 test('a refused review.open sends the change back to Underway, with the answer the route gives', async () => {

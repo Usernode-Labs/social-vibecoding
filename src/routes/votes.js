@@ -5981,10 +5981,15 @@ async function attemptMerge(config, pool, sessionId, { head, resumeFrom = null, 
   const isImported = session.source === 'imported';
   const useMockMerge = isImported && usesMockGithubForImports();
   const client = useMockMerge ? githubMock : github;
-  const [, owner, repo] = String(session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/) || [];
-  if (!(client.isEnabled() || useMockMerge) || !owner || !repo || !session.pr_number) {
+  if (!(client.isEnabled() || useMockMerge) || !session.repo_url || !session.pr_number) {
     // No GitHub, or no pull request (a local stack): nothing to ask.
     return { outcome: 'merged', sha: null, noGithub: true };
+  }
+  // GitHub is there and the proposal has a pull request: a repository this
+  // cannot read is a refusal, never a merge nobody asked GitHub for.
+  const [, owner, repo] = String(session.repo_url).match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/) || [];
+  if (!owner || !repo) {
+    return { outcome: 'refused', kind: 'blocked', message: `${sessionLabel(session)} was not merged: its repository address (${String(session.repo_url).slice(0, 200)}) could not be read.` };
   }
   const pinned = head || reviewedHeadForSession(session) || null;
   const label = sessionLabel(session);

@@ -252,6 +252,25 @@ test('no GitHub, or no pull request (a local stack): nothing to ask', async () =
   } finally { c.restore(); }
 });
 
+test('a repository address with a trailing slash is still asked about; one it cannot read is refused, never merged unasked (review: attempt 7)', async () => {
+  const slash = { ...native, repo_url: 'https://github.com/acme/demo/' };
+  const c = load({ session: slash, github: { mergePR: () => ({ sha: 'squashsha' }) } });
+  c.session = slash;
+  try {
+    const { out } = await attempt(c);
+    assert.deepEqual(out, { outcome: 'merged', sha: 'squashsha' });
+    assert.deepEqual(c.calls.merge, [HEAD], 'GitHub was asked');
+  } finally { c.restore(); }
+  const odd = { ...native, repo_url: 'https://gitlab.example/acme/demo' };
+  const d = load({ session: odd, github: { mergePR: () => ({ sha: 'squashsha' }) } });
+  d.session = odd;
+  try {
+    const { out } = await attempt(d);
+    assert.equal(out.outcome, 'refused');
+    assert.deepEqual(d.calls.merge, []);
+  } finally { d.restore(); }
+});
+
 test('refusalKind names a refusal from GitHub\'s answer and the pull request as it stands', () => {
   const { refusalKind } = require('../src/routes/votes');
   assert.equal(refusalKind(status(405, 'x'), { draft: true }), 'draft');

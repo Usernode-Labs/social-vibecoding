@@ -30,6 +30,9 @@ export interface Candidate {
   // The mirror's last measurement of this head: true clean, false conflict,
   // null never measured.
   mergesClean: boolean | null;
+  // GitHub refused this head against this main as a conflict the mirror did
+  // not measure: it is the conflict lane's (and its sync runs the turn).
+  githubConflict: boolean;
   conflictPaths: number;
   integrationMain: string | null;
   // A settled verdict stands on the pinned head; a run for it is under way.
@@ -109,15 +112,19 @@ export async function readLine(tx: Tx, appId: number, now: Date): Promise<Candid
     const checksSha = sha(r.checks_commit_sha);
     const onHead = !head || checksSha === head;
     const settled = (r.check_state === 'passing' || r.check_state === 'skipped') && onHead;
+    const integrationMain = sha(r.integration_main_sha);
+    const githubConflict = d.refused?.kind === 'conflict' && !!head && sha(d.refused.head) === head
+      && (!d.refused.main || !integrationMain || sha(d.refused.main) === integrationMain);
     const unmergeable = r.locked === true && r.admin_yes === false ? 'lock'
       : (r.check_state === 'failing' || r.check_state === 'error') && onHead && !!checksSha ? `checks_${r.check_state}` : null;
     out.push({
       id: Number(r.id), head, epoch: Number(r.approval_epoch) || 0,
       approved: !!gate?.mergeable, forced: !!d.force, yes: Number(r.yes_count) || 0,
       waitedSince: ms(r.promoted_at || r.created_at),
-      mergesClean: r.integration_merges_clean == null ? null : !!r.integration_merges_clean,
+      mergesClean: githubConflict ? false : r.integration_merges_clean == null ? null : !!r.integration_merges_clean,
+      githubConflict,
       conflictPaths: Array.isArray(r.integration_conflict_paths) ? r.integration_conflict_paths.length : 0,
-      integrationMain: sha(r.integration_main_sha),
+      integrationMain,
       settled,
       runInFlight: r.check_state === 'pending' && r.check_phase !== 'deferred' && onHead && !!checksSha,
       unmergeable,

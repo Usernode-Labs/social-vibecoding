@@ -9992,6 +9992,10 @@ const DevChat = {
           ok: false,
           message: data.error || PlatformI18n.t('devchat:banner.sync.failedHttp', { status: resp.status }),
         });
+      } else if (data.pending) {
+        // Still running past the route's wait: the WS terminal event and
+        // the poll fallback end it, not this answer.
+        DevChat._startSyncPolling(Number(sessionId));
       } else {
         // The POST response is the authoritative final result —
         // applied idempotently with the WS terminal event. Refresh
@@ -10080,7 +10084,9 @@ const DevChat = {
         if (!res.ok) return;
         const { sync } = await res.json();
         if (sync && sync.phase) {
-          if (DevChat._syncState && !DevChat._syncState.terminal
+          // 'starting' is all a poll knows of a sync under way (the live
+          // phase comes by push): it never overwrites one heard.
+          if (DevChat._syncState && !DevChat._syncState.terminal && sync.phase !== 'starting'
               && DevChat._syncState.phase !== sync.phase) {
             DevChat._syncState = { ...DevChat._syncState, phase: sync.phase };
             DevChat._applySyncBanner();

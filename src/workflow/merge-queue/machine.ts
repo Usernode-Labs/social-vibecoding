@@ -35,6 +35,11 @@ const sessionKey = (sessionId: number) => `session:${sessionId}`;
 // A proposal the queue waits on longer than this is looked at again: one
 // that is no longer being measured, merged or synced for it frees its slot.
 export const CHECK_MS = 30 * 60 * 1000;
+// While nothing is under way and the line is not empty, the queue looks at
+// it again this often, as the old eligible-merge sweep did: what nobody asks
+// about (a vote window that elapsed, a conflict before its vote, a decline
+// for a turn that has since ended, a back-off over) is picked up.
+export const SWEEP_MS = 4 * 60 * 1000;
 
 // ── State ───────────────────────────────────────────────────────────────
 
@@ -72,6 +77,7 @@ const EVENTS = {
   ResolutionEnded: (p: any) => ({ appId: int(p?.appId, 'appId'), sessionId: int(p?.sessionId, 'sessionId'), n: int(p?.n, 'n'),
     outcome: text(p?.outcome, 64) || 'ended', reason: text(p?.reason, 64) }),
   Check: () => ({}),
+  Sweep: () => ({}),
 };
 
 // ── The line's rules ────────────────────────────────────────────────────
@@ -110,6 +116,8 @@ export function admission(c: Candidate, now: number): { admit: boolean; reason: 
 const LANE_REASONS: ReadonlySet<string> = new Set(['awaiting_approval', 'unresolvable', 'fork_head']);
 
 const free = (c: Candidate) => c.state === 'in_review' && !c.busy;
+// The proposal states that can hold a slot of the queue's.
+const HOLDING: ReadonlySet<string> = new Set(['in_review', 'merging', 'underway']);
 
 // ── Moves ───────────────────────────────────────────────────────────────
 
@@ -172,7 +180,9 @@ function pick(d: Data, f: Facts, ctx: TransitionContext): Outcome<QState> {
     if (next) {
       const n = data.n + 1;
       data = { ...data, n, resolution: { n, sessionId: next.c.id }, tried: [...data.tried, `sync:${triedKey(next.c)}`] };
-      messages.push(toProposal(data, next.c.id, 'SyncRequested', { reason: 'conflict', queueN: n, approved: next.reason === 'approved' }));
+      messages.push(toProposal(data, next.c.id, 'SyncRequested', {
+        reason: 'conflict', queueN: n, approved: next.reason === 'approved', githubConflict: next.c.githubConflict,
+      }));
     }
   }
   void conflicts;
@@ -184,7 +194,13 @@ function pick(d: Data, f: Facts, ctx: TransitionContext): Outcome<QState> {
     data = { ...data, tried: [], named: [] };
   }
   const next: Live = { name: working ? 'working' : 'idle', data };
-  return step(next, { messages, writes, timer: working ? { at: new Date(ctx.now.getTime() + CHECK_MS), event: { type: 'Check' } } : null });
+  // The guard against an answer that never came is set when a slot is
+  // given, not pushed back by every ask after it; idle, the sweep.
+  const assigned = data.attempt !== d.attempt || data.resolution !== d.resolution;
+  const timer = working
+    ? (assigned ? { at: new Date(ctx.now.getTime() + CHECK_MS), event: { type: 'Check' } } : undefined)
+    : line.length ? { at: new Date(ctx.now.getTime() + SWEEP_MS), event: { type: 'Sweep' } } : null;
+  return step(next, { messages, writes, timer });
 }
 
 function wanted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<QState> {
@@ -213,17 +229,22 @@ function resolutionEnded(s: Live, e: Event<any>, f: Facts, ctx: TransitionContex
 // longer measured, merged or synced for it is freed.
 function checked(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<QState> {
   let d = { ...s.data };
+  // A proposal holds an attempt slot while its gate or GitHub's merge for
+  // that ask is under way, a resolution slot while that sync is.
   const a = d.attempt ? f.waiting.get(d.attempt.sessionId) : null;
-  if (d.attempt && (!a || !a.data?.attempt || a.data.attempt.queueN !== d.attempt.n)) d = { ...d, attempt: null };
+  const holdsAttempt = !!a && HOLDING.has(a.state) && !!a.data?.attempt && a.data.attempt.queueN === d.attempt?.n
+    && (a.data.attempt.stage === 'gate' || a.data.attempt.stage === 'merge');
+  if (d.attempt && !holdsAttempt) d = { ...d, attempt: null };
   const r = d.resolution ? f.waiting.get(d.resolution.sessionId) : null;
-  if (d.resolution && (!r || !r.data?.sync || r.data.sync.queueN !== d.resolution.n)) d = { ...d, resolution: null };
+  const holdsSync = !!r && HOLDING.has(r.state) && !!r.data?.sync && r.data.sync.queueN === d.resolution?.n;
+  if (d.resolution && !holdsSync) d = { ...d, resolution: null };
   if (d.attempt || d.resolution) {
     return step({ name: 'working', data: d }, { timer: { at: new Date(ctx.now.getTime() + CHECK_MS), event: { type: 'Check' } } });
   }
-  // Freed: the next ask (or this one's owed pass) picks again.
+  // Freed: a pass runs again at once (this event read no line).
   return step({ name: 'idle', data: { ...d, tried: [], named: [], owed: false } }, {
     timer: null,
-    messages: d.owed ? [{ to: { machine: MACHINE, key: appKey(d.appId) }, event: { type: 'MergeWanted', payload: { appId: d.appId, reason: 'owed' } }, appId: d.appId }] : [],
+    messages: [{ to: { machine: MACHINE, key: appKey(d.appId) }, event: { type: 'MergeWanted', payload: { appId: d.appId, reason: 'freed' } }, appId: d.appId }],
   });
 }
 
@@ -254,6 +275,7 @@ export function mergeQueue(): Machine<QState, Facts> {
     AttemptEnded: { guard: (s: QState, e: Event<any>) => own((d) => d.attempt)(s as Live, e), to: live(attemptEnded) },
     ResolutionEnded: { guard: (s: QState, e: Event<any>) => own((d) => d.resolution)(s as Live, e), to: live(resolutionEnded) },
     Check: name === 'working' ? { to: live(checked) } : { ignore: 'idle' },
+    Sweep: name === 'idle' ? { to: live((s, e, f, ctx) => pick({ ...s.data, tried: [], owed: false, named: [] }, f, ctx)) } : { ignore: 'working' },
   });
   return defineMachine<QState, Facts>({
     name: MACHINE,
@@ -269,7 +291,7 @@ export function mergeQueue(): Machine<QState, Facts> {
       const waitingOn = d ? [d.attempt?.sessionId, d.resolution?.sessionId].filter((x): x is number => !!x) : [];
       return readFacts(tx, appId, event.type, waitingOn, ctx.now);
     },
-    authorize: { MergeWanted: anyone, AttemptEnded: fromProposal, ResolutionEnded: fromProposal, Check: timer },
+    authorize: { MergeWanted: anyone, AttemptEnded: fromProposal, ResolutionEnded: fromProposal, Check: timer, Sweep: timer },
     transitions: { [NONE]: create, idle: table('idle'), working: table('working') } as any,
     writes: {
       // The card's "who acts" on a conflicting head (services/merge-requirements.js

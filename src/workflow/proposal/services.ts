@@ -15,6 +15,8 @@ const gone = (err: any) => err?.status === 404 || err?.status === 410;
 // A refusal the promote route answers with, by its code (platform.ts).
 const refused = (code: string, message: string) => Object.assign(permanent(message), { code });
 // GitHub's answer comes in seconds; a promote waits about twenty.
+// branch.sync: one retry after the machinery under it failed.
+const SYNC_ATTEMPTS = 2;
 const quick = (attempt: number) => Math.min(20 * 1000, 2000 * 2 ** (attempt - 1));
 
 export function proposalServices({ config, pool }: Deps): Record<string, WorkHandler> {
@@ -307,7 +309,7 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
     // the turn the worker still runs and then does what comes after it.
     [WORK.sync]: {
       resumable: true,
-      maxAttempts: 2,
+      maxAttempts: SYNC_ATTEMPTS,
       maxLostAttempts: 20,
       leaseMs: 120000,
       concurrency: 4,
@@ -319,7 +321,8 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
           lostAttempts: ctx.lostAttempts || 0, owner: `proposal/sync:${input.sessionId}:${input.n}`,
         });
         const out = await legacy('services/sync-main').runSyncWork(config, pool, {
-          sessionId: Number(input.sessionId), reason: String(input.reason), measureFirst: !!input.measureFirst, steps,
+          sessionId: Number(input.sessionId), reason: String(input.reason), measureFirst: !!input.measureFirst,
+          waitForIdle: !!input.waitForIdle, githubConflict: !!input.githubConflict, last: ctx.attempt >= SYNC_ATTEMPTS, steps,
         });
         await steps.flush();
         steps.fence();
