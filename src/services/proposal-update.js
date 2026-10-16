@@ -1939,6 +1939,9 @@ function sessionParts(ctx) {
     // this file for the same reason — it pulls in the server's socket state.
     pushSessionUpdate: c.pushSessionUpdate
       || ((payload) => require('./ws').pushSessionUpdate(payload)),
+    // The reviewed head's reconcile, for an active session that went up for
+    // a vote under the update (bug 13).
+    votes: c.votes || null,
   };
 }
 

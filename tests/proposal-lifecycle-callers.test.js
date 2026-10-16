@@ -1,0 +1,130 @@
+'use strict';
+
+// The proposal machine's callers (src/workflow/proposal/), read from source:
+// every move names what its caller read, nothing writes a proposal's status
+// outside the machine, and the flows that used to write it themselves now
+// ask the machine. The machine's own guarantees are
+// tests/workflow-proposal-postgres.test.js's.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const ROOT = path.join(__dirname, '..');
+const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+
+function sources(dir) {
+  const out = [];
+  for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+    const rel = path.join(dir, e.name);
+    if (e.isDirectory()) out.push(...sources(rel));
+    else if (/\.(js|ts)$/.test(e.name)) out.push(rel);
+  }
+  return out;
+}
+
+// The text of each call of `name(` in `text`: its arguments, up to the
+// parenthesis that closes it.
+function calls(text, name) {
+  const out = [];
+  const re = new RegExp(`\\b${name}\\(`, 'g');
+  let m;
+  while ((m = re.exec(text))) {
+    if (/function\s+$/.test(text.slice(Math.max(0, m.index - 20), m.index))) continue;
+    let depth = 0;
+    let i = m.index + name.length;
+    for (; i < text.length; i++) {
+      if (text[i] === '(') depth++;
+      else if (text[i] === ')' && --depth === 0) break;
+    }
+    out.push({ at: text.slice(0, m.index).split('\n').length, args: text.slice(m.index + name.length + 1, i) });
+  }
+  return out;
+}
+
+// A status move that names no `from` fails at the append (the machine's
+// decoders require it). This finds the call that would, before it runs.
+const MOVES = ['archiveSession', 'pauseSession', 'closeProposal', 'pauseProposal', 'resumeProposal', 'reopenProposal',
+  'unpromoteProposal', 'promoteProposal', 'promoteInTransaction', 'abandonMerge'];
+
+test('every proposal move in the platform names what its caller read (`from`)', () => {
+  const files = [...sources('src'), 'server.js'];
+  const missing = [];
+  for (const file of files) {
+    const text = read(file);
+    for (const name of MOVES) {
+      for (const c of calls(text, name)) {
+        // The wrappers' own forwarding (`from,` / `from: x`) counts.
+        if (!/\bfrom\b/.test(c.args)) missing.push(`${file}:${c.at} ${name}(${c.args.slice(0, 80).replace(/\s+/g, ' ')}…)`);
+      }
+    }
+  }
+  assert.deepEqual(missing, [], `calls without \`from\`:\n${missing.join('\n')}`);
+});
+
+test('no code outside the workflow machines writes a proposal\'s status: the list names only the staging seeds and SET lists built at run time', () => {
+  const { readBaseline } = require('./lib/workflow-boundary');
+  const listed = readBaseline().machines.proposal.filter((e) => e.startsWith('ownership | chat_sessions.status ←'));
+  const writers = listed.filter((e) => !/\(dynamic SET\)$/.test(e) && !/src\/db\/migrate\.js#seedStaging/.test(e));
+  assert.deepEqual(writers, [], 'a writer of status outside the machine');
+  for (const e of listed.filter((x) => /migrate\.js#seedStaging/.test(x))) {
+    const fn = e.split('#')[1];
+    const text = read('src/db/migrate.js');
+    const body = text.slice(text.indexOf(`async function ${fn}`), text.indexOf('\nasync function ', text.indexOf(`async function ${fn}`) + 10));
+    assert.match(body, /wf_holds\('proposal'/, `${fn} leaves a row the machine holds alone`);
+  }
+});
+
+test('the bot\'s build session keeps its slot between turns until the build ends (bug 22)', () => {
+  const live = read('src/services/homeroom-bot-live.js');
+  const turn = live.slice(live.indexOf("durableSteps.rethrowStop(err, 'build turn');"));
+  const fin = turn.slice(turn.indexOf('} finally {'), turn.indexOf('return { routed: turnRouted, stopped: turnStopped };'));
+  assert.match(fin, /activeWorkers\.delete\(session\.id\)/);
+  const code = fin.replace(/\/\/.*$/gm, '');
+  assert.doesNotMatch(code, /status|pause|restSession/i, 'nothing gives its slot back after a turn');
+});
+
+test('the bot\'s and the bench\'s own endings close through the machine (bug 15)', () => {
+  const live = read('src/services/homeroom-bot-live.js');
+  for (const reason of ['bot-failed', 'bot-plan-only', 'not-proposed']) {
+    assert.match(live, new RegExp(`closeOwnSession\\(\\{ pool, sessionId: session\\.id, reason: '${reason}' \\}\\)`), reason);
+  }
+  assert.match(read('src/services/homeroom-bot.js'), /archiveSession\(\{ pool, sessionId: session\.id, reason: 'bot-recovered', from: now\.status \}\)/);
+  assert.match(read('src/services/bench/lane.js'), /closeOwnSession\(\{ pool, sessionId: id, reason: 'bench' \}\)/);
+  assert.match(read('src/services/bench/studio.js'), /closeOwnSession\(\{ pool, sessionId: r\.session_id, reason: 'bench-preview-expired' \}\)/);
+  assert.match(read('server.js'), /closeProposal\(\{ sessionId: Number\(sessionId\), reason: 'bench', from: now\.status \}\)/);
+  // proposal_start's predecessor is closed in the successor's own transaction.
+  assert.match(read('src/routes/proposal-handoff.js'), /closeProposal\(\{\s*sessionId: Number\(replacementSession\.id\)[^}]*reason: 'proposal-replaced'[^}]*db: client/);
+});
+
+test('an import going straight to a vote goes up through the machine, under the cap (bugs 10, 11)', () => {
+  const votes = read('src/routes/votes.js');
+  const route = votes.slice(votes.indexOf("router.post('/api/apps/:slug/pr-import', drainGuard"), votes.indexOf("router.post('/api/apps/:slug/pr-import/_mock/advance'"));
+  assert.match(route, /promoteInTransaction\(\{[\s\S]*?db: importClient/);
+  assert.match(route, /cap: effectiveSessionCaps\(config, req\.user\)\.promotedSessions/);
+  assert.match(route, /draft: !!pr\.draft/, 'the draft GitHub reports is what the machine refuses');
+  assert.doesNotMatch(route, /'promoted'\s*(?:,|\))/, 'nothing inserts a row born in review');
+});
+
+test('a close vote\'s withdrawal is the machine\'s close: its durable work finishes what a crash cut off (bug 16)', () => {
+  const closed = read('src/services/homeroom-bot-closed-requests.js');
+  assert.match(closed, /lifecycle\.archiveSession\(\{ pool, sessionId: Number\(session\.id\), reason: REASON, from: 'promoted' \}\)/);
+  const lifecycle = read('src/services/session-lifecycle.js');
+  assert.doesNotMatch(lifecycle, /finalizeArchivedSession|github\.closePR|destroyWorker\(/, 'nothing of a close runs after it, in the calling process');
+});
+
+test('a resume reads that the session is the caller\'s and paused before it evicts anybody (bug 23)', () => {
+  const sessions = read('src/routes/sessions.js');
+  const fn = sessions.slice(sessions.indexOf('async function resumePausedSession('), sessions.indexOf('// What a stop forwarded from another platform process'));
+  const refused = fn.indexOf("if (!own || own.status !== 'paused') return { ok: false, status: 404");
+  assert.ok(refused > 0, 'a session that is not the caller\'s, or not paused, is refused first');
+  for (const evicts of ['freeGlobalSlot(', 'freeUserSlot(', 'resumeProposal(']) {
+    assert.ok(fn.indexOf(evicts) > refused, `${evicts} only after it`);
+  }
+  // The caps are the machine's, counted under its locks; the route only asks
+  // a session to pause when the machine refused for a cap.
+  assert.doesNotMatch(fn, /SELECT COUNT\(\*\)/);
+  assert.match(fn, /reason === 'user_cap'/);
+  assert.match(fn, /reason === 'global_cap'/);
+});

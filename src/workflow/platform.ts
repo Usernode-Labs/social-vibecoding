@@ -9,7 +9,7 @@
 
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
-import { createRuntime } from './kernel/index.ts';
+import { appendEvent, createRuntime } from './kernel/index.ts';
 import type { EventOutcome, Logger, Pool, Push, Queryable, Runtime } from './kernel/index.ts';
 import { legacy } from './legacy.ts';
 import { GOVERNANCE_KINDS } from './governance-proposal/facts.ts';
@@ -695,7 +695,19 @@ type ProposalAppend = {
   db?: Queryable; waitMs?: number;
 };
 
+// The proposal machine's events decoded at the append, also in a process
+// that does not run the machines (a script, a test that appends in its own
+// transaction): its deps decide nothing at an append.
+let decoding: ReturnType<typeof proposal> | null = null;
+
 async function proposalEvent(type: string, payload: Record<string, unknown>, o: ProposalAppend): Promise<EventOutcome | number> {
+  if (o.db && !proposals) {
+    decoding ||= proposal(proposalDeps({}));
+    return appendEvent(o.db, decoding, proposalKey(o.sessionId), { type, payload: { sessionId: o.sessionId, ...payload } }, {
+      requestKey: o.requestKey || `${type}:${o.sessionId}:${randomUUID()}`,
+      source: o.source || sys(type), actor: o.actor ?? undefined, appId: o.appId ?? undefined,
+    });
+  }
   const m = proposalMachine();
   const event = { type, payload: { sessionId: o.sessionId, ...payload } };
   const opts = {

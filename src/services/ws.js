@@ -63,10 +63,7 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       // hint would cost a query per instance to protect nothing.
       if (oversize) deliverGlobal(payload);
       else deliverGlobalScoped(payload, { appId: r.appId ?? null, appSlug: r.appSlug ?? null });
-      // A card that arrived on or left a board, as a workflow machine says
-      // (the proposal machine's moves): the Workshop's placement stage hears
-      // it here, as pushSessionUpdate tells it in the process that calls it.
-      // Every process relays it; the stage debounces and leases its run.
+      // A card a machine moved on a board: the Workshop hears it (debounced, leased).
       if (fromWorkflow && r.boardChange) noteBoardChange({ appId: r.appId ?? null, appSlug: r.appSlug ?? null });
       return;
     case 'admins':

@@ -420,9 +420,11 @@ const pause: Handler = (s, e, f) => {
 };
 
 const resume: Handler = (s, e, f, ctx, deps) => {
-  const next: Live = { name: 'underway', data: { ...s.data, slot: 'held' } };
+  // An imported proposal holds no slot (one left 'paused' by [main] reads
+  // 'active' again, as imports always do).
+  const next: Live = { name: 'underway', data: { ...s.data, slot: s.data.imported ? 'none' : 'held' } };
   // last_activity_at moves with it: the idle timer runs from now.
-  const timer = deps.idleMs > 0 ? { at: later(ctx, deps.idleMs), event: { type: 'IdleCheck' } } : null;
+  const timer = deps.idleMs > 0 && !s.data.imported ? { at: later(ctx, deps.idleMs), event: { type: 'IdleCheck' } } : null;
   return step(next, { writes: [{ type: 'resumed', sessionId: s.data.sessionId }], push: [board(f, 'resumed')], timer });
 };
 
@@ -517,7 +519,7 @@ const approvalsCleared: Handler = (s) => step(s, { writes: [{ type: 'approvalsCl
 // The idle check: a held slot nobody has used for a while is given back.
 const idleCheck: Handler = (s, e, f, ctx, deps) => {
   const row = f.row!;
-  if (deps.idleMs <= 0) return step(s, { timer: null });
+  if (deps.idleMs <= 0 || s.data.imported) return step(s, { timer: null });
   const last = row.lastActivityAt ? Date.parse(row.lastActivityAt) : 0;
   if (ctx.now.getTime() - last < deps.idleMs) return step(s, { timer: { at: new Date(last + deps.idleMs), event: { type: 'IdleCheck' } } });
   if (busy(row) || row.shotsRunning || row.buildHold || (deps.exemptFixtures && row.fixture)) {
