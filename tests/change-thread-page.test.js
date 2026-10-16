@@ -277,3 +277,31 @@ test('the header shows the status pill beside "Change #N", in the card\'s capsul
   assert.doesNotMatch(none, /data-change-status|gc-vote-count/);
   assert.match(none, /<div class="messages-thread-name min-w-0">Change #81<\/div>/);
 });
+
+// #5329: where the ⋯ menu has a Details row (the change has a technical
+// half), the header's "Change #N" title itself opens the Details sheet.
+// The ⋯ Details row's gate is `body.changeId` (AppView._topicCard), and the
+// head passes the same gate to the bar as `detailsId`.
+test('the header title is a button that opens Details where the ⋯ menu has a Details row', () => {
+  const head = 'frontend/src/features/dev-board/topic/change-head.tsx';
+  const open = renderComponent(head, 'ChangeBar', { v: view(null), menuKey: '', detailsId: 81 });
+  assert.match(open, /<div class="messages-thread-name min-w-0"><button type="button" class="messages-thread-name-link" data-change-details-open=""/);
+  assert.match(open, /aria-label="Change #81, see details" title="See details">Change #81<\/button><\/div>/);
+  assert.equal(message('project:topic.change.bar.openDetails', { title: 'Change #81' }), 'Change #81, see details');
+  assert.equal(message('project:topic.change.bar.openDetailsTitle'), 'See details');
+  // Without the gate, the title is the plain div it always was.
+  const plain = renderComponent(head, 'ChangeBar', { v: view(null), menuKey: '' });
+  assert.doesNotMatch(plain, /messages-thread-name-link/);
+  assert.match(plain, /<div class="messages-thread-name min-w-0">Change #81<\/div>/);
+});
+
+test('the title button opens details the way the ⋯ row does, on the row\'s gate', () => {
+  const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
+  assert.match(src, /onClick=\{\(\) => \(window as any\)\.AppView\?\.openTechnicalDetails\?\.\(detailsId\)\}/,
+    'the title button calls the same openTechnicalDetails the ⋯ row calls');
+  assert.match(src, /detailsId=\{id && body\.changeId \? id : null\}/,
+    'the head gates the title on body.changeId, the ⋯ Details row\'s gate');
+  const css = read('public/css/app.css');
+  assert.match(css, /\.messages-thread-name-link:hover \{ text-decoration: underline;/);
+  assert.match(css, /\.messages-thread-name-link:focus-visible \{ outline: 2px solid var\(--accent\);/);
+});

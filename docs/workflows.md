@@ -7,10 +7,10 @@ then applies, a preview builds and runs its checks, a merge sets off a list of f
 it, and one code path that applies those events. Everything it does to the outside world
 is a durable work item whose result comes back as another event.
 
-Governance proposals, a proposal's preview and required checks, what follows a merge
-and every production deploy of an app run on machines whose old paths are deleted: none
-has a flag, and each decides every case of its kind. The others move over one at a
-time.
+Governance proposals, a proposal's lifecycle, its preview and required checks, its
+before & after shots, what follows a merge and every production deploy of an app run on
+machines whose old paths are deleted: none has a flag, and each decides every case of its
+kind. The others move over one at a time.
 
 ## What it solves
 
@@ -558,6 +558,7 @@ release (`docs/kubernetes-operations.md`).
 | `tests/workflow-governance-postgres.test.js` | The governance machine, one subtest per guarantee (G1–G13), plus the rollout cases. |
 | `tests/workflow-governance-routes-postgres.test.js` | The routes with the runtime on. |
 | `tests/workflow-governance-services.test.js` | The governance work handlers. |
+| `tests/workflow-proposal-postgres.test.js` | The proposal machine, every move from every state it can be made in, against real PostgreSQL. |
 | `tests/admin-workflows.test.js` | The admin section. |
 | `tests/workflow-process-state.test.js` | The list of what the machines still depend on only shrinks. |
 | `tests/workflow-boundary.test.js` | The boundary check's rules, on a small source tree of its own. |
@@ -593,6 +594,7 @@ A new machine brings the same two layers:
 | `app-delivery` | `app:<id>`, for each app a production deploy was asked for | `idle` ⇄ `deploying` | On everywhere; its old paths are deleted |
 | `preview` | `session:<id>`, for each proposal with a preview, a checks run or work recorded on it, and each App bench studio preview | `idle`, `preparing`, `checking`, `deferred`, `settled`, `failed`, `retiring` → `retired` | On everywhere; its old paths are deleted |
 | `shots` | `session:<id>`, for each proposal that declares visible changes or whose UI change owes a declaration | `undeclared`, `not_needed`, `waiting_for_preview`, `building_copies`, `waiting_for_agent`, `taking_shots`, `publishing`, `published`, `failed`, `waived`, `closed` | On everywhere; its old paths are deleted |
+| `proposal` | `session:<id>`, for every session (a proposal from its start), adopted from its row by its first event | `underway` → `proposing` → `in_review` ⇄ `merging` → `merged`; `closed` (reopened to `underway`) | On everywhere; its old paths are deleted |
 
 ### governance-proposal
 
@@ -790,10 +792,7 @@ every `shot_runs` row are its projection and domain writes, guarded; their value
 are what every reader (the vote and merge gate, the cards, the bot, the gallery) already
 read. A proposal it has never seen is adopted from its row by its first event (any event,
 its close included); a run an earlier release was taking is ended as interrupted (its
-copies go) and taken again once while the proposal is open. The leader appends to every
-such proposal whose run went quiet, every two minutes for an hour after it starts leading,
-because a rollout keeps the older release's processes starting runs for a while
-(`platform.ts` `retryShotsCutOff`; transitional).
+copies go) and taken again once while the proposal is open.
 
 - **Requests.** A declaration (`Declared`: the hosted worker's tool, `submit_work`, a
   hand-off, PR import in its own transaction, the bot's own proposal) and a head move
@@ -828,9 +827,8 @@ because a rollout keeps the older release's processes starting runs for a while
   work.
 - **The machine decides:** at most 4 copy builds and 32 agent turns at a time; it waits
   for the proposal's agent (`waiting_for_agent`, rechecked every 20 seconds, within the
-  run's time from the moment its copies serve) instead of taking it from a turn, and for
-  any process of a release from before the machine to stop serving (its control plane was
-  in memory; transitional); another turn taking it is waited for again
+  run's time from the moment its copies serve) instead of taking it from a turn; another
+  turn taking it is waited for again
   twice, a dispatch whose process died is tried once more. Each step has a deadline: copies
   that take over 45 minutes fail, an agent's turn 15 minutes past its own clock fails (its
   process is stuck), a comparison past 15 minutes publishes without outlines. A platform
@@ -845,10 +843,86 @@ because a rollout keeps the older release's processes starting runs for a while
 - **Shots evals** (an admin's comparison of the agent's prompts) run the same steps one
   after another in their own runner (`shots-eval-runner.js`), on their own tables.
 
+### proposal
+
+A proposal's lifecycle (`src/workflow/proposal/`), from the moment somebody starts it until
+it is merged or closed. One instance per session, every one included (the Homeroom bot's
+triage and build sessions, the App bench's), adopted from its row by its first event: the
+leader's boot adopts every row in review, being merged or holding a slot, and its minute
+sweep the ones created since. `chat_sessions.status` is its projection with the values it
+always had (the move into `merged` stays merge-followups', which tells this machine with a
+`Merged` message), and it owns the columns that move with it: `promoted_at`, `archived_at`,
+`stale_notified_at`, `merge_attempt_at`, `active_users_at_promote`, and what the group votes
+on, `reviewed_head_sha` and `approval_epoch`.
+
+- **States as a person names them.** `underway` (being worked on; the session's slot is data
+  of it: held reads `active`, released `paused`, an imported proposal holds none and reads
+  `active`), `proposing` (GitHub is opening or readying its pull request; the status reads
+  what it read before), `in_review` (`promoted`), `merging`, `merged`, `closed` (`archived`,
+  its reason recorded; reopened to `underway`).
+- **Every move is an event that names what its caller read** (`from`, the status it saw; a
+  head move names the head): one a newer move overtook is refused rather than undoing it.
+  The decoders require it, so a caller that leaves it out fails at the append. A move whose
+  caller acts on the answer (a merge claim, a head move, a pause, a resume, an unpromote)
+  carries a deadline a few seconds out: past it the machine refuses it (`expired`), so an
+  answer the caller stopped waiting for never applies later. A close carries none.
+- **Teardown and coming back.** A pause, an unpromote or a close queues the worker's removal
+  (and a close that asks, the CC volume's). The removal (`worker.removeWorker`,
+  `removeCcVolume`) is strict (a refusal throws and is tried again), fenced (it reads the
+  resources' identities, Kubernetes uids or the container's id, checks its claim is still its
+  own and the session has not come back, and deletes only those, so a stalled call never
+  removes a newer worker) and finished (it reports once they are gone, not when the delete is
+  accepted). A resume or a reopen reads that work under lock: one no attempt has started is
+  cancelled; one any attempt has started (running, its lease lapsed or not; reported; waiting
+  for a retry) makes the move wait (`tearing_down`, asked again for up to 30 s).
+- **Promote** (the button, the connector's tools, the local CLI, the Homeroom bot, an import
+  going straight to a vote in its own transaction): under the owner's promoted cap, counted
+  under a lock on their `users` row; refused while somebody works on the session, and for a
+  pull request merged on GitHub or an imported one closed or kept as a draft. Nothing on
+  GitHub moves before the proposal is claimed: `review.open` then creates its pull request if
+  it has none, reopens a closed one of ours, links its originating request, marks a draft of
+  ours ready for review and reads the head, and the proposal is in review once it reports
+  (never while its pull request is still a draft). The route waits up to twenty seconds and
+  answers as before, else 202. The move into review writes its clock, its head, the
+  electorate it opened with, the line, the vote requests and the agent's "submitted" note in
+  its transaction, and asks the preview machine to check the reviewed head.
+- **The session's slot.** `Pause` gives it back (the platform's own reasons, `lru`,
+  `pressure` and `auto-idle`, never under somebody working on it or a durable build that
+  holds it); `Resume` takes it under the owner's and the platform's caps, counted under the
+  owner's row lock and a transaction-scoped advisory lock: over one it is refused, the route
+  asks the least recently active session nobody works on to pause, and asks once more. A
+  closed proposal is never resumed. An instance timer gives back a slot nobody has used for
+  `SESSION_AUTOPAUSE_IDLE_MS` (the session sweeper's old first pass).
+- **The review check** is the instance's hourly timer: the vote gate read under the lock
+  (`rules/pr-gate.ts`), so a Yes since counts; voted down closes it; quiet for
+  `PR_STALE_NOTIFY_MS` warns its author once; still quiet `PR_STALE_GRACE_MS` after the
+  warning closes it, and a vote since the warning clears it instead.
+- **One close for every reason** (withdrawn, voted down, gone quiet, replaced, superseded,
+  its request closed, red and untouched, the bot's and the bench's own endings): the votes
+  voided, its work orders abandoned, a secret it held discarded, the conversation that started
+  it told, the bell settled and the thread line written in the transaction; its pull request
+  closed, its worker destroyed, its CC volume purged when asked and the bot's tray told as
+  work; the preview machine asked to retire its preview for good (which tells shots). A
+  reopen reopens the pull request.
+- **A proposal's GitHub moves run one at a time:** a close during a promote waits for
+  GitHub to open the pull request, then closes it; a reopen during a close waits for it.
+- **The merge (step 6's) asks for the claim** at the head and epoch it gated on, and the
+  vote gate is read again under the lock (an admin's force skips it); its rollbacks and
+  recovery give the claim back (`MergeReleased`, keeping the votes), and a pull request
+  closed for good takes the proposal off the vote (`MergeAbandoned`, voiding them). Every
+  other exit from review voids the votes.
+- **The review revision** moves through it: `votes.reconcileNativeReviewedHead`,
+  `pr-import-sync.applyHeadChange`, `vote-revision`'s authored push and
+  `integration.clearApprovals` append `ReviewHeadMoved` / `ApprovalsCleared`, never on a
+  closed or merged proposal, and the move tells the shots machine (`HeadMoved`).
+- **Who works on a session** is `session-work.ts` read under the lock, in every one of these
+  decisions; a hand-off's promote names its own operation, and the pipeline checking the very
+  commit being proposed does not count.
+
 **Planned order:**
-1. **The proposal lifecycle.** (App delivery, previews and shots, above, came first.)
-2. **The merge itself:** the attempt, the queue, production delivery and conflicts.
-3. **Fleet campaigns.**
+1. **The merge itself:** the attempt, the queue, production delivery, conflicts, and sync
+   with main. (App delivery, previews, shots and the proposal lifecycle, above, came first.)
+2. **Fleet campaigns.**
 
 Each one deletes the old paths it replaces in the same change, as governance, previews,
-merge follow-ups, app delivery and shots have.
+merge follow-ups, app delivery, shots and the proposal lifecycle have.

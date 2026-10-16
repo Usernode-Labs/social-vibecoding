@@ -400,7 +400,9 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     assert.deepEqual(stopped, [runningSession], '... then its turn is ended, which frees its build slot');
     assert.equal(await bot.whyNotBuild(pool, { runId: running, botId: botUser.id, appId: recipebot.id, issueNumber: 96 }), skip,
       'and whatever that turn comes to reads as the skip, never a failure');
-    assert.deepEqual(archived, [{ pool, sessionId: duplicate, reason: 'superseded' }],
+    // `from`: the status it was read in, so a close a newer move overtook is
+    // refused (the proposal machine).
+    assert.deepEqual(archived, [{ pool, sessionId: duplicate, reason: 'superseded', from: 'promoted' }],
       'the duplicate is withdrawn as the platform withdraws one: no person did it');
     assert.equal(await statusOf(persons), 'promoted', 'a person\'s proposal is theirs');
     assert.equal(await statusOf(elsewhere), 'promoted', 'another request\'s is untouched');

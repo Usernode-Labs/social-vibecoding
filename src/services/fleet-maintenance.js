@@ -428,6 +428,10 @@ async function openCampaignProposal({ config, pool, campaign, app, files, summar
     [app.id, platformUserId, branch, prData.number, prData.html_url, prTitle]
   );
   const sessionId = sessRows[0].id;
+  // Born in review: the proposal machine adopts it now (its review check
+  // armed). The leader's sweep adopts any row this missed.
+  await require('../workflow/platform.ts').proposalAdopted({ sessionId: sessionId, appId: app.id })
+    .catch((err) => log.warn('fleet-maintenance', 'Could not hand a proposal born in review to the proposal machine', { sessionId: sessionId, err: err.message }));
 
   const { sendSystemMessage, pushVoteUpdate, pushNotificationToUser } = require('./ws');
   const notifications = require('./notifications');

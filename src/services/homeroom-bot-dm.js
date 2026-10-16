@@ -817,6 +817,53 @@ async function requesterOf(pool, appId, issueNumber) {
 }
 
 /**
+ * 16 Oct 2026: request `issueNumber`'s title, for a requester the bot kept
+ * none for (a row recorded where only the number was known): Homeroom's own
+ * row of it, else GitHub's (cached), and kept on the requester's row from
+ * then on. Its news named only the project without it: the bell read
+ * "Needs you / Homeroom / Homeroom · Homeroom bot". Null when neither has
+ * one. Never throws.
+ */
+async function requestTitleFor(pool, app, issueNumber, deps = {}) {
+  const n = Number(issueNumber);
+  if (!app?.id || !Number.isInteger(n) || n <= 0) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT title FROM issues
+        WHERE app_id = $1 AND github_issue_number = $2 AND NULLIF(BTRIM(title), '') IS NOT NULL
+        ORDER BY id DESC LIMIT 1`,
+      [app.id, n],
+    );
+    let title = rows[0]?.title || null;
+    if (!title) {
+      const github = deps.github || require('./github');
+      let repoUrl = app.repo_url;
+      if (repoUrl === undefined) {
+        const { rows: found } = await pool.query('SELECT repo_url FROM apps WHERE id = $1', [app.id]);
+        repoUrl = found[0]?.repo_url || null;
+      }
+      const repo = repoUrl && typeof github.parseGithubUrl === 'function' && github.isEnabled?.() !== false
+        ? github.parseGithubUrl(repoUrl) : null;
+      if (repo && typeof github.fetchPublicIssue === 'function') {
+        const fetched = await github.fetchPublicIssue(repo.owner, repo.repo, n);
+        title = fetched?.issue?.title || null;
+      }
+    }
+    title = title ? clip(String(title).trim(), 300) : null;
+    if (!title) return null;
+    await pool.query(
+      `UPDATE homeroom_bot_requesters SET issue_title = $3
+        WHERE app_id = $1 AND issue_number = $2 AND NULLIF(BTRIM(issue_title), '') IS NULL`,
+      [app.id, n, title],
+    );
+    return title;
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not look up a request\'s title', { app: app?.slug, issueNumber: n, err: err.message });
+    return null;
+  }
+}
+
+/**
  * #3707: the person's DM message a request of theirs started from, for the
  * bot's later news about it to quote. A request starts in the DM when File
  * it files the bot's offer, and the offer quotes the message it answered
@@ -1515,6 +1562,10 @@ async function relayIssuePost({
     await noteMove(requester ? 'no_bot' : 'no_requester');
     return null;
   }
+  if (!requester.issueTitle && !requester.firstVersion) {
+    const title = await requestTitleFor(pool, app, issueNumber);
+    if (title) requester.issueTitle = title;
+  }
   // One story: red checks handed to a person reach them as a stop of its own.
   kind = newsKind(kind, dm);
   if (kind === 'checks' && hasProposalCard(dm)) {
@@ -1679,6 +1730,11 @@ async function relayIssuePost({
     // #3707: news about a request they started here points back at it.
     replyToId: shown ? null : await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
     ...(shown ? { threadRootId: shown.messageId } : {}),
+    // 16 Oct 2026: said, and rings nothing (`quiet`, homeroom-bot.js
+    // actOnVerdict): an older request's first read that is not ready to
+    // try, and a request that names who builds it. Its card and the bot's
+    // Needs you list still show what it waits on.
+    ...(dm.quiet ? { moment: null } : {}),
   });
   await move.foldedOfferSent(pool, offer, sent);
   if (!sent?.messageId) {
@@ -5262,6 +5318,7 @@ module.exports = {
   whileTyping,
   recordRequester,
   requesterOf,
+  requestTitleFor,
   personOf,
   weeklySpentCents,
   weeklyCapCents,

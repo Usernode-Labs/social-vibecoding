@@ -238,8 +238,12 @@ test('only a demo-mode merge with a preview of a known image and commit offers o
   // One call site, and it is the merge's own deploy request.
   const calls = machine.match(/reuseOf\(/g) || [];
   assert.equal(calls.length, 2, 'the definition and exactly one call');
-  assert.match(machine, /const messages = d\.delivery \? \[deliveryRequest\(d, reuseOf\(f\)\)\] : \[\];/,
+  // (The merge's other message, beside the deploy request, tells the
+  // proposal machine the proposal merged; it carries no preview.)
+  assert.match(machine, /const messages = \[toProposal\(d\), \.\.\.\(d\.delivery \? \[deliveryRequest\(d, reuseOf\(f\)\)\] : \[\]\)\];/,
     'what it answers is what the deploy is offered, and nothing else is');
+  const toProposal = machine.slice(machine.indexOf('function toProposal('), machine.indexOf('function merged('));
+  assert.doesNotMatch(toProposal, /reuse|staging|image/i);
 });
 
 // ── The seam, where the source is the only place it shows ────────────────

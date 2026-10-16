@@ -66,6 +66,13 @@ const FIRST_VERSION = [
 ];
 
 const LABELS = { needs_you: 'Needs you', ready: 'Ready to try', stopped: 'Stopped', on_hold: 'On hold', live: 'Live', done_elsewhere: 'Done another way' };
+// 16 Oct 2026: a needs-you is headed by what it asks for.
+const ASKS = {
+  question: 'Question for you', questions: 'Questions for you', followup_ask: 'Question for you', plan: 'Plan to approve',
+  decide: 'Your decision', decide_others: 'Waiting on @ada and @ben', blocked: 'Needs more detail', empty: 'Needs more detail',
+  done: 'Looks done already', platform: 'Move it to Homeroom\'s board?',
+};
+const labelOf = (moment, said) => (moment === 'needs_you' ? ASKS[said] : LABELS[moment]);
 
 test('every variant of the contract is worded, with the request and its project as the title', () => {
   const covered = new Set();
@@ -73,9 +80,9 @@ test('every variant of the contract is worded, with the request and its project 
     const got = words({ moment, said, ...extra });
     assert.equal(got.body, body, `${moment}/${said}`);
     assert.equal(got.title, 'Dark mode · Plant Pal', `${moment}/${said}`);
-    assert.equal(got.bellLabel, LABELS[moment], `${moment}/${said}`);
+    assert.equal(got.bellLabel, labelOf(moment, said), `${moment}/${said}`);
     assert.equal(got.bellSubject, 'Dark mode', `${moment}/${said}`);
-    assert.equal(got.bellMeta, 'Plant Pal · Homeroom bot', `${moment}/${said}`);
+    assert.equal(got.bellMeta, 'Plant Pal · #4 · Homeroom bot', `${moment}/${said}: the request's number beside its project`);
     assert.equal(got.threadRootId, 77, 'the tap opens the request\'s thread');
     covered.add(said);
   }
@@ -89,6 +96,23 @@ test('every variant of the contract is worded, with the request and its project 
   for (const [moment, saids] of Object.entries(copy.SAID_BY_MOMENT)) {
     for (const said of saids) assert.ok(covered.has(said), `${moment}/${said} is pinned here`);
   }
+});
+
+test('a request whose title is not known is named by its number, never by its project alone', () => {
+  // 16 Oct 2026: "Needs you / Homeroom / Homeroom · Homeroom bot".
+  const got = words({ moment: 'needs_you', said: 'decide', requestTitle: null });
+  assert.equal(got.bellSubject, 'Request #4');
+  assert.equal(got.title, 'Request #4 · Plant Pal');
+  assert.equal(got.bellMeta, 'Plant Pal · Homeroom bot', 'the number is said once');
+  assert.equal(got.bellLabel, 'Your decision');
+  // With neither, the project, as before.
+  const bare = words({ moment: 'needs_you', said: 'decide', requestTitle: null, issueNumber: null });
+  assert.deepEqual([bare.bellSubject, bare.title, bare.bellMeta], ['Plant Pal', 'Plant Pal', 'Plant Pal · Homeroom bot']);
+  // Waiting on nobody named still says it waits.
+  assert.equal(words({ moment: 'needs_you', said: 'decide_others' }).bellLabel, 'Waiting on a decision');
+  // A first version keeps its own words.
+  const first = words({ moment: 'needs_you', said: 'plan_first', firstVersion: true, requestTitle: null });
+  assert.deepEqual([first.bellLabel, first.bellSubject, first.bellMeta], ['Plan to approve', 'Plant Pal first version', 'Plant Pal · Homeroom bot']);
 });
 
 test('nothing it says names a proposal, a PR, an issue, or the bot\'s handle', () => {

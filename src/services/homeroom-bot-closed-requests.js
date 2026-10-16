@@ -120,7 +120,7 @@ async function withdrawOne(pool, session, numbers, deps) {
   const lifecycle = deps.sessionLifecycle || require('./session-lifecycle');
   let archived = false;
   try {
-    ({ archived } = await lifecycle.archiveSession({ pool, sessionId: Number(session.id), reason: REASON }));
+    ({ archived } = await lifecycle.archiveSession({ pool, sessionId: Number(session.id), reason: REASON, from: 'promoted' }));
   } catch (err) {
     // A side effect after the archive failed: it is withdrawn if its row says so.
     log.warn('homeroom-bot-closed-requests', 'Withdrawing a proposal partly failed', { sessionId: session.id, err: err.message });

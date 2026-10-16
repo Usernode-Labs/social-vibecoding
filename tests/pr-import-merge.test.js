@@ -160,6 +160,7 @@ function loadVotes({ mergeImpl, reconcileImpl = null }) {
   const reports = [];
   const reconcileCalls = [];
   const requeues = [];
+  const claims = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   // The mirror-driven re-pin (#2100). Scripted per test; the default answers
@@ -185,8 +186,13 @@ function loadVotes({ mergeImpl, reconcileImpl = null }) {
     invalidateIssuesCache() {},
     noteIssuesClosed() {},
   });
+  // The merge's claim and its releases are the proposal machine's
+  // (platform.claimMerge / releaseMerge): granted here, and recorded.
   stub(ids.platform, {
     mergeConfirmed: async (m) => { reports.push(m); return { status: 'accepted', eventId: 1 }; },
+    claimMerge: async (c) => { claims.push(['claim', c]); return { status: 'accepted', reply: { claim: 1 } }; },
+    releaseMerge: async (r) => { claims.push(['release', r]); return { status: 'accepted', reply: {} }; },
+    abandonMerge: async (r) => { claims.push(['abandon', r]); return { status: 'accepted', reply: {} }; },
   });
   stub(ids.docker, {});
   stub(ids.resolver, {
@@ -231,7 +237,7 @@ function loadVotes({ mergeImpl, reconcileImpl = null }) {
   };
   return {
     subject, mergeCalls, voteUpdates, systemMessages, reports,
-    reconcileCalls, requeues, restore,
+    reconcileCalls, requeues, claims, restore,
   };
 }
 
@@ -257,10 +263,11 @@ const cliSession = {
 };
 
 function mergeReadyPool() {
-  return makeRecordingPool([
-    [/SET status = 'merging'/, [{ id: 1 }]],
-  ]);
+  return makeRecordingPool([]);
 }
+
+// The merge claim the proposal machine was asked to give back, by reason.
+const released = (claims) => claims.filter(([k]) => k === 'release').map(([, r]) => [r.claim, r.reason]);
 
 test('checkAndMerge: imported, native, and CLI handoff merges pin their reviewed head SHA', async () => {
   const { subject, mergeCalls, reports, restore } = loadVotes({
@@ -289,7 +296,7 @@ test('checkAndMerge: imported, native, and CLI handoff merges pin their reviewed
 });
 
 test('checkAndMerge: head-moved 409 leaves the imported row recoverable and does not error', async () => {
-  const { subject, voteUpdates, systemMessages, reports, restore } = loadVotes({
+  const { subject, voteUpdates, systemMessages, reports, claims, restore } = loadVotes({
     mergeImpl: () => { throw new (require('../src/services/github').HeadMovedError)(); },
   });
   const pool = mergeReadyPool();
@@ -299,9 +306,9 @@ test('checkAndMerge: head-moved 409 leaves the imported row recoverable and does
     assert.equal(r.merged, false, 'nothing merged');
     assert.equal(r.headMoved, true, 'distinct head-moved outcome');
 
-    // The merge claim is released back to 'promoted' — a recoverable state.
-    const releasedToPromoted = pool.queries.some((q) => /SET status = 'promoted'\s+WHERE id = \$1 AND status = 'merging'/.test(q.sql));
-    assert.ok(releasedToPromoted, 'row released to promoted for the sync poller to pick up');
+    // The merge claim is given back (the proposal machine returns it to
+    // review), a recoverable state for the sync poller to pick up.
+    assert.deepEqual(released(claims), [[1, 'head_moved']], 'the claim it was granted is released');
 
     // Never marked merged, never reported as a merge.
     assert.ok(!pool.queries.some((q) => /SET\s+status = 'merged'/.test(q.sql)), 'never marked merged');
@@ -370,7 +377,7 @@ test('checkAndMerge: an authored push found at the door returns the imported row
 
 test('checkAndMerge: a 409 on an imported row re-pins with votes intact and retries, instead of waiting for the poller', async () => {
   const SYNCED = 's'.repeat(40);
-  const { subject, voteUpdates, systemMessages, requeues, restore } = loadVotes({
+  const { subject, voteUpdates, systemMessages, requeues, claims, restore } = loadVotes({
     mergeImpl: () => { throw new (require('../src/services/github').HeadMovedError)(); },
     reconcileImpl: ({ session }, n) => {
       // First call (at the door): the mirror had not seen the push yet.
@@ -387,8 +394,7 @@ test('checkAndMerge: a 409 on an imported row re-pins with votes intact and retr
     assert.equal(r.headMoved, true);
     assert.equal(r.votesKept, true, 'the same outcome the native path has had since #955');
     assert.equal(r.reviewedHeadSha, SYNCED);
-    assert.ok(pool.queries.some((q) => /SET status = 'promoted'\s+WHERE id = \$1 AND status = 'merging'/.test(q.sql)),
-      'the claim is released');
+    assert.deepEqual(released(claims), [[1, 'head_moved']], 'the claim is released');
     assert.ok(systemMessages.some((m) => /Existing votes were kept and the merge retries automatically/.test(m.content)));
     assert.ok(!systemMessages.some((m) => /updated on GitHub since the vote/.test(m.content)),
       'the group is not told the author changed something the platform changed');

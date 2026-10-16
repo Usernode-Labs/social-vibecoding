@@ -6,7 +6,9 @@
 //      follow-up (this is what un-sticks whiteboard #41/#44/#52/#54). The
 //      sweep never writes the merged status itself.
 //   2. Demote a 'merging' session GitHub never merged (crash mid-merge) back
-//      to 'promoted' so the next vote/retry can redrive.
+//      to 'promoted' so the next vote/retry can redrive. The demote is the
+//      proposal machine's release (platform.ts releaseMerge, claim null);
+//      the stub records it as an update to 'promoted'.
 //   3. Leave a genuinely-open 'promoted' session (not merged on GitHub) alone.
 //
 // server.js only boots when run as the entry point (require.main guard), so
@@ -58,9 +60,11 @@ function stub(id, exports) {
 function makePool(rows) {
   const updates = [];
   const reports = [];
+  const releases = [];
   return {
     updates,
     reports,
+    releases,
     async query(sql, params = []) {
       const s = String(sql);
       if (/SELECT cs\.id[\s\S]*FROM chat_sessions cs/i.test(s) && /status IN \('promoted', 'merging'\)/.test(s)) {
@@ -103,6 +107,11 @@ function withStubs(pool, githubExports, fn) {
   const prevGithub = stub(githubId, githubExports);
   const prevPlatform = stub(platformId, {
     mergeObserved: async (m) => { pool.reports.push(m); return { status: 'accepted', eventId: 1 }; },
+    releaseMerge: async (r) => {
+      pool.releases.push(r);
+      pool.updates.push({ to: 'promoted', id: r.sessionId });
+      return { status: 'accepted', eventId: 2 };
+    },
   });
   return Promise.resolve()
     .then(fn)
@@ -132,9 +141,12 @@ test('recoverStuckMerges reports merged-on-GitHub rows, demotes stuck merging, l
   }]);
   assert.ok(!pool.updates.some((u) => u.to === 'merged'), 'the sweep never writes the merged status');
 
-  // Row 2 (merging, not merged on GitHub) demoted to promoted.
+  // Row 2 (merging, not merged on GitHub) demoted to promoted: the proposal
+  // machine gives back whatever claim is still the stuck one.
   const demote = pool.updates.find((u) => u.id === 2);
   assert.ok(demote && demote.to === 'promoted', 'stuck merging row demoted to promoted');
+  assert.deepEqual(pool.releases, [{ sessionId: 2, appId: 5, claim: null, reason: 'stuck' }]);
+  assert.equal(pool.updates.filter((u) => u.to === 'promoted').length, 1, 'the release is the only demote, no raw status write');
 
   // Row 3 (open promoted) untouched.
   assert.ok(!pool.updates.some((u) => u.id === 3), 'genuinely-open promoted row left alone');

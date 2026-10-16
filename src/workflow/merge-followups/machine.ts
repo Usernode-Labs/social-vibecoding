@@ -301,6 +301,12 @@ function settleWrites(e: Event<any>, d: Data, s: NonNullable<Facts['session']>):
   ];
 }
 
+// The proposal machine hears the move into 'merged' that this one makes
+// (its lifecycle ends there): one message, in the merge's transaction.
+function toProposal(d: Data): NonNullable<Outcome['messages']>[number] {
+  return { to: { machine: 'proposal', key: `session:${d.sessionId}` }, event: { type: 'Merged', payload: { sessionId: d.sessionId } }, appId: d.appId };
+}
+
 function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFState> {
   const s = f.session!;
   const app = f.app!;
@@ -316,7 +322,7 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
   // process: its release booting appends Deployed. On Docker hosts the host
   // deployer is told to fetch at once rather than on its poll.
   const work: WorkRequest[] = app.selfHosted ? [{ kind: WORK.nudge, key: 'nudge', input: { sha: d.mergeSha, prNumber: d.prNumber } }] : [];
-  const messages = d.delivery ? [deliveryRequest(d, reuseOf(f))] : [];
+  const messages = [toProposal(d), ...(d.delivery ? [deliveryRequest(d, reuseOf(f))] : [])];
   work.push(...settleWork(d, s.linkedIssues, false, { teardown: app.selfHosted }));
   if (d.repo && d.prNumber) {
     work.push({ kind: WORK.find, key: 'included', input: { sessionId: d.sessionId, appId: d.appId, prNumber: d.prNumber, ...d.repo } });
@@ -403,6 +409,7 @@ function included(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFSt
     writes: [...settleWrites(e, d, s), chat(e, d.appId, d.sessionId, threadLine(prRow(d), prRow(ref), { live }),
       { included: { sessionId: d.sessionId, inSessionId: ref.sessionId, inPrNumber: ref.prNumber } })],
     work,
+    messages: [toProposal(d)],
     push: [voteUpdate(d, { includedIn: ref.sessionId })],
     notify: [{ type: 'badgeSync', sessionId: d.sessionId }],
   };
@@ -605,8 +612,8 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
     // leaves the instances a newer version wrote alone. 5: every merge asks
     // app-delivery (an app.deliver item from before hands off to it), the
     // request's "It's live" (bot.announceLive), the issue lists' push at the
-    // merge.
-    version: 5,
+    // merge. 6: the proposal machine hears the move into 'merged' (Merged).
+    version: 6,
     events: EVENTS,
     create: ['Merged', 'Included'],
     terminal: ['live'],

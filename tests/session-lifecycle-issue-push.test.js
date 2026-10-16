@@ -1,121 +1,95 @@
-// archiveSession / unarchiveSession must fire pushIssueUpdate when the
-// session carries linked_issues — that broadcast is what clears (or
-// restores) the issue list's derived "In progress" chip on every open Dev
-// panel the moment a session is withdrawn / auto-rejected / stale-swept
-// (all of which funnel through archiveSession) or brought back. With no
-// linkage there is nothing to repaint, so no broadcast fires.
+// A close (archiveSession) and a reopen (unarchiveSession) must fire an
+// issue_update when the session carries linked_issues: that broadcast is
+// what clears (or restores) the issue list's derived "In progress" chip on
+// every open Dev panel the moment a session is withdrawn, auto-rejected or
+// stale-swept (all of which are one close) or brought back. With no linkage
+// there is nothing to repaint, so no broadcast fires.
 //
-// The lifecycle service requires its collaborators at module load and
-// looks ws up lazily per call, so everything is stubbed via the modules'
-// exports before the functions run.
+// Both moves are the proposal machine's now (src/workflow/proposal/
+// machine.ts), and the broadcast is one of its transition's pushes, which
+// the kernel publishes in the move's transaction. So this suite drives the
+// machine's transitions as the pure functions they are: the close from
+// review, the reopen from closed, each with and without linked issues.
+// tests/workflow-proposal-postgres.test.js (P13) holds the same push end to
+// end against the full schema.
 //
 // Run with: node --test tests/session-lifecycle-issue-push.test.js
 
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const ws = require('../src/services/ws');
-const pushedSession = [];
-const pushedIssue = [];
-ws.pushSessionUpdate = (d) => pushedSession.push(d);
-ws.pushIssueUpdate = (d) => pushedIssue.push(d);
-ws.sendSystemMessage = async () => {};
+const { proposal } = require('../src/workflow/proposal/machine.ts');
 
-const staging = require('../src/services/staging');
-staging.teardownStaging = async () => {};
+const machine = proposal({ idleMs: 0, exemptFixtures: false, reviewCheckMs: 60 * 60 * 1000, staleNotifyMs: 0, staleGraceMs: 0 });
 
-const worker = require('../src/services/worker');
-worker.destroyWorker = async () => {};
-worker.workerContainerName = (id) => `worker-${id}`;
-worker.destroyCcVolume = async () => {};
-
-const workerProgress = require('../src/services/worker-progress');
-workerProgress.clear = () => {};
-
-const github = require('../src/services/github');
-github.closePR = async () => {};
-github.reopenPR = async () => {};
-
-const { archiveSession, unarchiveSession } = require('../src/services/session-lifecycle');
-
-// Minimal pool: the status-flip UPDATE returns a row (the transition
-// happened), the follow-up SELECT returns the session row under test,
-// everything else is a silent no-op.
-function makePool(sessionRow) {
+function row(over = {}) {
   return {
-    query: async (sql) => {
-      const s = String(sql);
-      if (/^UPDATE chat_sessions SET status/i.test(s.trim())) {
-        return { rows: [{ id: sessionRow.id }] };
-      }
-      if (/SELECT cs\.\*/.test(s)) {
-        return { rows: [sessionRow] };
-      }
-      return { rows: [] };
-    },
-  };
-}
-
-function baseSession(over) {
-  return {
-    id: 5, app_id: 1, app_slug: 'demo', repo_url: null,
-    pr_number: null, pr_title: null, staging_container_id: null,
-    user_id: 7, owner_username: 'tester', cc_purged: false,
-    linked_issues: [],
+    id: 5, appId: 1, appSlug: 'demo', selfHosted: false, repo: null, userId: 7, ownerName: 'tester',
+    ownerSynthetic: false, status: 'promoted', imported: false, headless: false, prNumber: null, prTitle: null,
+    branch: 'dev/tester', head: null, reviewedHead: null, importedHead: null, epoch: 0, promotedAt: null,
+    createdAt: '2026-10-01T00:00:00Z', staleNotifiedAt: null, lastActivityAt: null, linkedIssues: [],
+    agentSessionId: null, explicitApproval: false, explicitReason: null, mergeAttemptAt: null, shots: false,
+    fixture: false, activeTurn: false, workedOn: false, moving: false, shotsRunning: false, buildHold: false,
+    pendingSecret: false,
     ...over,
   };
 }
 
-function reset() {
-  pushedSession.length = 0;
-  pushedIssue.length = 0;
+function state(name, over = {}) {
+  return {
+    name,
+    data: {
+      sessionId: 5, appId: 1, imported: false, slot: 'none', promoting: null, answer: null,
+      reason: name === 'closed' ? 'manual' : null, claim: null, pr: { running: null, next: [] }, doomed: [], n: 3, ...over,
+    },
+  };
 }
 
-test('archiveSession broadcasts an issue_update when linked_issues is non-empty', async () => {
-  reset();
-  const { archived } = await archiveSession({
-    pool: makePool(baseSession({ linked_issues: [4, 9] })),
-    sessionId: 5,
-    reason: 'manual',
-  });
-  assert.strictEqual(archived, true);
-  assert.strictEqual(pushedSession.length, 1);
-  assert.strictEqual(pushedIssue.length, 1);
-  assert.strictEqual(pushedIssue[0].action, 'updated');
-  assert.strictEqual(pushedIssue[0].source, 'session_archived');
-  assert.strictEqual(pushedIssue[0].appSlug, 'demo');
-  assert.strictEqual(pushedIssue[0].appId, 1);
+const ctx = { now: new Date('2026-10-16T12:00:00Z'), key: 'session:5' };
+
+// Runs `type` from `s` with the row as its facts: the guard must let it
+// through, and the transition's pushes are what it broadcasts.
+function run(s, type, payload, facts) {
+  const event = { id: 99, type, payload: { sessionId: 5, ...payload }, source: { kind: 'route', name: 'test' } };
+  const entry = machine.entryFor(s.name, type);
+  assert.strictEqual(entry.guard(s, event, facts, ctx), true, `${type} from ${s.name} is allowed`);
+  return entry.to(s, event, facts, ctx);
+}
+
+const issueUpdates = (out) => (out.push || []).filter((p) => p.data && p.data.type === 'issue_update');
+const sessionUpdates = (out) => (out.push || []).filter((p) => p.data && p.data.type === 'session_update');
+
+test('a close broadcasts an issue_update when linked_issues is non-empty', () => {
+  const out = run(state('in_review'), 'Close', { from: 'promoted', reason: 'manual', userId: null },
+    { row: row({ linkedIssues: [4, 9] }) });
+  assert.strictEqual(out.next.name, 'closed');
+  assert.strictEqual(sessionUpdates(out).length, 1);
+  const [push] = issueUpdates(out);
+  assert.ok(push, 'an issue_update is pushed');
+  assert.strictEqual(issueUpdates(out).length, 1);
+  assert.strictEqual(push.data.action, 'updated');
+  assert.strictEqual(push.data.source, 'session_archived');
+  assert.strictEqual(push.data.appSlug, 'demo');
+  assert.strictEqual(push.data.appId, 1);
 });
 
-test('archiveSession stays silent on the issue channel with no linkage', async () => {
-  reset();
-  const { archived } = await archiveSession({
-    pool: makePool(baseSession()),
-    sessionId: 5,
-    reason: 'manual',
-  });
-  assert.strictEqual(archived, true);
-  assert.strictEqual(pushedSession.length, 1, 'session update still fires');
-  assert.strictEqual(pushedIssue.length, 0, 'no issue update without linked issues');
+test('a close stays silent on the issue channel with no linkage', () => {
+  const out = run(state('in_review'), 'Close', { from: 'promoted', reason: 'manual', userId: null }, { row: row() });
+  assert.strictEqual(out.next.name, 'closed');
+  assert.strictEqual(sessionUpdates(out).length, 1, 'session update still fires');
+  assert.strictEqual(issueUpdates(out).length, 0, 'no issue update without linked issues');
 });
 
-test('unarchiveSession broadcasts an issue_update when linked_issues is non-empty', async () => {
-  reset();
-  const { unarchived } = await unarchiveSession({
-    pool: makePool(baseSession({ linked_issues: [4] })),
-    sessionId: 5,
-  });
-  assert.strictEqual(unarchived, true);
-  assert.strictEqual(pushedIssue.length, 1);
-  assert.strictEqual(pushedIssue[0].source, 'session_unarchived');
+test('a reopen broadcasts an issue_update when linked_issues is non-empty', () => {
+  const out = run(state('closed'), 'Reopen', { from: 'archived', userId: 7 },
+    { row: row({ status: 'archived', linkedIssues: [4] }) });
+  assert.strictEqual(out.next.name, 'underway');
+  assert.strictEqual(issueUpdates(out).length, 1);
+  assert.strictEqual(issueUpdates(out)[0].data.source, 'session_unarchived');
 });
 
-test('unarchiveSession stays silent on the issue channel with no linkage', async () => {
-  reset();
-  const { unarchived } = await unarchiveSession({
-    pool: makePool(baseSession()),
-    sessionId: 5,
-  });
-  assert.strictEqual(unarchived, true);
-  assert.strictEqual(pushedIssue.length, 0);
+test('a reopen stays silent on the issue channel with no linkage', () => {
+  const out = run(state('closed'), 'Reopen', { from: 'archived', userId: 7 }, { row: row({ status: 'archived' }) });
+  assert.strictEqual(out.next.name, 'underway');
+  assert.strictEqual(issueUpdates(out).length, 0);
 });

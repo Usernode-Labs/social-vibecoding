@@ -2102,6 +2102,72 @@ async function deleteWorker(config, sessionId, { deleteVolume = false } = {}) {
   if (deleteVolume) await deleteIfPresent(core, 'deleteNamespacedPersistentVolumeClaim', withSuffix(name, 'state'), namespace);
 }
 
+// A session's worker resources by identity (their uids; null for one that
+// is not there), for a removal fenced to exactly these: a worker made after
+// the read (the session came back) has other uids, so a delete carrying the
+// old uid as its precondition is refused for it, and leaves it alone. The
+// state volume is read only for a removal that takes it (`volume`).
+async function workerIdentity(config, sessionId, { volume = false } = {}) {
+  const namespace = config.kubernetes.workerNamespace;
+  const name = dnsName(`sv-worker-s${sessionId}`);
+  const { apps, core } = getClients();
+  const uid = async (api, method, resourceName) => {
+    try { return (await api[method]({ namespace, name: resourceName }))?.metadata?.uid || null; }
+    catch (err) { if (isNotFound(err)) return null; throw err; }
+  };
+  return {
+    deployment: await uid(apps, 'readNamespacedDeployment', name),
+    secret: await uid(core, 'readNamespacedSecret', withSuffix(name, 'env')),
+    pvc: volume ? await uid(core, 'readNamespacedPersistentVolumeClaim', withSuffix(name, 'state')) : null,
+  };
+}
+
+function workerIdentityResources(sessionId) {
+  const name = dnsName(`sv-worker-s${sessionId}`);
+  const { apps, core } = getClients();
+  return [
+    ['deployment', apps, 'Deployment', name],
+    ['secret', core, 'Secret', withSuffix(name, 'env')],
+    ['pvc', core, 'PersistentVolumeClaim', withSuffix(name, 'state')],
+  ];
+}
+
+// Deletes the resources `ids` names, each only if it still has that uid
+// (the Deployment in the foreground: it goes once its pods have). Gone
+// already, or replaced by a newer one (the precondition refused), is done.
+async function deleteWorkerIdentity(config, sessionId, ids) {
+  const namespace = config.kubernetes.workerNamespace;
+  for (const [field, api, kind, name] of workerIdentityResources(sessionId)) {
+    const uid = ids?.[field];
+    if (!uid) continue;
+    try {
+      await api[`deleteNamespaced${kind}`]({ name, namespace,
+        body: { ...(kind === 'Deployment' ? { propagationPolicy: 'Foreground' } : {}), preconditions: { uid } } });
+    } catch (err) {
+      if (!isNotFound(err) && !isConflict(err)) throw err;
+    }
+  }
+}
+
+// Whether every resource `ids` names has finished going: absent, or there
+// under another uid (a newer one). An accepted delete is not that: a
+// Deployment deleted in the foreground stays until its pods have
+// terminated, and a volume until no pod mounts it.
+async function workerIdentityGone(config, sessionId, ids) {
+  const namespace = config.kubernetes.workerNamespace;
+  for (const [field, api, kind, name] of workerIdentityResources(sessionId)) {
+    const uid = ids?.[field];
+    if (!uid) continue;
+    try {
+      const now = await api[`readNamespaced${kind}`]({ name, namespace });
+      if (now?.metadata?.uid === uid) return false;
+    } catch (err) {
+      if (!isNotFound(err)) throw err;
+    }
+  }
+  return true;
+}
+
 // A deletion acceptance is not proof that pods/PVCs finished terminating.
 // Account erasure keeps its durable task pending while finalizers run.
 async function eraseWorker(config, sessionId) {
@@ -3482,7 +3548,8 @@ module.exports = {
   checkJobRunName, deleteCheckJob, countRunningUnitSuiteJobs, deleteRunCheckJobs,
   deleteSettledCheckJobs, listCheckLeftovers, deleteCheckLeftover, MANAGED_BY, CHECK_JOB_TTL_SECONDS,
   execInWorker, _getClients: getClients,
-  getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker, listWorkers, cloneWorkerVolume,
+  getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker,
+  workerIdentity, deleteWorkerIdentity, workerIdentityGone, listWorkers, cloneWorkerVolume,
   listWorkerVolumes, listPreviews, listShotsRuntimes, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   stopCheckJobs,

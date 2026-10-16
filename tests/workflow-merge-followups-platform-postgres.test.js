@@ -125,7 +125,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   await t.test('every machine\'s guard is recorded for the ownership triggers', async () => {
     const { rows } = await pool.query(`SELECT key FROM wf_settings WHERE key LIKE 'enabled:%' ORDER BY key`);
     assert.deepEqual(rows.map((r) => r.key),
-      ['enabled:app-delivery', 'enabled:governance-proposal', 'enabled:merge-followups', 'enabled:preview', 'enabled:shots'],
+      ['enabled:app-delivery', 'enabled:governance-proposal', 'enabled:merge-followups', 'enabled:preview', 'enabled:proposal', 'enabled:shots'],
       'no machine has a flag: their guards are on in every process');
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_settings WHERE key = 'ownership_mode'`)).rows[0].n, 0);
   });
@@ -161,7 +161,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [s.id, voter.id]);
     await platform.mergeObserved({ sessionId: s.id, appId: app.id, mergeSha: SHA('a'), mergedAt: '2026-10-07T10:00:00Z' });
     await until(async () => (await state(s)) === 'live', 'live');
-    const { rows: [i] } = await pool.query(`SELECT data FROM wf_instances WHERE key = $1`, [`session:${s.id}`]);
+    const { rows: [i] } = await pool.query(`SELECT data FROM wf_instances WHERE machine = 'merge-followups' AND key = $1`, [`session:${s.id}`]);
     assert.equal(i.data.tally.yes, 1);
     assert.equal(i.data.mergedAt, '2026-10-07T10:00:00.000Z');
   });

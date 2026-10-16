@@ -200,6 +200,10 @@ function beginSessionOperation(sessionId, kind = 'operation') {
     }
   };
   release.recorded = started.then(() => undefined);
+  // The record's id: a decision this operation asks for while it holds it
+  // (a hand-off's promote) names it, so the operation does not count as
+  // somebody else working on the session (src/workflow/session-work.ts).
+  release.id = id;
   return release;
 }
 

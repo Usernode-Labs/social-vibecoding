@@ -85,7 +85,38 @@ test('a request that is already there is `done`: on a person or empty verdict, n
   const prompt = fs.readFileSync(path.join(__dirname, '..', 'src/prompts/homeroom-bot-triage.md'), 'utf8');
   assert.match(prompt, /- `done`: true only with `person` or `empty`, when all it asks for already exists or is done; `reason` says where on screen, and its requester is offered a vote to close it\./);
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
-  assert.match(src, /await say\('empty', live\.emptyText\(parsed\), \{ dm: \{ reason: parsed\.reason, \.\.\.\(parsed\.done \? \{ done: true \} : \{\}\) \} \}\);/);
+  assert.match(src, /await say\('empty', live\.emptyText\(parsed\), \{ dm: \{ reason: parsed\.reason, \.\.\.\(parsed\.done \? \{ done: true \} : \{\}\), \.\.\.quiet \} \}\);/);
+});
+
+test('a request that names who builds it is `builder`: a person verdict only, a bare name, and its news rings nobody', () => {
+  const named = bot.parseVerdict('{"verdict":"person","builder":"@snait","reason":"Assigned to snait, not for the bot."}');
+  assert.equal(named.builder, 'snait', 'the name, without its @');
+  assert.equal(bot.parseVerdict('{"verdict":"person","reason":"A design call."}').builder, null, 'absent is null');
+  assert.equal(bot.parseVerdict('{"verdict":"ready","builder":"snait","build_note":"Edit app.js."}').builder, null,
+    'never on a verdict that builds');
+  assert.equal(bot.parseVerdict('{"verdict":"person","builder":"two words","reason":"x"}').builder, null, 'a name, or nothing');
+  assert.equal(bot.parseVerdict('{"verdict":"person","builder":true,"reason":"x"}').builder, null);
+  const prompt = fs.readFileSync(path.join(__dirname, '..', 'src/prompts/homeroom-bot-triage.md'), 'utf8');
+  assert.match(prompt, /- `builder`: only with `person`, when the request or its discussion says a named person will build it: that username, without the @\./);
+  assert.match(prompt, /"builder": "who the request says will build it \(verdict person, only then\)",/);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
+  // Said in their chat with the bot, and quiet (homeroom-bot-dm.js relayIssuePost).
+  assert.match(src, /\.\.\.\(parsed\.builder \? \{ builder: parsed\.builder, quiet: true \} : quiet\),/);
+});
+
+test('an older request\'s first read rings only when it is ready to try (16 Oct 2026)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
+  assert.match(src, /backlog: item\.reason === BACKLOG_REASON,\n/, 'the read says which it is');
+  assert.match(src, /const quiet = backlog \? \{ quiet: true \} : \{\};/);
+  // A question and an empty request are quiet; a person hand-off is too.
+  const act = src.slice(src.indexOf('async function actOnVerdict'));
+  const body = act.slice(0, act.indexOf('\n}\n'));
+  assert.match(body, /\.\.\.\(parsed\.plan\?\.questions\?\.length > 1 \? \{ questions: parsed\.plan\.questions \} : \{\}\),\n\s+\.\.\.quiet,\n/);
+  // A ready one builds, and its news rings as it did: nothing marks it quiet.
+  const ready = body.slice(body.indexOf("} else if (parsed.verdict === 'ready') {"));
+  assert.doesNotMatch(ready.slice(0, 4000), /quiet: true|\.\.\.quiet\b/);
+  const dmSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
+  assert.match(dmSrc, /\.\.\.\(dm\.quiet \? \{ moment: null \} : \{\}\),/);
 });
 
 test('a re-read and the ask to repair a reply restate the verdict\'s keys (runs 1390, 1451, 1454 answered in keys of their own)', () => {
@@ -690,8 +721,9 @@ test('every issue starts a fresh model thread, through the platform\'s own readi
   assert.equal(out.verdict, 'question');
   assert.equal(calls.exec[0].opts.resumeSessionId, null, 'the dispatch resumes nothing');
   assert.equal(calls.exec[0].opts.resumeThreadId, null);
-  const start = calls.queries.find((q) => /SET status = 'active'/.test(q.s));
-  assert.match(start.s, /agent_thread_id = NULL/, 'and the saved thread is cleared in the row, for every later reader');
+  assert.deepEqual(calls.moves[0], ['takeSlot', 878, 0], 'the session takes its slot for the turn');
+  assert.ok(calls.queries.some((q) => /UPDATE chat_sessions SET agent_thread_id = NULL WHERE id = \$1/.test(q.s) && q.params[0] === 878),
+    'and the saved thread is cleared in the row, for every later reader');
 
   // The imitation is only worth something while it matches the platform.
   // (#3296 added a harness check after this read; it can only drop a thread,
@@ -1605,7 +1637,12 @@ test('the triage turn is a read-only scout: no build mode, no push, no posting, 
 test('the bot session is not work on any issue: is_headless FALSE, empty linked_issues, paused at rest', () => {
   const insert = SRC.slice(SRC.indexOf('INSERT INTO chat_sessions'), SRC.indexOf('RETURNING *', SRC.indexOf('INSERT INTO chat_sessions')));
   assert.match(insert, /'paused', FALSE, '\{\}'/);
-  assert.match(SRC, /SET status = 'paused', last_activity_at = NOW\(\)/, 'back to paused after every turn');
+  // Back to paused after every turn, through the proposal machine (its
+  // 'rest' pause), which refuses a session somebody works on.
+  const rest = SRC.slice(SRC.indexOf('async function pauseIdleSession'), SRC.indexOf('\n}\n', SRC.indexOf('async function pauseIdleSession')));
+  assert.match(rest, /require\('\.\/session-lifecycle'\)\.restSession\(\{ pool, sessionId \}\)/, 'back to paused after every turn');
+  assert.match(read('src/services/session-lifecycle.js'),
+    /async function restSession[\s\S]*?if \(!now \|\| now\.status !== 'active'\) return false;[\s\S]*?pauseProposal\(\{ sessionId: Number\(sessionId\), reason: 'rest', from: 'active' \}\)/);
   // Defence in depth on the board's two derivations, and the global cap.
   const issues = read('src/routes/issues.js');
   assert.equal((issues.match(/AND u\.is_synthetic IS NOT TRUE/g) || []).length, 2,
@@ -1619,7 +1656,11 @@ test('the bot session is not work on any issue: is_headless FALSE, empty linked_
   assert.ok(!require('../src/services/session-caps').GLOBAL_SESSIONS_SQL.includes(capClause),
     'the global-cap count includes synthetic sessions');
   assert.ok(!read('src/services/session-lifecycle.js').includes(capClause));
-  assert.equal((read('src/routes/sessions.js').match(/sessionLifecycle\.claimGlobalSlot\(/g) || []).length, 4);
+  assert.equal((read('src/routes/sessions.js').match(/sessionLifecycle\.claimGlobalSlot\(/g) || []).length, 3);
+  // The resume is the proposal machine's, which counts the platform-wide cap
+  // itself under its lock (its count includes synthetic sessions too).
+  assert.match(read('src/routes/sessions.js'), /platform\.resumeProposal\(\{[\s\S]*?caps: cap,/);
+  assert.ok(!read('src/workflow/proposal/facts.ts').includes('is_synthetic = TRUE'));
   assert.match(read('src/routes/proposal-handoff.js'), /sessionLifecycle\.claimGlobalSlot\(/);
 });
 
@@ -1683,8 +1724,16 @@ test('the triage prompt sends platform questions to the conventions tool, not to
 
 // ── runTriage with every dependency injected ─────────────────────────────
 
+// The bot session's slot moves go through the proposal machine
+// (session-lifecycle's takeSlot and restSession), which no fake pool runs:
+// each harness stands in for both and records every move with how many
+// turns had run when it was made.
+const sessionLifecycle = require('../src/services/session-lifecycle');
+
 function triageHarness({ verdictText, routed = null, budgetError = null, sessionId = 501, result = null } = {}) {
-  const calls = { queries: [], exec: [], spend: [], ensured: [] };
+  const calls = { queries: [], exec: [], spend: [], ensured: [], moves: [] };
+  sessionLifecycle.takeSlot = async ({ sessionId: id }) => { calls.moves.push(['takeSlot', id, calls.exec.length]); return true; };
+  sessionLifecycle.restSession = async ({ sessionId: id }) => { calls.moves.push(['restSession', id, calls.exec.length]); return true; };
   const pool = {
     async query(sql, params) {
       const s = String(sql);
@@ -1760,8 +1809,9 @@ test('runTriage: one scout turn, a fresh thread, a recorded verdict, a debited c
   assert.equal(insert.params[8], 'Route map');
   assert.equal(insert.params[14], 0.0123);
   assert.ok(calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31));
-  const statuses = calls.queries.filter((q) => /UPDATE chat_sessions SET status/.test(q.s)).map((q) => q.s.match(/status = '(\w+)'/)[1]);
-  assert.deepEqual(statuses, ['active', 'paused'], 'active only while the turn runs');
+  // Through the proposal machine: the slot taken before the turn, given
+  // back after it.
+  assert.deepEqual(calls.moves, [['takeSlot', 501, 0], ['restSession', 501, 1]], 'active only while the turn runs');
   assert.equal(deps.activeWorkers.size, 0, 'released after the turn');
 });
 
@@ -1825,8 +1875,9 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // 2026): the UI design guidance's line on forms on a phone (about 335
   // characters), which every build reads, rides in the reference too. #5224:
   // the plan lines' rule (about 330 more), so the plan card's lines stay
-  // short and one point each.
-  assert.ok(prompt.length < 22100, `a triage prompt stays small: ${prompt.length} chars`);
+  // short and one point each. 16 Oct 2026: `builder` (about 280 more), so a
+  // request that names who builds it does not ring its requester.
+  assert.ok(prompt.length < 22400, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
   assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\."\}$/);
 });
@@ -1950,8 +2001,8 @@ test('runTriage: a reply that decided in words is asked once, on its own thread,
   assert.ok(Math.abs(insert.params[14] - 0.025) < 1e-9, 'the row costs both turns');
   assert.deepEqual([insert.params[15], insert.params[16]], [2200, 80], 'and carries both turns\' tokens');
   assert.deepEqual(h.calls.spend.map((s) => s.cents), [2, 0.5], 'each turn joins the weekly pool');
-  const statuses = h.calls.queries.filter((q) => /UPDATE chat_sessions SET status/.test(q.s)).map((q) => q.s.match(/status = '(\w+)'/)[1]);
-  assert.deepEqual(statuses, ['active', 'paused', 'active', 'paused'], 'active only while each turn runs');
+  assert.deepEqual(h.calls.moves, [['takeSlot', 951, 0], ['restSession', 951, 1], ['takeSlot', 951, 1], ['restSession', 951, 2]],
+    'active only while each turn runs');
   assert.equal(h.deps.activeWorkers.size, 0, 'released after the second turn');
   assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s)), 'the row is consumed by the verdict');
 });

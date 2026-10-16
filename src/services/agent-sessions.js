@@ -719,11 +719,15 @@ const { appendConversationEvent, closedSentence } = agentNotes;
 
 // Park a change: today's pause, which releases its worker and keeps its
 // branch, preview and pull request. A promoted change keeps its vote and its
-// status; pauseSession only ever demotes an `active` one.
+// status: only an `active` one is paused. `reason` says why for the log.
 async function parkChange(pool, { userId, changeId, reason }) {
   const sessionLifecycle = require('./session-lifecycle');
   try {
-    return await sessionLifecycle.pauseSession({ pool, sessionId: changeId, userId, reason });
+    const { rows: [now] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [changeId]);
+    if (!now || now.status !== 'active') return { paused: false };
+    const out = await sessionLifecycle.pauseSession({ pool, sessionId: changeId, userId, reason: 'park', from: now.status });
+    if (out.paused) log.info('agent-sessions', 'Parked a change', { changeId, reason });
+    return out;
   } catch (err) {
     log.warn('agent-sessions', 'Could not park change', { changeId, reason, err: err.message });
     return { paused: false };

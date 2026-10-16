@@ -469,8 +469,12 @@ function boundary(root = REPO, allowed = new Set()) {
     out.set(name, entries);
   }
   // Other writers of owned columns: SQL anywhere under src/ outside the
-  // owning machine's directory, and triggers that assign them.
+  // owning machine's directory, and triggers that assign them. A machine
+  // whose own guard owns the same column is a co-owner, not another writer
+  // (proposal and merge-followups each own a move of chat_sessions.status).
   const owners = new Map();
+  const ownsToo = (file, table, column) => schema.owned.some((x) => x.table === table && x.column === column
+    && file.startsWith(`${WORKFLOW}${x.machine}/`));
   const sources = [...listFiles(root, 'src'), ...(fs.existsSync(path.join(root, 'server.js')) ? ['server.js'] : [])];
   const fragments = sqlFragments(root, sources);
   for (const file of sources) {
@@ -484,7 +488,7 @@ function boundary(root = REPO, allowed = new Set()) {
         for (const w of sqlWrites(sql)) {
           if (!w.cols) continue;
           for (const o of schema.owned) {
-            if (o.table !== w.table || file.startsWith(`${WORKFLOW}${o.machine}/`)) continue;
+            if (o.table !== w.table || file.startsWith(`${WORKFLOW}${o.machine}/`) || ownsToo(file, o.table, o.column)) continue;
             const at = `${file}#${topOf(n)}`;
             if (w.cols.has(o.column)) owners.set(`${o.machine}\u0000ownership | ${o.table}.${o.column} ← ${at}`, at);
             else if (w.cols.has('(dynamic)')) owners.set(`${o.machine}\u0000ownership | ${o.table}.${o.column} ← ${at} (dynamic SET)`, at);

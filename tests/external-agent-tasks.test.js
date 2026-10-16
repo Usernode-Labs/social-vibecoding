@@ -5039,16 +5039,25 @@ test('archiving a session ends the attempt it was making', async () => {
   assert.equal(q2.length, 0);
 });
 
-test('the archive path calls it, and never fails over it', () => {
+// Every close (any reason, proposal_start's archive-and-replace included)
+// is the proposal machine's one Close move, and the work orders the session
+// held are abandoned in that move's transaction (machine.ts, the `closed`
+// write), with the same rule as abandonTasksForSession: they commit with
+// the close or not at all, where [main]'s finalizeArchivedSession ran it
+// best-effort after the archive. The close against PostgreSQL is
+// tests/workflow-proposal-postgres.test.js P13.
+test('every close ends the attempt the session was making, in the close\'s own transaction', () => {
+  const machine = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/proposal/machine.ts'), 'utf8');
+  const closed = machine.slice(machine.indexOf('  closed: async (tx: Tx, w: any, ctx: WriteContext) => {'));
+  assert.ok(closed.length > 0, 'the close\'s write exists');
+  const abandon = closed.slice(0, closed.indexOf('\n  },\n'));
+  assert.match(abandon, /UPDATE external_agent_tasks SET status = 'abandoned'\s+WHERE origin_session_id = \$1 AND status = 'open' AND session_id IS NULL/,
+    'archiving ends the attempt, and a card already shared on the board is left standing');
+  assert.match(abandon, /tx\.query\(/, 'in the move\'s transaction');
+  // One funnel: no lifecycle path archives on its own any more.
   const life = fs.readFileSync(path.join(__dirname, '..', 'src/services/session-lifecycle.js'), 'utf8');
-  assert.match(life, /externalAgentTasks\.abandonTasksForSession\(pool, sessionId\)/,
-    'archiving ends the attempt');
-  // finalizeArchivedSession is the funnel every archive path runs through,
-  // including proposal_start's atomic archive-and-replace.
-  const fin = life.slice(life.indexOf('async function finalizeArchivedSession('));
-  assert.ok(fin.indexOf('abandonTasksForSession') >= 0, 'from inside the funnel, not one caller');
-  assert.match(fin.slice(fin.indexOf('abandonTasksForSession')), /\.catch\(/,
-    'best-effort: an archive must not fail because a reservation could not be closed');
+  assert.doesNotMatch(life, /async function finalizeArchivedSession\(/);
+  assert.match(life, /closeProposal\(/);
 });
 
 test('the one-time backfill closes litter, not live work', () => {

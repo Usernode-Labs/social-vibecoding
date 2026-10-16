@@ -40,6 +40,7 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const TOOLS_SRC = read('src/services/mcp-tools.js');
 const HANDOFF_SRC = read('src/routes/proposal-handoff.js');
 const VOTES_SRC = read('src/routes/votes.js');
+const PLATFORM_SRC = read('src/workflow/platform.ts');
 
 const ORIGIN = 'https://usernode.example';
 const OWNER = 7;
@@ -163,11 +164,16 @@ test('the one-call path reuses the promote route the propose-after-update runs, 
   assert.doesNotMatch(block, /isSessionBusy|hasUnsubmittedUpload|currentCheckedHead|promotedSessions|getBranchSha/);
   // The gates the refusals below rely on live in the routes, where the web
   // button meets them too: the CLI hand-off preflight (mounted ahead of the
-  // vote routes) and the owner-scoped promote itself.
+  // vote routes), the owner-scoped promote itself, and the proposal machine
+  // it hands the promote to, which refuses one somebody is still working on
+  // (a turn that may still move the branch) under its lock. The preflight
+  // names its own claim on the session, so it does not count as that.
   const preflight = HANDOFF_SRC.slice(HANDOFF_SRC.indexOf("router.post('/api/sessions/:id/promote'"));
   assert.match(preflight, /Nothing has been submitted to this change yet/);
-  assert.match(preflight, /An agent turn is still running on this change/);
   assert.match(preflight, /\['active', 'paused'\]\.includes\(session\.status\)/);
+  assert.match(preflight, /req\.cliHandoffOperation = releasePromotion\.id/);
+  assert.match(VOTES_SRC, /ownOperation: req\.cliHandoffOperation/);
+  assert.match(PLATFORM_SRC, /\['busy', \{ status: 409, body: \{ error: 'session_busy', message: 'The session is still working\. Try again when it finishes\.' \} \}\]/);
   assert.match(VOTES_SRC,
     /router\.post\('\/api\/sessions\/:id\/promote'[\s\S]{0,600}WHERE cs\.id = \$1 AND cs\.user_id = \$2 AND cs\.status IN \('active', 'paused'\)/);
 });
@@ -292,15 +298,16 @@ test('nothing submitted yet and a turn still moving the branch are refused in th
   assert.equal(empty.code, 'proposal_not_ready');
   assert.match(empty.message, /^Nothing has been submitted to this change yet/);
 
+  // The proposal machine's refusal of a promote somebody is still working on.
   const busy = await refused(platformWith({
     promote: refusal(409, {
-      error: 'proposal_not_ready',
-      message: 'An agent turn is still running on this change. Submit it for review when the turn finishes.',
+      error: 'session_busy',
+      message: 'The session is still working. Try again when it finishes.',
     }),
     session: sessionRow({ status: 'active' }),
   }));
-  assert.equal(busy.code, 'proposal_not_ready');
-  assert.match(busy.message, /An agent turn is still running on this change/);
+  assert.equal(busy.code, 'session_busy');
+  assert.match(busy.message, /The session is still working/);
 
   // Any other refusal of an open session of the caller's is the route's too:
   // the promoted-session cap, a branch with no commits on it.

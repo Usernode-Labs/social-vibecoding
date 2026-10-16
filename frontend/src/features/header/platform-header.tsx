@@ -46,6 +46,7 @@ import { ChromelessPill } from './chromeless-pill';
 import { useCommunityHeaderTint } from './community-tint';
 import { HeaderTitle } from './header-title';
 import { PlatformMark } from './platform-mark';
+import { InAppActions } from './in-app-actions';
 import { SidebarToggle } from '../nav/sidebar-toggle';
 import { improveStore, topicBackHref } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
@@ -572,6 +573,13 @@ export function PlatformHeader() {
             screen. It was measured with Improve between them and holds
             without it: the gap is between neighbours, not across the group. */}
         <div ref={rightGroupRef} className="ml-auto shrink-0 flex items-center gap-2.5">
+          {/*
+              #3702: the running app's two doors — "N to vote" and Suggest —
+              FIRST in the group, before the bell. They are about the app on
+              screen, so they lead it; both ship nothing at rest (see
+              ./in-app-actions.tsx), so the prerendered document is untouched.
+          */}
+          <InAppActions />
           {/*
               HEADER SLIM-DOWN: the fork label, the platform + app build pills
               and the kudos-budget badge used to live here as four inline

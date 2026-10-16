@@ -46,9 +46,9 @@ const DSN = process.env.TEST_DATABASE_URL
 // Pull the exact statement out of the handler. Anchored on
 // `RETURNING id, status`, which only the pr-import INSERT carries (the
 // revert-session INSERT further down returns bare `id`).
+const VOTES_SRC = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'votes.js'), 'utf8');
 function extractImportInsert() {
-  const source = fs.readFileSync(
-    path.join(__dirname, '..', 'src', 'routes', 'votes.js'), 'utf8');
+  const source = VOTES_SRC;
   const m = source.match(/`(INSERT INTO chat_sessions[\s\S]*?RETURNING id, status)`/);
   assert.ok(m, 'the pr-import INSERT INTO chat_sessions statement exists in routes/votes.js');
   return m[1];
@@ -89,7 +89,7 @@ const DDL = `
     active_users_at_promote INTEGER
   )`;
 
-// The same 19-element parameter shape the handler binds ($9 is the immutable
+// The same 18-element parameter shape the handler binds ($9 is the immutable
 // GitHub base SHA recorded for exact-revision before & after shots; $11 is the head
 // repository #1196 records, which is what decides whether the proposal's head
 // is in the author's fork or in the app's own repository; $15 is the request
@@ -119,9 +119,6 @@ function importParams(status, prNumber, linkedIssues = [1217]) {
     // for: no identifiers, no paths, nothing a non-developer has to decode.
     'Signing in now brings you back to what you were doing.',
     'c'.repeat(64),
-    // #3234: the electorate a straight-to-vote import opened with (display
-    // only); null for an import that joins the In-progress board.
-    status === 'promoted' ? 5 : null,
   ];
 }
 
@@ -155,7 +152,7 @@ async function withSchema(client, fn) {
   }
 }
 
-test('the pr-import INSERT prepares and writes both status paths on real postgres', async (t) => {
+test('the pr-import INSERT prepares and writes an Underway import on real postgres', async (t) => {
   const conn = await connect();
   if (!conn) return t.skip('the pg driver is not installed in this environment');
   if (conn.error) return t.skip(`no postgres reachable at ${DSN}: ${conn.error}`);
@@ -180,20 +177,18 @@ test('the pr-import INSERT prepares and writes both status paths on real postgre
       assert.equal(active.imported_pr_head_repo, 'external-author/demo',
         'the repository the PR head lives in is recorded at import time (#1196)');
 
-      // promote: true path: status 'promoted' — the CASE arms flip.
-      const { rows: promotedRows } = await client.query(sql, importParams('promoted', 102));
-      assert.equal(promotedRows[0].status, 'promoted');
-
-      const { rows: [promoted] } = await client.query(
-        'SELECT status, source, shared_at, promoted_at, linked_issues, active_users_at_promote FROM chat_sessions WHERE id = $1',
-        [promotedRows[0].id]
-      );
-      assert.equal(promoted.source, 'imported');
-      assert.ok(promoted.promoted_at, 'a promoted import lands straight in the vote panel');
-      assert.equal(promoted.shared_at, null, 'a promoted import skips the In-progress board');
-      assert.deepEqual(promoted.linked_issues, [1217],
+      // promote: true no longer writes a different row: since the proposal
+      // machine, every import is inserted Underway and a straight-to-vote one
+      // asks the machine in the same transaction (platform.promoteInTransaction),
+      // which stamps promoted_at and the electorate the vote opened with
+      // (#3234) when it moves the proposal into review. The statement binds
+      // the handler's one initial status.
+      assert.match(VOTES_SRC, /const initialStatus = 'active';/);
+      const { rows: linkedRows } = await client.query(sql, importParams('active', 102));
+      const { rows: [linked] } = await client.query(
+        'SELECT linked_issues FROM chat_sessions WHERE id = $1', [linkedRows[0].id]);
+      assert.deepEqual(linked.linked_issues, [1217],
         'the request the work order was prepared from (#1217)');
-      assert.equal(promoted.active_users_at_promote, 5, 'the electorate the vote opened with (#3234)');
 
       // #1217: the column is INTEGER[] NOT NULL, so the no-request case —
       // every browser import — has to bind the empty array. Binding null
@@ -232,11 +227,13 @@ test('the pr-import INSERT binds exactly as many parameters as the handler suppl
 
 // One bare use beside a cast one re-creates the "inconsistent types deduced
 // for parameter $7" prepare failure, whichever position the bare one is in.
+// Since the proposal machine the status is bound once (the CASE arms that
+// compared it are gone with the straight-to-vote INSERT); every use there is
+// is still cast, so one added back beside it cannot reintroduce the failure.
 test('every use of the status parameter in the pr-import INSERT is cast to ::text', () => {
   const sql = extractImportInsert();
   const uses = sql.match(/\$7(?:::\w+)?/g) || [];
-  assert.equal(uses.length, 3,
-    'the statement uses $7 for the status column and both CASE comparisons');
+  assert.ok(uses.length >= 1, 'the statement uses $7 for the status column');
   for (const use of uses) {
     assert.equal(use, '$7::text',
       'a bare $7 deduces a type from its own context (varchar in VALUES, text '
