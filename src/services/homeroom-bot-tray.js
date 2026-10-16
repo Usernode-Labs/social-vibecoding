@@ -124,6 +124,8 @@ const CLOSED_PROPOSAL = new Set(['closed', 'archived']);
 
 function settingsModule(deps) { return deps.botSvc || require('./homeroom-bot'); }
 function liveModule(deps) { return deps.liveSvc || require('./homeroom-bot-live'); }
+// One track per request (16 Oct 2026), worked out from what this module reads.
+function trackSvc() { return require('./homeroom-bot-track'); }
 
 function issueHref(slug, issueNumber) {
   return `#app/${encodeURIComponent(slug)}/dev/issues/${Number(issueNumber)}`;
@@ -476,9 +478,13 @@ async function currentJobs(pool, { userId, settings, deps = {} }) {
  */
 async function pastRuns(pool, { userId, limit = RUN_LIMIT }) {
   const { rows } = await pool.query(
-    `SELECT r.id, r.issue_number, r.verdict, r.build_ok, r.build_error, r.cap_suppressed,
+    `SELECT r.id, r.app_id, r.issue_number, r.verdict, r.build_ok, r.build_error, r.cap_suppressed,
             r.proposal_session_id, cs.pr_number AS proposal_pr_number, r.created_at,
-            r.awaiting_go_at,
+            r.awaiting_go_at, r.error,
+            -- A build that changed nothing: what its last turn said, which
+            -- the track reads for why (homeroom-bot-track.js noChangeWhy)
+            -- and never passes on.
+            r.build_no_change->'turns'->-1->>'said' AS no_change_said,
             -- #4539: the request's own state, newest row by id (issues is not
             -- unique on (app_id, github_issue_number), so a join could
             -- duplicate rows). Null reads as not closed.
@@ -567,7 +573,10 @@ async function workFor(pool, { user, settings = null, deps = {} }) {
   const work = withIcons(arrange(shown, rows.filter((row) => allowed.has(row.slug))), allowed);
   await withReleases(pool, work, shown);
   await withThreads(pool, userId, work);
-  return settleAnswered(work);
+  // 16 Oct 2026: one track per request, which every surface draws
+  // (homeroom-bot-track.js). Last, from everything above.
+  const settled = settleAnswered(work);
+  return trackSvc().withTracks(pool, settled, { entries: shown, rows: rows.filter((row) => allowed.has(row.slug)), keyOf, deps });
 }
 
 /**
@@ -817,7 +826,8 @@ async function demoWorkFor(pool, user, now = Date.now()) {
   } catch (err) {
     log.warn('homeroom-bot-tray', 'Could not read the demo strip\'s messages', { err: err.message });
   }
-  return demoWork(now, ids);
+  // Its tracks too, read the same way as a real tray's (no runs behind them).
+  return trackSvc().withTracks(pool, demoWork(now, ids), { keyOf });
 }
 
 module.exports = {

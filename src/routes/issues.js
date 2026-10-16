@@ -2511,6 +2511,23 @@ function issueRoutes(config) {
   // open issue it says the Homeroom bot is building it, which is what keeps
   // the page from offering a claim the bot would then step back for.
   // ----------------------------------------------------------------
+  // 16 Oct 2026: the Homeroom bot's slots on a project, for the page under
+  // its Workshop (homeroom-bot-track.js slotsView): what holds each slot,
+  // the requests waiting for one in order, the ones on hold, and the
+  // viewer's own building time. Reading it is read-only, so view-level.
+  router.get('/api/apps/:slug/homeroom-bot/slots', async (req, res) => {
+    try {
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, name`);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const trackSvc = require('../services/homeroom-bot-track');
+      if (IS_STAGING && req.query.demo === '1') return res.json({ slots: trackSvc.demoSlots(app) });
+      return res.json({ slots: await trackSvc.slotsView(pool, { app, user: req.user }) });
+    } catch (err) {
+      log.error('issues', 'Failed to read the bot\'s slots', { message: err.message, slug: req.params.slug });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/api/apps/:slug/github-issues/:number', async (req, res) => {
     try {
       // View-level (#621): reading an issue is read-only.
@@ -2598,6 +2615,12 @@ function issueRoutes(config) {
         }
         if (!bot && mock && number === 900018) bot = stagingMockBotWork();
       }
+      // 16 Oct 2026: where the bot's work on it is, as every surface draws
+      // it (homeroom-bot-track.js): the request page's track card. Open or
+      // closed, since a closed request's track says who shipped it.
+      const trackSvc = require('../services/homeroom-bot-track');
+      let track = (await trackSvc.tracksForRequests(pool, { appId: app.id, numbers: [number] })).get(number) || null;
+      if (!track && mock && number === 900018) track = trackSvc.demoRequestTrack(app, number, issue.title);
       // #4530: and its unanswered note there, as the list says it.
       const botAwaits = issue.state !== 'closed' && !bot && issue !== mock
         ? (await require('../services/homeroom-bot-dm').botWaitingByIssue(pool, app.id, [issue])).get(number) || null
@@ -2641,6 +2664,7 @@ function issueRoutes(config) {
           in_progress: null,
           bot,
           botAwaits,
+          track,
           myPrSessionId: null,
           addressed_by: addressed,
           closed_via: closedVia,

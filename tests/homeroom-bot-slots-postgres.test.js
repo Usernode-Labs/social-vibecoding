@@ -151,4 +151,37 @@ test('the bot\'s slots on a project count its builds under way, against the full
       'five taken, one of them a build not yet proposed');
     assert.equal((await bot.capRoomFor(pool, botUser, app.id)).proposals_per_app, 0);
   });
+
+  await t.test('the slots view: what holds each slot, what waits for one, with their tracks', async () => {
+    const track = require('../src/services/homeroom-bot-track');
+    await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title) VALUES ($1, 6, 'Sunlight log'), ($1, 8, 'Repotting reminders'), ($1, 30, 'Shipped by a person')`,
+      [app.id],
+    );
+    const settings = { mode: 'live', pausedApps: [] };
+    const liveSvc = { isLiveFor: () => true };
+    const view = await track.slotsView(pool, { app: { id: app.id, slug: 'plant-pal', name: 'Plant Pal' }, settings, deps: { liveSvc } });
+    assert.equal(view.cap, 5);
+    assert.equal(view.acts, true);
+    assert.deepEqual(view.slots.map((s) => `${s.kind}#${s.issueNumber}`), ['proposal#1', 'proposal#2', 'build#6', 'build#7', 'build#14']);
+    const six = view.slots.find((s) => s.issueNumber === 6);
+    assert.equal(six.title, 'Sunlight log');
+    assert.equal(six.track.state, 'queued', 'ready, waiting its turn to be built');
+    assert.equal(six.track.step, 'build');
+    assert.equal(view.slots.find((s) => s.issueNumber === 7).track.state, 'planning', 'its build session is open; no plan posted yet');
+    assert.deepEqual(view.waiting.map((w) => [w.issueNumber, w.position, w.limit, w.title]), [[8, 1, 'slots', 'Repotting reminders']]);
+    assert.equal(view.waiting[0].track.state, 'held');
+    assert.deepEqual(view.waiting[0].track.held, { limit: 'slots', position: 1, until: null });
+    assert.equal(view.week, null, 'nobody signed in, no week');
+
+    // The request page's track for a request somebody else shipped.
+    await run(30, { verdict: 'person' });
+    await pool.query(`UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = 30`, [app.id]);
+    const shipped = await session({ status: 'merged', linked: [30], user: lee.id });
+    await pool.query('UPDATE chat_sessions SET pr_number = 5247 WHERE id = $1', [shipped]);
+    const tracks = await track.tracksForRequests(pool, { appId: app.id, numbers: [30, 999] });
+    assert.deepEqual([...tracks.keys()], [30], 'only requests the bot had');
+    assert.equal(tracks.get(30).state, 'done_elsewhere');
+    assert.deepEqual(tracks.get(30).doneBy, { username: 'lee', prNumber: 5247 });
+  });
 });
