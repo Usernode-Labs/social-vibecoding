@@ -121,6 +121,8 @@ const DENIED_TABLES = new Set([
   'global_chat_tool_runs', // private action inputs and authoritative results
   'global_chat_action_tokens', // one-use action capabilities and sealed payloads
   'agent_session_actions', // the agent-session Mayor's sealed confirmation cards (#2779)
+  'private_requests',         // admin-only confidential and security requests, kept off GitHub (#5048)
+  'private_request_comments', // their discussion (#5048)
   'platform_db_roles',   // this role's own password, encrypted (AES blob, still deny)
 ]);
 

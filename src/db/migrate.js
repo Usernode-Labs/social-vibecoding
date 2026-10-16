@@ -75,6 +75,7 @@ async function migrate(config) {
   await seedStagingSupportUser(pool);
   await seedStagingDuplicateUser(pool);
   await seedSelfApp(pool, config);
+  await seedStagingPrivateRequest(pool);
   // The Homeroom bot's first-version configurations (services/bot-configs.js):
   // the three it starts from, each written once; then, once, an untouched
   // seeded current version moved on to its next (two review rounds in 20
@@ -1378,6 +1379,36 @@ async function seedStagingAdminDetailsUser(pool) {
 // Every row belongs to fake 9003xx identities, never the viewer, and nothing
 // here is a signal the Support routes decide anything from. Fixed ids and
 // ON CONFLICT DO NOTHING keep it idempotent; strictly a no-op outside staging.
+// One private request (#5048) on the platform's own project, so a preview's
+// Workshop shows its Private requests section to the admins who open it.
+// private_requests is staging:private, so the copy has no rows of its own.
+// Fixed ids, owned by the staging demo user, idempotent, a no-op outside
+// staging.
+async function seedStagingPrivateRequest(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const { rows } = await pool.query(
+      'SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1'
+    );
+    if (!rows.length) return;
+    await pool.query(
+      `INSERT INTO private_requests (id, app_id, title, description, created_by, created_at, updated_at)
+       VALUES (900501, $1, 'Staging demo private request',
+               'Staging demo: a confidential request only platform admins can see.',
+               900001, NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day')
+       ON CONFLICT DO NOTHING`,
+      [rows[0].id]
+    );
+    await pool.query(
+      `INSERT INTO private_request_comments (id, private_request_id, user_id, body, created_at)
+       VALUES (900501, 900501, 900001, 'Staging demo comment on a private request.', NOW() - INTERVAL '1 day')
+       ON CONFLICT DO NOTHING`
+    );
+  } catch (err) {
+    log.warn('db', 'Staging private request seeding failed', { message: err.message });
+  }
+}
+
 async function seedStagingSupportUser(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
