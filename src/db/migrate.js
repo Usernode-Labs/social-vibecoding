@@ -12987,6 +12987,47 @@ async function seedStagingTopochain(pool, config) {
        USERS.bpPending, USERS.bpReleased]
     );
 
+    // ─── The one GRADED activity (#3200) ────────────────────────────────
+    // A graded activity shows the grader's reason in the standings
+    // drill-down (metadata.grade, drawn as a "Why:" line under the label),
+    // and every point row above is ungraded — so the state no preview could
+    // reach is one this row reaches at boot. It sits on the season event's
+    // share challenge (900507) because the standings demo state
+    // (shots-demo-states.js, shots-demo-standings-activities-v1) writes its
+    // players' rows on the other two (900505, 900506) unconditionally: a
+    // seeded row there would come out twice in the same drill-down. The
+    // demo states run from the deployed build, which does not know a new
+    // state until it merges — the seed is what carries the state across
+    // that gap.
+    //
+    // The grade is the fixture's own content (the same shape
+    // shots-demo-standings-graded-v1 writes: score, reason, model), not a
+    // signal any code reads to decide something — the reason is the
+    // sentence the change's declaration shows the group, so the shot reads
+    // the way the change was described. Points track the challenge's own
+    // reward, as every row above does.
+    await pool.query(
+      `INSERT INTO user_activities
+         (id, user_id, season_event_id, activity_type, points, description,
+          metadata, activity_at, source, challenge_id)
+       SELECT 900704, u.id, c.season_event_id, COALESCE(ct.category, 'activity'), 50,
+              '[shots fixture] Shared the season announcement.', $1::jsonb,
+              NOW() - INTERVAL '40 minutes', 'api', c.id
+         FROM users u
+         JOIN challenges c ON c.id = 900507 AND c.season_event_id = 900501
+         LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
+        WHERE u.username = 'staging-demo-topochain-participant-6'
+       ON CONFLICT (id) DO NOTHING`,
+      [JSON.stringify({
+        fixture: 'shots-demo',
+        grade: {
+          score: 50,
+          reason: 'Says what broke, where, and what was expected. Easy to act on.',
+          model: 'fixture',
+        },
+      })]
+    );
+
     // ─── Leaderboard snapshots (2 snapshot times x 6 users, all against
     // the regular/display_leaderboard event). Points roughly track the
     // activities above: eventA1 and eventA2 accumulate between the two
