@@ -1151,7 +1151,8 @@ that happens there.
   once.
 - **What the place owes others**, each said once as work: a tap under one of its offers,
   decided once by the person it was offered to (`OfferTapped` → `voice.act`, claimed by
-  its work item so a retry carries the act on); what came of a change people asked for
+  its work item so a retry carries the act on and says its line once; an act that fails
+  for good settles the offer as failed and says so); what came of a change people asked for
   (`Report`, appended by the bot's follow-up in the transaction that ends their asks →
   `voice.report`); the answer to a mention on a request a person holds (`HeldAnswer`,
   from the bot's refresh: its post row is written pending with the decision, so the
@@ -1177,12 +1178,16 @@ bot owes them there. One instance per person (`person:<userId>`).
 - **Asked again later.** An answer no model could give says so, and the work reports
   `later`: the instance's timer asks again after 60 s, 3 min and 10 min (the last try says
   it could not). A newer message from them drops the try, as its own answer reads the old
-  one. An answer whose work fails for good gets one fixed line (`dm.sorry`).
+  one. An answer whose work fails for good gets one fixed line (`dm.sorry`: "I couldn't
+  answer just now", or for a later try, that it still could not), and a retry of an answer
+  that had said "I'll get back to you" still owes the later try it promised.
 - **Taps and hellos.** A tap under one of the bot's offers, or Build it under a plan, is
-  decided once here (`Tapped` → `dm.act`, claimed by its work item). A hello owed
-  (joining by an invite, the tour's end) is appended in the transaction that makes it owed
-  (`Greet` → `dm.hello`); every hello is claimed in the transaction that sends it
-  (`sendDm`'s `hello`), so none is claimed and then not sent.
+  decided once here (`Tapped` → `dm.act`, claimed by its work item; an act that fails for
+  good is settled as failed and said). A hello owed (joining a project by an invite, the
+  tour's end) is appended in the transaction that makes it owed (`Greet` → `dm.hello`, one
+  per trigger: each project joined owes its own); every hello is claimed in the transaction
+  that sends it (`sendDm`'s `hello`), so none is claimed and then not sent, and a person
+  has one.
 - **During a rollout** the later tries an older release promised (its turn rows say so)
-  are adopted once at the leader's boot (`adoptDeferredDms`). DM keys and wording are
+  are adopted at the leader's boot, for people with no instance yet (`adoptDeferredDms`). DM keys and wording are
   unchanged, so an older leader and this machine asking the same message send one answer.
