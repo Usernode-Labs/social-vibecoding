@@ -29,17 +29,22 @@
  * are app.css's to decide, not this component's. The breakpoint, because a
  * phone's bar is at the foot and folding it would leave a reader with no
  * navigation and no hover to bring it back; and `#platform-tabs.hidden`,
- * because a toggle for a thing that is not there is a dead control and an
- * app's rail comes back by pointing at the window's edge instead. The note
- * on the component below says why neither may be a render-time question.
+ * because a toggle for a thing that is not there is a dead control. On a
+ * platform screen the hot zone at the window's left edge brings a folded
+ * rail back (features/nav/tab-bar.tsx); inside a running app it does not
+ * (#3138), and the routes back from there are the ones that never needed the
+ * hover — the header's back button, the app chip menu, and Theme's "Keep
+ * sidebar open in apps". The note on the component below says why neither
+ * may be a render-time question.
  *
- * ── Collapsed is the app view's state, reached another way ─────────────
+ * ── Collapsed is the folded state, reached another way ─────────────────
  *
- * Folding the rail puts the shell in exactly the arrangement an open app
- * already produces: no band reserved, the page full width, and the hot zone
- * at the left edge ready to peek it back (features/nav/tab-bar.tsx). That is
- * why this needs no CSS of its own beyond being hidden on a phone — the
- * layout it asks for is one the stylesheet already draws.
+ * Folding the rail puts the shell in the arrangement an open app already
+ * draws: no band reserved, the page full width. On a platform screen the hot
+ * zone at the left edge is ready to peek it back
+ * (features/nav/tab-bar.tsx); inside an app there is no hover way back
+ * (#3138). That is why this needs no CSS of its own beyond being hidden on a
+ * phone — the layout it asks for is one the stylesheet already draws.
  *
  * ── Pointing at it peeks the folded rail (#2764) ───────────────────────
  *

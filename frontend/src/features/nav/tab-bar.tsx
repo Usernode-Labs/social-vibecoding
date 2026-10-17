@@ -811,28 +811,33 @@ export function PlatformTabs() {
     <>
       {/*
           THE HOT ZONE. A strip at the window's left edge, and the only thing
-          that can start a peek. It renders wherever there is no rail to point
-          at — inside an app, or with the rail folded by hand — and app.css
+          that can start a peek. It renders ONLY where the route has a rail
+          AND the viewer folded it by hand — a running app, the chromeless
+          shell and the signed-out screens never render it, whatever
+          `railOpen` says, because `visible` is false there
+          (App._syncPlatformTabs in public/js/app.js publishes it). app.css
           hides it below the desktop breakpoint, because a phone has no
           pointer to hover with and a hidden touch target at the screen edge
           would eat swipes.
 
-          NOT `collapsed`, and not a bare `screen === 'app-view'` either.
-          `collapsed` is also true on the chromeless and signed-out shells,
-          where there is no rail behind the edge to bring back and a strip
-          that peeked one in would be conjuring navigation out of nothing.
-          And the app view is TWO screens now (#2718 review): on its Workshop
-          the rail is UP, and this strip is `z-index: 39` against the rail's
-          30 — an invisible 18px column down the left edge of the tabs,
-          swallowing the press meant for the one under the pointer.
+          NOT `collapsed`: it is also true on the chromeless and signed-out
+          shells, where there is no rail behind the edge to bring back and a
+          strip that peeked one in would be conjuring navigation out of
+          nothing. And NOT the running app either (#3138): hovering the edge
+          over an open app dropped the sidebar on top of what the person was
+          doing, so an app's rail no longer comes back by hover at all — the
+          header's back button, the app chip menu in the header, and Theme's
+          "Keep sidebar open in apps" are the ways. The app view is also TWO
+          screens (#2718 review): on its Workshop the rail is UP, and this
+          strip is `z-index: 39` against the rail's 30 — an invisible 18px
+          column down the left edge of the tabs, swallowing the press meant
+          for the one under the pointer. A viewer who folds the rail by hand
+          there is in the same hand-folded case as any platform screen.
 
-          So: the app view WITH ITS RAIL DOWN, which is the running app, or a
-          rail the viewer folded anywhere. A folded rail is the running app's
-          arrangement reached another way and the way back has to be the same
-          one, or the toggle is a door that only opens; `!railOpen` implies a
-          rail existed, because the toggle renders only where one does.
+          So: a hand-folded rail on a route that has one. `!railOpen` implies
+          a rail existed, because the toggle renders only where one does.
       */}
-      {(screen === 'app-view' && !visible) || !railOpen ? (
+      {!railOpen && visible ? (
         <div
           id="platform-rail-peek"
           className="platform-rail-peek"

@@ -5294,6 +5294,11 @@
       "expectSelector": "body:has(#app-view:not(.hidden)):has(#platform-tabs.hidden.platform-tabs-route-hidden) #platform-header .platform-header-left > #sidebar-toggle"
     },
     {
+      "name": "#3138: the left-edge hover hot zone never renders over a running app, so hovering the screen's left edge cannot summon the sidebar over it",
+      "path": "/#app/staging-demo-forkable",
+      "expectSelector": "body:has(#app-view:not(.hidden)):not(:has(#platform-rail-peek))"
+    },
+    {
       "id": "agent-session.card",
       "name": "On a desktop an agent session opens in the Messages pane beside its row under Agents, and a write the Mayor proposes waits on a card with Confirm and Not now (#2779)",
       "path": "/#messages/agent/990801",
