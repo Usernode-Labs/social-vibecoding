@@ -12129,28 +12129,6 @@ const AppView = {
     return top.name;
   },
 
-  // WHERE MOST OF THE OPEN WORK IS (After-Workshop-B): the Workshop's
-  // Overview names the categories with the most open work, as chips under
-  // its figures. Open work is what the "open items" figure counts: open,
-  // underway and in review. Over EVERY category the app has, not the ones
-  // All items' search left standing (#2915), because the Overview is about
-  // the app; a category with none is not named, and ties keep the
-  // grouping's own order (a project's topics first). Each carries its
-  // topic, whose chip is the way into its channel.
-  WORKSHOP_OPEN_THEMES_MAX: 4,
-  _workshopOpenThemes(themes) {
-    return (themes || [])
-      .filter((t) => t && !t.ungrouped)
-      .map((t, i) => {
-        const c = t.counts || {};
-        return { t, i, open: (c.open || 0) + (c.underway || 0) + (c.review || 0) };
-      })
-      .filter((x) => x.open > 0)
-      .sort((a, b) => (b.open - a.open) || (a.i - b.i))
-      .slice(0, AppView.WORKSHOP_OPEN_THEMES_MAX)
-      .map(({ t, open }) => ({ id: t.id, name: t.name, open, topic: t.topic || null }));
-  },
-
   /**
    * The topic body for one card, for the Workshop to draw UNDER that card
    * without leaving the lander (#1787 round four).
@@ -12767,8 +12745,6 @@ const AppView = {
       people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,
       unclaimed: idle.length,
       busiest: AppView._busiestTheme(named),
-      // Where most of the open work is: the Overview's chips.
-      openThemes: AppView._workshopOpenThemes(named),
       // The model's three windowed lines, when there are any: the Workshop
       // draws them as cards. The flattened paragraph below is what a row
       // written under the previous digest prompt still has, and the derived

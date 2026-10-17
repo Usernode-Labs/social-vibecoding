@@ -1651,9 +1651,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Workshop (?ws=bot); two routes no other check reaches. 735 leaves 145
   // slots.
   //
+  // 735 → 734: −1 (#5391): the Workshop overview's "Most open work is in"
+  // chips are gone, and with them the check that selected one. 734 leaves
+  // 146 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 735);
+  checkCap.assertPinned(DAPP.tests.length, 734);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -155,9 +155,8 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   has(weeks, /className="dev-ws-reveal touch-target-32" data-ws-week-group-more=""/, 'a week group\'s Show all N');
   has(ws, new RegExp(`className="dev-ws-since-clear ${KIT}"`), 'Mark all seen');
   has(ws, /className="dev-ws-since-clear un-touch-target"\s+data-ws-fresh-clear=""/, 'New for you\'s Mark all seen');
-  // After-Workshop-B: the Overview's chips and its Rules, and a row's one
-  // act (Vote, Build it, the card's own), wear the kit's slop.
-  has(ws, new RegExp(`className="dev-ws-ov-chip ${KIT}"`), 'a chip of where the open work is');
+  // After-Workshop-B: the Overview's Rules, and a row's one act (Vote,
+  // Build it, the card's own), wear the kit's slop.
   has('frontend/src/features/dev-board/workshop/community-card.tsx', new RegExp(`className="dev-ws-hub-open dev-ws-ov-rule-edit ${KIT}"`), 'Rules');
   has('frontend/src/features/dev-board/workshop/work-row.tsx', new RegExp(`className="${KIT}"\\s+data-act=\\{a\\.act\\?\\.fn\\}`), 'a row\'s act');
   // "N more of yours" is gone: the Workshop tab shows your own work in full.

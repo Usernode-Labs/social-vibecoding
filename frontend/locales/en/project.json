@@ -555,10 +555,6 @@
     "text": "from {{count}}",
     "description": "Line under the \"live this week\" figure on the Workshop tab of a project's page, beside an up or down arrow: how many changes went live last week, for comparison. {{count}} is last week's number."
   },
-  "workshop.overview.mostOpenIn": {
-    "text": "<0>Most open work is in</0><1></1>",
-    "description": "Line in the All items card on the Workshop tab of a project's page. <0> wraps the words; <1></1> is where the chips go, one per category with the most open work (for example \"Onboarding\", \"Infra capacity\"), each opening that category."
-  },
   "workshop.pace.nonePartial": {
     "text": "Nothing has landed this week.",
     "description": "Sentence of the fallback summary on a project's Workshop tab: no change has been merged this week. Landed means merged into the app."

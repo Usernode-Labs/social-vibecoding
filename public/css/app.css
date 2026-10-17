@@ -2294,6 +2294,16 @@ form.agent-session-composer:focus-within {
 }
 .messages-session-full:hover { color: var(--text-primary); }
 .messages-inbox-session-active > a { background: var(--messages-selected); }
+/* #5378: A CHANGE IN FLIGHT TAKES THE INBOX'S OWN ROW GEOMETRY on the
+   cards: a conversation row's 16px of padding and 14px gap around the 44px
+   tile, so its tile shares the avatars' left edge and its title their 74px
+   column (where the separators and "N older chats" already sit), in the
+   rows' 15 over 13 (AGENTS.md). ../improve/session-row.tsx is the bell's row
+   too, with Tailwind's own spacing, so this is scoped to the wrapper Messages
+   puts round it; the desktop's one-line column overrides it below. */
+.messages-inbox-session > a { min-height: 66px; gap: 14px; padding: 13px 16px; }
+.messages-inbox-session > a > .min-w-0 > :first-child { font-size: 15px; font-weight: 650; line-height: 20px; }
+.messages-inbox-session > a > .min-w-0 > :first-child + * { margin-top: 2px; font-size: 13px; line-height: 18px; }
 
 /* Phone-width only. Each of these exists because a narrow column cannot lay
    the row out sideways; the thread pane on a desktop is up to ~59rem and can. */
@@ -19203,14 +19213,19 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
 }
 
 /* THE TRAY (places-tray.tsx): the list, slid in from the left over a
-   scrim, on a phone. Over the tab bar and the header (z 60), under a
-   dialog. */
-.dev-ws-tray-root { position: fixed; inset: 0; z-index: 60; }
+   scrim, on a phone. #5384: it opens UNDER the header, which stays as it
+   is, undimmed and pressable, its bottom edge the offset the other layers
+   under it use; it reaches down over the tab bar (z 60), under a dialog.
+   The header covers the status bar, so the list keeps only its own 16px. */
+.dev-ws-tray-root {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px));
+}
 .dev-ws-tray-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.45); animation: dev-ws-tray-fade 160ms ease-out; }
 .dev-ws-tray {
   position: absolute; top: 0; bottom: 0; left: 0;
   width: min(296px, calc(100vw - 56px));
-  padding: calc(16px + var(--platform-safe-top, 0px)) 12px calc(16px + var(--platform-safe-bottom, 0px));
+  padding: 16px 12px calc(16px + var(--platform-safe-bottom, 0px));
   overflow-y: auto; overscroll-behavior: contain;
   background: var(--dc-sheet-solid, var(--bg-primary));
   box-shadow: 0 0 40px rgba(0, 0, 0, 0.25);
@@ -23079,19 +23094,20 @@ html.un-kb #platform-parked {
 }
 /* A change in flight (16 Oct 2026): an agent's pencil on a tint of its
    project's colour (--change-ink, lib/community-color.ts), in the place of
-   the project's own icon, which for Homeroom is the bot's face. */
+   the project's own icon, which for Homeroom is the bot's face. #5378: at
+   the avatars' 44px and 12px radius, so the column's tiles line up. */
 .messages-inbox-change-tile {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
   color: var(--change-ink, var(--text-muted));
   background: color-mix(in srgb, var(--change-ink, var(--text-muted)) 14%, transparent);
 }
-.messages-inbox-change-tile svg { width: 18px; height: 18px; }
+.messages-inbox-change-tile svg { width: 22px; height: 22px; }
 html.dark .messages-inbox-change-tile {
   color: color-mix(in srgb, var(--change-ink, var(--text-muted)) 45%, white);
   background: color-mix(in srgb, var(--change-ink, var(--text-muted)) 35%, transparent);
@@ -23575,20 +23591,6 @@ html.in-side-panel body {
 .dev-ws-dash-sub[data-dir="up"] { color: var(--state-ok); }
 .dev-ws-dash-trend { flex: none; width: 10px; height: 10px; }
 .dev-ws-dash-sub[data-dir="down"] .dev-ws-dash-trend { transform: rotate(180deg); }
-.dev-ws-ov-topics {
-  margin: 2px 0 0; padding-top: 10px; border-top: 1px solid var(--app-sheet-line);
-  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-  font-size: 13px; line-height: 1.35; color: var(--text-muted);
-}
-.dev-ws-ov-lead { margin-right: 2px; }
-.dev-ws-ov-chips { display: contents; }
-.dev-ws-ov-chip {
-  display: inline-flex; align-items: center; height: 26px; padding: 0 10px;
-  border: 0; border-radius: 999px; background: var(--state-neutral-bg); color: var(--text-primary);
-  font: inherit; font-size: 13px; font-weight: 600; text-decoration: none; white-space: nowrap; cursor: pointer;
-}
-.dev-ws-ov-chip:hover { color: var(--accent); }
-.dev-ws-ov-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dev-ws-ov-rule {
   margin: 0; padding-top: 10px; border-top: 1px solid var(--app-sheet-line);
   display: flex; align-items: flex-start; gap: 8px;

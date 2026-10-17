@@ -434,6 +434,18 @@ test('a change in flight in Agents wears a pencil in its project\'s colour, not 
     /\.messages-inbox-change-tile \{[^}]*color: var\(--change-ink, var\(--text-muted\)\);\s*background: color-mix\(in srgb, var\(--change-ink, var\(--text-muted\)\) 14%, transparent\);/);
 });
 
+test('a change in flight lines up with the conversation rows on the cards (#5378)', () => {
+  // The bell's row brings Tailwind's own spacing; Messages' wrapper gives it
+  // the conversation row's padding, gap and type, so its tile shares the
+  // avatars' edge and its title their 74px column.
+  const css = read('public/css/app.css');
+  assert.match(css, /\n\.messages-inbox-session > a \{ min-height: 66px; gap: 14px; padding: 13px 16px; \}/);
+  assert.match(css, /\n\.messages-inbox-session > a > \.min-w-0 > :first-child \{ font-size: 15px; font-weight: 650; line-height: 20px; \}/);
+  assert.match(css, /\n\.messages-inbox-session > a > \.min-w-0 > :first-child \+ \* \{ margin-top: 2px; font-size: 13px; line-height: 18px; \}/);
+  const at = css.indexOf('.messages-inbox-change-tile {');
+  assert.match(css.slice(at, css.indexOf('}', at)), /width: 44px;\s*height: 44px;\s*border-radius: 12px;/, 'the avatars\' 44px');
+});
+
 // ── The agent half has to ask for itself (#2718 review) ────────────────
 
 test('the inbox initialises the global-chat bootstrap it reads', () => {

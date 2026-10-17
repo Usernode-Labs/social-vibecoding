@@ -299,7 +299,7 @@ test('the Workshop\'s counted words read with a plural form for each count, and 
   const path = require('node:path');
   const src = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dev-board/workshop/workshop.tsx'), 'utf8');
   assert.ok(!/function describe\(d: Dash\)/.test(src), 'the derived sentence is gone');
-  const tiles = src.slice(src.indexOf('function DashTiles('), src.indexOf('function OpenTopics('));
+  const tiles = src.slice(src.indexOf('function DashTiles('), src.indexOf(' * The three cards: what landed last week'));
   assert.ok(tiles.length > 200);
   assert.doesNotMatch(tiles, /=== 1/, 'no number is tested for "one" to choose a wording');
   assert.match(tiles, /t\('project:workshop\.dash\.onYou', \{ count: owed \}\)/);
