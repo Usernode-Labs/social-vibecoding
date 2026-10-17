@@ -1129,7 +1129,7 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_checked_at T
 -- #461: 'skipped' is a TERMINAL, GATE-PASSING verdict recorded when the
 -- checks genuinely cannot / need not run — the branch carries no commits
 -- beyond main, or GitHub isn't configured so no checks infrastructure
--- exists. Written by visuals.storeChecksSkipped (via
+-- exists. Written by the preview machine's storeChecksSkipped (via
 -- staging-recovery.recordChecksSkipped) with the human-readable reason in
 -- check_error_detail (same column the badge tooltip already surfaces); the
 -- merge gate treats it exactly like 'passing', and the next pushed commit
@@ -1181,7 +1181,7 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS captured_at TIMESTAM
 --   consecutive_check_failures : count of back-to-back failed check runs for
 --                              the current commit. Reset to 0 on any passing/
 --                              failing verdict and when a NEW commit starts a
---                              check run (see visuals.setChecksPending). Drives
+--                              check run (see preview/check-store.ts setChecksPending). Drives
 --                              the sweeper's exponential backoff + the
 --                              crash-loop short-circuit (stop auto-retrying a
 --                              deterministically-failing build after N tries).

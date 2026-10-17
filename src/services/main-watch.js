@@ -48,7 +48,8 @@
 // And three from the nine pauses of 26 September to 10 October 2026, every
 // one of which an admin ended by hand:
 //
-//   * A paused main asks again by itself (recheckPaused). A red that a
+//   * A paused main asks again by itself (the main-check machine's
+//     deadline). A red that a
 //     re-run could not confirm is retried within minutes; a confirmed red
 //     is re-run every quarter hour, up to MAIN_WATCH_RECHECKS times, and a
 //     green one lifts the pause like any green. Twice, a flaky test's red
@@ -66,9 +67,12 @@
 // main, which is production itself; a red production is caught by the
 // deploy's own health check and the rollback that follows it.
 //
-// State lives on the apps row (main_check_*; see schema.sql). Every write is
-// compare-and-swap on the merge commit, so a slow run for an older merge
-// cannot overwrite the verdict for a newer one.
+// The flow is the main-check workflow machine's (src/workflow/main-check/,
+// which applies these rules): this module keeps the suite's run
+// (runMainSuite) and the flake and fix filings, as its work's I/O, and the
+// readers of the state it projects on the apps row (main_check_*; describe,
+// mergePause). A run for an older commit cannot overwrite the verdict for a
+// newer one: the machine keeps only the current run's.
 //
 // A run takes a slot in the checks queue (services/checks-queue.js) before
 // its Job exists, like a proposal's run: first in line, with a slot of its
@@ -271,7 +275,7 @@ async function takeSlot(config, pool, app, mergeSha, { onRunId = null, signal = 
 // One run of the suite on the merge commit, as a verdict. Never throws: a
 // runner that could not be reached is an 'error' verdict. 'superseded' is a
 // run that never started because a newer merge took the row while it
-// waited for its slot; afterMerge stores nothing for it.
+// waited for its slot; the machine stores nothing for it.
 async function runSuite(config, pool, app, parsed, mergeSha, { adopt = null, onRunId = null, signal = null } = {}) {
   let slot = null;
   try {
@@ -313,7 +317,7 @@ const ADOPT_SLACK_MS = 2 * 60 * 1000;
  * A release restarts the platform, and a run it caught used to hold main
  * in 'running' or 'confirming' until it was 12 minutes stale and then ran
  * from the start (12 Oct 2026: 13 minutes on one confirmation). `dead` is
- * the queue row ({ runId, owner }) as resumeInterrupted saw it. Resolves a
+ * the queue row ({ runId, owner }) the main-check machine's work kept or adopted. Resolves a
  * verdict as runSuite does, 'superseded' when another process took it
  * first, or null when there is nothing to adopt and the suite must run
  * again. Never throws.
