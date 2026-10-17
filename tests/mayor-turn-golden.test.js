@@ -518,7 +518,7 @@ test('fallback-served reply records the fallback once and prices the served mode
       rawContent: [],
       stopReason: 'end_turn',
       fallbackServed: true,
-      servedModel: 'claude-sonnet-5',
+      servedModel: 'claude-sonnet-5-5',
       stopDetails: { category: 'bio' },
     }],
   });
