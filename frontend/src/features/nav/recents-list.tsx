@@ -88,6 +88,7 @@ import { ACTIVITY_LABEL } from '../agent-session/activity';
 import { AgentActivityIcon } from '../agent-session/activity-mark';
 import { useGlobalChatSelector } from '../global-chat/store';
 import { improveStore } from '../improve/improve-store.js';
+import { collapsedAppsStore } from './collapsed-apps-store.js';
 import { usePlatformSlug } from '../messages/channel-hub';
 import type { AgentChat } from '../messages/inbox';
 import { useMessagesSnapshot } from '../messages/store';
@@ -167,7 +168,18 @@ function AppTile({ app }: { app: NonNullable<RecentItem['app']> }) {
   );
 }
 
-function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
+function RecentRow({ item, live, collapsed = false, resume = false }: {
+  item: RecentItem;
+  live: boolean;
+  /** #3618: the ✕ closed this app on purpose — the row folds up into its
+   *  icon and the Resume pill, no name and no dot, until it is on screen
+   *  again. Active rows only; the store says who. */
+  collapsed?: boolean;
+  /** #3618: the pill on every Active row you are not in. A LABEL inside the
+   *  anchor, the parked strip's precedent (`.platform-parked-pill`): a
+   *  button inside an anchor is invalid markup. */
+  resume?: boolean;
+}) {
   const Glyph = GLYPHS[item.kind];
   const app = item.app && (item.app.iconUrl || item.app.iconEmoji) ? item.app : null;
   const unread = item.unread ? ', unread' : '';
@@ -175,12 +187,13 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
   const doing = item.activity ? `, ${ACTIVITY_LABEL[item.activity].toLowerCase()}` : '';
   return (
     <a
-      className="platform-recent"
+      className={`platform-recent${collapsed ? ' platform-recent-collapsed' : ''}`}
       href={item.href}
       data-recent-kind={item.kind}
       data-recent-key={item.key}
       aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${doing}${unread}`}
       {...(live ? { 'data-live': 'true' } : null)}
+      {...(collapsed ? { 'data-collapsed': 'true' } : null)}
       {...(item.current ? { 'aria-current': 'true' as const, 'data-current': 'true' } : null)}
       onClick={item.app
         ? (event) => onAppClick(event, item.app!.slug)
@@ -193,10 +206,13 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
       {item.activity
         ? <AgentActivityIcon activity={item.activity} className="platform-recent-glyph" />
         : app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
-      <span className="platform-recent-label">{item.label}</span>
+      {/* Folded: the name and the dot are what a full row is; the icon and
+          the pill are the whole control. The aria-label keeps the name. */}
+      {collapsed ? null : <span className="platform-recent-label">{item.label}</span>}
       {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
-      {live ? <LiveAppDot className="platform-recent-live" /> : null}
-      {item.unread ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
+      {live && !collapsed ? <LiveAppDot className="platform-recent-live" /> : null}
+      {item.unread && !collapsed ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
+      {resume && !item.current ? <span className="platform-active-resume">Resume</span> : null}
     </a>
   );
 }
@@ -261,14 +277,25 @@ export function RecentsByDay({ items, live, showOlder, onToggleOlder, now }: {
 /**
  * The running apps, above Recents (#3074). Nothing at all while there are
  * none, which is also the initial render. Its own component so a test can
- * render it from plain props.
+ * render it from plain props. #3618: each row you are not in carries the
+ * Resume pill, and one closed with the ✕ is folded up until it is back on
+ * screen — ./collapsed-apps-store.js says who, INITIAL-empty so the
+ * prerender and the first render agree.
  */
-export function ActiveApps({ items }: { items: RecentItem[] }) {
+export function ActiveApps({ items, collapsed = [] }: { items: RecentItem[]; collapsed?: string[] }) {
   if (!items.length) return null;
   return (
     <div className="platform-active" role="group" aria-labelledby="platform-active-head">
       <h2 id="platform-active-head" className="platform-recents-head">Active</h2>
-      {items.map((item) => <RecentRow key={item.key} item={item} live />)}
+      {items.map((item) => (
+        <RecentRow
+          key={item.key}
+          item={item}
+          live
+          resume
+          collapsed={collapsed.includes(item.app!.slug)}
+        />
+      ))}
     </div>
   );
 }
@@ -303,6 +330,10 @@ export function RecentsList() {
   const live = useLiveAppSlugs();
   const frameSlug = useCurrentAppSlug();
   const improve = useStoreState(improveStore);
+  // #3618: the apps closed with the ✕, folded in Active until one of them
+  // is back on screen (./collapsed-apps-store.js). Session-only, and empty
+  // at the first render, so the prerender is untouched.
+  const { slugs: collapsed } = useStoreState(collapsedAppsStore);
 
   // POST-MOUNT, for hydration (see the header). The stored apps are read by
   // ./mount.ts when the router names the viewer, since the list is theirs;
@@ -369,7 +400,7 @@ export function RecentsList() {
       role="group"
       aria-labelledby="platform-recents-head"
     >
-      <ActiveApps items={active} />
+      <ActiveApps items={active} collapsed={collapsed} />
       <h2 id="platform-recents-head" className="platform-recents-head">Recents</h2>
       <RecentsByDay
         items={items}

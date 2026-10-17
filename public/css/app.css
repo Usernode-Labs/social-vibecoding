@@ -20031,6 +20031,33 @@ html.un-kb #platform-parked {
     background: var(--lit-tint);
     color: var(--lit-ink);
   }
+  /* ── RESUME AND THE FOLD (#3618) ─────────────────────────────────────
+     frontend/src/features/nav/collapsed-apps-store.js carries the argument.
+     The green dot says an app is still open, but a dot is a status, not an
+     invitation: every Active row you are not in ends in the phone's
+     parked-strip pill (`.platform-parked-pill`) at rail size, so the row
+     reads as the way back in. The ✕ folds its row up into that pill beside
+     the app's icon — no name, no dot — until the app is on screen again,
+     because a closed app and a stepped-away one should not look alike. */
+  .platform-active-resume {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 10px;
+    border-radius: 999px;
+    border: 1px solid var(--lit-line);
+    background: var(--accent-tint);
+    color: var(--accent-tint-ink);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .platform-recent-collapsed {
+    height: 28px;
+    gap: 8px;
+    padding: 0 6px 0 10px;
+  }
   /* Only apps are running and none has been left yet: no RECENTS heading
      over nothing. The heading is the list's last child only then. */
   .platform-recents-head:last-child {

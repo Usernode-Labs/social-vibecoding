@@ -12,6 +12,9 @@
 
 import { flushSync } from 'react-dom';
 
+import {
+  collapsedAppsStore, collapseApp, expandApp, resetCollapsedApps,
+} from './collapsed-apps-store.js';
 import { navStore, tabForScreen } from './nav-store.js';
 import { parkedStore, setParked } from './parked-store.js';
 import { forgetRecentApp, readRecentApps, recentAppsStore, rememberRecentApp } from './recent-apps-store.js';
@@ -22,8 +25,11 @@ navStore.setFlush(flushSync);
 // page from what that callback did before it returned.
 parkedStore.setFlush(flushSync);
 recentAppsStore.setFlush(flushSync);
+// #3618: App.closeApp folds the app's Active row inside the same callback —
+// the fold must land with the screen swap, not a task after it.
+collapsedAppsStore.setFlush(flushSync);
 
-export { navStore, parkedStore };
+export { navStore, parkedStore, collapsedAppsStore };
 
 if (typeof window !== 'undefined') {
   const host = window as unknown as { UsernodeReact?: Record<string, unknown> };
@@ -104,6 +110,9 @@ if (typeof window !== 'undefined') {
       // is empty. Nothing to do while the name has not changed.
       if ((viewer || null) !== navStore.get().viewer) {
         recentAppsStore.set({ apps: readRecentApps(viewer || null) });
+        // #3618: the next account folds nothing over either — the folded
+        // rows were the previous session's closes.
+        resetCollapsedApps();
       }
       navStore.set({ viewer: viewer || null });
     },
@@ -140,6 +149,38 @@ if (typeof window !== 'undefined') {
     forget(slug: string) {
       if (parkedStore.get().app?.slug === slug) setParked(null);
       forgetRecentApp(slug, navStore.get().viewer);
+      // #3618: and it cannot be folded — its frame is going, so Active
+      // stops listing it and a stale fold must not survive its return.
+      expandApp(slug);
+    },
+    /**
+     * Fold the app's Active row up into its Resume pill (#3618): the ✕ in
+     * the running app's header closed it on purpose.
+     *
+     * The one writer is `App.closeApp()` in public/js/app.js, after its
+     * guards, before the navigation — so the fold lands with the screen
+     * swap. Empty or non-string slugs are ignored, which is also what keeps
+     * a caller without a current app from folding nothing.
+     *
+     * @param slug The closed app's slug.
+     */
+    collapseApp(slug: string) {
+      if (typeof slug !== 'string' || !slug) return;
+      collapseApp(slug);
+    },
+    /**
+     * Unfold the app's Active row (#3618): the app is on screen again.
+     *
+     * The writer is `_syncParkedApp`'s inApp branch — the one place that
+     * already decides "this app is on screen" on every screen decision — so
+     * every way back (the folded control, another row, a Home tile, a deep
+     * link, Back) publishes it. A no-op when the row was not folded.
+     *
+     * @param slug The app back on screen.
+     */
+    expandApp(slug: string) {
+      if (typeof slug !== 'string' || !slug) return;
+      expandApp(slug);
     },
   };
 }

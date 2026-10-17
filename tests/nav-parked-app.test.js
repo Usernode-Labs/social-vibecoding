@@ -148,6 +148,8 @@ function fakeElement() {
 // made so a test can tell which frame they landed in.
 function router({ launcher = [WHITEBOARD, PLATFORM], record = null } = {}) {
   const parks = [];
+  const folds = [];
+  const unfolds = [];
   const inReveal = [];
   const noop = () => undefined;
   const elements = new Map();
@@ -180,7 +182,12 @@ function router({ launcher = [WHITEBOARD, PLATFORM], record = null } = {}) {
   context.window = context;
   vm.runInContext(APP_JS, context);
   context.UsernodeReact = {
-    nav: { setScreen() {}, setViewer() {}, park: (app) => parks.push(app) },
+    nav: {
+      setScreen() {}, setViewer() {}, park: (app) => parks.push(app),
+      // #3618: the rail's fold of the closed app's Active row.
+      collapseApp: (slug) => folds.push(slug),
+      expandApp: (slug) => unfolds.push(slug),
+    },
     backButton: { set() {} },
   };
   const appView = {
@@ -198,7 +205,7 @@ function router({ launcher = [WHITEBOARD, PLATFORM], record = null } = {}) {
   };
   context.AppView = new Proxy(appView, { get: (t, k) => (k in t ? t[k] : noop) });
   context.Home = new Proxy({}, { get: () => noop });
-  return { App: context.App, AppView: context.AppView, parks, inReveal };
+  return { App: context.App, AppView: context.AppView, parks, folds, unfolds, inReveal };
 }
 
 const named = (park) => (park ? park.name : null);
@@ -331,6 +338,81 @@ test('one decision: whether the running app is on screen is the bar\'s, and it p
   assert.match(body, /App\._syncParkedApp\(inApp\);\s*$/, 'the bar\'s answer is handed on, last');
   assert.equal((APP_JS.match(/_syncParkedApp\(/g) || []).length, 2,
     'the definition and that one call — no second copy of the rule at a call site');
+});
+
+// ── #3618: the folded Active row unfolds when the app is back on screen ──
+//
+// The ✕ folds the app's Active row (App.closeApp publishes it). Coming back
+// out is the router's own answer: _syncParkedApp's inApp branch is the one
+// place that already decides "this app is on screen" on every screen
+// decision, so it publishes the expand and every way back — the folded
+// control itself, any other row, a Home tile, a deep link, Back — unfolds
+// the row. Leaving by anything but the ✕ folds nothing.
+
+test('being back on screen unfolds the app; leaving by a tab folds nothing (#3618)', async () => {
+  const { App, folds, unfolds } = router();
+  await App.navigateToApp('whiteboard-ab12cd');
+  assert.ok(unfolds.includes('whiteboard-ab12cd'), 'entering the app publishes the expand');
+  App.navigateHome();
+  assert.deepEqual(folds, [], 'tapping away is not a close: it parks, it never folds');
+});
+
+test('the ✕ folds the app, and opening it again unfolds the row (#3618)', async () => {
+  const { App, folds, unfolds } = router();
+  await App.navigateToApp('whiteboard-ab12cd');
+  const before = unfolds.length;
+  App.closeApp();
+  assert.deepEqual(folds, ['whiteboard-ab12cd'], 'the close folds, by slug');
+  assert.equal(unfolds.length, before, 'and does not undo its own fold');
+  await App.navigateToApp('whiteboard-ab12cd');
+  assert.ok(unfolds.length > before, 'opening it again is on screen again: the row comes out');
+});
+
+test('the bridge folds and unfolds, a viewer change resets, forget unfolds (#3618)', () => {
+  const previousWindow = global.window;
+  global.window = { localStorage: { getItem: () => null, setItem() {}, removeItem() {} } };
+  try {
+    const { collapsedAppsStore } = loadTsx('frontend/src/features/nav/mount.ts');
+    const nav = window.UsernodeReact.nav;
+    nav.setViewer('ana');
+    nav.collapseApp('notes');
+    nav.collapseApp('notes');
+    assert.deepEqual(collapsedAppsStore.get().slugs, ['notes'], 'collapsing twice keeps one entry');
+    nav.expandApp('never-opened');
+    assert.deepEqual(collapsedAppsStore.get().slugs, ['notes'], 'expanding an unfolded app is a no-op');
+    nav.expandApp('notes');
+    assert.deepEqual(collapsedAppsStore.get().slugs, [], 'collapse then expand is the empty set');
+    nav.collapseApp('notes');
+    nav.collapseApp('chess');
+    nav.setViewer('bo');
+    assert.deepEqual(collapsedAppsStore.get().slugs, [], 'a different account folds nothing over');
+    nav.collapseApp('notes');
+    nav.forget('notes');
+    assert.deepEqual(collapsedAppsStore.get().slugs, [], 'a blocked app cannot stay folded');
+    nav.collapseApp('');
+    nav.collapseApp(null);
+    nav.collapseApp(7);
+    assert.deepEqual(collapsedAppsStore.get().slugs, [], 'empty and non-string slugs fold nothing');
+  } finally {
+    if (previousWindow === undefined) delete global.window;
+    else global.window = previousWindow;
+  }
+});
+
+test('the collapsed-apps store: fold, unfold, reset (#3618)', () => {
+  const { collapsedAppsStore, collapseApp, expandApp, resetCollapsedApps } =
+    loadTsx('frontend/src/features/nav/collapsed-apps-store.js');
+  collapseApp('notes');
+  collapseApp('chess');
+  collapseApp('notes');
+  assert.deepEqual(collapsedAppsStore.get().slugs, ['notes', 'chess'],
+    'deduped, in the order closed');
+  expandApp('notes');
+  assert.deepEqual(collapsedAppsStore.get().slugs, ['chess']);
+  expandApp('never-opened');
+  assert.deepEqual(collapsedAppsStore.get().slugs, ['chess'], 'still a no-op');
+  resetCollapsedApps();
+  assert.deepEqual(collapsedAppsStore.get().slugs, []);
 });
 
 test('the display data is captured while the app is on screen, never looked up on the way out', () => {

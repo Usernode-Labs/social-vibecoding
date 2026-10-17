@@ -573,7 +573,7 @@ test('#3074: the Active rows are Recents\' rows, the current one lit, and nothin
   const list = read('frontend/src/features/nav/recents-list.tsx');
   // Hydration: rows only after mount, the section inside the root and first.
   assert.match(list, /const active = mounted && viewer\s*\n\s*\? buildActive\(/);
-  assert.match(list, /aria-labelledby="platform-recents-head"\s*\n\s*>\s*\n\s*<ActiveApps items=\{active\} \/>\s*\n\s*<h2 id="platform-recents-head"/);
+  assert.match(list, /aria-labelledby="platform-recents-head"\s*\n\s*>\s*\n\s*<ActiveApps items=\{active\} collapsed=\{collapsed\} \/>\s*\n\s*<h2 id="platform-recents-head"/);
   assert.match(list, /active: active\.map\(\(item\) => item\.app!\.slug\),/);
   assert.doesNotMatch(list, /data-close|aria-label="Close/, 'no close button');
   const live = read('frontend/src/features/app-frame/live-apps.tsx');
@@ -630,6 +630,81 @@ test('#3074: Active is drawn in the desktop block only, the app you are in lit l
   assert.match(css.slice(at), /^\.platform-active \{[^}]*display: flex;[^}]*flex: none;/);
   assert.match(css, /\.platform-recent\[aria-current="true"\] \{\s*background: var\(--lit-tint\);\s*color: var\(--lit-ink\);\s*\}/);
   assert.match(css, /\.platform-recents-head:last-child \{\s*display: none;\s*\}/, 'no Recents heading over nothing');
+});
+
+// ── #3618: a Resume pill on the rows you are not in, and the close's fold ─
+
+test('#3618: a Resume pill on every Active row you are not in, none on the one you are in', () => {
+  const { ActiveApps } = loadTsx('frontend/src/features/nav/recents-list.tsx');
+  const apps = [
+    recentApp('notes', '2026-09-20T10:00:00Z', { iconEmoji: '📝' }),
+    recentApp('chess', '2026-09-20T09:00:00Z'),
+  ];
+  const items = buildActive({ live: ['notes', 'chess'], current: 'notes', apps });
+  const html = renderToHtml(createElement(ActiveApps, { items }));
+  const rows = html.match(/<a class="platform-recent"[\s\S]*?<\/a>/g);
+  assert.equal(rows.length, 2);
+  assert.doesNotMatch(rows[0], /platform-active-resume/, 'you are in Notes: lit, the dot, no button');
+  assert.match(rows[1], /class="platform-active-resume">Resume</, 'Chess offers the way back in');
+  // A stepped-away row is still a full row: the pill is added, nothing taken.
+  assert.match(rows[1], /platform-recent-label/, 'the name stays');
+  assert.match(rows[1], /app-live-dot/, 'and the dot stays');
+  // Recents app rows and every other kind gain nothing: the pill is Active's.
+  const { RecentsByDay } = loadTsx('frontend/src/features/nav/recents-list.tsx');
+  const recents = buildRecents({
+    apps,
+    conversations: [conversation(1, 'direct', '2026-09-20T12:00:00Z', { peer: { id: 9, username: 'ana' } })],
+    discussions: [],
+    agents: [],
+    active: ['notes', 'chess'],
+  });
+  const rest = renderToHtml(createElement(RecentsByDay, {
+    items: recents, live: ['notes', 'chess'], showOlder: false, onToggleOlder: () => {},
+  }));
+  assert.doesNotMatch(rest, /platform-active-resume/, 'Recents is history, not an offer');
+});
+
+test('#3618: a closed app folds its row up into its icon and the pill, in its place', () => {
+  const { ActiveApps } = loadTsx('frontend/src/features/nav/recents-list.tsx');
+  const apps = [
+    recentApp('notes', '2026-09-20T10:00:00Z'),
+    recentApp('paint', '2026-09-20T09:00:00Z', { iconEmoji: '🎨' }),
+  ];
+  const items = buildActive({ live: ['notes', 'paint'], current: null, apps });
+  const html = renderToHtml(createElement(ActiveApps, { items, collapsed: ['paint'] }));
+  const rows = html.match(/<a class="platform-recent[^"]*"[\s\S]*?<\/a>/g);
+  assert.equal(rows.length, 2, 'the folded row keeps its place in Active');
+  const folded = rows[1];
+  assert.match(folded, /class="platform-recent platform-recent-collapsed"/);
+  assert.match(folded, /data-collapsed="true"/);
+  assert.match(folded, /href="\/app\/paint"/, 'a real address, so a modified click opens the app in a tab');
+  assert.match(folded, /aria-label="App: Paint, still open"/, 'the row still says what it is');
+  assert.match(folded, /data-live="true"/);
+  assert.match(folded, /platform-recent-tile/, 'the icon stays');
+  assert.match(folded, /platform-active-resume">Resume</);
+  assert.doesNotMatch(folded, /platform-recent-label/, 'no name: that is the fold');
+  assert.doesNotMatch(folded, /app-live-dot/, 'and no dot');
+  // The row beside it, left by tapping away, is untouched.
+  assert.match(rows[0], /platform-recent-label/);
+  assert.doesNotMatch(rows[0], /data-collapsed/);
+});
+
+test('#3618: the rail reads the fold from the store, and the rules are desktop ones', () => {
+  const list = read('frontend/src/features/nav/recents-list.tsx');
+  assert.match(list, /const \{ slugs: collapsed \} = useStoreState\(collapsedAppsStore\);/);
+  // Hydration: the store's INITIAL is empty, so the prerender agrees.
+  const store = read('frontend/src/features/nav/collapsed-apps-store.js');
+  assert.match(store, /const INITIAL = \{ slugs: \[\] \};/);
+  assert.doesNotMatch(store, /localStorage/);
+
+  const css = read('public/css/app.css');
+  const desktop = css.indexOf('THE SAME FIVE TABS, STANDING UP');
+  const pill = css.indexOf('.platform-active-resume {');
+  const fold = css.indexOf('.platform-recent-collapsed {');
+  assert.ok(pill > desktop && fold > desktop, 'inside the desktop block');
+  assert.equal(css.split('.platform-active-resume {').length - 1, 1, 'the phone blocks never draw the pill');
+  assert.equal(css.split('.platform-recent-collapsed {').length - 1, 1, 'nor the fold');
+  assert.match(css.slice(pill), /^\.platform-active-resume \{[^}]*border-radius: 999px;[^}]*border: 1px solid var\(--lit-line\);[^}]*background: var\(--accent-tint\);[^}]*color: var\(--accent-tint-ink\);/);
 });
 
 // ── #3555: a channel opens its project's Discussion tab ───────────────

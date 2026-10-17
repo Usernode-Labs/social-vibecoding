@@ -142,6 +142,8 @@ function router(start, opts = {}) {
   const parks = [];
   const slots = [];
   const presence = [];
+  const collapses = [];
+  const expands = [];
   let App = null;
   const h = makeHistory(start, { ...opts, onTopTraversal: () => App._routeFromHash() });
   const noop = () => undefined;
@@ -171,7 +173,12 @@ function router(start, opts = {}) {
   vm.runInContext(APP_JS, context);
   App = context.App;
   context.UsernodeReact = {
-    nav: { setScreen() {}, setViewer() {}, park: (app) => parks.push(app) },
+    nav: {
+      setScreen() {}, setViewer() {}, park: (app) => parks.push(app),
+      // #3618: the rail's fold of the closed app's Active row.
+      collapseApp: (slug) => collapses.push(slug),
+      expandApp: (slug) => expands.push(slug),
+    },
     backButton: { set: (mode, href) => slots.push([mode, href]) },
     sidePanel: { appPresence: (on) => presence.push(on) },
     messages: { route() {}, isOpen: () => true, close() {}, syncChrome() {} },
@@ -192,7 +199,7 @@ function router(start, opts = {}) {
   App.bindEvents();
   const back = context.document.getElementById('back-btn');
   return {
-    App, h, transitions, parks, slots, presence,
+    App, h, transitions, parks, slots, presence, collapses, expands,
     // A plain click on the header's back slot, as the anchor's own handler sees it.
     clickClose() {
       back.setAttribute('href', slots.length ? slots[slots.length - 1][1] : '/');
@@ -361,4 +368,95 @@ test('the origin is noted before the app\'s entry is written, and never from a r
   r.h.history.back();
   assert.equal(r.App.currentApp, 'garden-ab12');
   assert.equal(r.App._appReturn, null);
+});
+
+// ── #3618: the close folds the rail's Active row ──────────────────────────
+//
+// The ✕ is a close ON PURPOSE, so the desktop rail folds the app's Active
+// row up into its icon and a Resume pill until the app is back on screen.
+// The fold is published through the nav bridge BEFORE the navigation, so it
+// lands with the screen swap, and it is the same publication for every one
+// of the five close targets — a row folded for one route and not another
+// would read as the rail forgetting at random.
+
+test('closing an app folds it in the rail, for every close target', async () => {
+  // traverse: the thread the app was opened from.
+  {
+    const r = router('/');
+    await boot(r);
+    r.go('/#messages/4243');
+    await r.App.openAppTab('garden-ab12', 'app');
+    r.collapses.length = 0;
+    r.expands.length = 0;
+    r.clickClose();
+    assert.deepEqual(r.collapses, ['garden-ab12'], 'traverse');
+    assert.deepEqual(r.expands, [], 'and the close never undoes its own fold');
+  }
+  // route: onto the Workshop card the app was resumed from.
+  {
+    const r = router('/app/garden-ab12/dev/proposals/12');
+    await boot(r);
+    await r.App.openAppTab('garden-ab12', 'app');
+    r.collapses.length = 0;
+    r.clickClose();
+    await r.settle();
+    assert.deepEqual(r.collapses, ['garden-ab12'], 'route');
+  }
+  // back: without the Navigation API, nothing has been added since.
+  {
+    const r = router('/#messages/4243', { navigationApi: false });
+    await boot(r);
+    await r.App.openAppTab('garden-ab12', 'app');
+    r.collapses.length = 0;
+    r.clickClose();
+    assert.deepEqual(r.collapses, ['garden-ab12'], 'back');
+  }
+  // push: without the Navigation API, the frame wrote history in between.
+  {
+    const r = router('/#messages/4243', { navigationApi: false });
+    await boot(r);
+    await r.App.openAppTab('garden-ab12', 'app');
+    r.h.frameNavigates();
+    r.collapses.length = 0;
+    r.clickClose();
+    assert.deepEqual(r.collapses, ['garden-ab12'], 'push');
+  }
+  // home: a cold deep link has nowhere to return.
+  {
+    const r = router('/app/garden-ab12');
+    await boot(r);
+    r.collapses.length = 0;
+    r.clickClose();
+    assert.deepEqual(r.collapses, ['garden-ab12'], 'home');
+  }
+});
+
+test('the guards fold nothing: the side panel, and a close with no app', () => {
+  const r = router('/');
+  r.App.embeddedPanel = true;
+  r.App.currentApp = 'garden-ab12';
+  assert.equal(r.App.closeApp(), false, 'the side panel\'s document has no app to close');
+  assert.deepEqual(r.collapses, []);
+  r.App.embeddedPanel = false;
+  r.App.currentApp = null;
+  assert.equal(r.App.closeApp(), false, 'no app running, nothing to fold');
+  assert.deepEqual(r.collapses, []);
+});
+
+test('only the close folds: stepping out and back leaves the fold alone', async () => {
+  const r = router('/');
+  await boot(r);
+  r.go('/#messages/4243');
+  await r.App.openAppTab('garden-ab12', 'app');
+  // Entering the app reaches _syncParkedApp's inApp branch, the router's
+  // "this app is on screen" answer: it publishes the expand, which is what
+  // every way back on screen rides on. The branch re-asserts on every sync
+  // while the app is up, so count the publishes, not the entries.
+  assert.ok(r.expands.includes('garden-ab12'), 'on screen, the row is out');
+  r.collapses.length = 0;
+  const expanded = r.expands.length;
+  // Stepping out by a tab parks the app (pinned above) and folds nothing.
+  r.go('/#workshop');
+  assert.deepEqual(r.collapses, [], 'tapping away is not a close');
+  assert.equal(r.expands.length, expanded, 'and it does not fold or unfold anything');
 });

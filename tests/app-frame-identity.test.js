@@ -1405,7 +1405,9 @@ test('#2902: the green dot reads the frame store, on Home tiles and Recents rows
   assert.match(grid, /\{live \? <LiveAppDot className="app-card-live-dot" \/> : null\}/);
   const recents = read('frontend/src/features/nav/recents-list.tsx');
   assert.match(recents, /live=\{!!item\.app && live\.includes\(item\.app\.slug\)\}/);
-  assert.match(recents, /\{live \? <LiveAppDot className="platform-recent-live" \/> : null\}/);
+  // #3618: a row folded by the ✕ shows no dot — the icon and the pill are
+  // the whole control.
+  assert.match(recents, /\{live && !collapsed \? <LiveAppDot className="platform-recent-live" \/> : null\}/);
   const css = read('public/css/app.css');
   assert.match(css, /\.app-launch-host > iframe\[data-kept\] \{[\s\S]{0,200}visibility: hidden;/,
     'a kept frame keeps its box and is hidden by visibility, not display');

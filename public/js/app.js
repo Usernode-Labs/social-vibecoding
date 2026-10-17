@@ -4910,6 +4910,15 @@ const App = {
       const running = App._parkRecord(App.currentApp);
       App._runningApp = running;
       if (running) bridge.park(null);
+      // #3618: being back on screen is also the way a folded Active row
+      // comes back out. This branch is the router's "this app is on screen"
+      // answer, reached on every screen decision, so every way back — the
+      // folded control itself, any other row, a Home tile, a deep link,
+      // Back — lands here and unfolds the row. The platform's own app
+      // (`self_hosted`) folds like any other and expands here too: its park
+      // record is null, the expand is not. A no-op on the React side when
+      // the row was not folded.
+      bridge.expandApp?.(App.currentApp);
       return;
     }
     const left = App._runningApp;
@@ -6025,6 +6034,13 @@ const App = {
   // The ✕ in a running app's strip (#back-btn's click handler).
   closeApp() {
     if (App.embeddedPanel || !App.currentApp) return false;
+    // #3618: the ✕ is a close ON PURPOSE, so the desktop rail folds this
+    // app's Active row up into its icon and a Resume pill. Published before
+    // the navigation, so the fold lands with the screen swap; the row
+    // unfolds again when the app is back on screen (_syncParkedApp's inApp
+    // branch, the router's "this app is on screen" answer). Only the close
+    // folds: leaving by a tab, a rail row or Back parks, never folds.
+    window.UsernodeReact?.nav?.collapseApp?.(App.currentApp);
     const target = App._closeAppTarget();
     if (target.how === 'traverse') {
       try {
