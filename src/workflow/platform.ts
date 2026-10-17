@@ -836,6 +836,14 @@ export async function requestRecheck(r: { sessionId: number; appId: number; reas
     actor: r.actor ?? undefined, appId: r.appId, waitMs: 2000 });
 }
 
+// A person's "Run checks again" folded into what the session is already
+// doing (services/unit-suite-reuse.js owePendingRun): the machine stamps the
+// head's stored verdict pending, if it is the head's and not pending already.
+export async function recheckFolded(r: { sessionId: number; appId: number; head: string }): Promise<EventOutcome> {
+  return runtime!.appendAndWait(previews!, previewKey(r.sessionId), { type: 'RecheckFolded', payload: { head: r.head } },
+    { requestKey: `folded:${r.head}:${randomUUID()}`, source: { kind: 'route', name: 'manual-recheck' }, appId: r.appId, waitMs: 2000 });
+}
+
 export async function checksSkipped(sessionId: number, appId: number, head: string, reason: string,
   expected: string | null = null): Promise<EventOutcome> {
   return runtime!.appendAndWait(previews!, previewKey(sessionId), { type: 'ChecksSkipped', payload: { sessionId, head, reason, expected } },

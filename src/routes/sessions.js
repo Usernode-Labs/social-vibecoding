@@ -6548,7 +6548,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const busyNow = () => isSessionBusy(sessionId);
       if (busyNow()) {
         await require('../services/unit-suite-reuse').owePendingRun({
-          pool, visuals, stagingRecovery, config, session, busy: busyNow, head: requestedHead,
+          pool, stagingRecovery, config, session, busy: busyNow, head: requestedHead,
         });
         return res.json({ status: 'running' });
       }

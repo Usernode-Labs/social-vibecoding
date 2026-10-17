@@ -12,6 +12,8 @@
 // now keeps retrying such a fault for a day, 30 minutes apart once the
 // backoff tops out, and a platform release retries it at once.
 
+// The verdict's writers: the preview machine's own (its transitions run them).
+const rowStore = require('../src/workflow/preview/check-store.ts');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -75,9 +77,9 @@ function recordingPool() {
 
 test('storeChecks writes the flag with every error and clears it with every verdict', async () => {
   const pool = recordingPool();
-  await visuals.storeChecks(pool, 7741, 'a'.repeat(40), { state: 'error', results: [], platformFault: true }, COLLISION);
-  await visuals.storeChecks(pool, 7741, 'a'.repeat(40), { state: 'error', results: [] }, 'boot failed');
-  await visuals.storeChecks(pool, 7741, 'a'.repeat(40), { state: 'passing', results: [] });
+  await rowStore.storeChecks(pool, 7741, 'a'.repeat(40), { state: 'error', results: [], platformFault: true }, COLLISION);
+  await rowStore.storeChecks(pool, 7741, 'a'.repeat(40), { state: 'error', results: [] }, 'boot failed');
+  await rowStore.storeChecks(pool, 7741, 'a'.repeat(40), { state: 'passing', results: [] });
   const [platform, other, passing] = pool.calls;
   assert.match(platform.sql, /check_error_platform = \$6::boolean/);
   assert.equal(platform.params[5], true);

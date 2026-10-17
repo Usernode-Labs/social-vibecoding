@@ -218,9 +218,11 @@ async function markFreshOwed(pool, { sessionId, commitSha } = {}) {
  * agent turn, a build, a run whose suite is not copied): the route answers
  * "running" without a run of its own. The head is owed a fresh suite
  * (markFreshOwed, already set), so:
- *   * a verdict already stored for it no longer stands: the row is stamped
- *     pending, as the request's own run would, so the merge gate waits and
- *     the stale sweep re-drives the head if this process goes away;
+ *   * a verdict already stored for it no longer stands: the preview machine
+ *     stamps the row pending (RecheckFolded), as the request's own run
+ *     would, so the merge gate waits and the stale sweep re-drives the head
+ *     if this process goes away. The machine owns the verdict's columns: a
+ *     stamp written here was refused on every row it holds;
  *   * once the session is idle, if nothing has answered the request yet
  *     (still owed on that head), the owed run starts.
  * `busy()` is the route's own test of "something is running". `head` is
@@ -229,19 +231,14 @@ async function markFreshOwed(pool, { sessionId, commitSha } = {}) {
  * the checks pin. Never throws.
  */
 async function owePendingRun({
-  pool, visuals, stagingRecovery, config, session, busy, head = null, pollMs = 5000, maxWaitMs = 15 * 60 * 1000,
+  pool, stagingRecovery, config, session, busy, head = null, pollMs = 5000, maxWaitMs = 15 * 60 * 1000,
+  platform = require('../workflow/platform.ts'),
 }) {
   const sha = head || (session && session.checks_commit_sha);
   if (!pool || !isSha(sha)) return false;
   const same = (a) => !!a && String(a).toLowerCase() === String(sha).toLowerCase();
   try {
-    const { rows: [row] } = await pool.query(
-      'SELECT check_state, checks_commit_sha FROM chat_sessions WHERE id = $1', [Number(session.id)]
-    );
-    if (row && same(row.checks_commit_sha) && row.check_state !== 'pending') {
-      await visuals.setChecksPending(pool, session.id, sha, null, 'manual-recheck');
-      visuals.notifyChecksPending(session.id, sha, null, 'manual-recheck');
-    }
+    await platform.recheckFolded({ sessionId: Number(session.id), appId: Number(session.app_id), head: String(sha).toLowerCase() });
   } catch (err) {
     log.warn('unit-suite-reuse', 'Could not stamp a folded request pending', { sessionId: session.id, err: err.message });
   }

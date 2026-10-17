@@ -28,6 +28,7 @@ import type {
 import { chatLine, sessionEvent, sessionUpdate, toUser } from '../pushes.ts';
 import type { SessionRoute } from '../pushes.ts';
 import * as store from '../rules/check-store.ts';
+import * as rowStore from './check-store.ts';
 import { createCheckFailedNotification } from '../rules/change-notifications.ts';
 import { toBotChange, writeBotChange } from '../rules/bot-notes.ts';
 import { OPEN, readFacts } from './facts.ts';
@@ -171,6 +172,10 @@ const EVENTS = {
     expected: p?.expected == null ? null : sha(p.expected, 'expected'),
   }),
   ConflictResolved: (p: any) => ({ head: sha(p?.head, 'head') }),
+  // A person's "Run checks again" folded into what the session is already
+  // doing (services/unit-suite-reuse.js owePendingRun): the verdict stored
+  // for `head` no longer stands for it.
+  RecheckFolded: (p: any) => ({ head: sha(p?.head, 'head') }),
   // The branch moved on to code nothing checks yet (a CLI upload before it
   // is submitted, an update to a paused proposal): the verdict no longer
   // describes it, and whatever ran for the old head is obsolete.
@@ -691,6 +696,23 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
   };
 
+  // A person's recheck folded into a turn, a build or a run already under
+  // way: the stored verdict of the head they asked about no longer stands
+  // for it, so the row reads pending (and merge-blocked) until a run that
+  // answers them stores one, as their own run would have stamped it. The
+  // run they are owed starts once the session is idle (owePendingRun), or
+  // from the stale sweep, which re-drives a pending head nothing runs. A
+  // verdict of another head, or one already pending, is left alone.
+  const folded: Entry = {
+    guard: (s, e, f) => (f.session && f.session.checks.commitSha === e.payload.head && f.session.checks.state !== 'pending'
+      ? ok() : reject('nothing_to_stamp')),
+    to: (s, e, f, ctx) => step({
+      name: s.name, data: s.data,
+      writes: [{ type: 'pending', sessionId: s.data.sessionId, head: e.payload.head, phase: null, trigger: 'manual-recheck' }],
+      push: [checksPending(s.data, ctx, e.payload.head, '', 'manual-recheck')],
+    }),
+  };
+
   const lost: Entry = {
     guard: (s, e) => (s.data.serving?.n === e.payload.attempt ? ok() : reject('not_serving')),
     to: (s, e, f, ctx) => begin(s, s.data.head || s.data.serving.head, 'stuck-sweep', ctx, deps),
@@ -818,6 +840,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ...created, ...ops,
       ChecksSkipped: skipped,
       RecheckRequested: recheck,
+      RecheckFolded: folded,
       ConflictResolved: notHere('not_deferred'),
       ChecksCleared: cleared,
       PreviewLost: notHere('not_serving'),
@@ -830,6 +853,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ...created, ...ops,
       ChecksSkipped: notHere('in_progress'),
       RecheckRequested: joining,
+      RecheckFolded: folded,
       ConflictResolved: notHere('not_deferred'),
       ChecksCleared: cleared,
       PreviewLost: notHere('preparing'),
@@ -842,6 +866,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ...created, ...ops,
       ChecksSkipped: notHere('in_progress'),
       RecheckRequested: replacing,
+      RecheckFolded: folded,
       ConflictResolved: notHere('not_deferred'),
       ChecksCleared: cleared,
       PreviewLost: lost,
@@ -854,6 +879,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ...created, ...ops,
       ChecksSkipped: skipped,
       RecheckRequested: recheck,
+      RecheckFolded: folded,
       ConflictResolved: {
         guard: (s, e) => (e.payload.head === s.data.head ? ok() : reject('not_deferred_head')),
         to: (s, e, f, ctx) => startRun(s, 'conflict-resolved', ctx),
@@ -869,6 +895,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ...created, ...ops,
       ChecksSkipped: skipped,
       RecheckRequested: recheck,
+      RecheckFolded: folded,
       ConflictResolved: notHere('not_deferred'),
       ChecksCleared: cleared,
       PreviewLost: lost,
@@ -881,6 +908,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       ...created, ...ops,
       ChecksSkipped: skipped,
       RecheckRequested: recheck,
+      RecheckFolded: folded,
       ConflictResolved: notHere('not_deferred'),
       ChecksCleared: cleared,
       PreviewLost: lost,
@@ -903,6 +931,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       PreviewRequested: notHere('retiring'),
       ChecksSkipped: notHere('retiring'),
       RecheckRequested: notHere('retiring'),
+      RecheckFolded: notHere('retiring'),
       ConflictResolved: notHere('retiring'),
       ChecksCleared: notHere('retiring'),
       PreviewLost: notHere('retiring'),
@@ -1286,6 +1315,7 @@ export function preview(deps: Deps): Machine<PState, Facts> {
       PreviewRequested: produced,
       ChecksSkipped: produced,
       RecheckRequested: (e) => (PRODUCERS.has(e.source.kind) || e.source.kind === 'admin' ? ok() : reject('not_a_producer')),
+      RecheckFolded: produced,
       ConflictResolved: system,
       ChecksCleared: produced,
       PreviewLost: system,
@@ -1345,7 +1375,7 @@ async function buildCardOpen(tx: Tx, sessionId: number): Promise<boolean> {
 const WRITES = {
   botChange: writeBotChange,
   // checks_commit_sha, 'pending', the phase and the trigger.
-  pending: (tx: Tx, w: any) => store.setChecksPending(tx, w.sessionId, w.head, w.phase, w.trigger),
+  pending: (tx: Tx, w: any) => rowStore.setChecksPending(tx, w.sessionId, w.head, w.phase, w.trigger),
 
   // An imported proposal's thread hears that its preview is being built
   // (#866: it has no dev chat). Once per head: a rebuild of the same head
@@ -1411,7 +1441,7 @@ const WRITES = {
         `INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', 'Staging build failed', $2)`,
         [w.sessionId, JSON.stringify({ stagingFailed: true, error: w.detail, changesReady: true, prNumber: w.prNumber ?? null })]);
     }
-    const stored = await store.storeChecks(tx, w.sessionId, w.head,
+    const stored = await rowStore.storeChecks(tx, w.sessionId, w.head,
       { state: 'error', results: [], ...(w.platformFault ? { platformFault: true } : {}) }, w.detail);
     if (!stored || w.infrastructure) return;
     const { rows: [first] } = await tx.query(
@@ -1446,12 +1476,12 @@ const WRITES = {
   // once per run). Nothing of it is written for a verdict about a head the
   // row has since left.
   async settled(tx: Tx, w: any) {
-    const stored = await store.storeChecks(tx, w.sessionId, w.head,
+    const stored = await rowStore.storeChecks(tx, w.sessionId, w.head,
       { state: w.state, results: w.results, ...(w.platformFault ? { platformFault: true } : {}),
         ...(w.unitSuiteAbsent ? { unitSuiteAbsent: true } : {}) }, w.detail);
     if (!stored) { await dropMedia(tx, w.sessionId); return; }
-    if (w.console) await store.storeConsoleCheck(tx, w.sessionId, w.console, w.head);
-    if (w.capture) await store.storeCaptureOutcome(tx, w.sessionId, w.capture.state, w.capture.detail, w.head);
+    if (w.console) await rowStore.storeConsoleCheck(tx, w.sessionId, w.console, w.head);
+    if (w.capture) await rowStore.storeCaptureOutcome(tx, w.sessionId, w.capture.state, w.capture.detail, w.head);
     if (w.media) await publishMedia(tx, w.sessionId, w.runId); else await dropMedia(tx, w.sessionId);
     const history = Array.isArray(w.history) ? w.history : [];
     if (history.length) {
@@ -1491,12 +1521,12 @@ const WRITES = {
   carried: (tx: Tx, w: any) => tx.query('UPDATE chat_sessions SET checks_commit_sha = $2 WHERE id = $1', [w.sessionId, w.head]),
 
   // Nothing to test, against the row's pin as the transition read it.
-  skipped: (tx: Tx, w: any) => store.storeChecksSkipped(tx, w.sessionId, w.head, w.reason, w.expected ?? null),
+  skipped: (tx: Tx, w: any) => rowStore.storeChecksSkipped(tx, w.sessionId, w.head, w.reason, w.expected ?? null),
 
   // A promoted head that conflicts with main: previewed, verdict deferred.
   async deferred(tx: Tx, w: any) {
-    const stored = await store.storeChecksDeferred(tx, w.sessionId, w.head, 'Checks wait until this proposal merges cleanly with main');
-    if (stored && w.capture) await store.storeCaptureOutcome(tx, w.sessionId, w.capture.state, w.capture.detail, w.head);
+    const stored = await rowStore.storeChecksDeferred(tx, w.sessionId, w.head, 'Checks wait until this proposal merges cleanly with main');
+    if (stored && w.capture) await rowStore.storeCaptureOutcome(tx, w.sessionId, w.capture.state, w.capture.detail, w.head);
     if (stored && w.media) await publishMedia(tx, w.sessionId, w.runId); else await dropMedia(tx, w.sessionId);
   },
 };
