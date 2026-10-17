@@ -1321,7 +1321,7 @@ test('the community audience test is the Workshop\'s: never "Just you", never th
     'being put in by the platform is not joining');
 });
 
-test('an invitee counts once, for the first invite they took, and only once they joined', async () => {
+test('an invitee counts once, for the first invite they took inside the window, and only once they joined', async () => {
   const sql = scorer.MEASURE_SQL.INVITES_JOINED.replace(/\s+/g, ' ');
   assert.match(sql, /x\.status = 'joined' AND x\.applied_at IS NOT NULL/, 'a queued person has not joined yet');
   assert.match(sql, /c\.status = 'member' AND c\.invited_by IS NOT NULL AND c\.accepted_at IS NOT NULL/,
@@ -1329,6 +1329,11 @@ test('an invitee counts once, for the first invite they took, and only once they
   assert.match(sql, /DISTINCT ON \(t\.invitee_id\)/);
   assert.match(sql, /ORDER BY t\.invitee_id ASC, t\.at ASC/, 'the earliest invite names the one inviter');
   assert.match(sql, /t\.inviter_id <> t\.invitee_id/);
+  const dedupAt = sql.indexOf('ORDER BY t.invitee_id ASC');
+  const windowAt = sql.indexOf('AND t.at >= $1 AND t.at <= $2');
+  assert.ok(windowAt !== -1 && windowAt < dedupAt,
+    'the window narrows the invite rows before the first one is picked (#4048)');
+  assert.ok(!/\bWHERE f\.at\b/.test(sql), 'the outer query does not filter the window a second time');
 
   const seen = [];
   const pool = {
@@ -1342,6 +1347,44 @@ test('an invitee counts once, for the first invite they took, and only once they
   assert.deepEqual(seen[0].slice(0, 2), [iso(NOW - DAY), iso(NOW + DAY)], 'windowed: from the challenge\'s own start');
   assert.deepEqual(out.map((c) => c.sourceKey), ['invitee:21', 'invitee:22']);
   assert.deepEqual(out.map((c) => c.description), ['@ana joined by your invite', 'Somebody joined by your invite']);
+});
+
+test('a join through a later invite inside the window credits that inviter (#4048)', async () => {
+  const sql = scorer.MEASURE_SQL.INVITES_JOINED.replace(/\s+/g, ' ');
+  // A fake pool that evaluates the scenario in JS the way the SQL does:
+  // one row per record of an invite taken, the window applied before or
+  // after the one-row-per-invitee pick exactly where the SQL text puts it,
+  // then the earliest row per invitee credits its inviter.
+  const windowAt = sql.indexOf('AND t.at >= $1 AND t.at <= $2');
+  assert.ok(windowAt !== -1 && windowAt < sql.indexOf('ORDER BY t.invitee_id'),
+    'the SQL narrows the invite rows to the window before it picks one per person');
+  assert.ok(!/\bWHERE f\.at\b/.test(sql), 'the outer query does not filter the window a second time');
+  const inside = windowAt !== -1 && windowAt < sql.indexOf('ORDER BY t.invitee_id');
+  const poolFor = (rows) => ({
+    async query(text, params) {
+      const inWindow = (r) => r.at >= new Date(params[0]) && r.at <= new Date(params[1]);
+      let picked = rows.filter((r) => r.inviter_id !== r.invitee_id);
+      if (inside) picked = picked.filter(inWindow);
+      picked.sort((a, b) => a.invitee_id - b.invitee_id || a.at - b.at || a.inviter_id - b.inviter_id);
+      const first = new Map();
+      for (const r of picked) if (!first.has(r.invitee_id)) first.set(r.invitee_id, r);
+      let out = [...first.values()]
+        .map((r) => ({ user_id: r.inviter_id, invitee_id: r.invitee_id, at: r.at, invitee_username: null }));
+      if (!inside) out = out.filter(inWindow);
+      out.sort((a, b) => a.user_id - b.user_id || a.at - b.at || a.invitee_id - b.invitee_id);
+      return { rows: out.slice(0, params[2]) };
+    },
+  });
+  const rows = [
+    { inviter_id: 5, invitee_id: 21, at: new Date(NOW - 90 * DAY) }, // ana's first invite ever, before the window
+    { inviter_id: 7, invitee_id: 21, at: new Date(NOW - HOUR) },     // she took the reporter's invite inside it
+    { inviter_id: 5, invitee_id: 23, at: new Date(NOW - 90 * DAY) }, // his only invite ever: before the window
+  ];
+  const out = await scorer.loadCandidates(poolFor(rows), 'INVITES_JOINED', { startMs: NOW - DAY, endMs: NOW + DAY }, { target: 3 });
+  assert.deepEqual(out.map((c) => [c.userId, c.sourceKey, c.activityAt]), [[7, 'invitee:21', iso(NOW - HOUR)]],
+    'the in-window join credits the reporter, and the person whose only invite predates the window credits nobody');
+  const onlyBefore = await scorer.loadCandidates(poolFor([rows[2]]), 'INVITES_JOINED', { startMs: NOW - DAY, endMs: NOW + DAY }, { target: 3 });
+  assert.deepEqual(onlyBefore, [], 'a person whose every invite was taken before the window still yields nothing');
 });
 
 test('the two state measures credit once each, under a fixed key, whenever the state began', async () => {
