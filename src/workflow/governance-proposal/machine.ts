@@ -427,9 +427,10 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
     // change's redeploy is asked of app-delivery (an app.rebuildProduction
     // item from before hands off to it). 6: a maintenance campaign is
     // started by a message to the campaign machine, not campaign.run work.
-    // During a rollout an older Pod leaves the instances a newer version
-    // wrote alone.
-    version: 6,
+    // 7: a merge's follow-ups file and supersede a close proposal by
+    // message. During a rollout an older Pod leaves the instances a newer
+    // version wrote alone.
+    version: 7,
     events: EVENTS,
     create: ['Filed'],
     terminal: ['applied', 'refused', 'withdrawn', 'superseded'],

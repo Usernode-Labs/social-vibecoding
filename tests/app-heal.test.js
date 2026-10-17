@@ -46,6 +46,7 @@ function freshFixtures() {
     requested: [],
     requestError: null,
     appDeleted: false,
+    tearingDown: false,
     queries: [],
     poolRows: [],
     githubEnabled: true,
@@ -67,7 +68,7 @@ const fakePool = {
   async query(sql, params = []) {
     fx.queries.push({ sql, params });
     if (/SELECT \* FROM apps/.test(sql)) return { rows: fx.poolRows };
-    if (/SELECT teardown_started_at FROM apps WHERE id/.test(sql)) return { rows: fx.appDeleted ? [] : [{ teardown_started_at: null }] };
+    if (/SELECT teardown_started_at FROM apps WHERE id/.test(sql)) return { rows: fx.appDeleted ? [] : [{ teardown_started_at: fx.tearingDown ? new Date() : null }] };
     return { rows: [] };
   },
 };
@@ -246,9 +247,11 @@ test('failed Kubernetes recovery retains cooldown and does not persist success',
 test('an app being taken down is not healed', async (t) => {
   const kube = require('../src/services/kubernetes');
   t.mock.method(kube, 'getApplicationStatus', async () => 'not_found');
-  // Marked on its row, which every process reads (services/app-teardown.js).
+  // Marked on its row, which every process reads, and read now rather than
+  // from the sweep's snapshot (which still says nothing).
+  fx.tearingDown = true;
   const result = await appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool,
-    app({ teardown_started_at: new Date() }));
+    app({ teardown_started_at: null }));
   assert.equal(result.status, 'deleting');
   assert.deepEqual(fx.requested, []);
   assert.deepEqual(fx.respawnCalls, []);

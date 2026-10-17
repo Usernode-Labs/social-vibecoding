@@ -175,7 +175,7 @@ const EVENTS = {
   // A person's "Run checks again" folded into what the session is already
   // doing (services/unit-suite-reuse.js owePendingRun): the verdict stored
   // for `head` no longer stands for it.
-  RecheckFolded: (p: any) => ({ head: sha(p?.head, 'head') }),
+  RecheckFolded: (p: any) => ({ head: sha(p?.head, 'head'), sessionId: optInt(p?.sessionId, 'sessionId') }),
   // The branch moved on to code nothing checks yet (a CLI upload before it
   // is submitted, an update to a paused proposal): the verdict no longer
   // describes it, and whatever ran for the old head is obsolete.
@@ -713,6 +713,15 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     }),
   };
 
+  // The same where no build or run of the machine's stands (a retired or
+  // detached preview keeps its state), and, for a row it does not hold yet,
+  // after adopting it from the row, as ChecksCleared does: the stamp a
+  // folded request owes is the row's either way.
+  const foldedAdopting: Entry = {
+    guard: (s, e, f, ctx) => { const c = adopting(e, f, ctx); return c !== true ? c : (folded.guard as any)(s, e, f, ctx); },
+    to: (s, e, f, ctx) => (folded.to as any)(standing(adopt(e, f, priorOf(s)), f), e, f, ctx),
+  };
+
   const lost: Entry = {
     guard: (s, e) => (s.data.serving?.n === e.payload.attempt ? ok() : reject('not_serving')),
     to: (s, e, f, ctx) => begin(s, s.data.head || s.data.serving.head, 'stuck-sweep', ctx, deps),
@@ -835,6 +844,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       OperationStarted: opStarted,
       RetireRequested: retireAdopting,
       ChecksCleared: clearAdopting,
+      RecheckFolded: foldedAdopting,
     },
     idle: {
       ...created, ...ops,
@@ -948,6 +958,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     },
     retired: {
       '*': notHere('retired'),
+      RecheckFolded: folded,
       ...created, ...ops,
       ChecksSkipped: skipped,
       ChecksCleared: clearAdopting,
@@ -957,6 +968,7 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
     // instance in it starts again from its row, like a retired one.
     detached: {
       '*': notHere('detached'),
+      RecheckFolded: folded,
       ...created,
       ChecksSkipped: skipped,
       OperationStarted: opStarted,
@@ -1296,10 +1308,12 @@ export function preview(deps: Deps): Machine<PState, Facts> {
     // older Pod leaves the instances this version wrote alone during the
     // rollout; this version takes over the ones an older one wrote.
     // 5: a passing verdict asks the merge queue, and a boot failure main
-    // caused asks the proposal for a sync, by message.
-    version: 5,
+    // caused asks the proposal for a sync, by message. 6: a person's recheck
+    // folded into a busy session stamps the stored verdict pending
+    // (RecheckFolded).
+    version: 6,
     events: EVENTS,
-    create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted', 'RetireRequested', 'ChecksCleared'],
+    create: ['RevisionSubmitted', 'PreviewRequested', 'ChecksSkipped', 'OperationStarted', 'RetireRequested', 'ChecksCleared', 'RecheckFolded'],
     terminal: ['retired'],
     decode: (row) => ({ name: row.state, data: row.data } as PState),
     facts: (tx, state, event) => {

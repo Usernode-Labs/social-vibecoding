@@ -228,6 +228,12 @@ A service is a `WorkHandler` registered for a kind:
   item of the same kind with `continues: '<work key>'`. The new item then starts from that
   item's last checkpoint, so a manual retry of a close that already commented does not
   comment again. Without `continues`, a new key starts fresh.
+- **Steps within one item.** A long handler (a sync with main, a shots agent's turn, a
+  Homeroom bot build) keeps what it has done in the item's checkpoint with `ctx.steps()`
+  (`kernel/steps.ts`): `once(key, fn)` runs a step one time across attempts, `fence()`
+  throws once the item is no longer this process's, and a failed save is tried again within
+  the attempt. There is no other place durable work keeps anything. Code the kernel does
+  not run gets the inert steps of `services/durable-steps.js`, where every step just runs.
 - **An event can cancel work it made obsolete.** An outcome's `cancel: [{ kind, key }]`
   settles those items of the instance as cancelled in the event's transaction (`result`
   gains `cancelled: true`):
@@ -461,10 +467,11 @@ separate workflow Pod.
 Which process holds the leader role does not decide anything: row locks do. What the
 machines' work handlers still reach in process memory does: a restart
 erases it, and a machine resumes its work right after a boot, when memory is empty.
-Every place a machine calls into code that may keep such memory is listed, per machine,
-in `tests/baselines/workflow-process-state.json` (below).
-**Moving the loops to a Deployment of their own waits until that list is empty;** it is
-then a deployment change, with more than one replica and alerts on overdue work.
+Every place a machine calls into code outside the workflow is reviewed, per machine, in
+`tests/baselines/workflow-process-state.json` (below), and nothing unreviewed is left.
+**Moving the loops to a Deployment of their own** is then a deployment change, with more
+than one replica and alerts on overdue work; what it still needs (a workflow process role,
+web Pods without slots, the WebSocket bus started in that process) is not in the code yet.
 
 ### What the machines still depend on (the list)
 
@@ -480,32 +487,46 @@ between it and the code not migrated yet:
   timers, process listeners, and outside I/O from a transition;
 - each table a work handler's own code writes;
 - each other writer of a column the machine owns: SQL anywhere under `src/` that
-  updates it, and triggers that assign it (schema.sql's ownership triggers). A SET list
-  built from a named fragment (`${INVALIDATE_SQL}`, `${invalidateHeadMoveSql(…)}`) is read
-  with the fragment's own columns; one built from an array is "dynamic", counted as
-  writing every owned column.
+  updates it (an `INSERT … ON CONFLICT DO UPDATE` included), and triggers that assign it
+  on an update (schema.sql's ownership triggers). A SET list built from a named fragment
+  (`${INVALIDATE_SQL}`, `${invalidateHeadMoveSql(…)}`) is read with the fragment's own
+  columns; one built at run time is "dynamic", counted as writing every owned column, so
+  a SET list is written out in full (a `CASE` on a flag keeps a column as it was). A write
+  that leaves the guarded rows alone by what it says itself is not another writer: one
+  that excludes the rows the machine holds with the guard's own predicate
+  (`NOT wf_holds('<machine>', '<key prefix>' …)`, or the column set to itself where it
+  holds the row), one pinned to a kind the guard's `WHEN` does not cover, and one that
+  only ever sets another value than the move an `@enabled` guard owns. A trigger on
+  `INSERT` only fills a row no machine holds yet, which no guard covers.
+- a workflow module outside a machine's folder (`github-work.ts`) is read with the role
+  of the part that imports it: a work handler's I/O, or a transition's.
 
 It reads only the text, never what lies behind a call: the two-process and restart
 tests (below) show that. Transitions are held to the strictest form of it: a step moves
 the helpers its transitions use into the machine's own code, so that `decider | uses`
 reaches zero, and nothing outside the workflow code runs inside a transaction.
 
-The list is checked in, with what it allows and why (the kernel's own timers).
-`tests/workflow-process-state.test.js` fails when a change adds an entry, and when an
-entry disappears until the list is shrunk with `node tests/lib/workflow-boundary.js
---shrink`, which never adds anything. So the list only shrinks, and a migration step is
-done when its entries are gone. A new machine may enter it only with the other writers of
-its own columns, which go when its legacy paths are deleted, and with calls it took over
-from an older machine, each named in the list's `takenOver` with where it came from (the
-call moves; the older machine's copy goes with its work path).
-Two more kinds, decided with the preview machine (each named with a reason, and checked):
-- **an I/O core** (`io`): a function outside `src/workflow/` that does the step's I/O, cut
-  out of the per-process wrapper the old flow runs it through (the build without
-  `_stagingBuilds` and the coordinator, the checks run without its in-process seat). The
-  two-process and restart tests show it keeps no process memory;
-- **a hand-off** (`handOff`) to a flow a later step migrates (the Homeroom bot's
-  withdrawal of its proposals for closed requests, until the step that migrates the
-  bot's own read-and-fix loop), naming that step: it leaves the list when the step lands.
+**The list is empty.** `tests/baselines/workflow-process-state.json` holds only what was
+reviewed, each with its reason, and `tests/workflow-process-state.test.js` fails on
+anything else (a new call, another writer of an owned column, module state, a timer):
+- `allowed`: the kernel's own timers, the bot-build machine's build pipeline, and the
+  routes' side's wiring in `platform.ts` (the runtime handle, its pool and the logger,
+  set once at boot and deciding nothing);
+- `io`: a work handler's **I/O core**, a function outside `src/workflow/` that does the
+  work's I/O and keeps no process memory: cut out of the per-process wrapper the old flow
+  ran it through (the build without `_stagingBuilds`, the checks run without its seat, the
+  close watcher without its polls), reading governance, a teardown or who works on a
+  session from Postgres rather than from a cache, a registry or a hold of this process;
+- `handOff`: a call into a flow a later step migrates, naming the step. Two are left, both
+  for roadmap step 9 (agent turns' presence in Postgres): the sync with main's turn and
+  the shots agent's turn are dispatched through `worker.execInWorker`, whose "a turn is
+  in flight" and pending-stop gates read this process's worker registry. Two turns on one
+  session are refused across processes by the durable `active_turn` claim; a Stop pressed
+  on another process while such a turn starts is what is missed.
+
+An entry that is gone fails until it leaves the list (`node tests/lib/workflow-boundary.js
+--shrink`, which never adds anything; with no flag the script prints what is not
+reviewed, `--all` everything).
 
 ### In production (Kubernetes)
 
@@ -576,6 +597,8 @@ release (`docs/kubernetes-operations.md`).
 | `tests/workflow-process-state.test.js` | The list of what the machines still depend on only shrinks. |
 | `tests/workflow-boundary.test.js` | The boundary check's rules, on a small source tree of its own. |
 | `tests/workflow-bot-replies-postgres.test.js` | The Homeroom bot's reply machines (`bot-voice`, `bot-dm`), one subtest per rule, with their work faked. |
+| `tests/workflow-main-check-postgres.test.js` | The main-check machine, one subtest per rule (a provisional first red, flakes, a confirmed red, rechecks, Resume, a superseded run, a run carried on after a crash, adopting an older release's row). |
+| `tests/app-teardown-mark-postgres.test.js` | An app's teardown is marked on its row, which a deploy in any process reads. |
 | `tests/workflow-processes-postgres.test.js` | Each machine's flows with every decision and work item in a child process, the test process being the web side; and the same flows with the child killed (SIGKILL) mid-item, restarted, and compared with an uninterrupted run. Only outside services are faked (`tests/fixtures/workflow-outside-fakes.js`); the harness is `tests/lib/workflow-processes.js`. The known dependencies on the web process's memory are `todo` scenarios, each naming its entry in the list. |
 
 The kernel guarantees cover:
@@ -614,6 +637,7 @@ A new machine brings the same two layers:
 | `bot-change` | `session:<id>`, for each change of the Homeroom bot's that goes up for a vote | `checking`, `waiting_on_shots`, `with_the_bot`, `ready`, `stopped`, `merged` → `live`; `closed` | On everywhere; its old paths are deleted |
 | `bot-voice` | `place:<appId>:<type>:<ref>`, for each place in a project people speak to the Homeroom bot in | `quiet` ⇄ `settling` → `answering` | On everywhere; its old paths are deleted |
 | `bot-dm` | `person:<userId>`, for each person's DM with the Homeroom bot | `idle` ⇄ `answering` ⇄ `trying_later` | On everywhere; its old paths are deleted |
+| `main-check` | `app:<id>`, for each app whose main was checked after a merge or a new commit | `idle` → `running` (→ `confirming`) → `idle`; `idle` ⇄ `rechecking` while paused | On everywhere; its old paths are deleted |
 
 ### governance-proposal
 
@@ -675,12 +699,21 @@ What a merged pull request still has to do once GitHub has merged it
   (`DeployRequested`); its answer (`Delivered` with the build's sha, or `DeliveryFailed`)
   decides. The platform's own release is heard from the processes serving it; on a Docker
   host, its host deployer is told by durable work (`host.nudgeDeployer`).
+- **Messages, in the merge's transaction:** the preview's retirement
+  (`RetireRequested`, to the preview machine: at once for the platform's own app, otherwise
+  once app-delivery has answered, since demo mode deploys the preview's build), and the unit
+  suite on the merge commit (`CheckRequested`, to the app's `main-check` instance).
 - **Durable work for the rest:**
-  - `preview.teardown` and `worker.retire`;
+  - `worker.retire`: the worker and its Claude Code volume, through the proposal machine's
+    strict, fenced removal (`worker.removeCcVolume`);
   - `included.find`, then an `Included` message to each change it carried, which gets
     its own instance;
-  - `issues.closeAfterMerge`: the issue-close watcher;
-  - `main.check`: the unit suite on the merge commit.
+  - `issues.closeAfterMerge`: one look at the requests the merge closes per attempt
+    (`issue-close-watcher.closeAfterMerge`). At the first look a linked request still open
+    is left to GitHub, and the transition asks for a second look 30 s later, at which the
+    platform closes it. The close proposals whose target the look saw closed (or gone) are
+    told by message, in the transition that applies it (`Filed`, then `TargetClosed`, to
+    each one's own governance instance), never before the close is confirmed.
 
   A change of the Homeroom bot's tells its change machine (`bot-change`) with the
   merge's own write (`Merged`), and again once it is live (`Live`).
@@ -710,8 +743,9 @@ What a merged pull request still has to do once GitHub has merged it
   browser receives it.
 - **Work from before.** An `app.deliver` item a merge recorded before every deploy was
   app-delivery's (and governance's `app.rebuildProduction`) deploys nothing now: it
-  hands the merge (or the secret change) to `app-delivery`. Both handlers go once no such
-  item can be left.
+  hands the merge (or the secret change) to `app-delivery`. An older release's
+  `preview.teardown` and `main.check` items only report, and their results send the
+  message this release sends at the merge. These handlers go once no such item can be left.
 
 ### app-delivery
 
@@ -1191,3 +1225,38 @@ bot owes them there. One instance per person (`person:<userId>`).
 - **During a rollout** the later tries an older release promised (its turn rows say so)
   are adopted at the leader's boot, for people with no instance yet (`adoptDeferredDms`). DM keys and wording are
   unchanged, so an older leader and this machine asking the same message send one answer.
+
+### main-check
+
+The safety net under direct merges (`src/workflow/main-check/`, the run and the rules'
+history in `services/main-watch.js`). One instance per app (`app:<id>`), which owns the
+`apps.main_check_*` columns: the merge gate's pause (`main_check_paused_sha`) and the
+board's banner read them.
+
+- **Asked.** Every merge sends `CheckRequested` with its commit (merge-followups), and the
+  drift poller appends one for any new main it sees (`platform.requestMainCheck`). A
+  commit the row is already about is not checked twice; one whose last run could not
+  happen is.
+- **A run** is durable work (`main.suite`): a checks-queue slot, the repo's unit suite as
+  Jobs, the verdict. The queue row's run id is in the item's checkpoint before the Jobs
+  exist, so a process that dies mid-suite leaves the run to the next attempt, which reads
+  the dead run's Jobs. A run whose commit is no longer the row's when its slot comes
+  starts nothing.
+- **The verdict.** A first red is provisional: merges pause and the suite runs again
+  (`confirming`). Green then is passing, and the tests that flaked are recorded with a
+  request filed for each (`main.flakes`); red again is confirmed, and the Homeroom bot is
+  asked to fix it (`main.fixRequest`); red on other tests only is flakes. A red made only
+  of tests known to flake pauses nothing. Green after a pause, or flakes, ask the app's
+  merge queue to go on. Every verdict is kept (`main_watch_verdicts`), and a pause's start
+  and end are events.
+- **A paused red is asked again** by the instance's deadline (`RecheckDue`): three minutes
+  after a confirmation that could not run, a quarter of an hour after a confirmed red, at
+  most three times (`MAIN_WATCH_RECHECKS`).
+- **Resume.** An admin's "resume merges" (`POST /api/apps/:slug/main-check/resume`)
+  lifts the pause for that commit and asks the queue to go on.
+- **A newer commit** while a run is under way starts its own first run; the older run's
+  verdict is recorded as superseded and changes nothing.
+- **During a rollout** a row an older release left running, confirming or paused is
+  adopted at the leader's boot (`adoptMainChecks`), and an older release's `main.check`
+  item hands the merge over (merge-followups).
+

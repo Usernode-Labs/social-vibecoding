@@ -83,7 +83,12 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     },
     destroyCcVolume: async () => { throw new Error('the unfenced removal is not used'); },
   });
-  stub('../src/services/main-watch', { ...require('../src/services/main-watch'), afterMerge: async (c, p, o) => { calls.push(['main-check', o.mergeSha]); return null; } });
+  // main's unit suite on the merge commit: the main-check machine's work,
+  // its run faked green.
+  stub('../src/services/main-watch', {
+    ...require('../src/services/main-watch'),
+    runMainSuite: async (c, p, o) => { calls.push(['main-check', o.sha]); return { state: 'passing', detail: {} }; },
+  });
   // The real look for the app whose requests are looked at (`looked`); for
   // the others, nothing to close.
   const realWatcher = require('../src/services/issue-close-watcher');
@@ -165,7 +170,8 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   await t.test('every machine\'s guard is recorded for the ownership triggers', async () => {
     const { rows } = await pool.query(`SELECT key FROM wf_settings WHERE key LIKE 'enabled:%' ORDER BY key`);
     assert.deepEqual(rows.map((r) => r.key),
-      ['enabled:app-delivery', 'enabled:campaign', 'enabled:governance-proposal', 'enabled:merge-followups', 'enabled:merge-queue', 'enabled:preview', 'enabled:proposal', 'enabled:shots'],
+      ['enabled:app-delivery', 'enabled:campaign', 'enabled:governance-proposal', 'enabled:main-check', 'enabled:merge-followups', 'enabled:merge-queue',
+        'enabled:preview', 'enabled:proposal', 'enabled:shots'],
       'no machine has a flag: their guards are on in every process');
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_settings WHERE key = 'ownership_mode'`)).rows[0].n, 0);
   });
@@ -197,7 +203,9 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     await until(async () => calls.some((c) => c[0] === 'retire' && c[1] === s.id), 'the worker removed, fenced');
     const { rows: [d] } = await pool.query(`SELECT state FROM wf_instances WHERE machine = 'app-delivery' AND key = $1`, [`app:${app.id}`]);
     assert.equal(d.state, 'idle');
-    assert.ok(calls.some((c) => c[0] === 'main-check' && c[1] === SHA('a')));
+    await until(async () => calls.some((c) => c[0] === 'main-check' && c[1] === SHA('a')), 'the main check, run by its machine');
+    await until(async () => (await pool.query('SELECT main_check_state FROM apps WHERE id = $1', [app.id])).rows[0].main_check_state === 'passing',
+      'its verdict on the row');
     const { rows: [m] } = await pool.query('SELECT main_sha FROM apps WHERE id = $1', [app.id]);
     assert.equal(m.main_sha, SHA('a'));
   });

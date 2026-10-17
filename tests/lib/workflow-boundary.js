@@ -264,45 +264,85 @@ function sqlWrites(text) {
   }
   for (const m of text.matchAll(/(?<!\bDO\s+)\bUPDATE\s+([a-z_][a-z0-9_]*)(?:\s+(?:AS\s+)?[a-z_]+)?\s+SET\s+([\s\S]*?)(\bWHERE\b|\bFROM\b|\bRETURNING\b|$)/gi)) {
     const after = text.slice(m.index + m[0].length);
-    const where = /^WHERE$/i.test(m[3]) ? after.split(/\bRETURNING\b/i)[0] : '';
+    const where = /^WHERE$/i.test(m[3]) ? after.split(/\bRETURNING\b|;/i)[0] : '';
     out.push({ table: m[1].toLowerCase(), ...setList(m[2]), where });
   }
   return out;
 }
 
+// The parts of `text` split on `sep` (a keyword or a character) where no
+// parenthesis, quote or CASE is open: a WHERE's top-level conjuncts.
+function topLevel(text, sep) {
+  const out = [];
+  let depth = 0;
+  let quoted = false;
+  let start = 0;
+  const re = new RegExp(`^\\s*${sep}\\b`, 'i');
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "'") quoted = !quoted;
+    if (quoted) continue;
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    else if (/\bCASE\b/i.test(text.slice(i, i + 5)) && /\W|^/.test(text[i - 1] || ' ')) depth++;
+    else if (/^END\b/i.test(text.slice(i, i + 4)) && /\W/.test(text[i - 1] || ' ')) depth--;
+    else if (depth === 0 && /\s/.test(ch) && re.test(text.slice(i))) {
+      out.push(text.slice(start, i));
+      i += text.slice(i).match(re)[0].length - 1;
+      start = i + 1;
+    }
+  }
+  out.push(text.slice(start));
+  return out.map((x) => x.trim()).filter(Boolean);
+}
+
 // Whether an UPDATE leaves alone every row a machine's guard covers, by what
 // it says itself:
 //  - `@enrolled` guards cover the rows the machine holds, and the write
-//    excludes them with the guard's own predicate: `NOT wf_holds('<m>',
-//    '<prefix>' …)` in its WHERE, or the column set to itself where it holds
-//    the row (`col = CASE WHEN wf_holds('<m>', '<prefix>' …) THEN col …`);
-//  - a guard whose `WHEN (OLD.kind IN (…))` names kinds the write's WHERE
-//    pins away from (`kind = '<other>'`);
+//    excludes them with the guard's own predicate: a top-level conjunct of
+//    its WHERE that is `NOT wf_holds('<m>', '<prefix>' || <the row's id>)`,
+//    or the column set to itself where it holds the row
+//    (`col = CASE WHEN wf_holds('<m>', '<prefix>' ...) THEN col ...`);
+//  - a guard whose `WHEN (OLD.kind IN (...))` names kinds a top-level
+//    conjunct of the write's WHERE pins away from (`kind = '<other>'`);
 //  - an `@enabled` guard on a move into a value (`NEW.col = 'v'`) the write
 //    never sets: every value it assigns is a literal other than 'v', or the
-//    column itself.
+//    row's own column, and nothing else.
+// A WHERE with a top-level OR exempts nothing.
 function leavesGuardAlone(w, o) {
   const where = w.where || '';
-  const holds = (s) => new RegExp(`wf_holds\\(\\s*'${o.machine}'\\s*,\\s*'${o.prefix}'`, 'i').test(s);
+  const conjuncts = topLevel(where, 'OR').length > 1 ? [] : topLevel(where, 'AND');
+  const prefixArg = (key) => new RegExp(`^'${o.prefix}'\\s*\\|\\|\\s*(?:[a-z_]+\\.)?(?:id|\\$\\d+)(?:::\\w+)?\\s*$`, 'i').test(key);
+  const holdsCall = /^\s*wf_holds\(\s*'([a-z0-9-]+)'\s*,\s*(.+)\)\s*$/i;
   if (o.scope === 'enrolled' && o.prefix) {
-    if (/\bNOT\s+wf_holds\(/i.test(where) && holds(where.slice(where.search(/\bNOT\s+wf_holds\(/i)))) return true;
+    for (const c of conjuncts) {
+      const m = /^NOT\s+(wf_holds\(.*\))$/is.exec(c);
+      const call = m && holdsCall.exec(m[1]);
+      if (call && call[1] === o.machine && prefixArg(call[2].trim())) return true;
+    }
     const rhs = w.sets?.get(o.column);
-    const self = new RegExp(`^\\s*CASE\\s+WHEN\\s+wf_holds\\([^)]*\\)\\s+THEN\\s+(?:[a-z_]+\\.)?${o.column}\\b`, 'i');
-    if (rhs && self.test(rhs) && holds(rhs)) return true;
+    const self = new RegExp(`^\\s*CASE\\s+WHEN\\s+(wf_holds\\([^)]*\\))\\s+THEN\\s+(?:[a-z_]+\\.)?${o.column}\\s+ELSE\\b`, 'i').exec(rhs || '');
+    const call = self && holdsCall.exec(self[1]);
+    if (call && call[1] === o.machine && prefixArg(call[2].trim())) return true;
   }
   if (o.kinds) {
-    const pinned = /\bkind\s*=\s*'([a-z_]+)'/i.exec(where);
-    if (pinned && !o.kinds.has(pinned[1])) return true;
+    for (const c of conjuncts) {
+      const pinned = /^(?:[a-z_]+\.)?kind\s*=\s*'([a-z_]+)'$/i.exec(c);
+      if (pinned && !o.kinds.has(pinned[1])) return true;
+    }
   }
   if (o.scope === 'enabled' && o.into != null) {
     const rhs = w.sets?.get(o.column);
     if (rhs != null) {
-      const plain = rhs.replace(/wf_holds\([^)]*\)/gi, '');
-      const values = /^\s*CASE\b/i.test(plain)
-        ? [...plain.matchAll(/\b(?:THEN|ELSE)\s*('([^']*)'|(?:[a-z_]+\.)?([a-z_]+))/gi)]
-        : [/^\s*('([^']*)'|(?:[a-z_]+\.)?([a-z_]+))\s*$/i.exec(plain)].filter(Boolean);
-      const ok = values.length > 0 && values.every((v) => (v[2] != null ? v[2] !== o.into : v[3]?.toLowerCase() === o.column));
-      if (ok) return true;
+      const plain = rhs.replace(/wf_holds\([^)]*\)/gi, 'TRUE').trim();
+      // Each value it can take: the whole of a plain assignment, or each
+      // THEN and ELSE of a CASE (up to the next WHEN, ELSE or END).
+      const values = /^CASE\b/i.test(plain)
+        ? [...plain.matchAll(/\b(?:THEN|ELSE)\s+([\s\S]*?)(?=\s+(?:WHEN|ELSE|END)\b)/gi)].map((m) => m[1].trim())
+        : [plain];
+      const literal = (v) => /^'([^']*)'$/.exec(v);
+      const own = (v) => new RegExp(`^(?:${w.table}\\.)?${o.column}$`, 'i').test(v);
+      if (values.length && values.every((v) => (literal(v) ? literal(v)[1] !== o.into : own(v)))) return true;
     }
   }
   return false;

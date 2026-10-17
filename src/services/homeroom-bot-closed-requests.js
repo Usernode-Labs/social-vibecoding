@@ -296,7 +296,9 @@ function wakeFor(appId, deps) {
  * when it could not read; `strict` (the merge-followups machine's durable
  * work, which retries) throws that instead. Never throws otherwise.
  */
-async function noteRequestsClosed(pool, { appId, closed, strict = false, deps = {} } = {}) {
+// `tellStrict` (default: as `strict`): whether a requester's DM that fails
+// fails the call, for a caller whose retry would gate something else on it.
+async function noteRequestsClosed(pool, { appId, closed, strict = false, tellStrict = strict, deps = {} } = {}) {
   const numbers = numbersOf(closed);
   if (!pool || !(Number(appId) > 0) || !numbers.length) return { withdrawn: [] };
   try {
@@ -317,7 +319,7 @@ async function noteRequestsClosed(pool, { appId, closed, strict = false, deps = 
     }
     // 16 Oct 2026 (V4): whoever asked the bot for one of them hears it was
     // done another way, when somebody else's merged change shipped it.
-    if (deps.tellDoneElsewhere !== false) await tellDoneElsewhere(pool, { appId: Number(appId), numbers, deps, strict });
+    if (deps.tellDoneElsewhere !== false) await tellDoneElsewhere(pool, { appId: Number(appId), numbers, deps, strict: tellStrict });
     return { withdrawn };
   } catch (err) {
     if (strict) throw err;

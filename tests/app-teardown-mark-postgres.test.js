@@ -48,8 +48,9 @@ test('the teardown mark is on the row, read by a deploy in any process', async (
   assert.equal(await teardown.removeRuntimeIfDeleted({}, pool, deployed), false);
   assert.equal(await teardown.isTearingDown(pool, { id: app.id }), false);
 
-  // A teardown that fails at its first step clears its mark: the app is as
-  // it was.
+  // A teardown refused at its first step (a preview not retired yet) leaves
+  // the app as it was, and unmarked: a process that dies there leaves no mark
+  // that would remove a live app's runtime on its next deploy.
   const previews = require('../src/services/preview-workflow');
   await pool.query(`INSERT INTO chat_sessions (app_id, user_id, status, staging_url) VALUES ($1, $2, 'active', 'https://p.example')`,
     [app.id, owner.id]);
@@ -62,9 +63,27 @@ test('the teardown mark is on the row, read by a deploy in any process', async (
   // sweep reads it from the row it already has.
   await pool.query('UPDATE apps SET teardown_started_at = NOW() WHERE id = $1', [app.id]);
   assert.equal(await teardown.removeRuntimeIfDeleted({}, pool, deployed), true);
-  assert.deepEqual(removed, ['usernode-app-mark-app']);
+  assert.ok(removed.includes('usernode-app-mark-app'));
   assert.equal(await teardown.isTearingDown(pool, { id: app.id }), true);
   assert.equal(await teardown.isTearingDown(pool, (await pool.query('SELECT * FROM apps WHERE id = $1', [app.id])).rows[0]), true);
+
+  // Past the previews the mark goes on before anything is removed, and stays
+  // when a later step fails (a half-removed app is never rebuilt).
+  t.mock.method(previews, 'retire', async () => ({ retired: true, status: 'accepted' }));
+  await pool.query('UPDATE apps SET teardown_started_at = NULL WHERE id = $1', [app.id]);
+  const dbManager = require('../src/services/db-manager');
+  t.mock.method(dbManager, 'dropDatabase', async () => {
+    assert.ok((await pool.query('SELECT teardown_started_at FROM apps WHERE id = $1', [app.id])).rows[0].teardown_started_at,
+      'marked before the database goes');
+    throw new Error('drop refused');
+  });
+  const appFiles = require('../src/services/app-files');
+  t.mock.method(appFiles, 'getStore', () => null);
+  const realQuery = pool.query.bind(pool);
+  const refusing = t.mock.method(pool, 'query', (sql, params) => (/^DELETE FROM apps/.test(sql) ? Promise.reject(new Error('delete refused')) : realQuery(sql, params)));
+  await assert.rejects(teardown.teardownApp(pool, {}, app), /delete refused/);
+  refusing.mock.restore();
+  assert.ok((await pool.query('SELECT teardown_started_at FROM apps WHERE id = $1', [app.id])).rows[0].teardown_started_at, 'the mark stays');
 
   // Gone altogether: removed too.
   await pool.query('DELETE FROM apps WHERE id = $1', [app.id]);

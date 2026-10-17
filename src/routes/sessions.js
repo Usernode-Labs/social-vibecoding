@@ -6902,10 +6902,10 @@ async function setHeadlessStep(pool, sessionId, step, outcome, headlessTurnId = 
   // cannot rediscover.
   await pool.query(
     `UPDATE chat_sessions
-        SET headless_step = $1,
-            headless_outcome = CASE WHEN $3::boolean THEN $4 ELSE headless_outcome END,
-            headless_turn_id = CASE WHEN $5::boolean THEN $6
-                                    WHEN $1 = 'planning' THEN NULL ELSE headless_turn_id END
+        SET headless_step = $1::text,
+            headless_outcome = CASE WHEN $3::boolean THEN $4::text ELSE headless_outcome END,
+            headless_turn_id = CASE WHEN $5::boolean THEN $6::uuid
+                                    WHEN $1::text = 'planning' THEN NULL ELSE headless_turn_id END
       WHERE id = $2`,
     [step, sessionId, outcome !== undefined, outcome === undefined ? null : outcome,
       headlessTurnId !== undefined, headlessTurnId === undefined ? null : headlessTurnId],

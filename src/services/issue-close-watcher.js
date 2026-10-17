@@ -155,11 +155,13 @@ function closeTwinRows({ pool, appId, prNumber, numbers, strict = false }) {
 // bot's per-project proposal slots, for good. Lazy require, same reason as
 // resolveSupersededProposals. Same contract as closeTwinRows: a no-op without
 // a pool, never a reason the watch fails unless `strict`.
+// The requesters' "done another way" DM is best effort here: a DM that keeps
+// failing must not keep the requests a merge closes from closing.
 function withdrawBotProposals({ pool, appId, prNumber, numbers, strict = false }) {
   if (!pool || !appId || !Array.isArray(numbers) || !numbers.length) return Promise.resolve();
   try {
     const { noteRequestsClosed } = require('./homeroom-bot-closed-requests');
-    return noteRequestsClosed(pool, { appId, closed: numbers, strict }).then(() => {}, (err) => {
+    return noteRequestsClosed(pool, { appId, closed: numbers, strict, tellStrict: false }).then(() => {}, (err) => {
       if (strict) throw err;
       log.warn('issue-close-watcher', 'Withdrawing the bot\'s proposals for closed requests failed', {
         pr: prNumber, issues: numbers, err: err.message,
@@ -298,7 +300,10 @@ async function closeIncluded({ owner, repo, prNumber, linkedIssues, appId, pool 
     await closeTwinRows({ pool, appId, prNumber, numbers: closed, strict: true });
     await withdrawBotProposals({ pool, appId, prNumber, numbers: closed, strict: true });
   }
-  return { closed, failed, targets: await closeProposalTargets(pool, appId, closed) };
+  // A request that is gone (404, 410) never closes later: its close
+  // proposals are superseded as for a closed one.
+  const gone = failed.filter((f) => f.status === 404 || f.status === 410).map((f) => f.number);
+  return { closed, failed, targets: await closeProposalTargets(pool, appId, [...closed, ...gone]) };
 }
 
 module.exports = {

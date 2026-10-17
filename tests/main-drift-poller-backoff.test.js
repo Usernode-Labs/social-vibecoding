@@ -24,7 +24,6 @@ const ids = {
   logger: require.resolve('../src/services/logger'),
   pool: require.resolve('../src/db/pool'),
   github: require.resolve('../src/services/github'),
-  mainWatch: require.resolve('../src/services/main-watch'),
   platform: require.resolve('../src/workflow/platform.ts'),
 };
 
@@ -53,13 +52,17 @@ stub(ids.github, {
   getReadOctokit: async () => readClient,
   isEnabled: () => true,
 });
-stub(ids.mainWatch, { afterMerge: async () => {} });
 // The app-delivery machine: what was asked of it, and the app's row as it
-// reads it.
-const delivery = { requested: [], row: { deploy_state: null, last_failure: null } };
+// reads it. And the main-check machine: the commits it was asked to check
+// (`checkFails` makes the ask throw).
+const delivery = { requested: [], row: { deploy_state: null, last_failure: null }, checks: [], checkFails: false };
 stub(ids.platform, {
   requestDeploy: async (appId, reason) => { delivery.requested.push([appId, reason]); return 1; },
   wantMerge: async () => {},
+  requestMainCheck: async (c) => {
+    if (delivery.checkFails) throw new Error('The workflow runtime is not running in this process');
+    delivery.checks.push(c);
+  },
 });
 
 const queries = [];
@@ -90,6 +93,8 @@ function reset() {
   fetchError = null;
   delivery.requested.length = 0;
   delivery.row = { deploy_state: null, last_failure: null };
+  delivery.checks.length = 0;
+  delivery.checkFails = false;
 }
 
 const minutesAgo = (n) => new Date(clock - n * 60 * 1000).toISOString();
@@ -102,6 +107,23 @@ test('drift asks app delivery for the deploy, and the machine writes main_sha', 
   assert.equal(asked.to, RED);
   assert.deepEqual(delivery.requested, [[8, 'drift']]);
   assert.ok(!queries.some((q) => /UPDATE apps/.test(q.sql)), 'no write of its own');
+});
+
+test('a new main is the main-check machine\'s to check, once per commit; an ask that fails holds nothing up', async () => {
+  reset();
+  await poller.checkAndRedeployOne(config, pool, app);
+  assert.deepEqual(delivery.checks, [{ appId: 8, sha: RED }]);
+  // A commit the row already has a verdict for (a merge's own) is not asked
+  // again; one whose run could not happen is.
+  reset();
+  await poller.checkAndRedeployOne(config, pool, { ...app, main_check_sha: RED, main_check_state: 'passing' });
+  assert.deepEqual(delivery.checks, []);
+  await poller.checkAndRedeployOne(config, pool, { ...app, main_check_sha: RED, main_check_state: 'error' });
+  assert.deepEqual(delivery.checks, [{ appId: 8, sha: RED }]);
+  reset();
+  delivery.checkFails = true;
+  assert.equal((await poller.checkAndRedeployOne(config, pool, app)).status, 'deploy_requested');
+  assert.deepEqual(delivery.requested, [[8, 'drift']]);
 });
 
 test('while a deploy of the app runs, in any process, nothing is asked again', async () => {

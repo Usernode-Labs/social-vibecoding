@@ -1541,28 +1541,20 @@ async function becomeLeader() {
   // leader's boot adopted above. (A checks run a rollout interrupted is the
   // preview machine's work: claimed again once its lease lapses, and its
   // Jobs are collected rather than started over.)
-  const mainWatch = require('./src/services/main-watch');
   observeMergedOnGithub(config)
     // #447: after reconciling merge state, hand the preview machine any
     // proposal whose checks were never recorded or were left 'pending' from
     // before it held the row. Off the critical path. (The machine retries
     // the platform's own faults at a release itself: platform.ts.)
     .then(() => reconcileStuckChecks(config))
-    // The whole-tree check under direct merges (services/main-watch.js) is
-    // fire-and-forget from the process that merged — which, for the
-    // platform's own app, is the process the deploy of that merge replaces.
-    // A row left at 'running' or 'confirming' by that has no run behind it;
-    // re-drive it, or the app reads "checking the last merge" forever (or
-    // stays paused with no verdict coming and no Resume verb, since a
-    // provisional red hides it). Rows younger than a run's deadline are a
-    // live run's and are left alone.
-    .then(() => mainWatch.resumeInterrupted(config))
+    // (The whole-tree check under direct merges is the main-check machine's:
+    // a run a restart interrupted is its work item's, carried on by the next
+    // process, and a paused red's rechecks are its deadline.)
     .catch((err) => {
       log.warn('server', 'Boot merge observation / stuck-check reconcile failed', {
         err: err.message,
       });
     });
-  mainWatch.start(config);
 
   // Fallback recovery: for sessions whose container is already gone but
   // whose branch is ahead of main (i.e. CC pushed commits during an old
@@ -6110,7 +6102,7 @@ async function cleanup() {
 
   // The checks runs this process launched go on without it: their Jobs
   // belong to the cluster. Their rows still carry this process's heartbeat,
-  // though, and the next leader adopts a main-watch run only once its
+  // though, and the next process adopts a main check's run only once its
   // heartbeat has lapsed (main-watch.adoptRun), so hand them over
   // (check-runs.release) BEFORE the leader lock is released below. Bounded
   // like the evidence write above. (A preview machine's run is its work

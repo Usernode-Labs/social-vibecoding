@@ -129,6 +129,12 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
   const retireAsked = async (s) => (await pool.query(
     `SELECT payload, source FROM wf_events WHERE machine = 'preview' AND key = $1 AND type = 'RetireRequested' ORDER BY id`,
     [`session:${s.id}`])).rows;
+  // main's unit suite on the merge commit: the app's main-check machine is
+  // asked, by a message from this machine (src/workflow/main-check/; not
+  // registered here).
+  const checkAsked = async (a) => (await pool.query(
+    `SELECT payload, source FROM wf_events WHERE machine = 'main-check' AND key = $1 AND type = 'CheckRequested' ORDER BY id`,
+    [`app:${a.id}`])).rows;
   // What it told the governance machine about a close proposal.
   const toldProposal = async (issueId) => (await pool.query(
     `SELECT type, payload, source FROM wf_events WHERE machine = 'governance-proposal' AND key = $1 ORDER BY id`,
@@ -185,8 +191,13 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     // The deploy is asked of app-delivery; the preview waits for its answer
     // (demo mode deploys its build).
     const kinds = (await workOf(s)).map((w) => w.kind).sort();
-    assert.deepEqual(kinds, [WORK.find, WORK.issues, WORK.mainCheck, WORK.retire].sort());
+    assert.deepEqual(kinds, [WORK.find, WORK.issues, WORK.retire].sort());
     assert.equal((await asked(a)).length, 1);
+    // The merge commit's unit suite is the main-check machine's, asked in the
+    // merge's own transaction.
+    const [check] = await checkAsked(a);
+    assert.deepEqual(check.payload, { appId: a.id, sha: SHA('a'), sessionId: s.id, prNumber: s.pr_number });
+    assert.deepEqual([check.source.kind, check.source.from.machine, check.source.from.key], ['message', MACHINE, sessionKey(s.id)]);
   });
 
   await t.test('F2: a merge observed by recovery gets the same follow-ups', async () => {
@@ -195,8 +206,9 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.equal((await merge(s, { observedBy: 'recovery', tally: null })).result, 'accepted');
     assert.equal((await row(s.id)).status, 'merged');
     const kinds = (await workOf(s)).map((w) => w.kind).sort();
-    assert.deepEqual(kinds, [WORK.find, WORK.issues, WORK.mainCheck, WORK.retire].sort());
+    assert.deepEqual(kinds, [WORK.find, WORK.issues, WORK.retire].sort());
     assert.equal((await asked(a)).length, 1);
+    assert.equal((await checkAsked(a)).length, 1);
     assert.equal((await events(s, 'pr_merged')).length, 1);
   });
 
@@ -415,6 +427,32 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     await settle();
     assert.equal((await instance(s)).state, 'live');
     assert.equal((await retireAsked(s)).length, 1);
+  });
+
+  await t.test('a main.check item an older release queued asks the main-check machine when it reports', async () => {
+    const a = await app();
+    const s = await proposal(a);
+    await merge(s);
+    // Its merge asked already; the item is as an older release queued it.
+    const before = (await checkAsked(a)).length;
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query("SET LOCAL app.wf_writer = 'transition'");
+      const input = { appId: a.id, sessionId: s.id, prNumber: s.pr_number, mergeSha: SHA('a') };
+      await c.query(
+        `UPDATE wf_instances SET data = jsonb_set(data, '{followups,main-check}', $3::jsonb) WHERE machine = $1 AND key = $2`,
+        [MACHINE, sessionKey(s.id), JSON.stringify({ kind: WORK.mainCheck, input, status: 'pending' })]);
+      await c.query(`INSERT INTO wf_work (machine, key, kind, work_key, input) VALUES ($1, $2, $3, 'main-check', $4)`,
+        [MACHINE, sessionKey(s.id), WORK.mainCheck, JSON.stringify(input)]);
+      await c.query('COMMIT');
+    } catch (err) { await c.query('ROLLBACK'); throw err; } finally { c.release(); }
+    work.results.set(WORK.mainCheck, { handedOff: true });
+    try { await settle(); } finally { work.results.delete(WORK.mainCheck); }
+    const asks = await checkAsked(a);
+    assert.equal(asks.length, before + 1, 'asked when the item reports (main-check\'s claim per commit makes a second ask a no-op)');
+    assert.deepEqual(asks.at(-1).payload, { appId: a.id, sha: SHA('a'), sessionId: s.id, prNumber: s.pr_number });
+    assert.equal((await instance(s)).data.followups['main-check'].status, 'done');
   });
 
   await t.test('a delivery is live only if what it deployed contains the merge (review finding 1)', async () => {
@@ -644,7 +682,10 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
       assert.deepEqual([rows[1].status, rows[1].later], ['queued', true], 'about 30 seconds later');
       assert.deepEqual(rows[1].input, { ...first.input, look: 2 }, 'the same requests, the second look');
       assert.equal((await instance(s)).data.followups[rows[1].work_key].status, 'pending');
-      assert.deepEqual(pushed.filter((p) => p.kind === 'issues_closed').at(-1).data, { numbers: [5], open: [6] });
+      // #6 is linked and the second look closes it: it stays hidden from the
+      // boards meanwhile (the first look once showed it open again, review
+      // 2026-10-17).
+      assert.deepEqual(pushed.filter((p) => p.kind === 'issues_closed').at(-1).data, { numbers: [5] });
       // Its time comes.
       await pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition';
         UPDATE wf_work SET due_at = NOW() WHERE machine = '${MACHINE}' AND key = '${sessionKey(s.id)}' AND work_key = '${rows[1].work_key}'; COMMIT`);

@@ -1,0 +1,85 @@
+// The main-check machine's I/O: the suite's run, and the filings that follow
+// a verdict. Durable work, reported back as events.
+
+import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
+import { legacy } from '../legacy.ts';
+import { parseGithubUrl } from '../rules/github-url.ts';
+import { WORK } from './machine.ts';
+
+interface Deps { config: any; pool: Pool }
+
+// The output of the failing tests kept for a flake or a fix request: a few,
+// and short, since they ride on the instance until the confirmation reports.
+const MAX_EXCERPTS = 10;
+const EXCERPT_CHARS = 1500;
+
+export function mainCheckServices({ config, pool }: Deps): Record<string, WorkHandler> {
+  const watch = () => legacy('services/main-watch');
+  const app = async (id: number) => (await pool.query('SELECT id, slug, repo_url FROM apps WHERE id = $1', [id])).rows[0] || null;
+  return {
+    // One run of the repo's unit suite on the commit (main-watch.js
+    // runMainSuite): its checks-queue slot, its Jobs, its verdict. The
+    // queue row's run id is checkpointed before the Jobs exist, so the next
+    // attempt after a crash reads the dead run's Jobs rather than run the
+    // suite again; attempts lost with their process do not count.
+    [WORK.suite]: {
+      resumable: true,
+      maxAttempts: 3,
+      backoffMs: (n) => 60 * 1000 * 2 ** (n - 1),
+      leaseMs: 5 * 60 * 1000,
+      concurrency: 4,
+      async run(ctx): Promise<Json> {
+        const row = await app(Number(ctx.input.appId));
+        if (!row) return { state: 'skipped', detail: { reason: 'the app no longer exists' } };
+        const resumeRunId = (ctx.resumeFrom as { runId?: string } | null)?.runId ?? null;
+        const out = await watch().runMainSuite(config, pool, {
+          app: row, sha: String(ctx.input.sha), resumeRunId,
+          onRunId: (runId: string) => ctx.checkpoint({ runId }),
+        });
+        const excerpts = (Array.isArray(out.excerpts) ? out.excerpts : []).slice(0, MAX_EXCERPTS)
+          .map((x: any) => ({ ...x, ...(typeof x?.excerpt === 'string' ? { excerpt: x.excerpt.slice(0, EXCERPT_CHARS) } : {}) }));
+        return JSON.parse(JSON.stringify({ state: out.state, detail: out.detail || {}, excerpts })) as Json;
+      },
+    },
+
+    // The tests a verdict showed to be flaky, recorded, and a request filed
+    // for each (`note`); or a request for each test of a red made only of
+    // known flakes (`request`). One request per test per fortnight, claimed
+    // on its row (main-watch.js fileFlakeRequest).
+    [WORK.flakes]: {
+      maxAttempts: 3,
+      backoffMs: (n) => 60 * 1000 * 2 ** (n - 1),
+      async run({ input }): Promise<Json> {
+        const row = await app(Number(input.appId));
+        if (!row) return { gone: true };
+        const w = watch();
+        if (input.mode === 'note') {
+          const recorded = await w.noteFlakes(config, pool, row, input.sha, input.reds || [], input.excerpts || []);
+          return { recorded: recorded.length };
+        }
+        const filed = await w.fileFlakeRequests(config, pool, row, input.tests || [], { mergeSha: input.sha, excerpts: input.excerpts || [] });
+        return { filed };
+      },
+    },
+
+    // A confirmed red: one request to fix it, for the Homeroom bot, naming
+    // the merges its failing tests point at (main-red-fix.js), unless one is
+    // open for the app already.
+    [WORK.fix]: {
+      maxAttempts: 3,
+      backoffMs: (n) => 60 * 1000 * 2 ** (n - 1),
+      async run({ input }): Promise<Json> {
+        const row = await app(Number(input.appId));
+        if (!row) return { gone: true };
+        const w = watch();
+        const parsed = parseGithubUrl(row.repo_url);
+        if (!parsed) return { skipped: 'no_repo' };
+        const issueNumber = await legacy('services/main-red-fix').fileFixRequest(config, pool, {
+          app: row, parsed, redSha: input.sha, prNumber: input.prNumber ?? null, detail: input.detail || {},
+          excerpts: input.excerpts || [], fileBotIssue: w.fileBotIssue,
+        });
+        return { issueNumber: issueNumber ?? null };
+      },
+    },
+  };
+}

@@ -309,6 +309,20 @@ module.exports = function install(fakes) {
     async readMetadata() { return { status: 'valid' }; },
     async readSecret() { return 'sk-fake-bot-key'; },
   });
+  // main's unit suite on a commit (the main-check machine's main.suite work,
+  // services/main-watch.js runMainSuite): the run's queue id kept first, as
+  // the real run does before its Jobs exist, then the `main.suite` point,
+  // then green. What each attempt was handed is recorded (`main.suite`).
+  const mainWatch = require(path.join(SRC, 'services/main-watch'));
+  fakes.stub(path.join(SRC, 'services/main-watch'), {
+    ...mainWatch,
+    async runMainSuite(_config, _db, { app, sha, resumeRunId = null, onRunId = null }) {
+      await fakes.record('main.suite', { appId: app.id, sha, resumeRunId });
+      if (!resumeRunId && onRunId) await onRunId(`run-${app.id}-${sha.slice(0, 8)}`);
+      await fakes.pause('main.suite');
+      return { state: 'passing', detail: { summary: { tests: 1, pass: 1, fail: 0 } } };
+    },
+  });
   // Not an outside service, a probe: whether the Workshop hears a board
   // change in this process (its listener is registered by server.js only).
   const themes = require(path.join(SRC, 'services/workshop-themes'));

@@ -47,9 +47,16 @@ async function voteKind(pool) { await pool.query("UPDATE asks SET state = 'close
 async function upsert(pool) {
   await pool.query("INSERT INTO asks (id, kind, state) VALUES (1, 'vote', 'open') ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state");
 }
+// Shapes that look like they leave the rows alone and do not (review, 2026-10-17).
+async function orHolds(pool) { await pool.query("UPDATE things SET status = 'x' WHERE id = $1 OR NOT wf_holds('demo', 'thing:' || id)"); }
+async function holdsOther(pool) { await pool.query("UPDATE things SET status = 'x' WHERE id = $1 AND NOT wf_holds('other', 'thing:' || id) AND wf_holds('demo', 'thing:' || id)"); }
+async function laterStatement(pool) { await pool.query("UPDATE things SET status = 'x' WHERE id = 1; UPDATE things SET note = 'y' WHERE id = 1 AND NOT wf_holds('demo', 'thing:' || id)"); }
+async function orKind(pool) { await pool.query("UPDATE asks SET state = 'closed' WHERE kind = 'general' OR id = $1"); }
+async function intoParam(pool) { await pool.query("UPDATE things SET status = CASE WHEN wf_holds('demo', 'thing:' || id) THEN $1 ELSE 'open' END WHERE id = 2"); }
+async function intoExcluded(pool) { await pool.query("INSERT INTO things (id, status) VALUES (2, 'done') ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status"); }
 async function intoOther(pool) { await pool.query("UPDATE things SET status = CASE WHEN wf_holds('demo', 'thing:' || id) THEN status ELSE 'open' END WHERE id = 2"); }
 async function intoDone(pool) { await pool.query("UPDATE things SET status = 'done' WHERE id = 2 AND NOT wf_holds('demo', 'thing:' || id)"); }
-module.exports = { seed, careless, voteKind, upsert, intoOther, intoDone };
+module.exports = { seed, careless, voteKind, upsert, intoOther, intoDone, orHolds, holdsOther, laterStatement, orKind, intoParam, intoExcluded };
 `,
   'src/services/store.js': 'module.exports = { remember() {}, forget() {} };',
   'src/services/writer.js': `
@@ -247,4 +254,14 @@ test('a guard only on a move into one value: another value is not that move', ()
   const coowner = [...(list.get('coowner') || new Map()).keys()];
   assert.ok(!coowner.some((e) => e.includes('seeds.js#intoOther')), coowner.join('\n'));
   has(coowner, 'ownership | things.status ← src/services/seeds.js#intoDone');
+  has(coowner, 'ownership | things.status ← src/services/seeds.js#intoParam');     // a value it cannot read
+  has(coowner, 'ownership | things.status ← src/services/seeds.js#intoExcluded');  // the inserted row's, not the column's own
+});
+
+test('an exemption is a top-level conjunct of its own statement, naming the machine', () => {
+  const { demo } = fixture();
+  has(demo, 'ownership | things.status ← src/services/seeds.js#orHolds');
+  has(demo, 'ownership | things.status ← src/services/seeds.js#holdsOther');
+  has(demo, 'ownership | things.status ← src/services/seeds.js#laterStatement');
+  has(demo, 'ownership | asks.state ← src/services/seeds.js#orKind');
 });

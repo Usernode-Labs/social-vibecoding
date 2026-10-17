@@ -147,6 +147,13 @@
       "services | uses src/services/shots-orchestrator.js:resolveRevision": "shots.revision: the head's exact before revision from GitHub, cut out of scheduleForSession's in-process run (the step now reads nothing of a process's memory)",
       "services | uses src/services/shots-orchestrator.js:runCurrent": "whether a step's run is still the proposal's run under way (its row and the slot), so copies of a run that ended stop at their next phase and an agent step whose run ended starts no turn; a read, no state",
       "services | uses src/services/shots-orchestrator.js:visibleError": "a step's failure in the words the proposal shows (pure), cut out of executeRun's catch"
+    },
+    "main-check": {
+      "services | uses src/services/main-red-fix.js:fileFixRequest": "a confirmed red main: one request to fix it for the Homeroom bot (main.fixRequest), claimed on its main_red_requests row so it is filed once while one is open; naming the merges its failing tests point at; keeps nothing",
+      "services | uses src/services/main-watch.js:fileBotIssue": "files a request on the app's repository as the Homeroom bot (GitHub, its issues row and the notices a request gets), handed to fileFixRequest; keeps nothing",
+      "services | uses src/services/main-watch.js:fileFlakeRequests": "files a request for each test of a red made only of known flakes (main.flakes), one per test per fortnight, claimed on its main_test_flakes row; keeps nothing",
+      "services | uses src/services/main-watch.js:noteFlakes": "records the tests a green on the same commit showed to be flaky (main_test_flakes) and files a request for each (main.flakes); keeps nothing",
+      "services | uses src/services/main-watch.js:runMainSuite": "one run of the repo's unit suite on a commit of main (main.suite): its checks-queue slot (heartbeated while it runs), its Jobs, its verdict; the queue row's run id is checkpointed before the Jobs exist, so an attempt after a crash reads the dead run's Jobs; cut out of afterMerge, keeps nothing"
     }
   },
   "handOff": {
@@ -155,9 +162,6 @@
     },
     "shots": {
       "services | uses src/services/shots-orchestrator.js:dispatchAgent": "shots.agent: the shots agent's turn in the proposal's worker on the kernel's steps (durable-turn.js); its control plane is the run's workspace in Postgres. Its dispatch goes through worker.execInWorker, whose \"a turn is in flight\" and pending-stop gates read this process's worker registry; two turns on one session are refused by the durable active_turn claim. Goes with roadmap step 9, the agent turns' presence in Postgres"
-    },
-    "merge-followups": {
-      "services | uses src/services/main-watch.js:afterMerge": "the checks run on main after a merge (main.check): a whole flow, its claim on apps.main_check_*, its suite runs, the merge pause and a re-drive by a leader timer; goes with the main-check machine step, the next commit of this change"
     }
   }
 }

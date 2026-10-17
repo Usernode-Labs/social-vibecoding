@@ -3018,12 +3018,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     try {
       const { rows } = await pool.query('SELECT id, slug FROM apps WHERE slug = $1', [req.params.slug]);
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
-      const mainWatch = require('../services/main-watch');
-      const resumed = await mainWatch.resume(config, pool, rows[0].id, { by: req.user });
-      if (!resumed) {
+      // The app's main-check machine lifts the pause (src/workflow/main-check/).
+      const resumed = await require('../workflow/platform.ts').resumeMainCheck(rows[0].id, req.user);
+      if (resumed === 'not_paused') {
         return res.status(409).json({ error: 'Merges are not paused for this app' });
       }
-      res.json({ ok: true, mainCheck: resumed });
+      const mainWatch = require('../services/main-watch');
+      res.json({ ok: true, mainCheck: (await mainWatch.mergePause(pool, rows[0].id)), ...(resumed === 'pending' ? { pending: true } : {}) });
     } catch (err) {
       log.error('apps', 'Main-check resume failed', { slug: req.params.slug, message: err.message });
       res.status(500).json({ error: 'Internal server error' });

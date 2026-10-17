@@ -157,7 +157,8 @@ export function mergeFollowupsServices({ config, pool, requestDeploy, botNote }:
         }
         const out = await watcher.closeAfterMerge({
           owner: input.owner, repo: input.repo, prNumber: input.prNumber, linkedIssues: input.linkedIssues,
-          appId: input.appId, pool, look: input.look === 1 ? 1 : 2,
+          // An item an older release queued has no `look`: a first look.
+          appId: input.appId, pool, look: input.look === 2 ? 2 : 1,
         });
         // A linked request it could neither see closed nor close at the
         // second look is retried. A number only the PR's body names is
@@ -176,21 +177,14 @@ export function mergeFollowupsServices({ config, pool, requestDeploy, botNote }:
       run: (ctx) => closeAndComment(ctx, 'pullRequest'),
     },
 
-    // The repository's unit suite on the merge commit (services/main-watch.js).
-    // Its claim is per commit, so a retry after a crash finds it claimed and
-    // returns; main-watch's own recovery re-drives a run that died.
+    // One release only: an older release queued the merge commit's unit
+    // suite as work. It reports, and the transition that applies the result
+    // asks the main-check machine (machine.ts); since this release the
+    // merge's transition asks it by message.
     [WORK.mainCheck]: {
-      maxAttempts: 3,
+      maxAttempts: 5,
       backoffMs: backoff,
-      leaseMs: 5 * 60 * 1000,
-      async run({ input }): Promise<Json> {
-        const row = await app(input.appId);
-        if (!row) return { skipped: 'no_app' };
-        const verdict = await legacy('services/main-watch').afterMerge(config, pool, {
-          app: row, session: { id: input.sessionId, pr_number: input.prNumber }, mergeSha: input.mergeSha, strict: true,
-        });
-        return { state: verdict?.state ?? null };
-      },
+      async run(): Promise<Json> { return { handedOff: true }; },
     },
 
     // One release only: what an older release queued for a change of the

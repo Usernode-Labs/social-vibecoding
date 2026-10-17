@@ -645,6 +645,19 @@ test('unit-suite reuse through the preview machine, against the full PostgreSQL 
     const { rows: [again] } = await pool.query(
       `SELECT result, reason FROM wf_events WHERE machine = 'preview' AND key = $1 AND type = 'RecheckFolded' ORDER BY id DESC LIMIT 1`, [sessionKey(s.id)]);
     assert.deepEqual({ ...again }, { result: 'rejected', reason: 'nothing_to_stamp' });
+
+    // A row the machine does not hold (its verdict stored before it ran, or
+    // its preview retired by a reap) is stamped too, adopted from the row, as
+    // the route's own stamp did before (review, 2026-10-17).
+    const loose = await proposal({ status: 'promoted', source: 'cli_handoff' });
+    const H = SHA('8');
+    await pool.query(`UPDATE chat_sessions SET reviewed_head_sha = $2, checks_commit_sha = $2, check_state = 'passing' WHERE id = $1`, [loose.id, H]);
+    assert.equal(await instance(loose), undefined, 'no instance yet');
+    await send({ id: loose.id, app_id: loose.app_id }, 'RecheckFolded', { head: H, sessionId: loose.id }, { kind: 'route', name: 'manual-recheck' });
+    await rt.drain();
+    const r2 = await row(loose.id);
+    assert.deepEqual([r2.check_state, r2.check_trigger], ['pending', 'manual-recheck'], 'stamped from the row');
+    assert.ok(await instance(loose), 'adopted');
   });
 
   // A same-commit resubmission (submit_work with new testing routes or

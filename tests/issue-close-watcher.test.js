@@ -144,7 +144,7 @@ function recordingClosed({ fail = false } = {}) {
   return {
     asked,
     async noteRequestsClosed(pool, args) {
-      asked.push({ appId: args.appId, closed: args.closed, strict: args.strict });
+      asked.push({ appId: args.appId, closed: args.closed, strict: args.strict, tellStrict: args.tellStrict });
       if (fail && args.strict) throw new Error('db down');
       return { withdrawn: [] };
     },
@@ -537,7 +537,7 @@ test('an observed close asks, strictly, for the bot\'s proposals on those reques
   try {
     const res = await look(subject);
     assert.deepEqual(res.closed, [3, 9]);
-    assert.deepEqual(closed.asked, [{ appId: 7, closed: [3, 9], strict: true }]);
+    assert.deepEqual(closed.asked, [{ appId: 7, closed: [3, 9], strict: true, tellStrict: false }]);
   } finally { restore(); }
 });
 
@@ -554,7 +554,7 @@ test('a linked issue closed at the second look is asked about too; one still ope
   try {
     const res = await look(subject, { linkedIssues: [10], look: 2 });
     assert.deepEqual(res.stillOpen, [20]);
-    assert.deepEqual(closed.asked, [{ appId: 7, closed: [10], strict: true }]);
+    assert.deepEqual(closed.asked, [{ appId: 7, closed: [10], strict: true, tellStrict: false }]);
   } finally { restore(); }
 });
 
@@ -614,7 +614,22 @@ test('closeIncluded closes every linked request, records the closes, and names t
     assert.deepEqual(res.failed, [{ number: 4, status: 503 }, { number: 5, status: null }]);
     assert.deepEqual(res.targets, [{ issueId: 95, number: 3 }], 'only a request it closed');
     assert.deepEqual(pool.twinCloses().map((q) => q.params), [[7, [3]]]);
-    assert.deepEqual(closed.asked, [{ appId: 7, closed: [3], strict: true }]);
+    assert.deepEqual(closed.asked, [{ appId: 7, closed: [3], strict: true, tellStrict: false }]);
+  } finally { restore(); }
+});
+
+// A request that is gone never closes later: its close proposal is
+// superseded as a closed one's is (review, 2026-10-17).
+test('closeIncluded: a gone request names its close proposals too', async () => {
+  const calls = [], ws = [];
+  const { subject, restore } = loadWithStubs({
+    calls, ws, closedRequests: recordingClosed(),
+    gh: { closeIssue: async (o, r, n) => { if (n === 4) { const e = new Error('Not Found'); e.status = 404; throw e; } return { number: n }; } },
+  });
+  try {
+    const pool = recordingPool({ proposals: new Map([[3, 95], [4, 96]]) });
+    const res = await subject.closeIncluded({ ...BASE_ARGS, prNumber: 9, linkedIssues: [3, 4], pool });
+    assert.deepEqual(res.targets, [{ issueId: 95, number: 3 }, { issueId: 96, number: 4 }]);
   } finally { restore(); }
 });
 

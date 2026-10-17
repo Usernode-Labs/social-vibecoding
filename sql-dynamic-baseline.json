@@ -453,13 +453,6 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
-      "fingerprint": "53cbf4a100d8fd060870",
-      "count": 1,
-      "preview": "`UPDATE chat_sessions SET ${sets.join(', ')} WHERE id = $2`"
-    },
-    {
-      "source": "src/routes/sessions.js",
-      "kind": "structural-template",
       "fingerprint": "974dbc333f746ae0a00c",
       "count": 1,
       "preview": "`SELECT s.version, s.content, s.content_html, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at FROM chat_session_specs s JOIN chat_sessions cs ON cs."
@@ -1102,6 +1095,13 @@
       "preview": "`SELECT r.id, r.app_id, r.issue_number, r.verdict, r.build_ok, r.build_error, r.cap_suppressed, r.proposal_session_id, cs.pr_number AS proposal_pr_number, r.cre"
     },
     {
+      "source": "src/services/homeroom-bot-voice.js",
+      "kind": "structural-template",
+      "fingerprint": "f5edec0605c15fed7729",
+      "count": 1,
+      "preview": "`SELECT ${workedOnSql()} AS busy FROM chat_sessions cs WHERE cs.id = $1`"
+    },
+    {
       "source": "src/services/homeroom-bot.js",
       "kind": "structural-template",
       "fingerprint": "9a829c6ca7be69f2bf21",
@@ -1317,13 +1317,6 @@
       "fingerprint": "08e55ff95611f82c37a8",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1 AND status = 'active' AND ${OWNED_SOURCE_SQL} AND checks_commit_sha IS NOT DISTINCT FROM $2`"
-    },
-    {
-      "source": "src/services/proposal-update.js",
-      "kind": "structural-template",
-      "fingerprint": "ff67173aba31091e4b52",
-      "count": 1,
-      "preview": "`UPDATE chat_sessions SET ${sets.join(', ')} WHERE id = $${values.length}`"
     },
     {
       "source": "src/services/report-ai.js",
@@ -1713,9 +1706,9 @@
     {
       "source": "src/workflow/merge-followups/services.ts",
       "kind": "runtime-built-identifier",
-      "fingerprint": "13088ed3d10fbb042d8b",
+      "fingerprint": "769a008d3e54f1bd38ea",
       "count": 1,
-      "preview": "changes.CANDIDATES_SQL"
+      "preview": "INCLUDED_CANDIDATES_SQL"
     },
     {
       "source": "src/workflow/platform.ts",

@@ -37,6 +37,8 @@ import { botVoice } from './bot-voice/machine.ts';
 import { botVoiceServices } from './bot-voice/services.ts';
 import { botDm } from './bot-dm/machine.ts';
 import { botDmServices } from './bot-dm/services.ts';
+import { MACHINE as MAIN_CHECK, appKey as mainCheckKey, depsFromEnv as mainCheckDeps, mainCheck } from './main-check/machine.ts';
+import { mainCheckServices } from './main-check/services.ts';
 import { DM as BOT_DM, VOICE as BOT_VOICE, dmKey, placeOf, voiceKey } from './rules/bot-replies.ts';
 import type { Place } from './rules/bot-replies.ts';
 import { BOT_USERNAME } from './rules/bot-notes.ts';
@@ -56,7 +58,7 @@ let log: Logger | null = null;
 // for every machine (wf_holds reads it). Every machine is the only path for
 // what it decides, so its guard is always on and always refuses a write
 // from outside it.
-const MACHINES = [MACHINE, MERGE, DELIVERY, PREVIEW, SHOTS, PROPOSAL, QUEUE, CAMPAIGN];
+const MACHINES = [MACHINE, MERGE, DELIVERY, PREVIEW, SHOTS, PROPOSAL, QUEUE, CAMPAIGN, MAIN_CHECK];
 
 export async function syncSettings(pool: Pool): Promise<void> {
   for (const name of MACHINES) {
@@ -147,7 +149,9 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const voices = botVoice();
   const dms = botDm();
   const builds = botBuild();
-  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms];
+  // The suite on each new main, with its switches from the environment.
+  const checks = mainCheck(mainCheckDeps(process.env));
+  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks];
   // `botNote`: the one-release shims of the work kinds older releases queued
   // to reach the bot (each appends its event to the bot's change machine).
   const shimDeps = { ...deps, botNote };
@@ -155,6 +159,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     ...governanceServices({ ...deps, adoptCampaigns }), ...mergeFollowupsServices(shimDeps), ...botBuildServices(deps),
     ...appDeliveryServices(deps), ...previewServices(shimDeps), ...shotsServices(shimDeps), ...proposalServices(shimDeps),
     ...campaignServices(deps), ...botChangeServices(deps), ...botVoiceServices(deps), ...botDmServices(deps),
+    ...mainCheckServices(deps),
   };
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!,
@@ -208,7 +213,51 @@ export async function startWorkflowLoops(): Promise<void> {
   await adoptCampaigns();
   await adoptBotChanges();
   await adoptDeferredDms();
+  await adoptMainChecks();
   await retryPlatformFaults();
+}
+
+// ── The suite on each new main ──────────────────────────────────────────
+
+// A commit on an app's main to check (the drift poller's new main; a
+// merge's is merge-followups' message). Appended, not waited for.
+export async function requestMainCheck(c: { appId: number; sha: string; sessionId?: number | null; prNumber?: number | null }): Promise<void> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  await runtime.append(MAIN_CHECK, mainCheckKey(c.appId), { type: 'CheckRequested', payload: {
+    appId: c.appId, sha: c.sha, sessionId: c.sessionId ?? null, prNumber: c.prNumber ?? null,
+  } }, { requestKey: `check:${c.appId}:${String(c.sha).toLowerCase()}:${randomUUID()}`, source: { kind: 'system', name: 'new-main' }, appId: c.appId });
+}
+
+// An admin resumes an app's merges paused by a red main: whether there was
+// a pause to lift.
+export async function resumeMainCheck(appId: number, user: { id: number; username?: string | null }): Promise<'resumed' | 'not_paused' | 'pending'> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  const out = await runtime.appendAndWait(MAIN_CHECK, mainCheckKey(appId), { type: 'Resume', payload: { appId, by: user.username ?? null } },
+    { requestKey: `resume:${appId}:${randomUUID()}`, source: { kind: 'route', name: 'main-check-resume' }, actor: `user:${user.id}`, appId, waitMs: 5000 });
+  if (out.status === 'accepted' || out.status === 'replayed') return 'resumed';
+  if (out.status === 'pending') return 'pending';
+  return 'not_paused';
+}
+
+// Rows an older release left in the middle of a run, or paused with a
+// recheck to come, that no instance holds yet: taken from the row, once per
+// release. Transitional: deleted once no release older than the main-check
+// machine can run.
+async function adoptMainChecks(): Promise<number> {
+  if (!runtime) return 0;
+  const { rows } = await kernelPool!.query(
+    `SELECT a.id FROM apps a
+      WHERE (a.main_check_state IN ('running', 'confirming')
+             OR (a.main_check_state = 'failing' AND lower(coalesce(a.main_check_paused_sha, '')) = lower(coalesce(a.main_check_sha, ''))))
+        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'app:' || a.id)
+      ORDER BY a.id`, [MAIN_CHECK]);
+  for (const r of rows) {
+    await runtime.append(MAIN_CHECK, mainCheckKey(r.id), { type: 'Adopted', payload: { appId: r.id } },
+      { requestKey: `adopt:${r.id}`, source: { kind: 'system', name: 'adopt' }, appId: r.id })
+      .catch((err: Error) => log!.warn('workflow', 'Could not adopt a main check', { appId: r.id, message: err.message }));
+  }
+  if (rows.length) log!.info('workflow', 'Adopted main checks', { count: rows.length });
+  return rows.length;
 }
 
 // The Homeroom bot's changes up for a vote that its change machine does not
@@ -788,7 +837,7 @@ export async function requestRecheck(r: { sessionId: number; appId: number; reas
 // doing (services/unit-suite-reuse.js owePendingRun): the machine stamps the
 // head's stored verdict pending, if it is the head's and not pending already.
 export async function recheckFolded(r: { sessionId: number; appId: number; head: string }): Promise<EventOutcome> {
-  return runtime!.appendAndWait(PREVIEW, previewKey(r.sessionId), { type: 'RecheckFolded', payload: { head: r.head } },
+  return runtime!.appendAndWait(PREVIEW, previewKey(r.sessionId), { type: 'RecheckFolded', payload: { head: r.head, sessionId: r.sessionId } },
     { requestKey: `folded:${r.head}:${randomUUID()}`, source: { kind: 'route', name: 'manual-recheck' }, appId: r.appId, waitMs: 2000 });
 }
 

@@ -13907,10 +13907,12 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS live_at TIMESTAMPTZ;
 -- merge recovery records late checks the builds booted since it merged
 -- (merge-followups), since live_at is when production first ran it.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS booted_shas JSONB NOT NULL DEFAULT '[]'::jsonb;
--- When an app's teardown started (services/app-teardown.js): the row goes
--- last, so until then the app reads as one whose runtime is missing. The heal
--- sweep leaves it alone, and a deploy that finishes meanwhile removes what it
--- put back, in every process. Cleared by a teardown that fails.
+-- When an app's teardown began removing it (services/app-teardown.js): the
+-- row goes last, so until then the app reads as one whose runtime is missing.
+-- The heal sweep leaves it alone, and a deploy that finishes meanwhile
+-- removes what it put back, in every process. Set after its previews are
+-- retired (the step that may refuse); never cleared, since an app past it is
+-- half removed.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS teardown_started_at TIMESTAMPTZ;
 UPDATE chat_sessions cs SET live_at = COALESCE(cs.merged_at, cs.created_at, NOW())
  WHERE cs.status = 'merged' AND cs.live_at IS NULL
@@ -13983,6 +13985,23 @@ CREATE TRIGGER apps_wf_delivery_owned
         OR OLD.deploy_from_sha IS DISTINCT FROM NEW.deploy_from_sha)
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=app-delivery/app:',
     'deploy_state', 'deploy_started_at', 'deploy_from_sha');
+
+-- main-check (src/workflow/main-check/): the unit suite on each new main,
+-- one instance per app. For an app it holds, it owns the main_check_*
+-- columns (its projection: the merge gate's pause, the board's banner).
+DROP TRIGGER IF EXISTS apps_wf_main_check_owned ON apps;
+CREATE TRIGGER apps_wf_main_check_owned
+  BEFORE UPDATE ON apps
+  FOR EACH ROW
+  WHEN (OLD.main_check_state IS DISTINCT FROM NEW.main_check_state
+        OR OLD.main_check_sha IS DISTINCT FROM NEW.main_check_sha
+        OR OLD.main_check_at IS DISTINCT FROM NEW.main_check_at
+        OR OLD.main_check_detail IS DISTINCT FROM NEW.main_check_detail
+        OR OLD.main_check_paused_sha IS DISTINCT FROM NEW.main_check_paused_sha
+        OR OLD.main_check_resumed_sha IS DISTINCT FROM NEW.main_check_resumed_sha)
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=main-check/app:',
+    'main_check_state', 'main_check_sha', 'main_check_at', 'main_check_detail',
+    'main_check_paused_sha', 'main_check_resumed_sha');
 
 -- preview (src/workflow/preview/): a proposal's preview and its required
 -- checks, one instance per session. For a session it holds, it owns the

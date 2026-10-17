@@ -80,10 +80,11 @@ test('a merge\'s first look that leaves a linked request to GitHub reports it wa
   assert.deepEqual(await run({ ...base, linkedIssues: [4], closeOnly: false, look: 1 }), watch.result,
     'the machine asks for the second look (machine.ts)');
   assert.equal(watch.asked[0].look, 1);
-  // An item queued before the looks (no look in its input) is a second
-  // look: the old watch closed the linked ones itself after its polls.
+  // An item queued before the looks (no look in its input) is a first
+  // look: it has not waited for GitHub's own `Closes #N` yet, so the platform
+  // does not close the requests at once (review, 2026-10-17).
   await run({ ...base, linkedIssues: [4], closeOnly: false });
-  assert.equal(watch.asked[1].look, 2);
+  assert.equal(watch.asked[1].look, 1);
   assert.deepEqual([watch.asked[1].owner, watch.asked[1].repo, watch.asked[1].prNumber, watch.asked[1].appId, watch.asked[1].pool],
     ['acme', 'shop', 8, 2, pool]);
 });
@@ -116,11 +117,12 @@ stub('../src/services/worker', {
   async destroyCcVolume() { throw new Error('the unfenced removal is not used'); },
   retireWorker() { throw new Error('the in-memory hold is not read'); },
 });
-const seen = { bot: null, dm: null, journey: null, mainCheck: null };
+const seen = { bot: null, dm: null, journey: null };
 stub('../src/services/homeroom-bot', { async noteRequestMerged(p, s, deps) { seen.bot = deps; return {}; } });
 stub('../src/services/homeroom-bot-dm', { async noteProposalMerged(p, s, opts) { seen.dm = opts; return true; } });
 stub('../src/services/journey-events', { async recordChangeLive(p, args) { seen.journey = args; return {}; } });
-stub('../src/services/main-watch', { async afterMerge(c, p, args) { seen.mainCheck = args; return { state: 'running' }; } });
+// The main check is the main-check machine's: nothing here reaches main-watch.
+stub('../src/services/main-watch', {});
 
 function withRows(answer) {
   const asked = [];
@@ -190,12 +192,16 @@ test('included.find names each carried change with the head that matched', async
   assert.deepEqual(out, { ids: [3, 4], found: [{ id: 3, head: 'c'.repeat(40) }, { id: 4, head: 'd'.repeat(40) }] });
 });
 
-test('the journey and the main check run strict, so a failure is retried', async () => {
+test('the journey runs strict, so a failure is retried', async () => {
   const { handlers: h } = withRows((sql) => (/FROM apps/.test(sql) ? [{ id: 2 }] : [{ id: 5, app_id: 2 }]));
   await call(h, WORK.journey, { sessionId: 5, sha: 'a'.repeat(40), at: '2026-10-09T00:00:00.000Z' });
   assert.equal(seen.journey.strict, true);
-  await call(h, WORK.mainCheck, { appId: 2, sessionId: 5, prNumber: 8, mergeSha: 'a'.repeat(40) });
-  assert.equal(seen.mainCheck.strict, true);
+});
+
+test('a main.check item an older release queued only reports: its transition asks the main-check machine', async () => {
+  const { asked, handlers: h } = withRows(() => []);
+  assert.deepEqual(await call(h, WORK.mainCheck, { appId: 2, sessionId: 5, prNumber: 8, mergeSha: 'a'.repeat(40) }), { handedOff: true });
+  assert.deepEqual(asked, [], 'it reads and runs nothing');
 });
 
 test('the bot\'s items an older release queued hand the merge and the live to its change machine, keyed by the item', async () => {

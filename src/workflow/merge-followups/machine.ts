@@ -334,6 +334,12 @@ function toProposal(d: Data): NonNullable<Outcome['messages']>[number] {
   return { to: { machine: 'proposal', key: `session:${d.sessionId}` }, event: { type: 'Merged', payload: { sessionId: d.sessionId } }, appId: d.appId };
 }
 
+// The app's main check (src/workflow/main-check/): the suite on the merge commit.
+function toMainCheck(d: Data): NonNullable<Outcome['messages']>[number] {
+  return { to: { machine: 'main-check', key: `app:${d.appId}` }, event: { type: 'CheckRequested', payload: {
+    appId: d.appId, sha: d.mergeSha, sessionId: d.sessionId, prNumber: d.prNumber } }, appId: d.appId };
+}
+
 // The app's merge queue (src/workflow/merge-queue/): something may merge
 // now (this merge moved main; its check found main green).
 function toQueue(d: Data, reason: string): NonNullable<Outcome['messages']>[number] {
@@ -362,7 +368,9 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
   if (d.repo && d.prNumber) {
     work.push({ kind: WORK.find, key: 'included', input: { sessionId: d.sessionId, appId: d.appId, prNumber: d.prNumber, ...d.repo } });
   }
-  if (d.mergeSha) work.push({ kind: WORK.mainCheck, key: 'main-check', input: { appId: d.appId, sessionId: d.sessionId, prNumber: d.prNumber, mergeSha: d.mergeSha } });
+  // The repo's unit suite on the merge commit: the app's main-check
+  // machine (src/workflow/main-check/), asked by message.
+  if (d.mergeSha) messages.push(toMainCheck(d));
   // The requests it closes stop showing as open in every web process at
   // once, and the lists re-read (GitHub closes `Closes #N` late);
   // issues.closeAfterMerge makes sure they close.
@@ -501,6 +509,9 @@ function resultOf(status: Followup['status']) {
     if (p.kind === WORK.verify && status === 'done' && result.contains && s.name !== 'live') {
       return toLive(e, d, result.sha || null, ctx);
     }
+    // An older release queued the main check as work (one release: its
+    // handler only reports): the main-check machine is asked now.
+    if (p.kind === WORK.mainCheck) return { next: { name: s.name, data: d }, messages: [toMainCheck(d)] };
     // An older release queued the preview's teardown as work (one release:
     // its handler only reports): the preview machine is asked now, however
     // the item ended (an older handler's failure included), since nothing
@@ -554,8 +565,13 @@ function resultOf(status: Followup['status']) {
       });
       const work: WorkRequest[] = r.waiting ? [{ kind: WORK.issues, key: `issues~${ctx.version + 1}`,
         input: { ...(prev.input as Record<string, Json>), look: 2 }, notBefore: new Date(ctx.now.getTime() + ISSUES_SECOND_LOOK_MS) }] : [];
+      // A linked request still open at the first look stays hidden: the
+      // second look closes it. Only what the last look leaves open is shown
+      // again.
+      const linked = new Set(numbers((prev.input as { linkedIssues?: unknown }).linkedIssues));
+      const open = numbers(r.stillOpen).filter((n) => !r.waiting || !linked.has(n));
       return { next: { name: s.name, data: track(d, work) }, work, messages, push: [
-        issuesClosed({ ...d.repo, numbers: numbers(r.closed), open: numbers(r.stillOpen) }),
+        issuesClosed({ ...d.repo, numbers: numbers(r.closed), open }),
         boardMoved(issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' })),
       ] };
     }
@@ -668,8 +684,11 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
     // request's "It's live" (bot.announceLive), the issue lists' push at the
     // merge. 6: the proposal machine hears the move into 'merged' (Merged).
     // 7: the proposal machine reports the merge (Merged, by message); the
-    // merge queue hears every merge and main's verdict on it.
-    version: 7,
+    // merge queue hears every merge and main's verdict on it. 8: the
+    // preview is retired and main is checked by message; the requests a
+    // merge closes are looked at twice, and their close proposals are told
+    // by message once the close is confirmed.
+    version: 8,
     events: EVENTS,
     create: ['Merged', 'Included'],
     terminal: ['live'],

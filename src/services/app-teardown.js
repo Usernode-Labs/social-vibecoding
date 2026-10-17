@@ -29,13 +29,16 @@ const appAccess = require('./app-access');
 // production Deployment ten seconds in. The row was then deleted, and the
 // Deployment crash-looped against the dropped database for a week.
 //
-// The teardown marks the row first (apps.teardown_started_at), so every
-// process reads it at once, and a deploy that finishes while it runs (the
-// app-delivery machine's work, in whichever process claims it) removes what
-// it put back. A teardown that fails clears the mark; one whose process dies
-// leaves it, so a half-removed app is never rebuilt (deleting it again
-// finishes it). `app` is a row: one read with the column answers from it,
-// any other is read again.
+// The teardown marks the row (apps.teardown_started_at) as it begins to
+// remove anything, so every process reads it at once, and a deploy that
+// finishes while it runs (the app-delivery machine's work, in whichever
+// process claims it) removes what it put back. The mark goes on after the
+// previews are retired, the one step that may refuse and leave the app as
+// it was: a teardown refused there, or whose process dies there, leaves an
+// intact app unmarked. From the mark on, the app is being removed: the mark
+// stays even if a later step fails or its process dies, so a half-removed
+// app is never rebuilt, and deleting it again finishes it. `app` is a row:
+// one read with the column answers from it, any other is read again.
 async function isTearingDown(pool, app) {
   if (app && Object.prototype.hasOwnProperty.call(app, 'teardown_started_at')) return !!app.teardown_started_at;
   const { rows: [r] } = await pool.query('SELECT teardown_started_at FROM apps WHERE id = $1', [app.id]);
@@ -65,17 +68,13 @@ async function removeRuntimeIfDeleted(config, pool, app, { who = 'deploy' } = {}
 }
 
 async function teardownApp(pool, config, app) {
-  await pool.query('UPDATE apps SET teardown_started_at = NOW() WHERE id = $1', [app.id]);
-  try {
-    await removeApp(pool, config, app);
-  } catch (err) {
-    await pool.query('UPDATE apps SET teardown_started_at = NULL WHERE id = $1', [app.id]).catch(() => {});
-    throw err;
-  }
+  await removeApp(pool, config, app);
 }
 
 async function removeApp(pool, config, app) {
   await retirePreviews(pool, app);
+  // From here on the app is being removed (isTearingDown above).
+  await pool.query('UPDATE apps SET teardown_started_at = COALESCE(teardown_started_at, NOW()) WHERE id = $1', [app.id]);
   // Teardown through the backend that owns this app. Historical rows
   // without runtime_kind/runtime_name remain Docker-compatible.
   if (app.runtime_name || app.container_id) {
