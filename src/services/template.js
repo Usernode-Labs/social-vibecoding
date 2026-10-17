@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const nodeAppPackage = require('../templates/node-app/package.json');
+const appTemplates = require('./app-templates');
 const nodeAppLock = require('../templates/node-app/package-lock.json');
 
 // Forwarder snippet injected into every scaffolded app's public/index.html.
@@ -315,11 +316,15 @@ connector registered under some other name.
 // Discover and the project's page show) and the first sentence of
 // CLAUDE.md's About section, so the coding agent starts from the same
 // intent. Absent, both stay as they were.
-function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null } = {}) {
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = appTemplates.DEFAULT_TEMPLATE } = {}) {
+  const starter = appTemplates.get(template);
+  const starterAbout = starter && typeof description === 'string' && description.trim()
+    ? description.trim()
+    : starter && starter.description;
   const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
   const governanceBlock = require('./create-options').governanceBlock(governance);
   const about = typeof description === 'string' && description.trim() ? description.trim() : null;
-  return [
+  const files = [
     {
       path: 'CLAUDE.md',
       content: `# ${appName} — notes for Claude Code
@@ -989,6 +994,186 @@ start().catch(err => { console.error(err); process.exit(1); });
 `,
     },
   ];
+
+  if (!starter) return files;
+
+  // ── A starter's repository ──────────────────────────────────────────
+  //
+  // The same scaffold around a different, working app: its own api.js,
+  // its own screen, a server that mounts that API, and a manifest that
+  // declares the starter's checks. Everything else (package.json, the
+  // lockfile, Dockerfile, the connector scaffold) is unchanged.
+  const replace = new Map([
+    ['README.md', starterReadme(appName, starter)],
+    ['server.js', starterServer(slug)],
+    ['dapp.json', JSON.stringify({
+      name: appName,
+      description: starterAbout,
+      icon: { color: starter.color },
+      secrets: [],
+      ...(governanceBlock ? { governance: governanceBlock } : {}),
+      tests: starter.checks,
+    }, null, 2)],
+    ['tailwind.config.js', files.find((f) => f.path === 'tailwind.config.js').content.replace(
+      'theme: { extend: {} },',
+      "theme: {\n    extend: {\n      colors: {\n        accent: {\n          DEFAULT: '#0a6ee0',\n          strong: '#095bbd',\n          soft: '#e8f0fd',\n          'soft-dark': '#16233a',\n          ink: '#0a3f7d',\n          'soft-ink': '#cfe0fb',\n        },\n      },\n    },\n  },",
+    )],
+    ['CLAUDE.md', files.find((f) => f.path === 'CLAUDE.md').content.replace(
+      '## App-specific conventions',
+      starterClaudeSection(appName, starter) + '\n## App-specific conventions',
+    )],
+  ]);
+  const kept = files.map((f) => (replace.has(f.path) ? { path: f.path, content: replace.get(f.path) } : f));
+  const starterSources = appTemplates.starterFiles(starter.id).map((f) => (
+    f.path === 'public/index.html'
+      ? { path: f.path, content: f.content.replace('<!-- usernode-dev-console -->', DEV_CONSOLE_FORWARDER) }
+      : f
+  ));
+  // api.js and public/app.js are new; public/index.html replaces the Empty
+  // one. The starter's screen is its product, not placeholder content.
+  const byPath = new Map(kept.map((f) => [f.path, f]));
+  for (const f of starterSources) byPath.set(f.path, f);
+  return [...byPath.values()];
+}
+
+/** The README a starter's repository starts with. */
+function starterReadme(appName, starter) {
+  return `# ${appName}
+
+This project started from Homeroom's **${starter.title}** template: a small,
+working ${starter.title.toLowerCase()} app. It is real code with its own
+database tables, routes and screen, not placeholder content.
+
+- \`api.js\` holds the app's routes and its table setup.
+- \`public/index.html\` and \`public/app.js\` are the screen.
+- \`server.js\` verifies the platform-issued user token, mounts the API and
+  serves the screen.
+
+To make it yours, open the project on Homeroom, tap the Homeroom icon in the
+header, and choose **Start a new change**. The template's own notice on the
+screen says the same thing and is meant to be removed with the first real
+change.
+`;
+}
+
+/** The CLAUDE.md section that tells the app's agent where it started. */
+function starterClaudeSection(appName, starter) {
+  return `## Starting template
+
+This repository began from Homeroom's **${starter.title}** template — a small
+working app, not the Empty Press! demo. Its data lives in \`api.js\` (the
+tables it creates in \`migrate\`) and its screen is \`public/index.html\`
+with \`public/app.js\`. There is no Press! route or \`presses\` table.
+
+The template's notice on the screen is meant to be replaced by the app's
+first real change, along with this section.
+`;
+}
+
+/** The server a starter repo gets: the platform's auth shell around api.js. */
+function starterServer(slug) {
+  return `const express = require('express');
+const path = require('path');
+const { Pool } = require('pg');
+const jwt = require('jsonwebtoken');
+const api = require('./api');
+
+const app = express();
+const port = process.env.PORT || 3000;
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+let draining = false;
+let server = null;
+
+const JWT_PUBLIC_KEY = (process.env.USERNODE_JWT_PUBLIC_KEY || '')
+  .replace(/\\\\n/g, '\\n');
+const APP_AUDIENCE = process.env.USERNODE_APP_ID
+  ? 'usernode:app:' + process.env.USERNODE_APP_ID
+  : null;
+const PUBLIC_API_PATHS = new Set(['/health']);
+
+app.use(express.json());
+
+const PLATFORM_ORIGIN = (process.env.USERNODE_PLATFORM_ORIGIN || '')
+  .replace(/\\/+$/, '');
+
+app.get(/^\\/usernode-(?:bridge|native|tailwind)\\//, async (req, res) => {
+  try {
+    if (!PLATFORM_ORIGIN) return res.sendStatus(503);
+    const upstream = await fetch(PLATFORM_ORIGIN + req.path);
+    if (!upstream.ok) return res.sendStatus(upstream.status);
+    const type = upstream.headers.get('content-type');
+    if (type) res.type(type);
+    res.set('Cache-Control', 'public, max-age=0, must-revalidate');
+    return res.send(Buffer.from(await upstream.arrayBuffer()));
+  } catch (err) {
+    console.warn('hosted asset fetch failed: ' + err.message);
+    return res.sendStatus(502);
+  }
+});
+
+app.use((req, res, next) => {
+  const token = req.query.token || req.headers['x-usernode-token'];
+  if (token && JWT_PUBLIC_KEY && APP_AUDIENCE) {
+    try {
+      const claims = jwt.verify(token, JWT_PUBLIC_KEY, {
+        algorithms: ['RS256'],
+        issuer: 'usernode',
+        audience: APP_AUDIENCE,
+      });
+      if (claims && claims.pur === 'iframe') req.user = claims;
+    } catch {}
+  }
+  if (req.method !== 'GET' || req.path.startsWith('/api/')) {
+    if (PUBLIC_API_PATHS.has(req.path)) return next();
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+  }
+  next();
+});
+
+app.get('/health', (_req, res) => (
+  draining ? res.status(503).json({ status: 'draining' }) : res.json({ status: 'ok' })
+));
+
+app.get('/favicon.ico', (_req, res) => res.status(204).end());
+
+api.mount(app, pool);
+
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('*', (req, res) => {
+  if (!req.user) {
+    const deepPath = /^\\/[A-Za-z0-9\\-._~!$&()*+,;=:@\\/%?]*$/.test(req.originalUrl)
+      ? '?path=' + encodeURIComponent(req.originalUrl) : '';
+    if (PLATFORM_ORIGIN && req.get('sec-fetch-dest') === 'document') {
+      return res.redirect(302, PLATFORM_ORIGIN + '/app/${slug}/full' + deepPath);
+    }
+    return res.status(401).send('<!doctype html><meta charset=utf-8><title>Open in Homeroom</title><body style="font-family:system-ui;background:#09090b;color:#e4e4e7;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0"><div style="max-width:24rem;padding:2rem;text-align:center"><h1 style="font-size:1.25rem;margin:0 0 0.5rem">Open this app inside Homeroom</h1><p style="color:#a1a1aa;font-size:0.9rem;margin:0 0 1.25rem">This page is served via the platform; direct visits are not authenticated.</p><a href="${'${PLATFORM_ORIGIN}'}/app/${slug}/full${'${deepPath}'}" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Homeroom</a></div></body>');
+  }
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+async function start() {
+  await api.migrate(pool);
+  if (process.env.USERNODE_ENV === 'staging' && typeof api.seed === 'function') {
+    await api.seed(pool);
+  }
+  server = app.listen(port, () => console.log('Listening on :' + port));
+  server.keepAliveTimeout = 75_000;
+}
+
+function shutdown() {
+  if (draining) return;
+  draining = true;
+  if (!server) { pool.end().finally(() => process.exit(0)); return; }
+  server.close(() => { pool.end().finally(() => process.exit(0)); });
+  setTimeout(() => process.exit(1), 10000).unref();
+}
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+start().catch(err => { console.error(err); process.exit(1); });
+`;
 }
 
 function escapeHtml(str) {

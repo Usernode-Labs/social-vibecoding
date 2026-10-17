@@ -556,6 +556,10 @@ CREATE TABLE IF NOT EXISTS apps (
   created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
   created_at     TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Which ready-made template a project started from (services/app-templates.js).
+-- NULL is the Empty scaffold every project got before templates existed.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS template VARCHAR(40);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0;
 -- #21: surface the currently deployed commit. `main_sha` is the SHA the
 -- prod container was built from; `main_pr_number` is the PR that

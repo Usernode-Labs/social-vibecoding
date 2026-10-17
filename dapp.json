@@ -1468,6 +1468,12 @@
       "expectText": "GitHub repo URL"
     },
     {
+      "name": "Start from a template opens four ready-made apps under its row, and picking one enables Create (#3521)",
+      "path": "/?shot=create-template#create",
+      "expectSelector": "#create-card[data-step=\"start\"][data-mode=\"template\"] #create-template-block [data-template-pill=\"multimedia-social\"]",
+      "expectText": "Multimedia social"
+    },
+    {
       "name": "Create-project dialog opens on who it is for, nothing chosen yet and Next dimmed beside Cancel: Just me, A private community and A public community, with a step count (communities, stage 3; the rework)",
       "path": "/#create",
       "expectSelector": ".un-modal #create-card[data-step=\"who\"][data-audience=\"\"]:has(#create-cancel + #create-next:disabled) .create-who-pill[data-audience-pill=\"solo\"] + .create-who-pill[data-audience-pill=\"invited\"] + .create-who-pill[data-audience-pill=\"open\"]",

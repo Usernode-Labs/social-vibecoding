@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- usernode-dev-console -->
+  <title>Star catch</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230a6ee0'/><path d='M50 18l8 20 22 2-17 14 5 22-18-12-18 12 5-22-17-14 22-2z' fill='%23fbbf24'/></svg>">
+  <link rel="stylesheet" href="/tailwind.css">
+  <script src="/usernode-bridge/v1/bridge.js"></script>
+  <script>
+    (function () {
+      var media = window.matchMedia('(prefers-color-scheme: dark)');
+      function applyTheme() {
+        var theme = (window.usernode && window.usernode.theme)
+          || (media.matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.style.colorScheme = theme;
+      }
+      applyTheme();
+      window.addEventListener('usernode:theme-changed', applyTheme);
+      media.addEventListener('change', applyTheme);
+    })();
+  </script>
+</head>
+<body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100 min-h-screen">
+  <main class="max-w-lg mx-auto px-4 py-8 flex flex-col gap-5">
+    <header class="flex flex-col gap-1">
+      <h1 class="text-2xl font-bold">Star catch</h1>
+      <p class="text-sm text-zinc-500 dark:text-zinc-400">Catch the falling stars. Miss three and the round is over.</p>
+    </header>
+
+    <p id="template-note" class="rounded-xl bg-accent-soft text-accent-ink dark:bg-accent-soft-dark dark:text-accent-soft-ink text-sm px-4 py-3">
+      Started from the 2D game template. To change it, tap the Homeroom icon in the header and choose <strong class="font-semibold">Start a new change</strong>.
+    </p>
+
+    <section class="relative overflow-hidden rounded-2xl bg-slate-900" style="height:320px">
+      <canvas id="game-canvas" class="block h-full w-full touch-none" aria-label="Star catch game board"></canvas>
+      <div class="pointer-events-none absolute inset-x-0 top-0 flex justify-between px-4 py-3 text-white text-[15px] font-semibold">
+        <span id="game-score">Score 0</span>
+        <span id="game-misses">3 misses left</span>
+      </div>
+      <div id="game-overlay" class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-950/60 px-6 text-center text-white">
+        <p id="game-overlay-title" class="text-xl font-bold">Catch the stars</p>
+        <p id="game-overlay-note" class="text-sm text-slate-200">Use the arrow keys, A and D, or drag the basket.</p>
+        <button type="button" id="game-start" class="rounded-full bg-accent text-white font-semibold px-6 py-2.5 text-[15px] hover:bg-accent-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-white">
+          Play
+        </button>
+      </div>
+    </section>
+
+    <section id="leaderboard" class="rounded-2xl bg-white dark:bg-zinc-900 ring-1 ring-zinc-200 dark:ring-zinc-800 overflow-hidden">
+      <div class="flex items-baseline justify-between px-4 pt-4 pb-2">
+        <h2 class="text-[17px] font-semibold">Leaderboard</h2>
+        <span id="your-best" class="text-[13px] text-zinc-500 dark:text-zinc-400">Your best: 0</span>
+      </div>
+      <ol id="leaderboard-list" class="divide-y divide-zinc-100 dark:divide-zinc-800 border-t border-zinc-100 dark:border-zinc-800"></ol>
+      <p id="leaderboard-empty" class="hidden px-4 py-4 text-sm text-zinc-500 dark:text-zinc-400">No scores yet. Play the first round.</p>
+    </section>
+
+    <p id="game-error" class="hidden rounded-xl bg-red-50 text-red-800 dark:bg-red-950 dark:text-red-200 text-sm px-4 py-3" role="alert"></p>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

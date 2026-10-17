@@ -22,7 +22,7 @@
  *   approve  who approves changes: members vote, or people you pick (starting
  *            with you), with "at least N yes votes" as a follow-up under the
  *            second. A private or a public community only.
- *   start    how to begin: from scratch, from a template (Soon), or from a
+ *   start    how to begin: from scratch, from a template (four ready-made apps), or from a
  *            GitHub repo, whose check opens under its row. The check also
  *            reads the repo's dapp.json, and a notice names each earlier
  *            answer it will replace (name, what it is, who it is for, who
@@ -126,7 +126,16 @@ import {
 import { normalizeRepositoryUrl } from './repository-url';
 import { useDialog } from './use-dialog';
 
-type Mode = 'new' | 'import';
+type Mode = 'new' | 'import' | 'template';
+type TemplateId = 'social-productivity' | 'multimedia-social' | 'game-2d' | 'game-3d';
+/** The four starters, mirroring services/app-templates.js's allow-list. */
+const TEMPLATES: ReadonlyArray<{ key: TemplateId; title: string; caption: string }> = [
+  { key: 'social-productivity', title: 'Social productivity', caption: 'Shared lists that members add tasks to, claim and tick off.' },
+  { key: 'multimedia-social', title: 'Multimedia social', caption: 'A feed of posts with photos, likes and a way to report a post.' },
+  { key: 'game-2d', title: '2D game', caption: 'A canvas game played with keys or touch, with a leaderboard.' },
+  { key: 'game-3d', title: '3D game', caption: 'A 3D scene drawn with WebGL, with controls and a leaderboard.' },
+];
+
 type ImportState = 'idle' | 'checking' | 'ok' | 'error';
 /** Who it is for: services/communities.js's audiences, by their internal names. */
 type Audience = 'solo' | 'invited' | 'open';
@@ -269,10 +278,13 @@ export function createBody(answers: {
   approvalsN?: number;
   /** An import's dapp.json, as the check read it. */
   repo?: RepoManifest | null;
+  /** The starter picked under "Start from a template". */
+  template?: TemplateId | null;
 }): Record<string, unknown> {
   const body: Record<string, unknown> = { name: answers.name, audience: answers.audience };
   const importing = answers.mode === 'import';
   if (importing && answers.repoUrl) body.repoUrl = answers.repoUrl;
+  if (answers.mode === 'template' && answers.template) body.template = answers.template;
   const description = (answers.description || '').replace(/\s+/g, ' ').trim();
   if (description && !(importing && answers.repo?.description)) body.description = description;
   if (answers.audience === 'invited') {
@@ -339,6 +351,7 @@ interface ShotState {
   audience: Audience | null;
   kind: Kind | null;
   mode: Mode | null;
+  template: TemplateId | null;
   approvers: Approvers | null;
   name: string;
 }
@@ -357,7 +370,7 @@ interface ShotState {
  * `create-access`, an older link, lands on `create-approve`.
  */
 function shotState(): ShotState {
-  const open: ShotState = { step: 'who', audience: null, kind: null, mode: null, approvers: null, name: '' };
+  const open: ShotState = { step: 'who', audience: null, kind: null, mode: null, template: null, approvers: null, name: '' };
   try {
     const shot = new URLSearchParams(location.search).get('shot');
     const named = { ...open, kind: 'app' as Kind, name: 'Seed swap' };
@@ -366,6 +379,7 @@ function shotState(): ShotState {
     if (shot === 'create-approve' || shot === 'create-access') return { ...named, step: 'approve', audience: 'open' };
     if (shot === 'create-start') return { ...named, step: 'start', audience: 'open', approvers: 'anyone' };
     if (shot === 'create-import') return { ...named, step: 'start', audience: 'solo', mode: 'import' };
+    if (shot === 'create-template') return { ...named, step: 'start', audience: 'solo', mode: 'template' };
     return open;
   } catch {
     return open;
@@ -743,6 +757,7 @@ export function CreateAppDialog() {
   const [approvals, setApprovals] = useState<Approvals | null>(null);
   const [approvalsN, setApprovalsN] = useState(1);
   const [mode, setMode] = useState<Mode | null>(null);
+  const [template, setTemplate] = useState<TemplateId | null>(null);
   const [step, setStep] = useState<Step>('who');
   const [importState, setImportState] = useState<ImportState>('idle');
   const [repo, setRepo] = useState<RepoManifest | null>(null);
@@ -777,7 +792,9 @@ export function CreateAppDialog() {
       case 'kind': return kind != null;
       case 'details': return name.trim().length > 0;
       case 'approve': return approvers != null && (approvers !== 'invited' || approvals != null);
-      case 'start': return mode != null && (mode !== 'import' || importState === 'ok');
+      case 'start': return mode != null
+        && (mode !== 'import' || importState === 'ok')
+        && (mode !== 'template' || template != null);
       default: return false;
     }
   }
@@ -795,6 +812,7 @@ export function CreateAppDialog() {
       setAudience(initial.audience);
       setKind(initial.kind);
       applyMode(initial.mode);
+      setTemplate(initial.template);
       setApprovers(initial.approvers);
       setStep(initial.step);
       if (nameRef.current) nameRef.current.value = initial.name;
@@ -809,6 +827,7 @@ export function CreateAppDialog() {
       formRef.current?.reset();
       setError('');
       applyMode(null);
+      setTemplate(null);
       setAudience(null);
       setPeople([]);
       setKind(null);
@@ -881,6 +900,13 @@ export function CreateAppDialog() {
     if (next === 'import') setTimeout(() => urlRef.current?.focus(), 0);
   }
 
+  /** Picking a starter is its own answer; a different way to start drops it. */
+  function chooseTemplate(next: TemplateId) {
+    if (step !== 'start') { setStep('start'); return; }
+    setError('');
+    setTemplate(next);
+  }
+
   /** Move one step along, once this one is answered. */
   function next() {
     if (!stepAnswered) {
@@ -902,6 +928,8 @@ export function CreateAppDialog() {
   /** One entry point keeps every mirror of the mode in sync. */
   function applyMode(next: Mode | null) {
     setMode(next);
+    // A starter belongs to the template row alone.
+    if (next !== 'template') setTemplate(null);
     setError('');
     // A new answer here starts the check over: no stale banner, no stale read.
     setImportState('idle');
@@ -1002,6 +1030,7 @@ export function CreateAppDialog() {
       approvals,
       approvalsN,
       repo,
+      template,
     });
 
     // One request at a time (QA 2026-09-24 Q5). Claimed synchronously, before
@@ -1056,6 +1085,7 @@ export function CreateAppDialog() {
     'data-kind': kind ?? '',
     'data-approvers': approvers ?? '',
     'data-approvals': approvals ?? '',
+    'data-template': template ?? '',
     'data-final': isLast ? 'true' : 'false',
     // Which earlier answers an import's dapp.json replaces (app.css dims them).
     'data-repo-sets': overrides.map((o) => o.key).join(' '),
@@ -1382,13 +1412,37 @@ export function CreateAppDialog() {
                 <span className={CHOICE_CAPTION}>An empty app. Describe what you want and build it with the group.</span>
               </span>
             </button>
-            <div className={SOON} data-mode-pill="template" aria-disabled="true">
+            <button
+              type="button"
+              data-mode-pill="template"
+              aria-pressed={mode === 'template'}
+              className={CHOICE}
+              onClick={() => chooseStart('template')}
+            >
               <span className="min-w-0 flex-1">
                 <span className={CHOICE_TITLE}>Start from a template</span>
-                <span className={CHOICE_CAPTION}>A ready-made app to make your own.</span>
+                <span className={CHOICE_CAPTION}>A small working app to make your own.</span>
               </span>
-              <span className={SOON_TAG}>Soon</span>
-            </div>
+            </button>
+            {mode === 'template' ? (
+              <div id="create-template-block" className="create-template-block space-y-2 pl-3">
+                {TEMPLATES.map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    data-template-pill={t.key}
+                    aria-pressed={template === t.key}
+                    className={'create-template-pill ' + CARD + ' w-full text-left px-4 py-2.5 flex items-center gap-3 transition-colors'}
+                    onClick={() => chooseTemplate(t.key)}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className={CHOICE_TITLE}>{t.title}</span>
+                      <span className={CHOICE_CAPTION}>{t.caption}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <button
               type="button"
               data-mode-pill="import"

@@ -51,6 +51,15 @@ function governanceOf(row) {
   return { approverPolicy: row?.approver_policy || 'anyone', approvalsRequired: row?.approvals_required ?? null };
 }
 
+// Which starting template a row was created from. An id that is not on the
+// current allow-list reads as Empty, so an old project (or one whose starter
+// was retired) still retries and builds the scaffold it was promised.
+function templateOf(row) {
+  const appTemplates = require('./app-templates');
+  const id = row?.template;
+  return appTemplates.isTemplate(id) ? id : appTemplates.DEFAULT_TEMPLATE;
+}
+
 // The create screen's "What is it?" line. POST /api/apps seeds it into the
 // row's manifest snapshot (the dapp.json the template is about to write), so
 // a Retry after a failed create writes it too.
@@ -130,7 +139,7 @@ async function createApp(config, appRow) {
 
         // repoUrl makes the template name this repo as the app's canonical
         // one (.claude/homeroom-canonical-repo, read by the freshness check).
-        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow) });
+        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow), template: templateOf(appRow) });
         await github.pushFiles(botUsername, slug, files, {
           message: `Initialize ${name} from Homeroom template`,
         });
@@ -252,7 +261,7 @@ async function createApp(config, appRow) {
       fs.mkdirSync(tempDir, { recursive: true });
       fs.mkdirSync(path.join(tempDir, 'public'), { recursive: true });
 
-      const files = getTemplateFiles(name, slug, dbUrl, null, { governance: governanceOf(appRow), description: descriptionOf(appRow) });
+      const files = getTemplateFiles(name, slug, dbUrl, null, { governance: governanceOf(appRow), description: descriptionOf(appRow), template: templateOf(appRow) });
       for (const f of files) {
         const filePath = path.join(tempDir, f.path);
         fs.mkdirSync(path.dirname(filePath), { recursive: true });

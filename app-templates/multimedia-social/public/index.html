@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- usernode-dev-console -->
+  <title>Multimedia social</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230a6ee0'/><circle cx='38' cy='40' r='8' fill='white'/><path d='M22 72l18-20 12 12 10-9 16 17z' fill='white'/></svg>">
+  <link rel="stylesheet" href="/tailwind.css">
+  <script src="/usernode-bridge/v1/bridge.js"></script>
+  <script>
+    (function () {
+      var media = window.matchMedia('(prefers-color-scheme: dark)');
+      function applyTheme() {
+        var theme = (window.usernode && window.usernode.theme)
+          || (media.matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.style.colorScheme = theme;
+      }
+      applyTheme();
+      window.addEventListener('usernode:theme-changed', applyTheme);
+      media.addEventListener('change', applyTheme);
+    })();
+  </script>
+</head>
+<body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100 min-h-screen">
+  <main class="max-w-lg mx-auto px-4 py-8 flex flex-col gap-5">
+    <header class="flex flex-col gap-1">
+      <h1 class="text-2xl font-bold">Feed</h1>
+      <p class="text-sm text-zinc-500 dark:text-zinc-400">A feed of posts with photos and likes. Anyone here can write one.</p>
+    </header>
+
+    <p id="template-note" class="rounded-xl bg-accent-soft text-accent-ink dark:bg-accent-soft-dark dark:text-accent-soft-ink text-sm px-4 py-3">
+      Started from the Multimedia social template. To change it, tap the Homeroom icon in the header and choose <strong class="font-semibold">Start a new change</strong>.
+    </p>
+
+    <form id="composer" class="rounded-2xl bg-white dark:bg-zinc-900 ring-1 ring-zinc-200 dark:ring-zinc-800 p-4 flex flex-col gap-3">
+      <label for="composer-caption" class="sr-only">Caption</label>
+      <textarea id="composer-caption" rows="2" maxlength="500" placeholder="Say something"
+                class="w-full resize-none bg-transparent text-[15px] placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none"></textarea>
+      <div class="flex items-center gap-2">
+        <label for="composer-photo" class="cursor-pointer text-[13px] font-medium text-zinc-500 dark:text-zinc-400 rounded-full px-3 py-1.5 ring-1 ring-zinc-200 dark:ring-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200 focus-within:ring-2 focus-within:ring-accent">
+          Add a photo
+        </label>
+        <input id="composer-photo" type="file" accept="image/png,image/jpeg,image/gif,image/webp" class="sr-only">
+        <span id="composer-photo-name" class="min-w-0 flex-1 truncate text-[13px] text-zinc-500 dark:text-zinc-400"></span>
+        <button type="submit" id="composer-post" class="shrink-0 rounded-full bg-accent text-white font-semibold px-4 py-2 text-[15px] hover:bg-accent-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 dark:focus-visible:ring-offset-zinc-950">
+          Post
+        </button>
+      </div>
+    </form>
+
+    <p id="feed-error" class="hidden rounded-xl bg-red-50 text-red-800 dark:bg-red-950 dark:text-red-200 text-sm px-4 py-3" role="alert"></p>
+
+    <section id="feed-posts" class="flex flex-col gap-4" aria-live="polite"></section>
+
+    <section id="feed-empty" class="hidden rounded-2xl bg-white dark:bg-zinc-900 ring-1 ring-zinc-200 dark:ring-zinc-800 px-5 py-8 text-center">
+      <p class="text-[15px] font-semibold">Nothing here yet</p>
+      <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Write the first post above.</p>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

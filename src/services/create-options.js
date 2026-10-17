@@ -1,5 +1,7 @@
 'use strict';
 
+const appTemplates = require('./app-templates');
+
 /**
  * The choices POST /api/apps accepts beyond a name and a repo (communities,
  * stage 3): who the project is for, who is invited into it, and who approves
@@ -182,7 +184,10 @@ function parseDescription(raw) {
  * `{ audience, collabVisibility, viewVisibility, invitees, inviteEmails,
  * governance, description }`.
  */
-function parseCreateOptions(body = {}) {
+function parseCreateOptions(body = {}, { imported = false } = {}) {
+  const tpl = appTemplates.parseTemplate(body.template, { imported });
+  if (tpl.error) return { error: tpl.error };
+
   let audience = null;
   let collabVisibility;
   let viewVisibility;
@@ -218,6 +223,7 @@ function parseCreateOptions(body = {}) {
     audience,
     collabVisibility,
     viewVisibility,
+    template: tpl.template,
     invitees: inv.invitees,
     inviteEmails: mail.emails,
     governance: gov.governance,
