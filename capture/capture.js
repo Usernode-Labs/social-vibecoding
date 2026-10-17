@@ -1377,36 +1377,54 @@ function groupTestsByDocument(tests, opts) {
     );
     // A cohort at one of the app's routing boundaries ends its group (see
     // groupTests): it is still reached by a switch, but last, so nothing is
-    // switched to after it. That is ordering only, and it must never become a
-    // load of the boundary's own: a check that first appears in a group is
-    // never reached by a switch, so a boundary leading a group would be judged
-    // without its incoming switch, the exemption a plain address must not get.
+    // switched to after it. That is ordering only, and it must never change
+    // WHICH checks are loaded rather than switched to. A cohort that leads a
+    // group is never reached by a switch, so a new leader, boundary or not,
+    // would be judged without its incoming switch: the exemption a plain
+    // address must not get, and a truthful boundary must not hand to another
+    // screen's navigation bug (Codex, review of 8764).
     //
-    // So the first k boundaries each end one chunk of the rest, which keeps
-    // the document's order and is chunked as usual, and k is the most for
-    // which every chunk is led by an ordinary cohort (one past the cap where
-    // a boundary joins). That never adds a load: there are at most as many
-    // chunks as plain grouping makes. A boundary past k stays where it is, as
-    // an ordinary cohort: a check switched to after it may fall back, which
-    // costs time and never a verdict. A document with no ordinary cohort
-    // (all boundaries) is grouped exactly as before. A bare cohort cannot be
-    // a boundary (a boundary is a fragment route), and stays first.
+    // So the chunks are plain grouping's own, with the same leaders, and only
+    // what follows a leader moves:
+    //   * a boundary that leads its chunk keeps it, alone: the cohorts after
+    //     it join the other chunks (the smallest first), switched to there as
+    //     they were here. With no chunk led by an ordinary cohort to take
+    //     them, they stay;
+    //   * each chunk's first boundary that is not its leader goes to that
+    //     chunk's end, and a further one to the end of a chunk that has none
+    //     yet (past the cap if it must).
+    // A boundary that finds no such place stays where it is, an ordinary
+    // cohort: a check switched to after it may fall back, which costs time
+    // and never a verdict. Same number of groups, the same leaders, so every
+    // check plain grouping reaches by a switch is still reached by one. A bare
+    // cohort cannot be a boundary (a boundary is a fragment route).
     const ends = (c) => !!c.hash && c.tests.some((t) => t && t.endsGroup);
-    const bounds = cohorts.filter(ends);
-    let k = bounds.length;
-    let lead = cohorts;
-    for (; k > 0; k -= 1) {
-      const last = new Set(bounds.slice(0, k));
-      lead = cohorts.filter((c) => !last.has(c));
-      const n = Math.ceil(lead.length / cap);
-      let ledByOrdinary = n >= k;
-      for (let c = 0; ledByOrdinary && c < n; c += 1) ledByOrdinary = !ends(lead[c * cap]);
-      if (ledByOrdinary) break;
-    }
-    if (k === 0) lead = cohorts;
     const chunks = [];
-    for (let i = 0; i < lead.length; i += cap) chunks.push({ cohorts: lead.slice(i, i + cap) });
-    bounds.slice(0, k).forEach((c, i) => chunks[i].cohorts.push(c));
+    for (let i = 0; i < cohorts.length; i += cap) chunks.push({ cohorts: cohorts.slice(i, i + cap), ended: false });
+    const takers = chunks.filter((ch) => !ends(ch.cohorts[0]));
+    for (const ch of chunks) {
+      if (!ends(ch.cohorts[0]) || ch.cohorts.length < 2 || !takers.length) continue;
+      for (const c of ch.cohorts.splice(1)) {
+        const host = takers.reduce((a, b) => (b.cohorts.length < a.cohorts.length ? b : a));
+        host.cohorts.push(c);
+      }
+    }
+    const spare = [];
+    for (const ch of chunks) {
+      const movable = ch.cohorts.slice(1).filter(ends);
+      if (!movable.length) continue;
+      ch.cohorts.splice(ch.cohorts.indexOf(movable[0]), 1);
+      ch.cohorts.push(movable[0]);
+      ch.ended = true;
+      for (const c of movable.slice(1)) spare.push({ c, from: ch });
+    }
+    for (const { c, from } of spare) {
+      const host = chunks.find((ch) => !ch.ended);
+      if (!host) break;
+      from.cohorts.splice(from.cohorts.indexOf(c), 1);
+      host.cohorts.push(c);
+      host.ended = true;
+    }
     for (const ch of chunks) {
       // Flatten the chunk: a group stays a plain array of tests, which is what
       // the pool's budget/timeout/emit paths already iterate.

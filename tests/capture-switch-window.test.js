@@ -226,18 +226,20 @@ test('an endsGroup cohort stays in its document\'s group, reached by a switch, a
     T(0, 'http://s/#/a'), T(1, 'http://s/#/b'), T(2, 'http://s/#/c'),
     T(3, 'http://s/#/e1', E), T(4, 'http://s/#/e2', E), T(5, 'http://s/#/e3', E), T(6, 'http://s/#/e3', E),
   ];
-  // Two chunks can each end on one; the third boundary stays an ordinary
-  // cohort rather than leading a chunk of its own (Codex, review of 8764).
-  assert.deepEqual(ids(groupTests(many, { TEST_HASH_GROUP_CAP: '2' })), [[0, 1, 3], [2, 5, 6, 4]]);
-  for (const g of groupTests(many, { TEST_HASH_GROUP_CAP: '2' })) {
-    assert.ok(!cohortsOf(g)[0].tests.some((t) => t.endsGroup), 'no boundary is a group\'s load');
-  }
+  // Plain grouping's chunks and leaders stay: #/e1 already ends its chunk;
+  // #/e2 leads its own and stays its load (as without the rule), alone, and
+  // #/e3, which followed it, ends the smallest other chunk instead. No chunk
+  // is opened for a boundary (Codex, reviews of 8764).
+  assert.deepEqual(ids(groupTests(many, { TEST_HASH_GROUP_CAP: '2' })), [[0, 1, 5, 6], [2, 3], [4]]);
+  // A spare boundary ends a chunk that has none yet, and leaders never change.
+  const spare = [T(0, 'http://s/#/a'), T(1, 'http://s/#/e1', E), T(2, 'http://s/#/e2', E), T(3, 'http://s/#/b'), T(4, 'http://s/#/c'), T(5, 'http://s/#/d')];
+  assert.deepEqual(ids(groupTests(spare, { TEST_HASH_GROUP_CAP: '3' })), [[0, 1], [3, 4, 5, 2]]);
   // A list that sets none is grouped exactly as before.
   const plain = many.map(({ endsGroup, ...t }) => t);
   assert.deepEqual(ids(groupTests(plain, { TEST_HASH_GROUP_CAP: '2' })), [[0, 1], [2, 3], [4, 5, 6]]);
-  // A document of boundaries only is grouped exactly as plain grouping would.
+  // A document of boundaries only keeps plain grouping's chunks and leaders.
   const all = [T(0, 'http://s/#/p/a', E), T(1, 'http://s/#/p/b', E), T(2, 'http://s/#/p/c', E)];
-  assert.deepEqual(ids(groupTests(all, {})), [[0, 1, 2]]);
+  assert.deepEqual(ids(groupTests(all, {})), [[0, 2, 1]]);
   assert.deepEqual(ids(groupTests(all, { TEST_HASH_GROUP_CAP: '2' })), [[0, 1], [2]]);
   // A bare address is never moved, whatever it carries: it is the group's load.
   assert.deepEqual(ids(groupTests([T(0, 'http://s/#/a'), T(1, 'http://s/', E)], {})), [[1, 0]]);
@@ -296,6 +298,7 @@ for (const marked of [true, false]) {
 // and `#page/broken`, which an incoming switch never draws (a navigation
 // bug; a load of it does draw it). The rule must not make it fast.
 function makeRoutesPage({ handsOff, brokenOnSwitch }) {
+  // brokenOnSwitch: routes an incoming switch never draws.
   const p = makePage({ renderOnHash: true });
   const evaluate = p.evaluate;
   let handedOff = false;
@@ -319,14 +322,14 @@ function makeRoutesPage({ handsOff, brokenOnSwitch }) {
   return p;
 }
 
-async function runRoutes(tests) {
+async function runRoutes(tests, brokenOnSwitch = ['#page/broken']) {
   const read = collect();
   const pages = [];
   const browser = {
     async createBrowserContext() {
       return {
         async newPage() {
-          const p = makeRoutesPage({ handsOff: ['#page/'], brokenOnSwitch: ['#page/broken'] });
+          const p = makeRoutesPage({ handsOff: ['#page/'], brokenOnSwitch });
           pages.push(p);
           return p;
         },
@@ -372,14 +375,41 @@ test('a document of boundaries only: every one after the first is still reached 
   assert.equal(r.fallbacks, 1);
 });
 
-test('a routing boundary never adds a load and never turns a switch into one (random documents)', () => {
+// Codex's round-2 reproductions (review of 8764): a truthful boundary on a
+// healthy screen must not hand ANOTHER screen's navigation bug a load.
+test('a broken ordinary route after a boundary keeps its incoming switch (two routes)', async () => {
+  const tests = [
+    T(0, 'http://s/#page/first', { expectSelector: '#at-#page/first', endsGroup: true }),
+    T(1, 'http://s/#plain/broken', { expectSelector: '#at-#plain/broken' }),
+  ];
+  assert.deepEqual(ids(groupTests(tests, {})), [[0, 1]], 'its leader stays the leader');
+  const r = await runRoutes(tests, ['#plain/broken']);
+  assert.deepEqual(r.frames.map((f) => f.status), ['pass', 'pass']);
+  assert.ok(r.switched.includes('#plain/broken'), 'its incoming switch is tested');
+  assert.equal(r.fallbacks, 1);
+});
+
+test('a broken ordinary route past the cap keeps its incoming switch (eight routes, default cap)', async () => {
+  const names = ['home', 'page/first', 'c', 'd', 'e', 'f', 'g', 'plain/broken'];
+  const tests = names.map((n, i) => T(i, `http://s/#${n}`, { expectSelector: `#at-#${n}`, ...(n === 'page/first' ? { endsGroup: true } : {}) }));
+  const plain = groupTests(tests.map(({ endsGroup, ...t }) => t), {});
+  assert.deepEqual(ids(plain), [[0, 1, 2, 3, 4, 5], [6, 7]]);
+  assert.deepEqual(ids(groupTests(tests, {})), [[0, 2, 3, 4, 5, 1], [6, 7]], 'the boundary moves last; no leader changes');
+  const r = await runRoutes(tests, ['#plain/broken']);
+  assert.ok(r.frames.every((f) => f.status === 'pass'));
+  assert.ok(r.switched.includes('#plain/broken'), 'its incoming switch is tested');
+  assert.equal(r.fallbacks, 1);
+});
+
+test('a routing boundary never changes which checks are loaded (random documents, every check)', () => {
   // The invariant, behaviourally: compared with grouping the same document
-  // with no boundary declared, the rule makes no more groups, and a check
-  // that is its group's load under the rule is its group's load without it
-  // too, or is not a boundary at all.
+  // with no boundary declared, the rule makes the same number of groups, and
+  // the checks that are a group's load are exactly the same checks, boundary
+  // or not. Every check plain grouping reaches by a switch is still reached
+  // by one.
   let seed = 7;
   const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
-  for (let run = 0; run < 400; run += 1) {
+  for (let run = 0; run < 3000; run += 1) {
     const n = 1 + rnd(14);
     const cap = String(1 + rnd(7));
     const tests = [];
@@ -390,14 +420,10 @@ test('a routing boundary never adds a load and never turns a switch into one (ra
     const env = { TEST_HASH_GROUP_CAP: cap };
     const ruled = groupTests(tests, env);
     const plain = groupTests(tests.map(({ endsGroup, ...t }) => t), env);
-    assert.ok(ruled.length <= plain.length, `more loads: ${JSON.stringify(ids(ruled))}`);
-    const leads = (groups) => new Set(groups.flatMap((g) => cohortsOf(g)[0].tests.map((t) => t.index)));
-    const plainLeads = leads(plain);
-    for (const g of ruled) {
-      for (const t of cohortsOf(g)[0].tests) {
-        if (tests[t.index].endsGroup) assert.ok(plainLeads.has(t.index), `boundary ${t.url} became a load (cap ${cap}): ${JSON.stringify(ids(ruled))} vs ${JSON.stringify(ids(plain))}`);
-      }
-    }
+    assert.equal(ruled.length, plain.length, `loads changed: ${JSON.stringify(ids(ruled))}`);
+    const leads = (groups) => groups.flatMap((g) => cohortsOf(g)[0].tests.map((t) => t.index)).sort((a, b) => a - b);
+    assert.deepEqual(leads(ruled), leads(plain),
+      `a check's load changed (cap ${cap}): ${JSON.stringify(ids(ruled))} vs ${JSON.stringify(ids(plain))}`);
     assert.equal(ruled.flat().length, n);
   }
 });
@@ -566,7 +592,12 @@ test('every check #5280 and #5317 marked still gets what its mark gave it', () =
     assert.equal(t.coldLoad, true, t.path);
     assert.equal(cohortsOf(groupOf(t)).length, 1, `${t.path} is its group's load`);
   }
-  // #5317's one: the running app's desktop check, now last in its group.
+  // The boundary changes no check's load: the same checks lead a group as
+  // when the same list is grouped without it.
+  const leads = (gs) => gs.flatMap((g) => cohortsOf(g)[0].tests.map((t) => t.index)).sort((a, b) => a - b);
+  assert.deepEqual(leads(groups), leads(groupTests(tests.map(({ endsGroup, ...t }) => t), {})));
+  // #5317's one: the running app's desktop check. It leads its chunk in plain
+  // grouping, so it keeps that load, alone, and nothing follows it.
   const app = tests.find((t) => t.path === '/#app/staging-demo-forkable');
   assert.equal(app.endsGroup, true);
   const cs = cohortsOf(groupOf(app));

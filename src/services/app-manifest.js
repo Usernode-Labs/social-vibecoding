@@ -482,9 +482,9 @@ function readTestsWithMeta(parsed) {
 //     app's App tab opens the pages about it in a side panel beside it).
 //     A check at such a route is still reached by a switch like any other;
 //     the only thing that changes is that no other check is switched to
-//     after it: it ends its group. It never becomes a load of its own
-//     (capture.js groupTestsByDocument): where its document has no ordinary
-//     check left to lead a group into it, it stays an ordinary cohort.
+//     after it: it ends its group. It never changes which checks get a
+//     load, its own or another's (capture.js groupTestsByDocument): where it
+//     cannot end a group without that, it stays an ordinary cohort.
 //
 // There is deliberately no per-check form, and no rule exempts an address
 // that carries no boot parameter from being reached by a switch: a check
