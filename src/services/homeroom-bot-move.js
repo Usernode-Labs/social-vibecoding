@@ -101,7 +101,11 @@ async function moveGate(pool, { app, issueNumber, user, deps = {} }) {
   try {
     raw = await github.getIssue(repo.owner, repo.repo, n);
   } catch (err) {
+    if (err?.status === 404) return { ok: false, code: 'not_found', error: 'There is no such request.' };
     log.warn('homeroom-bot-move', 'Could not read a request to move', { app: app.slug, issueNumber: n, err: err.message });
+    // Under a tap's claim (its act's work), a read a retry can cure is
+    // thrown, so the work tries again rather than fail the tap.
+    if (mayorModule().retryAct(err, deps.actKey)) throw err;
     return { ok: false, code: 'unreadable', error: 'Its request cannot be read right now.' };
   }
   if (!raw || raw.pull_request) return { ok: false, code: 'not_found', error: 'There is no such request.' };

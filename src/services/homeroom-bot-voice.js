@@ -1406,7 +1406,10 @@ async function decideOffer(pool, config, { app, user: viewer, messageId, choice,
  * gate read again, done, and said. Throws on a failure a retry can cure.
  * Resolves { decision }.
  */
-async function actOnOffer(pool, config, { offerId, userId, choice, key, gaveUp = false, deps = {} }) {
+async function actOnOffer(pool, config, { offerId, userId, choice, key, gaveUp = false, deps: given = {} }) {
+  // The act's claim rides with it, so a gate that cannot read GitHub for a
+  // moment throws to the work instead of failing the tap (mayor.retryAct).
+  const deps = { ...given, actKey: key };
   const { rows: [offer] } = await pool.query(
     `SELECT o.*, m.thread_type, m.thread_ref, m.id AS msg_id, a.slug AS app_slug
        FROM homeroom_bot_voice_offers o JOIN chat_messages m ON m.id = o.message_id JOIN apps a ON a.id = o.app_id

@@ -236,7 +236,11 @@ const BROKEN_TEXT = 'I couldn\'t answer just now. Try again in a minute.';
 function retryAct(err, key) {
   if (!key || !err) return false;
   if (err.permanent || ['github_unavailable', 'invalid issue number'].includes(err.message)) return false;
-  const status = Number(err.status) || 0;
+  // GitHub's rate limits, primary and secondary, are a 403 as often as a
+  // 429: a wait, never a refusal of what was asked (github-budget.js).
+  const budget = require('./github-budget');
+  if (budget.isRateLimitError(err) || budget.isSecondaryRateLimitError(err)) return true;
+  const status = Number(err.status || err.response?.status) || 0;
   return !(status >= 400 && status < 500 && status !== 408 && status !== 429);
 }
 // Its DM answer's key: what it sends in answer to message `id` (`attempt`: a
@@ -3684,6 +3688,9 @@ async function closeGate(pool, { app, issueNumber, user, deps = {} }) {
   } catch (err) {
     if (err?.status === 404) return { ok: false, code: 'not_found', error: 'There is no such request.' };
     log.warn('homeroom-bot-mayor', 'Could not read a request to close', { app: app.slug, issueNumber: n, err: err.message });
+    // Under a tap's claim (its act's work), a read a retry can cure is
+    // thrown, so the work tries again rather than fail the tap.
+    if (retryAct(err, deps.actKey)) throw err;
     return { ok: false, code: 'unreadable', error: 'Its request cannot be read right now.' };
   }
   if (!raw || raw.pull_request) return { ok: false, code: 'not_found', error: 'There is no such request.' };
