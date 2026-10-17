@@ -75,7 +75,8 @@ test('notification bookmarks against the full schema', { timeout: 120000 }, asyn
   const evan = await user('evan');
   const snait = await user('snait');
   const mine = await notify(evan.id);
-  const mineToo = await notify(evan.id, 'kudos');
+  // A second kind that is still shown (kudos is parked, #5249, and the readers skip it).
+  const mineToo = await notify(evan.id, 'collab');
   const theirs = await notify(snait.id);
 
   await t.test('saving pins the caller\'s own notification, and re-saving keeps the saved time', async () => {
