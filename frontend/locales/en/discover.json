@@ -84,11 +84,11 @@
     "description": "Title in the header bar of the Discover screen while it shows the list of every app."
   },
   "search.placeholder": {
-    "text": "Browse apps or site…",
+    "text": "Browse apps and communities…",
     "description": "Placeholder inside the search field at the top of the Discover screen, which filters the list of every app and also accepts a web address, which is then offered to open in a new browser tab."
   },
   "search.label": {
-    "text": "Browse apps or site",
+    "text": "Browse apps and communities",
     "description": "Accessible name of the search field at the top of the Discover screen."
   },
   "site.subtitle": {
