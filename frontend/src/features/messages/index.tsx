@@ -12,6 +12,7 @@ import {
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
+import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { unmountLegacyPortal } from '../../lib/legacy-portals';
 import { confirmAction } from '../../lib/confirm';
 import { useMenuKeyboard } from '../../lib/menu-keys';
@@ -1577,6 +1578,11 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const [flashId, setFlashId] = useState<number | null>(null);
   const shownFocus = useRef<number | null>(null);
 
+  // #3571: the kit's keyboard avoidance on this scroller, so the composer
+  // stays on screen when the phone keyboard opens (its settled pin puts
+  // Safari's pan back). Before any early return, so the hook order holds.
+  useComposerKeyboard(scroller);
+
   useEffect(() => {
     if (!conversationId) return;
     previousLast.current = null; initialScroll.current = null;
@@ -1798,6 +1804,9 @@ function ReplyThreadPanel() {
   const thread = snap.thread && snap.thread.rootId === rootId ? snap.thread : null;
   const scroller = useRef<HTMLDivElement>(null);
   const count = useRef(0);
+  // #3571: the same keyboard avoidance as the conversation's, before this
+  // pane's early return below, so the hook order holds.
+  useComposerKeyboard(scroller);
   useEffect(() => {
     if (conversationId && rootId && !snap.loadingThread && snap.active?.id === conversationId) {
       void loadReplyThread(conversationId, rootId);
