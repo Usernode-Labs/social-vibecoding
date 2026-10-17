@@ -590,14 +590,13 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   assert.ok(!calm.includes('data-ws-dash-open'), 'a resting figure does nothing when tapped');
   assert.ok(!/<button type="button" class="dev-ws-dash-cell/.test(calm), 'and no figure is a button');
 
-  // WHERE THE OPEN WORK IS, in chips, under the figures: it took the place
-  // of the model's paragraph and of the sentence derived from the counts,
-  // which said the figures over again in prose.
-  assert.match(html, /<p class="dev-ws-ov-topics" data-ws-open-topics=""><span class="dev-ws-ov-lead">Most open work is in<\/span><span class="dev-ws-ov-chips"><button type="button" class="dev-ws-ov-chip un-touch-target" data-ws-topic-chip="t">Theming<\/button><\/span><\/p>/);
-  assert.ok(html.indexOf('class="dev-ws-dash"') < html.indexOf('data-ws-open-topics'), 'under the figures');
+  // Nothing under the figures says where the open work is: the chips that
+  // took the place of the model's paragraph and of the sentence derived from
+  // the counts went too (#5391), for the room they took.
+  assert.ok(!html.includes('data-ws-open-topics') && !html.includes('data-ws-topic-chip'), 'no "Most open work is in" chips');
   assert.ok(!html.includes('dev-ws-open-line') && !html.includes('open items across'), 'no sentence repeats the figures');
   assert.ok(!html.includes('dev-ws-lead-title'), 'nor a heading over one');
-  assert.equal(message('project:workshop.overview.mostOpenIn'), '<0>Most open work is in</0><1></1>');
+  assert.ok(!read('frontend/locales/en/project.json').includes('"workshop.overview.mostOpenIn"'), 'and its words are gone');
 });
 
 test('live this week says what last week came to, the whole rate on hover, and nothing off a paged history', () => {
@@ -701,8 +700,9 @@ test('the Overview says where the open work is, not the model\'s paragraph nor o
   seed(AppView);
   // After-Workshop-B: the paragraph about the open work, the sentence the
   // counts derived when there was none, and the caption that said which of
-  // the two was on screen all gave way to one line of chips. Whatever the
-  // model has or has not written, the Overview says the same thing.
+  // the two was on screen all gave way to one line of chips, and #5391 took
+  // the chips out. Whatever the model has or has not written, the Overview
+  // says nothing about the open work beyond its figures.
   const states = [
     { digest: 'In the last week, alice finished the sign-in work. Bob is on the mail templates now.' },
     {},
@@ -711,7 +711,7 @@ test('the Overview says where the open work is, not the model\'s paragraph nor o
   for (const extra of states) {
     AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12'] }], extra);
     const html = workshopHtml(AppView, 'workshop');
-    assert.match(html, /data-ws-open-topics=""><span class="dev-ws-ov-lead">Most open work is in<\/span><span class="dev-ws-ov-chips"><button[^>]*data-ws-topic-chip="t">Theming</, JSON.stringify(extra));
+    assert.ok(!html.includes('data-ws-open-topics'), JSON.stringify(extra));
     assert.ok(!html.includes('alice finished the sign-in work'), 'no paragraph');
     assert.ok(!html.includes('open items across'), 'no derived sentence');
     assert.ok(!html.includes('data-ws-digest-note'), 'and no caption about either');
@@ -744,10 +744,11 @@ test('the digest survives the fetch that loads it', async () => {
 
   assert.equal(AppView._workshopThemes.digest, digest, 'the normaliser keeps it');
   assert.equal(AppView._workshopView().dashboard.summary, digest, 'and the view model carries it');
-  // The Workshop's Overview draws the chips in its place (After-Workshop-B).
+  // The Workshop's Overview draws neither it nor the chips that once took
+  // its place (After-Workshop-B, #5391).
   const html = workshopHtml(AppView, 'workshop');
   assert.ok(!html.includes('alice finished the sign-in work'));
-  assert.match(html, /data-ws-topic-chip="t"/);
+  assert.ok(!html.includes('data-ws-topic-chip'));
 
   // A response with no paragraph still reads as one: null, not undefined.
   const empty = makeAppView({ fetch: async () => ({ ok: true, json: async () => ({ ...body, digest: null }) }) });
@@ -836,11 +837,11 @@ test('the lead block went with its sentence, and the walk’s way back went with
     },
   }));
   const html = workshopHtml(AppView, 'workshop');
-  // "Open items" titled the open line while the Overview had one. The chips
-  // say what that sentence did, so neither the heading nor its rule is left.
+  // "Open items" titled the open line while the Overview had one. Neither
+  // the heading nor its rule is left, nor the chips that followed (#5391).
   assert.ok(!html.includes('dev-ws-lead-title') && !html.includes('dev-ws-lead-head'));
   assert.doesNotMatch(CSS, /\.dev-ws-lead-(title|head) \{/);
-  assert.match(html, /data-ws-open-topics=""/, 'the chips in their place');
+  assert.ok(!html.includes('data-ws-open-topics'), 'nor the chips');
   // "Hide past weeks" folded the walk that was under this block. The weeks
   // are What happened's now, each a row or this week's head.
   assert.ok(!html.includes('data-ws-week-less'));
@@ -1164,7 +1165,7 @@ test('an empty window is no week at all', async () => {
   const bare = workshopHtml(none, 'workshop');
   assert.ok(!bare.includes('data-ws-week=') && !bare.includes('data-ws-happened'));
   assert.ok(!bare.includes('open items across'), 'and still no derived sentence');
-  assert.match(bare, /data-ws-open-topics=""/, 'the Overview says where the open work is all the same');
+  assert.ok(!bare.includes('data-ws-open-topics'), 'and no chips (#5391)');
 });
 
 test('a row written before the cards keeps its paragraph in the view, and its weeks their lines', async () => {
@@ -3845,13 +3846,9 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
   // one selector — it is the standing rule for this manifest, learned from
   // six straight gate failures against a selector that resolved perfectly in
   // this repo's own Chromium.
-  // After-Workshop-B: the line about the open work gave way to chips saying
-  // where most of it is, so the route check selects a chip.
-  const route = byName(/Workshop tab says where most of the open work is, as chips/);
-  assert.ok(route, 'the chips are what the gate can select');
-  assert.ok(!route.expectSelector.includes(':has('), 'no :has() on a gate that blocks merge');
-  assert.match(route.expectSelector, /#dev-workshop \[data-ws-dashboard\] > \[data-ws-open-topics\] > \.dev-ws-ov-chips > \[data-ws-topic-chip\]$/);
-  assert.equal(route.expectText, 'Most open work is in');
+  // #5391: the "Most open work is in" chips are gone from the Overview, and
+  // the route check that selected one with them.
+  assert.ok(!byName(/Workshop tab says where most of the open work is, as chips/), 'the chips\' check is retired');
   // The staging demo's mock categories hold its mock requests, which are open.
   assert.match(read('src/routes/workshop-themes.js'), /items: \['issue:900001', 'issue:900004', 'issue:900008'\]/);
   // THE PAGE'S ORDER (After-Workshop-B): the Overview label, All items with
@@ -4604,47 +4601,19 @@ test('#2915: declared checks open the Workshop page and the hub with a search on
   assert.match(whole.expectSelector, /:has\(> \[data-place-bar="workshop"\]\) \[data-ws-part="overview"\] \+ \[data-ws-dashboard\]$/, 'and its Overview stands whole');
 });
 
-test('where the open work is: the categories with the most of it, over the whole app, each opening its topic', () => {
+test('#5391: the Overview names no categories; the "Most open work is in" chips and what fed them are gone', () => {
   const AppView = makeAppView();
   seed(AppView);
-  AppView._ghIssues.push(
-    { number: 14, title: 'Sign-in on a phone', createdAt: at(4), updatedAt: at(4), lastMessageAt: null, user: 'erin', htmlUrl: 'https://github.com/x/y/issues/14' },
-    { number: 15, title: 'Password reset', createdAt: at(4), updatedAt: at(4), lastMessageAt: null, user: 'erin', htmlUrl: 'https://github.com/x/y/issues/15' },
-    { number: 16, title: 'Magic link', createdAt: at(4), updatedAt: at(4), lastMessageAt: null, user: 'erin', htmlUrl: 'https://github.com/x/y/issues/16' },
-  );
   AppView._workshopThemes = themes([
     { id: 'look', name: 'Look', items: ['issue:12'] },
-    { id: 'auth', name: 'Sign-in', items: ['issue:14', 'issue:15', 'issue:16'], topic: { key: 'auth', handle: 'sign-in' } },
-    { id: 'votes', name: 'Voting', items: ['issue:13', 'session:34'] },
-    { id: 'done', name: 'Shipped only', items: ['merged:78'] },
-    { id: 'a', name: 'A', items: [] }, { id: 'b', name: 'B', items: [] },
+    { id: 'auth', name: 'Sign-in', items: ['issue:13'], topic: { key: 'auth', handle: 'sign-in' } },
   ]);
-  // Ranked by open work (open, underway and in review, as "open items"
-  // counts it), at most four, none with nothing open; a tie keeps the
-  // grouping's own order. A topic carries its channel.
-  const ranked = plain(AppView._workshopView().dashboard.openThemes);
-  assert.deepEqual(ranked.map((t) => [t.id, t.open]), [['auth', 3], ['votes', 2], ['look', 1]]);
-  assert.deepEqual(ranked[0].topic, { key: 'auth', handle: 'sign-in' });
-  assert.equal(AppView.WORKSHOP_OPEN_THEMES_MAX, 4);
-  assert.equal(AppView._workshopOpenThemes([1, 2, 3, 4, 5].map((n) => ({ id: `t${n}`, name: `T${n}`, counts: { open: n } }))).length, 4);
-  // All items' search narrows All items alone (#2915): the Overview is about
-  // the app, so a search leaves its chips whole.
-  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'nothing matches this' };
-  assert.deepEqual(plain(AppView._workshopView().dashboard.openThemes).map((t) => t.id), ['auth', 'votes', 'look']);
-  AppView._kanbanFilters = AppView._defaultKanbanFilters();
-  // A topic's chip is its channel's link, as its card's "Discuss in #name"
-  // is; any other category's opens its card on All items, unfolded.
+  assert.ok(!('openThemes' in AppView._workshopView().dashboard), 'the view model no longer ranks categories');
+  assert.equal(AppView._workshopOpenThemes, undefined);
+  assert.equal(AppView.WORKSHOP_OPEN_THEMES_MAX, undefined);
   const html = workshopHtml(AppView, 'workshop');
-  assert.match(html, /<span class="dev-ws-ov-chips"><a class="dev-ws-ov-chip un-touch-target" data-ws-topic-chip="auth" data-ws-topic-channel="sign-in" href="\/app\/demo-app\/dev\/c\/sign-in">Sign-in<\/a><button type="button" class="dev-ws-ov-chip un-touch-target" data-ws-topic-chip="votes">Voting<\/button><button type="button" class="dev-ws-ov-chip un-touch-target" data-ws-topic-chip="look">Look<\/button><\/span>/);
-  assert.match(WORKSHOP, /<OpenTopics list=\{v\.dashboard\.openThemes\} slug=\{slug\} onChannel=\{openTab\} onTheme=\{openTheme\} \/>/);
-  assert.match(WORKSHOP, /const openTheme = \(id: string\) => \{\s*callAppView\('_setWorkshopGroup', 'category'\);\s*setOpenThemes\(\(cur\) => \(\{ \.\.\.\(cur \|\| \{\}\), \[id\]: true \}\)\);\s*setFocusTheme\(id\);\s*openTab\('all'\);\s*\};/);
-  // Nothing open is nothing to say.
-  const empty = makeAppView();
-  seed(empty);
-  empty._ghIssues = [];
-  empty._proposals = [];
-  empty._workshopThemes = themes([{ id: 't', name: 'T', items: [] }]);
-  assert.ok(!workshopHtml(empty, 'workshop').includes('data-ws-open-topics'));
+  assert.ok(!html.includes('data-ws-open-topics') && !html.includes('data-ws-topic-chip'));
+  assert.doesNotMatch(WORKSHOP, /OpenTopics|const openTheme = |focusTheme/, 'nor does the Workshop keep a way in for one');
 });
 
 test('an empty board still gets the All items pane, and the note names the ⋯ and where it is', () => {
@@ -5579,7 +5548,7 @@ test('#4457: the weeks before this one open on two rows, and Earlier weeks adds 
     'dev-ws-weekpage', 'dev-ws-week-meta', 'dev-ws-week-lead', 'dev-ws-none', 'dev-ws-since-clear', 'dev-ws-parthead',
     'dev-ws-hweek', 'dev-ws-hweek-head', 'dev-ws-hlist', 'dev-ws-hrow', 'dev-ws-hrow-dot', 'dev-ws-hrow-glyph', 'dev-ws-hrow-main',
     'dev-ws-hrow-link', 'dev-ws-hrow-meta', 'dev-ws-hrow-you', 'dev-ws-hrow-ago',
-    'dev-ws-dash-sub', 'dev-ws-dash-trend', 'dev-ws-ov-topics', 'dev-ws-ov-lead', 'dev-ws-ov-chips', 'dev-ws-ov-chip',
+    'dev-ws-dash-sub', 'dev-ws-dash-trend',
     'dev-ws-ov-rule', 'dev-ws-ov-rule-icon', 'dev-ws-ov-rule-text', 'dev-ws-ov-rule-wait', 'dev-ws-ov-rule-edit',
     'dev-ws-ov-faces', 'dev-ws-ov-face', 'dev-ws-ov-wide', 'dev-ws-ov-narrow',
     'dev-ws-side', 'dev-ws-side-bar', 'dev-ws-side-btn', 'dev-ws-side-page']) {
@@ -5587,7 +5556,7 @@ test('#4457: the weeks before this one open on two rows, and Earlier weeks adds 
   }
   assert.match(stripped, /\.dev-ws-since-clear \{[^}]*margin-left: auto;/, 'Mark all seen at the far end of the label\'s row');
   // And what nothing draws any more has none.
-  assert.doesNotMatch(stripped, /\.dev-ws-(rules|rule-step|rule-join|rule-tile|rule-text|since-sum|week-line) \{/);
+  assert.doesNotMatch(stripped, /\.dev-ws-(rules|rule-step|rule-join|rule-tile|rule-text|since-sum|week-line|ov-topics|ov-lead|ov-chips|ov-chip) \{/);
   // The rule's two wordings: the wide card's, and the narrow card's.
   assert.match(stripped, /\.dev-ws-ov-narrow \{ display: none; \}\s*@container \(max-width: 520px\) \{\s*\.dev-ws-ov-wide \{ display: none; \}\s*\.dev-ws-ov-narrow \{ display: inline; \}\s*\}/);
   assert.match(stripped, /\.dev-ws-strip\[data-ws-dashboard\] \{ container-type: inline-size; \}/);

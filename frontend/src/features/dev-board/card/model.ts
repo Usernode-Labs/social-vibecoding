@@ -776,14 +776,6 @@ export interface DevWorkshopView {
     unclaimed: number;
     /** The theme with the most recent activity, by name. */
     busiest: string | null;
-    /**
-     * Where most of the open work is (After-Workshop-B): up to four
-     * categories, the most open work first (open, underway and in review,
-     * as `open` counts it), over the whole app whatever All items is
-     * searched for (AppView._workshopOpenThemes). `topic` is a project
-     * topic's, whose chip opens its channel. Empty when nothing is open.
-     */
-    openThemes: { id: string; name: string; open: number; topic: { key: string; handle: string } | null }[];
     /** The merged history is paged; true means the week counts are floors. */
     partial: boolean;
     /**

@@ -203,6 +203,13 @@ test('the tray: rendered only while open, into the body; focus in and back; Esca
   assert.match(CSS, /@keyframes dev-ws-tray-out \{ from \{ transform: none; \} to \{ transform: translateX\(-100%\); \} \}/);
   assert.match(CSS, /@keyframes dev-ws-tray-fade-out \{ from \{ opacity: 1; \} to \{ opacity: 0; \} \}/);
   assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.dev-ws-tray-root\.is-closing \.dev-ws-tray, \.dev-ws-tray-root\.is-closing \.dev-ws-tray-scrim \{ animation: none; \}/);
+  // #5384: it opens under the header, which stays undimmed and pressable,
+  // and the list no longer pads for the status bar the header now covers.
+  const root = CSS.slice(CSS.indexOf('.dev-ws-tray-root {'), CSS.indexOf('}', CSS.indexOf('.dev-ws-tray-root {')));
+  assert.match(root, /top: calc\(var\(--browser-banner-h, 0px\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top, 0px\)\);/);
+  assert.doesNotMatch(root, /inset: 0/, 'not over the header');
+  const card = CSS.slice(CSS.indexOf('.dev-ws-tray {'), CSS.indexOf('}', CSS.indexOf('.dev-ws-tray {')));
+  assert.match(card, /padding: 16px 12px calc\(16px \+ var\(--platform-safe-bottom, 0px\)\);/);
 });
 
 test('places: keys, handles, aliases and addresses', () => {

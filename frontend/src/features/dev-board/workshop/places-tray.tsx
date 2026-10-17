@@ -4,8 +4,9 @@
  * Opened from the place bar's button (./place-bar.tsx), or by a swipe right
  * that starts at the screen's left edge; a swipe left on it, Escape, the
  * scrim, the button again and the device's Back each close it. It slides in
- * from the left over a scrim, as wide as the list needs (296px, never more
- * than the screen less a strip of the page), and holds the list
+ * from the left over a scrim, under the header (#5384: the header stays as
+ * it is, undimmed and pressable), as wide as the list needs (296px, never
+ * more than the screen less a strip of the page), and holds the list
  * (./project-places.tsx) with "Switch community" at its foot.
  *
  * Like the community switcher it is rendered while open — and while it

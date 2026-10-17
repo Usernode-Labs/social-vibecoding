@@ -929,63 +929,6 @@ function DashTiles({ d, owed, onVotes }: { d: Dash; owed: number; onVotes?: () =
 }
 
 /**
- * WHERE THE OPEN WORK IS, under the figures (After-Workshop-B): "Most open
- * work is in" and the four categories with the most of it, as chips
- * (`dashboard.openThemes`, ranked over the whole app, whatever All items is
- * searched for, #2915). It replaces the model's paragraph about the open
- * work and the sentence derived from the counts, which said the figures
- * over again in prose. A chip opens its topic the way a topic opens: a
- * project topic is its channel; any other category is its card on All
- * items, unfolded.
- */
-function OpenTopics({ list, slug, onChannel, onTheme }: {
-  list: Dash['openThemes'];
-  slug: string;
-  onChannel: (place: TabKey) => void;
-  onTheme: (id: string) => void;
-}): ReactNode {
-  useMessages('project');
-  if (!list || !list.length) return null;
-  const chips = (
-    <span className="dev-ws-ov-chips">
-      {list.map((theme) => (theme.topic ? (
-        <a
-          key={theme.id}
-          className="dev-ws-ov-chip un-touch-target"
-          data-ws-topic-chip={theme.id}
-          data-ws-topic-channel={theme.topic.handle}
-          href={placeHref(slug, channelPlace(theme.topic.handle))}
-          onClick={(e) => {
-            const nav = (window as unknown as { NavLink?: { isNativeClick?: (ev: unknown) => boolean } }).NavLink;
-            if (nav?.isNativeClick?.(e)) return;
-            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-            e.preventDefault();
-            onChannel(channelPlace(theme.topic?.handle));
-          }}
-        >
-          {theme.name}
-        </a>
-      ) : (
-        <button
-          key={theme.id}
-          type="button"
-          className="dev-ws-ov-chip un-touch-target"
-          data-ws-topic-chip={theme.id}
-          onClick={() => onTheme(theme.id)}
-        >
-          {theme.name}
-        </button>
-      )))}
-    </span>
-  );
-  return (
-    <p className="dev-ws-ov-topics" data-ws-open-topics="">
-      <RichMessage id="project:workshop.overview.mostOpenIn" components={[<span className="dev-ws-ov-lead" />, chips]} />
-    </p>
-  );
-}
-
-/**
  * The three cards: what landed last week, what has landed this week, what
  * the open work is about — one model-written line each, under a title.
  *
@@ -4194,9 +4137,6 @@ export function DevWorkshop(): ReactNode {
   const [openWeek, setOpenWeek] = useState<string | null>(null);
   // New for you's rows past its first WORKSHOP_WORK_FIRST, put out in place.
   const [freshAll, setFreshAll] = useState(false);
-  // The category an Overview chip opened on All items, unfolded and brought
-  // into view once the page is up.
-  const [focusTheme, setFocusTheme] = useState<string | null>(null);
   // #4457: the item whose page is open in the panel beside the list (wide
   // windows only; ./side-panel.tsx), as the kind and id AppView opens.
   const [sideItem, setSideItem] = useState<TopicRef | null>(null);
@@ -4497,17 +4437,6 @@ export function DevWorkshop(): ReactNode {
     setWeeksShown(WEEKS_FIRST);
     setFreshAll(false);
   }, [v.slug]);
-  // An Overview chip's category, once All items has drawn it: into view,
-  // the way the page brings an item's row beside the side panel above.
-  useLayoutEffect(() => {
-    if (tab !== 'all' || !focusTheme) return;
-    const card = hostRef.current
-      ? hostRef.current.querySelector<HTMLElement>(`[data-ws-theme="${CSS.escape(focusTheme)}"]`)
-      : null;
-    setFocusTheme(null);
-    if (card && typeof card.scrollIntoView === 'function') card.scrollIntoView({ block: 'start' });
-  }, [tab, focusTheme]);
-
   // A deep link that names a row (the ?shot= captures): open its theme and
   // unfold it once, on the publish that carries it.
   const autoKey = v.autoExpand ? `${v.autoExpand.theme}:${v.autoExpand.key}` : null;
@@ -4811,14 +4740,6 @@ export function DevWorkshop(): ReactNode {
     }
     return null;
   };
-  // An Overview chip for a category that is not a topic: its card on All
-  // items, unfolded, read By category.
-  const openTheme = (id: string) => {
-    callAppView('_setWorkshopGroup', 'category');
-    setOpenThemes((cur) => ({ ...(cur || {}), [id]: true }));
-    setFocusTheme(id);
-    openTab('all');
-  };
 
   return (
     <div
@@ -5057,11 +4978,6 @@ export function DevWorkshop(): ReactNode {
               else openTab('all');
             }}
           />
-          {/* Where the open work is: the categories with the most of it, as
-              chips. It replaced the model's paragraph about the open work
-              and the sentence derived from the counts, and the caption that
-              said which of the two was on screen. */}
-          <OpenTopics list={v.dashboard.openThemes} slug={slug} onChannel={openTab} onTheme={openTheme} />
           {/* 16 Oct 2026 (V2): Homeroom bot's slots on this project, and the
               requests waiting for one, a page under the Workshop
               (./bot-slots.tsx). Inside the card, above its rule, so the
