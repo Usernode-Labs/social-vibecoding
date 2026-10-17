@@ -1,5 +1,5 @@
 /**
- * The four steps of the welcome tour, as data.
+ * The five steps of the welcome tour, as data.
  *
  * Kept as a plain table with no React in it so the order, the wording, the
  * anchoring and the interaction rules can be asserted without rendering
@@ -97,7 +97,7 @@ export interface TourStep {
 }
 
 /*
- * ── #3240: four stops, and only when asked ─────────────────────────────
+ * ── #3240: the tour runs only when asked; #3567 opens it on communities ──
  *
  * The tour used to start by itself right after "What communities do you want
  * to join?" (../../auth/communities-first-run.js), and the two said the same
@@ -106,11 +106,23 @@ export interface TourStep {
  * card (../getting-started.tsx) or from Settings, and it keeps the four stops
  * nothing else on the first run covers: the shortcuts on Home, the mark that
  * opens the menu inside every app, the two actions in that menu, and where to
- * find the tour again. Welcome, Workshop, Discover and Getting started left:
- * the join screen and the card already say each of them, and the card is the
- * thing the viewer has just pressed.
+ * find the tour again. #3567 puts what a community is in front of those,
+ * because they all assume it. Welcome, Workshop, Discover and Getting started
+ * left: the join screen and the card already say each of them, and the card is
+ * the thing the viewer has just pressed.
  */
 export const TOUR_STEPS: readonly TourStep[] = [
+  {
+    // #3567: the tour opens on what a community IS, because every later step
+    // assumes the projects and the votes it explains. It points at the
+    // Communities tab, whose id has kept `workshop` since the tab was named
+    // after the Workshop; only its visible word is Communities. The step is
+    // described, not pressed: a tab press leaves Home and the tour.
+    id: 'communities',
+    title: 'Communities',
+    body: 'Homeroom is made of communities that build projects together. Anyone in one can propose a change, and the group votes it in. A community is Just you, a Private community or a Public community. Yours are here.',
+    targets: ['#platform-tab-workshop'],
+  },
   {
     // The Shortcuts section, heading and grid together, so the card never
     // sits on the heading the step is about. `#app-list` is the fallback
