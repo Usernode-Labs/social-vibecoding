@@ -119,7 +119,7 @@ export {
   groupRows, orderRows, SECTION_LIMIT, SECTION_STEP, SECTIONS, sectionFold,
 } from './sections';
 
-type WorkshopRow = {
+export type WorkshopRow = {
   slug: string;
   name?: string;
   icon_url?: string | null;
@@ -310,7 +310,17 @@ export function StatusLine({ working, needs }: { working: number; needs: number 
  * (2.75rem, `rounded-xl`), exactly as features/apps/browse-list.tsx draws it —
  * app.css owns that face, and a call site must not repaint it.
  */
-function AppRow({ row }: { row: WorkshopRow }) {
+export function AppRow({ row, onOpen, current = false }: {
+  row: WorkshopRow;
+  /**
+   * What a plain press does instead of opening the project's hub: the
+   * phone's drawer (../nav-drawer/outer-level.tsx) switches community in
+   * place, keeping the place you were on.
+   */
+  onOpen?: (row: WorkshopRow) => void;
+  /** The community the drawer is on, marked on its tile. */
+  current?: boolean;
+}) {
   // Subscribed: the row's fact (rowSubtitle) is read in the language on screen.
   const t = useMessages('communities');
   const fact = rowSubtitle(row);
@@ -327,10 +337,15 @@ function AppRow({ row }: { row: WorkshopRow }) {
       href={`/app/${encodeURIComponent(row.slug)}/workshop`}
       data-workshop-app={row.slug}
       data-workshop-audience={row.audience || 'open'}
+      aria-current={current ? 'true' : undefined}
       onClick={(event) => {
         const win = window as any;
         if (win.NavLink?.isNativeClick?.(event)) return;
         event.preventDefault();
+        if (onOpen) {
+          onOpen(row);
+          return;
+        }
         // A row opens the project's hub, whatever tab it was last left on.
         win.AppView?._landOnHub?.(row.slug);
         win.App?.navigateToApp?.(row.slug, 'dev');
@@ -377,7 +392,7 @@ function AppRow({ row }: { row: WorkshopRow }) {
  * changes. `chevron={false}` because a disclosure arrow on a row that
  * discloses nothing yet is the one part of the shape worth NOT reproducing.
  */
-function RowSkeletons(): ReactNode {
+export function RowSkeletons(): ReactNode {
   const t = useMessages('communities');
   return (
     <SkeletonGroup label={t('communities:list.loading')}>
@@ -412,12 +427,18 @@ function RowSkeletons(): ReactNode {
  * `button`, not an anchor, because it navigates nowhere — which also keeps it
  * out of `a[data-workshop-app]:first-of-type` for good.
  */
-function Section({ audience, label, count, rows }: {
+export function Section({ audience, label, count, rows, idPrefix = 'workshop-section', onOpen, current }: {
   audience: Audience;
   /** The section's heading and its count's accessible name, as message ids. */
   label: string;
   count: string;
   rows: WorkshopRow[];
+  /** The heading's id is `<idPrefix>-<audience>`: the drawer draws its own copy. */
+  idPrefix?: string;
+  /** AppRow's: a press that is not a door to the hub. */
+  onOpen?: (row: WorkshopRow) => void;
+  /** The community the drawer is on. */
+  current?: string | null;
 }) {
   // Subscribed: the heading and the fold row (sectionFold) follow the language.
   const t = useMessages('communities');
@@ -427,7 +448,7 @@ function Section({ audience, label, count, rows }: {
   const fold = sectionFold(rows.length, limit);
   const shown = rows.slice(0, fold.shown);
   const expanded = fold.shown === rows.length;
-  const headingId = `workshop-section-${audience}`;
+  const headingId = `${idPrefix}-${audience}`;
   return (
     <section data-workshop-section={audience} aria-labelledby={headingId}>
       <SectionHeader id={headingId} className="flex items-center gap-1.5">
@@ -436,7 +457,7 @@ function Section({ audience, label, count, rows }: {
         <span className="ml-auto tabular-nums" aria-label={t(count, { count: rows.length })}>{rows.length}</span>
       </SectionHeader>
       <GroupedList tone="plane">
-        {shown.map((row) => <AppRow key={row.slug} row={row} />)}
+        {shown.map((row) => <AppRow key={row.slug} row={row} onOpen={onOpen} current={!!current && current === row.slug} />)}
         {rows.length > SECTION_LIMIT ? (
           <ListRow
             as="button"

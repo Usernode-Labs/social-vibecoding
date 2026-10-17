@@ -306,5 +306,33 @@
   "switcher.start": {
     "text": "Start a community",
     "description": "Row at the end of the Your communities switcher: closes it and opens the dialog that creates a new project and its community."
+  },
+  "drawer.outer.name": {
+    "text": "Your communities",
+    "description": "On a phone, under the Communities tab: the name, for a screen reader, of the outermost level of the navigation drawer, the list of every community the person is in."
+  },
+  "drawer.places.name": {
+    "text": "{{community}}'s places",
+    "description": "On a phone, under the Communities tab: the name, for a screen reader, of the drawer level that lists one community's places (Hub, Needs you, Workshop, its channels). {{community}} is the community's name."
+  },
+  "drawer.peek.page": {
+    "text": "Back to {{page}}",
+    "description": "On a phone, under the Communities tab: what a screen reader says for the edge of the page that peeks in beside a community's places; pressing it slides back to that page. {{page}} is the page's name, for example Workshop or #general."
+  },
+  "drawer.search.placeholder": {
+    "text": "Search your communities",
+    "description": "Placeholder of the search field at the top of the list of the person's communities, in the phone's navigation drawer."
+  },
+  "drawer.search.label": {
+    "text": "Search your communities",
+    "description": "Accessible name of the search field at the top of the list of the person's communities, in the phone's navigation drawer."
+  },
+  "drawer.search.cancel": {
+    "text": "Cancel",
+    "description": "Button beside the communities search in the phone's navigation drawer: ends the search, clears it, and narrows the list back so the community's places peek in again."
+  },
+  "drawer.search.none": {
+    "text": "None of your communities match “{{query}}”.",
+    "description": "Shown in the phone's navigation drawer when no community the person is in has the searched words in its name. {{query}} is what they typed."
   }
 }

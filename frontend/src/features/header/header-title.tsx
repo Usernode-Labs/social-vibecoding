@@ -100,6 +100,8 @@ import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view'
 import { useDevViewMode } from '../dev-board/view-mode-store';
 import { communityScopeStore, toggleSwitcher } from '../workshop/community-scope';
 import { HeaderPlaceName } from '../dev-board/workshop/place-bar';
+import { drawerStore } from '../nav-drawer/drawer-store';
+import { DrawerTitles } from '../nav-drawer/header-drawer';
 
 // The one string that means "this is naming the platform, not an app". It is
 // header-title-store.js's INITIAL, which is why the prerendered document and
@@ -118,6 +120,11 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   // app's name opens it, and so does the Communities screen's All chip.
   const { switcher } = useStoreState(communityScopeStore);
   const switcherOpen = !!switcher;
+  // THE PHONE'S DRAWER (../nav-drawer/): on a community's page under 768px
+  // the title is the drawer's, "Communities", the community, or the
+  // community over its page, moving with the drawer. Off until the drawer
+  // has settled that it applies, after hydration.
+  const { on: drawerOn } = useStoreState(drawerStore);
 
   const onSession = tab === 'dev' && subTab === 'sessions';
   const sessionPill = onSession && life ? <MergeStatusPill life={life} /> : null;
@@ -170,6 +177,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
       id="header-title"
       className={"flex-1 min-w-0 text-base font-semibold pointer-events-none truncate\n               text-left"}
     >
+      {drawerOn ? <DrawerTitles /> : (
       <span className="inline-flex items-center gap-2 max-w-full align-middle">
         {appSwitch ? null : tile}
         {allAppsSwitcher ? (
@@ -267,6 +275,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
           </span>
         )}
       </span>
+      )}
     </h1>
   );
 }

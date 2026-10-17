@@ -565,7 +565,7 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   // #4703's merged places button excepted, which is the group's fourth
   // possible contents).
   assert.match(css,
-    /#platform-header \.platform-header-left:has\(> #back-btn\.hidden\):not\(:has\(> \.header-places-btn\)\) \{\s*\n\s*display: none;/);
+    /#platform-header \.platform-header-left:has\(> #back-btn\.hidden\):not\(:has\(> \.header-places-btn\)\):not\(:has\(> \.nav-drawer-back\)\) \{\s*\n\s*display: none;/);
   assert.match(css,
     /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-route-hidden\)\) #platform-header\s*\n\s*\.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: flex;/,
     '…unless the toggle is in it, which needs both a rail and the width');

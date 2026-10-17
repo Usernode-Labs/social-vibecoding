@@ -28,6 +28,7 @@ import { SidebarIcon } from '@/components/ui/icons';
 import { useMessages } from '../../../lib/i18n/react';
 import { listText, t as translate } from '../../../lib/i18n/runtime';
 import { useStoreState } from '../../../lib/use-store-state';
+import { drawerStore } from '../../nav-drawer/drawer-store';
 import { navStore } from '../../nav/nav-store.js';
 import { placeHandle, placeName, type PlaceKey } from './places';
 import { placeStore, toggleTray } from './place-store';
@@ -119,7 +120,11 @@ export function HeaderPlace({ slug, name }: { slug: string | null; name: string 
   const phone = usePhoneHeader();
   const { screen } = useStoreState(navStore);
   const { slug: mounted, owed, unread, tray } = useStoreState(placeStore);
+  // The phone's drawer holds the places now (../../nav-drawer/), and the
+  // header draws its back arrow here instead (header-drawer.tsx DrawerBack).
+  const { on: drawerOn } = useStoreState(drawerStore);
   const button = useRef<HTMLButtonElement | null>(null);
+  if (drawerOn) return null;
   if (!phone || !slug || mounted !== slug || screen !== 'app-view') return null;
   return (
     <PlacesButton
