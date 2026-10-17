@@ -633,6 +633,15 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   gap: 8px;
   min-width: 0;
 }
+/* A group row's tile (#5393): the faces of two of its other members, stacked
+   in the same 44px box the `lg` square takes, so the 74px separator inset
+   (16 + 44 + 14) holds. The last face's ring is the card the rows sit on
+   (.messages-section-card paints `--dc-sheet-solid`), so the pair reads as
+   two faces and not one melted one. */
+.messages-group-faces { position: relative; flex: 0 0 44px; width: 44px; height: 44px; }
+.messages-group-faces > * { position: absolute; }
+.messages-group-faces > :first-child { left: 0; top: 0; }
+.messages-group-faces > :last-child { right: 0; bottom: 0; box-shadow: 0 0 0 2px var(--dc-sheet-solid, var(--app-bg)); }
 .messages-row-name,
 .messages-row-preview {
   flex: 1 1 auto;
@@ -22724,6 +22733,17 @@ html.un-kb #platform-parked {
     border-radius: 6px;
     font-size: 10px;
   }
+  /* #5393: the compact list has room for one face, not a stack — the first
+     face at the row's own 22px, the second out. The outer box is the row's
+     first child, so the rule above already sizes it. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-group-faces > :first-child {
+    position: static;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    font-size: 10px;
+  }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-group-faces > :last-child { display: none; }
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-agent-tile { background: none; border: 0; color: var(--text-muted); }
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-agent-tile svg { width: 20px; height: 20px; }
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row > .min-w-0 { display: flex; align-items: center; gap: 8px; }

@@ -356,11 +356,48 @@ test('the bot\'s row says what waits on you, and the headings say what in them a
   assert.match(SCREEN, /return parts\.length \? parts\.slice\(0, 2\)\.map\(\(part\) => part\.text\)\.join\(' · '\) : null;/);
   assert.match(SCREEN, /if \(mounted && hasBot && !botWork\.work\) loadBotWork\(\{ fresh: false \}\);/, 'after mount');
   assert.match(SCREEN, /preview=\{conversation\.homeroomBot \? botLine : null\}/);
-  assert.match(SCREEN, /: preview \|\| conversation\.latestSummary \|\| t\('messages:inbox\.noMessages'\)/, 'its last message until then');
+  // #5393: a group's preview names its last sender ahead of this; the bot's
+  // own line (`preview`) still leads the fallback the DM rows draw.
+  assert.match(SCREEN, /: groupPreview \?\? \(preview \|\| conversation\.latestSummary \|\| t\('messages:inbox\.noMessages'\)\)/,
+    'its last message until then — the bot\'s own line first, then a group\'s sender-prefixed one');
   assert.equal(message('messages:inbox.section.working', { count: 1 }), '1 working');
   assert.equal(message('messages:inbox.section.unread', { count: 3 }), '3 unread');
   assert.match(SCREEN, /people: \{ text: unreadFromPeople \? t\('messages:inbox\.section\.unread', \{ count: unreadFromPeople \}\) : null, ask: true \},/,
     'a zero says nothing, and the people count is the accent');
+});
+
+test('#5393: a group row shows its members\' faces and names the person who spoke last', () => {
+  // The tile is the people in it, not the title's first letters. Only
+  // people who have joined count; the viewer is never one of the faces; at
+  // most two are drawn, stacked in the same 44px box the `lg` square takes
+  // so the row's separator inset holds.
+  const faces = SCREEN.slice(SCREEN.indexOf('function GroupFaces('), SCREEN.indexOf('const ConversationRow = memo('));
+  assert.ok(faces.length > 0, 'GroupFaces is defined before the row');
+  assert.match(faces, /member\.status === 'member' && Number\(member\.id\) !== viewerId/,
+    'joined members only, and never the viewer');
+  assert.match(faces, /\.slice\(0, 2\)/, 'two faces at most');
+  assert.match(faces, /<span className="messages-group-faces" aria-hidden="true">/, 'two members: the stacked pair');
+  assert.match(faces, /<UserAvatar user=\{others\[0\]\} size="sm" shape="square" \/>/, 'each face the kit\'s own sm square');
+  // The row draws it for a group the viewer is in; a DM and an unanswered
+  // invitation keep today's tile.
+  const row = SCREEN.slice(SCREEN.indexOf('const ConversationRow = memo('), SCREEN.indexOf('function KindPill'));
+  assert.match(row, /conversation\.kind === 'group' && !invited\s*\? <GroupFaces conversation=\{conversation\} \/>/);
+  assert.doesNotMatch(row.slice(row.indexOf('<UserAvatar')), /<GroupFaces/, 'the fallback tile is the old one');
+  // The preview names its last sender, the way #general's row already does.
+  assert.match(row, /const groupSender = conversation\.kind === 'group' && !invited\s*\? conversation\.latestMessage\?\.sender \|\| null\s*: null;/);
+  assert.match(row, /t\('messages:inbox\.previewYou', \{ message: conversation\.latestSummary \}\)/, 'the viewer\'s own message reads "You: …"');
+  assert.match(row, /t\('messages:inbox\.previewBy', \{ username: groupSender\.username, message: conversation\.latestSummary \}\)/, 'anyone else reads "@name: …"');
+  assert.equal(message('messages:inbox.previewYou', { message: 'hi' }), 'You: hi');
+  assert.equal(message('messages:inbox.previewBy', { username: 'ada', message: 'hi' }), '@ada: hi');
+  // The pair keeps the row's own geometry: a 44px box on the 74px inset,
+  // and one face at 22px in the compact desktop list.
+  const css = read('public/css/app.css');
+  assert.match(css, /\.messages-group-faces \{ position: relative; flex: 0 0 44px; width: 44px; height: 44px; \}/);
+  assert.match(css, /\.messages-conversation-row::after \{[^}]*left: 74px;/);
+  assert.match(css, /\.messages-group-faces > :last-child \{ right: 0; bottom: 0; box-shadow: 0 0 0 2px var\(--dc-sheet-solid, var\(--app-bg\)\); \}/);
+  const compact = css.indexOf('.messages-conversation-row .messages-group-faces > :first-child');
+  assert.ok(compact > -1, 'the compact list sizes the first face');
+  assert.match(css.slice(compact, compact + 400), /position: static;\s*width: 22px;\s*height: 22px;/);
 });
 
 test('on a desktop the column draws its rows as the Communities column does', () => {
