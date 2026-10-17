@@ -53,39 +53,58 @@ export function mainCheckServices({ config, pool }: Deps): Record<string, WorkHa
     // The tests a verdict showed to be flaky, recorded, and a request filed
     // for each (`note`); or a request for each test of a red made only of
     // known flakes (`request`). One request per test per fortnight, claimed
-    // on its row (main-watch.js fileFlakeRequest).
+    // on its row (main-watch.js fileFlakeRequest). Each is a step: the record
+    // is made once, and a claim is kept before its request is filed, so the
+    // attempt after a crash files it (or finds it filed) rather than find
+    // the test claimed and file nothing.
     [WORK.flakes]: {
       maxAttempts: 3,
       backoffMs: (n) => 60 * 1000 * 2 ** (n - 1),
-      async run({ input }): Promise<Json> {
+      async run(ctx): Promise<Json> {
+        const { input } = ctx;
         const row = await app(Number(input.appId));
         if (!row) return { gone: true };
         const w = watch();
-        if (input.mode === 'note') {
-          const recorded = await w.noteFlakes(config, pool, row, input.sha, input.reds || [], input.excerpts || []);
-          return { recorded: recorded.length };
+        const steps = ctx.steps({ owner: `main-check/flakes:${input.appId}` });
+        const excerpts: any[] = input.excerpts || [];
+        const tests: any[] = input.mode === 'note'
+          ? await steps.once('recorded', async () => w.noteFlakes(config, pool, row, input.sha, input.reds || [], excerpts, { file: false }))
+          : (input.tests || []);
+        const filed: number[] = [];
+        for (const t of tests) {
+          const key = `${t.file || ''}::${t.test}`;
+          const excerpt = (excerpts.find((d) => d && d.test === t.test && (d.file || null) === (t.file || null)) || {}).excerpt;
+          const n = await steps.once(`filed/${key}`, () => w.fileFlakeRequest(config, pool, row, t, {
+            mergeSha: input.sha, excerpt, strict: true,
+            claim: steps.get(`claim/${key}`) ?? null, onClaim: (c: Json) => steps.set(`claim/${key}`, c),
+          }));
+          if (n) filed.push(Number(n));
         }
-        const filed = await w.fileFlakeRequests(config, pool, row, input.tests || [], { mergeSha: input.sha, excerpts: input.excerpts || [] });
-        return { filed };
+        await steps.flush();
+        return { recorded: input.mode === 'note' ? tests.length : 0, filed };
       },
     },
 
     // A confirmed red: one request to fix it, for the Homeroom bot, naming
     // the merges its failing tests point at (main-red-fix.js), unless one is
-    // open for the app already.
+    // open for the app already. Its claim is kept before the request is
+    // filed, as above.
     [WORK.fix]: {
       maxAttempts: 3,
       backoffMs: (n) => 60 * 1000 * 2 ** (n - 1),
-      async run({ input }): Promise<Json> {
+      async run(ctx): Promise<Json> {
+        const { input } = ctx;
         const row = await app(Number(input.appId));
         if (!row) return { gone: true };
-        const w = watch();
         const parsed = parseGithubUrl(row.repo_url);
         if (!parsed) return { skipped: 'no_repo' };
+        const steps = ctx.steps({ owner: `main-check/fix:${input.appId}` });
         const issueNumber = await legacy('services/main-red-fix').fileFixRequest(config, pool, {
           app: row, parsed, redSha: input.sha, prNumber: input.prNumber ?? null, detail: input.detail || {},
-          excerpts: input.excerpts || [], fileBotIssue: w.fileBotIssue,
+          excerpts: input.excerpts || [], fileBotIssue: watch().fileBotIssue, strict: true,
+          claim: steps.get('claim') ?? null, onClaim: (id: number) => steps.set('claim', id),
         });
+        await steps.flush();
         return { issueNumber: issueNumber ?? null };
       },
     },

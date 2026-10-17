@@ -302,6 +302,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     const [, second] = await items();
     await pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition';
       UPDATE wf_work SET due_at = NOW() WHERE machine = 'merge-followups' AND key = '${key}' AND work_key = '${second.work_key}'; COMMIT`);
+    await pool.query(`SELECT pg_notify('wf_work', 'made due')`);
     await until(async () => (await gov()) === 'superseded', 'superseded once the second look closed its request');
     assert.ok(calls.findIndex((c) => c[0] === 'close' && c[1] === n) > calls.findIndex((c) => c[0] === 'look' && c[1] === s.pr_number && c[2] === 2),
       'closed at the second look');

@@ -42,14 +42,27 @@ stub('../src/services/main-watch', {
     filings.push({ mode: 'note', appId: app.id, sha, reds, excerpts });
     return [];
   },
-  async fileFlakeRequests(config, pool, app, tests, { mergeSha, excerpts }) {
-    filings.push({ mode: 'request', appId: app.id, sha: mergeSha, tests, excerpts });
-    return [];
+  // One call per test now (the work files each as a step of its own); the
+  // calls of one item are read as one filing.
+  async fileFlakeRequest(config, pool, app, t, { mergeSha, excerpt }) {
+    const last = filings.at(-1);
+    const one = last && last.mode === 'request' && last.appId === app.id && last.sha === mergeSha && !last.done ? last : null;
+    if (one) { one.tests.push(t); if (excerpt) one.excerpts.push(excerpt); } else {
+      filings.push({ mode: 'request', appId: app.id, sha: mergeSha, tests: [t], excerpts: excerpt ? [excerpt] : [] });
+    }
+    return null;
   },
   fileBotIssue,
 });
+// `fixScripts`: the next answer scripted for the app's fix request, a
+// function of the call (which may keep its claim and wait).
+const fixScripts = new Map();
 stub('../src/services/main-red-fix', {
-  async fileFixRequest(config, pool, args) { fixes.push({ ...args, appId: args.app.id }); return 700; },
+  async fileFixRequest(config, pool, args) {
+    fixes.push({ ...args, appId: args.app.id });
+    const next = (fixScripts.get(args.app.id) || []).shift();
+    return next ? next(args) : 700;
+  },
 });
 
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
@@ -749,5 +762,33 @@ test('the main check against the full PostgreSQL schema', { timeout: 240000 }, a
     const r = await row(a);
     assert.deepEqual([r.state, r.paused], ['passing', null], 'the dead attempt\'s late answer is not reported');
     assert.deepEqual(await verdicts(a), [[S1, 'passing', false, null, false]]);
+  });
+  await t.test('a process lost while filing the fix request: the next attempt carries its claim on and files it', async () => {
+    const a = await app();
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    script(a, redOn([REAL]), redOn([REAL]));
+    fixScripts.set(a.id, [async (args) => { await args.onClaim(55); await held; return 0; }, async (args) => (args.claim === 55 ? 701 : 0)]);
+    const dying = runtimeWith();
+    await ask(dying, a, S1);
+    await round(dying); await round(dying);
+    const fixWork = async () => (await pool.query(
+      `SELECT status, result, attempt_count, lost_attempts, checkpoint FROM wf_work
+        WHERE machine = $1 AND key = $2 AND kind = $3`, [MACHINE, appKey(a.id), WORK.fix])).rows;
+    assert.equal((await fixWork()).length, 1, 'a confirmed red is sent to be fixed');
+    const lost = dying.runServices();
+    for (let i = 0; i < 200 && !(await fixWork())[0]?.checkpoint; i++) await new Promise((r) => setTimeout(r, 10));
+    assert.ok((await fixWork())[0].checkpoint, 'the claim kept before anything is filed');
+    // The process is gone: its lease lapses.
+    await pool.query(`UPDATE wf_work SET lease_until = now() WHERE machine = $1 AND key = $2 AND kind = $3`, [MACHINE, appKey(a.id), WORK.fix]);
+    const next = runtimeWith();
+    assert.equal(await next.runServices(), 1);
+    release();
+    await lost;
+    await settle(next);
+    assert.deepEqual(fixedFor(a).map((f) => f.claim), [null, 55], 'the next attempt is handed the claim');
+    const [w] = await fixWork();
+    assert.deepEqual([w.status, w.lost_attempts], ['settled', 1]);
+    assert.match(JSON.stringify(w.result), /"issueNumber":701/, 'filed by the attempt that carried the claim on');
   });
 });

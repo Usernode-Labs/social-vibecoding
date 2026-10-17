@@ -170,36 +170,91 @@ function fixRequestText({ redSha, prNumber = null, failingTests = [], excerpts =
   return { title: `Main is failing: ${name}`, body: lines.join('\n') };
 }
 
+async function front(pool, app, issueNumber) {
+  try {
+    await require('./homeroom-bot').enqueueFront(pool, { appId: app.id, issueNumber, reason: 'main_red' });
+  } catch (err) {
+    log.warn('main-red-fix', 'Could not put the request at the front of the bot\'s queue', { appId: app.id, issueNumber, err: err.message });
+  }
+}
+
 /**
  * File the request for a confirmed red, unless one is open for this app
  * already. Resolves the issue number, or null. Never throws.
  * `fileBotIssue(config, pool, app, parsed, { title, body })` files it as the
  * Homeroom bot (main-watch.fileBotIssue); `deps` stands in for GitHub.
  */
-async function fileFixRequest(config, pool, { app, parsed, redSha, prNumber = null, detail = {}, excerpts = [], fileBotIssue, deps = null }) {
+//
+// `claim` / `onClaim` (the main-check machine's work): the claim this work
+// took before (its row id), kept in its checkpoint as `onClaim` is told it,
+// so the attempt after a crash between the claim and the filing carries the
+// filing on (or finds the request that attempt filed) rather than find the
+// red claimed and file nothing. `strict`: a failure (after giving the claim
+// back) throws, for the work to retry.
+async function fileFixRequest(config, pool, {
+  app, parsed, redSha, prNumber = null, detail = {}, excerpts = [], fileBotIssue, deps = null,
+  claim = null, onClaim = null, strict = false,
+}) {
   if (!fixRequestsEnabled() || !pool || !app || !parsed || !redSha) return null;
   if (!deps && !require('./github').isEnabled()) return null;
+  const failingTests = Array.isArray(detail.failingTests) ? detail.failingTests : [];
   let claimed;
-  try {
-    ({ rows: claimed } = await pool.query(
-      `INSERT INTO main_red_requests (app_id, red_sha)
-       SELECT $1, $2
-        WHERE NOT EXISTS (
-          SELECT 1 FROM main_red_requests r
-            LEFT JOIN issues i ON i.app_id = r.app_id AND i.github_issue_number = r.issue_number
-           WHERE r.app_id = $1
-             AND ((r.issue_number IS NULL AND r.filed_at > NOW() - interval '1 hour')
-                  OR i.status = 'open'))
-       ON CONFLICT (app_id, red_sha) DO NOTHING
-       RETURNING id`,
-      [app.id, String(redSha).toLowerCase()]
-    ));
-  } catch (err) {
-    log.warn('main-red-fix', 'request claim failed (non-fatal)', { appId: app.id, err: err.message });
-    return null;
+  if (claim) {
+    try {
+      const { rows: [own] } = await pool.query(
+        'SELECT id, issue_number, filed_at FROM main_red_requests WHERE id = $1 AND app_id = $2', [claim, app.id]);
+      let filed = own && own.issue_number ? Number(own.issue_number) : null;
+      if (own && !filed) {
+        const { title } = fixRequestText({ redSha, prNumber, failingTests });
+        const { rows: [r] } = await pool.query(
+          `SELECT github_issue_number FROM issues
+            WHERE app_id = $1 AND kind = 'general' AND title = $2 AND created_at >= $3 ORDER BY id LIMIT 1`,
+          [app.id, title, own.filed_at]);
+        if (r) {
+          filed = Number(r.github_issue_number);
+          await pool.query('UPDATE main_red_requests SET issue_number = $2 WHERE id = $1', [own.id, filed]);
+        }
+      }
+      // Filed by the attempt before: put at the front again (a no-op once
+      // the bot has started it), in case that attempt died before.
+      if (filed) { await front(pool, app, filed); return filed; }
+      if (own) claimed = [{ id: own.id }];
+    } catch (err) {
+      if (strict) throw err;
+      log.warn('main-red-fix', 'could not read the request claimed before (non-fatal)', { appId: app.id, err: err.message });
+      return null;
+    }
+  }
+  if (!claimed) {
+    try {
+      ({ rows: claimed } = await pool.query(
+        `INSERT INTO main_red_requests (app_id, red_sha)
+         SELECT $1, $2
+          WHERE NOT EXISTS (
+            SELECT 1 FROM main_red_requests r
+              LEFT JOIN issues i ON i.app_id = r.app_id AND i.github_issue_number = r.issue_number
+             WHERE r.app_id = $1
+               AND ((r.issue_number IS NULL AND r.filed_at > NOW() - interval '1 hour')
+                    OR i.status = 'open'))
+         ON CONFLICT (app_id, red_sha) DO NOTHING
+         RETURNING id`,
+        [app.id, String(redSha).toLowerCase()]
+      ));
+    } catch (err) {
+      if (strict) throw err;
+      log.warn('main-red-fix', 'request claim failed (non-fatal)', { appId: app.id, err: err.message });
+      return null;
+    }
+    // Kept by the work before anything is filed; a claim it could not keep
+    // is given back, so the next attempt claims it again.
+    if (claimed && claimed.length && onClaim) {
+      await Promise.resolve(onClaim(Number(claimed[0].id))).catch(async (err) => {
+        await pool.query('DELETE FROM main_red_requests WHERE id = $1', [claimed[0].id]).catch(() => {});
+        throw err;
+      });
+    }
   }
   if (!claimed || !claimed.length) return null;
-  const failingTests = Array.isArray(detail.failingTests) ? detail.failingTests : [];
   let found = null;
   try {
     found = await suspectsFor(pool, { app, parsed, redSha, failingTests }, deps);
@@ -210,11 +265,7 @@ async function fileFixRequest(config, pool, { app, parsed, redSha, prNumber = nu
   try {
     const issueNumber = await fileBotIssue(config, pool, app, parsed, { title, body });
     await pool.query('UPDATE main_red_requests SET issue_number = $2 WHERE id = $1', [claimed[0].id, issueNumber]);
-    try {
-      await require('./homeroom-bot').enqueueFront(pool, { appId: app.id, issueNumber, reason: 'main_red' });
-    } catch (err) {
-      log.warn('main-red-fix', 'Could not put the request at the front of the bot\'s queue', { appId: app.id, issueNumber, err: err.message });
-    }
+    await front(pool, app, issueNumber);
     log.info('main-red-fix', 'Filed a request to fix a red main', {
       appId: app.id, slug: app.slug, sha: short(redSha), issueNumber,
       suspects: found ? found.merges.filter((m) => m.suites.length).map((m) => m.pr || short(m.sha)) : null,
@@ -223,6 +274,7 @@ async function fileFixRequest(config, pool, { app, parsed, redSha, prNumber = nu
   } catch (err) {
     log.warn('main-red-fix', 'fix request failed (non-fatal)', { appId: app.id, err: err.message });
     await pool.query('DELETE FROM main_red_requests WHERE id = $1', [claimed[0].id]).catch(() => {});
+    if (strict) throw err;
     return null;
   }
 }

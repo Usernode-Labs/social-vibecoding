@@ -398,7 +398,9 @@ const testKey = (t) => `${t.file || ''}\u0000${t.test}`;
 // be flaky, then file a request for each. A red counts only when it named
 // all of its failures and no more than MAX_FLAKES_PER_RED of them. Never
 // throws; returns the tests recorded.
-async function noteFlakes(config, pool, app, mergeSha, reds, excerpts = []) {
+// `file: false` records them only (the main-check machine's work files each
+// request as a step of its own).
+async function noteFlakes(config, pool, app, mergeSha, reds, excerpts = [], { file = true } = {}) {
   const tests = new Map();
   for (const red of reds) {
     const named = red && Array.isArray(red.failingTests) ? red.failingTests : [];
@@ -424,7 +426,7 @@ async function noteFlakes(config, pool, app, mergeSha, reds, excerpts = []) {
     log.info('main-watch', 'Recorded flaky tests', {
       appId: app.id, slug: app.slug, sha: mergeSha, tests: recorded.map((t) => t.test),
     });
-    await fileFlakeRequests(config, pool, app, recorded, { mergeSha, excerpts });
+    if (file) await fileFlakeRequests(config, pool, app, recorded, { mergeSha, excerpts });
   }
   return recorded;
 }
@@ -501,7 +503,23 @@ async function fileBotIssue(config, pool, app, parsed, { title, body }) {
 // FLAKE_REQUEST_DAYS, and never while the last one is still open. The
 // request_filed_at claim keeps two processes from filing the same one.
 // Never throws; returns the issue number, or null.
-async function fileFlakeRequest(config, pool, app, t, { mergeSha = null, excerpt = '' } = {}) {
+// A request this claim already filed: its number on the claimed row, or the
+// bot's request of that title filed since the claim (a process that died
+// between filing and recording the number). Null when there is none.
+async function filedSince(pool, appId, title, since) {
+  const { rows: [r] } = await pool.query(
+    `SELECT github_issue_number FROM issues
+      WHERE app_id = $1 AND kind = 'general' AND title = $2 AND created_at >= $3::timestamptz
+      ORDER BY id LIMIT 1`, [appId, title, since]);
+  return r ? Number(r.github_issue_number) : null;
+}
+
+// `claim` / `onClaim` (the main-check machine's work): the claim this work
+// took before (`{ at }`), kept in its checkpoint as `onClaim` is told it,
+// so the attempt after a crash between the claim and the filing carries the
+// filing on rather than find the test claimed and file nothing. `strict`:
+// a failure (after giving the claim back) throws, for the work to retry.
+async function fileFlakeRequest(config, pool, app, t, { mergeSha = null, excerpt = '', claim = null, onClaim = null, strict = false } = {}) {
   if (!flakeRequestsEnabled()) return null;
   const parsed = parseRepo(app.repo_url);
   const github = require('./github');
@@ -509,19 +527,47 @@ async function fileFlakeRequest(config, pool, app, t, { mergeSha = null, excerpt
   const key = [app.id, t.file || '', t.test];
   let claimed;
   try {
-    ({ rows: claimed } = await pool.query(
-      `UPDATE main_test_flakes f
-          SET request_filed_at = NOW()
-        WHERE f.app_id = $1 AND f.file = $2 AND f.test = $3
-          AND (f.request_filed_at IS NULL OR f.request_filed_at < NOW() - ($4::int * interval '1 day'))
-          AND NOT EXISTS (
-            SELECT 1 FROM issues i
-             WHERE i.app_id = f.app_id AND i.github_issue_number = f.request_issue_number
-               AND i.status = 'open')
-      RETURNING f.seen_count, f.first_seen_at`,
-      [...key, FLAKE_REQUEST_DAYS]
-    ));
+    if (claim && claim.at) {
+      // This work's own claim, still standing: carried on.
+      ({ rows: claimed } = await pool.query(
+        `SELECT seen_count, first_seen_at, request_filed_at, request_issue_number FROM main_test_flakes
+          WHERE app_id = $1 AND file = $2 AND test = $3 AND request_filed_at = $4::timestamptz`, [...key, claim.at]));
+      if (claimed.length && claimed[0].request_issue_number) return Number(claimed[0].request_issue_number);
+      if (claimed.length) {
+        const title = flakeRequestText(t, { mergeSha, seenCount: 1, firstSeenAt: null, excerpt: '' }).title;
+        const found = await filedSince(pool, app.id, title, claim.at);
+        if (found) {
+          await pool.query('UPDATE main_test_flakes SET request_issue_number = $4 WHERE app_id = $1 AND file = $2 AND test = $3', [...key, found]);
+          return found;
+        }
+      }
+    }
+    if (!claimed || !claimed.length) {
+      ({ rows: claimed } = await pool.query(
+        `UPDATE main_test_flakes f
+            SET request_filed_at = NOW()
+          WHERE f.app_id = $1 AND f.file = $2 AND f.test = $3
+            AND (f.request_filed_at IS NULL OR f.request_filed_at < NOW() - ($4::int * interval '1 day'))
+            AND NOT EXISTS (
+              SELECT 1 FROM issues i
+               WHERE i.app_id = f.app_id AND i.github_issue_number = f.request_issue_number
+                 AND i.status = 'open')
+        RETURNING f.seen_count, f.first_seen_at, f.request_filed_at::text AS claimed_at`,
+        [...key, FLAKE_REQUEST_DAYS]
+      ));
+      // Kept by the work before anything is filed; a claim it could not keep
+      // is given back, so the next attempt claims it again.
+      if (claimed && claimed.length && onClaim) {
+        // The claim's own time, to the microsecond: what names it again.
+        await Promise.resolve(onClaim({ at: claimed[0].claimed_at })).catch(async (err) => {
+          await pool.query('UPDATE main_test_flakes SET request_filed_at = NULL WHERE app_id = $1 AND file = $2 AND test = $3', key)
+            .catch(() => {});
+          throw err;
+        });
+      }
+    }
   } catch (err) {
+    if (strict) throw err;
     log.warn('main-watch', 'flake request claim failed (non-fatal)', { appId: app.id, test: t.test, err: err.message });
     return null;
   }
@@ -543,6 +589,7 @@ async function fileFlakeRequest(config, pool, app, t, { mergeSha = null, excerpt
       'UPDATE main_test_flakes SET request_filed_at = NULL WHERE app_id = $1 AND file = $2 AND test = $3',
       key
     ).catch(() => {});
+    if (strict) throw err;
     return null;
   }
 }

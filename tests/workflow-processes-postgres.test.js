@@ -312,8 +312,11 @@ test('workflow machines in a process of their own, and through its crash', { tim
     assert.deepEqual(await removed(), [], 'the worker is kept while the run is under way');
     // The run ends; the retire asked again (made due now) removes the worker.
     await asWriter(shots('published'));
+    // The process sleeps until the next item it knows is due: told, as the
+    // kernel tells it of work it queues.
     await pool.query(`UPDATE wf_work SET due_at = NOW() WHERE machine = 'merge-followups' AND key = $1 AND kind = 'worker.retire' AND status = 'queued'`,
       [mergeKey(s)]);
+    await pool.query(`SELECT pg_notify('wf_work', 'worker.retire')`);
     await procs.until(async () => (await removed()).length === 1, 'the worker to go once the run ended');
   });
 
