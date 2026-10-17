@@ -56,6 +56,16 @@ const usernames = require('./usernames');
 const { listActiveUserIds } = require('./active-users');
 const notificationPreferences = require('./notification-preferences');
 const notificationBookmarks = require('./notification-bookmarks');
+const { PARKED_NOTIFICATION_KINDS } = require('./kudos-parked');
+
+// #5249: a parked feature's rows (kudos, while it is parked) are neither
+// listed nor counted. Built from the frozen constant in kudos-parked.js,
+// never from input, so interpolating it is safe; a static clause rather than
+// a parameter, so every reader's own parameter numbering stays as it was.
+// The rows stay in the table: flip the switch back and they come back.
+const PARKED_KINDS_SQL = PARKED_NOTIFICATION_KINDS.length
+  ? `n.kind NOT IN (${PARKED_NOTIFICATION_KINDS.map((k) => `'${k}'`).join(', ')})`
+  : 'TRUE';
 
 // Usernames in this app are [A-Za-z0-9_]+, length-restricted on signup.
 // Match @token that is NOT preceded by a word character (so emails don't
@@ -1596,6 +1606,7 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
      ${FILED_MESSAGE_JOIN_SQL}
      ${savedJoin}
      WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+       AND ${PARKED_KINDS_SQL}
      ${mergedHiddenClause}
      ${cursorClause}
      ${kindClause}
@@ -1651,7 +1662,8 @@ async function getForUser(pool, userId, id) {
        LEFT JOIN users su ON su.id = n.source_user_id
        LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
        ${FILED_MESSAGE_JOIN_SQL}
-      WHERE n.id = $1 AND n.user_id = $2 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
+      WHERE n.id = $1 AND n.user_id = $2 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+        AND ${PARKED_KINDS_SQL}`,
     [id, userId]
   );
   return rows[0] || null;
@@ -1684,6 +1696,7 @@ async function countUnread(pool, userId) {
       WHERE n.user_id = $1 AND n.read_at IS NULL
         AND NOT ${DECIDED_ASK_SETTLED_SQL}
         AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
+        AND ${PARKED_KINDS_SQL}
         AND NOT (n.kind = ANY($2::text[]) AND EXISTS (
               SELECT 1 FROM chat_sessions s
                WHERE s.id = n.session_id AND s.status = 'merged'))`,
@@ -2145,6 +2158,7 @@ module.exports = {
   listSavedForUserSafe,
   getForUser,
   countUnread,
+  PARKED_KINDS_SQL,
   markRead,
   markReadForSession,
   settleDecidedChange,

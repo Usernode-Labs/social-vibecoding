@@ -14,6 +14,7 @@ import type {
 } from '../kernel/index.ts';
 import { changeClosed } from '../rules/agent-notes.ts';
 import { resolveIssueBounty } from '../rules/bounties.ts';
+import { KUDOS_PARKED } from '../rules/kudos-parked.ts';
 import { createPrMergedNotification, settleDecidedChange } from '../rules/change-notifications.ts';
 import { authorLine, closingComment, liveLine, threadLine } from '../rules/included-lines.ts';
 import { creditsSentence, mergeCredits } from '../rules/merge-credits.ts';
@@ -791,7 +792,9 @@ async function writeSecrets(tx: Tx, w: any, dataKey: string, ctx: WriteContext) 
 }
 
 // Bounties on the requests it closes go to its author, with their events
-// and lines in the same transaction.
+// and lines in the same transaction. #5249: while kudos is parked
+// (rules/kudos-parked.ts) a bounty pledged before parking is still paid,
+// and its event recorded, but quietly: no line in the proposal's thread.
 async function writeBounties(tx: Tx, w: any, ctx: WriteContext) {
   for (const n of w.numbers as number[]) {
     const { awarded } = await resolveIssueBounty(tx, { appId: w.appId, sessionId: w.sessionId, awardeeUserId: w.userId, issueNumber: n });
@@ -799,6 +802,7 @@ async function writeBounties(tx: Tx, w: any, ctx: WriteContext) {
     await tx.query(
       `INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, 'bounty_awarded', $4::jsonb)`,
       [w.userId ?? null, w.appId, w.sessionId, JSON.stringify({ issueNumber: n, prNumber: w.prNumber, count: awarded.length })]);
+    if (KUDOS_PARKED) continue;
     const recipient = w.userId ? `<@${w.userId}>` : 'the author';
     await line(tx, ctx, w.eventId, w.appId, w.sessionId,
       `Bounty on issue #${n} (${awarded.length} kudos) awarded to ${recipient} for PR #${w.prNumber || w.sessionId}`);

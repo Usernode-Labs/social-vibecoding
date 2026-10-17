@@ -213,6 +213,20 @@ test('flush: posts the payload with queuedAt and drops the record once filed', a
   assert.deepEqual(await FQ.pending(), [], 'a filed message is gone from the outbox');
 });
 
+// #5249: a message saved before kudos was parked may still ask for a bounty.
+// Parked (no window.Kudos, as in Node here) the flag is dropped as it is
+// sent, so the report files without one and no "Pledged" notice can follow.
+test('flush: parked, a queued bounty flag is dropped as it is sent', async () => {
+  const FQ = load();
+  await FQ.enqueue(entry({ target: 'app', appSlug: 'demo-app', bounty: true }));
+  const calls = stubFetch({ status: 200, body: { issueUrl: 'https://github.com/o/r/issues/9' } });
+  const res = await FQ.flush('test');
+  assert.equal(res.sent, 1);
+  const posted = JSON.parse(calls[0].body);
+  assert.equal(posted.bounty, undefined, 'no bounty is asked for');
+  assert.equal(posted.description, 'The board scrolls to the top when I drag a card.', 'the words still go');
+});
+
 test('flush: a 500 keeps the message, counts one attempt and backs off', async () => {
   const FQ = load();
   await FQ.enqueue(entry());

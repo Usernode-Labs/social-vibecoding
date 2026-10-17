@@ -42,7 +42,13 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const picture = loadTsx('frontend/src/features/comment-pin/picture.ts');
-const post = loadTsx('frontend/src/features/comment-pin/post.ts');
+// The posting suites below exercise the Kudos as it works when kudos is not
+// parked, so they load post.ts with the switch off; `parkedPost` is the real
+// module, with kudos parked (#5249).
+const post = loadTsx('frontend/src/features/comment-pin/post.ts', {
+  stubs: { '../leaderboard/kudos-parked': { KUDOS_PARKED: false } },
+});
+const parkedPost = loadTsx('frontend/src/features/comment-pin/post.ts');
 const BRIDGE = read('public/usernode-bridge/v1/bridge.js');
 const SNAPSHOT = BRIDGE.split('/* __USERNODE_SNAPSHOT_BEGIN__ */')[1].split('/* __USERNODE_SNAPSHOT_END__ */')[0];
 
@@ -1065,6 +1071,20 @@ test('the box posts every picture first, then its title, Kudos and the page\'s p
   });
   assert.equal(post.numberFromUrl(out.url), 4490);
   assert.equal(post.numberFromUrl(''), null);
+}));
+
+test('parked, the box sends no bounty, says nothing of one, and hands none over (#5249)', () => withFetch([
+  { status: 200, body: { id: 'a'.repeat(32) } },
+  { status: 200, body: { id: 'b'.repeat(32) } },
+  { status: 200, body: { id: 'c'.repeat(32) } },
+  { status: 200, body: { url: 'https://github.com/o/r/issues/4490', title: 'Bigger Join button', bounty: { placed: true, remaining: 4 } } },
+], async (calls) => {
+  const out = await parkedPost.postComment(full);
+  assert.equal(out.bounty, null, 'an answer\'s bounty is not read');
+  assert.equal(JSON.parse(calls[3].init.body).bounty, undefined, 'a restored draft\'s Kudos is not sent');
+  assert.equal(parkedPost.handOverOptions(full).bounty, undefined, 'nor handed to the dialog');
+  const pin = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(pin, /if \(outcome\.bounty && !KUDOS_PARKED\) \{/, 'and the toast says no kudos sentence');
 }));
 
 test('no more than three pictures, and a pin only on a picture the server took', () => withFetch([

@@ -2319,7 +2319,9 @@ export function init() {
           // failure — the issue IS filed, and the bounty can still be added
           // later from the Dev screen's Topics row.
           let bountyNotice = '';
-          if (data.bounty) {
+          // #5249: parked, a `bounty` in the answer (an older server's, to a
+          // request saved before parking) says nothing.
+          if (data.bounty && !KUDOS_PARKED) {
             if (data.bounty.placed) {
               bountyNotice = t('dialogs:feedback.bounty.pledged', { count: Number(data.bounty.remaining) });
               // The drawer's Kudos meter must show the number the user
