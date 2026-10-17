@@ -170,7 +170,7 @@ const { DECIDED_ASK_KINDS } = changeNotifications;
 
 // #4778 (Page Turners): a row that asked something about a change reads as
 // read once the change is decided, whether or not settleDecidedChange got to
-// it (routes/votes.js, included-changes.js, session-lifecycle.js and the
+// it (routes/votes.js, merge-followups/facts.ts, session-lifecycle.js and the
 // merge-followups workflow all run it best-effort, so a missed settle used
 // to leave a decided proposal sitting unread in the bell for hours).
 // #4795 already hides a MERGED change's asks from the list and its count

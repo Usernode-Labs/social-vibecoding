@@ -158,12 +158,12 @@ async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
   const remoteSha = head.sha;
   if (!remoteSha) return { status: 'fetch_failed', slug: app.slug, error: 'GitHub returned no SHA' };
 
-  // main's unit suite runs on every new main, merge or direct push
-  // (services/main-watch.js). Its claim is per commit, so a merge commit the
-  // merge already checks is not run twice. Fire-and-forget, as from the merge.
+  // main's unit suite runs on every new main, merge or direct push (the
+  // app's main-check machine, src/workflow/main-check/). Its claim is per
+  // commit, so a merge commit the merge already asked about is not run twice.
   if (remoteSha !== app.main_check_sha || !app.main_check_state || app.main_check_state === 'error') {
-    require('./main-watch').afterMerge(config, pool, { app, mergeSha: remoteSha }).catch((err) => {
-      log.warn('drift-poller', 'Main check on a new main failed to start', { slug: app.slug, err: err.message });
+    await require('../workflow/platform.ts').requestMainCheck({ appId: app.id, sha: remoteSha }).catch((err) => {
+      log.warn('drift-poller', 'Main check on a new main could not be asked', { slug: app.slug, err: err.message });
     });
   }
 

@@ -171,7 +171,7 @@ test('one story: who the platform pings about a change Homeroom bot built, again
 
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes'), ($1, $3, 'no'), ($1, $4, 'yes')`,
       [darkMode.id, maya.id, ben.id, cy.id]);
-    await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [darkMode.id]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', live_at = COALESCE(merged_at, NOW()) WHERE id = $1`, [darkMode.id]);
     const told = await notifications.settleDecidedChange(pool, darkMode.id, { push: false });
     assert.ok(told.includes(maya.id));
     const { rows: [settled] } = await pool.query('SELECT session_id, read_at FROM notifications WHERE id = $1', [ring.id]);

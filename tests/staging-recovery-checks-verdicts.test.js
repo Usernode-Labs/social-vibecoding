@@ -446,7 +446,7 @@ function loadVisuals() {
   };
   const origLogger = stubModule(paths.logger, { info() {}, warn() {}, error() {}, debug() {} });
   delete require.cache[paths.subject];
-  const subject = require('../src/services/visuals');
+  const subject = require('../src/workflow/preview/check-store.ts');
   const restore = () => {
     if (origLogger) require.cache[paths.logger] = origLogger; else delete require.cache[paths.logger];
     delete require.cache[paths.subject];

@@ -1290,7 +1290,7 @@ function deferredNextStep(session, checks, branch) {
     : ' No conflicting paths are recorded in freshness.mergeabilityFiles yet; freshness.checkedAt says how old '
       + 'that block is.';
   // `checkedAt` on a deferred row is the deferral stamp itself
-  // (visuals.storeChecksDeferred): when the preview run reached the verdict
+  // (preview/check-store.ts storeChecksDeferred): when the preview run reached the verdict
   // and stopped.
   const when = checks.checkedAt ? ` The verdict was deferred at ${checks.checkedAt}.` : '';
   // The stamp clears no results, so a failing list here belongs to the commit

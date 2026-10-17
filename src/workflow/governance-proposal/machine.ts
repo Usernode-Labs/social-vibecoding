@@ -83,14 +83,17 @@ const EVENTS = {
 };
 
 const DELIVERY = 'app-delivery';
+// A message from a merge's follow-ups (merge-followups' issues.closeAfterMerge result).
+const fromMerge = (e: Event<any>) => e.source.kind === 'message' && e.source.from.machine === 'merge-followups';
 // A secret change's redeploy, asked of app-delivery: recorded as a
 // follow-up of this kind, answered by message rather than by a work result.
 const DELIVERY_FOLLOWUP = 'app-delivery';
 // The rebuild a secret change ran itself before every deploy was
-// app-delivery's. An item of it left from then deploys nothing: it hands
-// the redeploy to app-delivery (services.ts), and is removed once none can
-// be left.
+// app-delivery's: no item of it is left to run, and a follow-up of it in an
+// old record is asked again of app-delivery.
 const OWN_REBUILD = 'app.rebuildProduction';
+// The follow-up kinds a retry can queue: those with a handler (services.ts).
+const RETRYABLE_WORK: ReadonlySet<string> = new Set(['github.closeIssue', 'governance.checkTarget', 'bot.requestsClosed']);
 const deliveryRequest = (appId: number) => ({
   to: { machine: DELIVERY, key: `app:${appId}` }, event: { type: 'DeployRequested', payload: { appId, reason: 'secret_change' } },
 });
@@ -300,13 +303,6 @@ function supersede(issue: Issue, event: Event<any>, ctx: TransitionContext, caus
 // list lags; pushes.ts issuesClosed), then the open-issues lists re-read.
 function followupResult(s: { name: Closed; data: ClosedData }, e: Event<WorkResultPayload>, status: Followup['status']): Outcome<GovState> {
   const prev = s.data.followups[e.payload.workKey]!;
-  // A rebuild recorded before every deploy was app-delivery's handed the
-  // redeploy to it: the follow-up is now its request, answered by message.
-  if (status === 'done' && e.payload.kind === OWN_REBUILD && (e.payload.result as { handOff?: boolean } | null)?.handOff) {
-    const asked = { kind: DELIVERY_FOLLOWUP, input: prev.input, status: 'pending' as const };
-    return { next: { name: s.name, data: { ...s.data, followups: { ...s.data.followups, [e.payload.workKey]: asked } } },
-      messages: [deliveryRequest(Number((prev.input as any).appId))] };
-  }
   const followups = { ...s.data.followups, [e.payload.workKey]: { ...prev, status, ...(e.payload.error ? { error: e.payload.error.message } : {}) } };
   const input = (prev.input || {}) as Record<string, Json>;
   const closed = status === 'done' && e.payload.kind === 'github.closeIssue' && input.bustCache
@@ -380,8 +376,11 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
     Delivered: { guard: fromDelivery, to: (s: any, e: Event<any>) => deliveryAnswer(s, 'done', null) },
     DeliveryFailed: { guard: fromDelivery, to: (s: any, e: Event<any>) => deliveryAnswer(s, 'failed', e.payload.message) },
     RetryFollowup: {
-      guard: (s: any, e: Event<any>) => (['failed', 'exhausted'].includes(s.data.followups[e.payload.workKey]?.status)
-        ? ok() : reject('not_retryable')),
+      guard: (s: any, e: Event<any>) => {
+        const f = s.data.followups[e.payload.workKey];
+        const retryable = !!f && (f.kind === DELIVERY_FOLLOWUP || f.kind === OWN_REBUILD || RETRYABLE_WORK.has(f.kind));
+        return retryable && ['failed', 'exhausted'].includes(f.status) ? ok() : reject('not_retryable');
+      },
       to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<GovState> => {
         const prev = s.data.followups[e.payload.workKey] as Followup;
         const key = `${e.payload.workKey.replace(/~\d+$/, '')}~${ctx.version + 1}`;
@@ -425,9 +424,10 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
     // change's redeploy is asked of app-delivery (an app.rebuildProduction
     // item from before hands off to it). 6: a maintenance campaign is
     // started by a message to the campaign machine, not campaign.run work.
-    // During a rollout an older Pod leaves the instances a newer version
-    // wrote alone.
-    version: 6,
+    // 7: a merge's follow-ups file and supersede a close proposal by
+    // message. During a rollout an older Pod leaves the instances a newer
+    // version wrote alone.
+    version: 7,
     events: EVENTS,
     create: ['Filed'],
     terminal: ['applied', 'refused', 'withdrawn', 'superseded'],
@@ -439,12 +439,14 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
       return readFacts(tx, issueId, event, state.name === 'open' || state.name === NONE, deps.dataKey);
     },
     authorize: {
-      Filed: (e) => (['route', 'system', 'admin'].includes(e.source.kind) ? ok() : reject('not_allowed')),
+      // A merge's follow-ups file a close proposal whose target it saw
+      // closed, then tell it (TargetClosed): messages, in its transaction.
+      Filed: (e) => (['route', 'system', 'admin'].includes(e.source.kind) || fromMerge(e) ? ok() : reject('not_allowed')),
       VoteCast: (e) => (e.source.kind === 'route' && user(e) ? ok() : reject('not_the_voter')),
       Evaluate: (e) => (e.source.kind === 'timer' || e.source.kind === 'admin' ? ok() : reject('internal_only')),
       AdminApply: (e) => (e.source.kind === 'admin' && user(e) ? ok() : reject('admin_only')),
       Withdraw: (e, f) => (user(e) && f.issue?.createdBy === e.payload.userId ? ok() : reject('not_author')),
-      TargetClosed: (e) => (e.source.kind === 'system' || e.source.kind === 'route' ? ok() : reject('internal_only')),
+      TargetClosed: (e) => (e.source.kind === 'system' || e.source.kind === 'route' || fromMerge(e) ? ok() : reject('internal_only')),
       RetryFollowup: (e) => (e.source.kind === 'admin' ? ok() : reject('admin_only')),
       Delivered: (e) => (e.source.kind === 'message' && e.source.from.machine === DELIVERY ? ok() : reject('internal_only')),
       DeliveryFailed: (e) => (e.source.kind === 'message' && e.source.from.machine === DELIVERY ? ok() : reject('internal_only')),

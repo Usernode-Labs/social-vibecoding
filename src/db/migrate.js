@@ -4134,7 +4134,7 @@ async function seedStagingNoBranchSession(pool, config) {
      ON CONFLICT (id) DO UPDATE SET
        user_id = EXCLUDED.user_id,
        session_title = EXCLUDED.session_title,
-       status = CASE WHEN wf_holds('proposal', 'session:' || chat_sessions.id) THEN chat_sessions.status ELSE EXCLUDED.status END,
+       status = CASE WHEN wf_holds('proposal', 'session:' || chat_sessions.id) THEN chat_sessions.status ELSE 'active' END,
        branch_name = NULL`,
     [STAGING_NO_BRANCH_SESSION_ID, appId, owner.id]
   );

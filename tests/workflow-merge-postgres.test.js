@@ -210,6 +210,7 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     await want(r.app, { sessionId: r.id });
     await settle();
     assert.equal(calls(WORK.attempt).length, 0, 'main turned red: not merged past');
+    assert.deepEqual([(await pInst(r)).state, (await row(r)).approval_epoch], ['in_review', 0], 'back to review with its votes (Q4)');
     assert.equal((await sentTo(QUEUE, appKey(r.app.id))).filter((e) => e.type === 'AttemptEnded').at(-1).payload.reason, 'main_failing');
 
     defaults();
@@ -224,6 +225,29 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     await settle();
     assert.equal(calls(WORK.attempt).length, 0);
     assert.equal((await sentTo(QUEUE, appKey(c.app.id))).filter((e) => e.type === 'AttemptEnded').at(-1).payload.reason, 'checks');
+
+    // The head and the approval epoch the gate measured are compared with the
+    // row's under the lock: a push, or an unpromote and a re-promote, between
+    // the gate and the claim refuse it (proposal trace bugs 1, 2).
+    for (const [column, value, reason] of [['reviewed_head_sha', SHA('c'), 'head_moved'], ['approval_epoch', 1, 'epoch_moved']]) {
+      defaults();
+      const m = await proposalRow();
+      await vote(m, await user(), 'yes');
+      let moved = false;
+      work.answer.set(WORK.gate, async (input) => {
+        const { rows: [x] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [input.sessionId]);
+        if (!moved) {
+          moved = true;
+          await asTransition((cl) => cl.query(`UPDATE chat_sessions SET ${column} = $2 WHERE id = $1`, [m.id, value]));
+        }
+        return ready(x, { epoch: Number(x.approval_epoch) });
+      });
+      await want(m.app, { sessionId: m.id });
+      await settle();
+      assert.ok(!calls(WORK.attempt).some((x) => x.input.sessionId === m.id && x.input.head === SHA('a')), `${reason}: never asked GitHub`);
+      const reasons = (await sentTo(QUEUE, appKey(m.app.id))).filter((e) => e.type === 'AttemptEnded').map((e) => e.payload.reason);
+      assert.equal(reasons[0], reason);
+    }
   });
 
   await t.test('M3 one attempt per app at a time; an ask during it makes one more pass; each candidate once per pass (M3)', async () => {
@@ -353,7 +377,15 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     await want(c.app);
     await settle();
     assert.equal((await pInst(c)).state, 'underway', 'off the vote');
-    assert.equal((await row(c)).approval_epoch, 1, 'its votes voided (PL19)');
+    assert.deepEqual([(await row(c)).status, (await row(c)).approval_epoch], ['paused', 1], 'its votes voided (PL19)');
+    // An imported one stays as imports are: it holds no slot (bug 19).
+    defaults();
+    const imp = await proposalRow({ source: 'imported' });
+    await vote(imp, await user(), 'yes');
+    work.answer.set(WORK.attempt, { outcome: 'closed', message: 'closed' });
+    await want(imp.app);
+    await settle();
+    assert.deepEqual([(await row(imp)).status, (await row(imp)).approval_epoch], ['active', 1]);
     defaults();
     const o = await proposalRow();
     await vote(o, await user(), 'yes');
@@ -524,13 +556,15 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     await settle();
   });
 
-  await t.test('M12 a claim an older release made is asked about once it is old; a merge it lost is recorded', async () => {
+  await t.test('M12 a proposal left merging with no attempt of this machine\'s is asked about once its claim is old; a merge it lost is recorded', async () => {
     defaults();
-    const s = await proposalRow();
-    await vote(s, await user(), 'yes');
-    const c = await toProposal(s, 'MergeClaim', { head: SHA('a'), epoch: 0 });
+    const s = await proposalRow({ status: 'merging' });
+    await pool.query('UPDATE chat_sessions SET merge_attempt_at = NOW() WHERE id = $1', [s.id]);
+    await toProposal(s, 'Adopted', {});
     await settle();
-    assert.equal((await outcome(c)).result, 'accepted');
+    const i = await pInst(s);
+    assert.deepEqual([i.state, i.data.claim.n, i.deadline_event?.type], ['merging', 0, 'ObserveDue'], 'adopted as the claim it was');
+    assert.ok(Date.parse(i.deadline_at) > Date.now() + CLAIM_STALE_MS - 60000, 'GitHub is asked once the claim is old');
     assert.equal(calls(WORK.observe).length, 0, 'a live claim is its process\'s');
     await asTransition((x) => x.query(
       `UPDATE wf_instances SET data = jsonb_set(data, '{claim,at}', to_jsonb((now() - make_interval(secs => $3::bigint / 1000.0))::text))
@@ -571,6 +605,32 @@ test('the merge against the full PostgreSQL schema', { timeout: 240000 }, async 
     assert.equal((await qInst(s.app)).data.resolution, null, 'the queue heard');
     await settle();
     assert.equal(calls(WORK.sync).length, 0, 'never ran');
+
+    // The author's move back waits for a gate under way (refused busy), and
+    // once the gate claims it, it reads merging: the merge and the move back
+    // exclude each other (#3114).
+    defaults();
+    const u = await proposalRow();
+    await vote(u, await user(), 'yes');
+    let release;
+    work.hold.set(WORK.gate, new Promise((r) => { release = r; }));
+    await want(u.app);
+    await rt.drain();
+    const gating = rt.runServices();
+    await new Promise((r) => setTimeout(r, 100));
+    const during = await toProposal(u, 'Unpromote', { from: 'promoted', userId: u.owner.id }, { kind: 'route' });
+    await rt.drain();
+    assert.equal((await outcome(during)).reason, 'busy');
+    work.hold.delete(WORK.gate);
+    release();
+    await gating;
+    await rt.drain();
+    assert.equal((await pInst(u)).state, 'merging');
+    const after = await toProposal(u, 'Unpromote', { from: 'promoted', userId: u.owner.id }, { kind: 'route' });
+    await rt.drain();
+    assert.equal((await outcome(after)).reason, 'merging');
+    assert.equal((await row(u)).status, 'merging');
+    await settle();
   });
 
   // ── After the adversarial review ────────────────────────────────────

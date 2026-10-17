@@ -6,45 +6,19 @@
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import type { BotNote } from '../rules/bot-notes.ts';
 import { backoff, closeAndComment, gone, permanent } from '../github-work.ts';
-import { liveShotsRun } from './facts.ts';
+import { INCLUDED_CANDIDATES_SQL, includedIn, liveShotsRun } from './facts.ts';
 import { WORK } from './machine.ts';
 
-// requestDeploy: platform.ts's, for the deploy work left from before.
-interface Deps {
-  config: any; pool: Pool; requestDeploy?: (appId: number, reason: string, o?: Record<string, unknown>) => Promise<number>;
-  botNote?: BotNote;
-}
+interface Deps { config: any; pool: Pool }
 
-export function mergeFollowupsServices({ config, pool, requestDeploy, botNote }: Deps): Record<string, WorkHandler> {
+export function mergeFollowupsServices({ config, pool }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
   const session = async (id: number) => (await pool.query(
     `SELECT cs.*, a.slug AS app_slug, a.repo_url FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
     [id])).rows[0] || null;
-  const app = async (id: number) => (await pool.query('SELECT * FROM apps WHERE id = $1', [id])).rows[0] || null;
 
   return {
-    // The merge's own deploy, as merges recorded it before every deploy
-    // was app-delivery's. An item of it left from then deploys nothing: it
-    // asks app-delivery for the deploy it stood for, here, so the deploy is
-    // asked whichever release applies its result (during a rollout an older
-    // Pod may, and its code would not ask), and answers `handOff`: the
-    // machine then asks app-delivery on the merge's behalf too (one more
-    // request, served by the same deploys). The request key is the item's,
-    // so a retry asks once.
-    [WORK.deliver]: {
-      maxAttempts: 5,
-      backoffMs: backoff,
-      async run({ input, workId }): Promise<Json> {
-        await requestDeploy!(Number(input.appId), 'merge', {
-          prNumber: input.prNumber ?? null, revision: input.mergeSha ?? null, reuse: input.reuse ?? null,
-          requestKey: `handoff:${workId}`,
-        });
-        return { handOff: true };
-      },
-    },
-
     // Docker self-hosting: the host deployer fetches at once instead of on
     // its poll (Kubernetes releases through Argo CD: nothing to tell).
     [WORK.nudge]: {
@@ -72,38 +46,41 @@ export function mergeFollowupsServices({ config, pool, requestDeploy, botNote }:
       },
     },
 
-    // Its preview goes, read as the merged row it now is, so a running
-    // preview operation is aborted rather than left to the stale sweeper.
+    // One release only: an older release queued the preview's teardown as
+    // work. It reports, and the transition that applies the result asks the
+    // preview machine to retire it (machine.ts); since this release the
+    // merge's transition asks it by message.
     [WORK.teardown]: {
       maxAttempts: 5,
       backoffMs: backoff,
-      leaseMs: 120000,
-      async run({ input }): Promise<Json> {
-        const row = await session(input.sessionId);
-        if (!row) return { gone: true };
-        const result = await legacy('services/staging').teardownStaging(row, await app(row.app_id) || { slug: row.app_slug },
-          { terminal: true, reason: 'merged' });
-        if (result?.leaked) throw new Error(result.busy ? 'a preview operation is still running' : 'the preview could not be removed');
-        return { removed: !!result?.removed };
-      },
+      async run(): Promise<Json> { return { handedOff: true }; },
     },
 
     // Its worker and Claude Code volume go, unless a shots run is still
     // under way in them (the shots machine's instance says): then it says
-    // which, and the machine asks again later.
+    // which, and the machine asks again later. Strict and fenced
+    // (worker.removeCcVolume): the shots run is read again between reading
+    // what to remove and removing it, and a removal the runtime refuses is
+    // tried again.
     [WORK.retire]: {
       maxAttempts: 5,
       backoffMs: backoff,
-      async run({ input }): Promise<Json> {
-        const live = await liveShotsRun(pool, input.sessionId);
+      async run(ctx): Promise<Json> {
+        const id = Number(ctx.input.sessionId);
+        const live = await liveShotsRun(pool, id);
         if (live) return { waiting: live };
-        await legacy('services/worker').destroyCcVolume(input.sessionId);
+        let waiting: string | null = null;
+        const out = await legacy('services/worker').removeCcVolume(id, {
+          proceed: async () => { await ctx.checkpoint({ removing: true }); waiting = await liveShotsRun(pool, id); return !waiting; },
+          renew: () => ctx.checkpoint({ removing: true }),
+        });
+        if (out.skipped) return { waiting: waiting || 'run' };
         return { retired: true };
       },
     },
 
     // The app's other changes up for a vote whose head is one of this pull
-    // request's commits went live with it (services/included-changes.js).
+    // request's commits went live with it (workflow/merge-followups/facts.ts).
     // Each is named with the head that matched: the machine marks it only
     // if that is still its head, and nothing is working on it, read under
     // its own lock (machine.ts notIncludable).
@@ -119,13 +96,11 @@ export function mergeFollowupsServices({ config, pool, requestDeploy, botNote }:
       async run({ input }): Promise<Json> {
         const gh = github();
         if (!gh.isEnabled()) return { ids: [], found: [] };
-        const changes = legacy('services/included-changes');
-        const { rows } = await pool.query(changes.CANDIDATES_SQL, [input.appId, input.sessionId]);
+        const { rows } = await pool.query(INCLUDED_CANDIDATES_SQL, [input.appId, input.sessionId]);
         if (!rows.length) return { ids: [], found: [] };
         const listed = await gh.listPullRequestCommitShas(input.owner, input.repo, input.prNumber);
-        const head = (c: any) => String((c.source === 'imported' ? c.imported_pr_head_sha : c.reviewed_head_sha) || '').toLowerCase();
-        const found = changes.containedIn(rows, listed?.shas).map((c: any) => ({ id: Number(c.id), head: head(c) }));
-        return { ids: found.map((f: { id: number }) => f.id), found };
+        const found = includedIn(rows, listed?.shas);
+        return { ids: found.map((f) => f.id), found };
       },
     },
 
@@ -140,13 +115,11 @@ export function mergeFollowupsServices({ config, pool, requestDeploy, botNote }:
       async run({ input }): Promise<Json> {
         const gh = github();
         if (!gh.isEnabled()) return { skipped: 'github_off' };
-        const numbers: number[] = legacy('services/pr-metadata').sanitizeIssueNumbers(input.linkedIssues);
+        const watcher = legacy('services/issue-close-watcher');
         if (input.closeOnly) {
-          const changes = legacy('services/included-changes');
-          const row = { id: input.sessionId, app_id: input.appId, app_slug: input.appSlug, linked_issues: numbers };
-          const { closed, failed } = await changes.closeRequests({
-            pool, row, carrier: { pr_number: input.carrierPrNumber || null }, github: gh,
-            repo: { owner: input.owner, repo: input.repo }, d: changes.depsOf(), strict: true,
+          const { closed, failed, targets } = await watcher.closeIncluded({
+            owner: input.owner, repo: input.repo, prNumber: input.carrierPrNumber || null,
+            linkedIssues: input.linkedIssues, appId: input.appId, pool,
           });
           // A request that is gone (404, 410) is closed enough; any other
           // failure is retried (closing a closed request again is harmless).
@@ -154,25 +127,19 @@ export function mergeFollowupsServices({ config, pool, requestDeploy, botNote }:
           if (unclosed.length) {
             throw new Error(`Could not close request${unclosed.length === 1 ? '' : 's'} ${unclosed.map((f: { number: number }) => `#${f.number}`).join(', ')} on GitHub`);
           }
-          return { closed };
+          return { closed, targets };
         }
-        // Every web process stopped listing them when the merge was
-        // recorded, and re-reads when this ends (machine.ts, issuesClosed).
-        if (numbers.length) {
-          await legacy('routes/issues').resolveSupersededCloseProposals(pool, {
-            appId: input.appId, appSlug: input.appSlug, numbers, cause: { kind: 'pr-merge', prNumber: input.prNumber },
-            strict: true,
-          });
-        }
-        const out = await legacy('services/issue-close-watcher').watchIssuesClosedAfterMerge({
-          owner: input.owner, repo: input.repo, prNumber: input.prNumber, linkedIssues: numbers,
-          appSlug: input.appSlug, appId: input.appId, pool, strict: true,
+        const out = await watcher.closeAfterMerge({
+          owner: input.owner, repo: input.repo, prNumber: input.prNumber, linkedIssues: input.linkedIssues,
+          // An item an older release queued has no `look`: a first look.
+          appId: input.appId, pool, look: input.look === 2 ? 2 : 1,
         });
-        // A linked request the watcher could neither see closed nor close is
-        // retried: the next attempt watches and closes again. A number only
-        // the PR's body names is never closed here, so it is not waited for.
-        const open = (out.stillOpen || []).filter((n: number) => numbers.includes(n));
-        if (open.length) throw new Error(`Linked request${open.length === 1 ? '' : 's'} ${open.map((n: number) => `#${n}`).join(', ')} still open on GitHub`);
+        // A linked request it could neither see closed nor close at the
+        // second look is retried. A number only the PR's body names is
+        // never closed here, so it is not waited for.
+        const linked = new Set((Array.isArray(input.linkedIssues) ? input.linkedIssues : []).map(Number));
+        const open = (out.stillOpen || []).filter((n: number) => linked.has(n));
+        if (!out.waiting && open.length) throw new Error(`Linked request${open.length === 1 ? '' : 's'} ${open.map((n: number) => `#${n}`).join(', ')} still open on GitHub`);
         return out as Json;
       },
     },
@@ -181,54 +148,17 @@ export function mergeFollowupsServices({ config, pool, requestDeploy, botNote }:
     [WORK.closePr]: {
       maxAttempts: 6,
       backoffMs: backoff,
-      run: (ctx) => closeAndComment(ctx, (gh, owner, repo, number) => gh.closePR(owner, repo, number)),
+      run: (ctx) => closeAndComment(ctx, 'pullRequest'),
     },
 
-    // The repository's unit suite on the merge commit (services/main-watch.js).
-    // Its claim is per commit, so a retry after a crash finds it claimed and
-    // returns; main-watch's own recovery re-drives a run that died.
+    // One release only: an older release queued the merge commit's unit
+    // suite as work. It reports, and the transition that applies the result
+    // asks the main-check machine (machine.ts); since this release the
+    // merge's transition asks it by message.
     [WORK.mainCheck]: {
-      maxAttempts: 3,
-      backoffMs: backoff,
-      leaseMs: 5 * 60 * 1000,
-      async run({ input }): Promise<Json> {
-        const row = await app(input.appId);
-        if (!row) return { skipped: 'no_app' };
-        const verdict = await legacy('services/main-watch').afterMerge(config, pool, {
-          app: row, session: { id: input.sessionId, pr_number: input.prNumber }, mergeSha: input.mergeSha, strict: true,
-        });
-        return { state: verdict?.state ?? null };
-      },
-    },
-
-    // One release only: what an older release queued for a change of the
-    // Homeroom bot's once merged (its other work on the request stops) and
-    // once live (its requester's DM, the request's "It's live"). The bot's
-    // change machine hears it and does each once; since this release the
-    // merge's own writes tell it.
-    [WORK.bot]: {
       maxAttempts: 5,
       backoffMs: backoff,
-      async run({ input, workId }): Promise<Json> {
-        if (botNote) await botNote(Number(input.sessionId), 'Merged', { before: input.before ?? null }, { requestKey: `shim:${workId}` });
-        return { handedOff: true };
-      },
-    },
-    [WORK.dm]: {
-      maxAttempts: 5,
-      backoffMs: backoff,
-      async run({ input, workId }): Promise<Json> {
-        if (botNote) await botNote(Number(input.sessionId), 'Live', {}, { requestKey: `shim:${workId}` });
-        return { handedOff: true };
-      },
-    },
-    [WORK.live]: {
-      maxAttempts: 5,
-      backoffMs: backoff,
-      async run({ input, workId }): Promise<Json> {
-        if (botNote) await botNote(Number(input.sessionId), 'Live', {}, { requestKey: `shim:${workId}` });
-        return { handedOff: true };
-      },
+      async run(): Promise<Json> { return { handedOff: true }; },
     },
 
     // The admin Journey's change_live record, at the merge's time.

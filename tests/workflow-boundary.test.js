@@ -17,16 +17,47 @@ const FILES = {
   'src/db/schema.sql': `
 CREATE TABLE things (id SERIAL PRIMARY KEY, status TEXT, note TEXT);
 CREATE TABLE logs (id SERIAL PRIMARY KEY);
+CREATE TABLE asks (id SERIAL PRIMARY KEY, kind TEXT, state TEXT);
 CREATE TRIGGER things_wf_owned BEFORE UPDATE ON things FOR EACH ROW
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=demo/thing:', 'status');
+CREATE TRIGGER asks_wf_owned BEFORE UPDATE ON asks FOR EACH ROW
+  WHEN (OLD.kind IN ('vote', 'poll'))
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=demo/ask:', 'state');
 CREATE TRIGGER things_wf_done BEFORE UPDATE ON things FOR EACH ROW
   WHEN (NEW.status = 'done')
   EXECUTE FUNCTION wf_guard_owned_columns('@enabled=coowner', 'status');
 CREATE OR REPLACE FUNCTION things_fill() RETURNS TRIGGER AS $$
 BEGIN NEW.status := 'x'; RETURN NEW; END; $$ LANGUAGE plpgsql;
-CREATE TRIGGER things_fill BEFORE INSERT ON things FOR EACH ROW EXECUTE FUNCTION things_fill();
+CREATE TRIGGER things_fill BEFORE UPDATE ON things FOR EACH ROW EXECUTE FUNCTION things_fill();
+CREATE TRIGGER things_new BEFORE INSERT ON things FOR EACH ROW EXECUTE FUNCTION things_fill();
+CREATE TRIGGER things_gone BEFORE UPDATE ON things FOR EACH ROW EXECUTE FUNCTION things_fill();
+DROP TRIGGER IF EXISTS things_gone ON things;
 `,
   'src/services/helper.js': 'module.exports = { helped() {}, other() {} };',
+  // Writes that leave the guarded rows alone by what they say themselves,
+  // and the same shapes that do not.
+  'src/services/seeds.js': `
+async function seed(pool) {
+  await pool.query("UPDATE things SET status = 'x' WHERE id = $1 AND NOT wf_holds('demo', 'thing:' || id)");
+  await pool.query("UPDATE things SET status = CASE WHEN wf_holds('demo', 'thing:' || id) THEN status ELSE 'x' END WHERE id = 1");
+  await pool.query("UPDATE asks SET state = 'closed' WHERE id = $1 AND kind = 'general'");
+}
+async function careless(pool) { await pool.query("UPDATE things SET status = 'x' WHERE id = $1 AND NOT wf_holds('other', 'thing:' || id)"); }
+async function voteKind(pool) { await pool.query("UPDATE asks SET state = 'closed' WHERE id = $1 AND kind = 'vote'"); }
+async function upsert(pool) {
+  await pool.query("INSERT INTO asks (id, kind, state) VALUES (1, 'vote', 'open') ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state");
+}
+// Shapes that look like they leave the rows alone and do not (review, 2026-10-17).
+async function orHolds(pool) { await pool.query("UPDATE things SET status = 'x' WHERE id = $1 OR NOT wf_holds('demo', 'thing:' || id)"); }
+async function holdsOther(pool) { await pool.query("UPDATE things SET status = 'x' WHERE id = $1 AND NOT wf_holds('other', 'thing:' || id) AND wf_holds('demo', 'thing:' || id)"); }
+async function laterStatement(pool) { await pool.query("UPDATE things SET status = 'x' WHERE id = 1; UPDATE things SET note = 'y' WHERE id = 1 AND NOT wf_holds('demo', 'thing:' || id)"); }
+async function orKind(pool) { await pool.query("UPDATE asks SET state = 'closed' WHERE kind = 'general' OR id = $1"); }
+async function intoParam(pool) { await pool.query("UPDATE things SET status = CASE WHEN wf_holds('demo', 'thing:' || id) THEN $1 ELSE 'open' END WHERE id = 2"); }
+async function intoExcluded(pool) { await pool.query("INSERT INTO things (id, status) VALUES (2, 'done') ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status"); }
+async function intoOther(pool) { await pool.query("UPDATE things SET status = CASE WHEN wf_holds('demo', 'thing:' || id) THEN status ELSE 'open' END WHERE id = 2"); }
+async function intoDone(pool) { await pool.query("UPDATE things SET status = 'done' WHERE id = 2 AND NOT wf_holds('demo', 'thing:' || id)"); }
+module.exports = { seed, careless, voteKind, upsert, intoOther, intoDone, orHolds, holdsOther, laterStatement, orKind, intoParam, intoExcluded };
+`,
   'src/services/store.js': 'module.exports = { remember() {}, forget() {} };',
   'src/services/writer.js': `
 async function write(pool) {
@@ -70,6 +101,10 @@ import { createRequire } from 'node:module';
 const load = createRequire(new URL('../', import.meta.url));
 export function legacy(path: string): any { return load('./' + path); }
 `,
+  'src/workflow/io-shared.ts': `
+import { legacy } from './legacy.ts';
+export async function readIt(): Promise<unknown> { return legacy('services/store').remember(); }
+`,
   'src/workflow/shared.ts': `
 import { legacy } from './legacy.ts';
 export function closeWith(close: (m: any) => unknown) { const gh = legacy('services/helper'); return close(gh); }
@@ -102,9 +137,11 @@ const credits = (x: unknown) => ({ votes: x });   // a property named like nothi
 `,
   'src/workflow/demo/services.ts': `
 import { legacy } from '../legacy.ts';
+import { readIt } from '../io-shared.ts';
 const store = () => legacy('services/store');
 export function demoServices(pool: any) {
   return {
+    'demo.shared': { async run() { return readIt(); } },
     'demo.write': { async run() { await legacy('services/writer').write(pool); } },
     'demo.own': { async run() { await pool.query("UPDATE things SET note = 'x' WHERE id = 1"); await pool.query('INSERT INTO logs DEFAULT VALUES'); } },
     'demo.computed': { async run(ctx: any) { return legacy('services/helper')[ctx.input.fn](); } },
@@ -156,7 +193,9 @@ test('each place workflow code names code outside src/workflow/, as written', ()
   has(demo, 'services | uses src/services/helper.js[computed]');
   has(demo, 'services | uses src/services/store.js:remember');            // through a thunk
   has(demo, 'services | uses src/services/store.js (whole module)');      // handed on whole
-  has(demo, 'shared | uses src/services/helper.js (whole module)');       // a shared module hands it to a callback
+  has(demo, 'decider | uses src/services/helper.js (whole module)');      // a shared module a transition imports is the transition's
+  has(demo, 'services | uses src/services/store.js:remember');            // and one only work handlers import, theirs
+  assert.ok(!demo.some((e) => e.startsWith('shared | ')), 'a shared module has the roles of what imports it');
   has(demo, 'notifiers | uses src/services/helper.js:other');
   has(demo, 'notifiers | uses src/services/store.js (whole module)');     // a dynamic import
   assert.ok(!demo.some((e) => /writer\.js:(noteOnly)/.test(e)), 'only what the workflow code names');
@@ -190,6 +229,8 @@ test('notifiers, and other writers of owned columns', () => {
   has(demo, 'ownership | things.status ← src/services/writer.js#write');
   has(demo, 'ownership | things.status ← src/services/writer.js#write (dynamic SET)');
   has(demo, 'ownership | things.status ← trigger things_fill');
+  assert.ok(!demo.some((e) => e.includes('things_new')), 'a trigger on INSERT only fills a row no machine holds yet');
+  assert.ok(!demo.some((e) => e.includes('things_gone')), 'a trigger dropped further down is gone');
   assert.ok(!demo.some((e) => e.includes('noteOnly')), 'a writer of another column');
   assert.ok(!demo.some((e) => e.includes('fragments.js')), 'a SET built from named fragments of other columns');
   assert.ok(!demo.some((e) => e.includes('importer.js')), 'a fragment of a module the file requires');
@@ -197,4 +238,30 @@ test('notifiers, and other writers of owned columns', () => {
   has(demo, 'ownership | things.status ← src/services/stranger.js#guess (dynamic SET)');     // not imported
   assert.ok(!demo.some((e) => e.startsWith('ownership | things.note')), 'only owned columns');
   assert.ok(!demo.some((e) => e.includes('src/workflow/coowner/')), 'a machine that owns the column too is no other writer');
+  // A write that leaves the machine's rows alone by the guard's own terms.
+  assert.ok(!demo.some((e) => e.includes('seeds.js#seed')), 'NOT wf_holds, CASE WHEN wf_holds THEN col, a kind the guard does not cover');
+  has(demo, 'ownership | things.status ← src/services/seeds.js#careless');   // another machine's holds
+  has(demo, 'ownership | asks.state ← src/services/seeds.js#voteKind');      // a kind the guard covers
+  has(demo, 'ownership | asks.state ← src/services/seeds.js#upsert');        // ON CONFLICT DO UPDATE is a write
+  // An @enabled guard on a move into one value: a write of another value
+  // only is no other writer of it, a write of that value is.
+  assert.ok(!demo.some((e) => /coowner.*seeds\.js#intoOther/.test(e)));
+});
+
+test('a guard only on a move into one value: another value is not that move', () => {
+  const { root } = fixture();
+  const list = boundary(root);
+  const coowner = [...(list.get('coowner') || new Map()).keys()];
+  assert.ok(!coowner.some((e) => e.includes('seeds.js#intoOther')), coowner.join('\n'));
+  has(coowner, 'ownership | things.status ← src/services/seeds.js#intoDone');
+  has(coowner, 'ownership | things.status ← src/services/seeds.js#intoParam');     // a value it cannot read
+  has(coowner, 'ownership | things.status ← src/services/seeds.js#intoExcluded');  // the inserted row's, not the column's own
+});
+
+test('an exemption is a top-level conjunct of its own statement, naming the machine', () => {
+  const { demo } = fixture();
+  has(demo, 'ownership | things.status ← src/services/seeds.js#orHolds');
+  has(demo, 'ownership | things.status ← src/services/seeds.js#holdsOther');
+  has(demo, 'ownership | things.status ← src/services/seeds.js#laterStatement');
+  has(demo, 'ownership | asks.state ← src/services/seeds.js#orKind');
 });

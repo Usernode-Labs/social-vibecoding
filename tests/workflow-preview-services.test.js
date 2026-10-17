@@ -63,7 +63,6 @@ stub('../src/services/check-runs', {
   ...require('../src/services/check-runs'),
   async finish(pool, runId) { calls.push(['finish', runId]); },
 });
-const notes = [];
 const suites = { launched: [], running: 0, jobs: new Set(), asked: [], reusable: null };
 stub('../src/services/unit-suite', { ...require('../src/services/unit-suite'),
   isEnabled: () => true,
@@ -96,8 +95,7 @@ const pool = { async query(text) {
   if (/FROM apps WHERE id/.test(text)) return { rows: [{ id: 2, slug: 'shop', repo_url: 'https://github.com/acme/shop' }] };
   return { rows: [] };
 } };
-const handlers = previewServices({ config: { captureRuntime: 'kubernetes', kubernetes: {} }, pool,
-  botNote: async (sessionId, type, payload, o) => { notes.push([type, sessionId, payload, o.requestKey]); return 1; } });
+const handlers = previewServices({ config: { captureRuntime: 'kubernetes', kubernetes: {} }, pool });
 const ctx = (input, extra = {}) => ({
   input, key: 'k', attempt: 1, resumeFrom: null, signal: new AbortController().signal,
   checkpoint: async () => {}, ...extra,
@@ -232,29 +230,12 @@ test('a reclaimed build clones into its own claim\'s database, never the one a c
   assert.equal(out.db, dbs[1], 'and the receipt says which one serves');
 });
 
-
-test('an older release\'s preview-stopped and verdict items hand the bot\'s note to its change machine; an imported pull request\'s shots are told in the result', async () => {
-  notes.length = 0;
-  const key = (c) => `shim:${c.workId}`;
-  const stopped = ctx({ sessionId: 5, imported: false, shotsTold: true });
-  assert.deepEqual(await handlers[WORK.stopped].run(stopped), { noted: true });
-  assert.deepEqual(notes, [['PreviewStopped', 5, {}, key(stopped)]]);
-  notes.length = 0;
-  // The shots machine hears it from the transition (PreviewStopped); an
-  // item an older release queued says so in its result instead.
-  assert.deepEqual(await handlers[WORK.stopped].run(ctx({ sessionId: 6, imported: true, shotsTold: true })), { noted: true });
-  assert.deepEqual(await handlers[WORK.stopped].run(ctx({ sessionId: 6, imported: true })), { noted: true, stopped: null });
-  assert.deepEqual(notes.map((n) => n.slice(0, 2)), [['PreviewStopped', 6], ['PreviewStopped', 6]]);
-  // A verdict's follow-ups: the verdict for the bot (not a deferred one, not an error).
-  notes.length = 0;
-  assert.deepEqual(await handlers[WORK.followUps].run(ctx({ sessionId: 7, head, state: 'passing', shotsTold: true })), { done: true });
-  await handlers[WORK.followUps].run(ctx({ sessionId: 7, head, state: 'pending', deferred: true, shotsTold: true }));
-  await handlers[WORK.followUps].run(ctx({ sessionId: 7, head, state: 'error', shotsTold: true }));
-  assert.deepEqual(notes.map((n) => n.slice(0, 3)), [['Verdict', 7, { head, state: 'passing' }]]);
-  assert.deepEqual(await handlers[WORK.followUps].run(ctx({ sessionId: 7, head, state: 'failing' })), { done: true, handOff: head },
-    'an item from before the shots machine was told by message hands the head over');
-  // And an older release's `preview.ready` hands its head over, doing nothing itself.
-  assert.deepEqual(await handlers[WORK.ready].run(ctx({ sessionId: 6, head })), { handOff: head });
+test('no handler is left for the items an older release queued to hand a head or the bot\'s note on', () => {
+  // The transitions tell the shots machine and the bot by message now.
+  for (const old of ['preview.ready', 'verdict.followUps', 'preview.stopped']) {
+    assert.equal(handlers[old], undefined, `${old} has no handler`);
+  }
+  assert.deepEqual(Object.keys(handlers).sort(), Object.values(WORK).sort(), 'every kind the machine queues has one');
 });
 
 test('the unit suite starts with the build, under the attempt\'s own id, unless it is off, joined or the cluster is full', async () => {

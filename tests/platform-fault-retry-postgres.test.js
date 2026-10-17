@@ -10,6 +10,8 @@
 // Skips when no postgres is reachable (TEST_DATABASE_URL, else DATABASE_URL,
 // else localhost); a set TEST_DATABASE_URL that cannot be reached fails.
 
+// The verdict's writers: the preview machine's own (its transitions run them).
+const rowStore = require('../src/workflow/preview/check-store.ts');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -85,7 +87,7 @@ test('a platform fault is retried past the cap for a day, any other error is not
        VALUES ($1, 'b', 'pending', $2, NOW()) RETURNING id`, [app.id, sha])).rows[0].id;
     const errorSix = async (id, sha, platformFault, detail) => {
       for (let i = 0; i < 6; i += 1) {
-        assert.equal(await visuals.storeChecks(client, id, sha, { state: 'error', results: [], platformFault }, detail), true);
+        assert.equal(await rowStore.storeChecks(client, id, sha, { state: 'error', results: [], platformFault }, detail), true);
       }
       // Its scheduled retry has come.
       await client.query("UPDATE chat_sessions SET check_next_retry_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [id]);
@@ -123,11 +125,11 @@ test('a platform fault is retried past the cap for a day, any other error is not
     assert.deepEqual(await stuckIds(), []);
 
     // Another error on the same head is that error, and stops at the cap.
-    await visuals.storeChecks(client, platform, 'sha-platform', { state: 'error', results: [] }, 'The staging preview did not start.');
+    await rowStore.storeChecks(client, platform, 'sha-platform', { state: 'error', results: [] }, 'The staging preview did not start.');
     assert.equal((await row(platform)).check_error_platform, false);
     // A verdict clears the streak and the flag.
-    await visuals.storeChecks(client, platform, 'sha-platform', { state: 'error', results: [], platformFault: true }, COLLISION);
-    await visuals.storeChecks(client, platform, 'sha-platform', { state: 'passing', results: [] });
+    await rowStore.storeChecks(client, platform, 'sha-platform', { state: 'error', results: [], platformFault: true }, COLLISION);
+    await rowStore.storeChecks(client, platform, 'sha-platform', { state: 'passing', results: [] });
     const done = await row(platform);
     assert.equal(done.check_state, 'passing');
     assert.equal(done.check_error_platform, false);
@@ -140,7 +142,7 @@ test('a platform fault is retried past the cap for a day, any other error is not
       'the expression as it was');
     const dead = await session('sha-dead');
     await client.query("UPDATE chat_sessions SET check_state = 'error', consecutive_check_failures = 1018 WHERE id = $1", [dead]);
-    assert.equal(await visuals.storeChecks(client, dead, 'sha-dead', { state: 'error', results: [] }, 'The staging preview did not start.'), true);
+    assert.equal(await rowStore.storeChecks(client, dead, 'sha-dead', { state: 'error', results: [] }, 'The staging preview did not start.'), true);
     const d = await row(dead);
     assert.equal(d.consecutive_check_failures, 1019);
     const waitMin = (new Date(d.check_next_retry_at) - new Date(d.last_check_failure_at)) / 60000;

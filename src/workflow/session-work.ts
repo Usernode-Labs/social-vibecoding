@@ -69,3 +69,17 @@ export function buildHoldSql(alias: string): string {
                 AND b.key = substr(${alias}.workflow_owner, length(split_part(${alias}.workflow_owner, '/', 1)) + 2)
                 AND b.state = 'building'))`;
 }
+
+// True while anything above works on the session `sessionId` (an SQL
+// expression over chat_sessions as `cs`): a coding turn, a turn on a local
+// agent, a shots run, a durable build, or an old flow's recorded operation.
+// The same in every process and after a restart (the Homeroom bot's voice
+// reads it to say whether a run is going on a change).
+export function workedOnSql(): string {
+  return `(cs.active_turn IS NOT NULL
+           OR EXISTS (SELECT 1 FROM local_agent_turns t
+                       WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
+           OR ${shotsRunningSql('cs.id')}
+           OR ${operationsLiveSql('cs.id')}
+           OR ${buildHoldSql('cs')})`;
+}

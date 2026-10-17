@@ -16,17 +16,21 @@ const COMMENT_LOOKBACK_MS = 10 * 60 * 1000;
 // checkpointed. A reply GitHub never delivered can still hide a comment it
 // created, so the comment carries a marker, and a retry that may have posted
 // it looks for the marker before posting again. A thing already gone counts
-// as closed.
+// as closed. `what` names the GitHub call, written out below so the list of
+// what the machines call (tests/lib/workflow-boundary.js) can read it.
 export async function closeAndComment(
   { input, resumeFrom, checkpoint }: Pick<WorkContext, 'input' | 'resumeFrom' | 'checkpoint'>,
-  close: (gh: any, owner: string, repo: string, number: number) => Promise<unknown>,
+  what: 'issue' | 'pullRequest',
 ): Promise<Json> {
   const gh = legacy('services/github');
   if (!gh.isEnabled()) throw permanent('GitHub is not configured');
   // `commenting` is when an attempt started posting the comment.
   const done = (resumeFrom || {}) as { closed?: boolean; commenting?: string | boolean; commented?: boolean };
   if (!done.closed) {
-    try { await close(gh, input.owner, input.repo, input.number); } catch (err) {
+    try {
+      if (what === 'issue') await gh.closeIssue(input.owner, input.repo, input.number);
+      else await gh.closePR(input.owner, input.repo, input.number);
+    } catch (err) {
       if (gone(err)) return { gone: true };
       throw err;
     }

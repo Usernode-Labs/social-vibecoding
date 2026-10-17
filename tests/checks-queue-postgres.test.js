@@ -9,8 +9,9 @@
 // minutes; nothing bounded how many runs went at once. Here two processes are
 // two pg pools with their own connections, and an owner is the HOSTNAME
 // selfOwner() reads, switched between calls. The run that waits is the real
-// captureForSession and the real main-watch afterMerge, stopped before any
-// Job by superseding it or by a stub unit suite.
+// captureForSession and the real main-watch runMainSuite (the main-check
+// machine's main.suite work), stopped before any Job by superseding it or by
+// a stub unit suite.
 //
 // Skips when no postgres is reachable (TEST_DATABASE_URL, else DATABASE_URL,
 // else localhost).
@@ -318,9 +319,12 @@ test('main-watch runs through its slot, and a run superseded by a newer merge wh
   const suiteCalls = [];
   t.mock.method(unitSuite, 'maybeRunUnitSuite', async (opts) => { suiteCalls.push(opts.ref); return null; });
   const app = { id: appId, slug: 'demo', repo_url: 'https://github.com/org/demo' };
+  // The main-check machine claims the row for the commit before it runs.
+  const claim = (sha) => pool.query('UPDATE apps SET main_check_sha = $2 WHERE id = $1', [appId, sha]);
 
   // A slot free: it runs, and gives the slot back.
-  const out = await mainWatch.afterMerge(config, pool, { app, mergeSha: 'a'.repeat(40) });
+  await claim('a'.repeat(40));
+  const out = await mainWatch.runMainSuite(config, pool, { app, sha: 'a'.repeat(40) });
   assert.equal(out.state, 'skipped', 'the stub suite has no test script');
   assert.deepEqual(suiteCalls, ['a'.repeat(40)]);
   assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM check_runs')).rows[0].n, 0);
@@ -331,17 +335,16 @@ test('main-watch runs through its slot, and a run superseded by a newer merge wh
   const p1 = await ask(pool, await session(pool, appId));
   await checksQueue.admit(pool);
   assert.deepEqual((await admittedIds(pool)).sort(), [busy, p1].sort());
-  const waiting = mainWatch.afterMerge(config, pool, { app, mergeSha: 'b'.repeat(40) });
+  await claim('b'.repeat(40));
+  const waiting = mainWatch.runMainSuite(config, pool, { app, sha: 'b'.repeat(40) });
   await until(async () => (await pool.query(
     "SELECT 1 FROM check_runs WHERE kind = 'main' AND app_id = $1 AND admitted_at IS NULL", [appId])).rows.length);
   // A newer merge claims the row: nobody would read this run.
-  await pool.query('UPDATE apps SET main_check_sha = $2 WHERE id = $1', [appId, 'd'.repeat(40)]);
-  assert.equal(await waiting, null, 'nothing stored for the superseded merge');
+  await claim('d'.repeat(40));
+  assert.equal((await waiting).state, 'superseded', 'the machine records nothing more for it');
   assert.deepEqual(suiteCalls, ['a'.repeat(40)], 'its suite never ran');
   const { rows } = await pool.query("SELECT 1 FROM check_runs WHERE kind = 'main' AND app_id = $1", [appId]);
   assert.equal(rows.length, 0, 'and its row left the line');
-  assert.equal((await pool.query('SELECT main_check_sha FROM apps WHERE id = $1', [appId])).rows[0].main_check_sha,
-    'd'.repeat(40), 'the newer merge\'s claim stands');
 });
 
 // ── A freed slot ────────────────────────────────────────────────────────
@@ -487,7 +490,8 @@ test('a run waiting when its process died keeps its place: the retry of its work
 
 // 12 Oct 2026: a release restarted the platform during a confirmation, and
 // main stayed held until the run was 12 minutes stale and ran from the start.
-test('main-watch: an admitted run whose process died is taken over at once, and its Jobs read', async (t) => {
+// Now the main-check machine's next attempt passes the run id it kept back.
+test('main-watch: an admitted run whose process died is taken over by the next attempt, and its Jobs read', async (t) => {
   const env = await fresh(t, { cap: 1 });
   if (!env) return;
   const { pool, appId } = env;
@@ -501,39 +505,31 @@ test('main-watch: an admitted run whose process died is taken over at once, and 
   t.mock.method(kubernetes, 'deleteSettledCheckJobs', async () => 1);
   t.mock.method(unitSuite, 'outcomeFromLog', async () => ({ row: { status: 'pass', failureReason: '', summary: { tests: 40, pass: 40, fail: 0 } } }));
   const sha = 'a'.repeat(40);
-  await pool.query(
-    `UPDATE apps SET repo_url = 'https://github.com/org/demo', main_check_state = 'running', main_check_sha = $2,
-            main_check_at = NOW(), main_check_detail = '{}'::jsonb WHERE id = $1`, [appId, sha]);
+  const app = { id: appId, slug: 'demo', repo_url: 'https://github.com/org/demo' };
+  await pool.query('UPDATE apps SET main_check_sha = $2 WHERE id = $1', [appId, sha]);
   const running = await as('old-pod', () => askMain(pool, appId, sha));
   await checksQueue.admit(pool);
   assert.deepEqual(await admittedIds(pool), [running]);
 
-  // Alive and heartbeating: left alone.
-  let out = await mainWatch.resumeInterrupted(config, { pool });
-  assert.deepEqual(out.resumed, []);
-
-  // The release's shutdown hands its rows over; the new process takes the
-  // run at once, though main_check_at is seconds old.
+  // The release's shutdown hands its rows over; the new process's attempt
+  // takes the run at once.
   await as('old-pod', () => checkRuns.release(pool));
-  out = await as('new-pod', () => mainWatch.resumeInterrupted(config, { pool }));
-  assert.deepEqual(out.resumed, [{ appId, sha, was: 'running', adopting: true }]);
-  await out.done;
+  const out = await as('new-pod', () => mainWatch.runMainSuite(config, pool, { app, sha, resumeRunId: running }));
+  assert.equal(out.state, 'passing');
   assert.equal(fresh_.mock.callCount(), 0, 'its Jobs were read, not run again');
   assert.equal(found.mock.calls[0].arguments[1].previewRunId, running);
-  assert.equal((await pool.query('SELECT main_check_state FROM apps WHERE id = $1', [appId])).rows[0].main_check_state, 'passing');
   assert.equal((await pool.query('SELECT 1 FROM check_runs WHERE run_id = $1', [running])).rows.length, 0, 'its row is cleared');
 });
 
-test('main-watch: a live run is never re-driven, and one waiting when its process died is re-driven at once in its place', async (t) => {
+test('main-watch: a run waiting when its process died runs again in its place', async (t) => {
   const env = await fresh(t, { cap: 1 });
   if (!env) return;
   const { pool, appId } = env;
   const config = { workerRuntime: 'kubernetes' };
-  t.mock.method(unitSuite, 'maybeRunUnitSuite', async () => null);
+  const suite = t.mock.method(unitSuite, 'maybeRunUnitSuite', async () => null);
   const sha = 'e'.repeat(40);
-  await pool.query(
-    `UPDATE apps SET repo_url = 'https://github.com/org/demo', main_check_state = 'running', main_check_sha = $2,
-            main_check_at = NOW(), main_check_detail = '{}'::jsonb WHERE id = $1`, [appId, sha]);
+  const app = { id: appId, slug: 'demo', repo_url: 'https://github.com/org/demo' };
+  await pool.query('UPDATE apps SET main_check_sha = $2 WHERE id = $1', [appId, sha]);
   // Both slots a main-watch run may use are busy.
   const { rows: [other] } = await pool.query(`INSERT INTO apps (slug) VALUES ('other') RETURNING id`);
   const busy = await as('live-pod', () => askMain(pool, other.id, 'f'.repeat(40)));
@@ -542,22 +538,18 @@ test('main-watch: a live run is never re-driven, and one waiting when its proces
   const waiting = await as('old-pod', () => askMain(pool, appId, sha));
   const { rows: [before] } = await pool.query('SELECT queued_at FROM check_runs WHERE run_id = $1', [waiting]);
 
-  // Alive and waiting, it is not interrupted, however old the row's stamp.
-  let out = await mainWatch.resumeInterrupted(config, { pool, olderThanMs: 0 });
-  assert.deepEqual(out.resumed, []);
-
-  // Its process dies: re-driven at once, though the row was stamped just now.
+  // Its process dies; the next attempt passes its run id back, but a run
+  // never admitted has no Jobs: it asks for a slot again, in the dead run's place.
   await as('old-pod', () => checkRuns.release(pool));
-  out = await as('new-pod', () => mainWatch.resumeInterrupted(config, { pool, olderThanMs: 60 * 60 * 1000 }));
-  assert.deepEqual(out.resumed, [{ appId, sha, was: 'running', adopting: false }], 'it had no Jobs yet');
+  const out = as('new-pod', () => mainWatch.runMainSuite(config, pool, { app, sha, resumeRunId: waiting }));
   const again = await until(async () => (await pool.query(
     "SELECT * FROM check_runs WHERE kind = 'main' AND app_id = $1", [appId])).rows.find((r) => r.run_id !== waiting));
   assert.equal(new Date(again.queued_at).getTime(), new Date(before.queued_at).getTime(), 'it took over the dead run\'s place');
   assert.equal((await pool.query('SELECT 1 FROM check_runs WHERE run_id = $1', [waiting])).rows.length, 0);
 
-  // A slot frees; the re-driven run takes it and settles.
+  // A slot frees; the run takes it and settles.
   await checkRuns.finish(pool, busy);
-  await out.done;
-  assert.equal((await pool.query('SELECT main_check_state FROM apps WHERE id = $1', [appId])).rows[0].main_check_state, 'skipped');
+  assert.equal((await out).state, 'skipped');
+  assert.equal(suite.mock.callCount(), 1);
   assert.deepEqual(await admittedIds(pool), [p1], 'its slot went back');
 });

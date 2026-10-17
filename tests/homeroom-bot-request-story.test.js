@@ -85,7 +85,7 @@ function fakeLive({ posted = false, run = true } = {}) {
   return { pool, deps, queries, comments, messages };
 }
 
-// What the merge-followups machine's retry needs (bot.announceLive work,
+// What the bot's change machine's retry needs (its bot.commentLive work,
 // strict): a part that failed is thrown with the post left pending, and the
 // retry says only what is missing; a post never reads as said half sent.
 test('strict: a failed GitHub comment or thread message is thrown and retried, never marked said', async () => {

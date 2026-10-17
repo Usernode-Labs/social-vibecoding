@@ -63,17 +63,12 @@ test('every proposal move in the platform names what its caller read (`from`)', 
   assert.deepEqual(missing, [], `calls without \`from\`:\n${missing.join('\n')}`);
 });
 
-test('no code outside the workflow machines writes a proposal\'s status: the list names only the staging seeds and SET lists built at run time', () => {
-  const { readBaseline } = require('./lib/workflow-boundary');
-  const listed = readBaseline().machines.proposal.filter((e) => e.startsWith('ownership | chat_sessions.status ←'));
-  const writers = listed.filter((e) => !/\(dynamic SET\)$/.test(e) && !/src\/db\/migrate\.js#seedStaging/.test(e));
-  assert.deepEqual(writers, [], 'a writer of status outside the machine');
-  for (const e of listed.filter((x) => /migrate\.js#seedStaging/.test(x))) {
-    const fn = e.split('#')[1];
-    const text = read('src/db/migrate.js');
-    const body = text.slice(text.indexOf(`async function ${fn}`), text.indexOf('\nasync function ', text.indexOf(`async function ${fn}`) + 10));
-    assert.match(body, /wf_holds\('proposal'/, `${fn} leaves a row the machine holds alone`);
-  }
+test('no code outside the workflow machines writes a proposal\'s status: the scanner finds no other writer', () => {
+  // The staging seeds that touch it leave the rows the machine holds alone
+  // (wf_holds), which the scanner reads as no other writer.
+  const { boundary } = require('./lib/workflow-boundary');
+  const listed = [...(boundary().get('proposal') || new Map()).keys()].filter((e) => e.startsWith('ownership | chat_sessions.status ←'));
+  assert.deepEqual(listed, [], 'a writer of status outside the machine');
 });
 
 test('the bot\'s build session keeps its slot between turns until the build ends (bug 22)', () => {

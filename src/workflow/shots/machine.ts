@@ -44,9 +44,6 @@ export const WORK = Object.freeze({
   agent: 'shots.agent',
   publish: 'shots.publish',
   cleanup: 'shots.cleanup',
-  // Queued by an older release only: its handler hands the settle to the
-  // bot's change machine (services.ts, one release).
-  settled: 'bot.shotsSettled',
   prBlock: 'github.prShotsBlock',
 });
 
@@ -752,7 +749,7 @@ function cleaned(s: Live, e: Event<WorkResultPayload>): Outcome<SState> {
 const workDone: Handler = (s, e, f, ctx, deps) => {
   const p = e.payload as WorkResultPayload;
   if (p.kind === WORK.cleanup) return cleaned(s, e);
-  if (p.kind === WORK.settled || p.kind === WORK.prBlock) return step(s);
+  if (p.kind === WORK.prBlock) return step(s);
   // Copies of a run that ended while they were built: now their cleanup.
   const waited = p.kind === WORK.copies ? s.data.cleaning.find((c) => c.awaitCopies && p.workKey === `copies:${c.n}`) : null;
   if (waited) {

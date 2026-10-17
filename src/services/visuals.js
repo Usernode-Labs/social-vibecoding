@@ -668,10 +668,6 @@ function classifyConsole(frames) {
   return { state: errors.length ? 'errors' : 'clean', errors };
 }
 
-// Latest-only snapshot on the session, mirroring the merge-conflict trio.
-// One copy, shared with the preview machine: src/workflow/rules/check-store.ts.
-const storeConsoleCheck = checkStore.storeConsoleCheck;
-
 // ── Test suite (#47, "CI for proposals") ─────────────────────────────────
 // capture.js emits one frame per declared test:
 //   __USERNODE_TEST__ index=<n> status=<pass|fail> loadStatus=<n>
@@ -1299,25 +1295,18 @@ async function noteCheckSignals(checksResult, frames, { sessionId, commitHash, r
   }
 }
 
-// What a checks run leaves on the row: the verdict, the skipped and deferred
-// stamps, 'pending', the capture outcome, and their vocabularies. One copy,
-// shared with the preview machine (src/workflow/rules/check-store.ts, where
-// each statement's reasons are); a trimmed snapshot is logged here.
+// What a checks run leaves on the row (the verdict, the skipped and deferred
+// stamps, 'pending', the capture outcome) is the preview machine's to write
+// (src/workflow/preview/check-store.ts); the vocabularies it shares with this
+// module are src/workflow/rules/check-store.ts. A trimmed snapshot is logged
+// here.
 const TEST_RESULTS_MAX_BYTES = checkStore.TEST_RESULTS_MAX_BYTES;
 function serializeTestResults(results) {
   const { json, dropped, kept } = checkStore.serializeTestResults(results);
   if (dropped) log.info('visuals', 'Trimmed oversized test_results payload', { dropped, kept });
   return json;
 }
-const logTrim = ({ dropped, kept }) => log.info('visuals', 'Trimmed oversized test_results payload', { dropped, kept });
-// The fences for a person's "Run checks again" (the repo unit suite they
-// are owed, services/unit-suite-reuse.js) are check-store's own.
-function storeChecks(pool, sessionId, commitSha, result, errorDetail = null) {
-  return checkStore.storeChecks(pool, sessionId, commitSha, result, errorDetail, { onTrim: logTrim });
-}
 const DEFAULT_CHECKS_SKIPPED_REASON = checkStore.DEFAULT_CHECKS_SKIPPED_REASON;
-const storeChecksSkipped = checkStore.storeChecksSkipped;
-const setChecksPending = checkStore.setChecksPending;
 // The stage of a 'pending' run, alone (a preview machine's run: the machine
 // owns the verdict columns, and the run says only which stage it is in).
 async function setChecksPhase(pool, sessionId, commitSha, phase) {
@@ -1332,16 +1321,8 @@ async function setChecksPhase(pool, sessionId, commitSha, phase) {
 }
 const CHECK_PHASES = checkStore.CHECK_PHASES;
 const normalizeCheckPhase = checkStore.normalizeCheckPhase;
-const storeChecksDeferred = checkStore.storeChecksDeferred;
 const CHECK_TRIGGERS = checkStore.CHECK_TRIGGERS;
 const normalizeCheckTrigger = checkStore.normalizeCheckTrigger;
-// The capture-outcome snapshot (screenshot-reliability spec): WHAT the
-// capture run produced and WHY anything is missing, latest run only.
-// States: 'captured', 'partial', 'console_only', 'failed'. Best-effort at
-// every call site — an outcome write must never fail the capture pipeline.
-function storeCaptureOutcome(pool, sessionId, state, detail) {
-  return checkStore.storeCaptureOutcome(pool, sessionId, state, detail);
-}
 
 // Expand the deduped capture-path list into the ordered capture targets:
 // EVERY path is shot in BOTH the desktop frame (full media — png/webm/gif)
@@ -3576,7 +3557,6 @@ module.exports = {
   notifyChecks,
   RUN_TIMEOUT_MS,
   RUN_MAX_BUFFER,
-  storeChecksDeferred,
   // Exported for the regression test: the capture hostname is the only
   // consumer of these columns that needs a NAME rather than any handle
   // `docker` accepts, so the guard lives here and is asserted here.
@@ -3584,7 +3564,6 @@ module.exports = {
   storeArtifacts,
   getForSession,
   shapeAgg,
-  storeCaptureOutcome,
   expandCapturePaths,
   // Exported so the admin /gallery endpoint groups artifacts through the
   // SAME implementation the proposal cards and PR bodies use, instead of a
@@ -3592,7 +3571,6 @@ module.exports = {
   groupRows,
   parseConsole,
   classifyConsole,
-  storeConsoleCheck,
   parseTests,
   parseTestsDone,
   parseDiagnostics,
@@ -3604,10 +3582,7 @@ module.exports = {
   dnsHostname,
   serializeTestResults,
   overCeilingCheckRow,
-  storeChecks,
-  storeChecksSkipped,
   DEFAULT_CHECKS_SKIPPED_REASON,
-  setChecksPending,
   notifyChecksPending, makeChecksProgressTracker, makeChecksProgressState, setChecksProgress, notifyChecksProgress,
   CAPTURE_RETRY_INDEX_BASE,
   setChecksBuildProgress, notifyChecksBuildProgress, buildProgressFromTimings, BUILD_STEP_KEYS,

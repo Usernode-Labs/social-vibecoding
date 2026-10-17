@@ -617,21 +617,6 @@ test('every settled verdict reaches the bot\'s change machine, by the preview ma
   assert.match(schema, /ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha TEXT;/);
 });
 
-test('an older release\'s follow-ups read nothing themselves: the bot\'s change machine reads the row', async () => {
-  const { previewServices } = require('../src/workflow/preview/services.ts');
-  const { WORK } = require('../src/workflow/preview/machine.ts');
-  const asked = [];
-  const told = [];
-  const pool = { async query(sql) { asked.push(String(sql)); return { rows: [] }; } };
-  const followUps = (state) => previewServices({ config: {}, pool, botNote: async (id, type, p) => { told.push([type, p.state]); } })[WORK.followUps]
-    .run({ input: { sessionId: 5001, appId: 9, head: null, state }, workId: `w-${state}` });
-  await followUps('error');
-  await followUps('passing');
-  await followUps('failing');
-  assert.equal(asked.length, 0);
-  assert.deepEqual(told, [['Verdict', 'passing'], ['Verdict', 'failing']]);
-});
-
 // ── A declared change its shots show failing (Flat 4B Chores) ───────────
 //
 // Every check passed, but the before & after shots agent tapped the change's

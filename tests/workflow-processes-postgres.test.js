@@ -312,8 +312,11 @@ test('workflow machines in a process of their own, and through its crash', { tim
     assert.deepEqual(await removed(), [], 'the worker is kept while the run is under way');
     // The run ends; the retire asked again (made due now) removes the worker.
     await asWriter(shots('published'));
+    // The process sleeps until the next item it knows is due: told, as the
+    // kernel tells it of work it queues.
     await pool.query(`UPDATE wf_work SET due_at = NOW() WHERE machine = 'merge-followups' AND key = $1 AND kind = 'worker.retire' AND status = 'queued'`,
       [mergeKey(s)]);
+    await pool.query(`SELECT pg_notify('wf_work', 'worker.retire')`);
     await procs.until(async () => (await removed()).length === 1, 'the worker to go once the run ended');
   });
 
@@ -694,8 +697,9 @@ test('workflow machines in a process of their own, and through its crash', { tim
   async function campaignThrough({ crashAt } = {}) {
     await workflow.stop();
     await startWorkflow(MODEL);
-    // The fleet: one app; the campaign's own row as its governance apply
-    // inserts it (the apply is pinned in the governance suite).
+    // The fleet: one app, and the campaign proposed on the platform's own app
+    // and applied by an admin from the web side; the apply inserts its row and
+    // starts it (the apply is pinned in the governance suite).
     // (Its slug filter names only its own app.)
     const models = (await procs.effects(pool, 'llm.call')).length;
     const self = (await pool.query(`SELECT * FROM apps WHERE self_hosted = TRUE LIMIT 1`)).rows[0] || await app({ selfHosted: true });
@@ -706,14 +710,18 @@ test('workflow machines in a process of their own, and through its crash', { tim
        RETURNING *`, [`skip-${++seq}`, author.id]);
     await pool.query(`UPDATE apps SET status = 'running' WHERE id = $1`, [target.id]);
     const { rows: [issue] } = await pool.query(
-      `INSERT INTO issues (app_id, title, kind, payload, created_by, status) VALUES ($1, 'Maintenance campaign: JWT', 'maintenance_campaign', '{}', $2, 'closed')
-       RETURNING id`, [self.id, author.id]);
-    const { rows: [c] } = await pool.query(
-      `INSERT INTO maintenance_campaigns (issue_id, title, instructions, target_filter, status, created_by)
-       VALUES ($1, 'JWT', 'Use the public key', $3, 'running', $2) RETURNING id`, [issue.id, author.id, JSON.stringify([target.slug, skipped.slug])]);
+      `INSERT INTO issues (app_id, title, kind, payload, created_by) VALUES ($1, 'Maintenance campaign: JWT', 'maintenance_campaign', $2, $3)
+       RETURNING *`, [self.id, JSON.stringify({ title: 'JWT', instructions: 'Use the public key', targetFilter: [target.slug, skipped.slug] }), author.id]);
+    const { rows: [adminUser] } = await pool.query(
+      `INSERT INTO users (username, password, is_admin, has_platform_access) VALUES ($1, 'x', TRUE, TRUE) RETURNING id, username`,
+      [`campaign_admin_${++seq}`]);
+    await platform.fileProposal(issue.id, self.id);
     if (crashAt) await procs.arm(pool, crashAt);
     // The web side asks; the workflow process decides and works.
-    await platform.adoptCampaigns();
+    const applied = await platform.adminApplyProposal({ ...issue, status: 'open' }, adminUser);
+    assert.equal(applied.status, 200, JSON.stringify(applied.body));
+    const c = await procs.until(async () => (await pool.query('SELECT id FROM maintenance_campaigns WHERE issue_id = $1', [issue.id])).rows[0],
+      'the campaign\'s row, inserted by the apply');
     if (crashAt) {
       await procs.reached(pool, crashAt);
       await workflow.kill();
@@ -908,5 +916,69 @@ test('workflow machines in a process of their own, and through its crash', { tim
 
   await t.test('bot DM, restarted: killed in the answer\'s model call; the next process answers once (bug 10)', async () => {
     assert.deepEqual(await dmToTheBot({ crashAt: 'bot.model' }), dmUninterrupted, 'one answer, under its key, as without the crash');
+  });
+
+  // ── Main check: the unit suite on each new main ─────────────────────
+  const checkKey = (a) => `app:${a.id}`;
+  const mainCheckOf = async (a) => (await pool.query(
+    'SELECT main_check_state AS state, main_check_sha AS sha, main_check_paused_sha AS paused FROM apps WHERE id = $1', [a.id])).rows[0];
+  const suiteRuns = async (a) => (await procs.effects(pool, 'main.suite')).filter((e) => e.data.appId === a.id);
+  async function mergeIsChecked({ crashAt } = {}) {
+    const a = await app();
+    const s = await proposal(a);
+    if (crashAt) await procs.arm(pool, crashAt);
+    await reportMerge({ sessionId: s.id, appId: a.id, mergeSha: SHA('6') });
+    if (crashAt) {
+      await procs.reached(pool, crashAt);
+      await workflow.kill();
+      await procs.release(pool, crashAt);
+      await procs.expireLeases(pool);
+      await startWorkflow();
+    }
+    await procs.until(async () => (await mainCheckOf(a)).state === 'passing', 'the merge commit\'s suite to pass');
+    const { rows: [w] } = await pool.query(
+      `SELECT attempt_count, lost_attempts, checkpoint FROM wf_work WHERE machine = 'main-check' AND key = $1 AND kind = 'main.suite'`, [checkKey(a)]);
+    return {
+      row: await mainCheckOf(a),
+      state: (await instance('main-check', checkKey(a))).state,
+      verdicts: (await pool.query('SELECT sha, state FROM main_watch_verdicts WHERE app_id = $1', [a.id])).rows,
+      runs: (await suiteRuns(a)).map((e) => ({ resumeRunId: e.data.resumeRunId, here: e.pid === process.pid })),
+      work: w, app: a,
+      processes: await ranIn('main-check', checkKey(a), 'main.suite'),
+    };
+  }
+
+  await t.test('main check: a merge from the web side gets its main check decided and run in the workflow process', async () => {
+    const got = await mergeIsChecked();
+    assert.deepEqual(got.row, { state: 'passing', sha: SHA('6'), paused: null });
+    assert.equal(got.state, 'idle');
+    assert.deepEqual(got.verdicts, [{ sha: SHA('6'), state: 'passing' }]);
+    assert.deepEqual(got.runs, [{ resumeRunId: null, here: false }], 'one run, in the workflow process');
+    assert.equal(got.processes, 1);
+  });
+
+  await t.test('main check, restarted: killed mid-suite, the next process carries the run on from the run id it kept', async () => {
+    const got = await mergeIsChecked({ crashAt: 'main.suite' });
+    assert.deepEqual(got.row, { state: 'passing', sha: SHA('6'), paused: null }, 'a verdict, where the old work item ended with none');
+    assert.deepEqual(got.verdicts, [{ sha: SHA('6'), state: 'passing' }]);
+    const runId = `run-${got.app.id}-${SHA('6').slice(0, 8)}`;
+    assert.deepEqual(got.runs.map((r) => r.resumeRunId), [null, runId], 'the second attempt adopts the first one\'s run');
+    assert.equal(got.processes, 2);
+    assert.deepEqual([got.work.attempt_count, got.work.lost_attempts, got.work.checkpoint], [2, 1, { runId }],
+      'the attempt lost with its process is not one of its tries');
+  });
+
+  await t.test('main check: a new main the drift poller saw, and an admin\'s Resume, from the web side', async () => {
+    const a = await app();
+    await platform.requestMainCheck({ appId: a.id, sha: SHA('7') });
+    await procs.until(async () => (await mainCheckOf(a)).state === 'passing', 'the new main\'s suite to pass');
+    assert.equal((await mainCheckOf(a)).sha, SHA('7'));
+    // A pause an older release left: lifted by the instance the Resume makes.
+    const b = await app();
+    await pool.query(`UPDATE apps SET main_check_state = 'failing', main_check_sha = $2, main_check_paused_sha = $2, main_check_at = now(),
+                             main_check_detail = '{}'::jsonb WHERE id = $1`, [b.id, SHA('8')]);
+    assert.equal(await platform.resumeMainCheck(b.id, { id: author.id, username: author.username }), 'resumed');
+    assert.deepEqual(await mainCheckOf(b), { state: 'failing', sha: SHA('8'), paused: null });
+    assert.equal(await platform.resumeMainCheck(b.id, { id: author.id, username: author.username }), 'not_paused');
   });
 });

@@ -333,7 +333,7 @@ test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, as
     const { rows: [first] } = await pool.query(
       `SELECT id FROM chat_sessions WHERE app_id = $1 AND linked_issues = ARRAY[1]`, [app.id],
     );
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [first.id]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [first.id]);
     const logger = require('../src/services/logger');
     const said = [];
     const realInfo = logger.info;

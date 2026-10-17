@@ -18,7 +18,7 @@ const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
 const { proposal, sessionKey, MACHINE: PROPOSAL, WORK: PWORK } = require('../src/workflow/proposal/machine.ts');
-const { campaign, campaignKey, MACHINE, WORK, CHECK_MS, FENCE } = require('../src/workflow/campaign/machine.ts');
+const { campaign, campaignKey, MACHINE, WORK, CHECK_MS } = require('../src/workflow/campaign/machine.ts');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const SHA = (c) => c.repeat(40).slice(0, 40);
@@ -80,7 +80,7 @@ test('maintenance campaigns against the full PostgreSQL schema', { timeout: 2400
     'SELECT * FROM wf_instances WHERE machine = $1 AND key = $2', [machine, key])).rows[0];
   const cInst = (c) => inst(MACHINE, campaignKey(c.id));
   const rows = async (c) => (await pool.query(
-    `SELECT mca.app_id, mca.state, mca.error, mca.session_id, mca.runner_id FROM maintenance_campaign_apps mca
+    `SELECT mca.app_id, mca.state, mca.error, mca.session_id FROM maintenance_campaign_apps mca
       WHERE mca.campaign_id = $1 ORDER BY mca.id`, [c.id])).rows;
   const stateOf = async (c, a) => (await rows(c)).find((r) => r.app_id === a.id);
   const lines = async (c) => (await pool.query(
@@ -190,10 +190,6 @@ test('maintenance campaigns against the full PostgreSQL schema', { timeout: 2400
     assert.equal(calls(WORK.change)[0].input.appId, a1.id);
     assert.equal(calls(WORK.change)[0].input.branch, `maint/c${c.id}/${a1.slug}`, 'one branch name per app, no timestamp (bug 1)');
     assert.equal((await stateOf(c, a1)).state, 'running');
-    // The older release's lease is fenced off for good.
-    const { rows: [mc] } = await pool.query('SELECT runner_id, lease_until FROM maintenance_campaigns WHERE id = $1', [c.id]);
-    assert.equal(mc.runner_id, FENCE);
-    assert.equal(String(mc.lease_until), 'Infinity');
     work.hold.delete(WORK.change);
     release();
     await quiet();
@@ -425,54 +421,30 @@ test('maintenance campaigns against the full PostgreSQL schema', { timeout: 2400
       /WF_OWNERSHIP_VIOLATION/);
     await assert.rejects(pool.query(`UPDATE maintenance_campaigns SET status = 'running' WHERE id = $1`, [c.id]),
       /WF_OWNERSHIP_VIOLATION/);
-    // The older release's takeLease, as it was written, takes nothing: on a
-    // campaign still running (its change held).
-    await app();
-    const running = await campaignRow();
-    let release;
-    work.hold.set(WORK.change, new Promise((r) => { release = r; }));
-    await start(running);
-    await until(() => calls(WORK.change).some((x) => x.input.campaignId === running.id), 'its change started');
-    assert.equal((await cInst(running)).state, 'running');
-    const { rowCount } = await pool.query(
-      `UPDATE maintenance_campaigns SET runner_id = 'old', lease_until = NOW() + interval '120 seconds'
-        WHERE id = $1 AND status = 'running' AND (lease_until IS NULL OR lease_until < NOW() OR runner_id = 'old')`, [running.id]);
-    assert.equal(rowCount, 0);
-    work.hold.delete(WORK.change);
-    release();
-    await quiet();
     const sid = (await stateOf(c, a1)).session_id;
     await asTransition((cl) => cl.query('DELETE FROM chat_sessions WHERE id = $1', [sid]));
     assert.equal((await stateOf(c, a1)).session_id, null);
   });
 
-  await t.test('C9 adoption: a campaign an older release drives is left to it until its lease lapses, then taken as its rows stand', async () => {
+  await t.test('C9 Start takes a campaign as its app rows stand: an open PR kept, an app left mid-change changed again', async () => {
     defaults(); await fresh();
     const a1 = await app();
     const a2 = await app();
     const a3 = await app();
     const c = await campaignRow();
-    // As the older driver left it: one PR open, one mid-change, one pending.
+    // Its rows as they stand: one PR open, one mid-change, one pending.
     const { rows: [old] } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, status, source, pr_number, branch_name) VALUES ($1, $2, 'promoted', 'maintenance', 7, 'maint/old')
        RETURNING id`, [a1.id, platformUser.id]);
     await pool.query(
-      `INSERT INTO maintenance_campaign_apps (campaign_id, app_id, state, session_id, runner_id) VALUES
-         ($1, $2, 'pr_open', $5, 'old'), ($1, $3, 'running', NULL, 'old'), ($1, $4, 'pending', NULL, NULL)`,
+      `INSERT INTO maintenance_campaign_apps (campaign_id, app_id, state, session_id) VALUES
+         ($1, $2, 'pr_open', $5), ($1, $3, 'running', NULL), ($1, $4, 'pending', NULL)`,
       [c.id, a1.id, a2.id, a3.id, old.id]);
-    await pool.query(`UPDATE maintenance_campaigns SET runner_id = 'old', lease_until = NOW() + interval '2 minutes' WHERE id = $1`, [c.id]);
-    const first = await start(c);
-    await rt.drain();
-    const { rows: [ev] } = await pool.query('SELECT result, reason FROM wf_events WHERE id = $1', [first]);
-    assert.deepEqual([ev.result, ev.reason], ['rejected', 'driven_elsewhere']);
-    assert.equal(await cInst(c), undefined);
-    await pool.query(`UPDATE maintenance_campaigns SET lease_until = NOW() - interval '1 second' WHERE id = $1`, [c.id]);
     await start(c);
     await settle();
     const i = await cInst(c);
     assert.deepEqual(i.data.apps.map((a) => [a.appId, a.state]), [[a1.id, 'proposed'], [a2.id, 'proposed'], [a3.id, 'proposed']]);
     assert.deepEqual(calls(WORK.change).map((x) => x.input.appId), [a2.id, a3.id], 'the app left mid-change is changed again; the open PR is kept');
-    assert.ok((await rows(c)).every((r) => r.runner_id === FENCE), 'every row fenced off for an older driver');
     assert.equal(i.state, 'done');
   });
 
@@ -527,7 +499,8 @@ test('maintenance campaigns against the full PostgreSQL schema', { timeout: 2400
   await t.test('C13 the check waits for a promote not applied yet, never reading it as refused', () => {
     // The check's own move, on the facts it reads: the campaign's last
     // Promote still pending (a backlog, a rollout), its proposal underway
-    // with an earlier answer.
+    // with an earlier answer. Any refusal fails the app, not_a_producer
+    // included (it was sent again while older releases ran).
     const app1 = { appId: 1, slug: 'x', state: 'proposing', n: 1, sessionId: null, prNumber: 101, error: null, resumable: false };
     const s = { name: 'running', data: { campaignId: 1, issueId: 1, threadAppId: 1, title: 'T', proposerId: 2, apps: [app1],
       exemplar: null, drained: null, stopped: null } };
@@ -539,11 +512,10 @@ test('maintenance campaigns against the full PostgreSQL schema', { timeout: 2400
     const rejected = check({ asked: asked({ promote: { result: 'rejected', reason: 'busy' } }) });
     assert.equal(rejected.next.data.apps[0].state, 'failed');
     assert.deepEqual(rejected.messages.map((m) => [m.to.key, m.event.type]), [['session:5', 'Close']]);
-    const rollout = check({ asked: asked({ promote: { result: 'rejected', reason: 'not_a_producer' } }) });
-    assert.equal(rollout.next.data.apps[0].state, 'proposing', 'an older release refused it: sent again');
-    assert.deepEqual(rollout.messages.map((m) => m.event.type), ['Promote']);
-    assert.equal(rollout.next.data.apps[0].resent, 1);
-    assert.ok(rollout.timer && rollout.timer.event.type === 'Check', 'the check comes back');
+    const notProducer = check({ asked: asked({ promote: { result: 'rejected', reason: 'not_a_producer' } }) });
+    assert.equal(notProducer.next.data.apps[0].state, 'failed');
+    assert.match(notProducer.next.data.apps[0].error, /not_a_producer/);
+    assert.deepEqual(notProducer.messages.map((m) => [m.to.key, m.event.type]), [['session:5', 'Close']], 'never sent again');
   });
 
   await t.test('C14 the dashboard reads what came of each proposal (bug 10)', async () => {
@@ -554,7 +526,7 @@ test('maintenance campaigns against the full PostgreSQL schema', { timeout: 2400
     await settle();
     const ids = await Promise.all(apps.map(async (a) => (await stateOf(c, a)).session_id));
     await asTransition(async (cl) => {
-      await cl.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [ids[0]]);
+      await cl.query(`UPDATE chat_sessions SET status = 'merged', live_at = COALESCE(merged_at, NOW()) WHERE id = $1`, [ids[0]]);
       await cl.query(`UPDATE chat_sessions SET status = 'archived' WHERE id = $1`, [ids[1]]);
       await cl.query(`UPDATE chat_sessions SET status = 'active' WHERE id = $1`, [ids[2]]);
     });

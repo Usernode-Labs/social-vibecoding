@@ -445,14 +445,22 @@ test('a turn that only queued a change, or only offered something, never opens b
 });
 
 test('a change something is running on reads busy, in a turn\'s facts and when an ask is recorded', async () => {
-  // turnRunningOn takes one options object. Both paths once passed it the
-  // pool and an id, so it threw, the throw read as "free", and a running
-  // turn, operation or shots run on the change was never seen.
+  // Both paths once read it through turnRunningOn with the wrong arguments,
+  // so it threw, the throw read as "free", and a running turn, operation or
+  // shots run on the change was never seen; and turnRunningOn asked this
+  // process's own registry first, which a turn in another process is not in.
   const change = { id: 70, app_id: 9, user_id: 1, status: 'promoted', is_headless: false, linked_issues: [], title: 'Blue header' };
-  const pool = ({ activeTurn = null } = {}) => ({
+  // Whatever holds it is read from the durable records (workedOnSql), in one
+  // statement: `busy` is what that statement answers.
+  const pool = ({ busy = false } = {}) => ({
     async query(sql) {
+      if (/AS busy FROM chat_sessions cs WHERE cs\.id/.test(sql)) {
+        assert.match(sql, /cs\.active_turn IS NOT NULL/);
+        assert.match(sql, /machine = 'shots'/);
+        assert.match(sql, /o->>'holder'/, 'an old flow\'s recorded operation, counted while its holder lives');
+        return { rows: [{ busy }] };
+      }
       if (/FROM chat_sessions cs WHERE cs\.id/.test(sql)) return { rows: [change] };
-      if (/SELECT active_turn FROM chat_sessions/.test(sql)) return { rows: [{ active_turn: activeTurn }] };
       if (/INSERT INTO homeroom_bot_change_asks/.test(sql)) return { rows: [{ id: 501 }] };
       if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(sql)) return { rows: [{ n: 0 }] };
       return { rows: [] };
@@ -461,9 +469,10 @@ test('a change something is running on reads busy, in a turn\'s facts and when a
   const busyDeps = (over = {}) => ({
     ...deps(),
     botSvc: { async enqueueFront() { return true; } },
-    worker: { isInFlight: () => false },
-    activeWorkers: new Set(),
-    shotsRunning: async () => false,
+    // This process's own registry is never asked: a turn here or elsewhere
+    // reads the same from the records.
+    worker: { isInFlight: () => true },
+    activeWorkers: new Set([70]),
     ...over,
   });
   const facts = (p, d) => voice.factsFor(p, {
@@ -476,10 +485,7 @@ test('a change something is running on reads busy, in a turn\'s facts and when a
   assert.match(await facts(pool(), busyDeps()), /Nothing is running on it now\./);
   assert.equal(await ask(pool(), busyDeps()), false);
   const held = [
-    ['a worker turn in this process', pool(), busyDeps({ activeWorkers: new Set([70]) })],
-    ['its executing worker', pool(), busyDeps({ worker: { isInFlight: (id) => Number(id) === 70 } })],
-    ['a shots run', pool(), busyDeps({ shotsRunning: async (id) => id === 70 })],
-    ['a turn on its row', pool({ activeTurn: { turnId: 't1' } }), busyDeps()],
+    ['a turn, an operation, a build or a shots run on its records', pool({ busy: true }), busyDeps()],
   ];
   for (const [what, p, d] of held) {
     assert.match(await facts(p, d), /A run on it is going right now\./, what);

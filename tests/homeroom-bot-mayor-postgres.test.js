@@ -904,7 +904,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(failing.stage, 'checks_failed');
     assert.equal(failing.doing, 'it\'s waiting for approval, and its tests failed (1 test did not pass)');
     // Merged: no longer in progress, and among what finished lately.
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [proposal.id]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [proposal.id]);
     const merged = await read();
     assert.ok(!merged.rightNow.some((e) => e.project === 'note-board' && e.number === 5));
     const done = merged.finishedLately.find((e) => e.project === 'note-board' && e.number === 5);
@@ -1884,7 +1884,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(await statusOf(share), 'promoted');
     // Offered, then merged before the tap: refused, and said why.
     const late = await offerOn(share);
-    await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [share]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', live_at = NOW() WHERE id = $1`, [share]);
     const tap = await say('Withdraw it', { reply_to_id: late.messageId });
     assert.equal((await read(await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: tap, deps: { sessionLifecycle } }))).content,
       'I couldn\'t withdraw it: it was approved, so it is being merged or is already live.');
