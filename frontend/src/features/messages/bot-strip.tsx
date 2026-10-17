@@ -11,7 +11,7 @@ import { useResolvedCommunityColor } from '../../lib/community-color';
 import * as api from './api';
 import { tryChange } from './bot-ready';
 import { requestHue, requestKey, storyRootIn } from './bot-request';
-import { ENDED_STATES, openSlots, slotsHref, trackEnding, trackLine, trackShort } from './bot-track';
+import { ENDED_STATES, trackEnding, trackLine, trackShort } from './bot-track';
 import { loadBotWork, useBotWork } from './bot-work';
 import { loadedMessages, openThreadAt } from './store';
 import type { BotTrack, HomeroomBotCurrentJob, HomeroomBotJob, HomeroomBotPastJob, HomeroomBotWork } from './types';
@@ -696,11 +696,6 @@ export function BotStripView({ work, remembered = null, onRemember, now }: BotSt
   const choose = (next: boolean) => { setOpen(next); setDoneOpen(false); onRemember?.(next); };
   const onOpen = (row: StripRow) => { choose(false); openRow(row); };
   const needTags = model.needs.slice(0, NEEDS_LIMIT).map((row) => row.job.issueNumber).filter((n): n is number => !!n && n > 0);
-  // 16 Oct 2026: a door to each project's bot slots where the bot has work
-  // in hand or held back: what holds each slot and what waits for one.
-  const slotProjects = [...new Map([...model.progress, ...model.ready, ...model.held]
-    .filter((row) => row.track && row.job.appSlug && !row.job.firstVersion)
-    .map((row) => [row.job.appSlug as string, { slug: row.job.appSlug as string, name: row.job.appName }])).values()];
   return (
     <section className="relative z-20 shrink-0" aria-label={t('messages:bot.strip.name')} data-bot-strip={open ? 'open' : 'closed'}>
       <button
@@ -770,21 +765,6 @@ export function BotStripView({ work, remembered = null, onRemember, now }: BotSt
                 </button>
                 {doneOpen ? <ul data-bot-strip-group="done">{model.done.map((row) => <DoneRow key={row.key} row={row} onOpen={onOpen} />)}</ul> : null}
               </>
-            ) : null}
-            {slotProjects.length ? (
-              <div className="flex flex-col gap-1 px-4 pt-2" data-bot-strip-slots="">
-                {slotProjects.map((project) => (
-                  <a
-                    key={project.slug}
-                    href={slotsHref(project.slug)}
-                    className="text-[13px] font-semibold text-violet-700 hover:underline dark:text-violet-300"
-                    data-bot-strip-slots-link={project.slug}
-                    onClick={(event) => { event.preventDefault(); choose(false); openSlots(project.slug); }}
-                  >
-                    {t('messages:bot.strip.slots', { project: project.name })}
-                  </a>
-                ))}
-              </div>
             ) : null}
           </div>
         </>
