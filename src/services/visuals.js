@@ -2203,8 +2203,11 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         expectSelector: t.expectSelector || '',
         expectText: t.expectText || '',
         allowConsoleErrors: !!t.allowConsoleErrors,
-        // capture.js groupTests gives such a check a load of its own.
-        ...(t.coldLoad === true ? { coldLoad: true } : {}),
+        // How capture.js groupTests loads its page, from the app's
+        // `bootParams` / `routingBoundaries` against the address visited:
+        // `coldLoad` (a load of its own) and `endsGroup` (nothing is
+        // switched to after it). Neither is ever a check's own setting.
+        ...appManifest.checkLoadFlags(visitPath, declared.loadRules),
       };
     });
 
@@ -3119,7 +3122,8 @@ async function holdMedia(pool, run, { shots, failures, collect, deferred }) {
 // Returns an empty suite when GitHub is disabled, the file is absent, or
 // anything goes wrong — the caller then synthesizes the baseline suite.
 //
-// The shape is { tests, rawCount, ceilingDropped, ok } rather than a bare
+// The shape is { tests, rawCount, ceilingDropped, ok } (plus, on a read,
+// the app's `loadRules` for checkLoadFlags) rather than a bare
 // array because the over-ceiling guard has to tell "the base branch declares
 // zero checks" apart from "we could not read the base branch". Both give
 // tests.length === 0; only the second must NOT be used as a baseline to
@@ -3135,7 +3139,10 @@ async function resolveDeclaredTests(repoOwner, repoName, ref) {
     let parsed;
     try { parsed = JSON.parse(raw); } catch { return empty(false); }
     const meta = appManifest.readTestsWithMeta(parsed);
-    return { tests: meta.tests, rawCount: meta.rawCount, ceilingDropped: meta.ceilingDropped, ok: true };
+    return {
+      tests: meta.tests, rawCount: meta.rawCount, ceilingDropped: meta.ceilingDropped, ok: true,
+      loadRules: meta.loadRules,
+    };
   } catch (err) {
     log.warn('visuals', 'Declared-test fetch failed — using baseline', {
       repo: `${repoOwner}/${repoName}`, ref, err: err.message,
