@@ -115,10 +115,17 @@ async function createManifestPR(config, pool, app, actor, opts) {
   // /api/sessions/:id/promote in routes/votes.js): set promoted_at
   // (anchors the stale-PR sweeper), emit pr_promoted, fan out
   // pr_proposed notifications.
+  // #5379: a manifest PR is a settings proposal, not agent work — no agent
+  // chat backs it, so stamp `source = 'settings'` to keep it out of the
+  // agent-session lists (Messages › Agents, the bell's Agents tab, the
+  // Improve panel). It still goes to the vote and the project's board like
+  // every other proposal; the session-caps counting treats it as NULL does.
+  // (JS comment, not `--` in the SQL: scripts/check-sql.js flattens queries
+  // to one line and a line comment would eat the statement.)
   const { rows: sessRows } = await pool.query(
     `INSERT INTO chat_sessions
-       (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status, promoted_at)
-     VALUES ($1, $2, $3, $4, $5, $6, 'promoted', NOW())
+       (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status, promoted_at, source)
+     VALUES ($1, $2, $3, $4, $5, $6, 'promoted', NOW(), 'settings')
      RETURNING id`,
     [app.id, actor.id || null, branch, prData.number, prData.html_url, prTitle]
   );

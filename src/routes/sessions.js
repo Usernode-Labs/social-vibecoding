@@ -2353,6 +2353,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // use this endpoint as a cross-app worker/session list; the Dev board
       // opts in so it can render the owner's imported In-progress cards.
       const includeImported = req.query.include_imported === '1';
+      // #5379: source='settings' rows are the manifest proposals the platform
+      // writes itself (rename, visibility, governance, admins, secret-declare,
+      // who-decides, topics). No agent conversation backs them, so the agent
+      // lists leave them out by default; the connector's proposal views opt
+      // back in with include_settings=1, alongside include_imported above.
+      const includeSettings = req.query.include_settings === '1';
       // last_activity_at = the newest message in the session's thread,
       // falling back to the session's own creation time. The dev tab's
       // card list sorts session rows by this ("most recent activity"),
@@ -2408,8 +2414,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          WHERE cs.user_id = $1 AND cs.status IN ('active', 'promoted', 'paused')
            AND cs.is_headless = FALSE
            AND ($2::boolean OR cs.source IS DISTINCT FROM 'imported')
+           AND ($3::boolean OR cs.source IS DISTINCT FROM 'settings')
          ORDER BY last_activity_at DESC`,
-        [req.user.id, includeImported]
+        [req.user.id, includeImported, includeSettings]
       );
       // #1196: the same login /api/sessions/:id carries, read once for the
       // whole list rather than per row. It is what makes "can you push this

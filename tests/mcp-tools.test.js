@@ -165,7 +165,7 @@ test('list responses are bounded and say when they were cut', () => {
   for (const name of listTools) {
     const idx = SRC.indexOf(`server.registerTool('${name}'`);
     assert.ok(idx > 0, `${name} is registered`);
-    const body = SRC.slice(idx, idx + 3000);
+    const body = SRC.slice(idx, idx + 3500);
     assert.match(body, /slice\(0, MAX_LIST_ITEMS\)/, `${name} caps its list`);
     assert.match(body, /truncated:/, `${name} reports truncation`);
   }
@@ -4129,19 +4129,23 @@ test('list_my_proposals asks for imported proposals, which is what it opens', ()
     SRC.indexOf("server.registerTool('list_my_proposals'"),
     SRC.indexOf("server.registerTool('prepare_work'")
   );
-  assert.match(block, /'\/api\/me\/active-sessions\?include_imported=1'/);
+  assert.match(block, /'\/api\/me\/active-sessions\?include_imported=1&include_settings=1'/);
 
   // Why the flag is load-bearing rather than tidy: the route's own SQL drops
   // `source='imported'` rows without it, and submit_work records every
-  // connector proposal as exactly that — an imported pull request.
+  // connector proposal as exactly that — an imported pull request. The
+  // settings flag keeps the platform-written proposals (#5379) visible to the
+  // agent too, even though they never had an agent chat.
   const SESSIONS_SRC = fs.readFileSync(
     path.join(__dirname, '../src/routes/sessions.js'), 'utf8'
   );
   const route = SESSIONS_SRC.slice(SESSIONS_SRC.indexOf("'/api/me/active-sessions'"));
   // The window is "the route's own query", not a fixed distance: the filter
   // sat 15 characters inside 3000 until #1959 put a second LATERAL and two
-  // columns ahead of the WHERE clause.
-  assert.match(route.slice(0, 4000), /cs\.source IS DISTINCT FROM 'imported'/);
+  // columns ahead of the WHERE clause, and #5379 added the settings gate
+  // beside it.
+  assert.match(route.slice(0, 4500), /cs\.source IS DISTINCT FROM 'imported'/);
+  assert.match(route.slice(0, 4500), /cs\.source IS DISTINCT FROM 'settings'/);
   assert.match(SRC.slice(SRC.indexOf("server.registerTool('submit_work'")), /pr-import/);
 
   // And the connector allowlist matches on the PATH, so the query string
@@ -4895,7 +4899,7 @@ const PR_ROW = {
 function platformWithProposals(rows) {
   return (method, pathname) => {
     assert.equal(method, 'GET');
-    if (pathname === '/api/me/active-sessions?include_imported=1') return { sessions: rows };
+    if (pathname === '/api/me/active-sessions?include_imported=1&include_settings=1') return { sessions: rows };
     const m = /^\/api\/sessions\/(\d+)$/.exec(pathname);
     if (m) {
       const found = rows.find((r) => r.id === Number(m[1]));
@@ -4932,7 +4936,7 @@ test('#2136 — get_proposal by prNumber answers exactly as by proposalId', asyn
     // exactly as an id is. No new route, no new access rule.
     assert.deepEqual(c.calls.map((x) => x.pathname), [
       '/api/sessions/4223',
-      '/api/me/active-sessions?include_imported=1', '/api/sessions/4223',
+      '/api/me/active-sessions?include_imported=1&include_settings=1', '/api/sessions/4223',
     ]);
     // With the slug too, when the caller has it.
     const scoped = await c.handlers.get('get_proposal')({ prNumber: 2151, slug: 'recipe-box' });

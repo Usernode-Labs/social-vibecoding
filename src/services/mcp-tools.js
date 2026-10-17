@@ -3846,7 +3846,7 @@ function registerTools(server, ctx) {
   // anyway. Two matches are possible in principle — the same number is a
   // different pull request on every app — and that is what `slug` is for.
   const resolveProposalByPr = async (prNumber, slug) => {
-    const result = await callPlatform(baseUrl, accessToken, 'GET', '/api/me/active-sessions?include_imported=1');
+    const result = await callPlatform(baseUrl, accessToken, 'GET', '/api/me/active-sessions?include_imported=1&include_settings=1');
     if (!result.ok) return { error: platformError(result) };
     const sessions = Array.isArray(result.body && result.body.sessions) ? result.body.sessions : [];
     const matches = sessions.filter((s) => Number(s.pr_number) === prNumber && (!slug || s.app_slug === slug));
@@ -4415,7 +4415,11 @@ function registerTools(server, ctx) {
     // the work as a pull request and imports it. Without the flag this tool
     // answered "no open proposals" to the agent that had just opened one, and
     // the only way back to it was a proposal id nothing had reported.
-    const result = await callPlatform(baseUrl, accessToken, 'GET', '/api/me/active-sessions?include_imported=1');
+    // `include_settings=1` keeps the platform-written settings proposals
+    // (source='settings', #5379) in the universe too: an agent can still see
+    // and look one up by its pull request number, even though they never had
+    // an agent chat.
+    const result = await callPlatform(baseUrl, accessToken, 'GET', '/api/me/active-sessions?include_imported=1&include_settings=1');
     if (!result.ok) return platformError(result);
     const sessions = Array.isArray(result.body && result.body.sessions) ? result.body.sessions : [];
     const open = sessions.filter((s) => s.status === 'promoted' || s.status === 'merging');
