@@ -185,10 +185,13 @@ test('an unanswered direct request is named by its requester in the row and the 
   assert.match(header, /active\.awaitingAcceptance \? t\('messages:header\.subtitle\.requestPending'\) : t\('messages:header\.subtitle\.direct'\)/);
 });
 
-test('the phone bar over an unanswered request names its requester too', () => {
+test('the phone bar over an open conversation says Messages', () => {
   const STORE = read('frontend/src/features/messages/store.ts');
   assert.equal(message('messages:store.header.messages'), 'Messages');
-  assert.match(STORE, /: state\.route\.agent \? t\('messages:store\.header\.messages'\) : chromeTitle\(state\.active\)\)/);
+  // #5383: the bar over an open conversation keeps saying "Messages"; the
+  // conversation's own header is the one place its name appears.
+  assert.match(STORE, /app\.setBackIcon\?\.\(thread \? 'arrow' : 'none', thread \? '#messages' : undefined\);/);
+  assert.match(STORE, /app\.setHeaderTitle\?\.\(t\('messages:store\.header\.messages'\)\);/);
   const helper = STORE.slice(STORE.indexOf('function chromeTitle('));
   assert.match(helper, /active\.kind === 'direct' && active\.membershipStatus === 'invited' && active\.requester\?\.username\)\s*\{\s*return active\.requester\.username;/);
 });

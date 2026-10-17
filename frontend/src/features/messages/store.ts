@@ -1199,18 +1199,19 @@ export function syncChrome(): void {
   // a jump to a screen its own bar already reaches. A THREAD is a level
   // inside this screen and keeps its chevron up to the list.
   app.setBackIcon?.(thread ? 'arrow' : 'none', thread ? '#messages' : undefined);
-  app.setHeaderTitle?.(thread
-    ? (state.route.appSlug
-      ? state.discussionContext?.name || t('messages:store.header.discussion')
-      : state.route.agent ? t('messages:store.header.messages') : chromeTitle(state.active))
-    : t('messages:store.header.messages'));
+  // #5383: a conversation's own header under the bar is the one place its
+  // name appears, so the bar over it says "Messages" — on a phone as it
+  // already does on a desktop, where the list stays beside the conversation.
+  app.setHeaderTitle?.(t('messages:store.header.messages'));
 }
 
 /**
- * The bar's name for an open conversation: its title — which for an
- * accepted direct one is the other person's username. QA 2026-09-24 Q33a: an
- * unanswered direct request has no peer yet and is titled "Direct message",
- * so it takes its requester's name instead, as its header and row do.
+ * The bar's name for a channel (#5383: an open conversation is named by its
+ * own header now, and the bar over it says "Messages"): its title — which
+ * for an accepted direct one is the other person's username. QA 2026-09-24
+ * Q33a: an unanswered direct request has no peer yet and is titled "Direct
+ * message", so it takes its requester's name instead, as its header and row
+ * do.
  */
 function chromeTitle(active: ConversationDetail | null): string {
   if (!active) return t('messages:store.header.messages');
