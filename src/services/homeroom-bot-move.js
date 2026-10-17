@@ -321,6 +321,8 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
     });
   } catch (err) {
     log.warn('homeroom-bot-move', 'Could not file a moved request', { app: app.slug, issueNumber: n, err: err.message });
+    // A failure a retry can cure: the act's work tries again, its claim kept.
+    if (mayor.retryAct(err, deps.actKey)) throw err;
     return failed(err.message, 'I couldn\'t move it just now. Try again in a minute.');
   }
   await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);

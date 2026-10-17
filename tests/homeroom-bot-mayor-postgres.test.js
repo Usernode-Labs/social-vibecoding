@@ -667,6 +667,46 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     await pool.query('DELETE FROM issues WHERE id = $1', [issue.id]);
   });
 
+  // Review round 2 (#5399): a failure a retry can cure, inside a tap's
+  // act, is the act's work's to retry with its claim, never a tap failed for
+  // good with nothing queued.
+  await t.test('a tap whose queueing fails for a moment is retried by its work, and files and queues once', async () => {
+    const offered = await turn('could note board export to csv?', scripted([
+      [['offer_request', { project: 'note-board', title: 'CSV export', details: 'Export notes as CSV.' }]],
+      [['reply', { text: 'Want me to file this?' }]],
+    ]));
+    const { rows: [action] } = await pool.query('SELECT id FROM homeroom_bot_dm_actions WHERE message_id = $1', [offered.messageId]);
+    const realBot = require('../src/services/homeroom-bot');
+    let tries = 0;
+    const botSvc = {
+      ...realBot,
+      async enqueueFront(...args) {
+        tries += 1;
+        if (tries === 1) throw Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+        return realBot.enqueueFront(...args);
+      },
+    };
+    const before = created.length;
+    const act = () => mayor.actOnTap(pool, CONFIG, { userId: ada.id, actionId: action.id, choice: 'yes', key: `action:${action.id}`, deps: { bot, botSvc } });
+    await assert.rejects(act(), /ECONNRESET/, 'thrown to the work, which tries again');
+    const { rows: [claimed] } = await pool.query('SELECT status, decided_key, issue_number FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
+    assert.deepEqual([claimed.status, claimed.decided_key, claimed.issue_number], ['done', `action:${action.id}`, null], 'its claim kept, not failed');
+    assert.deepEqual(await act(), { done: true, why: null });
+    assert.equal(created.length, before + 1, 'filed once');
+    const { rows: [after] } = await pool.query('SELECT status, issue_number FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
+    assert.equal(after.status, 'done');
+    const { rows: queued } = await pool.query('SELECT id FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2', [notes.id, after.issue_number]);
+    assert.equal(queued.length, 1, 'and queued');
+    assert.equal(tries, 2);
+    // A refusal no retry can change is still said at once (GitHub off).
+    assert.equal(mayor.retryAct(new Error('github_unavailable'), 'action:1'), false);
+    assert.equal(mayor.retryAct(Object.assign(new Error('Not Found'), { status: 404 }), 'action:1'), false);
+    assert.equal(mayor.retryAct(Object.assign(new Error('rate limited'), { status: 429 }), 'action:1'), true);
+    assert.equal(mayor.retryAct(Object.assign(new Error('x'), { code: 'ECONNRESET' }), null), false, 'outside durable work, said');
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2', [notes.id, after.issue_number]);
+    await pool.query('DELETE FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2', [notes.id, after.issue_number]);
+  });
+
   await t.test('an offer drafted again by a retried answer is the one under its message', async () => {
     const steps = [
       [['offer_request', { project: 'note-board', title: 'Sort by size', details: 'Sort notes by size.' }]],

@@ -225,6 +225,20 @@ const OFF_TEXT = 'I\'m switched off right now, so I\'m not working on anything. 
 const BUSY_TEXT = 'You\'ve sent me a lot in the last hour. Give me a little while and ask again.';
 // The last resort, when nothing below could answer at all.
 const BROKEN_TEXT = 'I couldn\'t answer just now. Try again in a minute.';
+/**
+ * Whether a tap's act that failed is the platform's to try again: inside
+ * the person's DM machine's work (`key`, the act's claim), anything but a
+ * refusal that a retry cannot change (GitHub is not set up, a 4xx other than
+ * a rate limit, an error marked permanent) is thrown, so the work retries
+ * with its claim and carries the act on; past its tries it is said to have
+ * failed (actOnTap's gaveUp). Outside durable work, nothing is.
+ */
+function retryAct(err, key) {
+  if (!key || !err) return false;
+  if (err.permanent || ['github_unavailable', 'invalid issue number'].includes(err.message)) return false;
+  const status = Number(err.status) || 0;
+  return !(status >= 400 && status < 500 && status !== 408 && status !== 429);
+}
 // Its DM answer's key: what it sends in answer to message `id` (`attempt`: a
 // later try's), so it is said once whichever path says it.
 function answerKey(id, attempt = 0) {
@@ -2822,11 +2836,14 @@ async function settleOffer(pool, config, {
     }, { conversationId: action.conversation_id, userId: user.id }).catch(() => {});
   }
   if (no && tapped) return { declined: true };
-  if (action.kind === 'withdraw_proposal') return decideWithdraw(pool, { bot, user, action, yes, ack, deps });
+  // The act's claim (`key`) rides with it, so what it calls can tell a
+  // failure to retry from one to say.
+  const actDeps = key ? { ...deps, actKey: key } : deps;
+  if (action.kind === 'withdraw_proposal') return decideWithdraw(pool, { bot, user, action, yes, ack, deps: actDeps });
   if (action.kind === 'move_request') {
-    return require('./homeroom-bot-move').decideMove(pool, config, { bot, user, settings, action, yes, ack, deps });
+    return require('./homeroom-bot-move').decideMove(pool, config, { bot, user, settings, action, yes, ack, deps: actDeps });
   }
-  if (action.kind === 'close_request') return decideClose(pool, { user, action, yes, ack, deps });
+  if (action.kind === 'close_request') return decideClose(pool, { user, action, yes, ack, deps: actDeps });
   if (no) return ack('OK, I won\'t file it.');
   const { rows: apps } = await pool.query(
     `SELECT ${require('./app-access').nonSecretAppColumnList()} FROM apps WHERE id = $1`, [action.app_id],
@@ -2880,6 +2897,8 @@ async function settleOffer(pool, config, {
     );
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'Could not file a request from a DM', { app: app.slug, userId: user.id, err: err.message });
+    // A failure a retry can cure: the act's work tries again, its claim kept.
+    if (retryAct(err, key)) throw err;
     await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(err.message, 300)]);
     return ack('I couldn\'t file it just now. Try again, or post it on the project\'s page.');
   }
@@ -3743,6 +3762,7 @@ async function decideClose(pool, { user, action, yes, ack, deps = {} }) {
     });
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'Could not propose closing a request from a DM', { app: app.slug, issueNumber: n, err: err.message });
+    if (retryAct(err, deps.actKey)) throw err;
     return failed(err.message, closed);
   }
   if (!proposed.ok) {
@@ -3979,6 +3999,7 @@ module.exports = {
   statusOf,
   buildWords,
   retryPlan,
+  retryAct,
   normalizeCalls,
   myWork,
   requestDetail,
