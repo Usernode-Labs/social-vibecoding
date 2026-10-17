@@ -31,6 +31,8 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const PROVIDER_RE = /^[a-zA-Z0-9 ._:/()-]{1,80}$/;
 const MODEL_RE = /^[\w./:@+-]{1,160}$/;
 const HARNESS_RE = /^[a-z_]{1,20}$/;
+// A turn keeps at most eight hosts (agent-turn.js ROUTED_PROVIDERS_MAX).
+const ROUTED_PROVIDERS_MAX = 8;
 
 // The ledger's metrics a build's speed is read from (llm-telemetry.js
 // normalizeDiagnostics): the query hands back these keys and no others.
@@ -49,18 +51,21 @@ const BUILD_FIELDS = Object.freeze([
   'wallMs', 'modelCalls', 'inputTokens', 'outputTokens', 'inputTokensPerCall', 'firstFileChangeMs', 'firstAppBootMs',
   'browserShare', 'modelRequestMs', 'browserToolMs', 'shellToolMs', 'editToolMs', 'readToolMs', 'otherToolMs',
   'fileChanges', 'distinctFileChanges', 'compactions', 'toolOutputPruned', 'toolOutputPrunedChars', 'toolBytes',
+  'shortlistFallbacks',
 ]);
 const REVIEW_FIELDS = Object.freeze(['round1Blockers', 'round1Majors', 'rounds', 'reviewMs', 'doneMs']);
 // The plan step's (planSpeedOf): its turn has no browser and no app to boot.
 const PLAN_FIELDS = Object.freeze([
   'wallMs', 'modelCalls', 'inputTokens', 'outputTokens', 'inputTokensPerCall', 'modelRequestMs',
-  'shellToolMs', 'editToolMs', 'readToolMs', 'otherToolMs', 'fileChanges', 'compactions',
+  'shellToolMs', 'editToolMs', 'readToolMs', 'otherToolMs', 'fileChanges', 'compactions', 'shortlistFallbacks',
 ]);
 const NOT_RUN = new Set(['pending', 'running', 'awaiting', 'not_applicable', 'skipped_cap', 'cancelled']);
 
 const TURNS_SQL = `SELECT logical_turn_id::text AS turn_id, attempt_number, started_at, completed_at,
             input_tokens, cached_input_tokens, output_tokens, requested_model, routed_model, routed_provider,
             metadata->>'harness' AS harness,
+            CASE WHEN jsonb_typeof(metadata->'routed_providers') = 'array' THEN metadata->'routed_providers' END AS routed_providers,
+            metadata->>'shortlist_fallbacks' AS shortlist_fallbacks,
             (SELECT jsonb_object_agg(e.key, e.value)
                FROM jsonb_each(CASE WHEN jsonb_typeof(metadata->'telemetry_metrics') = 'object'
                                     THEN metadata->'telemetry_metrics' END) AS e
@@ -137,6 +142,15 @@ async function buildTurnsFor(pool, trialRows) {
  *                       on its first request
  *   routedProvider, routedModel, requestedModel, harness
  *                       the first attempt's that recorded each
+ *   routedProviders, shortlistFallbacks
+ *                       every host the attempts' requests went to, first seen
+ *                       first (agent-turn.js routedProvidersOf; an attempt
+ *                       from before run seven gives its routed_provider), and
+ *                       how many of those requests the model's host shortlist
+ *                       refused and sent again to every host, summed (null
+ *                       when none recorded it): a shortlist that never holds
+ *                       has as many fallbacks as calls, as 1017's pin to
+ *                       DeepSeek's host did in run 206
  *
  * Pure.
  */
@@ -184,6 +198,9 @@ function turnSpeedOf(rows, turnIds) {
   const firstBrowser = at('first_browser_call_ms', Math.min);
   const lastBrowser = at('last_browser_call_ms', Math.max);
   const browserSpanMs = firstBrowser != null && lastBrowser != null ? Math.max(0, lastBrowser - firstBrowser) : null;
+  const hosts = [...new Set(mine.flatMap((a) => (Array.isArray(a.r.routed_providers) ? a.r.routed_providers : [a.r.routed_provider])
+    .map((name) => pick(name, PROVIDER_RE)).filter(Boolean)))].slice(0, ROUTED_PROVIDERS_MAX);
+  const fallbacks = mine.map((a) => num(a.r.shortlist_fallbacks)).filter((x) => x != null);
   return {
     startedAt: new Date(startMs).toISOString(),
     turns: new Set(mine.map((a) => String(a.r.turn_id).toLowerCase())).size,
@@ -214,6 +231,8 @@ function turnSpeedOf(rows, turnIds) {
     toolOutputPrunedChars: sum('tool_output_pruned_chars'),
     toolBytes: mine.map((a) => num(a.m.first_request_tool_bytes)).find((x) => x != null) ?? null,
     routedProvider: first('routed_provider', PROVIDER_RE),
+    routedProviders: hosts.length ? hosts : null,
+    shortlistFallbacks: fallbacks.length ? fallbacks.reduce((s, x) => s + x, 0) : null,
     routedModel: first('routed_model', MODEL_RE),
     requestedModel: first('requested_model', MODEL_RE),
     harness: first('harness', HARNESS_RE),
@@ -301,7 +320,8 @@ function countsOf(values) {
 /**
  * Per arm (trialOut's armLabel), over its trials that ran to an end: n, and
  * for the builds with turns on record (build.n) the median of each number
- * buildSpeedOf gives with the hosts they ran on, and for the reviewed ones
+ * buildSpeedOf gives with the hosts they ran on (how many builds used each,
+ * every host a build's requests went to), and for the reviewed ones
  * (review.n) the median of each of reviewOutcomeOf's with the round-1
  * verdicts, the stops and how often the first build passed its declared
  * checks. Each median is over the trials that recorded that number. Arms in
@@ -324,11 +344,12 @@ function armSpeed(trials) {
       if (passed == null) return null;
       return passed ? 'passed' : 'failed';
     };
+    const hostsOf = (speeds) => countsOf(speeds.flatMap((b) => (Array.isArray(b.routedProviders) ? b.routedProviders : [b.routedProvider])));
     return {
       arm,
       n: list.length,
-      plan: { n: plans.length, median: mediansOf(plans, PLAN_FIELDS), hosts: countsOf(plans.map((b) => b.routedProvider)) },
-      build: { n: builds.length, median: mediansOf(builds, BUILD_FIELDS), hosts: countsOf(builds.map((b) => b.routedProvider)) },
+      plan: { n: plans.length, median: mediansOf(plans, PLAN_FIELDS), hosts: hostsOf(plans) },
+      build: { n: builds.length, median: mediansOf(builds, BUILD_FIELDS), hosts: hostsOf(builds) },
       review: {
         n: reviews.length,
         median: mediansOf(reviews, REVIEW_FIELDS),

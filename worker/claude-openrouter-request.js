@@ -600,12 +600,18 @@ const PROVIDER_PREFERENCES = Object.freeze({
 // `baseten` is baseten/fp8), fastest first (`sort: 'throughput'`, which also
 // turns off price balancing), and may fall back within it.
 //
-// DeepSeek V4.1 Flash 1017 (17 Oct 2026) names DeepSeek's own host alone: of
-// its five hosts, the one whose weights are certainly the 1017 snapshot
-// (DeepSeek serves it as `deepseek-flash`), whose thinking levels mean what
-// DeepSeek documents (its API runs `xhigh` as `high`), and whose $0.003/M
-// cache reads hold only while a turn's requests stay on one host. Every other
-// model is routed as before.
+// DeepSeek V4.1 Flash 1017 (17 Oct 2026) names Parasail and InferenceNet.
+// DeepSeek's own host is not one: the platform's OpenRouter account excludes
+// endpoints that may train on prompts, so a pin to it was refused (404, "Paid
+// model training violation") and every request was sent again to every host;
+// bench run 206's builds landed on these two, a round trip lost per call. Of
+// the hosts left, both passed what 1017 needs, measured on 17 Oct: its
+// thinking survives a tool call (4 of 4 recalled it, 0 of 6 without it), the
+// same three effort levels (low, then high and xhigh alike, then max), and
+// Parasail ran 130-150 tokens/s and 3.1 s a call in a build. InferenceNet's
+// window is 262k, so a longer prompt goes to Parasail alone. Cloudflare was
+// rate-limited in bursts and recalled 2 of 3; DeepInfra's base slug includes
+// its slow flex tier (40-80 tokens/s).
 //
 // The shortlist can never leave a request with no host: it is not sent with
 // a request that brings routing of its own (`only`, `order`, `ignore`,
@@ -624,7 +630,7 @@ const PROVIDER_ROUTING_BY_MODEL = Object.freeze({
     sort: 'throughput',
   }),
   'deepseek/deepseek-v4.1-flash-1017': Object.freeze({
-    only: Object.freeze(['deepseek']),
+    only: Object.freeze(['parasail', 'inference-net']),
     sort: 'throughput',
   }),
 });
