@@ -233,8 +233,11 @@ const Notifications = {
       Notifications.saved = Array.isArray(data.savedMessages) ? data.savedMessages : [];
       // #4769: the pinned section's other half, saved NOTIFICATIONS. Same
       // contract as `saved`: whatever the server sent, else an empty list.
+      // #5249: through _shown like the feed, so a kudos row saved before
+      // kudos was parked is not drawn here either (the server skips the kind
+      // too; this holds for an older server or a staging demo row).
       Notifications.savedNotifications = Array.isArray(data.savedNotifications)
-        ? data.savedNotifications : [];
+        ? data.savedNotifications.filter(Notifications._shown) : [];
       Notifications.unread = data.unread || 0;
       Notifications.hasMore = !!data.hasMore;
       Notifications.nextBefore = data.nextBefore || null;

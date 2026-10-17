@@ -24,9 +24,11 @@ import type { GlobalChatItemSelection, GlobalChatResult } from './types';
 
 type JsonObject = Record<string, unknown>;
 
+// `leaderboard` is GET /api/v4/leaderboard's list of Standings rows (#5249).
 const ARRAY_KEYS = [
   'items', 'issues', 'proposals', 'apps', 'sessions', 'conversations',
   'notifications', 'results', 'rows', 'challenges', 'users', 'messages',
+  'leaderboard',
 ];
 const OBJECT_KEYS = ['app', 'issue', 'proposal', 'session', 'conversation', 'profile', 'notification'];
 const TITLE_KEYS = [
@@ -189,7 +191,7 @@ function itemTitle(result: GlobalChatResult, item: JsonObject) {
       'senderUsername', 'sender_username', 'username',
     ],
     profile: ['displayName', 'username', 'name'],
-    leaderboard: ['username', 'displayName', 'name'],
+    leaderboard: ['display_name', 'username', 'displayName', 'name'],
     setting: ['name', 'label'],
   };
   const explicit = first(item, rendererKeys[result.renderer] || TITLE_KEYS, 120);
@@ -359,16 +361,12 @@ function directItemActions(
     )];
   }
   if (result.renderer === 'leaderboard') {
+    // #5249: no "Merged work" any more: it read the kudos board's list of a
+    // person's thanked changes, and kudos is parked.
     const userId = first(item, ['userId', 'user_id', 'id'], 80);
-    const username = text(item.username, 80);
-    return [
-      ...(userId ? [itemAction(
-        translate('chat:global.action.profile'), translate('chat:global.request.profileFor', { target: targetLabel }), 'leaderboard.profile', { userId }, 'inline',
-      )] : []),
-      ...(username ? [itemAction(
-        translate('chat:global.action.mergedWork'), translate('chat:global.request.mergedWorkBy', { target: targetLabel }), 'leaderboard.prs', { username }, 'inline',
-      )] : []),
-    ];
+    return userId ? [itemAction(
+      translate('chat:global.action.profile'), translate('chat:global.request.profileFor', { target: targetLabel }), 'leaderboard.profile', { userId }, 'inline',
+    )] : [];
   }
   if (result.renderer === 'setting' && result.capabilityId === 'settings.catalog') {
     const group = text(item.id || item.group, 80);
@@ -519,9 +517,9 @@ function displayFields(result: GlobalChatResult, item: JsonObject): DisplayField
     add(translate('chat:global.field.from'), ['sourceUsername', 'source_username']);
     add(translate('chat:global.field.pr'), ['prNumber', 'pr_number']);
   } else if (result.renderer === 'leaderboard') {
-    add(translate('chat:global.field.kudos'), ['kudosReceived', 'kudos_received']);
-    add(translate('chat:global.field.prsRecognized'), ['prsKudosed', 'prs_kudosed']);
-    add(translate('chat:global.field.merged'), ['kudosReceivedPrsMerged', 'kudos_received_prs_merged']);
+    // #5249: a Standings row (GET /api/v4/leaderboard): its rank and points.
+    add(translate('chat:global.field.rank'), ['rank']);
+    add(translate('chat:global.field.points'), ['total_points', 'totalPoints']);
   } else if (result.renderer === 'setting') {
     const spending = text(item.name, 100) === 'Global Chat usage';
     if (spending) {

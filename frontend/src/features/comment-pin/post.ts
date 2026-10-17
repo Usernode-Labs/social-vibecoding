@@ -31,6 +31,7 @@
  */
 
 import { t } from '../../lib/i18n/runtime';
+import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import type { ElementInfo } from './picture';
 import { noteFor } from './pin-data';
 
@@ -212,7 +213,8 @@ export async function postComment(post: CommentPost): Promise<PostOutcome> {
   if (post.target === 'app' && post.appSlug) body.appSlug = post.appSlug;
   const title = String(post.title || '').trim();
   if (title) body.title = title.slice(0, 200);
-  if (post.bounty) body.bounty = true;
+  // #5249: never while kudos is parked, whatever a restored draft held.
+  if (post.bounty && !KUDOS_PARKED) body.bounty = true;
   if (ids.length) body.screenshotIds = ids;
   if (pins.length) {
     body.screenshotPins = pins.slice(0, MAX_COMMENTS).map((p) => {
@@ -241,7 +243,7 @@ export async function postComment(post: CommentPost): Promise<PostOutcome> {
       botWillBuild: !!bot?.botWillBuild,
       url: typeof data.url === 'string' ? data.url : '',
       title: typeof data.title === 'string' ? data.title : title,
-      bounty: b && typeof b === 'object' ? { placed: !!b.placed, remaining: b.remaining, error: b.error } : null,
+      bounty: !KUDOS_PARKED && b && typeof b === 'object' ? { placed: !!b.placed, remaining: b.remaining, error: b.error } : null,
     };
   }
   if (res.status >= 500) return { ok: false, handover: true };
@@ -268,7 +270,7 @@ export function handOverOptions(post: CommentPost): Record<string, unknown> {
   if (screenshots.length) opts.screenshots = screenshots.slice(0, MAX_PICTURES);
   const title = String(post.title || '').trim();
   if (title) opts.title = title;
-  if (post.bounty) opts.bounty = true;
+  if (post.bounty && !KUDOS_PARKED) opts.bounty = true;
   return opts;
 }
 

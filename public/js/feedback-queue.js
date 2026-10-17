@@ -339,6 +339,12 @@
   // stay pure and testable.
   async function send(record) {
     const body = Object.assign({}, record.payload);
+    // #5249: a request saved before kudos was parked may still ask for a
+    // bounty. While it is parked (the bundle publishes no window.Kudos, see
+    // frontend/src/features/leaderboard/kudos-parked.ts) the flag is dropped
+    // here, so the request files without one and nothing says a kudos was
+    // pledged. The server ignores it too.
+    if (body.bounty && !(typeof window !== 'undefined' && window.Kudos)) delete body.bounty;
     const queuedAt = record.queuedAt || formatQueuedAt(record.createdAt);
     if (queuedAt) body.queuedAt = queuedAt;
 
