@@ -256,8 +256,8 @@ test('Suggest an improvement and Start a new change each exist once, and the rea
     'the menu does not keep a second caller of the same method');
   assert.equal(MENU.split('id="improve-row-new-session"').length - 1, 0,
     'and the menu carries no start-a-change row any more (#4729)');
-  // Messages' "+" is Build it now now, opening an agent session.
-  assert.equal(message('messages:inbox.new.agent.label'), 'Build it now');
+  // Messages' "+" is Agent chat, opening an agent session.
+  assert.equal(message('messages:inbox.new.agent.label'), 'Agent chat');
   assert.match(read('frontend/src/features/messages/index.tsx'),
     /startAgentSession\(\{ entry: 'messages' \}\)/);
   // #852 review: the hub's ⋯ leads with it too, calling the same method, and

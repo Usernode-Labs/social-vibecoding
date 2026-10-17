@@ -168,8 +168,8 @@ test('the "+" sits beside the search, and opens a choice rather than guessing (#
   // THE VOTE POPUP'S MECHANICS, shared rather than copied: placement from
   // the button's rect, dismissal on outside click / Escape / scroll / resize.
   assert.match(fn, /useAnchoredDismiss\(open, \[btnRef, popRef\], shut\);/);
-  // B8: sized to its rows, which are four with Homeroom bot and three without.
-  assert.match(fn, /placeUnderAnchor\(rect, \{ width: 260, height: 54 \* newChoices\(\)\.length \+ 2 \}/);
+  // B8: sized to its rows, which are three.
+  assert.match(fn, /placeUnderAnchor\(rect, \{ width: 260, height: 54 \* NEW_CHOICES\.length \+ 2 \}/);
   assert.match(fn, /createPortal\(/, 'portalled, so the list\'s scroller cannot clip it');
   assert.match(fn, /role="menu"/);
   assert.match(fn, /pu\.actionSheet\(\{/, 'a phone gets the kit\'s action sheet');
@@ -181,19 +181,26 @@ test('the "+" sits beside the search, and opens a choice rather than guessing (#
   assert.match(SCREEN, /\{ key: 'direct', label: 'messages:inbox\.new\.direct\.label'/);
   assert.equal(message('messages:inbox.new.group.label'), 'Group chat');
   assert.match(SCREEN, /\{ key: 'group', label: 'messages:inbox\.new\.group\.label'/);
-  // B8: building it yourself, beside Homeroom bot, which leads for somebody who has it.
-  assert.equal(message('messages:inbox.new.agent.label'), 'Build it now');
+  // #5380: the agent row is "Agent chat", and Homeroom bot is out of the
+  // menu: it starts new conversations, and the bot's one conversation is
+  // reached from the top of Agents.
+  assert.equal(message('messages:inbox.new.agent.label'), 'Agent chat');
   assert.equal(message('messages:inbox.new.agent.hint'), 'Plan and build a change with a coding agent');
   assert.match(SCREEN, /\{ key: 'agent', label: 'messages:inbox\.new\.agent\.label', hint: 'messages:inbox\.new\.agent\.hint' \}/);
-  assert.equal(message('messages:inbox.new.bot.label'), 'Homeroom bot');
-  assert.equal(message('messages:inbox.new.bot.hint'), 'Make an app or suggest an improvement');
-  assert.match(SCREEN, /\{ key: 'bot', label: 'messages:inbox\.new\.bot\.label', hint: 'messages:inbox\.new\.bot\.hint' \}/);
-  assert.match(SCREEN, /return NEW_CHOICES\.filter\(\(item\) => item\.key !== 'bot' \|\| hasHomeroomBot\(\)\);/);
+  assert.throws(() => message('messages:inbox.new.bot.label'));
+  assert.throws(() => message('messages:inbox.new.bot.hint'));
+  assert.doesNotMatch(SCREEN, /key: 'bot'/);
+  assert.doesNotMatch(SCREEN, /hasHomeroomBot/);
+  // The order is agent, then people.
+  const agentAt = SCREEN.indexOf("key: 'agent'");
+  const directAt = SCREEN.indexOf("key: 'direct'");
+  const groupAt = SCREEN.indexOf("key: 'group'");
+  assert.ok(agentAt > -1 && directAt > agentAt && groupAt > directAt, 'the menu is Agent chat, Direct message, Group chat');
   const start = SCREEN.slice(SCREEN.indexOf('function startNew'));
   const starter = start.slice(0, start.indexOf('\n}\n'));
-  assert.match(starter, /if \(choice === 'bot'\) void openBot\(\);/, 'Homeroom bot opens the chat with it');
-  assert.match(starter, /else if \(choice === 'agent'\) void startAgentSession\(\{ entry: 'messages' \}\);/,
-    'Agent opens one new conversation with the Mayor, with no app to pick first (#2779)');
+  assert.doesNotMatch(starter, /openBot/, 'Homeroom bot is not a new conversation to start');
+  assert.match(starter, /if \(choice === 'agent'\) void startAgentSession\(\{ entry: 'messages' \}\);/,
+    'Agent chat opens one new conversation with the Mayor, with no app to pick first (#2779)');
   assert.match(starter, /else openDialog\('messagesCreate', choice\);/,
     'DM and group open the create flow on the matching tab');
   const create = read('frontend/src/features/messages/create-dialog.tsx');

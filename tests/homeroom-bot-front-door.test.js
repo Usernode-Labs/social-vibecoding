@@ -31,9 +31,9 @@ test('B8: Suggest an improvement is gated on membership and hands its request to
 
 test('B8: the doors that open the chat with Homeroom bot, and what they are called', () => {
   // The mark menu's Build it now row left with its Agent chats section
-  // (#4729); building it yourself is Messages' "+" choice, named the same.
+  // (#4729); building it yourself is Messages' "+" Agent chat choice.
   assert.doesNotMatch(read('frontend/src/features/app-context/app-context-sheet.tsx'), /improve-row-new-session|app-menu-sessions/);
-  assert.equal(message('messages:inbox.new.agent.label'), 'Build it now');
+  assert.equal(message('messages:inbox.new.agent.label'), 'Agent chat');
   const row = read('frontend/src/features/dev-board/actions-row.tsx');
   assert.ok(row.indexOf('data-plus="issue"') < row.indexOf('data-plus="new-change"'), 'Suggest an improvement leads the hub\'s ⋯');
   assert.match(row, /title=\{t\('project:menu\.build\.title'\)\}\s+sub=\{t\('project:menu\.build\.sub'\)\}/);
