@@ -2970,7 +2970,7 @@
    * worst case to no animation instead of a two-copies animation.
    *
    * 'zoom-in'/'zoom-out' play the iOS-homescreen expand/collapse out of
-   * a tile ({ el, fromEl | fromRect, after?, fallback?, outEl? }). No
+   * a tile ({ el, fromEl | fromRect, after?, fallback?, outEl?, duration? }). No
    * View Transition is involved: the LIVE screen element (opts.el) is
    * pinned as a fixed overlay and transform-animated from/to the tile's
    * rect — no snapshot, so it is iframe-safe and content keeps loading
@@ -3045,6 +3045,19 @@
       ? src.getBoundingClientRect()
       : src;
     return zoomRectUsable(rect, window.innerHeight) ? rect : null;
+  }
+
+  // The motion length for a zoom: the caller's `duration` when it supplies
+  // one (a Resume control is a small target and lands sooner), the type's own
+  // timing otherwise. The fade and the safety timer scale with it so a short
+  // zoom keeps its proportions instead of cutting the fade off.
+  function zoomDuration(opts, fallbackMs) {
+    var value = opts && opts.duration;
+    if (typeof value === 'function') {
+      try { value = value(); } catch (e) { value = 0; }
+    }
+    var ms = Number(value);
+    return ms > 0 ? ms : fallbackMs;
   }
 
   function zoomTransition(fn, type, opts) {
@@ -3127,14 +3140,16 @@
       el.style.opacity = '0.3';
       el.style.borderRadius = ZOOM_RADIUS;
       void el.offsetHeight; // flush the start pose before enabling the transition
-      el.style.transition = 'transform 380ms ' + ZOOM_EASE
-        + ', opacity 220ms ease, border-radius 380ms ease';
+      var inMs = zoomDuration(opts, 380);
+      var inFadeMs = Math.round(inMs * 220 / 380);
+      el.style.transition = 'transform ' + inMs + 'ms ' + ZOOM_EASE
+        + ', opacity ' + inFadeMs + 'ms ease, border-radius ' + inMs + 'ms ease';
       el.style.transform = 'none';
       el.style.opacity = '1';
       el.style.borderRadius = '0px';
       zoomCleanup = finish;
       el.addEventListener('transitionend', onEnd);
-      setTimeout(finish, 500); // safety if transitionend never fires
+      setTimeout(finish, inMs + 120); // safety if transitionend never fires
       return promise;
     }
 
@@ -3152,15 +3167,19 @@
       return promise;
     }
     void el.offsetHeight;
-    el.style.transition = 'transform 340ms ' + ZOOM_EASE
-      + ', opacity 200ms ease 60ms, border-radius 340ms ease';
+    var outMs = zoomDuration(opts, 340);
+    var outFadeMs = Math.round(outMs * 200 / 340);
+    var outDelayMs = Math.round(outMs * 60 / 340);
+    el.style.transition = 'transform ' + outMs + 'ms ' + ZOOM_EASE
+      + ', opacity ' + outFadeMs + 'ms ease ' + outDelayMs + 'ms'
+      + ', border-radius ' + outMs + 'ms ease';
     el.style.transform = 'translate(' + outPose.tx + 'px, ' + outPose.ty + 'px) '
       + 'scale(' + outPose.sx + ', ' + outPose.sy + ')';
     el.style.opacity = '0';
     el.style.borderRadius = ZOOM_RADIUS;
     zoomCleanup = finish;
     el.addEventListener('transitionend', onEnd);
-    setTimeout(finish, 480); // safety if transitionend never fires
+    setTimeout(finish, outMs + 140); // safety if transitionend never fires
     return promise;
   }
 

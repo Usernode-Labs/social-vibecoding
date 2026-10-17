@@ -15,6 +15,9 @@ import { flushSync } from 'react-dom';
 import { navStore, tabForScreen } from './nav-store.js';
 import { parkedStore, setParked } from './parked-store.js';
 import { forgetRecentApp, readRecentApps, recentAppsStore, rememberRecentApp } from './recent-apps-store.js';
+import {
+  collapseIntoResume, resumeHandleFor, takeResumeOrigin, RESUME_MOTION_MS,
+} from './resume-motion';
 
 navStore.setFlush(flushSync);
 // Same reason as the tab's: App.navigateToApp clears the strip inside
@@ -141,5 +144,16 @@ if (typeof window !== 'undefined') {
       if (parkedStore.get().app?.slug === slug) setParked(null);
       forgetRecentApp(slug, navStore.get().viewer);
     },
+    /**
+     * The app's Resume control on screen, for the router's zooms: the Active
+     * row's pill, then the row, then the phone strip (./resume-motion.ts).
+     */
+    resumeHandle: resumeHandleFor,
+    /** The control a Resume press came from, taken once for the same slug. */
+    takeResumeOrigin,
+    /** Shrink a stand-in card into the Resume control when #app-view is gone. */
+    collapse: collapseIntoResume,
+    /** The shared motion length, so app.js can pass it to the kit's zooms. */
+    resumeMotionMs: RESUME_MOTION_MS,
   };
 }

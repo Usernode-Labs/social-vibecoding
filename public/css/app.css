@@ -5435,6 +5435,45 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   box-shadow: none;
 }
 
+/* THE STAND-IN, WHEN THE APP VIEW IS ALREADY GONE (#3618). A close to Home
+   is the kit's own zoom-out, shrinking the live #app-view into the Resume
+   control. A close to any other screen has already hidden #app-view by the
+   time the router parks the app, so features/nav/resume-motion.ts draws one
+   decorative card in its place and shrinks that instead, into the same
+   control at the same length. It is aria-hidden and takes no pointer events;
+   its face is the app's own icon tile, cloned, so the card reads as the app
+   that just went. Reduced motion removes it as a second guard: the script
+   already declines to draw it. */
+.resume-ghost {
+  position: fixed;
+  z-index: 9960;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--un-zoom-bg);
+  pointer-events: none;
+  transform-origin: 0 0;
+  will-change: transform, opacity;
+}
+.resume-ghost-tile {
+  width: 56px;
+  height: 56px;
+  flex: none;
+  border-radius: 14px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.resume-ghost-tile > span {
+  font-size: 30px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .resume-ghost { display: none; }
+}
+
 /* ── APPS KEPT ALIVE BEHIND THE ONE ON SCREEN (#2902) ──────────────────
    The last few apps you opened stay loaded, each in its own frame beside
    #app-iframe (features/app-frame/app-frame.tsx), so resuming one shows it
@@ -19359,9 +19398,12 @@ html.un-ios {
   height: 28px;
   padding: 0 12px;
   border-radius: 999px;
-  border: 1px solid var(--brand-line);
-  background: var(--brand-tint);
-  color: var(--brand-ink);
+  /* #3618: Resume is an ACTION, so it wears the accent the rail's pill and
+     the product's other actions wear — not the header's periwinkle, which
+     marks the header's own furniture. */
+  border: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
   font-size: 13px;
   font-weight: 600;
 }
@@ -20001,6 +20043,29 @@ html.un-kb #platform-parked {
     text-overflow: ellipsis;
     white-space: nowrap;
     line-height: 1.35;
+  }
+  /* #3618: THE WAY BACK IN, in words. A running app you are not in carries
+     one filled pill on its Active row. The row is still the single link and
+     the pill is a label inside it, so the row's own accessible name is the
+     whole story and the pill is decorative. The accent is the product's
+     action colour, which is exactly what Resume is. */
+  .platform-recent-resume {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 9px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  /* ONE MARK PER ROW: where Resume is drawn the green "still open" dot has
+     already said its piece, and two marks for the same fact is one too many. */
+  .platform-recent-resume ~ .platform-recent-live {
+    display: none;
   }
   /* UNREAD IS A DOT, not a count: the count lives on the Messages tab and
      on the row in Messages, and a 224px rail has room for one mark. */

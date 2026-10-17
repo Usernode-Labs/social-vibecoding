@@ -95,6 +95,7 @@ import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { navStore } from './nav-store.js';
 import { parkedStore, readParked, setParked } from './parked-store.js';
 import { enterPeek, leavePeek } from './rail-peek';
+import { noteResumeOrigin } from './resume-motion';
 
 type ParkedApp = { slug: string; name: string; iconUrl: string | null; iconEmoji: string | null };
 
@@ -221,6 +222,9 @@ export function ParkedStrip() {
               event.preventDefault();
               // A leaving strip is inert; there is no app to resume.
               if (!app) return;
+              // #3618: the whole strip is the target, so it is the zoom's
+              // origin — the app grows back out of the bar you pressed.
+              noteResumeOrigin(app.slug, event.currentTarget);
               window.App?.openAppTab?.(app.slug, 'app');
             }}
           >

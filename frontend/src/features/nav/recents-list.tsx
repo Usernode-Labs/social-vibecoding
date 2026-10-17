@@ -96,6 +96,7 @@ import { readRecentApps, recentAppsStore } from './recent-apps-store.js';
 import {
   buildActive, buildRecents, currentAppOnScreen, groupRecents, type RecentItem, type RecentKind,
 } from './recents';
+import { noteResumeOrigin } from './resume-motion';
 
 const GLYPHS: Record<RecentKind, typeof UserIcon> = {
   app: AppWindowIcon,
@@ -123,6 +124,11 @@ function onAppClick(event: MouseEvent<HTMLAnchorElement>, slug: string): void {
   // The router's "this app, this tab" entry point, which is what the Resume
   // strip used (./parked-strip.tsx): it switches tabs for an app that is
   // still open and navigates for any other.
+  //
+  // #3618: the pressed row (or its Resume pill) is the zoom's origin, so
+  // opening an app from the rail grows out of the thing that was pressed.
+  const row = event.currentTarget;
+  noteResumeOrigin(slug, row.querySelector('.platform-recent-resume') || row);
   window.App?.openAppTab?.(slug, 'app');
 }
 
@@ -167,7 +173,7 @@ function AppTile({ app }: { app: NonNullable<RecentItem['app']> }) {
   );
 }
 
-function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
+function RecentRow({ item, live, resume }: { item: RecentItem; live: boolean; resume?: boolean }) {
   const Glyph = GLYPHS[item.kind];
   const app = item.app && (item.app.iconUrl || item.app.iconEmoji) ? item.app : null;
   const unread = item.unread ? ', unread' : '';
@@ -194,7 +200,13 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
         ? <AgentActivityIcon activity={item.activity} className="platform-recent-glyph" />
         : app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
       <span className="platform-recent-label">{item.label}</span>
-      {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
+      {/* #3618: the app is running but not on screen, so the row offers the
+          way back in words. The pill is a label INSIDE the row's single
+          link, not a second target; the row keeps its one accessible name. */}
+      {resume ? <span className="platform-recent-resume" aria-hidden="true">Resume</span> : null}
+      {/* #2902: still loaded — resuming it shows it exactly as it was left.
+          Where the Resume pill is drawn this dot is hidden by CSS: two marks
+          for "this app is running" would say the same thing twice. */}
       {live ? <LiveAppDot className="platform-recent-live" /> : null}
       {item.unread ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
     </a>
@@ -268,7 +280,9 @@ export function ActiveApps({ items }: { items: RecentItem[] }) {
   return (
     <div className="platform-active" role="group" aria-labelledby="platform-active-head">
       <h2 id="platform-active-head" className="platform-recents-head">Active</h2>
-      {items.map((item) => <RecentRow key={item.key} item={item} live />)}
+      {items.map((item) => (
+        <RecentRow key={item.key} item={item} live resume={!item.current} />
+      ))}
     </div>
   );
 }
