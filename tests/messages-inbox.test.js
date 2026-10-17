@@ -354,7 +354,12 @@ test('the bot\'s row says what waits on you, and the headings say what in them a
   // Its chat's own activity bar words, from the same store, once it has read.
   assert.match(SCREEN, /const parts = summaryParts\(stripGroups\(botWork\.work\)\);/);
   assert.match(SCREEN, /return parts\.length \? parts\.slice\(0, 2\)\.map\(\(part\) => part\.text\)\.join\(' · '\) : null;/);
-  assert.match(SCREEN, /if \(mounted && hasBot && !botWork\.work\) loadBotWork\(\{ fresh: false \}\);/, 'after mount');
+  // #5392: the row stays current, the same live reads the DM's strip runs:
+  // again whenever the list opens or the bot's work moves, fresh, and every
+  // POLL_MS while the bot has work in hand and the page is in view.
+  assert.match(SCREEN, /if \(mounted && botConversation\) loadBotWork\(\);/, 'fresh, after mount and whenever the bot\'s last activity moves');
+  assert.match(SCREEN, /window\.addEventListener\(WORK_CHANGED_EVENT, changed\);/, 'again when the bot\'s work changes');
+  assert.match(SCREEN, /window\.setInterval\(\(\) => \{\s*if \(document\.visibilityState !== 'hidden'\) loadBotWork\(\);\s*\}, POLL_MS\);/, 'every POLL_MS while it has work in hand');
   assert.match(SCREEN, /preview=\{conversation\.homeroomBot \? botLine : null\}/);
   // #5393: a group's preview names its last sender ahead of this; the bot's
   // own line (`preview`) still leads the fallback the DM rows draw.

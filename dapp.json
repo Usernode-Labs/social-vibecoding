@@ -4934,10 +4934,10 @@
       ]
     },
     {
-      "name": "The chat with Homeroom bot says under its name what it is for, and puts an Activity bar under its header (one request, one story): closed, it says what needs you, with that request's number in its own colour, what is ready to try and what is in progress; pressed, it opens a drawer over the chat with a row for each, one button that opens the request's thread at the question, and Try it and Approve (#3692, #3770)",
+      "name": "The chat with Homeroom bot says under its name what it is for, and puts an Activity bar under its header (one request, one story): closed, it says what needs you, with that request's number in its own colour, what is ready to try and what is in progress; pressed, it opens a drawer over the chat with a row for each, one button that opens the request's thread at the question, and Try it and Approve (#3692, #3770; #5392: a change waiting for their yes counts here too, so two need you and one is ready to try)",
       "path": "/?demo=1#messages/910005",
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-header + [data-bot-strip=closed] [data-bot-strip-toggle][aria-expanded=false]:has([data-bot-strip-count=needs]):has([data-bot-strip-count=ready]):has([data-bot-strip-count=progress]) [data-request-tag]",
-      "expectText": "1 needs you",
+      "expectText": "2 need you",
       "id": "homeroom-bot-dm-activity-tray",
       "visual": true,
       "impact": [
@@ -4950,9 +4950,9 @@
       ]
     },
     {
-      "name": "#4097, one request, one story: in the chat with Homeroom bot each request is one row that opens its story, its earlier news folded into its newest row, which counts the updates; finished requests in a row fold into one line with how each ended (a build that stopped, a change that went live), and a change ready for your yes says so",
+      "name": "#4097, #5392, one request, one story: in the chat with Homeroom bot each request is one row that opens its story, its earlier news folded into its newest row, which counts the updates; finished requests fold into one line of words (N finished · N couldn't build) that opens the rows saying how each ended, and a change ready for your yes says so",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-scroll:has([data-bot-settled-badges] [data-bot-final=build_failed]):has([data-bot-settled-badges] [data-bot-final=live]) [data-bot-news=question] [data-bot-news-state=needs] [data-bot-thread-link]",
+      "expectSelector": ".messages-thread-scroll:has([data-bot-settled-toggle] [data-bot-settled-count=failed]):has([data-bot-settled-toggle] [data-bot-settled-count=finished]) [data-bot-news=question] [data-bot-news-state=needs] [data-bot-thread-link]",
       "expectText": "Ready for your yes"
     },
     {

@@ -85,7 +85,7 @@ test('the groups, in order, each request once', () => {
   assert.deepEqual(titles(model.done), ['Went live'], 'done is the last day only');
   // The Needs you button opens the request's thread at what waits.
   assert.deepEqual([model.needs[0].rootId, model.needs[0].focusId], [31, 40]);
-  assert.deepEqual(stripGroups(null), { needs: [], ready: [], progress: [], held: [], done: [] });
+  assert.deepEqual(stripGroups(null), { needs: [], ready: [], progress: [], done: [] });
 });
 
 // #4974: a reply on the request's discussion settles a need, and what the
@@ -241,7 +241,10 @@ test('the drawer ends at Finished today: no per-project slots links', () => {
     }),
   });
   assert.match(html, /data-bot-strip-group="progress"/);
-  assert.match(html, /data-bot-strip-group="held"/);
+  // #5392: a hold is in progress now; there is no On hold group any more.
+  assert.equal((html.match(/data-bot-strip-row="progress"/g) || []).length, 2, 'the building one and the held one');
+  assert.doesNotMatch(html, /data-bot-strip-group="held"/);
+  assert.match(html, /data-bot-strip-state="">On hold · /, 'a hold says it is on hold, under In progress');
   assert.doesNotMatch(html, /data-bot-strip-slots/, 'no slots links at the drawer\'s end');
   const source = read(STRIP);
   assert.doesNotMatch(source, /data-bot-strip-slots|bot\.strip\.slots/);
@@ -524,8 +527,19 @@ test('a finished request is ONE line: the project\'s small tile, how it ended, i
   assert.doesNotMatch(source, /grayscale/, 'finished is said by its ending, not by greying the row');
 });
 
-test('finished requests in a row fold into "N requests finished", a row of its own with their badges; open, whole rows under it', () => {
-  const { SettledRun } = loadTsx(NEWS);
+test('finished requests in a row fold into words, "N finished · N couldn\'t build"; open, whole rows under it', () => {
+  // The run reads the viewer's bot work as the drawer does; hand the bundle
+  // a read (tests/lib/render-tsx.js stubs).
+  const tray = work({});
+  const { SettledRun } = loadTsx(NEWS, {
+    stubs: {
+      './bot-work': {
+        useBotWork: () => ({ work: tray, failed: false }),
+        loadBotWork() {}, resetBotWork() {}, newestBotMessageId: () => null, BotWorkSync: () => null,
+        WORK_CHANGED_EVENT: 'homeroom_bot_work_changed', jobName: () => '', jobTitle: () => '',
+      },
+    },
+  });
   const items = [botMessage({ kind: 'merged', issueNumber: 21 }), botMessage({ kind: 'build_failed', issueNumber: 22 }), botMessage({ kind: 'merged', issueNumber: 23 })]
     .map((message) => ({ message, earlier: [], updates: null, focused: false }));
   items[1].earlier = [botMessage({ kind: 'activity', issueNumber: 22 })];
@@ -537,16 +551,25 @@ test('finished requests in a row fold into "N requests finished", a row of its o
   for (const m of [items[0].message, items[1].message, items[1].earlier[0], items[2].message]) {
     assert.match(html, new RegExp(`<span id="messages-message-${m.id}" aria-hidden="true"></span>`), 'a link to a folded row lands on the line');
   }
-  assert.match(html, /aria-expanded="false" data-bot-settled-toggle=""><span>3 requests finished<\/span><svg /, 'the count first, and it is the control');
-  assert.match(html, /<div class="flex h-\[30px\] min-w-0 flex-1 items-center gap-1 overflow-hidden" data-bot-settled-badges="">/);
-  assert.equal((html.match(/data-bot-final=/g) || []).length, 3, 'their badges after it');
-  assert.equal((html.match(/data-bot-settled-badge="\d+"/g) || []).length, 3, 'each badge opens its own request');
+  // #5392: the parts are words, each with what it counts; no strip of squares.
+  assert.match(html, /aria-expanded="false" data-bot-settled-toggle=""><span data-bot-settled-count="finished">2 finished<\/span><span aria-hidden="true"> · <\/span><span data-bot-settled-count="failed">1 couldn’t build<\/span><svg /, 'the words first, and the line is the control');
+  assert.doesNotMatch(html, /data-bot-settled-badges|data-bot-settled-badge=/);
+  assert.doesNotMatch(html, /data-bot-final=/, 'the badges are gone from the line');
   assert.doesNotMatch(html, /<article /, 'folded: no rows');
+  // A run of failures alone says only what went wrong.
+  const onlyFailed = [botMessage({ kind: 'build_failed', issueNumber: 24 }), botMessage({ kind: 'first_version_failed', issueNumber: 25 })]
+    .map((message) => ({ message, earlier: [], updates: null, focused: false }));
+  const failedHtml = renderToHtml(createElement(SettledRun, { items: onlyFailed }));
+  assert.match(failedHtml, /data-bot-settled-count="failed">2 couldn’t build<\/span>/);
+  assert.doesNotMatch(failedHtml, /data-bot-settled-count="finished"/, 'zero parts are left out');
+  const opened = renderToHtml(createElement(SettledRun, { items: items.map((item, index) => ({ ...item, focused: index === 0 })) }));
+  assert.match(opened, /data-bot-settled-rows="">/, 'opened: whole rows under it');
+  assert.match(opened, /data-bot-settled-words="">Live<\/span>/, 'an opened row says how it ended, as the drawer\'s Finished today rows do');
   const source = read(NEWS);
-  assert.match(source, /export const RUN_BADGES = 6;/);
+  assert.doesNotMatch(source, /RUN_BADGES/, 'no strip of squares to cap');
+  assert.match(source, /data-bot-settled-count="failed"/);
   assert.match(source, /<div className="mt-1 flex flex-col" data-bot-settled-rows="">/, 'opened: whole rows under it');
   assert.match(source, /<BotNewsLine key=\{item\.message\.clientKey \|\| item\.message\.id\} message=\{item\.message\} earlier=\{item\.earlier\} updates=\{item\.updates\} focused=\{item\.focused\} \/>/);
-  assert.match(source, /data-bot-settled-badge=\{item\.message\.id\} onClick=\{\(\) => openItem\(item\)\}/);
   assert.match(source, /useEffect\(\(\) => \{ if \(focused\) setOpen\(true\); \}, \[focused\]\);/, 'a link into it opens it');
   // The transcript collects finished rows and draws two or more as one run.
   const screen = read('frontend/src/features/messages/index.tsx');
@@ -571,7 +594,85 @@ test('Finished today starts folded each time the drawer opens; pressed, its rows
   assert.match(source, /const \[doneOpen, setDoneOpen\] = useState\(false\);/);
   assert.match(source, /const choose = \(next: boolean\) => \{ setOpen\(next\); setDoneOpen\(false\); onRemember\?\.\(next\); \};/);
   assert.match(source, /\{doneOpen \? <ul data-bot-strip-group="done">\{model\.done\.map\(\(row\) => <DoneRow key=\{row\.key\} row=\{row\} onOpen=\{onOpen\} \/>\)\}<\/ul> : null\}/);
-  assert.match(source, /function DoneRow[\s\S]*?<SettledLine[\s\S]*?outcome=\{row\.track \? trackEnding\(row\.track\) : \(job as HomeroomBotPastJob\)\.outcome\} fallback=\{row\.state\}/);
+  assert.match(source, /function DoneRow[\s\S]*?<SettledLine[\s\S]*?outcome=\{outcome\} fallback=\{row\.state\}\s*words=\{row\.state\}/, 'each finished row says how it ended in words');
+});
+
+// ── #5392: one reading of the bot's work, grouped once ───────────────────
+
+const trackOf = (extra = {}) => ({
+  key: `plant-pal#${extra.issueNumber || 20}`, appSlug: 'plant-pal', appName: 'Plant Pal', iconUrl: null, iconEmoji: null,
+  issueNumber: 20, title: 'Dark mode', firstVersion: false, state: 'building', step: 'build', why: null, waitingOn: null,
+  busy: false, try: 1, tryStartedAt: null, tryStarts: [], since: ago(30), rootId: null, askId: null, proposalId: null,
+  sessionId: null, links: { request: null, proposal: null, project: null }, ...extra,
+});
+
+test('"today" is the local day: what ended since midnight, not the last 24 hours', () => {
+  const { startOfDay, stripGroups } = strip();
+  // NOW is midday; the day began at midnight on this device.
+  const midnight = startOfDay(NOW).getTime();
+  const yesterday = new Date(midnight - 10 * 60000).toISOString(); // 23:50 the day before
+  const early = new Date(midnight + 5 * 60000).toISOString(); // 00:05 today
+  const model = stripGroups(work({
+    tracks: [
+      trackOf({ issueNumber: 1, state: 'live', step: 'live', since: yesterday }),
+      trackOf({ issueNumber: 2, state: 'live', step: 'live', since: early }),
+      trackOf({ issueNumber: 3, state: 'stopped', why: 'build_failed', step: null, since: early }),
+      trackOf({ issueNumber: 4, state: 'stopped', why: 'time', step: null, since: 'not a moment' }),
+    ],
+  }), NOW);
+  assert.deepEqual(model.done.map((row) => row.job.issueNumber), [2, 3], '23:50 yesterday is not finished today; 00:05 today is; no parsable since stays out');
+  // "Couldn't build" says the reason with it, the dot joining two sentences.
+  assert.deepEqual(model.done.map((row) => row.state), ['Live', 'Couldn’t build · Its build didn\'t finish']);
+});
+
+test('a vote whose yes is yours is Needs you, with Try it and Approve; the group\'s turn stays Ready to try', () => {
+  const { stripGroups, summaryParts } = strip();
+  const tracks = [
+    trackOf({ issueNumber: 30, state: 'vote', step: 'vote' }),
+    trackOf({ issueNumber: 31, state: 'vote', step: 'vote' }),
+  ];
+  const yours = past({ issueNumber: 30, outcome: 'proposed', ready: { messageId: 60, sessionId: 9, epoch: 0, open: true, approve: true, waiting: null } });
+  const theirs = past({ issueNumber: 31, outcome: 'proposed', ready: { messageId: 61, sessionId: null, epoch: 0, open: true, approve: false, waiting: '@ada' } });
+  const model = stripGroups(work({ tracks, history: [yours, theirs] }), NOW);
+  assert.deepEqual(model.needs.map((row) => row.job.issueNumber), [30], 'a change waiting for your yes waits on you');
+  assert.equal(model.needs[0].state, 'Ready for your yes');
+  assert.deepEqual(model.ready.map((row) => row.job.issueNumber), [31], 'the group\'s turn is not yours');
+  assert.deepEqual(summaryParts(model).map((part) => part.text), ['1 needs you', '1 ready to try']);
+  const html = draw({ remembered: true, work: work({ tracks, history: [yours, theirs] }) });
+  const needs = html.slice(html.indexOf('data-bot-strip-group="needs"'), html.indexOf('data-bot-strip-group="ready"'));
+  assert.match(needs, /data-bot-strip-row="needs" data-bot-strip-key=/, 'the row wears the group it is in');
+  assert.match(needs, /data-bot-strip-act="try">Try it<\/button>/);
+  assert.match(needs, /data-bot-strip-act="approve">Approve<\/button>/, 'their yes is theirs to say there');
+  assert.match(needs, /data-bot-badge="needs"/, 'the need badge, with what to do on it');
+});
+
+test('a hold and a change going live are In progress, never finished; the bar\'s parts, in order', () => {
+  const { stripGroups, summaryParts } = strip();
+  const model = stripGroups(work({
+    tracks: [
+      trackOf({ issueNumber: 40, state: 'held', step: null, why: 'slots', held: { limit: 'slots', position: 1, until: null } }),
+      trackOf({ issueNumber: 41, state: 'held', step: null, why: 'allowance', held: { limit: 'allowance', position: null, until: '2026-10-19T09:00:00Z' } }),
+      trackOf({ issueNumber: 42, state: 'going_live', step: 'live', since: ago(5) }),
+      trackOf({ issueNumber: 43, state: 'waiting', step: 'plan', why: 'plan', askId: 44 }),
+    ],
+  }), NOW);
+  assert.deepEqual(model.progress.map((row) => row.job.issueNumber), [40, 41, 42], 'none of it has ended');
+  assert.match(model.progress[0].state, /^On hold · /, 'the state\'s word leads, then what it waits for');
+  assert.match(model.progress[1].state, /^On hold/, 'the allowance line says on hold by itself');
+  assert.deepEqual(model.done, [], 'going live has not ended');
+  const parts = summaryParts(model).map((part) => part.text);
+  assert.deepEqual(parts, ['1 needs you', '3 in progress'], 'the groups in order, zero ones left out');
+  assert.equal(parts.slice(0, 2).join(' · '), '1 needs you · 3 in progress', 'the row shows the bar\'s first two parts');
+});
+
+test('a finished row wears its ending in words after its mark; a failed one says what went wrong', () => {
+  const { SettledLine } = strip();
+  const words = (outcome, withWords) => renderToHtml(createElement('div', null, createElement(SettledLine, {
+    name: 'Plant Pal', slug: 'plant-pal', iconUrl: null, emoji: null, number: 51, title: 'Dark mode', outcome, fallback: 'Stopped', ...withWords,
+  })));
+  assert.match(words('build_failed', { words: 'Couldn’t build · Its build didn\'t finish' }), /data-bot-settled-words="">Couldn’t build · /, 'the words after the title');
+  assert.doesNotMatch(words('live', { words: null }), /data-bot-settled-words/, 'no words, no span');
+  assert.match(words('live', { words: 'Live' }), /data-bot-settled-words="">Live<\/span>/);
 });
 
 // ── 3. A request's number, in its own colour ─────────────────────────────

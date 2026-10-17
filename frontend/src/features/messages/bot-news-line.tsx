@@ -7,7 +7,8 @@ import { t as translate } from '../../lib/i18n/runtime';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { isBotNews, requestKey } from './bot-request';
 import { newsIcon } from './bot-shared';
-import { FinalState, OpenState, ProjectTile, RequestTag, SettledLine, trayEnded, trayNow, type StripRow } from './bot-strip';
+import { endedWords, OpenState, ProjectTile, RequestTag, SettledLine, trayEnded, trayNow, type StripRow } from './bot-strip';
+import { tracksByKey } from './bot-track';
 import { useBotWork } from './bot-work';
 import { openThreadAt } from './store';
 import type { ConversationMessage, HomeroomBotMeta, HomeroomBotWork } from './types';
@@ -229,6 +230,7 @@ export function BotNewsLine({ message, focused = false, earlier = [], updates: u
   const status = newsStatus(meta, trayNow(work), trayEnded(work));
   // Its story: the thread, else the oldest piece from before threads.
   const rootId = newsThread(message) ?? (earlier[0]?.id || message.id);
+  const key = requestKey(meta);
   const icon = newsIcon(work, meta.appSlug, meta.appName);
   const updates = updatesIn ?? (meta.kind === 'activity' && message.thread ? message.thread.replyCount : 0);
   function tap() {
@@ -257,6 +259,7 @@ export function BotNewsLine({ message, focused = false, earlier = [], updates: u
           <SettledLine
             name={meta.appName || meta.appSlug || ''} slug={meta.appSlug || null} iconUrl={icon.iconUrl} emoji={meta.appEmoji || icon.iconEmoji}
             number={meta.firstVersion ? null : meta.issueNumber} title={newsTitle(meta)} outcome={status.ended} fallback={status.text}
+            words={endedWords(status.ended, key ? tracksByKey(work)?.get(key) || null : null, status.text)}
             nested={nested}
           />
           <ChevronRightIcon aria-hidden="true" className="h-4 w-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
@@ -298,25 +301,28 @@ export interface SettledRunItem {
 }
 
 /**
- * Settled rows in a row fold into one line (one request, one story): two or
- * more finished requests with nothing between them on the same day are
+ * Settled rows in a row fold into one line of words (one request, one
+ * story): two or more finished requests with nothing between them on the
+ * same day are
  *
- *     [✓] 4 requests finished v  [✓][✋][✋][⚠]
+ *     [✓] 12 finished · 1 couldn't build ⌄
  *
  * a row of its own (16 Oct 2026): its own tile in the tile column, so it
  * never reads as part of the row above it (it sat indented under that row's
- * title, under "3 updates", and read as those updates finishing), then how
- * many requests it holds and their badges. Each badge opens its own
- * request's story; the count opens the rows, each a whole row under it,
- * where the rows above are. Open requests are never folded, so what still
- * asks something is what the eye meets. A link to a folded row lands on the
- * line (each row's id is an anchor on it) and opens it.
+ * title, under "3 updates", and read as those updates finishing). #5392:
+ * the parts are words, each with what it counts, and no strip of small
+ * squares that runs off the edge; "couldn't build" counts the builds that
+ * went wrong, "finished" every other ending, and zero parts are left out.
+ * Pressed, it opens the same rows, in place, that the drawer's Finished
+ * today list draws, each saying how it ended in words. Open requests are
+ * never folded, so what still asks something is what the eye meets. A link
+ * to a folded row lands on the line (each row's id is an anchor on it) and
+ * opens it.
  *
- * Pressed, the count stays where it is on the screen: the rows open below
+ * Pressed, the line stays where it is on the screen: the rows open below
  * it, and `holdPlace` (the transcript's) stops it following the newest line
- * for that press and puts the count back where it was once they are drawn.
+ * for that press and puts it back where it was once they are drawn.
  */
-export const RUN_BADGES = 6;
 export function SettledRun({ items, holdPlace }: {
   items: SettledRunItem[];
   /** Keep an element where it is on screen across the next draw: returns what puts it back. */
@@ -334,15 +340,11 @@ export function SettledRun({ items, holdPlace }: {
     putBack.current = null;
   }, [open]);
   const statuses = items.map((item) => newsStatusOf(item.message, work));
-  const more = items.length - RUN_BADGES;
+  const failed = statuses.filter((status) => status?.ended === 'build_failed' || status?.ended === 'failed').length;
+  const finished = items.length - failed;
   const toggle = () => {
     if (count.current && holdPlace) putBack.current = holdPlace(count.current);
     setOpen(!open);
-  };
-  // A badge opens its own request's story, as its row would.
-  const openItem = (item: SettledRunItem) => {
-    const rootId = newsThread(item.message) ?? (item.earlier[0]?.id || item.message.id);
-    openThreadAt(rootId, rootId === item.message.id ? null : item.message.id);
   };
   return (
     <div className="messages-bot-news messages-bot-settled-run pb-1 pt-2" data-bot-settled-run={items.length} data-bot-settled-first={items[0]?.message.id}>
@@ -363,23 +365,11 @@ export function SettledRun({ items, holdPlace }: {
           data-bot-settled-toggle=""
           onClick={toggle}
         >
-          <span>{t('messages:bot.news.finished', { count: items.length })}</span>
+          {finished ? <span data-bot-settled-count="finished">{t('messages:bot.news.run.finished', { count: finished })}</span> : null}
+          {finished && failed ? <span aria-hidden="true"> · </span> : null}
+          {failed ? <span data-bot-settled-count="failed">{t('messages:bot.news.run.failed', { count: failed })}</span> : null}
           <ChevronDownIcon aria-hidden="true" className={`h-4 w-4 shrink-0 text-zinc-400 transition-transform dark:text-zinc-500 ${open ? 'rotate-180' : ''}`} />
         </button>
-        {open ? null : (
-          <div className="flex h-[30px] min-w-0 flex-1 items-center gap-1 overflow-hidden" data-bot-settled-badges="">
-            {items.slice(0, RUN_BADGES).map((item, index) => {
-              const meta = item.message.metadata?.homeroomBot;
-              return (
-                <button key={item.message.id} type="button" className="flex shrink-0 rounded-[6px]" data-bot-settled-badge={item.message.id} onClick={() => openItem(item)}>
-                  <FinalState outcome={statuses[index]?.ended} fallback={statuses[index]?.text || ''} />
-                  {meta ? <span className="sr-only">{newsTitle(meta)}</span> : null}
-                </button>
-              );
-            })}
-            {more > 0 ? <span className="shrink-0 text-[13px] font-semibold text-zinc-500 dark:text-zinc-400">{`+${more}`}</span> : null}
-          </div>
-        )}
       </div>
       {open ? (
         <div className="mt-1 flex flex-col" data-bot-settled-rows="">
