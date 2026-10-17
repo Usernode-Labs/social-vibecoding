@@ -3919,7 +3919,9 @@ async function answerOwed(pool, config, { userId, conversationId, messageId, att
   const message = await conversations.getMessage(pool, user, Number(conversationId), Number(messageId));
   if (!message || message.deletedAt || message.deleted_at) return { sent: false, skipped: 'gone' };
   let later = null;
-  const turnDeps = { ...deps, bot, workKey, once, onLater: (n) => { later = n; } };
+  // Strict: an answer that could not be delivered fails the work, which is
+  // retried and then says it could not (dm.sorry), never counted as said.
+  const turnDeps = { ...deps, bot, workKey, once, strict: true, onLater: (n) => { later = n; } };
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
   const sent = attempt > 0
     ? await mayor.answerLater(pool, config, { bot, user, conversationId: Number(conversationId), message, deps: turnDeps }, attempt)
@@ -4501,6 +4503,8 @@ async function finishOnTryAgain(pool, config, { bot, user, target, message, deps
     },
   }).catch((err) => {
     log.warn('homeroom-bot-dm', 'Could not say a first version is being finished', { userId: user.id, runId, err: err.message });
+    // In the DM machine's answer work, a line that did not go is retried.
+    if (deps.strict) throw err;
     return null;
   });
   let said = null;

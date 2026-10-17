@@ -2175,6 +2175,9 @@ async function turn(pool, config, { bot, user, settings, conversationId, message
     }
     return say(BROKEN_TEXT).catch((sendErr) => {
       log.warn('homeroom-bot-mayor', 'Could not answer a DM at all', { userId: user.id, err: sendErr.message });
+      // `strict` (the person's DM machine's answer work): nothing reached
+      // them, so the work fails and is tried again, then says it could not.
+      if (deps.strict) throw sendErr;
       return null;
     });
   }
@@ -2910,21 +2913,6 @@ async function fileRequest(pool, config, {
   const github = deps.github || require('./github');
   const ws = deps.ws || require('./ws');
   const notifications = deps.notifications || require('./notifications');
-  // `fileKey`: the tap's act it is filed for (workflow work). A retry after
-  // a restart finds the request that act filed and files no second one.
-  // (Between GitHub answering and the row below, a restart can still file
-  // it twice: nothing on GitHub can be looked up by a key at once.)
-  if (fileKey) {
-    const { rows: [had] } = await pool.query(
-      `SELECT github_issue_number FROM issues WHERE app_id = $1 AND payload->>'fileKey' = $2 LIMIT 1`, [app.id, String(fileKey)]);
-    if (had) {
-      const { rows: [queued] } = await pool.query(
-        'SELECT id FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2 LIMIT 1', [app.id, Number(had.github_issue_number)]);
-      return { issueNumber: Number(had.github_issue_number), queueId: queued ? Number(queued.id) : null, again: true };
-    }
-  }
-  const m = String(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  if (!m || !github.isEnabled()) throw new Error('github_unavailable');
   const body = [
     details || '',
     '',
@@ -2932,17 +2920,46 @@ async function fileRequest(pool, config, {
     // B9: where it was asked, when not in their chat with the bot.
     footer || `Filed from ${user.username}'s chat with Homeroom bot.`,
   ].join('\n').trim();
-  const created = await github.createIssue(m[1], m[2], {
-    title, body: typeof github.safeMention === 'function' ? github.safeMention(body) : body,
-  });
-  const issueNumber = Number(created?.number);
-  if (!Number.isInteger(issueNumber) || issueNumber <= 0) throw new Error('invalid issue number');
-  try { github.noteIssueCreated?.(m[1], m[2], created); } catch {}
-  const { rows: issueRows } = await pool.query(
-    `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
-     VALUES ($1, $2, $3, $4, 'general', $6, $5) RETURNING id`,
-    [app.id, issueNumber, title, body, user.id, JSON.stringify(fileKey ? { fileKey: String(fileKey) } : {})],
-  );
+  // `fileKey`: the tap's act it is filed for (workflow work). A retry after
+  // a restart finds the request that act filed and files no second one, and
+  // finishes what that attempt had not: its requester, its notices, its
+  // place in the queue. (Between GitHub answering and the issue row, a
+  // restart can still file it twice: nothing on GitHub can be looked up by
+  // a key at once.)
+  let issueNumber = null;
+  let issueId = null;
+  let recovered = false;
+  let requesterKnown = false;
+  if (fileKey) {
+    const { rows: [had] } = await pool.query(
+      `SELECT i.id, i.github_issue_number,
+              EXISTS (SELECT 1 FROM homeroom_bot_requesters q WHERE q.app_id = i.app_id AND q.issue_number = i.github_issue_number) AS requester
+         FROM issues i WHERE i.app_id = $1 AND i.payload->>'fileKey' = $2 LIMIT 1`, [app.id, String(fileKey)]);
+    if (had) {
+      recovered = true;
+      issueNumber = Number(had.github_issue_number);
+      issueId = had.id;
+      // Its requester recorded means the attempt got that far, and the
+      // notices it sends right after went with it.
+      requesterKnown = !!had.requester;
+    }
+  }
+  if (!recovered) {
+    const m = String(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+    if (!m || !github.isEnabled()) throw new Error('github_unavailable');
+    const created = await github.createIssue(m[1], m[2], {
+      title, body: typeof github.safeMention === 'function' ? github.safeMention(body) : body,
+    });
+    issueNumber = Number(created?.number);
+    if (!Number.isInteger(issueNumber) || issueNumber <= 0) throw new Error('invalid issue number');
+    try { github.noteIssueCreated?.(m[1], m[2], created); } catch {}
+    const { rows: issueRows } = await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
+       VALUES ($1, $2, $3, $4, 'general', $6, $5) RETURNING id`,
+      [app.id, issueNumber, title, body, user.id, JSON.stringify(fileKey ? { fileKey: String(fileKey) } : {})],
+    );
+    issueId = issueRows[0]?.id;
+  }
   await pool.query(
     `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, asked_text)
      VALUES ($1, $2, $3, $4, $5)
@@ -2950,24 +2967,33 @@ async function fileRequest(pool, config, {
        asked_text = COALESCE(EXCLUDED.asked_text, homeroom_bot_requesters.asked_text)`,
     [app.id, issueNumber, user.id, title, askedText ? clip(askedText, 2000) : null],
   );
-  // The people who follow new requests on the project, and (#3952) the
-  // people it names with @, in their words: once each (#4271). Never rejects.
-  try {
-    notifications.notifyIssueFiled?.(pool, { appId: app.id, issueNumber, authorId: user.id, text: `${title}\n\n${body}` });
-  } catch {}
-  await ws.sendSystemMessage(pool, app.id, `${user.username} created issue: "${title}" (#${issueNumber})`,
-    'system', null, { type: 'issue', ref: issueNumber }).catch(() => {});
-  ws.pushIssueUpdate?.({ action: 'created', appSlug: app.slug, appId: app.id, issueId: issueRows[0]?.id, kind: 'general' });
+  if (!requesterKnown) {
+    // The people who follow new requests on the project, and (#3952) the
+    // people it names with @, in their words: once each (#4271). Never rejects.
+    try {
+      notifications.notifyIssueFiled?.(pool, { appId: app.id, issueNumber, authorId: user.id, text: `${title}\n\n${body}` });
+    } catch {}
+    await ws.sendSystemMessage(pool, app.id, `${user.username} created issue: "${title}" (#${issueNumber})`,
+      'system', null, { type: 'issue', ref: issueNumber }).catch(() => {});
+    ws.pushIssueUpdate?.({ action: 'created', appSlug: app.slug, appId: app.id, issueId, kind: 'general' });
+  }
   let queueId = null;
   if (liveModule(deps).isLiveFor(settings, app)) {
+    // An upsert, so a retry puts it first once. Durable work (`fileKey`) is
+    // told it failed, and retries, rather than leave the request unqueued.
     const queued = await botModule(deps).enqueueFront(pool, { appId: app.id, issueNumber, userId: user.id, reason })
       .catch((err) => {
+        if (fileKey) throw err;
         log.warn('homeroom-bot-mayor', 'Could not queue a filed request', { err: err.message });
         return null;
       });
     queueId = queued?.id ? Number(queued.id) : null;
   } else {
     botModule(deps).noteIssueActivity({ appId: app.id, issueNumber, reason: 'created' });
+  }
+  if (recovered) {
+    log.info('homeroom-bot-mayor', 'Finished a request filed before a restart', { app: app.slug, issueNumber, userId: user.id });
+    return { issueNumber, queueId, again: true };
   }
   log.info('homeroom-bot-mayor', 'Filed a request from a DM', { app: app.slug, issueNumber, userId: user.id });
   return { issueNumber, queueId };

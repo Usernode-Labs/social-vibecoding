@@ -618,6 +618,55 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     tapFiled = Number(filed.issue_number);
   });
 
+  // Review round 1 (#5399): a DM answer that could not be delivered is the
+  // answer's work's failure, retried (and then said it could not), never
+  // reported as done; a request filed before a restart is finished, not
+  // left without its requester or its place in the queue.
+  await t.test('an answer whose every send fails fails its work: nothing reached them', async () => {
+    const realDm = require('../src/services/homeroom-bot-dm');
+    const down = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+    const dmSvc = { ...realDm, async sendDm() { throw down; } };
+    const message = await say('is it up yet?');
+    const deps = { dmSvc, chat: scripted([[['reply', { text: 'Yes.' }]]]), apiKey: 'sk-test', openMcp, sleep: async () => {} };
+    await assert.rejects(mayor.runDmTurn(pool, CONFIG, { bot, user: ada, settings, conversationId: opened.conversationId, message,
+      deps: { ...deps, strict: true } }), /ECONNRESET/);
+    // Outside durable work it still never throws (as before).
+    assert.equal(await mayor.runDmTurn(pool, CONFIG, { bot, user: ada, settings, conversationId: opened.conversationId, message,
+      deps: { ...deps, chat: scripted([[['reply', { text: 'Yes.' }]]]) } }), null);
+    // The DM machine's answer work runs strict.
+    await assert.rejects(realDm.answerOwed(pool, CONFIG, {
+      userId: ada.id, conversationId: opened.conversationId, messageId: message.id, workKey: 'msg:fail',
+      deps: { ...deps, chat: scripted([[['reply', { text: 'Yes.' }]]]), bot },
+    }), /ECONNRESET/);
+  });
+
+  await t.test('a request filed before a restart is finished by the retry: its requester and its queue, no second issue', async () => {
+    const before = created.length;
+    // The first attempt filed it on GitHub and wrote its row, then its
+    // process went.
+    const { rows: [issue] } = await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
+       VALUES ($1, 977, 'Dark notes', 'x', 'general', $2, $3) RETURNING id`,
+      [notes.id, JSON.stringify({ fileKey: 'dm-action:recover' }), ada.id]);
+    const filed = await mayor.fileRequest(pool, CONFIG, {
+      user: ada, app: notes, title: 'Dark notes', details: 'Notes in the dark.', settings, fileKey: 'dm-action:recover',
+    });
+    assert.equal(filed.issueNumber, 977);
+    assert.equal(filed.again, true);
+    assert.equal(created.length, before, 'no second issue on GitHub');
+    const { rows: [requester] } = await pool.query('SELECT user_id FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = 977', [notes.id]);
+    assert.equal(requester?.user_id, ada.id, 'its requester recorded, so its news reaches her DM');
+    const { rows: queued } = await pool.query('SELECT id FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 977', [notes.id]);
+    assert.equal(queued.length, 1, 'and it is queued');
+    assert.equal(filed.queueId, Number(queued[0].id));
+    // Once more: still one of each.
+    await mayor.fileRequest(pool, CONFIG, { user: ada, app: notes, title: 'Dark notes', details: 'x', settings, fileKey: 'dm-action:recover' });
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 977', [notes.id])).rows[0].n, 1);
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 977', [notes.id]);
+    await pool.query('DELETE FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = 977', [notes.id]);
+    await pool.query('DELETE FROM issues WHERE id = $1', [issue.id]);
+  });
+
   await t.test('an offer drafted again by a retried answer is the one under its message', async () => {
     const steps = [
       [['offer_request', { project: 'note-board', title: 'Sort by size', details: 'Sort notes by size.' }]],
