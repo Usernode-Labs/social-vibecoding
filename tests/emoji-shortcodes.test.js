@@ -194,7 +194,7 @@ test('both composers use this module, and neither re-derives the rules', () => {
   assert.match(body, /api\.completedEmojiShortcode\(/);
 });
 
-test('the Messages composer: its own listbox, and its keys run before Enter-to-send', () => {
+test('the Messages composer: its own listbox, and its keys run before the send chord', () => {
   const composer = read('frontend/src/features/messages/composer.tsx');
   // The menu is the mention menu's box, headed with the query, over a listbox
   // named for screen readers.
@@ -209,7 +209,8 @@ test('the Messages composer: its own listbox, and its keys run before Enter-to-s
   // The menu's keys come first: with it open, Enter inserts and never sends.
   // The @ and # list's keys (QA 2026-09-24 Q13) come next, and never meet
   // these: the emoji menu opens only while neither of those lists shows.
-  assert.match(composer, /onKeyDown=\{\(event\) => \{ if \(onEmojiKeyDown\(event\)\) return; if \(suggestionKeys\(event\)\) return; if \(event\.key === 'Enter' && !event\.shiftKey/);
+  // #5361: the send chord is Ctrl/Cmd+Enter; plain Enter is a new line.
+  assert.match(composer, /onKeyDown=\{\(event\) => \{ if \(onEmojiKeyDown\(event\)\) return; if \(suggestionKeys\(event\)\) return; if \(event\.key === 'Enter' && \(event\.metaKey \|\| event\.ctrlKey\)/);
   const handler = composer.slice(composer.indexOf('function onEmojiKeyDown('), composer.indexOf('function onComposerChange('));
   for (const key of ['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape']) {
     assert.ok(handler.includes(`'${key}'`), `${key} is the menu's while it is open`);

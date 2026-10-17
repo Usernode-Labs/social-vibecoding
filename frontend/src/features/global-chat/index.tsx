@@ -305,7 +305,8 @@ function Composer({ id }: { id: string }) {
           event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 144)}px`;
         }}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+          // Enter is a new line; Send (or Ctrl/Cmd+Enter, as in the dev chat) sends.
+          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) {
             event.preventDefault();
             submit();
           }

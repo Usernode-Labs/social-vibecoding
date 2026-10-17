@@ -284,6 +284,10 @@ test('Global Chat has a mobile/native layout and accessible composer controls', 
   // above it no longer reserves that band too (it is always above the
   // composer, so the band is the composer's to clear, once).
   assert.match(screen, /<form className="global-chat-composer platform-safe-bar" onSubmit=\{submit\}>/);
+  // #5361: Enter is a new line in the composer, as in the workshop agent
+  // chat; the send chord (Ctrl/Cmd+Enter) sends, and plain Enter never does.
+  assert.match(screen, /if \(event\.key === 'Enter' && \(event\.metaKey \|\| event\.ctrlKey\)/, 'Ctrl/Cmd+Enter sends');
+  assert.doesNotMatch(screen, /event\.key === 'Enter' && !event\.shiftKey && !event\.nativeEvent\.isComposing/, 'plain Enter no longer sends');
   assert.match(screen, /<div ref=\{scroll\} className="global-chat-transcript" aria-live="polite">/);
   assert.match(css,
     /\.platform-safe-bar \{[^}]*padding-bottom: calc\(0\.5rem \+ max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom\)\)\) !important;/,
