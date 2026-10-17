@@ -2747,6 +2747,10 @@
     "text": "@{{username}}: {{message}}",
     "description": "Second line of a channel's row in the conversation list: who wrote the latest message and its text. {{username}} is the author (keep the @) and {{message}} the message."
   },
+  "inbox.previewYou": {
+    "text": "You: {{message}}",
+    "description": "Second line of a group chat's row in the conversation list when the signed-in person wrote the latest message. {{message}} is the message."
+  },
   "inbox.everyone": {
     "text": "Everyone on Homeroom",
     "description": "Second line of the #general channel's row in the conversation list while nothing has been written there: who the channel is for. Homeroom is the product's name."

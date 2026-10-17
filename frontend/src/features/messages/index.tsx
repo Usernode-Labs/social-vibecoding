@@ -201,6 +201,32 @@ function GroupMemberCount({ count }: { count: number }) {
   );
 }
 
+/**
+ * #5393: what a group row's tile is — the faces of the people in it, not the
+ * title's first letters. Up to two of the other members, stacked in the same
+ * 44px box the `lg` square takes, so the row's own geometry (the 74px
+ * separator inset) holds. The viewer is never one of the faces. One other
+ * member is their face at full size; nobody known keeps the title's
+ * initials, as today. A member with no photo falls back to their initials
+ * tile, the way avatars look everywhere else.
+ */
+function GroupFaces({ conversation }: { conversation: ConversationSummary }) {
+  const viewerId = typeof window !== 'undefined' ? Number(window.App?.user?.id) : 0;
+  const others = conversation.members
+    .filter((member) => member.status === 'member' && Number(member.id) !== viewerId)
+    .slice(0, 2);
+  if (others.length === 2) {
+    return (
+      <span className="messages-group-faces" aria-hidden="true">
+        <UserAvatar user={others[0]} size="sm" shape="square" />
+        <UserAvatar user={others[1]} size="sm" shape="square" />
+      </span>
+    );
+  }
+  if (others.length === 1) return <UserAvatar user={others[0]} size="lg" shape="square" />;
+  return <UserAvatar user={null} title={conversation.title} size="lg" shape="square" />;
+}
+
 const ConversationRow = memo(function ConversationRow({ conversation, active, preview = null }: {
   conversation: ConversationSummary;
   active: boolean;
@@ -215,6 +241,19 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
   // conversation last spoken in during March read "412d", which is a duration
   // and not information. `title` carries the unelided instant either way.
   const activity = agoStamp(conversation.lastActivityAt);
+  // #5393: in a group the preview names its last sender, the way #general's
+  // row already does — "@name: …", or "You: …" when the viewer wrote it. A
+  // message with no person behind it (a platform line) keeps the bare
+  // summary. A direct message and an invitation keep their previews as they
+  // are, and the bot's own line (`preview`) still wins where it is given.
+  const groupSender = conversation.kind === 'group' && !invited
+    ? conversation.latestMessage?.sender || null
+    : null;
+  const groupPreview = groupSender?.id && conversation.latestSummary
+    ? (Number(groupSender.id) === Number(window.App?.user?.id)
+      ? t('messages:inbox.previewYou', { message: conversation.latestSummary })
+      : t('messages:inbox.previewBy', { username: groupSender.username, message: conversation.latestSummary }))
+    : null;
   return (
     <a
       href={`#messages/${conversation.id}`}
@@ -227,7 +266,9 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
       className={`messages-conversation-row ${conversation.homeroomBot ? 'messages-bot-row' : ''} ${active ? 'messages-conversation-active' : ''}`}
       aria-current={active ? 'page' : undefined}
     >
-      <UserAvatar user={conversation.kind === 'direct' ? peer : null} title={peer?.username || conversation.title} size="lg" shape="square" />
+      {conversation.kind === 'group' && !invited
+        ? <GroupFaces conversation={conversation} />
+        : <UserAvatar user={conversation.kind === 'direct' ? peer : null} title={peer?.username || conversation.title} size="lg" shape="square" />}
       <div className="min-w-0 flex-1">
         {/* Two lines, the row's own geometry: the name with the time on its
             trailing edge, then the preview with the unread count on its. The
@@ -239,7 +280,7 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
           <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
         </div>
         <div className="messages-row-line">
-          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{invited ? (conversation.kind === 'direct' ? t('messages:inbox.requestReview') : t('messages:inbox.invitationReview')) : preview || conversation.latestSummary || t('messages:inbox.noMessages')}</span>
+          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{invited ? (conversation.kind === 'direct' ? t('messages:inbox.requestReview') : t('messages:inbox.invitationReview')) : groupPreview ?? (preview || conversation.latestSummary || t('messages:inbox.noMessages'))}</span>
           {conversation.unreadCount > 0 ? <span className="messages-unread" aria-label={t('messages:inbox.unread', { count: conversation.unreadCount })}>{conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}</span> : null}
         </div>
       </div>

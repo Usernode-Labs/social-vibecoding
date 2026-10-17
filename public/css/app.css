@@ -633,6 +633,15 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   gap: 8px;
   min-width: 0;
 }
+/* A group row's tile (#5393): the faces of two of its other members, stacked
+   in the same 44px box the `lg` square takes, so the 74px separator inset
+   (16 + 44 + 14) holds. The last face's ring is the card the rows sit on
+   (.messages-section-card paints `--dc-sheet-solid`), so the pair reads as
+   two faces and not one melted one. */
+.messages-group-faces { position: relative; flex: 0 0 44px; width: 44px; height: 44px; }
+.messages-group-faces > * { position: absolute; }
+.messages-group-faces > :first-child { left: 0; top: 0; }
+.messages-group-faces > :last-child { right: 0; bottom: 0; box-shadow: 0 0 0 2px var(--dc-sheet-solid, var(--app-bg)); }
 .messages-row-name,
 .messages-row-preview {
   flex: 1 1 auto;
@@ -17616,54 +17625,39 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   overflow-x: hidden;
   scroll-snap-type: y mandatory;
   scrollbar-width: none;
-  border-radius: 22px;
+  border-radius: 20px;
 }
 .dev-ws-needs-scroll::-webkit-scrollbar { display: none; }
 @media (prefers-reduced-motion: no-preference) {
   .dev-ws-needs-scroll { scroll-behavior: smooth; }
 }
-/* ── The item: a reel ─────────────────────────────────────────────────
-   ONE DARK CARD, in the light theme and the dark alike, as a short video's
-   frame is: the picture fills it, and the caption is laid over its foot in
-   white on a scrim (workshop.tsx FeedItem). The card is a scheme of its
-   own: the tokens are redefined for everything inside it, to the dark
-   palette's own values, so the pictures (lib/diagram, What it touches, the
-   shots' switch) and the facts draw light on dark without a second copy of
-   their rules. The tint pair still
-   alternates, as a faint wash over the dark, so a swipe reads as a new
-   item. On a phone the rail stands over the card's right edge, so the
-   caption keeps its lane (80px) free; nothing else does, because the rail
-   floats over the picture the way a reel's buttons do. The end card is an
-   item too, and keeps the page's own scheme. */
+/* ── The item: a card of the page's own ───────────────────────────────
+   ONE CARD, IN THE PAGE'S SCHEME, in the light theme and the dark alike,
+   like the hub's and the Workshop's grouped cards are: the plane colour
+   (--dc-sheet-solid), the 20px corners and the one hairline
+   (--app-sheet-line). The picture fills it, and the caption is laid over
+   its foot (workshop.tsx FeedItem); the rail stands over the card's right
+   edge on a phone, so the caption keeps its lane (80px) free. Everything
+   inside reads the theme's own tokens --text-*, --accent, --state-* and
+   --app-sheet-line, so the pictures (lib/diagram, What it touches, the
+   shots' switch) and the facts follow the viewer's theme without a second
+   copy of their rules. The end card is an item too, and keeps the page's
+   own scheme. */
 .dev-ws-item {
   position: relative;
   height: 100%; box-sizing: border-box;
   scroll-snap-align: start; scroll-snap-stop: always;
   display: flex; flex-direction: column;
   padding: 0;
-  border-radius: 22px;
+  border-radius: 20px;
   overflow: hidden;
   background-color: var(--dc-sheet-fill);
 }
 .dev-ws-item:not(.dev-ws-needs-done) {
-  --text-primary: #fff;
-  --text-secondary: rgba(255, 255, 255, .88);
-  --text-muted: rgba(255, 255, 255, .68);
-  --text-faint: rgba(255, 255, 255, .5);
-  --state-neutral-bg: rgba(255, 255, 255, .14);
-  --app-sheet-line: rgba(255, 255, 255, .14);
-  --accent: #5aa9ff;
-  --accent-tint: rgba(90, 169, 255, .14);
-  --accent-wash-ink: #85bcff;
-  --state-ok: #34d399;
-  --state-progress: #a78bfa;
-  --state-attention: #fbbf24;
-  --state-blocked: #f87171;
-  background-color: #14171f;
+  background-color: var(--dc-sheet-solid);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
   color: var(--text-primary);
 }
-.dev-ws-item[data-ws-tint="a"] { background-image: linear-gradient(165deg, rgba(139, 92, 246, .16), rgba(20, 23, 31, 0) 55%, rgba(244, 114, 182, .10)); }
-.dev-ws-item[data-ws-tint="b"] { background-image: linear-gradient(165deg, rgba(59, 130, 246, .16), rgba(20, 23, 31, 0) 55%, rgba(251, 191, 36, .08)); }
 /* #4754: THE STAGE. The strip and the scroller share one column, so the
    strip is as wide as the card and sits over it, and neither scrolls. */
 .dev-ws-needs-stage {
@@ -17697,7 +17691,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   min-height: 20px; margin: 22px 14px 0;
 }
-.dev-ws-item-top > .dev-ws-eyebrow { font-size: 10.5px; font-weight: 700; letter-spacing: .09em; color: rgba(255, 255, 255, .7); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dev-ws-item-top > .dev-ws-eyebrow { font-size: 12px; font-weight: 700; letter-spacing: .06em; color: var(--text-muted); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* #3517: the way back on a phone, at the right end of the card's top line,
    where the counter sat before it moved to the strip (workshop.tsx draws it
    there only, from the second item on). A small round, the rail's own fill,
@@ -17710,8 +17704,8 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   width: 26px; height: 26px; margin: -3px -4px -3px auto; padding: 0;
   display: grid; place-items: center;
   border: 0; border-radius: 9999px;
-  background-color: rgba(255, 255, 255, .16);
-  color: #fff; cursor: pointer;
+  background-color: var(--state-neutral-bg);
+  color: var(--text-primary); cursor: pointer;
 }
 .dev-ws-item-prev::after { content: ''; position: absolute; inset: -9px; }
 .dev-ws-item-prev-icon { width: 16px; height: 16px; }
@@ -17723,7 +17717,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-item-tick {
   width: 18px; height: 18px; flex: none; padding: 3px; box-sizing: border-box;
-  border-radius: 9999px; background: var(--state-ok); color: #14171f;
+  border-radius: 9999px; background: var(--state-ok); color: #fff;
 }
 /* A no vote (#4568): the confirmation, and its tick, in the blocked red
    instead of the ok green. Yes keeps the rules above. */
@@ -17733,15 +17727,16 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    edge; the scrim and the caption are laid over its lower part. */
 .dev-ws-item-spacer { flex: 1 1 auto; min-height: 0; }
 /* What keeps the caption legible over any picture: a fade up from the
-   card's foot. Open, the caption has the whole card, and the picture is
-   dimmed under it. Taps go through to the picture. */
+   card's foot, into the card's own colour. Open, the caption has the whole
+   card, and the picture is washed out in the card's colour under it. Taps
+   go through to the picture. */
 .dev-ws-item-scrim {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 1;
   height: 300px; max-height: 75%;
-  background: linear-gradient(to top, rgba(0, 0, 0, .8), rgba(0, 0, 0, .5) 45%, rgba(0, 0, 0, 0));
+  background: linear-gradient(to top, var(--dc-sheet-solid), transparent);
   pointer-events: none;
 }
-.dev-ws-item[data-ws-open] > .dev-ws-item-scrim { top: 0; height: auto; max-height: none; background: rgba(0, 0, 0, .62); }
+.dev-ws-item[data-ws-open] > .dev-ws-item-scrim { top: 0; height: auto; max-height: none; background: var(--dc-sheet-solid); opacity: .94; }
 /* THE CAPTION, bottom-left, as on a reel. Open ("more") it grows up the
    card and scrolls once it meets the counter. */
 .dev-ws-item-caption {
@@ -17763,13 +17758,13 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   font-size: 13px; color: var(--text-muted);
 }
 .dev-ws-item-by-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dev-ws-item-by b { color: var(--text-primary); font-size: 14.5px; font-weight: 700; }
+.dev-ws-item-by b { color: var(--text-primary); font-size: 15px; font-weight: 650; }
 .dev-ws-item-avatar {
   width: 30px; height: 30px; border-radius: 9999px; flex: none;
   display: grid; place-items: center;
   color: #fff; font-size: 12.5px; font-weight: 700;
 }
-.dev-ws-item-caption .dev-ws-item-avatar { box-shadow: 0 0 0 2px rgba(255, 255, 255, .9); }
+.dev-ws-item-caption .dev-ws-item-avatar { box-shadow: 0 0 0 2px var(--dc-sheet-solid); }
 .dev-ws-item-title {
   margin: 0;
   font-size: 18px; line-height: 1.22; font-weight: 750; letter-spacing: -.01em;
@@ -17789,7 +17784,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-item-summary { display: flex; margin: 0; }
 .dev-ws-item-summary-text {
   margin: 0; min-width: 0;
-  font-size: 14px; line-height: 1.4; color: var(--text-secondary);
+  font-size: 15px; line-height: 1.4; color: var(--text-secondary);
   white-space: pre-line; overflow-wrap: anywhere;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
@@ -17809,21 +17804,21 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-item-words :is(h1, h2, h3, h4, h5, h6) { font-size: 15px; font-weight: 700; color: var(--text-primary); }
 .dev-ws-item-words :is(ul, ol) { padding-left: 20px; }
 .dev-ws-item-words a { color: var(--text-primary); text-decoration: underline; text-underline-offset: 2px; }
-.dev-ws-item-words code { padding: 0 4px; border-radius: 4px; background: rgba(255, 255, 255, .12); font-size: 13px; }
+.dev-ws-item-words code { padding: 0 4px; border-radius: 4px; background: var(--state-neutral-bg); font-size: 13px; }
 /* A CHANGE WITH NO PICTURE AT ALL (workshop.tsx `pictureless`): the card is
    its words. The caption takes the card from under the counter to its foot
    and sits in the middle of it (auto margins, which give way to the top
    when the words run long), in a larger size, and the summary runs to eight
    lines before "more" is offered. No art stands in for the picture. */
 .dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption { top: 56px; }
-/* #5039: the caption's words sit on a soft panel of the card's own dark
-   colour, so they never lie on the picture's own words. Every pictured card
-   gets it; a pictureless card, where the words fill the card and nothing
-   sits behind them, does not. */
+/* #5039: the caption's words sit on a solid panel of the card's own colour
+   with a hairline, so they read over any picture, light or dark. Every
+   pictured card gets it; a pictureless card, where the words fill the card
+   and nothing sits behind them, does not. */
 .dev-ws-item:not([data-ws-picture="none"]) > .dev-ws-item-caption {
   padding: 10px 12px; border-radius: 16px;
-  background: rgba(20, 23, 31, .55);
-  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  background: var(--dc-sheet-solid);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
 }
 .dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption > :first-child { margin-top: auto; }
 .dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption > :last-child { margin-bottom: auto; }
@@ -17855,7 +17850,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    and the topic follows it (the wide block). */
 .dev-ws-item-facts {
   display: block; align-self: flex-start; max-width: 100%; box-sizing: border-box; margin: 2px 0 0;
-  padding: 4px 10px; border-radius: 12px; background: rgba(255, 255, 255, .16);
+  padding: 4px 10px; border-radius: 12px; background: var(--state-neutral-bg);
   font-size: 12px; font-weight: 600; line-height: 16px; color: var(--text-primary);
   white-space: normal; overflow-wrap: anywhere;
 }
@@ -18410,7 +18405,7 @@ button.dev-ws-recent-card {
 }
 .dev-ws-item > .dev-ws-diagram .dev-ws-diagram-src { margin: 2px 0 0; font-size: 12.5px; }
 .dev-ws-item > .dev-ws-diagram .dev-ws-diagram-rows { gap: 12px; }
-.dev-ws-item > .dev-ws-touches .dev-ws-diagram-what { font-size: 16px; font-weight: 700; }
+.dev-ws-item > .dev-ws-touches .dev-ws-diagram-what { font-size: 15px; font-weight: 650; }
 .dev-ws-item > .dev-ws-touches .dev-ws-diagram-bar { height: 9px; }
 .dev-ws-item > .dev-ws-diagram[role="button"] { cursor: pointer; }
 .dev-ws-diagram[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -18491,11 +18486,12 @@ button.dev-ws-recent-card {
 
 /* ── The rail ─────────────────────────────────────────────────────────
    One column of round buttons at the right edge, bottom-aligned with the
-   caption. On a phone it stands over the dark card, as a reel's buttons
-   do: white glyphs on translucent rounds, the words under them shadowed so
-   they read on any picture. Vote is filled in the accent: it is the thing
-   to press. Beside the card on a wide window (the wide block) it is drawn
-   on the page instead. */
+   caption. On a phone it stands over the card's right edge, so each disc
+   is solid in the card's own colour with a hairline and a small drop, and
+   the words under it get a soft halo in that colour: they read over any
+   picture, light or dark (#5298: Comments nearly disappeared over a light
+   shot). Vote is filled in the accent: it is the thing to press. Beside
+   the card on a wide window (the wide block) it is drawn on the page. */
 .dev-ws-rail {
   position: absolute; right: 8px; bottom: 10px; z-index: 3;
   display: flex; flex-direction: column; align-items: center; gap: 10px;
@@ -18503,24 +18499,25 @@ button.dev-ws-recent-card {
 .dev-ws-rail-btn {
   display: flex; flex-direction: column; align-items: center; gap: 4px;
   width: 60px; margin: 0; padding: 0; border: 0; background: none;
-  color: #fff; font: inherit; cursor: pointer;
+  color: var(--text-secondary); font: inherit; cursor: pointer;
 }
 .dev-ws-rail-btn:disabled { opacity: .4; cursor: default; }
 .dev-ws-rail-ic {
   width: 44px; height: 44px; border-radius: 9999px;
   display: grid; place-items: center;
-  background-color: rgba(255, 255, 255, .16);
-  color: #fff;
+  background-color: var(--dc-sheet-solid);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 1px 3px rgba(0, 0, 0, .12);
 }
 .dev-ws-rail-ic > svg { width: 23px; height: 23px; }
-.dev-ws-rail-lab { font-size: 11.5px; font-weight: 650; line-height: 1; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .4); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dev-ws-rail-lab { font-size: 11.5px; font-weight: 650; line-height: 1; color: var(--text-primary); text-shadow: 0 0 3px var(--dc-sheet-solid), 0 0 6px var(--dc-sheet-solid); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .dev-ws-rail-vote .dev-ws-rail-ic { width: 48px; height: 48px; background-color: var(--accent); color: #fff; box-shadow: 0 2px 12px rgba(10, 110, 224, .45); }
 .dev-ws-rail-vote.is-on .dev-ws-rail-ic { background-color: var(--state-ok); border-color: var(--state-ok); box-shadow: 0 2px 8px rgba(21, 128, 61, .28); }
 /* The same no vote (#4568): the rail button red, with the red glow. */
 .dev-ws-rail-vote.is-on[data-ws-voted="no"] .dev-ws-rail-ic { background-color: var(--state-blocked); border-color: var(--state-blocked); box-shadow: 0 2px 8px rgba(220, 38, 38, .28); }
-/* The sheet a button opens is up: its round turns over. */
-.dev-ws-rail-btn[aria-expanded="true"] .dev-ws-rail-ic { background-color: #fff; color: #14171f; }
-.dev-ws-rail-vote[aria-expanded="true"] .dev-ws-rail-ic { background-color: var(--accent); color: #fff; box-shadow: 0 0 0 3px rgba(255, 255, 255, .55); }
+/* The sheet a button opens is up: its round turns over to the page's ink. */
+.dev-ws-rail-btn[aria-expanded="true"] .dev-ws-rail-ic { background-color: var(--text-primary); color: var(--dc-sheet-solid); }
+.dev-ws-rail-vote[aria-expanded="true"] .dev-ws-rail-ic { background-color: var(--accent); color: #fff; box-shadow: 0 0 0 3px var(--accent-wash); }
 .dev-ws-move { display: none; }
 .dev-ws-keys { display: none; }
 
@@ -20090,10 +20087,8 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
      the card and not as wide as the rail beside it. The scroller fills the
      stage (its base rule is already `flex: 1 1 auto; min-height: 0`). */
   .dev-ws-needs-stage { flex: 0 1 440px; max-width: 440px; }
-  .dev-ws-needs-scroll { border-radius: 22px; box-shadow: 0 16px 40px rgba(20, 23, 31, .25); }
+  .dev-ws-needs-scroll { border-radius: 20px; }
   .dev-ws-needs-progress { margin: 0 4px 8px; }
-  /* The end card is the page's own, with its own hairline: no reel's shadow. */
-  .dev-ws-needs[data-ws-end] .dev-ws-needs-scroll { box-shadow: none; }
   .dev-ws-item-top { margin: 26px 16px 0; }
   .dev-ws-item-caption { left: 18px; right: 18px; bottom: 20px; gap: 8px; }
   /* #5039: beside the card, the caption below a diagram needs no rail lane. */
@@ -20107,12 +20102,12 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   .dev-ws-item[data-ws-picture="none"] .dev-ws-item-summary-text { font-size: 17px; -webkit-line-clamp: 10; }
   /* The facts: the vote's words are the pill, the topic follows it. */
   .dev-ws-item-caption > .dev-ws-item-facts { padding: 0; border-radius: 0; background: none; font-size: 12.5px; line-height: 26px; color: var(--text-muted); }
-  .dev-ws-item-caption .dev-ws-item-facts-vote { display: inline-block; padding: 0 10px; border-radius: 9999px; background: rgba(255, 255, 255, .16); color: var(--text-primary); }
+  .dev-ws-item-caption .dev-ws-item-facts-vote { display: inline-block; padding: 0 10px; border-radius: 9999px; background: var(--state-neutral-bg); color: var(--text-primary); }
   .dev-ws-item-caption .dev-ws-item-facts-vote + .dev-ws-fact { margin-left: 8px; }
   .dev-ws-item-caption .dev-ws-item-facts-vote + .dev-ws-fact::before { content: none; }
   .dev-ws-media-bar { margin: 0 16px 8px; }
   .dev-ws-item > .dev-ws-diagram { padding: 0 32px 16px; gap: 16px; }
-  .dev-ws-item > .dev-ws-touches .dev-ws-diagram-what { font-size: 18px; }
+  .dev-ws-item > .dev-ws-touches .dev-ws-diagram-what { font-size: 15px; font-weight: 650; }
   .dev-ws-item > .dev-ws-touches .dev-ws-diagram-bar { height: 10px; }
   /* With the panel up the card keeps its picture and its by-line: the rest
      of the caption is at the panel's top. */
@@ -20124,15 +20119,13 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
     position: relative; right: auto; bottom: auto; z-index: auto;
     flex: 0 0 64px; justify-content: flex-end; padding-bottom: 20px; gap: 16px;
   }
-  .dev-ws-rail-btn { width: 64px; color: var(--text-secondary); }
-  .dev-ws-rail-ic { width: 48px; height: 48px; background-color: var(--state-neutral-bg); color: var(--text-primary); }
+  .dev-ws-rail-btn { width: 64px; }
+  .dev-ws-rail-ic { width: 48px; height: 48px; }
   .dev-ws-rail-lab { font-size: 12.5px; color: var(--text-secondary); text-shadow: none; }
   .dev-ws-rail-vote .dev-ws-rail-ic { width: 52px; height: 52px; box-shadow: 0 4px 12px rgba(10, 110, 224, .3); }
   .dev-ws-rail-vote .dev-ws-rail-lab { color: var(--accent); }
   .dev-ws-rail-vote.is-on .dev-ws-rail-lab { color: var(--state-ok); }
   .dev-ws-rail-vote.is-on[data-ws-voted="no"] .dev-ws-rail-lab { color: var(--state-blocked); }
-  .dev-ws-rail-btn[aria-expanded="true"] .dev-ws-rail-ic { background-color: var(--text-primary); color: var(--dc-sheet); }
-  .dev-ws-rail-vote[aria-expanded="true"] .dev-ws-rail-ic { background-color: var(--accent); color: #fff; box-shadow: 0 0 0 3px var(--accent-wash); }
   /* The arrows: a column of their own to the rail's right, at the stage's
      middle, out of the row's centring. Gone while the panel is up. */
   .dev-ws-move {
@@ -22725,6 +22718,17 @@ html.un-kb #platform-parked {
     border-radius: 6px;
     font-size: 10px;
   }
+  /* #5393: the compact list has room for one face, not a stack — the first
+     face at the row's own 22px, the second out. The outer box is the row's
+     first child, so the rule above already sizes it. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-group-faces > :first-child {
+    position: static;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    font-size: 10px;
+  }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-group-faces > :last-child { display: none; }
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-agent-tile { background: none; border: 0; color: var(--text-muted); }
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-agent-tile svg { width: 20px; height: 20px; }
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row > .min-w-0 { display: flex; align-items: center; gap: 8px; }
