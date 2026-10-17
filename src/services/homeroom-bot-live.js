@@ -928,6 +928,48 @@ async function post({
 }
 
 /**
+ * Post one message in a proposal's own discussion thread only — the place
+ * the group votes — and record it. No GitHub comment and no issue-thread
+ * line: the issue already has its own post for anything that concerns it
+ * (the reconcile says there that a revision cleared the votes). Used by the
+ * bot's checks-fix note, which is said where the proposal is judged.
+ * Returns what landed; a failed thread send keeps the record.
+ */
+async function postOnProposal({
+  pool, ws, app, issueNumber, kind, runId = null, text, sender = null, proposalSessionId,
+}) {
+  const { rows } = await pool.query(
+    `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id`,
+    [app.id, issueNumber, runId, kind],
+  );
+  const postId = rows[0]?.id || null;
+  let message = null;
+  try {
+    message = sender
+      ? await ws.sendBotMessage(pool, app.id, {
+        user: sender, content: text, metadata: null,
+        thread: { type: 'session', ref: Number(proposalSessionId) },
+      })
+      : await ws.sendSystemMessage(pool, app.id, text, 'system', null,
+        { type: 'session', ref: Number(proposalSessionId) });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Proposal thread post failed (post kept)', { app: app.slug, issueNumber, kind, err: err.message });
+  }
+  if (postId) {
+    await pool.query(
+      'UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1',
+      [postId, message?.id ?? null],
+    ).catch(() => {});
+  }
+  log.info('homeroom-bot', 'Posted on proposal', {
+    app: app.slug, issueNumber, kind, proposalSessionId: Number(proposalSessionId), thread: !!message,
+  });
+  return { postId, thread: !!message };
+}
+
+/**
  * The GitHub account the bot comments as, or null when it cannot be read.
  * `github.getBotUsername()` is async. Used unawaited, the Promise reached
  * the triage seed, where tagging a GitHub comment called .toLowerCase() on
@@ -1488,6 +1530,7 @@ module.exports = {
   advanceSeen,
   botUsernameOf,
   openBotProposal,
+  postOnProposal,
   promoteAsBot,
   prepareProposal,
   proposalTitle,

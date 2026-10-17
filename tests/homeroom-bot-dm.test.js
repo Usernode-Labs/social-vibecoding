@@ -115,8 +115,13 @@ test('a first version gets the longer build clocks', () => {
   const app = { repo_url: 'https://github.com/usernode-bot/x' };
   const plain = bot.buildBudgets(app, {}, 60_000);
   const first = bot.buildBudgets(app, {}, 60_000, { firstVersion: true });
-  assert.equal(first.turnBudgetMs, plain.turnBudgetMs * bot.PLATFORM_BUILD_TIME_FACTOR);
-  assert.equal(first.specBudgetMs, plain.specBudgetMs * bot.PLATFORM_BUILD_TIME_FACTOR);
+  assert.equal(first.turnBudgetMs, plain.turnBudgetMs * bot.FIRST_VERSION_BUILD_TIME_FACTOR,
+    'a first version keeps its own clock, whatever the platform\'s factor is');
+  assert.equal(first.specBudgetMs, plain.specBudgetMs * bot.FIRST_VERSION_BUILD_TIME_FACTOR);
+  const platform = { repo_url: 'https://github.com/Usernode-Labs/social-vibecoding' };
+  assert.equal(bot.buildBudgets(platform, {}, 60_000).turnBudgetMs,
+    plain.turnBudgetMs * bot.PLATFORM_BUILD_TIME_FACTOR,
+    'only the platform\'s own repository moves with the platform factor');
 });
 
 // ── What the DM says ─────────────────────────────────────────────────────

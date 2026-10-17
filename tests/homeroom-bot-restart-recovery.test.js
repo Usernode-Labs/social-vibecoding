@@ -392,3 +392,66 @@ test('an issue a restart sent back is not told "looking" a second time', () => {
   assert.equal(bot.RESTART_REASON, 'restart');
   assert.match(src, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON \? null : await live\.post\(\{\n\s+pool, github, ws: liveD\.ws, app, repo, issueNumber,\n\s+kind: 'looking'/);
 });
+
+// ── A live build the restart lost (run 613) ──────────────────────────────
+// Before, a build whose worker died with the redeploy went back to be
+// triaged and its run stayed "building" forever. Now the run records the
+// loss and the issue hears it, before the issue goes back to be triaged.
+
+const realGithubIsEnabled = github.isEnabled;
+
+function liveSettingsPool({ session, run = RUN, liveRun = LIVE_RUN, settings = true }) {
+  const pool = makePool({ session, run: null, liveRun });
+  const base = pool.query.bind(pool);
+  pool.query = async (sql, params) => {
+    const s = String(sql);
+    if (settings && /FROM platform_settings WHERE key = ANY/.test(s)) {
+      return { rows: [
+        { key: 'homeroom_bot_mode', value: 'shadow' },
+        { key: 'homeroom_bot_live_apps', value: '["todo"]' },
+      ] };
+    }
+    return base(sql, params);
+  };
+  return pool;
+}
+
+test('a live build whose worker did not survive is recorded lost, and the issue hears it', async (t) => {
+  stubLive();
+  github.isEnabled = () => true;
+  t.after(() => { github.isEnabled = realGithubIsEnabled; });
+  const session = botSession();
+  const pool = liveSettingsPool({ session });
+  await adopt(pool, session, 'exited');
+
+  const lost = runUpdates(pool).find((c) => /SET build_ok = FALSE, build_error = \$2/.test(c.sql));
+  assert.ok(lost, 'the run records the outcome');
+  assert.deepEqual(lost.params, [LIVE_RUN.id,
+    'lost: the platform restarted while it was building, and the build was lost']);
+  const said = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_failed');
+  assert.ok(said, 'said on the issue');
+  assert.match(said[2], /the platform restarted while it was building, and the build was lost/);
+  assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']],
+    'and the issue still goes back to be triaged, as before');
+});
+
+test('the loss is recorded even where saying it would not reach anybody', async (t) => {
+  stubLive({ issueState: 'closed' });
+  github.isEnabled = () => true;
+  t.after(() => { github.isEnabled = realGithubIsEnabled; });
+  const session = botSession();
+  const pool = liveSettingsPool({ session });
+  await adopt(pool, session, 'exited');
+
+  assert.ok(runUpdates(pool).some((c) => /SET build_ok = FALSE, build_error = \$2/.test(c.sql)),
+    'recorded even when the issue is closed');
+  assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'but not said: nobody is watching a closed issue');
+  assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']]);
+
+  stubLive();
+  const pool2 = liveSettingsPool({ session, settings: false });
+  await adopt(pool2, session, 'exited');
+  assert.ok(runUpdates(pool2).some((c) => /SET build_ok = FALSE, build_error = \$2/.test(c.sql)),
+    'recorded even when the app is no longer live');
+  assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), []);
+});

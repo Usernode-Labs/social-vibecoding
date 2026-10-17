@@ -424,7 +424,7 @@ test('a budget stop records WHICH limit tripped, in a column of its own', async 
   const harness = triageHarness({ verdictText: 'x', sessionId: 856 });
   await runToWallClock(t, harness);
   const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.match(insert.s, /budget_stop, proposal_session_id\)/, 'the insert names the column');
+  assert.match(insert.s, /budget_stop, proposal_session_id,\s*checks_head_sha\)/, 'the insert names the column');
   assert.ok(insert.params.includes('wall clock'),
     'the limit is stored as data, not left to be grepped out of the error text');
   assert.ok(insert.params.includes('budget: wall clock'), 'and the error line still reads the same');
@@ -1143,7 +1143,11 @@ test('refreshApp treats a degraded GitHub read as "no answer", not "no issues"',
 // ── What makes shadow mode shadow (source pins) ─────────────────────────
 
 test('the triage turn is a read-only scout: no build mode, no push, no posting, no claims', () => {
-  const dispatch = SRC.slice(SRC.indexOf('async function runTriage'), SRC.indexOf('// ── The work loop'));
+  // The follow-up section after the triage holds the turns that answer
+  // people (and, since the checks fix, one build turn on the bot's own
+  // proposal); the triage dispatch itself ends where that section begins.
+  const dispatch = SRC.slice(SRC.indexOf('async function runTriage'),
+    SRC.indexOf('/**\n * #3264: a follow-up on the bot\'s own open proposal for this issue. Runs'));
   assert.match(dispatch, /mode: 'scout'/, 'the ledger loop runs in scout mode');
   // The container exec carries the token half of the budget between the
   // mode and the prompt now (#2737), and #2870's note on where that limit
@@ -1464,4 +1468,302 @@ test('runTriage on an app not in the live list stays silent', async () => {
   assert.ok(!calls.queries.some((q) => /homeroom_bot_posts/.test(q.s)));
   const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
   assert.equal(insert.params[3], 'shadow');
+});
+
+// ── Its own failing checks ───────────────────────────────────────────────
+//
+// A proposal the bot built can fail its checks and sit red until a person
+// writes something. These pin when the bot queues a look at its own failure
+// (noteProposalChecks, called beside the auto-merge at every settle point),
+// and what one look may end in (runChecksFix).
+
+const followup = require('../src/services/homeroom-bot-followup');
+
+const OLD_HEAD = 'a'.repeat(40);
+const NEW_HEAD = 'b'.repeat(40);
+const SEEN = '2026-09-27T09:00:00Z';
+const LIVE_SETTINGS = { mode: 'shadow', liveApps: [APP.slug], turnSeconds: 1200, turnInputTokens: 10_000_000 };
+
+const PASS = (name) => ({ name, status: 'pass' });
+const FAILING = (name, reason) => ({ name, status: 'fail', reason });
+
+// The single row noteProposalChecks reads: the bot's own promoted proposal
+// on a live app, failing on the head the group is voting on.
+const checksSessionRow = (over = {}) => ({
+  id: 5001, app_id: APP.id, status: 'promoted', check_state: 'failing',
+  checks_commit_sha: OLD_HEAD, reviewed_head_sha: OLD_HEAD,
+  test_results: [PASS('loads'), FAILING('list saves', 'expected #000, saw #111')],
+  linked_issues: [ITEM.issue_number], slug: APP.slug, app_name: APP.name,
+  repo_url: APP.repo_url, self_hosted: false,
+  username: BOT.username, is_synthetic: true, checks_looked: false,
+  ...over,
+});
+
+function checksPool(rowOrRows, calls = { queries: [] }) {
+  return {
+    async query(sql, params) {
+      const s = String(sql);
+      calls.queries.push({ s, params });
+      if (/checks_looked/.test(s)) return { rows: rowOrRows === null ? [] : [rowOrRows] };
+      if (/INSERT INTO homeroom_bot_queue/.test(s)) return { rows: [] };
+      return { rows: [] };
+    },
+  };
+}
+
+test('noteProposalChecks queues a look at its own failing proposal, once per head', async () => {
+  const calls = { queries: [] };
+  const out = await bot.noteProposalChecks(checksPool(checksSessionRow(), calls), { sessionId: 5001, settings: LIVE_SETTINGS });
+  assert.deepEqual(out, { queued: true, appId: APP.id, issueNumber: ITEM.issue_number });
+  const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_queue/.test(q.s));
+  assert.deepEqual(insert.params, [APP.id, ITEM.issue_number, 'checks_failing']);
+  assert.match(insert.s, /VALUES \(\$1, \$2, 1, \$3\)/,
+    'priority 1: a person\'s or an admin\'s row outranks it');
+});
+
+test('noteProposalChecks looks at nobody else\'s session and nothing not live', async () => {
+  const calls = { queries: [] };
+  const run = (row, settings = LIVE_SETTINGS) =>
+    bot.noteProposalChecks(checksPool(row, calls), { sessionId: 5001, settings });
+  assert.deepEqual(await run(checksSessionRow({ username: 'alice', is_synthetic: false })),
+    { queued: false, reason: 'not_the_bots' });
+  assert.deepEqual(await run(checksSessionRow({ is_synthetic: false })),
+    { queued: false, reason: 'not_the_bots' }, 'a person\'s account is not the bot even with its name');
+  assert.deepEqual(await run(checksSessionRow({ status: 'merging' })), { queued: false, reason: 'not_promoted' });
+  assert.deepEqual(await run(null), { queued: false, reason: 'no_session' });
+  assert.equal(calls.queries.filter((q) => /INSERT INTO homeroom_bot_queue/.test(q.s)).length, 0,
+    'nothing queued on any refusal');
+  assert.deepEqual(await run(checksSessionRow(), { mode: 'off', liveApps: [APP.slug] }),
+    { queued: false, reason: 'not_live' });
+  assert.deepEqual(await run(checksSessionRow(), { mode: 'shadow', liveApps: ['other-app'] }),
+    { queued: false, reason: 'not_live' });
+});
+
+test('noteProposalChecks acts only on a failing verdict, on the current head, once', async () => {
+  const calls = { queries: [] };
+  const run = (over) => bot.noteProposalChecks(checksPool(checksSessionRow(over), calls),
+    { sessionId: 5001, settings: LIVE_SETTINGS });
+  assert.deepEqual(await run({ check_state: 'error' }), { queued: false, reason: 'not_due' },
+    'an errored verdict is the platform\'s to re-run');
+  assert.deepEqual(await run({ checks_commit_sha: NEW_HEAD }), { queued: false, reason: 'not_due' },
+    'a failure on an older commit is already answered');
+  assert.deepEqual(await run({ checks_looked: true }), { queued: false, reason: 'not_due' },
+    'a head already looked at is not looked at again');
+  assert.deepEqual(await run({ test_results: [PASS('loads')] }), { queued: false, reason: 'not_due' });
+  assert.equal(calls.queries.filter((q) => /INSERT INTO homeroom_bot_queue/.test(q.s)).length, 0);
+});
+
+test('noteProposalChecks leaves a platform-shaped failure for the re-run', async () => {
+  const calls = { queries: [] };
+  const row = checksSessionRow({
+    test_results: Array.from({ length: 6 }, (_, i) => FAILING(`check ${i}`, 'net::ERR_CONNECTION_REFUSED at http://localhost')),
+  });
+  const out = await bot.noteProposalChecks(checksPool(row, calls), { sessionId: 5001, settings: LIVE_SETTINGS });
+  assert.deepEqual(out, { queued: false, reason: 'looks_like_infra' });
+  assert.equal(calls.queries.filter((q) => /INSERT INTO homeroom_bot_queue/.test(q.s)).length, 0);
+});
+
+// ── runChecksFix: the one look, and what it may end in ───────────────────
+
+function checksHarness({
+  revisions = 0,
+  checksRow = checksSessionRow(),
+  session = null,
+  turnResult = { lastResultText: '```json\n{"action":"revise","reply":"Fixed the dark background.","summary":"Background is #000 now."}\n```', pushOk: true, sha: NEW_HEAD },
+  routed = null,
+} = {}) {
+  const calls = { queries: [], exec: [], loop: [], posts: [], proposalPosts: [], reconciled: [], seen: [], failures: [] };
+  const sessionRow = session || {
+    id: 5001, user_id: BOT.id, app_id: APP.id, status: 'promoted',
+    branch_name: 'dev/homeroom_bot-5001', pr_number: 25,
+    reviewed_head_sha: OLD_HEAD, checks_commit_sha: OLD_HEAD, check_state: 'failing',
+    test_results: checksRow.test_results, agent_thread_id: 55,
+    app_slug: APP.slug, app_name: APP.name, repo_url: APP.repo_url, app_self_hosted: false,
+  };
+  const pool = {
+    async query(sql, params) {
+      const s = String(sql);
+      calls.queries.push({ s, params });
+      if (/SELECT id, status, pr_number FROM chat_sessions/.test(s)) {
+        return { rows: [{ id: 5001, status: 'promoted', pr_number: 25 }] };
+      }
+      if (/SELECT id, thread_seen_at FROM homeroom_bot_runs/.test(s)) return { rows: [{ id: 800, thread_seen_at: SEEN }] };
+      if (/SELECT cs\.check_state/.test(s)) return { rows: [checksRow] };
+      if (/SELECT cs\.\*, a\.slug AS app_slug/.test(s)) return { rows: [sessionRow] };
+      if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(s)) return { rows: [{ n: revisions }] };
+      if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
+      return { rows: [] };
+    },
+  };
+  const deps = {
+    github: {
+      isEnabled: () => true,
+      getBotUsername: async () => 'usernode-bot',
+      async fetchPublicIssue() { return { issue: { number: ITEM.issue_number, title: 'Pins drift', body: 'They drift.', state: 'open' } }; },
+      async fetchIssueComments() { return { comments: [] }; },
+    },
+    worker: {
+      async ensureWorkerImage() {},
+      async ensureWorker() { return 'usernode-worker-5001'; },
+      async execInWorker(id, opts) { calls.exec.push({ id, opts }); return turnResult; },
+      async stopTurn() {},
+      isInFlight: () => false,
+      async clearActiveTurn() {},
+    },
+    agentTurn: { async resolveCodexRuntimeContext() { return {}; }, estimateRequestedModelCost: () => null },
+    limits: { async checkBudget() { return { ok: true }; }, async recordSpend() {} },
+    threadContext: {
+      async loadIssueThread() { return { messages: [] }; },
+      async loadProposalThread() { return { messages: [] }; },
+    },
+    managedOpenRouter: { async usesIncludedKey() { return false; } },
+    sessions: {
+      buildHeadlessSeed: (n) => `ISSUE #${n}`,
+      async runCodexAttemptLoop({ dispatchOnce, mode, telemetryComponent }) {
+        calls.loop.push({ mode, telemetryComponent });
+        if (routed) return routed;
+        const r = await dispatchOnce({});
+        return { result: r, error: null, estimatedCostUsd: 0.01 };
+      },
+    },
+    activeWorkers: new Set(),
+    ws: {},
+    votes: { async reconcileNativeReviewedHead(args) { calls.reconciled.push(args); return { enforced: true }; } },
+    dm: { async recordRequester() { return null; }, async overWeeklyAllowance() { return false; } },
+  };
+  return { pool, deps, calls };
+}
+
+async function runChecks(t, h) {
+  const real = { post: live.post, proposal: live.postOnProposal, seen: live.advanceSeen, targets: live.mentionTargets };
+  t.after(() => { Object.assign(live, real); });
+  live.post = async (args) => { h.calls.posts.push(args); return { githubCreatedAt: '2026-09-27T09:05:00Z' }; };
+  live.postOnProposal = async (args) => { h.calls.proposalPosts.push(args); return {}; };
+  live.advanceSeen = async (args) => { h.calls.seen.push(args); return { advanced: true }; };
+  live.mentionTargets = async () => ['evan'];
+  return bot.runTriage(h.pool, {}, {
+    bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings: LIVE_SETTINGS, deps: h.deps,
+  });
+}
+
+const insertOf = (h) => h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+
+test('a failing proposal is fixed on its own: one revise, reconciled, said once in the thread only', async (t) => {
+  const h = checksHarness();
+  const out = await runChecks(t, h);
+  assert.deepEqual({ ran: out.ran, verdict: out.verdict, acted: out.acted }, { ran: true, verdict: 'revise', acted: 'checks_revise' });
+  assert.equal(h.calls.exec.length, 1, 'one fix turn');
+  assert.equal(h.calls.exec[0].id, 5001, 'on the proposal\'s own session');
+  assert.equal(h.calls.exec[0].opts.branchName, 'dev/homeroom_bot-5001', 'on its branch');
+  assert.equal(h.calls.loop[0].mode, 'build');
+  assert.match(h.calls.exec[0].opts.prompt, /Its automated checks are failing/);
+  assert.match(h.calls.exec[0].opts.prompt, /list saves/, 'the failing checks are data for the turn');
+  assert.equal(h.calls.reconciled.length, 1, 'votes on the old head stop counting, like any revision');
+  assert.equal(h.calls.reconciled[0].fresh, true);
+  assert.equal(h.calls.posts.length, 0, 'nothing on the issue: the reconcile already says the votes were cleared');
+  assert.equal(h.calls.proposalPosts.length, 1);
+  assert.equal(h.calls.proposalPosts[0].kind, 'checks_revise');
+  assert.equal(h.calls.proposalPosts[0].proposalSessionId, 5001);
+  assert.match(h.calls.proposalPosts[0].text, /Background is #000 now\./);
+  assert.match(h.calls.proposalPosts[0].text, /the checks run again on the new version/);
+  const insert = insertOf(h);
+  assert.equal(insert.params[4], 'revise');
+  assert.equal(insert.params[20], 5001, 'tied to the proposal');
+  assert.equal(insert.params[21], OLD_HEAD, 'the failing head is recorded, so it is not looked at twice');
+  assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === ITEM.id));
+});
+
+test('a check the proposal itself added may be fixed; the hand-off names what it saw', async (t) => {
+  const h = checksHarness({
+    turnResult: { lastResultText: '```json\n{"action":"person","reply":"The grouping check wants a design decision; a person should decide."}\n```', pushOk: false, sha: OLD_HEAD },
+  });
+  const out = await runChecks(t, h);
+  assert.deepEqual({ ran: out.ran, verdict: out.verdict, acted: out.acted }, { ran: true, verdict: 'person', acted: 'checks_person' });
+  assert.equal(h.calls.reconciled.length, 0);
+  assert.equal(h.calls.posts.length, 1);
+  assert.equal(h.calls.posts[0].kind, 'followup_person');
+  assert.equal(h.calls.posts[0].proposalSessionId, 5001, 'said in the proposal thread too');
+  assert.deepEqual(h.calls.posts[0].dm, { reason: 'The grouping check wants a design decision; a person should decide.' },
+    'and in the requester\'s DM');
+  const insert = insertOf(h);
+  assert.equal(insert.params[4], 'person');
+  assert.equal(insert.params[18], null);
+  assert.equal(insert.params[21], OLD_HEAD);
+});
+
+test('a fix that moved nothing is a failure, recorded on the head it did not move', async (t) => {
+  const h = checksHarness({
+    turnResult: { lastResultText: '```json\n{"action":"revise","reply":"Done."}\n```', pushOk: true, sha: OLD_HEAD },
+  });
+  const out = await runChecks(t, h);
+  assert.deepEqual({ ran: out.ran, verdict: out.verdict, acted: out.acted }, { ran: true, verdict: 'failed', acted: 'checks_person' });
+  assert.equal(h.calls.reconciled.length, 0);
+  const insert = insertOf(h);
+  assert.equal(insert.params[4], 'failed');
+  assert.equal(insert.params[18], 'checks revise: its fix attempt changed nothing');
+  assert.equal(insert.params[21], OLD_HEAD);
+  assert.match(h.calls.posts[0].text, /a person should take this one/);
+});
+
+test('out of revisions the failure is handed over without a turn', async (t) => {
+  const h = checksHarness({ revisions: followup.MAX_REVISIONS });
+  const out = await runChecks(t, h);
+  assert.deepEqual({ ran: out.ran, verdict: out.verdict, acted: out.acted }, { ran: true, verdict: 'person', acted: 'checks_person' });
+  assert.equal(h.calls.exec.length, 0, 'no turn at all');
+  assert.equal(insertOf(h).params[4], 'person');
+  assert.equal(insertOf(h).params[21], OLD_HEAD);
+  assert.equal(h.calls.posts.length, 1, 'the hand-off note still goes out');
+});
+
+test('a platform fault keeps the queue row and marks nothing', async (t) => {
+  const h = checksHarness({ routed: { result: {}, error: 'credential_required' } });
+  const out = await runChecks(t, h);
+  assert.deepEqual(out, { ran: false, reason: 'infra', detail: 'credential_required', runId: 901 });
+  assert.ok(h.calls.queries.some((q) => /UPDATE homeroom_bot_queue SET started_at = NULL/.test(q.s)),
+    'the row is handed back for a retry');
+  const insert = insertOf(h);
+  assert.equal(insert.params[4], 'failed');
+  assert.equal(insert.params[18], 'credential_required');
+  assert.equal(insert.params[21], null, 'the head is not marked, so the retry still gets its look');
+  assert.equal(h.calls.posts.length, 0, 'nobody is told a platform fault');
+});
+
+test('a fix turn that runs past its budget hands over, with the limit named', async (t) => {
+  const h = checksHarness();
+  h.deps.sessions.runCodexAttemptLoop = async ({ dispatchOnce, mode }) => {
+    h.calls.loop.push({ mode });
+    await new Promise((r) => setTimeout(r, 40));
+    const r = await dispatchOnce({});
+    return { result: r, error: null, estimatedCostUsd: 0.01 };
+  };
+  const failures = [];
+  const realPost = live.post;
+  const realSeen = live.advanceSeen;
+  const realTargets = live.mentionTargets;
+  t.after(() => { live.post = realPost; live.advanceSeen = realSeen; live.mentionTargets = realTargets; });
+  live.post = async (args) => { h.calls.posts.push(args); return { githubCreatedAt: '2026-09-27T09:05:00Z' }; };
+  live.advanceSeen = async (args) => { h.calls.seen.push(args); return { advanced: true }; };
+  live.mentionTargets = async () => ['evan'];
+  const out = await bot.runChecksFix(h.pool, {}, {
+    bot: BOT, app: APP, repo: { owner: 'usernode-bot', repo: 'todo' },
+    item: ITEM, issue: { number: ITEM.issue_number, title: 'Pins drift', body: 'They drift.', state: 'open' },
+    proposal: { id: 5001, status: 'promoted', pr_number: 25 },
+    runMode: 'live', model: null, turnBudgetMs: 10, startedMs: Date.now(),
+    recordFailure: (error, extra) => { failures.push({ error, extra }); return { ran: false, reason: 'infra' }; },
+    deps: h.deps,
+  });
+  assert.deepEqual({ ran: out.ran, verdict: out.verdict, acted: out.acted }, { ran: true, verdict: 'failed', acted: 'checks_person' });
+  const insert = insertOf(h);
+  assert.equal(insert.params[18], 'budget: wall clock');
+  assert.equal(insert.params[19], 'wall clock', 'WHICH limit tripped');
+  assert.equal(insert.params[21], OLD_HEAD, 'the head is still marked: one look per failing commit');
+  assert.match(h.calls.posts[0].text, /ran past its time limit/);
+  assert.deepEqual(failures, []);
+});
+
+test('the fix turn shares the follow-up path: same loop name, same session, its own commit message', async (t) => {
+  const h = checksHarness();
+  await runChecks(t, h);
+  assert.equal(h.calls.loop[0].telemetryComponent, 'homeroom_bot_followup');
+  assert.equal(h.calls.exec[0].opts.commitMsg, `Homeroom bot: fix its proposal's failing checks on #${ITEM.issue_number}`);
 });

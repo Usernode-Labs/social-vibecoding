@@ -9413,6 +9413,14 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_runs (
 -- widen one constraint on this table.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS budget_stop TEXT;
 
+-- The failing head of a bot proposal a run looked at, when the bot went to
+-- fix its proposal's failing checks on its own. A run that looked (a fix
+-- revision, a hand-off to a person, or a turn that failed) records the head
+-- it acted on, so each failing commit gets exactly one look; a run that
+-- found the failure looked like the platform's fault records nothing, so a
+-- later verdict on the same head (the platform's own re-run) is still seen.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha TEXT;
+
 -- #2737: 'empty' joins the verdicts on a database that predates it, and
 -- #3264 adds a follow-up's 'answer' and 'revise' (its "ask" is a 'question'
 -- and its hand-off a 'person'; a follow-up row is one with a

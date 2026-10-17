@@ -30,24 +30,28 @@ function stub(id, exports) {
 
 // Load services/visuals with github + conflict-resolver stubbed so the
 // trigger's effect (a checkAndResolveConflicts call) is observable and the
-// real drain never runs.
+// real drain never runs. homeroom-bot is stubbed too, so the bot-checks note
+// the failing verdict passes on is observable without loading the bot loop.
 function loadVisuals({ githubEnabled = true } = {}) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     github: require.resolve('../src/services/github'),
     resolver: require.resolve('../src/services/conflict-resolver'),
+    bot: require.resolve('../src/services/homeroom-bot'),
     subject: require.resolve('../src/services/visuals'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
   const drainCalls = [];
+  const botNotes = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.github, { isEnabled: () => githubEnabled });
   stub(ids.resolver, {
     checkAndResolveConflicts: async (_config, trigger) => { drainCalls.push(trigger); },
   });
+  stub(ids.bot, { noteProposalChecks: async (pool, { sessionId }) => { botNotes.push(sessionId); } });
 
   delete require.cache[ids.subject];
   const subject = require(ids.subject);
@@ -56,7 +60,7 @@ function loadVisuals({ githubEnabled = true } = {}) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, drainCalls, restore };
+  return { subject, drainCalls, botNotes, restore };
 }
 
 // A pool that returns the given chat_sessions row for the status/app_id
@@ -157,4 +161,46 @@ test('passing verdict is a no-op when GitHub is disabled (staging / standalone)'
   } finally {
     restore();
   }
+});
+
+// ── The bot's own failing checks (run 613) ───────────────────────────────
+
+test('a failing verdict also asks the bot to look at its own failing checks', async () => {
+  const { subject, botNotes, restore } = loadVisuals();
+  const pool = poolReturning({ status: 'promoted', app_id: 42 });
+  try {
+    subject.noteBotChecksAfterChecks({ jwtSecret: 's' }, pool, session, 'failing');
+    await flush();
+    assert.deepEqual(botNotes, [7], 'the bot loop is handed the session, once');
+  } finally {
+    restore();
+  }
+});
+
+test('a verdict that is not failing never reaches the bot loop', async () => {
+  const { subject, botNotes, restore } = loadVisuals();
+  const pool = poolReturning({ status: 'promoted', app_id: 42 });
+  try {
+    subject.noteBotChecksAfterChecks({ jwtSecret: 's' }, pool, session, 'passing');
+    subject.noteBotChecksAfterChecks({ jwtSecret: 's' }, pool, session, 'pending');
+    subject.noteBotChecksAfterChecks({ jwtSecret: 's' }, pool, { id: null }, 'failing');
+    await flush();
+    assert.deepEqual(botNotes, []);
+  } finally {
+    restore();
+  }
+});
+
+test('the bot-checks note fires beside the auto-merge drain at every settle point', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  const v = read('src/services/visuals.js');
+  const h = read('src/services/check-harvest.js');
+  // The lifecycle wrapper around the live capture.
+  assert.match(v, /maybeAutoMergeAfterChecks\(config, getPool\(config\), session, completed\.state\);\n\s+noteBotChecksAfterChecks\(config, getPool\(config\), session, completed\.state\);/);
+  // The shared settle path.
+  assert.match(v, /maybeAutoMergeAfterChecks\(config, pool, session, checksResult\.state\);\n\s+noteBotChecksAfterChecks\(config, pool, session, checksResult\.state\);/);
+  // The adopted run in the harvest.
+  assert.match(h, /visuals\.maybeAutoMergeAfterChecks\(config, pool, session, settled\.result\.state\);[\s\S]{0,200}?visuals\.noteBotChecksAfterChecks\(config, pool, session, settled\.result\.state\);/);
 });
