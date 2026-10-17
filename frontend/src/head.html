@@ -263,6 +263,102 @@
     }());
   </script>
   <script>
+    // Display module — text size and high contrast (#3969).
+    // Storage contract (the same head-blocking pattern as window.Theme
+    // above: a deferred React bundle is several frames too late to size the
+    // page, so the stored choice lands on <html> before first paint):
+    //   'homeroom:text-size'  → 'large' | 'larger'
+    //                         → key removed for Normal (the default)
+    //   'homeroom:contrast'   → 'more'
+    //                         → key removed for off (the default)
+    // Every storage access sits in try/catch: unreadable storage means the
+    // defaults, and an unknown stored value reads as a default too.
+    window.Display = (function () {
+      const SIZE_KEY = 'homeroom:text-size';
+      const CONTRAST_KEY = 'homeroom:contrast';
+      const _listeners = [];
+
+      function getTextSize() {
+        try {
+          const val = window.localStorage.getItem(SIZE_KEY);
+          if (val === 'large' || val === 'larger') return val;
+          return 'normal';
+        } catch {
+          return 'normal';
+        }
+      }
+
+      function getContrast() {
+        try {
+          return window.localStorage.getItem(CONTRAST_KEY) === 'more';
+        } catch {
+          return false;
+        }
+      }
+
+      // Sets or removes data-text-size / data-contrast on <html>. The
+      // attributes live OUTSIDE React's body tree, exactly like `.dark`, so
+      // hydrating the shell never disagrees with them.
+      function apply() {
+        const root = document.documentElement;
+        const size = getTextSize();
+        if (size === 'normal') {
+          root.removeAttribute('data-text-size');
+        } else {
+          root.setAttribute('data-text-size', size);
+        }
+        if (getContrast()) {
+          root.setAttribute('data-contrast', 'more');
+        } else {
+          root.removeAttribute('data-contrast');
+        }
+      }
+
+      function setTextSize(size) {
+        try {
+          if (size === 'large' || size === 'larger') {
+            window.localStorage.setItem(SIZE_KEY, size);
+          } else {
+            window.localStorage.removeItem(SIZE_KEY);
+          }
+        } catch { /* unwritable storage: the choice applies for this load only */ }
+        apply();
+        _listeners.forEach(function (fn) { try { fn(); } catch {} });
+      }
+
+      function setContrast(on) {
+        try {
+          if (on) {
+            window.localStorage.setItem(CONTRAST_KEY, 'more');
+          } else {
+            window.localStorage.removeItem(CONTRAST_KEY);
+          }
+        } catch { /* unwritable storage: the choice applies for this load only */ }
+        apply();
+        _listeners.forEach(function (fn) { try { fn(); } catch {} });
+      }
+
+      function onChange(fn) {
+        _listeners.push(fn);
+      }
+
+      // Other tabs in the same browser follow (the settings pane re-reads
+      // through the same listener).
+      window.addEventListener('storage', function (e) {
+        if (e.key === SIZE_KEY || e.key === CONTRAST_KEY) {
+          apply();
+          _listeners.forEach(function (fn) { try { fn(); } catch {} });
+        }
+      });
+
+      // Apply before first paint. This is the no-flash guard: the stored
+      // size is on <html> before app.css, whose rules read it, is applied.
+      apply();
+
+      return { getTextSize, setTextSize, getContrast, setContrast, apply, onChange };
+    }());
+  </script>
+  <script>
     // Language first paint (frontend/locales/README.md). The document is
     // prerendered in English, and another language is applied after
     // hydration, once its pack has loaded. When this device last showed

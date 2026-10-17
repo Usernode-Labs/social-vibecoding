@@ -3025,6 +3025,53 @@ form.agent-session-composer:focus-within {
   --state-admin-bg: rgba(245, 158, 11, 0.14);
 }
 
+/* ── Accessibility: text size and high contrast (#3969) ─────────────
+   Owned by the inline `window.Display` block in frontend/src/head.html,
+   which puts data-text-size / data-contrast on <html> before first paint
+   (the same head-blocking pass as `.dark`, so nothing flashes).
+
+   Text size scales everything in rem — the primitives' text-[0.9375rem],
+   Tailwind's text-xs…text-3xl, and the rem paddings and heights with them,
+   so tap targets keep their proportion. Fixed-pixel text (font-size: Npx
+   rules and text-[Npx] classes) deliberately does not scale; converting it
+   is a later change. CSS zoom was ruled out: the shell is pinned to
+   height:100dvh and zoom pushes the fixed bars off screen.
+
+   High contrast deepens the existing ink and line tokens — every value
+   below is one already on the zinc ramp or in the token blocks above, so
+   nothing changes hue. The light overrides are scoped to html:not(.dark)
+   and the dark ones to html.dark, so an element carrying only a light-only
+   zinc class is never darkened on a dark page. The attribute selectors
+   (0,2,1) outrank Tailwind's single-class (0,1,0) and its `:is(.dark …)`
+   (0,2,0) rules, so the stylesheet order native → app → tailwind stays as
+   it is; they do NOT touch the [data-app-tone] ink blocks on
+   #platform-header / #app-frame-host, which keep their tuned ink over a
+   toned app. */
+html[data-text-size="large"] { font-size: 112.5%; }
+html[data-text-size="larger"] { font-size: 125%; }
+
+html:not(.dark)[data-contrast="more"] {
+  --text-muted: #3a3a3c;
+  --text-faint: #48484a;
+  --border: #8e8e93;
+  --border-light: #c7c7cc;
+  --app-sheet-line: #c7c7cc;
+}
+html:not(.dark)[data-contrast="more"] .text-zinc-400,
+html:not(.dark)[data-contrast="more"] .text-zinc-500 { color: #3a3a3c; }
+html:not(.dark)[data-contrast="more"] .border-zinc-200 { border-color: #c7c7cc; }
+
+html.dark[data-contrast="more"] {
+  --text-muted: #e3e3e6;
+  --text-faint: #c7c7cc;
+  --border: #8e8e93;
+  --border-light: #48484a;
+  --app-sheet-line: #48484a;
+}
+html.dark[data-contrast="more"] .dark\:text-zinc-400,
+html.dark[data-contrast="more"] .dark\:text-zinc-500 { color: #e3e3e6; }
+html.dark[data-contrast="more"] .dark\:border-zinc-800 { border-color: #48484a; }
+
 /* ── usernode-native kit theming ─────────────────────────
    The platform loads its own hosted kit (/usernode-native/v1/) — see
    index.html. The kit's defaults already ARE the platform violet, but

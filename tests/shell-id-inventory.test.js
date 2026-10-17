@@ -399,6 +399,13 @@ const ADDED_IDS = {
   // #3319: Settings → Theme's "Keep sidebar open in apps" switch, React-wired
   // (features/settings/sections/theme.tsx) and desktop only.
   'settings-rail-pinned': '#3319 keep-sidebar-open-in-apps switch',
+  // ── #3969: Settings → Accessibility, the reading controls ──────────
+  // A page of one part in Preferences, right after Appearance. Stateful like
+  // Theme (features/settings/sections/accessibility.tsx); nothing in
+  // settings.js binds inside it.
+  'settings-accessibility-section': '#3969: the Accessibility page root, inside its [data-settings-section="accessibility"] wrapper.',
+  'settings-text-size-track': '#3969: the Normal / Large / Larger segmented control. Reuses the .theme-seg classes app.css keys the recessed track off; deliberately no caret — --theme-caret-index belongs to the theme control.',
+  'settings-high-contrast': '#3969: the High contrast switch (the RailPinnedRow pattern, at every width).',
   // ── #2718: the platform's destinations leave the app's menu ──────
   //
   // Eleven ids leave THIS map rather than entering RETIRED_IDS, because the
