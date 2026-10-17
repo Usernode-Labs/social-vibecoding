@@ -108,10 +108,10 @@ export type UnSocialPush =
   | { kind: 'unavailable'; reason: string; failure: string | null; retry: boolean }
   | { kind: 'ready'; enabled: boolean; status: string };
 
-/** The block-production queue. */
+/** The block-production queue. #3756: a released note may carry one action. */
 export type UnBlockProduction =
   | { kind: 'checking' }
-  | { kind: 'note'; text: string }
+  | { kind: 'note'; text: string; action?: UnAction | null }
   | { kind: 'ask' };
 
 export interface UnWidgetIcons {
