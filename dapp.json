@@ -528,7 +528,7 @@
       "key": "OPENROUTER_MODEL_HARNESSES",
       "group": "AI & coding agents",
       "required": false,
-      "default": "z-ai/glm-5.3-flash=claude,deepseek/deepseek-v4.1-flash=codex",
+      "default": "z-ai/glm-5.3-flash=claude,deepseek/deepseek-v4.1-flash=codex,deepseek/deepseek-v4.1-flash-1017=claude",
       "description": "Which coding-agent CLI runs each OpenRouter model: comma-separated exact-model=harness pairs, where harness is claude (Claude Code through OpenRouter's Anthropic-compatible endpoint) or codex. Models not listed run in Codex. Set none to run every OpenRouter model in Codex."
     },
     {

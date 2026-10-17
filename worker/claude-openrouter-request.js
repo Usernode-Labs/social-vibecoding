@@ -598,8 +598,14 @@ const PROVIDER_PREFERENCES = Object.freeze({
 // that shortlist (`only`, OpenRouter's base slugs, each matching every one
 // of the host's endpoints: `parasail` is parasail/fp4 and parasail/fast,
 // `baseten` is baseten/fp8), fastest first (`sort: 'throughput'`, which also
-// turns off price balancing), and may fall back within it. Every other model
-// is routed as before.
+// turns off price balancing), and may fall back within it.
+//
+// DeepSeek V4.1 Flash 1017 (17 Oct 2026) names DeepSeek's own host alone: of
+// its five hosts, the one whose weights are certainly the 1017 snapshot
+// (DeepSeek serves it as `deepseek-flash`), whose thinking levels mean what
+// DeepSeek documents (its API runs `xhigh` as `high`), and whose $0.003/M
+// cache reads hold only while a turn's requests stay on one host. Every other
+// model is routed as before.
 //
 // The shortlist can never leave a request with no host: it is not sent with
 // a request that brings routing of its own (`only`, `order`, `ignore`,
@@ -615,6 +621,10 @@ const PROVIDER_PREFERENCES = Object.freeze({
 const PROVIDER_ROUTING_BY_MODEL = Object.freeze({
   'z-ai/glm-5.3-flash': Object.freeze({
     only: Object.freeze(['relace', 'fireworks', 'parasail', 'together', 'baseten']),
+    sort: 'throughput',
+  }),
+  'deepseek/deepseek-v4.1-flash-1017': Object.freeze({
+    only: Object.freeze(['deepseek']),
     sort: 'throughput',
   }),
 });
@@ -996,18 +1006,31 @@ const GLM_MODEL = /^~?z-ai\/glm-/;
 // requests, so it compacts at 120k.
 const NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT = 120_000;
 
-// A first version's `roomy_context` tweak (ROOMY_CONTEXT=1, worker.js): the
-// 200k limit for any model. App bench run 191's GLM builds compacted 2 to 3
-// times each at about 65k tokens of context, and each compaction was a
-// one-to-three-minute reply writing the summary, then files read again; run
-// 196 (above) is why GLM now has that limit without it. For GLM the tweak
-// changes nothing; it still raises every other non-Anthropic model to 200k.
+// DeepSeek's models (deepseek/...) compact where DeepSeek's own Claude Code
+// guide does (api-docs.deepseek.com, "Integrate with Claude Code":
+// CLAUDE_CODE_AUTO_COMPACT_WINDOW=786432, of a 1M-token window). DeepSeek
+// V4.1 Flash 1017 is the first DeepSeek model to run in Claude Code here
+// (OPENROUTER_MODEL_HARNESSES), and its cache reads, $0.003/M on DeepSeek's
+// host, make a long context cheap to send again. Not yet benched against a
+// smaller window.
+const DEEPSEEK_MODEL = /^~?deepseek\//;
+const DEEPSEEK_AUTO_COMPACT_TOKEN_LIMIT = 786_432;
+
+// A first version's `roomy_context` tweak (ROOMY_CONTEXT=1, worker.js): at
+// least the 200k limit for any model. App bench run 191's GLM builds
+// compacted 2 to 3 times each at about 65k tokens of context, and each
+// compaction was a one-to-three-minute reply writing the summary, then files
+// read again; run 196 (above) is why GLM now has that limit without it. For
+// GLM the tweak changes nothing; it raises every other non-Anthropic model to
+// 200k and lowers none (DeepSeek's stays at its own).
 const ROOMY_AUTO_COMPACT_TOKEN_LIMIT = AUTO_COMPACT_TOKEN_LIMIT;
 
 function autoCompactLimit(model, env = {}) {
-  if (env.ROOMY_CONTEXT === '1') return ROOMY_AUTO_COMPACT_TOKEN_LIMIT;
   const id = String(model || '');
-  return ANTHROPIC_MODEL.test(id) || GLM_MODEL.test(id) ? AUTO_COMPACT_TOKEN_LIMIT : NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT;
+  const own = DEEPSEEK_MODEL.test(id) ? DEEPSEEK_AUTO_COMPACT_TOKEN_LIMIT
+    : ANTHROPIC_MODEL.test(id) || GLM_MODEL.test(id) ? AUTO_COMPACT_TOKEN_LIMIT
+      : NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT;
+  return env.ROOMY_CONTEXT === '1' ? Math.max(own, ROOMY_AUTO_COMPACT_TOKEN_LIMIT) : own;
 }
 
 // Claude Code's compaction settings for this turn: the model's real window
@@ -1129,7 +1152,7 @@ if (require.main === module) {
 
 module.exports = {
   startMessagesAdapter, applyTurnPolicy, pairToolIds, makeRedactor, claudeChildEnv, runClaude, replyFields, PROVIDER_PREFERENCES,
-  AUTO_COMPACT_TOKEN_LIMIT, NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT, ROOMY_AUTO_COMPACT_TOKEN_LIMIT, autoCompactLimit,
+  AUTO_COMPACT_TOKEN_LIMIT, NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT, DEEPSEEK_AUTO_COMPACT_TOKEN_LIMIT, ROOMY_AUTO_COMPACT_TOKEN_LIMIT, autoCompactLimit,
   pruneOldImages, KEEP_LATEST_IMAGES, PRUNE_STEP_IMAGES, PRUNED_IMAGE_NOTE, TOOL_OUTPUT_LIMITS,
   pruneStaleToolOutput, KEEP_LATEST_OUTPUTS, PRUNE_STEP_OUTPUTS, PRUNE_MIN_OUTPUT_CHARS, PRUNED_OUTPUT_HEAD_CHARS,
   PROVIDER_ROUTING_BY_MODEL, providerRoutingFor, withoutShortlist, parseShortlist, SHORTLIST_FALLBACK_STATUSES,

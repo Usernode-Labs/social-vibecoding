@@ -426,12 +426,14 @@ function load() {
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
     // #3296: which CLI runs each OpenRouter model — `claude` (Claude Code
     // against OpenRouter's Anthropic-compatible endpoint) or `codex`. GLM 5.3
-    // Flash does better in Claude Code and DeepSeek v4.1 Flash in Codex; a
-    // model not listed here stays on Codex. The name above predates this and
-    // still means "the default OpenRouter coding model", whichever CLI runs it.
+    // Flash does better in Claude Code and DeepSeek v4.1 Flash in Codex;
+    // DeepSeek V4.1 Flash 1017 runs in Claude Code, where DeepSeek measured
+    // it (docs/coding-agent-defaults.md); a model not listed here stays on
+    // Codex. The name above predates this and still means "the default
+    // OpenRouter coding model", whichever CLI runs it.
     openrouterModelHarnesses: parseOpenRouterHarnessMap(
       process.env.OPENROUTER_MODEL_HARNESSES === undefined
-        ? 'z-ai/glm-5.3-flash=claude,deepseek/deepseek-v4.1-flash=codex'
+        ? 'z-ai/glm-5.3-flash=claude,deepseek/deepseek-v4.1-flash=codex,deepseek/deepseek-v4.1-flash-1017=claude'
         : process.env.OPENROUTER_MODEL_HARNESSES,
     ),
     // The effort a coding turn runs at when the session carries no explicit

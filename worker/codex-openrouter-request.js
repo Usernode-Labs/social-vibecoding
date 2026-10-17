@@ -57,8 +57,14 @@ const PROVIDER_PREFERENCES = Object.freeze({
 // that shortlist (`only`, OpenRouter's base slugs, each matching every one
 // of the host's endpoints: `parasail` is parasail/fp4 and parasail/fast,
 // `baseten` is baseten/fp8), fastest first (`sort: 'throughput'`, which also
-// turns off price balancing), and may fall back within it. Every other model
-// is routed as before.
+// turns off price balancing), and may fall back within it.
+//
+// DeepSeek V4.1 Flash 1017 (17 Oct 2026) names DeepSeek's own host alone: of
+// its five hosts, the one whose weights are certainly the 1017 snapshot
+// (DeepSeek serves it as `deepseek-flash`), whose thinking levels mean what
+// DeepSeek documents (its API runs `xhigh` as `high`), and whose $0.003/M
+// cache reads hold only while a turn's requests stay on one host. Every other
+// model is routed as before.
 //
 // The shortlist can never leave a request with no host: it is not sent with
 // a request that brings routing of its own (`only`, `order`, `ignore`,
@@ -74,6 +80,10 @@ const PROVIDER_PREFERENCES = Object.freeze({
 const PROVIDER_ROUTING_BY_MODEL = Object.freeze({
   'z-ai/glm-5.3-flash': Object.freeze({
     only: Object.freeze(['relace', 'fireworks', 'parasail', 'together', 'baseten']),
+    sort: 'throughput',
+  }),
+  'deepseek/deepseek-v4.1-flash-1017': Object.freeze({
+    only: Object.freeze(['deepseek']),
     sort: 'throughput',
   }),
 });

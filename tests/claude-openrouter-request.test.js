@@ -25,6 +25,7 @@ const ROOT = path.join(__dirname, '..');
 const GLM = 'z-ai/glm-5.3-flash';
 const KIMI = 'moonshotai/kimi-k2';
 const OTHER = 'deepseek/deepseek-v4.1-flash';
+const DEEPSEEK_1017 = 'deepseek/deepseek-v4.1-flash-1017';
 // GLM's routing: the preferences every model gets, and its fast hosts.
 const GLM_ROUTED = {
   ...PROVIDER_PREFERENCES, only: ['relace', 'fireworks', 'parasail', 'together', 'baseten'], sort: 'throughput', allow_fallbacks: true,
@@ -92,6 +93,7 @@ test('GLM\'s coding turns go to its fast hosts, fastest first, and never to no h
   const codex = require('../worker/codex-openrouter-request');
   assert.deepEqual(mod.PROVIDER_ROUTING_BY_MODEL, {
     [GLM]: { only: ['relace', 'fireworks', 'parasail', 'together', 'baseten'], sort: 'throughput' },
+    [DEEPSEEK_1017]: { only: ['deepseek'], sort: 'throughput' },
   });
   assert.deepEqual(codex.PROVIDER_ROUTING_BY_MODEL, mod.PROVIDER_ROUTING_BY_MODEL, 'the Codex listener routes the same');
   assert.equal(Object.isFrozen(mod.PROVIDER_ROUTING_BY_MODEL[GLM].only), true);
@@ -122,6 +124,19 @@ test('GLM\'s coding turns go to its fast hosts, fastest first, and never to no h
   assert.equal(mod.withoutShortlist(PROVIDER_PREFERENCES, {}), null, 'nothing to drop');
   assert.equal(mod.withoutShortlist({ only: ['z-ai'] }, { only: ['z-ai'] }), null, 'a list the request sent is its own');
   assert.deepEqual([...mod.SHORTLIST_FALLBACK_STATUSES].sort(), [404, 429, 502, 503]);
+});
+
+test('DeepSeek V4.1 Flash 1017\'s coding turns go to DeepSeek\'s own host, and 0910\'s are routed as before', () => {
+  // The one host whose weights are certainly 1017 and whose cache reads
+  // ($0.003/M) hold while a turn stays on it; a refusal still reaches every
+  // host through the same safety net as GLM's.
+  const codex = require('../worker/codex-openrouter-request');
+  const routed = { ...PROVIDER_PREFERENCES, only: ['deepseek'], sort: 'throughput', allow_fallbacks: true };
+  assert.deepEqual(applyTurnPolicy({ max_tokens: 10, messages: [] }, { model: DEEPSEEK_1017, maxOutputTokens: 64_000 }).provider, routed);
+  assert.deepEqual(codex.providerRoutingFor(DEEPSEEK_1017), routed, 'and the Codex listener the same');
+  assert.deepEqual(require('../worker/claude-openrouter-request').withoutShortlist(routed, {}), PROVIDER_PREFERENCES);
+  assert.deepEqual(applyTurnPolicy({ max_tokens: 10 }, { model: OTHER, maxOutputTokens: 64_000 }).provider, PROVIDER_PREFERENCES,
+    'DeepSeek V4.1 Flash (0910) keeps every host');
 });
 
 test('a GLM request its shortlist refuses is sent once more to every host, and says so', async (t) => {
@@ -423,13 +438,18 @@ test('a GLM turn compacts at 200k with no ROOMY_CONTEXT, still never past its wi
   assert.equal(told.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000');
 });
 
-test('the compaction limit is per model family: Anthropic\'s and GLM\'s at 200k, every other provider\'s at 120k', () => {
+test('the compaction limit is per model family: Anthropic\'s and GLM\'s at 200k, DeepSeek\'s at its own 786k, every other provider\'s at 120k', () => {
   const mod = require('../worker/claude-openrouter-request');
   assert.equal(mod.NON_ANTHROPIC_AUTO_COMPACT_TOKEN_LIMIT, 120_000);
   for (const model of ['anthropic/claude-sonnet-4.5', '~anthropic/claude-opus-latest', GLM, 'z-ai/glm-4.6']) {
     assert.equal(mod.autoCompactLimit(model), 200_000, model);
   }
-  for (const model of [KIMI, 'openai/gpt-5', 'deepseek/deepseek-v4.1-flash', 'z-ai/other-model', 'example/z-ai/glm-5', '', undefined]) {
+  // DeepSeek's own Claude Code guide: CLAUDE_CODE_AUTO_COMPACT_WINDOW=786432.
+  assert.equal(mod.DEEPSEEK_AUTO_COMPACT_TOKEN_LIMIT, 786_432);
+  for (const model of [DEEPSEEK_1017, OTHER, '~deepseek/deepseek-flash-latest']) {
+    assert.equal(mod.autoCompactLimit(model), 786_432, model);
+  }
+  for (const model of [KIMI, 'openai/gpt-5', 'z-ai/other-model', 'example/z-ai/glm-5', 'example/deepseek/x', '', undefined]) {
     assert.equal(mod.autoCompactLimit(model), 120_000, String(model));
   }
   const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local' };
@@ -439,6 +459,11 @@ test('the compaction limit is per model family: Anthropic\'s and GLM\'s at 200k,
   assert.equal(glm.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000');
   const kimi = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '262144' }, { ...base, model: KIMI });
   assert.equal(kimi.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '120000', 'any other provider unchanged');
+  const deepseek = claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '1048576' }, { ...base, model: DEEPSEEK_1017 });
+  assert.equal(deepseek.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '786432');
+  assert.equal(deepseek.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1048576');
+  assert.equal(claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '262144' }, { ...base, model: DEEPSEEK_1017 }).CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+    '262144', 'never past the model\'s own window');
 });
 
 // App bench run 191: GLM builds compacted 2 to 3 times each at about 65k
@@ -454,6 +479,7 @@ test('roomy_context: ROOMY_CONTEXT=1 compacts a non-Anthropic model at 200k, sti
   assert.equal(mod.autoCompactLimit(GLM, { ROOMY_CONTEXT: '1' }), 200_000);
   assert.equal(mod.autoCompactLimit(GLM, { ROOMY_CONTEXT: '0' }), 200_000, 'for GLM it changes nothing');
   assert.equal(mod.autoCompactLimit('anthropic/claude-sonnet-4.5', { ROOMY_CONTEXT: '1' }), 200_000);
+  assert.equal(mod.autoCompactLimit(DEEPSEEK_1017, { ROOMY_CONTEXT: '1' }), 786_432, 'and never lowers a larger window');
   const base = { baseUrl: 'http://127.0.0.1:4000', localToken: 'local', model: KIMI };
   assert.equal(claudeChildEnv({ AGENT_MODEL_CONTEXT_WINDOW: '262144', ROOMY_CONTEXT: '1' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000');
   assert.equal(claudeChildEnv({ ROOMY_CONTEXT: '1' }, base).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000', 'no catalog window');
