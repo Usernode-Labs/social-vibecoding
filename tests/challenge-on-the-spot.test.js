@@ -390,8 +390,12 @@ test('every vote door counts the vote before it answers', () => {
   assert.match(issues, /require\('\.\.\/services\/topochain\/challenge-scorer'\)/);
   assert.match(issueBody, /pushIssueUpdate\(\{ action: 'voted', appSlug: issue\.app_slug, appId: issue\.app_id, issueId: issue\.id, vote \}\);\s*(?:\/\/[^\n]*\n\s*)*await challengeScorer\.scoreOnVote\(pool, config\);/,
     'a request vote: after the broadcast, before the apply');
-  assert.ok(issueBody.indexOf('scoreOnVote') > issueBody.indexOf('return res.json({ ok: true, toggled: true });'),
+  assert.ok(issueBody.lastIndexOf('scoreOnVote') > issueBody.indexOf('return res.json({ ok: true, toggled: true });'),
     'taking a vote back is not casting one');
+  // A governance vote is the governance machine's: the route credits it
+  // once the machine accepted it, never a take-back or one still pending.
+  assert.match(issueBody, /if \(reply\.status === 200 && reply\.body\?\.ok && !reply\.body\.toggled\) await challengeScorer\.scoreOnVote\(pool, config\);\s*return res\.status\(reply\.status\)\.json\(reply\.body\);/,
+    'a governance vote: credited before the voter is answered, a cast only');
 });
 
 test('a report counts before the person is answered, on both targets', () => {
