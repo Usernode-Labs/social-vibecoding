@@ -86,9 +86,6 @@ test('every door to filing a request says Suggest an improvement', () => {
   assert.match(read('frontend/src/features/home/tour/tour-steps.ts'),
     /id: 'menu-actions',\s*title: 'onboarding:tour\.step\.menuActions\.title',/, 'the tour names the button by its words');
   assert.equal(require('./lib/platform-i18n').message('onboarding:tour.step.menuActions.title'), 'Suggest an improvement');
-  assert.match(read('frontend/src/features/messages/index.tsx'),
-    /hint: 'messages:inbox\.new\.bot\.hint'/, 'Messages\' new-chat menu');
-  assert.equal(message('messages:inbox.new.bot.hint'), 'Make an app or suggest an improvement');
   // The hub's Your work says "No work in progress." on every project from
   // its first day (15 Oct 2026); the empty board's note names the ⋯'s row.
   assert.equal(message('project:boardEmpty.press.hub.plain.full'),

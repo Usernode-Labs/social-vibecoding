@@ -86,7 +86,6 @@ import {
   typingUsers,
   useChannelHandles,
   useMessagesSnapshot,
-  openBot,
 } from './store';
 import { typingLine } from './typing-line';
 import { issueRefHref } from './channels';
@@ -567,35 +566,24 @@ function ChangeTile({ session }: { session: SessionRowView }) {
 }
 
 /**
- * What the "+" can start, in the order the popover lists them. B8: Homeroom
- * bot first, for somebody who has it (/api/auth/me `homeroomBotDm`), then
- * building it yourself, then people.
+ * What the "+" can start, in the order the popover lists them: the agent,
+ * then people. #5380 renamed the agent row to "Agent chat" and took Homeroom
+ * bot out: the menu starts new conversations, and the bot's one conversation
+ * is reached from the top of Agents.
  */
 const NEW_CHOICES = [
-  { key: 'bot', label: 'messages:inbox.new.bot.label', hint: 'messages:inbox.new.bot.hint' },
   // #2779: a conversation with the Mayor that works on any app, so there is
   // no app to pick first. It replaced "Agent chat", which asked which app and
-  // opened a classic dev session there; those are no longer created. B8:
-  // named for what it is beside Homeroom bot, building it yourself.
+  // opened a classic dev session there; those are no longer created.
   { key: 'agent', label: 'messages:inbox.new.agent.label', hint: 'messages:inbox.new.agent.hint' },
   { key: 'direct', label: 'messages:inbox.new.direct.label', hint: 'messages:inbox.new.direct.hint' },
   { key: 'group', label: 'messages:inbox.new.group.label', hint: 'messages:inbox.new.group.hint' },
 ] as const;
 type NewChoice = typeof NEW_CHOICES[number]['key'];
 
-/** B8: whether the signed-in person has Homeroom bot to ask. */
-function hasHomeroomBot(): boolean {
-  return typeof window !== 'undefined' && !!(window as any).App?.user?.homeroomBotDm;
-}
-
-function newChoices() {
-  return NEW_CHOICES.filter((item) => item.key !== 'bot' || hasHomeroomBot());
-}
-
 function startNew(choice: NewChoice) {
   // DM and group are the create dialog, opened on the matching tab.
-  if (choice === 'bot') void openBot();
-  else if (choice === 'agent') void startAgentSession({ entry: 'messages' });
+  if (choice === 'agent') void startAgentSession({ entry: 'messages' });
   else openDialog('messagesCreate', choice);
 }
 
@@ -634,7 +622,7 @@ function NewMessageButton() {
     const pu = (window as any).PlatformUI;
     if (pu && typeof pu.isTouch === 'function' && pu.isTouch() && typeof pu.actionSheet === 'function') {
       pu.actionSheet({
-        actions: newChoices().map((item) => ({ label: t(item.label), handler: () => startNew(item.key) })),
+        actions: NEW_CHOICES.map((item) => ({ label: t(item.label), handler: () => startNew(item.key) })),
       });
       return;
     }
@@ -645,7 +633,7 @@ function NewMessageButton() {
   // on the button rather than on a row this close is about to unmount.
   const choose = (choice: NewChoice) => { btnRef.current?.focus({ preventScroll: true }); shut(); startNew(choice); };
   const pos = rect
-    ? placeUnderAnchor(rect, { width: 260, height: 54 * newChoices().length + 2 }, { width: window.innerWidth, height: window.innerHeight })
+    ? placeUnderAnchor(rect, { width: 260, height: 54 * NEW_CHOICES.length + 2 }, { width: window.innerWidth, height: window.innerHeight })
     : null;
 
   return (
@@ -674,7 +662,7 @@ function NewMessageButton() {
           onClick={(event) => event.stopPropagation()}
           onKeyDown={menuKeys.onKeyDown}
         >
-          {newChoices().map((item) => (
+          {NEW_CHOICES.map((item) => (
             <button
               key={item.key}
               type="button"
@@ -686,7 +674,6 @@ function NewMessageButton() {
               {item.key === 'direct' ? <ChatIcon aria-hidden="true" /> : null}
               {item.key === 'group' ? <UserGroupIcon aria-hidden="true" /> : null}
               {item.key === 'agent' ? <SparklesIcon aria-hidden="true" /> : null}
-              {item.key === 'bot' ? <img src="/brand/homeroom-mark.png" alt="" aria-hidden="true" className="messages-new-option-mark" /> : null}
               <span className="min-w-0">
                 <span className="messages-new-option-label">{t(item.label)}</span>
                 <span className="messages-new-option-hint">{t(item.hint)}</span>

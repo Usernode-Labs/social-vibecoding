@@ -1490,13 +1490,6 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   align-items: center;
   gap: 5px;
 }
-/* B8: Homeroom bot's row in Messages' "+" wears its mark, at the glyphs' size. */
-.messages-new-option-mark {
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
-  flex-shrink: 0;
-}
 /* B5: the bot's hello, above the first card it sends somebody. */
 .messages-bot-hello {
   margin: 0 0 6px;

@@ -239,7 +239,7 @@ test('a newcomer still has every other door to building it themselves', () => {
   assert.match(view, /label: PlatformI18n\.t\('changes:issue\.action\.buildNow'\),\s*title: PlatformI18n\.t\('changes:issue\.action\.buildNowTitle'\),\s*act: \{ fn: 'chooseIssueWork', args: \[n\] \}/, 'a request\'s own');
   assert.equal(message('changes:issue.action.buildNow'), 'Build it now');
   assert.equal(message('changes:issue.action.buildNowTitle'), 'Start an agent session on this request');
-  assert.equal(message('messages:inbox.new.agent.label'), 'Build it now');
+  assert.equal(message('messages:inbox.new.agent.label'), 'Agent chat');
   assert.equal(message('messages:inbox.new.agent.hint'), 'Plan and build a change with a coding agent');
   assert.match(read('frontend/src/features/messages/index.tsx'),
     /\{ key: 'agent', label: 'messages:inbox\.new\.agent\.label', hint: 'messages:inbox\.new\.agent\.hint' \}/, 'Messages\' new chat');

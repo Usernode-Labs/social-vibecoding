@@ -86,7 +86,7 @@ test('the mark\'s menu lists no agent entries: Agent chats moved whole to Messag
   assert.ok(at('id="app-menu-row-workshop"') > -1 && at('id="app-menu-row-about"') > -1
     && at('id="app-menu-row-workshop"') < at('id="app-menu-row-about"'),
     'Go to community and About are the app\'s section, and the list ends there');
-  // Starting a new agent chat is Messages' "+", whose "Build it now" choice
+  // Starting a new agent chat is Messages' "+", whose "Agent chat" choice
   // has opened one since B8.
   assert.match(read('frontend/src/features/messages/index.tsx'), /startAgentSession\(\{ entry: 'messages' \}\)/);
   // The catalog entries the menu's rows read are gone with them.
