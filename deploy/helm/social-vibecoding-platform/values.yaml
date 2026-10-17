@@ -185,6 +185,9 @@ config:
   internalUrl: http://social-vibecoding.social-platform.svc.cluster.local:3000
   logLevel: INFO
   workerMemory: 2g
+  # A worker on the platform's own repository (its agent boots the whole
+  # platform and a browser): 2g OOM-killed most of its bot builds that died.
+  workerMemoryPlatformRepo: 4g
   workerCpus: "2"
   captureMemory: 6g
   captureCpus: "8"

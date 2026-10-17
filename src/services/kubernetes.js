@@ -1914,8 +1914,10 @@ const VOLUME_QUOTA_RETRIES = 10;
 // quota refuses this one and resolves how many it deleted. The quota's usage
 // drops only once the controller observes those deletions, so the claim is
 // retried for a short while rather than once.
+// `memory` is this worker's limit in WORKER_MEMORY units (worker.js
+// workerMemoryFor); config.workerMemory when it is not given.
 async function ensureWorker(config, { sessionId, env, onProgress, temporary = false,
-  reclaimVolumes = null, retryDelayMs = VOLUME_QUOTA_RETRY_MS, timeoutMs, retryAttempt = null }) {
+  reclaimVolumes = null, retryDelayMs = VOLUME_QUOTA_RETRY_MS, timeoutMs, retryAttempt = null, memory = null }) {
   const cfg = config.kubernetes;
   if (!cfg.workerImage?.includes('@sha256:')) throw new Error('KUBERNETES_WORKER_IMAGE must be an immutable digest');
   const namespace = cfg.workerNamespace;
@@ -1997,7 +1999,7 @@ async function ensureWorker(config, { sessionId, env, onProgress, temporary = fa
             volumeMounts: [{ name: 'state', mountPath: '/home/node/.claude' }],
             startupProbe: { exec: { command: ['test', '-f', '/tmp/usernode-worker-ready'] }, periodSeconds: 2, failureThreshold: 150 },
             readinessProbe: { exec: { command: ['test', '-f', '/tmp/usernode-worker-ready'] }, periodSeconds: 2, failureThreshold: 1 },
-            resources: { requests: { cpu: '250m', memory: '512Mi' }, limits: { cpu: config.workerCpus || '2', memory: (config.workerMemory || '2Gi').replace(/g$/i, 'Gi') } },
+            resources: { requests: { cpu: '250m', memory: '512Mi' }, limits: { cpu: config.workerCpus || '2', memory: String(memory || config.workerMemory || '2Gi').replace(/g$/i, 'Gi').replace(/m$/i, 'Mi') } },
             securityContext: containerSecurityContext(),
           }],
           volumes: [{ name: 'state', ...(temporary

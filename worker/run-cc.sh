@@ -237,6 +237,8 @@ fi
 # Sourced here, after the readiness and argument guards above, so a turn
 # that must stop early never depends on it.
 . "$(dirname "$0")/session-branch.sh"
+# The container's memory, for the result line (mem_peak_mib and the rest).
+. "$(dirname "$0")/memory-fields.sh"
 
 # Pre-exec hygiene: every turn starts from a known-good tree. Pulls in
 # anything pushed by a parallel turn / merge bot since we last ran, and
@@ -675,6 +677,9 @@ if [ -n "$STOP_GUARD_FLAGS" ]; then
 fi
 if [ -n "$STOP_GUARD_DIR" ]; then rm -rf "$STOP_GUARD_DIR" 2>/dev/null || true; fi
 
+# Read once the agent is done: the most the container used by then.
+MEMORY_FIELDS=$(usernode_memory_fields)
+
 if [ "$MODE" = "scout" ] || [ "$MODE" = "shots" ]; then
   # Read-only run: no commit, no push. The host pulls scout output out
   # of stream-json's `result` event and writes it into spec_md.
@@ -683,7 +688,7 @@ if [ "$MODE" = "scout" ] || [ "$MODE" = "shots" ]; then
   # Terminal phase marker so the progress card ends on "Finished"
   # instead of freezing on the last action line.
   echo "__USERNODE_PHASE__ done"
-  echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE"
+  echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE$MEMORY_FIELDS"
   exit "$CC_EXIT"
 fi
 
@@ -707,7 +712,7 @@ if [ "${DISCARD_FAILED_TURN:-}" = "1" ]; then
   if [ -n "$TURN_FAILED" ]; then
     echo "__USERNODE_WARN__ $TURN_FAILED; skipping commit/push"
     echo "__USERNODE_PHASE__ done"
-    echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=build$STOP_HOOK_BLOCKS_FIELD"
+    echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=build$STOP_HOOK_BLOCKS_FIELD$MEMORY_FIELDS"
     if [ "$CC_EXIT" -ne 0 ]; then exit "$CC_EXIT"; fi
     exit 1
   fi
@@ -757,5 +762,5 @@ if [ "$PUSH_OK" = "1" ]; then
 else
   echo "__USERNODE_PHASE__ push_failed"
 fi
-echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build$BRANCH_MISMATCH_FIELD$STOP_HOOK_BLOCKS_FIELD"
+echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build$BRANCH_MISMATCH_FIELD$STOP_HOOK_BLOCKS_FIELD$MEMORY_FIELDS"
 exit "$CC_EXIT"

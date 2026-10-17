@@ -380,6 +380,9 @@ function runRunCc(fx, extra = {}) {
         BROWSER_MCP_CONFIG: path.join(fx.dir, 'absent-browser-mcp.json'),
         HOMEROOM_MCP_CONFIG: path.join(fx.dir, 'absent-homeroom-mcp.json'),
         INLOOP_PGDATA: path.join(fx.dir, 'absent-pgdata'),
+        // No cgroup to read, on every machine: a result line ends as each
+        // test below expects (worker/memory-fields.sh has a test of its own).
+        USERNODE_CGROUP_DIR: path.join(fx.dir, 'absent-cgroup'),
         STUB_LOG: fx.log,
         ...extra,
       },
@@ -455,10 +458,10 @@ test('run-cc.sh: no hook for a build that did not ask, or for a scout', async ()
 test('run-cc.sh: a guard that cannot be set up leaves the build running without it', async () => {
   const fx = runnerFixture();
   // The hook script missing beside the runner: copy the runner somewhere
-  // that has session-branch.sh and the adapter but not the hook.
+  // that has session-branch.sh, memory-fields.sh and the adapter but not the hook.
   const alone = path.join(fx.dir, 'runner');
   fs.mkdirSync(alone);
-  for (const f of ['run-cc.sh', 'session-branch.sh', 'claude-openrouter-request.js', 'agent-api-failure.js', 'start-inloop-db.sh']) {
+  for (const f of ['run-cc.sh', 'session-branch.sh', 'memory-fields.sh', 'claude-openrouter-request.js', 'agent-api-failure.js', 'start-inloop-db.sh']) {
     fs.copyFileSync(path.join(ROOT, 'worker', f), path.join(alone, f));
   }
   const ran = await runRunCc(fx, { RUNNER: path.join(alone, 'run-cc.sh') });
@@ -809,6 +812,25 @@ test('checks that passed are not run again on the same tree; a changed tree runs
   assert.equal(hook.runGuard({ env, checks: () => FAILING, stop: none }).block, true);
   assert.equal(hook.runGuard({ env, checks, stop: none }).checks, 'checks_pass');
   assert.equal(runs, 3);
+});
+
+// 17 Oct 2026: the result line ends with the container's memory as the
+// agent finished (worker/memory-fields.sh), read from its cgroup, which the
+// turn's telemetry keeps (worker_memory_peak_mib and the rest).
+test('run-cc.sh: the result line ends with the container\'s memory, which reaches the turn\'s telemetry', async () => {
+  const fx = runnerFixture();
+  const cgroup = path.join(fx.dir, 'cgroup');
+  fs.mkdirSync(cgroup);
+  fs.writeFileSync(path.join(cgroup, 'memory.peak'), String(1482 * 1048576));
+  fs.writeFileSync(path.join(cgroup, 'memory.max'), String(4096 * 1048576));
+  fs.writeFileSync(path.join(cgroup, 'memory.events'), 'oom 0\noom_kill 0\n');
+  const ran = await runRunCc(fx, { STUB_WORK: 'commit', USERNODE_CGROUP_DIR: cgroup });
+  assert.equal(ran.code, 0, ran.out);
+  assert.match(resultLine(ran.out), / stop_hook_blocks=0 mem_peak_mib=1482 mem_limit_mib=4096 mem_oom_kills=0$/);
+  const state = worker.newWatchState();
+  for (const line of ran.out.split('\n')) worker.parseLine(line, () => {}, state);
+  const metrics = llmTelemetry.normalizeDiagnostics(state);
+  assert.deepEqual([metrics.worker_memory_peak_mib, metrics.worker_memory_limit_mib, metrics.worker_oom_kill_count], [1482, 4096, 0]);
 });
 
 test('run-cc.sh: a server the agent left running is stopped as its turn ends, and the result line counts it', async () => {
