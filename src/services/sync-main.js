@@ -168,11 +168,6 @@ function refusedMessage(reason) {
   return `Tried to sync with main, but the merge was not pushed: ${reason} The branch is unchanged; resolve it locally.`;
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
 
 async function runSyncMain(config, pool, sessionId, opts = {}) {
   const key = Number(sessionId);
@@ -369,7 +364,10 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
     // any ledger.
     await limits.recordSystemSpend(pool, Math.round((result.costUsd || 0) * 100));
 
-    const syncResult = result.syncResult || (result.exitCode === 0 ? 'clean' : 'conflict');
+    // Only the four outcomes the runner writes count; anything else is read
+    // as the failure, so a forged or garbled result never reports success.
+    const reported = result.syncResult || (result.exitCode === 0 ? 'clean' : 'conflict');
+    const syncResult = ['already_synced', 'clean', 'resolved', 'conflict'].includes(reported) ? reported : 'conflict';
     let message;
     switch (syncResult) {
       case 'already_synced':
@@ -390,13 +388,6 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
           : 'Tried to sync with main but Claude couldn\'t resolve the conflicts. The branch is unchanged; try again or resolve locally.';
         break;
     }
-    // The dev chat's transcript renders a system status row's content as
-    // HTML, and a reason is data from the worker (an agent's sentence, a
-    // file name a check left behind), so the row gets it escaped. The banner
-    // and a toast set it as text, so they keep the plain message.
-    const statusText = result.syncReason && syncResult === 'conflict'
-      ? refusedMessage(escapeHtml(result.syncReason))
-      : message;
 
     // #361: persist the derived merge-conflict snapshot for proposal
     // cards. An unresolved conflict leaves the branch broken → 'failed'
@@ -436,7 +427,12 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
     // timeline keys on. Only emitted when we opened an activity entry (a
     // real merge); a behind==0 short-circuit leaves no row, matching the
     // banner-only behaviour callers had before this change.
-    const syncMeta = { syncMain: { syncResult, behind: result.behind || 0, sha: result.sha || null, pushOk: !!result.pushOk, ...(result.syncReason ? { reason: result.syncReason } : {}) } };
+    // plainText: the row's content is a sentence, not markup. The reason in
+    // it is data from the worker (an agent's sentence, a file name), so the
+    // dev chat draws this row as text, and each renderer escapes it once:
+    // the owner's transcript through React, the shared transcript in
+    // session-transcript.js, the banner and a toast as text.
+    const syncMeta = { plainText: true, syncMain: { syncResult, behind: result.behind || 0, sha: result.sha || null, pushOk: !!result.pushOk, ...(result.syncReason ? { reason: result.syncReason } : {}) } };
 
     // The worker owns the Git merge/push, but a CLI-handoff proposal also
     // has immutable head pins that own its preview and check verdict. Adopt
@@ -462,7 +458,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
     }
 
     if (emitActivity) {
-      await sendStatus(statusText, syncMeta);
+      await sendStatus(message, syncMeta);
     }
 
     // Analytics: record the sync outcome on the terminal path. Attributed

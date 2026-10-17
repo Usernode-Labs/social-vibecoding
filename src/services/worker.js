@@ -1522,6 +1522,21 @@ function decodeSyncReason(value) {
   return text.length > SYNC_REASON_MAX ? `${text.slice(0, SYNC_REASON_MAX - 3)}...` : text;
 }
 
+// The MODE=sync outcomes run-cc.sh writes (sync_result=…).
+const SYNC_RESULTS = new Set(['already_synced', 'clean', 'resolved', 'conflict']);
+
+// The conflicted paths of a MODE=sync turn (run-cc.sh conflict_files_b64):
+// NUL-separated raw paths, base64url-encoded, so a path is data on the
+// space-delimited result line, never more fields. Bounded like the raw form's
+// consumers expect: at most 200 paths of at most 1,024 characters.
+const CONFLICT_FILES_MAX = 200;
+function decodeConflictFiles(value) {
+  if (!value || !/^[A-Za-z0-9_-]+$/.test(value)) return [];
+  let text;
+  try { text = Buffer.from(value, 'base64url').toString('utf8'); } catch { return []; }
+  return text.split('\u0000').filter(Boolean).slice(0, CONFLICT_FILES_MAX).map((p) => p.slice(0, 1024));
+}
+
 function parseLine(line, onProgress, state) {
   if (!line || !line.trim()) return;
   if (line.startsWith('__USERNODE_CODING_PROVIDER__ ')) {
@@ -1552,14 +1567,25 @@ function parseLine(line, onProgress, state) {
   }
   if (line.startsWith('__USERNODE_RESULT__')) {
     const body = line.replace('__USERNODE_RESULT__', '').trim();
+    // The line is space-delimited key=value pairs, and the runner writes
+    // them in a fixed order. A field seen a second time on one line is not
+    // the runner's (review of proposal 8758: a conflicted file named
+    // `z sync_result=other`, written raw, overwrote the real result), so the
+    // first value wins. The runner now writes file names encoded
+    // (conflict_files_b64); the raw form is still read from older images.
+    const seenFields = new Set();
     for (const kv of body.split(/\s+/)) {
       const [k, v] = kv.split('=');
+      if (seenFields.has(k)) continue;
+      seenFields.add(k);
       if (k === 'cc_exit') state.ccExit = parseInt(v, 10);
       else if (k === 'ahead') state.ahead = parseInt(v, 10) || 0;
       else if (k === 'behind') state.behind = parseInt(v, 10) || 0;
       else if (k === 'sha') state.sha = v || null;
       else if (k === 'push_ok') state.pushOk = v === '1';
-      else if (k === 'sync_result') state.syncResult = v || null;
+      // Anything but the four the runner writes is not a result it reached:
+      // read as the failure, so it never reports a merge as done.
+      else if (k === 'sync_result') state.syncResult = v ? (SYNC_RESULTS.has(v) ? v : 'conflict') : null;
       // Backend-neutral antelope (plan.md §4-PR1): Codex/OpenRouter turns
       // (PR5+) emit these fields in __USERNODE_RESULT__ alongside the
       // legacy cc_* fields. Parsing them here keeps worker.js the single
@@ -1578,6 +1604,7 @@ function parseLine(line, onProgress, state) {
       // string → no conflicts. Threaded out as result.conflictFiles so
       // sync-main.js can persist the merge-conflict snapshot.
       else if (k === 'conflict_files') state.conflictFiles = v ? v.split(',').filter(Boolean) : [];
+      else if (k === 'conflict_files_b64') state.conflictFiles = decodeConflictFiles(v);
       else if (k === 'sync_reason') state.syncReason = decodeSyncReason(v);
       // The agent ended on a line that does not build on the session branch
       // (worker/session-branch.sh): nothing was committed or pushed.
@@ -5975,6 +6002,7 @@ module.exports = {
   _mintHomeroomReadGrantForTests: mintHomeroomReadGrant,
   parseLine,
   decodeSyncReason,
+  decodeConflictFiles,
   newWatchdogCounters,
   recordWatchdogProbe,
   WORKER_JWT_TTL_MS,

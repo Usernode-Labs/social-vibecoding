@@ -24,7 +24,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { RUNNER_TEST_ENV } = require('./lib/runner-env');
-const { decodeSyncReason } = require('../src/services/worker');
+const { decodeSyncReason, decodeConflictFiles } = require('../src/services/worker');
 
 const ROOT = path.join(__dirname, '..');
 const BRANCH = 'dev/sync-conflict';
@@ -122,6 +122,12 @@ function runSync(fx, mode, extraEnv = {}) {
   };
 }
 
+// The conflicted files, as the worker reads them off the result line.
+function filesOf(result) {
+  const m = result.match(/ conflict_files_b64=(\S*)/);
+  return m ? decodeConflictFiles(m[1]) : null;
+}
+
 function reasonOf(result) {
   const m = result.match(/ sync_reason=(\S*)/);
   return m ? decodeSyncReason(m[1]) : null;
@@ -159,7 +165,8 @@ test('a resolved merge commit lists each conflicted file and how it was resolved
   const fx = fixture();
   const ran = runSync(fx, 'resolve');
   assert.equal(ran.code, 0, ran.out);
-  assert.match(ran.result, /mode=sync sync_result=resolved conflict_files=lib\.js$/);
+  assert.match(ran.result, /mode=sync sync_result=resolved conflict_files_b64=\S+$/);
+  assert.deepEqual(filesOf(ran.result), ['lib.js']);
   const message = git(fx.ws, 'log', '-1', '--format=%B');
   assert.equal(message, [
     'Merge origin/main via Homeroom sync (Claude-resolved)',
@@ -198,7 +205,8 @@ test('a resolver that leaves no notes still gets the conflicted files in the com
 
 function assertAbandoned(fx, ran) {
   assert.equal(ran.code, 0, ran.out);
-  assert.match(ran.result, /push_ok=0 mode=sync sync_result=conflict conflict_files=lib\.js sync_reason=\S+$/);
+  assert.match(ran.result, /push_ok=0 mode=sync sync_result=conflict conflict_files_b64=\S+ sync_reason=\S+$/);
+  assert.ok(filesOf(ran.result).includes('lib.js'));
   assert.equal(git(fx.ws, 'rev-parse', 'HEAD'), fx.start, 'the branch is where it was');
   assert.doesNotMatch(ran.out, /__USERNODE_PHASE__ sync_push/);
   assert.equal(fs.existsSync(path.join(fx.ws, '.git', 'MERGE_HEAD')), false, 'no merge left in progress');
@@ -434,22 +442,189 @@ test('a reason stays text from the worker\'s result line to the dev chat transcr
   } finally {
     restore();
   }
-  // The banner and the toast set text: they keep the plain sentence.
+  // One plain sentence everywhere; each renderer escapes it once.
   assert.ok(result.message.includes(payload));
   assert.ok(updates.at(-1).message.includes(payload));
-  // The transcript's row is HTML: escaped.
-  assert.ok(!row.params[1].includes(payload));
-  assert.ok(row.params[1].includes('&lt;img src=x onerror=globalThis.__review8758=1&gt;'));
+  assert.equal(row.params[1], result.message, 'the row stores the plain sentence');
+  assert.equal(JSON.parse(row.params[2]).plainText, true, 'marked as text for the dev chat');
 
+  const html = renderOwner(row.params[1], JSON.parse(row.params[2]));
+  assert.doesNotMatch(html, /<img src=x onerror/, 'no live element');
+  assert.match(html, /&lt;img src=x onerror=globalThis\.__review8758=1&gt;/, 'shown as text, escaped once');
+  assert.doesNotMatch(html, /&amp;lt;img/, 'not escaped twice');
+});
+
+// ── Review round 3 of proposal 8758 (Codex) ─────────────────────────────
+// File names on the result line, and one escape per renderer.
+
+// Compile a slice of another suite's harness as a module of its own.
+function compileSlice(file, source, exportsLine) {
+  const Module = require('node:module');
+  const m = new Module(file);
+  m.filename = file;
+  m.paths = Module._nodeModulePaths(path.dirname(file));
+  m._compile(`${source}\n${exportsLine}`, file);
+  return m.exports;
+}
+
+// runSyncMain with the worker's result stubbed (tests/sync-progress.test.js).
+function syncHarness(execImpl) {
+  const sp = fs.readFileSync(path.join(__dirname, 'sync-progress.test.js'), 'utf8');
+  const helpers = sp.slice(sp.indexOf('function makePool('), sp.indexOf('// ── runSyncMain coalescing'));
+  const activity = sp.slice(sp.indexOf('function ownerRow('), sp.indexOf("test('activity: a clean merge"));
+  const h = compileSlice(path.join(__dirname, 'sync-round3-harness.cjs'),
+    `const assert = require('node:assert/strict');\n${helpers}\n${activity}`,
+    'module.exports = { loadSyncMain, activityPool, ownerRow };');
+  return { ...h, ...h.loadSyncMain({ execImpl }) };
+}
+
+async function runSyncMainWith(execImpl) {
+  const h = syncHarness(execImpl);
+  const pool = h.activityPool();
+  try {
+    const result = await h.subject.runSyncMain({}, pool, 7, { sessionRow: h.ownerRow() });
+    const row = pool.calls.filter((c) => /INSERT INTO chat_session_messages/.test(c.sql)).at(-1);
+    return { result, content: row.params[1], metadata: JSON.parse(row.params[2]), updates: h.updates };
+  } finally {
+    h.restore();
+  }
+}
+
+// The owner's transcript (the dev chat), through its real renderer.
+function renderOwner(content, metadata) {
   const tf = path.join(__dirname, 'dev-chat-transcript.test.js');
   const ts = fs.readFileSync(tf, 'utf8');
-  const end = ts.indexOf('// ── 1.');
-  assert.ok(end > 0, 'dev-chat-transcript harness found');
-  const { makeDevChat } = load(path.join(__dirname, 'sync-reason-transcript.cjs'), ts.slice(0, end), 'module.exports = { makeDevChat };');
-  const html = makeDevChat().render([{
-    role: 'system', id: 42, content: row.params[1], metadata: JSON.parse(row.params[2]),
-    created_at: '2026-10-16T00:00:00Z',
+  const { makeDevChat } = compileSlice(path.join(__dirname, 'sync-round3-transcript.cjs'),
+    ts.slice(0, ts.indexOf('// ── 1.')), 'module.exports = { makeDevChat };');
+  // Rows reach the dev chat with their metadata's markers lifted onto them
+  // (the load path in dev-chat.js); plainText is the one this row carries.
+  return makeDevChat().render([{
+    role: 'system', id: 42, content, metadata, plainText: metadata.plainText === true,
+    created_at: '2026-10-17T00:00:00Z',
   }]);
-  assert.doesNotMatch(html, /<img src=x onerror/, 'no live element');
-  assert.match(html, /&lt;img src=x onerror=globalThis\.__review8758=1&gt;/, 'shown as text');
+}
+
+// The shared read-only transcript: the share sanitiser, then its renderer.
+function renderShared(content, metadata) {
+  const row = require('../src/services/transcript-share').sanitizeTranscriptMessage({
+    role: 'system', id: 42, content, metadata, created_at: '2026-10-17T00:00:00Z',
+  });
+  const vm = require('node:vm');
+  const sandbox = { console };
+  sandbox.window = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'public/js/session-transcript.js'), 'utf8'), sandbox);
+  return sandbox.SessionTranscript.renderHtml({ session: { id: 7, username: 'fixture' }, messages: [row] });
+}
+
+test('a file named like a result field stays data: the sync stays a failure and its reason stays text', async () => {
+  const name = 'z sync_result=other';
+  const fx = customFixture({
+    base(s) { fs.writeFileSync(path.join(s, name), 'base\n'); },
+    branch(s) { fs.writeFileSync(path.join(s, name), 'branch\n'); },
+    main(s) { fs.writeFileSync(path.join(s, name), 'main\n'); },
+  });
+  const payload = '<img src=x onerror=globalThis.__review8758=1>';
+  inject(fx, `printf 'resolved\\n' > '${name}'\nprintf 'output' > '${payload}'`);
+  const ran = runSync(fx, 'resolve');
+  assertAbandoned(fx, ran);
+  assert.doesNotMatch(ran.result, /sync_result=other/, 'no file name is written raw on the line');
+  assert.deepEqual(filesOf(ran.result).sort(), ['lib.js', name].sort());
+  const state = {};
+  require('../src/services/worker').parseLine(ran.result, () => {}, state);
+  assert.equal(state.syncResult, 'conflict');
+  const out = await runSyncMainWith(async () => ({ ...state, exitCode: 0 }));
+  assert.equal(out.result.ok, false, 'an abandoned merge is never ok');
+  assert.equal(out.result.syncResult, 'conflict');
+  const html = renderOwner(out.content, out.metadata);
+  assert.doesNotMatch(html, /<img src=x onerror/);
+  assert.match(html, /&lt;img src=x onerror=globalThis\.__review8758=1&gt;/);
+});
+
+test('the worker keeps the first of a repeated result field, and reads an unknown sync result as the failure', async () => {
+  const w = require('../src/services/worker');
+  const forged = {};
+  w.parseLine('__USERNODE_RESULT__ cc_exit=0 ahead=0 behind=1 sha=abc push_ok=0 mode=sync sync_result=conflict conflict_files=lib.js,z sync_result=resolved push_ok=1', () => {}, forged);
+  assert.equal(forged.syncResult, 'conflict', 'the raw form from older images cannot be overwritten either');
+  assert.equal(forged.pushOk, false);
+  const odd = {};
+  w.parseLine('__USERNODE_RESULT__ cc_exit=0 ahead=0 behind=1 sha=abc push_ok=0 mode=sync sync_result=other', () => {}, odd);
+  assert.equal(odd.syncResult, 'conflict');
+  // Fields on later lines still replace earlier ones: the guard is per line.
+  w.parseLine('__USERNODE_RESULT__ cc_exit=0 ahead=1 behind=0 sha=def push_ok=1 mode=sync sync_result=resolved', () => {}, odd);
+  assert.equal(odd.syncResult, 'resolved');
+  const enc = Buffer.from(['a b.js', 'sync_result=x', 'new\nline'].join('\u0000')).toString('base64url');
+  assert.deepEqual(w.decodeConflictFiles(enc), ['a b.js', 'sync_result=x', 'new\nline']);
+  assert.deepEqual(w.decodeConflictFiles('not base64!'), []);
+  assert.equal(w.decodeConflictFiles(Buffer.from(Array.from({ length: 300 }, (_, i) => `f${i}`).join('\u0000')).toString('base64url')).length, 200);
+  // sync-main itself never reports an unknown outcome as done.
+  const out = await runSyncMainWith(async () => ({ syncResult: 'other', behind: 1, pushOk: false, exitCode: 0 }));
+  assert.equal(out.result.ok, false);
+  assert.equal(out.result.syncResult, 'conflict');
+});
+
+test('a reason is escaped exactly once in each place it is shown', async () => {
+  const reason = 'Keep &lt;img&gt; literal, A&B.js, "quoted" and \'apostrophe\'.';
+  const out = await runSyncMainWith(async () => ({ syncResult: 'conflict', syncReason: reason, behind: 1, pushOk: false, exitCode: 0 }));
+  // Stored, sent, and answered as the plain sentence.
+  assert.ok(out.result.message.includes(reason));
+  assert.equal(out.content, out.result.message);
+  assert.equal(out.metadata.syncMain.reason, reason);
+  assert.ok(out.updates.at(-1).message.includes(reason), 'the banner gets text');
+  // The owner's transcript.
+  const owner = renderOwner(out.content, out.metadata);
+  assert.ok(owner.includes('Keep &amp;lt;img&amp;gt; literal, A&amp;B.js, &quot;quoted&quot; and &#x27;apostrophe&#x27;.'), owner);
+  // The shared read-only transcript (its sanitiser drops the metadata).
+  const shared = renderShared(out.content, out.metadata);
+  assert.match(shared, /A&amp;B\.js/);
+  assert.doesNotMatch(shared, /A&amp;amp;B\.js/, 'not escaped twice');
+  assert.doesNotMatch(shared, /<img/);
+});
+
+test('the dev chat draws a plainText row as text, and an unmarked system row as before', () => {
+  const marked = renderOwner('<b>bold</b>', { plainText: true });
+  assert.match(marked, /&lt;b&gt;bold&lt;\/b&gt;/);
+  // A row that still carries the marker only in its metadata (any path
+  // that did not lift it) is drawn as text too.
+  const tf = path.join(__dirname, 'dev-chat-transcript.test.js');
+  const ts = fs.readFileSync(tf, 'utf8');
+  const { makeDevChat } = compileSlice(path.join(__dirname, 'sync-round3-metadata.cjs'),
+    ts.slice(0, ts.indexOf('// ── 1.')), 'module.exports = { makeDevChat };');
+  const viaMetadata = makeDevChat().render([{
+    role: 'system', id: 43, content: '<b>bold</b>', metadata: { plainText: true }, created_at: '2026-10-17T00:00:00Z',
+  }]);
+  assert.match(viaMetadata, /&lt;b&gt;bold&lt;\/b&gt;/);
+  const unmarked = renderOwner('<b>bold</b>', {});
+  assert.match(unmarked, /<b>bold<\/b>/, 'other system rows keep their markup');
+  const src = fs.readFileSync(path.join(ROOT, 'frontend/src/features/dev-chat/dev-chat.js'), 'utf8');
+  assert.match(src, /if \(m\.metadata\.plainText === true\) m\.plainText = true;/, 'the load path lifts the marker');
+  assert.equal((src.match(/content: data\.text, turnError: data\.turnError,[^\n]*_active: true, plainText: data\.plainText === true \}\);/g) || []).length, 2, 'both live status paths carry it');
+  assert.match(src, /rows\.push\(DevChat\._asPlainText\(DevChat\._withRunningLabel\(\{/, 'the generic row honours it');
+  const app = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
+  assert.match(app, /content: data\.text, ccOutput: data\.ccOutput,[^\n]*_active: true, plainText: data\.plainText === true \}\);/, 'and the WebSocket path');
+});
+
+test('a file name with a newline is staged whole', () => {
+  const name = 'multi\nline.txt';
+  const fx = customFixture({
+    base(s) { fs.writeFileSync(path.join(s, name), 'base\n'); },
+    branch(s) { fs.writeFileSync(path.join(s, name), 'branch\n'); },
+    main(s) { fs.writeFileSync(path.join(s, name), 'main\n'); },
+  });
+  inject(fx, `printf 'merged\\n' > '${name}'`);
+  const ran = runSync(fx, 'resolve');
+  assert.match(ran.result, /sync_result=resolved/, ran.out);
+  assert.equal(execFileSync('git', ['--literal-pathspecs', 'show', `HEAD:${name}`], { cwd: fx.ws, encoding: 'utf8' }), 'merged\n');
+  assert.ok(filesOf(ran.result).includes(name));
+});
+
+test('a resolver that aborts the merge or resets the branch itself is refused, and the head put back', () => {
+  for (const command of ['git merge --abort', 'git reset --hard origin/main']) {
+    const fx = fixture();
+    inject(fx, command);
+    const ran = runSync(fx, 'resolve');
+    assertAbandoned(fx, ran);
+    assert.equal(reasonOf(ran.result), 'The resolver ran git itself, so the merge was not pushed.', command);
+  }
 });

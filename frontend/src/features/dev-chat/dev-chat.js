@@ -926,6 +926,16 @@ const DevChat = {
   // Put that heading on a row built from `msg`. `html` goes with the venue:
   // the heading is our own copy now, not the row's stored content, so there
   // is nothing left for the unescaped branch to render.
+  /**
+   * A system row whose content is a sentence, not markup (its metadata says
+   * `plainText`; sync-main.js marks a sync's outcome, which can carry a
+   * worker's reason): drawn through the text path, so React escapes it once.
+   */
+  _asPlainText(row, msg) {
+    if (msg && (msg.plainText === true || (msg.metadata && msg.metadata.plainText === true))) delete row.html;
+    return row;
+  },
+
   _withRunningLabel(row, msg) {
     const label = DevChat._runningRowLabel(msg);
     if (!label) return row;
@@ -4591,6 +4601,10 @@ const DevChat = {
           // is the same landing as data, so the row can draw chips.
           if (m.metadata.stopLanding) m.stopLanding = m.metadata.stopLanding;
           if (m.metadata.billingSwitch) m.billingSwitch = true;
+          // A row whose content is a sentence, not markup (sync-main.js: a
+          // sync's outcome, which can carry a worker's reason): drawn as
+          // text, never through the HTML path.
+          if (m.metadata.plainText === true) m.plainText = true;
           if (m.metadata.ccLog) m.ccLog = m.metadata.ccLog;
           if (m.metadata.ccOutput) m.ccOutput = m.metadata.ccOutput;
           if (m.metadata.ccSummary) m.ccSummary = m.metadata.ccSummary;
@@ -5146,7 +5160,7 @@ const DevChat = {
                 // #786: quickReplies ride the status event so a
                 // restart-recovery breadcrumb repaints the pill bar live
                 // (the server persists them on the same system row).
-                DevChat.messages.push({ role: 'system', content: data.text, turnError: data.turnError, stopLanding: data.stopLanding, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+                DevChat.messages.push({ role: 'system', content: data.text, turnError: data.turnError, stopLanding: data.stopLanding, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true, plainText: data.plainText === true });
                 // #990: a step line means work is under way with nothing else
                 // painting yet — put the dots where the next message will
                 // land, and keep them there until it does. Set before the
@@ -5823,7 +5837,7 @@ const DevChat = {
         const sealMsg = lastAssistantMsg();
         if (sealMsg) sealMsg._finalized = true;
         // #786: carry quickReplies (see the POST-SSE status handler).
-        DevChat.messages.push({ role: 'system', content: data.text, turnError: data.turnError, stopLanding: data.stopLanding, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
+        DevChat.messages.push({ role: 'system', content: data.text, turnError: data.turnError, stopLanding: data.stopLanding, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true, plainText: data.plainText === true });
         // #990: keep a live cue where the next message will land — see the
         // POST-SSE status handler. Set before the render so both channels
         // emit the indicator inside the same innerHTML write.
@@ -7950,10 +7964,10 @@ const DevChat = {
           });
           return;
         }
-        rows.push(DevChat._withRunningLabel({
+        rows.push(DevChat._asPlainText(DevChat._withRunningLabel({
           t: 'status', key, icon: msg._active ? 'spinner' : 'check',
           html: msg.content || '', text: msg.content || '', elapsed, stamp,
-        }, msg));
+        }, msg), msg));
         return;
       }
 
