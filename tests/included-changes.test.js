@@ -1,6 +1,6 @@
 'use strict';
 
-// A change that went live inside another one (services/included-changes.js).
+// A change that went live inside another one (workflow/merge-followups/facts.ts).
 //
 // Flat 4B Chores, 5 Oct 2026: the Homeroom bot built the project's first
 // version (PR 3) and, asked in the group chat to fix it, built the fix (PR 8)
@@ -20,7 +20,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const included = require('../src/services/included-changes');
+const { includedIn } = require('../src/workflow/merge-followups/facts.ts');
 const lines = require('../src/workflow/rules/included-lines.ts');
 
 const ROOT = path.join(__dirname, '..');
@@ -41,7 +41,7 @@ const PR3 = {
   included_in_session_id: 6288,
 };
 
-test('containedIn: a head on the merged pull request\'s commits, and nothing else', () => {
+test('includedIn: a head on the merged pull request\'s commits, and nothing else', () => {
   const candidates = [
     { id: 1, source: 'native', reviewed_head_sha: H3 },
     { id: 2, source: 'native', reviewed_head_sha: H5 },
@@ -49,10 +49,12 @@ test('containedIn: a head on the merged pull request\'s commits, and nothing els
     { id: 4, source: 'native', reviewed_head_sha: null },
     { id: 5, source: 'native', reviewed_head_sha: 'not-a-sha' },
   ];
-  assert.deepEqual(included.containedIn(candidates, [H8, H3]).map((c) => c.id), [1, 3],
-    'native by its reviewed head, imported by its imported head, in any case');
-  assert.deepEqual(included.containedIn(candidates, []), []);
-  assert.deepEqual(included.containedIn(candidates, null), []);
+  assert.deepEqual(includedIn(candidates, [H8, H3]), [{ id: 1, head: H3 }, { id: 3, head: H3 }],
+    'native by its reviewed head, imported by its imported head, in any case, each named with that head in lowercase');
+  assert.deepEqual(includedIn(candidates, [H8.toUpperCase(), H3.toUpperCase()]).map((c) => c.id), [1, 3],
+    'the listed commits are compared in any case too');
+  assert.deepEqual(includedIn(candidates, []), []);
+  assert.deepEqual(includedIn(candidates, null), []);
 });
 
 test('the words: its pull request, its thread and its author, with no em dash', () => {

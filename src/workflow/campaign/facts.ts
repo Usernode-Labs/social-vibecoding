@@ -1,7 +1,5 @@
 // What the campaign machine reads inside a transition. The campaign's row is
-// locked first: during a rollout an older release's driver may still write
-// it (its lease, its app rows), and the machine adopts a campaign only once
-// that driver has let it go.
+// locked first.
 
 import type { Event, Tx } from '../kernel/index.ts';
 
@@ -11,8 +9,6 @@ export interface CampaignRow {
   title: string;
   status: string;
   targetFilter: string[] | null;
-  // An older release's driver holds its lease right now.
-  drivenElsewhere: boolean;
   // The app whose thread carries the governance proposal (the platform's own).
   threadAppId: number | null;
 }
@@ -65,14 +61,13 @@ export const NO_FACTS: Facts = { campaign: null, apps: [], green: [], asked: [],
 async function readCampaign(tx: Tx, id: number): Promise<CampaignRow | null> {
   const { rows: [r] } = await tx.query(
     `SELECT mc.id, mc.issue_id, mc.title, mc.status, mc.target_filter,
-            (mc.lease_until IS NOT NULL AND mc.lease_until > now() AND mc.runner_id IS DISTINCT FROM 'workflow') AS driven_elsewhere,
             (SELECT i.app_id FROM issues i WHERE i.id = mc.issue_id) AS thread_app_id
        FROM maintenance_campaigns mc WHERE mc.id = $1 FOR UPDATE`, [id]);
   if (!r) return null;
   const filter = Array.isArray(r.target_filter) && r.target_filter.length ? r.target_filter.map(String) : null;
   return {
     id: r.id, issueId: r.issue_id ?? null, title: String(r.title), status: String(r.status), targetFilter: filter,
-    drivenElsewhere: !!r.driven_elsewhere, threadAppId: r.thread_app_id ?? null,
+    threadAppId: r.thread_app_id ?? null,
   };
 }
 

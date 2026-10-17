@@ -169,16 +169,7 @@ test('WP-C: the card says the room can see it only while the bot has it and has 
   assert.doesNotMatch(SHARED_LINE, /—/);
 });
 
-test('WP-C: the reads behind offers are budgeted per person and per hour', () => {
-  const budget = { people: new Map(), hour: { at: 0, n: 0 } };
-  const t0 = 1_000_000_000;
-  for (let i = 0; i < botChat.OFFER_READS_PER_DAY; i += 1) assert.equal(botChat.takeOfferRead(1, t0 + i, budget), true);
-  assert.equal(botChat.takeOfferRead(1, t0 + 10, budget), false, 'their day is spent');
-  assert.equal(botChat.takeOfferRead(2, t0 + 10, budget), true, 'somebody else\'s is not');
-  assert.equal(botChat.takeOfferRead(1, t0 + 25 * 60 * 60 * 1000, budget), true, 'a new day');
-  const busy = { people: new Map(), hour: { at: t0, n: botChat.OFFER_READS_PER_HOUR } };
-  assert.equal(botChat.takeOfferRead(3, t0 + 1000, busy), false, 'everybody\'s hour is spent');
-  assert.equal(botChat.takeOfferRead(3, t0 + 61 * 60 * 1000, busy), true, 'a new hour');
+test('WP-C: a message is counted in words', () => {
   assert.equal(botChat.wordCount('  could it   show the weather '), 5);
 });
 
@@ -329,5 +320,23 @@ test('WP-C: offers against the full PostgreSQL schema', { timeout: 180000 }, asy
     // An offer is only ever its own maker's to take.
     const taken = await botChat.requestFromMessage(pool, null, { app, user: { id: sam.id, username: 'sam' }, messageId: second, deps: deps(null) });
     assert.equal(taken.status, 403);
+  });
+
+  // 17 Oct 2026: counted from rows, so the budget holds across processes
+  // and restarts (it was a counter in each process's memory).
+  await t.test('the reads behind offers are budgeted per person a day and for everybody an hour, from rows', async () => {
+    await pool.query('DELETE FROM homeroom_bot_offer_reads');
+    for (let i = 0; i < botChat.OFFER_READS_PER_DAY; i += 1) assert.equal(await botChat.takeOfferRead(pool, sam.id, 900000 + i), true);
+    assert.equal(await botChat.takeOfferRead(pool, sam.id, 900100), false, 'their day is spent');
+    assert.equal(await botChat.takeOfferRead(pool, vet.id, 900101), true, 'somebody else\'s is not');
+    assert.equal(await botChat.takeOfferRead(pool, vet.id, 900101), false, 'a message is read once');
+    await pool.query(`UPDATE homeroom_bot_offer_reads SET read_at = NOW() - INTERVAL '25 hours' WHERE user_id = $1`, [sam.id]);
+    assert.equal(await botChat.takeOfferRead(pool, sam.id, 900102), true, 'a new day');
+    await pool.query(
+      `INSERT INTO homeroom_bot_offer_reads (user_id, message_id) SELECT $1, 950000 + g FROM generate_series(1, $2::int) g`,
+      [maya.id, botChat.OFFER_READS_PER_HOUR]);
+    assert.equal(await botChat.takeOfferRead(pool, vet.id, 900103), false, 'everybody\'s hour is spent');
+    await pool.query(`UPDATE homeroom_bot_offer_reads SET read_at = NOW() - INTERVAL '61 minutes'`);
+    assert.equal(await botChat.takeOfferRead(pool, vet.id, 900104), true, 'a new hour');
   });
 });

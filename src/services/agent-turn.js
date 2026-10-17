@@ -623,6 +623,7 @@ async function completeCodexAttempt({
         dispatch_failed: 'worker',
         agent_context_changed: 'worker',
         recovery_abandoned: 'worker',
+        worker_lost: 'worker',
       };
       const normalizedMetrics = llmTelemetry.normalizeDiagnostics({
         ...(telemetryMetrics || {}),
@@ -965,7 +966,8 @@ async function settleRecoveredAgentAttempt({
         ? activeTurn.telemetryComponent || null
         : null,
       telemetryMetrics: result || null,
-      errorCode: result?.agentRetryFresh === true ? 'resume_thread_missing' : null,
+      errorCode: result?.agentRetryFresh === true ? 'resume_thread_missing'
+        : result?.markerlessCause ? 'worker_lost' : null,
     });
   }
   if (typeof settleClaude === 'function') {

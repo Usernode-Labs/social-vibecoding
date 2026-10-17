@@ -2234,11 +2234,9 @@ function revisionChangedVoteResponse(res, headSha, message = null, epoch = null)
 // head_sha is still recorded. It no longer decides anything, but it is the
 // only record of which commit a person was looking at when they approved,
 // and that is worth keeping.
-// The longest line a vote may carry (#1688). One sentence, not a review:
-// the roster, the thread line and the proposer's notification all quote it
-// whole, and a paragraph in any of those is worse than none.
-const VOTE_REASON_MAX = 280;
-const VOTE_REASON_REQUIRED = 'A No comes with a line: what is not working for you?';
+// The longest line a vote may carry, and what a No without one is answered
+// (#1688; src/workflow/rules/vote-reason.ts).
+const { VOTE_REASON_MAX, VOTE_REASON_REQUIRED } = require('../workflow/rules/vote-reason.ts');
 
 // The one-line reason on a vote, normalised: whitespace collapsed, empty
 // becomes null (no line), anything else trimmed. `{ error }` when the line is
@@ -2387,7 +2385,7 @@ function mergedRowSelect() {
            COALESCE(cs.merged_at, cs.created_at) AS completed_at,
            cs.revert_of_session_id,
            -- A change that went live inside another one
-           -- (services/included-changes.js): the change that carried it, for
+           -- (workflow/merge-followups/facts.ts): the change that carried it, for
            -- its page's "Live, included in #8".
            cs.included_in_session_id,
            inc.pr_number AS included_in_pr_number,
@@ -5248,6 +5246,9 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
     // #2038: scoped by approval epoch inside the gate. No revision is passed,
     // because a proposal's commit changes for reasons that say nothing about
     // whether its approvals still describe it.
+    // Read uncached: the proposal machine's merge.gate work decides from it
+    // in whichever process runs it (the claim reads it again under its lock).
+    fresh: true,
   });
   // The member floor, when it is what stands between this proposal and the
   // merge: the votes are there, but none of them is from someone other than

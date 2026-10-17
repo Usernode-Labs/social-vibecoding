@@ -154,6 +154,21 @@ module.exports = function install(fakes) {
     keep: ['containerHostname', 'parseDockerBuildLine', 'STOP_GRACE_SEC', 'STAGING_STOP_GRACE_SEC'],
     overrides: {
       async removeVolume(name) { await fakes.record('docker.removeVolume', { name }); },
+      // A merge's worker goes through worker.removeCcVolume, which reads the
+      // container by identity and removes the volume with the docker CLI:
+      // no container of that name, and the volume's removal recorded as
+      // removeVolume's is.
+      async execFileAsync(cmd, args) {
+        if (cmd === 'docker' && args[0] === 'inspect') {
+          throw Object.assign(new Error('No such object'), { stderr: `Error: No such object: ${args.at(-1)}` });
+        }
+        if (cmd === 'docker' && args[0] === 'volume' && args[1] === 'rm') {
+          await fakes.record('docker.removeVolume', { name: args.at(-1) });
+          return { stdout: '', stderr: '' };
+        }
+        await fakes.record('fake.unexpected', { module: 'services/docker', fn: `execFileAsync ${cmd} ${args[0]}` });
+        throw Object.assign(new Error(`docker ${args[0]} reaches an outside service this test does not fake`), { code: 'ECONNREFUSED' });
+      },
     },
   });
   outside(fakes, 'services/kubernetes', { keep: [] });
@@ -268,6 +283,44 @@ module.exports = function install(fakes) {
       await fakes.record('sync.run', { sessionId: o.sessionId, reason: o.reason });
       await fakes.pause('sync.turn');
       return { outcome: 'clean', sha: 'd'.repeat(40), message: 'Merged main cleanly.' };
+    },
+  });
+  // The Homeroom bot's chat model (its voice in projects, its DM): one
+  // scripted answer, a reply that names the message it answers, stopping at
+  // `bot.model` while it is asked. Its key is the bot's own, read from the
+  // credential store, which answers here that it has one.
+  const openrouter = require(path.join(SRC, 'services/global-chat/openrouter'));
+  fakes.stub(path.join(SRC, 'services/global-chat/openrouter'), {
+    ...openrouter,
+    async streamChat(req) {
+      const last = [...(req.messages || [])].reverse().find((m) => m.role === 'user');
+      await fakes.record('bot.model', { pid: process.pid });
+      await fakes.pause('bot.model');
+      const words = String(last?.content || '');
+      const asked = /#(\d+)/.exec(words.slice(words.lastIndexOf('Answer what was said to you'))) ? 'the place' : 'the DM';
+      const calls = [{ id: 'c1', type: 'function', function: { name: 'reply', arguments: JSON.stringify({ text: `Here is my answer in ${asked}.` }) } }];
+      return { content: '', toolCalls: calls, assistantMessage: { role: 'assistant', content: null, tool_calls: calls },
+        usage: { inputTokens: 1, outputTokens: 1, costUsd: 0 } };
+    },
+  });
+  const store = require(path.join(SRC, 'services/credential-store'));
+  fakes.stub(path.join(SRC, 'services/credential-store'), {
+    ...store,
+    async readMetadata() { return { status: 'valid' }; },
+    async readSecret() { return 'sk-fake-bot-key'; },
+  });
+  // main's unit suite on a commit (the main-check machine's main.suite work,
+  // services/main-watch.js runMainSuite): the run's queue id kept first, as
+  // the real run does before its Jobs exist, then the `main.suite` point,
+  // then green. What each attempt was handed is recorded (`main.suite`).
+  const mainWatch = require(path.join(SRC, 'services/main-watch'));
+  fakes.stub(path.join(SRC, 'services/main-watch'), {
+    ...mainWatch,
+    async runMainSuite(_config, _db, { app, sha, resumeRunId = null, onRunId = null }) {
+      await fakes.record('main.suite', { appId: app.id, sha, resumeRunId });
+      if (!resumeRunId && onRunId) await onRunId(`run-${app.id}-${sha.slice(0, 8)}`);
+      await fakes.pause('main.suite');
+      return { state: 'passing', detail: { summary: { tests: 1, pass: 1, fail: 0 } } };
     },
   });
   // Not an outside service, a probe: whether the Workshop hears a board

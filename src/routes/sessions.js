@@ -6548,7 +6548,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const busyNow = () => isSessionBusy(sessionId);
       if (busyNow()) {
         await require('../services/unit-suite-reuse').owePendingRun({
-          pool, visuals, stagingRecovery, config, session, busy: busyNow, head: requestedHead,
+          pool, stagingRecovery, config, session, busy: busyNow, head: requestedHead,
         });
         return res.json({ status: 'running' });
       }
@@ -6893,24 +6893,22 @@ async function postHeadlessQuestionThreadMessage({ pool, appId, issueNumber, que
 // cc_running → wrapping transition so a 'wrapping' resume knows what the
 // dispatch arrived at without re-deriving it.
 async function setHeadlessStep(pool, sessionId, step, outcome, headlessTurnId = undefined) {
-  const sets = ['headless_step = $1'];
-  const params = [step, sessionId];
-  if (outcome !== undefined) {
-    params.push(outcome);
-    sets.push(`headless_outcome = $${params.length}`);
-  }
-  if (headlessTurnId !== undefined) {
-    params.push(headlessTurnId);
-    sets.push(`headless_turn_id = $${params.length}`);
-  } else if (step === 'planning') {
-    sets.push('headless_turn_id = NULL');
-  }
+  // An outcome or a turn id left undefined keeps the stored one; a step back
+  // to planning without a turn id clears it. One fixed SET list, so what it
+  // can write is read from the text (tests/lib/workflow-boundary.js).
+  //
   // This is a dispatch/replay boundary, not telemetry. If it cannot commit,
   // the caller must not make the next paid call under an identity recovery
   // cannot rediscover.
   await pool.query(
-    `UPDATE chat_sessions SET ${sets.join(', ')} WHERE id = $2`,
-    params,
+    `UPDATE chat_sessions
+        SET headless_step = $1::text,
+            headless_outcome = CASE WHEN $3::boolean THEN $4::text ELSE headless_outcome END,
+            headless_turn_id = CASE WHEN $5::boolean THEN $6::uuid
+                                    WHEN $1::text = 'planning' THEN NULL ELSE headless_turn_id END
+      WHERE id = $2`,
+    [step, sessionId, outcome !== undefined, outcome === undefined ? null : outcome,
+      headlessTurnId !== undefined, headlessTurnId === undefined ? null : headlessTurnId],
   );
 }
 
@@ -10448,6 +10446,11 @@ const CODEX_LEDGER_ERROR_CODES = {
   credential_failure: 'credential_failure',
 };
 function codexLedgerErrorCode(result) {
+  // 17 Oct 2026: a turn whose worker went from under it (OOM-killed, its
+  // container gone) is the worker's failure, not the provider's: without a
+  // code its row read error_class 'provider'. Why is in its telemetry
+  // (markerless_cause).
+  if (result?.markerlessCause) return 'worker_lost';
   return CODEX_LEDGER_ERROR_CODES[result?.agentErrorCode] || null;
 }
 

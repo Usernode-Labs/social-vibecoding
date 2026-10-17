@@ -28,11 +28,8 @@ export const sessionKey = (sessionId: number) => `session:${sessionId}`;
 
 // Work kinds. delivery.verify (and app-delivery's answer, a message) decide
 // `live`; the rest only have to happen. The deploy is app-delivery's: the
-// merge asks it by message. app.deliver is the deploy a merge recorded
-// before that ran itself: an item of it left from then hands the merge to
-// app-delivery instead (services.ts), and is removed once none can be left.
+// merge asks it by message.
 export const WORK = Object.freeze({
-  deliver: 'app.deliver',
   nudge: 'host.nudgeDeployer',
   verify: 'delivery.verify',
   teardown: 'preview.teardown',
@@ -41,13 +38,14 @@ export const WORK = Object.freeze({
   issues: 'issues.closeAfterMerge',
   closePr: 'github.closePullRequest',
   mainCheck: 'main.check',
-  // Queued by an older release only: their handlers hand the merge and the
-  // live to the Homeroom bot's change machine (services.ts, one release).
-  bot: 'bot.requestMerged',
-  dm: 'bot.dmMerged',
-  live: 'bot.announceLive',
   journey: 'journey.changeLive',
 });
+// The deploy a merge recorded before every deploy was app-delivery's: no item
+// of it is left to run, and a follow-up of it in an old instance's record is
+// asked again through Retry delivery.
+const OLD_DELIVER = 'app.deliver';
+// The kinds a follow-up can be retried as: those with a handler.
+const RETRYABLE: ReadonlySet<string> = new Set(Object.values(WORK));
 
 // Post-commit kicks into flows not migrated yet. What browsers hear is a
 // push, published with the transition (thread lines, the vote card, the
@@ -269,23 +267,44 @@ function deliveryRequest(d: Data, reuse: Json): NonNullable<Outcome['messages']>
   } } };
 }
 
-// Its preview goes. For a merge that is delivered, only once app-delivery
+// Its preview goes: the preview machine retires it for good, asked by a
+// message in this transaction (it cannot be lost, and the preview's own
+// timeline shows it). For a merge that is delivered, only once app-delivery
 // has answered: in demo mode the deploy uses the preview's own build, and
-// the teardown drops the preview's reference to it.
-const teardownWork = (d: Data): WorkRequest => ({ kind: WORK.teardown, key: 'teardown', input: { sessionId: d.sessionId } });
+// the retirement drops the preview's reference to it. Recorded as a
+// follow-up done, so it is asked once.
+const TEARDOWN = 'teardown';
+function andTeardown(out: Outcome<MFState>): Outcome<MFState> {
+  if (out.next.name === NONE) return out;
+  const next = out.next as Going;
+  const d = next.data;
+  if (d.followups[TEARDOWN]) return out;
+  const input = { sessionId: d.sessionId };
+  return {
+    ...out,
+    next: { name: next.name, data: { ...d, followups: { ...d.followups, [TEARDOWN]: { kind: 'preview.retire', input, status: 'done' } } } },
+    messages: [...(out.messages || []), { to: { machine: 'preview', key: sessionKey(d.sessionId) },
+      event: { type: 'RetireRequested', payload: { sessionId: d.sessionId, reason: 'merged', terminal: true } }, appId: d.appId }],
+  };
+}
 
-// What every merged change has to have done: its preview and worker go, and
-// the requests close. (The bot stops its other work on the request: the
-// merge's write tells its change machine, settleWrites.)
-function settleWork(d: Data, linkedIssues: number[], closeOnly: boolean, { teardown = true } = {}): WorkRequest[] {
+// The second look at the requests a merge closes (issues.closeAfterMerge):
+// GitHub closes `Closes #N` a few seconds after the merge, or not at all,
+// so a request still open at the first look is looked at again this much
+// later, and closed by the platform then.
+const ISSUES_SECOND_LOOK_MS = 30 * 1000;
+
+// What every merged change has to have done: its worker goes, and the
+// requests close (its preview: andTeardown). (The bot stops its other work
+// on the request: the merge's write tells its change machine, settleWrites.)
+function settleWork(d: Data, linkedIssues: number[], closeOnly: boolean): WorkRequest[] {
   const work: WorkRequest[] = [
-    ...(teardown ? [teardownWork(d)] : []),
     { kind: WORK.retire, key: 'worker', input: { sessionId: d.sessionId } },
   ];
   if (d.repo && d.prNumber && (!closeOnly || linkedIssues.length)) {
     work.push({ kind: WORK.issues, key: 'issues', input: {
       sessionId: d.sessionId, appId: d.appId, appSlug: d.appSlug, prNumber: d.prNumber, ...d.repo, linkedIssues, closeOnly,
-      ...(d.includedIn ? { carrierPrNumber: d.includedIn.prNumber } : {}),
+      ...(d.includedIn ? { carrierPrNumber: d.includedIn.prNumber } : {}), look: 1,
     } });
   }
   return work;
@@ -313,6 +332,12 @@ function toProposal(d: Data): NonNullable<Outcome['messages']>[number] {
   return { to: { machine: 'proposal', key: `session:${d.sessionId}` }, event: { type: 'Merged', payload: { sessionId: d.sessionId } }, appId: d.appId };
 }
 
+// The app's main check (src/workflow/main-check/): the suite on the merge commit.
+function toMainCheck(d: Data): NonNullable<Outcome['messages']>[number] {
+  return { to: { machine: 'main-check', key: `app:${d.appId}` }, event: { type: 'CheckRequested', payload: {
+    appId: d.appId, sha: d.mergeSha, sessionId: d.sessionId, prNumber: d.prNumber } }, appId: d.appId };
+}
+
 // The app's merge queue (src/workflow/merge-queue/): something may merge
 // now (this merge moved main; its check found main green).
 function toQueue(d: Data, reason: string): NonNullable<Outcome['messages']>[number] {
@@ -337,11 +362,13 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
   // The app's merge queue: the next merge (a message, not a kick: it cannot
   // be lost).
   const messages = [toProposal(d), ...(d.delivery ? [deliveryRequest(d, reuseOf(f))] : []), toQueue(d, 'merged')];
-  work.push(...settleWork(d, s.linkedIssues, false, { teardown: app.selfHosted }));
+  work.push(...settleWork(d, s.linkedIssues, false));
   if (d.repo && d.prNumber) {
     work.push({ kind: WORK.find, key: 'included', input: { sessionId: d.sessionId, appId: d.appId, prNumber: d.prNumber, ...d.repo } });
   }
-  if (d.mergeSha) work.push({ kind: WORK.mainCheck, key: 'main-check', input: { appId: d.appId, sessionId: d.sessionId, prNumber: d.prNumber, mergeSha: d.mergeSha } });
+  // The repo's unit suite on the merge commit: the app's main-check
+  // machine (src/workflow/main-check/), asked by message.
+  if (d.mergeSha) messages.push(toMainCheck(d));
   // The requests it closes stop showing as open in every web process at
   // once, and the lists re-read (GitHub closes `Closes #N` late);
   // issues.closeAfterMerge makes sure they close.
@@ -365,14 +392,17 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
     const since = Date.parse(d.mergedAt) - BOOT_CLOCK_MARGIN_MS;
     const after = app.booted.filter((b) => Date.parse(b.at) >= since);
     const exact = after.find((b) => b.sha === d.mergeSha);
-    if (exact) return toLive(e, d, exact.sha, ctx, x);
+    if (exact) return andTeardown(toLive(e, d, exact.sha, ctx, x));
     if (d.repo) for (const b of after) work.push(verifyWork(d, b.sha));
   }
-  return outcome('delivering', d, x);
+  // The platform's own app has no deploy here to wait for: its preview goes
+  // at once.
+  const out = outcome('delivering', d, x);
+  return app.selfHosted ? andTeardown(out) : out;
 }
 
-// Why a carried change can no longer be included: CANDIDATES_SQL's
-// conditions (services/included-changes.js), read again under the change's
+// Why a carried change can no longer be included: INCLUDED_CANDIDATES_SQL's
+// conditions (facts.ts), read again under the change's
 // own lock. The message is then refused and no instance is made, so the
 // change can still merge on its own, or be included by a later merge.
 //
@@ -424,9 +454,9 @@ function included(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFSt
     messages: [toProposal(d)],
     push: [voteUpdate(d, { includedIn: ref.sessionId })],
   };
-  if (p.carrierState === 'live') return toLive(e, d, p.deliveredSha, ctx, x);
-  if (p.carrierState === 'deploy_failed') return toFailed(e, d, 'the change that carried it did not deploy', { ...x });
-  return outcome('delivering', d, x);
+  if (p.carrierState === 'live') return andTeardown(toLive(e, d, p.deliveredSha, ctx, x));
+  if (p.carrierState === 'deploy_failed') return andTeardown(toFailed(e, d, 'the change that carried it did not deploy', { ...x }));
+  return andTeardown(outcome('delivering', d, x));
 }
 
 // More work, added to an outcome already decided.
@@ -436,24 +466,14 @@ function andWork(out: Outcome<MFState>, work: WorkRequest[]): Outcome<MFState> {
   return { ...out, next: { name: next.name, data: track(next.data, work) }, work: [...(out.work || []), ...work] };
 }
 
-// A work result updates its follow-up; delivery.verify (and an app.deliver
-// that deployed before app-delivery ran every deploy) can also make the
-// change live, and included.find hands the carried changes on. An
-// app.deliver's first result, whatever it is, lets the preview go, unless
-// it handed the merge to app-delivery, whose answer does (or the merge is
-// live already: another deploy contained it first).
-const handedOff = (e: Event<WorkResultPayload>) => e.payload.kind === WORK.deliver
-  && !!(e.payload.result as { handOff?: boolean } | null)?.handOff;
+// A work result updates its follow-up; delivery.verify can also make the
+// change live, and included.find hands the carried changes on.
 function workResult(status: Followup['status']) {
   const decide = resultOf(status);
   return {
     guard: (s: any, e: Event<WorkResultPayload>): Check =>
       (s.data.followups[e.payload.workKey]?.status === 'pending' ? ok() : reject('stale_result')),
-    to: (s: any, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext): Outcome<MFState> => {
-      const out = decide(s, e, f, ctx);
-      const letGo = e.payload.kind === WORK.deliver && (!handedOff(e) || s.name === 'live') && !s.data.followups.teardown;
-      return letGo ? andWork(out, [teardownWork(s.data)]) : out;
-    },
+    to: (s: any, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext): Outcome<MFState> => decide(s, e, f, ctx),
   };
 }
 
@@ -464,18 +484,19 @@ function resultOf(status: Followup['status']) {
     const d: Data = { ...s.data, followups: { ...s.data.followups,
       [p.workKey]: { ...prev, status, ...(p.error ? { error: p.error.message } : {}) } } };
     const result = (p.result || {}) as { sha?: string; contains?: boolean; ids?: number[]; found?: { id: number; head: string }[] };
-    if (p.kind === WORK.deliver && s.name !== 'live') {
-      // Recorded before every deploy was app-delivery's: the merge asks it
-      // now, as it would have, with the preview build the item offered.
-      if (status === 'done' && handedOff(e)) {
-        const asked = { ...d, delivery: DELIVERY, answered: false };
-        return outcome('delivering', asked, { messages: [deliveryRequest(asked, (prev.input as { reuse?: Json }).reuse ?? null)] });
-      }
-      if (status === 'done') return deployedBuild(e, s.name, d, result.sha ? String(result.sha).toLowerCase() : null, ctx);
-      if (s.name === 'delivering') return toFailed(e, d, p.error?.message || 'the deploy failed');
-    }
     if (p.kind === WORK.verify && status === 'done' && result.contains && s.name !== 'live') {
       return toLive(e, d, result.sha || null, ctx);
+    }
+    // An older release queued the main check as work (one release: its
+    // handler only reports): the main-check machine is asked now.
+    if (p.kind === WORK.mainCheck) return { next: { name: s.name, data: d }, messages: [toMainCheck(d)] };
+    // An older release queued the preview's teardown as work (one release:
+    // its handler only reports): the preview machine is asked now, however
+    // the item ended (an older handler's failure included), since nothing
+    // else will ask it.
+    if (p.kind === WORK.teardown) {
+      return { next: { name: s.name, data: d }, messages: [{ to: { machine: 'preview', key: sessionKey(d.sessionId) },
+        event: { type: 'RetireRequested', payload: { sessionId: d.sessionId, reason: 'merged', terminal: true } }, appId: d.appId }] };
     }
     // A shots run still works in the worker: the same retire, later.
     if (p.kind === WORK.retire && status === 'done' && (result as { waiting?: string }).waiting) {
@@ -505,11 +526,30 @@ function resultOf(status: Followup['status']) {
     // in every process: the handler's own updates reached only its own.
     // (`skipped` is a reason when the work did not run, GitHub off; the
     // watcher's own result carries a list of that name.)
+    // A request it found still open at the first look is looked at again
+    // later (GitHub closes `Closes #N` late), and closed then. The close
+    // proposals whose target it saw closed or gone are superseded, by a
+    // message to their own instance (filed first: one filed before the
+    // governance machine ran is adopted from its row).
     if (p.kind === WORK.issues && status === 'done' && typeof (result as { skipped?: unknown }).skipped !== 'string' && d.repo) {
       const numbers = (v: unknown) => (Array.isArray(v) ? v : []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
-      const r = result as { closed?: unknown; stillOpen?: unknown };
-      return { next: { name: s.name, data: d }, push: [
-        issuesClosed({ ...d.repo, numbers: numbers(r.closed), open: numbers(r.stillOpen) }),
+      const r = result as { closed?: unknown; stillOpen?: unknown; waiting?: boolean; targets?: { issueId: number; number: number }[] };
+      const cause = { kind: 'pr-merge', prNumber: (prev.input as { carrierPrNumber?: number }).carrierPrNumber || d.prNumber };
+      const targets = (Array.isArray(r.targets) ? r.targets : []).filter((t) => Number.isInteger(t?.issueId) && Number.isInteger(t?.number));
+      const messages = targets.flatMap((t): NonNullable<Outcome['messages']> => {
+        const to = { machine: 'governance-proposal', key: `issue:${t.issueId}` };
+        return [{ to, event: { type: 'Filed', payload: { issueId: t.issueId } }, appId: d.appId },
+          { to, event: { type: 'TargetClosed', payload: { issueNumber: t.number, cause } }, appId: d.appId }];
+      });
+      const work: WorkRequest[] = r.waiting ? [{ kind: WORK.issues, key: `issues~${ctx.version + 1}`,
+        input: { ...(prev.input as Record<string, Json>), look: 2 }, notBefore: new Date(ctx.now.getTime() + ISSUES_SECOND_LOOK_MS) }] : [];
+      // A linked request still open at the first look stays hidden: the
+      // second look closes it. Only what the last look leaves open is shown
+      // again.
+      const linked = new Set(numbers((prev.input as { linkedIssues?: unknown }).linkedIssues));
+      const open = numbers(r.stillOpen).filter((n) => !r.waiting || !linked.has(n));
+      return { next: { name: s.name, data: track(d, work) }, work, messages, push: [
+        issuesClosed({ ...d.repo, numbers: numbers(r.closed), open }),
         boardMoved(issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' })),
       ] };
     }
@@ -562,29 +602,28 @@ const deployed = {
 };
 
 // app-delivery's answer to this merge's own request. Its first answer,
-// whatever it is, lets the preview go (as app.deliver's first result does).
+// whatever it is, lets the preview go.
 const fromDelivery = (s: any, e: Event<any>): Check =>
   (s.data.role === 'merge' && s.data.delivery === DELIVERY && e.source.kind === 'message'
     && e.source.from.machine === DELIVERY && e.source.from.key === deliveryKey(s.data.appId) ? ok() : reject('not_asked'));
-const withTeardown = (s: any, out: Outcome<MFState>) => (s.data.followups.teardown ? out : andWork(out, [teardownWork(s.data)]));
 const delivered = {
   guard: fromDelivery,
   to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFState> =>
-    withTeardown(s, deployedBuild(e, s.name, { ...s.data, answered: true }, e.payload.sha, ctx)),
+    andTeardown(deployedBuild(e, s.name, { ...s.data, answered: true }, e.payload.sha, ctx)),
 };
 const deliveryFailed = {
   guard: fromDelivery,
   to: (s: any, e: Event<any>): Outcome<MFState> => {
     const d = { ...s.data, answered: true };
-    return withTeardown(s, s.name === 'delivering' ? toFailed(e, d, e.payload.message) : { next: { name: s.name, data: d } });
+    return andTeardown(s.name === 'delivering' ? toFailed(e, d, e.payload.message) : { next: { name: s.name, data: d } });
   },
 };
 
 const retryFollowup = {
   guard: (s: any, e: Event<any>): Check => {
     const f = s.data.followups[e.payload.workKey];
-    if (f?.kind === WORK.deliver) return reject('use_retry_delivery');
-    return f && ['failed', 'exhausted'].includes(f.status) ? ok() : reject('not_retryable');
+    if (f?.kind === OLD_DELIVER) return reject('use_retry_delivery');
+    return f && RETRYABLE.has(f.kind) && ['failed', 'exhausted'].includes(f.status) ? ok() : reject('not_retryable');
   },
   to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFState> => {
     const prev = s.data.followups[e.payload.workKey]!;
@@ -623,8 +662,11 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
     // request's "It's live" (bot.announceLive), the issue lists' push at the
     // merge. 6: the proposal machine hears the move into 'merged' (Merged).
     // 7: the proposal machine reports the merge (Merged, by message); the
-    // merge queue hears every merge and main's verdict on it.
-    version: 7,
+    // merge queue hears every merge and main's verdict on it. 8: the
+    // preview is retired and main is checked by message; the requests a
+    // merge closes are looked at twice, and their close proposals are told
+    // by message once the close is confirmed.
+    version: 8,
     events: EVENTS,
     create: ['Merged', 'Included'],
     terminal: ['live'],

@@ -200,9 +200,13 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
   });
 
   await t.test('somebody the bot already wrote to is never greeted', async () => {
-    assert.equal(await dm.claimHello(pool, { userId: maya.id, botId: bot.id, kind: 'maker' }), false);
-    const { rows: [row] } = await pool.query('SELECT kind FROM homeroom_bot_hellos WHERE user_id = $1', [maya.id]);
-    assert.equal(row.kind, 'known');
+    await pool.query(
+      `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_mode', 'live')
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+    assert.equal(await dm.greetTourFinisher(pool, { userId: maya.id }), null, 'no hello sent');
+    await pool.query(`DELETE FROM platform_settings WHERE key = 'homeroom_bot_mode'`);
+    const { rows: [row] } = await pool.query('SELECT kind, message_id FROM homeroom_bot_hellos WHERE user_id = $1', [maya.id]);
+    assert.deepEqual(row, { kind: 'known', message_id: null }, 'recorded as known, in the send that did not go');
     await pool.query('DELETE FROM homeroom_bot_hellos WHERE user_id = $1', [maya.id]);
     await pool.query('DELETE FROM conversation_messages WHERE sender_id = $1 OR sender_id = $2', [bot.id, maya.id]);
   });
@@ -305,9 +309,10 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     assert.deepEqual(hello, { kind: 'joiner', message_id: sent.messageId });
     assert.equal(await dm.greetJoiner(pool, { user: tess, app: herbs }), null, 'once, ever');
     await mode('off');
-    // Redeeming a link is what greets them.
+    // Redeeming a link is what greets them: owed in the redemption's own
+    // transaction, to their DM machine (src/workflow/bot-dm/).
     assert.match(read('src/services/community-invites.js'),
-      /if \(status === 'joined'\) \{\n {6}appAccess\.invalidateVisibility\(invite\.app_id, invite\.slug\);\n[^\n]*\n {6}void require\('\.\/homeroom-bot-dm'\)\.greetJoiner\(pool, \{/);
+      /if \(after\[0\]\?\.status === 'joined'\) \{\n {6}await require\('\.\.\/workflow\/platform\.ts'\)\.greet\(client, \{ userId: user\.id, kind: 'joiner', appId: invite\.app_id \}\);\n {4}\}\n {4}await client\.query\('COMMIT'\);/);
   });
 
   await t.test('#4604: ending the tour greets once, only somebody the bot has not met', async () => {
@@ -336,7 +341,8 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     await mode('off');
     // The first end of the tour is what greets, never a backfill.
     const source = read('src/services/onboarding.js');
-    assert.match(source, /if \(marked && marked\.rowCount > 0 && ended !== 'backfill'\) \{\n {4}void require\('\.\/homeroom-bot-dm'\)\.greetTourFinisher\(pool, \{ userId \}\);/);
+    assert.match(source, /if \(marked && marked\.rowCount > 0 && ended !== 'backfill'\) \{\n {6}await require\('\.\.\/workflow\/platform\.ts'\)\.greet\(client, \{ userId, kind: 'tour' \}\);\n {4}\}\n {4}await client\.query\('COMMIT'\);/,
+      'owed in the transaction that ends the tour');
     assert.equal(typeof onboarding.markTourDone, 'function');
   });
 
@@ -389,8 +395,31 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     await mode('off');
   });
 
-  await t.test('two claims at once greet once', async () => {
-    const claims = await Promise.all([1, 2, 3].map(() => dm.claimHello(pool, { userId: old.id, botId: bot.id, kind: 'member' })));
-    assert.equal(claims.filter(Boolean).length, 1);
+  await t.test('two hellos at once greet once, each claimed in its own send', async () => {
+    const sends = await Promise.all([1, 2, 3].map((i) => dm.sendDm(pool, {
+      bot, userId: old.id, content: `card ${i}`, idempotencyKey: `hello-race-${i}`,
+      hello: { kind: 'member', content: `Hi! card ${i}`, metadata: { kind: 'activity', hello: 'Hi!' } },
+    })));
+    assert.equal(sends.filter((x) => x?.hello).length, 1, 'one of them says it');
+    const { rows } = await pool.query(
+      `SELECT content FROM conversation_messages WHERE sender_id = $1 AND idempotency_key LIKE 'hello-race-%' ORDER BY id`, [bot.id]);
+    assert.equal(rows.length, 3, 'every card went');
+    assert.equal(rows.filter((r) => r.content.startsWith('Hi!')).length, 1);
+    const { rows: [hello] } = await pool.query('SELECT kind, message_id FROM homeroom_bot_hellos WHERE user_id = $1', [old.id]);
+    assert.equal(hello.kind, 'member');
+    assert.ok(hello.message_id, 'the message it went in');
+  });
+
+  await t.test('a hello whose send fails is not claimed: the next one greets', async () => {
+    const fresh = await user('fresh_one');
+    // The send's transaction fails after the claim: both roll back.
+    const before = (await pool.query('SELECT COUNT(*)::int AS n FROM homeroom_bot_hellos WHERE user_id = $1', [fresh.id])).rows[0].n;
+    await assert.rejects(conversations.sendMessage(pool, bot, (await conversations.ensureAdmittedDirect(pool, bot.id, fresh.id)).conversationId,
+      { content: 'Hi' }, {
+        prepare: async (db) => { await db.query(`INSERT INTO homeroom_bot_hellos (user_id, kind) VALUES ($1, 'tour')`, [fresh.id]); return null; },
+        afterInsert: async () => { throw new Error('the process went'); },
+      }));
+    const after = (await pool.query('SELECT COUNT(*)::int AS n FROM homeroom_bot_hellos WHERE user_id = $1', [fresh.id])).rows[0].n;
+    assert.equal(after, before, 'no claim without its message');
   });
 });

@@ -57,10 +57,9 @@ is one for its whole life, so what a follower could not do had to move:
   reaches every copy too (15 Oct 2026), so the conductor's bot reads a
   request a web process filed, a project's first version among them, at
   once rather than once GitHub's own list has it.
-- **A DM answer the bot promised to ask again** is marked by the process
-  that will ask it (`dm_defer`, a marker no drain waits for) and held while
-  the try runs (`dm_answer`): the leader's resume leaves either alone, and its
-  minute sweep picks up what a process that exited or died left.
+- **A DM answer the bot owes** is the person's DM machine's (`bot-dm`, docs/workflows.md):
+  the message is heard in its own transaction on the web Pod, and the answer, and any
+  later try, are its work, wherever the workflow loops run.
 - **A worker warm in one process** is a marker for the others (`warm`, which
   no drain waits for): the admin status shows another process's worker as
   in flight or warm, not as an orphan; adoption leaves it; and when two

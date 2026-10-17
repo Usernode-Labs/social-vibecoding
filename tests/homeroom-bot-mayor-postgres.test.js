@@ -186,19 +186,29 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       async close() { platformClosed += 1; },
     };
   }
-  // #3772: what a turn that could not answer asked to run again later, kept
-  // here rather than on a timer.
+  // #3772: what a turn that could not answer asked to run again later (the
+  // person's DM machine sets its timer, src/workflow/bot-dm/), kept here
+  // with the later try the machine's work would run.
   const scheduled = [];
   async function turn(text, chat, extra = {}) {
     const message = await say(text, extra.input || {});
+    const deps = { chat, apiKey: 'sk-test', openMcp, sleep: async () => {}, ...(extra.deps || {}) };
+    deps.onLater = (n) => scheduled.push({
+      ms: mayor.DEFER_DELAYS_MS[n - 1],
+      work: () => mayor.answerLater(pool, CONFIG, { bot, user: ada, conversationId: opened.conversationId, message, deps }, n),
+    });
     return mayor.runDmTurn(pool, CONFIG, {
-      bot, user: ada, settings: extra.settings || settings, conversationId: opened.conversationId, message,
-      deps: {
-        chat, apiKey: 'sk-test', openMcp, sleep: async () => {}, schedule: (work, ms) => scheduled.push({ work, ms }),
-        ...(extra.deps || {}),
-      },
+      bot, user: ada, settings: extra.settings || settings, conversationId: opened.conversationId, message, deps,
     });
   }
+  // A tap is decided in the person's DM machine and done by its work
+  // (mayor.actOnTap): here, at once, keyed as the machine keys it.
+  const replies = {
+    async tapDmAction(a) {
+      await mayor.actOnTap(pool, CONFIG, { ...a, key: `action:${a.actionId}`, deps: { bot } });
+      return { ok: true };
+    },
+  };
   async function read(sent) {
     return conversations.getMessage(pool, ada, opened.conversationId, sent.messageId);
   }
@@ -587,21 +597,135 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(meta.actionId, Number(action.id), 'and name what a tap decides');
 
     const before = created.length;
-    const foreign = await mayor.decideOfferTap(pool, CONFIG, { user: sam, actionId: action.id, choice: 'yes', deps: { bot } });
+    const foreign = await mayor.decideOfferTap(pool, CONFIG, { user: sam, actionId: action.id, choice: 'yes', deps: { bot, replies } });
     assert.deepEqual(foreign, { ok: false, status: 404, error: 'No such choice' }, 'only the person it was offered to');
-    assert.equal((await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'maybe', deps: { bot } })).status, 400);
+    assert.equal((await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'maybe', deps: { bot, replies } })).status, 400);
 
-    const tapped = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'yes', deps: { bot } });
+    const tapped = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'yes', deps: { bot, replies } });
     assert.deepEqual(tapped, { ok: true, choice: 'yes', label: 'File it' });
     assert.equal(created.length, before + 1, 'filed');
     const after = (await read(offered)).metadata.homeroomBot;
     assert.deepEqual([after.status, after.answer, after.chosen], ['answered', 'File it', 'yes']);
 
-    const again = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'yes', deps: { bot } });
+    const again = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'yes', deps: { bot, replies } });
     assert.equal(again.status, 409, 'a second tap, here or on another device, does nothing');
     assert.equal(created.length, before + 1, 'filed once');
+    // Its act retried after a restart (the same work item): its own claim
+    // passes, and the request it filed is found, not filed twice.
+    await mayor.actOnTap(pool, CONFIG, { userId: ada.id, actionId: action.id, choice: 'yes', key: `action:${action.id}`, deps: { bot } });
+    assert.equal(created.length, before + 1, 'still filed once');
     const { rows: [filed] } = await pool.query('SELECT issue_number FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
     tapFiled = Number(filed.issue_number);
+  });
+
+  // Review round 1 (#5399): a DM answer that could not be delivered is the
+  // answer's work's failure, retried (and then said it could not), never
+  // reported as done; a request filed before a restart is finished, not
+  // left without its requester or its place in the queue.
+  await t.test('an answer whose every send fails fails its work: nothing reached them', async () => {
+    const realDm = require('../src/services/homeroom-bot-dm');
+    const down = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+    const dmSvc = { ...realDm, async sendDm() { throw down; } };
+    const message = await say('is it up yet?');
+    const deps = { dmSvc, chat: scripted([[['reply', { text: 'Yes.' }]]]), apiKey: 'sk-test', openMcp, sleep: async () => {} };
+    await assert.rejects(mayor.runDmTurn(pool, CONFIG, { bot, user: ada, settings, conversationId: opened.conversationId, message,
+      deps: { ...deps, strict: true } }), /ECONNRESET/);
+    // Outside durable work it still never throws (as before).
+    assert.equal(await mayor.runDmTurn(pool, CONFIG, { bot, user: ada, settings, conversationId: opened.conversationId, message,
+      deps: { ...deps, chat: scripted([[['reply', { text: 'Yes.' }]]]) } }), null);
+    // The DM machine's answer work runs strict.
+    await assert.rejects(realDm.answerOwed(pool, CONFIG, {
+      userId: ada.id, conversationId: opened.conversationId, messageId: message.id, workKey: 'msg:fail',
+      deps: { ...deps, chat: scripted([[['reply', { text: 'Yes.' }]]]), bot },
+    }), /ECONNRESET/);
+  });
+
+  await t.test('a request filed before a restart is finished by the retry: its requester and its queue, no second issue', async () => {
+    const before = created.length;
+    // The first attempt filed it on GitHub and wrote its row, then its
+    // process went.
+    const { rows: [issue] } = await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
+       VALUES ($1, 977, 'Dark notes', 'x', 'general', $2, $3) RETURNING id`,
+      [notes.id, JSON.stringify({ fileKey: 'dm-action:recover' }), ada.id]);
+    const filed = await mayor.fileRequest(pool, CONFIG, {
+      user: ada, app: notes, title: 'Dark notes', details: 'Notes in the dark.', settings, fileKey: 'dm-action:recover',
+    });
+    assert.equal(filed.issueNumber, 977);
+    assert.equal(filed.again, true);
+    assert.equal(created.length, before, 'no second issue on GitHub');
+    const { rows: [requester] } = await pool.query('SELECT user_id FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = 977', [notes.id]);
+    assert.equal(requester?.user_id, ada.id, 'its requester recorded, so its news reaches her DM');
+    const { rows: queued } = await pool.query('SELECT id FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 977', [notes.id]);
+    assert.equal(queued.length, 1, 'and it is queued');
+    assert.equal(filed.queueId, Number(queued[0].id));
+    // Once more: still one of each.
+    await mayor.fileRequest(pool, CONFIG, { user: ada, app: notes, title: 'Dark notes', details: 'x', settings, fileKey: 'dm-action:recover' });
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 977', [notes.id])).rows[0].n, 1);
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 977', [notes.id]);
+    await pool.query('DELETE FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = 977', [notes.id]);
+    await pool.query('DELETE FROM issues WHERE id = $1', [issue.id]);
+  });
+
+  // Review round 2 (#5399): a failure a retry can cure, inside a tap's
+  // act, is the act's work's to retry with its claim, never a tap failed for
+  // good with nothing queued.
+  await t.test('a tap whose queueing fails for a moment is retried by its work, and files and queues once', async () => {
+    const offered = await turn('could note board export to csv?', scripted([
+      [['offer_request', { project: 'note-board', title: 'CSV export', details: 'Export notes as CSV.' }]],
+      [['reply', { text: 'Want me to file this?' }]],
+    ]));
+    const { rows: [action] } = await pool.query('SELECT id FROM homeroom_bot_dm_actions WHERE message_id = $1', [offered.messageId]);
+    const realBot = require('../src/services/homeroom-bot');
+    let tries = 0;
+    const botSvc = {
+      ...realBot,
+      async enqueueFront(...args) {
+        tries += 1;
+        if (tries === 1) throw Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+        return realBot.enqueueFront(...args);
+      },
+    };
+    const before = created.length;
+    const act = () => mayor.actOnTap(pool, CONFIG, { userId: ada.id, actionId: action.id, choice: 'yes', key: `action:${action.id}`, deps: { bot, botSvc } });
+    await assert.rejects(act(), /ECONNRESET/, 'thrown to the work, which tries again');
+    const { rows: [claimed] } = await pool.query('SELECT status, decided_key, issue_number FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
+    assert.deepEqual([claimed.status, claimed.decided_key, claimed.issue_number], ['done', `action:${action.id}`, null], 'its claim kept, not failed');
+    assert.deepEqual(await act(), { done: true, why: null });
+    assert.equal(created.length, before + 1, 'filed once');
+    const { rows: [after] } = await pool.query('SELECT status, issue_number FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
+    assert.equal(after.status, 'done');
+    const { rows: queued } = await pool.query('SELECT id FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2', [notes.id, after.issue_number]);
+    assert.equal(queued.length, 1, 'and queued');
+    assert.equal(tries, 2);
+    // A refusal no retry can change is still said at once (GitHub off).
+    assert.equal(mayor.retryAct(new Error('github_unavailable'), 'action:1'), false);
+    assert.equal(mayor.retryAct(Object.assign(new Error('Not Found'), { status: 404 }), 'action:1'), false);
+    assert.equal(mayor.retryAct(Object.assign(new Error('rate limited'), { status: 429 }), 'action:1'), true);
+    assert.equal(mayor.retryAct(Object.assign(new Error('x'), { code: 'ECONNRESET' }), null), false, 'outside durable work, said');
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2', [notes.id, after.issue_number]);
+    await pool.query('DELETE FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2', [notes.id, after.issue_number]);
+  });
+
+  await t.test('an offer drafted again by a retried answer is the one under its message', async () => {
+    const steps = [
+      [['offer_request', { project: 'note-board', title: 'Sort by size', details: 'Sort notes by size.' }]],
+      [['reply', { text: 'Want me to file this?' }]],
+    ];
+    const message = await say('could note board sort by size?');
+    const run = () => mayor.runDmTurn(pool, CONFIG, {
+      bot, user: ada, settings, conversationId: opened.conversationId, message,
+      deps: { chat: scripted(steps), apiKey: 'sk-test', openMcp, sleep: async () => {} },
+    });
+    const first = await run();
+    // Its process went after the send, before it noted the message.
+    await pool.query('UPDATE homeroom_bot_dm_actions SET message_id = NULL WHERE message_id = $1', [first.messageId]);
+    const second = await run();
+    assert.equal(second.messageId, first.messageId, 'the same message');
+    const { rows } = await pool.query(
+      `SELECT id, message_id FROM homeroom_bot_dm_actions WHERE user_id = $1 AND title = 'Sort by size' ORDER BY id`, [ada.id]);
+    assert.deepEqual(rows.map((r) => r.message_id), [first.messageId], 'one offer, under its message');
+    await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE id = $1', [rows[0].id]);
   });
 
   await t.test('B3: a tap on Not now sends nothing, and the buttons give way to the choice', async () => {
@@ -613,7 +737,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const { rows: [{ n: messagesBefore }] } = await pool.query(
       'SELECT COUNT(*)::int AS n FROM conversation_messages WHERE conversation_id = $1', [opened.conversationId],
     );
-    const tapped = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'no', deps: { bot } });
+    const tapped = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'no', deps: { bot, replies } });
     assert.deepEqual(tapped, { ok: true, choice: 'no', label: 'Not now' });
     const { rows: [{ n: messagesAfter }] } = await pool.query(
       'SELECT COUNT(*)::int AS n FROM conversation_messages WHERE conversation_id = $1', [opened.conversationId],
@@ -635,13 +759,14 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       bot, user: ada, settings, conversationId: opened.conversationId, message,
       deps: { chat: scripted(steps), apiKey: 'sk-test', openMcp },
     });
-    // Two questions sent before either is answered: each answer points at its own.
+    // Two questions sent before either is answered (her DM machine answers
+    // them one after the other): each answer points at its own.
     const first = await say('is Pin notes up for a vote yet?');
     const second = await say('and what about dark mode?');
-    const answers = await Promise.all([
-      run(first, [[['reply', { text: 'Yes, Pin notes is up for a vote.' }]]]),
-      run(second, [[['reply', { text: 'Dark mode waits for your answer.' }]]]),
-    ]);
+    const answers = [
+      await run(first, [[['reply', { text: 'Yes, Pin notes is up for a vote.' }]]]),
+      await run(second, [[['reply', { text: 'Dark mode waits for your answer.' }]]]),
+    ];
     const [one, two] = await Promise.all(answers.map(read));
     assert.ok(one.id > second.id && two.id > one.id, 'both answers land after both questions');
     assert.equal(one.reply.id, first.id);
@@ -779,7 +904,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(failing.stage, 'checks_failed');
     assert.equal(failing.doing, 'it\'s waiting for approval, and its tests failed (1 test did not pass)');
     // Merged: no longer in progress, and among what finished lately.
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [proposal.id]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [proposal.id]);
     const merged = await read();
     assert.ok(!merged.rightNow.some((e) => e.project === 'note-board' && e.number === 5));
     const done = merged.finishedLately.find((e) => e.project === 'note-board' && e.number === 5);
@@ -1168,28 +1293,29 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     }
     assert.equal(scheduled.length, 0);
 
-    // Written to since: that message's own turn answers, and this one is not asked again.
+    // Its first answer sent ("I'll get back to you") and its process gone
+    // before it reported: the answer's work, retried, says nothing again
+    // and still reports the later try it promised.
     scheduled.length = 0;
-    await turn('one more?', flaky);
-    await say('never mind');
-    assert.equal(await scheduled[0].work(), null);
+    const promised = await turn('and the calendar?', flaky);
+    const dmSvc = require('../src/services/homeroom-bot-dm');
+    const again2 = await dmSvc.answerOwed(pool, CONFIG, {
+      userId: ada.id, conversationId: opened.conversationId, messageId: (await read(promised)).reply.id, attempt: 0, workKey: 'msg:x',
+      deps: { bot, chat: flaky, apiKey: 'sk-test', openMcp, sleep: async () => {} },
+    });
+    assert.deepEqual(again2, { sent: true, skipped: 'answered', later: 1 });
+    // A later try that fails for good says it could not, under its own key.
+    const gaveUp = await dmSvc.sayCouldNotAnswer(pool, { userId: ada.id, conversationId: opened.conversationId,
+      messageId: (await read(promised)).reply.id, attempt: 1, deps: { bot } });
+    assert.equal((await read(gaveUp)).content, mayor.DEFERRED_GAVE_UP_TEXT);
+    // (Written to since, the try is not asked at all: the DM machine drops it,
+    // workflow-bot-replies-postgres.test.js.)
     await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
   });
 
-  await t.test('her turns run one after another, never side by side', async () => {
-    let active = 0;
-    let most = 0;
-    const slow = async () => {
-      active += 1; most = Math.max(most, active);
-      await new Promise((r) => setTimeout(r, 30));
-      active -= 1;
-      const calls = [{ id: 'c', type: 'function', function: { name: 'reply', arguments: '{"text":"ok"}' } }];
-      return { content: '', toolCalls: calls, assistantMessage: { role: 'assistant', content: null, tool_calls: calls }, usage: {} };
-    };
-    await Promise.all([turn('one', slow), turn('two', slow), turn('three', slow)]);
-    assert.equal(most, 1);
-    assert.equal(mayor._chainsForTests(), 0, 'nothing is left waiting');
-  });
+  // Her turns run one after another, never side by side, wherever they run:
+  // the person's DM machine answers one message at a time
+  // (workflow-bot-replies-postgres.test.js), so there is no chain here.
 
   // ── #3740: a change to one of the bot's own proposals, asked for in the DM ──
   //
@@ -1758,7 +1884,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(await statusOf(share), 'promoted');
     // Offered, then merged before the tap: refused, and said why.
     const late = await offerOn(share);
-    await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [share]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', live_at = NOW() WHERE id = $1`, [share]);
     const tap = await say('Withdraw it', { reply_to_id: late.messageId });
     assert.equal((await read(await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: tap, deps: { sessionLifecycle } }))).content,
       'I couldn\'t withdraw it: it was approved, so it is being merged or is already live.');

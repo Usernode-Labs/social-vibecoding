@@ -1399,11 +1399,6 @@ async function becomeLeader() {
   // chose. Leader-only so one Pod sends; the queue row's lock and the
   // message's idempotency key keep a retry from sending twice anyway.
   require('./src/services/welcome-dm').start(config);
-  // The Homeroom bot's one welcome to everybody who had an account when it
-  // went on for everyone: a few a minute until nobody is left, then never
-  // again. Leader-only so one Pod sends; each person's one hello is claimed
-  // before the message goes, so a second sender could not send it twice.
-  require('./src/services/homeroom-bot-welcome').start(config);
   // Season challenges are read from the points ledger, and until this ran
   // only two of them ever wrote to it without an admin typing the rows in.
   // Leader-only and advisory-locked on top of that, because a tick costs
@@ -1546,28 +1541,20 @@ async function becomeLeader() {
   // leader's boot adopted above. (A checks run a rollout interrupted is the
   // preview machine's work: claimed again once its lease lapses, and its
   // Jobs are collected rather than started over.)
-  const mainWatch = require('./src/services/main-watch');
   observeMergedOnGithub(config)
     // #447: after reconciling merge state, hand the preview machine any
     // proposal whose checks were never recorded or were left 'pending' from
     // before it held the row. Off the critical path. (The machine retries
     // the platform's own faults at a release itself: platform.ts.)
     .then(() => reconcileStuckChecks(config))
-    // The whole-tree check under direct merges (services/main-watch.js) is
-    // fire-and-forget from the process that merged — which, for the
-    // platform's own app, is the process the deploy of that merge replaces.
-    // A row left at 'running' or 'confirming' by that has no run behind it;
-    // re-drive it, or the app reads "checking the last merge" forever (or
-    // stays paused with no verdict coming and no Resume verb, since a
-    // provisional red hides it). Rows younger than a run's deadline are a
-    // live run's and are left alone.
-    .then(() => mainWatch.resumeInterrupted(config))
+    // (The whole-tree check under direct merges is the main-check machine's:
+    // a run a restart interrupted is its work item's, carried on by the next
+    // process, and a paused red's rechecks are its deadline.)
     .catch((err) => {
       log.warn('server', 'Boot merge observation / stuck-check reconcile failed', {
         err: err.message,
       });
     });
-  mainWatch.start(config);
 
   // Fallback recovery: for sessions whose container is already gone but
   // whose branch is ahead of main (i.e. CC pushed commits during an old
@@ -4929,19 +4916,11 @@ const FRESHNESS_REFRESH_COOLDOWN_MS = Math.max(
 
 // Every session the proposal machine does not hold yet is adopted (one
 // created since the leader started): its idle check and its hourly review
-// check are the machine's timers, armed on adoption. So is a maintenance
-// campaign an older release was driving, once its driver lets it go (a
-// rollout's transitional piece: platform.adoptCampaigns), and a change of the
-// Homeroom bot's an older release put up for a vote during the rollout
-// (platform.adoptBotChanges).
+// check are the machine's timers, armed on adoption.
 const adoptProposals = async () => {
   const platform = require('./src/workflow/platform.ts');
   await platform.adoptProposals()
     .catch((err) => log.warn('server', 'Adopting sessions for the proposal machine failed', { err: err.message }));
-  await platform.adoptCampaigns()
-    .catch((err) => log.warn('server', 'Adopting maintenance campaigns failed', { err: err.message }));
-  await platform.adoptBotChanges()
-    .catch((err) => log.warn('server', 'Adopting the Homeroom bot\'s changes failed', { err: err.message }));
 };
 
 function startSessionAutoPauseSweeper(config) {
@@ -5955,9 +5934,6 @@ async function cleanup() {
   try { require('./src/services/shots-eval-runner').stopRunner(); } catch (err) {
     log.warn('server', 'Stopping the shots eval runner failed', { err: err.message });
   }
-  try { require('./src/services/homeroom-bot-welcome').stop(); } catch (err) {
-    log.warn('server', 'Stopping the Homeroom bot welcome failed', { err: err.message });
-  }
   // The leader's sweeps on timers of their own: none may run beside the new
   // leader's while this process finishes its work. A creation under way here
   // keeps its own heartbeat until it ends.
@@ -6118,7 +6094,7 @@ async function cleanup() {
 
   // The checks runs this process launched go on without it: their Jobs
   // belong to the cluster. Their rows still carry this process's heartbeat,
-  // though, and the next leader adopts a main-watch run only once its
+  // though, and the next process adopts a main check's run only once its
   // heartbeat has lapsed (main-watch.adoptRun), so hand them over
   // (check-runs.release) BEFORE the leader lock is released below. Bounded
   // like the evidence write above. (A preview machine's run is its work

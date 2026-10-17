@@ -139,8 +139,8 @@ test('a rebuild of a proposal builds its reviewed head, not a tip past it; an un
 test('the verdict store keeps to the pinned commit', () => {
   // A run of an old commit that finishes after the pin moved on stores
   // nothing: both verdict writes are guarded on the pinned commit.
-  // (One copy, shared by every writer: src/workflow/rules/check-store.ts.)
-  const visuals = fs.readFileSync(path.join(ROOT, 'src/workflow/rules/check-store.ts'), 'utf8');
+  // (The preview machine's writers: src/workflow/preview/check-store.ts.)
+  const visuals = fs.readFileSync(path.join(ROOT, 'src/workflow/preview/check-store.ts'), 'utf8');
   const store = visuals.slice(visuals.indexOf('async function storeChecks('), visuals.indexOf('async function storeChecksSkipped('));
   assert.equal((store.match(/AND checks_commit_sha IS NOT DISTINCT FROM \$3::text`/g) || []).length, 2);
 });

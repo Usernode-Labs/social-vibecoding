@@ -32,6 +32,7 @@ const bot = require('../src/services/homeroom-bot');
 const dm = require('../src/services/homeroom-bot-dm');
 const live = require('../src/services/homeroom-bot-live');
 const configs = require('../src/services/bot-configs');
+const { tapsNow } = require('./lib/bot-replies');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -503,7 +504,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
 
   await t.test('Build it from the DM builds exactly that plan: the spec it showed, its screens, the choices in the note', async () => {
     const card = await planMessage(first);
-    const tapped = await mayor.decideOfferTap(pool, {}, {
+    const tapped = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) },
       user: maya, actionId: card.meta.actionId, choice: 'build', answers: ['Only people who opt in'],
     });
     assert.deepEqual(tapped, { ok: true, choice: 'build', label: 'Build it' });

@@ -20,6 +20,8 @@
 //     (the machine's side: tests/unit-suite-reuse-machine-postgres.test.js);
 //   * UNIT_SUITE_REUSE=0 turns it off.
 
+// The verdict's writers: the preview machine's own (its transitions run them).
+const rowStore = require('../src/workflow/preview/check-store.ts');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -371,7 +373,7 @@ test('readers can say a run reused its unit suite: the row, the connector and th
 });
 
 test('the card keeps the reused unit suite after the verdict, and says so', () => {
-  const src = read('src/workflow/rules/check-store.ts');
+  const src = read('src/workflow/preview/check-store.ts');
   assert.match(src, /'unit', CASE WHEN checks_progress #> '\{unit,reused\}' IS NOT NULL\s+THEN checks_progress -> 'unit' END,/);
   const en = JSON.parse(read('frontend/locales/en/project.json'));
   assert.match(en['topic.run.unit.reused_other'].text, /^Reused: \{\{passed\}\} passed \{\{when\}\} \(run \{\{run\}\}\)$/);
@@ -512,7 +514,7 @@ test('every manual entry marks the head as owed a fresh suite, durably, before i
   assert.match(read('src/services/staging-recovery.js'), /if \(checkTriggerForReason\(reason\) === 'manual-recheck'\) \{[\s\S]{0,700}markFreshOwed\(pool, \{\s+sessionId: session\.id, commitSha: await requestedRecheckHead\(pool, session\),\s+\}\);/);
   // And the machine's 'manual-recheck' pending stamp, every way it starts
   // a run for a person.
-  assert.match(read('src/workflow/rules/check-store.ts'), /unit_suite_fresh_sha = CASE WHEN \$4::text = 'manual-recheck' AND \$2::text IS NOT NULL\s+THEN lower\(\$2::text\) ELSE unit_suite_fresh_sha END,/,
+  assert.match(read('src/workflow/preview/check-store.ts'), /unit_suite_fresh_sha = CASE WHEN \$4::text = 'manual-recheck' AND \$2::text IS NOT NULL\s+THEN lower\(\$2::text\) ELSE unit_suite_fresh_sha END,/,
     'and the manual pending stamp sets it');
 });
 
@@ -613,17 +615,17 @@ test('postgres, full schema: while a fresh run is owed, a verdict with a copied 
       'SELECT check_state, checks_commit_sha, unit_suite_fresh_sha, test_results FROM chat_sessions WHERE id = $1', [s.id])).rows[0];
 
     // An automatic run of the head: no fresh run owed, a copied pass stores.
-    await visuals.setChecksPending(pool, s.id, SHA, 'testing', 'boot-reconcile');
+    await rowStore.setChecksPending(pool, s.id, SHA, 'testing', 'boot-reconcile');
     assert.equal((await read()).unit_suite_fresh_sha, null);
-    assert.equal(await visuals.storeChecks(pool, s.id, SHA, { state: 'passing', results: [reusedRow] }), true);
+    assert.equal(await rowStore.storeChecks(pool, s.id, SHA, { state: 'passing', results: [reusedRow] }), true);
 
     // A person presses "Run checks again" on that head.
-    await visuals.setChecksPending(pool, s.id, SHA, 'building', 'manual-recheck');
+    await rowStore.setChecksPending(pool, s.id, SHA, 'building', 'manual-recheck');
     assert.equal((await read()).unit_suite_fresh_sha, SHA, 'the request is on the row, durably');
     // The run that answers copied a pass (it decided before the press, or
     // it was collected): its verdict is refused, the head stays pending.
-    assert.equal(await visuals.storeChecks(pool, s.id, SHA, { state: 'passing', results: [reusedRow] }), false);
-    assert.equal(await visuals.storeChecks(pool, s.id, SHA, { state: 'error', results: [reusedRow] }), false);
+    assert.equal(await rowStore.storeChecks(pool, s.id, SHA, { state: 'passing', results: [reusedRow] }), false);
+    assert.equal(await rowStore.storeChecks(pool, s.id, SHA, { state: 'error', results: [reusedRow] }), false);
     let row = await read();
     assert.equal(row.check_state, 'pending', 'merge-blocked');
     // The gate's reading of a stored copied pass while the request stands.
@@ -637,11 +639,11 @@ test('postgres, full schema: while a fresh run is owed, a verdict with a copied 
     assert.match(gateSelect[1], /\bunit_suite_fresh_sha\b/);
 
     // A suite that could not run does not settle the request either.
-    assert.equal(await visuals.storeChecks(pool, s.id, SHA, { state: 'error', results: [unitRow({ status: 'fail', couldNotRun: true })] }), true);
+    assert.equal(await rowStore.storeChecks(pool, s.id, SHA, { state: 'error', results: [unitRow({ status: 'fail', couldNotRun: true })] }), true);
     assert.equal((await read()).unit_suite_fresh_sha, SHA);
     // The suite really runs: stored, and the request is settled.
-    await visuals.setChecksPending(pool, s.id, SHA, 'testing', 'manual-recheck');
-    assert.equal(await visuals.storeChecks(pool, s.id, SHA, { state: 'passing', results: [unitRow({})] }), true);
+    await rowStore.setChecksPending(pool, s.id, SHA, 'testing', 'manual-recheck');
+    assert.equal(await rowStore.storeChecks(pool, s.id, SHA, { state: 'passing', results: [unitRow({})] }), true);
     row = await read();
     assert.equal(row.check_state, 'passing');
     assert.equal(row.unit_suite_fresh_sha, null);
@@ -713,7 +715,7 @@ async function fullSchemaDb(t) {
 // through `storePool`.
 async function settleAndStore(settlePool, run, storePool = settlePool) {
   const { result } = await visuals.settleCaptureRun({}, settlePool, { collect: { runId: `run-${run.session.id}` }, ...run });
-  await visuals.storeChecks(storePool, run.session.id, run.commitHash, {
+  await rowStore.storeChecks(storePool, run.session.id, run.commitHash, {
     state: result.state, results: result.results,
     ...(result.platformFault ? { platformFault: true } : {}),
     ...(result.unitSuiteAbsent ? { unitSuiteAbsent: true } : {}),
@@ -769,8 +771,8 @@ test('postgres: a request folded into a busy session stamps the head pending and
   const realUnit = { index: -3, name: unitSuite.UNIT_CHECK_NAME, path: 'package.json', status: 'pass', advisory: false };
   const row = async () => (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [s.id])).rows[0];
   // An old REAL pass of the head is stored.
-  await visuals.setChecksPending(pool, s.id, SHA, 'testing', 'commit-push');
-  assert.equal(await visuals.storeChecks(pool, s.id, SHA, { state: 'passing', results: [realUnit] }), true);
+  await rowStore.setChecksPending(pool, s.id, SHA, 'testing', 'commit-push');
+  assert.equal(await rowStore.storeChecks(pool, s.id, SHA, { state: 'passing', results: [realUnit] }), true);
 
   // The press, folded into a busy session (the route's busy branch).
   await reuse.markFreshOwed(pool, { sessionId: s.id, commitSha: SHA });
@@ -778,10 +780,19 @@ test('postgres: a request folded into a busy session stamps the head pending and
   assert.equal(unitSuiteRow.freshSuiteOwed(await row()), true, 'the merge gate reads it as not checked, real old pass or not');
   let busy = 2;
   const rechecks = [];
+  // The stamp is the preview machine's (RecheckFolded, through the real
+  // runtime in tests/unit-suite-reuse-machine-postgres.test.js); here its
+  // write stands in for it.
+  const folded = [];
+  const platform = { recheckFolded: async (o) => {
+    folded.push(o);
+    await rowStore.setChecksPending(pool, o.sessionId, o.head, null, 'manual-recheck');
+  } };
   await reuse.owePendingRun({
-    pool, visuals, config: {}, session: { ...s, checks_commit_sha: SHA }, busy: () => busy-- > 0, pollMs: 10,
+    pool, platform, config: {}, session: { ...s, checks_commit_sha: SHA }, busy: () => busy-- > 0, pollMs: 10,
     stagingRecovery: { recheckSessionChecks: async (args) => { rechecks.push(args.reason); } },
   });
+  assert.deepEqual(folded, [{ sessionId: s.id, appId: app.id, head: SHA }], 'the machine is asked, for the head they asked about');
   let r = await row();
   assert.equal(r.check_state, 'pending', 'the old pass no longer stands');
   assert.equal(r.check_trigger, 'manual-recheck');
@@ -792,7 +803,7 @@ test('postgres: a request folded into a busy session stamps the head pending and
   assert.deepEqual(rechecks, ['manual-recheck'], 'idle again: the owed run starts');
 
   // The owed run's real suite settles it.
-  assert.equal(await visuals.storeChecks(pool, s.id, SHA, { state: 'passing', results: [realUnit] }), true);
+  assert.equal(await rowStore.storeChecks(pool, s.id, SHA, { state: 'passing', results: [realUnit] }), true);
   r = await row();
   assert.equal(r.unit_suite_fresh_sha, null);
   assert.equal(unitSuiteRow.freshSuiteOwed(r), false);
@@ -801,16 +812,16 @@ test('postgres: a request folded into a busy session stamps the head pending and
   await reuse.markFreshOwed(pool, { sessionId: s.id, commitSha: SHA });
   const more = [];
   await reuse.owePendingRun({
-    pool, visuals, config: {}, session: { ...s, checks_commit_sha: SHA }, busy: () => false, pollMs: 10,
+    pool, platform, config: {}, session: { ...s, checks_commit_sha: SHA }, busy: () => false, pollMs: 10,
     stagingRecovery: { recheckSessionChecks: async (args) => { more.push(args.reason); } },
   });
-  await visuals.storeChecks(pool, s.id, SHA, { state: 'passing', results: [realUnit] });
+  await rowStore.storeChecks(pool, s.id, SHA, { state: 'passing', results: [realUnit] });
   await new Promise((res) => setTimeout(res, 60));
   assert.deepEqual(more, []);
 
   const route = read('src/routes/sessions.js');
   const recheck = route.slice(route.indexOf("router.post('/api/sessions/:id/recheck'"), route.indexOf("router.post('/api/sessions/:id/recheck'") + 9000);
-  assert.match(recheck, /const busyNow = \(\) => isSessionBusy\(sessionId\);\s+if \(busyNow\(\)\) \{\s+await require\('\.\.\/services\/unit-suite-reuse'\)\.owePendingRun\(\{\s+pool, visuals, stagingRecovery, config, session, busy: busyNow, head: requestedHead,\s+\}\);\s+return res\.json\(\{ status: 'running' \}\);/);
+  assert.match(recheck, /const busyNow = \(\) => isSessionBusy\(sessionId\);\s+if \(busyNow\(\)\) \{\s+await require\('\.\.\/services\/unit-suite-reuse'\)\.owePendingRun\(\{\s+pool, stagingRecovery, config, session, busy: busyNow, head: requestedHead,\s+\}\);\s+return res\.json\(\{ status: 'running' \}\);/);
 });
 
 // The settlement's view of a run with no unit-suite row while a fresh run is
@@ -840,7 +851,7 @@ test('postgres, real settlement: a manual run whose unit suite never started kee
   t.mock.method(github, 'isEnabled', () => true);
 
   // package.json could not be read (a metadata outage): 0 unit Jobs, no row.
-  await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
+  await rowStore.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
   const outage = t.mock.method(github, 'getFileContent', async () => { throw new Error('GitHub 502'); });
   await settle();
   let r = await read();
@@ -852,8 +863,8 @@ test('postgres, real settlement: a manual run whose unit suite never started kee
 
   // A run that failed before any unit Job (a lifecycle readiness error):
   // stored as an error with no rows; the request stands.
-  await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'boot-reconcile');
-  assert.equal(await visuals.storeChecks(pool, session.id, SHA, { state: 'error', results: [] }, 'preview not ready'), true);
+  await rowStore.setChecksPending(pool, session.id, SHA, 'testing', 'boot-reconcile');
+  assert.equal(await rowStore.storeChecks(pool, session.id, SHA, { state: 'error', results: [] }, 'preview not ready'), true);
   assert.equal((await read()).unit_suite_fresh_sha, SHA);
   // Nor does an automatic run then copy a pass for it.
   const pass = await unitSuite.reusablePass({
@@ -862,7 +873,7 @@ test('postgres, real settlement: a manual run whose unit suite never started kee
   assert.equal(pass, null);
 
   // The repository has no runnable test script: confirmed absent, answered.
-  await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
+  await rowStore.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
   t.mock.method(github, 'getFileContent', async () => JSON.stringify({ scripts: { test: 'echo "Error: no test specified" && exit 1' } }));
   await settle();
   r = await read();
@@ -882,7 +893,7 @@ test('postgres, real settlement: a unit pass behind as many browser checks as th
   const n = checkHistory.MAX_ROWS_PER_RUN;
   const unitKey = require('../src/services/app-manifest').checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH);
   const { app, session } = await settleFixture(pool, 'cap-full');
-  await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'commit-push');
+  await rowStore.setChecksPending(pool, session.id, SHA, 'testing', 'commit-push');
   const dispatched = Array.from({ length: n }, (_, i) => ({ index: i, checkKey: `k${i}`, name: `check ${i}`, path: '/', graduated: false }));
   const { result } = await visuals.settleCaptureRun({}, pool, {
     session, app, commitHash: SHA, trigger: 'commit-push', media: false, capturePaths: ['/'], pathDefaulted: true,
@@ -968,7 +979,7 @@ test('postgres, real settlement and the real GitHub reader: a 404 on package.jso
 
   for (const m of ['all-404', 'tree-without']) {
     mode = m;
-    await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
+    await rowStore.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
     await settle();
     const r = await read();
     assert.equal(r.check_state, 'error', m);
@@ -984,7 +995,7 @@ test('postgres, real settlement and the real GitHub reader: a 404 on package.jso
   for (const m of ['tree-without', 'no-test']) {
     mode = m;
     await reuse.markFreshOwed(pool, { sessionId: session.id, commitSha: SHA });
-    await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
+    await rowStore.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
     await settle();
     const r = await read();
     assert.deepEqual([r.check_state, r.unit_suite_fresh_sha], ['passing', null], m);
@@ -1016,7 +1027,7 @@ test('postgres, real settlement: one failed marker read keeps an owed head pendi
     visualScenarios: [], prodRunning: false, stagingOrigin: '', targets: [], testsCount: 1, stdout: frameFor(0),
     unitOutcome: null,
   }, pool);
-  await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
+  await rowStore.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
   await settle(flaky);
   assert.equal(failMarkerRead, false, 'the read did fail');
   const { rows: [r] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [session.id]);
@@ -1030,7 +1041,7 @@ test('postgres, real settlement: one failed marker read keeps an owed head pendi
   // answers the request even though the marker could not be read.
   t.mock.method(github, 'getFileContent', async () => JSON.stringify({ scripts: {} }));
   failMarkerRead = true;
-  await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
+  await rowStore.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
   await settle(flaky);
   assert.equal(failMarkerRead, false);
   const { rows: [answered] } = await pool.query('SELECT check_state, unit_suite_fresh_sha FROM chat_sessions WHERE id = $1', [session.id]);
@@ -1038,7 +1049,7 @@ test('postgres, real settlement: one failed marker read keeps an owed head pendi
 
   // A run of a head nobody asked about is stored as it always was.
   const { session: other, app: app2 } = await settleFixture(pool, 'markerread-control');
-  await visuals.setChecksPending(pool, other.id, SHA, 'testing', 'commit-push');
+  await rowStore.setChecksPending(pool, other.id, SHA, 'testing', 'commit-push');
   await settleAndStore(pool, {
     session: other, app: app2, commitHash: SHA, trigger: 'commit-push', media: false, capturePaths: ['/'], pathDefaulted: true,
     visualScenarios: [], prodRunning: false, stagingOrigin: '', targets: [], testsCount: 1, stdout: frameFor(0),
@@ -1113,7 +1124,7 @@ test('postgres, real settlement: with the unit suite switched off, a manual requ
     'SELECT check_state, unit_suite_fresh_sha FROM chat_sessions WHERE id = $1', [session.id])).rows[0];
   process.env.UNIT_SUITE_CHECK_ENABLED = '0';
   try {
-    await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
+    await rowStore.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
     await settle();
   } finally { delete process.env.UNIT_SUITE_CHECK_ENABLED; }
   assert.deepEqual(Object.values(await read()), ['passing', null], 'switched off: nothing to run, the request is answered');
@@ -1121,7 +1132,7 @@ test('postgres, real settlement: with the unit suite switched off, a manual requ
   // repository from being taken as having no suite.
   t.mock.method(github, 'getFileContent', async () => null);
   t.mock.method(github, 'listRepoFiles', async () => ({ files: [], truncated: false }));
-  await visuals.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
+  await rowStore.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
   await settle();
   assert.deepEqual(Object.values(await read()), ['error', SHA]);
 });

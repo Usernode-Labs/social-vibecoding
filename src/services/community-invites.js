@@ -895,15 +895,17 @@ async function redeem(pool, { token, user, browser = null, requirePhone = false 
         WHERE id = $1 AND needs_communities_choice = TRUE`,
       [user.id]
     );
+    // WP-F: Homeroom bot says hello, once, when it builds for them: owed in
+    // this transaction (their DM machine's work says it), so a restart
+    // after the join cannot lose it.
+    if (after[0]?.status === 'joined') {
+      await require('../workflow/platform.ts').greet(client, { userId: user.id, kind: 'joiner', appId: invite.app_id });
+    }
     await client.query('COMMIT');
 
     const status = after[0]?.status === 'joined' ? 'joined' : 'queued';
     if (status === 'joined') {
       appAccess.invalidateVisibility(invite.app_id, invite.slug);
-      // WP-F: Homeroom bot says hello, once, when it builds for them.
-      void require('./homeroom-bot-dm').greetJoiner(pool, {
-        user, app: { id: invite.app_id, slug: invite.slug, name: invite.name },
-      });
       // WP-E: the link's maker hears who came in by it, and the open that
       // brought them (from this browser, maybe signed out) is not news now.
       void require('./invite-activity').noteJoined(pool, { inviteId: invite.id, user, browser });

@@ -48,7 +48,8 @@
 // And three from the nine pauses of 26 September to 10 October 2026, every
 // one of which an admin ended by hand:
 //
-//   * A paused main asks again by itself (recheckPaused). A red that a
+//   * A paused main asks again by itself (the main-check machine's
+//     deadline). A red that a
 //     re-run could not confirm is retried within minutes; a confirmed red
 //     is re-run every quarter hour, up to MAIN_WATCH_RECHECKS times, and a
 //     green one lifts the pause like any green. Twice, a flaky test's red
@@ -66,9 +67,12 @@
 // main, which is production itself; a red production is caught by the
 // deploy's own health check and the rollback that follows it.
 //
-// State lives on the apps row (main_check_*; see schema.sql). Every write is
-// compare-and-swap on the merge commit, so a slow run for an older merge
-// cannot overwrite the verdict for a newer one.
+// The flow is the main-check workflow machine's (src/workflow/main-check/,
+// which applies these rules): this module keeps the suite's run
+// (runMainSuite) and the flake and fix filings, as its work's I/O, and the
+// readers of the state it projects on the apps row (main_check_*; describe,
+// mergePause). A run for an older commit cannot overwrite the verdict for a
+// newer one: the machine keeps only the current run's.
 //
 // A run takes a slot in the checks queue (services/checks-queue.js) before
 // its Job exists, like a proposal's run: first in line, with a slot of its
@@ -82,9 +86,6 @@ const unitSuite = require('./unit-suite');
 const unitSuiteRow = require('./unit-suite-row');
 const checkRuns = require('./check-runs');
 const checksQueue = require('./checks-queue');
-const leaderTimers = require('./leader-timers');
-// Required when used: it reads scripts/test-changed.js and the bot's queue.
-const redFix = () => require('./main-red-fix');
 
 // How many failing tests a verdict keeps by name, in its detail.
 const MAX_FAILING_TESTS = 20;
@@ -97,18 +98,9 @@ const FLAKE_MEMORY_DAYS = 30;
 // one is still open.
 const FLAKE_REQUEST_DAYS = 14;
 
-function intEnv(name, fallback) {
-  const v = parseInt(process.env[name], 10);
-  return Number.isFinite(v) && v >= 0 ? v : fallback;
-}
-
-// How many times a paused main is re-run before only a fix or an admin
-// can lift the pause. 0 turns the rechecks off.
-function maxRechecks() { return intEnv('MAIN_WATCH_RECHECKS', 3); }
-// How long after its last verdict a confirmed red is re-run.
-function recheckMs() { return intEnv('MAIN_WATCH_RECHECK_MS', 15 * 60 * 1000); }
-// How long after a confirming re-run that could not happen it is tried again.
-function confirmRetryMs() { return intEnv('MAIN_WATCH_CONFIRM_RETRY_MS', 3 * 60 * 1000); }
+// The flow's own switches (MAIN_WATCH_ENABLED, _CONFIRM, _RECHECKS,
+// _RECHECK_MS, _CONFIRM_RETRY_MS) are the main-check machine's
+// (src/workflow/main-check/machine.ts depsFromEnv).
 
 // File a request for each newly flaky test. On by default.
 function flakeRequestsEnabled() {
@@ -116,21 +108,8 @@ function flakeRequestsEnabled() {
   return !(v === '0' || v === 'false' || v === 'off');
 }
 
-function isEnabled() {
-  const v = String(process.env.MAIN_WATCH_ENABLED ?? '1').trim().toLowerCase();
-  return !(v === '0' || v === 'false' || v === 'off');
-}
-
-// Re-run a first red once before calling main broken. On by default.
-function confirmEnabled() {
-  const v = String(process.env.MAIN_WATCH_CONFIRM ?? '1').trim().toLowerCase();
-  return !(v === '0' || v === 'false' || v === 'off');
-}
-
-function parseRepo(repoUrl) {
-  const m = String(repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
-}
+// The rules' one parser, as the main-check machine's own claim reads it.
+const { parseGithubUrl: parseRepo } = require('../workflow/rules/github-url.ts');
 
 function sameSha(a, b) {
   return !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase();
@@ -247,17 +226,6 @@ function classify(outcome) {
   return { state: 'failing', detail, ...(excerpts.length ? { excerpts } : {}) };
 }
 
-// The suite's own account of a red, without the bookkeeping a run keeps
-// around it: what a re-run carries over as the red it is re-asking about.
-function redOf(detail) {
-  const d = detail && typeof detail === 'object' ? detail : {};
-  const out = {};
-  for (const key of ['summary', 'failureReason', 'failingTests', 'failingTestsComplete']) {
-    if (d[key] !== undefined) out[key] = d[key];
-  }
-  return out;
-}
-
 // Is `mergeSha` still the merge the app's row is about? A run waiting for
 // its slot asks each time it polls; any doubt answers yes, so a read that
 // fails never drops a run.
@@ -275,7 +243,7 @@ async function stillTheMerge(pool, appId, mergeSha) {
 // release }`: superseded when a newer merge claimed the row while this one
 // waited; `release` gives the slot back. Never throws, and fails open: a
 // queue that cannot be joined lets the run go, as before the queue existed.
-async function takeSlot(config, pool, app, mergeSha) {
+async function takeSlot(config, pool, app, mergeSha, { onRunId = null, signal = null } = {}) {
   const none = { superseded: false, runId: null, release: async () => {} };
   if (config?.workerRuntime !== 'kubernetes' || !checksQueue.isEnabled()) return none;
   const runId = crypto.randomUUID();
@@ -283,10 +251,13 @@ async function takeSlot(config, pool, app, mergeSha) {
     runId, kind: 'main', appId: app.id, commitSha: mergeSha, manifest: { kind: 'main' },
   });
   if (!place) return none;
+  // The run's name, kept by the caller (the main-check machine's work
+  // checkpoints it) before its Jobs exist: an attempt after a crash adopts them.
+  if (onRunId) await onRunId(runId);
   const stopHeartbeat = checkRuns.startHeartbeat(pool, runId);
   const release = async () => { stopHeartbeat(); await checkRuns.finish(pool, runId); };
   const slot = await checksQueue.waitForSlot(pool, {
-    runId, stillWanted: () => stillTheMerge(pool, app.id, mergeSha),
+    runId, signal, stillWanted: () => stillTheMerge(pool, app.id, mergeSha),
   });
   if (slot.outcome === 'superseded') {
     await release();
@@ -304,15 +275,15 @@ async function takeSlot(config, pool, app, mergeSha) {
 // One run of the suite on the merge commit, as a verdict. Never throws: a
 // runner that could not be reached is an 'error' verdict. 'superseded' is a
 // run that never started because a newer merge took the row while it
-// waited for its slot; afterMerge stores nothing for it.
-async function runSuite(config, pool, app, parsed, mergeSha, { adopt = null } = {}) {
+// waited for its slot; the machine stores nothing for it.
+async function runSuite(config, pool, app, parsed, mergeSha, { adopt = null, onRunId = null, signal = null } = {}) {
   let slot = null;
   try {
     if (adopt) {
       const adopted = await adoptRun(config, pool, app, mergeSha, adopt);
       if (adopted) return adopted;
     }
-    slot = await takeSlot(config, pool, app, mergeSha);
+    slot = await takeSlot(config, pool, app, mergeSha, { onRunId, signal });
     if (slot.superseded) return { state: 'superseded', detail: {} };
     const outcome = await unitSuite.maybeRunUnitSuite({
       config, pool, appId: app.id,
@@ -333,23 +304,6 @@ async function runSuite(config, pool, app, parsed, mergeSha, { adopt = null } = 
   }
 }
 
-// A pause of the app's merges starting or ending, as an event each
-// (events.MAIN_PAUSED / MAIN_RESUMED): the proposal-pipeline topic's "Merges
-// paused by a red main" figure counts the pauses and adds up how long they
-// lasted (services/topic-figures.js). `by` says what ended one: a green
-// verdict, a red of known flakes only, or an admin's Resume. Fire-and-forget.
-function notePauseChange(pool, appId, { was_paused: was, now_paused: now }, { sha, state = null, by = null } = {}) {
-  const events = require('./events');
-  if (!was && now) {
-    events.record(pool, { type: events.EVENT_TYPES.MAIN_PAUSED, appId, metadata: { sha: now, confirming: state === 'confirming' } });
-  } else if (was && !now) {
-    events.record(pool, {
-      type: events.EVENT_TYPES.MAIN_RESUMED, appId,
-      metadata: { sha: sha || was, by: by || (state === 'passing' ? 'green' : 'flakes') },
-    });
-  }
-}
-
 const mainSessionId = (app) => `main-${app.id}`;
 
 // How long past the suite's own timeout a run's Jobs are waited on when
@@ -363,7 +317,7 @@ const ADOPT_SLACK_MS = 2 * 60 * 1000;
  * A release restarts the platform, and a run it caught used to hold main
  * in 'running' or 'confirming' until it was 12 minutes stale and then ran
  * from the start (12 Oct 2026: 13 minutes on one confirmation). `dead` is
- * the queue row ({ runId, owner }) as resumeInterrupted saw it. Resolves a
+ * the queue row ({ runId, owner }) the main-check machine's work kept or adopted. Resolves a
  * verdict as runSuite does, 'superseded' when another process took it
  * first, or null when there is nothing to adopt and the suite must run
  * again. Never throws.
@@ -430,214 +384,6 @@ async function adoptRun(config, pool, app, mergeSha, dead) {
   }
 }
 
-// The compare-and-swap write of a state for the merge commit this run is
-// about. The pause column moves with the state: green clears it, red sets
-// it (unless an admin already resumed this very sha), anything else — a run
-// that could not happen — leaves it as it was. A red whose failures are all
-// known flakes (`flakesOnly`) is green for the pause: every other test
-// passed, so it clears a pause rather than setting one. Returns true when
-// the row was still ours, false when a newer merge re-claimed it, null on a
-// failed write.
-async function writeState(pool, app, mergeSha, state, detail) {
-  const quiet = !!detail && Array.isArray(detail.flakesOnly) && detail.flakesOnly.length > 0;
-  try {
-    // The CTE reads the pause as it stood, so a pause that starts or ends
-    // here is recorded (notePauseChange).
-    const write = await pool.query(
-      `WITH prev AS (SELECT main_check_paused_sha AS was FROM apps WHERE id = $1)
-       UPDATE apps
-          SET main_check_state = $3, main_check_at = NOW(), main_check_detail = $4::jsonb,
-              main_check_paused_sha = CASE
-                WHEN $5::boolean THEN NULL
-                WHEN $6::boolean AND lower(coalesce(main_check_resumed_sha, '')) <> lower($2::text) THEN $2::text
-                ELSE main_check_paused_sha
-              END
-        WHERE id = $1 AND main_check_sha = $2::text
-    RETURNING (SELECT was FROM prev) AS was_paused, main_check_paused_sha AS now_paused`,
-      [app.id, mergeSha, state, JSON.stringify(detail),
-        state === 'passing' || quiet, (state === 'failing' || state === 'confirming') && !quiet]
-    );
-    if (write.rows && write.rows[0]) notePauseChange(pool, app.id, write.rows[0], { sha: mergeSha, state });
-    return write.rowCount !== 0;
-  } catch (err) {
-    log.warn('main-watch', 'state write failed', { appId: app.id, sha: mergeSha, state, err: err.message });
-    return null;
-  }
-}
-
-/**
- * Run the suite on a merge commit and record what it said (the
- * merge-followups machine's main.check work, and the drift poller on any new
- * main); never throws unless `strict`.
- *
- * `confirmationOf` is the re-drive of an INTERRUPTED confirmation
- * (resumeInterrupted below): the first red's detail, already recorded, so
- * this run starts at the re-run instead of asking the suite twice more.
- */
-// `strict` (the merge-followups machine's durable work) throws when the claim
-// itself could not be written, so the work is retried rather than read as done.
-async function afterMerge(config, pool, { app, session = null, mergeSha, confirmationOf = null, resume = false, adopt = null, strict = false } = {}) {
-  if (!isEnabled() || !pool || !app || !mergeSha) return null;
-  const parsed = parseRepo(app.repo_url);
-  if (!parsed) return null;
-  const prNumber = session && session.pr_number ? Number(session.pr_number) : null;
-  const startedDetail = { prNumber, sessionId: session ? session.id : null };
-
-  // Claim the sha. The CTE reads the state this run supersedes, which is
-  // how a red→green transition is noticed below. The pause column is not
-  // touched: a new merge is a new question about the code, not an answer
-  // to the old one.
-  let previous = null;
-  try {
-    const { rows } = await pool.query(
-      `WITH prev AS (
-         SELECT main_check_state AS was_state, main_check_sha AS was_sha,
-                main_check_paused_sha AS was_paused_sha
-           FROM apps WHERE id = $1
-       )
-       UPDATE apps
-          SET main_check_state = 'running', main_check_sha = $2,
-              main_check_at = NOW(), main_check_detail = $3::jsonb
-        WHERE id = $1
-          AND ($4::boolean OR main_check_sha IS DISTINCT FROM $2
-               OR main_check_state IS NULL OR main_check_state = 'error')
-    RETURNING (SELECT was_state FROM prev) AS was_state, (SELECT was_sha FROM prev) AS was_sha,
-              (SELECT was_paused_sha FROM prev) AS was_paused_sha`,
-      [app.id, mergeSha, JSON.stringify(startedDetail), resume]
-    );
-    previous = rows[0] || null;
-  } catch (err) {
-    if (strict) throw err;
-    log.warn('main-watch', 'claim failed; not running', { appId: app.id, err: err.message });
-    return null;
-  }
-  if (!previous) return null; // Already claimed or completed for this SHA.
-  const wasPaused = !!previous && (!!previous.was_paused_sha
-    || previous.was_state === 'failing' || previous.was_state === 'confirming');
-
-  let verdict;
-  if (confirmationOf) {
-    // The first run already happened and was red; the process that was
-    // re-running it is gone. Pick up where it stopped.
-    verdict = { state: 'failing', detail: redOf(confirmationOf) };
-  } else {
-    log.info('main-watch', 'Running the unit suite on main', {
-      appId: app.id, slug: app.slug, sha: mergeSha, prNumber,
-    });
-    // A re-driven run takes over the dead process's Jobs (adoptRun) if
-    // they are still there.
-    verdict = await runSuite(config, pool, app, parsed, mergeSha, { adopt });
-  }
-  if (verdict.state === 'superseded') return null;
-
-  // The first red's tests, for a flake record if the re-run is green.
-  const firstRun = verdict.state === 'failing' ? verdict.detail : null;
-  const firstExcerpts = verdict.excerpts || [];
-  let confirmExcerpts = [];
-  if (verdict.state === 'failing' && confirmEnabled()) {
-    // Provisional: hold the pause, say so, and ask the suite again. A red
-    // of known flakes alone holds nothing while it is asked again.
-    const quietFirst = await knownFlakeNames(pool, app.id, firstRun);
-    const held = await writeState(pool, app, mergeSha, 'confirming', {
-      ...startedDetail, ...firstRun, confirming: true, ...(quietFirst ? { flakesOnly: quietFirst } : {}),
-    });
-    if (held === null) return null;
-    if (!held) {
-      log.info('main-watch', 'Discarded a first red for a superseded merge', { appId: app.id, sha: mergeSha });
-      await redFix().recordVerdict(pool, { appId: app.id, sha: mergeSha, state: 'failing', superseded: true, confirmed: false });
-      return null;
-    }
-    // Held, the board's banner says so (main-pause-store: "re-running to
-    // confirm"); nothing is posted anywhere else.
-    log.info('main-watch', confirmationOf
-      ? 'Resuming an interrupted confirming run'
-      : 'main failed once; re-running to confirm', {
-      appId: app.id, slug: app.slug, sha: mergeSha, prNumber, test: firstFailingTest(firstRun.failureReason),
-    });
-    // An interrupted confirmation's Jobs are the confirming run itself.
-    const again = await runSuite(config, pool, app, parsed, mergeSha, { adopt: confirmationOf ? adopt : null });
-    if (again.state === 'superseded') return null;
-    confirmExcerpts = again.excerpts || [];
-    if (again.state === 'passing') {
-      verdict = { state: 'passing', detail: { ...again.detail, flake: firstRun } };
-    } else if (again.state === 'failing') {
-      // Red twice, but on different tests: each failure went away when the
-      // suite ran again, so each is a flake, and the pause is lifted.
-      const disjoint = disjointReds(firstRun, again.detail);
-      verdict = {
-        state: 'failing',
-        detail: { ...again.detail, confirmed: true, firstRun, ...(disjoint ? { flakesOnly: disjoint, disjoint: true } : {}) },
-      };
-    } else {
-      // The re-run could not happen: it neither confirms nor clears the
-      // first red, which stands, and says so. recheckPaused asks again in
-      // a few minutes.
-      verdict = { state: 'failing', detail: { ...firstRun, confirmed: false, confirmation: again.detail } };
-    }
-  }
-  const detail = { ...startedDetail, ...verdict.detail };
-  if (verdict.state === 'failing') {
-    const quiet = await knownFlakeNames(pool, app.id, redOf(verdict.detail));
-    if (quiet) detail.flakesOnly = quiet;
-  }
-
-  const stored = await writeState(pool, app, mergeSha, verdict.state, detail);
-  if (stored === null) return null;
-  if (!stored) {
-    // Kept all the same: a superseded green is still the newest merge known
-    // to pass, which is where a later red's suspects are read from.
-    log.info('main-watch', 'Discarded a verdict for a superseded merge', { appId: app.id, sha: mergeSha, state: verdict.state });
-    await redFix().recordVerdict(pool, {
-      appId: app.id, sha: mergeSha, state: verdict.state, superseded: true, confirmed: detail.confirmed, flake: flakedRed(detail),
-    });
-    return null;
-  }
-  log.info('main-watch', `main is ${verdict.state}`, {
-    appId: app.id, slug: app.slug, sha: mergeSha, prNumber, state: verdict.state,
-    confirmed: detail.confirmed, flake: !!detail.flake,
-    ...(detail.flakesOnly ? { flakesOnly: detail.flakesOnly.length } : {}),
-  });
-  await redFix().recordVerdict(pool, { appId: app.id, sha: mergeSha, state: verdict.state, confirmed: detail.confirmed, flake: flakedRed(detail) });
-
-  // A red pauses merges and a green lifts the pause: the stored state is
-  // the whole of it, and the board's banner is how it is seen
-  // (main-pause-store). A channel carries no activity.
-  if ((verdict.state === 'passing' && detail.flake) || detail.disjoint) {
-    await kickQueue(config, app.id, 'post-flake');
-  } else if ((verdict.state === 'passing' || detail.flakesOnly) && wasPaused) {
-    // The pause lifted; whatever was approved meanwhile can go.
-    await kickQueue(config, app.id, 'post-green');
-  }
-  // Red then green on one commit: the tests that failed are flaky.
-  if (verdict.state === 'passing' && detail.flake && firstRun) {
-    await noteFlakes(config, pool, app, mergeSha, [firstRun], firstExcerpts);
-  } else if (detail.disjoint) {
-    // Two reds with no test in common: every one of them is flaky.
-    await noteFlakes(config, pool, app, mergeSha, [firstRun, redOf(detail)], [...firstExcerpts, ...confirmExcerpts]);
-  } else if (detail.flakesOnly) {
-    await fileFlakeRequests(config, pool, app, redOf(detail).failingTests || [], { mergeSha });
-  } else if (verdict.state === 'failing' && detail.confirmed === true) {
-    // Broken, twice over: ask the Homeroom bot to fix it, naming the merges
-    // the failing tests point at (services/main-red-fix.js).
-    await redFix().fileFixRequest(config, pool, {
-      app, parsed, redSha: mergeSha, prNumber, detail: redOf(detail),
-      excerpts: confirmExcerpts.length ? confirmExcerpts : firstExcerpts, fileBotIssue,
-    });
-  }
-  return { state: verdict.state, sha: mergeSha, detail };
-}
-
-// Main turned green (or an admin resumed merges): the app's merge queue is
-// asked for the merges the pause held back (src/workflow/merge-queue/).
-async function kickQueue(config, appId, why) {
-  void config;
-  try {
-    await require('../workflow/platform.ts').wantMerge({ appId, reason: `main-${why}` });
-  } catch (err) {
-    log.warn('main-watch', `${why}: could not ask the merge queue`, { appId, err: err.message });
-  }
-}
-
 // ── Flaky tests ──────────────────────────────────────────────────────────
 //
 // A test that failed on a commit and then passed on the same commit failed
@@ -648,60 +394,13 @@ async function kickQueue(config, appId, why) {
 
 const testKey = (t) => `${t.file || ''}\u0000${t.test}`;
 
-// A red the same commit did not keep when it ran again: green on the
-// confirm run or a recheck (`flake` holds the red it cleared), or red twice
-// on tests that each passed the other time (`disjoint`). Kept on the
-// verdict for the proposal-pipeline topic's "Reds that passed on a re-run".
-function flakedRed(detail) {
-  return !!(detail && (detail.flake || detail.disjoint));
-}
-
-// The failing tests' names when EVERY one of them is a known flake: named
-// in full (the suite's recap counted no failure the list lacks) and each
-// seen flaking within FLAKE_MEMORY_DAYS. Null otherwise, and on any doubt:
-// a read that fails pauses as before.
-async function knownFlakeNames(pool, appId, red) {
-  const tests = red && Array.isArray(red.failingTests) ? red.failingTests : [];
-  if (!tests.length || red.failingTestsComplete !== true) return null;
-  try {
-    const { rows } = await pool.query(
-      `SELECT file, test FROM main_test_flakes
-        WHERE app_id = $1 AND last_seen_at > NOW() - ($2::int * interval '1 day')`,
-      [appId, FLAKE_MEMORY_DAYS]
-    );
-    const known = new Set((rows || []).map((r) => testKey({ file: r.file, test: r.test })));
-    return tests.every((t) => known.has(testKey(t))) ? tests.map((t) => t.test) : null;
-  } catch (err) {
-    log.warn('main-watch', 'flake read failed; pausing as usual', { appId, err: err.message });
-    return null;
-  }
-}
-
-// Two reds on one commit that share no failing test: each test that failed
-// passed when the suite ran again, so each is a flake, whatever else the
-// other run hit. On 12 Oct 2026 a merge failed db-export-service's
-// backpressure test, its confirming run failed social-push-web's tap retries
-// instead, and merges stayed paused for 23 minutes on two flakes. Both lists
-// must be complete and short (MAX_FLAKES_PER_RED), as noteFlakes asks: a
-// dozen failures each time is the run's environment, and a list that lost
-// some names could hide a test that failed both times. Returns every
-// failing test's name, or null.
-function disjointReds(a, b) {
-  const listed = (red) => (red && red.failingTestsComplete === true && Array.isArray(red.failingTests)
-    && red.failingTests.length > 0 && red.failingTests.length <= MAX_FLAKES_PER_RED ? red.failingTests : null);
-  const first = listed(a);
-  const second = listed(b);
-  if (!first || !second) return null;
-  const seen = new Set(first.map(testKey));
-  if (second.some((t) => seen.has(testKey(t)))) return null;
-  return [...first, ...second].map((t) => t.test);
-}
-
 // Record the tests of each red that a green on the same commit showed to
 // be flaky, then file a request for each. A red counts only when it named
 // all of its failures and no more than MAX_FLAKES_PER_RED of them. Never
 // throws; returns the tests recorded.
-async function noteFlakes(config, pool, app, mergeSha, reds, excerpts = []) {
+// `file: false` records them only (the main-check machine's work files each
+// request as a step of its own).
+async function noteFlakes(config, pool, app, mergeSha, reds, excerpts = [], { file = true } = {}) {
   const tests = new Map();
   for (const red of reds) {
     const named = red && Array.isArray(red.failingTests) ? red.failingTests : [];
@@ -727,7 +426,7 @@ async function noteFlakes(config, pool, app, mergeSha, reds, excerpts = []) {
     log.info('main-watch', 'Recorded flaky tests', {
       appId: app.id, slug: app.slug, sha: mergeSha, tests: recorded.map((t) => t.test),
     });
-    await fileFlakeRequests(config, pool, app, recorded, { mergeSha, excerpts });
+    if (file) await fileFlakeRequests(config, pool, app, recorded, { mergeSha, excerpts });
   }
   return recorded;
 }
@@ -804,27 +503,63 @@ async function fileBotIssue(config, pool, app, parsed, { title, body }) {
 // FLAKE_REQUEST_DAYS, and never while the last one is still open. The
 // request_filed_at claim keeps two processes from filing the same one.
 // Never throws; returns the issue number, or null.
-async function fileFlakeRequest(config, pool, app, t, { mergeSha = null, excerpt = '' } = {}) {
+// A request this claim already filed: its number on the claimed row, or the
+// bot's request of that title filed since the claim (a process that died
+// between filing and recording the number). Null when there is none.
+async function filedSince(pool, appId, title, since) {
+  const { rows: [r] } = await pool.query(
+    `SELECT github_issue_number FROM issues
+      WHERE app_id = $1 AND kind = 'general' AND title = $2 AND created_at >= $3::timestamptz
+      ORDER BY id LIMIT 1`, [appId, title, since]);
+  return r ? Number(r.github_issue_number) : null;
+}
+
+// `claimedBy` (the main-check machine's work): the work item taking the
+// claim, written with it, so the attempt after a crash at any point carries
+// its own claim on rather than find the test claimed and file nothing. A
+// claim clears the last request's number: the number on a row is always
+// its current claim's. `strict`: a failure (after giving the claim back)
+// throws, for the work to retry.
+async function fileFlakeRequest(config, pool, app, t, { mergeSha = null, excerpt = '', claimedBy = null, strict = false } = {}) {
   if (!flakeRequestsEnabled()) return null;
   const parsed = parseRepo(app.repo_url);
   const github = require('./github');
   if (!parsed || !github.isEnabled()) return null;
   const key = [app.id, t.file || '', t.test];
+  const by = claimedBy == null ? null : String(claimedBy);
   let claimed;
   try {
-    ({ rows: claimed } = await pool.query(
-      `UPDATE main_test_flakes f
-          SET request_filed_at = NOW()
-        WHERE f.app_id = $1 AND f.file = $2 AND f.test = $3
-          AND (f.request_filed_at IS NULL OR f.request_filed_at < NOW() - ($4::int * interval '1 day'))
-          AND NOT EXISTS (
-            SELECT 1 FROM issues i
-             WHERE i.app_id = f.app_id AND i.github_issue_number = f.request_issue_number
-               AND i.status = 'open')
-      RETURNING f.seen_count, f.first_seen_at`,
-      [...key, FLAKE_REQUEST_DAYS]
-    ));
+    if (by) {
+      // This work's own claim, still standing: carried on.
+      ({ rows: claimed } = await pool.query(
+        `SELECT seen_count, first_seen_at, request_filed_at::text AS claimed_at, request_issue_number FROM main_test_flakes
+          WHERE app_id = $1 AND file = $2 AND test = $3 AND request_claimed_by = $4 AND request_filed_at IS NOT NULL`, [...key, by]));
+      if (claimed.length && claimed[0].request_issue_number) return Number(claimed[0].request_issue_number);
+      if (claimed.length) {
+        const title = flakeRequestText(t, { mergeSha, seenCount: 1, firstSeenAt: null, excerpt: '' }).title;
+        const found = await filedSince(pool, app.id, title, claimed[0].claimed_at);
+        if (found) {
+          await pool.query('UPDATE main_test_flakes SET request_issue_number = $4 WHERE app_id = $1 AND file = $2 AND test = $3', [...key, found]);
+          return found;
+        }
+      }
+    }
+    if (!claimed || !claimed.length) {
+      ({ rows: claimed } = await pool.query(
+        `UPDATE main_test_flakes f
+            SET request_filed_at = NOW(), request_issue_number = NULL, request_claimed_by = $5
+          WHERE f.app_id = $1 AND f.file = $2 AND f.test = $3
+            AND (f.request_filed_at IS NULL OR f.request_filed_at < NOW() - ($4::int * interval '1 day'))
+            AND NOT EXISTS (
+              SELECT 1 FROM issues i
+               WHERE i.app_id = f.app_id AND i.github_issue_number = f.request_issue_number
+                 AND i.status = 'open')
+        RETURNING f.seen_count, f.first_seen_at`,
+        [...key, FLAKE_REQUEST_DAYS, by]
+      ));
+    }
   } catch (err) {
+    if (strict) throw err;
     log.warn('main-watch', 'flake request claim failed (non-fatal)', { appId: app.id, test: t.test, err: err.message });
     return null;
   }
@@ -843,294 +578,46 @@ async function fileFlakeRequest(config, pool, app, t, { mergeSha = null, excerpt
   } catch (err) {
     log.warn('main-watch', 'flake request failed (non-fatal)', { appId: app.id, test: t.test, err: err.message });
     await pool.query(
-      'UPDATE main_test_flakes SET request_filed_at = NULL WHERE app_id = $1 AND file = $2 AND test = $3',
+      'UPDATE main_test_flakes SET request_filed_at = NULL, request_claimed_by = NULL WHERE app_id = $1 AND file = $2 AND test = $3',
       key
     ).catch(() => {});
+    if (strict) throw err;
     return null;
   }
 }
 
-// ── Rechecks ─────────────────────────────────────────────────────────────
-//
-// A paused main asks the suite again by itself. The state stays 'failing'
-// throughout, so the banner and an admin's Resume read as before; the
-// detail's `rechecks` counter is the claim (two sweeps that read the same
-// count cannot both move it on), and `recheckingAt` marks the run in
-// flight until its verdict replaces the detail.
-
-/**
- * Re-run the suite on each paused main that is due: a red whose confirming
- * re-run could not happen after confirmRetryMs, a confirmed red after
- * recheckMs, each at most maxRechecks times. Green lifts the pause and
- * records the flakes; red stands. Leader-only, on start()'s timer. The runs
- * are not awaited: returns the rows taken, and `done` for tests.
- */
-async function recheckPaused(config, { pool = null, max = maxRechecks() } = {}) {
-  const none = { rechecked: [], done: Promise.resolve([]) };
-  if (!isEnabled() || !(max > 0)) return none;
-  const db = pool || require('../db/pool').getPool(config);
-  let rows;
-  try {
-    ({ rows } = await db.query(
-      `SELECT id, slug, repo_url, main_check_sha, main_check_detail
-         FROM apps
-        WHERE main_check_state = 'failing'
-          AND main_check_sha IS NOT NULL
-          AND lower(coalesce(main_check_paused_sha, '')) = lower(main_check_sha)
-          AND coalesce((main_check_detail->>'rechecks')::int, 0) < $1::int
-          AND (main_check_detail->>'recheckingAt' IS NULL
-               OR (main_check_detail->>'recheckingAt')::timestamptz < NOW() - ($4::int * interval '1 millisecond'))
-          AND main_check_at < NOW() - (CASE WHEN main_check_detail->>'confirmed' = 'false'
-                                            THEN $2::int ELSE $3::int END * interval '1 millisecond')
-        ORDER BY main_check_at`,
-      [max, confirmRetryMs(), recheckMs(), staleMs()]
-    ));
-  } catch (err) {
-    log.warn('main-watch', 'Could not list paused mains (non-fatal)', { err: err.message });
-    return none;
+// One run of the suite on `sha` for the main-check machine's main.suite work
+// (src/workflow/main-check/): `onRunId` is told the checks-queue row's run id
+// before its Jobs exist, and an attempt after a crash passes it back
+// (`resumeRunId`) to read the dead run's Jobs rather than run the suite
+// again, once the dead process's row is still there. Resolves a verdict
+// (classify); never throws.
+async function runMainSuite(config, pool, { app, sha, resumeRunId = null, onRunId = null, signal = null } = {}) {
+  const parsed = parseRepo(app && app.repo_url);
+  if (!parsed) return { state: 'skipped', detail: { reason: 'no repository' } };
+  let adopt = null;
+  if (resumeRunId) {
+    try {
+      const { rows: [r] } = await pool.query(
+        'SELECT owner FROM check_runs WHERE run_id = $1 AND admitted_at IS NOT NULL', [resumeRunId]);
+      if (r) adopt = { runId: resumeRunId, owner: r.owner };
+    } catch { /* nothing to adopt: the suite runs again */ }
   }
-  if (!rows || !rows.length) return none;
-  const rechecked = [];
-  const runs = [];
-  for (const row of rows) {
-    rechecked.push({ appId: row.id, sha: row.main_check_sha });
-    runs.push(recheckOne(config, db, row, max).catch((err) => {
-      log.warn('main-watch', 'Recheck failed (non-fatal)', { appId: row.id, err: err.message });
-      return null;
-    }));
-  }
-  return { rechecked, done: Promise.all(runs) };
-}
-
-async function recheckOne(config, pool, row, max) {
-  const app = { id: row.id, slug: row.slug, repo_url: row.repo_url };
-  const parsed = parseRepo(app.repo_url);
-  if (!parsed) return null;
-  const mergeSha = row.main_check_sha;
-  const before = row.main_check_detail && typeof row.main_check_detail === 'object' ? row.main_check_detail : {};
-  const n = (Number.isInteger(before.rechecks) ? before.rechecks : 0) + 1;
-  const claim = await pool.query(
-    `UPDATE apps
-        SET main_check_detail = coalesce(main_check_detail, '{}'::jsonb)
-              || jsonb_build_object('rechecks', $3::int, 'recheckingAt', NOW())
-      WHERE id = $1 AND main_check_sha = $2 AND main_check_state = 'failing'
-        AND main_check_paused_sha IS NOT NULL
-        AND coalesce((main_check_detail->>'rechecks')::int, 0) = $3::int - 1`,
-    [app.id, mergeSha, n]
-  );
-  if (!claim.rowCount) return null;
-  const red = redOf(before);
-  log.info('main-watch', before.confirmed === false
-    ? 'Retrying a confirmation that could not run'
-    : 'Re-checking a paused main', {
-    appId: app.id, slug: app.slug, sha: mergeSha, recheck: n, of: max, test: firstFailingTest(red.failureReason),
-  });
-  const again = await runSuite(config, pool, app, parsed, mergeSha);
-  if (again.state === 'superseded') return null;
-  const keep = {
-    ...(before.prNumber !== undefined ? { prNumber: before.prNumber } : {}),
-    ...(before.sessionId !== undefined ? { sessionId: before.sessionId } : {}),
-    rechecks: n,
-  };
-  let state;
-  let detail;
-  if (again.state === 'passing') {
-    state = 'passing';
-    detail = { ...keep, ...again.detail, flake: red };
-  } else if (again.state === 'failing') {
-    state = 'failing';
-    detail = { ...keep, ...again.detail, confirmed: true, firstRun: red };
-    // The paused red's tests all passed this time and others failed: flakes,
-    // as on a merge (disjointReds).
-    const disjoint = disjointReds(red, again.detail);
-    const quiet = disjoint || await knownFlakeNames(pool, app.id, again.detail);
-    if (quiet) detail.flakesOnly = quiet;
-    if (disjoint) detail.disjoint = true;
-  } else {
-    // It could not run this time either: the red stands as it was, with
-    // one recheck spent.
-    const { recheckingAt, ...rest } = before;
-    state = 'failing';
-    detail = { ...rest, rechecks: n, recheckError: again.detail };
-  }
-  const stored = await writeState(pool, app, mergeSha, state, detail);
-  if (!stored) return null;
-  if (again.state === 'passing' || again.state === 'failing') {
-    await redFix().recordVerdict(pool, { appId: app.id, sha: mergeSha, state, confirmed: detail.confirmed, flake: flakedRed(detail) });
-  }
-  log.info('main-watch', `main is ${state}`, {
-    appId: app.id, slug: app.slug, sha: mergeSha, state, recheck: n, flake: !!detail.flake,
-    ...(detail.flakesOnly ? { flakesOnly: detail.flakesOnly.length } : {}),
-  });
-  if (state === 'passing' || detail.flakesOnly) await kickQueue(config, app.id, 'post-recheck');
-  if (state === 'passing') {
-    await noteFlakes(config, pool, app, mergeSha, [red, before.firstRun].filter(Boolean));
-  } else if (detail.disjoint) {
-    await noteFlakes(config, pool, app, mergeSha, [red, again.detail], again.excerpts || []);
-  } else if (detail.flakesOnly) {
-    await fileFlakeRequests(config, pool, app, again.detail.failingTests || [], { mergeSha, excerpts: again.excerpts || [] });
-  }
-  return { state, sha: mergeSha, detail };
-}
-
-/**
- * An admin's "resume merges" for the current pause. Lifts it and remembers
- * the sha it was about, so a red verdict still in flight for that same sha
- * cannot re-pause. Returns the block the API serializes, or null when there
- * was nothing to resume.
- */
-async function resume(config, pool, appId, { by = null } = {}) {
-  const { rows } = await pool.query(
-    `UPDATE apps
-        SET main_check_resumed_sha = main_check_paused_sha, main_check_paused_sha = NULL
-      WHERE id = $1 AND main_check_paused_sha IS NOT NULL
-    RETURNING main_check_state, main_check_sha, main_check_at, main_check_detail,
-              main_check_resumed_sha, main_check_paused_sha`,
-    [appId]
-  );
-  if (!rows[0]) return null;
-  log.info('main-watch', 'Merges resumed by an admin', {
-    appId, sha: rows[0].main_check_resumed_sha, by: by && by.username,
-  });
-  notePauseChange(pool, appId, { was_paused: rows[0].main_check_resumed_sha, now_paused: null }, { by: 'admin' });
-  await kickQueue(config, appId, 'post-resume');
-  return describe(rows[0]);
-}
-
-// How long a 'running' / 'confirming' row may sit before it is taken for
-// interrupted. One suite run is bounded by UNIT_SUITE_TIMEOUT_MS, and each
-// phase re-stamps main_check_at when it begins, so a row older than a run
-// plus a margin has no process behind it.
-function staleMs() {
-  const v = parseInt(process.env.MAIN_WATCH_STALE_MS, 10);
-  return Number.isFinite(v) && v > 0 ? v : unitSuite.UNIT_SUITE_TIMEOUT_MS + 2 * 60 * 1000;
-}
-
-/**
- * Re-drive runs a restart interrupted. afterMerge is fire-and-forget from the
- * process that merged, and for the platform's own app that process is
- * replaced by the deploy of the very merge it is testing — so a rollout
- * mid-run leaves the row at 'running' ("checking the last merge", forever)
- * or, worse, at 'confirming': paused, no verdict coming, and no Resume verb
- * because a provisional red hides it. This turns each such row back into a
- * run: 'running' asks the suite again for that sha; 'confirming' resumes at
- * the re-run, with the recorded first red carried over.
- *
- * The checks queue (services/checks-queue.js) moves both edges. A run of the
- * row's sha whose process is alive, waiting for its slot or running, is
- * never re-driven, however long ago the row was stamped. A run that was
- * still waiting when its process died is re-driven at once rather than when
- * the row goes stale, and the new run takes over its place in line.
- *
- * Leader-only (server.js becomeLeader): once at boot, then on a timer. Rows
- * younger than `olderThanMs` are left alone — a live run somewhere else in
- * the cluster is stamped within the window. The runs themselves are not
- * awaited: returns the rows taken, and `done` for tests.
- */
-async function resumeInterrupted(config, { pool = null, olderThanMs = staleMs() } = {}) {
-  if (!isEnabled()) return { resumed: [], done: Promise.resolve([]) };
-  const db = pool || require('../db/pool').getPool(config);
-  let rows;
-  try {
-    // A run is interrupted once its own queue row stops being heartbeated:
-    // its process is gone (a shutdown hands its rows over at once,
-    // check-runs.release). Without a row to ask (no checks queue), once the
-    // row is older than a run could take. `dead` is the newest such row: an
-    // admitted one has Jobs on the cluster to adopt (adoptRun).
-    ({ rows } = await db.query(
-      `SELECT apps.id, apps.slug, apps.repo_url, apps.main_check_state, apps.main_check_sha,
-              apps.main_check_detail, dead.run_id AS dead_run_id, dead.owner AS dead_owner,
-              dead.admitted_at AS dead_admitted_at
-         FROM apps
-         LEFT JOIN LATERAL (
-           SELECT cr.run_id, cr.owner, cr.admitted_at FROM check_runs cr
-            WHERE cr.kind = 'main' AND cr.app_id = apps.id
-              AND lower(cr.commit_sha) = lower(apps.main_check_sha)
-            ORDER BY cr.started_at DESC LIMIT 1
-         ) dead ON TRUE
-        WHERE apps.main_check_state IN ('running', 'confirming')
-          AND apps.main_check_sha IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM check_runs cr
-             WHERE cr.kind = 'main' AND cr.app_id = apps.id
-               AND lower(cr.commit_sha) = lower(apps.main_check_sha)
-               AND cr.heartbeat_at >= NOW() - ($2::int * interval '1 millisecond'))
-          AND (apps.main_check_at < NOW() - ($1::int * interval '1 millisecond')
-               OR dead.run_id IS NOT NULL)
-        ORDER BY apps.main_check_at`,
-      [olderThanMs, Math.round(checkRuns.ORPHAN_MS)]
-    ));
-  } catch (err) {
-    log.warn('main-watch', 'Could not list interrupted runs (non-fatal)', { err: err.message });
-    return { resumed: [], done: Promise.resolve([]) };
-  }
-  if (!rows.length) return { resumed: [], done: Promise.resolve([]) };
-  const resumed = [];
-  const runs = [];
-  for (const row of rows) {
-    const app = { id: row.id, slug: row.slug, repo_url: row.repo_url };
-    const detail = row.main_check_detail && typeof row.main_check_detail === 'object' ? row.main_check_detail : {};
-    const session = detail.sessionId ? { id: detail.sessionId, pr_number: detail.prNumber || null } : null;
-    // A confirming row's detail is the first red (writeState above): the
-    // suite's own account of it, minus the bookkeeping this run re-adds.
-    const firstRun = redOf(detail);
-    const confirmationOf = row.main_check_state === 'confirming' && firstRun.failureReason ? firstRun : null;
-    // Admitted: its Jobs were created, and may still be running or done.
-    const adopt = row.dead_run_id && row.dead_admitted_at ? { runId: row.dead_run_id, owner: row.dead_owner } : null;
-    log.info('main-watch', 'Re-driving an interrupted run', {
-      appId: row.id, slug: row.slug, sha: row.main_check_sha, was: row.main_check_state,
-      resumingConfirmation: !!confirmationOf, adopting: !!adopt,
-    });
-    resumed.push({ appId: row.id, sha: row.main_check_sha, was: row.main_check_state, adopting: !!adopt });
-    runs.push(afterMerge(config, db, { app, session, mergeSha: row.main_check_sha, confirmationOf, resume: true, adopt })
-      .catch((err) => {
-        log.warn('main-watch', 'Re-drive failed (non-fatal)', { appId: row.id, err: err.message });
-        return null;
-      }));
-  }
-  return { resumed, done: Promise.all(runs) };
-}
-
-/**
- * The leader's timer for resumeInterrupted and recheckPaused. Returns a stop
- * function. A leader timer (services/leader-timers.js): a re-drive can start
- * a whole-tree run or release a paused main to merges, so none starts once
- * shutdown has begun, and the sweeps of a tick under way are drained.
- */
-function start(config, { intervalMs = 2 * 60 * 1000 } = {}) {
-  if (!isEnabled()) return () => {};
-  return leaderTimers.every('main-watch', () => Promise.all([
-    resumeInterrupted(config).catch((err) => {
-      log.warn('main-watch', 'Interrupted-run sweep failed (non-fatal)', { err: err.message });
-    }),
-    recheckPaused(config).catch((err) => {
-      log.warn('main-watch', 'Paused-main sweep failed (non-fatal)', { err: err.message });
-    }),
-  ]), intervalMs);
+  return runSuite(config, pool, app, parsed, sha, { adopt, onRunId, signal });
 }
 
 module.exports = {
-  isEnabled,
-  confirmEnabled,
-  afterMerge,
   mergePause,
-  resume,
-  resumeInterrupted,
-  recheckPaused,
-  start,
-  staleMs,
   describe,
   classify,
   firstFailingTest,
-  // Exported for tests.
-  knownFlakeNames,
+  parseRepo,
+  runMainSuite,
   noteFlakes,
-  flakedRed,
+  fileFlakeRequests,
   fileFlakeRequest,
   fileBotIssue,
-  disjointReds,
   flakeRequestText,
-  maxRechecks,
-  recheckMs,
-  confirmRetryMs,
+  MAX_FLAKES_PER_RED,
+  FLAKE_MEMORY_DAYS,
 };

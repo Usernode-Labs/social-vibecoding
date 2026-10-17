@@ -53,19 +53,10 @@ test('each place has its own switch, on unless an admin turns it off, and nothin
   assert.equal(off.voiceSession, true);
 });
 
-test('only a mention or a reply can be to the bot in a chat; a change, a request and a reply thread are read', () => {
+test('a mention of the bot is its handle or its name', () => {
   assert.equal(voice.mentionsBot('@Homeroom bot can you sort it?'), true);
   assert.equal(voice.mentionsBot('hey @homeroom_bot'), true);
   assert.equal(voice.mentionsBot('the homeroom bot did it'), false);
-  const chat = { type: 'chat', ref: null };
-  assert.equal(voice.mightBeAddressed(chat, { content: 'nice work all', quoted: false }), false);
-  assert.equal(voice.mightBeAddressed(chat, { content: '@Homeroom bot sort it', quoted: false }), true);
-  assert.equal(voice.mightBeAddressed(chat, { content: 'yes please', quoted: true }), true, 'a reply, which the gate checks is to the bot');
-  assert.equal(voice.mightBeAddressed({ type: 'category', ref: 2 }, { content: 'ok', quoted: false }), false);
-  for (const type of ['session', 'issue', 'message']) {
-    assert.equal(voice.mightBeAddressed({ type, ref: 1 }, { content: 'ok', quoted: false }), true, type);
-  }
-  assert.equal(voice.mightBeAddressed(null, { content: '@Homeroom bot' }), false);
 });
 
 test('words a DM or a chat passed on are not answered twice', () => {
@@ -269,13 +260,15 @@ test('a repeat note is held for a mention the voice answers, but an answer to it
 
 // ── The seams ────────────────────────────────────────────────────────────
 
-test('the room hands every person\'s message to the voice, with what it knows, never a connector\'s or a vote\'s', () => {
+test('the room hands every person\'s message to the voice in the statement that stores it, never a connector\'s or a vote\'s', () => {
   const ws = read('src/services/ws.js');
-  const at = ws.indexOf("require('./homeroom-bot-voice').noteMessage(pool, null, {");
-  assert.ok(at > 0);
-  const before = ws.slice(at - 400, at);
-  assert.match(before, /if \(postedVia !== 'agent' && \(!thread \|\| thread\.type !== 'governance'\)\) \{/);
-  assert.match(ws.slice(at, at + 300), /hint: \{ content, thread, quoted: !!quote \}/);
+  assert.match(ws, /const heard = postedVia !== 'agent' && \(!thread \|\| thread\.type !== 'governance'\);/);
+  assert.match(ws, /\? require\('\.\.\/workflow\/platform\.ts'\)\.insertHeard\(db, insertSql, insertParams, \{ appId: client\.appId, thread: thread \|\| null \}\)/);
+  const platform = read('src/workflow/platform.ts');
+  const heard = platform.slice(platform.indexOf('export async function insertHeard'));
+  assert.match(heard, /`WITH m AS \(\$\{insertSql\}\),\s+e AS \(\s+INSERT INTO wf_events/, 'the message and its event, one statement');
+  // Nothing floats after the commit to hear it.
+  assert.doesNotMatch(ws, /homeroom-bot-voice'\)\.noteMessage|homeroom-bot-chat'\)\.noteChatMessage/);
   assert.match(ws, /require\('\.\/homeroom-bot-voice'\)\.setConfig\(config\)/);
   assert.match(ws, /module\.exports = \{ noteBoardChange, broadcastThreadSummary,/);
   // The bot's reply in a reply thread names its root, as a person's does.
@@ -288,6 +281,9 @@ test('a mention in a project\'s chat is the voice\'s while it is on there; the n
   const note = chat.slice(chat.indexOf('async function noteChatMessage'), chat.indexOf('function wordCount'));
   assert.match(note, /if \(mentioned && await \(deps\.voice \|\| require\('\.\/homeroom-bot-voice'\)\)\.enabledFor\(pool, 'chat', deps\)\) return null;/);
   assert.ok(note.indexOf('enabledFor') < note.indexOf('return await maybeOffer'), 'decided before anything is read for it');
+  // The chat place's turn hands it what nobody said to the bot.
+  const src = read('src/services/homeroom-bot-voice.js');
+  assert.match(src, /\? chatModule\(deps\)\.heardInChat\(pool, cfg, \{ app, place, messages: fresh\.filter\(\(m\) => !told\.has\(Number\(m\.id\)\)\), deps \}\)/);
 });
 
 test('the change follow-up takes the asks and lets the voice tell the people who asked; no working or wait notes for them', () => {
@@ -297,8 +293,9 @@ test('the change follow-up takes the asks and lets the voice tell the people who
   assert.match(run, /replies = replies\.filter\(\(r\) => r\.via !== 'homeroom' \|\| \(r\.where === 'proposal' \? !voiceOnChange : !voiceOnRequest\)\);/);
   assert.match(run, /onStart: deps\.ws && !asks\.length \?/);
   assert.match(run, /turn\.routed\?\.error === 'session_busy' && deps\.ws && !asks\.length/);
-  assert.match(run, /voice\.reportFollowUp\(pool, config, \{\s*app, session, bot, asks, deps: voiceDeps,/);
-  assert.match(run, /voice\.finishAsks\(pool, \{ runTag, runId \}\)/);
+  // The asks end and their report is owed in one transaction.
+  assert.match(run, /voice\.reportFollowUp\(pool, config, \{\s*app, session, asks, runTag, deps: voiceDeps,/);
+  assert.match(run, /finish: \(db\) => voice\.finishAsks\(db, \{ runTag, runId \}\),/);
   assert.match(run, /await requeueAsks\(\);\n  return \{ ran: true, verdict: followup\.VERDICT_FOR\[action\]/);
   // And a message in its discussion no longer brings it back by itself.
   const note = src.slice(src.indexOf('async function noteProposalActivity'), src.indexOf('function onBusMessage'));
@@ -314,7 +311,7 @@ test('the DM, a chat\'s fix and a No vote\'s line become asks, and a merge drops
   assert.match(post, /source: queueReason === 'vote_no' \? 'vote_no' : 'dm'/);
   assert.match(post, /messageId: Number\(posted\.message\?\.id\) \|\| null/);
   const merged = dm.slice(dm.indexOf('async function noteProposalMerged'));
-  assert.match(merged.slice(0, 400), /\.dropAsks\(pool, session\.id\)/);
+  assert.match(merged.slice(0, 500), /\.dropAsks\(pool, session\.id, \{ strict: !!deps\.strict \}\)/, 'strict in the bot-change machine\'s durable work');
 });
 
 test('a tap under an offer is the person\'s own, from their browser, and members only', () => {
@@ -397,12 +394,20 @@ test('the report\'s model is never shown the agent\'s workings, is told not to n
       };
     },
   };
-  const pool = { async query() { return { rows: [] }; } };
-  const n = await voice.reportFollowUp(pool, {}, {
-    app: { id: 9, slug: 'homeroom', name: 'Homeroom' },
-    session: { id: 7630, pr_number: 4646, session_title: 'Match the requester\'s language in DMs' },
-    bot: { id: 1, username: 'homeroom_bot' },
-    asks: [{ id: 1, asker: 'evan', asker_id: 2, instruction: 'Use the user\'s locale in DMs', place_type: 'session', place_ref: 7630 }],
+  // The rows the report's work reads, by what it asks.
+  const pool = {
+    async query(sql) {
+      if (/FROM apps WHERE id/.test(sql)) return { rows: [{ id: 9, slug: 'homeroom', name: 'Homeroom' }] };
+      if (/FROM chat_sessions WHERE id/.test(sql)) return { rows: [{ id: 7630, pr_number: 4646, title: 'Match the requester\'s language in DMs' }] };
+      if (/FROM homeroom_bot_change_asks a WHERE a\.id = ANY/.test(sql)) {
+        return { rows: [{ id: 1, asker: 'evan', asker_id: 2, instruction: 'Use the user\'s locale in DMs', place_type: 'session', place_ref: 7630 }] };
+      }
+      return { rows: [] };
+    },
+  };
+  deps.dmSvc = { async botAccount() { return { id: 1, username: 'homeroom_bot' }; } };
+  const out = await voice.sayReport(pool, {}, {
+    appId: 9, place: { type: 'session', ref: 7630 }, sessionId: 7630, runTag: 'fu1', asks: [1],
     outcome: {
       action: 'revise', moved: true,
       summary: 'DM replies follow the language picked in Settings.',
@@ -410,7 +415,7 @@ test('the report\'s model is never shown the agent\'s workings, is told not to n
     },
     deps,
   });
-  assert.equal(n, 1);
+  assert.equal(out.id, 9);
   const req = seen.find((x) => x.req).req;
   const facts = req.messages[1].content;
   assert.doesNotMatch(facts, /harness|commit|push/i, 'the facts it writes from leave them out');
@@ -440,14 +445,22 @@ test('a turn that only queued a change, or only offered something, never opens b
 });
 
 test('a change something is running on reads busy, in a turn\'s facts and when an ask is recorded', async () => {
-  // turnRunningOn takes one options object. Both paths once passed it the
-  // pool and an id, so it threw, the throw read as "free", and a running
-  // turn, operation or shots run on the change was never seen.
+  // Both paths once read it through turnRunningOn with the wrong arguments,
+  // so it threw, the throw read as "free", and a running turn, operation or
+  // shots run on the change was never seen; and turnRunningOn asked this
+  // process's own registry first, which a turn in another process is not in.
   const change = { id: 70, app_id: 9, user_id: 1, status: 'promoted', is_headless: false, linked_issues: [], title: 'Blue header' };
-  const pool = ({ activeTurn = null } = {}) => ({
+  // Whatever holds it is read from the durable records (workedOnSql), in one
+  // statement: `busy` is what that statement answers.
+  const pool = ({ busy = false } = {}) => ({
     async query(sql) {
+      if (/AS busy FROM chat_sessions cs WHERE cs\.id/.test(sql)) {
+        assert.match(sql, /cs\.active_turn IS NOT NULL/);
+        assert.match(sql, /machine = 'shots'/);
+        assert.match(sql, /o->>'holder'/, 'an old flow\'s recorded operation, counted while its holder lives');
+        return { rows: [{ busy }] };
+      }
       if (/FROM chat_sessions cs WHERE cs\.id/.test(sql)) return { rows: [change] };
-      if (/SELECT active_turn FROM chat_sessions/.test(sql)) return { rows: [{ active_turn: activeTurn }] };
       if (/INSERT INTO homeroom_bot_change_asks/.test(sql)) return { rows: [{ id: 501 }] };
       if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(sql)) return { rows: [{ n: 0 }] };
       return { rows: [] };
@@ -456,9 +469,10 @@ test('a change something is running on reads busy, in a turn\'s facts and when a
   const busyDeps = (over = {}) => ({
     ...deps(),
     botSvc: { async enqueueFront() { return true; } },
-    worker: { isInFlight: () => false },
-    activeWorkers: new Set(),
-    shotsRunning: async () => false,
+    // This process's own registry is never asked: a turn here or elsewhere
+    // reads the same from the records.
+    worker: { isInFlight: () => true },
+    activeWorkers: new Set([70]),
     ...over,
   });
   const facts = (p, d) => voice.factsFor(p, {
@@ -471,10 +485,7 @@ test('a change something is running on reads busy, in a turn\'s facts and when a
   assert.match(await facts(pool(), busyDeps()), /Nothing is running on it now\./);
   assert.equal(await ask(pool(), busyDeps()), false);
   const held = [
-    ['a worker turn in this process', pool(), busyDeps({ activeWorkers: new Set([70]) })],
-    ['its executing worker', pool(), busyDeps({ worker: { isInFlight: (id) => Number(id) === 70 } })],
-    ['a shots run', pool(), busyDeps({ shotsRunning: async (id) => id === 70 })],
-    ['a turn on its row', pool({ activeTurn: { turnId: 't1' } }), busyDeps()],
+    ['a turn, an operation, a build or a shots run on its records', pool({ busy: true }), busyDeps()],
   ];
   for (const [what, p, d] of held) {
     assert.match(await facts(p, d), /A run on it is going right now\./, what);

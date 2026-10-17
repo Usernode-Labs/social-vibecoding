@@ -8,6 +8,8 @@
 //
 // Run with: node --test tests/capture-outcomes.test.js
 
+// The verdict's writers: the preview machine's own (its transitions run them).
+const rowStore = require('../src/workflow/preview/check-store.ts');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -414,7 +416,7 @@ test('buildVisualsBlock stays byte-identical without the flag', () => {
 test('storeCaptureOutcome writes state + detail + timestamp', async () => {
   const calls = [];
   const pool = { query: async (sql, params) => { calls.push({ sql, params }); return { rows: [] }; } };
-  await visuals.storeCaptureOutcome(pool, 42, 'partial', { pathDefaulted: true });
+  await rowStore.storeCaptureOutcome(pool, 42, 'partial', { pathDefaulted: true });
   assert.equal(calls.length, 1);
   assert.match(calls[0].sql, /capture_state = \$1/);
   assert.match(calls[0].sql, /captured_at = NOW\(\)/);

@@ -129,8 +129,8 @@ test('a proposal\'s own notices that only ever went to the channel now go to its
   assert.match(mf, /writes\.push\(chat\(e, d\.appId, d\.sessionId, failureLine\(d, message\)\)\)/);
   assert.match(mf, /const chat = \([^)]*\): DomainWrite =>\n {2}\(\{ type: 'chat', eventId: e\.id, appId, thread: \{ type: 'session', ref: sessionId \}, content, metadata \}\);/);
   // A closed PR taken off the vote, and a withdrawn proposal, are the
-  // proposal machine's lines now (MergeAbandoned, Close), and every line it
-  // writes goes into the proposal's thread.
+  // proposal machine's lines now (a merge attempt's 'closed', Close), and
+  // every line it writes goes into the proposal's thread.
   const pm = read('src/workflow/proposal/machine.ts');
   assert.match(pm, /const abandoned: Handler = [\s\S]{0,800}line\(e, s\.data, `\$\{prLabel\(f\.row!\)\} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel\./);
   assert.match(pm, /if \(row\.prNumber\) writes\.push\(line\(e, d, closedLine\(row, reason, !!more\.byOwner\)\)\);/);

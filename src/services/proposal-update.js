@@ -1071,21 +1071,15 @@ async function applyTestingMetadata({ pool, session, testing }) {
   const stepsChanged = !!testing.testingMd && String(session.testing_md || '') !== testing.testingMd;
   if (!pathsChanged && !stepsChanged) return unchangedResult(testing.testingPaths);
 
-  const sets = [];
-  const values = [];
-  if (pathsChanged) {
-    values.push(JSON.stringify(testing.testingPaths));
-    sets.push(`testing_paths = $${values.length}::jsonb`);
-    values.push(testing.testingPath);
-    sets.push(`testing_path = $${values.length}`);
-  }
-  if (stepsChanged) {
-    values.push(testing.testingMd);
-    sets.push(`testing_md = $${values.length}`);
-  }
-  values.push(Number(session.id));
   try {
-    await pool.query(`UPDATE chat_sessions SET ${sets.join(', ')} WHERE id = $${values.length}`, values);
+    await pool.query(
+      `UPDATE chat_sessions
+          SET testing_paths = CASE WHEN $2::boolean THEN $3::jsonb ELSE testing_paths END,
+              testing_path = CASE WHEN $2::boolean THEN $4 ELSE testing_path END,
+              testing_md = CASE WHEN $5::boolean THEN $6 ELSE testing_md END
+        WHERE id = $1`,
+      [Number(session.id), pathsChanged, pathsChanged ? JSON.stringify(testing.testingPaths) : null,
+        pathsChanged ? testing.testingPath : null, stepsChanged, stepsChanged ? testing.testingMd : null]);
   } catch (err) {
     log.error('proposal-update', 'could not store the revision\'s testing metadata', {
       sessionId: Number(session.id), err: err.message,

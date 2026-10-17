@@ -20,6 +20,8 @@ import type { EventOutcome, Logger, Pool, Push, Queryable, WorkHandler } from '.
 export { NONE, WORK_EVENTS, WorkflowInputError, defineMachine, ok, reject, canonicalHash } from './machine.ts';
 export type { Machine, WorkResultPayload } from './machine.ts';
 export { LeaseLost } from './services.ts';
+export { StepsStopped, isStopped, plain, steps } from './steps.ts';
+export type { Steps } from './steps.ts';
 // An event appended in a caller's own transaction needs no runtime in the
 // caller's process: it is a row, applied wherever slots run once it commits.
 export { append as appendEvent } from './stream.ts';

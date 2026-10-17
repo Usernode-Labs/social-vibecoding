@@ -1,7 +1,7 @@
 // What is said about a change that went live inside another one (an
-// included change, services/included-changes.js): its pull request's
+// included change, workflow/merge-followups/facts.ts): its pull request's
 // closing comment, its thread's lines and its author's notification. The
-// merge-followups machine writes them; included-changes.js re-exports them.
+// merge-followups machine writes them.
 
 export interface PrRow { id?: number; pr_number?: number | null; pr_title?: string | null }
 

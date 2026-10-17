@@ -51,12 +51,16 @@ test('B9 (E8): names starting with homeroom are taken; the bot is never notified
   assert.match(read('src/services/notifications.js'), /'SELECT id FROM users WHERE id = ANY\(\$1::int\[\]\) AND is_synthetic = FALSE'/);
 });
 
-test('B9: the room hands a mention over after it is stored, and only from the main stream or (#4417) a topic\'s channel', () => {
-  const ws = read('src/services/ws.js');
-  assert.match(ws, /if \(!thread \|\| thread\.type === appChat\.CATEGORY_THREAD\) \{\s*void require\('\.\/homeroom-bot-chat'\)\.noteChatMessage\(pool, null, \{\s*appId: client\.appId, userId: client\.user\.id, messageId: rows\[0\]\.id, content, thread, postedVia,/);
-  assert.match(read('src/services/homeroom-bot-chat.js'), /if \(\(thread && thread\.type !== 'category'\) \|\| postedVia === 'agent' \|\| !appId \|\| !userId\) return null;/,
+test('B9: the chat place\'s turn hands a mention over once it is heard, and only from the main stream or (#4417) a topic\'s channel', () => {
+  // Heard in the message's own transaction (ws.js), handed over by the chat
+  // place's turn (the bot-voice machine's work), never floated after it.
+  const voiceSrc = read('src/services/homeroom-bot-voice.js');
+  assert.match(voiceSrc, /const chatPlace = place\.type === 'chat' \|\| place\.type === 'category';/);
+  assert.match(voiceSrc, /\? chatModule\(deps\)\.heardInChat\(pool, cfg, \{ app, place, messages: fresh\.filter/);
+  const chatSrc = read('src/services/homeroom-bot-chat.js');
+  assert.match(chatSrc, /if \(\(thread && thread\.type !== 'category'\) \|\| postedVia === 'agent' \|\| !appId \|\| !userId\) return null;/,
     'a reply thread, an issue\'s or a proposal\'s discussion is not a place to ask the bot');
-  assert.ok(ws.indexOf("noteChatMessage(pool, null") > ws.indexOf('await broadcastFromSender(pool, client.appId, outMsg, client.user.id);'), 'after the room has it');
+  assert.doesNotMatch(read('src/services/ws.js'), /noteChatMessage/);
   const chat = read('src/routes/chat.js');
   assert.match(chat, /router\.post\('\/api\/apps\/:slug\/messages\/:id\/request', groupChatWriteLimiter, sameOriginBrowserOnly,\s*communities\.requireAppMembership\(pool\),/);
   assert.match(chat, /router\.get\('\/api\/apps\/:slug\/my-bot-requests', appChatReadLimiter,/);
@@ -64,15 +68,14 @@ test('B9: the room hands a mention over after it is stored, and only from the ma
   assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/x/messages/5/request'), false, 'a person\'s own browser only');
 });
 
-// The room does not await the hand-over, so a rejection there would be
-// unhandled and end the process: a failed read is logged, and resolves null.
-test('B9: a failed read never rejects, and the room catches the hand-over anyway', async () => {
+// A failed read is logged, and resolves null: one message never ends the
+// turn that reads the others.
+test('B9: a failed read never rejects', async () => {
   const pool = { query: async () => { throw new Error('connection terminated'); } };
   const out = await botChat.noteChatMessage(pool, null, {
     appId: 7, userId: 3, messageId: 11, content: '@Homeroom bot add tags',
   });
   assert.equal(out, null);
-  assert.match(read('src/services/ws.js'), /noteChatMessage\(pool, null, \{[^}]*\}\)\s*\.catch\(/);
 });
 
 test('B9: the chip and the card', () => {

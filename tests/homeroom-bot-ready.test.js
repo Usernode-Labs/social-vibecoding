@@ -437,7 +437,7 @@ test('B7: who approves, who is told, and the card, against the full PostgreSQL s
       });
     }
     // It goes live; the next change the bot makes there needs a person's Yes.
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [id]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [id]);
     const later = await change(club, ben, 2);
     const next = await dm.approvalState(pool, { sessionId: later, userId: ben.id });
     assert.equal(next.firstVersion, false);

@@ -43,20 +43,24 @@
 // Withdraw it, Propose to close), as in the DM: homeroom_bot_voice_offers,
 // and `decideOffer` for the tap.
 //
+// 17 Oct 2026: what a person writes reaches the place's workflow machine
+// (src/workflow/bot-voice/) in the transaction that stores it (ws.js), and
+// the turn, a tap's act and a follow-up's report are its work (runTurn,
+// actOnOffer, sayReport): a release or a crash no longer loses an answer
+// owed, and a retry finds what it said by its mark and says nothing twice.
+//
 // Each place has a switch (homeroom-bot.js voiceSession, voiceIssue,
 // voiceChat), on unless an admin turns it off; off, the place goes back to
 // the fixed notes it had. Never a reason anything else fails: every entry
 // point is best-effort and never throws.
 
 const log = require('./logger');
+const replyRules = require('../workflow/rules/bot-replies.ts');
 
-// A burst is one turn: a turn starts once the place has been quiet this
-// long after a person's message, and never later than SETTLE_CAP_MS after
-// the first message it answers (9 Oct 2026, PR #4584: a message and its bare
-// "@Homeroom bot" two seconds later were answered twice).
-const SETTLE_MS = 8 * 1000;
-const SETTLE_CAP_MS = 25 * 1000;
-// A turn's claim on its place left by a process that died is taken back.
+// A burst is one turn (the bot-voice machine settles it): its rule's.
+const { SETTLE_MS, SETTLE_CAP_MS } = replyRules;
+// A turn's record left unfinished by an older release's process that died
+// is taken back (one release: the machine's own turns take their own row up).
 const CLAIM_STALE_MINUTES = 5;
 // What a turn reads of its place.
 const MAX_TRANSCRIPT = 30;
@@ -109,6 +113,8 @@ function botModule(deps) { return deps.botSvc || require('./homeroom-bot'); }
 function dmModule(deps) { return deps.dmSvc || require('./homeroom-bot-dm'); }
 function liveModule(deps) { return deps.liveSvc || require('./homeroom-bot-live'); }
 function wsModule(deps) { return deps.ws || require('./ws'); }
+function chatModule(deps) { return deps.chatSvc || require('./homeroom-bot-chat'); }
+function workflowModule(deps) { return deps.replies || require('../workflow/platform.ts'); }
 
 function clip(value, max) {
   const text = String(value ?? '').trim();
@@ -127,21 +133,17 @@ function withoutEmDashes(text) {
  * (a governance vote's).
  */
 function placeOf(thread) {
-  if (!thread) return { type: 'chat', ref: null };
-  const type = String(thread.type || '');
-  const ref = Number(thread.ref);
-  if (!['session', 'issue', 'category', 'message'].includes(type) || !Number.isInteger(ref) || ref <= 0) return null;
-  return { type, ref };
+  return replyRules.placeOf(thread);
 }
 
-/** Pure: one claim per place, across processes. */
+/** Pure: one place, across processes (the bot-voice instance's key is built from it). */
 function placeKey(appId, place) {
-  return `${Number(appId)}:${place.type}:${place.ref == null ? '' : Number(place.ref)}`;
+  return replyRules.placeKey(appId, place);
 }
 
 /** Pure: the thread a message in `place` sits in, as chat_messages stores it. */
 function threadOf(place) {
-  return place.type === 'chat' ? null : { type: place.type, ref: Number(place.ref) };
+  return replyRules.threadOf(place);
 }
 
 /** Pure: the switch that turns the voice on in `place` (homeroom-bot.js settings). */
@@ -296,73 +298,12 @@ async function gate(pool, { app, place, row, bot, settings, speaker, deps = {} }
 }
 
 // ── Hearing ──────────────────────────────────────────────────────────────
-
-const pending = new Map();
-
-/**
- * Pure: whether a message could be to the bot at all, from what the room
- * already knows of it, before anything is read. In a main chat or a topic
- * only a mention or a reply can be; on a change, a request and in a reply
- * thread the gate reads more. Every message in every project passes here.
- */
-function mightBeAddressed(place, { content = null, quoted = null } = {}) {
-  if (!place) return false;
-  if (place.type === 'session' || place.type === 'issue' || place.type === 'message') return true;
-  if (content == null) return true;
-  return mentionsBot(content) || quoted === true || quoted == null;
-}
-
-/**
- * ws.js hands every person's message in a project here, once it is stored
- * and broadcast (any thread but a governance vote's), with what it knows of
- * it (`hint`: { content, thread, quoted }). Decides whether the bot was
- * spoken to, and if so starts a turn once the place settles. Never throws;
- * resolves { scheduled, why }.
- */
-async function noteMessage(pool, config, { appId, messageId, hint = null, deps = {} } = {}) {
-  try {
-    if (hint) {
-      const guess = placeOf(hint.thread || null);
-      if (!guess) return { scheduled: false, why: 'no_place' };
-      if (!mightBeAddressed(guess, hint)) return { scheduled: false, why: 'not_addressed' };
-    }
-    const row = await bareRow(pool, messageId);
-    if (!row || Number(row.app_id) !== Number(appId)) return { scheduled: false, why: 'unknown' };
-    const place = placeOf(row.thread_type ? { type: row.thread_type, ref: row.thread_ref } : null);
-    if (!place) return { scheduled: false, why: 'no_place' };
-    const settings = await botModule(deps).readSettings(pool);
-    if (!voiceOn(settings, place)) return { scheduled: false, why: 'switched_off' };
-    const bot = await dmModule(deps).botAccount(pool);
-    const app = await appRow(pool, appId);
-    const speaker = await personRow(pool, row.user_id);
-    const decided = await gate(pool, { app, place, row, bot, settings, speaker, deps });
-    if (!decided.speak) return { scheduled: false, why: decided.why };
-    schedule(pool, config, { appId: Number(appId), place, deps });
-    return { scheduled: true, why: decided.why };
-  } catch (err) {
-    log.warn('homeroom-bot-voice', 'Could not hear a message', { appId, messageId, err: err.message });
-    return { scheduled: false, why: 'error' };
-  }
-}
-
-/** Start a turn in `place` once it has settled (SETTLE_MS), one burst at a time. */
-function schedule(pool, config, args) {
-  const deps = args.deps || {};
-  if (typeof deps.schedule === 'function') return deps.schedule(() => runPlace(pool, config, args));
-  const key = placeKey(args.appId, args.place);
-  const now = Date.now();
-  const p = pending.get(key) || { first: now };
-  if (p.timer) clearTimeout(p.timer);
-  p.args = args;
-  const wait = Math.max(0, Math.min(SETTLE_MS, p.first + SETTLE_CAP_MS - now));
-  p.timer = setTimeout(() => {
-    pending.delete(key);
-    runPlace(pool, config, p.args).catch((err) => log.warn('homeroom-bot-voice', 'A turn failed', { key, err: err.message }));
-  }, wait);
-  if (typeof p.timer?.unref === 'function') p.timer.unref();
-  pending.set(key, p);
-  return true;
-}
+//
+// Every person's message in a project but a governance vote's reaches the
+// place's bot-voice instance in the transaction that stores it
+// (ws.js handleMessage → workflow/platform.ts insertHeard). The machine
+// settles the burst and asks for a turn (runTurn), which decides with the
+// gate whether the bot was spoken to.
 
 async function appRow(pool, appId) {
   const { rows } = await pool.query(
@@ -396,20 +337,30 @@ async function personRow(pool, userId) {
 
 // ── One turn, one place ──────────────────────────────────────────────────
 
-/** Claim `place` for one turn; null when another turn holds it. */
-async function claim(pool, { appId, place, trigger = 'message', speakerId = null }) {
+/**
+ * The record of one turn (`turnKey`, its work item's): a row of
+ * homeroom_bot_voice_turns, taken up again by a retry of the same item.
+ * Null while an older release's turn still runs here (its row unfinished,
+ * fewer than CLAIM_STALE_MINUTES old): the place's machine asks again.
+ */
+async function claim(pool, { appId, place, turnKey, trigger = 'message', speakerId = null }) {
   const key = placeKey(appId, place);
+  const { rows: [mine] } = await pool.query(
+    'SELECT id FROM homeroom_bot_voice_turns WHERE place_key = $1 AND turn_key = $2 AND finished_at IS NULL',
+    [key, turnKey],
+  );
+  if (mine) return mine.id;
   await pool.query(
     `UPDATE homeroom_bot_voice_turns SET finished_at = NOW(), outcome = COALESCE(outcome, 'failed'), error = COALESCE(error, 'abandoned')
       WHERE place_key = $1 AND finished_at IS NULL AND started_at < NOW() - make_interval(mins => $2)`,
     [key, CLAIM_STALE_MINUTES],
   );
   const { rows } = await pool.query(
-    `INSERT INTO homeroom_bot_voice_turns (app_id, place_type, place_ref, place_key, trigger, speaker_id)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO homeroom_bot_voice_turns (app_id, place_type, place_ref, place_key, trigger, speaker_id, turn_key)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      ON CONFLICT (place_key) WHERE finished_at IS NULL DO NOTHING
      RETURNING id`,
-    [Number(appId), place.type, place.ref == null ? null : Number(place.ref), key, trigger, speakerId],
+    [Number(appId), place.type, place.ref == null ? null : Number(place.ref), key, trigger, speakerId, turnKey],
   );
   return rows[0]?.id || null;
 }
@@ -425,7 +376,7 @@ async function finishTurn(pool, turnId, row) {
       row.rounds || 0, (row.tools || []).slice(0, 30), row.inputTokens ?? null, row.outputTokens ?? null,
       row.costUsd ?? null, row.error ? clip(row.error, 300) : null, (row.failures || []).slice(0, 20),
       row.speakerId || null],
-  ).catch((err) => log.warn('homeroom-bot-voice', 'Could not record a turn', { turnId, err: err.message }));
+  );
 }
 
 /** The newest message a finished turn in this place read, or 0. */
@@ -486,95 +437,141 @@ function transcriptLine(m, botId) {
   return `#${Number(m.id)} [${at}] ${who}${quote}: ${text}`;
 }
 
-/**
- * Run one turn in one place: read what was said since the last turn here,
- * answer the people who wrote to the bot (or say nothing), and record it.
- * One at a time per place, across processes (claim). Resolves the outcome.
- */
-async function runPlace(pool, config, { appId, place, deps = {} }) {
-  const turnId = await claim(pool, { appId, place }).catch((err) => {
-    log.warn('homeroom-bot-voice', 'Could not claim a place', { appId, place, err: err.message });
-    return null;
-  });
-  if (!turnId) return { outcome: 'busy' };
-  const record = { outcome: 'quiet', tools: [], failures: [] };
-  let followUp = false;
-  try {
-    const cfg = configOf(config);
-    const app = await appRow(pool, appId);
-    const bot = await dmModule(deps).botAccount(pool);
-    const settings = await botModule(deps).readSettings(pool);
-    if (!app || !bot || !voiceOn(settings, place)) return finishWith('quiet');
-    const key = placeKey(appId, place);
-    const through = await answeredThrough(pool, key);
-    const messages = await placeMessages(pool, { app, place });
-    const botLast = messages.reduce((n, m) => (Number(m.user_id) === Number(bot.id) ? Math.max(n, Number(m.id)) : n), 0);
-    const since = Math.max(through, botLast);
-    const cutoff = Date.now() - ANSWER_WINDOW_MINUTES * 60 * 1000;
-    const fresh = messages.filter((m) => Number(m.id) > since && m.user_id && Number(m.user_id) !== Number(bot.id)
-      && m.msg_type === 'message' && new Date(m.created_at).getTime() >= cutoff);
-    record.throughId = messages.length ? Number(messages[messages.length - 1].id) : through;
-    if (!fresh.length) return finishWith('quiet');
-    // Which of them were to the bot (the gate, again, for each): the newest
-    // of those is who it answers.
-    const addressed = [];
-    for (const m of fresh) {
-      const speaker = await personRow(pool, m.user_id);
-      const decided = await gate(pool, {
-        app, place, row: { ...m, deleted_at: null, thread_type: place.type === 'chat' ? null : place.type }, bot, settings, speaker, deps,
-      });
-      if (decided.speak) addressed.push({ message: m, speaker, why: decided.why });
-    }
-    if (!addressed.length) return finishWith('quiet');
-    if (await turnsLastHour(pool, key) >= MAX_TURNS_PER_PLACE_HOUR) {
-      record.error = 'busy_place';
-      return finishWith('quiet');
-    }
-    const last = addressed[addressed.length - 1];
-    record.speakerId = last.speaker.id;
-    const out = await converse(pool, cfg, {
-      app, place, bot, settings, messages, fresh, addressed, deps, record,
-    });
-    record.replyId = out?.messageId || null;
-    return finishWith(out?.outcome || (record.replyId ? 'replied' : 'quiet'));
-  } catch (err) {
-    record.error = err.message;
-    log.warn('homeroom-bot-voice', 'A turn failed', { appId, place, err: err.message });
-    return finishWith('failed');
-  }
-
-  async function finishWith(outcome) {
-    record.outcome = outcome;
-    await finishTurn(pool, turnId, record);
-    // What was written while it ran is answered by the next turn.
-    followUp = await newerAddressed(pool, { appId, place, through: record.throughId, deps }).catch(() => false);
-    if (followUp) schedule(pool, config, { appId, place, deps });
-    return { outcome, turnId, replyId: record.replyId || null };
-  }
+/** A place's turn held by an older release's process: the work item asks again. */
+class PlaceBusy extends Error {
+  constructor() { super('Another turn is answering in this place'); this.code = 'place_busy'; }
 }
 
-/** Whether something addressed to the bot was written in `place` after `through`. */
-async function newerAddressed(pool, { appId, place, through, deps = {} }) {
-  if (!through) return false;
+/**
+ * Run one turn in one place (the bot-voice machine's `voice.turn` work):
+ * read what was said there since `through`, answer the people who wrote to
+ * the bot (or say nothing), and record it. `turnKey` is the work item's: a
+ * retry after a restart finds the reply it already posted by its mark
+ * (say), and posts nothing twice. `sorry`: the turn before this one failed
+ * for good; whoever spoke to the bot hears that it could not answer.
+ * Throws on a failure a retry can cure. Resolves { outcome, throughId,
+ * replyId }: the place reads after throughId next time.
+ */
+async function runTurn(pool, config, { appId, place, through = 0, sorry = false, turnKey, deps = {} }) {
+  const turnId = await claim(pool, { appId, place, turnKey });
+  if (!turnId) throw new PlaceBusy();
+  const record = { outcome: 'quiet', tools: [], failures: [] };
+  const finishWith = async (outcome) => {
+    record.outcome = outcome;
+    await finishTurn(pool, turnId, record);
+    return { outcome, throughId: record.throughId || null, replyId: record.replyId || null };
+  };
+  const cfg = configOf(config);
+  const app = await appRow(pool, appId);
+  const bot = await dmModule(deps).botAccount(pool);
+  const settings = await botModule(deps).readSettings(pool);
+  if (!app || !bot) return finishWith('quiet');
+  const key = placeKey(appId, place);
+  // Posted already, by an attempt a restart cut short: its mark says so,
+  // and what it read through.
+  const said = await replyOf(pool, { app, place, bot, turnKey });
+  if (said) {
+    record.replyId = said.id;
+    record.throughId = said.through;
+    return finishWith('replied');
+  }
+  const chatPlace = place.type === 'chat' || place.type === 'category';
+  if (!voiceOn(settings, place) && !chatPlace) {
+    record.throughId = (await newestIn(pool, { app, place })) || through;
+    return finishWith('quiet');
+  }
+  // What the place has answered: the machine's `through`, or (an instance
+  // new since an older release answered here) what that release recorded.
+  // Never the bot's own last message: a report or an offer's line says
+  // nothing about the messages before it.
+  const since = Math.max(Number(through) || 0, await answeredThrough(pool, key));
+  const messages = await placeMessages(pool, { app, place });
+  const cutoff = Date.now() - ANSWER_WINDOW_MINUTES * 60 * 1000;
+  // A reply thread's root is its own place's (the chat or topic it was
+  // written in, which answers it), never the thread's to answer again.
+  const root = place.type === 'message' ? Number(place.ref) : 0;
+  const fresh = messages.filter((m) => Number(m.id) > since && Number(m.id) !== root && m.user_id && Number(m.user_id) !== Number(bot.id)
+    && m.msg_type === 'message' && new Date(m.created_at).getTime() >= cutoff);
+  record.throughId = messages.length ? Math.max(since, Number(messages[messages.length - 1].id)) : since;
+  if (!fresh.length) return finishWith('quiet');
+  // Which of them were to the bot (the gate, for each): the newest of those
+  // is who it answers. (With the voice off in a chat, nobody: the chat's
+  // older ask has them, below.)
+  const addressed = [];
+  for (const m of voiceOn(settings, place) ? fresh : []) {
+    const speaker = await personRow(pool, m.user_id);
+    const decided = await gate(pool, {
+      app, place, row: { ...m, deleted_at: null, thread_type: place.type === 'chat' ? null : place.type }, bot, settings, speaker, deps,
+    });
+    if (decided.speak) addressed.push({ message: m, speaker, why: decided.why });
+  }
+  // What the project's chat does with what nobody said to the bot (a
+  // newcomer's idea, offered to be suggested; the older ask with the voice
+  // off there: homeroom-bot-chat.js), after the reply, which never waits on
+  // it.
+  const told = new Set(addressed.map((a) => Number(a.message.id)));
+  const restOfChat = () => (chatPlace
+    ? chatModule(deps).heardInChat(pool, cfg, { app, place, messages: fresh.filter((m) => !told.has(Number(m.id))), deps })
+    : null);
+  if (!addressed.length) {
+    await restOfChat();
+    return finishWith('quiet');
+  }
+  const last = addressed[addressed.length - 1];
+  record.speakerId = last.speaker.id;
+  const answer = addressed.map((a) => ({ message: a.message, username: a.speaker.username, userId: a.speaker.id }));
+  const mark = { key: turnKey, through: record.throughId };
+  if (sorry) {
+    const sent = await say(pool, { app, place, bot, text: SORRY_TEXT, answer, mark, deps });
+    record.replyId = sent?.id || null;
+    record.error = 'gave_up';
+    await restOfChat();
+    return finishWith('fallback');
+  }
+  if (await turnsLastHour(pool, key) >= MAX_TURNS_PER_PLACE_HOUR) {
+    record.error = 'busy_place';
+    await restOfChat();
+    return finishWith('quiet');
+  }
+  const out = await converse(pool, cfg, {
+    app, place, bot, settings, messages, fresh, addressed, deps, record, mark,
+  });
+  record.replyId = out?.messageId || null;
+  await restOfChat();
+  return finishWith(out?.outcome || (record.replyId ? 'replied' : 'quiet'));
+}
+
+// What a turn says when it could not answer at all (Q3: once, where it was asked).
+const SORRY_TEXT = 'Sorry, I couldn\'t answer that just now. Ask me again in a bit.';
+
+/** The newest message in `place`, or 0. */
+async function newestIn(pool, { app, place }) {
   const thread = threadOf(place);
   const { rows } = thread
     ? await pool.query(
-      `SELECT id FROM chat_messages WHERE app_id = $1 AND thread_type = $2 AND thread_ref = $3 AND id > $4
-         AND msg_type = 'message' AND deleted_at IS NULL ORDER BY id DESC LIMIT 1`,
-      [appId, thread.type, thread.ref, through],
-    )
-    : await pool.query(
-      `SELECT id FROM chat_messages WHERE app_id = $1 AND thread_type IS NULL AND id > $2
-         AND msg_type = 'message' AND deleted_at IS NULL ORDER BY id DESC LIMIT 1`,
-      [appId, through],
-    );
-  if (!rows.length) return false;
-  const row = await bareRow(pool, rows[0].id);
-  const settings = await botModule(deps).readSettings(pool);
-  const bot = await dmModule(deps).botAccount(pool);
-  const app = await appRow(pool, appId);
-  const speaker = await personRow(pool, row?.user_id);
-  return (await gate(pool, { app, place, row, bot, settings, speaker, deps })).speak;
+      'SELECT MAX(id) AS id FROM chat_messages WHERE app_id = $1 AND thread_type = $2 AND thread_ref = $3', [app.id, thread.type, thread.ref])
+    : await pool.query('SELECT MAX(id) AS id FROM chat_messages WHERE app_id = $1 AND thread_type IS NULL', [app.id]);
+  return Number(rows[0]?.id) || 0;
+}
+
+/**
+ * The reply a turn (`turnKey`) already posted, by its mark, with what it
+ * read through; null when it posted none. Its offer's message id is put
+ * right if the attempt that posted it stopped before writing it.
+ */
+async function replyOf(pool, { app, place, bot, turnKey }) {
+  const { rows: [m] } = await pool.query(
+    `SELECT id, metadata FROM chat_messages
+      WHERE app_id = $1 AND user_id = $2 AND metadata->'homeroomBot'->'turn'->>'key' = $3
+      ORDER BY id LIMIT 1`,
+    [app.id, bot.id, String(turnKey)],
+  );
+  if (!m) return null;
+  const offerId = Number(m.metadata?.homeroomBot?.offer?.id);
+  if (offerId) {
+    await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1 AND message_id IS NULL', [offerId, m.id]);
+  }
+  return { id: Number(m.id), through: Number(m.metadata?.homeroomBot?.turn?.through) || null };
 }
 
 async function turnsLastHour(pool, key) {
@@ -617,19 +614,18 @@ async function askState(pool, sessionId) {
 }
 
 /**
- * Whether a turn, an operation or a before & after shots run holds the
- * change's session now, as the follow-up's own start reads it
- * (homeroom-bot-followup.js turnRunningOn). A read that fails says no.
+ * Whether a turn, an operation, a durable build or a before & after shots
+ * run holds the change's session now, read from their durable records
+ * (src/workflow/session-work.ts workedOnSql): the voice's turns are the
+ * bot-voice machine's work, which runs in whichever process claims it, so
+ * no process's own registry of turns can answer. A read that fails says no.
  */
-async function changeBusy(pool, sessionId, deps = {}) {
+async function changeBusy(pool, sessionId) {
   try {
-    return await require('./homeroom-bot-followup').turnRunningOn({
-      pool,
-      session: { id: Number(sessionId) },
-      worker: deps.worker || require('./worker'),
-      activeWorkers: deps.activeWorkers || require('./active-workers').activeWorkers,
-      shotsRunning: deps.shotsRunning || null,
-    });
+    const { workedOnSql } = require('../workflow/session-work.ts');
+    const { rows: [r] } = await pool.query(
+      `SELECT ${workedOnSql()} AS busy FROM chat_sessions cs WHERE cs.id = $1`, [Number(sessionId)]);
+    return !!r?.busy;
   } catch {
     return false;
   }
@@ -655,7 +651,7 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
       `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs WHERE proposal_session_id = $1 AND verdict = 'revise'`, [change.id],
     );
     const asks = await askState(pool, change.id);
-    const busy = await changeBusy(pool, change.id, deps);
+    const busy = await changeBusy(pool, change.id);
     lines.push(`The change${place.type === 'issue' ? ' you built for this request' : ''}: change ${change.id}${change.pr_number ? ` (PR #${change.pr_number})` : ''}, "${clip(change.title, 160)}", ${own ? 'built by you' : 'built by somebody else'}, status ${change.status}${request ? `, for request #${request}` : ''}.`);
     if (change.check_state) lines.push(`Its checks: ${change.check_state}.`);
     if (own) {
@@ -877,15 +873,20 @@ async function recordAsk(pool, {
     if (!force && !(await enabledFor(pool, 'session', deps))) return null;
     const text = clip(withoutEmDashes(instruction), 2000);
     if (!text) return null;
+    // Once per change and message: a turn asked again after a restart finds
+    // the ask it recorded before (homeroom_bot_change_asks_once).
     const { rows: [row] } = await pool.query(
       `INSERT INTO homeroom_bot_change_asks
          (app_id, session_id, issue_number, asker_id, instruction, source, place_type, place_ref, message_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (session_id, message_id) WHERE message_id IS NOT NULL
+         DO UPDATE SET instruction = homeroom_bot_change_asks.instruction
+       RETURNING id`,
       [Number(appId), Number(sessionId), Number(issueNumber), askerId || null, text, source,
         place?.type || null, place?.ref == null ? null : Number(place.ref), messageId || null],
     );
     const running = (await askState(pool, sessionId)).running
-      || await changeBusy(pool, sessionId, deps);
+      || await changeBusy(pool, sessionId);
     // Its follow-up first in the queue: null when one has it claimed now
     // (it takes this ask after), undefined when it could not be queued.
     const first = await botModule(deps).enqueueFront(pool, {
@@ -966,13 +967,18 @@ async function asksWaiting(pool, sessionId) {
   return rows.length > 0;
 }
 
-/** Drop what waits on a change that merged or closed. */
-async function dropAsks(pool, sessionId) {
-  await pool.query(
+/**
+ * Drop what waits on a change that merged or closed. `strict` (durable work
+ * that calls it, the bot-change machine's live DM): a failure throws, so the
+ * item is retried rather than leaving the asks queued.
+ */
+async function dropAsks(pool, sessionId, { strict = false } = {}) {
+  const done = pool.query(
     `UPDATE homeroom_bot_change_asks SET status = 'dropped', done_at = NOW()
       WHERE session_id = $1 AND status IN ('queued', 'taken')`,
     [Number(sessionId)],
-  ).catch(() => {});
+  );
+  await (strict ? done : done.catch(() => {}));
 }
 
 /** The platform's read tools, scoped to this project, on a grant for the person who wrote (mayor/mcp-shim.js). */
@@ -1006,7 +1012,7 @@ async function scopedPlatformCall(pool, platform, app, name, args) {
  * The model's turn in a place: context, tools, the claims check, one reply
  * (or nothing). Resolves { outcome, messageId }.
  */
-async function converse(pool, cfg, { app, place, bot, settings, messages, fresh, addressed, deps, record }) {
+async function converse(pool, cfg, { app, place, bot, settings, messages, fresh, addressed, deps, record, mark = null }) {
   const mayor = mayorModule(deps);
   const last = addressed[addressed.length - 1];
   const speaker = last.speaker;
@@ -1123,7 +1129,7 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   }
   const posted = await say(pool, {
     app, place, bot, text, answer: addressed.map((a) => ({ message: a.message, username: a.speaker.username, userId: a.speaker.id })),
-    offer: ctx.offer, deps,
+    offer: ctx.offer, mark, deps,
   });
   return { outcome: record.outcome === 'fallback' ? 'fallback' : 'replied', messageId: posted?.id || null };
 }
@@ -1313,13 +1319,19 @@ function offerActions(kind, offerId) {
  * reply thread under that message. With an offer, its buttons go under it.
  * Resolves the message, or null.
  */
-async function say(pool, { app, place, bot, text, answer = [], offer = null, deps = {} }) {
+async function say(pool, { app, place, bot, text, answer = [], offer = null, mark = null, deps = {} }) {
   const ws = wsModule(deps);
   const newest = answer[answer.length - 1] || null;
   const thread = place.type === 'chat' || place.type === 'category'
     ? (newest ? { type: 'message', ref: Number(newest.message.id) } : null)
     : threadOf(place);
   if (!thread) return null;
+  // `mark`: the work item it is said for ({ key, through }). Said once: a
+  // retry after a restart finds it and says it again nowhere.
+  if (mark) {
+    const had = await replyOf(pool, { app, place, bot, turnKey: mark.key });
+    if (had) return { id: had.id, again: true };
+  }
   let offerRow = null;
   if (offer) {
     const { rows } = await pool.query(
@@ -1331,6 +1343,7 @@ async function say(pool, { app, place, bot, text, answer = [], offer = null, dep
   const metadata = {
     homeroomBot: {
       kind: 'voice',
+      ...(mark ? { turn: { key: String(mark.key), ...(mark.through ? { through: Number(mark.through) } : {}) } } : {}),
       ...(offerRow ? {
         offer: { id: Number(offerRow.id), kind: offer.kind, status: 'open', forUserId: Number(offer.forUserId) || null },
         actions: offerActions(offer.kind, offerRow.id),
@@ -1341,7 +1354,9 @@ async function say(pool, { app, place, bot, text, answer = [], offer = null, dep
   const sent = await ws.sendBotMessage(pool, app.id, { user: bot, content: text, metadata, thread });
   if (!sent?.id) return null;
   if (offerRow) {
-    await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1', [offerRow.id, sent.id]).catch(() => {});
+    // Without it the buttons decide nothing (decideOffer finds the offer by
+    // its message): a failure here is the turn's, and retried.
+    await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1', [offerRow.id, sent.id]);
   }
   if (thread.type === 'message' && typeof ws.broadcastThreadSummary === 'function') {
     await Promise.resolve(ws.broadcastThreadSummary(pool, app.id, thread.ref, bot.id)).catch(() => {});
@@ -1366,90 +1381,139 @@ async function say(pool, { app, place, bot, text, answer = [], offer = null, dep
 
 /**
  * Somebody tapped Yes or No under one of the voice's offers in a thread
- * (routes/chat.js). Only the person it was offered to decides it, once; every
- * gate is read again. Resolves { ok, status?, error?, said? }.
+ * (routes/chat.js). Decided once, by the person it was offered to, in the
+ * place its message is in (the bot-voice machine), whose work then acts on
+ * it (actOnOffer): the buttons give way when the room hears it was decided.
+ * Resolves { ok, status?, error? }.
  */
 async function decideOffer(pool, config, { app, user: viewer, messageId, choice, deps = {} }) {
-  // The person as the gates read them, whatever the route's user carries.
-  const user = await personRow(pool, viewer?.id);
-  if (!user) return { ok: false, status: 404, error: 'Nothing to decide here.' };
-  const { rows } = await pool.query(
-    `SELECT o.*, m.thread_type, m.thread_ref, m.app_id AS message_app_id
-       FROM homeroom_bot_voice_offers o JOIN chat_messages m ON m.id = o.message_id
-      WHERE o.message_id = $1`,
-    [Number(messageId)],
+  if (!viewer?.id) return { ok: false, status: 404, error: 'Nothing to decide here.' };
+  if (choice !== 'yes' && choice !== 'no') return { ok: false, status: 400, error: 'choice must be yes or no' };
+  const { rows: [offer] } = await pool.query(
+    'SELECT id FROM homeroom_bot_voice_offers WHERE message_id = $1 AND app_id = $2', [Number(messageId), app.id],
   );
-  const offer = rows[0];
-  if (!offer || Number(offer.app_id) !== Number(app.id)) return { ok: false, status: 404, error: 'Nothing to decide here.' };
-  if (Number(offer.for_user_id) !== Number(user.id)) {
-    return { ok: false, status: 403, error: 'Only the person it was offered to can decide it.' };
-  }
+  if (!offer) return { ok: false, status: 404, error: 'Nothing to decide here.' };
+  return workflowModule(deps).tapVoiceOffer({
+    appId: Number(app.id), offerId: Number(offer.id), messageId: Number(messageId), userId: Number(viewer.id), choice,
+  });
+}
+
+/**
+ * The act of a tap under one of the voice's offers (the bot-voice machine's
+ * `voice.act`, `key` its work item's): claimed once (`deciding`, by this
+ * item: a retry after a restart passes its own claim and carries on), every
+ * gate read again, done, and said. Throws on a failure a retry can cure.
+ * Resolves { decision }.
+ */
+async function actOnOffer(pool, config, { offerId, userId, choice, key, gaveUp = false, deps: given = {} }) {
+  // The act's claim rides with it, so a gate that cannot read GitHub for a
+  // moment throws to the work instead of failing the tap (mayor.retryAct).
+  const deps = { ...given, actKey: key };
+  const { rows: [offer] } = await pool.query(
+    `SELECT o.*, m.thread_type, m.thread_ref, m.id AS msg_id, a.slug AS app_slug
+       FROM homeroom_bot_voice_offers o JOIN chat_messages m ON m.id = o.message_id JOIN apps a ON a.id = o.app_id
+      WHERE o.id = $1`,
+    [Number(offerId)],
+  );
+  if (!offer) return { decision: 'gone' };
   const { rows: claimed } = await pool.query(
-    `UPDATE homeroom_bot_voice_offers SET status = 'deciding' WHERE id = $1 AND status = 'open' RETURNING id`,
-    [offer.id],
+    `UPDATE homeroom_bot_voice_offers SET status = 'deciding', decided_key = $2
+      WHERE id = $1 AND (status = 'open' OR (status = 'deciding' AND decided_key = $2)) RETURNING id`,
+    [offer.id, String(key)],
   );
-  if (!claimed.length) return { ok: false, status: 409, error: 'That was already decided.' };
+  if (!claimed.length) {
+    // Decided already, before it: nothing of this act's.
+    if (offer.decided_key !== String(key)) return { decision: 'already' };
+    // By this item, which a restart cut short after it settled: the buttons
+    // and its line, once (each by its mark).
+    const app = await appRow(pool, offer.app_id);
+    const bot = await dmModule(deps).botAccount(pool);
+    if (app) await markOfferMessage(pool, { app, messageId: Number(offer.msg_id), status: offer.status, deps });
+    const said = offer.result?.said;
+    if (app && bot && said) {
+      await say(pool, { app, place: { type: offer.thread_type, ref: Number(offer.thread_ref) }, bot, text: said, answer: [], mark: { key: `${key}:said` }, deps });
+    }
+    return { decision: offer.status };
+  }
+  const app = await appRow(pool, offer.app_id);
+  const user = await personRow(pool, userId);
   const bot = await dmModule(deps).botAccount(pool);
   const place = { type: offer.thread_type, ref: Number(offer.thread_ref) };
+  // The act failed for good (its work exhausted): it is settled as failed,
+  // and said, rather than left deciding with its buttons up.
+  const messageId = Number(offer.msg_id);
   const settle = async (status, result, said) => {
     await pool.query(
       `UPDATE homeroom_bot_voice_offers SET status = $2, result = $3, decided_at = NOW() WHERE id = $1`,
-      [offer.id, status, JSON.stringify(result || {})],
+      [offer.id, status, JSON.stringify({ ...(result || {}), ...(said ? { said } : {}) })],
     );
     await markOfferMessage(pool, { app, messageId, status, deps });
-    if (said && bot) {
-      await say(pool, { app, place, bot, text: said, answer: [], deps }).catch(() => null);
-    }
-    return { ok: status !== 'failed', status: status === 'failed' ? 409 : 200, said: said || null, decision: status };
+    if (said && bot) await say(pool, { app, place, bot, text: said, answer: [], mark: { key: `${key}:said` }, deps });
+    return { decision: status };
   };
+  if (gaveUp) return settle('failed', { error: 'gave_up' }, 'That didn\'t work just now. Try again in a minute.');
   // Keep it / Not now: the buttons go, and nothing is said.
-  if (choice !== 'yes') return settle('declined', {}, null);
+  if (choice !== 'yes' || !app || !user) return settle('declined', {}, null);
   const args = offer.args || {};
   const settings = await botModule(deps).readSettings(pool);
   const mayor = mayorModule(deps);
-  try {
-    if (offer.kind === 'withdraw_change') {
-      const gate = await mayor.withdrawGate(pool, { bot, user, sessionId: args.sessionId, deps });
-      if (!gate.ok) return settle('failed', { error: gate.code }, `I couldn't withdraw it: ${gate.error}`);
-      const done = await mayor.withdrawNow(pool, { gate, user, reason: 'withdrawn', deps });
-      if (!done.ok) return settle('failed', { error: 'archive' }, 'I couldn\'t withdraw it just now. Try again in a minute.');
-      await dropAsks(pool, args.sessionId);
-      return settle('done', { sessionId: args.sessionId }, 'Withdrawn: its pull request is closed and its preview is down. The request stays open.');
-    }
-    if (offer.kind === 'close_request') {
-      const full = await mayor.findApp(pool, app.slug);
-      const gate = await mayor.closeGate(pool, { app: full, issueNumber: args.issueNumber, user, deps });
-      if (!gate.ok) return settle('failed', { error: gate.code }, gate.code === 'already_proposed' ? 'A vote on closing it is already open.' : `I couldn't propose closing it: ${gate.error}`);
-      const proposed = await require('./homeroom-bot-move').proposeClose(pool, {
-        app: full, user, issueNumber: args.issueNumber, issueTitle: gate.issue.title, reason: args.why, deps,
-      });
-      if (!proposed.ok) return settle('failed', { error: proposed.code }, 'I couldn\'t propose closing it just now.');
-      return settle('done', { closeIssueId: proposed.id || null }, `Done: a vote on closing request #${Number(args.issueNumber)} is open. It closes if the group votes for it.`);
-    }
-    if (offer.kind === 'file_request') {
-      const chat = deps.chatSvc || require('./homeroom-bot-chat');
-      // Filing reads the person as the chat's own path does.
-      const person = await chat.personRow(pool, user.id);
-      const here = person ? await chat.botFor(pool, { app, user: person, settings, deps }) : null;
-      if (!here) return settle('failed', { error: 'not_enabled' }, 'I can\'t file requests for you yet.');
-      if (await chat.filedLately(pool, person.id) >= chat.FILINGS_PER_HOUR) {
-        return settle('failed', { error: 'busy' }, 'You\'ve asked me for a lot in the last hour. Try File it again in a little while.');
+  if (offer.kind === 'withdraw_change') {
+    const gate = await mayor.withdrawGate(pool, { bot, user, sessionId: args.sessionId, deps });
+    if (!gate.ok) {
+      // Withdrawn already (by this act, before a restart): it is done.
+      if (await withdrawnBy(pool, args.sessionId)) {
+        await dropAsks(pool, args.sessionId, { strict: true });
+        return settle('done', { sessionId: args.sessionId }, 'Withdrawn: its pull request is closed and its preview is down. The request stays open.');
       }
-      const full = await mayor.findApp(pool, app.slug);
-      const card = await chat.fileMessage(pool, configOf(config), {
-        app: full, user: person, messageId: Number(args.messageId), words: args.details || args.title, title: args.title, here, deps,
-      });
-      chat.pushCard(person.id, app.slug, card, deps);
-      const n = card?.issueNumber ? Number(card.issueNumber) : null;
-      return settle('done', { issueNumber: n }, n
-        ? `Filed as request #${n}${here.builds ? '. I\'ll start on it, and the chip on the message shows how it goes.' : ', for the group.'}`
-        : 'Filed.');
+      return settle('failed', { error: gate.code }, `I couldn't withdraw it: ${gate.error}`);
     }
-  } catch (err) {
-    log.warn('homeroom-bot-voice', 'An offer\'s tap failed', { app: app.slug, offerId: offer.id, err: err.message });
-    return settle('failed', { error: 'error' }, 'That didn\'t work just now. Try again in a minute.');
+    const done = await mayor.withdrawNow(pool, { gate, user, reason: 'withdrawn', deps });
+    if (!done.ok) return settle('failed', { error: 'archive' }, 'I couldn\'t withdraw it just now. Try again in a minute.');
+    await dropAsks(pool, args.sessionId, { strict: true });
+    return settle('done', { sessionId: args.sessionId }, 'Withdrawn: its pull request is closed and its preview is down. The request stays open.');
+  }
+  if (offer.kind === 'close_request') {
+    const full = await mayor.findApp(pool, app.slug);
+    const gate = await mayor.closeGate(pool, { app: full, issueNumber: args.issueNumber, user, deps });
+    if (!gate.ok) return settle('failed', { error: gate.code }, gate.code === 'already_proposed' ? 'A vote on closing it is already open.' : `I couldn't propose closing it: ${gate.error}`);
+    const proposed = await require('./homeroom-bot-move').proposeClose(pool, {
+      app: full, user, issueNumber: args.issueNumber, issueTitle: gate.issue.title, reason: args.why, deps,
+    });
+    if (!proposed.ok) return settle('failed', { error: proposed.code }, 'I couldn\'t propose closing it just now.');
+    return settle('done', { closeIssueId: proposed.id || null }, `Done: a vote on closing request #${Number(args.issueNumber)} is open. It closes if the group votes for it.`);
+  }
+  if (offer.kind === 'file_request') {
+    const chat = chatModule(deps);
+    // Filing reads the person as the chat's own path does.
+    const person = await chat.personRow(pool, user.id);
+    const here = person ? await chat.botFor(pool, { app, user: person, settings, deps }) : null;
+    if (!here) return settle('failed', { error: 'not_enabled' }, 'I can\'t file requests for you yet.');
+    // Filed already for this message (by this act, before a restart): the
+    // same request, not a second one.
+    const filedBefore = await chat.filedFor(pool, Number(args.messageId));
+    const { rows: [onGitHub] } = await pool.query(
+      `SELECT 1 FROM issues WHERE app_id = $1 AND payload->>'fileKey' = $2 LIMIT 1`, [app.id, `voice-offer:${offer.id}`]);
+    if (!filedBefore && !onGitHub && await chat.filedLately(pool, person.id) >= chat.FILINGS_PER_HOUR) {
+      return settle('failed', { error: 'busy' }, 'You\'ve asked me for a lot in the last hour. Try File it again in a little while.');
+    }
+    const full = await mayor.findApp(pool, app.slug);
+    const card = filedBefore || await chat.fileMessage(pool, configOf(config), {
+      app: full, user: person, messageId: Number(args.messageId), words: args.details || args.title, title: args.title, here,
+      fileKey: `voice-offer:${offer.id}`, deps,
+    });
+    chat.pushCard(person.id, app.slug, card, deps);
+    const n = card?.issueNumber ? Number(card.issueNumber) : null;
+    return settle('done', { issueNumber: n }, n
+      ? `Filed as request #${n}${here.builds ? '. I\'ll start on it, and the chip on the message shows how it goes.' : ', for the group.'}`
+      : 'Filed.');
   }
   return settle('failed', { error: 'unknown_kind' }, null);
+}
+
+/** Whether change `sessionId` is withdrawn already. */
+async function withdrawnBy(pool, sessionId) {
+  const { rows: [row] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [Number(sessionId)]);
+  return !!row && row.status === 'archived';
 }
 
 /** The offer's buttons give way to what was decided, for everybody reading. */
@@ -1580,45 +1644,80 @@ function plainReport(outcome) {
 
 /**
  * A follow-up on one of the bot's changes ended (homeroom-bot.js runFollowUp)
- * with the asks it took: the people who asked hear what came of it, where
- * they asked, in the voice's words (a short model turn over the facts, or
- * plainReport when that fails). One message per place they asked in, quoting
- * the newest ask there. Never throws; resolves how many messages it sent.
+ * with the asks it took: the people who asked are owed what came of it,
+ * where they asked. One report per place they asked in, owed by that
+ * place's bot-voice instance and said by its work (sayReport), appended in
+ * one transaction with `finish` (what ends the asks, when the caller ends
+ * them here), so a restart after it can neither lose the report nor say it
+ * twice. `runTag`: the follow-up's. Resolves how many places are owed one.
  */
-async function reportFollowUp(pool, config, { app, session, bot, asks = [], outcome, deps = {} }) {
-  try {
-    if (!asks.length || !app || !bot) return 0;
-    const cfg = configOf(config);
-    const byPlace = new Map();
-    for (const ask of asks) {
-      const place = ask.place_type && PLACE_TYPES.includes(ask.place_type)
-        ? { type: ask.place_type, ref: ask.place_ref == null ? null : Number(ask.place_ref) }
-        : { type: 'session', ref: Number(session.id) };
-      const key = placeKey(app.id, place);
-      if (!byPlace.has(key)) byPlace.set(key, { place, asks: [] });
-      byPlace.get(key).asks.push(ask);
-    }
-    let sent = 0;
-    for (const { place, asks: here } of byPlace.values()) {
-      const text = await composeReport(pool, cfg, { app, session, bot, asks: here, outcome, deps })
-        .catch(() => null) || plainReport(outcome);
-      const answer = [];
-      for (const ask of here) {
-        if (!ask.message_id) continue;
-        const row = await bareRow(pool, ask.message_id).catch(() => null);
-        if (row && !row.deleted_at) answer.push({ message: row, username: ask.asker || row.username, userId: ask.asker_id });
-      }
-      // In a main chat or a topic, the answer goes under the message it answers.
-      const where = (place.type === 'chat' || place.type === 'category') && !answer.length
-        ? { type: 'session', ref: Number(session.id) } : place;
-      const out = await say(pool, { app, place: where, bot, text, answer, deps });
-      if (out?.id) sent += 1;
-    }
-    return sent;
-  } catch (err) {
-    log.warn('homeroom-bot-voice', 'Could not report a change\'s update', { app: app?.slug, err: err.message });
-    return 0;
+async function reportFollowUp(pool, config, { app, session, asks = [], outcome, runTag, finish = null, deps = {} }) {
+  if (!app || !session) return 0;
+  const byPlace = new Map();
+  for (const ask of asks) {
+    const place = ask.place_type && PLACE_TYPES.includes(ask.place_type)
+      ? { type: ask.place_type, ref: ask.place_ref == null ? null : Number(ask.place_ref) }
+      : { type: 'session', ref: Number(session.id) };
+    const key = placeKey(app.id, place);
+    if (!byPlace.has(key)) byPlace.set(key, { place, asks: [] });
+    byPlace.get(key).asks.push(Number(ask.id));
   }
+  const tag = String(runTag || `s${Number(session.id)}-${asks.map((a) => Number(a.id)).join('.')}`).slice(0, 120);
+  const workflow = workflowModule(deps);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (finish) await finish(client);
+    for (const { place, asks: here } of byPlace.values()) {
+      if (!here.length) continue;
+      await workflow.reportOwed(client, {
+        appId: Number(app.id), place, sessionId: Number(session.id), runTag: tag, asks: here, outcome: outcome || {},
+      });
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+  return byPlace.size;
+}
+
+/**
+ * One place's report of a follow-up (the bot-voice machine's `voice.report`):
+ * a short model turn over the facts, or plainReport when that fails, said
+ * once (its mark), quoting the newest ask there. Throws on a failure a
+ * retry can cure. Resolves the message, or null.
+ */
+async function sayReport(pool, config, { appId, place, sessionId, runTag, asks: askIds = [], outcome = {}, deps = {} }) {
+  const cfg = configOf(config);
+  const app = await appRow(pool, appId);
+  const bot = await dmModule(deps).botAccount(pool);
+  if (!app || !bot) return null;
+  const { rows: [session] } = await pool.query(
+    'SELECT id, pr_number, COALESCE(session_title, pr_title) AS title FROM chat_sessions WHERE id = $1', [Number(sessionId)]);
+  const { rows: asks } = await pool.query(
+    `SELECT a.*, (SELECT username FROM users WHERE id = a.asker_id) AS asker
+       FROM homeroom_bot_change_asks a WHERE a.id = ANY($1::int[]) ORDER BY a.id`, [askIds.map(Number)]);
+  if (!asks.length) return null;
+  // One report per follow-up and place (a follow-up's asks from two places
+  // owe two).
+  const mark = { key: `report:${runTag}:${placeKey(appId, place)}` };
+  const had = await replyOf(pool, { app, place, bot, turnKey: mark.key });
+  if (had) return { id: had.id, again: true };
+  const text = await composeReport(pool, cfg, { app, session: session || { id: sessionId }, bot, asks, outcome, deps })
+    .catch(() => null) || plainReport(outcome);
+  const answer = [];
+  for (const ask of asks) {
+    if (!ask.message_id) continue;
+    const row = await bareRow(pool, ask.message_id);
+    if (row && !row.deleted_at) answer.push({ message: row, username: ask.asker || row.username, userId: ask.asker_id });
+  }
+  // In a main chat or a topic, the answer goes under the message it answers.
+  const where = (place.type === 'chat' || place.type === 'category') && !answer.length
+    ? { type: 'session', ref: Number(sessionId) } : place;
+  return say(pool, { app, place: where, bot, text, answer, mark, deps });
 }
 
 /** The voice's words for a follow-up's facts: one short model turn, forced to reply. Null when it cannot. */
@@ -1814,6 +1913,7 @@ module.exports = {
   SETTLE_CAP_MS,
   MAX_ASK_TRIES,
   OFFER_WORDS,
+  SORRY_TEXT,
   setConfig,
   placeOf,
   placeKey,
@@ -1824,9 +1924,8 @@ module.exports = {
   mentionsBot,
   isRelay,
   gate,
-  mightBeAddressed,
-  noteMessage,
-  runPlace,
+  runTurn,
+  replyOf,
   transcriptLine,
   systemPrompt,
   toolsFor,
@@ -1843,12 +1942,13 @@ module.exports = {
   offerActions,
   say,
   decideOffer,
+  actOnOffer,
   mustSay,
   plainReport,
   withoutInternals,
   notDoneYet,
   reportFollowUp,
+  sayReport,
   voiceSummary,
   codeOnly,
-  _pendingForTests() { return pending.size; },
 };

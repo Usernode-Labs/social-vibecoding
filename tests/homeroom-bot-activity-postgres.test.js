@@ -253,7 +253,7 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
     // #4227: being merged, not live yet: going live; then live.
     await pool.query(`UPDATE chat_sessions SET status = 'merging' WHERE id = $1`, [build.id]);
     assert.equal((await byId(asAda, first.messageId)).outcome, 'going_live');
-    await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [build.id]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', live_at = NOW() WHERE id = $1`, [build.id]);
     assert.equal((await byId(asAda, first.messageId)).outcome, 'live');
   });
 

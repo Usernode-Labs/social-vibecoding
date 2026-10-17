@@ -261,7 +261,8 @@ test('the made screen\'s answers go ahead with planShown: false, through the car
   assert.deepEqual(went.pop(), { runId: 12, answers: [null, null] });
   // The other taps on the card, and "build it" said under it, go ahead as shown.
   const mayor = read('src/services/homeroom-bot-mayor.js');
-  assert.match(mayor, /return dmModule\(deps\)\.decidePlanTap\(pool, \{ user, action, choice, answers, deps \}\);/);
+  // A tap's act is the person's DM machine's work (actOnTap), keyed by it.
+  assert.match(mayor, /const went = await dm\.decidePlanTap\(pool, \{ user, action, choice: 'build', answers, deps, claimKey: key \}\);/);
   assert.match(read('src/services/homeroom-bot-dm.js'), /const went = await decidePlanTap\(pool, \{ user, action, choice: 'build', answers: \[\], deps \}\);/);
 });
 

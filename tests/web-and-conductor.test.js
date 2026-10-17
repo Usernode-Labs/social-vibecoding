@@ -184,55 +184,19 @@ test('issues one process closes leave every process\'s open-issues copy, and are
 
 // ── DM answers asked again ────────────────────────────────────────────
 
-test('a DM answer is held until its later try runs, and a restart leaves one a live process holds', async (t) => {
-  processes._reset();
-  t.after(() => processes._reset());
-  const mayor = require('../src/services/homeroom-bot-mayor');
-  let run = null;
-  const pool = { query: async () => ({ rows: [{ x: 1 }] }) }; // a newer message: the try does nothing
-  mayor.scheduleDeferred(pool, {}, {
-    message: { id: 501 }, user: { id: 1 }, conversationId: 2, deps: { schedule: (fn) => { run = fn; } },
-  }, 1);
-  assert.equal(processes.heldHere('dm_defer', 501), true, 'marked from the promise');
-  assert.equal(processes.localCount(), 0, 'a timer waiting is no work a drain waits for');
-  const running = run();
-  assert.equal(processes.heldHere('dm_answer', 501), true, 'the try running is');
-  assert.equal(processes.heldHere('dm_defer', 501), false);
-  assert.equal(processes.localCount(), 1);
-  await running;
-  assert.equal(processes.heldHere('dm_answer', 501), false, 'released once the try ran');
-
-  // resumeDeferred: one message held by a live process, one nobody holds.
-  const found = [
-    { message_id: 601, conversation_id: 3, tries: 1, user_id: 1, username: 'a', content: 'hi' },
-    { message_id: 602, conversation_id: 3, tries: 1, user_id: 1, username: 'a', content: 'hi' },
-    { message_id: 603, conversation_id: 3, tries: 1, user_id: 1, username: 'a', content: 'hi' },
-  ];
-  const scheduled = [];
-  const resumePool = { query: async (sql) => (sql.includes('homeroom_bot_dm_turns') ? { rows: found } : { rows: [] }) };
-  const n = await mayor.resumeDeferred(resumePool, {}, {
-    dmSvc: { botAccount: async () => ({ id: 99 }) },
-    processes: {
-      heldHere: () => false,
-      holders: async (kinds, ref) => {
-        assert.deepEqual(kinds, ['dm_defer', 'dm_answer'], 'waiting or running');
-        if (Number(ref) === 603) throw new Error('database blip');
-        return Number(ref) === 601 ? ['pod-web'] : [];
-      },
-    },
-    schedule: (fn) => { scheduled.push(fn); },
-  }, { minAgeSeconds: 60 });
-  assert.equal(n, 1, 'only the one nobody holds is asked again: not one held, nor one whose holders cannot be read');
-  assert.equal(scheduled.length, 1);
-  assert.equal(processes.heldHere('dm_defer', 602), true, 'and this process marks it now');
-  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-mayor.js'), 'utf8'),
-    /AND NOT EXISTS \(\n\s+SELECT 1 FROM conversation_messages n/, 'one written to since is not picked up again and again');
-});
-
-test('the bot sweeps every minute for DM answers a process that died had promised', () => {
+// 17 Oct 2026: a later try at a DM answer is the person's DM machine's own
+// timer (src/workflow/bot-dm/), so no process marks or holds one, and the
+// leader sweeps for none a process that died left.
+test('a DM answer asked again later is the DM machine\'s, never a process\'s mark or the leader\'s sweep', () => {
+  const kinds = fs.readFileSync(path.join(__dirname, '..', 'src/services/processes.js'), 'utf8');
+  assert.doesNotMatch(kinds, /'dm_defer'|'dm_answer'/);
   const bot = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
-  assert.match(bot, /resumeDeferred\(getPool\(config\), config, \{\}, \{ minAgeSeconds: 60 \}\)/);
-  assert.match(bot, /if \(deferResumeTimer\) clearInterval\(deferResumeTimer\);\n\s+deferResumeTimer = null;/, 'stopped with the bot');
+  assert.doesNotMatch(bot, /resumeDeferred|deferResumeTimer/);
+  const mayor = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-mayor.js'), 'utf8');
+  assert.doesNotMatch(mayor, /scheduleDeferred|setTimeout\(work, ms\)/);
+  assert.match(mayor, /if \(typeof deps\.onLater === 'function'\) deps\.onLater\(next\);/, 'the answer\'s work hears it and the machine sets its timer');
+  const machine = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/bot-dm/machine.ts'), 'utf8');
+  assert.match(machine, /timer: \{ at: new Date\(ctx\.now\.getTime\(\) \+ DEFER_DELAYS_MS\[later - 1\]!\), event: \{ type: 'TryAgain' \} \}/);
 });
 
 // ── Warm workers ──────────────────────────────────────────────────────

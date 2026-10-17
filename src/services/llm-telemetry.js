@@ -96,6 +96,12 @@ const ERROR_CLASSES = new Set([
   'billing', 'invalid_request', 'not_found', 'overloaded', 'network',
   'provider', 'worker', 'unknown',
 ]);
+// How a coding turn's process went when it left no exit marker (worker.js
+// markerlessCause): its worker was OOM-killed, its container went, its
+// process went, or the platform lost sight of it.
+const MARKERLESS_CAUSES = new Set([
+  'oom_killed', 'container_gone', 'turn_process_gone', 'probe_unobservable',
+]);
 
 let configuredPoolSource = null;
 // Stay inert until application initialization. Unit tests that import llm.js
@@ -374,6 +380,16 @@ function normalizeDiagnostics(event = {}) {
     // stopped as its turn ended (a server left running held run 190's turn
     // open nine minutes). Absent without the guard.
     stop_hook_servers_stopped: tokenCount(event.stopHookServersStopped),
+    // Why a turn that left no exit marker ended (worker.js markerlessCause),
+    // and the memory its worker's container used: the most it had used by
+    // the turn's end, its limit, and how many processes the kernel killed
+    // for memory, all read from its cgroup by the runner (run-cc.sh,
+    // run-codex-agent.sh). 17 Oct 2026: the bot's builds that died of
+    // memory were recorded as provider failures that changed nothing.
+    markerless_cause: enumOrNull(event.markerlessCause, MARKERLESS_CAUSES),
+    worker_memory_peak_mib: tokenCount(event.workerMemoryPeakMib),
+    worker_memory_limit_mib: tokenCount(event.workerMemoryLimitMib),
+    worker_oom_kill_count: tokenCount(event.workerOomKillCount),
     usage_reset_detected: booleanOrNull(event.usageResetDetected),
     // What a coding turn's first and last model requests carried, in bytes of
     // the wire request, as its request listener measured them (worker.js
@@ -554,6 +570,7 @@ const DIAGNOSTIC_METRIC_NAMES = Object.freeze([
   'model_request_ms', 'browser_tool_ms', 'shell_tool_ms', 'edit_tool_ms', 'read_tool_ms',
   'other_tool_ms', 'first_file_change_ms', 'first_app_boot_ms', 'first_browser_call_ms',
   'last_browser_call_ms', 'stop_hook_blocks', 'stop_hook_servers_stopped',
+  'worker_memory_peak_mib', 'worker_memory_limit_mib', 'worker_oom_kill_count',
   'turn_duration_ms', 'turn_invocation_count', 'turn_result_count',
 ]);
 
@@ -561,7 +578,7 @@ const CATEGORY_NAMES = Object.freeze([
   'request_mode', 'tool_choice_mode', 'output_format', 'thinking_mode',
   'requested_service_tier', 'service_tier', 'inference_region',
   'requested_inference_region', 'served_provider',
-  'reasoning_effort', 'error_class', 'usage_reset_detected',
+  'reasoning_effort', 'error_class', 'usage_reset_detected', 'markerless_cause',
   'turn_outcome', 'turn_error_code',
 ]);
 

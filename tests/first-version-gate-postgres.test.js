@@ -214,7 +214,7 @@ test('the first version skips the vote; the bot\'s later changes wait for a pers
     const first = (await pool.query(
       'SELECT proposal_session_id AS id FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = 1 AND proposal_session_id IS NOT NULL ORDER BY id LIMIT 1', [club.id],
     )).rows[0].id;
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [first]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [first]);
     assert.equal(await firstVersionRule.isFirstVersion(pool, first), true, 'the one that went live still was the first version');
     // Another build for the same request after it went live is a later change.
     const again = await proposal(club, bot);

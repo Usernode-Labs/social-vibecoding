@@ -15,6 +15,8 @@
 //   4. The connector says how current each field is, and when a submit's
 //      vote-clearing actually happens.
 
+// The verdict's writers: the preview machine's own (its transitions run them).
+const rowStore = require('../src/workflow/preview/check-store.ts');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -158,8 +160,8 @@ test('setChecksProgress writes only while this run is the pending one', async ()
 });
 
 test('setChecksPending resets progress and every verdict write clears it', () => {
-  // The statements live in one copy shared with the preview machine.
-  const src = read('src/workflow/rules/check-store.ts');
+  // The statements are the preview machine's own.
+  const src = read('src/workflow/preview/check-store.ts');
   const pendingSql = /async function setChecksPending[\s\S]*?UPDATE chat_sessions[\s\S]*?checks_progress = NULL/;
   assert.match(src, pendingSql, 'a new run starts with no stale progress');
   // Three verdict writes: error/partial, the normal result, and skipped.
@@ -820,7 +822,7 @@ test('the build steps render as a line and a step row, live and finished', () =>
 test('#2170: the verdict keeps the finished build and the checking time on the row instead of dropping them', async () => {
   const calls = [];
   const pool = { query: async (sql, params) => { calls.push({ sql, params }); return { rowCount: 1 }; } };
-  assert.equal(await visuals.storeChecks(pool, 7, 'abc', { state: 'passing', results: [] }), true);
+  assert.equal(await rowStore.storeChecks(pool, 7, 'abc', { state: 'passing', results: [] }), true);
   const sql = calls[0].sql;
   assert.match(sql, /SET check_state = \$1/);
   assert.doesNotMatch(sql, /checks_progress = NULL,/, 'the live snapshot is reduced, not dropped');
@@ -843,7 +845,7 @@ test('#2170: the verdict keeps the finished build and the checking time on the r
   assert.match(src, /function setChecksPhase[\s\S]*?checks_checked_at = CASE WHEN \$3::text = 'testing' THEN NOW\(\) ELSE checks_checked_at END/);
   // An error verdict has no run to cost — it still clears the snapshot, and
   // so does the next run's start (tests/set-checks-pending.test.js).
-  await visuals.storeChecks(pool, 7, 'abc', { state: 'error', results: [] }, 'boom');
+  await rowStore.storeChecks(pool, 7, 'abc', { state: 'error', results: [] }, 'boom');
   assert.match(calls[1].sql, /checks_progress = NULL,/);
 });
 

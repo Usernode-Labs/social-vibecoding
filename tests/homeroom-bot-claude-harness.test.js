@@ -822,7 +822,10 @@ test('a build that ended on an error result, or on the runtime\'s API error noti
   assert.deepEqual(wire.promotions, []);
 });
 
-test('a Codex build that failed fails exactly as it did', async (t) => {
+// 17 Oct 2026: it used to fail as "the build produced no change to
+// propose", which told its requester it had found nothing to do. It failed;
+// it is said as failed, with why (homeroom-bot-live.js turnFailureReason).
+test('a Codex build that failed fails as failed, with its exit code', async (t) => {
   // The Codex runner's own line for a failed turn: nothing committed or pushed.
   const run = await runBotBuild(t, DEEPSEEK, {
     journal: [
@@ -833,11 +836,12 @@ test('a Codex build that failed fails exactly as it did', async (t) => {
   });
   assert.equal(run.execs[1].agentHarness, 'codex');
   assert.equal(run.out.ok, false);
-  assert.equal(run.out.error, 'the build produced no change to propose', 'the message it always had');
+  assert.equal(run.out.error, 'the build turn failed (the agent exited with code 1)');
   assert.deepEqual(run.promotions, []);
   assert.match(run.dispatches[1].script, /run-codex-agent\.sh/);
   assert.equal(run.dispatches[1].env.DISCARD_FAILED_TURN, undefined, 'the Codex runner needs no asking');
-  // A Codex turn is judged as before: only by what it pushed.
+  // failedClaudeTurn reads a Codex turn's exit only when its worker was lost
+  // (workerLostReason); the build reads the rest (turnFailureReason).
   assert.equal(live.failedClaudeTurn({ agentHarness: 'codex', ccExit: 1, exitCode: 1, ccIsError: true }), null);
   t.mock.restoreAll();
   const pushed = await runBotBuild(t, DEEPSEEK, {

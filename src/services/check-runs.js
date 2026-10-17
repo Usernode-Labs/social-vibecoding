@@ -127,8 +127,8 @@ function startHeartbeat(pool, runId, { intervalMs = HEARTBEAT_MS } = {}) {
 // heartbeat says — that run will settle it (or replace it) itself.
 //
 // Proposal rows only. A main-watch row (services/checks-queue.js) has no
-// session to settle: main-watch re-drives its own interrupted runs
-// (main-watch.resumeInterrupted). `queued_at` and `admitted_at` say whether
+// session to settle: the main-check machine's work carries its own
+// interrupted runs on (main-watch.runMainSuite). `queued_at` and `admitted_at` say whether
 // the run was still waiting for a checks slot, and the place it had.
 async function listOrphans(pool, { staleMs = ORPHAN_MS, isInFlight = () => false, limit = 50 } = {}) {
   if (!pool) return [];

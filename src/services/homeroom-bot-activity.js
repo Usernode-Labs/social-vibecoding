@@ -195,30 +195,38 @@ async function sendCard(pool, {
     firstVersion: !!requester.firstVersion,
   };
   const words = cardText(context, dm, { joined: !!startedAt, filed, queued, lowAllowance, waitsForFirstVersion, go });
+  const metadata = {
+    kind: KIND,
+    appSlug: app.slug,
+    appName: context.appName,
+    issueNumber,
+    ...(context.issueTitle ? { issueTitle: context.issueTitle } : {}),
+    ...(context.firstVersion ? { firstVersion: true } : {}),
+    // B4: what they asked for, in their own words, which the card leads with.
+    ...(typeof dm.askedLine === 'function' && dm.askedLine(requester.askedText)
+      ? { askedText: dm.askedLine(requester.askedText) } : {}),
+    // B3: a reply to it stays in the DM, for the bot to read: a card is
+    // progress, not a question (homeroom-bot-dm.js MIRRORED_KINDS).
+    ...(startedAt ? { startedAt } : {}),
+    ...(lookAt ? { lookAt } : {}),
+    // #4392: the thanks under a plan, drawn with its thumbnail row; the
+    // project's icon, when it has one, is the row's tile.
+    ...(go ? { thanks: true, ...(app.icon_emoji ? { appEmoji: String(app.icon_emoji) } : {}) } : {}),
+  };
   return dm.sendDm(pool, {
     bot,
     userId: requester.userId,
-    // B5: their hello leads the card it introduces, with its prompts under it.
-    content: hello ? `${hello}\n\n${words}` : words,
-    metadata: {
-      ...(hello ? { hello, actions: dm.promptActions(dm.MEMBER_PROMPTS), status: 'open' } : {}),
-      kind: KIND,
-      appSlug: app.slug,
-      appName: context.appName,
-      issueNumber,
-      ...(context.issueTitle ? { issueTitle: context.issueTitle } : {}),
-      ...(context.firstVersion ? { firstVersion: true } : {}),
-      // B4: what they asked for, in their own words, which the card leads with.
-      ...(typeof dm.askedLine === 'function' && dm.askedLine(requester.askedText)
-        ? { askedText: dm.askedLine(requester.askedText) } : {}),
-      // B3: a reply to it stays in the DM, for the bot to read: a card is
-      // progress, not a question (homeroom-bot-dm.js MIRRORED_KINDS).
-      ...(startedAt ? { startedAt } : {}),
-      ...(lookAt ? { lookAt } : {}),
-      // #4392: the thanks under a plan, drawn with its thumbnail row; the
-      // project's icon, when it has one, is the row's tile.
-      ...(go ? { thanks: true, ...(app.icon_emoji ? { appEmoji: String(app.icon_emoji) } : {}) } : {}),
-    },
+    content: words,
+    metadata,
+    // B5: the person's hello, when this card is where they have it (their
+    // first request on somebody else's project): it leads the card, with its
+    // prompts under it, decided in the card's own transaction.
+    ...(hello ? {
+      hello: {
+        kind: 'member', content: `${hello}\n\n${words}`,
+        metadata: { ...metadata, hello, actions: dm.promptActions(dm.MEMBER_PROMPTS), status: 'open' },
+      },
+    } : {}),
     idempotencyKey: key,
     // #3707: news about a request they started in the DM points back at it.
     replyToId: await dm.requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
@@ -337,8 +345,8 @@ async function startCard(pool, {
       ? await dm.allowanceLow(pool, s, requester.userId).catch(() => false) : false;
     // B5: somebody's first request on a project they did not make is where
     // the bot says hello to them, once.
-    const hello = typeof dm.claimHello === 'function' && await madeBySomebodyElse(pool, app, requester.userId)
-      && await dm.claimHello(pool, { userId: requester.userId, botId: bot.id, kind: 'member' })
+    // B5: offered as their hello; sendDm says it only when it is theirs.
+    const hello = await madeBySomebodyElse(pool, app, requester.userId)
       ? dm.memberHello(app.name || app.slug) : null;
     // 2026-10-05: a request filed or queued while the project's first
     // version is not live waits for it, and its card says so.
@@ -348,7 +356,6 @@ async function startCard(pool, {
       app, issueNumber: n, requester, bot, key: jobCardKey(jobKey), filed, queued, lowAllowance, dm, hello,
       waitsForFirstVersion: waits,
     });
-    if (hello) await dm.noteHelloSent(pool, requester.userId, sent?.messageId);
     if (!sent?.messageId || sent.duplicate) return sent || null;
     await recordCard(pool, sent, { userId: requester.userId, appId: app.id, issueNumber: n });
     log.info('homeroom-bot-activity', 'Started an activity card', {

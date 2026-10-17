@@ -3,14 +3,15 @@
 // A proposal in review can be taken back to Underway by its author without
 // closing its pull request. The move is the proposal machine's
 // (src/workflow/proposal/machine.ts, Unpromote): it is decided under the
-// row's lock, from the status the route read, and a merge claim for the same
-// proposal is an event to the same instance, so the two exclude each other.
-// This file drives the real route, recordVote and the platform's appends
-// (src/workflow/platform.ts) with the workflow runtime running against the
-// full PostgreSQL schema: a mock pool cannot show that the merge claim and
-// the move back exclude each other, or that a voided vote stops counting.
-// The machine's own refusals are tests/workflow-proposal-postgres.test.js's
-// (P7); this is the route's answers and what a person sees after them.
+// row's lock, from the status the route read, and the merge queue's ask for
+// the same proposal is an event to the same instance, so the two exclude
+// each other (the move back during the gate and after the claim:
+// tests/workflow-merge-postgres.test.js M14). This file drives the real
+// route, recordVote and the platform's appends (src/workflow/platform.ts)
+// with the workflow runtime running against the full PostgreSQL schema: a
+// mock pool cannot show that a voided vote stops counting. The machine's own
+// refusals are tests/workflow-proposal-postgres.test.js's (P7); this is the
+// route's answers and what a person sees after them.
 //
 // Set TEST_DATABASE_URL to run the database tests; without a reachable server
 // they skip (the unit-suite container has none). The source-level checks at
@@ -202,27 +203,31 @@ test('unpromote against a real PostgreSQL, through the proposal machine', { time
   const lines = async (id) => (await pool.query(
     `SELECT content, thread_type, thread_ref FROM chat_messages WHERE thread_type = 'session' AND thread_ref = $1 ORDER BY id`,
     [id])).rows;
-  // A merge claim (MergeClaim, as an older release's merge asks for it
-  // during a rollout; an admin's force skips the vote gate, which is not what
-  // this file is about), appended and waited for.
+  // The merge queue's ask for the proposal (MergeRequested), appended and
+  // waited for: its answer is the queue's AttemptEnded message.
   const { appendEvent } = require('../src/workflow/kernel/index.ts');
   const { proposal, sessionKey } = require('../src/workflow/proposal/machine.ts');
   const decoder = proposal({ idleMs: 0, exemptFixtures: false, reviewCheckMs: 0, staleNotifyMs: 0, staleGraceMs: 0 });
-  let claims = 0;
-  const claim = async (s) => {
+  let asks = 0;
+  const askMerge = async (s) => {
+    const queueN = 1000 + ++asks;
     const id = await appendEvent(pool, decoder, sessionKey(s.id),
-      { type: 'MergeClaim', payload: { sessionId: s.id, head: SHA, epoch: 0, force: true } },
-      { requestKey: `claim-${s.id}-${++claims}`, source: { kind: 'system', name: 'merge' }, appId: app.id });
-    // A slot decides the claim whenever it picks the event up; under the
+      { type: 'MergeRequested', payload: { sessionId: s.id, queueN, force: false } },
+      { requestKey: `ask-${s.id}-${queueN}`, source: { kind: 'system', name: 'merge' }, appId: app.id });
+    // The queue decides the ask whenever a slot picks it up; under the
     // suite's parallel load that can lag well past ten seconds, so the
-    // deadline is generous. A claim that never settles fails this test
-    // loudly rather than coming back as a fake outcome to assert against.
+    // deadline is generous. An ask that never settles fails this test loudly.
     const deadline = Date.now() + 30000;
     for (;;) {
       const { rows: [e] } = await pool.query('SELECT result, reason FROM wf_events WHERE id = $1', [id]);
-      if (e && e.result && e.result !== 'pending') return { status: e.result, reason: e.reason };
+      if (e && e.result && e.result !== 'pending') {
+        const { rows: [told] } = await pool.query(
+          `SELECT payload FROM wf_events WHERE machine = 'merge-queue' AND key = $1 AND type = 'AttemptEnded'
+              AND (payload->>'n')::int = $2`, [`app:${app.id}`, queueN]);
+        return { status: e.result, answer: told?.payload ?? null };
+      }
       if (Date.now() >= deadline) {
-        assert.fail(`the merge claim on session ${s.id} (event ${id}) never settled: its result is still ${e ? e.result : 'missing'}`);
+        assert.fail(`the merge ask on session ${s.id} (event ${id}) never settled: its result is still ${e ? e.result : 'missing'}`);
       }
       await new Promise((res) => setTimeout(res, 50));
     }
@@ -286,19 +291,18 @@ test('unpromote against a real PostgreSQL, through the proposal machine', { time
     assert.equal((await lines(mine.id)).length, 1, 'a repeat posts nothing');
   });
 
-  await t.test('an Underway proposal cannot be voted on or claimed for a merge', async () => {
+  await t.test('an Underway proposal cannot be voted on or asked for by the merge queue', async () => {
     const late = await vote(mine.id, users.dave, 'yes');
     assert.equal(late.rowCount, 0, 'recordVote requires review, so a late click is refused');
-    const out = await claim(mine);
-    assert.equal(out.status, 'rejected', 'the merge claim cannot take an Underway proposal');
-    assert.equal(out.reason, 'not_in_review');
+    const out = await askMerge(mine);
+    assert.equal(out.status, 'accepted', 'the queue\'s ask is always answered');
+    assert.deepEqual([out.answer?.outcome, out.answer?.reason], ['declined', 'not_in_review'], 'and never measured');
     assert.equal(await statusOf(mine.id), 'paused');
   });
 
   await t.test('a proposal that has started merging, or merged, or closed, stays put', async () => {
-    const merging = await seed();
-    assert.equal((await claim(merging)).status, 'accepted');
-    assert.equal(await statusOf(merging.id), 'merging');
+    // Left merging (the machine adopts it as the claim it is).
+    const merging = await seed({ status: 'merging' });
     const res = await srv.post(merging.id);
     assert.equal(res.status, 409);
     assert.match(res.body.error, /already merging/);
@@ -312,25 +316,6 @@ test('unpromote against a real PostgreSQL, through the proposal machine', { time
     const closed = await srv.post(archived.id);
     assert.equal(closed.status, 409);
     assert.match(closed.body.error, /no longer in review/);
-  });
-
-  await t.test('the merge claim and the move back race: exactly one wins', async () => {
-    for (let i = 0; i < 10; i += 1) {
-      const s = await seed();
-      const [claimed, res] = await Promise.all([claim(s), srv.post(s.id)]);
-      const status = await statusOf(s.id);
-      if (claimed.status === 'accepted') {
-        assert.equal(status, 'merging');
-        assert.equal(res.status, 409);
-      } else if (claimed.status === 'rejected') {
-        assert.equal(status, 'paused');
-        assert.equal(res.status, 200);
-      } else {
-        // 'pending' cannot reach here (the claim helper fails loudly), and a
-        // faulted claim is this run's failure, not a side that lost.
-        assert.fail(`the merge claim settled as ${claimed.status} (${claimed.reason}): not a side of the race`);
-      }
-    }
   });
 
   await t.test('a running build or a held secret refuses the move', async () => {

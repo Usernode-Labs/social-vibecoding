@@ -255,7 +255,7 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     assert.equal(recorded.build_error, `skipped: the request already has a proposal (${building})`);
 
     // ... nor once that proposal merged after it.
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [building]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [building]);
     const third = (await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note, live_build_waiting_at, created_at)
        VALUES ($1, 90, 'live', 'ready', 'build it', NOW(), NOW() - INTERVAL '5 minutes') RETURNING id`,
@@ -318,7 +318,7 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     await pool.query(`UPDATE chat_sessions SET status = 'merging' WHERE id = $1`, [first]);
     assert.equal(await why(), `skipped: the request already has a proposal (${first})`);
     // Merged before this verdict: an earlier change on the same issue.
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() - INTERVAL '1 hour' WHERE id = $1`, [first]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() - INTERVAL '1 hour', live_at = NOW() - INTERVAL '1 hour' WHERE id = $1`, [first]);
     assert.equal(await why(), null);
     // Merged since it: the request is answered.
     await pool.query(`UPDATE chat_sessions SET merged_at = NOW() WHERE id = $1`, [first]);
@@ -415,7 +415,7 @@ test('a live build always records its outcome, against the full PostgreSQL schem
     // Once: a second call (another Pod) finds nothing left to do.
     assert.deepEqual(await bot.noteRequestMerged(pool, { id: merged }, deps), { skipped: 0, stopped: 0, withdrawn: 0, dequeued: 0 });
     // Only the bot's own merged proposals.
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [persons]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [persons]);
     assert.equal(await bot.noteRequestMerged(pool, { id: persons }, deps), null);
     assert.equal(await bot.noteRequestMerged(pool, { id: elsewhere }, deps), null, 'nor one not merged');
     assert.equal(await bot.noteRequestMerged({ query: () => Promise.reject(new Error('down')) }, { id: merged }, deps), null, 'never throws');

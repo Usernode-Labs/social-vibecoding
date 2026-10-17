@@ -5,7 +5,7 @@
 // schema and a running workflow runtime: the vote, withdraw and admin-apply
 // routes answer with the shapes the client reads, the create route and the
 // boot backfill enroll proposals, and a merged PR's `Closes #N` supersedes a
-// close proposal through the machine. Handlers are driven off the router
+// close proposal through the machine, told by the merge's follow-ups. Handlers are driven off the router
 // stack, like the sibling route suites; GitHub and WS pushes are stubbed.
 
 const test = require('node:test');
@@ -89,7 +89,8 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
   listener.on('notification', (m) => { const e = JSON.parse(m.payload); if (e.i === 'workflow') heard.push(e); });
   await listener.query('LISTEN usernode_ws');
   const platform = require('../src/workflow/platform.ts');
-  const { issueRoutes, resolveSupersededCloseProposals } = require('../src/routes/issues');
+  const { issueRoutes } = require('../src/routes/issues');
+  const { appendEvent } = require('../src/workflow/kernel/index.ts');
   const router = issueRoutes(config);
   const adminRouter = require('../src/routes/admin-workflow').adminWorkflowRoutes(config);
   t.after(async () => {
@@ -192,12 +193,35 @@ test('governance routes through the workflow machine', { timeout: 120000 }, asyn
       assert.equal(r.status, 201, JSON.stringify(r.body));
       const created = r.body.issue;
       await until(async () => (await instance(created))?.state === 'open', 'enrolled by the create route');
-      const { resolved } = await resolveSupersededCloseProposals(pool, {
-        appId: app.id, numbers: [5], cause: { kind: 'pr-merge', prNumber: 77 },
-      });
-      assert.deepEqual(resolved, [created.id]);
+      // A merge's follow-ups saw #5 closed (merge-followups machine.ts, the
+      // issues.closeAfterMerge result): a message, which only that machine's
+      // is taken as.
+      const outcome = async (id) => (await pool.query('SELECT status, result, reason FROM wf_events WHERE id = $1', [id])).rows[0];
+      const settled = async (id) => { await until(async () => (await outcome(id)).status === 'processed', 'processed'); return outcome(id); };
+      const tell = (from, n = 5) => appendEvent(pool, 'governance-proposal', `issue:${created.id}`,
+        { type: 'TargetClosed', payload: { issueNumber: n, cause: { kind: 'pr-merge', prNumber: 77 } } },
+        { requestKey: `merge-test:${from}:${n}`, appId: app.id, source: { kind: 'message', from: { machine: from, key: 'session:1', eventId: 1 } } });
+      const forged = await settled(await tell('app-delivery'));
+      assert.deepEqual([forged.result, forged.reason], ['rejected', 'internal_only'], 'not from another machine');
+      const other = await settled(await tell('merge-followups', 6));
+      assert.deepEqual([other.result, other.reason], ['rejected', 'not_target'], 'nor about another request');
+      assert.equal((await instance(created)).state, 'open');
+      const told = await settled(await tell('merge-followups'));
+      assert.equal(told.result, 'accepted');
       await until(async () => (await instance(created)).state === 'superseded', 'superseded');
       assert.equal((await status(created)).payload.supersededBy, 'pr-merge:#77');
+
+      // A close proposal the governance machine never enrolled (filed before
+      // it ran) is filed by the same merge's message first, then told.
+      const unfiled = await issue('close_issue', { issueNumber: 8, issueTitle: 'Old' });
+      const from = { kind: 'message', from: { machine: 'merge-followups', key: 'session:2', eventId: 2 } };
+      await appendEvent(pool, 'governance-proposal', `issue:${unfiled.id}`, { type: 'Filed', payload: { issueId: unfiled.id } },
+        { requestKey: `merge-test:file:${unfiled.id}`, appId: app.id, source: from });
+      await appendEvent(pool, 'governance-proposal', `issue:${unfiled.id}`,
+        { type: 'TargetClosed', payload: { issueNumber: 8, cause: { kind: 'pr-merge', prNumber: 78 } } },
+        { requestKey: `merge-test:close:${unfiled.id}`, appId: app.id, source: from });
+      await until(async () => (await instance(unfiled))?.state === 'superseded', 'filed, then superseded');
+      assert.equal((await status(unfiled)).payload.supersededBy, 'pr-merge:#78');
     } finally {
       appAccess.getAppForUser = origGet;
     }

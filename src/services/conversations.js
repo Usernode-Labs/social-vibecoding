@@ -1690,6 +1690,13 @@ function mentionsUsername(content, username) {
 // notifications.CONVERSATION_NOTIFICATION_KINDS. A group or channel ignores it.
 async function sendMessage(pool, user, conversationId, input, {
   metadata = null, notify = true, notificationDetail = null, notificationKind = null,
+  // Inside the message's own transaction, for what must commit with it or
+  // not at all (the Homeroom bot's hello, homeroom-bot-dm.js sendDm; a DM to
+  // the bot heard by its workflow machine, routes/conversations.js):
+  // `prepare(db)` before the insert may answer { content, metadata } to send
+  // instead, or { refuse: true } to send nothing; `afterInsert(db, { messageId,
+  // membership, memberIds })` after it.
+  prepare = null, afterInsert = null,
 } = {}) {
   const attachmentIds = normalizeAttachmentIds(input.attachment_ids ?? input.attachmentIds);
   const refsRaw = input.objects ?? (input.object ? [input.object] : []);
@@ -1787,12 +1794,20 @@ async function sendMessage(pool, user, conversationId, input, {
     }
     // #3624: `metadata` is the platform's (the Homeroom bot's questions),
     // passed beside the input rather than in it, so no request body sets it.
+    let sendContent = content;
+    let sendMetadata = metadata;
+    if (typeof prepare === 'function') {
+      const instead = await prepare(db);
+      if (instead?.refuse) return null;
+      if (instead && typeof instead.content === 'string') sendContent = instead.content;
+      if (instead && 'metadata' in instead) sendMetadata = instead.metadata;
+    }
     const inserted = await db.query(
       `INSERT INTO conversation_messages
          (conversation_id, sender_id, content, reply_to_id, idempotency_key, thread_root_id, metadata)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
-      [conversationId, user.id, content, replyId, key, threadRootId, JSON.stringify(metadata || {})]
+      [conversationId, user.id, sendContent, replyId, key, threadRootId, JSON.stringify(sendMetadata || {})]
     );
     const messageId = inserted.rows[0].id;
     if (attachmentIds.length) {
@@ -1863,10 +1878,13 @@ async function sendMessage(pool, user, conversationId, input, {
         if (!blockedBySender.has(row.sender_id)) threadParticipants.add(row.sender_id);
       }
     }
+    if (typeof afterInsert === 'function') {
+      await afterInsert(db, { messageId, membership, memberIds: members.rows.map((row) => row.user_id) });
+    }
     const notifications = [];
     for (const member of members.rows) {
       if (!notify) break;
-      const mentioned = mentionsUsername(content, member.username);
+      const mentioned = mentionsUsername(sendContent, member.username);
       let kind = 'conversation_message';
       if (membership.kind === 'direct' && notificationKind) kind = notificationKind;
       else if (membership.kind === 'channel') {

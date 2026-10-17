@@ -593,6 +593,9 @@ function load() {
     // by src/services/worker.js. Defaults preserve historical behavior;
     // shrink them in prod to fit more concurrent warm workers on one box.
     workerMemory: process.env.WORKER_MEMORY || '2g',
+    // A worker on the platform's own repository, which boots the whole
+    // platform and a browser beside its agent (worker.js workerMemoryFor).
+    workerMemoryPlatformRepo: process.env.WORKER_MEMORY_PLATFORM_REPO || '4g',
     workerCpus: process.env.WORKER_CPUS || '2',
     // Runtime selection is explicit and intentionally defaults to the
     // existing single-server Docker implementation. Kubernetes never
@@ -1034,7 +1037,7 @@ function load() {
   if (config.maxAdminUserPromotedSessions < config.maxUserPromotedSessions) {
     console.log(`  [warn] MAX_ADMIN_USER_PROMOTED_SESSIONS (${config.maxAdminUserPromotedSessions}) is below MAX_USER_PROMOTED_SESSIONS (${config.maxUserPromotedSessions}) — admins get a LOWER proposal cap than regular users`);
   }
-  console.log(`  WORKER_MEMORY=${config.workerMemory} WORKER_CPUS=${config.workerCpus}`);
+  console.log(`  WORKER_MEMORY=${config.workerMemory} WORKER_MEMORY_PLATFORM_REPO=${config.workerMemoryPlatformRepo} WORKER_CPUS=${config.workerCpus}`);
   console.log(`  APP_RUNTIME=${config.appRuntime} WORKER_RUNTIME=${config.workerRuntime} CAPTURE_RUNTIME=${config.captureRuntime}`);
   console.log(`  SHOTS_V2=collect:${config.shots.collect} execute:${config.shots.execute} present:${config.shots.present} enforce:${config.shots.enforce}`);
   console.log(`  DB_POOL_MAX=${config.dbPoolMax}`);

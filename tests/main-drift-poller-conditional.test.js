@@ -24,7 +24,6 @@ const ids = {
   pool: require.resolve('../src/db/pool'),
   github: require.resolve('../src/services/github'),
   releaseWatch: require.resolve('../src/services/release-watch'),
-  mainWatch: require.resolve('../src/services/main-watch'),
   platform: require.resolve('../src/workflow/platform.ts'),
 };
 
@@ -74,6 +73,8 @@ const requested = [];
 stub(ids.platform, {
   requestDeploy: async (appId, reason) => { requested.push([appId, reason]); return 1; },
   wantMerge: async () => {},
+  // main's unit suite on a new main (the main-check machine) is its own concern.
+  requestMainCheck: async () => {},
 });
 const observed = [];
 stub(ids.releaseWatch, {
@@ -83,7 +84,6 @@ stub(ids.releaseWatch, {
   },
   converged: async () => ({ cleared: false }),
 });
-stub(ids.mainWatch, { afterMerge: async () => {} });
 
 let pollRows = [];
 const pool = {

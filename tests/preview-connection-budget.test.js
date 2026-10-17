@@ -302,7 +302,9 @@ test('#1771: a non-passing check run says whether the server was starved', () =>
   assert.ok(block.slice(0, flip).includes('connectionExhaustionDetail('),
     'and only ever behind the every-row rule, never on the census alone');
   // And storeChecks stays a pure write.
-  const store = src.slice(src.indexOf('async function storeChecks('), src.indexOf('async function storeChecksSkipped'));
+  const writers = read('src/workflow/preview/check-store.ts');
+  const store = writers.slice(writers.indexOf('async function storeChecks('), writers.indexOf('async function storeChecksSkipped'));
+  assert.ok(store.length > 0, 'the verdict writer is where it is read from');
   assert.doesNotMatch(store, /connectionCensus/,
     'the persistence path gains no query');
 });

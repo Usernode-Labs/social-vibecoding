@@ -256,7 +256,10 @@ test('no nudge for a turn that failed, under either CLI, or whose dispatch faile
   const cases = [
     [{ ...QUIT, ccExit: 1, exitCode: 1 }, /the build turn failed \(the agent exited with code 1\)/],
     [{ ...QUIT, lastResultText: 'API Error: 429 Too Many Requests' }, /the build turn failed \(it ended on an API error: API Error: 429 Too Many Requests\)/],
-    [{ ...QUIT, agentHarness: 'codex', ccExit: null, exitCode: 1, agentExit: 1 }, /produced no change/],
+    // 17 Oct 2026: said as failed, with why, never as a build that changed
+    // nothing (homeroom-bot-live.js turnFailureReason).
+    [{ ...QUIT, agentHarness: 'codex', ccExit: null, exitCode: 1, agentExit: 1 }, /the build turn failed \(the agent exited with code 1\)/],
+    [{ ...QUIT, ccExit: null, exitCode: -1, markerlessCause: 'oom_killed', pushOk: false }, /the build turn failed \(its worker ran out of memory\)/],
   ];
   for (const [result, error] of cases) {
     const h = harness({ turns: [result] });

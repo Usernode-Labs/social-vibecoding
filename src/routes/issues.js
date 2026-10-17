@@ -3343,41 +3343,12 @@ function issueRoutes(config) {
   return router;
 }
 
-/**
- * Close proposals whose target was closed by other means (a merged PR
- * carrying `Closes #N`, a close on GitHub): each open one for those numbers
- * hears it from the governance machine (src/workflow/platform.ts
- * targetsClosed), which supersedes it. Called from the merge path
- * (the merge-followups machine) and the
- * post-merge issue-close watcher.
- *
- * `cause` is { kind: 'pr-merge', prNumber } or { kind: 'github-close' }.
- * Never throws unless `strict`, for a caller that retries on it (the
- * merge-followups machine's work).
- */
-async function resolveSupersededCloseProposals(pool, { appId, numbers, cause, strict = false } = {}) {
-  const nums = (Array.isArray(numbers) ? numbers : [])
-    .map((n) => Number(n))
-    .filter((n) => Number.isInteger(n) && n > 0);
-  if (!appId || !nums.length) return { resolved: [] };
-  try {
-    return { resolved: await workflow().targetsClosed(appId, nums, cause || { kind: 'github-close' }) };
-  } catch (err) {
-    if (strict) throw err;
-    log.warn('issues', 'Superseded close-proposal resolve failed', { appId, numbers: nums, err: err.message });
-    return { resolved: [] };
-  }
-}
-
 module.exports = {
   issueRoutes,
   creatorFromSourceLine,
   shouldCreateGithubTwin,
   issueBodyWithScreenshots,
   MAX_GITHUB_ISSUE_BODY_CHARS,
-  // For the merge path and the issue-close watcher: close proposals whose
-  // target was closed by other means.
-  resolveSupersededCloseProposals,
   // "In progress" derivation pieces, exported for unit tests.
   pickInProgressTarget,
   composeInProgress,
