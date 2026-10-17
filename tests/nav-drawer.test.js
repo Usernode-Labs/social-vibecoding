@@ -206,7 +206,7 @@ test('the header takes the drawer\'s arrow and titles only while it applies', ()
     'the arrow in the places button\'s seat');
   assert.match(header, /-mb-2'\}\s*>\s*\{\/\*[\s\S]*?\*\/\}\s*<DrawerUntint \/>/, 'the untinted bar, first in the header');
   const title = read('frontend/src/features/header/header-title.tsx');
-  assert.match(title, /const \{ on: drawerOn \} = useStoreState\(drawerStore\);/);
+  assert.match(title, /const drawerOn = useDrawerMode\(\) !== null;/, 'either drawer, Communities\' or Messages\'');
   assert.match(title, /\{drawerOn \? <DrawerTitles \/> : \(/);
   const bar = read('frontend/src/features/dev-board/workshop/place-bar.tsx');
   assert.match(bar, /if \(drawerOn\) return null;\s*if \(!phone \|\| !slug \|\| mounted !== slug \|\| screen !== 'app-view'\) return null;/,
@@ -267,5 +267,102 @@ test('its words are catalog entries', () => {
   for (const key of ['drawer.outer.name', 'drawer.places.name', 'drawer.peek.page', 'drawer.search.placeholder',
     'drawer.search.label', 'drawer.search.cancel', 'drawer.search.none']) {
     assert.ok(communities[key] && communities[key].description, key);
+  }
+});
+
+// ── Messages on the same drawer ────────────────────────────────────────
+
+test('Messages\' strip: the list at 85%, then the conversation; a quarter of the way lands', () => {
+  const { MESSAGES_AT, offsetIn, depthIn, landingIn } = math;
+  assert.deepEqual([...MESSAGES_AT], [0, 0.85]);
+  near(offsetIn(MESSAGES_AT, 0.5), 0.425, 'halfway');
+  near(depthIn(MESSAGES_AT, 0.85), 1, 'the conversation');
+  for (const f of [0, 0.3, 1]) near(depthIn(MESSAGES_AT, offsetIn(MESSAGES_AT, f)), f, `round trip at ${f}`);
+  assert.equal(landingIn(MESSAGES_AT, 0, 0.2, -1), 0, 'short of a quarter of 0.85');
+  assert.equal(landingIn(MESSAGES_AT, 0, 0.22, -1), 1);
+  assert.equal(landingIn(MESSAGES_AT, 1, 0.63, 1), 0, 'a quarter of 0.85 back toward the list');
+  assert.equal(landingIn(MESSAGES_AT, 1, 0.65, 1), 1);
+  // The Communities wrappers are the same rule on their own stops.
+  assert.equal(math.landing(1, math.LEVEL_AT[1] + 0.21, -1), math.landingIn(math.LEVEL_AT, 1, math.LEVEL_AT[1] + 0.21, -1));
+});
+
+test('Messages\' header: no colour, and the conversation arrives with its line under it', () => {
+  const at0 = math.headerFrame(0, 44, false, true);
+  assert.equal(at0.tint, 0);
+  assert.deepEqual(at0.outer, { opacity: 1, x: -44, y: 7 }, '"Messages", where the arrow is not');
+  assert.equal(at0.back.opacity, 0);
+  const half = math.headerFrame(0.5, 44, false, true);
+  assert.equal(half.tint, 0, 'never a community\'s colour');
+  assert.equal(half.outer.x, -44 - 6, 'going in, "Messages" drifts left');
+  assert.equal(half.inner.x, 12, 'and the conversation arrives from the right');
+  assert.equal(half.inner.subOpacity, math.SUB_OPACITY, 'with who it is with already under its name');
+  assert.equal(half.inner.y, 0);
+  const at1 = math.headerFrame(1, 44, false, true);
+  assert.deepEqual(at1.inner, { opacity: 1, x: 0, y: 0, subOpacity: math.SUB_OPACITY, subX: 0, subY: 0 });
+  assert.equal(at1.back.live, true);
+  assert.equal(math.headerFrame(2, 44, false, true).inner.opacity, 1, 'a depth past 1 is the conversation');
+});
+
+test('Messages\' drawer holds the list and conversations with people, on a phone only', () => {
+  const { messagesDrawerApplies } = loadTsx(`${DIR}/messages-drawer.ts`);
+  const list = { phone: true, open: true, conversationId: null, appSlug: null, agent: null, threadRootId: null };
+  assert.equal(messagesDrawerApplies(list), true);
+  assert.equal(messagesDrawerApplies({ ...list, conversationId: 8, activeKind: 'group' }), true);
+  assert.equal(messagesDrawerApplies({ ...list, conversationId: 8, activeKind: null }), true, 'before the conversation has loaded');
+  assert.equal(messagesDrawerApplies({ ...list, phone: false }), false, 'never at 768px and up');
+  assert.equal(messagesDrawerApplies({ ...list, open: false }), false, 'another screen');
+  assert.equal(messagesDrawerApplies({ ...list, conversationId: 1, activeKind: 'channel' }), false, 'a channel is its community\'s');
+  assert.equal(messagesDrawerApplies({ ...list, appSlug: 'notes' }), false);
+  assert.equal(messagesDrawerApplies({ ...list, agent: { kind: 'agent', id: 3 } }), false, 'an agent opens on its own screen');
+  assert.equal(messagesDrawerApplies({ ...list, conversationId: 8, threadRootId: 40 }), false, 'a reply thread is a level over its conversation');
+  assert.equal(messagesDrawerApplies({ ...list, embedded: true }), false);
+});
+
+test('the Messages screen: the panes are the levels, the page drops its name, the arrow is the drawer\'s', () => {
+  const index = read('frontend/src/features/messages/index.tsx');
+  assert.match(index, /const drawer = useMessagesDrawer\(layoutRef, snap\.route, snap\.active, snap\.messages, threadWords\);/);
+  assert.match(index, /\{drawer\.peek \? <ConversationPeek peek=\{drawer\.peek\} \/> : <ConversationThread \/>\}/);
+  assert.match(index, /className=\{`messages-list-pane \$\{specBeside \? 'hidden' : drawer \? 'flex' : /, 'the list stays drawn beside a conversation');
+  assert.match(index, /\{inDrawer \? null : channel/, 'no avatar in the sheet\'s title row');
+  assert.match(index, /<div className="messages-peek-body" inert aria-hidden="true">/, 'the peek is a picture');
+  const store = read('frontend/src/features/messages/store.ts');
+  assert.match(store, /if \(state\.route\.conversationId && messagesDrawerApplies\(\{[\s\S]*?\}\)\) \{\s*app\.setBackIcon\?\.\('none'\);/,
+    'no href\'d arrow, so WebKit\'s history swipe stays off');
+  const drawer = read('frontend/src/features/messages/phone-drawer.tsx');
+  assert.match(drawer, /openConversation\(to === 1 \? peekId : null\);/, 'a pan lands by opening the address');
+  assert.match(drawer, /const start = running && shown !== 'none' \? shown : at\(pane, from, w\);/,
+    'the pane the route swaps in slides on from where the old one was');
+  assert.match(drawer, /el\.animate\(\[\{ transform: start \}, \{ transform: end \}\], \{ duration: SLIDE_MS, easing: SLIDE_EASE \}\)/);
+  assert.doesNotMatch(drawer, /\.style\.transition/, 'the conversation\'s pane is the kit\'s keyboard column, whose transition the kit owns');
+  assert.match(drawer, /if \(!on \|\| level !== 1 \|\| !pageTakesEdge\(\)\) return undefined;/, 'a conversation pans from its edge');
+  const header = read(`${DIR}/header-drawer.tsx`);
+  assert.match(header, /if \(mode === 'messages'\) return <BackDisc mode=\{mode\} label=\{t\('core:header\.drawer\.toMessages'\)\} onBack=\{messagesBack\} \/>;/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.messages-layout\.messages-drawer > \.messages-list-pane \{\s*position: absolute; top: 0; bottom: 0; left: 0; width: 85%;/);
+  const messages = JSON.parse(read('frontend/locales/en/messages.json'));
+  assert.ok(messages['drawer.peek.open'] && messages['drawer.peek.open'].description);
+  const core = JSON.parse(read('frontend/locales/en/core.json'));
+  for (const key of ['header.drawer.messages', 'header.drawer.toMessages']) assert.ok(core[key] && core[key].description, key);
+});
+
+test('the phone\'s header names a conversation as its sheet does', () => {
+  const { threadWords } = loadTsx('frontend/src/features/messages/index.tsx');
+  const base = { id: 8, members: [], memberCount: 3, membershipStatus: 'member', title: 'Launch crew' };
+  assert.deepEqual(threadWords({ ...base, kind: 'group', myRole: 'owner' }), { title: 'Launch crew', sub: '3 members · you own this group' });
+  assert.deepEqual(threadWords({ ...base, kind: 'group', myRole: 'member', memberCount: 1 }), { title: 'Launch crew', sub: '1 member' });
+  assert.equal(threadWords({ ...base, kind: 'group', membershipStatus: 'invited' }).sub, 'Invitation pending');
+  const ada = { id: 3, username: 'ada' };
+  assert.deepEqual(threadWords({ ...base, kind: 'direct', title: 'ada', peer: ada }), { title: 'ada', sub: 'Direct message' });
+  assert.equal(threadWords({ ...base, kind: 'direct', title: 'ada', peer: ada, awaitingAcceptance: true }).sub, 'Request pending');
+  const bot = { id: 2, username: 'homeroom_bot', bot: true, displayName: 'Homeroom bot' };
+  assert.deepEqual(threadWords({ ...base, kind: 'direct', title: 'homeroom_bot', peer: bot, homeroomBot: true }),
+    { title: 'Homeroom bot', sub: 'Builds what you ask for' });
+  // The sheet builds the same words from the same ids.
+  const index = read('frontend/src/features/messages/index.tsx');
+  const words = index.slice(index.indexOf('export function threadWords('), index.indexOf('function ThreadHeader('));
+  const header = index.slice(index.indexOf('function ThreadHeader('), index.indexOf('/** The day a message was sent'));
+  for (const id of ['header.subtitle.channel', 'header.subtitle.invited', 'header.subtitle.groupOwner', 'header.subtitle.group',
+    'header.subtitle.requestPending', 'header.subtitle.direct', 'header.subtitle.homeroomBot']) {
+    assert.ok(words.includes(`'messages:${id}'`) && header.includes(`'messages:${id}'`), id);
   }
 });

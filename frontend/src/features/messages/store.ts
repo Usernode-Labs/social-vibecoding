@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 
 import { t } from '../../lib/i18n/runtime';
 import { navStore } from '../nav/nav-store.js';
+import { messagesDrawerApplies } from '../nav-drawer/messages-drawer';
 import * as api from './api';
 import { WORK_CHANGED_EVENT, inMainStream, openAppTarget, threadsAllowed } from './bot-shared';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
@@ -1183,6 +1184,24 @@ export function syncChrome(): void {
   // pointed — the Workshop, when that is where the app had been opened from.
   // #4229: and on a strip too narrow for the list beside it, where the list
   // has stepped aside just as it does on a phone.
+  // THE PHONE'S DRAWER (../nav-drawer/messages-drawer.ts): a conversation
+  // with people is its second level, and the header draws the drawer's own
+  // arrow (a button, not this href'd one, so WebKit's history swipe stays
+  // off while a finger pans the drawer) and names the conversation.
+  if (state.route.conversationId && messagesDrawerApplies({
+    phone: isMobile(),
+    open: state.route.open,
+    conversationId: state.route.conversationId,
+    appSlug: state.route.appSlug,
+    agent: state.route.agent,
+    threadRootId: state.route.threadRootId,
+    embedded: state.route.embedded,
+    activeKind: state.active && state.active.id === state.route.conversationId ? state.active.kind : null,
+  })) {
+    app.setBackIcon?.('none');
+    app.setHeaderTitle?.(t('messages:store.header.messages'));
+    return;
+  }
   const thread = listAside() && !!(state.route.conversationId || state.route.appSlug || state.route.agent);
   // #2387: a reply thread, on a phone, is a level over its conversation: the
   // chevron goes back to the conversation, and the bar says "Thread".

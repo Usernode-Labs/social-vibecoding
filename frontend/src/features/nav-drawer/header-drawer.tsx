@@ -19,6 +19,10 @@
  *                  page is exactly the tinted bar it was. Its ink follows the
  *                  same value (`--nav-k`, app.css), from the bar's own to white.
  *
+ * Messages (./messages-drawer.ts) takes the arrow and the titles too: on
+ * its list "Messages", in a conversation the conversation's name over who
+ * it is with, and no colour.
+ *
  * Every one of them is drawn from the live depth (./drawer-math.ts
  * headerFrame): a tap animates it over the slide and a pan sets it from the
  * finger, and each writes only its own nodes' transform, opacity and
@@ -35,10 +39,21 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { placeHandle, placeName, type PlaceKey } from '../dev-board/workshop/places';
 import { headerFrame, type HeaderFrame } from './drawer-math';
-import { back, drawerStore, liveDepth, onDepth, reducedMotion } from './drawer-store';
+import { back, communitiesDepth, drawerStore, reducedMotion, type DepthChannel } from './drawer-store';
+import { messagesBack, messagesDepth, messagesDrawerStore } from './messages-drawer';
 
-/** Draw `apply` from the live depth now, and on every change, while mounted. */
+type Mode = 'communities' | 'messages' | null;
+
+/** Which drawer the header is drawn for: Communities', Messages', or none. */
+export function useDrawerMode(): Mode {
+  const { on } = useStoreState(drawerStore);
+  const { on: messages } = useStoreState(messagesDrawerStore);
+  return on ? 'communities' : messages ? 'messages' : null;
+}
+
+/** Draw `apply` from the drawer's live depth now, and on every change, while mounted. */
 function useHeaderFrame(
+  mode: Mode,
   apply: (frame: HeaderFrame) => void,
   slot: () => number = () => 0,
   redraw?: { current: () => void },
@@ -48,11 +63,13 @@ function useHeaderFrame(
   const slotRef = useRef(slot);
   slotRef.current = slot;
   useIsomorphicLayoutEffect(() => {
-    const drawAt = (f: number) => applyRef.current(headerFrame(f, slotRef.current(), reducedMotion()));
-    if (redraw) redraw.current = () => drawAt(liveDepth());
-    drawAt(liveDepth());
-    return onDepth(drawAt);
-  }, []);
+    if (!mode) return undefined;
+    const channel: DepthChannel = mode === 'messages' ? messagesDepth : communitiesDepth;
+    const drawAt = (f: number) => applyRef.current(headerFrame(f, slotRef.current(), reducedMotion(), mode === 'messages'));
+    if (redraw) redraw.current = () => drawAt(channel.live());
+    drawAt(channel.live());
+    return channel.on(drawAt);
+  }, [mode]);
 }
 
 function translate(x: number, y = 0): string {
@@ -72,14 +89,16 @@ const BACK_CLASS = 'nav-drawer-back inline-flex items-center justify-center w-7 
 
 export function DrawerBack(): ReactNode {
   const t = useMessages('core');
-  const { on, level, shown } = useStoreState(drawerStore);
-  if (!on) return null;
-  return <BackDisc label={level === 2 ? t('core:header.drawer.toPlaces', { community: shown.name }) : t('core:header.drawer.toCommunities')} />;
+  const mode = useDrawerMode();
+  const { level, shown } = useStoreState(drawerStore);
+  if (mode === 'messages') return <BackDisc mode={mode} label={t('core:header.drawer.toMessages')} onBack={messagesBack} />;
+  if (mode !== 'communities') return null;
+  return <BackDisc mode={mode} label={level === 2 ? t('core:header.drawer.toPlaces', { community: shown.name }) : t('core:header.drawer.toCommunities')} onBack={back} />;
 }
 
-function BackDisc({ label }: { label: string }): ReactNode {
+function BackDisc({ mode, label, onBack }: { mode: Mode; label: string; onBack: () => void }): ReactNode {
   const ref = useRef<HTMLButtonElement>(null);
-  useHeaderFrame((frame) => {
+  useHeaderFrame(mode, (frame) => {
     const el = ref.current;
     if (!el) return;
     el.style.opacity = String(frame.back.opacity);
@@ -89,7 +108,7 @@ function BackDisc({ label }: { label: string }): ReactNode {
     el.setAttribute('aria-hidden', frame.back.live ? 'false' : 'true');
   });
   return (
-    <button ref={ref} type="button" className={BACK_CLASS} data-nav-drawer-back="" aria-label={label} onClick={() => back()}>
+    <button ref={ref} type="button" className={BACK_CLASS} data-nav-drawer-back="" aria-label={label} onClick={() => onBack()}>
       <ChevronLeftIcon className="w-5 h-5" aria-hidden="true" />
     </button>
   );
@@ -97,7 +116,14 @@ function BackDisc({ label }: { label: string }): ReactNode {
 
 export function DrawerTitles(): ReactNode {
   const t = useMessages('core');
-  const { level, shown } = useStoreState(drawerStore);
+  const mode = useDrawerMode();
+  const { level: placeLevel, shown } = useStoreState(drawerStore);
+  const conversation = useStoreState(messagesDrawerStore);
+  const messages = mode === 'messages';
+  // Where it rests, for a screen reader: the title on show, and the small
+  // line only where it says something.
+  const outerShown = messages ? conversation.level === 0 : placeLevel === 0;
+  const subShown = messages ? conversation.level === 1 && !!conversation.sub : placeLevel === 2;
   const box = useRef<HTMLSpanElement>(null);
   const outer = useRef<HTMLSpanElement>(null);
   const inner = useRef<HTMLSpanElement>(null);
@@ -122,7 +148,7 @@ export function DrawerTitles(): ReactNode {
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
   }, []);
-  useHeaderFrame((frame) => {
+  useHeaderFrame(mode, (frame) => {
     const a = outer.current;
     const b = inner.current;
     const s = sub.current;
@@ -136,19 +162,21 @@ export function DrawerTitles(): ReactNode {
   }, () => slot.current, redraw);
   return (
     <span ref={box} className="nav-drawer-titles" data-nav-drawer-titles="">
-      <span ref={outer} className="nav-drawer-title" aria-hidden={level !== 0 || undefined}>
-        <b className="nav-drawer-title-name">{t('core:header.communities')}</b>
+      <span ref={outer} className="nav-drawer-title" aria-hidden={!outerShown || undefined}>
+        <b className="nav-drawer-title-name">{messages ? t('core:header.drawer.messages') : t('core:header.communities')}</b>
       </span>
-      <span ref={inner} className="nav-drawer-title" aria-hidden={level === 0 || undefined}>
+      <span ref={inner} className="nav-drawer-title" aria-hidden={outerShown || undefined}>
         <b className="nav-drawer-title-name">
-          {shown.selfHosted ? (
+          {messages ? conversation.title : shown.selfHosted ? (
             <>
               <Wordmark className="nav-drawer-title-mark" aria-hidden="true" />
               <span className="sr-only">{shown.name}</span>
             </>
           ) : shown.name}
         </b>
-        <small ref={sub} className="nav-drawer-title-page" aria-hidden={level !== 2 || undefined}>{pageLabel(shown.place)}</small>
+        <small ref={sub} className="nav-drawer-title-page" aria-hidden={!subShown || undefined}>
+          {messages ? conversation.sub : pageLabel(shown.place)}
+        </small>
       </span>
     </span>
   );
@@ -161,7 +189,7 @@ export function DrawerUntint(): ReactNode {
 
 function Untint(): ReactNode {
   const ref = useRef<HTMLSpanElement>(null);
-  useHeaderFrame((frame) => {
+  useHeaderFrame('communities', (frame) => {
     const el = ref.current;
     if (!el) return;
     el.style.opacity = String(1 - frame.tint);

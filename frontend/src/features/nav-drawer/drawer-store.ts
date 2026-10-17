@@ -27,7 +27,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
-import { clampDepth, easeOut, REDUCED_MS, SLIDE_MS, type Level } from './drawer-math';
+import { easeOut, REDUCED_MS, SLIDE_MS, type Level } from './drawer-math';
 
 /** The community the drawer shows: its places are level 1, its page level 2. */
 export interface Shown {
@@ -68,35 +68,22 @@ export const drawerStore = createStore<DrawerState>({
 
 /* ── The live depth ─────────────────────────────────────────────────── */
 
-let depth = 2;
-let frame = 0;
-const depthListeners = new Set<(f: number) => void>();
-
-/** Where the strip is now, between 0 and 2. */
-export function liveDepth(): number {
-  return depth;
-}
-
-/** Follow the live depth. Returns the undo. */
-export function onDepth(listener: (f: number) => void): () => void {
-  depthListeners.add(listener);
-  return () => { depthListeners.delete(listener); };
-}
-
-function draw(f: number): void {
-  depth = clampDepth(f);
-  for (const listener of [...depthListeners]) listener(depth);
-}
-
-function stopSlide(): void {
-  if (frame && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame);
-  frame = 0;
-}
-
-/** A finger sets it. */
-export function setDepth(f: number): void {
-  stopSlide();
-  draw(f);
+/**
+ * One drawer's live depth: where its strip is now, which its header draws
+ * from. Communities' runs 0 to 2; Messages' (./messages-drawer.ts) 0 to 1,
+ * on a channel of its own, so the two can never draw over each other while
+ * one turns off and the other on.
+ */
+export interface DepthChannel {
+  live(): number;
+  /** Follow it. Returns the undo. */
+  on(listener: (f: number) => void): () => void;
+  /** A finger sets it. */
+  set(f: number): void;
+  /** A tap animates it to `target` over the slide, on the slide's curve. */
+  slide(target: number): void;
+  /** Put it at `target` at once. */
+  cut(target: number): void;
 }
 
 export function reducedMotion(): boolean {
@@ -107,23 +94,69 @@ export function reducedMotion(): boolean {
   }
 }
 
-/** A tap animates it to `target` over the slide, on the slide's curve. */
-function slideDepth(target: number): void {
-  stopSlide();
-  const from = depth;
-  const to = clampDepth(target);
-  if (from === to || typeof requestAnimationFrame !== 'function' || typeof performance === 'undefined') {
-    draw(to);
-    return;
-  }
-  const ms = reducedMotion() ? REDUCED_MS : SLIDE_MS;
-  const t0 = performance.now();
-  const tick = (now: number) => {
-    const k = Math.min(1, (now - t0) / ms);
-    draw(from + (to - from) * easeOut(k));
-    frame = k < 1 ? requestAnimationFrame(tick) : 0;
+export function createDepthChannel(rest: number, deepest: number): DepthChannel {
+  let depth = rest;
+  let frame = 0;
+  const listeners = new Set<(f: number) => void>();
+  const clamp = (f: number) => (Number.isFinite(f) ? Math.max(0, Math.min(deepest, f)) : rest);
+  const draw = (f: number) => {
+    depth = clamp(f);
+    for (const listener of [...listeners]) listener(depth);
   };
-  frame = requestAnimationFrame(tick);
+  const stop = () => {
+    if (frame && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame);
+    frame = 0;
+  };
+  return {
+    live: () => depth,
+    on(listener) {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+    set(f) {
+      stop();
+      draw(f);
+    },
+    cut(target) {
+      stop();
+      draw(target);
+    },
+    slide(target) {
+      stop();
+      const from = depth;
+      const to = clamp(target);
+      if (from === to || typeof requestAnimationFrame !== 'function' || typeof performance === 'undefined') {
+        draw(to);
+        return;
+      }
+      const ms = reducedMotion() ? REDUCED_MS : SLIDE_MS;
+      const t0 = performance.now();
+      const tick = (now: number) => {
+        const k = Math.min(1, (now - t0) / ms);
+        draw(from + (to - from) * easeOut(k));
+        frame = k < 1 ? requestAnimationFrame(tick) : 0;
+      };
+      frame = requestAnimationFrame(tick);
+    },
+  };
+}
+
+/** Communities' depth. */
+export const communitiesDepth = createDepthChannel(2, 2);
+
+/** Where the strip is now, between 0 and 2. */
+export function liveDepth(): number {
+  return communitiesDepth.live();
+}
+
+/** Follow the live depth. Returns the undo. */
+export function onDepth(listener: (f: number) => void): () => void {
+  return communitiesDepth.on(listener);
+}
+
+/** A finger sets it. */
+export function setDepth(f: number): void {
+  communitiesDepth.set(f);
 }
 
 /* ── The surface that moves ─────────────────────────────────────────── */
@@ -206,12 +239,8 @@ export function go(to: number, opts: GoOptions = {}): void {
     moving: level === 2 && !cut,
   });
   surface?.place(level, cut || reducedMotion());
-  if (cut) {
-    stopSlide();
-    draw(level);
-  } else {
-    slideDepth(level);
-  }
+  if (cut) communitiesDepth.cut(level);
+  else communitiesDepth.slide(level);
 }
 
 /** The header's arrow: up one level. A widened search narrows first. */
@@ -285,7 +314,6 @@ export function setOn(on: boolean): void {
   const s = drawerStore.get();
   if (on === s.on) return;
   letGoBack(true);
-  stopSlide();
-  draw(2);
+  communitiesDepth.cut(2);
   drawerStore.set({ on, level: 2, searching: false, moving: false, ...(on ? {} : { pending: null }) });
 }

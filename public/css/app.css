@@ -19396,6 +19396,68 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   .nav-drawer-places { transition: none; }
 }
 
+/* ── MESSAGES ON THE SAME DRAWER (features/messages/phone-drawer.tsx) ──
+   Evan's design (18 Oct 2026), on a phone: the conversation list at 85% of
+   the screen in the column's styling (the desktop's sidebar rows: no cards,
+   the conversation you were in lit), the last conversation peeking at its
+   right, and the conversation over the whole screen, moved by transform
+   between the two. The panes stay the inbox's own (#messages-screen >
+   .messages-layout > …), so the declared checks and the wide window's
+   rules are untouched; `messages-drawer` is only ever set under 768px. */
+@media (max-width: 767.98px) {
+  .messages-layout.messages-drawer { position: relative; overflow: hidden; touch-action: pan-y; }
+  .messages-layout.messages-drawer > .messages-list-pane {
+    position: absolute; top: 0; bottom: 0; left: 0; width: 85%;
+    will-change: transform;
+  }
+  .messages-layout.messages-drawer.messages-drawer-alone > .messages-list-pane { width: 100%; }
+  .messages-layout.messages-drawer > .messages-thread-pane {
+    position: absolute; top: 0; bottom: 0; left: 0; width: 100%;
+    margin-top: 0;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
+    will-change: transform;
+  }
+  .messages-layout.messages-drawer > .messages-thread-pane.messages-no-selection { display: none; }
+  /* The list's rows: the column's, one name a row with its last line small under it. */
+  .messages-layout.messages-drawer > .messages-list-pane .messages-toolbar { margin: 12px 12px 4px; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-list-scroll { padding: 0 8px 12px; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-section-head { padding: 12px 10px 4px; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-section-card {
+    display: flex; flex-direction: column; gap: 2px;
+    margin: 0; overflow: visible; border-radius: 0; background: none; box-shadow: none;
+  }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row {
+    min-height: 48px; gap: 10px; padding: 4px 10px; border-radius: 10px;
+  }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row::after { display: none; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > :first-child {
+    flex: 0 0 28px; width: 28px; height: 28px; border-radius: 8px; font-size: 11px;
+  }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > .messages-group-faces > :first-child {
+    position: static; width: 28px; height: 28px; border-radius: 8px; font-size: 11px;
+  }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > .messages-group-faces > :last-child { display: none; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-row-time,
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-kind-pill,
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-group-tag { display: none; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-row-name { font-size: 15px; font-weight: 400; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-row-preview { font-size: 12px; line-height: 16px; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-active { background: var(--lit-tint); color: var(--lit-ink); }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-active .messages-row-name { color: inherit; font-weight: 600; }
+  /* The peek: a picture of the conversation, pressed as one. */
+  .messages-thread-peek { overflow: hidden; }
+  .messages-thread-peek > .messages-peek-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+  .messages-thread-peek .messages-thread-scroll { overflow: hidden; }
+  .messages-peek-open {
+    position: absolute; inset: 0; margin: 0; padding: 0; border: 0;
+    background: rgba(0, 0, 0, 0.05); cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  :is(.dark) .messages-peek-open { background: rgba(0, 0, 0, 0.22); }
+  .messages-peek-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; }
+  /* In a conversation the header names it, so its sheet keeps only its discs. */
+  .messages-layout.messages-drawer .messages-thread-header { padding-top: 8px; padding-bottom: 0; }
+}
+
 /* ── The hero's rows (community-card.tsx) ──
    Who is here: the faces, then "Public community · 23 members" as one
    phrase, the audience's glyph leading it. Then one row of what you can do:

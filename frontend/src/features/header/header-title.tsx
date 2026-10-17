@@ -100,8 +100,7 @@ import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view'
 import { useDevViewMode } from '../dev-board/view-mode-store';
 import { communityScopeStore, toggleSwitcher } from '../workshop/community-scope';
 import { HeaderPlaceName } from '../dev-board/workshop/place-bar';
-import { drawerStore } from '../nav-drawer/drawer-store';
-import { DrawerTitles } from '../nav-drawer/header-drawer';
+import { DrawerTitles, useDrawerMode } from '../nav-drawer/header-drawer';
 
 // The one string that means "this is naming the platform, not an app". It is
 // header-title-store.js's INITIAL, which is why the prerendered document and
@@ -122,9 +121,10 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   const switcherOpen = !!switcher;
   // THE PHONE'S DRAWER (../nav-drawer/): on a community's page under 768px
   // the title is the drawer's, "Communities", the community, or the
-  // community over its page, moving with the drawer. Off until the drawer
+  // community over its page, moving with the drawer; on Messages,
+  // "Messages" or the conversation over who it is with. Off until a drawer
   // has settled that it applies, after hydration.
-  const { on: drawerOn } = useStoreState(drawerStore);
+  const drawerOn = useDrawerMode() !== null;
 
   const onSession = tab === 'dev' && subTab === 'sessions';
   const sessionPill = onSession && life ? <MergeStatusPill life={life} /> : null;

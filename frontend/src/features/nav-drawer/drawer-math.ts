@@ -23,6 +23,11 @@ export const OUTER_SHARE = 0.85;
 export const PLACES_SHARE = 0.8;
 /** Where each level starts on the strip, in screen widths. */
 export const LEVEL_AT: readonly [number, number, number] = [0, OUTER_SHARE, OUTER_SHARE + PLACES_SHARE];
+/**
+ * Messages on the same drawer (./messages-drawer.ts): the conversation list
+ * at 85%, then the conversation, the whole screen.
+ */
+export const MESSAGES_AT: readonly [number, number] = [0, OUTER_SHARE];
 /** How far into the next level a pan must be let go to land there. */
 export const LAND_SHARE = 0.25;
 /** How far a finger moves, mostly sideways, before it is a pan. */
@@ -47,18 +52,31 @@ export function clampDepth(f: number): number {
   return Number.isFinite(f) ? Math.max(0, Math.min(2, f)) : 2;
 }
 
+/** How far a strip of levels at `stops` is moved left at depth `f`, in screen widths. */
+export function offsetIn(stops: readonly number[], f: number): number {
+  const deepest = stops.length - 1;
+  const d = Math.max(0, Math.min(deepest, Number.isFinite(f) ? f : deepest));
+  const lo = Math.min(deepest - 1, Math.floor(d));
+  return stops[lo] + (stops[lo + 1] - stops[lo]) * (d - lo);
+}
+
+/** The depth a strip of levels at `stops` is at when moved left by `offset` screen widths. */
+export function depthIn(stops: readonly number[], offset: number): number {
+  const deepest = stops.length - 1;
+  const o = Math.max(0, Math.min(stops[deepest], Number(offset) || 0));
+  let lo = 0;
+  while (lo < deepest - 1 && o > stops[lo + 1]) lo += 1;
+  return lo + (o - stops[lo]) / (stops[lo + 1] - stops[lo]);
+}
+
 /** How far the strip is moved left at depth `f`, in screen widths. */
 export function offsetAt(f: number): number {
-  const d = clampDepth(f);
-  const lo = Math.min(1, Math.floor(d));
-  return LEVEL_AT[lo] + (LEVEL_AT[lo + 1] - LEVEL_AT[lo]) * (d - lo);
+  return offsetIn(LEVEL_AT, f);
 }
 
 /** The depth the strip is at when moved left by `offset` screen widths. */
 export function depthAt(offset: number): number {
-  const o = Math.max(0, Math.min(LEVEL_AT[2], Number(offset) || 0));
-  if (o <= LEVEL_AT[1]) return o / LEVEL_AT[1];
-  return 1 + (o - LEVEL_AT[1]) / (LEVEL_AT[2] - LEVEL_AT[1]);
+  return depthIn(LEVEL_AT, offset);
 }
 
 /** Whether a finger that has moved `dx, dy` is panning sideways. */
@@ -73,13 +91,19 @@ export function isPan(dx: number, dy: number): boolean {
  * crossed a whole level and a quarter more goes two.
  */
 export function landing(from: Level, offset: number, dx: number): Level {
-  let to: number = from;
+  return landingIn(LEVEL_AT, from, offset, dx) as Level;
+}
+
+/** `landing`, for a strip of levels at `stops`. */
+export function landingIn(stops: readonly number[], from: number, offset: number, dx: number): number {
+  const deepest = stops.length - 1;
+  let to = from;
   if (dx < 0) {
-    while (to < 2 && offset > LEVEL_AT[to] + LAND_SHARE * (LEVEL_AT[to + 1] - LEVEL_AT[to])) to += 1;
+    while (to < deepest && offset > stops[to] + LAND_SHARE * (stops[to + 1] - stops[to])) to += 1;
   } else if (dx > 0) {
-    while (to > 0 && offset < LEVEL_AT[to] - LAND_SHARE * (LEVEL_AT[to] - LEVEL_AT[to - 1])) to -= 1;
+    while (to > 0 && offset < stops[to] - LAND_SHARE * (stops[to] - stops[to - 1])) to -= 1;
   }
-  return to as Level;
+  return to;
 }
 
 /**
@@ -100,6 +124,10 @@ export function landing(from: Level, offset: number, dx: number): Level {
  * `slot` is how far left of the community's name the bar's own left edge
  * is (the arrow and its gap), where "Communities" sits with no arrow.
  * Reduce Motion keeps the fades and drops every movement.
+ *
+ * MESSAGES (`messages`): two levels, the list and a conversation, and no
+ * colour. The conversation's name arrives with its line under it ("Direct
+ * message", "3 members") already in place, the way a new title arrives.
  */
 export interface HeaderFrame {
   tint: number;
@@ -113,10 +141,18 @@ export const SUB_OPACITY = 0.78;
 /** How far the name sits down while it is alone on the row. */
 const ALONE_Y = 7;
 
-export function headerFrame(f: number, slot: number, reduced = false): HeaderFrame {
+export function headerFrame(f: number, slot: number, reduced = false, messages = false): HeaderFrame {
   const move = reduced ? 0 : 1;
-  const d = clampDepth(f);
+  const d = messages ? Math.max(0, Math.min(1, Number.isFinite(f) ? f : 1)) : clampDepth(f);
   const b = Math.min(1, d);
+  if (messages) {
+    return {
+      tint: 0,
+      back: { opacity: b, x: 8 * (1 - b) * move, live: b > 0.5 },
+      outer: { opacity: 1 - d, x: -slot - 12 * d * move, y: ALONE_Y },
+      inner: { opacity: d, x: 24 * (1 - d) * move, y: 0, subOpacity: SUB_OPACITY, subX: 0, subY: 0 },
+    };
+  }
   const frame: HeaderFrame = {
     tint: b,
     back: { opacity: b, x: 8 * (1 - b) * move, live: b > 0.5 },

@@ -3734,5 +3734,9 @@
   "bot.track.pictures.after": {
     "text": "After",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Label on the \"after\" picture of a change."
+  },
+  "drawer.peek.open": {
+    "text": "Open {{name}}",
+    "description": "On a phone, what a screen reader says for the last conversation, peeking in beside the list of conversations; pressing it opens that conversation. {{name}} is the conversation's name: a person's name or a group's title."
   }
 }
