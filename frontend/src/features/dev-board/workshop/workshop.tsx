@@ -4571,13 +4571,18 @@ export function DevWorkshop(): ReactNode {
   // bar's button, and a swipe from the left edge on a phone. It shuts when
   // the place or the project changes under it (a door, Back), and a press on
   // a place in it shuts it as a navigating close, so the Back claim it took
-  // cannot undo the entry the press pushes.
+  // cannot undo the entry the press pushes. The close itself is the open
+  // played in reverse (#5386): `trayOpen` turns false at once and everything
+  // that reads it sees it closed, while `trayShown` keeps the tray mounted
+  // until its slide-out has run.
   const [trayOpen, setTrayOpen] = useState(false);
+  const [trayShown, setTrayShown] = useState(false);
   const trayNav = useRef(false);
   const placesBtn = useRef<HTMLButtonElement | null>(null);
   const trayId = useId();
   const placesInColumn = useMediaFlag(PLACES_COLUMN_QUERY);
   useEffect(() => { setTrayOpen(false); }, [tab, v.slug, placesInColumn]);
+  useEffect(() => { if (trayOpen) setTrayShown(true); }, [trayOpen]);
   useEdgeSwipe(!placesInColumn && !trayOpen && !!v.slug && !v.loading, () => {
     trayNav.current = false;
     setTrayOpen(true);
@@ -4687,11 +4692,13 @@ export function DevWorkshop(): ReactNode {
       buttonRef={placesBtn}
     />
   );
-  const tray = trayOpen ? (
+  const tray = trayOpen || trayShown ? (
     <PlacesTray
       id={trayId}
       label={t('project:places.tray.name', { project: projectName })}
       onClose={() => { trayNav.current = false; setTrayOpen(false); }}
+      closing={!trayOpen}
+      onClosed={() => setTrayShown(false)}
       // #4703: focus returns to the button that opened the tray — the merged
       // header's on a phone, the bar's own on a wide window — whichever is
       // connected and visible (the band's button is display:none under 768px,

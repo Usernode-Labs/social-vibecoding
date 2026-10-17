@@ -139,7 +139,12 @@ test('the place bar: the tray\'s button, a dot while something waits, then the p
 test('the page draws the bar where the tabs were, and the tray only while it is open', () => {
   const WS = read(`${DIR}/workshop.tsx`);
   assert.match(WS, /const band = \(\s*<PlaceBar/);
-  assert.match(WS, /const tray = trayOpen \? \(\s*<PlacesTray/);
+  // #5386: the tray stays mounted while it slides out — `trayOpen` turns
+  // false at once, `trayShown` holds it until the slide has run.
+  assert.match(WS, /const tray = trayOpen \|\| trayShown \? \(\s*<PlacesTray/);
+  assert.match(WS, /closing=\{!trayOpen\}/);
+  assert.match(WS, /onClosed=\{\(\) => setTrayShown\(false\)\}/);
+  assert.match(WS, /useEffect\(\(\) => \{ if \(trayOpen\) setTrayShown\(true\); \}, \[trayOpen\]\);/);
   // #4486: All items' way back is in its pinned head, so nothing sits
   // between the bar and the tray (which renders nothing in place).
   assert.match(WS, /\{band\}\s*\{tray\}/);
@@ -158,14 +163,25 @@ test('the page draws the bar where the tabs were, and the tray only while it is 
 
 test('the tray: rendered only while open, into the body; focus in and back; Escape, the scrim and a swipe close it', () => {
   const src = read(TRAY);
-  assert.match(src, /return createPortal\(\s*<div className="dev-ws-tray-root" data-places-tray="">/);
+  // #5386: while it slides out the root wears `is-closing` (the CSS animates
+  // the close) and takes no presses.
+  assert.match(src, /return createPortal\(\s*<div\s*className=\{closing \? 'dev-ws-tray-root is-closing' : 'dev-ws-tray-root'\}\s*data-places-tray=""\s*inert=\{!!closing\}\s*aria-hidden=\{closing \|\| undefined\}\s*>/);
   assert.match(src, /document\.body,\s*\);/);
   assert.match(src, /<div className="dev-ws-tray-scrim" aria-hidden="true" onClick=\{\(\) => closeRef\.current\(\)\} \/>/);
   assert.match(src, /role="dialog"\s*aria-modal="true"\s*aria-label=\{label\}/);
   assert.match(src, /querySelector<HTMLElement>\('\[aria-current="page"\]'\)/, 'focus lands on the place you are on');
   assert.match(src, /back\.focus\(\{ preventScroll: true \}\)/, 'and goes back to the button');
+  // The focus return and the Back release run in the close's own commit: the
+  // effects depend on `closing`, so their cleanups fire when it starts.
+  assert.match(src, /querySelector<HTMLElement>\('a\[href\], button'\);[\s\S]*?\}, \[closing\]\);/, 'the focus effect ends with the close\'s start');
   assert.match(src, /if \(e\.key === 'Escape'\) \{/);
   assert.match(src, /pushDismissible\(/, 'the device\'s Back closes it too');
+  assert.match(src, /\{ navigating: true \} : undefined\);\s*\};\s*\}, \[closing\]\);/, 'a place press\'s navigating release, in the close\'s own commit');
+  // The slide's end calls `onClosed`: the card's animationend, a 320ms
+  // fallback if it is missed, and at once under reduced motion.
+  assert.match(src, /onAnimationEnd=\{\(e\) => \{\s*if \(e\.target !== e\.currentTarget \|\| e\.animationName !== 'dev-ws-tray-out'\) return;\s*if \(!closingRef\.current\) return;/, 'the card\'s own out slide ends it');
+  assert.match(src, /setTimeout\(\(\) => closedRef\.current\?\.\(\), 320\)/, 'a missed animationend never leaves it on screen');
+  assert.match(src, /if \(window\.matchMedia\?\.\('\(prefers-reduced-motion: reduce\)'\)\?\.matches\) \{\s*closedRef\.current\?\.\(\);/, 'reduced motion closes at once, as the open skips its slide');
   const { isEdgeSwipe, isCloseSwipe, edgeSwipeAllowed } = loadTsx(TRAY);
   assert.equal(isEdgeSwipe(4, 300, 120, 310), true, 'a swipe right from the edge');
   assert.equal(isEdgeSwipe(60, 300, 200, 300), false, 'not from the edge');
@@ -179,6 +195,14 @@ test('the tray: rendered only while open, into the body; focus in and back; Esca
   assert.equal(edgeSwipeAllowed({ ua: iphone, maxTouchPoints: 5, standalone: true, native: false }), true, 'an installed app has no browser Back');
   assert.equal(edgeSwipeAllowed({ ua: iphone, maxTouchPoints: 5, standalone: false, native: true }), true, 'nor the native shell');
   assert.equal(edgeSwipeAllowed({ ua: 'Mozilla/5.0 (Linux; Android 14) Chrome/129 Mobile', maxTouchPoints: 5, standalone: false, native: false }), true);
+  // #5386: the close's CSS — the open in reverse, presses passing through.
+  const CSS = read('public/css/app.css');
+  assert.match(CSS, /\.dev-ws-tray-root\.is-closing \{ pointer-events: none; \}/);
+  assert.match(CSS, /\.dev-ws-tray-root\.is-closing \.dev-ws-tray \{ animation: dev-ws-tray-out 200ms cubic-bezier\(\.2, \.8, \.2, 1\) forwards; \}/);
+  assert.match(CSS, /\.dev-ws-tray-root\.is-closing \.dev-ws-tray-scrim \{ animation: dev-ws-tray-fade-out 160ms ease-out forwards; \}/);
+  assert.match(CSS, /@keyframes dev-ws-tray-out \{ from \{ transform: none; \} to \{ transform: translateX\(-100%\); \} \}/);
+  assert.match(CSS, /@keyframes dev-ws-tray-fade-out \{ from \{ opacity: 1; \} to \{ opacity: 0; \} \}/);
+  assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.dev-ws-tray-root\.is-closing \.dev-ws-tray, \.dev-ws-tray-root\.is-closing \.dev-ws-tray-scrim \{ animation: none; \}/);
 });
 
 test('places: keys, handles, aliases and addresses', () => {
