@@ -4940,10 +4940,10 @@
       ]
     },
     {
-      "name": "The chat with Homeroom bot says under its name what it is for, and puts an Activity bar under its header (one request, one story): closed, it says what needs you, with that request's number in its own colour, what is ready to try and what is in progress; pressed, it opens a drawer over the chat with a row for each, one button that opens the request's thread at the question, and Try it and Approve (#3692, #3770)",
+      "name": "The chat with Homeroom bot says under its name what it is for, and puts an Activity bar under its header (one request, one story): closed, it says what needs you, with that request's number in its own colour, what is ready to try and what is in progress; pressed, it opens a drawer over the chat with a row for each, one button that opens the request's thread at the question, and Try it and Approve (#3692, #3770; #5392: a change waiting for their yes counts here too, so two need you and one is ready to try)",
       "path": "/?demo=1#messages/910005",
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-header + [data-bot-strip=closed] [data-bot-strip-toggle][aria-expanded=false]:has([data-bot-strip-count=needs]):has([data-bot-strip-count=ready]):has([data-bot-strip-count=progress]) [data-request-tag]",
-      "expectText": "1 needs you",
+      "expectText": "2 need you",
       "id": "homeroom-bot-dm-activity-tray",
       "visual": true,
       "impact": [

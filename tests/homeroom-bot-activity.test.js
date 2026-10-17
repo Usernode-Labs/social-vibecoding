@@ -722,7 +722,9 @@ test('the staging preview\'s declared check finds the Activity bar under the dem
   assert.match(check.expectSelector, /:has\(\[data-bot-strip-count=needs\]\):has\(\[data-bot-strip-count=ready\]\):has\(\[data-bot-strip-count=progress\]\)/);
   assert.match(check.expectSelector, /\[data-request-tag\]$/, 'the number of what needs you');
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
-  assert.equal(check.expectText, '1 needs you', 'the demo bar\'s summary');
+  // #5392: a change waiting for their yes is a needs-you request now, so the
+  // demo bar says two need you (the question and the change's yes), not one.
+  assert.equal(check.expectText, '2 need you', 'the demo bar\'s summary');
   for (const file of ['src/services/homeroom-bot-activity.js', 'src/services/staging-messages.js', 'src/routes/conversations.js']) {
     assert.ok(check.impact.includes(file), file);
   }
