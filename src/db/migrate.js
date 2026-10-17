@@ -179,6 +179,8 @@ async function migrate(config) {
   await seedStagingScrollTestThread(pool);
   // Must run AFTER seedStagingScrollTestThread — it invites the same member fixture.
   await seedStagingGroupInviteNote(pool);
+  // #5393: must run AFTER seedStagingGeneralChannel — its fake speakers are that seed's people.
+  await seedStagingGroupFacesRows(pool);
   await seedStagingQuickReplyFallback(pool, config);
   await seedStagingChatAttachments(pool, config);
   await seedStagingGroupChatAttachments(pool, config);
@@ -1844,6 +1846,99 @@ async function seedStagingGroupInviteNote(pool) {
     log.info('db', 'Staging group invite note seeded', { conversationId });
   } catch (err) {
     log.warn('db', 'Staging group invite note seeding failed', { message: err.message });
+  }
+}
+
+// #5393's before/after shots follow a group chat's ROW: two members' faces
+// on its tile and the last sender before the preview. A fresh clone has no
+// accepted group for the shots' member fixture, so two are seeded, both
+// obviously fake: one whose last word was a fake member's ("@ada: …"), one
+// whose last word was the member's own ("You: …"). Idempotent through the
+// membership rows' primary key and the messages' idempotency keys; strictly
+// a no-op outside staging.
+async function seedStagingGroupFacesRows(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query(
+      `SELECT id, username FROM users
+        WHERE username IN ('usernode-capture', 'staging-demo-general-ada',
+                           'staging-demo-general-lin')`
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const ada = people.rows.find((row) => row.username === 'staging-demo-general-ada');
+    const lin = people.rows.find((row) => row.username === 'staging-demo-general-lin');
+    if (!member || !ada || !lin || member.id === ada.id || member.id === lin.id) {
+      log.warn('db', 'Staging group faces rows skipped: fixture users missing');
+      return;
+    }
+    // Both groups are owned by the fake member, with the capture member and
+    // the other fake person accepted. Re-asserted on every boot so a partial
+    // earlier boot self-heals.
+    const conversationIdByTitle = {};
+    for (const [title, others] of [
+      ['Row faces crew (staging demo)', [member.id, lin.id]],
+      ['Row faces own word (staging demo)', [member.id, lin.id]],
+    ]) {
+      const found = await pool.query(
+        `SELECT c.id FROM conversations c
+          JOIN conversation_members owner ON owner.conversation_id = c.id
+            AND owner.user_id = $2 AND owner.role = 'owner'
+         WHERE c.kind = 'group' AND c.title = $1
+         LIMIT 1`,
+        [title, ada.id]
+      );
+      let conversationId = found.rows[0]?.id;
+      if (!conversationId) {
+        const created = await pool.query(
+          `INSERT INTO conversations (kind, title, created_by)
+           VALUES ('group', $1, $2) RETURNING id`,
+          [title, ada.id]
+        );
+        conversationId = created.rows[0].id;
+      }
+      await pool.query(
+        `INSERT INTO conversation_members
+           (conversation_id, user_id, role, status, responded_at, joined_at)
+         SELECT $1, u.id, CASE WHEN u.id = $2 THEN 'owner' ELSE 'member' END,
+                'member', NOW(), NOW()
+           FROM users u WHERE u.id = ANY($3::int[])
+         ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+        [conversationId, ada.id, [ada.id, ...others]]
+      );
+      conversationIdByTitle[title] = conversationId;
+    }
+    // The messages, inserted oldest-first per conversation so the later id
+    // is the later word (the list reads the latest by id). The first group
+    // ends on ada's word, the second on the member's own.
+    const lines = [
+      ['Row faces crew (staging demo)', lin.id,
+        'Staging demo: anyone up for the Thursday standup?', 'crew-lin', 120],
+      ['Row faces crew (staging demo)', ada.id,
+        'Staging demo: ok sir, see you there', 'crew-ada', 60],
+      ['Row faces own word (staging demo)', ada.id,
+        'Staging demo: draft slides are in the folder', 'own-ada', 300],
+      ['Row faces own word (staging demo)', member.id,
+        'Staging demo: thanks, taking a look now', 'own-member', 60],
+    ];
+    let insertedCount = 0;
+    for (const [title, senderId, content, slug, minutesAgo] of lines) {
+      const row = await pool.query(
+        `INSERT INTO conversation_messages
+           (conversation_id, sender_id, content, idempotency_key, created_at)
+         VALUES ($1, $2, $3, 'staging-row-faces-' || $4,
+                 NOW() - ($5 * INTERVAL '1 minute'))
+         ON CONFLICT (conversation_id, sender_id, idempotency_key)
+           WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL
+         DO NOTHING`,
+        [conversationIdByTitle[title], senderId, content, slug, minutesAgo]
+      );
+      insertedCount += row.rowCount;
+    }
+    if (insertedCount > 0) {
+      log.info('db', 'Staging group faces rows seeded', { inserted: insertedCount });
+    }
+  } catch (err) {
+    log.warn('db', 'Staging group faces rows seeding failed', { message: err.message });
   }
 }
 
