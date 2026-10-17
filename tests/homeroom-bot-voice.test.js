@@ -260,14 +260,13 @@ test('a repeat note is held for a mention the voice answers, but an answer to it
 
 // ── The seams ────────────────────────────────────────────────────────────
 
-test('the room hands every person\'s message to the voice in the transaction that stores it, never a connector\'s or a vote\'s', () => {
+test('the room hands every person\'s message to the voice in the statement that stores it, never a connector\'s or a vote\'s', () => {
   const ws = read('src/services/ws.js');
-  const at = ws.indexOf("require('../workflow/platform.ts').heardInProject(cx, {");
-  assert.ok(at > 0);
-  const before = ws.slice(ws.lastIndexOf("const heard = ", at), at);
-  assert.match(before, /const heard = postedVia !== 'agent' && \(!thread \|\| thread\.type !== 'governance'\);/);
-  assert.match(before, /await cx\.query\('BEGIN'\);\s+\(\{ rows \} = await cx\.query\(insertSql, insertParams\)\);/, 'with the message, in one transaction');
-  assert.match(ws.slice(at, at + 400), /await cx\.query\('COMMIT'\);/);
+  assert.match(ws, /const heard = postedVia !== 'agent' && \(!thread \|\| thread\.type !== 'governance'\);/);
+  assert.match(ws, /\? require\('\.\.\/workflow\/platform\.ts'\)\.insertHeard\(db, insertSql, insertParams, \{ appId: client\.appId, thread: thread \|\| null \}\)/);
+  const platform = read('src/workflow/platform.ts');
+  const heard = platform.slice(platform.indexOf('export async function insertHeard'));
+  assert.match(heard, /`WITH m AS \(\$\{insertSql\}\),\s+e AS \(\s+INSERT INTO wf_events/, 'the message and its event, one statement');
   // Nothing floats after the commit to hear it.
   assert.doesNotMatch(ws, /homeroom-bot-voice'\)\.noteMessage|homeroom-bot-chat'\)\.noteChatMessage/);
   assert.match(ws, /require\('\.\/homeroom-bot-voice'\)\.setConfig\(config\)/);
@@ -279,10 +278,9 @@ test('the room hands every person\'s message to the voice in the transaction tha
 
 test('a mention in a project\'s chat is the voice\'s while it is on there; the newcomer\'s offer stays', () => {
   const chat = read('src/services/homeroom-bot-chat.js');
-  const heard = chat.slice(chat.indexOf('async function heardInChat'), chat.indexOf('function wordCount'));
-  assert.match(heard, /const voiceChat = await \(deps\.voice \|\| require\('\.\/homeroom-bot-voice'\)\)\.enabledFor\(pool, 'chat', deps\);/);
-  assert.match(heard, /if \(mentioned && voiceChat\) continue;/);
-  assert.ok(heard.indexOf('voiceChat) continue') < heard.indexOf('await maybeOffer'), 'decided before anything is read for it');
+  const note = chat.slice(chat.indexOf('async function noteChatMessage'), chat.indexOf('function wordCount'));
+  assert.match(note, /if \(mentioned && await \(deps\.voice \|\| require\('\.\/homeroom-bot-voice'\)\)\.enabledFor\(pool, 'chat', deps\)\) return null;/);
+  assert.ok(note.indexOf('enabledFor') < note.indexOf('return await maybeOffer'), 'decided before anything is read for it');
   // The chat place's turn hands it what nobody said to the bot.
   const src = read('src/services/homeroom-bot-voice.js');
   assert.match(src, /await chatModule\(deps\)\.heardInChat\(pool, cfg, \{ app, place, messages: fresh\.filter\(\(m\) => !told\.has\(Number\(m\.id\)\)\), deps \}\);/);

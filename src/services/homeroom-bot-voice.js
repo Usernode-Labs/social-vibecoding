@@ -301,7 +301,7 @@ async function gate(pool, { app, place, row, bot, settings, speaker, deps = {} }
 //
 // Every person's message in a project but a governance vote's reaches the
 // place's bot-voice instance in the transaction that stores it
-// (ws.js handleMessage → workflow/platform.ts heardInProject). The machine
+// (ws.js handleMessage → workflow/platform.ts insertHeard). The machine
 // settles the burst and asks for a turn (runTurn), which decides with the
 // gate whether the bot was spoken to.
 

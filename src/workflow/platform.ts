@@ -278,16 +278,31 @@ export async function botNote(sessionId: number, type: string, payload: Record<s
 // ── The Homeroom bot's replies (bot-voice, bot-dm) ─────────────────────
 
 // A person wrote in a project (services/ws.js handleMessage): the place's
-// voice hears it, in the transaction that stores the message, so an answer
-// owed is never only in the memory of the process that took it. `db` is
-// that transaction. Nothing for a place the voice has no part in (a
-// governance vote's thread).
-export async function heardInProject(db: Queryable, p: { appId: number; messageId: number; thread: { type?: unknown; ref?: unknown } | null }): Promise<void> {
+// voice hears it in the statement that inserts the message, so an answer
+// owed is never only in the memory of the process that took it.
+// `insertSql` is its INSERT … RETURNING id,
+// created_at, and the event is appended from the row it returns, column for
+// column as the kernel's append writes one (kernel/stream.ts), so the two
+// commit as one statement, in one round trip, with or without a
+// transaction around it. Resolves the INSERT's rows. A place the voice has
+// no part in (a governance vote's thread) inserts the message alone.
+export async function insertHeard(db: Queryable, insertSql: string, values: unknown[],
+  p: { appId: number; thread: { type?: unknown; ref?: unknown } | null }): Promise<{ id: number; created_at: string }[]> {
   const place = placeOf(p.thread);
-  if (!place) return;
-  await appendEvent(db, BOT_VOICE, voiceKey(p.appId, place),
-    { type: 'Heard', payload: { appId: p.appId, place: place as any, messageId: p.messageId } },
-    { requestKey: `heard:${p.messageId}`, source: { kind: 'route', name: 'chat' }, appId: p.appId });
+  if (!place) return (await db.query(insertSql, values)).rows;
+  const n = values.length;
+  const { rows } = await db.query(
+    `WITH m AS (${insertSql}),
+     e AS (
+       INSERT INTO wf_events (machine, key, app_id, type, payload, source, actor, request_key, caused_by)
+       SELECT $${n + 1}, $${n + 2}, $${n + 3}::int, 'Heard',
+              jsonb_build_object('appId', $${n + 3}::int, 'place', $${n + 4}::jsonb, 'messageId', m.id),
+              $${n + 5}::jsonb, NULL, 'heard:' || m.id, NULL
+         FROM m
+       RETURNING id)
+     SELECT m.id, m.created_at, (SELECT pg_notify('wf_events', $${n + 1}) FROM e LIMIT 1) AS woke FROM m`,
+    [...values, BOT_VOICE, voiceKey(p.appId, place), p.appId, JSON.stringify(place), JSON.stringify({ kind: 'route', name: 'chat' })]);
+  return rows.map(({ woke: _woke, ...row }: any) => row);
 }
 
 // A person wrote in their DM with the bot (routes/conversations.js, in

@@ -1451,29 +1451,25 @@ async function handleMessage(pool, client, msg) {
       const insertParams = [client.appId, client.user.id, content, JSON.stringify(metadata || {}),
         thread ? thread.type : null, thread ? thread.ref : null, postedVia];
       // 17 Oct 2026: a person's message in any place but a governance vote's
-      // is heard by the Homeroom bot's voice there (src/workflow/bot-voice/),
-      // in the same transaction: an answer it owes is never only in this
-      // process's memory. Never a connector's post.
+      // is heard by the Homeroom bot's voice there (src/workflow/bot-voice/)
+      // in the statement that inserts it: an answer it owes is never only in
+      // this process's memory. Never a connector's post.
       const heard = postedVia !== 'agent' && (!thread || thread.type !== 'governance');
+      const insert = (db) => (heard
+        ? require('../workflow/platform.ts').insertHeard(db, insertSql, insertParams, { appId: client.appId, thread: thread || null })
+        : db.query(insertSql, insertParams).then((r) => r.rows));
       let rows;
-      if (attRows.length || heard) {
+      if (attRows.length) {
         // Insert + link atomically — a half-linked send would render
         // chips that 404 while the orphan sweeper still owns the rows.
         const cx = await pool.connect();
         try {
           await cx.query('BEGIN');
-          ({ rows } = await cx.query(insertSql, insertParams));
-          if (attRows.length) {
-            await cx.query(
-              `UPDATE chat_message_attachments SET message_id = $1 WHERE id = ANY($2)`,
-              [rows[0].id, attIds]
-            );
-          }
-          if (heard) {
-            await require('../workflow/platform.ts').heardInProject(cx, {
-              appId: client.appId, messageId: Number(rows[0].id), thread: thread || null,
-            });
-          }
+          rows = await insert(cx);
+          await cx.query(
+            `UPDATE chat_message_attachments SET message_id = $1 WHERE id = ANY($2)`,
+            [rows[0].id, attIds]
+          );
           await cx.query('COMMIT');
         } catch (err) {
           try { await cx.query('ROLLBACK'); } catch { /* connection gone */ }
@@ -1482,7 +1478,7 @@ async function handleMessage(pool, client, msg) {
           cx.release();
         }
       } else {
-        ({ rows } = await pool.query(insertSql, insertParams));
+        rows = await insert(pool);
       }
 
       // #2387 follow-up: a reply in a reply thread is drawn in the general

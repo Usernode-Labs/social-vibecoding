@@ -58,6 +58,7 @@ require('../src/db/pool').getPool = () => pool;
 const bot = require('../src/services/homeroom-bot');
 const progress = require('../src/services/homeroom-bot-progress');
 const { appRoutes } = require('../src/routes/apps');
+const { tapsNow } = require('./lib/bot-replies');
 
 test('the made screen reads the waiting plan off the real GET /api/apps/:slug, for its creator', { timeout: 180000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
@@ -196,7 +197,7 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
 
   await t.test('Build it, tapped anywhere: the next read has no plan to draw', async () => {
     const mayor = require('../src/services/homeroom-bot-mayor');
-    const tapped = await mayor.decideOfferTap(pool, {}, { user: alex, actionId: card.meta.actionId, choice: 'build', answers: [] });
+    const tapped = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: alex, actionId: card.meta.actionId, choice: 'build', answers: [] });
     assert.deepEqual(tapped, { ok: true, choice: 'build', label: 'Build it' });
     const read = madeAppOf(await get());
     assert.equal(read.firstVersion.plan, undefined);
