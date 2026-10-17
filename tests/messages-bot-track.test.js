@@ -61,7 +61,7 @@ test('each state has its word, and each why its line; a loop says which try', ()
   assert.equal(trackLine(track({ state: 'waiting', step: 'plan', why: 'no_such_why' })), t('bot.track.line.waiting.question'), 'an unknown why falls back to the state\'s own line');
 
   const held = track({ state: 'held', step: null, why: 'slots', held: { limit: 'slots', position: 3, until: null } });
-  assert.equal(trackStateWord(held), 'On hold', 'the same word as the drawer\'s On hold group');
+  assert.equal(trackStateWord(held), 'On hold', 'the same word a held row says under In progress');
   assert.equal(trackLine(held), t('bot.track.line.held.slots'));
   assert.equal(trackPlace(held), t('bot.track.held.ahead_other', { count: 2 }));
   assert.equal(trackPlace({ ...held, held: { ...held.held, position: 1 } }), t('bot.track.held.next'));
@@ -154,7 +154,7 @@ test('a thread\'s card is the track once the tray has one for the request, and a
 
 // ── 3. The activity drawer, from the tracks ──────────────────────────────
 
-test('the drawer groups the tracks: what waits on you, a vote, work under way, a hold, and what ended today', () => {
+test('the drawer groups the tracks: what waits on you, a vote, work under way, and what ended today', () => {
   const { stripGroups, summaryParts } = loadTsx(STRIP);
   const tracks = [
     track({ issueNumber: 1, state: 'waiting', step: 'plan', why: 'question', askId: 40 }),
@@ -172,28 +172,27 @@ test('the drawer groups the tracks: what waits on you, a vote, work under way, a
   assert.equal(model.needs[0].focusId, 40, 'opened at what waits');
   assert.equal(model.needs[0].action, 'messages:bot.strip.action.answer');
   assert.deepEqual(numbers(model.ready), [2], 'a change up for a vote is ready to try');
-  assert.deepEqual(numbers(model.progress), [3], 'each request once');
-  assert.deepEqual(numbers(model.held), [4], 'a hold is On hold, never finished');
-  assert.equal(model.held[0].state, t('bot.track.held.next'), 'under On hold, its place in line');
+  // #5392: a hold and a change going live are In progress; none of it has ended.
+  assert.deepEqual(numbers(model.progress), [3, 4], 'each request once, the hold among the work');
+  assert.equal(model.progress[1].state, `${t('bot.track.state.held')} · ${t('bot.track.held.next')}`, 'a hold says it is on hold, under In progress');
   const { trackShort } = loadTsx(TRACK);
   const second = track({ state: 'held', step: null, why: 'slots', held: { limit: 'slots', position: 3, until: null } });
   assert.equal(trackShort(second), t('bot.track.held.aheadSlot_other', { count: 2 }), 'one short line that still says what it waits for');
   assert.equal(trackShort(track({ state: 'vote', step: 'vote' })), t('bot.track.line.vote.default'));
-  assert.deepEqual(numbers(model.done), [5, 7], 'ended in the last day, done another way among them');
+  assert.deepEqual(numbers(model.done), [5, 7], 'ended today, done another way among them');
   assert.deepEqual(summaryParts(model).map((part) => part.text),
-    ['1 needs you', '1 ready to try', '1 in progress', '1 on hold', '2 finished today']);
+    ['1 needs you', '1 ready to try', '2 in progress', '2 finished today']);
 });
 
-test('the drawer\'s On hold group and its way to the bot\'s slots', () => {
+test('the drawer has no On hold group any more; the slots page still opens from the card', () => {
   const src = read(STRIP);
-  assert.match(src, /t\('messages:bot\.strip\.group\.held'\)/);
+  assert.doesNotMatch(src, /data-bot-strip-group="held"/, '#5392: a hold is In progress, with its own On hold words');
   // #5373: the drawer's own slots links are gone; the slots page opens from
   // a held request's card in the story, which still calls openSlots here.
   const track = read(TRACK);
   assert.match(track, /openSlots\(/, 'the slots page opens as a place under the Workshop');
   assert.doesNotMatch(src, /openSlots\(|bot\.strip\.slots/, 'the drawer carries no slots links of its own');
   assert.match(src, /done_elsewhere: \{ key: 'messages:bot\.final\.doneElsewhere', tone: 'good', icon: CheckIcon \}/);
-  assert.equal(message('messages:bot.strip.group.held'), 'On hold');
   assert.equal(message('messages:bot.strip.group.done'), 'Finished today');
 });
 

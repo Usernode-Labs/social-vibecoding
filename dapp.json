@@ -4956,9 +4956,9 @@
       ]
     },
     {
-      "name": "#4097, one request, one story: in the chat with Homeroom bot each request is one row that opens its story, its earlier news folded into its newest row, which counts the updates; finished requests in a row fold into one line with how each ended (a build that stopped, a change that went live), and a change ready for your yes says so",
+      "name": "#4097, #5392, one request, one story: in the chat with Homeroom bot each request is one row that opens its story, its earlier news folded into its newest row, which counts the updates; finished requests fold into one line of words (N finished · N couldn't build) that opens the rows saying how each ended, and a change ready for your yes says so",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-scroll:has([data-bot-settled-badges] [data-bot-final=build_failed]):has([data-bot-settled-badges] [data-bot-final=live]) [data-bot-news=question] [data-bot-news-state=needs] [data-bot-thread-link]",
+      "expectSelector": ".messages-thread-scroll:has([data-bot-settled-toggle] [data-bot-settled-count=failed]):has([data-bot-settled-toggle] [data-bot-settled-count=finished]) [data-bot-news=question] [data-bot-news-state=needs] [data-bot-thread-link]",
       "expectText": "Ready for your yes"
     },
     {

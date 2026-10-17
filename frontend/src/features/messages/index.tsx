@@ -35,7 +35,8 @@ import { isReadyMessage } from './bot-ready';
 import {
   alsoInChat, botRequestNames, botThreadTitle, changeBlocks, dotText, threadsAllowed, type ChangeBlock,
 } from './bot-shared';
-import { BotWorkSync, loadBotWork, newestBotMessageId, useBotWork } from './bot-work';
+import { POLL_MS } from './bot-activity-store';
+import { BotWorkSync, loadBotWork, newestBotMessageId, useBotWork, WORK_CHANGED_EVENT } from './bot-work';
 import { BotStrip, RequestTag, stripGroups, summaryParts } from './bot-strip';
 import { useTrackOf } from './bot-track';
 import { BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledRun, type SettledRunItem } from './bot-news-line';
@@ -942,11 +943,28 @@ function ConversationList() {
   // what it is doing, in the words of its chat's own activity bar
   // (./bot-strip.tsx summaryParts: "1 needs you · 2 in progress"), read
   // from the same store once this list is up; its last message until then.
+  // #5392: the row stays current, the same live reads the DM's strip runs
+  // (./bot-work.tsx): again whenever the list opens and the bot's work
+  // moves (its news lands, the work-changed event), and every POLL_MS while
+  // it has work in hand and the page is in view.
   const botWork = useBotWork();
-  const hasBot = snap.conversations.some((item) => item.homeroomBot && item.kind !== 'channel');
+  const botConversation = snap.conversations.find((item) => item.homeroomBot && item.kind !== 'channel') || null;
   useEffect(() => {
-    if (mounted && hasBot && !botWork.work) loadBotWork({ fresh: false });
-  }, [mounted, hasBot, botWork.work]);
+    if (mounted && botConversation) loadBotWork();
+  }, [mounted, botConversation?.id, botConversation?.lastActivityAt]);
+  useEffect(() => {
+    if (!botConversation) return undefined;
+    const changed = () => loadBotWork();
+    window.addEventListener(WORK_CHANGED_EVENT, changed);
+    return () => window.removeEventListener(WORK_CHANGED_EVENT, changed);
+  }, [botConversation]);
+  useEffect(() => {
+    if (!botConversation || !botWork.work?.now.length || document.visibilityState === 'hidden') return undefined;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'hidden') loadBotWork();
+    }, POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [botConversation, botWork.work?.now.length]);
   const botLine = useMemo(() => {
     if (!botWork.work) return null;
     const parts = summaryParts(stripGroups(botWork.work));

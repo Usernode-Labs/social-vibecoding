@@ -705,19 +705,7 @@
   },
   "bot.strip.summary.done_other": {
     "text": "{{count}} finished today",
-    "description": "Part of the summary line of the activity drawer of the chat with Homeroom bot: how many requests went live in the last day. {{count}} is that number. Counts every request that ended today: live, done another way, closed or stopped."
-  },
-  "bot.strip.summary.held_one": {
-    "text": "{{count}} on hold",
-    "description": "The activity drawer at the top of the chat with Homeroom bot. Part of the bar that opens the drawer: how many requests are held back by a limit (all of the project's slots in use, or this week's building time used up). {{count}} is how many."
-  },
-  "bot.strip.summary.held_other": {
-    "text": "{{count}} on hold",
-    "description": "The activity drawer at the top of the chat with Homeroom bot. Part of the bar that opens the drawer: how many requests are held back by a limit (all of the project's slots in use, or this week's building time used up). {{count}} is how many."
-  },
-  "bot.strip.group.held": {
-    "text": "On hold",
-    "description": "The activity drawer at the top of the chat with Homeroom bot. Heading over the requests held back by a limit: they wait for a slot, or for the week's building time to reset."
+    "description": "Part of the summary line of the activity drawer of the chat with Homeroom bot: how many requests ended today, since midnight. {{count}} is that number. Counts every request that ended today: live, done another way, closed or stopped."
   },
   "bot.final.doneElsewhere": {
     "text": "Done another way",
@@ -987,13 +975,21 @@
     "text": "Was ready to try",
     "description": "The same line when the change the bot built is no longer up for the person to try (it went live, was closed or was replaced). Past tense; sentence case."
   },
-  "bot.news.finished_one": {
-    "text": "{{count}} request finished",
-    "description": "A line of its own in the chat with Homeroom bot standing for several requests that finished one after another, with their small status squares; a tap shows them. {{count}} is how many. It is not part of the row above it."
+  "bot.news.run.finished_one": {
+    "text": "{{count}} finished",
+    "description": "Part of the chat with Homeroom bot's folded line of finished requests, in place of a strip of small status squares: how many of them ended fine (went live, was closed, was handed to a person). {{count}} is that number. Zero parts of the line are left out."
   },
-  "bot.news.finished_other": {
-    "text": "{{count}} requests finished",
-    "description": "A line of its own in the chat with Homeroom bot standing for several requests that finished one after another, with their small status squares; a tap shows them. {{count}} is how many. It is not part of the row above it."
+  "bot.news.run.finished_other": {
+    "text": "{{count}} finished",
+    "description": "Part of the chat with Homeroom bot's folded line of finished requests, in place of a strip of small status squares: how many of them ended fine (went live, was closed, was handed to a person). {{count}} is that number. Zero parts of the line are left out."
+  },
+  "bot.news.run.failed_one": {
+    "text": "{{count}} couldn’t build",
+    "description": "Part of the chat with Homeroom bot's folded line of finished requests, in place of a strip of small status squares: how many of them went wrong. {{count}} is that number."
+  },
+  "bot.news.run.failed_other": {
+    "text": "{{count}} couldn’t build",
+    "description": "Part of the chat with Homeroom bot's folded line of finished requests, in place of a strip of small status squares: how many of them went wrong. {{count}} is that number."
   },
   "bot.news.updates_one": {
     "text": "· {{count}} update",
