@@ -190,6 +190,15 @@ function proposalLink(domain, appSlug, sessionId) {
 // The spec gets a clock of its own, shorter than a build's: the triage has
 // already read the code, so this is writing down a plan, not discovering one.
 const SPEC_TURN_MAX_MS = 10 * 60 * 1000;
+// The platform's own repository runs its whole suite on every proposal, so a
+// build there is told to run only the tests its change touches. Running
+// `npm test` locally duplicates that and was how a platform build spent its
+// clock on its 92nd model request (#3396).
+const PLATFORM_TEST_NOTE = [
+  'This is the platform\'s own repository. Do not run the whole test suite (`npm test`): the platform runs it on the proposal anyway.',
+  'Run only the tests for the files you changed, with `npm run test:changed -- --files <the files you changed, comma-separated>`, or `node --test <test file>` for the test files that name them.',
+  'If a test that does not read anything you changed fails, name it in your summary and move on.',
+].join('\n');
 // GitHub refuses a comment over 65,536 characters.
 const MAX_SPEC_COMMENT_CHARS = 60_000;
 // A timed-out build's last few progress lines, kept for its failure reason.
@@ -561,6 +570,32 @@ async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec
     user: bot, content: card.content, metadata: card.metadata,
     thread: { type: 'session', ref: Number(sessionId) }, msgType: card.msgType,
   });
+}
+
+/**
+ * A note in the proposal's own discussion only, as the bot's ordinary
+ * message, recorded in homeroom_bot_posts under `kind` (a checks fix says so
+ * there once). Never posts on GitHub or the issue's thread.
+ */
+async function postOnProposal({ pool, ws, app, bot, sessionId, issueNumber, runId = null, kind, text }) {
+  if (!sessionId || !text) return null;
+  await pool.query(
+    `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
+     VALUES ($1, $2, $3, $4)`,
+    [app.id, issueNumber, runId, kind],
+  ).catch((err) => {
+    log.warn('homeroom-bot', 'Could not record a proposal note', { app: app.slug, issueNumber, kind, err: err.message });
+  });
+  try {
+    return await ws.sendBotMessage(pool, app.id, {
+      user: bot, content: text, thread: { type: 'session', ref: Number(sessionId) },
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', {
+      app: app.slug, issueNumber, kind, err: err.message,
+    });
+    return null;
+  }
 }
 
 // ── Who filed the issue ──────────────────────────────────────────────────
@@ -1079,7 +1114,7 @@ const BUILD_DESCRIPTION_LINES = Object.freeze([
   'test results: those belong in the summary above it. Skip the block only if you changed nothing.',
 ]);
 
-function buildPrompt({ seed, buildNote, spec = null }) {
+function buildPrompt({ seed, buildNote, spec = null, platformRepo = false }) {
   const specBlock = spec
     ? [
       '',
@@ -1102,6 +1137,7 @@ function buildPrompt({ seed, buildNote, spec = null }) {
     '',
     clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
     ...specBlock,
+    ...(platformRepo ? ['', PLATFORM_TEST_NOTE] : []),
     '',
     // The rules every on-platform build works under (services/build-contract.js):
     // this bot's own list, which the dev chat now shares.
@@ -1216,7 +1252,7 @@ async function draftSpec({
 async function buildAndPropose({
   pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
   turnBudgetMs, model, deps, propose = true, onSpec = null, specBudgetMs = SPEC_TURN_MAX_MS,
-  onSession = null, presetSpec = null, proposalCeiling = null,
+  onSession = null, presetSpec = null, proposalCeiling = null, platformRepo = false,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
@@ -1365,7 +1401,7 @@ async function buildAndPropose({
   }, turnBudgetMs);
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
-  const prompt = buildPrompt({ seed, buildNote, spec: spec.ok ? spec.specMd : null });
+  const prompt = buildPrompt({ seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
   // time-outs, most of them cheap, with nothing recorded about why.
@@ -1507,6 +1543,8 @@ module.exports = {
   blockedText,
   shareSpecVersion,
   postSpecOnProposal,
+  postOnProposal,
+  PLATFORM_TEST_NOTE,
   SPEC_TURN_MAX_MS,
   readSpec,
   MAX_SPEC_COMMENT_CHARS,

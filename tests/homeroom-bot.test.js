@@ -424,7 +424,7 @@ test('a budget stop records WHICH limit tripped, in a column of its own', async 
   const harness = triageHarness({ verdictText: 'x', sessionId: 856 });
   await runToWallClock(t, harness);
   const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.match(insert.s, /budget_stop, proposal_session_id\)/, 'the insert names the column');
+  assert.match(insert.s, /budget_stop, proposal_session_id,\s*checks_head_sha\)/, 'the insert names the columns');
   assert.ok(insert.params.includes('wall clock'),
     'the limit is stored as data, not left to be grepped out of the error text');
   assert.ok(insert.params.includes('budget: wall clock'), 'and the error line still reads the same');
@@ -1022,6 +1022,7 @@ test('parseVerdict accepts empty, and it shares the question tripwire', () => {
 test('refreshApp queues eligible issues, skips busy and unchanged ones, and drops stale rows', async () => {
   const inserts = [];
   let deleted = null;
+  let insertSql = null;
   const pool = {
     async query(sql, params) {
       const s = String(sql);
@@ -1031,7 +1032,7 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
       if (/created_from_issue_number AS n/.test(s)) return { rows: [] };
       if (/FROM chat_messages/.test(s)) return { rows: [{ n: 2, last_at: '2026-09-10T00:00:00Z' }] };
       if (/FROM homeroom_bot_runs/.test(s)) return { rows: [{ issue_number: 2, thread_seen_at: '2026-09-10T00:00:00Z' }, { issue_number: 5, thread_seen_at: '2026-09-01T00:00:00Z' }] };
-      if (/INSERT INTO homeroom_bot_queue/.test(s)) { inserts.push(params); return { rows: [] }; }
+      if (/INSERT INTO homeroom_bot_queue/.test(s)) { insertSql = s; inserts.push(params); return { rows: [] }; }
       if (/DELETE FROM homeroom_bot_queue/.test(s)) { deleted = params; return { rowCount: 2, rows: [] }; }
       throw new Error(`unexpected query: ${s.slice(0, 60)}`);
     },
@@ -1052,7 +1053,12 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
   const out = await bot.refreshApp(pool, { id: 9, slug: 'todo', repo_url: 'https://github.com/usernode-bot/todo' }, { github });
   assert.equal(out.queued, 2);
   assert.deepEqual(inserts.map((p) => [p[1], p[2], p[3]]), [[1, 1, 'new'], [5, 2, 'changed']]);
-  assert.deepEqual(deleted, [9, [1, 5]], 'everything else queued for this app is dropped');
+  assert.deepEqual(deleted.slice(0, 2), [9, [1, 5]], 'everything else queued for this app is dropped');
+  assert.deepEqual(deleted[2], ['restart', 'checks_failing'],
+    'the bot\'s own rows are kept while their issue is open');
+  assert.deepEqual(deleted[3], [1, 2, 3, 4, 5], 'the open issues a self-queued row may belong to');
+  assert.match(insertSql, /homeroom_bot_queue\.reason = ANY\(\$6::text\[\]\)/,
+    'and a refresh does not overwrite a self-queued reason');
   assert.equal(out.removed, 2);
 });
 
