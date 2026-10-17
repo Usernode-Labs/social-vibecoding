@@ -187,7 +187,11 @@ test('the drawer groups the tracks: what waits on you, a vote, work under way, a
 test('the drawer\'s On hold group and its way to the bot\'s slots', () => {
   const src = read(STRIP);
   assert.match(src, /t\('messages:bot\.strip\.group\.held'\)/);
-  assert.match(src, /openSlots\(/, 'the slots page opens as a place under the Workshop');
+  // #5373: the drawer's own slots links are gone; the slots page opens from
+  // a held request's card in the story, which still calls openSlots here.
+  const track = read(TRACK);
+  assert.match(track, /openSlots\(/, 'the slots page opens as a place under the Workshop');
+  assert.doesNotMatch(src, /openSlots\(|bot\.strip\.slots/, 'the drawer carries no slots links of its own');
   assert.match(src, /done_elsewhere: \{ key: 'messages:bot\.final\.doneElsewhere', tone: 'good', icon: CheckIcon \}/);
   assert.equal(message('messages:bot.strip.group.held'), 'On hold');
   assert.equal(message('messages:bot.strip.group.done'), 'Finished today');
