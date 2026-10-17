@@ -601,6 +601,12 @@ const TopochainLeaderboard = {
           // Raw; ./activity-row.tsx formats it in the renderer (#3648).
           at: a.activity_at || null,
           precision: a.activity_time_precision || null,
+          // The grader's reason, when the activity was graded (#3200);
+          // ./activity-row.tsx draws it. Null for ungraded point sources.
+          reason: a.metadata && a.metadata.grade
+            && typeof a.metadata.grade.reason === 'string'
+            && a.metadata.grade.reason.trim()
+            ? a.metadata.grade.reason.trim() : null,
         }))
         : null,
     };

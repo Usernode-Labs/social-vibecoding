@@ -191,6 +191,16 @@ const USER_ACTIVITIES = [
   {
     id: 1, user_id: 1, season_event_id: 100, challenge_id: 1, activity_type: 'bug_report',
     points: '20.00', description: 'Found an XSS', activity_at: T(-2),
+    // The challenge grader's grade on a graded row (#3200): the breakdown's
+    // activities carry its reason through as grade_reason.
+    metadata: { grade: { score: 20, reason: 'Says what broke and where.' } },
+  },
+  // A second activity on the DISABLED challenge, so challenge_progress's
+  // earned_points (which counts challenge 1 only) is unchanged: no grade,
+  // the way an ungraded point source reads.
+  {
+    id: 2, user_id: 1, season_event_id: 100, challenge_id: 2, activity_type: 'onchain',
+    points: '5.00', description: 'Sent a testnet transaction', activity_at: T(-3),
   },
 ];
 
@@ -814,10 +824,15 @@ test('me/breakdown event scope: full shape incl. challenge_progress + activities
     });
 
     // activities: activity_sub_category -> activity_kind rename.
-    assert.equal(body.data.activities.length, 1);
+    assert.equal(body.data.activities.length, 2);
     assert.equal(body.data.activities[0].activity_kind, 'REPORT_BUG');
     assert.equal(body.data.activities[0].challenge_id, 1);
     assert.equal(body.data.activities[0].points, 20);
+    // #3200: the grader's reason rides along on a graded activity…
+    assert.equal(body.data.activities[0].grade_reason, 'Says what broke and where.');
+    // …and an ungraded one carries null, not a string.
+    assert.equal(body.data.activities[1].challenge_id, 2);
+    assert.equal(body.data.activities[1].grade_reason, null);
   });
 });
 

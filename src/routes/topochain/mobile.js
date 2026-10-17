@@ -300,6 +300,11 @@ async function fetchChallengeProgress(pool, userId, eventId) {
 // activity's own challenge's template `kind` (INNER JOIN is safe here —
 // user_activities.challenge_id CASCADEs with its challenge row, so no
 // activity can outlive the challenge it points at).
+//
+// `grade_reason` carries the challenge grader's short explanation of the
+// points (#3200) from `metadata.grade`, which the challenge scorer writes on
+// graded rows. Rows without a grade — ungraded measures, partner `api` rows,
+// admin-created rows — get null, so the client draws nothing there.
 async function fetchBreakdownActivities(pool, userId, eventId) {
   const { rows } = await pool.query(
     `SELECT ua.id, ua.challenge_id, ua.activity_type, ua.points, ua.description, ua.activity_at, ua.metadata,
@@ -320,6 +325,9 @@ async function fetchBreakdownActivities(pool, userId, eventId) {
     description: r.description,
     activity_at: iso(r.activity_at),
     activity_time_precision: activityTimePrecision(r),
+    grade_reason: r.metadata && typeof r.metadata.grade === 'object' && r.metadata.grade !== null
+      ? String(r.metadata.grade.reason || '').trim() || null
+      : null,
   }));
 }
 

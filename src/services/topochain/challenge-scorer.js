@@ -313,15 +313,13 @@ const COMMUNITY_APP_CREATED_SQL = `
 // counts on the day its person is let in), and a collaborator invite — by
 // username, or by email once claimed — accepted. A link on an invite-only
 // project writes both, which is why each person is taken once: the FIRST
-// invite they took, across all time, names their one inviter. Without that,
+// invite they took INSIDE THE WINDOW names their one inviter. Without that,
 // a handful of accounts joining each other's communities would pay every
 // one of them.
+//
 // The first invite each person ever took, across all inviters — one row per
-// person, the earliest record naming their one inviter. This is the inner
-// DISTINCT ON of INVITES_JOINED_SQL below, factored out so the challenge
-// page's invite list (./invite-statuses.js) reads the same records the
-// scorer pays on and the two cannot drift apart. INVITES_JOINED_SQL embeds
-// it verbatim.
+// person, the earliest record naming their one inviter. The challenge page's
+// invite list (./invite-statuses.js) reads it to show whose invite came first.
 const INVITES_FIRST_TAKEN_SQL = `SELECT DISTINCT ON (t.invitee_id) t.inviter_id, t.invitee_id, t.at
     FROM (
       SELECT i.created_by AS inviter_id, x.user_id AS invitee_id, x.applied_at AS at
@@ -336,11 +334,28 @@ const INVITES_FIRST_TAKEN_SQL = `SELECT DISTINCT ON (t.invitee_id) t.inviter_id,
    WHERE t.inviter_id <> t.invitee_id
    ORDER BY t.invitee_id ASC, t.at ASC, t.inviter_id ASC`;
 
+// INVITES_JOINED_SQL is the scorer's read: the window filter sits before the DISTINCT ON: filtering
+// after it threw away every in-window join by a person whose first invite
+// ever was older than the window, so the later inviter got nobody (#4048).
 const INVITES_JOINED_SQL = `
   SELECT f.inviter_id AS user_id, f.invitee_id, f.at, u.username AS invitee_username
-    FROM (${INVITES_FIRST_TAKEN_SQL}) f
+    FROM (
+      SELECT DISTINCT ON (t.invitee_id) t.inviter_id, t.invitee_id, t.at
+        FROM (
+          SELECT i.created_by AS inviter_id, x.user_id AS invitee_id, x.applied_at AS at
+            FROM community_invite_redemptions x
+            JOIN community_invites i ON i.id = x.invite_id
+           WHERE x.status = 'joined' AND x.applied_at IS NOT NULL AND i.created_by IS NOT NULL
+          UNION ALL
+          SELECT c.invited_by, c.user_id, c.accepted_at
+            FROM app_collaborators c
+           WHERE c.status = 'member' AND c.invited_by IS NOT NULL AND c.accepted_at IS NOT NULL
+        ) t
+       WHERE t.inviter_id <> t.invitee_id
+         AND t.at >= $1 AND t.at <= $2
+       ORDER BY t.invitee_id ASC, t.at ASC, t.inviter_id ASC
+    ) f
     LEFT JOIN users u ON u.id = f.invitee_id
-   WHERE f.at >= $1 AND f.at <= $2
    ORDER BY f.inviter_id ASC, f.at ASC, f.invitee_id ASC
    LIMIT $3
 `;
