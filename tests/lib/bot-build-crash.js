@@ -235,7 +235,11 @@ function forkChild({ databaseUrl, config, env = {}, label = '' }) {
       ...process.env, ...env,
       BOT_BUILD_CRASH_CHILD: JSON.stringify({ databaseUrl, config, fixture: FIXTURE }),
     },
-    execArgv: [],
+    // One thread for the collector and V8's platform tasks: a child lives
+    // for a build or two, and the parallel collector's helpers cost more CPU
+    // than they save it (≈−15 % of a boot's CPU, measured in the worker
+    // image). Nothing it runs depends on either.
+    execArgv: ['--single-threaded-gc', '--v8-pool-size=1'],
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   const debug = process.env.BOT_BUILD_CRASH_DEBUG;

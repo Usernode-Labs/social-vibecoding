@@ -18,6 +18,19 @@
 
 const { AsyncLocalStorage } = require('node:async_hooks');
 const path = require('node:path');
+
+// Every kill point boots one of these processes, so its boot is most of what
+// the suite spends (about 370 boots a run). The platform's TypeScript
+// modules (src/workflow/**/*.ts, ESM syntax) are type-stripped on every
+// load, and their compiled code is never reused across processes: Node's
+// compile cache keeps CommonJS and plain ESM, not a module it stripped
+// itself. So the stripped source is kept in a directory the suite gives its
+// children (BOT_BUILD_CRASH_TS_CACHE), keyed by the file and its content,
+// and handed to the loader as the plain ES module it is: the same code,
+// stripped by the same function Node uses, now compiled once and cached.
+// It about halves a boot's CPU (≈770 → ≈400 ms in the worker image).
+if (process.env.BOT_BUILD_CRASH_TS_CACHE) require('./bot-build-crash-ts-cache').register(process.env.BOT_BUILD_CRASH_TS_CACHE);
+
 const { Pool } = require('pg');
 
 const spec = JSON.parse(process.env.BOT_BUILD_CRASH_CHILD);

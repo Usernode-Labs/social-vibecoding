@@ -81,14 +81,18 @@ function joinUnitResults(results, expectedShards = 1) {
   const worst = ['gone', 'aborted'].find((state) => list.some((r) => r.state === state));
   const failed = red[0] || list.find((r) => r.state !== 'succeeded');
   const joined = require('./unit-suite').joinUnitShardOutputs(list);
-  const state = red.length ? (red.some((r) => r.state === 'timeout') ? 'timeout' : 'failed')
+  let state = red.length ? (red.some((r) => r.state === 'timeout') ? 'timeout' : 'failed')
     : (worst || (failed ? 'failed' : 'succeeded'));
+  // Every shard passed, but together they did not run every test file
+  // (unit-suite.shardCoverage): a failed suite, as the live path reads it.
+  const uncovered = state === 'succeeded' && !joined.coverage.ok;
+  if (uncovered) state = 'failed';
   return {
     state,
     stdout: joined.stdout,
     stderr: joined.stderr,
     timedOut: list.some((r) => r.timedOut),
-    exitCode: failed ? failed.exitCode : 0,
+    exitCode: failed ? failed.exitCode : (uncovered ? 1 : 0),
   };
 }
 

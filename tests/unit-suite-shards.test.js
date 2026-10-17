@@ -235,13 +235,56 @@ test('a shard runs the pretest, then test:shard; without TEST_SHARD, npm test as
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  assert.match(unitSuite.RUN_SCRIPT, /if \[ -z "\$\{TEST_SHARD:-\}" \] \|\| \[ "\$\{TEST_SHARD%%\/\*\}" = "1" \]; then\s+npm run lint:sql\s+fi/,
-    'the SQL is validated once, in the first shard');
 });
 
-test('the platform\'s own test:shard is its test script, sharded', () => {
+test('the SQL is validated once, in the first shard, beside its tests; either failing fails the suite', { skip: !hasBash && 'no bash' }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'unit-shard-lint-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ scripts: { test: 'x', 'test:shard': 'y' } }));
+    const script = unitSuite.RUN_SCRIPT;
+    const from = script.indexOf('  if [ -z "${TEST_SHARD:-}" ] || [ "${TEST_SHARD%%/*}" = "1" ]; then');
+    assert.ok(from > 0, 'the first shard\'s lint block');
+    const lint = script.slice(from, script.indexOf('\n  fi\n', from) + '\n  fi\n'.length);
+    const tail = script.slice(script.indexOf('TEST_CMD='));
+    const run = (shard, lintRc, testRc) => {
+      const env = { ...process.env, LINT_RC: String(lintRc), TEST_RC: String(testRc) };
+      delete env.TEST_SHARD;
+      if (shard) env.TEST_SHARD = shard;
+      return spawnSync('bash', ['-c', `set -eu
+WS="${dir}"
+cd "${dir}"
+npm() {
+  case "$*" in
+    "run lint:sql") sleep 0.2; echo "lint ran"; return "$LINT_RC" ;;
+    "run pretest --if-present") return 0 ;;
+    *) echo "tests ran"; return "$TEST_RC" ;;
+  esac
+}
+${lint}
+${tail}`], { encoding: 'utf8', env });
+    };
+    const ok = run('1/3', 0, 0);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.deepEqual(ok.stdout.trim().split('\n'), ['tests ran', 'lint ran'], 'the tests do not wait for the lint; its output follows theirs');
+    const lintRed = run('1/3', 3, 0);
+    assert.equal(lintRed.status, 3, 'a failed lint fails a shard whose tests passed');
+    assert.match(lintRed.stderr, /unit-suite: npm run lint:sql failed \(exit 3\)/);
+    assert.equal(run('1/3', 0, 1).status, 1, 'failed tests fail it as before');
+    assert.equal(run('1/3', 3, 1).status, 1, 'the tests\' own status is kept when both fail');
+    const second = run('2/3', 3, 0);
+    assert.equal(second.status, 0, 'only the first shard lints');
+    assert.deepEqual(second.stdout.trim().split('\n'), ['tests ran']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the platform\'s own test:shard is its time-balanced runner, which runs the test script\'s command', () => {
   const scripts = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).scripts;
-  assert.equal(scripts['test:shard'], scripts.test.replace(' tests/*.test.js', ' --test-shard=${TEST_SHARD:-1/1} tests/*.test.js'));
+  assert.equal(scripts['test:shard'], 'node scripts/test-shard.js');
+  const runner = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'test-shard.js'), 'utf8');
+  assert.match(runner, /opts = runOptionsOf\(pkg\)/, 'the planned files, with the test script\'s own preloads and timeout');
+  assert.match(runner, /testCommand\(pkg, \[`--test-shard=\$\{shard\.k\}\/\$\{shard\.n\}`, \.\.\.files\]\)/, 'and node\'s --test-shard when there is no plan');
 });
 
 // ── Jobs and harvest ─────────────────────────────────────────────────────
