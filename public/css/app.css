@@ -375,8 +375,15 @@ html.un-kb .platform-safe-sheet {
    Messages and Android Messages both shrink the content area by the keyboard's
    height and pin the composer above it rather than covering or panning.
    The scroller loses that height instead of being covered, so the transcript
-   stays visible, the composer sits above the keys, and nothing needs to pan,
-   which leaves the settled pin inert rather than destructive.
+   stays visible, the composer sits above the keys, and nothing needs to pan.
+
+   Reserving the inset is NOT enough on its own: iOS Safari has already panned
+   the page by the keyboard's height when the inset publishes, so the column's
+   padding would lift the composer a second time. The kit's settled pin
+   (`window.scrollTo(0, 0)` in `attachKeyboardAvoidance`, on the fixed shell
+   only) is what cancels that pan first. Reserving without the pin is what
+   double-counts it; with the pin, the box moves once. Every column therefore
+   attaches the kit to its scroller.
 
    Transition shape copied from the kit's own `.un-kb-avoid`: none while the
    keyboard is up so the bar tracks it exactly, eased on the way out so the

@@ -50,6 +50,20 @@ declare global {
   }
 
   interface Window {
+    /**
+     * The native-feel kit (`public/usernode-native/v1/native.js`). Only the
+     * members the React bundle calls are declared here.
+     * lib/composer-keyboard.ts attaches a composer pane's keyboard avoidance
+     * to it directly, so a Messages pane gets its own handle rather than a
+     * shared attachScreenFx key.
+     */
+    unNative?: {
+      attachKeyboardAvoidance?: (
+        scrollEl: Element,
+        options?: { topEl?: Element; margin?: number; fields?: string },
+      ) => { detach?: () => void };
+      [key: string]: unknown;
+    };
     /** features/notifications/notifications.js */
     Notifications?: {
       init(): void;

@@ -12,6 +12,7 @@ import {
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
+import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { unmountLegacyPortal } from '../../lib/legacy-portals';
 import { confirmAction } from '../../lib/confirm';
 import { useMenuKeyboard } from '../../lib/menu-keys';
@@ -1566,6 +1567,9 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
   const scroller = useRef<HTMLDivElement>(null);
+  // Cancels Safari's keyboard pan before the column's inset is read, so the
+  // box moves once (see lib/composer-keyboard.ts).
+  useComposerKeyboard(scroller);
   const previousLast = useRef<number | null>(null);
   const initialScroll = useRef<number | null>(null);
   const conversationId = snap.route.conversationId;
@@ -1797,6 +1801,8 @@ function ReplyThreadPanel() {
   const rootId = snap.route.threadRootId;
   const thread = snap.thread && snap.thread.rootId === rootId ? snap.thread : null;
   const scroller = useRef<HTMLDivElement>(null);
+  // The reply pane is a second composer column and needs the same pin.
+  useComposerKeyboard(scroller);
   const count = useRef(0);
   useEffect(() => {
     if (conversationId && rootId && !snap.loadingThread && snap.active?.id === conversationId) {

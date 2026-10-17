@@ -162,10 +162,11 @@ test('every composer column reserves the keyboard inset, exactly once', () => {
   // shrink-0 siblings, OUTSIDE the scroller. The kit cannot help there —
   // `attachKeyboardAvoidance` gates on `scrollEl.contains(field)` and
   // `.un-kb-avoid` pads the inside of a scroller — so the composer sat behind
-  // the keyboard on all four, and on iOS the settled pin also reset Safari's
-  // reveal-pan once per keypress. Reserving on the column is what native does
-  // (iOS and Android Messages both shrink the content area rather than cover
-  // or pan it), and it leaves the pin inert.
+  // the keyboard on all four, and on iOS the settled pin is what cancels
+  // Safari's pan first — reserving the inset without that pin counted the
+  // keyboard twice and lifted the box off the top of the visible strip.
+  // Reserving on the column is what native does (iOS and Android Messages
+  // both shrink the content area rather than cover or pan it).
   const col = /html\.un-kb \.platform-kb-column\s*\{([^}]*)\}/.exec(APP_CSS);
   assert.ok(col, 'html.un-kb .platform-kb-column rule is missing');
   assert.match(col[1], /padding-bottom:\s*var\(--un-kb-inset, 0px\)/,
