@@ -12300,21 +12300,28 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 #create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-approver-pill) .create-choice-caption {
   color: var(--text-muted);
 }
-/* A row that is there but cannot be pressed yet (Document, Video, a
-   template): it takes no fill and no pointer. */
+/* A row that is there but cannot be pressed yet (Document and Video): it
+   takes no fill and no pointer. */
 #create-card .create-soon-row { cursor: default; }
 /* NOTHING IS CHOSEN FOR THE PERSON, AND A ROW IS A SELECTION. Every answer
    starts empty (the attributes are ""), so no row is filled on arrival.
    Pressing a row fills it at once, on its own step, and Next (beside
-   Cancel on every step) moves on. */
+   Cancel on every step) moves on. #3521: template mode fills its pill, and
+   each template row fills once picked (#create-card[data-template]). */
 #create-card[data-audience="solo"]      .create-who-pill[data-audience-pill="solo"],
 #create-card[data-audience="invited"]   .create-who-pill[data-audience-pill="invited"],
 #create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"],
 #create-card[data-kind="app"]           .create-kind-row[data-kind-pill="app"],
 #create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"],
+#create-card[data-mode="template"]      .create-mode-pill[data-mode-pill="template"],
 #create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"],
 #create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"],
 #create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"],
+#create-card[data-template="empty"]     .create-mode-pill[data-template-pill="empty"],
+#create-card[data-template="social"]    .create-mode-pill[data-template-pill="social"],
+#create-card[data-template="media"]     .create-mode-pill[data-template-pill="media"],
+#create-card[data-template="game2d"]    .create-mode-pill[data-template-pill="game2d"],
+#create-card[data-template="game3d"]    .create-mode-pill[data-template-pill="game3d"],
 #create-card[data-approvals="majority"] .create-approvals-pill[data-approvals-pill="majority"],
 #create-card[data-approvals="atLeast"]  .create-approvals-pill[data-approvals-pill="atLeast"] {
   background: #0a6ee0; /* violet-600, as tailwind.config.js compiles it */
@@ -12327,9 +12334,15 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 #create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"] .create-choice-caption,
 #create-card[data-kind="app"]           .create-kind-row[data-kind-pill="app"] .create-choice-caption,
 #create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"] .create-choice-caption,
+#create-card[data-mode="template"]      .create-mode-pill[data-mode-pill="template"] .create-choice-caption,
 #create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"] .create-choice-caption,
 #create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"] .create-choice-caption,
-#create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"] .create-choice-caption {
+#create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"] .create-choice-caption,
+#create-card[data-template="empty"]     .create-mode-pill[data-template-pill="empty"] .create-choice-caption,
+#create-card[data-template="social"]    .create-mode-pill[data-template-pill="social"] .create-choice-caption,
+#create-card[data-template="media"]     .create-mode-pill[data-template-pill="media"] .create-choice-caption,
+#create-card[data-template="game2d"]    .create-mode-pill[data-template-pill="game2d"] .create-choice-caption,
+#create-card[data-template="game3d"]    .create-mode-pill[data-template-pill="game3d"] .create-choice-caption {
   color: inherit;
   opacity: 0.9;
 }
@@ -12354,8 +12367,10 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
   cursor: not-allowed;
 }
 
-/* The repo URL and its check belong to "Import a GitHub repo" alone. */
+/* The repo URL and its check belong to "Import a GitHub repo" alone, and
+   the template picker to "Start from a template" alone (#3521). */
 #create-card:not([data-mode="import"]) .create-import-block { display: none; }
+#create-card:not([data-mode="template"]) .create-template-block { display: none; }
 
 /* THE STEPS UNFOLD IN ONE CARD (#1911; six of them since the rework).
    Every step's section ships on every step — the declared checks select on

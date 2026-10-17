@@ -80,6 +80,12 @@
 
 const AUDIENCES = new Set(['solo', 'invited', 'open']);
 const VISIBILITIES = new Set(['public', 'private']);
+// #3521: the starting templates a new project can open on, the keys the
+// template registry (services/template.js) answers to. Absent or empty is
+// 'empty' — the starter demo every project got before this choice existed —
+// so an older client or a script POSTing without a template keeps today's
+// scaffold.
+const TEMPLATES = new Set(['empty', 'social', 'media', 'game2d', 'game3d']);
 const MAX_INVITEES = 20;
 const MAX_APPROVALS_REQUIRED = 50;
 const USERNAME_MAX = 64;
@@ -176,11 +182,20 @@ function parseDescription(raw) {
   return { description: text };
 }
 
+/** The template a fresh create seeds, or a 400 naming the valid values. */
+function parseTemplate(raw) {
+  if (raw == null || raw === '') return { template: 'empty' };
+  if (typeof raw !== 'string' || !TEMPLATES.has(raw)) {
+    return { error: `template must be one of: ${[...TEMPLATES].join(', ')}` };
+  }
+  return { template: raw };
+}
+
 /**
  * Everything POST /api/apps needs to know about who a new project is for.
  * Returns `{ error }` for a 400, otherwise
  * `{ audience, collabVisibility, viewVisibility, invitees, inviteEmails,
- * governance, description }`.
+ * governance, description, template }`.
  */
 function parseCreateOptions(body = {}) {
   let audience = null;
@@ -214,7 +229,11 @@ function parseCreateOptions(body = {}) {
   const desc = parseDescription(body.description);
   if (desc.error) return { error: desc.error };
 
+  const tpl = parseTemplate(body.template);
+  if (tpl.error) return { error: tpl.error };
+
   return {
+    template: tpl.template,
     audience,
     collabVisibility,
     viewVisibility,
@@ -243,6 +262,7 @@ function governanceBlock(governance) {
 
 module.exports = {
   AUDIENCES,
+  TEMPLATES,
   MAX_INVITEES,
   DESCRIPTION_MAX,
   parseCreateOptions,

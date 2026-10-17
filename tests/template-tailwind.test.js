@@ -21,8 +21,12 @@ const assert = require('node:assert/strict');
 
 const { getTemplateFiles } = require('../src/services/template');
 
-function files() {
-  return getTemplateFiles('My App', 'my-app-123', 'pg://x', 'secret');
+// #3521: every starting template's scaffold. The demos differ; the styling
+// contract is shared.
+const TEMPLATE_KEYS = ['empty', 'social', 'media', 'game2d', 'game3d'];
+
+function files(template = 'empty') {
+  return getTemplateFiles('My App', 'my-app-123', 'pg://x', 'secret', { template });
 }
 
 function file(list, p) {
@@ -31,28 +35,31 @@ function file(list, p) {
   return f.content;
 }
 
-test('the scaffold links a precompiled stylesheet, not a CDN engine', () => {
-  const html = file(files(), 'public/index.html');
-  assert.ok(html.includes('<link rel="stylesheet" href="/tailwind.css">'),
-    'index.html should link the app-relative /tailwind.css');
-  assert.ok(!/<script[^>]+src="https:\/\/cdn\.tailwindcss\.com/.test(html),
-    'index.html must not load the Tailwind CDN engine');
-  assert.ok(!/tailwind\.config\s*=/.test(html),
-    'the inline tailwind.config belongs in tailwind.config.js on the precompiled path');
+test('the scaffold links a precompiled stylesheet, not a CDN engine, on every template', () => {
+  for (const template of TEMPLATE_KEYS) {
+    const html = file(files(template), 'public/index.html');
+    assert.ok(html.includes('<link rel="stylesheet" href="/tailwind.css">'),
+      'index.html should link the app-relative /tailwind.css');
+    assert.ok(!/<script[^>]+src="https:\/\/cdn\.tailwindcss\.com/.test(html),
+      'index.html must not load the Tailwind CDN engine');
+    assert.ok(!/tailwind\.config\s*=/.test(html),
+      'the inline tailwind.config belongs in tailwind.config.js on the precompiled path');
+  }
 });
 
-test('the scaffold loads no off-origin subresources at all', () => {
+test('the scaffold loads no off-origin subresources at all, on every template', () => {
   // Strip HTML comments first: the scaffold documents the hosted-runtime
   // escape hatch by showing the tag, and a commented tag fetches nothing.
-  const html = file(files(), 'public/index.html').replace(/<!--[\s\S]*?-->/g, '');
-  for (const m of html.matchAll(/<(?:script|link|img)\b[^>]*\b(?:src|href)="([^"]+)"/g)) {
-    assert.ok(!/^https?:\/\//.test(m[1]),
-      `scaffold index.html loads an off-origin asset: ${m[1]}`);
+  for (const template of TEMPLATE_KEYS) {
+    const html = file(files(template), 'public/index.html').replace(/<!--[\s\S]*?-->/g, '');
+    for (const m of html.matchAll(/<(?:script|link|img)\b[^>]*\b(?:src|href)="([^"]+)"/g)) {
+      assert.ok(!/^https?:\/\//.test(m[1]),
+        `scaffold index.html loads an off-origin asset: ${m[1]}`);
+    }
+    // And the documented escape hatch really is inert.
+    assert.ok(!html.includes('usernode-tailwind'),
+      'the hosted-runtime tag must stay commented out — the scaffold uses the precompiled path');
   }
-  // And the documented escape hatch really is inert.
-  const live = file(files(), 'public/index.html').replace(/<!--[\s\S]*?-->/g, '');
-  assert.ok(!live.includes('usernode-tailwind'),
-    'the hosted-runtime tag must stay commented out — the scaffold uses the precompiled path');
 });
 
 test('the generated tailwind.config.js matches the scaffold markup', () => {
@@ -160,6 +167,11 @@ test('new apps declare a locked, build-time Tailwind compiler and standard build
   assert.deepEqual(lock.packages[''].devDependencies, pkg.devDependencies);
   assert.equal(lock.packages['node_modules/tailwindcss'].version, '3.4.17');
   assert.match(lock.packages['node_modules/tailwindcss'].integrity, /^sha512-/);
+  // #3521: the 3D game's demo imports three from the app's own node_modules
+  // (server.js serves its build out to /vendor/three*.js), so the dependency
+  // is locked like any other.
+  assert.match(pkg.dependencies.three, /^\^\d+\.\d+\.\d+$/, 'three is a declared dependency');
+  assert.ok(lock.packages['node_modules/three'], 'three is in the lockfile');
   const second = getTemplateFiles('Other', 'other-456');
   assert.equal(JSON.parse(file(second, 'package-lock.json')).name, 'other-456');
   assert.equal(JSON.parse(file(files(), 'package-lock.json')).name, 'my-app-123');

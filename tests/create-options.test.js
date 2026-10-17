@@ -97,8 +97,36 @@ test('the new repository\'s dapp.json carries a non-default rule, and only then'
   assert.deepEqual(readGovernance(dapp({ approverPolicy: 'invited', approvalsRequired: 3 })),
     { approvers: 'invited', approvals: 3 });
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
-  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\) \}/g) || []).length, 2,
-    'both template paths (GitHub and local) pass the row\'s rule and its line');
+  assert.equal(
+    (creator.match(/\{ template: appRow\.starter_template \|\| 'empty', governance: governanceOf\(appRow\), description: descriptionOf\(appRow\) \}/g) || []).length,
+    2,
+    'both template paths (GitHub and local) pass the row\'s chosen template, its rule and its line',
+  );
+});
+
+// #3521: the create dialog's last question offers a template. Absent is the
+// starter demo every new project got before the choice existed; unknown is a
+// 400 naming the values, so a scripted POST learns the keys instead of
+// quietly getting an empty app.
+test('a template is one of the registry\'s five keys, or absent means the empty starter', () => {
+  assert.deepEqual(options.TEMPLATES, new Set(['empty', 'social', 'media', 'game2d', 'game3d']),
+    'the registry keys (services/template.js\'s DEMOS) are the accepted set');
+  const parse = (template) => options.parseCreateOptions({ audience: 'open', template });
+  assert.equal(parse(undefined).template, 'empty', 'no body field keeps today\'s scaffold');
+  assert.equal(parse('').template, 'empty', 'an empty string is an absent choice');
+  assert.equal(parse(null).template, 'empty');
+  for (const key of ['empty', 'social', 'media', 'game2d', 'game3d']) {
+    assert.equal(parse(key).template, key, `${key} is accepted verbatim`);
+  }
+  const bad = parse('social-media');
+  assert.match(bad.error, /^template must be one of: empty, social, media, game2d, game3d$/,
+    'the 400 names the values, so a caller can correct itself');
+  assert.match(parse(42).error, /^template must be one of/);
+  // The route stores what this returned, read back off the row by app-creator.
+  const route = fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8');
+  assert.match(route, /starter_template\)\s*VALUES/, 'the INSERT writes the choice');
+  assert.match(route, /repoUrlNormalized \? 'empty' : template/,
+    'an import keeps its own repository and never seeds a template');
 });
 
 test('"What is it?" is one optional line, tidied and bounded', () => {

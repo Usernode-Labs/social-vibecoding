@@ -623,6 +623,17 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS build_ref VARCHAR(253);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS runtime_kind VARCHAR(32) NOT NULL DEFAULT 'docker';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS runtime_name VARCHAR(253);
 
+-- #3521: which starter example a new app opens on (services/template.js's
+-- registry: 'empty', 'social', 'media', 'game2d', 'game3d'). Written from
+-- the create dialog's "Start from a template" choice and read off the row
+-- by app-creator.js at every point that seeds a repository, so a Retry
+-- after a failed create rebuilds the same template rather than falling
+-- back to the empty one — which is the reason the choice is a column and
+-- not just a request field. Existing rows read as 'empty' through the
+-- default. An import keeps its own repository and never seeds a template;
+-- a fork copies its source repository and does not read this either.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS starter_template VARCHAR(32) NOT NULL DEFAULT 'empty';
+
 -- Activity tracking (for home screen sort)
 CREATE TABLE IF NOT EXISTS app_activity (
   id             SERIAL PRIMARY KEY,

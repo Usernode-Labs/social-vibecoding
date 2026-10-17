@@ -445,6 +445,8 @@ const ADDED_IDS = {
   'create-invitees': 'The usernames a group is created with, comma separated, in an uncontrolled input so the prerender carries no value.',
   'create-approve-block': 'The create dialog\'s last step for a group or a community made new: Members vote, or People I pick (starting with the creator), with "at least N yes votes" as its follow-up. Written into the new repository\'s dapp.json (POST /api/apps `governance`).',
   'create-approvals-n': 'The "Yes votes needed" number under People I pick → At least a number (1 to 50).',
+  // ── #3521: Start from a template is a real choice ─────────────────
+  'create-template-block': 'The create dialog\'s template picker: five starting templates (Empty, Social productivity, Multimedia social, 2D game, 3D game) shown in template mode only (app.css keys it off #create-card[data-mode]), nothing preselected, Create dimmed until one is picked. POST /api/apps takes `template`; services/template.js scaffolds the chosen example. It took an id, rather than riding the import block\'s, because the declared checks select on it and the baseline is the inventory.',
   // ── Communities, stage 5: the first run ─────────────────────────────
   'home-getting-started': 'Home\'s Getting started card: the welcome tour and the season\'s First challenges for a new account that came through "What communities do you want to join?", ticked off from their credits (GET /api/me/getting-started; the one list, 2026-10-01). Ships empty and hidden; a React island (features/home/getting-started.tsx).',
   // ── #1374: per-app notification settings ─────────────────────────

@@ -299,9 +299,830 @@ connector registered under some other name.
   ];
 }
 
+// ── The starting templates (#3521) ─────────────────────────────────────
+//
+// The create dialog's last question now offers a template. Every template
+// shares one scaffold — CLAUDE.md, the .claude/ connector scaffold, the
+// Dockerfile, the Tailwind config, dapp.json, the server's auth core —
+// produced once below, and differs only in the example the new app opens
+// on: the "Try the example" section of public/index.html and its inline
+// script, the demo route handlers registered after the same auth
+// middleware, and the demo table's CREATE TABLE IF NOT EXISTS bootstrap in
+// start(). The registry keys are services/create-options.js's TEMPLATES,
+// which POST /api/apps validates; anything else still resolves to `empty`,
+// the starter demo every new project has always had, byte for byte.
+//
+// The games are catch-and-collect demos with a high-score table (a
+// ranking); nothing fights and nothing is wagered. The multimedia demo's
+// pictures are six gradient tiles the template draws itself, so nothing is
+// uploaded and nothing is loaded from another site. All demo copy is
+// original placeholder text.
+const DEMOS = {
+  empty: {
+    routes: `// Button press
+app.post('/api/press', async (req, res) => {
+  try {
+    await pool.query(\`
+      INSERT INTO presses (user_id, username) VALUES ($1, $2)
+    \`, [req.user.id, req.user.username]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Leaderboard
+app.get('/api/leaderboard', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(\`
+      SELECT username, COUNT(*) as presses
+      FROM presses
+      GROUP BY username
+      ORDER BY presses DESC
+      LIMIT 50
+    \`);
+    res.json({ leaderboard: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});`,
+    table: `  await pool.query(\`
+    CREATE TABLE IF NOT EXISTS presses (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  \`);`,
+    section: `    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col items-center gap-5">
+      <div class="w-full flex items-baseline justify-between gap-2">
+        <h2 class="text-sm font-medium text-zinc-500">Try the example</h2>
+        <span class="text-xs text-zinc-600">This example will be replaced</span>
+      </div>
+
+      <button id="press-btn" class="w-32 h-32 rounded-full bg-violet-600 hover:bg-violet-500 active:scale-95 transition-all text-white text-xl font-bold shadow-lg shadow-violet-600/30">
+        Press!
+      </button>
+
+      <div id="count" class="text-lg text-zinc-400">0 total presses</div>
+
+      <div class="w-full max-w-sm">
+        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">Leaderboard</h3>
+        <div id="leaderboard" class="space-y-1"></div>
+      </div>
+    </section>`,
+    script: `  <script>
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || '';
+    const headers = token ? { 'x-usernode-token': token } : {};
+
+    async function loadLeaderboard() {
+      const res = await fetch('/api/leaderboard', { headers });
+      if (!res.ok) return;
+      const { leaderboard } = await res.json();
+      const el = document.getElementById('leaderboard');
+      if (!leaderboard.length) {
+        el.innerHTML = '<p class="text-center text-zinc-600 text-sm">No presses yet</p>';
+        return;
+      }
+      el.innerHTML = leaderboard.map((r, i) =>
+        '<div class="flex justify-between px-3 py-1 rounded ' + (i === 0 ? 'bg-violet-600/20 text-violet-300' : 'text-zinc-400') + '">' +
+        '<span>' + (i + 1) + '. ' + r.username + '</span>' +
+        '<span class="font-mono">' + r.presses + '</span></div>'
+      ).join('');
+      const total = leaderboard.reduce((s, r) => s + parseInt(r.presses), 0);
+      document.getElementById('count').textContent = total + ' total presses';
+    }
+
+    document.getElementById('press-btn').addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/press', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...headers },
+        });
+        if (res.ok) loadLeaderboard();
+        else if (res.status === 401) document.getElementById('count').textContent = 'Sign in to press!';
+      } catch {}
+    });
+
+    loadLeaderboard();
+  </script>`,
+    claudeExample: `the Press! example (the demo markup in
+\`public/index.html\`, the \`/api/press\` and \`/api/leaderboard\` routes, and
+the \`presses\` table bootstrap in \`server.js\`)`,
+    claudeTable: '`presses`',
+    readme: `- **Database** — the app has its own private Postgres database; the
+  demo stores button presses in a \`presses\` table.
+- **Live API** — two example routes (\`/api/press\`,
+  \`/api/leaderboard\`) read and write through a real Express server.`,
+  },
+
+  social: {
+    routes: `// Shared task list (the starter example)
+app.get('/api/tasks', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(\`
+      SELECT id, username, text, done
+      FROM tasks
+      ORDER BY id DESC
+      LIMIT 100
+    \`);
+    res.json({ tasks: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/tasks', async (req, res) => {
+  const text = (req.body && typeof req.body.text === 'string' ? req.body.text : '').trim();
+  if (!text || text.length > 200) {
+    return res.status(400).json({ error: 'A task needs a line of text, 200 characters or fewer.' });
+  }
+  try {
+    const { rows } = await pool.query(\`
+      INSERT INTO tasks (user_id, username, text) VALUES ($1, $2, $3)
+      RETURNING id, username, text, done
+    \`, [req.user.id, req.user.username, text]);
+    res.status(201).json({ task: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/tasks/:id/toggle', async (req, res) => {
+  try {
+    const { rows } = await pool.query(\`
+      UPDATE tasks SET done = NOT done WHERE id = $1
+      RETURNING id, username, text, done
+    \`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'No such task' });
+    res.json({ task: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});`,
+    table: `  await pool.query(\`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      text VARCHAR(200) NOT NULL,
+      done BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  \`);`,
+    section: `    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col gap-4">
+      <div class="w-full flex items-baseline justify-between gap-2">
+        <h2 class="text-sm font-medium text-zinc-500">Try the example</h2>
+        <span class="text-xs text-zinc-600">This example will be replaced</span>
+      </div>
+
+      <form id="task-form" class="flex gap-2">
+        <input id="task-input" type="text" maxlength="200" placeholder="Add a task, like Water the plants"
+               class="flex-1 min-w-0 rounded-lg bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-violet-500" />
+        <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 transition-colors text-white text-sm font-semibold px-4">Add</button>
+      </form>
+
+      <div id="tasks" class="space-y-1"></div>
+    </section>`,
+    script: `  <script>
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || '';
+    const headers = token ? { 'x-usernode-token': token } : {};
+
+    function esc(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    async function loadTasks() {
+      const res = await fetch('/api/tasks', { headers });
+      if (!res.ok) return;
+      const { tasks } = await res.json();
+      const el = document.getElementById('tasks');
+      if (!tasks.length) {
+        el.innerHTML = '<p class="text-center text-zinc-600 text-sm">No tasks yet. Add the first one above.</p>';
+        return;
+      }
+      el.innerHTML = tasks.map((t) =>
+        '<div class="flex items-center gap-3 px-3 py-2 rounded-lg bg-zinc-950 border border-zinc-800">' +
+        '<button type="button" data-toggle="' + t.id + '" aria-pressed="' + t.done + '" aria-label="' + (t.done ? 'Mark not done' : 'Mark done') + '" class="w-6 h-6 shrink-0 rounded-full border text-xs leading-none ' + (t.done ? 'bg-violet-600 border-violet-600 text-white' : 'border-zinc-600 text-transparent') + '">✓</button>' +
+        '<span class="flex-1 min-w-0 break-words text-sm ' + (t.done ? 'text-zinc-600 line-through' : 'text-zinc-200') + '">' + esc(t.text) + '</span>' +
+        '<span class="shrink-0 text-xs text-zinc-500">' + esc(t.username) + '</span>' +
+        '</div>'
+      ).join('');
+      el.querySelectorAll('[data-toggle]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          try {
+            const res = await fetch('/api/tasks/' + btn.getAttribute('data-toggle') + '/toggle', { method: 'POST', headers });
+            if (res.ok) loadTasks();
+            else if (res.status === 401) el.innerHTML = '<p class="text-center text-zinc-600 text-sm">Sign in to tick tasks off.</p>';
+          } catch {}
+        });
+      });
+    }
+
+    document.getElementById('task-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const input = document.getElementById('task-input');
+      const text = input.value.trim();
+      if (!text) return;
+      try {
+        const res = await fetch('/api/tasks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...headers },
+          body: JSON.stringify({ text: text }),
+        });
+        if (res.ok) { input.value = ''; loadTasks(); }
+        else if (res.status === 401) document.getElementById('tasks').innerHTML =
+          '<p class="text-center text-zinc-600 text-sm">Sign in to add tasks.</p>';
+      } catch {}
+    });
+
+    loadTasks();
+  </script>`,
+    claudeExample: `the shared task-board example (the demo markup in
+\`public/index.html\`, the \`/api/tasks\` routes, and the \`tasks\` table
+bootstrap in \`server.js\`)`,
+    claudeTable: '`tasks`',
+    readme: `- **Database** — the app has its own private Postgres database; the
+  demo stores tasks in a \`tasks\` table.
+- **Live API** — three example routes (\`/api/tasks\` and
+  \`/api/tasks/:id/toggle\`) read and write through a real Express server.`,
+  },
+
+  media: {
+    routes: `// Picture posts (the starter example)
+const POST_ART = new Set(['sunset', 'ocean', 'meadow', 'orchid', 'ember', 'slate']);
+
+app.get('/api/posts', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(\`
+      SELECT id, username, caption, art, hearts
+      FROM posts
+      ORDER BY id DESC
+      LIMIT 50
+    \`);
+    res.json({ posts: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/posts', async (req, res) => {
+  const caption = (req.body && typeof req.body.caption === 'string' ? req.body.caption : '').trim();
+  const art = req.body ? req.body.art : null;
+  if (!caption || caption.length > 140) {
+    return res.status(400).json({ error: 'A post needs a caption of 140 characters or fewer.' });
+  }
+  if (!POST_ART.has(art)) {
+    return res.status(400).json({ error: 'Pick one of the six picture tiles.' });
+  }
+  try {
+    const { rows } = await pool.query(\`
+      INSERT INTO posts (user_id, username, caption, art) VALUES ($1, $2, $3, $4)
+      RETURNING id, username, caption, art, hearts
+    \`, [req.user.id, req.user.username, caption, art]);
+    res.status(201).json({ post: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/posts/:id/heart', async (req, res) => {
+  try {
+    const { rows } = await pool.query(\`
+      UPDATE posts SET hearts = hearts + 1 WHERE id = $1
+      RETURNING id, username, caption, art, hearts
+    \`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'No such post' });
+    res.json({ post: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});`,
+    table: `  await pool.query(\`
+    CREATE TABLE IF NOT EXISTS posts (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      caption VARCHAR(140) NOT NULL,
+      art VARCHAR(16) NOT NULL,
+      hearts INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  \`);`,
+    section: `    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col gap-4">
+      <div class="w-full flex items-baseline justify-between gap-2">
+        <h2 class="text-sm font-medium text-zinc-500">Try the example</h2>
+        <span class="text-xs text-zinc-600">This example will be replaced</span>
+      </div>
+
+      <form id="post-form" class="flex flex-col gap-2">
+        <div id="art-picker" class="grid grid-cols-6 gap-2" role="radiogroup" aria-label="Pick a picture tile"></div>
+        <input id="post-caption" type="text" maxlength="140" placeholder="Write a caption"
+               class="rounded-lg bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-violet-500" />
+        <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 transition-colors text-white text-sm font-semibold px-4 py-2">Post</button>
+      </form>
+
+      <div id="posts" class="flex flex-col gap-3"></div>
+    </section>`,
+    script: `  <script>
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || '';
+    const headers = token ? { 'x-usernode-token': token } : {};
+
+    function esc(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // Six gradient tiles the template draws itself: nothing to upload and
+    // nothing loaded from another site. The class names are whole literals
+    // so the Tailwind compile keeps them.
+    const TILES = {
+      sunset: 'Sunset|bg-gradient-to-br from-rose-500 via-orange-400 to-amber-300',
+      ocean: 'Ocean|bg-gradient-to-br from-sky-500 via-cyan-400 to-teal-300',
+      meadow: 'Meadow|bg-gradient-to-br from-emerald-500 via-green-400 to-lime-300',
+      orchid: 'Orchid|bg-gradient-to-br from-fuchsia-500 via-purple-400 to-violet-300',
+      ember: 'Ember|bg-gradient-to-br from-orange-600 via-red-400 to-rose-300',
+      slate: 'Slate|bg-gradient-to-br from-slate-400 via-zinc-400 to-zinc-300',
+    };
+    let pickedArt = null;
+
+    function tileClass(art) {
+      const tile = TILES[art] || '';
+      return tile.slice(tile.indexOf('|') + 1);
+    }
+
+    const picker = document.getElementById('art-picker');
+    Object.keys(TILES).forEach((art) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.setAttribute('data-art', art);
+      btn.setAttribute('aria-pressed', 'false');
+      btn.setAttribute('aria-label', TILES[art].slice(0, TILES[art].indexOf('|')) + ' tile');
+      btn.className = 'h-10 rounded-lg ring-offset-2 ring-offset-zinc-900 ' + tileClass(art);
+      btn.addEventListener('click', () => {
+        pickedArt = art;
+        picker.querySelectorAll('[data-art]').forEach((b) =>
+          b.setAttribute('aria-pressed', String(b.getAttribute('data-art') === art)));
+      });
+      picker.appendChild(btn);
+    });
+
+    function renderPosts(posts) {
+      const el = document.getElementById('posts');
+      if (!posts.length) {
+        el.innerHTML = '<p class="text-center text-zinc-600 text-sm">No posts yet. Pick a tile and write the first caption.</p>';
+        return;
+      }
+      el.innerHTML = posts.map((p) =>
+        '<div class="rounded-lg bg-zinc-950 border border-zinc-800 overflow-hidden">' +
+        '<div class="h-28 ' + tileClass(p.art) + '"></div>' +
+        '<div class="flex items-center gap-3 px-3 py-2">' +
+        '<span class="flex-1 min-w-0 break-words text-sm text-zinc-200">' + esc(p.caption) + '</span>' +
+        '<button type="button" data-heart="' + p.id + '" aria-label="Heart this post" class="shrink-0 text-sm text-violet-300">♥ ' + p.hearts + '</button>' +
+        '</div>' +
+        '<p class="px-3 pb-2 text-xs text-zinc-500">' + esc(p.username) + '</p>' +
+        '</div>'
+      ).join('');
+      el.querySelectorAll('[data-heart]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          try {
+            const res = await fetch('/api/posts/' + btn.getAttribute('data-heart') + '/heart', { method: 'POST', headers });
+            if (res.ok) loadPosts();
+          } catch {}
+        });
+      });
+    }
+
+    async function loadPosts() {
+      const res = await fetch('/api/posts', { headers });
+      if (!res.ok) return;
+      const { posts } = await res.json();
+      renderPosts(posts);
+    }
+
+    document.getElementById('post-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const input = document.getElementById('post-caption');
+      const caption = input.value.trim();
+      if (!pickedArt || !caption) { input.focus(); return; }
+      try {
+        const res = await fetch('/api/posts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...headers },
+          body: JSON.stringify({ caption: caption, art: pickedArt }),
+        });
+        if (res.ok) { input.value = ''; loadPosts(); }
+        else if (res.status === 401) document.getElementById('posts').innerHTML =
+          '<p class="text-center text-zinc-600 text-sm">Sign in to post.</p>';
+      } catch {}
+    });
+
+    loadPosts();
+  </script>`,
+    claudeExample: `the picture-post feed (the demo markup in
+\`public/index.html\`, the \`/api/posts\` routes, and the \`posts\` table
+bootstrap in \`server.js\`)`,
+    claudeTable: '`posts`',
+    readme: `- **Database** — the app has its own private Postgres database; the
+  demo stores picture posts in a \`posts\` table.
+- **Live API** — three example routes (\`/api/posts\` and
+  \`/api/posts/:id/heart\`) read and write through a real Express server.`,
+  },
+
+  game2d: {
+    routes: `// High scores (the starter example)
+app.get('/api/scores', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(\`
+      SELECT username, score
+      FROM scores
+      ORDER BY score DESC, created_at ASC
+      LIMIT 10
+    \`);
+    res.json({ scores: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/scores', async (req, res) => {
+  const score = Math.round(Number(req.body && req.body.score));
+  if (!Number.isInteger(score) || score < 0 || score > 100000) {
+    return res.status(400).json({ error: 'A score is a whole number between 0 and 100000.' });
+  }
+  try {
+    await pool.query(\`
+      INSERT INTO scores (user_id, username, score) VALUES ($1, $2, $3)
+    \`, [req.user.id, req.user.username, score]);
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});`,
+    table: `  await pool.query(\`
+    CREATE TABLE IF NOT EXISTS scores (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      score INTEGER NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  \`);`,
+    section: `    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col items-center gap-4">
+      <div class="w-full flex items-baseline justify-between gap-2">
+        <h2 class="text-sm font-medium text-zinc-500">Try the example</h2>
+        <span class="text-xs text-zinc-600">This example will be replaced</span>
+      </div>
+
+      <canvas id="game-canvas" width="320" height="240" class="w-full rounded-lg bg-zinc-950 border border-zinc-800" aria-label="Catch the falling stars with the basket. Move with the arrow keys or by dragging on the canvas."></canvas>
+      <p class="text-sm text-zinc-500">Move the basket with the arrow keys, or drag on the canvas. Catch the falling stars.</p>
+      <p id="score" class="text-lg text-zinc-400">Score 0</p>
+
+      <div class="w-full max-w-sm">
+        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">High scores</h3>
+        <div id="scores" class="space-y-1"></div>
+      </div>
+    </section>`,
+    script: `  <script>
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || '';
+    const headers = token ? { 'x-usernode-token': token } : {};
+
+    function esc(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    const canvas = document.getElementById('game-canvas');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const ROUND_SECONDS = 30;
+
+    const basket = { x: canvas.width / 2 - 30, y: canvas.height - 18, w: 60, h: 12 };
+    const stars = [];
+    const keys = {};
+    let score = 0;
+    let over = false;
+    let scoreSent = false;
+    let secondsLeft = ROUND_SECONDS;
+    let last = null;
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') e.preventDefault();
+      keys[e.key] = true;
+    });
+    document.addEventListener('keyup', (e) => { keys[e.key] = false; });
+    // A drag on the canvas moves the basket, so touch screens do not scroll
+    // the page instead.
+    canvas.style.touchAction = 'none';
+    canvas.addEventListener('pointermove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * canvas.width / rect.width;
+      basket.x = Math.max(0, Math.min(canvas.width - basket.w, x - basket.w / 2));
+    });
+
+    async function loadScores() {
+      const res = await fetch('/api/scores', { headers });
+      if (!res.ok) return;
+      const { scores } = await res.json();
+      const el = document.getElementById('scores');
+      el.innerHTML = scores.length
+        ? scores.map((s, i) =>
+            '<div class="flex justify-between px-3 py-1 rounded ' + (i === 0 ? 'bg-violet-600/20 text-violet-300' : 'text-zinc-400') + '">' +
+            '<span>' + (i + 1) + '. ' + esc(s.username) + '</span>' +
+            '<span class="font-mono">' + s.score + '</span></div>'
+          ).join('')
+        : '<p class="text-center text-zinc-600 text-sm">No scores yet</p>';
+    }
+
+    async function submitScore() {
+      if (scoreSent) return;
+      scoreSent = true;
+      try {
+        const res = await fetch('/api/scores', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...headers },
+          body: JSON.stringify({ score: score }),
+        });
+        if (res.ok) loadScores();
+        else if (res.status === 401) scoreEl.textContent = 'Sign in to record your score';
+      } catch {}
+    }
+
+    function tick(ts) {
+      if (last == null) last = ts;
+      const dt = Math.min((ts - last) / 1000, 0.1);
+      last = ts;
+
+      if (!over) {
+        secondsLeft -= dt;
+        if (secondsLeft <= 0) { secondsLeft = 0; over = true; submitScore(); }
+        if (keys.ArrowLeft) basket.x = Math.max(0, basket.x - 180 * dt);
+        if (keys.ArrowRight) basket.x = Math.min(canvas.width - basket.w, basket.x + 180 * dt);
+        if (Math.random() < dt * 2.5) {
+          stars.push({ x: 6 + Math.random() * (canvas.width - 12), y: -8, v: 60 + Math.random() * 60 });
+        }
+        for (const s of stars) {
+          s.y += s.v * dt;
+          if (!s.caught && s.y > basket.y - 6 && s.y < basket.y + basket.h && s.x > basket.x - 4 && s.x < basket.x + basket.w + 4) {
+            s.caught = true;
+            score += 1;
+          }
+        }
+        for (let i = stars.length - 1; i >= 0; i--) {
+          if (stars[i].caught || stars[i].y > canvas.height + 8) stars.splice(i, 1);
+        }
+      }
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#fbbf24';
+      for (const s of stars) {
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = '#8b5cf6';
+      ctx.fillRect(basket.x, basket.y, basket.w, basket.h);
+
+      scoreEl.textContent = over
+        ? 'Game over — score ' + score
+        : 'Score ' + score + ' · ' + Math.ceil(secondsLeft) + 's left';
+      requestAnimationFrame(tick);
+    }
+
+    loadScores();
+    requestAnimationFrame(tick);
+  </script>`,
+    claudeExample: `the star-catching game (the demo markup in
+\`public/index.html\`, the \`/api/scores\` routes, and the \`scores\` table
+bootstrap in \`server.js\`)`,
+    claudeTable: '`scores`',
+    readme: `- **Database** — the app has its own private Postgres database; the
+  demo stores game scores in a \`scores\` table.
+- **Live API** — two example routes (the \`/api/scores\` GET and POST)
+  read and write through a real Express server.`,
+  },
+
+  game3d: {
+    routes: `// High scores (the starter example)
+app.get('/api/scores', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(\`
+      SELECT username, score
+      FROM scores
+      ORDER BY score DESC, created_at ASC
+      LIMIT 10
+    \`);
+    res.json({ scores: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/scores', async (req, res) => {
+  const score = Math.round(Number(req.body && req.body.score));
+  if (!Number.isInteger(score) || score < 0 || score > 100000) {
+    return res.status(400).json({ error: 'A score is a whole number between 0 and 100000.' });
+  }
+  try {
+    await pool.query(\`
+      INSERT INTO scores (user_id, username, score) VALUES ($1, $2, $3)
+    \`, [req.user.id, req.user.username, score]);
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// The 3D example's library, served out of this app's own node_modules so
+// nothing loads from another site. The file carries no data, so it is
+// served the way the static assets below are: always, with no token. Only
+// the two file names the library ships are ever sent — the fixed set is
+// what keeps this from becoming a path into the dependency tree. (The
+// module build imports ./three.core.js internally, hence the second name.)
+app.get(/^\\/vendor\\/three(\\.core)?(\\.module)?\\.js$/, (req, res) => {
+  const name = req.path.includes('.core') ? 'three.core.js' : 'three.module.js';
+  res.type('application/javascript');
+  res.sendFile(path.join(path.dirname(require.resolve('three')), name));
+});`,
+    table: `  await pool.query(\`
+    CREATE TABLE IF NOT EXISTS scores (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      score INTEGER NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  \`);`,
+    section: `    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col items-center gap-4">
+      <div class="w-full flex items-baseline justify-between gap-2">
+        <h2 class="text-sm font-medium text-zinc-500">Try the example</h2>
+        <span class="text-xs text-zinc-600">This example will be replaced</span>
+      </div>
+
+      <canvas id="game-canvas" width="480" height="320" class="w-full rounded-lg bg-zinc-950 border border-zinc-800" aria-label="Roll the ball with the arrow keys or W A S D and collect the gems."></canvas>
+      <p class="text-sm text-zinc-500">Roll the ball with the arrow keys or W A S D. Collect the gems.</p>
+      <p id="score" class="text-lg text-zinc-400">Score 0</p>
+
+      <div class="w-full max-w-sm">
+        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">High scores</h3>
+        <div id="scores" class="space-y-1"></div>
+      </div>
+    </section>`,
+    script: `  <script type="module">
+    import * as THREE from '/vendor/three.module.js';
+
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || '';
+    const headers = token ? { 'x-usernode-token': token } : {};
+
+    function esc(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    const canvas = document.getElementById('game-canvas');
+    const scoreEl = document.getElementById('score');
+    const ROUND_SECONDS = 30;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x09090b);
+    const camera = new THREE.PerspectiveCamera(60, canvas.width / canvas.height, 0.1, 100);
+    const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+    renderer.setSize(canvas.width, canvas.height, false);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+    sun.position.set(4, 8, 2);
+    scene.add(sun);
+
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(20, 20),
+      new THREE.MeshLambertMaterial({ color: 0x27272a })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    scene.add(floor);
+
+    const ball = new THREE.Mesh(
+      new THREE.SphereGeometry(0.4, 24, 16),
+      new THREE.MeshLambertMaterial({ color: 0x8b5cf6 })
+    );
+    ball.position.set(0, 0.4, 0);
+    scene.add(ball);
+
+    // Eight gems, far enough apart that a round takes most of the timer.
+    const SPOTS = [[-3, -3], [3, 3], [-3, 3], [3, -3], [0, -4], [4, 0], [-4, 0], [0, 4]];
+    const gems = SPOTS.map(([x, z]) => {
+      const gem = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.35),
+        new THREE.MeshLambertMaterial({ color: 0xfbbf24 })
+      );
+      gem.position.set(x, 0.8, z);
+      scene.add(gem);
+      return gem;
+    });
+
+    const keys = {};
+    document.addEventListener('keydown', (e) => {
+      if (e.code.startsWith('Arrow')) e.preventDefault();
+      keys[e.code] = true;
+    });
+    document.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+    let score = 0;
+    let over = false;
+    let scoreSent = false;
+    let secondsLeft = ROUND_SECONDS;
+
+    async function loadScores() {
+      const res = await fetch('/api/scores', { headers });
+      if (!res.ok) return;
+      const { scores } = await res.json();
+      const el = document.getElementById('scores');
+      el.innerHTML = scores.length
+        ? scores.map((s, i) =>
+            '<div class="flex justify-between px-3 py-1 rounded ' + (i === 0 ? 'bg-violet-600/20 text-violet-300' : 'text-zinc-400') + '">' +
+            '<span>' + (i + 1) + '. ' + esc(s.username) + '</span>' +
+            '<span class="font-mono">' + s.score + '</span></div>'
+          ).join('')
+        : '<p class="text-center text-zinc-600 text-sm">No scores yet</p>';
+    }
+
+    async function submitScore() {
+      if (scoreSent) return;
+      scoreSent = true;
+      try {
+        const res = await fetch('/api/scores', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...headers },
+          body: JSON.stringify({ score: score }),
+        });
+        if (res.ok) loadScores();
+        else if (res.status === 401) scoreEl.textContent = 'Sign in to record your score';
+      } catch {}
+    }
+
+    const clock = new THREE.Clock();
+
+    function tick() {
+      const dt = Math.min(clock.getDelta(), 0.1);
+      if (!over) {
+        secondsLeft -= dt;
+        if (secondsLeft <= 0) { secondsLeft = 0; over = true; submitScore(); }
+        const dir = new THREE.Vector3(
+          (keys.ArrowRight || keys.KeyD ? 1 : 0) - (keys.ArrowLeft || keys.KeyA ? 1 : 0),
+          0,
+          (keys.ArrowDown || keys.KeyS ? 1 : 0) - (keys.ArrowUp || keys.KeyW ? 1 : 0)
+        );
+        if (dir.lengthSq() > 0) {
+          dir.normalize();
+          ball.position.addScaledVector(dir, 4 * dt);
+          ball.position.x = Math.max(-9.5, Math.min(9.5, ball.position.x));
+          ball.position.z = Math.max(-9.5, Math.min(9.5, ball.position.z));
+        }
+        gems.forEach((gem, i) => {
+          if (!gem.visible) return;
+          gem.rotation.y += dt * 2;
+          gem.position.y = 0.8 + Math.sin(clock.elapsedTime * 2 + i) * 0.15;
+          if (gem.position.distanceTo(ball.position) < 0.8) {
+            gem.visible = false;
+            score += 1;
+          }
+        });
+      }
+      camera.position.set(ball.position.x, 4.5, ball.position.z + 6);
+      camera.lookAt(ball.position);
+      renderer.render(scene, camera);
+      scoreEl.textContent = over
+        ? 'Game over — score ' + score
+        : 'Score ' + score + ' · ' + Math.ceil(secondsLeft) + 's left';
+      requestAnimationFrame(tick);
+    }
+
+    loadScores();
+    requestAnimationFrame(tick);
+  </script>`,
+    claudeExample: `the gem-collecting 3D game (the demo markup in
+\`public/index.html\`, the \`/api/scores\` routes, and the \`scores\` table
+bootstrap in \`server.js\`)`,
+    claudeTable: '`scores`',
+    readme: `- **Database** — the app has its own private Postgres database; the
+  demo stores game scores in a \`scores\` table.
+- **Live API** — two example routes (the \`/api/scores\` GET and POST)
+  read and write through a real Express server.`,
+  },
+};
+
 // repoUrl is the app's canonical GitHub repository; with it the scaffold
 // includes the pointer file the freshness check reads. A local build with no
 // GitHub has none, and gets no pointer.
+//
+// `template` is the create dialog's "Start from a template" choice
+// (services/create-options.js's TEMPLATES): which example the new app opens
+// on. It only swaps the demo — the registry above — never the shared
+// scaffold, so a create cannot drift between templates. Absent or unknown,
+// it is `empty`, the starter demo every new project got before the choice
+// existed.
 //
 // `governance` is the approval rule chosen on the create screen
 // ({ approverPolicy, approvalsRequired }, the apps row's two columns). A
@@ -315,7 +1136,8 @@ connector registered under some other name.
 // Discover and the project's page show) and the first sentence of
 // CLAUDE.md's About section, so the coding agent starts from the same
 // intent. Absent, both stay as they were.
-function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null } = {}) {
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { template = 'empty', governance = null, description = null } = {}) {
+  const demo = DEMOS[template] || DEMOS.empty;
   const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
   const governanceBlock = require('./create-options').governanceBlock(governance);
   const about = typeof description === 'string' && description.trim() ? description.trim() : null;
@@ -385,9 +1207,7 @@ the platform fixes the base commit, and none of this applies.
 ## Starter template
 
 The screen this app currently ships — the hero, the "What's already
-working" card, and the Press! example (the demo markup in
-\`public/index.html\`, the \`/api/press\` and \`/api/leaderboard\` routes, and
-the \`presses\` table bootstrap in \`server.js\`) — is placeholder content
+working" card, and ${demo.claudeExample} — is placeholder content
 from the Homeroom starter template, not product intent.
 
 When the user asks for their first real feature, REPLACE the template
@@ -396,7 +1216,7 @@ screen rather than building alongside it:
 - remove the \`usernode-starter-notice@1\` block in \`public/index.html\`
   (both sentinel comments and everything between them),
 - remove or repurpose the "Try the example" card, its demo endpoints and
-  the \`presses\` table as appropriate,
+  the ${demo.claudeTable} table as appropriate,
 - rewrite \`README.md\` to describe the actual app.
 
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` when rewriting the
@@ -445,10 +1265,7 @@ The scaffold is a small working demo that proves the plumbing works:
 - **Sign-in** — the server verifies the platform-issued user token
   (an RS256 JWT) on every request, so the app already knows who is
   using it. No accounts to build.
-- **Database** — the app has its own private Postgres database; the
-  demo stores button presses in a \`presses\` table.
-- **Live API** — two example routes (\`/api/press\`,
-  \`/api/leaderboard\`) read and write through a real Express server.
+${demo.readme}
 - **Styling** — Tailwind CSS, precompiled by \`npm run build\` during
   image creation with either Kubernetes/Paketo or standalone Docker.
 
@@ -767,33 +1584,7 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 // fresh load.
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
-// Button press
-app.post('/api/press', async (req, res) => {
-  try {
-    await pool.query(\`
-      INSERT INTO presses (user_id, username) VALUES ($1, $2)
-    \`, [req.user.id, req.user.username]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Leaderboard
-app.get('/api/leaderboard', async (_req, res) => {
-  try {
-    const { rows } = await pool.query(\`
-      SELECT username, COUNT(*) as presses
-      FROM presses
-      GROUP BY username
-      ORDER BY presses DESC
-      LIMIT 50
-    \`);
-    res.json({ leaderboard: rows });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+${demo.routes}
 
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -833,14 +1624,7 @@ app.get('*', (req, res) => {
 });
 
 async function start() {
-  await pool.query(\`
-    CREATE TABLE IF NOT EXISTS presses (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL,
-      username VARCHAR(255) NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  \`);
+${demo.table}
   const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;
@@ -927,63 +1711,12 @@ start().catch(err => { console.error(err); process.exit(1); });
     </section>
     <!-- /usernode-starter-notice@1 -->
 
-    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col items-center gap-5">
-      <div class="w-full flex items-baseline justify-between gap-2">
-        <h2 class="text-sm font-medium text-zinc-500">Try the example</h2>
-        <span class="text-xs text-zinc-600">This example will be replaced</span>
-      </div>
-
-      <button id="press-btn" class="w-32 h-32 rounded-full bg-violet-600 hover:bg-violet-500 active:scale-95 transition-all text-white text-xl font-bold shadow-lg shadow-violet-600/30">
-        Press!
-      </button>
-
-      <div id="count" class="text-lg text-zinc-400">0 total presses</div>
-
-      <div class="w-full max-w-sm">
-        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">Leaderboard</h3>
-        <div id="leaderboard" class="space-y-1"></div>
-      </div>
-    </section>
+${demo.section}
 
     <p class="text-center text-xs text-zinc-600">Built on Homeroom — this template screen disappears once you build your real app.</p>
   </main>
 
-  <script>
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get('token') || '';
-    const headers = token ? { 'x-usernode-token': token } : {};
-
-    async function loadLeaderboard() {
-      const res = await fetch('/api/leaderboard', { headers });
-      if (!res.ok) return;
-      const { leaderboard } = await res.json();
-      const el = document.getElementById('leaderboard');
-      if (!leaderboard.length) {
-        el.innerHTML = '<p class="text-center text-zinc-600 text-sm">No presses yet</p>';
-        return;
-      }
-      el.innerHTML = leaderboard.map((r, i) =>
-        '<div class="flex justify-between px-3 py-1 rounded ' + (i === 0 ? 'bg-violet-600/20 text-violet-300' : 'text-zinc-400') + '">' +
-        '<span>' + (i + 1) + '. ' + r.username + '</span>' +
-        '<span class="font-mono">' + r.presses + '</span></div>'
-      ).join('');
-      const total = leaderboard.reduce((s, r) => s + parseInt(r.presses), 0);
-      document.getElementById('count').textContent = total + ' total presses';
-    }
-
-    document.getElementById('press-btn').addEventListener('click', async () => {
-      try {
-        const res = await fetch('/api/press', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...headers },
-        });
-        if (res.ok) loadLeaderboard();
-        else if (res.status === 401) document.getElementById('count').textContent = 'Sign in to press!';
-      } catch {}
-    });
-
-    loadLeaderboard();
-  </script>
+${demo.script}
 </body>
 </html>
 `,

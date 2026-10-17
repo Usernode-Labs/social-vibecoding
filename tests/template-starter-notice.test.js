@@ -13,6 +13,11 @@
 // (usernode-starter-notice@1), following the usernode-dev-console@1
 // precedent, so agents/tooling can locate and excise the block.
 //
+// #3521: every starting template gets the same welcome. The five templates
+// differ only in the example the new app opens on — the welcome, the
+// explainer, the README and the CLAUDE.md instruction are the same scaffold
+// with a different example named.
+//
 // Run with: node --test tests/template-starter-notice.test.js
 
 const test = require('node:test');
@@ -20,8 +25,12 @@ const assert = require('node:assert/strict');
 
 const { getTemplateFiles } = require('../src/services/template');
 
-function files() {
-  return getTemplateFiles('My App', 'my-app-123', 'pg://x');
+// The keys services/create-options.js's TEMPLATES accepts; `empty` is the
+// starter demo every project got before the choice existed.
+const TEMPLATE_KEYS = ['empty', 'social', 'media', 'game2d', 'game3d'];
+
+function files(template) {
+  return getTemplateFiles('My App', 'my-app-123', 'pg://x', null, { template });
 }
 
 function file(list, p) {
@@ -30,42 +39,44 @@ function file(list, p) {
   return f.content;
 }
 
-test('index.html carries the starter-notice sentinel block before the example card', () => {
-  const html = file(files(), 'public/index.html');
+test('index.html carries the starter-notice sentinel block before the example card, on every template', () => {
+  for (const key of TEMPLATE_KEYS) {
+    const html = file(files(key), 'public/index.html');
 
-  const open = html.indexOf('<!-- usernode-starter-notice@1');
-  const close = html.indexOf('<!-- /usernode-starter-notice@1 -->');
-  assert.ok(open !== -1, 'opening sentinel comment present');
-  assert.ok(close !== -1, 'closing sentinel comment present');
-  assert.ok(open < close, 'sentinels are ordered open → close');
+    const open = html.indexOf('<!-- usernode-starter-notice@1');
+    const close = html.indexOf('<!-- /usernode-starter-notice@1 -->');
+    assert.ok(open !== -1, 'opening sentinel comment present');
+    assert.ok(close !== -1, 'closing sentinel comment present');
+    assert.ok(open < close, 'sentinels are ordered open → close');
 
-  // Exactly one block: the sentinel name appears once per comment.
-  const occurrences = html.match(/usernode-starter-notice@1/g) || [];
-  assert.equal(occurrences.length, 2, 'exactly one sentinel pair');
+    // Exactly one block: the sentinel name appears once per comment.
+    const occurrences = html.match(/usernode-starter-notice@1/g) || [];
+    assert.equal(occurrences.length, 2, 'exactly one sentinel pair');
 
-  // The template messaging lives inside the block…
-  const block = html.slice(open, close);
-  assert.match(block, /Starter template/, 'hero badge names the starter template');
-  // #3573: it named the Improve pill, which #2718 retired. It names the
-  // Homeroom mark's menu and its row now, by the row's own label.
-  assert.match(block, /Tap the <strong[^>]*>Homeroom icon<\/strong> in the header and choose <strong[^>]*>Start a new change<\/strong> to start building your app\./,
-    'hero copy names the Homeroom icon and its Start a new change row');
-  assert.doesNotMatch(block, /Improve/, 'no Improve button to point at any more');
-  assert.match(block, /What's already working/, 'explainer card inside the sentinel block');
-  // #1418: the welcome copy is product-focused — it describes the outcome,
-  // never the AI that produces it.
-  assert.ok(!block.includes('Claude'), 'welcome copy does not name Claude');
+    // The template messaging lives inside the block…
+    const block = html.slice(open, close);
+    assert.match(block, /Starter template/, 'hero badge names the starter template');
+    // #3573: it named the Improve pill, which #2718 retired. It names the
+    // Homeroom mark's menu and its row now, by the row's own label.
+    assert.match(block, /Tap the <strong[^>]*>Homeroom icon<\/strong> in the header and choose <strong[^>]*>Start a new change<\/strong> to start building your app\./,
+      'hero copy names the Homeroom icon and its Start a new change row');
+    assert.doesNotMatch(block, /Improve/, 'no Improve button to point at any more');
+    assert.match(block, /What's already working/, 'explainer card inside the sentinel block');
+    // #1418: the welcome copy is product-focused — it describes the outcome,
+    // never the AI that produces it.
+    assert.ok(!block.includes('Claude'), 'welcome copy does not name Claude');
 
-  // …and precedes the labelled example card.
-  const example = html.indexOf('Try the example');
-  assert.ok(example !== -1, 'example card is labelled');
-  assert.ok(close < example, 'sentinel block precedes the example card');
-  assert.match(html, /This example will be replaced/,
-    'example card carries the will-be-replaced tag');
+    // …and precedes the labelled example card.
+    const example = html.indexOf('Try the example');
+    assert.ok(example !== -1, 'example card is labelled');
+    assert.ok(close < example, 'sentinel block precedes the example card');
+    assert.match(html, /This example will be replaced/,
+      'example card carries the will-be-replaced tag');
+  }
 });
 
-test('the demo contract survives the redesign', () => {
-  const html = file(files(), 'public/index.html');
+test('the empty template\'s demo contract survives the redesign', () => {
+  const html = file(files('empty'), 'public/index.html');
 
   // The inline script looks these up by id; each must exist exactly once.
   for (const id of ['press-btn', 'count', 'leaderboard']) {
@@ -77,22 +88,44 @@ test('the demo contract survives the redesign', () => {
   assert.match(html, /Leaderboard/, 'the leaderboard heading survives');
 });
 
-test('the scaffold ships a README that names the app and the template state', () => {
-  const readme = file(files(), 'README.md');
-  assert.match(readme, /^# My App/m, 'README titled with the app name');
-  assert.match(readme, /Starter template/, 'README states this is the starter template');
-  // #3573: Start a new change in the Homeroom mark's menu, not the retired
-  // Improve pill (#2718).
-  assert.match(readme, /tap the Homeroom icon in the header, choose\n\*\*Start a new change\*\*, and describe the app you want/,
-    'README says Start a new change is how to replace it');
-  assert.doesNotMatch(readme, /Improve/);
-  assert.match(readme, /rewrite this README/i,
-    'README instructs its own rewrite once the real app exists');
-  // #1418: the product promise never names Claude as the actor. "Claude Code"
-  // (the developer tool) and the CLAUDE.md filename are the only sanctioned
-  // mentions, so a bare "Claude" not followed by " Code" is a regression.
-  assert.ok(!/Claude(?! Code)/.test(readme),
-    'README mentions Claude only as the "Claude Code" tool name');
+// #3521: the other four open on a different example, with ids their own
+// script looks up — never the Press! demo's.
+test('each non-empty template opens on its own example, not the Press! demo', () => {
+  const ids = {
+    social: ['task-form', 'task-input', 'tasks'],
+    media: ['post-form', 'art-picker', 'post-caption', 'posts'],
+    game2d: ['game-canvas', 'score', 'scores'],
+    game3d: ['game-canvas', 'score', 'scores'],
+  };
+  for (const key of TEMPLATE_KEYS.filter((k) => k !== 'empty')) {
+    const html = file(files(key), 'public/index.html');
+    for (const id of ids[key]) {
+      const matches = html.match(new RegExp(`id="${id}"`, 'g')) || [];
+      assert.equal(matches.length, 1, `${key}: exactly one element with id="${id}"`);
+    }
+    assert.doesNotMatch(html, /id="press-btn"/, `${key}: the Press! demo is gone`);
+    assert.match(html, /Try the example/, `${key}: the example card is still labelled`);
+  }
+});
+
+test('the scaffold ships a README that names the app and the template state, on every template', () => {
+  for (const key of TEMPLATE_KEYS) {
+    const readme = file(files(key), 'README.md');
+    assert.match(readme, /^# My App/m, 'README titled with the app name');
+    assert.match(readme, /Starter template/, 'README states this is the starter template');
+    // #3573: Start a new change in the Homeroom mark's menu, not the retired
+    // Improve pill (#2718).
+    assert.match(readme, /tap the Homeroom icon in the header, choose\n\*\*Start a new change\*\*, and describe the app you want/,
+      'README says Start a new change is how to replace it');
+    assert.doesNotMatch(readme, /Improve/);
+    assert.match(readme, /rewrite this README/i,
+      'README instructs its own rewrite once the real app exists');
+    // #1418: the product promise never names Claude as the actor. "Claude Code"
+    // (the developer tool) and the CLAUDE.md filename are the only sanctioned
+    // mentions, so a bare "Claude" not followed by " Code" is a regression.
+    assert.ok(!/Claude(?! Code)/.test(readme),
+      'README mentions Claude only as the "Claude Code" tool name');
+  }
 });
 
 // #3573: the starter page and README send a new app's creator to a control
@@ -110,10 +143,12 @@ test('the starter copy names the row the Homeroom mark\'s menu really has', () =
     'the header control is still the Homeroom mark');
 });
 
-test('CLAUDE.md instructs the agent to remove the template wholesale', () => {
-  const claude = file(files(), 'CLAUDE.md');
-  assert.match(claude, /usernode-starter-notice@1/, 'names the sentinel');
-  assert.match(claude, /REPLACE the template/i, 'instructs replacement, not accretion');
-  assert.match(claude, /usernode-dev-console@1/,
-    'reminds the agent to keep the dev-console forwarder');
+test('CLAUDE.md instructs the agent to remove the template wholesale, on every template', () => {
+  for (const key of TEMPLATE_KEYS) {
+    const claude = file(files(key), 'CLAUDE.md');
+    assert.match(claude, /usernode-starter-notice@1/, 'names the sentinel');
+    assert.match(claude, /REPLACE the template/i, 'instructs replacement, not accretion');
+    assert.match(claude, /usernode-dev-console@1/,
+      'reminds the agent to keep the dev-console forwarder');
+  }
 });
