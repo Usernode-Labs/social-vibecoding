@@ -220,6 +220,36 @@ test('the drawer starts closed whatever waits; open is remembered on the device;
   assert.match(source, /try \{ window\.localStorage\.setItem\(HIDDEN_KEY, open \? '1' : '0'\); \} catch/);
 });
 
+// #5373: the drawer ends at its last group. The per-project "The bot's
+// slots on …" links that hung under Finished today are gone; the slots page
+// still opens from a held request's own card (./bot-track.tsx).
+test('the drawer ends at Finished today: no per-project slots links', () => {
+  const trackFixture = (extra = {}) => ({
+    key: `plant-pal#${extra.issueNumber || 12}`, appSlug: 'plant-pal', appName: 'Plant Pal', iconUrl: null, iconEmoji: null,
+    issueNumber: 12, title: 'Dark mode', firstVersion: false, state: 'building', step: 'build', why: null, waitingOn: null,
+    busy: false, try: 1, tryStartedAt: null, tryStarts: [], since: ago(30), rootId: null, askId: null, proposalId: null,
+    sessionId: null, links: { request: '#app/plant-pal/dev/i/12', proposal: null, project: '#app/plant-pal' }, ...extra,
+  });
+  const html = draw({
+    remembered: true,
+    work: work({
+      tracks: [
+        trackFixture({ issueNumber: 12, state: 'building' }),
+        trackFixture({ issueNumber: 13, state: 'vote' }),
+        trackFixture({ issueNumber: 14, state: 'held', step: null, why: 'slots', held: { limit: 'slots', position: 2, until: null } }),
+      ],
+    }),
+  });
+  assert.match(html, /data-bot-strip-group="progress"/);
+  assert.match(html, /data-bot-strip-group="held"/);
+  assert.doesNotMatch(html, /data-bot-strip-slots/, 'no slots links at the drawer\'s end');
+  const source = read(STRIP);
+  assert.doesNotMatch(source, /data-bot-strip-slots|bot\.strip\.slots/);
+  assert.equal(JSON.parse(read('frontend/locales/en/messages.json'))['bot.strip.slots'], undefined, 'the link\'s words are gone from the catalog');
+  // The held request's card keeps its own slots button.
+  assert.match(read('frontend/src/features/messages/bot-track.tsx'), /data-bot-track-slots/);
+});
+
 test('the strip is pinned under the bot chat\'s header and its sub-line says what the bot is for', () => {
   const screen = read('frontend/src/features/messages/index.tsx');
   assert.match(screen, /\{embedded \? null : <ThreadHeader \/>\}\s*(?:\{\/\*[^\n]*\*\/\}\s*)?\{botDm && !embedded \? <BotStrip \/> : null\}/);

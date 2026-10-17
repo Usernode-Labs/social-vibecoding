@@ -719,10 +719,6 @@
     "text": "On hold",
     "description": "The activity drawer at the top of the chat with Homeroom bot. Heading over the requests held back by a limit: they wait for a slot, or for the week's building time to reset."
   },
-  "bot.strip.slots": {
-    "text": "The bot's slots on {{project}}",
-    "description": "The activity drawer at the top of the chat with Homeroom bot. Link at the end of the drawer: opens the page listing what holds each of a project's Homeroom bot slots and what waits for one. {{project}} is the project's name."
-  },
   "bot.final.doneElsewhere": {
     "text": "Done another way",
     "description": "How a request the bot was working on ended, said on hover and to a screen reader beside its small status square: somebody else's change shipped what it asked for."
