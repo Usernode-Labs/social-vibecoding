@@ -336,7 +336,7 @@
     "description": "Title shown in the header bar, and as the browser tab's title, on the list of votes the person has cast on proposals."
   },
   "title.allApps": {
-    "text": "All apps",
+    "text": "Discover",
     "description": "Title shown in the header bar, and as the browser tab's title, on the screen that lists every app on Homeroom."
   },
   "title.communities": {

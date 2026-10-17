@@ -27,6 +27,12 @@ export const browseStore = createStore({
   level: 'list',
   /** null until the first _renderList; else an array of row descriptors. */
   rows: null,
+  /**
+   * The "Open site" row's descriptor ({ href, label }) while the search text
+   * is a web address (#5364), else null — so the prerender, which has no
+   * query, renders no site row and hydration is silent.
+   */
+  site: null,
   curated: true,
   grouped: true,
   moreExpanded: false,
