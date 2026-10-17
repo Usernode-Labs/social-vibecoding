@@ -9954,6 +9954,10 @@ const AppView = {
           // #4772: what Homeroom bot waits on this viewer for here
           // (services/workshop-waiting.js), for the Workshop's Waiting on you.
           waitingOnYou: (ghData && ghData.waitingOnYou && typeof ghData.waitingOnYou === 'object') ? ghData.waitingOnYou : null,
+          // #5385: what Homeroom bot has in hand for this viewer on this
+          // project, and where it needs them (botWorkOnApp, the drawer's
+          // own tracks), one entry per request: { number, waiting, track }.
+          homeroomBotWork: Array.isArray(ghData && ghData.homeroomBotWork) ? ghData.homeroomBotWork : [],
         };
       }
       // GitHub twins of open env-var proposals render as governance
@@ -10764,6 +10768,27 @@ const AppView = {
     return { label: PlatformI18n.t('changes:workshop.row.tag.specDraft'), tone: 'plain', glyph: 'lock', title: AppView.PRIVATE_DIVIDER_TITLE };
   },
   /**
+   * #5385: what Homeroom bot has in hand or needs the viewer for on this
+   * project, by request number: Map(number → { waiting, track }), from the
+   * request list's `homeroomBotWork` (services/workshop-waiting.js
+   * botWorkOnApp — the Activity drawer's own tracks, already keyed to the
+   * signed-in person, so only their requests are here). Empty under
+   * ?shot=mine-empty, as the strip is.
+   */
+  _workshopBotWork() {
+    const out = new Map();
+    if (AppView._workshopShot === 'mine-empty') return out;
+    const list = (AppView._ghIssuesMeta && AppView._ghIssuesMeta.homeroomBotWork) || [];
+    for (const entry of Array.isArray(list) ? list : []) {
+      const n = Number(entry && entry.number);
+      if (Number.isInteger(n) && n > 0 && entry.track && !out.has(n)) {
+        out.set(n, { waiting: !!entry.waiting, track: entry.track });
+      }
+    }
+    return out;
+  },
+
+  /**
    * #4772: what Homeroom bot waits on the viewer for on this project, for
    * the Workshop's Waiting on you: Map(item key, as _workshopItemKey makes
    * it → { why: 'plan' | 'question', at }), one reason an item, the first
@@ -10783,6 +10808,14 @@ const AppView = {
     if (w && typeof w === 'object') {
       for (const p of list(w.plans)) if (n(p && p.number)) put(`issue:${n(p.number)}`, { why: 'plan', at: p.at || null });
       for (const q of list(w.questions)) if (n(q && q.number)) put(`issue:${n(q.number)}`, { why: 'question', at: q.at || null });
+    }
+    // #5385: what the bot's own track says waits on the viewer — it cannot
+    // build the request as written, a look found nothing to go on, failing
+    // checks handed back to a person. Plans and questions are already named
+    // above and `put` keeps the first entry, so a request listed there keeps
+    // its words and is listed once.
+    for (const [number, entry] of AppView._workshopBotWork()) {
+      if (entry.waiting) put(`issue:${number}`, { why: 'bot', at: (entry.track && entry.track.since) || null });
     }
     const me = App.user && App.user.username;
     if (me) {
@@ -10853,6 +10886,10 @@ const AppView = {
   _workshopWaitingTag(w) {
     if (w.why === 'plan') return { label: PlatformI18n.t('changes:workshop.row.tag.planWaits'), tone: 'warn' };
     if (w.why === 'question') return { label: PlatformI18n.t('changes:workshop.row.tag.botAsked'), tone: 'warn' };
+    // #5385: a wait the bot's own track says needs no extra tag — the row
+    // already wears the bot tag, and the track's step where there is no
+    // plan or question tag to say why.
+    if (w.why === 'bot') return null;
     return null;
   },
 
@@ -10875,6 +10912,19 @@ const AppView = {
             : AppView._proposalCardModel(item);
     if (!card) return null;
     const brief = AppView._workshopBrief(kind, item, card);
+    // #5385: a request Homeroom bot has in hand for the viewer wears the
+    // bot tag and carries its track, whose step the What's happening row
+    // ends with in the drawer's words (week-pages.tsx HappenedRow). This
+    // brief only: the board builds its own from the same card model.
+    const bot = kind === 'issue' ? AppView._workshopBotWork().get(Number(item.number)) : null;
+    if (bot) {
+      return AppView._attachRowConversation(
+        {
+          t: 'card', key: `mine:${card.key}`, card,
+          brief: { ...brief, requested: true, tags: [AppView._botForYouTag()], botTrack: bot.track },
+        }, kind, item,
+      );
+    }
     // #4728: a change the bot built from the viewer's own request wears
     // the bot tag in Your work, so the row says it was taken up at a
     // glance and not only in its maker line. First among a proposal's
@@ -12272,6 +12322,23 @@ const AppView = {
     // on this screen you cannot find another way.
     const meId = App.user && App.user.id;
     const mineOf = (bucket, pick) => bucket.filter(pick);
+    // #5385: a request made for the viewer that Homeroom bot has in hand on
+    // this project is their work to watch as it happens — the Activity
+    // drawer's rows, not only the proposal once it is one. In hand only:
+    // what the bot needs them for is Waiting on you's (_workshopWaitingOn).
+    // A request the board does not have (closed, past the list) gets no row,
+    // and one the strip already carries — a claim of theirs, or a bot
+    // request they have picked up — is not added twice. The de-dup at the
+    // end of the list below drops a request once the bot's proposal or
+    // merged change is drawn instead (#4457).
+    const myIssueNumbers = new Set(mineOf(buckets.inProgress,
+      (e) => e.kind === 'issue' && AppView._issueIsMine(e.item)).map((e) => Number(e.item.number)));
+    const botIssueItems = [];
+    for (const [n, entry] of AppView._workshopBotWork()) {
+      if (entry.waiting || myIssueNumbers.has(n)) continue;
+      const issue = AppView._visibleGhIssues().find((i) => Number(i.number) === n);
+      if (issue) botIssueItems.push({ kind: 'issue', item: issue });
+    }
     const mineItems = [
       ...mineOf(buckets.inProgress, (e) => e.kind === 'my-session')
         .map((e) => ({ kind: 'my-session', item: e.item })),
@@ -12323,6 +12390,10 @@ const AppView = {
         && ['deploying', 'delivery_pending']
           .includes((AppView.statusPillState(m) || {}).key))
         .map((m) => ({ kind: 'merged', item: m })),
+      // #5385: the bot's in-hand work on the viewer's requests, above —
+      // sorted with the rest by the same activity, and dropped by the
+      // linked_issues filter below once its build is a proposal.
+      ...botIssueItems,
     ].sort((a, b) => activityOf(b.kind, b.item) - activityOf(a.kind, a.item))
       // #4457: a request your own change addresses is that change's, and is
       // drawn as it ("Change #4456 · yours · for #4455"), not a second time.
@@ -29500,6 +29571,13 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
 
 if (typeof window !== 'undefined') {
   window.AppView = AppView;
+  // #5385: the bot started or finished a piece of work for this viewer (the
+  // socket's homeroom_bot_work_changed, relayed as a window event by
+  // app.js): the Workshop's rows of it re-read, as the Activity drawer
+  // does. refreshDevData does nothing off the board.
+  window.addEventListener('homeroom-bot-work-changed', () => {
+    AppView.refreshDevData('homeroom-bot');
+  });
   // #1038: wire the Dev board's card surfaces to live session state. Both
   // subscriptions are registered ONCE here rather than per mount, so no
   // repaint or navigation can leave the board stranded on a stale spinner;

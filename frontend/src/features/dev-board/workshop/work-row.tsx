@@ -200,16 +200,17 @@ const TAG_RANK: Record<RowTag['tone'], number> = { bad: 0, warn: 1, run: 2, ok: 
  * Who made it is said at most once, never as a name in the words. What you
  * made says nothing: everything here is yours unless it says otherwise.
  * Homeroom bot's change from your request says so with its tag (#4728),
- * and a private session of yours keeps its "Only you". A request you are
- * working on names nobody here: it is often somebody else's, its words say
- * who asked, and its "Picked up · you" already says you are on it.
+ * and so does its work in hand on your request (#5385, `botTrack`). A
+ * request you are working on names nobody here: it is often somebody
+ * else's, its words say who asked, and its "Picked up · you" already says
+ * you are on it.
  */
 export function lineTags(b: RowBrief, card: DevCardModel): { ranked: RowTag[]; maker: RowTag | null } {
   const pill = card.pill?.state || null;
   const said = b.kind === 'live' && pill ? pill.label : null;
   const tags = (said !== null ? b.tags.filter((t) => t.tone !== 'ok' && t.label !== said) : b.tags)
     .filter((t) => t.glyph !== 'eye');
-  const maker = b.kind === 'request' ? null
+  const maker = (b.kind === 'request' && !b.botTrack) ? null
     : tags.find((t) => t.glyph === 'bot') || (b.mine ? tags.find((t) => t.glyph === 'lock') : undefined) || null;
   return { ranked: tags.filter((t) => t !== maker).sort((x, y) => TAG_RANK[x.tone] - TAG_RANK[y.tone]), maker };
 }

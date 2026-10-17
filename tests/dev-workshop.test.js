@@ -6779,3 +6779,113 @@ test('a run that does not know its total yet still shows its bar: "Checks" on th
   const html = renderToHtml(createElement(WorkRow, { row: { ...row, brief }, slug: 'demo-app' }));
   assert.match(html, /<span class="dev-ws-tag" data-tone="run" title="Checks starting\.[^"]*"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span>Checks<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="Checks starting"><\/span><\/span>/);
 });
+
+// ── #5385: the bot's work on your requests, as it happens ──
+
+test('#5385: a request of yours Homeroom bot has in hand is a Your work row, in the drawer\'s words', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  const trackSvc = require('../src/services/homeroom-bot-track');
+  const track = (number, title, job, extra = {}) => plain(trackSvc.trackOf({
+    job: { key: `demo-app#${number}`, appSlug: 'demo-app', appName: 'Demo app', issueNumber: number,
+      title, firstVersion: false, ...job }, ...extra,
+  }));
+  // Request 12: the bot is writing its plan (in hand). Request 13: it
+  // cannot build it as written (waiting). homeroomBotWork already carries
+  // only the signed-in person's, so no further gate is needed here.
+  AppView._ghIssuesMeta = {
+    waitingOnYou: { plans: [], questions: [] },
+    homeroomBotWork: [
+      { number: 12, waiting: false, track: track(12, 'Dark mode resets', { stage: 'planning', since: at(0.02) }) },
+      { number: 13, waiting: true, track: track(13, 'Keyboard voting', { outcome: 'blocked', at: at(0.05) }) },
+    ],
+  };
+  const v = AppView._workshopView();
+  assert.deepEqual(plain(v.mine.rows).map((r) => r.key), ['mine:issue:12'], 'the request in hand is Your work');
+  assert.equal(v.mine.count, 1, 'it counts in Your work');
+  const row = v.mine.rows[0];
+  assert.equal(row.group, 'work');
+  assert.deepEqual(plain(row.brief.tags),
+    [{ label: message('changes:workshop.row.tag.homeroomBot'), tone: 'plain', glyph: 'bot' }],
+    'the same Homeroom bot tag the bot\'s changes wear');
+  // What needs the viewer is Waiting on you, not Your work.
+  const extra = plain(v.mine.extra);
+  assert.deepEqual(extra.map((r) => r.key), ['mine:issue:13']);
+  assert.equal(extra[0].group, 'waiting');
+
+  const html = workshopHtml(AppView, 'workshop');
+  const part = (attr) => {
+    const from = html.indexOf(attr);
+    const next = html.indexOf('<div class="dev-ws-hpart"', from + 1);
+    const end = html.indexOf('</section>', from);
+    return html.slice(from, next > 0 && next < end ? next : end);
+  };
+  const work = part('data-ws-mine=""');
+  const wait = part('data-ws-mine-section="waiting"');
+  // The step at the line's end, in the drawer's own words: running work in
+  // the run tone, a wait in the warn one. Who made it goes first.
+  assert.match(work, /<span class="dev-ws-hrow-tag" data-tone="plain"><svg[^]*?<\/svg>Homeroom bot<\/span>/);
+  assert.match(work, /<span class="dev-ws-hrow-tag" data-ws-bot-step="" data-tone="run">Writing the plan<\/span>/);
+  assert.match(wait, /<span class="dev-ws-hrow-tag" data-ws-bot-step="" data-tone="warn">It can&#x27;t build this as written: add detail<\/span>/);
+  // The row opens the chat with the bot at the request's thread, where the
+  // drawer's row goes; a modified click keeps the request page's href.
+  assert.match(work, /href="#app\/demo-app\/dev\/issues\/12"/);
+  assert.match(work, /<li class="dev-ws-hrow" data-ws-row="mine:issue:12" data-ws-kind="request"/);
+
+  // A plan the list already reports (waitingOnYou) is listed once, and
+  // keeps its words; the bot tag joins it.
+  AppView._ghIssuesMeta.waitingOnYou.plans = [{ number: 14, at: at(0.1) }];
+  AppView._ghIssues.push({ number: 14, title: 'Rota export', createdAt: at(1), updatedAt: at(1), user: 'me', htmlUrl: 'https://github.com/x/y/issues/14' });
+  AppView._ghIssuesMeta.homeroomBotWork.push({
+    number: 14, waiting: true,
+    track: track(14, 'Rota export', { stage: 'plan', since: at(0.1) }),
+  });
+  const v2 = AppView._workshopView();
+  const extras = plain(v2.mine.extra).filter((r) => r.key === 'mine:issue:14');
+  assert.equal(extras.length, 1, 'the request is Waiting on you once');
+  assert.equal(extras[0].brief.tags[0].label, message('changes:workshop.row.tag.planWaits'), 'its plan words keep the start');
+  assert.deepEqual(extras[0].brief.tags[1],
+    { label: message('changes:workshop.row.tag.homeroomBot'), tone: 'plain', glyph: 'bot' });
+  const html2 = workshopHtml(AppView, 'workshop');
+  const from2 = html2.indexOf('data-ws-mine-section="waiting"');
+  const nextPart2 = html2.indexOf('<div class="dev-ws-hpart"', from2 + 1);
+  const wait2 = html2.slice(from2, nextPart2 > 0 ? nextPart2 : undefined);
+  assert.match(wait2, /data-tone="warn">Plan ready: tap Build it<\/span>/);
+  // Row 14 keeps the plan's words alone; the track's own wait is not said
+  // twice on the same line (13's own row may still carry its words).
+  const row14 = wait2.slice(wait2.indexOf('data-ws-row="mine:issue:14"'));
+  assert.ok(!row14.slice(0, row14.indexOf('</li>')).includes('data-ws-bot-step'), 'the track\'s own wait is not said twice');
+
+  // Once the bot's build is a proposal made for the viewer, that proposal
+  // row is the request (#4457's de-dup), and the in-hand row is not drawn
+  // a second time.
+  AppView._ghIssuesMeta.homeroomBotWork.push({
+    number: 15, waiting: false,
+    track: track(15, 'Shared kudos', { stage: 'building', since: at(0.01) }),
+  });
+  AppView._ghIssues.push({ number: 15, title: 'Shared kudos', createdAt: at(1), updatedAt: at(1), user: 'me', htmlUrl: 'https://github.com/x/y/issues/15' });
+  AppView._proposals.push({ id: 71, pr_number: 212, pr_title: 'Shared kudos, built', status: 'promoted', username: 'homeroom_bot',
+    user_id: 900, requested_by_me: true, created_at: at(0.5), promoted_at: at(0.5), last_message_at: at(0.5),
+    linked_issues: [15], my_vote: null });
+  const v3 = AppView._workshopView();
+  assert.ok(!plain(v3.mine.rows).some((r) => r.key === 'mine:issue:15'), 'the request is not a second row');
+  assert.ok(plain(v3.mine.rows).some((r) => r.key === 'mine:proposal:71'), 'its proposal is Your work');
+
+  // A request the board does not have (closed, past the list) gets no row.
+  AppView._ghIssuesMeta.homeroomBotWork.push({
+    number: 999, waiting: false,
+    track: track(999, 'Gone', { stage: 'building', since: at(0.01) }),
+  });
+  assert.ok(!plain(AppView._workshopView().mine.rows).some((r) => r.key === 'mine:issue:999'));
+
+  // The declared check's empty strip stays empty.
+  AppView._workshopShot = 'mine-empty';
+  const shot = AppView._workshopView();
+  assert.deepEqual(plain(shot.mine.rows), []);
+  assert.deepEqual(plain(shot.mine.extra), []);
+  assert.equal(AppView._workshopShot, 'mine-empty');
+
+  // The bot row's click goes to the chat, not the side panel (week-pages.tsx).
+  assert.match(read('frontend/src/features/dev-board/workshop/week-pages.tsx'),
+    /callAppView\('openBotChatFromRequest', b\.n\)/);
+});

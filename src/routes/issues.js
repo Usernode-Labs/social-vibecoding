@@ -2485,6 +2485,16 @@ function issueRoutes(config) {
         ? workshopWaiting.demoWaiting()
         : await workshopWaiting.waitingOnViewer(pool, { appId: app.id, userId: req.user.id });
 
+      // #5385: what Homeroom bot has in hand for this viewer on THIS
+      // project, and where it needs them, as the Activity drawer's tracks
+      // (services/homeroom-bot-tray.js workFor, already keyed to the signed-
+      // in person), so the Workshop's What's happening draws the work as it
+      // happens and cannot disagree with the drawer. The staging demo shows
+      // the two mock requests' rows.
+      const homeroomBotWork = IS_STAGING && req.query.demo === '1'
+        ? workshopWaiting.demoBotWork(app)
+        : await workshopWaiting.botWorkOnApp(pool, { app, user: req.user });
+
       res.json({
         issues,
         truncatedList: !!result.truncatedList,
@@ -2499,6 +2509,7 @@ function issueRoutes(config) {
         limit: WEEKLY_BOUNTY_LIMIT,
         ...(botDoor ? { homeroomBot: botDoor } : {}),
         waitingOnYou,
+        homeroomBotWork,
       });
     } catch (err) {
       log.error('issues', 'Failed to list GitHub issues', { message: err.message });

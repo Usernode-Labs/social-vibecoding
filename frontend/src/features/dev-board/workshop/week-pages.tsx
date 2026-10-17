@@ -31,7 +31,8 @@ import { ChevronDownIcon, ChevronRightIcon, LockIcon, PencilSquareIcon, Sparkles
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { getLanguage, t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
-import { openHref } from '../card/fold';
+import { trackLine, trackShort } from '../../messages/bot-track';
+import { callAppView, openHref } from '../card/fold';
 import type { RowBrief, RowTag } from '../card/model';
 import { PageBack } from './page-back';
 import { TILE, WorkList, lineTags, topicRef, type CardRow, type TopicRef } from './work-row';
@@ -284,6 +285,8 @@ export function HappenedRow({ row, fresh, slug, on = false, onOpen, standing = f
   standing?: boolean;
 }): ReactNode {
   const t = useMessages('project');
+  // #5385: a bot row's step words come from the messages' bot.track catalog.
+  useMessages('messages');
   const b = row.brief;
   if (!b) return null;
   const card = row.card;
@@ -300,6 +303,23 @@ export function HappenedRow({ row, fresh, slug, on = false, onOpen, standing = f
   const stand = standing ? lineTags(b, card) : null;
   const first = stand && !going && !stuck && stand.ranked.length ? stand.ranked[0] : null;
   const maker = stand ? stand.maker : null;
+  // #5385: where the bot is on the viewer's request, in the drawer's own
+  // words, at the line's end. A wait already said by a plan or question
+  // tag (Waiting on you's) is not said twice; the tone asks for the viewer
+  // only when the track does.
+  const bot = b.botTrack || null;
+  const botStep = bot && !first ? (bot.state === 'held' ? trackShort(bot) : trackLine(bot)) : null;
+  const botStepTone = bot && (bot.state === 'waiting' || (bot.state === 'checks' && bot.why === 'handed_over'))
+    ? 'warn' : 'run';
+  // A bot row opens the chat with Homeroom bot at the request's thread, the
+  // drawer row's destination — never the side panel (onOpen). A modified
+  // click keeps the request page's href. If the request has no thread yet,
+  // the chat opens (openBotChatFromRequest).
+  const onBotClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+    event.preventDefault();
+    callAppView('openBotChatFromRequest', b.n);
+  };
   return (
     <li
       className="dev-ws-hrow"
@@ -321,7 +341,7 @@ export function HappenedRow({ row, fresh, slug, on = false, onOpen, standing = f
             className="dev-ws-hrow-link"
             href={href}
             aria-current={on ? 'true' : undefined}
-            onClick={ref && onOpen ? (e) => onOpen(e, ref) : undefined}
+            onClick={bot ? onBotClick : (ref && onOpen ? (e) => onOpen(e, ref) : undefined)}
           >
             {card.title.text}
           </a>
@@ -330,8 +350,20 @@ export function HappenedRow({ row, fresh, slug, on = false, onOpen, standing = f
           {b.mine && !standing ? <span className="dev-ws-hrow-you">{t('project:happened.row.you')}</span> : null}
           {going ? <span className="dev-ws-hrow-tag" data-tone="run">{t('project:happened.row.goingLive')}</span> : null}
           {stuck && s ? <span className="dev-ws-hrow-tag" data-tone="bad">{s.label}</span> : null}
-          {first ? <MetaTag tag={first} /> : null}
-          {maker ? <MetaTag tag={maker} /> : null}
+          {bot ? (
+            <>
+              {maker ? <MetaTag tag={maker} /> : null}
+              {first ? <MetaTag tag={first} /> : null}
+              {botStep ? (
+                <span className="dev-ws-hrow-tag" data-ws-bot-step="" data-tone={botStepTone}>{botStep}</span>
+              ) : null}
+            </>
+          ) : (
+            <>
+              {first ? <MetaTag tag={first} /> : null}
+              {maker ? <MetaTag tag={maker} /> : null}
+            </>
+          )}
           {when && when.text ? (
             <time className="dev-ws-hrow-ago" dateTime={new Date(at).toISOString()} title={when.title}>{when.text}</time>
           ) : null}
