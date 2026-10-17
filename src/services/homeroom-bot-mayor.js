@@ -2555,10 +2555,10 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     // the one under the message; this one was never shown.
     await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE id = $1 AND message_id IS NULL', [action.id]);
     await pool.query(
-      `UPDATE homeroom_bot_dm_actions a SET message_id = $2
-        WHERE a.id = (SELECT id FROM homeroom_bot_dm_actions WHERE user_id = $3 AND conversation_id = $4 AND message_id IS NULL ORDER BY id DESC LIMIT 1)
-          AND NOT EXISTS (SELECT 1 FROM homeroom_bot_dm_actions WHERE message_id = $2)`,
-      [action.id, sent.messageId, user.id, conversationId]);
+      `UPDATE homeroom_bot_dm_actions a SET message_id = $1
+        WHERE a.id = (SELECT id FROM homeroom_bot_dm_actions WHERE user_id = $2 AND conversation_id = $3 AND message_id IS NULL ORDER BY id DESC LIMIT 1)
+          AND NOT EXISTS (SELECT 1 FROM homeroom_bot_dm_actions WHERE message_id = $1)`,
+      [sent.messageId, user.id, conversationId]);
   } else if (sent?.messageId) {
     await pool.query('UPDATE homeroom_bot_dm_actions SET message_id = $2 WHERE id = $1', [action.id, sent.messageId]);
   }
@@ -2714,10 +2714,26 @@ async function decideOfferTap(pool, config, { user, actionId, choice, answers = 
  * and carries the act on), then done and answered, as a typed answer is.
  * Throws on a failure a retry can cure. Resolves what it did.
  */
-async function actOnTap(pool, config, { userId, actionId, choice, answers = [], key, deps = {} }) {
+async function actOnTap(pool, config, { userId, actionId, choice, answers = [], key, gaveUp = false, deps = {} }) {
   const { rows: [action] } = await pool.query('SELECT * FROM homeroom_bot_dm_actions WHERE id = $1 AND user_id = $2', [Number(actionId), Number(userId)]);
   if (!action) return { done: false, why: 'gone' };
   const dm = dmModule(deps);
+  // The act failed for good (its work exhausted): what it claimed, or never
+  // got to, is settled as failed and said, once, under the tap's own ack.
+  if (gaveUp) {
+    const { rows: failed } = await pool.query(
+      `UPDATE homeroom_bot_dm_actions SET status = 'failed', error = 'gave_up', decided_at = COALESCE(decided_at, NOW()), decided_key = $2
+        WHERE id = $1 AND (status = 'open' OR decided_key = $2) AND issue_number IS NULL RETURNING id`, [action.id, String(key)]);
+    if (!failed.length) return { done: false, why: 'decided' };
+    const bot = deps.bot || await dm.botAccount(pool);
+    if (bot) {
+      await dm.sendDm(pool, {
+        bot, userId: Number(userId), content: 'That didn\'t work just now. Try again in a minute.',
+        idempotencyKey: `hrbot-offer-tap-${action.id}`, replyToId: action.message_id || null,
+      });
+    }
+    return { done: false, why: 'gave_up' };
+  }
   const { rows: [u] } = await pool.query(
     'SELECT id, username, is_synthetic, has_platform_access, is_admin, private_member_since FROM users WHERE id = $1', [Number(userId)]);
   if (!u) return { done: false, why: 'gone' };
@@ -2901,7 +2917,11 @@ async function fileRequest(pool, config, {
   if (fileKey) {
     const { rows: [had] } = await pool.query(
       `SELECT github_issue_number FROM issues WHERE app_id = $1 AND payload->>'fileKey' = $2 LIMIT 1`, [app.id, String(fileKey)]);
-    if (had) return { issueNumber: Number(had.github_issue_number), queueId: null, again: true };
+    if (had) {
+      const { rows: [queued] } = await pool.query(
+        'SELECT id FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2 LIMIT 1', [app.id, Number(had.github_issue_number)]);
+      return { issueNumber: Number(had.github_issue_number), queueId: queued ? Number(queued.id) : null, again: true };
+    }
   }
   const m = String(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
   if (!m || !github.isEnabled()) throw new Error('github_unavailable');

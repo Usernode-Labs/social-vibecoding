@@ -217,13 +217,21 @@ const held = (s: VState, e: Event<any>, _f: Facts, ctx: TransitionContext): Outc
   return { ...out, writes: [{ type: 'heldPost', appId: e.payload.appId, issueNumber: e.payload.place.ref, kind: e.payload.kind, at: ctx.now.toISOString() }] };
 };
 
+// A note's result, kept (so the same work owed again is owed once). An act
+// that failed for good is settled as failed and said (`offer:<id>:failed`),
+// never left deciding with its buttons up.
 function noteResult(status: Note['status']) {
   return {
     guard: (s: VState, e: Event<WorkResultPayload>): Check =>
       ((s as Live).data.notes[e.payload.workKey]?.status === 'pending' ? ok() : reject('stale_result')),
     to: (s: VState, e: Event<WorkResultPayload>): Outcome<VState> => {
       const d = (s as Live).data;
-      return step(s.name as Name, { ...d, notes: { ...d.notes, [e.payload.workKey]: { ...d.notes[e.payload.workKey]!, status } } });
+      const notes = { ...d.notes, [e.payload.workKey]: { ...d.notes[e.payload.workKey]!, status } };
+      const m = /^offer:(\d+)$/.exec(e.payload.workKey);
+      if (status === 'done' || e.payload.kind !== WORK.act || !m) return step(s.name as Name, { ...d, notes });
+      const key = `${e.payload.workKey}:failed`;
+      const work: WorkRequest = { kind: WORK.act, key, input: { offerId: Number(m[1]), userId: 0, choice: 'no', key: e.payload.workKey, gaveUp: true } };
+      return step(s.name as Name, { ...d, notes: { ...notes, [key]: { kind: WORK.act, status: 'pending' } } }, { work: [work] });
     },
   };
 }

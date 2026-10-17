@@ -487,7 +487,10 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
   const since = Math.max(Number(through) || 0, await answeredThrough(pool, key));
   const messages = await placeMessages(pool, { app, place });
   const cutoff = Date.now() - ANSWER_WINDOW_MINUTES * 60 * 1000;
-  const fresh = messages.filter((m) => Number(m.id) > since && m.user_id && Number(m.user_id) !== Number(bot.id)
+  // A reply thread's root is its own place's (the chat or topic it was
+  // written in, which answers it), never the thread's to answer again.
+  const root = place.type === 'message' ? Number(place.ref) : 0;
+  const fresh = messages.filter((m) => Number(m.id) > since && Number(m.id) !== root && m.user_id && Number(m.user_id) !== Number(bot.id)
     && m.msg_type === 'message' && new Date(m.created_at).getTime() >= cutoff);
   record.throughId = messages.length ? Math.max(since, Number(messages[messages.length - 1].id)) : since;
   if (!fresh.length) return finishWith('quiet');
@@ -502,13 +505,18 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
     });
     if (decided.speak) addressed.push({ message: m, speaker, why: decided.why });
   }
-  // What the project's chat does with what nobody said to the bot: a
-  // newcomer's idea, offered to be suggested (homeroom-bot-chat.js).
-  if (chatPlace) {
-    const told = new Set(addressed.map((a) => Number(a.message.id)));
-    await chatModule(deps).heardInChat(pool, cfg, { app, place, messages: fresh.filter((m) => !told.has(Number(m.id))), deps });
+  // What the project's chat does with what nobody said to the bot (a
+  // newcomer's idea, offered to be suggested; the older ask with the voice
+  // off there: homeroom-bot-chat.js), after the reply, which never waits on
+  // it.
+  const told = new Set(addressed.map((a) => Number(a.message.id)));
+  const restOfChat = () => (chatPlace
+    ? chatModule(deps).heardInChat(pool, cfg, { app, place, messages: fresh.filter((m) => !told.has(Number(m.id))), deps })
+    : null);
+  if (!addressed.length) {
+    await restOfChat();
+    return finishWith('quiet');
   }
-  if (!addressed.length) return finishWith('quiet');
   const last = addressed[addressed.length - 1];
   record.speakerId = last.speaker.id;
   const answer = addressed.map((a) => ({ message: a.message, username: a.speaker.username, userId: a.speaker.id }));
@@ -517,16 +525,19 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
     const sent = await say(pool, { app, place, bot, text: SORRY_TEXT, answer, mark, deps });
     record.replyId = sent?.id || null;
     record.error = 'gave_up';
+    await restOfChat();
     return finishWith('fallback');
   }
   if (await turnsLastHour(pool, key) >= MAX_TURNS_PER_PLACE_HOUR) {
     record.error = 'busy_place';
+    await restOfChat();
     return finishWith('quiet');
   }
   const out = await converse(pool, cfg, {
     app, place, bot, settings, messages, fresh, addressed, deps, record, mark,
   });
   record.replyId = out?.messageId || null;
+  await restOfChat();
   return finishWith(out?.outcome || (record.replyId ? 'replied' : 'quiet'));
 }
 
@@ -1395,7 +1406,7 @@ async function decideOffer(pool, config, { app, user: viewer, messageId, choice,
  * gate read again, done, and said. Throws on a failure a retry can cure.
  * Resolves { decision }.
  */
-async function actOnOffer(pool, config, { offerId, userId, choice, key, deps = {} }) {
+async function actOnOffer(pool, config, { offerId, userId, choice, key, gaveUp = false, deps = {} }) {
   const { rows: [offer] } = await pool.query(
     `SELECT o.*, m.thread_type, m.thread_ref, m.id AS msg_id, a.slug AS app_slug
        FROM homeroom_bot_voice_offers o JOIN chat_messages m ON m.id = o.message_id JOIN apps a ON a.id = o.app_id
@@ -1409,23 +1420,36 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, deps = {
     [offer.id, String(key)],
   );
   if (!claimed.length) {
-    // Decided already: by this item (a retry after it settled), or before it.
-    return { decision: offer.decided_key === String(key) ? offer.status : 'already' };
+    // Decided already, before it: nothing of this act's.
+    if (offer.decided_key !== String(key)) return { decision: 'already' };
+    // By this item, which a restart cut short after it settled: the buttons
+    // and its line, once (each by its mark).
+    const app = await appRow(pool, offer.app_id);
+    const bot = await dmModule(deps).botAccount(pool);
+    if (app) await markOfferMessage(pool, { app, messageId: Number(offer.msg_id), status: offer.status, deps });
+    const said = offer.result?.said;
+    if (app && bot && said) {
+      await say(pool, { app, place: { type: offer.thread_type, ref: Number(offer.thread_ref) }, bot, text: said, answer: [], mark: { key: `${key}:said` }, deps });
+    }
+    return { decision: offer.status };
   }
   const app = await appRow(pool, offer.app_id);
   const user = await personRow(pool, userId);
   const bot = await dmModule(deps).botAccount(pool);
   const place = { type: offer.thread_type, ref: Number(offer.thread_ref) };
+  // The act failed for good (its work exhausted): it is settled as failed,
+  // and said, rather than left deciding with its buttons up.
   const messageId = Number(offer.msg_id);
   const settle = async (status, result, said) => {
     await pool.query(
       `UPDATE homeroom_bot_voice_offers SET status = $2, result = $3, decided_at = NOW() WHERE id = $1`,
-      [offer.id, status, JSON.stringify(result || {})],
+      [offer.id, status, JSON.stringify({ ...(result || {}), ...(said ? { said } : {}) })],
     );
     await markOfferMessage(pool, { app, messageId, status, deps });
     if (said && bot) await say(pool, { app, place, bot, text: said, answer: [], mark: { key: `${key}:said` }, deps });
     return { decision: status };
   };
+  if (gaveUp) return settle('failed', { error: 'gave_up' }, 'That didn\'t work just now. Try again in a minute.');
   // Keep it / Not now: the buttons go, and nothing is said.
   if (choice !== 'yes' || !app || !user) return settle('declined', {}, null);
   const args = offer.args || {};
@@ -1436,6 +1460,7 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, deps = {
     if (!gate.ok) {
       // Withdrawn already (by this act, before a restart): it is done.
       if (await withdrawnBy(pool, args.sessionId)) {
+        await dropAsks(pool, args.sessionId, { strict: true });
         return settle('done', { sessionId: args.sessionId }, 'Withdrawn: its pull request is closed and its preview is down. The request stays open.');
       }
       return settle('failed', { error: gate.code }, `I couldn't withdraw it: ${gate.error}`);
@@ -1464,7 +1489,9 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, deps = {
     // Filed already for this message (by this act, before a restart): the
     // same request, not a second one.
     const filedBefore = await chat.filedFor(pool, Number(args.messageId));
-    if (!filedBefore && await chat.filedLately(pool, person.id) >= chat.FILINGS_PER_HOUR) {
+    const { rows: [onGitHub] } = await pool.query(
+      `SELECT 1 FROM issues WHERE app_id = $1 AND payload->>'fileKey' = $2 LIMIT 1`, [app.id, `voice-offer:${offer.id}`]);
+    if (!filedBefore && !onGitHub && await chat.filedLately(pool, person.id) >= chat.FILINGS_PER_HOUR) {
       return settle('failed', { error: 'busy' }, 'You\'ve asked me for a lot in the last hour. Try File it again in a little while.');
     }
     const full = await mayor.findApp(pool, app.slug);
@@ -1672,7 +1699,9 @@ async function sayReport(pool, config, { appId, place, sessionId, runTag, asks: 
     `SELECT a.*, (SELECT username FROM users WHERE id = a.asker_id) AS asker
        FROM homeroom_bot_change_asks a WHERE a.id = ANY($1::int[]) ORDER BY a.id`, [askIds.map(Number)]);
   if (!asks.length) return null;
-  const mark = { key: `report:${runTag}` };
+  // One report per follow-up and place (a follow-up's asks from two places
+  // owe two).
+  const mark = { key: `report:${runTag}:${placeKey(appId, place)}` };
   const had = await replyOf(pool, { app, place, bot, turnKey: mark.key });
   if (had) return { id: had.id, again: true };
   const text = await composeReport(pool, cfg, { app, session: session || { id: sessionId }, bot, asks, outcome, deps })

@@ -320,6 +320,46 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.deepEqual(out, { decision: 'done' }, 'its own claim passes');
     assert.equal(filed.length, 1);
     assert.match(sent[sent.length - 1].content, /Filed as request #14/);
+    // Settled, and its process went before its line: the retry says it, once.
+    const lines = sent.length;
+    await pool.query(`DELETE FROM chat_messages WHERE metadata->'homeroomBot'->'turn'->>'key' = 'offer:cut:said'`);
+    sent.length = 0;
+    assert.deepEqual(await voice.actOnOffer(pool, {}, { offerId: o.id, userId: sam.id, choice: 'yes', key: 'offer:cut', deps: { ws, chatSvc } }),
+      { decision: 'done' });
+    assert.equal(filed.length, 1, 'nothing filed again');
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].content, /Filed as request #14/);
+    await voice.actOnOffer(pool, {}, { offerId: o.id, userId: sam.id, choice: 'yes', key: 'offer:cut', deps: { ws, chatSvc } });
+    assert.equal(sent.length, 1, 'and once');
+    assert.ok(lines);
+  });
+
+  await t.test('an act that failed for good settles its offer as failed and says so, instead of leaving it deciding', async () => {
+    sent.length = 0;
+    const id = await say(sam, '@Homeroom bot withdraw it');
+    const { rows: [o] } = await pool.query(
+      `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id) VALUES ($1, 'withdraw_change', '{}', $2) RETURNING id`, [app.id, sam.id]);
+    const reply = await say(homeroomBot, 'Withdraw it?', { type: 'message', ref: id }, { homeroomBot: { kind: 'voice', offer: { id: o.id, status: 'open' } } });
+    await pool.query(`UPDATE homeroom_bot_voice_offers SET message_id = $2, status = 'deciding', decided_key = 'offer:x' WHERE id = $1`, [o.id, reply]);
+    assert.deepEqual(await voice.actOnOffer(pool, {}, { offerId: o.id, userId: 0, choice: 'no', key: 'offer:x', gaveUp: true, deps: { ws } }),
+      { decision: 'failed' });
+    const { rows: [row] } = await pool.query('SELECT status FROM homeroom_bot_voice_offers WHERE id = $1', [o.id]);
+    assert.equal(row.status, 'failed');
+    assert.match(sent[0].content, /didn't work just now/);
+  });
+
+  await t.test('a reply thread\'s turn never answers again the mention it hangs off (its chat\'s)', async () => {
+    sent.length = 0;
+    const model = scripted([{ tool: 'reply', args: { text: 'You are welcome.' } }]);
+    const root = await say(sam, '@Homeroom bot add a dark mode?');
+    const reply = await say(homeroomBot, 'Drafted.', { type: 'message', ref: root });
+    const thanks = await say(sam, 'thanks!', { type: 'message', ref: root });
+    const out = await turn({ type: 'message', ref: root }, model);
+    assert.equal(out.outcome, 'replied');
+    const asked = model.seen[0].messages[1].content;
+    assert.match(asked, new RegExp(`Answer what was said to you in #${thanks} by`));
+    assert.doesNotMatch(asked.slice(asked.lastIndexOf('Answer what was said')), new RegExp(`#${root}\\b`), 'not the root');
+    assert.ok(reply);
   });
 
   await t.test('mentioned in the project\'s chat, it offers a vote on closing a request by its number', async () => {
@@ -444,6 +484,19 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.equal(again.id, sent[0].id);
     assert.equal(sent.length, 1);
     assert.equal(await voice.asksWaiting(pool, change.id), false);
+
+    // A follow-up's asks from two places owe two reports, each said there.
+    sent.length = 0;
+    const where = await say(evan, 'One more thing in the request', { type: 'issue', ref: 12 });
+    const { rows: [other] } = await pool.query(
+      `INSERT INTO homeroom_bot_change_asks (app_id, session_id, issue_number, asker_id, instruction, place_type, place_ref, message_id, status)
+       VALUES ($1, $2, 12, $3, 'Footer', 'issue', 12, $4, 'done') RETURNING id`, [app.id, change.id, evan.id, where]);
+    const both = { runTag: 'fu-two', asks: [...asks.map((a) => a.id), other.id] };
+    for (const [place, ids] of [[{ type: 'session', ref: change.id }, asks.map((a) => a.id)], [{ type: 'issue', ref: 12 }, [other.id]]]) {
+      await voice.sayReport(pool, {}, { appId: app.id, place, sessionId: change.id, runTag: both.runTag, asks: ids, outcome,
+        deps: { ws, notifications, apiKey: 'test-key', ...failing } });
+    }
+    assert.deepEqual(sent.map((m) => m.thread), [{ type: 'session', ref: change.id }, { type: 'issue', ref: 12 }], 'one in each place');
   });
 
   await t.test('an ask that keeps failing gives up after its tries, and one that never got going is not a try', async () => {

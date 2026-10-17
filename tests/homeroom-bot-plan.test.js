@@ -527,6 +527,12 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     const again = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: card.meta.actionId, choice: 'build' });
     assert.deepEqual([again.ok, again.status, again.error], [false, 409, 'already_decided']);
     assert.equal((await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: card.meta.actionId, choice: 'maybe' })).status, 400);
+    // Its act retried after it went ahead (a restart before it reported):
+    // it went, and stays done, never "plan gone".
+    const retried = await mayor.actOnTap(pool, {}, { userId: maya.id, actionId: card.meta.actionId, choice: 'build', key: `action:${card.meta.actionId}` });
+    assert.deepEqual(retried, { done: true, why: null });
+    const { rows: [action] } = await pool.query('SELECT status, error FROM homeroom_bot_dm_actions WHERE id = $1', [card.meta.actionId]);
+    assert.deepEqual([action.status, action.error], ['done', null]);
     await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL, build_ok = FALSE, build_error = $2 WHERE id = $1', [first, 'test: done']);
   });
 

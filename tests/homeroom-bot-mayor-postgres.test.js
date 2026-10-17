@@ -618,6 +618,27 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     tapFiled = Number(filed.issue_number);
   });
 
+  await t.test('an offer drafted again by a retried answer is the one under its message', async () => {
+    const steps = [
+      [['offer_request', { project: 'note-board', title: 'Sort by size', details: 'Sort notes by size.' }]],
+      [['reply', { text: 'Want me to file this?' }]],
+    ];
+    const message = await say('could note board sort by size?');
+    const run = () => mayor.runDmTurn(pool, CONFIG, {
+      bot, user: ada, settings, conversationId: opened.conversationId, message,
+      deps: { chat: scripted(steps), apiKey: 'sk-test', openMcp, sleep: async () => {} },
+    });
+    const first = await run();
+    // Its process went after the send, before it noted the message.
+    await pool.query('UPDATE homeroom_bot_dm_actions SET message_id = NULL WHERE message_id = $1', [first.messageId]);
+    const second = await run();
+    assert.equal(second.messageId, first.messageId, 'the same message');
+    const { rows } = await pool.query(
+      `SELECT id, message_id FROM homeroom_bot_dm_actions WHERE user_id = $1 AND title = 'Sort by size' ORDER BY id`, [ada.id]);
+    assert.deepEqual(rows.map((r) => r.message_id), [first.messageId], 'one offer, under its message');
+    await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE id = $1', [rows[0].id]);
+  });
+
   await t.test('B3: a tap on Not now sends nothing, and the buttons give way to the choice', async () => {
     const offered = await turn('add a print button to note board', scripted([
       [['offer_request', { project: 'note-board', title: 'Print notes', details: 'Print the board.' }]],
@@ -1183,6 +1204,21 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     }
     assert.equal(scheduled.length, 0);
 
+    // Its first answer sent ("I'll get back to you") and its process gone
+    // before it reported: the answer's work, retried, says nothing again
+    // and still reports the later try it promised.
+    scheduled.length = 0;
+    const promised = await turn('and the calendar?', flaky);
+    const dmSvc = require('../src/services/homeroom-bot-dm');
+    const again2 = await dmSvc.answerOwed(pool, CONFIG, {
+      userId: ada.id, conversationId: opened.conversationId, messageId: (await read(promised)).reply.id, attempt: 0, workKey: 'msg:x',
+      deps: { bot, chat: flaky, apiKey: 'sk-test', openMcp, sleep: async () => {} },
+    });
+    assert.deepEqual(again2, { sent: true, skipped: 'answered', later: 1 });
+    // A later try that fails for good says it could not, under its own key.
+    const gaveUp = await dmSvc.sayCouldNotAnswer(pool, { userId: ada.id, conversationId: opened.conversationId,
+      messageId: (await read(promised)).reply.id, attempt: 1, deps: { bot } });
+    assert.equal((await read(gaveUp)).content, mayor.DEFERRED_GAVE_UP_TEXT);
     // (Written to since, the try is not asked at all: the DM machine drops it,
     // workflow-bot-replies-postgres.test.js.)
     await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);

@@ -141,7 +141,7 @@ function answered(status: 'done' | 'failed' | 'exhausted') {
     if (status !== 'done') {
       // Failed for good: they hear the bot could not answer, once.
       const key = `sorry:${cur.messageId}`;
-      const sorry: WorkRequest = { kind: WORK.sorry, key, input: { userId: d.userId, messageId: cur.messageId, conversationId: cur.conversationId } };
+      const sorry: WorkRequest = { kind: WORK.sorry, key, input: { userId: d.userId, messageId: cur.messageId, conversationId: cur.conversationId, attempt: cur.attempt } };
       const withNote = d.notes[key] ? d : { ...d, notes: { ...d.notes, [key]: { kind: WORK.sorry, status: 'pending' as const } } };
       return next(withNote, d.notes[key] ? {} : { work: [sorry] });
     }
@@ -180,14 +180,25 @@ const tapped = (s: DState, e: Event<any>): Outcome<DState> => {
   }, { taps: { ...d.taps, [String(e.payload.actionId)]: e.payload.choice } });
 };
 
+// Each trigger owes its own (a join of each project): whether the person
+// has had a hello is the send's to decide, in its transaction.
 const greet = (s: DState, e: Event<any>): Outcome<DState> => owe(s, e, {
-  kind: WORK.hello, key: `hello:${e.payload.kind}`, input: { userId: e.payload.userId, kind: e.payload.kind, appId: e.payload.appId },
+  kind: WORK.hello, key: `hello:${e.payload.kind}${e.payload.appId ? `:${e.payload.appId}` : ''}`,
+  input: { userId: e.payload.userId, kind: e.payload.kind, appId: e.payload.appId },
 });
 
+// A note's result, kept (so the same work owed again is owed once). An act
+// that failed for good is settled as failed and said (`action:<id>:failed`),
+// never left claimed and undone.
 function noteResult(status: Note['status']) {
   return (s: DState, e: Event<WorkResultPayload>): Outcome<DState> => {
     const d = (s as Live).data;
-    return step(s.name as Name, { ...d, notes: { ...d.notes, [e.payload.workKey]: { ...d.notes[e.payload.workKey]!, status } } });
+    const notes = { ...d.notes, [e.payload.workKey]: { ...d.notes[e.payload.workKey]!, status } };
+    const m = /^action:(\d+)$/.exec(e.payload.workKey);
+    if (status === 'done' || e.payload.kind !== WORK.act || !m) return step(s.name as Name, { ...d, notes });
+    const key = `${e.payload.workKey}:failed`;
+    const work: WorkRequest = { kind: WORK.act, key, input: { userId: d.userId, actionId: Number(m[1]), choice: 'no', answers: [], key: e.payload.workKey, gaveUp: true } };
+    return step(s.name as Name, { ...d, notes: { ...notes, [key]: { kind: WORK.act, status: 'pending' } } }, { work: [work] });
   };
 }
 

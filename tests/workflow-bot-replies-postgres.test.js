@@ -227,6 +227,20 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
     assert.equal((await tap(ada, 'no')).reason, 'already_decided', 'decided once, even before its act ran');
     assert.equal(calls(voice.WORK.act).length, 1);
     assert.deepEqual(calls(voice.WORK.act)[0].input, { offerId: offer.id, userId: ada.id, choice: 'yes', key: `offer:${offer.id}` });
+    // Its act failed for good: it is settled as failed and said, by work
+    // (never left deciding with its buttons up: bug 7).
+    reset();
+    const { rows: [o2] } = await pool.query(
+      `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id, message_id) VALUES ($1, 'file_request', '{}', $2, NULL) RETURNING id`,
+      [app.id, ada.id]);
+    const { rows: [reply2] } = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref) VALUES ($1, $2, 'Again?', 'message', '{}', 'message', $3) RETURNING id`,
+      [app.id, bot.id, root]);
+    await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1', [o2.id, reply2.id]);
+    work.answer.set(voice.WORK.act, (input) => { if (!input.gaveUp) throw new Error('GitHub is down'); return { decision: 'failed' }; });
+    assert.equal((await send('bot-voice', key, 'OfferTapped', { appId: app.id, place: thread, offerId: o2.id, userId: ada.id, choice: 'yes' })).result, 'accepted');
+    assert.deepEqual(calls(voice.WORK.act).map((c) => [c.key, !!c.input.gaveUp, c.input.key]),
+      [[`offer:${o2.id}`, false, `offer:${o2.id}`], [`offer:${o2.id}`, false, `offer:${o2.id}`], [`offer:${o2.id}:failed`, true, `offer:${o2.id}`]]);
     // An offer of another place is not this place's to decide.
     const other = await send('bot-voice', chatKey, 'OfferTapped', { appId: app.id, place: { type: 'chat', ref: null }, offerId: offer.id, userId: ada.id, choice: 'yes' });
     assert.equal(other.reason, 'no_such_offer');
@@ -351,6 +365,15 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
     assert.equal((await tap(ada, plan.id, 'build')).result, 'accepted');
     assert.deepEqual(calls(dm.WORK.act).map((c) => [c.input.actionId, c.input.choice, c.key]),
       [[action.id, 'yes', `action:${action.id}`], [plan.id, 'build', `action:${plan.id}`]]);
+    // An act that failed for good is settled as failed and said, by work.
+    reset();
+    const { rows: [third] } = await pool.query(
+      `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title) VALUES ($1, $2, $3, 'file_request', 'Pins') RETURNING id`,
+      [ada.id, opened.conversationId, app.id]);
+    work.answer.set(dm.WORK.act, (input) => { if (!input.gaveUp) throw new Error('down'); return { done: false, why: 'gave_up' }; });
+    await tap(ada, third.id, 'yes');
+    assert.deepEqual(calls(dm.WORK.act).map((c) => [c.key, !!c.input.gaveUp]),
+      [[`action:${third.id}`, false], [`action:${third.id}`, false], [`action:${third.id}:failed`, true]]);
     // The route's answers.
     const out = await platform.tapDmAction({ userId: ada.id, actionId: action.id, choice: 'yes' }).catch((err) => err);
     assert.match(String(out.message || ''), /not running/, 'the route needs the runtime of its process');
@@ -359,12 +382,18 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
   await t.test('D-greet: a hello owed is said once per kind, by work (bug 18)', async () => {
     reset();
     const dee = await user('dee');
+    const { rows: [other] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by, status) VALUES ('Books', 'books', $1, 'running') RETURNING id`, [ada.id]);
     await platform.greet(pool, { userId: dee.id, kind: 'joiner', appId: app.id });
     await platform.greet(pool, { userId: dee.id, kind: 'joiner', appId: app.id });
+    // A later join of another project owes its own (the first may have
+    // greeted nobody: the bot was off, or did not build for them yet).
+    await platform.greet(pool, { userId: dee.id, kind: 'joiner', appId: other.id });
     await platform.greet(pool, { userId: dee.id, kind: 'tour' });
     await settle();
-    assert.deepEqual(calls(dm.WORK.hello).map((c) => [c.input.kind, c.key]), [['joiner', 'hello:joiner'], ['tour', 'hello:tour']],
-      'the send itself keeps one hello per person (sendDm\'s claim)');
+    assert.deepEqual(calls(dm.WORK.hello).map((c) => [c.input.kind, c.key]),
+      [['joiner', `hello:joiner:${app.id}`], ['joiner', `hello:joiner:${other.id}`], ['tour', 'hello:tour']],
+      'each trigger owes its own; the send keeps one hello per person (sendDm\'s claim)');
   });
 
   await t.test('D-heard: a DM to the bot is heard in its own transaction; a DM between people is not', async () => {

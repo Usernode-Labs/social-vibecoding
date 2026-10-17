@@ -54,6 +54,7 @@ export function botDmServices({ config, pool }: Deps): Record<string, WorkHandle
       async run({ input }): Promise<Json> {
         const sent = await dm().sayCouldNotAnswer(pool, {
           userId: Number(input.userId), conversationId: Number(input.conversationId), messageId: Number(input.messageId),
+          attempt: Number(input.attempt) || 0,
         });
         return { sent: !!sent };
       },
@@ -66,7 +67,7 @@ export function botDmServices({ config, pool }: Deps): Record<string, WorkHandle
       async run({ input }): Promise<Json> {
         const out = await legacy('services/homeroom-bot-mayor').actOnTap(pool, config, {
           userId: Number(input.userId), actionId: Number(input.actionId), choice: String(input.choice),
-          answers: Array.isArray(input.answers) ? input.answers : [], key: String(input.key),
+          answers: Array.isArray(input.answers) ? input.answers : [], key: String(input.key), gaveUp: !!input.gaveUp,
         });
         return (out || null) as Json;
       },

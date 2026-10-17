@@ -2134,10 +2134,18 @@ async function decidePlanTap(pool, { user, action, choice, answers = [], deps = 
     [action.id, user.id, key],
   );
   if (!claimed.length) return { ok: false, status: 409, error: 'already_decided' };
-  const went = await (deps.botSvc || settingsModule()).goAhead(pool, {
+  let went = await (deps.botSvc || settingsModule()).goAhead(pool, {
     runId: Number(card.run_id), answers: Array.isArray(answers) ? answers.slice(0, 2) : [],
     ...(planShown === false ? { planShown: false } : {}),
   });
+  // Retried after it went ahead (a restart after goAhead): it went, with
+  // the choices recorded then; the rest is done now.
+  if (!went.ok && key && action.decided_key === key) {
+    const { rows: [run] } = await pool.query(
+      `SELECT app_id, issue_number, plan->'chosen' AS chosen FROM homeroom_bot_runs WHERE id = $1 AND go_ahead_at IS NOT NULL`,
+      [Number(card.run_id)]);
+    if (run) went = { ok: true, appId: Number(run.app_id), issueNumber: Number(run.issue_number), chosen: Array.isArray(run.chosen) ? run.chosen : [] };
+  }
   if (!went.ok) {
     await pool.query('UPDATE homeroom_bot_dm_actions SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'plan_gone']);
     return { ok: false, status: 409, error: 'plan_gone' };
@@ -3894,7 +3902,11 @@ async function heardInDm(db, { user, conversationId, messageId, membership, memb
 async function answerOwed(pool, config, { userId, conversationId, messageId, attempt = 0, workKey, once = null, deps = {} }) {
   const bot = deps.bot || await botAccount(pool);
   if (!bot) return { sent: false, skipped: 'no_bot' };
-  if (await answeredAlready(pool, { botId: bot.id, conversationId, messageId, attempt })) return { sent: true, skipped: 'answered' };
+  if (await answeredAlready(pool, { botId: bot.id, conversationId, messageId, attempt })) {
+    // Said already, by an attempt a restart cut short: if what it said was
+    // "I'll get back to you", the later try it promised is still owed.
+    return { sent: true, skipped: 'answered', later: await laterPromised(pool, { messageId, attempt }) };
+  }
   const { rows: [u] } = await pool.query(
     `SELECT id, username, is_synthetic, has_platform_access, is_admin, private_member_since FROM users
       WHERE id = $1 AND anonymised_at IS NULL`, [Number(userId)]);
@@ -3920,6 +3932,19 @@ async function answerOwed(pool, config, { userId, conversationId, messageId, att
  * `attempt`), by the keys its answers to that message use (`hrbot-<kind>-
  * <messageId>`, a later try's `hrbot-mayor-<messageId>-d<n>`).
  */
+/**
+ * The later try an answer to `messageId` (try `attempt`) promised, by its
+ * turn's record (a model that could not answer: 'deferred', 'plain_later'),
+ * or null.
+ */
+async function laterPromised(pool, { messageId, attempt = 0 }) {
+  const { rows: [turn] } = await pool.query(
+    `SELECT fallback FROM homeroom_bot_dm_turns WHERE message_id = $1 ORDER BY id DESC LIMIT 1`, [Number(messageId)]);
+  const next = Number(attempt) + 1;
+  const tries = require('../workflow/rules/bot-replies.ts').DEFER_DELAYS_MS.length;
+  return turn && ['deferred', 'plain_later'].includes(turn.fallback) && next <= tries ? next : null;
+}
+
 // The keys an answer to a person's message is sent under, by what answered it.
 const ANSWER_KEY_KINDS = Object.freeze(['mayor', 'ack', 'plan-change', 'finish', 'revise', 'offer']);
 async function answeredAlready(pool, { botId, conversationId, messageId, attempt = 0 }) {
@@ -3939,14 +3964,15 @@ async function answeredAlready(pool, { botId, conversationId, messageId, attempt
  * hears the bot could not answer, once, under the answer's own key (so it
  * is nothing when an answer did go out). Throws on a failure.
  */
-async function sayCouldNotAnswer(pool, { userId, conversationId, messageId, deps = {} }) {
+async function sayCouldNotAnswer(pool, { userId, conversationId, messageId, attempt = 0, deps = {} }) {
   const bot = deps.bot || await botAccount(pool);
   if (!bot) return null;
-  if (await answeredAlready(pool, { botId: bot.id, conversationId, messageId })) return null;
+  if (await answeredAlready(pool, { botId: bot.id, conversationId, messageId, attempt })) return null;
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
+  // A later try's: it had promised to come back, so it says it could not.
   return sendDm(pool, {
-    bot, userId: Number(userId), content: mayor.BROKEN_TEXT, idempotencyKey: mayor.answerKey(messageId),
-    replyToId: Number(messageId), moment: 'reply',
+    bot, userId: Number(userId), content: attempt ? mayor.DEFERRED_GAVE_UP_TEXT : mayor.BROKEN_TEXT,
+    idempotencyKey: mayor.answerKey(messageId, attempt), replyToId: Number(messageId), moment: 'reply',
   });
 }
 

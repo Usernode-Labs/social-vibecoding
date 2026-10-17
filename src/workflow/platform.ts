@@ -319,7 +319,7 @@ export async function dmWritten(db: Queryable, p: { userId: number; conversation
 export async function greet(db: Queryable, p: { userId: number; kind: string; appId?: number | null }): Promise<void> {
   await appendEvent(db, BOT_DM, dmKey(Number(p.userId)),
     { type: 'Greet', payload: { userId: Number(p.userId), kind: p.kind, appId: p.appId == null ? null : Number(p.appId) } },
-    { requestKey: `greet:${Number(p.userId)}:${p.kind}`, source: { kind: 'system', name: 'hello' }, appId: p.appId == null ? null : Number(p.appId) });
+    { requestKey: `greet:${Number(p.userId)}:${p.kind}:${p.appId == null ? '' : Number(p.appId)}`, source: { kind: 'system', name: 'hello' }, appId: p.appId == null ? null : Number(p.appId) });
 }
 
 // What came of a change people asked for (the bot's follow-up,
@@ -341,17 +341,22 @@ export async function heldAnswerOwed(db: Queryable, p: { appId: number; issueNum
     { requestKey: `held:${p.mentionId}:${p.kind}`, source: { kind: 'system', name: 'holds' }, appId: p.appId });
 }
 
-const TAP_STATUS = new Map<string, { status: number; error: string }>([
+// What a refused tap answers: the thread's words (the room's toast shows
+// them), and the DM's codes, as each route answered before.
+const VOICE_TAP = new Map<string, { status: number; error: string }>([
   ['no_such_offer', { status: 404, error: 'Nothing to decide here.' }],
-  ['no_such_choice', { status: 404, error: 'No such choice' }],
   ['not_for_you', { status: 403, error: 'Only the person it was offered to can decide it.' }],
-  ['already_decided', { status: 409, error: 'already_decided' }],
-  ['wrong_choice', { status: 400, error: 'That choice does not fit this offer.' }],
+  ['already_decided', { status: 409, error: 'That was already decided.' }],
 ]);
-function tapAnswer(out: EventOutcome): { ok: boolean; status?: number; error?: string; pending?: boolean } {
+const DM_TAP = new Map<string, { status: number; error: string }>([
+  ['no_such_choice', { status: 404, error: 'No such choice' }],
+  ['already_decided', { status: 409, error: 'already_decided' }],
+  ['wrong_choice', { status: 400, error: 'choice must be yes, no or build' }],
+]);
+function tapAnswer(out: EventOutcome, refusals: Map<string, { status: number; error: string }>): { ok: boolean; status?: number; error?: string; pending?: boolean } {
   if (out.status === 'accepted' || out.status === 'replayed') return { ok: true };
   if (out.status === 'pending') return { ok: true, pending: true };
-  return { ok: false, ...(TAP_STATUS.get(String(out.reason)) || { status: 409, error: String(out.reason || 'refused') }) };
+  return { ok: false, ...(refusals.get(String(out.reason)) || { status: 409, error: 'That didn\'t work just now.' }) };
 }
 
 // A tap under one of the voice's offers (routes/chat.js): decided once in
@@ -364,7 +369,7 @@ export async function tapVoiceOffer(p: { appId: number; offerId: number; message
   const out = await runtime.appendAndWait(voices, voiceKey(p.appId, place),
     { type: 'OfferTapped', payload: { appId: p.appId, place: place as any, offerId: p.offerId, userId: p.userId, choice: p.choice } },
     { requestKey: `tap-offer:${p.offerId}:${p.userId}:${randomUUID()}`, source: { kind: 'route', name: 'bot-offer' }, actor: `user:${p.userId}`, appId: p.appId });
-  return tapAnswer(out);
+  return tapAnswer(out, VOICE_TAP);
 }
 
 // A tap under one of the bot's offers in a person's DM, or Build it under a
@@ -374,7 +379,7 @@ export async function tapDmAction(p: { userId: number; actionId: number; choice:
   const out = await runtime.appendAndWait(dms, dmKey(p.userId),
     { type: 'Tapped', payload: { userId: p.userId, actionId: p.actionId, choice: p.choice, answers: (p.answers || []) as any } },
     { requestKey: `tap-action:${p.actionId}:${randomUUID()}`, source: { kind: 'route', name: 'bot-action' }, actor: `user:${p.userId}` });
-  return tapAnswer(out);
+  return tapAnswer(out, DM_TAP);
 }
 
 // A later try an older release owed (homeroom-bot-mayor.js's in-memory
