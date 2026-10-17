@@ -289,9 +289,12 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
     await settle();
     assert.deepEqual(calls(dm.WORK.answer).map((c) => c.input.messageId), [101, 102, 103]);
     assert.equal((await inst('bot-dm', dmKey(ada))).state, 'idle');
-    // The same message heard twice (an adoption, a retried route) is one answer.
+    // The same message heard again (an adoption, a retried route) is one
+    // answer, and leaves nothing waiting.
     await wrote(ada, 103);
+    await wrote(ada, 102);
     assert.equal(calls(dm.WORK.answer).length, 3);
+    assert.equal((await inst('bot-dm', dmKey(ada))).state, 'idle', 'not left answering for a work item never made');
   });
 
   await t.test('D-later: an answer the model could not give is asked again by the instance\'s timer; a newer message drops it (bugs 11, 12)', async () => {

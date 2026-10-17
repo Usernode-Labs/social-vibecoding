@@ -44,6 +44,9 @@ export interface Data {
   current: Owed | null;
   // The one whose answer is asked again when the timer fires.
   later: Owed | null;
+  // The newest message whose answer ended (any try): one heard again is
+  // answered already (its work key would make no second item).
+  done: number;
   // Taps decided (action id → choice): a second is refused.
   taps: Record<string, string>;
   notes: Record<string, Note>;
@@ -92,7 +95,7 @@ const CREATE = ['Wrote', 'Tapped', 'Greet'];
 // ── Moves ───────────────────────────────────────────────────────────────
 
 const step = (name: Name, data: Data, more: Omit<Outcome<DState>, 'next'> = {}): Outcome<DState> => ({ next: { name, data }, ...more });
-const created = (e: Event<any>): Data => ({ userId: e.payload.userId, queue: [], current: null, later: null, taps: {}, notes: {} });
+const created = (e: Event<any>): Data => ({ userId: e.payload.userId, queue: [], current: null, later: null, done: 0, taps: {}, notes: {} });
 const live = (s: DState, e: Event<any>): Data => (s.name === NONE ? created(e) : (s as Live).data);
 const answerKey = (o: Owed) => `msg:${o.messageId}${o.attempt ? `:d${o.attempt}` : ''}`;
 
@@ -114,7 +117,8 @@ function next(d: Data, more: Omit<Outcome<DState>, 'next'> = {}): Outcome<DState
 function wrote(s: DState, e: Event<any>): Outcome<DState> {
   const d = live(s, e);
   const o: Owed = { messageId: e.payload.messageId, conversationId: e.payload.conversationId, attempt: e.payload.attempt };
-  const seen = [d.current, d.later, ...d.queue].some((q) => q && q.messageId === o.messageId && q.attempt >= o.attempt);
+  const seen = o.messageId <= (d.done || 0)
+    || [d.current, d.later, ...d.queue].some((q) => q && q.messageId === o.messageId && q.attempt >= o.attempt);
   if (seen) return step(s.name === NONE ? 'idle' : (s.name as Name), d);
   if (s.name === 'answering') return step('answering', { ...d, queue: [...d.queue, o] });
   // Written to since an answer it would try again: that try is dropped (the
@@ -132,8 +136,8 @@ const tryAgain = (s: DState): Outcome<DState> => {
 // nothing newer waits; else the next message, if any.
 function answered(status: 'done' | 'failed' | 'exhausted') {
   return (s: DState, e: Event<WorkResultPayload>, _f: Facts, ctx: TransitionContext): Outcome<DState> => {
-    const d = (s as Live).data;
-    const cur = d.current!;
+    const cur = (s as Live).data.current!;
+    const d: Data = { ...(s as Live).data, done: Math.max((s as Live).data.done || 0, cur.messageId) };
     if (status !== 'done') {
       // Failed for good: they hear the bot could not answer, once.
       const key = `sorry:${cur.messageId}`;
