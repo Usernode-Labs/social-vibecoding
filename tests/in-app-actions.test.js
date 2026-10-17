@@ -97,6 +97,24 @@ test('inside a running app both controls show, in this order', () => {
   assert.match(html, /id="header-in-app-to-vote"/);
 });
 
+test('both controls are hidden on a phone and return below sm (#5367)', () => {
+  // The bar was too crowded on mobile, so neither control displays at a
+  // phone width; they keep their place in the header on wider windows and
+  // stay in the mark's menu on every size. The elements remain in the DOM
+  // (display only), so the ids and the gates above are unaffected.
+  const html = render({});
+  for (const id of ['header-in-app-suggest', 'header-in-app-to-vote']) {
+    // React renders the element's id before its class, so the first class
+    // attribute after the id belongs to that element.
+    const classes = html.slice(html.indexOf(`id="${id}"`))
+      .match(/class="([^"]+)"/)?.[1] ?? '';
+    assert.match(classes, /(^| )hidden( |$)/, `${id} is not displayed on a phone`);
+    assert.match(classes, /(^| )sm:inline-flex( |$)/, `${id} comes back on wider windows`);
+    assert.doesNotMatch(classes, /(?<!sm:)inline-flex/,
+      `${id} has no bare inline-flex outside the sm: prefix`);
+  }
+});
+
 test('the pill says "N to vote" — the menu row\'s words, at zero nothing', () => {
   const two = render();
   assert.match(two, />2 to vote</);

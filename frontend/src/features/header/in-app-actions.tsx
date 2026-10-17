@@ -12,6 +12,10 @@
  * the thing the votes are about — so each takes one tap from the bar rather
  * than two through a menu. The menu's own rows are unchanged.
  *
+ * On a phone the bar was too crowded with them (#5367), so both are hidden
+ * below `sm` and reached there through the mark's menu; they keep their
+ * place in the header on wider windows.
+ *
  * ── The count is the Communities tab's ─────────────────────────────────
  *
  * `communityScopeStore.info[slug].needs` is votes owed less the ones swiped
@@ -56,7 +60,7 @@ import { placeHref } from '../dev-board/workshop/places';
  * something of you — the same blue the menu's Suggest button is filled with
  * — and the header's 28px height, so the bar does not grow.
  */
-const TO_VOTE_CLASS = 'shrink-0 inline-flex items-center h-7 px-2.5 rounded-full '
+const TO_VOTE_CLASS = 'shrink-0 hidden sm:inline-flex items-center h-7 px-2.5 rounded-full '
   + 'bg-violet-600 hover:bg-violet-500 text-white text-[0.8125rem] font-semibold '
   + 'whitespace-nowrap un-touch-target';
 
@@ -65,7 +69,7 @@ const TO_VOTE_CLASS = 'shrink-0 inline-flex items-center h-7 px-2.5 rounded-full
  * narrowed on a phone (`px-1.5` and the word `hidden sm:inline`) so the
  * app's name keeps some room.
  */
-const SUGGEST_CLASS = 'shrink-0 inline-flex items-center justify-center gap-1.5 h-7 '
+const SUGGEST_CLASS = 'shrink-0 hidden sm:inline-flex items-center justify-center gap-1.5 h-7 '
   + 'min-w-7 px-1.5 sm:px-2.5 rounded-full border border-[color:var(--brand-line)] '
   + 'bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)] '
   + 'text-[0.8125rem] font-semibold un-touch-target';
