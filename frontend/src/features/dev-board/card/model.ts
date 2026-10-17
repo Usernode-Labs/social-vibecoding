@@ -37,6 +37,8 @@
  * inside it. Nothing else on a card needs one.
  */
 
+import type { BotTrack } from '../../messages/types';
+
 /** A resolved type-chip: the tint classes and the SVG path, from DEV_CARD_ICONS. */
 export interface CardIconSpec {
   tint: string;
@@ -433,6 +435,12 @@ export interface RowBrief {
   tags: RowTag[];
   /** One part per Yes it needs; `ask` when this viewer's vote is wanted. */
   vote: { yes: number; need: number; ask: boolean } | null;
+  /**
+   * #5385: on a request Homeroom bot has in hand for the viewer, its track
+   * (the Activity drawer's), whose step the What's happening row ends with.
+   * What's happening's own rows only: the board's brief has none.
+   */
+  botTrack?: BotTrack;
 }
 
 export type ListRow =
