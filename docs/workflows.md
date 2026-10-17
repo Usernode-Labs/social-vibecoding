@@ -8,9 +8,10 @@ it, and one code path that applies those events. Everything it does to the outsi
 is a durable work item whose result comes back as another event.
 
 Governance proposals, a proposal's lifecycle, its preview and required checks, its
-before & after shots, what follows a merge and every production deploy of an app run on
-machines whose old paths are deleted: none has a flag, and each decides every case of its
-kind. The others move over one at a time.
+before & after shots, what follows a merge, every production deploy of an app, and the
+Homeroom bot's answers to the people who speak to it run on machines whose old paths are
+deleted: none has a flag, and each decides every case of its kind. The others move over
+one at a time.
 
 ## What it solves
 
@@ -574,6 +575,7 @@ release (`docs/kubernetes-operations.md`).
 | `tests/admin-workflows.test.js` | The admin section. |
 | `tests/workflow-process-state.test.js` | The list of what the machines still depend on only shrinks. |
 | `tests/workflow-boundary.test.js` | The boundary check's rules, on a small source tree of its own. |
+| `tests/workflow-bot-replies-postgres.test.js` | The Homeroom bot's reply machines (`bot-voice`, `bot-dm`), one subtest per rule, with their work faked. |
 | `tests/workflow-processes-postgres.test.js` | Each machine's flows with every decision and work item in a child process, the test process being the web side; and the same flows with the child killed (SIGKILL) mid-item, restarted, and compared with an uninterrupted run. Only outside services are faked (`tests/fixtures/workflow-outside-fakes.js`); the harness is `tests/lib/workflow-processes.js`. The known dependencies on the web process's memory are `todo` scenarios, each naming its entry in the list. |
 
 The kernel guarantees cover:
@@ -610,6 +612,8 @@ A new machine brings the same two layers:
 | `merge-queue` | `app:<id>`, for each app a merge was asked for | `idle` ⇄ `working` | On everywhere; its old paths are deleted |
 | `campaign` | `campaign:<id>`, for each fleet maintenance campaign | `running` → `done` (⇄ `running` on a retry), `stopped` | On everywhere; its old paths are deleted |
 | `bot-change` | `session:<id>`, for each change of the Homeroom bot's that goes up for a vote | `checking`, `waiting_on_shots`, `with_the_bot`, `ready`, `stopped`, `merged` → `live`; `closed` | On everywhere; its old paths are deleted |
+| `bot-voice` | `place:<appId>:<type>:<ref>`, for each place in a project people speak to the Homeroom bot in | `quiet` ⇄ `settling` → `answering` | On everywhere; its old paths are deleted |
+| `bot-dm` | `person:<userId>`, for each person's DM with the Homeroom bot | `idle` ⇄ `answering` ⇄ `trying_later` | On everywhere; its old paths are deleted |
 
 ### governance-proposal
 
@@ -1121,3 +1125,64 @@ requires a run of the bot's that proposed the session.
   merged that no instance holds and no event is on its way to; it decides from the row, and its DM keys are the older release's, so a change
   already told is not told again. A release revert leaves the instances unread.
 
+### bot-voice
+
+One place in a project where people speak to the Homeroom bot (`src/workflow/bot-voice/`):
+a change's or a request's discussion, the project's chat, a topic's channel, a reply
+thread. One instance per place (`place:<appId>:<type>:<ref>`), created by the first thing
+that happens there.
+
+- **Heard where it is stored.** Every person's message in a project, but a governance
+  vote's and a connector's, is inserted together with its `Heard` event in one statement
+  (`services/ws.js handleMessage` → `platform.ts insertHeard`), so an answer owed is never
+  only in the memory of the process that took it.
+- **A burst is one turn.** `Heard` settles the place: its timer fires 8 s after the last
+  message, never more than 25 s after the first (`rules/bot-replies.ts`). A message
+  written while a turn runs gets a turn of its own after it.
+- **The turn decides whether to speak** (`voice.turn` → `homeroom-bot-voice.js runTurn`):
+  it reads what was said since the place's `through`, runs the voice's gate on every new
+  message (settings, the person's access, the change, the request's open question: I/O,
+  reported in the result), and answers or stays quiet. In a project's chat it also hands
+  what nobody said to the bot to the chat's own path (a newcomer's idea, offered to be
+  suggested; the older ask with the voice's chat switch off). Its reply carries the
+  turn's mark (`metadata.homeroomBot.turn`): a retry after a restart finds it and says
+  nothing twice; the asks it records are one per change and message. A turn that fails
+  for good is followed by one that tells whoever spoke to the bot it could not answer,
+  once.
+- **What the place owes others**, each said once as work: a tap under one of its offers,
+  decided once by the person it was offered to (`OfferTapped` → `voice.act`, claimed by
+  its work item so a retry carries the act on); what came of a change people asked for
+  (`Report`, appended by the bot's follow-up in the transaction that ends their asks →
+  `voice.report`); the answer to a mention on a request a person holds (`HeldAnswer`,
+  from the bot's refresh: its post row is written pending with the decision, so the
+  refresh counts it as said only once it is certain to be → `voice.post`).
+- **During a rollout** an older Pod's messages still go to its in-memory path. A turn of
+  this machine takes the place's turn record (`homeroom_bot_voice_turns`, whose one
+  unfinished row per place stays for one release): while an older release's turn holds
+  it, the turn's work asks again.
+
+### bot-dm
+
+One person's DM with the Homeroom bot (`src/workflow/bot-dm/`), from the first thing the
+bot owes them there. One instance per person (`person:<userId>`).
+
+- **Heard where it is stored.** A person's message in their DM with the bot appends
+  `Wrote` in `conversations.sendMessage`'s own transaction (`routes/conversations.js` →
+  `homeroom-bot-dm.js heardInDm`).
+- **One answer at a time, in the order written**, wherever the work runs (`dm.answer` →
+  `homeroom-bot-dm.js answerOwed`: every code path, and the model's turn). An answer
+  already sent under the message's keys ends a retry; the words it passes on to a request
+  or a change carry their mark, a platform report it files is kept in the item's
+  checkpoint, an offer it drafts is one per message.
+- **Asked again later.** An answer no model could give says so, and the work reports
+  `later`: the instance's timer asks again after 60 s, 3 min and 10 min (the last try says
+  it could not). A newer message from them drops the try, as its own answer reads the old
+  one. An answer whose work fails for good gets one fixed line (`dm.sorry`).
+- **Taps and hellos.** A tap under one of the bot's offers, or Build it under a plan, is
+  decided once here (`Tapped` → `dm.act`, claimed by its work item). A hello owed
+  (joining by an invite, the tour's end) is appended in the transaction that makes it owed
+  (`Greet` → `dm.hello`); every hello is claimed in the transaction that sends it
+  (`sendDm`'s `hello`), so none is claimed and then not sent.
+- **During a rollout** the later tries an older release promised (its turn rows say so)
+  are adopted once at the leader's boot (`adoptDeferredDms`). DM keys and wording are
+  unchanged, so an older leader and this machine asking the same message send one answer.
