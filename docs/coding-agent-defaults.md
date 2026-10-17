@@ -73,7 +73,42 @@ per model from `OPENROUTER_MODEL_HARNESSES` (`src/config.js`
 |---|---|
 | `z-ai/glm-5.3-flash` | Claude Code |
 | `deepseek/deepseek-v4.1-flash` | Codex |
+| `deepseek/deepseek-v4.1-flash-1017` | Claude Code |
 | anything not listed | Codex |
+
+#3296's evidence was one admin's impression ("apparently"), not a measured
+run. The 2 Oct Core bench runs (3, 4 and 5) then put DeepSeek V4.1 Flash, in
+Codex, level with GLM 5.3 Flash on triage (73% and 74%), and found it cost
+1.4 to 10 times as much per attempt across triage, DM, checks fix and build,
+although the two models' token prices are almost the same.
+
+### DeepSeek V4.1 Flash 1017 (17 Oct 2026)
+
+The 1017 snapshot runs in Claude Code. DeepSeek documents both Claude Code
+and Codex without preferring either, but it measured 1017's Terminal-Bench 4.0
+score in Claude Code. Core bench run 205, launched the same day, is the
+"before": 1017 and the 0910 snapshot both in Codex, routed by OpenRouter's
+defaults. Its other settings follow DeepSeek's own documentation:
+
+- **Host:** DeepSeek's own OpenRouter host alone (`PROVIDER_ROUTING_BY_MODEL`
+  in both worker listeners), with the shortlist's usual fallback to every
+  host. Of 1017's five hosts it is the one whose weights are certainly 1017,
+  whose thinking levels mean what DeepSeek documents, and whose $0.003/M
+  cache reads hold only while a turn's requests stay on one host. Its price
+  doubles on weekdays from about 01:00 to 04:00 and 06:00 to 10:00 UTC
+  (OpenRouter's override table).
+- **Compaction in Claude Code:** at 786,432 tokens, DeepSeek's own
+  `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (`worker/claude-openrouter-request.js`
+  `autoCompactLimit`), for every `deepseek/` model. A first version's
+  `roomy_context` tweak never lowers it. Codex keeps its 200k limit.
+- **Thinking level:** unchanged. The platform default `xhigh` is what
+  DeepSeek's API runs as `high`, the level its Codex guide sets.
+- **Sampling:** nothing to send. DeepSeek ignores temperature in thinking
+  mode and clamps top_p to 0.95 to 1.0.
+- **Reasoning across tool calls:** with tools, DeepSeek's API refuses (400) a
+  request that does not send back the earlier reasoning. The listeners pass
+  through whatever the CLI sends; a 400 on DeepSeek's host is the first thing
+  to look for in a 1017 turn's ledger.
 
 Users do not choose it. The model picker marks the Claude Code models, and the
 OpenRouter settings description says what that mark means. The transcript

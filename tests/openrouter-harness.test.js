@@ -65,17 +65,20 @@ test('the runner follows the harness for OpenRouter and never for Anthropic', ()
   assert.deepEqual(registry.listBackends().map((b) => b.id).sort(), ['claude_code', 'codex_openrouter']);
 });
 
-test('the platform default puts GLM in Claude Code and DeepSeek in Codex', () => {
+test('the platform default puts GLM and DeepSeek V4.1 Flash 1017 in Claude Code and DeepSeek V4.1 Flash in Codex', () => {
   const src = fs.readFileSync(path.join(ROOT, 'src', 'config.js'), 'utf8');
   assert.match(src, /openrouterModelHarnesses: parseOpenRouterHarnessMap\(/);
-  assert.match(src, /'z-ai\/glm-5\.3-flash=claude,deepseek\/deepseek-v4\.1-flash=codex'/);
+  assert.match(src, /'z-ai\/glm-5\.3-flash=claude,deepseek\/deepseek-v4\.1-flash=codex,deepseek\/deepseek-v4\.1-flash-1017=claude'/);
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'dapp.json'), 'utf8'));
   const declared = (manifest.platform_env || []).find((s) => s.key === 'OPENROUTER_MODEL_HARNESSES');
   assert.ok(declared, 'dapp.json declares OPENROUTER_MODEL_HARNESSES');
   assert.equal(declared.required, false);
-  assert.equal(declared.default, `${GLM}=claude,${DEEPSEEK}=codex`);
+  assert.equal(declared.default, `${GLM}=claude,${DEEPSEEK}=codex,${DEEPSEEK}-1017=claude`);
   assert.match(fs.readFileSync(path.join(ROOT, '.env.example'), 'utf8'),
-    /^OPENROUTER_MODEL_HARNESSES=z-ai\/glm-5\.3-flash=claude,deepseek\/deepseek-v4\.1-flash=codex$/m);
+    /^OPENROUTER_MODEL_HARNESSES=z-ai\/glm-5\.3-flash=claude,deepseek\/deepseek-v4\.1-flash=codex,deepseek\/deepseek-v4\.1-flash-1017=claude$/m);
+  const map = registry.parseOpenRouterHarnessMap(declared.default);
+  assert.equal(registry.openRouterHarnessForModel(`${DEEPSEEK}-1017`, { openrouterModelHarnesses: map }), 'claude');
+  assert.equal(registry.openRouterHarnessForModel(DEEPSEEK, { openrouterModelHarnesses: map }), 'codex', 'the 0910 snapshot stays on Codex');
 });
 
 // ── Runtime context ───────────────────────────────────────────────────
