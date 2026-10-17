@@ -154,6 +154,7 @@ export function LeaderboardScreen() {
       id="leaderboard-screen"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll [scrollbar-gutter:stable]"
       style={{ position: "relative" }}
+      data-page-bounce=""
     >
       {/*
           max-w-5xl for the Topochain table's sake (and the challenge grid's);

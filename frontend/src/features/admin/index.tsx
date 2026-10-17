@@ -152,6 +152,7 @@ export function AdminScreen() {
       id="admin-screen"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll"
       style={{ position: "relative" }}
+      data-page-bounce=""
     >
       <div id="admin-root" className="w-full p-4 lg:px-6">
         <div className="md:flex md:items-start md:gap-6">

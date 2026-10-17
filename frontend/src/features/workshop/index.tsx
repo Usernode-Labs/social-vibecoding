@@ -472,6 +472,7 @@ export function WorkshopScreen() {
       id="workshop-screen"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll"
       style={{ position: 'relative' }}
+      data-page-bounce=""
     >
       {/* SECTION LABEL over a card of hairline-separated rows — the widget
           language's primary content shape, drawn by @/components/ui/grouped-list
