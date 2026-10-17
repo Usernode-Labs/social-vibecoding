@@ -685,8 +685,15 @@
   },
   "tests": [
     {
+      "name": "Account email and recovery is discoverable in Settings (#1841)",
+      "path": "/#settings/email",
+      "expectText": "Email & recovery",
+      "expectSelector": "[data-settings-section=\"email\"]:not(.hidden) [data-account-email-form]",
+      "allowConsoleErrors": false
+    },
+    {
       "name": "Accessibility settings ship text size and contrast controls (#3969)",
-      "path": "/#settings/accessibility",
+      "path": "/?demo=1#settings/accessibility",
       "expectText": "High contrast",
       "expectSelector": "#settings-accessibility-section #settings-text-size-track[role=\"radiogroup\"] [data-text-size-option=\"larger\"]"
     },
