@@ -107,7 +107,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button';
 import { IconTile } from '@/components/ui/icon-tile';
 import {
-  BookmarkIcon, BookmarkSolidIcon, ChatBubbleTailIcon, ChevronRightIcon, XIcon,
+  BookmarkIcon, BookmarkSolidIcon, ChatBubbleTailIcon, ChevronRightIcon, SearchIcon, XIcon,
 } from '@/components/ui/icons';
 
 import { UserAvatar, swatchFor } from '../messages/format';
@@ -117,6 +117,7 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
+import { matchesNotificationQuery, normalizeNotificationQuery } from './notifications-search.js';
 import { notificationsSheetStore } from './notifications-sheet-store.js';
 import { NotificationsSheet } from './notifications-sheet-controller.js';
 import { NotificationsPinnedSections } from './notifications-list';
@@ -650,6 +651,11 @@ export function NotificationsSheetView() {
   // closes or the tab changes, so coming back to Unread starts collapsed
   // again. It starts false, so the prerendered markup is unchanged.
   const [olderShown, setOlderShown] = useState(false);
+  // #5405: what the search field holds. It narrows the tab that is open —
+  // all three tabs — and a tab change keeps it. It starts '' so the
+  // prerendered markup is an empty field, and the close effect below clears
+  // it when the sheet closes, so the next visit opens unfiltered.
+  const [query, setQuery] = useState('');
   const t = useMessages('notifications');
 
   // `?shot=notifications-messages` lands on the Messages tab, so the capture
@@ -675,7 +681,8 @@ export function NotificationsSheetView() {
   // above). An effect, not the initial state, for the hydration reason the
   // deep link above spells out.
   useEffect(() => {
-    if (!open || tab !== 'unread') setOlderShown(false);
+    if (!open) { setOlderShown(false); setQuery(''); }
+    else if (tab !== 'unread') setOlderShown(false);
   }, [open, tab]);
 
   const all = snap.screenList || [];
@@ -721,6 +728,15 @@ export function NotificationsSheetView() {
     : shown.map((view) => ({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
   const today = entries.filter((entry) => entry.at >= boundary);
   const earlier = entries.filter((entry) => entry.at < boundary);
+  // #5405: the query narrows what the open tab already drew — the same
+  // `entries`, notifications and sessions both. Whitespace-only is no query
+  // at all. While it is active the headings, the pinned sections and the
+  // pager footers step aside, and the empty state is the search one.
+  const needle = normalizeNotificationQuery(query);
+  const searching = !!needle;
+  const matches = searching
+    ? entries.filter((entry) => matchesNotificationQuery(entry, needle))
+    : entries;
   const renderEntry = (entry: MessagesEntry): ReactNode => (entry.type === 'session' ? (
     // The same <SessionRow> the Improve panel and then the Agents tab drew,
     // so a session reads the same wherever you meet it and its busy /
@@ -821,6 +837,41 @@ export function NotificationsSheetView() {
           <XIcon className="w-5 h-5" />
         </button>
       </div>
+      {/*
+          #5405: the search field, between the title and the tab strip — the
+          Discover field's shape (browse-screen.tsx): a white rounded field,
+          a magnifying glass on its left, grey hint text, filtering as you
+          type with no button to press. Escape with text in it empties the
+          field instead of reaching whatever else would hear it; an empty
+          field's Escape is not intercepted.
+      */}
+      <div id="notifications-search" className="px-4 pt-1 pb-2 shrink-0">
+        <div className="relative">
+          <SearchIcon
+            className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
+            aria-hidden="true"
+          />
+          <input
+            id="notifications-search-input"
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value.slice(0, 100))}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && event.currentTarget.value) {
+                event.preventDefault();
+                event.stopPropagation();
+                setQuery('');
+              }
+            }}
+            placeholder={t('notifications:sheet.search.placeholder')}
+            aria-label={t('notifications:sheet.search.placeholder')}
+            autoComplete="off"
+            spellCheck={false}
+            enterKeyHint="search"
+            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-3 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
+          />
+        </div>
+      </div>
       <div
         id="notifications-screen-tabs"
         className={'flex gap-2 px-4 pt-1 pb-2 shrink-0 overflow-x-auto '
@@ -906,7 +957,7 @@ export function NotificationsSheetView() {
           with nothing unread (disabled), so the row does not reflow the
           first time you clear the list.
       */}
-      {tab === 'messages' ? (
+      {searching ? null : tab === 'messages' ? (
         <button
           id="notifications-all-messages"
           type="button"
@@ -930,7 +981,16 @@ export function NotificationsSheetView() {
       ) : (
         <NotificationsPinnedSections />
       )}
-      {today.length ? (
+      {/* #5405: while searching the list is ONLY the matches — no headings,
+          no pager — and a query with no matches gets one line saying so. */}
+      {searching ? (
+        matches.length ? matches.map(renderEntry) : (
+          <p id="notifications-search-empty" className="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-500 text-center">
+            {t('notifications:sheet.search.noMatches', { query: query.trim() })}
+          </p>
+        )
+      ) : null}
+      {!searching && today.length ? (
         <>
           <SectionHead>
             {t('notifications:sheet.today')}
@@ -938,7 +998,7 @@ export function NotificationsSheetView() {
           {today.map(renderEntry)}
         </>
       ) : null}
-      {earlier.length ? (
+      {!searching && earlier.length ? (
         <>
           <SectionHead>
             {t('notifications:sheet.earlier')}
@@ -946,7 +1006,7 @@ export function NotificationsSheetView() {
           {earlier.map(renderEntry)}
         </>
       ) : null}
-      {!entries.length ? (
+      {!searching && !entries.length ? (
         <p className="px-4 py-8 text-sm text-zinc-500 text-center">
           {tab === 'unread' ? t('notifications:sheet.empty.unread') : t('notifications:sheet.empty.other')}
         </p>
@@ -981,7 +1041,7 @@ export function NotificationsSheetView() {
           on a quiet account would otherwise offer a link to an equally empty
           All, which is a dead end dressed as a way forward.
       */}
-      {tab === 'messages' && snap.messagesCanLoadMore ? (
+      {searching ? null : (tab === 'messages' && snap.messagesCanLoadMore ? (
         <div className="px-4 py-3">
           <button
             id="notifications-see-older-messages"
@@ -1057,7 +1117,7 @@ export function NotificationsSheetView() {
             {snap.loadingMore ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.load')}
           </button>
         </div>
-      ) : null}
+      ) : null)}
       </div>
       </div>
       <OverlayScrim panelId="notifications-sheet" backdropId="notifications-sheet-overlay" />
