@@ -594,6 +594,56 @@ const Notifications = {
     }
   },
 
+  // #5406: mark every unread notification from ONE app read — the per-app
+  // "Mark read" button on the sheet's Unread tab. A busy app can be cleared
+  // in one tap while every other app's unread rows stay where they are.
+  //
+  // It reuses the route's `{ app_id }` branch (markReadForApp), which is the
+  // whole of what the server does here: the clear reaches every unread row
+  // for that app the server has, including ones the sheet has not paged in,
+  // and its `unread` figure is the account-wide truth the badge adopts.
+  // Cross-tab refresh is the route's own `notifications_changed` push.
+  //
+  // The same rule markAllRead follows: nothing clears until the server
+  // answers, so a failed request leaves every unread mark where it was and
+  // says so with a toast. No optimistic flip and no kinds scoping — the
+  // app branch of the route ignores them.
+  async markAppRead(appId) {
+    if (appId == null) return false;
+    // Nothing in hand to clear (another tab or a refresh got there first):
+    // no request, and the caller's button has nothing to wait on.
+    if (!Notifications.items.some((n) => n && n.appId === appId && !n.readAt)) return false;
+    const failed = () => window.PlatformUI?.toast?.(t('notifications:toast.markAppFailed'));
+    try {
+      const res = await fetch('/api/notifications/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ app_id: appId }),
+      });
+      if (!res.ok) { failed(); return false; }
+      const data = await res.json();
+      Notifications.unread = data.unread || 0;
+      // Flip only what is still unread: a refresh that landed while the
+      // request was running replaced `items` with the server's own rows,
+      // which already say what is true.
+      const now = new Date().toISOString();
+      for (const n of Notifications.items) {
+        if (n && n.appId === appId && !n.readAt) n.readAt = now;
+      }
+      Notifications._reconcileCompletionTitle();
+      Notifications._renderBadge();
+      Notifications._renderList();
+      // #449's reason, for one app: an open group chat may be drawing dots
+      // for the notifications that were just cleared.
+      window.GroupChat?.reconcileDotsFromNotifications?.();
+      return true;
+    } catch (err) {
+      console.warn('[notifications] markAppRead failed', err);
+      failed();
+      return false;
+    }
+  },
+
   // #161: drop the tab-title completion marker once no unread completion
   // notification remains (drawer click, group/app mark-read, mark-all,
   // or a cross-tab notifications_changed refresh). The visibility/focus
@@ -2526,6 +2576,9 @@ function rowView(n) {
     createdAtMs: Date.parse(n.createdAt) || 0,
     who,
     appLine,
+    // Which app the row came from, for the Unread tab's per-app groups
+    // (#5406). Conversation kinds carry no app, so they group under "Other".
+    appId: n.appId ?? null,
     // Meta-line attribution. Null unless the source user actually DID this.
     by: null,
     // The kind line. Every branch below overwrites it; '' would render a
