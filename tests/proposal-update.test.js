@@ -1621,13 +1621,15 @@ test('an update stores the routes it was given, and stores them BEFORE the captu
 
   const write = testingWrite(log);
   assert.ok(write, 'the routes reached the column');
-  assert.match(String(write.sql), /testing_paths = \$1::jsonb/);
-  assert.match(String(write.sql), /testing_path = \$2/);
-  assert.match(String(write.sql), /testing_md = \$3/);
-  assert.deepEqual(JSON.parse(write.params[0]), TESTING.testingPaths);
-  assert.equal(write.params[1], '/?shot=invite', 'the PRIMARY path is the first entry, same rule as the block parser');
-  assert.equal(write.params[2], '1. Open the invite dialog.');
-  assert.equal(write.params[3], 501);
+  assert.match(String(write.sql), /testing_paths = CASE WHEN \$2::boolean THEN \$3::jsonb/);
+  assert.match(String(write.sql), /testing_path = CASE WHEN \$2::boolean THEN \$4/);
+  assert.match(String(write.sql), /testing_md = CASE WHEN \$5::boolean THEN \$6/);
+  assert.equal(write.params[0], 501);
+  assert.equal(write.params[1], true);
+  assert.deepEqual(JSON.parse(write.params[2]), TESTING.testingPaths);
+  assert.equal(write.params[3], '/?shot=invite', 'the PRIMARY path is the first entry, same rule as the block parser');
+  assert.equal(write.params[4], true);
+  assert.equal(write.params[5], '1. Open the invite dialog.');
 
   // Property 1: the row the tails hand to captureForSession says the new
   // routes, not the old ones — and it said so before the tail ran.
@@ -1669,7 +1671,7 @@ test('an unusable route is dropped rather than stored, and the rules are the blo
   // from services/testing-notes.js rather than from a second copy here.
   assert.deepEqual(result.testingPaths, ['/ok?x=1', '/a', '/b']);
   const write = testingWrite(log);
-  assert.deepEqual(JSON.parse(write.params[0]).map((p) => p.path), ['/ok?x=1', '/a', '/b']);
+  assert.deepEqual(JSON.parse(write.params[2]).map((p) => p.path), ['/ok?x=1', '/a', '/b']);
 
   // …and every one of those drops is NAMED (#1214). Dropping is right —
   // one bad route must not cost an update that already landed on GitHub —
@@ -1737,7 +1739,7 @@ test('the @mobile annotation survives an update written as a plain string (#1214
   assert.equal(result.ok, true);
   assert.deepEqual(result.testingPaths, ['/?shot=invite @mobile', '/?shot=members @mobile']);
   assert.equal(result.testingPathsRejected, null);
-  assert.deepEqual(JSON.parse(testingWrite(log).params[0]), [
+  assert.deepEqual(JSON.parse(testingWrite(log).params[2]), [
     { path: '/?shot=invite', viewport: 'mobile' },
     { path: '/?shot=members', viewport: 'mobile' },
   ]);
@@ -1791,7 +1793,7 @@ test('a same-commit resubmit with new routes stores them and forces a fresh capt
 
   // The stored routes, and the re-run that shoots them.
   const write = testingWrite(log);
-  assert.deepEqual(JSON.parse(write.params[0]), TESTING.testingPaths);
+  assert.deepEqual(JSON.parse(write.params[2]), TESTING.testingPaths);
   assert.equal(rechecks.length, 1);
   assert.equal(rechecks[0].reason, 'testing-update');
   assert.deepEqual(rechecks[0].session.testing_paths, TESTING.testingPaths,

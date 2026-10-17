@@ -24,7 +24,7 @@ export function governanceServices({ config, pool, requestDeploy, adoptCampaigns
       maxAttempts: 6,
       backoffMs: backoff,
       async run(ctx): Promise<Json> {
-        const done = await closeAndComment(ctx, (gh, owner, repo, number) => gh.closeIssue(owner, repo, number));
+        const done = await closeAndComment(ctx, 'issue');
         if ((done as { gone?: boolean }).gone) return done;
         return { closed: true };
       },

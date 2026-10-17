@@ -181,7 +181,7 @@ export function mergeFollowupsServices({ config, pool, requestDeploy, botNote }:
     [WORK.closePr]: {
       maxAttempts: 6,
       backoffMs: backoff,
-      run: (ctx) => closeAndComment(ctx, (gh, owner, repo, number) => gh.closePR(owner, repo, number)),
+      run: (ctx) => closeAndComment(ctx, 'pullRequest'),
     },
 
     // The repository's unit suite on the merge commit (services/main-watch.js).
