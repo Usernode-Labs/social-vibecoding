@@ -6,9 +6,11 @@
 // #3016: at 390px the session bar's five controls (focus, change, Build,
 // Changes, ⋯) came to 537px, and a bar that could not wrap made the whole
 // conversation that wide. The screen clips its overflow, so the right edge of
-// every message and the Send button were simply gone. The bar wraps now, the
-// panel may shrink below its content, and an empty message box is as tall as
-// its hint, which wraps on a phone and was cut off mid-line.
+// every message and the Send button were simply gone. The bar is one
+// non-wrapping row now: the two pills that name things give way (the app's
+// name truncates, then the PR suffix drops) while Changes and the ⋯ never do.
+// The panel may shrink below its content, and an empty message box is as tall
+// as its hint, which wraps on a phone and was cut off mid-line.
 //
 // #3559: the same failure from inside the transcript. A row holding one
 // unbroken run of text (a pasted link, a path) made the conversation wider
@@ -29,22 +31,63 @@ const { loadTsx, createElement, renderToHtml } = require('./lib/render-tsx');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const panel = read('frontend/src/features/agent-session/index.tsx');
 
-test('#3016: the session bar wraps on every surface, and the panel cannot outgrow the screen', () => {
+test('#3016: the session bar is one non-wrapping pill row on every surface, and the panel cannot outgrow the screen', () => {
   const bar = panel.slice(panel.indexOf('function SessionBar('), panel.indexOf('function SessionMenu('));
-  assert.match(bar, /<div className="flex flex-wrap items-center gap-x-2 gap-y-2 [^"]*" data-agent-session-bar>/,
-    'wrapping is not the embedded variant\'s alone any more');
-  assert.doesNotMatch(bar, /embedded \? 'flex-wrap' : ''/);
-  assert.match(bar, /data-agent-session-change-pill\s+className=\{`inline-flex shrink-0 items-center whitespace-nowrap /,
-    'the change pill stays one line');
-  // Changes and the ⋯ end whichever row they land on. Build left the bar
-  // for the composer's "Build with" (#3078).
+  assert.match(bar, /<div className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>/,
+    'the bar is a block, so the title and the pill row stack instead of wrapping together');
+  assert.doesNotMatch(bar, /flex-wrap|basis-full/, 'nothing wraps any more');
+
+  // The embedded title sits above the row, not inside it.
+  assert.match(bar, /embedded \? \(\s*<div className="mb-2 min-w-0">/, 'the title block is above the pills');
+  assert.match(bar, /<div className="flex min-w-0 flex-nowrap items-center gap-2 \[container-type:inline-size\]" data-agent-session-pills>/,
+    'one row that never wraps, and its own container for the give-way rules');
+  assert.doesNotMatch(bar, /flex-wrap/, 'the row is nowrap');
+
+  // The row's children stay in their declared order: the dapp checks read
+  // sibling chains across them.
+  const row = bar.slice(bar.indexOf('data-agent-session-pills'));
+  const order = [
+    'data-agent-session-focus',
+    'data-agent-session-change-pill',
+    'data-agent-session-changes-button',
+    '<OpenAppButton',
+    '{action}',
+    '<SessionMenu',
+  ].map((needle) => {
+    const at = row.indexOf(needle);
+    assert.ok(at >= 0, `${needle} is inside the pill row`);
+    return at;
+  });
+  assert.deepEqual(order, [...order].sort((a, b) => a - b), 'focus, change, Changes, Open app, action, ⋯');
+
+  // The names give way first; the controls never do.
+  assert.match(bar, /data-agent-session-focus\s+className="inline-flex min-w-\[2\.75rem\] max-w-fit grow basis-0 items-center gap-1\.5 whitespace-nowrap /,
+    'the app pill grows from a zero basis and can shrink to its mark');
+  assert.match(bar, /<span className="min-w-0 max-w-\[7rem\] truncate">/, 'a long app name truncates at 7rem');
+  assert.match(bar, /data-agent-session-change-pill\s+className=\{`inline-flex min-w-\[3\.5rem\] items-center whitespace-nowrap /,
+    'the change pill shrinks after the focus pill and stays one line');
+  assert.doesNotMatch(bar, /data-agent-session-change-pill\s+className=\{`[^`]*shrink-0/, 'it gives way; it is not pinned');
+  assert.doesNotMatch(bar, /data-agent-session-change-pill\s+className=\{`[^`]*grow/, 'it does not grow');
+  assert.match(bar, /<span className="\[@container\(max-width:24rem\)\]:hidden"> · PR #\{active\.prNumber\}<\/span>/,
+    'the PR suffix drops in a narrow row, and the tooltip keeps the full line');
+  assert.match(bar, /title=\{changeText\}/, 'the full status line is always readable');
+  assert.match(bar, /data-agent-session-changes-button\s+className="ml-auto inline-flex shrink-0 [^"]*whitespace-nowrap[^"]*"/,
+    'Changes never gives way');
+  assert.match(panel, /data-agent-session-menu\s+className="inline-flex h-7 w-7 shrink-0 /, 'nor does the ⋯');
   assert.doesNotMatch(bar, /VenuePicker/);
-  assert.match(bar, /data-agent-session-changes-button\s+className="ml-auto [^"]*whitespace-nowrap[^"]*"/);
-  assert.doesNotMatch(bar, /data-agent-session-changes-button\s+className="[^"]*sm:ml-0/, 'nothing before it to push it right any more');
 
   assert.match(panel, /<div ref=\{root\} className=\{`relative flex min-h-0 min-w-0 flex-1 /,
     'the panel shrinks below its content, so nothing inside can widen the screen');
   assert.match(panel, /className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat/);
+});
+
+test('#3016: Open app keeps its screen-reader name and gives up only its words in a narrow row', () => {
+  const api = loadTsx('tests/fixtures/agent-session-api.ts');
+  const html = renderToHtml(createElement(api.OpenAppButton, { target: { slug: 'notes', name: 'Notes' } }));
+  assert.match(html, /aria-label="Open app"/, 'the icon-only state still names itself');
+  assert.match(html, /\[@container\(max-width:32rem\)\]:px-2/, 'it tightens its padding in a narrow row');
+  assert.match(html, /class="truncate \[@container\(max-width:32rem\)\]:hidden">Open app<\/span>/,
+    'only the words drop, the window mark stays');
 });
 
 test('#3016: an empty message box is sized to its hint, measured without an input event', () => {
