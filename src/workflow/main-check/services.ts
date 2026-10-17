@@ -26,15 +26,23 @@ export function mainCheckServices({ config, pool }: Deps): Record<string, WorkHa
       resumable: true,
       maxAttempts: 3,
       backoffMs: (n) => 60 * 1000 * 2 ** (n - 1),
-      leaseMs: 5 * 60 * 1000,
+      // Renewed while it runs (a suite takes minutes): a process that exits
+      // mid-suite leaves it to the next one within this much.
+      leaseMs: 90 * 1000,
       concurrency: 4,
       async run(ctx): Promise<Json> {
         const row = await app(Number(ctx.input.appId));
         if (!row) return { state: 'skipped', detail: { reason: 'the app no longer exists' } };
-        const resumeRunId = (ctx.resumeFrom as { runId?: string } | null)?.runId ?? null;
+        // The run to carry on: this item's own, or (an adopted row) the one
+        // an older release left.
+        const resumeRunId = (ctx.resumeFrom as { runId?: string } | null)?.runId ?? ctx.input.resumeRunId ?? null;
         const out = await watch().runMainSuite(config, pool, {
-          app: row, sha: String(ctx.input.sha), resumeRunId,
-          onRunId: (runId: string) => ctx.checkpoint({ runId }),
+          app: row, sha: String(ctx.input.sha), resumeRunId, signal: ctx.signal,
+          // A save that fails for another reason than a lost claim costs
+          // only the adoption after a crash: the run goes on.
+          onRunId: (runId: string) => ctx.checkpoint({ runId }).catch((err: any) => {
+            if (err?.constructor?.name === 'LeaseLost' || ctx.signal.aborted) throw err;
+          }),
         });
         const excerpts = (Array.isArray(out.excerpts) ? out.excerpts : []).slice(0, MAX_EXCERPTS)
           .map((x: any) => ({ ...x, ...(typeof x?.excerpt === 'string' ? { excerpt: x.excerpt.slice(0, EXCERPT_CHARS) } : {}) }));

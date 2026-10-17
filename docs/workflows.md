@@ -1257,6 +1257,12 @@ board's banner read them.
 - **A newer commit** while a run is under way starts its own first run; the older run's
   verdict is recorded as superseded and changes nothing.
 - **During a rollout** a row an older release left running, confirming or paused is
-  adopted at the leader's boot (`adoptMainChecks`), and an older release's `main.check`
-  item hands the merge over (merge-followups).
+  adopted at the leader's boot (`adoptMainChecks`, reading that release's own run's Jobs
+  when it was admitted), and an older release's `main.check` item hands the merge over
+  (merge-followups).
+- **Rolling back past it.** The guard stays on (its `enabled:main-check` row and the
+  instances outlive the release), so an older release's writes to `main_check_*` are
+  refused, a pause included: an app paused then stays paused. Delete the
+  `enabled:main-check` row of `wf_settings` after such a rollback (the same holds for every
+  machine's guard).
 

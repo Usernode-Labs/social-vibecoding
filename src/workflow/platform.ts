@@ -223,6 +223,7 @@ export async function startWorkflowLoops(): Promise<void> {
 // merge's is merge-followups' message). Appended, not waited for.
 export async function requestMainCheck(c: { appId: number; sha: string; sessionId?: number | null; prNumber?: number | null }): Promise<void> {
   if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  if (!mainCheckDeps(process.env).enabled) return;   // MAIN_WATCH_ENABLED off: nothing is asked
   await runtime.append(MAIN_CHECK, mainCheckKey(c.appId), { type: 'CheckRequested', payload: {
     appId: c.appId, sha: c.sha, sessionId: c.sessionId ?? null, prNumber: c.prNumber ?? null,
   } }, { requestKey: `check:${c.appId}:${String(c.sha).toLowerCase()}:${randomUUID()}`, source: { kind: 'system', name: 'new-main' }, appId: c.appId });
@@ -230,12 +231,13 @@ export async function requestMainCheck(c: { appId: number; sha: string; sessionI
 
 // An admin resumes an app's merges paused by a red main: whether there was
 // a pause to lift.
-export async function resumeMainCheck(appId: number, user: { id: number; username?: string | null }): Promise<'resumed' | 'not_paused' | 'pending'> {
+export async function resumeMainCheck(appId: number, user: { id: number; username?: string | null }): Promise<'resumed' | 'not_paused' | 'pending' | 'failed'> {
   if (!runtime) throw new Error('The workflow runtime is not running in this process');
   const out = await runtime.appendAndWait(MAIN_CHECK, mainCheckKey(appId), { type: 'Resume', payload: { appId, by: user.username ?? null } },
     { requestKey: `resume:${appId}:${randomUUID()}`, source: { kind: 'route', name: 'main-check-resume' }, actor: `user:${user.id}`, appId, waitMs: 5000 });
   if (out.status === 'accepted' || out.status === 'replayed') return 'resumed';
   if (out.status === 'pending') return 'pending';
+  if (out.status === 'faulted') return 'failed';
   return 'not_paused';
 }
 
@@ -246,13 +248,20 @@ export async function resumeMainCheck(appId: number, user: { id: number; usernam
 async function adoptMainChecks(): Promise<number> {
   if (!runtime) return 0;
   const { rows } = await kernelPool!.query(
-    `SELECT a.id FROM apps a
+    `SELECT a.id, dead.run_id FROM apps a
+       LEFT JOIN LATERAL (
+         -- The older release's own run of the row's commit, admitted: its
+         -- Jobs are read rather than the suite run again.
+         SELECT cr.run_id FROM check_runs cr
+          WHERE cr.kind = 'main' AND cr.app_id = a.id AND lower(cr.commit_sha) = lower(a.main_check_sha)
+            AND cr.admitted_at IS NOT NULL
+          ORDER BY cr.started_at DESC LIMIT 1) dead ON a.main_check_state IN ('running', 'confirming')
       WHERE (a.main_check_state IN ('running', 'confirming')
              OR (a.main_check_state = 'failing' AND lower(coalesce(a.main_check_paused_sha, '')) = lower(coalesce(a.main_check_sha, ''))))
         AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'app:' || a.id)
       ORDER BY a.id`, [MAIN_CHECK]);
   for (const r of rows) {
-    await runtime.append(MAIN_CHECK, mainCheckKey(r.id), { type: 'Adopted', payload: { appId: r.id } },
+    await runtime.append(MAIN_CHECK, mainCheckKey(r.id), { type: 'Adopted', payload: { appId: r.id, runId: r.run_id ?? null } },
       { requestKey: `adopt:${r.id}`, source: { kind: 'system', name: 'adopt' }, appId: r.id })
       .catch((err: Error) => log!.warn('workflow', 'Could not adopt a main check', { appId: r.id, message: err.message }));
   }

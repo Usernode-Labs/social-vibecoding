@@ -441,9 +441,76 @@ test('the main check against the full PostgreSQL schema', { timeout: 240000 }, a
     await settle();
     r = await row(b);
     assert.deepEqual([r.state, r.sha, r.paused], ['passing', S2, null]);
-    assert.deepEqual(byCommit(await verdicts(b)), [[S1, 'failing', true, null, false], [S2, 'passing', false, null, false]]);
+    assert.deepEqual(byCommit(await verdicts(b)), [[S1, 'failing', true, true, false], [S2, 'passing', false, null, false]],
+      'a red again is kept confirmed, as the run would have stored it');
     assert.deepEqual(fixedFor(b), [], 'a superseded red is sent to nobody');
     assert.deepEqual(await kicks(b), ['main-post-green'], 'the green lifts the hold the confirmation had');
+  });
+
+  // Review round 2 (2026-10-17).
+  await t.test('review: superseded greens are flakes, flakes are read on a failed confirmation, a deleted app faults nothing, the switch holds', async () => {
+    const bySha = (answers) => (args) => answers.get(args.sha);
+    // A confirmation green after a newer commit took the row: a flake.
+    const a = await app();
+    const confirm = bySha(new Map([[S1, null], [S2, green]]));
+    script(a, redOn([REAL]), confirm, confirm);
+    suite.scripts.set(a.id, [redOn([REAL]), () => green, () => green]);
+    await ask(rt, a, S1);
+    await round();
+    assert.equal((await row(a)).state, 'confirming');
+    await ask(rt, a, S2);
+    await settle();
+    assert.deepEqual((await verdicts(a)).filter(([sha]) => sha === S1).map(([, state, sup, conf, flake]) => [state, sup, conf, flake]),
+      [['passing', true, null, true]], 'red then green on that commit: a flake, though superseded');
+
+    // A confirmation that fails for good stands the first red: one of known
+    // flakes alone still pauses nothing (the flakes are read for every result).
+    const b = await app();
+    await knownFlake(b, FLAKY);
+    script(b, redOn([FLAKY]), new Error('docker daemon unreachable'), new Error('docker daemon unreachable'));
+    await ask(rt, b, S1);
+    await settle();
+    let r = await row(b);
+    assert.deepEqual([r.state, r.paused, r.detail.confirmed, r.detail.flakesOnly], ['failing', null, false, [FLAKY.test]]);
+
+    // An app deleted while its run is under way: the verdict has nowhere to
+    // go, and the instance is not faulted for it.
+    const c = await app();
+    let release;
+    script(c, () => new Promise((resolve) => { release = () => resolve(green); }));
+    await ask(rt, c, S1);
+    const running = (async () => { await round(); })();
+    for (let i = 0; i < 100 && !release; i += 1) await new Promise((res) => setTimeout(res, 20));
+    await pool.query('DELETE FROM apps WHERE id = $1', [c.id]);
+    release();
+    await running;
+    await settle();
+    assert.equal((await inst(c)).flag, null, 'not faulted');
+
+    // MAIN_WATCH_ENABLED off: nothing is adopted, and no recheck runs.
+    const off = runtimeWith({ enabled: false });
+    const d = await app();
+    await seed(d, { state: 'confirming', paused: S1, detail: { confirming: true, ...redOn([REAL]).detail } });
+    assert.equal((await send(off, d, 'Adopted')).reason, 'off');
+
+    // An older release's run is adopted by its id: the suite is not run again.
+    const e = await app();
+    await seed(e, { state: 'running', detail: { prNumber: 41, sessionId: 3 } });
+    script(e, green);
+    await send(rt, e, 'Adopted', { runId: 'run-of-the-older-release' });
+    assert.deepEqual((await suiteWork(e)).map((w) => w.input.resumeRunId), ['run-of-the-older-release']);
+    await settle();
+    assert.equal(ran(e)[0].resumeRunId, 'run-of-the-older-release');
+
+    // An admin's Resume names the commit it resumed, while a newer one runs.
+    const f = await app();
+    script(f, redOn([REAL]), redOn([REAL]), green);
+    await ask(rt, f, S1);
+    await settle();
+    await ask(rt, f, S2);
+    await send(rt, f, 'Resume', {}, route);
+    assert.deepEqual((await pauses(f)).at(-1), ['main_resumed', { sha: S1, by: 'admin' }]);
+    await settle();
   });
 
   await t.test('Resume lifts the pause, remembers its commit, clears the recheck and lets the queue go', async () => {

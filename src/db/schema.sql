@@ -9562,16 +9562,7 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_at TIMESTAMPTZ;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_detail JSONB;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_resumed_sha VARCHAR(40);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_paused_sha VARCHAR(40);
--- Carry the derived pauses over. Idempotent: only rows that are red, not
--- resumed for that red, not a red of known flakes alone, and not yet
--- carrying the pause column.
-UPDATE apps
-   SET main_check_paused_sha = main_check_sha
- WHERE main_check_state = 'failing'
-   AND main_check_sha IS NOT NULL
-   AND main_check_paused_sha IS NULL
-   AND lower(coalesce(main_check_resumed_sha, '')) <> lower(main_check_sha)
-   AND (main_check_detail -> 'flakesOnly') IS NULL;
+-- (Their derived pauses are carried over below the main-check guard.)
 
 -- Every verdict main watch reached on a merge commit (services/main-red-fix.js),
 -- kept even when a newer merge took the app's row before it could be stored
@@ -14002,6 +13993,19 @@ CREATE TRIGGER apps_wf_main_check_owned
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=main-check/app:',
     'main_check_state', 'main_check_sha', 'main_check_at', 'main_check_detail',
     'main_check_paused_sha', 'main_check_resumed_sha');
+
+-- Carry the derived pauses over. Idempotent: only rows that are red, not
+-- resumed for that red, not a red of known flakes alone, and not yet
+-- carrying the pause column, on rows the main-check machine does not hold
+-- (it owns the column there).
+UPDATE apps
+   SET main_check_paused_sha = main_check_sha
+ WHERE main_check_state = 'failing'
+   AND main_check_sha IS NOT NULL
+   AND main_check_paused_sha IS NULL
+   AND lower(coalesce(main_check_resumed_sha, '')) <> lower(main_check_sha)
+   AND (main_check_detail -> 'flakesOnly') IS NULL
+   AND NOT wf_holds('main-check', 'app:' || id);
 
 -- preview (src/workflow/preview/): a proposal's preview and its required
 -- checks, one instance per session. For a session it holds, it owns the

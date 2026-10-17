@@ -389,9 +389,23 @@ test('the schema carries the pause column and the backfill for the derived pause
   assert.match(schema, /ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_paused_sha VARCHAR\(40\);/);
   // Idempotent: red, not resumed for that red, not a red of known flakes
   // alone (which pauses nothing on purpose), and not yet carrying the
-  // column. Runs at every boot without moving anything twice.
-  assert.match(schema, /UPDATE apps\s+SET main_check_paused_sha = main_check_sha\s+WHERE main_check_state = 'failing'\s+AND main_check_sha IS NOT NULL\s+AND main_check_paused_sha IS NULL\s+AND lower\(coalesce\(main_check_resumed_sha, ''\)\) <> lower\(main_check_sha\)\s+AND \(main_check_detail -> 'flakesOnly'\) IS NULL;/);
+  // column, on rows the main-check machine does not hold (it owns the
+  // column there; so the backfill comes after its guard and wf_holds).
+  // Runs at every boot without moving anything twice.
+  assert.match(schema, /UPDATE apps\s+SET main_check_paused_sha = main_check_sha\s+WHERE main_check_state = 'failing'\s+AND main_check_sha IS NOT NULL\s+AND main_check_paused_sha IS NULL\s+AND lower\(coalesce\(main_check_resumed_sha, ''\)\) <> lower\(main_check_sha\)\s+AND \(main_check_detail -> 'flakesOnly'\) IS NULL\s+AND NOT wf_holds\('main-check', 'app:' \|\| id\);/);
+  assert.ok(schema.indexOf('UPDATE apps\n   SET main_check_paused_sha') > schema.indexOf('CREATE OR REPLACE FUNCTION wf_holds('), 'after wf_holds is defined');
   // The API serializes the column with its siblings.
   const access = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'app-access.js'), 'utf8');
   assert.match(access, /'main_check_resumed_sha', 'main_check_paused_sha',/);
+});
+
+// The suite's run reads the repository as the main-check machine's claim
+// does (rules/github-url.ts): an app the machine claims is never stored as
+// having no repository (review, 2026-10-17).
+test('parseRepo: the rules\' one parser, the ssh form and a trailing slash included', () => {
+  const { parseRepo } = require('../src/services/main-watch');
+  for (const url of ['https://github.com/acme/shop', 'https://github.com/acme/shop/', 'https://www.github.com/acme/shop.git', 'git@github.com:acme/shop.git']) {
+    assert.deepEqual(parseRepo(url), { owner: 'acme', repo: 'shop' }, url);
+  }
+  assert.equal(parseRepo('https://gitlab.com/acme/shop'), null);
 });

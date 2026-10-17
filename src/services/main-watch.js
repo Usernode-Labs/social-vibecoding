@@ -104,10 +104,8 @@ function flakeRequestsEnabled() {
   return !(v === '0' || v === 'false' || v === 'off');
 }
 
-function parseRepo(repoUrl) {
-  const m = String(repoUrl || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
-}
+// The rules' one parser, as the main-check machine's own claim reads it.
+const { parseGithubUrl: parseRepo } = require('../workflow/rules/github-url.ts');
 
 function sameSha(a, b) {
   return !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase();
@@ -241,7 +239,7 @@ async function stillTheMerge(pool, appId, mergeSha) {
 // release }`: superseded when a newer merge claimed the row while this one
 // waited; `release` gives the slot back. Never throws, and fails open: a
 // queue that cannot be joined lets the run go, as before the queue existed.
-async function takeSlot(config, pool, app, mergeSha, { onRunId = null } = {}) {
+async function takeSlot(config, pool, app, mergeSha, { onRunId = null, signal = null } = {}) {
   const none = { superseded: false, runId: null, release: async () => {} };
   if (config?.workerRuntime !== 'kubernetes' || !checksQueue.isEnabled()) return none;
   const runId = crypto.randomUUID();
@@ -255,7 +253,7 @@ async function takeSlot(config, pool, app, mergeSha, { onRunId = null } = {}) {
   const stopHeartbeat = checkRuns.startHeartbeat(pool, runId);
   const release = async () => { stopHeartbeat(); await checkRuns.finish(pool, runId); };
   const slot = await checksQueue.waitForSlot(pool, {
-    runId, stillWanted: () => stillTheMerge(pool, app.id, mergeSha),
+    runId, signal, stillWanted: () => stillTheMerge(pool, app.id, mergeSha),
   });
   if (slot.outcome === 'superseded') {
     await release();
@@ -274,14 +272,14 @@ async function takeSlot(config, pool, app, mergeSha, { onRunId = null } = {}) {
 // runner that could not be reached is an 'error' verdict. 'superseded' is a
 // run that never started because a newer merge took the row while it
 // waited for its slot; afterMerge stores nothing for it.
-async function runSuite(config, pool, app, parsed, mergeSha, { adopt = null, onRunId = null } = {}) {
+async function runSuite(config, pool, app, parsed, mergeSha, { adopt = null, onRunId = null, signal = null } = {}) {
   let slot = null;
   try {
     if (adopt) {
       const adopted = await adoptRun(config, pool, app, mergeSha, adopt);
       if (adopted) return adopted;
     }
-    slot = await takeSlot(config, pool, app, mergeSha, { onRunId });
+    slot = await takeSlot(config, pool, app, mergeSha, { onRunId, signal });
     if (slot.superseded) return { state: 'superseded', detail: {} };
     const outcome = await unitSuite.maybeRunUnitSuite({
       config, pool, appId: app.id,
@@ -551,7 +549,7 @@ async function fileFlakeRequest(config, pool, app, t, { mergeSha = null, excerpt
 // (`resumeRunId`) to read the dead run's Jobs rather than run the suite
 // again, once the dead process's row is still there. Resolves a verdict
 // (classify); never throws.
-async function runMainSuite(config, pool, { app, sha, resumeRunId = null, onRunId = null } = {}) {
+async function runMainSuite(config, pool, { app, sha, resumeRunId = null, onRunId = null, signal = null } = {}) {
   const parsed = parseRepo(app && app.repo_url);
   if (!parsed) return { state: 'skipped', detail: { reason: 'no repository' } };
   let adopt = null;
@@ -562,7 +560,7 @@ async function runMainSuite(config, pool, { app, sha, resumeRunId = null, onRunI
       if (r) adopt = { runId: resumeRunId, owner: r.owner };
     } catch { /* nothing to adopt: the suite runs again */ }
   }
-  return runSuite(config, pool, app, parsed, sha, { adopt, onRunId });
+  return runSuite(config, pool, app, parsed, sha, { adopt, onRunId, signal });
 }
 
 module.exports = {

@@ -3023,6 +3023,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (resumed === 'not_paused') {
         return res.status(409).json({ error: 'Merges are not paused for this app' });
       }
+      if (resumed === 'failed') return res.status(500).json({ error: 'Internal server error' });
       const mainWatch = require('../services/main-watch');
       res.json({ ok: true, mainCheck: (await mainWatch.mergePause(pool, rows[0].id)), ...(resumed === 'pending' ? { pending: true } : {}) });
     } catch (err) {

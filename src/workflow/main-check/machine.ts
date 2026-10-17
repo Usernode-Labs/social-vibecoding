@@ -69,6 +69,8 @@ export function depsFromEnv(env: Record<string, string | undefined>): Deps {
   };
 }
 
+const WORK_RESULTS: ReadonlySet<string> = new Set(['WorkSucceeded', 'WorkFailed', 'WorkExhausted']);
+
 // A red is taken for flaky tests only when it named this few (a dozen tests
 // failing and then passing is the run's environment, not each test).
 const MAX_FLAKES_PER_RED = 3;
@@ -132,7 +134,7 @@ const EVENTS = {
   RecheckDue: () => ({}),
   // A row an older release left in the middle of a run, or paused (the
   // leader's boot backfill): taken from the row.
-  Adopted: (p: any) => ({ appId: int(p?.appId, 'appId') }),
+  Adopted: (p: any) => ({ appId: int(p?.appId, 'appId'), runId: typeof p?.runId === 'string' ? p.runId.slice(0, 64) : null }),
 };
 
 // ── The rules (services/main-watch.js tells why each is so) ──────────────
@@ -198,7 +200,7 @@ function rowWrites(d0: Data, d: Data, { by = null }: { by?: string | null } = {}
     writes.push({ type: 'pauseEvent', appId: d.appId, eventType: 'main_paused', metadata: { sha: d.pausedSha, confirming: d.state === 'confirming' } });
   } else if (d0.pausedSha && !d.pausedSha) {
     writes.push({ type: 'pauseEvent', appId: d.appId, eventType: 'main_resumed',
-      metadata: { sha: d.sha || d0.pausedSha, by: by || (d.state === 'passing' ? 'green' : 'flakes') } });
+      metadata: { sha: by === 'admin' ? d0.pausedSha : (d.sha || d0.pausedSha), by: by || (d.state === 'passing' ? 'green' : 'flakes') } });
   }
   return writes;
 }
@@ -212,8 +214,8 @@ const verdictWrite = (d: Data, sha: string, state: string, o: { superseded?: boo
 const kick = (d: Data, why: string): MessageRequest =>
   ({ to: { machine: 'merge-queue', key: appKey(d.appId) }, event: { type: 'MergeWanted', payload: { appId: d.appId, reason: `main-${why}` } }, appId: d.appId });
 
-const suiteWork = (d: Data, run: Run): WorkRequest =>
-  ({ kind: WORK.suite, key: run.key, input: { appId: d.appId, sha: run.sha, phase: run.phase } });
+const suiteWork = (d: Data, run: Run, resumeRunId: string | null = null): WorkRequest =>
+  ({ kind: WORK.suite, key: run.key, input: { appId: d.appId, sha: run.sha, phase: run.phase, ...(resumeRunId ? { resumeRunId } : {}) } });
 
 // When a paused red is asked again, or null when it is not.
 // A paused red with rechecks left.
@@ -302,9 +304,13 @@ function reported(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: Transitio
   // red's suspects are read from), and changes nothing else.
   const old = d.older.find((r) => r.key === p.workKey);
   if (old || !d.run || d.run.key !== p.workKey) {
-    const keepIt = old && (v.state === 'passing' || v.state === 'failing');
+    // As the run would have stored it: a first red unconfirmed, a red again
+    // confirmed, a green after a red a flake (a recheck's is not kept).
+    const keepIt = old && old.phase !== 'recheck' && (v.state === 'passing' || v.state === 'failing');
+    const confirmed = v.state === 'failing' ? old?.phase === 'confirm' : null;
+    const flake = old?.phase === 'confirm' && v.state === 'passing';
     const next = { ...d, older: d.older.filter((r) => r.key !== p.workKey) };
-    return step(s.name, next, { writes: keepIt ? [verdictWrite(d, old.sha, v.state, { superseded: true, confirmed: old.phase === 'first' ? false : null })] : [] });
+    return step(s.name, next, { writes: keepIt ? [verdictWrite(d, old.sha, v.state, { superseded: true, confirmed, flake })] : [] });
   }
   const run = d.run;
   // A run whose dead predecessor another process took first (main-watch.js
@@ -380,16 +386,20 @@ function fromRow(appId: number, r: Row): Data {
 // A row an older release left: a first run is run again, a confirmation
 // resumes at its re-run with the first red carried over, and a paused red
 // waits for its recheck.
-function adopt(d: Data, ctx: TransitionContext, deps: Deps): Outcome<MCState> {
+// `runId`: the older release's own run of the row's commit, whose Jobs the
+// first attempt reads rather than run the suite again.
+function adopt(d: Data, ctx: TransitionContext, deps: Deps, runId: string | null = null): Outcome<MCState> {
   const detail = obj(d.detail);
   if (d.state === 'running' && d.sha) {
-    return claim({ ...d, state: 'error' }, { sha: d.sha, sessionId: detail.sessionId ?? null, prNumber: detail.prNumber ?? null }, ctx);
+    const out = claim({ ...d, state: 'error' }, { sha: d.sha, sessionId: detail.sessionId ?? null, prNumber: detail.prNumber ?? null }, ctx);
+    const run = (out.next as Live).data.run!;
+    return { ...out, work: [suiteWork((out.next as Live).data, run, runId)] };
   }
   if (d.state === 'confirming' && d.sha) {
     const run: Run = { key: 'suite:1', sha: d.sha, phase: 'confirm', prNumber: detail.prNumber ?? null, sessionId: detail.sessionId ?? null,
       wasPaused: true, firstRun: redOf(detail) as Json, firstExcerpts: [] };
     const d1 = { ...d, n: 1, run };
-    return step('confirming', d1, { work: [suiteWork(d1, run)] });
+    return step('confirming', d1, { work: [suiteWork(d1, run, runId)] });
   }
   return step('idle', d, { timer: recheckTimer(d, deps, ctx.now) });
 }
@@ -432,7 +442,7 @@ export function mainCheck(given: Partial<Deps> = {}): Machine<MCState, Facts> {
       // and its run is carried on, as the boot's adoption would have.
       const lifted = resume({ name: 'idle', data: fromRow(e.payload.appId, f.row!) }, e);
       const d = (lifted.next as Live).data;
-      if (d.state !== 'running' && d.state !== 'confirming') return lifted;
+      if (!deps.enabled || (d.state !== 'running' && d.state !== 'confirming')) return lifted;
       const carried = adopt(d, ctx, deps);
       return { ...carried, writes: [...(lifted.writes || []), ...(carried.writes || [])],
         messages: [...(lifted.messages || []), ...(carried.messages || [])], timer: null };
@@ -453,7 +463,7 @@ export function mainCheck(given: Partial<Deps> = {}): Machine<MCState, Facts> {
     CheckRequested: requested,
     Resume: resumeEntry,
     RecheckDue: name === 'idle'
-      ? { guard: (s: MCState) => (recheckable((s as Live).data, deps) ? ok() : reject('not_due')), to: live((s, e, f, ctx) => recheck(s, ctx)) }
+      ? { guard: (s: MCState) => (!deps.enabled ? reject('off') : recheckable((s as Live).data, deps) ? ok() : reject('not_due')), to: live((s, e, f, ctx) => recheck(s, ctx)) }
       : { ignore: 'under_way' },
     Adopted: { ignore: 'held' },
     ...resultsOf(name),
@@ -468,7 +478,7 @@ export function mainCheck(given: Partial<Deps> = {}): Machine<MCState, Facts> {
     facts: (tx: Tx, state: MCState, event: Event<any>) => {
       const appId = state.name === NONE ? Number((event.payload as any)?.appId) : (state.data as Data).appId;
       if (!Number.isInteger(appId) || appId <= 0) return Promise.resolve(NO_FACTS);
-      return readFacts(tx, appId, { flakes: event.type === 'WorkSucceeded' });
+      return readFacts(tx, appId, { flakes: WORK_RESULTS.has(event.type) });
     },
     authorize: { CheckRequested: producer, Resume: adminOnly, RecheckDue: timerOnly, Adopted: systemOnly },
     transitions: {
@@ -477,6 +487,7 @@ export function mainCheck(given: Partial<Deps> = {}): Machine<MCState, Facts> {
         Resume: resumeEntry,
         Adopted: {
           guard: (s: MCState, e: Event<any>, f: Facts, ctx: TransitionContext): Check => {
+            if (!deps.enabled) return reject('off');
             const k = keyOf(e, ctx);
             if (k !== true) return k;
             const r = f.row;
@@ -484,7 +495,7 @@ export function mainCheck(given: Partial<Deps> = {}): Machine<MCState, Facts> {
             const paused = r.state === 'failing' && !!r.sha && lower(r.pausedSha) === lower(r.sha);
             return r.state === 'running' || r.state === 'confirming' || paused ? ok() : reject('nothing_to_adopt');
           },
-          to: (s: MCState, e: Event<any>, f: Facts, ctx: TransitionContext) => adopt(fromRow(e.payload.appId, f.row!), ctx, deps),
+          to: (s: MCState, e: Event<any>, f: Facts, ctx: TransitionContext) => adopt(fromRow(e.payload.appId, f.row!), ctx, deps, e.payload.runId),
         },
       },
       idle: table('idle'),
@@ -500,13 +511,16 @@ export function mainCheck(given: Partial<Deps> = {}): Machine<MCState, Facts> {
                 main_check_detail = $5::jsonb, main_check_paused_sha = $6, main_check_resumed_sha = $7
           WHERE id = $1`,
         [w.appId, w.state, w.sha, w.at, JSON.stringify(w.detail ?? {}), w.pausedSha, w.resumedSha]),
+      // (An app deleted meanwhile keeps neither: its rows go with it.)
       pauseEvent: async (tx: Tx, w: any) => tx.query(
-        `INSERT INTO events (app_id, event_type, metadata) VALUES ($1, $2, $3::jsonb)`,
+        `INSERT INTO events (app_id, event_type, metadata)
+         SELECT $1, $2, $3::jsonb WHERE EXISTS (SELECT 1 FROM apps WHERE id = $1)`,
         [w.appId, w.eventType, JSON.stringify(w.metadata || {})]),
       // Every verdict, a superseded one too (main-red-fix.js reads them for
       // a later red's suspects).
       verdict: async (tx: Tx, w: any) => tx.query(
-        `INSERT INTO main_watch_verdicts (app_id, sha, state, superseded, confirmed, flake) VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO main_watch_verdicts (app_id, sha, state, superseded, confirmed, flake)
+         SELECT $1, $2, $3, $4, $5, $6 WHERE EXISTS (SELECT 1 FROM apps WHERE id = $1)`,
         [w.appId, lower(w.sha), w.state, !!w.superseded, w.confirmed, !!w.flake]),
     },
     reply: async (tx, event, after) => (after.name === NONE ? null : { state: after.name, pausedSha: (after as Live).data.pausedSha }),
