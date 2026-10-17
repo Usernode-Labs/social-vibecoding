@@ -55,7 +55,9 @@ test('restoreFromHash rewrites the aliases onto the dev vocabulary', () => {
 });
 
 test('the route applies the layout, and re-renders when only the layout moved', () => {
-  const fn = body("if (parts[0] === 'app' && parts[1]) {", 9200);
+  // Wide enough to reach the dispatch guard, which sits past the project
+  // page's `?ws=` block and the comment that explains it (#3620).
+  const fn = body("if (parts[0] === 'app' && parts[1]) {", 10400);
   // Set BEFORE the dispatch, so a cold entry paints the named layout on the
   // board's first frame instead of flashing the stored one.
   assert.match(fn, /AppView\._setViewMode\(boardView\)/,

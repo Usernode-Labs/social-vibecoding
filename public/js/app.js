@@ -3739,7 +3739,7 @@ const App = {
     // The address this document LOADED at, so the first navigation away from
     // it records a real previous route rather than null (#1565).
     App._currentRoute = location.hash || '';
-    window.addEventListener('popstate', () => App._routeFromHash());
+    window.addEventListener('popstate', () => App._routeFromHash(true));
     window.addEventListener('hashchange', () => App._routeFromHash());
   },
 
@@ -3748,7 +3748,7 @@ const App = {
   // restoreFromHash so the many in-app callers that route WITHOUT the
   // address having moved (boot, the auth screens, the alias rewrites) don't
   // drag the shot appliers along.
-  _routeFromHash() {
+  _routeFromHash(fromHistory) {
     // Recorded before the router runs, and guarded on a real change: one
     // history traversal fires popstate AND hashchange, so this runs twice in
     // a tick with the address already settled (#1102). Without the guard the
@@ -3758,7 +3758,20 @@ const App = {
       App._previousRoute = App._currentRoute;
       App._currentRoute = arriving;
     }
+    // A PROJECT TAB IS A HISTORY RECORD (#3620), and its only mark is the
+    // `?ws=` in the query — the hash does not move between a project's tabs.
+    // The deep-link value is resolved once per page life, so a traversal has
+    // to make it re-read the address it landed on, or Back/Forward would
+    // keep the tab the page was last on. The door's explicit choice
+    // (`_setWorkshopTab`'s null) is untouched here: this is only a real
+    // history traversal, and a door's hashchange is not one.
+    if (fromHistory && typeof AppView !== 'undefined') {
+      AppView._workshopTabUrlOverride = undefined;
+    }
     App.restoreFromHash();
+    if (typeof AppView !== 'undefined' && AppView._applyWorkshopTabRoute) {
+      AppView._applyWorkshopTabRoute();
+    }
     App._applyRouteShots();
   },
 
@@ -3778,15 +3791,23 @@ const App = {
   },
 
   // Preserve every platform query parameter byte-for-byte, except `path`,
-  // which belongs exclusively to the chromeless app route. The inner child
-  // path is encoded as ONE query value so its own `?`, `&`, and `=` survive.
-  _routeSearch(innerPath) {
+  // which belongs exclusively to the chromeless app route, and `ws`, which is
+  // the PROJECT PAGE's tab (#3620). `ws` is put back only by _appUrl, and only
+  // for that one route: a tab is not a property of the home screen, a session
+  // or a chat, so a project's `?ws=` must not ride along into them and make
+  // the next project open on the previous one's tab. The inner child path is
+  // encoded as ONE query value so its own `?`, `&`, and `=` survive.
+  _routeSearch(innerPath, workshopTab) {
     const raw = String(location.search || '').replace(/^\?/, '');
     const kept = raw ? raw.split('&').filter((part) => {
       const key = part.split('=', 1)[0].replace(/\+/g, ' ');
-      try { return decodeURIComponent(key) !== 'path'; } catch (_) { return true; }
+      try {
+        const decoded = decodeURIComponent(key);
+        return decoded !== 'path' && decoded !== 'ws';
+      } catch (_) { return true; }
     }) : [];
     if (innerPath) kept.push(`path=${encodeURIComponent(innerPath)}`);
+    if (workshopTab) kept.push(`ws=${encodeURIComponent(workshopTab)}`);
     return kept.length ? `?${kept.join('&')}` : '';
   },
 
@@ -3825,7 +3846,8 @@ const App = {
       }
     }
     return `/app/${safeSlug}${suffix}${App._routeSearch(
-      opts.chromeless ? opts.innerPath : null
+      opts.chromeless ? opts.innerPath : null,
+      opts.workshopTab || null
     )}`;
   },
 
@@ -4503,8 +4525,20 @@ const App = {
         // Hash app URLs and older clean aliases are permanent inputs, never
         // permanent outputs. Replace before dispatch so reload/copy exposes
         // the clean canonical path without manufacturing a Back entry.
+        //
+        // A PROJECT PAGE KEEPS ITS TAB (#3620). `_routeSearch` drops `ws`
+        // from every other destination, so the one route that owns it must
+        // name it here — otherwise this canonicalising replace would erase
+        // the tab from the address the reader landed on, and the record Back
+        // returns to would no longer say which tab it showed. On a traversal
+        // the cache was just re-read, so this is the incoming `?ws=`; on a
+        // cold link with none it is the remembered tab, which is what the
+        // page is about to show.
+        const projectPage = tab === 'dev' && subTab === 'forum' && !chromeless;
+        const workshopTab = projectPage && typeof AppView !== 'undefined'
+          && AppView._workshopTab ? (AppView._workshopTab() || 'status') : null;
         const canonicalAppUrl = App._appUrl(slug, tab, ref, subTab, {
-          chromeless, innerPath, boardView,
+          chromeless, innerPath, boardView, workshopTab,
         });
         const currentAppUrl = `${location.pathname}${location.search}${location.hash}`;
         if (currentAppUrl !== canonicalAppUrl) {
@@ -6508,9 +6542,19 @@ const App = {
       }
       const innerPath = (App.chromeless && typeof AppView !== 'undefined'
         && AppView.pendingInnerPath) || null;
+      // The project page's tab, in its address (#3620). It is the only route
+      // that owns `?ws=`, so it is named here rather than left to
+      // _routeSearch's carry-over of the current query; every other
+      // destination drops it (see _routeSearch). Reading it AFTER the
+      // render/dispatch above means a tab the page just switched to is
+      // already the remembered one.
+      const projectPage = !App.chromeless && App.currentTab === 'dev'
+        && App.currentSubTab === 'forum';
+      const workshopTab = projectPage && typeof AppView !== 'undefined'
+        && AppView._workshopTab ? (AppView._workshopTab() || 'status') : null;
       newUrl = App._appUrl(
         App.currentApp, App.currentTab, ref, App.currentSubTab,
-        { chromeless: App.chromeless, innerPath, boardView }
+        { chromeless: App.chromeless, innerPath, boardView, workshopTab }
       );
     } else {
       // Home: drop the fragment entirely — but keep the query string. In

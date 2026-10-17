@@ -142,11 +142,11 @@ test('the state-painting shot appliers re-run on every fragment change', () => {
 });
 
 test('both history listeners route AND re-apply, through one entry point', () => {
-  assert.match(appJs, /window\.addEventListener\('popstate', \(\) => App\._routeFromHash\(\)\);/,
-    'popstate goes through _routeFromHash');
+  assert.match(appJs, /window\.addEventListener\('popstate', \(\) => App\._routeFromHash\(true\)\);/,
+    'popstate goes through _routeFromHash, marked as the history traversal it is');
   assert.match(appJs, /window\.addEventListener\('hashchange', \(\) => App\._routeFromHash\(\)\);/,
-    'hashchange goes through _routeFromHash');
-  const fn = body(appJs, '  _routeFromHash() {');
+    'hashchange goes through the same entry point, unmarked: a door wrote the hash');
+  const fn = body(appJs, '  _routeFromHash(fromHistory) {');
   assert.match(fn, /App\.restoreFromHash\(\);[\s\S]*App\._applyRouteShots\(\);/,
     'it routes first, then applies the shots for the address it landed on');
 });
@@ -159,7 +159,7 @@ test('the NAVIGATION-driving shot stays once per document', () => {
   const boot = body(appJs, '    App.restoreFromHash();\n    // The fragment-scoped');
   assert.match(boot, /App\._applyRouteShots\(\);/, 'boot applies the painting shots');
   assert.match(boot, /App\._applySettingsBackShot\(\);/, 'and the navigation one');
-  const routed = body(appJs, '  _routeFromHash() {');
+  const routed = body(appJs, '  _routeFromHash(fromHistory) {');
   assert.doesNotMatch(routed, /_applyMenuNavShot|_applySettingsBackShot/,
     'but the routed path does not repeat it');
 });

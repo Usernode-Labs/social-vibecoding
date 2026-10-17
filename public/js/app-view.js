@@ -8135,6 +8135,58 @@ const AppView = {
     try { window.localStorage.setItem(AppView.WORKSHOP_TAB_KEY, next); } catch {}
   },
   /**
+   * A TAB PRESS IS SOMEWHERE TO COME BACK TO (#3620). The tabs are local
+   * state and the address never moved between them, so Back from Workshop
+   * fell straight through to wherever the project was opened from — Home,
+   * Communities, a message — which is not where the reader had been a moment
+   * before. Each press records the address it is already on with only `?ws=`
+   * moved, the deep link the tabs have always understood (_workshopTabParam),
+   * so Back and Forward walk the tabs as the strip reads on screen and a
+   * reload opens the tab the address names.
+   *
+   * Nothing is recorded for a press on the tab that is already up (a Back
+   * that goes nowhere), or outside the project page (the tab strip is not
+   * on screen), or when the host refuses a history write.
+   *
+   * The tab itself was persisted by _setWorkshopTab just before this runs;
+   * this only writes the address.
+   */
+  _pushWorkshopTab(tab) {
+    if (typeof App === 'undefined' || !App.currentApp
+        || App.currentTab !== 'dev' || App.currentSubTab !== 'forum') return false;
+    const key = AppView.WORKSHOP_TABS.indexOf(tab) !== -1 ? tab : 'status';
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('ws', key);
+      const next = `${url.pathname}${url.search}${url.hash}`;
+      const here = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (next === here) return false;
+      window.history.pushState(null, '', next);
+      return true;
+    } catch (_) { return false; }
+  },
+  /**
+   * THE OTHER HALF OF THAT RECORD (#3620): a traversal that lands on a
+   * project page reopens the tab its address names. The deep-link value is
+   * resolved once per page life, so the router resets the cache before
+   * restoreFromHash; this reads the value back, remembers it as the tab the
+   * project page reopens on (Back and Forward are not doors), and tells a
+   * page that is already mounted to turn. A page that is mounting reads the
+   * same value itself, so a missed event costs nothing.
+   */
+  _applyWorkshopTabRoute() {
+    if (typeof App === 'undefined' || !App.currentApp
+        || App.currentTab !== 'dev' || App.currentSubTab !== 'forum') return;
+    AppView._workshopTabUrlOverride = undefined;
+    const tab = AppView._workshopTab() || 'status';
+    AppView._setWorkshopTab(tab);
+    try {
+      window.dispatchEvent(new CustomEvent('usernode:workshop-tab', {
+        detail: { slug: App.currentApp, tab },
+      }));
+    } catch (_) { /* an environment without CustomEvent has no page to tell */ }
+  },
+  /**
    * A DOOR TO A PROJECT'S HUB OPENS THE HUB. The page reopens on the tab you
    * last chose (_workshopTab), which is right when you come BACK to it and
    * wrong when you follow a link that says "community hub": the logo menu's
@@ -8172,6 +8224,22 @@ const AppView = {
     try {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: key } }));
     } catch {}
+    // A DOOR PRESSED ON THE PAGE ITSELF CHANGES NO ROUTE, so the address
+    // would go on naming the tab the reader left (#3620: the tab is part of
+    // the address now). Replace it in place: a door is not somewhere Back
+    // should return to, which is why this never pushes. A door to another
+    // project leaves the current page's address to that route.
+    if (slug && typeof App !== 'undefined' && App.currentApp === slug
+        && App.currentTab === 'dev' && App.currentSubTab === 'forum') {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('ws', key);
+        const next = `${url.pathname}${url.search}${url.hash}`;
+        if (next !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
+          window.history.replaceState(null, '', next);
+        }
+      } catch (_) { /* the route below still opens the tab */ }
+    }
     if (slug) AppView._saveFeedScroll(slug, 0);
   },
   // Rows per lane per theme before "+N more · Open on Board".

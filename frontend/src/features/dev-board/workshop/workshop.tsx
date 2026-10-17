@@ -3430,6 +3430,10 @@ export function DevWorkshop(): ReactNode {
   const openTab = (next: TabKey) => {
     setTab(next);
     callAppView('_setWorkshopTab', next);
+    // ...and into the address, so Back returns to the tab the reader was on
+    // rather than leaving the project (#3620). The press on the tab already
+    // up changes no address, so it records nothing.
+    callAppView('_pushWorkshopTab', next);
     callAppView('_saveFeedScroll', v.slug, 0);
     scrollToHead(hostRef.current);
   };
