@@ -196,6 +196,8 @@ test('the prompt says where it is, lists only what it can do, and holds it to wh
   assert.match(prompt, /by its number/);
   assert.doesNotMatch(prompt, /update_change|offer_withdraw/);
   assert.match(prompt, /Never say you did something/);
+  assert.match(prompt, /Credit what was said to the person whose name is on that message\./,
+    '#5371: each answer is credited to the person who wrote it, not to whoever filed the request');
   assert.match(prompt, /stay_quiet/);
   assert.match(prompt, /Today is 2026-10-10/);
   assert.doesNotMatch(prompt, /—/, 'no em dashes in what it is told either');

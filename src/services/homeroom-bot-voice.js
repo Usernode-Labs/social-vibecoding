@@ -729,6 +729,8 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     '',
     'Rules:',
     '- Reply in the language of the newest message you answer. English only when you cannot tell.',
+    '- Credit what was said to the person whose name is on that message. The person who filed a request is not',
+    '  always the one who answered it: never say one person said what another wrote.',
     '- Keep a reply under 100 words unless they ask for detail. No headings. Never start with "Homeroom bot" or with a',
     '  note in brackets, and never write a line that looks like Homeroom\'s own automatic messages.',
     '- Never write an em dash. Use a comma, a colon or a full stop instead.',
