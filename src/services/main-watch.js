@@ -514,28 +514,30 @@ async function filedSince(pool, appId, title, since) {
   return r ? Number(r.github_issue_number) : null;
 }
 
-// `claim` / `onClaim` (the main-check machine's work): the claim this work
-// took before (`{ at }`), kept in its checkpoint as `onClaim` is told it,
-// so the attempt after a crash between the claim and the filing carries the
-// filing on rather than find the test claimed and file nothing. `strict`:
-// a failure (after giving the claim back) throws, for the work to retry.
-async function fileFlakeRequest(config, pool, app, t, { mergeSha = null, excerpt = '', claim = null, onClaim = null, strict = false } = {}) {
+// `claimedBy` (the main-check machine's work): the work item taking the
+// claim, written with it, so the attempt after a crash at any point carries
+// its own claim on rather than find the test claimed and file nothing. A
+// claim clears the last request's number: the number on a row is always
+// its current claim's. `strict`: a failure (after giving the claim back)
+// throws, for the work to retry.
+async function fileFlakeRequest(config, pool, app, t, { mergeSha = null, excerpt = '', claimedBy = null, strict = false } = {}) {
   if (!flakeRequestsEnabled()) return null;
   const parsed = parseRepo(app.repo_url);
   const github = require('./github');
   if (!parsed || !github.isEnabled()) return null;
   const key = [app.id, t.file || '', t.test];
+  const by = claimedBy == null ? null : String(claimedBy);
   let claimed;
   try {
-    if (claim && claim.at) {
+    if (by) {
       // This work's own claim, still standing: carried on.
       ({ rows: claimed } = await pool.query(
-        `SELECT seen_count, first_seen_at, request_filed_at, request_issue_number FROM main_test_flakes
-          WHERE app_id = $1 AND file = $2 AND test = $3 AND request_filed_at = $4::timestamptz`, [...key, claim.at]));
+        `SELECT seen_count, first_seen_at, request_filed_at::text AS claimed_at, request_issue_number FROM main_test_flakes
+          WHERE app_id = $1 AND file = $2 AND test = $3 AND request_claimed_by = $4 AND request_filed_at IS NOT NULL`, [...key, by]));
       if (claimed.length && claimed[0].request_issue_number) return Number(claimed[0].request_issue_number);
       if (claimed.length) {
         const title = flakeRequestText(t, { mergeSha, seenCount: 1, firstSeenAt: null, excerpt: '' }).title;
-        const found = await filedSince(pool, app.id, title, claim.at);
+        const found = await filedSince(pool, app.id, title, claimed[0].claimed_at);
         if (found) {
           await pool.query('UPDATE main_test_flakes SET request_issue_number = $4 WHERE app_id = $1 AND file = $2 AND test = $3', [...key, found]);
           return found;
@@ -545,26 +547,16 @@ async function fileFlakeRequest(config, pool, app, t, { mergeSha = null, excerpt
     if (!claimed || !claimed.length) {
       ({ rows: claimed } = await pool.query(
         `UPDATE main_test_flakes f
-            SET request_filed_at = NOW()
+            SET request_filed_at = NOW(), request_issue_number = NULL, request_claimed_by = $5
           WHERE f.app_id = $1 AND f.file = $2 AND f.test = $3
             AND (f.request_filed_at IS NULL OR f.request_filed_at < NOW() - ($4::int * interval '1 day'))
             AND NOT EXISTS (
               SELECT 1 FROM issues i
                WHERE i.app_id = f.app_id AND i.github_issue_number = f.request_issue_number
                  AND i.status = 'open')
-        RETURNING f.seen_count, f.first_seen_at, f.request_filed_at::text AS claimed_at`,
-        [...key, FLAKE_REQUEST_DAYS]
+        RETURNING f.seen_count, f.first_seen_at`,
+        [...key, FLAKE_REQUEST_DAYS, by]
       ));
-      // Kept by the work before anything is filed; a claim it could not keep
-      // is given back, so the next attempt claims it again.
-      if (claimed && claimed.length && onClaim) {
-        // The claim's own time, to the microsecond: what names it again.
-        await Promise.resolve(onClaim({ at: claimed[0].claimed_at })).catch(async (err) => {
-          await pool.query('UPDATE main_test_flakes SET request_filed_at = NULL WHERE app_id = $1 AND file = $2 AND test = $3', key)
-            .catch(() => {});
-          throw err;
-        });
-      }
     }
   } catch (err) {
     if (strict) throw err;
@@ -586,7 +578,7 @@ async function fileFlakeRequest(config, pool, app, t, { mergeSha = null, excerpt
   } catch (err) {
     log.warn('main-watch', 'flake request failed (non-fatal)', { appId: app.id, test: t.test, err: err.message });
     await pool.query(
-      'UPDATE main_test_flakes SET request_filed_at = NULL WHERE app_id = $1 AND file = $2 AND test = $3',
+      'UPDATE main_test_flakes SET request_filed_at = NULL, request_claimed_by = NULL WHERE app_id = $1 AND file = $2 AND test = $3',
       key
     ).catch(() => {});
     if (strict) throw err;

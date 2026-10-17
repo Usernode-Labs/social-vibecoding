@@ -763,12 +763,14 @@ test('the main check against the full PostgreSQL schema', { timeout: 240000 }, a
     assert.deepEqual([r.state, r.paused], ['passing', null], 'the dead attempt\'s late answer is not reported');
     assert.deepEqual(await verdicts(a), [[S1, 'passing', false, null, false]]);
   });
-  await t.test('a process lost while filing the fix request: the next attempt carries its claim on and files it', async () => {
+  await t.test('a process lost while filing the fix request: the next attempt claims in the same name and files it', async () => {
     const a = await app();
     let release;
     const held = new Promise((resolve) => { release = resolve; });
     script(a, redOn([REAL]), redOn([REAL]));
-    fixScripts.set(a.id, [async (args) => { await args.onClaim(55); await held; return 0; }, async (args) => (args.claim === 55 ? 701 : 0)]);
+    let reached;
+    const filing = new Promise((resolve) => { reached = resolve; });
+    fixScripts.set(a.id, [async () => { reached(); await held; return 0; }, async () => 701]);
     const dying = runtimeWith();
     await ask(dying, a, S1);
     await round(dying); await round(dying);
@@ -777,8 +779,7 @@ test('the main check against the full PostgreSQL schema', { timeout: 240000 }, a
         WHERE machine = $1 AND key = $2 AND kind = $3`, [MACHINE, appKey(a.id), WORK.fix])).rows;
     assert.equal((await fixWork()).length, 1, 'a confirmed red is sent to be fixed');
     const lost = dying.runServices();
-    for (let i = 0; i < 200 && !(await fixWork())[0]?.checkpoint; i++) await new Promise((r) => setTimeout(r, 10));
-    assert.ok((await fixWork())[0].checkpoint, 'the claim kept before anything is filed');
+    await filing;
     // The process is gone: its lease lapses.
     await pool.query(`UPDATE wf_work SET lease_until = now() WHERE machine = $1 AND key = $2 AND kind = $3`, [MACHINE, appKey(a.id), WORK.fix]);
     const next = runtimeWith();
@@ -786,7 +787,8 @@ test('the main check against the full PostgreSQL schema', { timeout: 240000 }, a
     release();
     await lost;
     await settle(next);
-    assert.deepEqual(fixedFor(a).map((f) => f.claim), [null, 55], 'the next attempt is handed the claim');
+    const { rows: [{ id }] } = await pool.query('SELECT id FROM wf_work WHERE machine = $1 AND key = $2 AND kind = $3', [MACHINE, appKey(a.id), WORK.fix]);
+    assert.deepEqual(fixedFor(a).map((f) => f.claimedBy), [id, id], 'both attempts claim in the work item\'s name');
     const [w] = await fixWork();
     assert.deepEqual([w.status, w.lost_attempts], ['settled', 1]);
     assert.match(JSON.stringify(w.result), /"issueNumber":701/, 'filed by the attempt that carried the claim on');

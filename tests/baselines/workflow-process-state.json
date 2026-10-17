@@ -149,9 +149,9 @@
       "services | uses src/services/shots-orchestrator.js:visibleError": "a step's failure in the words the proposal shows (pure), cut out of executeRun's catch"
     },
     "main-check": {
-      "services | uses src/services/main-red-fix.js:fileFixRequest": "a confirmed red main: one request to fix it for the Homeroom bot (main.fixRequest), claimed on its main_red_requests row so it is filed once while one is open, the claim kept in the item's steps before filing so an attempt after a crash files it or finds it filed; keeps nothing",
+      "services | uses src/services/main-red-fix.js:fileFixRequest": "a confirmed red main: one request to fix it for the Homeroom bot (main.fixRequest), claimed on its main_red_requests row in the work item's name (claimed_by) so it is filed once while one is open, and an attempt after a crash files it or finds it filed; keeps nothing",
       "services | uses src/services/main-watch.js:fileBotIssue": "files a request on the app's repository as the Homeroom bot (GitHub, its issues row and the notices a request gets), handed to fileFixRequest; keeps nothing",
-      "services | uses src/services/main-watch.js:fileFlakeRequest": "files the request for one flaky test (main.flakes), one per test per fortnight, claimed on its main_test_flakes row; the claim is kept in the item's steps before filing, so an attempt after a crash files it or finds it filed; keeps nothing",
+      "services | uses src/services/main-watch.js:fileFlakeRequest": "files the request for one flaky test (main.flakes), one per test per fortnight, claimed on its main_test_flakes row in the work item's name (request_claimed_by), so an attempt after a crash files it or finds it filed; keeps nothing",
       "services | uses src/services/main-watch.js:noteFlakes": "records the tests a green on the same commit showed to be flaky (main_test_flakes) and files a request for each (main.flakes); keeps nothing",
       "services | uses src/services/main-watch.js:runMainSuite": "one run of the repo's unit suite on a commit of main (main.suite): its checks-queue slot (heartbeated while it runs), its Jobs, its verdict; the queue row's run id is checkpointed before the Jobs exist, so an attempt after a crash reads the dead run's Jobs; cut out of afterMerge, keeps nothing"
     }

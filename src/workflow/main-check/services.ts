@@ -53,10 +53,10 @@ export function mainCheckServices({ config, pool }: Deps): Record<string, WorkHa
     // The tests a verdict showed to be flaky, recorded, and a request filed
     // for each (`note`); or a request for each test of a red made only of
     // known flakes (`request`). One request per test per fortnight, claimed
-    // on its row (main-watch.js fileFlakeRequest). Each is a step: the record
-    // is made once, and a claim is kept before its request is filed, so the
-    // attempt after a crash files it (or finds it filed) rather than find
-    // the test claimed and file nothing.
+    // on its row (main-watch.js fileFlakeRequest) in this item's name
+    // (`claimedBy`, its work id), so the attempt after a crash, wherever it
+    // came, files it (or finds it filed) rather than find the test claimed
+    // and file nothing. The record and each filing are steps, made once.
     [WORK.flakes]: {
       maxAttempts: 3,
       backoffMs: (n) => 60 * 1000 * 2 ** (n - 1),
@@ -75,8 +75,7 @@ export function mainCheckServices({ config, pool }: Deps): Record<string, WorkHa
           const key = `${t.file || ''}::${t.test}`;
           const excerpt = (excerpts.find((d) => d && d.test === t.test && (d.file || null) === (t.file || null)) || {}).excerpt;
           const n = await steps.once(`filed/${key}`, () => w.fileFlakeRequest(config, pool, row, t, {
-            mergeSha: input.sha, excerpt, strict: true,
-            claim: steps.get(`claim/${key}`) ?? null, onClaim: (c: Json) => steps.set(`claim/${key}`, c),
+            mergeSha: input.sha, excerpt, strict: true, claimedBy: ctx.workId,
           }));
           if (n) filed.push(Number(n));
         }
@@ -87,8 +86,7 @@ export function mainCheckServices({ config, pool }: Deps): Record<string, WorkHa
 
     // A confirmed red: one request to fix it, for the Homeroom bot, naming
     // the merges its failing tests point at (main-red-fix.js), unless one is
-    // open for the app already. Its claim is kept before the request is
-    // filed, as above.
+    // open for the app already. Claimed in this item's name, as above.
     [WORK.fix]: {
       maxAttempts: 3,
       backoffMs: (n) => 60 * 1000 * 2 ** (n - 1),
@@ -98,13 +96,10 @@ export function mainCheckServices({ config, pool }: Deps): Record<string, WorkHa
         if (!row) return { gone: true };
         const parsed = parseGithubUrl(row.repo_url);
         if (!parsed) return { skipped: 'no_repo' };
-        const steps = ctx.steps({ owner: `main-check/fix:${input.appId}` });
         const issueNumber = await legacy('services/main-red-fix').fileFixRequest(config, pool, {
           app: row, parsed, redSha: input.sha, prNumber: input.prNumber ?? null, detail: input.detail || {},
-          excerpts: input.excerpts || [], fileBotIssue: watch().fileBotIssue, strict: true,
-          claim: steps.get('claim') ?? null, onClaim: (id: number) => steps.set('claim', id),
+          excerpts: input.excerpts || [], fileBotIssue: watch().fileBotIssue, strict: true, claimedBy: ctx.workId,
         });
-        await steps.flush();
         return { issueNumber: issueNumber ?? null };
       },
     },

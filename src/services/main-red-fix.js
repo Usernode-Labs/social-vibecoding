@@ -185,24 +185,26 @@ async function front(pool, app, issueNumber) {
  * Homeroom bot (main-watch.fileBotIssue); `deps` stands in for GitHub.
  */
 //
-// `claim` / `onClaim` (the main-check machine's work): the claim this work
-// took before (its row id), kept in its checkpoint as `onClaim` is told it,
-// so the attempt after a crash between the claim and the filing carries the
-// filing on (or finds the request that attempt filed) rather than find the
-// red claimed and file nothing. `strict`: a failure (after giving the claim
-// back) throws, for the work to retry.
+// `claimedBy` (the main-check machine's work): the work item taking the
+// claim, written with it, so the attempt after a crash at any point carries
+// its own claim on: it returns the number recorded on it, or the bot's
+// request of that title filed since the claim (a process that died before
+// writing the number), or files under it. `strict`: a failure (after giving
+// the claim back) throws, for the work to retry.
 async function fileFixRequest(config, pool, {
   app, parsed, redSha, prNumber = null, detail = {}, excerpts = [], fileBotIssue, deps = null,
-  claim = null, onClaim = null, strict = false,
+  claimedBy = null, strict = false,
 }) {
   if (!fixRequestsEnabled() || !pool || !app || !parsed || !redSha) return null;
   if (!deps && !require('./github').isEnabled()) return null;
   const failingTests = Array.isArray(detail.failingTests) ? detail.failingTests : [];
+  const sha = String(redSha).toLowerCase();
   let claimed;
-  if (claim) {
-    try {
+  try {
+    if (claimedBy) {
       const { rows: [own] } = await pool.query(
-        'SELECT id, issue_number, filed_at FROM main_red_requests WHERE id = $1 AND app_id = $2', [claim, app.id]);
+        'SELECT id, issue_number, filed_at FROM main_red_requests WHERE app_id = $1 AND red_sha = $2 AND claimed_by = $3',
+        [app.id, sha, String(claimedBy)]);
       let filed = own && own.issue_number ? Number(own.issue_number) : null;
       if (own && !filed) {
         const { title } = fixRequestText({ redSha, prNumber, failingTests });
@@ -219,17 +221,11 @@ async function fileFixRequest(config, pool, {
       // the bot has started it), in case that attempt died before.
       if (filed) { await front(pool, app, filed); return filed; }
       if (own) claimed = [{ id: own.id }];
-    } catch (err) {
-      if (strict) throw err;
-      log.warn('main-red-fix', 'could not read the request claimed before (non-fatal)', { appId: app.id, err: err.message });
-      return null;
     }
-  }
-  if (!claimed) {
-    try {
+    if (!claimed) {
       ({ rows: claimed } = await pool.query(
-        `INSERT INTO main_red_requests (app_id, red_sha)
-         SELECT $1, $2
+        `INSERT INTO main_red_requests (app_id, red_sha, claimed_by)
+         SELECT $1, $2, $3
           WHERE NOT EXISTS (
             SELECT 1 FROM main_red_requests r
               LEFT JOIN issues i ON i.app_id = r.app_id AND i.github_issue_number = r.issue_number
@@ -238,21 +234,13 @@ async function fileFixRequest(config, pool, {
                     OR i.status = 'open'))
          ON CONFLICT (app_id, red_sha) DO NOTHING
          RETURNING id`,
-        [app.id, String(redSha).toLowerCase()]
+        [app.id, sha, claimedBy == null ? null : String(claimedBy)]
       ));
-    } catch (err) {
-      if (strict) throw err;
-      log.warn('main-red-fix', 'request claim failed (non-fatal)', { appId: app.id, err: err.message });
-      return null;
     }
-    // Kept by the work before anything is filed; a claim it could not keep
-    // is given back, so the next attempt claims it again.
-    if (claimed && claimed.length && onClaim) {
-      await Promise.resolve(onClaim(Number(claimed[0].id))).catch(async (err) => {
-        await pool.query('DELETE FROM main_red_requests WHERE id = $1', [claimed[0].id]).catch(() => {});
-        throw err;
-      });
-    }
+  } catch (err) {
+    if (strict) throw err;
+    log.warn('main-red-fix', 'request claim failed (non-fatal)', { appId: app.id, err: err.message });
+    return null;
   }
   if (!claimed || !claimed.length) return null;
   let found = null;

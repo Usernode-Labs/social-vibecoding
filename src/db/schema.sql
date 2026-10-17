@@ -9613,6 +9613,13 @@ CREATE TABLE IF NOT EXISTS main_test_flakes (
   request_filed_at     TIMESTAMPTZ,
   PRIMARY KEY (app_id, file, test)
 );
+-- The work item that took a claim (main_red_requests.claimed_by, and
+-- request_claimed_by here: the main-check machine's wf_work id), written by
+-- the claim's own statement, so the attempt after a crash knows the claim is
+-- its own and carries the filing on, whenever the crash came. Null for a
+-- claim an older release took.
+ALTER TABLE main_red_requests ADD COLUMN IF NOT EXISTS claimed_by TEXT;
+ALTER TABLE main_test_flakes ADD COLUMN IF NOT EXISTS request_claimed_by TEXT;
 
 -- #2253: a ceiling on each app's own Postgres database. Uploaded files have
 -- had a per-app cap since app-files.js; the database had none, and one app

@@ -2,16 +2,21 @@
 
 // A request the main-check machine's work files (a fix request for a red
 // main, a flake request) is claimed in Postgres before it is filed on
-// GitHub, so two attempts never file it twice. The claim is the work's own:
-// it is kept in the work's checkpoint (`onClaim`), and the attempt after a
-// crash passes it back (`claim`). Before, a process that died between the
-// claim and the filing left a claim nobody owned: the retry found the red
-// (or the test) claimed, filed nothing and succeeded, and the request was
-// lost (review of 24adf32, reproduced here).
+// GitHub, so two attempts never file it twice. The claim is written in the
+// work item's name (`claimedBy`, its wf_work id) by the claim's own
+// statement, so the attempt after a crash, wherever it came, knows the claim
+// is its own and carries the filing on.
 //
-// A crash is an attempt that never finishes: its filing (or the write of
-// the number it got) never resolves, and the next attempt starts with what
-// the checkpoint kept.
+// Before: a process that died between the claim and the filing left a claim
+// nobody owned, and the retry found the red (or the test) claimed, filed
+// nothing and succeeded (review of 24adf32). Keeping the claim in the work's
+// checkpoint after taking it left the same window, a crash before the
+// checkpoint was written (review of 91b767c). And a flake claim after the
+// fortnight kept the last request's number, so an attempt carrying it on
+// returned the closed request of two weeks before and filed nothing.
+//
+// A crash is an attempt that never finishes: a statement it sent, or its
+// filing, never comes back. The next attempt has only what Postgres kept.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -32,11 +37,17 @@ const stub = (rel, exports) => {
 const created = [];
 const fronted = [];
 let botId = null;
+let number = 7000;
+// `stall`: the next filing reaches GitHub and never comes back.
+let stall = null;
 const github = {
   isEnabled: () => true,
   safeMention: (s) => s,
   noteIssueCreated: () => {},
-  createIssue: async (owner, repo, issue) => { created.push(issue); return { number: 7000 + created.length }; },
+  async createIssue(owner, repo, issue) {
+    if (stall) { const s = stall; stall = null; s(); return new Promise(() => {}); }
+    created.push(issue); return { number: ++number };
+  },
   compareCommitAncestry: async () => ({ status: 'diverged' }),
 };
 stub('../src/services/github', github);
@@ -53,19 +64,25 @@ const redFix = require('../src/services/main-red-fix');
 
 const RED = 'f'.repeat(40);
 const FLAKY = { file: 'tests/clock.test.js', test: 'the clock ticks once a second' };
-const never = () => new Promise(() => {});
+const WORK_ID = '6f1d2c3b-0000-4000-8000-000000000001';
+const OTHER_WORK = '6f1d2c3b-0000-4000-8000-000000000002';
 
-// The pool as one attempt sees it: `dies` names the statement it never
-// returns from (the process is gone by then).
-const attemptPool = (pool, dies) => ({ query: (sql, params) => (dies && dies.test(sql) ? never() : pool.query(sql, params)) });
-
-// What the work's checkpoint keeps across attempts.
-function checkpoint() {
-  const kept = { claim: null };
-  let told;
-  const told$ = new Promise((resolve) => { told = resolve; });
-  return { kept, told: told$, onClaim: (c) => { kept.claim = c; told(); } };
+// One attempt that dies: its statement matching `at` runs (`after`) or is
+// never sent (`before`), and it never hears back. Resolves once it is gone.
+function dyingAttempt(pool, { at, after = false }) {
+  let gone;
+  const died = new Promise((resolve) => { gone = resolve; });
+  const p = {
+    async query(sql, params) {
+      if (!at.test(sql)) return pool.query(sql, params);
+      if (after) await pool.query(sql, params);
+      gone();
+      return new Promise(() => {});
+    },
+  };
+  return { pool: p, died };
 }
+const count = async (pool, table) => (await pool.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0].n;
 
 async function database(t) {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
@@ -91,110 +108,120 @@ async function database(t) {
   return { pool, app };
 }
 
-test.beforeEach(() => { created.length = 0; fronted.length = 0; });
+test.beforeEach(() => { created.length = 0; fronted.length = 0; stall = null; });
 
-test('a fix request claimed by an attempt that died is filed by the next one, once', async (t) => {
+test('a fix request: the attempt after a crash at any point files it, once', async (t) => {
   const db = await database(t); if (!db) return;
   const { pool, app } = db;
   const parsed = { owner: 'Usernode-Labs', repo: 'claims-app' };
-  const detail = { failingTests: [FLAKY] };
-  const file = (p, more) => redFix.fileFixRequest({}, p, {
-    app, parsed, redSha: RED, prNumber: 12, detail, fileBotIssue: mainWatch.fileBotIssue, strict: true, ...more,
+  const file = (p, claimedBy = WORK_ID) => redFix.fileFixRequest({}, p, {
+    app, parsed, redSha: RED, prNumber: 12, detail: { failingTests: [FLAKY] }, fileBotIssue: mainWatch.fileBotIssue,
+    strict: true, claimedBy,
   });
+  const reset = async () => { await pool.query('DELETE FROM main_red_requests'); await pool.query('DELETE FROM issues'); created.length = 0; fronted.length = 0; };
 
-  // Dies before GitHub hears of it.
-  const first = checkpoint();
-  file(attemptPool(pool, /^\s*SELECT DISTINCT ON \(sha\)/), { onClaim: first.onClaim });
-  await first.told;
+  // Dies once the claim is committed, before it hears so (review of 91b767c).
+  number = 7000;
+  const one = dyingAttempt(pool, { at: /INSERT INTO main_red_requests/, after: true });
+  file(one.pool); await one.died;
+  assert.equal(await count(pool, 'main_red_requests'), 1, 'the claim stands');
+  // Another work's attempt (or a release's without a name) finds it claimed.
+  assert.equal(await file(pool, OTHER_WORK), null);
+  assert.equal(await file(pool, null), null);
   assert.equal(created.length, 0);
-  // What the retry did before: the red is claimed, so nothing is filed.
-  assert.equal(await file(pool, {}), null, 'an unowned claim blocks a fresh attempt');
-
-  // The work's next attempt carries its own claim on.
-  const n = await file(pool, { claim: first.kept.claim, onClaim: () => assert.fail('claims again') });
-  assert.equal(n, 7001);
+  // The same work's next attempt carries it on.
+  assert.equal(await file(pool), 7001);
   assert.equal(created.length, 1);
-  assert.deepEqual((await pool.query('SELECT issue_number FROM main_red_requests')).rows, [{ issue_number: 7001 }]);
+  assert.deepEqual((await pool.query('SELECT issue_number, claimed_by FROM main_red_requests')).rows, [{ issue_number: 7001, claimed_by: WORK_ID }]);
   assert.deepEqual(fronted.map((f) => f.issueNumber), [7001]);
+  // Filed: asked again, it is not filed twice.
+  assert.equal(await file(pool), 7001);
+  assert.equal(created.length, 1);
+
+  // Dies on GitHub's side of the filing.
+  await reset(); number = 7000;
+  const reached = new Promise((resolve) => { stall = resolve; });
+  file(pool); await reached;
+  assert.equal(await file(pool), 7001);
+  assert.equal(created.length, 1);
 
   // Dies after filing, before the number is written: the next attempt finds
   // the request the bot filed and files no second one.
-  await pool.query('DELETE FROM main_red_requests'); await pool.query('DELETE FROM issues');
-  created.length = 0; fronted.length = 0;
-  const second = checkpoint();
-  file(attemptPool(pool, /UPDATE main_red_requests SET issue_number/), { onClaim: second.onClaim });
-  await second.told;
-  for (let i = 0; i < 100 && !(await pool.query('SELECT 1 FROM issues')).rows.length; i++) await new Promise((r) => setTimeout(r, 20));
+  await reset(); number = 7000;
+  const two = dyingAttempt(pool, { at: /UPDATE main_red_requests SET issue_number/ });
+  file(two.pool); await two.died;
   assert.equal(created.length, 1);
-  assert.equal(await file(pool, { claim: second.kept.claim }), 7001);
+  assert.equal(await file(pool), 7001);
   assert.equal(created.length, 1, 'filed once');
   assert.deepEqual((await pool.query('SELECT issue_number FROM main_red_requests')).rows, [{ issue_number: 7001 }]);
   assert.deepEqual(fronted.map((f) => f.issueNumber), [7001], 'still put at the front of the bot\'s queue');
 
-  // A claim the work could not keep is given back, for the next attempt.
-  await pool.query('DELETE FROM main_red_requests');
-  await assert.rejects(file(pool, { onClaim: async () => { throw new Error('checkpoint lost'); } }), /checkpoint lost/);
-  assert.equal((await pool.query('SELECT count(*)::int AS n FROM main_red_requests')).rows[0].n, 0);
   // A filing GitHub refused throws for the work to retry, and gives the claim back.
+  await reset();
   const createIssue = github.createIssue;
   github.createIssue = async () => { throw new Error('GitHub 502'); };
   t.after(() => { github.createIssue = createIssue; });
-  await assert.rejects(file(pool, { onClaim: () => {} }), /GitHub 502/);
-  assert.equal((await pool.query('SELECT count(*)::int AS n FROM main_red_requests')).rows[0].n, 0);
+  await assert.rejects(file(pool), /GitHub 502/);
+  assert.equal(await count(pool, 'main_red_requests'), 0);
 });
 
-test('a flake request claimed by an attempt that died is filed by the next one, once', async (t) => {
+test('a flake request: the attempt after a crash at any point files it, once, and never takes the last request for it', async (t) => {
   const db = await database(t); if (!db) return;
   const { pool, app } = db;
-  const createIssue = github.createIssue;
-  // `stall`: the next filing reaches GitHub and never comes back.
-  let stall = null;
-  github.createIssue = async (owner, repo, issue) => {
-    if (stall) { const s = stall; stall = null; s(); return never(); }
-    created.push(issue); return { number: 8000 + created.length };
-  };
-  t.after(() => { github.createIssue = createIssue; });
   const reset = async () => {
     await pool.query('DELETE FROM main_test_flakes'); await pool.query('DELETE FROM issues');
     await pool.query('INSERT INTO main_test_flakes (app_id, file, test) VALUES ($1, $2, $3)', [app.id, FLAKY.file, FLAKY.test]);
-    created.length = 0;
+    created.length = 0; number = 8000;
   };
-  const file = (p, more) => mainWatch.fileFlakeRequest({}, p, app, FLAKY, { mergeSha: RED, strict: true, ...more });
-  const row = async () => (await pool.query('SELECT request_issue_number FROM main_test_flakes')).rows[0];
+  const file = (p, claimedBy = WORK_ID) => mainWatch.fileFlakeRequest({}, p, app, FLAKY, { mergeSha: RED, strict: true, claimedBy });
+  const row = async () => (await pool.query('SELECT request_issue_number, request_claimed_by FROM main_test_flakes')).rows[0];
+  const CLAIM = /UPDATE main_test_flakes f\s+SET request_filed_at = NOW\(\)/;
 
-  // Dies before GitHub hears of it.
+  // Dies once the claim is committed, before it hears so.
   await reset();
-  const first = checkpoint();
-  const reached = new Promise((resolve) => { stall = resolve; });
-  file(pool, { onClaim: first.onClaim });
-  await first.told; await reached;
-  assert.match(first.kept.claim.at, /\.\d{1,6}/, 'the claim is named to the microsecond');
-  assert.equal(await file(pool, {}), null, 'an unowned claim blocks a fresh attempt');
-  assert.equal(await file(pool, { claim: first.kept.claim, onClaim: () => assert.fail('claims again') }), 8001);
+  const one = dyingAttempt(pool, { at: CLAIM, after: true });
+  file(one.pool); await one.died;
+  assert.equal(await file(pool, OTHER_WORK), null, 'claimed: another work files nothing');
+  assert.equal(await file(pool), 8001);
   assert.equal(created.length, 1);
-  assert.deepEqual(await row(), { request_issue_number: 8001 });
+  assert.deepEqual(await row(), { request_issue_number: 8001, request_claimed_by: WORK_ID });
+
+  // Dies on GitHub's side of the filing.
+  await reset();
+  const reached = new Promise((resolve) => { stall = resolve; });
+  file(pool); await reached;
+  assert.equal(await file(pool), 8001);
+  assert.equal(created.length, 1);
 
   // Dies after filing, before the number is written.
   await reset();
-  const second = checkpoint();
-  file(attemptPool(pool, /SET request_issue_number/), { onClaim: second.onClaim });
-  await second.told;
-  for (let i = 0; i < 100 && !(await pool.query('SELECT 1 FROM issues')).rows.length; i++) await new Promise((r) => setTimeout(r, 20));
+  const two = dyingAttempt(pool, { at: /^UPDATE main_test_flakes SET request_issue_number/ });
+  file(two.pool); await two.died;
   assert.equal(created.length, 1);
-  assert.equal(await file(pool, { claim: second.kept.claim }), 8001);
+  assert.equal(await file(pool), 8001);
   assert.equal(created.length, 1, 'filed once');
-  assert.deepEqual(await row(), { request_issue_number: 8001 });
+  assert.deepEqual(await row(), { request_issue_number: 8001, request_claimed_by: WORK_ID });
 
-  // A claim that is no longer this work's (taken again after the cooldown)
-  // is not carried on: the work claims afresh, and that claim is refused
-  // while the other one stands.
+  // A fortnight after a request (an earlier work's) now closed (review of
+  // 91b767c): the new claim clears its number, so the attempt after a crash files a new one
+  // rather than take the closed one for its own.
   await reset();
-  await pool.query("UPDATE main_test_flakes SET request_filed_at = NOW() - interval '1 minute'");
-  assert.equal(await file(pool, { claim: { at: '2020-01-01 00:00:00+00' }, onClaim: () => assert.fail('claims') }), null);
-  assert.equal(created.length, 0);
+  await pool.query(`INSERT INTO issues (app_id, github_issue_number, title, kind, status, created_at)
+                    VALUES ($1, 7999, 'Flaky test: the clock ticks once a second', 'general', 'closed', NOW() - interval '15 days')`, [app.id]);
+  await pool.query(`UPDATE main_test_flakes SET request_issue_number = 7999, request_filed_at = NOW() - interval '15 days',
+                           request_claimed_by = $1`, [OTHER_WORK]);
+  const three = dyingAttempt(pool, { at: CLAIM, after: true });
+  file(three.pool); await three.died;
+  assert.deepEqual(await row(), { request_issue_number: null, request_claimed_by: WORK_ID });
+  assert.equal(await file(pool), 8001, 'a new request, not the closed one');
+  assert.equal(created.length, 1);
 
-  // A claim the work could not keep is given back.
+  // A filing GitHub refused throws, and gives the claim back.
   await reset();
-  await assert.rejects(file(pool, { onClaim: async () => { throw new Error('checkpoint lost'); } }), /checkpoint lost/);
-  assert.equal((await pool.query('SELECT request_filed_at FROM main_test_flakes')).rows[0].request_filed_at, null);
+  const createIssue = github.createIssue;
+  github.createIssue = async () => { throw new Error('GitHub 502'); };
+  t.after(() => { github.createIssue = createIssue; });
+  await assert.rejects(file(pool), /GitHub 502/);
+  const { rows: [r] } = await pool.query('SELECT request_filed_at, request_claimed_by FROM main_test_flakes');
+  assert.deepEqual(r, { request_filed_at: null, request_claimed_by: null });
 });
