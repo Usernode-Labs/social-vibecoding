@@ -5289,9 +5289,9 @@
       "expectSelector": "a#back-btn:not(.hidden)[aria-label=\"Back\"][href=\"#messages\"]"
     },
     {
-      "name": "Over a running app the rail is the route's to hide, so a peek from the window's edge never brings the sidebar toggle into the app's strip",
+      "name": "Over a running app the rail is the route's to hide, its left edge has no hot zone, so no peek brings the sidebar toggle into the app's strip (#3138)",
       "path": "/#app/staging-demo-forkable",
-      "expectSelector": "body:has(#app-view:not(.hidden)):has(#platform-tabs.hidden.platform-tabs-route-hidden) #platform-header .platform-header-left > #sidebar-toggle"
+      "expectSelector": "body:has(#app-view:not(.hidden)):has(#platform-tabs.hidden.platform-tabs-route-hidden):not(:has(#platform-rail-peek)):not(:has(#platform-tabs.platform-tabs-peek)) #platform-header .platform-header-left > #sidebar-toggle"
     },
     {
       "id": "agent-session.card",

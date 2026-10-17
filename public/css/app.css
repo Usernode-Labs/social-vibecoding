@@ -20411,17 +20411,21 @@ html.un-kb #platform-parked {
 }
 
 
-/* ── The rail, peeked back over an open app (#2718) ──────────────────
-   frontend/src/features/nav/tab-bar.tsx carries the argument: an app covers
-   the rail, which is what makes it feel like a program rather than a page,
-   and on a laptop the pointer is already at the left edge half the time. The
-   navigation comes back on hover and stops spending width while you work —
-   WeChat's floating capsule, an auto-hiding dock and Slack's own collapsed
-   rail are all this move. */
+/* ── The rail, peeked back over a folded one (#2718, #3138) ───────────
+   frontend/src/features/nav/tab-bar.tsx carries the argument: folding the
+   rail costs the viewer the navigation they had, and on a laptop the pointer
+   is already at the left edge half the time. The navigation comes back on
+   hover and stops spending width while you work — WeChat's floating capsule,
+   an auto-hiding dock and Slack's own collapsed rail are all this move. Over
+   a RUNNING APP there is no such target (#3138): the app keeps the whole
+   window, the header's close control leads back to the platform, and with
+   "Keep sidebar open in apps" on the header's toggle is the explicit way to
+   show and fold the rail beside it. */
 
-/* THE HOT ZONE, and the only thing that can start a peek. Narrow enough that
-   it never intercepts a pointer heading for the app's own left edge, wide
-   enough to be findable without aiming. */
+/* THE HOT ZONE, and the only thing that can start a peek. It exists only for
+   a folded rail the route owns — never over a running app (#3138). Narrow
+   enough that it never intercepts a pointer heading for the page's own left
+   edge, wide enough to be findable without aiming. */
 .platform-rail-peek {
   position: fixed;
   left: 0;

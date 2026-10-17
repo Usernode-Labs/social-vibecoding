@@ -8,6 +8,12 @@
  * is where the pointer already is when the reader goes looking for the
  * navigation they folded away.
  *
+ * THE EDGE TARGET BELONGS TO A FOLDED RAIL THE ROUTE OWNS (#3138). A running
+ * app has none: pointing at its left edge must not bring the platform's
+ * navigation over it, so nothing there starts this peek. The toggle remains
+ * the explicit way to preview and unfold the rail beside an app, which is
+ * why the peek is shared rather than living on the edge strip.
+ *
  * ── Why the grace timer is module state ───────────────────────────────
  *
  * The pointer has to cross a gap to get from whatever summoned the rail onto

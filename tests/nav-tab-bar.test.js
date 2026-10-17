@@ -27,7 +27,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
@@ -338,21 +338,24 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   assert.match(block, /\.platform-parked-pill \{[\s\S]{0,200}order: -1;/);
 });
 
-test('the rail peeks back over an open app, and reserves nothing while it does', () => {
-  // An app covers the rail, which is what makes it feel like a program
-  // rather than a page, and on a laptop the pointer is already at the left
-  // edge half the time. The navigation comes back on hover and stops
-  // spending width while you work.
+test('a folded rail peeks back, and reserves nothing while it does', () => {
+  // Folding the rail costs the viewer the navigation they had, and on a
+  // laptop the pointer is already at the left edge half the time. The
+  // navigation comes back on hover and stops spending width while you work.
+  // A RUNNING APP keeps the whole window instead (#3138): its left edge is
+  // the app's, and the toggle is the explicit way back.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /id="platform-rail-peek"/, 'a hot zone starts it');
-  // TWO WAYS TO HAVE NO RAIL, and the zone answers both (#2718 review): the
-  // ROUTE can say there is none (an app) and the VIEWER can fold the one
-  // there is (#sidebar-toggle). `!railOpen` rather than the `collapsed` the
-  // class toggle below uses, deliberately — `collapsed` is also true on the
-  // chromeless and signed-out shells, where a strip that peeked a rail in
-  // would be conjuring navigation out of nothing.
-  assert.match(bar, /\(screen === 'app-view' && !visible\) \|\| !railOpen \? \(/,
-    'and it exists where the rail is out of the way, by either route');
+  // THE ZONE ANSWERS A FOLDED RAIL THE ROUTE OWNS (#3138): the ROUTE must
+  // have one (`visible`) and the VIEWER must have folded it (`!railOpen`).
+  // `!railOpen` rather than the `collapsed` the class toggle below uses,
+  // deliberately — `collapsed` is also true on the chromeless and signed-out
+  // shells, where a strip that peeked a rail in would be conjuring
+  // navigation out of nothing. `!runningApp` is the app itself, where the
+  // router lights no tab.
+  assert.match(bar, /const runningApp = screen === 'app-view' && !tab;/);
+  assert.match(bar, /\{visible && !railOpen && !runningApp \? \(/,
+    'and it exists only where the route has a rail the viewer folded');
   // NOT a bare `screen === 'app-view'`: the app view is two screens, and on
   // its Workshop the rail is UP. This strip is `z-index: 39` against the
   // rail's 30, so rendering it there lays an invisible 18px column down the
@@ -376,6 +379,42 @@ test('the rail peeks back over an open app, and reserves nothing while it does',
   // summoned it and arrives under it.
   assert.match(css, /animation: platform-rail-peek-in 140ms ease-out;/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,120}animation: none;/);
+});
+
+test('the hot zone renders for a folded rail the route owns, never a running app', () => {
+  // THE RENDER, not a grep (#3138). The condition has three inputs and only
+  // one of the two folded cases may draw the strip, so run the real component
+  // over each arrangement the spec names. `visible` is the ROUTE's answer
+  // (../../lib/visibility-store, which the router publishes) and `railOpen`
+  // is the VIEWER's; the run against `screen`/`tab` decides the app.
+  const nav = loadTsx('frontend/src/features/nav/nav-store.js');
+  let routeHasRail = true;
+  const { PlatformTabs } = loadTsx('frontend/src/features/nav/tab-bar.tsx', {
+    stubs: {
+      './nav-store.js': nav,
+      '../../lib/visibility-store': { useVisibility: () => routeHasRail },
+    },
+  });
+  const renders = (state, visible) => {
+    routeHasRail = visible;
+    nav.navStore.set({ screen: null, tab: null, railOpen: true, ...state });
+    return renderToHtml(createElement(PlatformTabs, {}));
+  };
+  const zone = /id="platform-rail-peek"/;
+  const cases = [
+    ['a running app with the rail unpinned', { screen: 'app-view', tab: null, railOpen: true }, false, false],
+    ['a running app pinned with the rail up', { screen: 'app-view', tab: null, railOpen: true }, true, false],
+    ['a running app pinned with the rail folded', { screen: 'app-view', tab: null, railOpen: false }, true, false],
+    ['a chromeless or signed-out shell', { screen: null, tab: null, railOpen: true }, false, false],
+    ['Home with the rail folded', { screen: 'home-screen', tab: 'home', railOpen: false }, true, true],
+    ["an app's Workshop with the rail folded", { screen: 'app-view', tab: 'workshop', railOpen: false }, true, true],
+    ['Home with the rail up', { screen: 'home-screen', tab: 'home', railOpen: true }, true, false],
+  ];
+  for (const [name, state, visible, expected] of cases) {
+    const html = renders(state, visible);
+    assert.equal(zone.test(html), expected,
+      `${name}: the hot zone ${expected ? 'renders' : 'does not render'}`);
+  }
 });
 
 test('every screen change clears the peek, and nothing else does', () => {
