@@ -151,8 +151,8 @@ browser. What `ws.js`'s push helpers also kick in the process that calls them ri
 the push or its statement:
 - **the Workshop's board-change reaction**: a push marked `routing.boardChange`
   (`pushes.ts boardMoved`) is handed to the Workshop's listener in every web process
-  that relays it (`ws.js _onBusMessage`), whose reconcile is debounced and leased per
-  app, so N processes hearing it run one;
+  that relays it (`ws.js _onBusMessage`): each process debounces it and reads the board
+  once, and the row lease (or an unchanged board) leaves one reconcile to run;
 - **the phone badge sync**: everyone a push tells `notifications_changed` is owed a
   re-badge, a row of `mobile_push_badge_syncs` written in the same statement as the
   pushes (`publishPushes`, where phone push is on) and drained by the push sender,
@@ -1094,16 +1094,19 @@ requires a run of the bot's that proposed the session.
     (`bot.queueFix`: the queue row and the loop's wake, a NOTIFY on the bus, in one
     statement). Its clock looks every 10 minutes: the queue row still there is a round
     waiting or under way; gone with nothing recorded, the round was lost and is asked once
-    more; lost again, the change is ready to try saying what does not work (failing
-    checks: its requester hears it needs a look, `bot.needsLook`). A bot that is off, not
-    working on the app, or facing a failure that looks like the platform's does not take
-    it, and says why in the result.
+    more; lost again, a change whose checks pass is ready to try saying what does not work,
+    and one whose checks fail is left as it was (nobody is told). A bot that is off, not
+    working on the app, or facing a failure that looks like the platform's (which it tells
+    the requester itself) does not take it, and says why in the result; the next verdict
+    or settle asks again. A fix result about a head the change has left settles nothing.
   - **Its preview will not start**: a quiet line, once per epoch (`bot.tellStopped`).
   - **Merged**: the bot's other work on the request stops, bounded to what had started
     before the merge (`bot.stopRequestWork`). **Live**: the requester's DM, the chip, a
     first version's line (`bot.tellLive`), and the request's "It's live" on GitHub and in
     its thread (`bot.commentLive`).
-  - **Closed**: the requester's tray reads again (a push), and nothing more is said.
+  - **Closed**: the requester's tray reads again (a push the close's own write sends),
+    and nothing more is said; a closed change reopened and put up for a vote again is
+    followed again. **Live** is the end.
 - **Its work only sends, strict:** a failure throws and is retried, instead of reporting
   success with nothing done. Each is keyed so a retry says nothing twice: the DMs by their
   idempotency keys (a duplicate send records what its first attempt never got to), the
@@ -1114,7 +1117,7 @@ requires a run of the bot's that proposed the session.
   `preview.stopped`, `bot.shotsSettled`, `bot.proposalChanged`, `bot.requestMerged`,
   `bot.dmMerged` and `bot.announceLive`: each handler only appends the matching event
   (keyed by its work id, for a session of the bot's) and returns, for one release. The
-  leader's boot and its minute sweep adopt every promoted change of the bot's no instance
-  holds; it decides from the row, and its DM keys are the older release's, so a change
+  leader's boot and its minute sweep adopt every change of the bot's in review or being
+  merged that no instance holds and no event is on its way to; it decides from the row, and its DM keys are the older release's, so a change
   already told is not told again. A release revert leaves the instances unread.
 

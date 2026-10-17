@@ -144,7 +144,9 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     const underway = await change({ status: 'active' });
     assert.equal((await tell(underway, 'Verdict', { head: underway.head, state: 'passing' })).reason, 'not_up_for_vote');
     const s = await change();
-    assert.equal((await tell(s, 'Proposed')).result, 'accepted');
+    // The promote, as the proposal machine's transition sends it.
+    await rt.append(sender, `x:${s.id}`, { type: 'Tell', payload: { sessionId: s.id, event: 'Proposed' } }, { requestKey: `s-${++rk}`, source: system });
+    await settle();
     assert.equal((await inst(s)).state, 'checking', 'no verdict yet');
     assert.ok(pushes.some((p) => p.kind === 'user' && p.routing.userId === asker.id && p.data.type === 'homeroom_bot_work_changed'),
       'the requester\'s tray reads again (was bot.proposalChanged)');
@@ -219,7 +221,8 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     await tell(s, 'ShotsSettled');
     let i = await inst(s);
     assert.equal(i.state, 'with_the_bot');
-    assert.deepEqual(calls(WORK.fix).map((c) => [c.key, c.input.head]), [[`fix:${s.head.slice(0, 12)}:1`, s.head]]);
+    assert.deepEqual(calls(WORK.fix).map((c) => c.input.head), [s.head]);
+    assert.match(calls(WORK.fix)[0].key, new RegExp(`^fix:${s.head.slice(0, 12)}:v\\d+$`));
     assert.equal(calls(WORK.ready).length, 0, 'no card while the bot fixes it');
     // The round is waiting in the bot's queue: the clock waits on.
     await pool.query('INSERT INTO homeroom_bot_queue (app_id, issue_number, reason) VALUES ($1, $2, $3)', [app.id, s.issueNumber, 'checks_failing']);
@@ -231,7 +234,8 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     // a release took the round, bug 4): asked once more.
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2', [app.id, s.issueNumber]);
     await fire(s);
-    assert.deepEqual(calls(WORK.fix).map((c) => c.key), [`fix:${s.head.slice(0, 12)}:1`, `fix:${s.head.slice(0, 12)}:2`]);
+    assert.equal(calls(WORK.fix).length, 2);
+    assert.notEqual(calls(WORK.fix)[0].key, calls(WORK.fix)[1].key, 'each ask is its own item');
     // Lost again: the requester is told it is ready, saying what does not work.
     await fire(s);
     i = await inst(s);
@@ -270,7 +274,7 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     assert.equal(calls(WORK.ready).length, 1);
   });
 
-  await t.test('B-failing: failing checks go back to the bot; not taken, its requester hears it needs a look', async () => {
+  await t.test('B-failing: failing checks go back to the bot; one it will not take is said by nobody else, and the next verdict asks again (review R1-1, R1-2)', async () => {
     reset();
     const s = await change();
     await tell(s, 'Proposed');
@@ -278,12 +282,99 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     work.answer.set(WORK.fix, { queued: false, why: 'infra' });
     await tell(s, 'Verdict', { head: s.head, state: 'failing' });
     assert.equal(calls(WORK.fix).length, 1);
-    assert.equal(calls(WORK.ready).length, 0, 'a failing change is never "ready to try"');
-    assert.deepEqual(calls(WORK.needsLook).map((c) => c.key), ['needs-look:1']);
-    // Its checks run again and pass on the same epoch: ready now.
+    assert.equal((await inst(s)).state, 'checking');
+    assert.equal(calls(WORK.ready).length, 0, 'a failing change is never "ready to try", and nothing else is said here (the bot said it needs a look itself)');
+    // The platform re-ran them on the same head and three real failures came back.
+    work.answer.set(WORK.fix, { queued: true });
+    await verdict(s, 'failing', [{ name: 'host shows', status: 'fail', failureReason: 'expected host' }]);
+    await tell(s, 'Verdict', { head: s.head, state: 'failing' });
+    assert.equal(calls(WORK.fix).length, 2, 'asked again: the bot decides afresh');
+    assert.equal((await inst(s)).state, 'with_the_bot');
+    // Its checks pass on the same epoch once fixed: ready now.
     await verdict(s, 'passing');
     await tell(s, 'Verdict', { head: s.head, state: 'passing' });
     assert.deepEqual(calls(WORK.ready).map((c) => c.key), ['ready:1']);
+  });
+
+  await t.test('B-off: a bot that is off takes no round, and nobody hears anything (as on [main])', async () => {
+    reset();
+    const s = await change();
+    await tell(s, 'Proposed');
+    await verdict(s, 'failing', [{ name: 'x', status: 'fail' }]);
+    work.answer.set(WORK.fix, { queued: false, why: 'off' });
+    await tell(s, 'Verdict', { head: s.head, state: 'failing' });
+    assert.equal((await inst(s)).state, 'checking');
+    assert.deepEqual(work.calls.map((c) => c.kind), [WORK.fix]);
+  });
+
+  await t.test('B-late: a fix result about a head the change has left settles nothing (review R1-3)', async () => {
+    reset();
+    const s = await change();
+    await tell(s, 'Proposed');
+    await verdict(s, 'failing', [{ name: 'x', status: 'fail' }]);
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    work.answer.set(WORK.fix, async (input) => { if (input.head === s.head) await gate; return input.head === s.head ? { queued: false, why: 'not_due' } : { queued: true }; });
+    await rt.append(bc, sessionKey(s.id), { type: 'Verdict', payload: { sessionId: s.id, head: s.head, state: 'failing' } }, { requestKey: `t-${++rk}`, source: system });
+    await rt.drain();
+    const pending = rt.runServices();
+    // The head moves to B with its own failing verdict while A's answer is late.
+    const B = SHA('b');
+    await asTransition((cl) => cl.query('UPDATE chat_sessions SET reviewed_head_sha = $2, checks_commit_sha = $2 WHERE id = $1', [s.id, B]));
+    await tell({ ...s, head: B }, 'Verdict', { head: B, state: 'failing' });
+    release();
+    await pending;
+    await settle();
+    const i = await inst(s);
+    assert.equal(i.data.fix.head, B);
+    assert.equal(i.data.fix.refused, null, 'A\'s answer does not touch B\'s round');
+    assert.equal(i.state, 'with_the_bot');
+  });
+
+  await t.test('B-merging, B-merged: being merged keeps the clock; a look that saw the merge first still lets its Merged stop the bot\'s work, bounded (review R1-4, R1-5)', async () => {
+    reset();
+    const s = await change();
+    await tell(s, 'Proposed');
+    await verdict(s, 'passing');
+    await shots(s, { state: 'verified', results: broken });
+    work.answer.set(WORK.fix, { queued: true });
+    await pool.query('INSERT INTO homeroom_bot_queue (app_id, issue_number, reason) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [app.id, s.issueNumber, 'checks_failing']);
+    await tell(s, 'ShotsSettled');
+    const armed = (await inst(s)).deadline_at;
+    assert.ok(armed);
+    await asTransition((cl) => cl.query(`UPDATE chat_sessions SET status = 'merging' WHERE id = $1`, [s.id]));
+    await fire(s);
+    assert.ok((await inst(s)).deadline_at, 'its clock is kept while it is being merged');
+    await asTransition((cl) => cl.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() - INTERVAL '1 minute' WHERE id = $1`, [s.id]));
+    await fire(s);
+    assert.equal((await inst(s)).state, 'merged');
+    assert.equal(calls(WORK.merged).length, 0);
+    await tell(s, 'Merged', { before: null });
+    assert.equal(calls(WORK.merged).length, 1, 'the Merged after the look still stops the bot\'s other work');
+    assert.ok(calls(WORK.merged)[0].input.before, 'bounded by the row\'s own merge time');
+  });
+
+  await t.test('B-reopen, B-stopped-held: a closed change reopened is followed again; a preview that will not start keeps the clock (review R1-6, R1-8)', async () => {
+    reset();
+    const s = await change();
+    await tell(s, 'Proposed');
+    await tell(s, 'Closed', { reason: 'stale-pr' });
+    assert.equal((await inst(s)).state, 'closed');
+    await verdict(s, 'passing');
+    await tell(s, 'Proposed');
+    assert.equal((await inst(s)).state, 'ready', 'put up for a vote again: followed again');
+    assert.equal(calls(WORK.ready).length, 1);
+    const h = await change();
+    await tell(h, 'Proposed');
+    await shots(h, { state: 'exploring', runId: crypto.randomBytes(16).toString('hex') });
+    await verdict(h, 'passing');
+    await tell(h, 'Verdict', { head: h.head, state: 'passing' });
+    assert.equal((await inst(h)).state, 'waiting_on_shots');
+    await tell(h, 'PreviewStopped', { head: h.head });
+    const i = await inst(h);
+    assert.equal(i.state, 'waiting_on_shots');
+    assert.ok(i.deadline_at, 'the hold\'s clock is kept');
+    assert.equal(calls(WORK.stopped).length, 1);
   });
 
   await t.test('B-stopped, B-live, B-closed: the preview that will not start, the merge and its live, the close', async () => {
@@ -308,11 +399,16 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     // Closed: the tray reads again, and nothing more is said.
     const c = await change();
     await tell(c, 'Proposed');
-    pushes.length = 0;
     await tell(c, 'Closed', { reason: 'closed' });
     assert.equal((await inst(c)).state, 'closed');
-    assert.ok(pushes.some((p) => p.kind === 'user' && p.data.type === 'homeroom_bot_work_changed'));
     assert.equal((await tell(c, 'Verdict', { head: c.head, state: 'passing' })).reason, 'ended');
+    // The close's own write re-reads the requester's tray, for a change never followed too.
+    const never = await change({ status: 'archived' });
+    pushes.length = 0;
+    await rt.append(sender, `x:${never.id}`, { type: 'Tell', payload: { sessionId: never.id, event: 'Closed', payload: { reason: 'closed' } } },
+      { requestKey: `s-${++rk}`, source: system });
+    await settle();
+    assert.ok(pushes.some((p) => p.kind === 'user' && p.routing.userId === asker.id && p.data.type === 'homeroom_bot_work_changed'));
   });
 
   await t.test('B-retry: a note that failed for good is asked again by an admin, from its checkpoint', async () => {

@@ -22,7 +22,8 @@ function revokeLocal(userId, sessionIds = []) {
   }
   require('./ws').disconnectUser(userId);
   require('./app-access').invalidateAllVisibility();
-  require('./app-admins').invalidateAppAdmins();
+  // Here only: every process runs this itself (account_deleted is heard by all).
+  require('./app-admins').invalidateAppAdminsHere();
   const registry = require('./stop-registry');
   for (const id of sessionIds) {
     const handle = registry.get(id);

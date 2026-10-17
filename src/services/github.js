@@ -2840,7 +2840,9 @@ function invalidateIssuesCacheHere(owner, repo) {
 // from GitHub instead of trusted (ws.js _onBusListening).
 function expireIssuesCachesHere() {
   singleIssueCache.clear();
-  for (const [key, entry] of issuesCache) issuesCache.set(key, { result: entry.result, expiresAt: 0 });
+  // Its failure backoff kept (#2261): a reconnect during a rate limit does
+  // not send every repo's next read to GitHub at once.
+  for (const [key, entry] of issuesCache) issuesCache.set(key, { ...entry, expiresAt: 0 });
 }
 
 // The open-issues copy, its closed-issue suppressions and its single-issue

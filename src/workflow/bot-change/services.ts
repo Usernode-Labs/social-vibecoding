@@ -53,16 +53,6 @@ export function botChangeServices({ pool }: Deps): Record<string, WorkHandler> {
       },
     },
 
-    // Failing checks the bot will not fix: its requester hears it needs a look.
-    [WORK.needsLook]: {
-      maxAttempts: 5,
-      backoffMs: backoff,
-      async run({ input }): Promise<Json> {
-        const sent = await legacy('services/homeroom-bot-dm').noteNeedsLook(pool, { sessionId: Number(input.sessionId), why: 'checks', strict: true });
-        return { messageId: sent?.messageId ?? null };
-      },
-    },
-
     // Merged: the bot's other work on the same request stops, bounded to
     // what had started before the merge (homeroom-bot.js).
     [WORK.merged]: {

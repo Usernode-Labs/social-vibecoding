@@ -1684,6 +1684,11 @@ async function commentMadeSince(github, repo, issueNumber, text, since, { strict
     const read = await github.fetchIssueComments(repo.owner, repo.repo, issueNumber, {
       ...(Number.isFinite(from) ? { since: new Date(from).toISOString() } : {}),
     });
+    // github.js answers a failed read with a note, not a throw: GitHub could
+    // not say. A deleted issue ('not found') has no comment of ours to find.
+    if (strict && (read?.note === 'rate limited' || read?.note === 'fetch failed')) {
+      throw Object.assign(new Error(`Could not read the issue's comments (${read.note})`), { status: 503 });
+    }
     const head = String(text || '').trim().slice(0, COMMENT_MATCH_CHARS);
     const found = (read?.comments || []).find((c) => String(c.body || '').trim().slice(0, COMMENT_MATCH_CHARS) === head
       && (!c.createdAt || !Number.isFinite(from) || Date.parse(c.createdAt) >= from));

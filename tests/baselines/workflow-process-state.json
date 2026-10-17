@@ -114,8 +114,7 @@
     },
     "bot-change": {
       "services | uses src/services/homeroom-bot-dm.js:tellReady": "the ready-to-try card, its record, the approvers' bells and the chip, cut out of noteChangeReady (which also decided, from the wall clock, swallowed every error and ran from four callers): it sends what the machine decided, keyed per epoch, and throws what it could not do",
-      "services | uses src/services/homeroom-bot.js:queueChecksFix": "the bot's queue row for a fix round on a head, and the loop's wake in the same statement, cut out of noteProposalChecks (which swallowed errors, defaulted the settings on a read error and reported queued for a row it did not touch): it reports whether the bot takes it, and why not",
-      "services | uses src/services/homeroom-bot-dm.js:noteNeedsLook": "the \"needs a look\" line for failing checks the bot will not fix, keyed per epoch, strict (a failure is retried) and recorded on a retry too, outside the loop that also sends it for built changes with no proposal"
+      "services | uses src/services/homeroom-bot.js:queueChecksFix": "the bot's queue row for a fix round on a head, and the loop's wake in the same statement, cut out of noteProposalChecks (which swallowed errors, defaulted the settings on a read error and reported queued for a row it did not touch): it reports whether the bot takes it, and why not"
     }
   },
   "handOff": {
@@ -397,7 +396,6 @@
     ],
     "bot-change": [
       "services | uses src/services/homeroom-bot-dm.js:noteChangeStopped",
-      "services | uses src/services/homeroom-bot-dm.js:noteNeedsLook",
       "services | uses src/services/homeroom-bot-dm.js:noteProposalMerged",
       "services | uses src/services/homeroom-bot-dm.js:tellReady",
       "services | uses src/services/homeroom-bot-live.js:announceLive",

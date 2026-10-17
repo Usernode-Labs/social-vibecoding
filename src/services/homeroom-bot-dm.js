@@ -2429,6 +2429,9 @@ async function changeReadiness(pool, sessionId, { now = Date.now() } = {}) {
   const waitingOnShots = checked && shotsState.holdsReady(row, head, { now });
   return {
     ready: checked && !waitingOnShots,
+    // Up for a vote with its checks passed or skipped on its head (the
+    // change machine's own `checked`): what a card may still be sent for.
+    checked,
     epoch: Number(row.approval_epoch) || 0,
     waitingOnShots,
     broken: checked ? shotsState.brokenOnHead(row, head) : [],
@@ -2474,7 +2477,10 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
   if (!Number.isInteger(id) || id <= 0) return null;
   const state = await changeReadiness(pool, id);
   if (!state) return null;
-  if (Number(state.epoch) !== Number(epoch)) return { stale: true };
+  // Decided for another epoch, or no longer up for a vote with its checks
+  // passed (merged, closed, a newer verdict since: a retry, or an admin's,
+  // after the fact): the machine decides again from its next look.
+  if (Number(state.epoch) !== Number(epoch) || !state.checked) return { stale: true };
   const { rows } = await pool.query(
     `SELECT r.id AS run_id, r.issue_number, a.id, a.slug, a.name
        FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id
@@ -2977,8 +2983,8 @@ async function noteChangeStopped(pool, sessionId, { why = 'preview', deps = {}, 
   try {
     const { rows } = await pool.query(
       `SELECT r.issue_number, a.id, a.slug, a.name, cs.status, cs.approval_epoch
-         FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id JOIN chat_sessions cs ON cs.id = r.proposal_session_id
-        WHERE r.proposal_session_id = $1
+         FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id JOIN chat_sessions cs ON cs.id = $1
+        WHERE r.proposal_session_id = $1 OR r.build_session_id = $1
         ORDER BY r.id DESC LIMIT 1`,
       [id],
     );
@@ -3057,8 +3063,8 @@ async function noteNeedsLook(pool, { sessionId = null, runId = null, why = 'chec
     const { rows } = why === 'checks'
       ? await pool.query(
         `SELECT r.id AS run_id, r.issue_number, a.id, a.slug, a.name, cs.status, cs.approval_epoch
-           FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id JOIN chat_sessions cs ON cs.id = r.proposal_session_id
-          WHERE r.proposal_session_id = $1
+           FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id JOIN chat_sessions cs ON cs.id = $1
+          WHERE r.proposal_session_id = $1 OR r.build_session_id = $1
           ORDER BY r.id DESC LIMIT 1`,
         [id],
       )
@@ -3250,12 +3256,12 @@ async function noteProposalMerged(pool, session, { deps = {} } = {}) {
   const run = rows[0];
   // A first version's timeline (first-version-timeline.js): merged, and
   // live, each once (this runs again when a later part fails).
-  await timeline.record(pool, { runId: run.run_id, stage: 'merged', sessionId: session.id, once: true });
+  await timeline.record(pool, { runId: run.run_id, stage: 'merged', sessionId: session.id, once: true, strict: !!deps.strict });
   const platform = !!run.self_hosted;
   const live = true;
   // B9: the chat message it was asked in, if it was, says it is live.
   await noteChatLive(pool, run, deps);
-  await timeline.record(pool, { runId: run.run_id, stage: 'live', sessionId: session.id, once: true });
+  await timeline.record(pool, { runId: run.run_id, stage: 'live', sessionId: session.id, once: true, strict: !!deps.strict });
   const requester = await requesterOf(pool, run.app_id, run.issue_number);
   // #8: their activity tray reads again, whether or not the DM says it.
   if (requester) require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);

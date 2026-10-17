@@ -121,7 +121,7 @@ function positive(value) {
  * for a plan written at Make it, by its project (`appId`). Resolves whether
  * a row was written; never throws.
  */
-async function record(pool, { runId = null, appId = null, stage, sessionId = null, detail = null, once = false } = {}) {
+async function record(pool, { runId = null, appId = null, stage, sessionId = null, detail = null, once = false, strict = false } = {}) {
   try {
     if (!pool || !STAGES.includes(stage)) return false;
     const run = positive(runId);
@@ -135,6 +135,8 @@ async function record(pool, { runId = null, appId = null, stage, sessionId = nul
     else ({ rows } = await pool.query(BY_APP_SQL, [app, events.EVENT_TYPES.FIRST_VERSION_STAGE, metadata]));
     return rows.length > 0;
   } catch (err) {
+    // A durable caller (`strict`, recording once) is told, and retries.
+    if (strict) throw err;
     log.debug('first-version-timeline', 'A first version\'s stage was not recorded', { runId, appId, stage, err: err && err.message });
     return false;
   }

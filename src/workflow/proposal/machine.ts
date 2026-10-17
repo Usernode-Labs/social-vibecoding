@@ -682,7 +682,7 @@ function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner
     // A change of the Homeroom bot's withdrawn because every request it is
     // for was closed (homeroom-bot-closed-requests.js): each request's
     // thread says so, with the close.
-    for (const n of row.linkedIssues) writes.push({ type: 'requestLine', eventId: e.id, appId: d.appId, issueNumber: n, content: withdrawnNote(row.prTitle) });
+    for (const n of row.linkedIssues) writes.push({ type: 'withdrawnLine', eventId: e.id, appId: d.appId, sessionId: d.sessionId, issueNumber: n });
   }
   // A change of the Homeroom bot's: its change machine ends with it.
   writes.push(toBotChange(d.sessionId, 'Closed', { reason }));
@@ -1517,12 +1517,15 @@ function named(ctx: WriteContext, rows: { id: number; user_id: number }[]) {
 const WRITES = {
   line: writeLine,
   botChange: writeBotChange,
-  // A line in a request's own thread.
-  requestLine: async (tx: Tx, w: any, ctx: WriteContext) => {
+  // A withdrawal's line in one of its requests' own threads, the change
+  // named by its title (its pull request's, else its session's).
+  withdrawnLine: async (tx: Tx, w: any, ctx: WriteContext) => {
+    const { rows: [t] } = await tx.query(
+      `SELECT COALESCE(NULLIF(pr_title, ''), NULLIF(session_title, '')) AS title FROM chat_sessions WHERE id = $1`, [w.sessionId]);
     const { rows: [row] } = await tx.query(
       `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
        VALUES ($1, $2, 'system', $3, 'issue', $4) RETURNING id, app_id, content, msg_type, metadata, thread_type, thread_ref, created_at`,
-      [w.appId, w.content, JSON.stringify({ wfEvent: w.eventId }), w.issueNumber]);
+      [w.appId, withdrawnNote(t?.title ?? null), JSON.stringify({ wfEvent: w.eventId }), w.issueNumber]);
     ctx.push(chatLine(row));
   },
   event: async (tx: Tx, w: any) => tx.query(

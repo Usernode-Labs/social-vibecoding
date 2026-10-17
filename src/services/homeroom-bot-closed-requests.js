@@ -98,6 +98,9 @@ function numbersOf(list) {
 /** Pure: the line a withdrawal leaves on each of its requests (the proposal machine's close writes it). */
 const { withdrawnNote: closedNote } = require('../workflow/rules/bot-notes.ts');
 
+const NETWORK_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND', 'EPIPE', 'UND_ERR_SOCKET']);
+const transient = (err) => err?.status === 429 || Number(err?.status) >= 500 || NETWORK_CODES.has(err?.code);
+
 // Whether GitHub says #n is a closed issue. Only a positive answer counts: a
 // pull request or anything else keeps the proposal up. A failed read keeps
 // it up too, except for a durable caller (`strict`), which is told: its
@@ -110,7 +113,10 @@ function githubClosed(repo, deps, { strict = false } = {}) {
       memo.set(n, !repo ? Promise.resolve(false) : Promise.resolve()
         .then(() => github.getIssue(repo.owner, repo.repo, n))
         .then((issue) => !!issue && issue.state === 'closed' && !issue.pull_request, (err) => {
-          if (strict && err?.status !== 404 && err?.status !== 410) throw err;
+          // What may answer on a retry (GitHub down, rate limited, the
+          // network) is retried by a durable caller; anything else (gone,
+          // forbidden, not configured) keeps the proposal up, as before.
+          if (strict && transient(err)) throw err;
           return false;
         }));
     }

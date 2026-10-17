@@ -1019,8 +1019,9 @@ test('WP1: a merge stops the rest of the bot\'s work on its request, in a work i
   const toLive = machine.slice(machine.indexOf('function toLive('), machine.indexOf('function lineInput('));
   assert.match(toLive, /toBotChange\(d\.sessionId, 'Live'\)/, 'the merged DM waits for live');
   const bc = read('src/workflow/bot-change/machine.ts');
-  assert.match(bc, /\{ kind: WORK\.merged, key: 'merged', input: \{ sessionId: d\.sessionId, before: e\.payload\.before \} \}/);
-  assert.match(bc, /\{ kind: WORK\.liveDm, key: 'live-dm', input: \{ sessionId: d\.sessionId \} \},\n\s+\{ kind: WORK\.livePost, key: 'live-post', input: \{ sessionId: d\.sessionId \} \},/,
+  assert.match(bc, /const \{ d, work \} = stopWork\(live \? live\.data : created\(e, f\), e\.payload\.before, f\);/);
+  assert.match(bc, /const work: WorkRequest\[\] = \[\{ kind: WORK\.merged, key: 'merged', input: \{ sessionId: d\.sessionId, before: at \} \}\];/);
+  assert.match(bc, /\{ kind: WORK\.liveDm, key: 'live-dm', input: \{ sessionId: stop\.d\.sessionId \} \},\n\s+\{ kind: WORK\.livePost, key: 'live-post', input: \{ sessionId: stop\.d\.sessionId \} \},/,
     'and is not the same item');
   const services = read('src/workflow/bot-change/services.ts');
   const merged = services.slice(services.indexOf('[WORK.merged]: {'), services.indexOf('[WORK.liveDm]: {'));

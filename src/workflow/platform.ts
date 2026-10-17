@@ -110,8 +110,9 @@ export async function publishPushes(q: Queryable, pushes: Push[], { badges = fal
     .filter((id) => Number.isSafeInteger(id) && id > 0))] : [];
   await q.query(
     `WITH owed AS (
-       INSERT INTO mobile_push_badge_syncs (user_id) SELECT DISTINCT u FROM unnest($3::int[]) AS u
-       ON CONFLICT (user_id) DO UPDATE SET queued_at = now()
+       INSERT INTO mobile_push_badge_syncs (user_id)
+       SELECT DISTINCT x.u FROM unnest($3::int[]) AS x(u) JOIN users ON users.id = x.u
+       ON CONFLICT (user_id) DO UPDATE SET queued_at = now(), claimed_until = NULL
        RETURNING 1)
      SELECT pg_notify($1, body) FROM unnest($2::text[]) WITH ORDINALITY AS t(body, n) ORDER BY n`,
     [bus.CHANNEL, pushes.map((p) => bus.workflowBody(p.kind, p.routing ?? null, p.data)), owed]);
@@ -233,7 +234,7 @@ export async function adoptBotChanges(limit = 500): Promise<number> {
         AND EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.proposal_session_id = cs.id OR r.build_session_id = cs.id)
         AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'session:' || cs.id)
         -- nor one an event is already on its way to (an adoption not yet applied)
-        AND NOT EXISTS (SELECT 1 FROM wf_events e WHERE e.machine = $1 AND e.key = 'session:' || cs.id)
+        AND NOT EXISTS (SELECT 1 FROM wf_events e WHERE e.machine = $1 AND e.key = 'session:' || cs.id AND e.status = 'pending')
       ORDER BY cs.id LIMIT $3`, [BOT_CHANGE, BOT_USERNAME, limit]);
   for (const r of rows) {
     await botNote(r.id, 'Proposed', {}, { requestKey: `adopt:${r.id}`, source: { kind: 'system', name: 'adopt' }, appId: r.app_id })

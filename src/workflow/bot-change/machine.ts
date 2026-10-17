@@ -36,7 +36,6 @@ export const WORK = Object.freeze({
   ready: 'bot.tellReady',
   stopped: 'bot.tellStopped',
   fix: 'bot.queueFix',
-  needsLook: 'bot.needsLook',
   merged: 'bot.stopRequestWork',
   liveDm: 'bot.tellLive',
   livePost: 'bot.commentLive',
@@ -45,8 +44,9 @@ export const WORK = Object.freeze({
 // not said its round looked at the head (FixRoundEnded, a speed-up): its
 // queue row still there means the round is waiting or under way; gone with
 // nothing recorded, the round was lost (a follow-up that ended without it,
-// a release), and it is asked once more (Q3), then the change is ready with
-// what does not work.
+// a release), and it is asked once more (Q3); lost again, it is given up on:
+// a change whose checks pass is ready to try, saying what does not work; one
+// whose checks fail is left as [main] left it (nobody is told).
 export const FIX_LOOK_MS = 10 * 60 * 1000;
 export const FIX_ROUNDS = 2;
 
@@ -55,24 +55,27 @@ export const FIX_ROUNDS = 2;
 type Name = 'checking' | 'waiting_on_shots' | 'with_the_bot' | 'ready' | 'stopped' | 'merged' | 'live' | 'closed';
 // A work item and what came of it, for Admin → Workflows' retry.
 interface Note { kind: string; input: Json; status: 'pending' | 'done' | 'failed' | 'exhausted' | 'retried'; error?: string }
+// The change handed back to the bot for this head: whether a round is asked
+// and not answered yet (`asked`), how many were lost (`lost`), and why the
+// bot would not take the last ask (`refused`: off, not on this app, the
+// platform's failure, which it says itself; asked again on the next verdict),
+// or that it gave up waiting (`gaveUp`, for this head).
+interface Fix { head: string; asked: boolean; lost: number; refused: string | null; gaveUp: boolean }
 export interface Data {
   sessionId: number;
   appId: number;
-  // The epoch whose ready card was asked for, and the one whose "needs a
-  // look" was (failing checks the bot does not fix).
+  // The epoch whose ready card was asked for.
   told: number | null;
-  toldLook: number | null;
   stoppedEpoch: number | null;
-  // Handed back to the bot for this head: how many rounds were asked, and
-  // why the bot would not take it (`refused`: off, not on this app, the
-  // platform's failure), or that it gave up waiting (`gaveUp`).
-  fix: { head: string; n: number; refused: string | null; gaveUp: boolean } | null;
+  fix: Fix | null;
   notes: Record<string, Note>;
 }
 export type BState = { name: Name; data: Data } | { name: typeof NONE; data: null };
 type Live = Extract<BState, { data: Data }>;
 
-const FINAL: ReadonlySet<string> = new Set(['live', 'closed']);
+// Live is the end. A closed change may be reopened and put up for a vote
+// again (the proposal machine's Reopen): its next Proposed follows it again.
+const FINAL: ReadonlySet<string> = new Set(['live']);
 const UP: ReadonlySet<string> = new Set(['promoted', 'merging', 'merged']);
 
 // ── Events ──────────────────────────────────────────────────────────────
@@ -104,6 +107,10 @@ const EVENTS = {
 // heard before the promote's own message, a merge of a change an older
 // release proposed before its adoption).
 const CREATE = ['Proposed', 'Verdict', 'ShotsSettled', 'PreviewStopped', 'FixRoundEnded', 'Merged', 'Live'];
+// What a verdict, a settle or a promote says anew: a round the bot would
+// not take on this head is asked again (its settings, its live list or the
+// failure's look may have changed).
+const NEWS: ReadonlySet<string> = new Set(['Verdict', 'ShotsSettled', 'Proposed']);
 
 // ── Moves ───────────────────────────────────────────────────────────────
 
@@ -120,21 +127,34 @@ function asked(d: Data, work: WorkRequest[]): Data {
 
 // The tray of whoever asked for it reads again (homeroom-bot-tray.js: the
 // strip in their chat with the bot; it reads its records on the event).
+// A promote's: the proposal machine's message (an adoption at boot pushes
+// nothing). A close's is pushed by the close's own write (rules/bot-notes.ts),
+// for a change this machine never followed too.
 const tray = (f: Facts): Push[] => (f.requesterId ? [toUser(f.requesterId, { type: 'homeroom_bot_work_changed' })] : []);
+const fromProposal = (e: Event<any>) => e.source.kind === 'message' && e.source.from.machine === 'proposal';
 
 const words = (claims: Claim[]) => claims.map((c) => c.claim).filter(Boolean).slice(0, 3);
 const shortSha = (sha: string) => sha.slice(0, 12);
+const lookIn = (ctx: TransitionContext) => ({ at: new Date(ctx.now.getTime() + FIX_LOOK_MS), event: { type: 'Look' } });
 
 // What the change's row says now, decided once: the one rule every look
 // runs (a verdict, the shots settling, the bot's round, the clock, the
-// promote). A change not up for a vote waits for its promote; one merged
-// waits for its live.
+// promote). A change not up for a vote waits for its promote; one being
+// merged keeps its clock (a merge GitHub does not confirm puts it back up
+// for its vote); one merged waits for its Merged and its Live.
 function decide(s: Live | null, f: Facts, ctx: TransitionContext, base: Data, extra: { push?: Push[] } = {}): Outcome<BState> {
   const row = f.row!;
   let d = base;
   const now = ctx.now.getTime();
   const at = (name: Name, more: Omit<Outcome<BState>, 'next'> = {}) => step(name, d, { push: extra.push, ...more });
-  if (row.status === 'merging' || row.status === 'merged') return at(row.status === 'merged' ? 'merged' : (s?.name as Name) || 'checking', { timer: null });
+  const kept = (s?.name as Name) || 'checking';
+  // (A timer that fired is spent: a look while it is being merged arms the
+  // next one for what it was waiting on.)
+  if (row.status === 'merging') {
+    const waits = kept === 'with_the_bot' || kept === 'waiting_on_shots';
+    return at(kept === 'merged' ? 'checking' : kept, waits ? { timer: lookIn(ctx) } : {});
+  }
+  if (row.status === 'merged') return at('merged', { timer: null });
   if (row.status !== 'promoted') return at('checking', { timer: null });
   const r = readiness(row, now);
   const due = checksDue({ ...row, looked: f.looked, fix_revised: f.fixRevised });
@@ -146,26 +166,16 @@ function decide(s: Live | null, f: Facts, ctx: TransitionContext, base: Data, ex
   }
   // Part of it fails, and no round looked at this head yet: it goes back to
   // the bot, once per head (its round revises it, a new head, or records it
-  // looked), unless the bot would not take it or gave up waiting.
-  // (With its checks passed, what is due is what its shots show.)
-  const wantsFix = !!due;
-  if (wantsFix && !(fixHere && (fixHere.refused || fixHere.gaveUp))) {
-    if (fixHere && fixHere.n > 0) {
-      // Asked already: waiting for the round.
-      return at('with_the_bot', { timer: { at: new Date(now + FIX_LOOK_MS), event: { type: 'Look' } } });
-    }
-    return askFix(d, due!.head, 1, ctx, extra);
+  // looked), unless the bot would not take it or gave up waiting. (With its
+  // checks passed, what is due is what its shots show.)
+  if (due && !(fixHere && (fixHere.refused || fixHere.gaveUp))) {
+    if (fixHere?.asked) return at('with_the_bot', { timer: lookIn(ctx) });
+    return askFix(d, due.head, fixHere?.lost || 0, ctx, extra);
   }
-  if (!r.checked) {
-    // Failing checks the bot will not fix, or gave up waiting on: its
-    // requester hears it needs a look, once per epoch.
-    if (wantsFix && fixHere && d.toldLook !== r.epoch) {
-      const work: WorkRequest[] = [{ kind: WORK.needsLook, key: `needs-look:${r.epoch}`, input: { sessionId: d.sessionId, epoch: r.epoch } }];
-      d = asked({ ...d, toldLook: r.epoch }, work);
-      return at('ready', { work, timer: null });
-    }
-    return at('checking', { timer: null });
-  }
+  // Failing checks the bot does not fix (it is off, not on this app, or the
+  // failure looks like the platform's and it said so itself): nobody else is
+  // told anything, as on [main].
+  if (!r.checked) return at('checking', { timer: null });
   // Ready to try: said once per epoch, saying what does not work.
   if (d.told === r.epoch) return at('ready', { timer: null });
   const broken = words(r.broken);
@@ -175,10 +185,12 @@ function decide(s: Live | null, f: Facts, ctx: TransitionContext, base: Data, ex
   return at('ready', { work, timer: null });
 }
 
-function askFix(base: Data, head: string, n: number, ctx: TransitionContext, extra: { push?: Push[] } = {}): Outcome<BState> {
-  const work: WorkRequest[] = [{ kind: WORK.fix, key: `fix:${shortSha(head)}:${n}`, input: { sessionId: base.sessionId, head } }];
-  const d = asked({ ...base, fix: { head, n, refused: null, gaveUp: false } }, work);
-  return step('with_the_bot', d, { work, push: extra.push, timer: { at: new Date(ctx.now.getTime() + FIX_LOOK_MS), event: { type: 'Look' } } });
+// Keyed by the instance's version: a head left and come back to is asked
+// again under a key of its own.
+function askFix(base: Data, head: string, lost: number, ctx: TransitionContext, extra: { push?: Push[] } = {}): Outcome<BState> {
+  const work: WorkRequest[] = [{ kind: WORK.fix, key: `fix:${shortSha(head)}:v${ctx.version + 1}`, input: { sessionId: base.sessionId, head } }];
+  const d = asked({ ...base, fix: { head, asked: true, lost, refused: null, gaveUp: false } }, work);
+  return step('with_the_bot', d, { work, push: extra.push, timer: lookIn(ctx) });
 }
 
 // The clock while the bot has its change: its round looked (decide), is
@@ -186,44 +198,57 @@ function askFix(base: Data, head: string, n: number, ctx: TransitionContext, ext
 // more, then given up on.
 function looked(s: Live, f: Facts, ctx: TransitionContext): Outcome<BState> {
   const fix = s.data.fix;
-  if (s.name !== 'with_the_bot' || !fix || f.looked || !f.row || f.row.status !== 'promoted') return decide(s, f, ctx, s.data);
+  if (!fix || !fix.asked || f.looked || !f.row || f.row.status !== 'promoted') return decide(s, f, ctx, s.data);
   const due = checksDue({ ...f.row, looked: f.looked, fix_revised: f.fixRevised });
   if (!due || due.head !== fix.head) return decide(s, f, ctx, s.data);
-  if (f.queued) return step('with_the_bot', s.data, { timer: { at: new Date(ctx.now.getTime() + FIX_LOOK_MS), event: { type: 'Look' } } });
-  if (fix.n < FIX_ROUNDS) return askFix(s.data, fix.head, fix.n + 1, ctx);
-  return decide(s, f, ctx, { ...s.data, fix: { ...fix, gaveUp: true } });
+  if (f.queued) return step('with_the_bot', s.data, { timer: lookIn(ctx) });
+  const lost = fix.lost + 1;
+  if (lost < FIX_ROUNDS) return askFix(s.data, fix.head, lost, ctx);
+  return decide(s, f, ctx, { ...s.data, fix: { ...fix, asked: false, lost, gaveUp: true } });
 }
 
 function created(e: Event<any>, f: Facts): Data {
-  return { sessionId: e.payload.sessionId, appId: f.row!.app_id, told: null, toldLook: null, stoppedEpoch: null, fix: null, notes: {} };
+  return { sessionId: e.payload.sessionId, appId: f.row!.app_id, told: null, stoppedEpoch: null, fix: null, notes: {} };
 }
 
 // A look from anything that tells it: a verdict, a settle, a round that
-// ended, the promote, the clock.
+// ended, the promote, the clock. A closed change put up for a vote again
+// is followed again from here.
 function look(s: BState, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<BState> {
   const live = s.name === NONE ? null : (s as Live);
-  const d = live ? live.data : created(e, f);
-  const push = e.type === 'Proposed' ? tray(f) : undefined;
+  let d = live ? live.data : created(e, f);
+  if (NEWS.has(e.type) && d.fix?.refused) d = { ...d, fix: { ...d.fix, refused: null } };
+  const push = e.type === 'Proposed' && fromProposal(e) ? tray(f) : undefined;
   if (live && live.name === 'with_the_bot' && (e.type === 'Look' || e.type === 'FixRoundEnded')) return looked(live, f, ctx);
-  return decide(live, f, ctx, d, { push });
+  return decide(live && live.name !== 'closed' ? live : null, f, ctx, d, { push });
 }
 
-function stopped(s: BState, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<BState> {
+// Its preview will not start: said quietly, once per epoch. What the change
+// waits on otherwise (its shots, the bot's round) keeps its clock.
+function stopped(s: BState, e: Event<any>, f: Facts): Outcome<BState> {
   const live = s.name === NONE ? null : (s as Live);
   const d = live ? live.data : created(e, f);
+  const name: Name = !live || live.name === 'checking' || live.name === 'ready' ? 'stopped' : live.name as Name;
   const epoch = Number(f.row!.approval_epoch) || 0;
   if (f.row!.status !== 'promoted' || d.stoppedEpoch === epoch) return step((live?.name as Name) || 'checking', d);
   const work: WorkRequest[] = [{ kind: WORK.stopped, key: `stopped:${epoch}`, input: { sessionId: d.sessionId, epoch } }];
-  return step('stopped', asked({ ...d, stoppedEpoch: epoch }, work), { work, timer: null });
+  return step(name, asked({ ...d, stoppedEpoch: epoch }, work), { work });
 }
 
-// Merged: the bot's other work on the same request stops, bounded to what
-// started before the merge. Then it waits to be live.
+// The bot's other work on the request stops, bounded to what had started
+// before the merge (the message's, else the row's own merge time).
+function stopWork(d: Data, before: string | null, f: Facts): { d: Data; work: WorkRequest[] } {
+  if (d.notes.merged) return { d, work: [] };
+  const at = before || (f.row?.merged_at ? new Date(f.row.merged_at).toISOString() : null);
+  const work: WorkRequest[] = [{ kind: WORK.merged, key: 'merged', input: { sessionId: d.sessionId, before: at } }];
+  return { d: asked(d, work), work };
+}
+
+// Merged: its other work on the request stops. Then it waits to be live.
 function merged(s: BState, e: Event<any>, f: Facts): Outcome<BState> {
   const live = s.name === NONE ? null : (s as Live);
-  const d = live ? live.data : created(e, f);
-  const work: WorkRequest[] = [{ kind: WORK.merged, key: 'merged', input: { sessionId: d.sessionId, before: e.payload.before } }];
-  return step('merged', asked(d, work), { work, timer: null });
+  const { d, work } = stopWork(live ? live.data : created(e, f), e.payload.before, f);
+  return step('merged', d, { work, timer: null });
 }
 
 // Live: whoever asked hears it (their DM, the chip, a first version's line),
@@ -232,17 +257,16 @@ function merged(s: BState, e: Event<any>, f: Facts): Outcome<BState> {
 // bot's other work on its request too.
 function wentLive(s: BState, e: Event<any>, f: Facts): Outcome<BState> {
   const live = s.name === NONE ? null : (s as Live);
-  const d = live ? live.data : created(e, f);
+  const stop = stopWork(live ? live.data : created(e, f), null, f);
   const work: WorkRequest[] = [
-    { kind: WORK.liveDm, key: 'live-dm', input: { sessionId: d.sessionId } },
-    { kind: WORK.livePost, key: 'live-post', input: { sessionId: d.sessionId } },
+    { kind: WORK.liveDm, key: 'live-dm', input: { sessionId: stop.d.sessionId } },
+    { kind: WORK.livePost, key: 'live-post', input: { sessionId: stop.d.sessionId } },
   ];
-  if (!d.notes.merged) work.push({ kind: WORK.merged, key: 'merged', input: { sessionId: d.sessionId, before: null } });
-  return step('live', asked(d, work), { work, timer: null });
+  return step('live', asked(stop.d, work), { work: [...work, ...stop.work], timer: null });
 }
 
-function closed(s: Live, e: Event<any>, f: Facts): Outcome<BState> {
-  return step('closed', s.data, { push: tray(f), timer: null });
+function closed(s: Live): Outcome<BState> {
+  return step('closed', s.data, { timer: null });
 }
 
 // A work result: recorded on its note. The fix the bot would not take, or
@@ -256,15 +280,18 @@ function workResult(status: Note['status']) {
       const prev = live.data.notes[e.payload.workKey]!;
       const notes = { ...live.data.notes, [e.payload.workKey]: { ...prev, status, ...(e.payload.error ? { error: e.payload.error.message.slice(0, 500) } : {}) } };
       let d: Data = { ...live.data, notes };
-      if (e.payload.kind === WORK.fix && live.data.fix) {
+      const fix = live.data.fix;
+      // A fix result about the head the bot has now; one about a head the
+      // change has left only settles its note.
+      if (e.payload.kind === WORK.fix && fix && String((prev.input as any)?.head) === fix.head) {
         const r = (e.payload.result || {}) as { queued?: boolean; why?: string };
         // Taken: the round is the bot's (the clock watches its row). Not
         // taken (the bot is off, not on this app, the failure looks like the
         // platform's, which it says itself), or failing for good: decided
-        // again without a round.
+        // again without a round, until the next verdict asks again.
         if (status !== 'done' || !r.queued) {
-          d = { ...d, fix: { ...live.data.fix, refused: status === 'done' ? String(r.why || 'refused') : 'failed' } };
-          if (!FINAL.has(live.name) && live.name !== 'merged' && f.row) return decide(live, f, ctx, d);
+          d = { ...d, fix: { ...fix, asked: false, refused: status === 'done' ? String(r.why || 'refused') : 'failed' } };
+          if (!FINAL.has(live.name) && live.name !== 'merged' && live.name !== 'closed' && f.row) return decide(live, f, ctx, d);
         }
       }
       return step(live.name as Name, d);
@@ -311,13 +338,15 @@ export function botChange(): Machine<BState, Facts> {
     Look: { ignore: 'ended' }, PreviewStopped: { ignore: 'ended' }, Merged: { ignore: 'ended' }, Live: { ignore: 'ended' },
     Closed: { ignore: 'ended' }, RetryFollowup: retryFollowup, ...works,
   };
-  // Once merged only going live (or a close, an unmerge's) moves it on.
+  // Once merged only its Merged (when a look saw the merge first) and its
+  // Live move it on.
   const mergedState = {
     ...looks,
     Proposed: { ignore: 'merged' }, Verdict: { ignore: 'merged' }, ShotsSettled: { ignore: 'merged' },
     FixRoundEnded: { ignore: 'merged' }, Look: { ignore: 'merged' }, PreviewStopped: { ignore: 'merged' },
-    Merged: { ignore: 'already_merged' },
   };
+  // Closed: put up for a vote again (reopened), it is followed again.
+  const closedState = { ...ended, Proposed: { to: look } };
   // Whatever creates it must be about a change of the bot's that a run of
   // its proposed, up for a vote or past it.
   const creating = (to: (s: BState, e: Event<any>, f: Facts, ctx: TransitionContext) => Outcome<BState>) => ({
@@ -366,7 +395,7 @@ export function botChange(): Machine<BState, Facts> {
       stopped: looks,
       merged: mergedState,
       live: ended,
-      closed: ended,
+      closed: closedState,
     } as any,
   });
 }

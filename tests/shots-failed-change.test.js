@@ -391,7 +391,7 @@ test('ready to try waits for the shots on its head, and carries what they show f
   const waiting = await dm.changeReadiness(readinessPool(sessionRow({
     shots_state: 'exploring', shots_detail: { headSha: HEAD, required: true, intent: chores() },
   })), 6269);
-  assert.deepEqual(waiting, { ready: false, epoch: 3, waitingOnShots: true, broken: [], skipped: [], title: null });
+  assert.deepEqual(waiting, { ready: false, checked: true, epoch: 3, waitingOnShots: true, broken: [], skipped: [], title: null });
   // #3870: what the change is, for its card: the proposal's title unless it
   // is the placeholder, else the session's.
   const titled = (extra) => dm.changeReadiness(readinessPool(sessionRow(extra)), 6269).then((s) => s.title);

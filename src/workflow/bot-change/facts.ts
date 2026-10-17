@@ -39,7 +39,7 @@ export const NO_FACTS: Facts = {
 
 export async function readFacts(tx: Tx, sessionId: number): Promise<Facts> {
   const { rows: [r] } = await tx.query(
-    `SELECT cs.id, cs.app_id, cs.status, cs.source, cs.check_state, cs.approval_epoch,
+    `SELECT cs.id, cs.app_id, cs.status, cs.source, cs.check_state, cs.approval_epoch, cs.merged_at,
             cs.reviewed_head_sha, cs.imported_pr_head_sha, cs.checks_commit_sha, cs.handoff_head_sha,
             cs.checks_checked_at, cs.shots_state, cs.shots_run_id, cs.shots_detail, cs.shots_updated_at,
             cs.test_results, cs.linked_issues,

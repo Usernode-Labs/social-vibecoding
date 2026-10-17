@@ -217,7 +217,8 @@ test('strict: a retry finds the thread message it made before by its mark, and a
   const comments = [];
   const deps = {
     github: {
-      async fetchIssueComments() { if (lookupDown) throw Object.assign(new Error('GitHub 502'), { status: 502 }); return { comments: [] }; },
+      // As github.js answers a read it could not make: a note, never a throw.
+      async fetchIssueComments() { return lookupDown ? { comments: [], truncated: false, note: 'fetch failed' } : { comments: [] }; },
       async createIssueComment(o, r, n, text) { comments.push(text); return { id: 5, created_at: 'now' }; },
     },
     ws: {
@@ -231,7 +232,7 @@ test('strict: a retry finds the thread message it made before by its mark, and a
       async sendSystemMessage() {},
     },
   };
-  await assert.rejects(live.announceLive(pool, { session: { id: 51 }, deps, strict: true }), /GitHub 502/,
+  await assert.rejects(live.announceLive(pool, { session: { id: 51 }, deps, strict: true }), /fetch failed/,
     'a failed lookup of its comment is retried, not taken for none');
   assert.equal(comments.length, 0);
   lookupDown = false;

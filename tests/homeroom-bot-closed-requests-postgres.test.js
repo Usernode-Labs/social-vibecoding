@@ -225,8 +225,12 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
     assert.equal(await closedRequests.noteRequestsClosed(down, { appId: app.id, closed: [20], deps: h.deps }), null);
     await assert.rejects(closedRequests.noteRequestsClosed(down, { appId: app.id, closed: [20], strict: true, deps: h.deps }), /connection lost/,
       'the merge-followups machine retries what it could not do');
-    // A failed GitHub read is retried by a durable caller, never settled as "open".
-    await assert.rejects(closedRequests.noteRequestsClosed(pool, { appId: app.id, closed: [20], strict: true, deps: h.deps }), /rate limited/);
+    // A GitHub read a retry can cure (rate limited, down) is retried by a
+    // durable caller, never settled as "open"; one it cannot (no status: not
+    // configured, no installation) keeps the proposal up, as before.
+    assert.deepEqual(await closedRequests.noteRequestsClosed(pool, { appId: app.id, closed: [20], strict: true, deps: h.deps }), { withdrawn: [] });
+    const flaky = harness({ async getIssue() { throw Object.assign(new Error('rate limited'), { status: 429 }); } });
+    await assert.rejects(closedRequests.noteRequestsClosed(pool, { appId: app.id, closed: [20], strict: true, deps: flaky.deps }), /rate limited/);
     assert.equal(await statusOf(unsure), 'promoted');
   });
 
