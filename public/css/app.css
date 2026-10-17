@@ -19221,8 +19221,16 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
 }
 @keyframes dev-ws-tray-in { from { transform: translateX(-100%); } to { transform: none; } }
 @keyframes dev-ws-tray-fade { from { opacity: 0; } to { opacity: 1; } }
+/* The close (#5386): the open in reverse. The leaving tray takes no presses
+   (they go to the page under it) and the card calls its own end. */
+.dev-ws-tray-root.is-closing { pointer-events: none; }
+.dev-ws-tray-root.is-closing .dev-ws-tray { animation: dev-ws-tray-out 200ms cubic-bezier(.2, .8, .2, 1) forwards; }
+.dev-ws-tray-root.is-closing .dev-ws-tray-scrim { animation: dev-ws-tray-fade-out 160ms ease-out forwards; }
+@keyframes dev-ws-tray-out { from { transform: none; } to { transform: translateX(-100%); } }
+@keyframes dev-ws-tray-fade-out { from { opacity: 1; } to { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
   .dev-ws-tray, .dev-ws-tray-scrim { animation: none; }
+  .dev-ws-tray-root.is-closing .dev-ws-tray, .dev-ws-tray-root.is-closing .dev-ws-tray-scrim { animation: none; }
 }
 
 /* ── The hero's rows (community-card.tsx) ──
