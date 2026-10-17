@@ -1,0 +1,59 @@
+<div class="wrap sl-wrap">
+  <section class="intro">
+    <span class="kicker">For discussion · 17 October 2026</span>
+    <h1>Three ways to move around Homeroom</h1>
+    <p class="lede">Today's app, the current Stack design, and Stack with the changes I suggested. All five tabs work on every phone, and each phone keeps its own place.</p>
+  </section>
+
+  <section class="sl-demos" aria-label="Working mockups">
+    <div class="demo">
+      <div class="sl-head"><span class="sl-num">1</span><div><h2>Today</h2><p>The app as it is: a tray over the whole screen that snaps shut, and the header's community switcher.</p></div></div>
+      <div class="phone"><div class="screen" id="ph-today"></div></div>
+      <p class="hint">On Communities, tap the sidebar icon for the tray, or the community's name for the switcher.</p>
+    </div>
+
+    <div class="demo">
+      <div class="sl-head"><span class="sl-num">2</span><div><h2>Current version</h2><p>Stack: page, then the community's places at 80%, then your communities at 80%, each with the next layer peeking.</p></div></div>
+      <div class="phone"><div class="screen" id="ph-stack"></div></div>
+      <p class="hint">On Communities, press back twice. "All your communities" grows the rail to the whole screen; tap a peeking layer to go to it.</p>
+    </div>
+
+    <div class="demo">
+      <div class="sl-head"><span class="sl-num">3</span><div><h2>With the changes</h2><p>One outermost list of all your communities, a pan that follows your finger, and Messages on the same drawer.</p>
+        <div class="sl-ctl"><span>Outer layer</span><div class="seg" role="group" aria-label="Width of the outermost layer">
+          <button type="button" data-outer="80" aria-pressed="false">80%</button>
+          <button type="button" data-outer="85" aria-pressed="true">85%</button>
+          <button type="button" data-outer="90" aria-pressed="false">90%</button>
+          <button type="button" data-outer="95" aria-pressed="false">95%</button>
+        </div></div></div></div>
+      <div class="phone"><div class="screen" id="ph-next"></div></div>
+      <p class="hint">Drag sideways on Communities or Messages, or use back. Tap the search on the communities list to widen it; Cancel narrows it again.</p>
+    </div>
+  </section>
+
+  <section class="cols">
+    <div class="panel">
+      <h2>What 3 changes from 2</h2>
+      <ul>
+        <li><b>One outermost list.</b> The widened rail and "All your communities" were two states of one level, with no way back from the second. Now the outermost layer is the whole list, at 85% of the screen: search at the top, Waiting on your vote, Recent, then the rest. Tapping the search widens it to the whole screen while you type, and Cancel or a pick narrows it again.</li>
+        <li><b>The pan follows your finger.</b> Drag sideways to move between levels, and let go past a quarter of the way to land on the next one. Back and tapping the peeking layer still work.</li>
+        <li><b>Messages uses the same drawer.</b> The conversation list takes the left of the screen in the sidebar's styling, with the chat you were in peeking; opening one pans to it full screen, and the header becomes the conversation's name with who it's with (or what the agent does) under it, in place of a second heading on the page.</li>
+        <li><b>The header moves with the drawer, in its direction.</b> Going in, everything moves left: the old title drifts left as it fades, the new one and the back arrow arrive from the right, and the community colour blends in. Going back, everything moves right. Between a community's places and a page, the name stays put and the page's name slides in under it from the right, then back out to the right on the way back. While you drag, all of it follows your finger; switching tabs changes the header at once.</li>
+        <li><b>The community is the title, with its page under it.</b> On its places the header is just its name; on a page, the page (Workshop, #general…) is the small line under it. Switching community keeps the page you were on when the new one has it, and opens its Hub when it doesn't (a topic only one community has).</li>
+        <li><b>Tapping Communities again goes back one level.</b> From a page to its places, then to your communities, rather than all the way out at once. Phone 2 still jumps all the way.</li>
+        <li><b>The outer layer's width is a setting here.</b> 80%, 85% (the default), 90% or 95% of the screen, for the communities list and the conversation list; the places layer stays at 80%.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h2>To keep in mind</h2>
+      <ul>
+        <li>In mobile Safari, as opposed to the native app, a swipe from the left edge is the browser's own Back, so there the back button has to be the main way back, as it is for the places tray today.</li>
+        <li>The pan should move with transforms only, so it stays smooth on iOS while a page is still loading.</li>
+        <li>On a wide window the three layers fit side by side, which is the same arrangement the phone shows one window of.</li>
+      </ul>
+    </div>
+  </section>
+
+  <p class="foot">A rough mockup to discuss the navigation, not a pixel spec. The communities, Home and Discover follow your account on 17 October, with simplified icons and some member counts left out. The conversations and the apps' contents are examples.</p>
+</div>
+
