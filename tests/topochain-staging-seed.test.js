@@ -574,6 +574,35 @@ test('user_activities span multiple challenges with the challenge_completion rep
     'challenge_id is NOT NULL — a NULL here kills the whole Topochain seed');
 });
 
+// The one graded activity (#3200): the standings drill-down's "Why:" line
+// needs a row whose metadata carries the grader's grade, and the demo states
+// cannot be the only writer — they install from the deployed build, which
+// does not know a new state until it merges. Pinned: the row, the challenge
+// it hangs off, and the grade itself.
+test('the graded activity hangs off the share challenge the demo states do not write', () => {
+  const start = body.indexOf('The one GRADED activity');
+  assert.ok(start > 0, 'the graded fixture has its own block');
+  // Through the statement's params, not just its SQL: the block ends at the
+  // next heading, and the grade lives in the params after the ON CONFLICT.
+  const block = body.slice(start, body.indexOf('\n\n    // ───', start));
+  assert.match(block, /INSERT INTO user_activities/);
+  assert.match(block, /SELECT 900704/, 'the row keeps a fixed id of its own');
+  // The standings demo state (shots-demo-states.js) writes its players'
+  // rows on 900505 and 900506 unconditionally, so a seed on either would
+  // put the same activity in the drill-down twice. 900507 is the season
+  // event's third challenge, which no demo state touches.
+  assert.match(block, /c\.id = 900507 AND c\.season_event_id = 900501/);
+  assert.match(block, /'staging-demo-topochain-participant-6'/,
+    'the graded row is one of the standings demo state\'s players (ada)');
+  assert.match(block, /\[shots fixture\] Shared the season announcement\./);
+  // The grade is the fixture's own content, in the shape the drill-down
+  // draws (metadata.grade.reason under the label) and the change's
+  // declaration quotes.
+  assert.match(block, /fixture: 'shots-demo'/);
+  assert.match(block,
+    /score: 50,\n *reason: 'Says what broke, where, and what was expected\. Easy to act on\.',\n *model: 'fixture'/);
+});
+
 // The home-screen Challenges card (#911) can draw four states, and a seed
 // that omits one leaves it unreviewable — nobody can approve a state that
 // never renders. The finished NUMERIC one (900514) is the newest and the
