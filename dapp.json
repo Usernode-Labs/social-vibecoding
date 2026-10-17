@@ -1931,10 +1931,10 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Landing's one Continue button is for new and returning people, and says we let new people in in waves (first session)",
+      "name": "Landing's one Continue button is for new and returning people, with the email line under it and nothing after (first session)",
       "path": "/?shot=anon#landing",
-      "expectSelector": "#auth-landing-screen:not(.hidden) [data-landing-story] a[data-landing-story-start][href=\"#signup\"] + p[data-landing-story-how] + div [data-landing-story-waves]",
-      "expectText": "We let new people in in waves.",
+      "expectSelector": "#auth-landing-screen:not(.hidden) [data-landing-story] a[data-landing-story-start][href=\"#signup\"] + p[data-landing-story-how]:last-child",
+      "expectText": "Sign in or join with your email.",
       "allowConsoleErrors": true
     },
     {

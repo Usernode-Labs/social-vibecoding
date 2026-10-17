@@ -6,11 +6,12 @@
  * One centred group under the landing's logo bar: the picture, the small
  * caps "Welcome to Homeroom", one headline, the small caps "For example"
  * over the make screen's three examples (to show, not to press). At the
- * foot, one "Continue" button, under it "Sign in or join with your email."
- * and, set apart as a small tinted pill, "We let new people in in waves." (#5251, the
- * navigation review of 15 October 2026: "Get started" beside "Already have
- * an account? Sign in" made people decide which they were, for what is one
- * form, and nothing mentioned the waitlist most of them land on). On a
+ * foot, one "Continue" button with "Sign in or join with your email." under
+ * it (#5251, the navigation review of 15 October 2026: "Get started" beside
+ * "Already have an account? Sign in" made people decide which they were, for
+ * what is one form). The small pill that also said "We let new people in in
+ * waves." (added by #5251) is gone at Evan's request of 17 October 2026,
+ * #5376: nothing replaces it. On a
  * phone the foot sits at the foot of the screen and the story shrinks, a
  * step at a time, until it is on screen (`fitStyle`, below); on a wide
  * screen the foot follows the examples, so the button is not left far
@@ -33,8 +34,6 @@
 // #4354; examples.ts FRONT since 15 Oct): the same three here and there, the
 // tier list drawn as one.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-
-import { Alert } from '@/components/ui/alert';
 
 import { Message } from '../../lib/i18n/react';
 import { FRONT } from '../first-session/examples';
@@ -210,14 +209,6 @@ export function Story({ primaryClass, welcomeEmail = null, onStart }: {
         <p data-landing-story-how="" className="mt-1 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400 text-balance">
           {t('auth:story.email')}
         </p>
-        {/* The waitlist, said apart from the line above as the shell's amber
-            notice (@/components/ui/alert.tsx), drawn as a pill: it is the
-            one thing a new person should know before they press Continue. */}
-        <div className="flex justify-center">
-          <Alert variant="notice" density="compact" data-landing-story-waves="" className="rounded-full py-1 text-[13px] leading-5 font-semibold">
-            {t('auth:story.waves')}
-          </Alert>
-        </div>
       </div>
     </div>
   );

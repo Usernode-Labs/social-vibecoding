@@ -151,9 +151,9 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
 // 8 October (C1-story): "Welcome to Homeroom" over the picture, one headline,
 // "For example" over the make screen's three examples (Evan's, #4354; their
 // rows are pinned by the templates test below), then one "Continue" (#5251,
-// the navigation review: no separate Sign in, the email decides), the line
-// under it, and the waitlist's waves set apart in a pill.
-test('the story: label, headline, "For example" and the three examples, then one Continue and the waves line', () => {
+// the navigation review: no separate Sign in, the email decides) and the line
+// under it; the waves pill that followed is gone (#5376, Evan, 17 Oct 2026).
+test('the story: label, headline, "For example" and the three examples, then one Continue and the email line', () => {
   const html = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {} });
   // Each row: its emoji (the tier list draws a chart, no text), title and line.
   const TEMPLATE_ROWS = loadTsx(`${DIR}/examples.ts`).FRONT.flatMap((t) => (t.chart ? [message(t.title), message(t.line)] : [t.emoji, message(t.title), message(t.line)]));
@@ -166,11 +166,10 @@ test('the story: label, headline, "For example" and the three examples, then one
     ...TEMPLATE_ROWS,
     message('auth:story.continue'),
     message('auth:story.email'),
-    message('auth:story.waves'),
   ]);
   assert.match(html, /<a href="#signup" data-landing-story-start="" class="pill">Continue<\/a>/);
-  assert.match(html, /<p data-landing-story-how=""[^>]*>Sign in or join with your email\.<\/p><div class="flex justify-center"><div data-landing-story-waves="" class="[^"]*bg-amber-500\/10[^"]*rounded-full[^"]*">We let new people in in waves\.<\/div><\/div>/);
-  assert.doesNotMatch(html, /data-landing-story-signin|Already have an account|Get started/);
+  assert.match(html, /<p data-landing-story-how=""[^>]*>Sign in or join with your email\.<\/p><\/div>/);
+  assert.doesNotMatch(html, /data-landing-story-signin|Already have an account|Get started|data-landing-story-waves|in waves/);
   // In a phone browser too, the story fills the screen and its foot is at the foot.
   const css = read('public/css/app.css');
   assert.match(css, /html\[data-browser-scroller="auth-landing-scroll"\] #auth-landing-scroll:has\(> \* > \[data-landing-story\]\) \{\s+flex: 1 0 auto;\s+display: flex;\s+flex-direction: column;\s+\}/);
