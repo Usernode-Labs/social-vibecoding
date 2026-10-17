@@ -247,6 +247,7 @@ async function migrate(config) {
   await backfillLinkedIssuesFromPrBodies(pool);
   await backfillProposalIssuerAssignments(pool);
   await backfillUsernameChoiceForEmailHandles(pool);
+  await backfillSettingsProposalSource(pool);
   await migrateWaitlistCountryCodes(pool);
   // After backfillVotesRequired, which reads the merge announcements.
   await clearAutomatedChannelLines(pool);
@@ -313,6 +314,46 @@ async function backfillUsernameChoiceForEmailHandles(pool) {
   );
   if (result.rowCount) {
     log.info('db', 'Flagged email-as-username accounts for a username choice', {
+      count: result.rowCount,
+    });
+  }
+  return result.rowCount || 0;
+}
+
+// #5379: manifest proposals the platform wrote before createManifestPR began
+// stamping source='settings' still read as native agent sessions, so they
+// showed up in the agent lists. Tag them the same way, identified by the
+// branch prefix createManifestPR gives every flavour (rename, visibility,
+// governance, admins, secret-declare, who-decides, topics). Three guards
+// keep it to exactly those rows: source IS NULL (a backfill, so a re-run
+// matches nothing — idempotent on every boot), agent_session_id IS NULL (a
+// real agent change that happens to use one of these branch names keeps its
+// chat), and a transcript guard (no user/assistant conversation ever backed
+// a manifest PR; dev chats branch as dev/…). Best effort: a failure logs and
+// boot goes on, the rows just stay listed until the next boot.
+async function backfillSettingsProposalSource(pool) {
+  let result;
+  try {
+    result = await pool.query(
+      `UPDATE chat_sessions
+          SET source = 'settings'
+        WHERE source IS NULL
+          AND pr_number IS NOT NULL
+          AND agent_session_id IS NULL
+          AND (branch_name LIKE 'rename/%' OR branch_name LIKE 'visibility/%'
+               OR branch_name LIKE 'governance/%' OR branch_name LIKE 'admins/%'
+               OR branch_name LIKE 'secret-declare/%' OR branch_name LIKE 'who-decides/%'
+               OR branch_name LIKE 'topics/%')
+          AND NOT EXISTS (SELECT 1 FROM chat_session_messages m
+                           WHERE m.session_id = chat_sessions.id
+                             AND m.role IN ('user', 'assistant'))`
+    );
+  } catch (err) {
+    log.warn('db', 'Settings-proposal source backfill skipped (query failed)', { err: err.message });
+    return 0;
+  }
+  if (result.rowCount) {
+    log.info('db', 'Tagged platform-written settings proposals in flight', {
       count: result.rowCount,
     });
   }
@@ -14770,6 +14811,7 @@ module.exports = {
   migrateWaitlistCountryCodes,
   clearAutomatedChannelLines,
   backfillProposalIssuerAssignments, backfillVotesRequired,
+  backfillSettingsProposalSource,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
   seedStagingGeneralChannel, seedStagingShotsNoticed,
