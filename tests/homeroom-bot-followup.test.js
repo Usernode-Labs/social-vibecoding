@@ -64,6 +64,17 @@ test('the prompt lists the replies, and offers revise only while revisions remai
   assert.match(capped, /already revised this proposal as many times as you may/);
 });
 
+test('#5371: every answer is credited to the person the reply line names, and the requester is named beside it', () => {
+  const replies = [{ where: 'issue', via: 'homeroom', author: 'evan', body: 'for the gym app, maybe its own', createdAt: '2026-10-16T11:08:00Z' }];
+  const withRequester = followup.followUpPrompt({ seed: 'SEED', replies, requester: 'marc' });
+  assert.match(withRequester, /The request was filed by @marc\./);
+  assert.match(withRequester, /Credit everything people said to the person named on the reply it came from\./);
+  assert.match(withRequester, /never say one person answered, asked or decided what another person wrote\./);
+  const without = followup.followUpPrompt({ seed: 'SEED', replies });
+  assert.match(without, /Credit everything people said to the person named on the reply it came from\./);
+  assert.doesNotMatch(without, /filed by @/, 'no recorded requester, no line naming one');
+});
+
 test('#3703: the prompt carries the spec the proposal was built from, the card a reply in its discussion is about', () => {
   const replies = [{ where: 'proposal', via: 'homeroom', author: 'evan', body: 'does the order make sense though?', createdAt: '2026-10-02T17:26:19Z' }];
   const spec = '# Add relative-note lessons\n\n## User-facing changes\nA new Notes group appears above Intervals.';

@@ -5821,6 +5821,9 @@ async function runFollowUp(pool, config, {
       // what the change does for people.
       planFormat: canRevise ? live.followUpPlanFormat({ config, app, locale }) : undefined,
       locale,
+      // #5371: the requester's name, so the prompt can tell them apart from
+      // whoever answered its questions about the request.
+      requester: requester?.username || null,
     });
     snapshot = {
       stage: 'followup', appId: app.id, issueNumber,

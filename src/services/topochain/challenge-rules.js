@@ -239,7 +239,7 @@ const MEASURES = {
   INVITES_JOINED: {
     label: 'People who joined by their invite',
     phrase: 'brings in {target} people by invite',
-    summary: 'People who joined through their invite link, or accepted their invite by username or email, inside the window. Each person counts once, for the first invite they took, so a ring of accounts cannot pay each other.',
+    summary: 'People who joined through their invite link, or accepted their invite by username or email, inside the window. Each person counts once, for the first invite they took inside the window, so a ring of accounts cannot pay each other.',
     unit: 'person',
     targetUnit: 'people',
     counted: true,

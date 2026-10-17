@@ -674,6 +674,39 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     }
   }
 
+  // The graded fixture row (#3200): ada's "Reported a reproducible bug."
+  // carries the grader's reason in the drill-down's own response, so the
+  // activity row can show why it earned its points. Her other row and the
+  // other players' rows stay ungraded.
+  const ada = named.find((row) => row.display_name === 'shots_fixture_ada');
+  const adaDrill = await (await fetch(`${origin}/api/v4/leaderboard/user-activities?season_event_id=900501`
+    + `&participant_identifier=${encodeURIComponent(ada.bech32m || ada.discord)}`)).json();
+  const adaBug = adaDrill.data.find((a) => a.activity_type === 'bug');
+  assert.equal(adaBug.metadata.grade.reason,
+    'Says what broke, where, and what was expected. Easy to act on.');
+  assert.equal(adaDrill.data.find((a) => a.activity_type === 'onchain').metadata.grade, undefined,
+    'her ungraded row carries no grade');
+  for (const row of named.filter((r) => r !== ada)) {
+    const drill = await (await fetch(`${origin}/api/v4/leaderboard/user-activities?season_event_id=900501`
+      + `&participant_identifier=${encodeURIComponent(row.bech32m || row.discord)}`)).json();
+    assert.ok(drill.data.every((a) => !(a.metadata || {}).grade), row.display_name);
+  }
+  // A second install re-writes the same grade onto the same row: nothing
+  // new appears, and the row count stays at two per player.
+  const again = await demoStates.installDemoStates({ base: base.input, head: head.input },
+    ['shots-demo-standings-graded-v1']);
+  assert.deepEqual(again.skipped, []);
+  assert.deepEqual(again.installed.map((s) => s.id), ['shots-demo-standings-graded-v1']);
+  const { rows: [activities] } = await base.pool.query(
+    `SELECT COUNT(*)::int AS n, COUNT(DISTINCT user_id)::int AS players FROM user_activities
+      WHERE metadata->>'fixture' = $1 AND challenge_id = ANY($2::bigint[])`,
+    ['shots-demo', [900505, 900506]]);
+  assert.deepEqual(activities, { n: 6, players: 3 });
+  const { rows: [graded] } = await base.pool.query(
+    `SELECT COUNT(*)::int AS n FROM user_activities
+      WHERE metadata->>'fixture' = $1 AND metadata ? 'grade'`, ['shots-demo']);
+  assert.equal(graded.n, 1, 'exactly one graded fixture row, still');
+
   // A change the member voted on that went live, and its row in their
   // bell, read through the bell's own reader (#4787): the voted-live kind
   // on that change, live rather than going live, with its title, and read,

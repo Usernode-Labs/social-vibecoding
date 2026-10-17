@@ -15,6 +15,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROW = 'frontend/src/features/leaderboard/activity-row.tsx';
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
@@ -86,6 +87,34 @@ test('the row renders the reason, the date and the points', () => {
   assert.match(html, /<time[^>]*dateTime="2026-10-02T16:32:00.000Z"|<time[^>]*datetime="2026-10-02T16:32:00.000Z"/);
   assert.match(html, /data-activity-when/);
   assert.match(html, /\+250/);
+});
+
+// #3200: a graded activity also says why it earned its points — the grader's
+// own short reason, under the label and above the date, in the same small
+// muted text as the date so it reads as part of the entry.
+test('a graded activity shows the grader\'s reason between the label and the date (#3200)', () => {
+  const reason = 'Says what broke, where, and what was expected.';
+  const html = renderToHtml(createElement(mod.ActivityRow, {
+    text: 'Reported a reproducible bug.', points: '+250', at: '2026-10-02T16:32:00.000Z', reason,
+  }));
+  const line = message('leaderboard:activity.gradeReason', { reason });
+  assert.equal(line, 'Why: Says what broke, where, and what was expected.');
+  assert.ok(html.includes(`>${line}</span>`), 'the catalog text is drawn');
+  const reasonAt = html.indexOf('data-activity-reason');
+  const labelAt = html.indexOf('Reported a reproducible bug.');
+  const timeAt = html.indexOf('<time');
+  assert.ok(reasonAt > -1, 'the line carries the data-activity-reason hook');
+  assert.ok(labelAt < reasonAt && reasonAt < timeAt, 'and sits between the label and the date');
+});
+
+test('no reason, or a blank one, draws nothing and the markup is what it always was', () => {
+  for (const reason of [undefined, null, '', '   ']) {
+    const html = renderToHtml(createElement(mod.ActivityRow, {
+      text: 'Sent a testnet transaction.', points: '+100', at: '2026-10-02T10:00:00.000Z', reason,
+    }));
+    assert.ok(!html.includes('data-activity-reason'), `no reason line for ${JSON.stringify(reason)}`);
+    assert.match(html, /<time/, 'the date line is unaffected');
+  }
 });
 
 test('the standings drill-down draws the shared row and passes activity_at through', () => {

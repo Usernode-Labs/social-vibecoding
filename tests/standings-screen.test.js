@@ -782,6 +782,37 @@ test('a standings row the server could not name reads "Anonymous", never just it
   assert.equal(TL.drillView().displayName, 'Anonymous', 'and so does its drill-down header');
 });
 
+// #3200: the challenge grader writes a short reason into an activity's
+// metadata.grade, and the drill-down carries it through to the row so the
+// renderer can draw the "Why:" line. Ungraded point sources (no grade, empty
+// metadata, a non-string reason) carry null, so nothing is drawn for them.
+test('the drill-down activities carry the grader\'s reason, or null when there is none', () => {
+  const { TL } = loadStandings();
+  TL._drillRow = SEASON_ROW;
+  TL._drillActivities = {
+    loading: false, error: null,
+    data: [
+      { description: 'Reported a reproducible bug.', points: 250,
+        activity_at: '2026-10-02T16:32:00.000Z', activity_time_precision: 'instant',
+        metadata: { grade: { score: 250, reason: 'Says what broke, where, and what was expected.' } } },
+      { description: 'Sent a testnet transaction.', points: 100,
+        activity_at: '2026-10-02T10:00:00.000Z' },
+      { description: 'Empty metadata.', points: 5,
+        activity_at: '2026-10-02T10:00:00.000Z', metadata: {} },
+      { description: 'Non-string reason.', points: 5,
+        activity_at: '2026-10-02T10:00:00.000Z', metadata: { grade: { score: 5, reason: 42 } } },
+    ],
+  };
+  TL._drillEpoch = { loading: false, error: null, data: null };
+  TL._drillProfile = { loading: false, error: null, data: null };
+  const items = TL.drillView().activities.items;
+  assert.equal(items[0].reason, 'Says what broke, where, and what was expected.',
+    'the reason the grader stored rides along');
+  assert.equal(items[1].reason, null, 'no grade at all -> null');
+  assert.equal(items[2].reason, null, 'empty metadata -> null');
+  assert.equal(items[3].reason, null, 'a non-string reason -> null');
+});
+
 // ─── #3887: non-podium rows hidden by default, chip to show them grayed ──
 //
 // The server filters by default now and answers `non_podium_count` over the

@@ -1722,6 +1722,11 @@ test('the triage prompt sends platform questions to the conventions tool, not to
   assert.match(prompt, /A question about the platform is answered there, not in the app's repository: look it up with the tool/);
 });
 
+test('the triage prompt credits each answer to the person who wrote it (#5371)', () => {
+  const prompt = read('src/prompts/homeroom-bot-triage.md');
+  assert.match(prompt, /Credit what was said to the person named on the comment or message it came from: the person who filed the request is not always the one who answered\./);
+});
+
 // ── runTriage with every dependency injected ─────────────────────────────
 
 // The bot session's slot moves go through the proposal machine

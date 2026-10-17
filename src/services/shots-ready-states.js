@@ -72,6 +72,8 @@ const READY_STATES = Object.freeze([
     ['member', 'read_only_admin', 'full_admin']],
   ['shots-demo-standings-activities-v1', 'standings players with recorded point activities',
     ['member', 'read_only_admin', 'full_admin']],
+  ['shots-demo-standings-graded-v1', 'the grader\'s reason under a graded standings activity',
+    ['member', 'read_only_admin', 'full_admin']],
   ['shots-demo-member-bot-deciders-v1', 'Homeroom bot\'s "needs a person" message naming who decides on a project',
     ['member']],
   ['shots-demo-member-first-version-thanks-v1', 'an answered first-version plan with Homeroom bot\'s thanks under it',
