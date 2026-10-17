@@ -44,12 +44,13 @@ import type {
   Check, DomainWrite, Event, Json, Machine, MessageRequest, Outcome, Push, TimerRequest, TransitionContext, Tx,
   WorkRequest, WorkResultPayload, WriteContext,
 } from '../kernel/index.ts';
-import { chatLine, issueUpdate, sessionUpdate, toUser, voteUpdate } from '../pushes.ts';
+import { boardMoved, chatLine, issueUpdate, sessionUpdate, toUser, voteUpdate } from '../pushes.ts';
 import { changeClosed } from '../rules/agent-notes.ts';
 import { settleDecidedChange } from '../rules/change-notifications.ts';
 import { createConnectorSubmittedNotification, createPrProposedNotifications, createStalePrNotification } from '../rules/proposal-notifications.ts';
 import { invalidateHeadMoveSql } from '../rules/summary-freshness.ts';
 import { claimRefusal } from '../rules/merge-claim.ts';
+import { toBotChange, withdrawnNote, writeBotChange } from '../rules/bot-notes.ts';
 import { readFacts, NO_FACTS } from './facts.ts';
 import type { Facts, Row } from './facts.ts';
 
@@ -62,6 +63,8 @@ export const WORK = Object.freeze({
   reopen: 'pr.reopen',
   destroy: 'worker.destroy',
   purge: 'cc.purge',
+  // Queued by an older release only: its handler hands the move to the
+  // bot's change machine (services.ts), for one release.
   bot: 'bot.proposalChanged',
   gate: 'merge.gate',
   attempt: 'merge.attempt',
@@ -488,11 +491,9 @@ const line = (e: Event<any>, d: Data, content: string, extra: { msgType?: string
   ({ type: 'line', eventId: e.id, appId: d.appId, sessionId: d.sessionId, content, msgType: extra.msgType || 'system',
     metadata: extra.metadata ?? null });
 // A card moved on the boards: browsers hear it, and so does the Workshop's
-// placement stage in every web process (services/ws.js, `boardChange`).
-const board = (f: Facts, action: string, extra: Record<string, Json> = {}): Push => {
-  const p = sessionUpdate({ action, sessionId: f.row!.id, appId: f.row!.appId, appSlug: f.row!.appSlug, ...extra });
-  return { ...p, routing: { ...(p.routing || {}), boardChange: true } };
-};
+// placement stage in every web process (pushes.ts boardMoved).
+const board = (f: Facts, action: string, extra: Record<string, Json> = {}): Push =>
+  boardMoved(sessionUpdate({ action, sessionId: f.row!.id, appId: f.row!.appId, appSlug: f.row!.appSlug, ...extra }));
 const votes = (f: Facts, extra: Record<string, Json> = {}): Push =>
   voteUpdate({ sessionId: f.row!.id, appId: f.row!.appId, appSlug: f.row!.appSlug, merged: false, ...extra });
 
@@ -511,10 +512,9 @@ const toCampaign = (d: Data, c: { key: string; appId: number }, type: string, pa
 const toFollowups = (d: Data, payload: Record<string, Json>): MessageRequest =>
   ({ to: { machine: 'merge-followups', key: sessionKey(d.sessionId) }, event: { type: 'Merged', payload: { sessionId: d.sessionId, ...payload } }, appId: d.appId });
 
-// What the bot's tray and the worker need when a proposal ends its turn at
-// a slot or closes.
+// What the worker needs when a proposal ends its turn at a slot or closes.
 const destroyWorker = (d: Data, n: number): WorkRequest => ({ kind: WORK.destroy, key: `destroy:${n}`, input: { sessionId: d.sessionId } });
-const botNote = (d: Data, n: number): WorkRequest => ({ kind: WORK.bot, key: `bot:${n}`, input: { sessionId: d.sessionId } });
+
 
 // The thread line of a close, in Homeroom's words (a change, never "PR #n").
 function closedLine(r: Row, reason: string, byOwner: boolean): string {
@@ -584,9 +584,10 @@ function opened(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, deps: 
   const read = typeof r.head === 'string' ? r.head.toLowerCase() : null;
   const head = row.head && row.head !== promoting.headAt ? row.head : read;
   const work = [...done.work];
-  if (row.ownerSynthetic) work.push(botNote(d, promoting.n));
   return step(next, {
     writes: [
+      // A change of the Homeroom bot's: its change machine follows it from here.
+      toBotChange(d.sessionId, 'Proposed'),
       { type: 'promoted', sessionId: d.sessionId, imported: d.imported, head, electorate: f.electorate, issueLinkSeeded: !!r.issueLinkSeeded },
       line(e, d, `${promoting.byName || row.ownerName || 'Somebody'} promoted ${prLabel(row, prNumber, prTitle)} for voting`,
         { msgType: 'vote', metadata: { vote: { sessionId: d.sessionId, prNumber: prNumber || null } } }),
@@ -660,7 +661,7 @@ function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner
   const { told, cancel } = endSlots(s.data, 'declined', { reason: 'closed' });
   const destroy = destroyWorker(d, n);
   d = doom(d, destroy);
-  const work: WorkRequest[] = [destroy, botNote(d, n)];
+  const work: WorkRequest[] = [destroy];
   // Its pull request is closed; one GitHub is still opening for it (a
   // promote under way) is closed once it has, by the number it then has.
   const pr = repoInput(f) || (s.name === 'proposing' && row.repo ? { owner: row.repo.owner, repo: row.repo.repo, number: null } : null);
@@ -677,6 +678,14 @@ function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner
   const writes: DomainWrite[] = [{ type: 'closed', eventId: e.id, sessionId: d.sessionId, appId: d.appId,
     outcome: OUTCOMES.get(reason) || 'closed', agentSessionId: row.agentSessionId, prNumber: row.prNumber }];
   if (row.prNumber) writes.push(line(e, d, closedLine(row, reason, !!more.byOwner)));
+  if (reason === 'request-closed') {
+    // A change of the Homeroom bot's withdrawn because every request it is
+    // for was closed (homeroom-bot-closed-requests.js): each request's
+    // thread says so, with the close.
+    for (const n of row.linkedIssues) writes.push({ type: 'requestLine', eventId: e.id, appId: d.appId, issueNumber: n, content: withdrawnNote(row.prTitle) });
+  }
+  // A change of the Homeroom bot's: its change machine ends with it.
+  writes.push(toBotChange(d.sessionId, 'Closed', { reason }));
   const push = [board(f, 'archived'), votes(f)];
   if (row.linkedIssues.length) push.push(issueUpdate({ action: 'updated', source: 'session_archived', appSlug: row.appSlug, appId: row.appId }));
   return step({ name: 'closed', data: d }, {
@@ -1507,6 +1516,15 @@ function named(ctx: WriteContext, rows: { id: number; user_id: number }[]) {
 
 const WRITES = {
   line: writeLine,
+  botChange: writeBotChange,
+  // A line in a request's own thread.
+  requestLine: async (tx: Tx, w: any, ctx: WriteContext) => {
+    const { rows: [row] } = await tx.query(
+      `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
+       VALUES ($1, $2, 'system', $3, 'issue', $4) RETURNING id, app_id, content, msg_type, metadata, thread_type, thread_ref, created_at`,
+      [w.appId, w.content, JSON.stringify({ wfEvent: w.eventId }), w.issueNumber]);
+    ctx.push(chatLine(row));
+  },
   event: async (tx: Tx, w: any) => tx.query(
     `INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, $4, $5::jsonb)`,
     [w.userId ?? null, w.appId, w.sessionId, w.eventType, JSON.stringify(w.metadata || {})]),

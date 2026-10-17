@@ -330,7 +330,7 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
     const fixCard = () => mine.cards.find((c) => c.messageId === fixId);
     assert.equal(fixCard().state.stage, 'checking');
     assert.equal((await metaOf(fixId)).botRequest.status, 'fixing', 'still Fixing for the room while it is tested');
-    // Its checks pass: the moment (noteChangeReady) moves her chip and pushes her card.
+    // Its checks pass: the moment (tellReady, once the bot's change machine decides) moves her chip and pushes her card.
     await pool.query(`UPDATE chat_sessions SET check_state = 'passing' WHERE id = $1`, [first.id]);
     pushed.length = 0;
     await botChat.noteRequestStatus(pool, { appId: app.id, issueNumber: 1, status: 'ready', sessionId: first.id, deps: deps(null) });

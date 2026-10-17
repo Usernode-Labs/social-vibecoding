@@ -630,35 +630,40 @@ test('workflow machines in a process of their own, and through its crash', { tim
 
   // ── What the workflow process's boot gives it (src/workflow/setup.ts) ─
 
-  await t.test('a merge decided in the workflow process syncs the phone badge of everyone with a bell row about it', async () => {
+  await t.test('a merge decided in the workflow process owes a badge to everyone it told, in its own transaction, which the sender drains', async () => {
     const a = await app({ selfHosted: true });
     const s = await proposal(a);
     const voter = await user();
     await pool.query(`INSERT INTO notifications (user_id, app_id, session_id, kind) VALUES ($1, $2, $3, 'pr_proposed')`, [voter.id, a.id, s.id]);
-    await pool.query('ALTER TABLE mobile_push_registrations DROP CONSTRAINT IF EXISTS mobile_push_registrations_native_credential_user_fk');
-    const token = `fcm-${crypto.randomUUID()}`;
-    await pool.query(
-      `INSERT INTO mobile_push_registrations
-         (user_id, native_session_credential_reference, environment, installation_id,
-          registration_hash, registration_enc, platform, permission_status, session_expires_at)
-       VALUES ($1, $2, 'production', $3, $4, $5, 'ios', 'authorized', NOW() + INTERVAL '30 days')`,
-      [voter.id, `nsc_${String(voter.id).padStart(43, '0')}`, crypto.randomUUID(), crypto.randomBytes(32).toString('hex'),
-        require('../src/services/secrets').encrypt(token, DATA_KEY)]);
     await reportMerge({ sessionId: s.id, appId: a.id, mergeSha: SHA('9') });
-    const sent = await procs.until(async () => (await procs.effects(pool, 'push.send')).find((e) => e.data.token === token), 'the badge push');
-    assert.equal(sent.data.badge, 0, 'the merge settled the vote request, so nothing is left unread');
-    assert.equal(sent.pid, workflow.pid, 'sent by the workflow process');
+    // The row is the transition's (platform.ts publishPushes): it outlives
+    // a restart of either process, and is drained where the sender runs.
+    await procs.until(async () => (await pool.query('SELECT 1 FROM mobile_push_badge_syncs WHERE user_id = $1', [voter.id])).rowCount === 1,
+      'the badge owed');
+    const { MobilePushWorker } = require('../src/services/mobile-push-worker');
+    const synced = [];
+    const worker = new MobilePushWorker({ pool, config: { mobilePushEnabled: true }, provider: {},
+      badges: { debounceMs: 0, async syncUser(id) { synced.push(id); return 1; } } });
+    worker.stopping = false;
+    await worker.drainBadges();
+    assert.ok(synced.includes(voter.id), 'synced once drained');
+    assert.equal((await pool.query('SELECT 1 FROM mobile_push_badge_syncs WHERE user_id = $1', [voter.id])).rowCount, 0, 'and the row goes');
   });
 
-  await t.test('the Workshop hears a board change decided in the workflow process', {
-    todo: 'its listener is registered by server.js only (list: notifiers | uses src/services/ws.js:noteBoardChange); it leaves when the Workshop reacts to the stream',
-  }, async () => {
+
+  // The board change rides the push (pushes.ts boardMoved), which every web
+  // process relays and hands to its Workshop listener (services/ws.js
+  // _onBusMessage, pinned in tests/ws-workflow-relay.test.js): this test
+  // process stands for the web side, its bus listener the relay's.
+  await t.test('the Workshop hears a board change decided in the workflow process', async () => {
     const a = await app();
     const issue = await closeProposal(a, 77);
     await platform.fileProposal(issue.id, a.id);
     await platform.voteOnProposal({ ...issue, status: 'open' }, await user(), { vote: 'up', reason: null });
-    await procs.until(async () => (await procs.effects(pool, 'workshop.boardChange')).some((e) => e.data.appId === a.id),
-      'the Workshop to hear it', 5000);
+    const pushed = await procs.until(async () => heard.find((e) => e.k === 'scoped' && e.r?.boardChange === true && e.r.appId === a.id),
+      'the board change, on the push the web side relays', 5000);
+    assert.equal(pushed.d.type, 'issue_update');
+    assert.deepEqual(await procs.effects(pool, 'workshop.boardChange'), [], 'nothing kicked in the workflow process after its commit');
   });
 
   // ── App delivery: the deploy and its "deploying" state ──────────────

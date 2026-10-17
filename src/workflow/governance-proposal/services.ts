@@ -1,6 +1,6 @@
 // The governance machine's I/O: work handlers (durable, reported back as
-// events) and notifiers (post-commit kicks, allowed to be lost). What
-// browsers hear is a push the transition publishes (../pushes.ts).
+// events). What browsers hear is a push the transition publishes
+// (../pushes.ts); nothing runs after a transition commits.
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
@@ -90,17 +90,5 @@ export function governanceServices({ config, pool, requestDeploy, adoptCampaigns
         }
       },
     },
-  };
-}
-
-// Post-commit kicks that only speed something up: losing one costs a wait.
-export function governanceNotifiers({ config, pool }: Deps): Record<string, (n: any) => Promise<void> | void> {
-  return {
-    // A request board changed: the Workshop re-places its cards (an hourly
-    // sweep re-themes what it misses).
-    boardChange: (n) => legacy('services/ws').noteBoardChange({ appId: n.appId, appSlug: n.appSlug }),
-    // "Vote on a change", graded now rather than on the scorer's next pass,
-    // which grades the same vote if this is lost.
-    scoreVote: () => legacy('services/topochain/challenge-scorer').scoreOnVote(pool, config),
   };
 }

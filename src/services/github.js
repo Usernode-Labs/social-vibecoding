@@ -2834,6 +2834,15 @@ function invalidateIssuesCacheHere(owner, repo) {
   return false;
 }
 
+// Every repo's open-issues list and single reads expire here (kept as the
+// fallback a failed refetch serves, #2261): this process's bus listener came
+// back, and what it missed meanwhile (a merge's issues_closed) is read again
+// from GitHub instead of trusted (ws.js _onBusListening).
+function expireIssuesCachesHere() {
+  singleIssueCache.clear();
+  for (const [key, entry] of issuesCache) issuesCache.set(key, { result: entry.result, expiresAt: 0 });
+}
+
 // The open-issues copy, its closed-issue suppressions and its single-issue
 // reads are this process's own; what one process learns about a repo's
 // issues, the others hear over the bus (ws.js 'issues_cache', applied with
@@ -2999,6 +3008,7 @@ function recordCreatedHere(owner, repo, normalized, ttlMs = ISSUES_CREATED_OVERL
 }
 
 module.exports = {
+  expireIssuesCachesHere,
   init,
   isEnabled,
   getBotUsername,

@@ -1671,11 +1671,13 @@ async function issuePoster(pool, { app, repo, issueNumber, issue, botLogin = nul
 /**
  * The comment of `text` the bot made on the issue at or after `since`, or
  * null: a post a restart cut short after its comment went out and before
- * its answer was kept. Read off the issue; never throws.
+ * its answer was kept. Read off the issue. A read that fails is "none",
+ * except for a durable caller (`strict`), which is told: taken for none,
+ * its retry would comment a second time.
  */
 const COMMENT_MATCH_CHARS = 200;
 const COMMENT_CLOCK_SLACK_MS = 2 * 60 * 1000;
-async function commentMadeSince(github, repo, issueNumber, text, since) {
+async function commentMadeSince(github, repo, issueNumber, text, since, { strict = false } = {}) {
   try {
     if (typeof github?.fetchIssueComments !== 'function') return null;
     const from = Date.parse(since) - COMMENT_CLOCK_SLACK_MS;
@@ -1687,9 +1689,22 @@ async function commentMadeSince(github, repo, issueNumber, text, since) {
       && (!c.createdAt || !Number.isFinite(from) || Date.parse(c.createdAt) >= from));
     return found ? { id: found.id ?? null } : null;
   } catch (err) {
+    if (strict) throw err;
     log.warn('homeroom-bot', 'Could not read the issue for a post a restart cut short', { issueNumber, err: err.message });
     return null;
   }
+}
+
+// The thread message a post of `postId` made before a restart (or before a
+// failure after its row was written, its broadcast's), found by the post's
+// mark on it: the row's own id was never kept, and the post must not be
+// said twice in the thread.
+async function threadMessageOf(pool, app, issueNumber, postId) {
+  const { rows } = await pool.query(
+    `SELECT id FROM chat_messages
+      WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2 AND metadata->>'hrbotPost' = $3
+      ORDER BY id LIMIT 1`, [app.id, issueNumber, String(postId)]);
+  return rows[0] ? { id: rows[0].id } : null;
 }
 
 async function post({
@@ -1757,10 +1772,10 @@ async function post({
   // what is missing.
   const failed = [];
   // Its thread message went out before the restart: so did what it tagged.
-  const messageSentBefore = !!message;
+  let messageSentBefore = !!message;
   if (!noComment && !comment) {
     // Made before the restart, its answer lost with it: found on the issue.
-    if (had) comment = await commentMadeSince(github, repo, issueNumber, text, had.created_at);
+    if (had) comment = await commentMadeSince(github, repo, issueNumber, text, had.created_at, { strict });
     if (!comment) {
       try {
         comment = await github.createIssueComment(repo.owner, repo.repo, issueNumber, text);
@@ -1811,17 +1826,27 @@ async function post({
   // its title, a person by their name) brings them as `homeroomText`.
   const own = homeroomText || firstPerson(text);
   const threadText = handles ? `${handles} ${own}` : own;
+  // Taken up again: the message it may have made before (its mark says).
+  if (!noIssueThread && !message && had) {
+    message = await threadMessageOf(pool, app, issueNumber, postId).catch((err) => {
+      if (strict) throw err;
+      return null;
+    });
+    if (message) messageSentBefore = true;
+  }
   if (!noIssueThread && !message) {
+    // The post's mark on its message, so a retry finds it (threadMessageOf).
+    const marked = (meta) => ({ ...(meta || {}), hrbotPost: String(postId) });
     try {
       // A spec is a card in the thread (its full text is on GitHub, and one
       // click away from the card), not a wall of markdown in a chat bubble.
       message = threadMessage && sender
         ? await ws.sendBotMessage(pool, app.id, {
           user: sender, content: handles ? `${handles} ${firstPerson(threadMessage.content)}` : firstPerson(threadMessage.content),
-          metadata: threadMessage.metadata,
+          metadata: marked(threadMessage.metadata),
           thread: { type: 'issue', ref: issueNumber }, msgType: threadMessage.msgType,
         })
-        : await inThread(threadText, { type: 'issue', ref: issueNumber });
+        : await inThread(threadText, { type: 'issue', ref: issueNumber }, marked(metadata));
     } catch (err) {
       log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
       failed.push(`the thread message (${err.message})`);

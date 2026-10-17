@@ -1,18 +1,23 @@
 // The merge-followups machine's I/O: work handlers (durable, reported back
-// as events) and notifiers (post-commit kicks, allowed to be lost). What
-// browsers hear is a push the transition publishes (../pushes.ts). The handlers reuse [main]'s functions; each is safe to run again
-// after a crash, which is what a retried work item does.
+// as events). What browsers hear is a push the transition publishes
+// (../pushes.ts); nothing runs after a transition commits. The handlers
+// reuse [main]'s functions; each is safe to run again after a crash, which
+// is what a retried work item does.
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
+import type { BotNote } from '../rules/bot-notes.ts';
 import { backoff, closeAndComment, gone, permanent } from '../github-work.ts';
 import { liveShotsRun } from './facts.ts';
 import { WORK } from './machine.ts';
 
 // requestDeploy: platform.ts's, for the deploy work left from before.
-interface Deps { config: any; pool: Pool; requestDeploy?: (appId: number, reason: string, o?: Record<string, unknown>) => Promise<number> }
+interface Deps {
+  config: any; pool: Pool; requestDeploy?: (appId: number, reason: string, o?: Record<string, unknown>) => Promise<number>;
+  botNote?: BotNote;
+}
 
-export function mergeFollowupsServices({ config, pool, requestDeploy }: Deps): Record<string, WorkHandler> {
+export function mergeFollowupsServices({ config, pool, requestDeploy, botNote }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
   const session = async (id: number) => (await pool.query(
     `SELECT cs.*, a.slug AS app_slug, a.repo_url FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
@@ -196,41 +201,33 @@ export function mergeFollowupsServices({ config, pool, requestDeploy }: Deps): R
       },
     },
 
-    // The bot's other work on the same request stops (homeroom-bot.js),
-    // bounded to what had started before the merge.
+    // One release only: what an older release queued for a change of the
+    // Homeroom bot's once merged (its other work on the request stops) and
+    // once live (its requester's DM, the request's "It's live"). The bot's
+    // change machine hears it and does each once; since this release the
+    // merge's own writes tell it.
     [WORK.bot]: {
       maxAttempts: 5,
       backoffMs: backoff,
-      async run({ input }): Promise<Json> {
-        const out = await legacy('services/homeroom-bot').noteRequestMerged(pool, { id: input.sessionId },
-          { before: input.before, strict: true });
-        return (out || null) as Json;
+      async run({ input, workId }): Promise<Json> {
+        if (botNote) await botNote(Number(input.sessionId), 'Merged', { before: input.before ?? null }, { requestKey: `shim:${workId}` });
+        return { handedOff: true };
       },
     },
-
-    // Whoever the bot built it for hears it is live, in their DM.
     [WORK.dm]: {
       maxAttempts: 5,
       backoffMs: backoff,
-      async run({ input }): Promise<Json> {
-        const sent = await legacy('services/homeroom-bot-dm').noteProposalMerged(pool, { id: input.sessionId },
-          { deps: { strict: true } });
-        return { sent: !!sent };
+      async run({ input, workId }): Promise<Json> {
+        if (botNote) await botNote(Number(input.sessionId), 'Live', {}, { requestKey: `shim:${workId}` });
+        return { handedOff: true };
       },
     },
-
-    // The request's "It's live" (a GitHub comment and the bot's bubble in
-    // its thread), for a change the bot built: said once per change.
     [WORK.live]: {
       maxAttempts: 5,
       backoffMs: backoff,
-      async run({ input }): Promise<Json> {
-        const row = await session(input.sessionId);
-        if (!row) return { gone: true };
-        const posted = await legacy('services/homeroom-bot-live').announceLive(pool, {
-          session: row, deps: { github: github() }, strict: true,
-        });
-        return { posted: !!posted };
+      async run({ input, workId }): Promise<Json> {
+        if (botNote) await botNote(Number(input.sessionId), 'Live', {}, { requestKey: `shim:${workId}` });
+        return { handedOff: true };
       },
     },
 
@@ -246,19 +243,6 @@ export function mergeFollowupsServices({ config, pool, requestDeploy }: Deps): R
         });
         return { recorded: true };
       },
-    },
-  };
-}
-
-export function mergeFollowupsNotifiers({ config, pool }: Deps): Record<string, (n: any) => Promise<void> | void> {
-  return {
-    // A request board changed: the Workshop re-places its cards.
-    boardChange: (n) => legacy('services/ws').noteBoardChange({ appId: n.appId, appSlug: n.appSlug }),
-    // Everyone with a bell row about the change: their phone's badge count.
-    async badgeSync(n) {
-      const { rows } = await pool.query('SELECT DISTINCT user_id FROM notifications WHERE session_id = $1', [n.sessionId]);
-      const push = legacy('services/mobile-push');
-      for (const r of rows) push.scheduleBadgeSync(r.user_id);
     },
   };
 }

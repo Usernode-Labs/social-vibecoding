@@ -408,7 +408,9 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
        VALUES ($1, 1, 'live', 'ready', $2, TRUE)`,
       [app.id, first.id],
     );
-    await dm.noteChangeReady(pool, first.id, { bot, domain: 'app.example.test' });
+    // The bot's change machine decided it is ready (src/workflow/bot-change/): its card.
+    const { rows: [{ approval_epoch: epoch }] } = await pool.query('SELECT approval_epoch FROM chat_sessions WHERE id = $1', [first.id]);
+    await dm.tellReady(pool, first.id, { epoch, deps: { bot, domain: 'app.example.test' } });
     const { rows: [sent] } = await pool.query(
       `SELECT m.id, m.metadata->'homeroomBot' AS meta FROM homeroom_bot_dm_messages d JOIN conversation_messages m ON m.id = d.message_id
         WHERE d.user_id = $1 AND d.kind = 'proposal'`,

@@ -18,11 +18,12 @@ function stub(path, exports) {
 }
 
 const botCalls = [];
+// The bot's own code, which the shims must no longer call.
 stub('../src/services/homeroom-bot-dm', {
-  async noteChangeReady(_pool, sessionId) { botCalls.push(['ready', sessionId]); },
+  async tellReady(_pool, sessionId) { botCalls.push(['ready', sessionId]); },
 });
 stub('../src/services/homeroom-bot', {
-  async noteProposalChecks(_pool, o) { botCalls.push(['checks', o.sessionId]); },
+  async queueChecksFix(_pool, o) { botCalls.push(['checks', o.sessionId]); },
 });
 
 const { previewServices } = require('../src/workflow/preview/services.ts');
@@ -49,13 +50,15 @@ test('a failing or errored verdict, or a proposal not in review (merged, gone), 
   assert.deepEqual(mergeWanted(data, facts(null), 'passing'), []);
 });
 
-test('the follow-up work keeps the Homeroom bot\'s notes, and no longer reaches into the merge', async () => {
+test('an older release\'s follow-up work hands the verdict to the bot\'s change machine, and no longer reaches into the merge', async () => {
   const queries = [];
   const pool = { async query(sql) { queries.push(String(sql)); return { rows: [] }; } };
-  const handlers = previewServices({ config: { jwtSecret: 's' }, pool });
+  const told = [];
+  const handlers = previewServices({ config: { jwtSecret: 's' }, pool, botNote: async (id, type, payload) => { told.push([type, id, payload.state]); } });
   botCalls.length = 0;
-  await handlers[WORK.followUps].run({ input: { sessionId: 7, appId: 42, head: null, state: 'passing' } });
-  await handlers[WORK.followUps].run({ input: { sessionId: 7, appId: 42, head: null, state: 'failing' } });
-  assert.deepEqual(botCalls, [['ready', 7], ['checks', 7]]);
+  await handlers[WORK.followUps].run({ input: { sessionId: 7, appId: 42, head: null, state: 'passing' }, workId: 'w-1' });
+  await handlers[WORK.followUps].run({ input: { sessionId: 7, appId: 42, head: null, state: 'failing' }, workId: 'w-2' });
+  assert.deepEqual(told, [['Verdict', 7, 'passing'], ['Verdict', 7, 'failing']]);
+  assert.deepEqual(botCalls, [], 'the bot\'s own code is its change machine\'s to call');
   assert.deepEqual(queries, [], 'no status re-read: the transition decided, under the lock');
 });

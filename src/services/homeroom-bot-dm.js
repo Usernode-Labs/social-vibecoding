@@ -1247,7 +1247,7 @@ function requestNews(kind, dm, context) {
     // attaches it whenever the news names its session), so the text points
     // at the card. The address is written out only when there is no card:
     // beside one it was a raw URL next to the same link, in the DM and in
-    // its push. B4: sent once it is ready to try (noteChangeReady), and in
+    // its push. B4: sent once it is ready to try (tellReady), and in
     // plain words: on a project of theirs alone they approve it themselves;
     // with others in it, it goes live once it is approved.
     case 'proposal':
@@ -1546,7 +1546,7 @@ const CHAT_STATUS_OF_KIND = Object.freeze({
 });
 
 async function relayIssuePost({
-  pool, ws = null, app, issueNumber, kind, runId = null, postId = null, bot, dm, ready = false, key = null,
+  pool, ws = null, app, issueNumber, kind, runId = null, postId = null, bot, dm, ready = false, key = null, strict = false,
 }) {
   if (CHAT_STATUS_OF_KIND[kind] && app?.id) {
     await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber, status: CHAT_STATUS_OF_KIND[kind] });
@@ -1621,8 +1621,8 @@ async function relayIssuePost({
     };
   }
   // B4: "it's built" waits until it is ready to try: its preview is up and
-  // its checks passed or were skipped (noteChangeReady, from every place a
-  // check verdict lands). Said to the post as told, so the post does not tag
+  // its checks passed or were skipped (tellReady, which the bot's change
+  // machine asks for). Said to the post as told, so the post does not tag
   // them either: they hear it once, when they can try it. One story: its
   // thread says, quietly, that it is built and being tested.
   let sendKey = key;
@@ -1683,7 +1683,7 @@ async function relayIssuePost({
         // people listed, the card says how many and that any of them will do.
         ...(Number.isInteger(dm.card.missing) ? { missing: Number(dm.card.missing) } : {}),
         ...(Number.isInteger(dm.card.needed) ? { needed: Number(dm.card.needed) } : {}),
-        // What its shots show not working (noteChangeReady), said on the card.
+        // What its shots show not working (tellReady), said on the card.
         ...(brokenWords(dm.card.broken).length ? { broken: brokenWords(dm.card.broken) } : {}),
       },
       sessionId: Number(dm.sessionId),
@@ -1742,12 +1742,20 @@ async function relayIssuePost({
     return null;
   }
   const told = { ...sent, userId: requester.userId, username: requester.username };
-  // The same post relayed again (a retry) was already sent and recorded.
-  if (sent.duplicate) return told;
   // #3698: from here the DM is in front of them, so what follows failing
   // is logged rather than thrown: a relay that throws is one the post
-  // makes up for by tagging them, and this one did reach them.
+  // makes up for by tagging them, and this one did reach them. A durable
+  // caller (`strict`, the bot's change machine) is told instead: its retry
+  // finds the DM sent (a duplicate) and does what is left.
   try {
+    // The same post relayed again (a retry): done if it was recorded. One
+    // that went out and was never recorded (the first attempt ended between
+    // the two) is recorded now, with what follows it, or its card would
+    // read "checking" for good.
+    if (sent.duplicate) {
+      const { rows: had } = await pool.query('SELECT 1 FROM homeroom_bot_dm_messages WHERE message_id = $1', [sent.messageId]);
+      if (had.length) return told;
+    }
     // Whatever this post says, it is the request's news now: an older
     // question about it is not waiting for an answer any more.
     await closeOpenQuestions(pool, { userId: requester.userId, appId: app.id, issueNumber, ws });
@@ -1763,6 +1771,7 @@ async function relayIssuePost({
       [sent.messageId, requester.userId, sent.conversationId, app.id, issueNumber, kind, runId, asks ? 'open' : null],
     );
   } catch (err) {
+    if (strict) throw err;
     log.warn('homeroom-bot-dm', 'Told the requester, but could not record it', {
       app: app.slug, issueNumber, kind, userId: requester.userId, err: err.message,
     });
@@ -2449,154 +2458,81 @@ function brokenWords(broken) {
 }
 
 /**
- * B4: a check verdict landed on a change (visuals.noteBotChecksAfterChecks,
- * called from every place one does). When it is one of the bot's changes and
- * it is ready to try now, its requester hears so, once per approval epoch:
- * "It's built" used to go out the moment the change went up, often with its
- * checks still running. A failing verdict is the bot's own to fix, quietly
- * (homeroom-bot.js noteProposalChecks). Never throws; resolves what was sent.
+ * B4: one of the bot's changes is ready to try, for approval epoch `epoch`
+ * (the bot's change machine decided it: src/workflow/bot-change/). Its
+ * requester's card goes out once per epoch, saying what its shots show not
+ * working (`broken`, the claims' words), and, when nothing is broken, the
+ * people who must approve it are asked; the chat message it was asked in,
+ * if it was, says Try it. A durable caller's: it throws what it could not
+ * read or send, and a retry says nothing twice (the card's key, the bells'
+ * NOT EXISTS, the chip). Resolves what was sent, `{ stale: true }` when the
+ * epoch moved on since it was decided (the machine decides again), or null
+ * when there is nobody to tell.
  */
-async function noteChangeReady(pool, sessionId, deps = {}) {
+async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], deps = {} } = {}) {
   const id = Number(sessionId);
   if (!Number.isInteger(id) || id <= 0) return null;
-  try {
-    const state = await changeReadiness(pool, id);
-    if (!state?.ready) {
-      if (state?.waitingOnShots) {
-        log.info('homeroom-bot-dm', 'A change passed its checks; its requester hears once its before & after shots settle', { sessionId: id });
-      }
-      return null;
-    }
-    const { rows } = await pool.query(
-      `SELECT r.id AS run_id, r.issue_number, a.id, a.slug, a.name
-         FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id
-        WHERE r.proposal_session_id = $1
-        ORDER BY r.id DESC LIMIT 1`,
-      [id],
-    );
-    if (!rows[0]) return null;
-    const run = rows[0];
-    // Its shots show part of it failing: the bot fixes that first, in the
-    // same round a failing check gets (homeroom-bot.js noteProposalChecks,
-    // once per head and within its revisions). Only when no such round is
-    // due (it already looked at this head, has no revisions left, or is not
-    // working on this app) does the card go out, saying what does not work.
-    // The same goes for a change its shots could not reach for want of data
-    // the change can seed: the bot adds it, and the shots are taken again,
-    // before anybody is asked to approve it without pictures of it.
-    const broken = brokenWords(state.broken);
-    const unshot = Array.isArray(state.skipped) ? state.skipped.length : 0;
-    if (broken.length || unshot) {
-      const handedBack = await settingsModule().noteProposalChecks(pool, { sessionId: id }).catch(() => false);
-      if (handedBack) {
-        log.info('homeroom-bot-dm', broken.length
-          ? 'A change\'s shots show part of it failing; the bot fixes it before its requester hears'
-          : 'A change\'s shots could not reach part of it; the bot adds the data they need before its requester hears', {
-          sessionId: id, failed: broken.length, skipped: unshot,
-        });
-        return null;
-      }
-    }
-    const bot = deps.bot || await botAccount(pool);
-    if (!bot) return null;
-    const domain = deps.domain || require('./caddy').USERNODE_DOMAIN;
-    const link = require('./homeroom-bot-live').proposalLink(domain, run.slug, id);
-    // B7: what its asker can do on the card, and who else must approve it.
-    const requester = await requesterOf(pool, run.id, Number(run.issue_number));
-    const approval = await approvalState(pool, { sessionId: id, userId: requester?.userId || null }).catch((err) => {
-      log.warn('homeroom-bot-dm', 'Could not read who approves a change (sending its card without Approve)', { sessionId: id, err: err.message });
-      return null;
-    });
-    // A first version goes live without a vote (D1): nobody is waited on,
-    // and the card offers Try it and Change something, never Approve.
-    const noVote = !!approval?.firstVersion;
-    const waiting = approval && !noVote
-      ? await usernamesOf(pool, await needsYesFrom(pool, approval, { except: requester?.userId ? [requester.userId] : [] }))
-      : [];
-    const told = await relayIssuePost({
-      pool, ws: deps.ws || null, app: { id: run.id, slug: run.slug, name: run.name }, issueNumber: Number(run.issue_number),
-      kind: 'proposal', runId: Number(run.run_id), bot, ready: true, key: readyKey(id, state.epoch),
-      dm: {
-        link, sessionId: id, epoch: state.epoch,
-        ...(state.title ? { title: state.title } : {}),
-        card: {
-          approve: !noVote && !!(approval?.counts && !approval.already),
-          // D1: a project's first version goes live without a vote.
-          ...(noVote ? { noVote: true } : {}),
-          last: !!approval?.last,
-          // Nobody else is asked on a project of one; and never a long list.
-          waitingOn: waiting.slice(0, 3),
-          more: Math.max(waiting.length - 3, 0),
-          // How many of them it needs (Page Turners, 5 October: two of
-          // three, not all three), so the card can say any of them will do.
-          ...(approval ? { missing: approval.missing, needed: approval.needed } : {}),
-          // What its shots show not working, said on the card.
-          ...(broken.length ? { broken } : {}),
-        },
+  const state = await changeReadiness(pool, id);
+  if (!state) return null;
+  if (Number(state.epoch) !== Number(epoch)) return { stale: true };
+  const { rows } = await pool.query(
+    `SELECT r.id AS run_id, r.issue_number, a.id, a.slug, a.name
+       FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id
+      WHERE r.proposal_session_id = $1 OR r.build_session_id = $1
+      ORDER BY r.id DESC LIMIT 1`,
+    [id],
+  );
+  if (!rows[0]) return null;
+  const run = rows[0];
+  const broken = brokenWords(brokenClaims);
+  const bot = deps.bot || await botAccount(pool);
+  if (!bot) return null;
+  const domain = deps.domain || require('./caddy').USERNODE_DOMAIN;
+  const link = require('./homeroom-bot-live').proposalLink(domain, run.slug, id);
+  // B7: what its asker can do on the card, and who else must approve it.
+  const requester = await requesterOf(pool, run.id, Number(run.issue_number));
+  const approval = await approvalState(pool, { sessionId: id, userId: requester?.userId || null });
+  // A first version goes live without a vote (D1): nobody is waited on,
+  // and the card offers Try it and Change something, never Approve.
+  const noVote = !!approval?.firstVersion;
+  const waiting = approval && !noVote
+    ? await usernamesOf(pool, await needsYesFrom(pool, approval, { except: requester?.userId ? [requester.userId] : [] }))
+    : [];
+  const told = await relayIssuePost({
+    pool, ws: deps.ws || null, app: { id: run.id, slug: run.slug, name: run.name }, issueNumber: Number(run.issue_number),
+    kind: 'proposal', runId: Number(run.run_id), bot, ready: true, key: readyKey(id, state.epoch), strict: true,
+    dm: {
+      link, sessionId: id, epoch: state.epoch,
+      ...(state.title ? { title: state.title } : {}),
+      card: {
+        approve: !noVote && !!(approval?.counts && !approval.already),
+        // D1: a project's first version goes live without a vote.
+        ...(noVote ? { noVote: true } : {}),
+        last: !!approval?.last,
+        // Nobody else is asked on a project of one; and never a long list.
+        waitingOn: waiting.slice(0, 3),
+        more: Math.max(waiting.length - 3, 0),
+        // How many of them it needs (Page Turners, 5 October: two of
+        // three, not all three), so the card can say any of them will do.
+        ...(approval ? { missing: approval.missing, needed: approval.needed } : {}),
+        // What its shots show not working, said on the card.
+        ...(broken.length ? { broken } : {}),
       },
-    });
-    // Nobody else is asked to approve a change part of which does not work:
-    // its requester's card says what, and the bot's hand-off said so where
-    // the group talks about it.
-    // Nor is anybody asked to approve a first version (D1): it needs no Yes,
-    // so needsYesFrom names nobody and nothing is sent.
-    if (approval && !broken.length) await noteApproversReady(pool, { sessionId: id, epoch: state.epoch, requesterId: requester?.userId || null, state: approval });
-    // B9: and the chat message it was asked in, if it was, says Try it.
-    await require('./homeroom-bot-chat').noteRequestStatus(pool, {
-      appId: run.id, issueNumber: Number(run.issue_number), status: 'ready', sessionId: id,
-    });
-    return told;
-  } catch (err) {
-    log.warn('homeroom-bot-dm', 'Could not tell the requester their change is ready', { sessionId: id, err: err.message });
-    return null;
+    },
+  });
+  // Nobody else is asked to approve a change part of which does not work:
+  // its requester's card says what, and the bot's hand-off said so where
+  // the group talks about it.
+  // Nor is anybody asked to approve a first version (D1): it needs no Yes,
+  // so needsYesFrom names nobody and nothing is sent.
+  if (approval && !broken.length) {
+    await noteApproversReady(pool, { sessionId: id, epoch: state.epoch, requesterId: requester?.userId || null, state: approval, strict: true });
   }
-}
-
-/**
- * A proposal's before & after shots settled (the shots machine's
- * bot.shotsSettled work, src/workflow/shots/: a run
- * published or failed, was waived, or will not start). A change of the
- * bot's that passed its checks was waiting on them: it is ready to try now,
- * or, when they show part of it failing or could not reach part of it for
- * want of data it can seed, it goes back to the bot first
- * (noteChangeReady). One indexed read for any other proposal. Never throws.
- */
-function noteShotsSettled(pool, sessionId, deps = {}) {
-  return noteChangeReady(pool, sessionId, deps);
-}
-
-// How long after a held change's limit the bot's refresh (every five
-// minutes) keeps asking: a few passes, so a short pause of the loop does not
-// miss it.
-const HELD_READY_WINDOW_MS = 20 * 60 * 1000;
-
-/**
- * The bot's refresh: a change of the bot's that passed its checks
- * READY_HOLD_MS ago (and no more than HELD_READY_WINDOW_MS before that) may
- * have been waiting on shots that never settled; shots-state.holdsReady
- * stops waiting then, so asked again it is sent now. Every settle already
- * asks (noteShotsSettled); this is the backstop. Sending is idempotent per
- * approval epoch, so a change already told is not told twice. Resolves how
- * many were looked at; never throws.
- */
-async function sweepHeldReady(pool, deps = {}) {
-  try {
-    const holdMs = require('./shots-state').READY_HOLD_MS;
-    const { rows } = await pool.query(
-      `SELECT cs.id FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
-        WHERE u.username = $1 AND u.is_synthetic = TRUE
-          AND cs.status = 'promoted' AND cs.check_state IN ('passing', 'skipped')
-          AND cs.checks_checked_at <= NOW() - ($2::bigint * INTERVAL '1 millisecond')
-          AND cs.checks_checked_at > NOW() - (($2::bigint + $3::bigint) * INTERVAL '1 millisecond')
-        ORDER BY cs.id LIMIT 20`,
-      [BOT_USERNAME, holdMs, HELD_READY_WINDOW_MS],
-    );
-    for (const row of rows) await noteChangeReady(pool, row.id, deps);
-    return rows.length;
-  } catch (err) {
-    log.warn('homeroom-bot-dm', 'Could not look for changes held on their shots', { err: err.message });
-    return 0;
-  }
+  // B9: and the chat message it was asked in, if it was, says Try it.
+  await require('./homeroom-bot-chat').noteRequestStatus(pool, {
+    appId: run.id, issueNumber: Number(run.issue_number), status: 'ready', sessionId: id, deps: { strict: true },
+  });
+  return told;
 }
 
 // ── B7: ready to try, and who approves it ───────────────────────────────
@@ -2730,7 +2666,7 @@ async function usernamesOf(pool, ids) {
  * default, and pushed), from whoever asked for it. Never its asker, who has
  * the card. Resolves the rows made. Never throws.
  */
-async function noteApproversReady(pool, { sessionId, epoch, requesterId = null, state = null }) {
+async function noteApproversReady(pool, { sessionId, epoch, requesterId = null, state = null, strict = false }) {
   try {
     const known = state || await approvalState(pool, { sessionId });
     if (!known) return [];
@@ -2744,6 +2680,7 @@ async function noteApproversReady(pool, { sessionId, epoch, requesterId = null, 
     if (rows.length) log.info('homeroom-bot-dm', 'Told who must approve that a change is ready to try', { sessionId, people: rows.length });
     return rows;
   } catch (err) {
+    if (strict) throw err;
     log.warn('homeroom-bot-dm', 'Could not tell who must approve that a change is ready', { sessionId, err: err.message });
     return [];
   }
@@ -2850,7 +2787,7 @@ async function closeOlderReadyCards(pool, { userId, appId, issueNumber, keepMess
 // DM reads its activity cards (homeroom-bot-activity.js cardsFor), on the
 // same events: the bot's news landing in the DM (its "It's live now." is
 // one), the loop's work changing (a merge or a close announces it,
-// noteProposalChanged), and a vote on the change (noteVoted). What is read
+// the change machine's tray push), and a vote on the change (noteVoted). What is read
 // is where the change stands now and, while it is up for approval, who it
 // still waits on and what happens next once the reader has said Yes.
 // Nothing is written: the message keeps its words for the inbox and the push.
@@ -3034,7 +2971,7 @@ async function noteVoted(pool, sessionId, deps = {}) {
 // What a change whose preview did not start says while it is tried again.
 const PREVIEW_RETRY_TEXT = 'I built it, but its preview didn\'t start, so it isn\'t ready to try yet. I\'m trying again.';
 
-async function noteChangeStopped(pool, sessionId, { why = 'preview', deps = {} } = {}) {
+async function noteChangeStopped(pool, sessionId, { why = 'preview', deps = {}, strict = false } = {}) {
   const id = Number(sessionId);
   if (!Number.isInteger(id) || id <= 0) return null;
   try {
@@ -3081,6 +3018,8 @@ async function noteChangeStopped(pool, sessionId, { why = 'preview', deps = {} }
       objects: cardsFor('proposal', { sessionId: id }, { id: run.id }, context.issueNumber),
     });
   } catch (err) {
+    // The bot's change machine's durable work asks for the error, to retry.
+    if (strict) throw err;
     log.warn('homeroom-bot-dm', 'Could not tell the requester their change is stuck', { sessionId: id, err: err.message });
     return null;
   }
@@ -3111,7 +3050,7 @@ function needsLookText(line, why) {
  * activity card stops saying it is still being checked (homeroom-bot-
  * activity.js outcomeOf, which reads the row recorded here). Never throws.
  */
-async function noteNeedsLook(pool, { sessionId = null, runId = null, why = 'checks', deps = {} } = {}) {
+async function noteNeedsLook(pool, { sessionId = null, runId = null, why = 'checks', deps = {}, strict = false } = {}) {
   const id = Number(why === 'checks' ? sessionId : runId);
   if (!Number.isInteger(id) || id <= 0) return null;
   try {
@@ -3158,13 +3097,17 @@ async function noteNeedsLook(pool, { sessionId = null, runId = null, why = 'chec
       },
       objects: why === 'checks' ? cardsFor('proposal', { sessionId: id }, { id: run.id }, issueNumber) : [],
     });
-    if (sent?.messageId && !sent.duplicate) {
+    // Recorded on a retry too (a duplicate send whose first attempt ended
+    // before its record): the activity card reads it.
+    if (sent?.messageId) {
       await pool.query(
         `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, run_id)
          VALUES ($1, $2, $3, $4, $5, 'needs_look', $6)
          ON CONFLICT (message_id) DO NOTHING`,
         [sent.messageId, requester.userId, sent.conversationId, run.id, issueNumber, Number(run.run_id) || null],
       );
+    }
+    if (sent?.messageId && !sent.duplicate) {
       require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);
       log.info('homeroom-bot-dm', 'Told the requester their change needs a look', {
         app: run.slug, issueNumber, why, sessionId: why === 'checks' ? id : null, runId: Number(run.run_id) || null,
@@ -3172,6 +3115,8 @@ async function noteNeedsLook(pool, { sessionId = null, runId = null, why = 'chec
     }
     return sent;
   } catch (err) {
+    // The bot's change machine's durable work asks for the error, to retry.
+    if (strict) throw err;
     log.warn('homeroom-bot-dm', 'Could not tell the requester their change needs a look', { why, id, err: err.message });
     return null;
   }
@@ -3211,36 +3156,6 @@ async function sweepUnproposedBuilds(pool, deps = {}) {
   }
 }
 
-/**
- * #8 (WP3): one of the bot's proposals was promoted, merged, or closed:
- * whoever asked for the request it answers has their activity tray read
- * again (homeroom-bot-tray.js noteWorkChanged). The loop announces the work
- * it starts and finishes itself; these three ends happen outside it, and
- * the tray in an open DM kept saying "Working on…" past them. The build
- * session becomes the proposal, so a proposal just promoted is found by its
- * build too, before its run records it. Resolves the requester's id, or
- * null for a session that is not the bot's. Never throws.
- */
-async function noteProposalChanged(pool, sessionId, deps = {}) {
-  const id = Number(sessionId);
-  if (!Number.isInteger(id) || id <= 0) return null;
-  try {
-    const { rows } = await pool.query(
-      `SELECT q.user_id
-         FROM homeroom_bot_runs r
-         JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
-        WHERE r.proposal_session_id = $1 OR r.build_session_id = $1
-        ORDER BY r.id DESC LIMIT 1`,
-      [id],
-    );
-    if (!rows.length) return null;
-    require('./homeroom-bot-tray').noteWorkChanged(rows[0].user_id, deps);
-    return Number(rows[0].user_id);
-  } catch (err) {
-    log.warn('homeroom-bot-dm', 'Could not announce a change to the bot\'s proposal', { sessionId: id, err: err.message });
-    return null;
-  }
-}
 
 /**
  * Pure (#7, WP3): what the requester is told when the bot's proposal for
@@ -3327,19 +3242,20 @@ async function noteProposalMerged(pool, session, { deps = {} } = {}) {
   const { rows } = await pool.query(
     `SELECT r.id AS run_id, r.app_id, r.issue_number, a.slug, a.name, a.self_hosted, a.runtime_kind, a.runtime_name
        FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id
-      WHERE r.proposal_session_id = $1
+      WHERE r.proposal_session_id = $1 OR r.build_session_id = $1
       ORDER BY r.id DESC LIMIT 1`,
     [session.id],
   );
   if (!rows.length) return null;
   const run = rows[0];
-  // A first version's timeline (first-version-timeline.js): merged, and live.
-  void timeline.record(pool, { runId: run.run_id, stage: 'merged', sessionId: session.id });
+  // A first version's timeline (first-version-timeline.js): merged, and
+  // live, each once (this runs again when a later part fails).
+  await timeline.record(pool, { runId: run.run_id, stage: 'merged', sessionId: session.id, once: true });
   const platform = !!run.self_hosted;
   const live = true;
   // B9: the chat message it was asked in, if it was, says it is live.
   await noteChatLive(pool, run, deps);
-  void timeline.record(pool, { runId: run.run_id, stage: 'live', sessionId: session.id });
+  await timeline.record(pool, { runId: run.run_id, stage: 'live', sessionId: session.id, once: true });
   const requester = await requesterOf(pool, run.app_id, run.issue_number);
   // #8: their activity tray reads again, whether or not the DM says it.
   if (requester) require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);
@@ -5294,9 +5210,7 @@ module.exports = {
   readyKey,
   changeReadiness,
   brokenWords,
-  noteChangeReady,
-  noteShotsSettled,
-  sweepHeldReady,
+  tellReady,
   noteChangeStopped,
   needsLookText,
   noteNeedsLook,
@@ -5396,7 +5310,6 @@ module.exports = {
   // #7, #8, #20 (WP3)
   hasProposalCard,
   mergedText,
-  noteProposalChanged,
   isBotDirect,
   MIRRORED_FROM_DM,
   mirroredText,

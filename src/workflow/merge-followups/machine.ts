@@ -9,7 +9,7 @@
 
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type {
-  Check, DomainWrite, Event, Json, Machine, Notification, Outcome, Push, TransitionContext, Tx, WorkRequest,
+  Check, DomainWrite, Event, Json, Machine, Outcome, Push, TransitionContext, Tx, WorkRequest,
   WorkResultPayload, WriteContext,
 } from '../kernel/index.ts';
 import { changeClosed } from '../rules/agent-notes.ts';
@@ -18,7 +18,8 @@ import { createPrMergedNotification, settleDecidedChange } from '../rules/change
 import { authorLine, closingComment, liveLine, threadLine } from '../rules/included-lines.ts';
 import { creditsSentence, mergeCredits } from '../rules/merge-credits.ts';
 import { applyInTransaction } from '../rules/pending-secret-apply.ts';
-import { appVersion, chatLine, issuesClosed, issueUpdate, toUser, voteUpdate as votePush } from '../pushes.ts';
+import { toBotChange, writeBotChange } from '../rules/bot-notes.ts';
+import { appVersion, boardMoved, chatLine, issuesClosed, issueUpdate, toUser, voteUpdate as votePush } from '../pushes.ts';
 import { readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
 
@@ -40,6 +41,8 @@ export const WORK = Object.freeze({
   issues: 'issues.closeAfterMerge',
   closePr: 'github.closePullRequest',
   mainCheck: 'main.check',
+  // Queued by an older release only: their handlers hand the merge and the
+  // live to the Homeroom bot's change machine (services.ts, one release).
   bot: 'bot.requestMerged',
   dm: 'bot.dmMerged',
   live: 'bot.announceLive',
@@ -49,7 +52,6 @@ export const WORK = Object.freeze({
 // Post-commit kicks into flows not migrated yet. What browsers hear is a
 // push, published with the transition (thread lines, the vote card, the
 // version pill, the bell).
-export const NOTIFIERS = ['boardChange', 'badgeSync'] as const;
 
 const DELIVERY = 'app-delivery' as const;
 const deliveryKey = (appId: number) => `app:${appId}`;
@@ -205,13 +207,13 @@ function track(data: Data, work: WorkRequest[]): Data {
 }
 
 interface Extra {
-  writes?: DomainWrite[]; work?: WorkRequest[]; messages?: Outcome['messages']; push?: Push[]; notify?: Notification[];
+  writes?: DomainWrite[]; work?: WorkRequest[]; messages?: Outcome['messages']; push?: Push[];
 }
 
 // The writes that add thread lines push them with the rows they inserted.
 function outcome(name: Going['name'], data: Data, x: Extra = {}): Outcome<MFState> {
   const work = x.work || [];
-  return { next: { name, data: track(data, work) }, writes: x.writes, work, messages: x.messages, push: x.push, notify: x.notify };
+  return { next: { name, data: track(data, work) }, writes: x.writes, work, messages: x.messages, push: x.push };
 }
 
 const carrierRef = (d: Data): CarrierRef => ({ sessionId: d.sessionId, prNumber: d.prNumber, prTitle: d.prTitle });
@@ -223,16 +225,17 @@ function toLive(e: Event<any>, data: Data, deliveredSha: string | null, ctx: Tra
   if (d.role === 'merge') writes.push({ type: 'mergedLine', eventId: e.id, ...lineInput(d) });
   writes.push({ type: 'mergedNotification', sessionId: d.sessionId, appId: d.appId, userId: d.authorId, force: d.force,
     mergedAt: d.mergedAt, includedIn: d.includedIn });
+  // A change of the Homeroom bot's: whoever asked hears it is live, and the
+  // request says so (its change machine).
+  writes.push(toBotChange(d.sessionId, 'Live'));
   const work: WorkRequest[] = [...(x.work || []),
-    { kind: WORK.dm, key: 'dm', input: { sessionId: d.sessionId, sha: deliveredSha } },
-    { kind: WORK.live, key: 'live', input: { sessionId: d.sessionId } },
     { kind: WORK.journey, key: 'journey', input: { sessionId: d.sessionId, sha: deliveredSha, at: d.mergedAt } }];
   const messages = [...(x.messages || []), ...d.included.map((id) => ({
     to: { machine: MACHINE, key: sessionKey(id) }, event: { type: 'CarrierDelivered', payload: { sha: deliveredSha } },
   }))];
   const push = [...(x.push || []), voteUpdate(d, { live: true })];
   if (d.role === 'merge') push.push(appVersion({ appId: d.appId, appSlug: d.appSlug, sha: deliveredSha, prNumber: d.prNumber }));
-  return outcome('live', d, { writes, work, messages, push, notify: x.notify });
+  return outcome('live', d, { writes, work, messages, push });
 }
 
 function lineInput(d: Data) {
@@ -271,13 +274,13 @@ function deliveryRequest(d: Data, reuse: Json): NonNullable<Outcome['messages']>
 // the teardown drops the preview's reference to it.
 const teardownWork = (d: Data): WorkRequest => ({ kind: WORK.teardown, key: 'teardown', input: { sessionId: d.sessionId } });
 
-// What every merged change has to have done: its preview and worker go, the
-// bot stops its other work on the request, and the requests close.
+// What every merged change has to have done: its preview and worker go, and
+// the requests close. (The bot stops its other work on the request: the
+// merge's write tells its change machine, settleWrites.)
 function settleWork(d: Data, linkedIssues: number[], closeOnly: boolean, { teardown = true } = {}): WorkRequest[] {
   const work: WorkRequest[] = [
     ...(teardown ? [teardownWork(d)] : []),
     { kind: WORK.retire, key: 'worker', input: { sessionId: d.sessionId } },
-    { kind: WORK.bot, key: 'bot', input: { sessionId: d.sessionId, before: d.mergedAt } },
   ];
   if (d.repo && d.prNumber && (!closeOnly || linkedIssues.length)) {
     work.push({ kind: WORK.issues, key: 'issues', input: {
@@ -298,6 +301,9 @@ function settleWrites(e: Event<any>, d: Data, s: NonNullable<Facts['session']>):
     { type: 'bounties', eventId: e.id, sessionId: d.sessionId, appId: d.appId, userId: d.authorId, prNumber: d.prNumber, numbers: s.linkedIssues },
     { type: 'agentNote', sessionId: d.sessionId, agentSessionId: s.agentSessionId, prNumber: d.prNumber },
     { type: 'bell', sessionId: d.sessionId },
+    // A change of the Homeroom bot's: its other work on the same request
+    // stops, bounded to what had started before the merge.
+    toBotChange(d.sessionId, 'Merged', { before: d.mergedAt }),
   ];
 }
 
@@ -336,19 +342,18 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
     work.push({ kind: WORK.find, key: 'included', input: { sessionId: d.sessionId, appId: d.appId, prNumber: d.prNumber, ...d.repo } });
   }
   if (d.mergeSha) work.push({ kind: WORK.mainCheck, key: 'main-check', input: { appId: d.appId, sessionId: d.sessionId, prNumber: d.prNumber, mergeSha: d.mergeSha } });
-  const notify: Notification[] = [{ type: 'badgeSync', sessionId: d.sessionId }];
   // The requests it closes stop showing as open in every web process at
   // once, and the lists re-read (GitHub closes `Closes #N` late);
   // issues.closeAfterMerge makes sure they close.
   const push: Push[] = [voteUpdate(d, {})];
   if (d.repo && s.linkedIssues.length) {
+    // The request board changed: the Workshop re-places its cards.
     push.push(issuesClosed({ ...d.repo, numbers: s.linkedIssues }),
-      issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' }));
-    notify.push({ type: 'boardChange', appId: d.appId, appSlug: d.appSlug });
+      boardMoved(issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' })));
   }
   const x: Extra = {
     writes: [{ type: 'secrets', eventId: e.id, sessionId: d.sessionId, appId: d.appId }, ...settleWrites(e, d, s)],
-    work, messages, notify, push,
+    work, messages, push,
   };
   // The platform's own release reports itself when it boots, to the merges
   // waiting then. A merge recorded after such a boot (recovery finding it
@@ -418,7 +423,6 @@ function included(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFSt
     work,
     messages: [toProposal(d)],
     push: [voteUpdate(d, { includedIn: ref.sessionId })],
-    notify: [{ type: 'badgeSync', sessionId: d.sessionId }],
   };
   if (p.carrierState === 'live') return toLive(e, d, p.deliveredSha, ctx, x);
   if (p.carrierState === 'deploy_failed') return toFailed(e, d, 'the change that carried it did not deploy', { ...x });
@@ -506,8 +510,8 @@ function resultOf(status: Followup['status']) {
       const r = result as { closed?: unknown; stillOpen?: unknown };
       return { next: { name: s.name, data: d }, push: [
         issuesClosed({ ...d.repo, numbers: numbers(r.closed), open: numbers(r.stillOpen) }),
-        issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' }),
-      ], notify: [{ type: 'boardChange', appId: d.appId, appSlug: d.appSlug }] };
+        boardMoved(issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' })),
+      ] };
     }
     return { next: { name: s.name, data: d } };
   };
@@ -594,11 +598,9 @@ const retryFollowup = {
 
 export interface MachineDeps {
   dataKey: string;   // config.dataEncryptionKey, for the declared secret values
-  notifiers: Record<string, (n: any) => void | Promise<void>>;
 }
 
 export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
-  for (const n of NOTIFIERS) if (typeof deps.notifiers[n] !== 'function') throw new Error(`merge-followups: notifier ${n} missing`);
   const system = (e: Event<any>): Check => (e.source.kind === 'system' ? ok() : reject('internal_only'));
   const deliveryMessage = (e: Event<any>): Check =>
     (e.source.kind === 'message' && e.source.from.machine === DELIVERY ? ok() : reject('internal_only'));
@@ -708,6 +710,7 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
       },
     },
     writes: {
+      botChange: writeBotChange,
       chat: (tx, w, ctx) => writeChat(tx, w, ctx),
       event: async (tx, w) => tx.query(
         `INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, $4, $5::jsonb)`,
@@ -719,10 +722,12 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
         await changeClosed(tx,
           { change: { id: w.sessionId, agent_session_id: w.agentSessionId, pr_number: w.prNumber }, outcome: 'merged' });
       },
-      // Everyone whose bell the decision changed re-reads it: the asks it
-      // settled, digests it was the last one waiting in (those name no
-      // session), and every row about the change, whose wording follows its
-      // status (going live, then live).
+      // Everyone whose bell the decision changed re-reads it, and their
+      // phone's icon re-badges (the badge row platform.ts publishPushes
+      // writes for every notifications_changed): the asks it settled,
+      // digests it was the last one waiting in (those name no session), and
+      // every row about the change, whose wording follows its status (going
+      // live, then live).
       bell: async (tx, w, ctx) => {
         const told = new Set(await settleDecidedChange(tx, w.sessionId, { status: 'merged' }));
         const { rows } = await tx.query('SELECT DISTINCT user_id FROM notifications WHERE session_id = $1', [w.sessionId]);
@@ -750,7 +755,6 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
         await tx.query('UPDATE chat_sessions SET live_at = $2 WHERE id = $1', [d.sessionId, live]);
       }
     },
-    notifiers: deps.notifiers,
   });
 }
 

@@ -88,7 +88,7 @@ The workflow kernel answers each one with a rule:
 | **Request key** | Identifies the request behind an event, so a retry is recognised as the same request. |
 | **Facts** | What a transition reads from the database inside its transaction: the issue row, vote counts, settings. |
 | **Guard** | A pure check that accepts the event or rejects it with a reason, such as `not_open` or `reason_required`. |
-| **Outcome** | What a transition returns: the next state, plus writes, work, messages, a timer, pushes and notifications. |
+| **Outcome** | What a transition returns: the next state, plus writes, work, messages, a timer and pushes. Nothing runs after it commits. |
 | **Push** | What browsers should hear, published in the transition's transaction. Every web process relays it to its sockets once the transaction commits, whichever process decided. |
 | **Work item** | A durable request for I/O, run by a service. Its result returns as an event. |
 | **Projection** | The legacy columns (`issues.status`, audit fields in `issues.payload`) written from the machine's state in the same transaction, so existing readers keep working. |
@@ -135,8 +135,10 @@ afterwards. A machine that answers routes defines `reply(tx, event, after, ctx, 
    5. **Persist,** in this order: domain writes, projection, the machine's reply, the
       pushes, work items, messages, then the instance row, receipt and the event's own
       result in one statement. A placeholder row whose event is rejected is deleted again.
-5. commits, then wakes whoever waits for the outcome and runs the notifications
-   (post-commit kicks, which may be lost in a crash).
+5. commits, then wakes whoever waits for the outcome. Nothing else runs after COMMIT:
+   the kernel has no post-commit kicks (a crash between the commit and a kick lost it),
+   and a transition that returns one faults. What an event sets off is a push, work or
+   a message, all committed with it.
 
 **Pushes.** What browsers should hear is part of the transition. A transition returns
 `push`, and a domain write adds what it inserted with `ctx.push` (a thread line with its
@@ -145,11 +147,19 @@ id). `src/workflow/pushes.ts` shapes them as `services/ws.js`'s helpers do. The 
 bus's channel before `COMMIT`, so it is heard only if the transition commits. The
 sender is `workflow` (`services/ws-bus.js WORKFLOW_SENDER`), so every web process relays
 it, the one whose slot decided included. No machine calls into web code to reach a
-browser. A push is delivery only. What `ws.js`'s push helpers also kick in the process
-that calls them (the Workshop's board-change reaction, the phone badge sync) is the
-machine's own notifier (`boardChange`, `badgeSync`), run once where it decided, and
-listed until those flows migrate. Delivery is at most once, as a WebSocket broadcast
-always was, with two differences from a push helper called in the deciding process:
+browser. What `ws.js`'s push helpers also kick in the process that calls them rides
+the push or its statement:
+- **the Workshop's board-change reaction**: a push marked `routing.boardChange`
+  (`pushes.ts boardMoved`) is handed to the Workshop's listener in every web process
+  that relays it (`ws.js _onBusMessage`), whose reconcile is debounced and leased per
+  app, so N processes hearing it run one;
+- **the phone badge sync**: everyone a push tells `notifications_changed` is owed a
+  re-badge, a row of `mobile_push_badge_syncs` written in the same statement as the
+  pushes (`publishPushes`, where phone push is on) and drained by the push sender,
+  coalesced per person (`mobile-push-worker.js drainBadges`).
+
+Delivery is at most once, as a WebSocket broadcast always was, with two differences
+from a push helper called in the deciding process:
 - every process, the deciding one included, hears it through its own `LISTEN`
   connection; while that connection is down its sockets miss it, and get the resync
   nudge when it is back (a client also resyncs after its own reconnect);
@@ -368,7 +378,6 @@ defineMachine<State, Facts>({
   writes: { vote: writeVote, chat: writeChat, apply: applyKind },   // named domain writes
   project: async (tx, before, after) => { /* UPDATE issues ... */ },
   reply: async (tx, event, after) => ({ result: ... }),   // the routes' answer, replayed as recorded
-  notifiers: { boardChange, ... },    // post-commit kicks (being retired; see Rules)
 });
 ```
 
@@ -391,9 +400,8 @@ always `unknown_event`.
    issue row).
 3. **External I/O is work, and its result is an event.** Anything a person or another
    system relies on (a GitHub call, an email, the next merge) is work or a message.
-   What browsers hear is a push. The notifiers still declared are post-commit kicks
-   into code not migrated yet; each is on the list in
-   `tests/baselines/workflow-process-state.json` until its step replaces it.
+   What browsers hear is a push. Nothing runs after the transition commits:
+   `defineMachine` refuses `notifiers`, and an outcome with `notify` faults.
 4. **A machine relies only on what `src/workflow/setup.ts` sets up.** That is the
    configuration and the clients of outside services every process running the
    machines makes at boot (activity mail, the account-deletion guard on workers, the
@@ -450,7 +458,7 @@ separate workflow Pod.
   Admin → Workflows, where [main]'s inline calls only failed in the logs.
 
 Which process holds the leader role does not decide anything: row locks do. What the
-machines' work handlers and notifiers still reach in process memory does: a restart
+machines' work handlers still reach in process memory does: a restart
 erases it, and a machine resumes its work right after a boot, when memory is empty.
 Every place a machine calls into code that may keep such memory is listed, per machine,
 in `tests/baselines/workflow-process-state.json` (below).
@@ -461,7 +469,7 @@ then a deployment change, with more than one replica and alerts on overdue work.
 
 `tests/lib/workflow-boundary.js` reads each machine's code (`src/workflow/<machine>/`, the
 shared workflow modules it imports, `platform.ts` for the routes' side, the kernel) and
-lists, per part (transitions and domain writes, work handlers, notifiers), the boundary
+lists, per part (transitions and domain writes, work handlers), the boundary
 between it and the code not migrated yet:
 - each place its code names code outside `src/workflow/` (`uses`), as written there:
   `legacy('services/x').fn` is `uses src/services/x.js:fn`, a module handed on whole is
@@ -469,7 +477,6 @@ between it and the code not migrated yet:
   counts too;
 - what its own code does that the part may not: module state that changes after load,
   timers, process listeners, and outside I/O from a transition;
-- each notifier still declared;
 - each table a work handler's own code writes;
 - each other writer of a column the machine owns: SQL anywhere under `src/` that
   updates it, and triggers that assign it (schema.sql's ownership triggers). A SET list
@@ -495,8 +502,9 @@ Two more kinds, decided with the preview machine (each named with a reason, and 
   out of the per-process wrapper the old flow runs it through (the build without
   `_stagingBuilds` and the coordinator, the checks run without its in-process seat). The
   two-process and restart tests show it keeps no process memory;
-- **a hand-off** (`handOff`) to a flow a later step migrates (the Homeroom bot's notes),
-  naming that step: it leaves the list when the step lands.
+- **a hand-off** (`handOff`) to a flow a later step migrates (the Homeroom bot's
+  withdrawal of its proposals for closed requests, until the step that migrates the
+  bot's own read-and-fix loop), naming that step: it leaves the list when the step lands.
 
 ### In production (Kubernetes)
 
@@ -601,6 +609,7 @@ A new machine brings the same two layers:
 | `proposal` | `session:<id>`, for every session (a proposal from its start), adopted from its row by its first event | `underway` → `proposing` → `in_review` ⇄ `merging` (⇄ `unconfirmed`) → `merged`; `closed` (reopened to `underway`) | On everywhere; its old paths are deleted |
 | `merge-queue` | `app:<id>`, for each app a merge was asked for | `idle` ⇄ `working` | On everywhere; its old paths are deleted |
 | `campaign` | `campaign:<id>`, for each fleet maintenance campaign | `running` → `done` (⇄ `running` on a retry), `stopped` | On everywhere; its old paths are deleted |
+| `bot-change` | `session:<id>`, for each change of the Homeroom bot's that goes up for a vote | `checking`, `waiting_on_shots`, `with_the_bot`, `ready`, `stopped`, `merged` → `live`; `closed` | On everywhere; its old paths are deleted |
 
 ### governance-proposal
 
@@ -667,8 +676,10 @@ What a merged pull request still has to do once GitHub has merged it
   - `included.find`, then an `Included` message to each change it carried, which gets
     its own instance;
   - `issues.closeAfterMerge`: the issue-close watcher;
-  - `main.check`: the unit suite on the merge commit;
-  - `bot.requestMerged`.
+  - `main.check`: the unit suite on the merge commit.
+
+  A change of the Homeroom bot's tells its change machine (`bot-change`) with the
+  merge's own write (`Merged`), and again once it is live (`Live`).
 - **Merged, then live.** The change is `live` once production runs a build that contains
   it: its own deploy's answer, or a `Deployed` report checked against GitHub
   (`delivery.verify`). Every successful app-delivery deploy reports one to the merges
@@ -676,8 +687,8 @@ What a merged pull request still has to do once GitHub has merged it
   runs it (`releaseServing`, from the listener's start; never a conductor, which serves
   nobody and can be up before the release's web Pods).
   - Only then are these written: `chat_sessions.live_at`, the "is live" line, the
-    author's notification, the requester's DM, the request's "It's live"
-    (`bot.announceLive`) and the journey record.
+    author's notification and the journey record (and, for a change of the bot's, its
+    change machine is told: the requester's DM and the request's "It's live").
   - Until then the change reads merged and going live.
 - **A failed deploy** ends in `deploy_failed`, said in the thread. Any later deploy that
   contains the change makes it live, and so does **Retry delivery** in Admin → Workflows.
@@ -786,7 +797,8 @@ release built is known, and retired by identity once a newer attempt serves).
   check history (`rules/check-store.ts`), with the pushes browsers hear (`checks_ready`,
   `staging_ready`, `visuals_ready`). A verdict about a head the row has left stores
   nothing. A passing or skipped verdict on a proposal in review asks the app's merge queue
-  by message (`MergeWanted`); the bot's note is a work item; the shots machine hears the
+  by message (`MergeWanted`); a change of the Homeroom bot's tells its change machine
+  with the settle's own write (`Verdict`); the shots machine hears the
   head by message. A build that fails because the proposal no longer starts against main
   asks the proposal machine for its one sync (`SyncRequested`, reason `boot_failure`).
 - **Liveness is the work lease;** nothing is judged stuck by clock. An `error` runs again
@@ -854,8 +866,8 @@ copies go) and taken again once while the proposal is open.
   `shots.publish` (the outlines). Publication is the transition: the ready files become
   `shot_artifacts` in the same transaction that writes `verified`. Whatever way a run
   ends, `shots.cleanup` removes its copies (and its turn, and a temporary worker no newer
-  run is in), and `bot.shotsSettled` and `github.prShotsBlock` tell the Homeroom bot and
-  the pull request. Copies still being built when their run ends are not cancelled: they
+  run is in), `github.prShotsBlock` tells the pull request, and the settle's own write
+  tells the Homeroom bot's change machine (`ShotsSettled`) when the change is the bot's. Copies still being built when their run ends are not cancelled: they
   stop at their next phase (the step asks whether its run is still current), and the
   cleanup starts once they report, so nothing they make afterwards is left. An agent's step
   whose run ended starts no turn.
@@ -941,8 +953,9 @@ on, `reviewed_head_sha` and `approval_epoch`, and what makes each platform sync 
   its request closed, red and untouched, the bot's and the bench's own endings): the votes
   voided, its work orders abandoned, a secret it held discarded, the conversation that started
   it told, the bell settled and the thread line written in the transaction; its pull request
-  closed, its worker destroyed, its CC volume purged when asked and the bot's tray told as
-  work; the preview machine asked to retire its preview for good (which tells shots). A
+  closed, its worker destroyed and its CC volume purged when asked, as work; a change of
+  the Homeroom bot's tells its change machine (`Closed`) and, withdrawn because its
+  requests closed, says so in each request's thread; the preview machine asked to retire its preview for good (which tells shots). A
   reopen reopens the pull request.
 - **A proposal's GitHub moves run one at a time:** a close during a promote waits for
   GitHub to open the pull request, then closes it; a reopen during a close waits for it.
@@ -1053,3 +1066,55 @@ projections, and its guard refuses them to anyone else.
   campaign fenced and guarded: freeing one for the older code is
   `DELETE FROM wf_settings WHERE key = 'enabled:campaign'` and
   `UPDATE maintenance_campaigns SET runner_id = NULL, lease_until = NULL WHERE runner_id = 'workflow'`.
+
+### bot-change
+
+One of the Homeroom bot's changes from the moment it goes up for a vote until it is live
+or closed (`src/workflow/bot-change/`): what its requester and its approvers hear, and
+when it goes back to the bot to fix first. One instance per change, created by the first
+thing a machine tells it: the proposal machine's promote (`Proposed`), the preview's
+verdict (`Verdict`), the shots settling (`ShotsSettled`), the preview that will not start
+(`PreviewStopped`), the merge (`Merged`, `Live`). Each sender tells it with a domain write
+in its own transition (`rules/bot-notes.ts writeBotChange`), which sends the message only
+for a session of the bot's: it commits with its cause and cannot be lost. The bot's loop
+says when its fix round on a head ended (`FixRoundEnded`, a hint). Its creating guard
+requires a run of the bot's that proposed the session.
+
+- **One rule decides, from the row, with the transaction's clock**
+  (`rules/bot-readiness.ts`, the one copy the old modules import back): a message is only
+  "look now", so a late or repeated one decides the same thing again.
+  - **Ready to try**: up for a vote, its checks passed or skipped on the head up for a
+    vote, its shots on that head settled. Said once per approval epoch: the card, its
+    record, the approvers' bells when nothing is broken, the chip (`bot.tellReady`).
+  - **Waiting on its shots**: held until 45 minutes after the later of the verdict and
+    the slot's last move, by the instance's own timer (the bot's refresh sweep and its
+    20-minute window are gone).
+  - **Back to the bot**: its checks fail, or its shots show part of it failing or could
+    not reach part of it for want of seed data, and no round looked at that head
+    (`bot.queueFix`: the queue row and the loop's wake, a NOTIFY on the bus, in one
+    statement). Its clock looks every 10 minutes: the queue row still there is a round
+    waiting or under way; gone with nothing recorded, the round was lost and is asked once
+    more; lost again, the change is ready to try saying what does not work (failing
+    checks: its requester hears it needs a look, `bot.needsLook`). A bot that is off, not
+    working on the app, or facing a failure that looks like the platform's does not take
+    it, and says why in the result.
+  - **Its preview will not start**: a quiet line, once per epoch (`bot.tellStopped`).
+  - **Merged**: the bot's other work on the request stops, bounded to what had started
+    before the merge (`bot.stopRequestWork`). **Live**: the requester's DM, the chip, a
+    first version's line (`bot.tellLive`), and the request's "It's live" on GitHub and in
+    its thread (`bot.commentLive`).
+  - **Closed**: the requester's tray reads again (a push), and nothing more is said.
+- **Its work only sends, strict:** a failure throws and is retried, instead of reporting
+  success with nothing done. Each is keyed so a retry says nothing twice: the DMs by their
+  idempotency keys (a duplicate send records what its first attempt never got to), the
+  "It's live" by its post record (its comment found again by a lookup that throws when it
+  cannot read, its thread message by the post's mark on it). Admin → Workflows retries a
+  note that failed for good (`RetryFollowup`).
+- **During a rollout** an older release still queues `verdict.followUps`,
+  `preview.stopped`, `bot.shotsSettled`, `bot.proposalChanged`, `bot.requestMerged`,
+  `bot.dmMerged` and `bot.announceLive`: each handler only appends the matching event
+  (keyed by its work id, for a session of the bot's) and returns, for one release. The
+  leader's boot and its minute sweep adopt every promoted change of the bot's no instance
+  holds; it decides from the row, and its DM keys are the older release's, so a change
+  already told is not told again. A release revert leaves the instances unread.
+

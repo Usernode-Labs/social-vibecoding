@@ -215,7 +215,6 @@ test('#5217: a pass with forceRefresh runs the sweep, and the row it queues is t
     worker: { async listWorkerVolumes() { return []; } },
     dm: {
       async sweepFirstVersions() { return null; },
-      async sweepHeldReady() { return null; },
       async sweepUnproposedBuilds() { return null; },
     },
     github: { isEnabled: () => false },

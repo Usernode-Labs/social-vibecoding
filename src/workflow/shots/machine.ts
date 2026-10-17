@@ -29,6 +29,7 @@ import type {
   WorkResultPayload,
 } from '../kernel/index.ts';
 import { toUser, voteUpdate } from '../pushes.ts';
+import { toBotChange, writeBotChange } from '../rules/bot-notes.ts';
 import { missingIntentDetail, pendingDetail, requiredForIntent, runSummary } from '../rules/shots-detail.ts';
 import { SHOTS_LIVE_STATES } from '../session-work.ts';
 import { OPEN, readFacts } from './facts.ts';
@@ -43,6 +44,8 @@ export const WORK = Object.freeze({
   agent: 'shots.agent',
   publish: 'shots.publish',
   cleanup: 'shots.cleanup',
+  // Queued by an older release only: its handler hands the settle to the
+  // bot's change machine (services.ts, one release).
   settled: 'bot.shotsSettled',
   prBlock: 'github.prShotsBlock',
 });
@@ -248,15 +251,14 @@ function cleanupWork(d: Data, c: Cleaning): WorkRequest {
     input: { runId: c.runId, sessionId: d.sessionId, appSlug: d.appSlug, worker: c.worker, stopTurn: c.stopTurn } };
 }
 
-// What whoever waits on the slot hears once it settled: the Homeroom bot
-// (a change of its, ready to try or back to it), and the pull request's
-// description.
+// What whoever waits on the slot hears once it settled: the pull request's
+// description (work), and the Homeroom bot's change machine, when it is a
+// change of the bot's (ready to try, or back to the bot: a write that
+// messages it, rules/bot-notes.ts).
 function settledWork(d: Data, ctx: TransitionContext): WorkRequest[] {
-  return [
-    { kind: WORK.settled, key: `settled:v${ctx.version + 1}`, input: { sessionId: d.sessionId } },
-    { kind: WORK.prBlock, key: `pr-block:v${ctx.version + 1}`, input: { sessionId: d.sessionId } },
-  ];
+  return [{ kind: WORK.prBlock, key: `pr-block:v${ctx.version + 1}`, input: { sessionId: d.sessionId } }];
 }
+const settledNote = (d: Data): DomainWrite => toBotChange(d.sessionId, 'ShotsSettled');
 
 const told = (d: Data, state: string): Push => voteUpdate({
   sessionId: d.sessionId, appId: d.appId, appSlug: d.appSlug, merged: false, action: 'shots', shotsState: state,
@@ -294,7 +296,7 @@ function endRun(s: Live, f: Facts, { worker = true, copiesSettled = false }: { w
 function refuse(d: Data, why: string, reason: string, ctx: TransitionContext): { d: Data; writes: DomainWrite[]; work: WorkRequest[] } {
   if (d.notStarted === why) return { d, writes: [], work: [] };
   const next = { ...d, notStarted: why };
-  return { d: next, writes: [{ type: 'notStarted', sessionId: d.sessionId, reason }], work: settledWork(next, ctx) };
+  return { d: next, writes: [{ type: 'notStarted', sessionId: d.sessionId, reason }, settledNote(next)], work: settledWork(next, ctx) };
 }
 
 // Start a run of the declaration on head `head`, or say on the slot why it
@@ -370,7 +372,7 @@ function fail(s: Live, f: Facts, ctx: TransitionContext, failure: {
   return step({ name: 'failed', data: next }, {
     writes: [{ type: 'runMoved', runId: r.id, state: 'failed',
       patch: { failureCode: failure.code, failureReason: failure.reason, traceSummary: trace,
-        ...(failure.verdict ? { hardVerdict: failure.verdict } : {}) } }],
+        ...(failure.verdict ? { hardVerdict: failure.verdict } : {}) } }, settledNote(next)],
     cancel, work: [...work, ...settledWork(next, ctx)],
     timer: retryAt ? { at: new Date(retryAt), event: { type: 'RetryDue', payload: { runId: r.id, phase: 'retry' } } } : null,
   });
@@ -514,7 +516,7 @@ const declared: Handler = (s, e, f, ctx, deps) => {
   const slot = slotDetail(d);
   const writes: DomainWrite[] = [{ type: 'declared', sessionId: d.sessionId, head, keepHead: false,
     state: slot.state, detail: slot.detail, cancelCode: 'intent_changed', cancelReason: 'The author changed the declared changes.' }];
-  if (!required) return step({ name: 'not_needed', data: d }, { writes, cancel, work: [...work, ...settledWork(d, ctx)], timer: null });
+  if (!required) return step({ name: 'not_needed', data: d }, { writes: [...writes, settledNote(d)], cancel, work: [...work, ...settledWork(d, ctx)], timer: null });
   const ready = !!head && !!f.session && OPEN.has(f.session.status) && f.session.readyHeads.includes(head);
   if (ready) return start({ name: 'waiting_for_preview', data: d }, e, f, ctx, deps, 'declared', { writes, cancel, work });
   return step({ name: 'waiting_for_preview', data: d }, { writes, cancel, work, timer: null });
@@ -573,7 +575,7 @@ const closed: Handler = (s, e, f, ctx) => {
   const r = s.data.run!;
   const { d, cancel, work } = endRun(s, f);
   return step({ name: 'closed', data: d }, {
-    writes: [{ type: 'runMoved', runId: r.id, state: 'failed', patch: { failureCode: 'shots_closed', failureReason: CLOSED_REASON } }],
+    writes: [{ type: 'runMoved', runId: r.id, state: 'failed', patch: { failureCode: 'shots_closed', failureReason: CLOSED_REASON } }, settledNote(d)],
     cancel, work: [...work, ...settledWork(d, ctx)], timer: null,
   });
 };
@@ -601,7 +603,7 @@ const waiveRequested: Handler = (s, e, f, ctx) => {
   let work: WorkRequest[] = [];
   if (live(s)) ({ d, cancel, work } = endRun(s, f));
   return step({ name: 'waived', data: { ...d, last: null } }, {
-    writes: [{ type: 'waived', runId: runIdOf!, userId: p.userId, reason: p.reason }],
+    writes: [{ type: 'waived', runId: runIdOf!, userId: p.userId, reason: p.reason }, settledNote(d)],
     cancel, work: [...work, ...settledWork(d, ctx)], timer: null,
   });
 };
@@ -729,7 +731,7 @@ function publishDone(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: Transi
   const { d, cancel, work } = endRun(s, f);
   return step({ name: 'published', data: d }, {
     timer: null,
-    writes: [{ type: 'published', runId: r.id, slots: p.slots, verdict: compared || p.verdict, planHash: p.manifestHash }],
+    writes: [{ type: 'published', runId: r.id, slots: p.slots, verdict: compared || p.verdict, planHash: p.manifestHash }, settledNote(d)],
     cancel: e.type === 'WorkSucceeded' ? cancel.filter((c) => c.kind !== WORK.publish) : cancel,
     work: [...work, ...settledWork(d, ctx)],
   });
@@ -963,6 +965,7 @@ async function moveRun(tx: Tx, runIdOf: string, state: string, patch: Record<str
 }
 
 const WRITES = {
+  botChange: writeBotChange,
   // A declaration, a missing one, or a head move: runs that no longer stand
   // end (one under way is cancelled, a settled one goes stale), and the slot
   // shows the declaration for the head. `keepHead`: runs on this head stand.

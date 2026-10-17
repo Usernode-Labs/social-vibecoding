@@ -757,7 +757,7 @@ function clampInt(raw, fallback, min, max) {
   return Math.min(max, Math.max(min, n));
 }
 
-async function readSettings(pool) {
+async function readSettings(pool, { strict = false } = {}) {
   try {
     const { rows } = await pool.query(
       'SELECT key, value FROM platform_settings WHERE key = ANY($1)',
@@ -770,6 +770,8 @@ async function readSettings(pool) {
     if (!settings.everyoneSince) settings.everyoneSince = new Date().toISOString();
     return settings;
   } catch (err) {
+    // A durable caller (`strict`) decides from them: it is told, and retries.
+    if (strict) throw err;
     // platform_settings may not exist on a very first boot before migrate()
     // has run; the defaults keep the loop idle, which is the safe answer.
     log.warn('homeroom-bot', 'settings read failed; using defaults', { err: err.message });
@@ -3671,6 +3673,7 @@ async function runTriage(pool, config, {
             github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
             activeWorkers, votes: deps.votes || null, dm: deps.dm || null, fixedCheckSync: deps.fixedCheckSync || null, ...liveD,
             ...(deps.voice ? { voice: deps.voice } : {}), ...(deps.voiceDeps ? { voiceDeps: deps.voiceDeps } : {}),
+            ...(deps.botNote ? { botNote: deps.botNote } : {}),
           },
         });
       }
@@ -6141,9 +6144,9 @@ async function reconcileRevision({ config, pool, session, app, issueNumber, deps
 //   - each failing head is looked at once: the run that looked records it
 //     (checks_head_sha), and checksDue reads that back as `looked`.
 //   - a declared change its before & after shots show failing on that head
-//     is due the same turn (followup.brokenClaims): every settled shots run
-//     reaches homeroom-bot-dm.noteShotsSettled, whose noteChangeReady calls
-//     noteProposalChecks before it would offer the change as ready to try.
+//     is due the same turn (followup.brokenClaims): the bot's change machine
+//     (src/workflow/bot-change/) hears every settled shots run and hands the
+//     change back (queueChecksFix) before it would offer it as ready to try.
 //     So is one they skipped for want of data the change can seed
 //     (followup.skippedClaims); its revision is a new head, whose shots are
 //     taken again once. A skip is never a reason for a round once a fix
@@ -6188,10 +6191,11 @@ async function checksToFix(pool, sessionId) {
 }
 
 /**
- * A check verdict settled 'failing' on proposal `sessionId` (visuals.js),
- * or its before & after shots showed a declared change failing, or skipped
- * one for want of data the change can seed, while its checks passed
- * (homeroom-bot-dm.noteChangeReady). When it is the bot's own
+ * A check verdict settled 'failing' on proposal `sessionId`, or its before
+ * & after shots showed a declared change failing, or skipped one for want
+ * of data the change can seed, while its checks passed (the bot's own
+ * paths: a follow-up's re-queue; the change machine calls queueChecksFix
+ * itself). When it is the bot's own
  * open proposal, on an app it is live on, and a fix is due on its current
  * head, its issue is queued for a checks follow-up and the loop woken. A
  * run that looks like the platform's fault (followup.checksLookLikeInfra)
@@ -6200,47 +6204,82 @@ async function checksToFix(pool, sessionId) {
  */
 async function noteProposalChecks(pool, { sessionId } = {}) {
   try {
-    const { rows } = await pool.query(CHECKS_ROW_SQL, [Number(sessionId), BOT_USERNAME]);
-    const row = rows[0];
-    const due = followup.checksDue(row);
-    if (!due) return false;
-    const issueNumber = Array.isArray(row.linked_issues) ? Number(row.linked_issues[0]) : null;
-    if (!Number.isInteger(issueNumber) || issueNumber <= 0) return false;
-    const settings = await readSettings(pool);
-    if (settings.mode === 'off' || !live.isLiveFor(settings, { slug: row.slug })) return false;
-    if (followup.checksLookLikeInfra(due)) {
-      log.info('homeroom-bot', 'Its proposal\'s checks failed, but it looks like the platform; not revising', {
-        app: row.slug, issueNumber, sessionId: row.id, failing: due.failing.length, total: due.total,
-      });
-      // #4242: nothing else tells its requester, and its card would say it
-      // is still being checked for good: they hear it needs a look.
-      if (due.failing.length) await require('./homeroom-bot-dm').noteNeedsLook(pool, { sessionId: row.id, why: 'checks' });
-      return false;
-    }
-    await pool.query(
-      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason)
+    return !!(await queueChecksFix(pool, { sessionId })).queued;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not look at a failing check verdict', { sessionId, err: err.message });
+    return false;
+  }
+}
+
+/**
+ * The Homeroom bot's change machine (src/workflow/bot-change/) handed proposal
+ * `sessionId` back to the bot: its issue is queued for a checks follow-up on
+ * `head` (the fix due there, followup.checksDue), and the bot's loop woken in
+ * the same statement, wherever it runs (a NOTIFY on the bus commits with the
+ * queue row). Resolves { queued } or { queued: false, why }: `not_due` (no
+ * fix is due on that head now: a round looked at it, or the head moved),
+ * `off` / `not_live` (the bot is off, or not working on this app), `infra`
+ * (the failure looks like the platform's: its requester is told it needs a
+ * look, and the platform's own re-run is left to it). Throws what it could
+ * not read or write, so the machine's work runs again. A row a turn holds
+ * already is left as it is (the machine's clock watches it).
+ */
+async function queueChecksFix(pool, { sessionId, head = null } = {}) {
+  const { rows } = await pool.query(CHECKS_ROW_SQL, [Number(sessionId), BOT_USERNAME]);
+  const row = rows[0];
+  const due = followup.checksDue(row);
+  if (!due || (head && due.head !== String(head).toLowerCase())) return { queued: false, why: 'not_due' };
+  const issueNumber = Array.isArray(row.linked_issues) ? Number(row.linked_issues[0]) : null;
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) return { queued: false, why: 'no_request' };
+  const settings = await readSettings(pool, { strict: true });
+  if (settings.mode === 'off') return { queued: false, why: 'off' };
+  if (!live.isLiveFor(settings, { slug: row.slug })) return { queued: false, why: 'not_live' };
+  if (followup.checksLookLikeInfra(due)) {
+    log.info('homeroom-bot', 'Its proposal\'s checks failed, but it looks like the platform; not revising', {
+      app: row.slug, issueNumber, sessionId: row.id, failing: due.failing.length, total: due.total,
+    });
+    // #4242: nothing else tells its requester, and its card would say it
+    // is still being checked for good: they hear it needs a look.
+    if (due.failing.length) await require('./homeroom-bot-dm').noteNeedsLook(pool, { sessionId: row.id, why: 'checks', strict: true });
+    return { queued: false, why: 'infra' };
+  }
+  const bus = require('./ws-bus');
+  await pool.query(
+    `WITH q AS (
+       INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason)
        VALUES ($1, $2, 1, $3)
        ON CONFLICT (app_id, issue_number) DO UPDATE
          SET priority = LEAST(homeroom_bot_queue.priority, 1),
              reason = CASE WHEN homeroom_bot_queue.priority = 0
                            THEN homeroom_bot_queue.reason ELSE EXCLUDED.reason END,
              enqueued_at = NOW()
-       WHERE homeroom_bot_queue.started_at IS NULL`,
-      [row.app_id, issueNumber, CHECKS_REASON],
-    );
-    log.info('homeroom-bot', due.failing.length
-      ? 'Its proposal\'s checks failed; queued to fix them'
-      : due.broken?.length
-        ? 'Part of its proposal failed when Homeroom tried it; queued to fix it'
-        : 'Its proposal\'s shots could not reach a change for want of data; queued to add it', {
-      app: row.slug, issueNumber, sessionId: row.id, head: due.head, failing: due.failing.length, total: due.total,
-      broken: due.broken?.length || 0, skipped: due.skipped?.length || 0,
-    });
-    noteIssueActivity({ appId: row.app_id, issueNumber, reason: CHECKS_REASON });
-    return true;
+       WHERE homeroom_bot_queue.started_at IS NULL
+       RETURNING 1)
+     SELECT pg_notify($4, $5)`,
+    [row.app_id, issueNumber, CHECKS_REASON, bus.CHANNEL,
+      bus.workflowBody(BUS_KIND, null, { appId: row.app_id, issueNumber, reason: CHECKS_REASON })],
+  );
+  log.info('homeroom-bot', due.failing.length
+    ? 'Its proposal\'s checks failed; queued to fix them'
+    : due.broken?.length
+      ? 'Part of its proposal failed when Homeroom tried it; queued to fix it'
+      : 'Its proposal\'s shots could not reach a change for want of data; queued to add it', {
+    app: row.slug, issueNumber, sessionId: row.id, head: due.head, failing: due.failing.length, total: due.total,
+    broken: due.broken?.length || 0, skipped: due.skipped?.length || 0,
+  });
+  return { queued: true };
+}
+
+// A checks round on the bot's proposal `sessionId` looked at `head`: its
+// change machine decides at once what its requester hears (ready to try,
+// saying what does not work). A hint: the machine's own clock sees the
+// round's record if this is lost.
+async function fixRoundEnded(sessionId, head, deps = {}) {
+  try {
+    const note = deps.botNote || require('../workflow/platform.ts').botNote;
+    await note(Number(sessionId), 'FixRoundEnded', { head: head || null });
   } catch (err) {
-    log.warn('homeroom-bot', 'Could not look at a failing check verdict', { sessionId, err: err.message });
-    return false;
+    log.warn('homeroom-bot', 'Could not tell the change machine a checks round ended', { sessionId, err: err.message });
   }
 }
 
@@ -6392,8 +6431,7 @@ async function runChecksFix(pool, config, {
       log.info('homeroom-bot', 'Its proposal\'s shots could not reach a change, and it added no data for them', {
         app: app.slug, issueNumber, sessionId: session.id, head, why, skipped: skipped.length,
       });
-      (deps.dm || require('./homeroom-bot-dm')).noteChangeReady(pool, session.id, { ws: deps.ws || null })
-        .catch(() => {});
+      await fixRoundEnded(session.id, head, deps);
       return { ran: true, verdict, runId, acted: 'checks_shots_left' };
     }
     if (notChange) {
@@ -6444,12 +6482,9 @@ async function runChecksFix(pool, config, {
     });
     // This head has been looked at now. A change whose checks pass but whose
     // shots showed part of it failing was held back from "ready to try" for
-    // this round; it goes out now, saying plainly what does not work
-    // (homeroom-bot-dm.noteChangeReady).
-    if (broken.length) {
-      (deps.dm || require('./homeroom-bot-dm')).noteChangeReady(pool, session.id, { ws: deps.ws || null })
-        .catch(() => {});
-    }
+    // this round; it goes out now, saying plainly what does not work (the
+    // change machine decides: fixRoundEnded).
+    await fixRoundEnded(session.id, head, deps);
     return { ran: true, verdict, runId, acted: 'checks_person' };
   };
 
@@ -9394,7 +9429,8 @@ async function noteRequestMerged(pool, session, deps = {}) {
       log.info('homeroom-bot', 'A request\'s proposal merged; the rest of the bot\'s work on it stopped', {
         sessionId: Number(merged.id), appId, issues, ...out,
       });
-      wake({ appId });
+      // Run from the workflow's work, which need not be the loop's process.
+      wakeApp({ appId });
     }
     // The project's first version is live: what waited for it
     // (FIRST_VERSION_PENDING_SQL) is picked up now, from the new main, on
@@ -10174,10 +10210,8 @@ async function runOnce(pool, config, deps = {}) {
       // #4175: and a first version's plan that could not be sent is sent again.
       const resent = await retryUnsentPlans(pool, bot, { dm: deps.dm, ws: deps.ws || null });
       if (resent.sent || resent.unsent || resent.stopped) out.plansResent = resent;
-      // A change that passed its checks and waited longer than it should on
-      // its before & after shots is offered as ready to try anyway.
-      const heldReady = await (deps.dm || require('./homeroom-bot-dm')).sweepHeldReady?.(pool, { ws: deps.ws || null });
-      if (heldReady) out.heldReadyLooked = heldReady;
+      // (A change that waited on its before & after shots is the change
+      // machine's: its own clock offers it as ready to try. src/workflow/bot-change/.)
       // #4242: and a build that succeeded and became no proposal is said.
       const unproposed = await (deps.dm || require('./homeroom-bot-dm')).sweepUnproposedBuilds?.(pool, { ws: deps.ws || null });
       if (unproposed) out.unproposedLooked = unproposed;
@@ -10396,6 +10430,19 @@ function publishWake(data) {
   } catch (err) {
     log.warn('homeroom-bot', 'wake publish failed', { err: err.message });
   }
+}
+
+/**
+ * A slot came free on app `appId` (a proposal withdrawn or merged): the loop
+ * looks again, in this process and wherever it runs (the bus). A hint: a
+ * lost one waits for the loop's next refresh.
+ */
+function wakeApp({ appId } = {}) {
+  const id = Number(appId);
+  if (!Number.isInteger(id) || id <= 0) return false;
+  wake({ appId: id });
+  publishWake({ appId: id });
+  return true;
 }
 
 /** The whole queue is stale (the mode was switched on): every Pod hears. */
@@ -11258,6 +11305,8 @@ async function enqueueNow(pool, { slug, issueNumber, actorId }) {
 }
 
 module.exports = {
+  queueChecksFix,
+  wakeApp,
   BOT_DISPLAY_NAME,
   // #4239: Homeroom's own board, where a request about the platform moves.
   PLATFORM_SELF_APP_SLUG,

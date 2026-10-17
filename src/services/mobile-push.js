@@ -206,23 +206,28 @@ async function initialize(config, dependencies = {}) {
   }
   if (!config.mobilePushEnabled) return;
   provider = nextProvider;
-  worker = new MobilePushWorker({
-    pool,
-    config,
-    provider,
-    options: dependencies.options,
-  });
   badgeSync = new MobilePushBadgeSync({
     pool,
     config,
     provider,
     options: dependencies.badgeOptions,
   });
+  worker = new MobilePushWorker({
+    pool,
+    config,
+    provider,
+    options: dependencies.options,
+    // The workflow machines' badge rows are drained by the sender
+    // (mobile_push_badge_syncs).
+    badges: badgeSync,
+  });
 }
 
-// #2904: called for every `notifications_changed` fan-out (./ws.js
-// pushToUser) so a read anywhere re-badges the user's iPhone. A no-op until
-// push is initialized and enabled on this instance.
+// #2904: called for every `notifications_changed` fan-out of a route or a
+// service (./ws.js pushToUser) so a read anywhere re-badges the user's
+// iPhone. A no-op until push is initialized and enabled on this instance.
+// A workflow machine's fan-out writes a badge row instead, which the worker
+// drains (mobile_push_badge_syncs).
 function scheduleBadgeSync(userId) {
   return badgeSync ? badgeSync.schedule(userId) : false;
 }

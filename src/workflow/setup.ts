@@ -1,15 +1,16 @@
-// What a process that runs the machines' work and notifiers sets up before
+// What a process that runs the machines' work sets up before
 // its runtime starts: the configuration and clients that the code behind
 // their calls reads. A process booted without it would not fail: GitHub
-// would read as "not configured", a badge sync would do nothing, a worker
+// would read as "not configured", a phone push would not send, a worker
 // would start for a deleted account. So it is one function, run by every
 // process that runs the machines: server.js at boot, in two halves so its
 // order stays what it was, and a process that runs only the workflow
 // (tests/lib/workflow-child.js) whole.
 //
 // It holds nothing only the web server has: its sockets, the Workshop's
-// board-change listener, the leader's sweepers and loops. A machine that
-// relies on one of those fails its two-process tests
+// board-change listener (a machine reaches it with a push, which every web
+// process relays: pushes.ts boardMoved), the leader's sweepers and loops. A
+// machine that relies on one of those fails its two-process tests
 // (tests/workflow-processes-postgres.test.js), and its list entry says why.
 
 import { legacy } from './legacy.ts';

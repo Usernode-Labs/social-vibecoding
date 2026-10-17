@@ -79,9 +79,20 @@ const govCache = new Map(); // appId -> { at, value: { approverPolicy, approvals
 // The app facts a rules project's gate reads (rulesFacts), on the same TTL.
 const factsCache = new Map(); // appId -> { at, value }
 
-function invalidateGovernance(appId) {
+function invalidateGovernanceHere(appId) {
+  if (appId == null) {
+    govCache.clear();
+    factsCache.clear();
+    return;
+  }
   govCache.delete(appId);
   factsCache.delete(appId);
+}
+
+// Here and in every other process (access-change.js).
+function invalidateGovernance(appId) {
+  invalidateGovernanceHere(appId);
+  require('./access-change').shareAccessChange(appId);
 }
 
 async function getGovernance(pool, appId) {
@@ -730,6 +741,7 @@ module.exports = {
   readGovernance,
   governanceFromRow,
   invalidateGovernance,
+  invalidateGovernanceHere,
   getApproverSet,
   isApprover,
   atLeastGate,

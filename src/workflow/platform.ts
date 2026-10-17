@@ -14,9 +14,9 @@ import type { EventOutcome, Logger, Pool, Push, Queryable, Runtime } from './ker
 import { legacy } from './legacy.ts';
 import { GOVERNANCE_KINDS } from './governance-proposal/facts.ts';
 import { MACHINE, governanceProposal, issueKey } from './governance-proposal/machine.ts';
-import { governanceNotifiers, governanceServices } from './governance-proposal/services.ts';
+import { governanceServices } from './governance-proposal/services.ts';
 import { MACHINE as MERGE, mergeFollowups, sessionKey } from './merge-followups/machine.ts';
-import { mergeFollowupsNotifiers, mergeFollowupsServices } from './merge-followups/services.ts';
+import { mergeFollowupsServices } from './merge-followups/services.ts';
 import { MACHINE as BUILD, botBuild, buildKey } from './bot-build/machine.ts';
 import type { Target as BuildTarget } from './bot-build/machine.ts';
 import { botBuildServices } from './bot-build/services.ts';
@@ -31,6 +31,9 @@ import { proposalServices } from './proposal/services.ts';
 import { MACHINE as QUEUE, appKey as queueKey, mergeQueue } from './merge-queue/machine.ts';
 import { MACHINE as CAMPAIGN, campaign, campaignKey } from './campaign/machine.ts';
 import { campaignServices } from './campaign/services.ts';
+import { MACHINE as BOT_CHANGE, botChange, sessionKey as botChangeKey } from './bot-change/machine.ts';
+import { botChangeServices } from './bot-change/services.ts';
+import { BOT_USERNAME } from './rules/bot-notes.ts';
 
 const pg = createRequire(import.meta.url)('pg');
 
@@ -49,6 +52,7 @@ let shotRuns: ReturnType<typeof shots> | null = null;
 let proposals: ReturnType<typeof proposal> | null = null;
 let queues: ReturnType<typeof mergeQueue> | null = null;
 let campaigns: ReturnType<typeof campaign> | null = null;
+let botChanges: ReturnType<typeof botChange> | null = null;
 let log: Logger | null = null;
 
 // What the ownership triggers read, synced on every boot: enabled:<machine>
@@ -91,10 +95,26 @@ async function recordBooted(pool: Pool): Promise<void> {
 // the transition's own transaction: Postgres delivers a NOTIFY only if it
 // commits, to every web process listening then, the deciding one included
 // (services/ws-bus.js WORKFLOW_SENDER), which relays it to its sockets.
-export async function publishPushes(q: Queryable, pushes: Push[]): Promise<void> {
+//
+// `badges`: everyone told their bell changed (`notifications_changed`) has
+// their phone's icon re-badged too, from a row in the same statement
+// (mobile_push_badge_syncs), which the push worker drains, coalesced per
+// person (services/mobile-push-worker.js). A row, not a kick: it outlives
+// a restart, and it runs where the sender runs. Off where the platform
+// sends no pushes (nothing would drain the rows).
+export async function publishPushes(q: Queryable, pushes: Push[], { badges = false }: { badges?: boolean } = {}): Promise<void> {
   const bus = legacy('services/ws-bus');
-  await q.query('SELECT pg_notify($1, body) FROM unnest($2::text[]) WITH ORDINALITY AS t(body, n) ORDER BY n',
-    [bus.CHANNEL, pushes.map((p) => bus.workflowBody(p.kind, p.routing ?? null, p.data))]);
+  const owed = badges ? [...new Set(pushes
+    .filter((p) => p.kind === 'user' && p.data.type === 'notifications_changed')
+    .map((p) => Number((p.routing as { userId?: unknown } | undefined)?.userId))
+    .filter((id) => Number.isSafeInteger(id) && id > 0))] : [];
+  await q.query(
+    `WITH owed AS (
+       INSERT INTO mobile_push_badge_syncs (user_id) SELECT DISTINCT u FROM unnest($3::int[]) AS u
+       ON CONFLICT (user_id) DO UPDATE SET queued_at = now()
+       RETURNING 1)
+     SELECT pg_notify($1, body) FROM unnest($2::text[]) WITH ORDINALITY AS t(body, n) ORDER BY n`,
+    [bus.CHANNEL, pushes.map((p) => bus.workflowBody(p.kind, p.routing ?? null, p.data)), owed]);
 }
 
 export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {
@@ -111,8 +131,8 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   workflowPool.on('error', (err: Error) => log!.warn('workflow', 'Idle workflow database connection lost', { message: err.message }));
   kernelPool = workflowPool;
   const deps = { config, pool: appPool, requestDeploy };
-  machine = governanceProposal({ dataKey: config.dataEncryptionKey, notifiers: governanceNotifiers(deps) });
-  merges = mergeFollowups({ dataKey: config.dataEncryptionKey, notifiers: mergeFollowupsNotifiers(deps) });
+  machine = governanceProposal({ dataKey: config.dataEncryptionKey });
+  merges = mergeFollowups({ dataKey: config.dataEncryptionKey });
   deliveries = appDelivery();
   // A cancelled prepare learns it at its next checkpoint or lease renewal;
   // its attempt is retired, and a retirement runs, a lease and more later
@@ -126,14 +146,19 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   proposals = proposal(proposalDeps(config));
   queues = mergeQueue();
   campaigns = campaign();
-  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns];
+  botChanges = botChange();
+  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns, botChanges];
+  // `botNote`: the one-release shims of the work kinds older releases queued
+  // to reach the bot (each appends its event to the bot's change machine).
+  const shimDeps = { ...deps, botNote };
   const services = {
-    ...governanceServices({ ...deps, adoptCampaigns }), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
-    ...appDeliveryServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
-    ...campaignServices(deps),
+    ...governanceServices({ ...deps, adoptCampaigns }), ...mergeFollowupsServices(shimDeps), ...botBuildServices(deps),
+    ...appDeliveryServices(deps), ...previewServices(shimDeps), ...shotsServices(shimDeps), ...proposalServices(shimDeps),
+    ...campaignServices(deps), ...botChangeServices(deps),
   };
   const started = createRuntime({
-    pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, publish: publishPushes,
+    pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!,
+    publish: (q, pushes) => publishPushes(q, pushes, { badges: !!config.mobilePushEnabled }),
   });
   try {
     await started.start({ slots: true });
@@ -150,6 +175,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     proposals = null;
     queues = null;
     campaigns = null;
+    botChanges = null;
     throw err;
   }
   runtime = started;
@@ -189,7 +215,49 @@ export async function startWorkflowLoops(): Promise<void> {
   await rearmWaitingProposals();
   await adoptMergeQueues();
   await adoptCampaigns();
+  await adoptBotChanges();
   await retryPlatformFaults();
+}
+
+// The Homeroom bot's changes up for a vote that its change machine does not
+// hold yet (proposed by an older release) are adopted from their rows: the
+// machine decides from the row, and what it sends is keyed as the older
+// release keyed it, so a change already told is not told again. Once per
+// release; the leader's minute sweep (server.js) runs it again for the rare
+// change whose promote an older release accepted during the rollout.
+export async function adoptBotChanges(limit = 500): Promise<number> {
+  if (!runtime || !botChanges) return 0;
+  const { rows } = await kernelPool!.query(
+    `SELECT cs.id, cs.app_id, cs.status FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
+      WHERE cs.status IN ('promoted', 'merging') AND u.username = $2 AND u.is_synthetic = TRUE
+        AND EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.proposal_session_id = cs.id OR r.build_session_id = cs.id)
+        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'session:' || cs.id)
+        -- nor one an event is already on its way to (an adoption not yet applied)
+        AND NOT EXISTS (SELECT 1 FROM wf_events e WHERE e.machine = $1 AND e.key = 'session:' || cs.id)
+      ORDER BY cs.id LIMIT $3`, [BOT_CHANGE, BOT_USERNAME, limit]);
+  for (const r of rows) {
+    await botNote(r.id, 'Proposed', {}, { requestKey: `adopt:${r.id}`, source: { kind: 'system', name: 'adopt' }, appId: r.app_id })
+      .catch((err: Error) => log!.warn('workflow', 'Could not adopt a change of the Homeroom bot\'s', { sessionId: r.id, message: err.message }));
+  }
+  if (rows.length) log!.info('workflow', 'Adopted the Homeroom bot\'s changes', { count: rows.length });
+  return rows.length;
+}
+
+// The bot's change machine hears `type` about session `sessionId`: from the
+// bot's loop (FixRoundEnded, homeroom-bot.js) and from the one-release
+// shims of the work kinds older releases queued. Only for a session of the
+// bot's (a shim's item may be about anybody's); the machine's guard refuses
+// one no run of the bot's proposed.
+export async function botNote(sessionId: number, type: string, payload: Record<string, unknown> = {},
+  o: { requestKey?: string; source?: Source; appId?: number | null } = {}): Promise<EventOutcome | number> {
+  if (!runtime || !botChanges) throw new Error('The workflow runtime is not running in this process');
+  const { rows: [own] } = await kernelPool!.query(
+    `SELECT cs.app_id FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
+      WHERE cs.id = $1 AND u.username = $2 AND u.is_synthetic = TRUE`, [sessionId, BOT_USERNAME]);
+  if (!own) return 0;
+  return runtime.append(botChanges, botChangeKey(sessionId), { type, payload: { sessionId, ...payload } as any },
+    { requestKey: o.requestKey || `${type}:${sessionId}:${randomUUID()}`, source: o.source || { kind: 'system', name: 'bot' },
+      appId: o.appId ?? own.app_id });
 }
 
 // A campaign an older release started (no instance yet: running, or done
@@ -323,6 +391,8 @@ export async function stopWorkflow(): Promise<void> {
   shotRuns = null;
   proposals = null;
   queues = null;
+  campaigns = null;
+  botChanges = null;
   await r?.stop();
   await kernelPool?.end();
   kernelPool = null;
@@ -1041,6 +1111,7 @@ const ADMIN_EVENTS = new Map<string, ReadonlySet<string>>([
   [MERGE, new Set(['RetryDelivery', 'RetryFollowup'])],
   [DELIVERY, new Set(['EndDeploy'])],
   [PREVIEW, new Set(['AdminRetry', 'AdminRetire', 'AdminEnd'])],
+  [BOT_CHANGE, new Set(['RetryFollowup'])],
 ]);
 
 // The states a machine names as waiting on something outside (its
@@ -1069,7 +1140,8 @@ export async function adminEvent(
   const body = type === 'AdminApply' ? { userId: admin.id, username: admin.username }
     : type === 'RetryFollowup' ? { workKey: String(payload.workKey || '') } : {};
   const target = machineName === MACHINE ? machine : machineName === MERGE ? merges
-    : machineName === DELIVERY ? deliveries : machineName === PREVIEW ? previews : null;
+    : machineName === DELIVERY ? deliveries : machineName === PREVIEW ? previews
+      : machineName === BOT_CHANGE ? botChanges : null;
   if (!target) throw new AdminActionError(409, `${machineName} is not running here`);
   return runtime.appendAndWait(target, key, { type, payload: body },
     { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}` });

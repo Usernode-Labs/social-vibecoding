@@ -29,6 +29,7 @@ import { chatLine, sessionEvent, sessionUpdate, toUser } from '../pushes.ts';
 import type { SessionRoute } from '../pushes.ts';
 import * as store from '../rules/check-store.ts';
 import { createCheckFailedNotification } from '../rules/change-notifications.ts';
+import { toBotChange, writeBotChange } from '../rules/bot-notes.ts';
 import { OPEN, readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
 
@@ -46,10 +47,11 @@ export const WORK = Object.freeze({
   retireAttempt: 'preview.retireAttempt',
   dropClaims: 'preview.dropClaims',
   retire: 'preview.retire',
-  // Hand-offs to flows later steps migrate (the boundary list's "hand-off"
-  // entries): a verdict's merge kick and bot note, and the bot's note that a
-  // change's preview will not start. `preview.ready` is left only for the
-  // items an older release queued (it hands their head to the shots machine).
+  // Left only for the items an older release queued: `preview.ready` and a
+  // verdict's follow-ups hand their head to the shots machine, and the
+  // follow-ups and `preview.stopped` hand the bot's note to its change
+  // machine (services.ts, one release). Since then the transitions tell
+  // both by message.
   ready: 'preview.ready',
   followUps: 'verdict.followUps',
   stopped: 'preview.stopped',
@@ -416,12 +418,12 @@ function errorTimer(d: Data, f: Facts, deps: Deps, ctx: TransitionContext, strea
   return { at: new Date(ctx.now.getTime() + retryDelayMs(streakBefore)), event: { type: 'RetryDue' } };
 }
 
-// The work that follows a settled run: the bot's note, the merge kick, and
-// shots. One item per run.
-const followUps = (d: Data, run: Run, state: string, deferred = false): WorkRequest => ({
-  kind: WORK.followUps, key: `follow-ups:${run.key}`,
-  input: { sessionId: d.sessionId, appId: d.appId, head: run.head, state, deferred, trigger: d.trigger, shotsTold: true },
-});
+// A verdict a change of the Homeroom bot's is told: ready to try, or its
+// failing checks are the bot's to fix (its change machine decides, from
+// the row this transition writes: src/workflow/bot-change/).
+const BOT_VERDICTS: ReadonlySet<string> = new Set(['passing', 'skipped', 'failing']);
+const toBot = (d: Data, head: string, state: string): DomainWrite[] =>
+  (BOT_VERDICTS.has(state) ? [toBotChange(d.sessionId, 'Verdict', { head, state })] : []);
 
 // ── Adoption ────────────────────────────────────────────────────────────
 
@@ -600,8 +602,8 @@ function transitions(deps: Deps): Record<string, Record<string, Entry>> {
       const run: Run = { key: `skipped-${ctx.version + 1}`, n: d.serving?.n ?? 0, head: e.payload.head };
       return step({
         name: 'settled', data: d,
-        writes: [{ type: 'skipped', ...base, reason: e.payload.reason, expected: f.session!.checks.commitSha }],
-        work: [followUps(d, run, 'skipped')],
+        writes: [{ type: 'skipped', ...base, reason: e.payload.reason, expected: f.session!.checks.commitSha },
+          ...toBot(d, e.payload.head, 'skipped')],
         push: [checksReady(d, ctx, e.payload.head, 'skipped')],
         messages: [toShots(d, 'HeadReady', { head: e.payload.head }), ...mergeWanted(d, f, 'skipped')],
         timer: null,
@@ -1106,8 +1108,10 @@ function prepared(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: Transi
   const work: WorkRequest[] = [failedAttempt.work, ...(removed ? [removed.work] : [])];
   const messages: MessageRequest[] = r?.sync && attempt.head ? [bootFailureSync(d, attempt.head)] : [];
   if (streakBefore === 0) {
-    work.push({ kind: WORK.stopped, key: `stopped:${attempt.n}`,
-      input: { sessionId: d.sessionId, imported: f.session?.source === 'imported', shotsTold: true } });
+    // Once per failure streak: a change of the Homeroom bot's hears its
+    // preview will not start; an imported pull request's shots, that none
+    // will come.
+    writes.push(toBotChange(d.sessionId, 'PreviewStopped', { head: attempt.head ?? null }));
     if (f.session?.source === 'imported') messages.push(toShots(d, 'PreviewStopped', { head: attempt.head }));
   }
   return step({
@@ -1136,10 +1140,7 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
     return step({
       name: 'deferred', data: d,
       writes: [{ type: 'deferred', ...base, capture: (r.capture ?? null) as Json, media: !!visuals }],
-      work: [
-        { kind: WORK.publish, key: `publish:${run.key}`, input: { ...base, visuals: !!visuals } },
-        followUps(d, run, 'pending', true),
-      ],
+      work: [{ kind: WORK.publish, key: `publish:${run.key}`, input: { ...base, visuals: !!visuals } }],
       push: [checksPending(d, ctx, run.head, 'deferred', d0.trigger), ...visualsReady],
       messages: [toShots(d, 'HeadReady', { head: run.head }), ...undeclared(d, r)],
       timer: null,
@@ -1205,13 +1206,10 @@ function ran(s: Live, e: Event<any>, outcome: string, f: Facts, ctx: TransitionC
   return step({
     name: 'settled', data: d,
     cancel: ended ? [{ kind: WORK.run, key: run.key }] : undefined,
-    writes: [settle],
+    writes: [settle, ...(stores ? toBot(d, run.head, state) : [])],
     work: [
       ...(ended ? [{ kind: WORK.cancel, key: `cancel:${run.key}`, input: { sessionId: d.sessionId, runId: run.key } }] : []),
-      ...(stores ? [
-        { kind: WORK.publish, key: `publish:${run.key}`, input: { ...base, state, visuals: !!visuals } },
-        followUps(d, run, state),
-      ] : []),
+      ...(stores ? [{ kind: WORK.publish, key: `publish:${run.key}`, input: { ...base, state, visuals: !!visuals } }] : []),
     ],
     push: stores ? [checksReady(d, ctx, run.head, state, results), ...visualsReady] : [],
     messages: [...(stores ? [toShots(d, 'HeadReady', { head: run.head }), ...mergeWanted(d, f, state)] : []), ...undeclared(d, r)],
@@ -1345,6 +1343,7 @@ async function buildCardOpen(tx: Tx, sessionId: number): Promise<boolean> {
 }
 
 const WRITES = {
+  botChange: writeBotChange,
   // checks_commit_sha, 'pending', the phase and the trigger.
   pending: (tx: Tx, w: any) => store.setChecksPending(tx, w.sessionId, w.head, w.phase, w.trigger),
 

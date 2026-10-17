@@ -13,6 +13,13 @@ function scoped(type: string, data: JsonObject): Push {
 }
 
 export const issueUpdate = (data: JsonObject) => scoped('issue_update', data);   // ws.pushIssueUpdate
+
+// A card moved on a board: besides the browsers, the Workshop's placement
+// stage hears it in every web process that relays the push (services/ws.js
+// `routing.boardChange` → workshop-themes.noteBoardChange, debounced and
+// leased per app), the deciding one included. What ws.pushIssueUpdate /
+// pushSessionUpdate kick in the process that calls them.
+export const boardMoved = (p: Push): Push => ({ ...p, routing: { ...(p.routing || {}), boardChange: true } });
 export const voteUpdate = (data: JsonObject) => scoped('vote_update', data);     // ws.pushVoteUpdate
 export const appUpdate = (data: JsonObject) => scoped('app_update', data);       // ws.pushAppUpdate
 

@@ -136,7 +136,7 @@ export interface HomeroomBotReady {
   /**
    * What does not work yet: the declared changes its before & after shots
    * showed failing, after the bot's own fix round (homeroom-bot-dm.js
-   * noteChangeReady). The card then says so instead of "ready to try".
+   * tellReady). The card then says so instead of "ready to try".
    */
   broken?: string[];
 }

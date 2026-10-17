@@ -85,11 +85,6 @@ function isTerminal(state) {
   return TERMINAL_STATES.has(state);
 }
 
-function clip(value, max) {
-  const text = typeof value === 'string' ? value.trim() : '';
-  return text ? text.slice(0, max) : null;
-}
-
 const { claimsFromIntent, requiredForIntent, pendingDetail, missingIntentDetail } = detailRules;
 
 // ── Declarations (the shots machine decides) ─────────────────────────────
@@ -214,59 +209,13 @@ function runSummary(row, artifactSummary = []) {
   return detailRules.runSummary(row, artifactSummary, { cleanConditions: shots.cleanConditions });
 }
 
-const IN_FLIGHT_STATES = new Set(['planned', 'provisioning', 'exploring', 'replaying', 'reviewing']);
-// How long a ready-to-try message waits on shots that have not settled,
-// from the checks verdict on the same head. The shots machine settles every
-// run it starts (bounded by its deadlines) and tells the bot, so this only
-// matters if no settle ever arrives; the bot's refresh then sends what
-// waited (homeroom-bot-dm.sweepHeldReady).
-const READY_HOLD_MS = 45 * 60_000;
-
-function lowerSha(value) {
-  return typeof value === 'string' ? value.trim().toLowerCase() : '';
-}
-
-function timeOf(value) {
-  if (value == null) return NaN;
-  const ms = value instanceof Date ? value.getTime() : Date.parse(String(value));
-  return Number.isFinite(ms) ? ms : NaN;
-}
-
-/**
- * Pure: the declared changes whose result in the settled shots on head
- * `headSha` passes `keep(result, declared)`, from a session row's
- * `shots_state` and `shots_detail`: [{ id, claim, steps, reason }]. Empty
- * for shots on another head and for unsettled shots.
- */
-function resultsOnHead(row, headSha, keep) {
-  const detail = row?.shots_detail;
-  const head = lowerSha(headSha);
-  if (!detail || typeof detail !== 'object' || !head) return [];
-  if (!['verified', 'failed'].includes(row.shots_state)) return [];
-  if (lowerSha(detail.headSha) !== head) return [];
-  const claims = Array.isArray(detail.claims) ? detail.claims : [];
-  const results = Array.isArray(detail.shotResults) ? detail.shotResults : [];
-  return results.filter((result) => result && typeof result.id === 'string')
-    .map((result) => ({ result, declared: claims.find((claim) => claim && claim.id === result.id) || {} }))
-    .filter(({ result, declared }) => keep(result, declared))
-    .slice(0, planContract.MAX_STORIES)
-    .map(({ result, declared }) => ({
-      id: result.id,
-      claim: clip(declared.claim, 300) || result.id,
-      steps: Array.isArray(declared.steps) ? declared.steps.slice(0, 12).map((step) => String(step).slice(0, 200)) : [],
-      reason: clip(result.reason, 1000),
-    }));
-}
-
-/**
- * Pure: the declared changes the shots on head `headSha` show failing (the
- * shots agent did the steps and the after build broke): [{ id, claim,
- * steps, reason }]. Empty for shots on another head, unsettled shots, and
- * runs from before the failed outcome existed.
- */
-function brokenOnHead(row, headSha) {
-  return resultsOnHead(row, headSha, (result) => result.status === 'failed');
-}
+// How long a ready-to-try message waits on shots that have not settled, the
+// shots on a head that failed or were skipped for want of seed data, and
+// whether shots still hold a change: the Homeroom bot's change machine
+// decides from these (src/workflow/rules/bot-readiness.ts, the one copy;
+// src/workflow/bot-change/), and this module's callers read them here.
+const readiness = require('../workflow/rules/bot-readiness.ts');
+const { READY_HOLD_MS, brokenOnHead, seedableSkip, skippedOnHead } = readiness;
 
 // ── A skip its author can fix ────────────────────────────────────────────
 //
@@ -297,50 +246,9 @@ function brokenOnHead(row, headSha) {
 // data and no such cause; the baseState rule then leaves out the ones
 // declared as a change to a screen that was already there (a new bell row
 // declared "present" because the bell was, proposal 7886).
-const MISSING_DATA_RE = /\bfixtures?\b|\bno\b[^.;:]{0,60}?\b(?:rows?|records?|data|changes?|projects?|apps?|members?|accounts?|items?|entries|messages?|cards?|runs?|requests?|states?|seeds?)\b|\bdoes(?: not|n't) exist\b|\b(?:is|are)(?: not|n't) (?:on|in) (?:these|this|the|either) (?:copies|copy|after copy)\b/i;
-const NOT_SEEDABLE_RE = /\bmodel\b|\bwallets?\b|\bupload|file chooser|e-?mail|mailbox|\boffline\b|connection drop|network (?:request|connection)|stub fetch|geolocation|location permission|camera|microphone|clipboard|\bnot signed in\b|sign(?:ing|-| )in (?:is|isn't|is not)|browser(?:-| )tab|favicon|too fast|in flight|(?:hold|delay)(?: or (?:hold|delay))? (?:the )?(?:api )?requests?|\b(?:401|403|5\d\d)\b|unauthori[sz]ed|server error|did not save/i;
-
-/** Pure: whether a skip's reason says the copies lack data a seed could supply, and nothing a seed cannot. */
-function seedableSkip(reason) {
-  const text = typeof reason === 'string' ? reason : '';
-  return MISSING_DATA_RE.test(text) && !NOT_SEEDABLE_RE.test(text);
-}
-
-/**
- * Pure: the declared changes the shots on head `headSha` skipped for want of
- * data that the proposal itself could seed (seedableSkip, on a change
- * declared new on the after side): [{ id, claim, steps, reason }].
- */
-function skippedOnHead(row, headSha) {
-  return resultsOnHead(row, headSha, (result, declared) => result.status === 'skipped'
-    && declared.baseState === 'not_present' && seedableSkip(result.reason));
-}
-
-/**
- * Pure: whether shots of head `headSha` are still to come, so a change is
- * not yet ready to try. True while a run on that head is under way, or
- * while declared shots have no settled run on it yet and nothing recorded
- * that one will not start (a run is created only once the checks settle,
- * beside the verdict that asks this). False when nothing visible was
- * declared, when shots on this head settled, and once READY_HOLD_MS has
- * passed since the checks verdict (`checks_checked_at`) or, without one,
- * since the slot last changed.
- */
+/** Pure: whether shots of head `headSha` are still to come (bot-readiness.ts heldUntil). */
 function holdsReady(row, headSha, { now = Date.now() } = {}) {
-  const detail = row?.shots_detail;
-  const head = lowerSha(headSha);
-  if (!detail || typeof detail !== 'object' || !head) return false;
-  if (detail.required === false || row.shots_state === 'not_required' || !row.shots_state) return false;
-  const since = Math.max(timeOf(row.checks_checked_at) || 0, timeOf(row.shots_updated_at) || 0);
-  if (!since || now - since > READY_HOLD_MS) return false;
-  const onHead = !detail.headSha || lowerSha(detail.headSha) === head;
-  if (onHead && row.shots_run_id) return IN_FLIGHT_STATES.has(row.shots_state);
-  if (onHead && TERMINAL_STATES.has(row.shots_state)) return false;
-  if (row.shots_state === 'planned' && typeof detail.notStartedReason === 'string' && detail.notStartedReason.trim()) {
-    return false;
-  }
-  const stories = detail.intent && Array.isArray(detail.intent.stories) ? detail.intent.stories : [];
-  return stories.length > 0;
+  return readiness.holdsReady(row, headSha, now);
 }
 
 async function getRun(pool, runId, { forUpdate = false } = {}) {

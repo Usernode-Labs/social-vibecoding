@@ -58,8 +58,15 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
       [`pv-app-${++seq}`, owner.id]);
     return a;
   }
-  async function proposal(a, { status = 'promoted', source = null, pin = null, extra = {} } = {}) {
-    const by = await user();
+  // The Homeroom bot: a change of its is followed by its change machine,
+  // which the verdict's own write tells (rules/bot-notes.ts).
+  const { rows: [botUser] } = await pool.query(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE) RETURNING id, username`);
+  const toldBot = async (s) => (await pool.query(
+    `SELECT type, payload FROM wf_events WHERE machine = 'bot-change' AND key = $1 ORDER BY id`, [`session:${s.id}`])).rows
+    .map((e) => [e.type, e.payload.state ?? null]);
+  async function proposal(a, { status = 'promoted', source = null, pin = null, extra = {}, bot = false } = {}) {
+    const by = bot ? botUser : await user();
     const { rows: [s] } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, status, source, branch_name, pr_number, reviewed_head_sha, imported_pr_head_sha)
        VALUES ($1, $2, $3, $4, 'feature', $5, $6, $7) RETURNING *`,
@@ -150,7 +157,7 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
   const submit = (s, head, extra = {}) => send(s, 'RevisionSubmitted', { sessionId: s.id, head, source: 'test', trigger: 'commit-push', ...extra });
 
   await t.test('P1 a revision is built, published, checked and settled, with its history counted once', async () => {
-    const s = await proposal(await app(), { pin: SHA('a') });
+    const s = await proposal(await app(), { pin: SHA('a'), bot: true });
     const id = await submit(s, SHA('a'));
     await rt.drain();
     assert.equal((await outcome(id)).state_after, 'preparing');
@@ -169,9 +176,8 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal(prepare.input.db, attemptDb(s.app.slug, s.id, i.data.seed, 1));
     const { rows: history } = await pool.query('SELECT pass_count FROM app_check_history WHERE app_id = $1', [s.app_id]);
     assert.deepEqual(history.map((h) => h.pass_count), [1]);
-    const follow = await workOf(s, WORK.followUps);
-    assert.deepEqual(follow.map((w) => [w.input.state, w.input.head]), [['passing', SHA('a')]],
-      'a passing verdict sets off its follow-ups once (the merge queue among them)');
+    assert.deepEqual(await toldBot(s), [['Verdict', 'passing']],
+      'a passing verdict tells the bot\'s change machine once, by message (no follow-up work)');
     assert.deepEqual(heard(s, 'staging_ready').map((p) => p.data.url), [`https://pv--s${s.id}.apps.test`]);
     assert.deepEqual(heard(s, 'checks_ready').map((p) => p.data.checkState), ['pending', 'pending', 'passing'],
       'building, testing, then the verdict, as the badges hear them');
@@ -179,7 +185,7 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     const publish = (await workOf(s, WORK.publish))[0];
     assert.equal(publish.input.state, 'passing', 'the platform-variables check refreshes on a verdict (review finding 4)');
     const kinds = (await workOf(s)).map((w) => w.kind).sort();
-    assert.deepEqual(kinds, [WORK.followUps, WORK.run, WORK.publish, WORK.prepare, WORK.unitEarly].sort());
+    assert.deepEqual(kinds, [WORK.run, WORK.publish, WORK.prepare, WORK.unitEarly].sort());
     // The shots machine hears the head: when the preview served, and when
     // the verdict settled (messages, not hand-off work).
     const { rows: told } = await pool.query(
@@ -285,7 +291,7 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
   });
 
   await t.test('P5 a run that cannot say is an error, never a verdict, and adds no history', async () => {
-    const s = await proposal(await app(), { status: 'active' });
+    const s = await proposal(await app(), { status: 'active', bot: true });
     work.answer.set(WORK.run, { outcome: 'blocked', reason: 'The capture Job output could not be read' });
     await submit(s, SHA('e'));
     await settle();
@@ -295,8 +301,7 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.equal((await instance(s)).deadline_at, null, 'an active native row is outside the error lane');
     const { rows } = await pool.query('SELECT 1 FROM app_check_history WHERE app_id = $1', [s.app_id]);
     assert.equal(rows.length, 0);
-    assert.deepEqual((await workOf(s, WORK.followUps)).map((w) => w.input.state), ['error'],
-      'its follow-ups hear an error: nothing for the merge queue');
+    assert.deepEqual(await toldBot(s), [], 'an error is no verdict: the bot hears nothing, nor does the merge queue');
     assert.equal(r.check_error_platform, false, 'an unreadable run is the proposal\'s error');
     // A run whose Pods never started is the platform's fault, as [main] says
     // it (check-pod-start.js): the automatic retries a proposal's own errors
@@ -434,7 +439,7 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.deepEqual([i.state, i.data.failure, i.deadline_at], ['failed', 'Image build failed', null]);
     r = await row(s2.id);
     assert.deepEqual([r.check_state, r.check_error_notified_at], [null, null]);
-    assert.deepEqual(await workOf(s2, WORK.stopped), []);
+    assert.deepEqual(await toldBot(s2), []);
     assert.equal(heard(s2, 'staging_failed').length, 1);
     work.answer.set(WORK.prepare, prepareOk);
   });
@@ -537,14 +542,14 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
   });
 
   await t.test('P10 a head with nothing beyond main settles skipped without a build, and kicks the queue', async () => {
-    const s = await proposal(await app(), { status: 'promoted', pin: SHA('8') });
+    const s = await proposal(await app(), { status: 'promoted', pin: SHA('8'), bot: true });
     const id = await send(s, 'ChecksSkipped', { sessionId: s.id, head: SHA('9'), reason: 'branch has no commits beyond main' });
     await rt.drain();
     assert.equal((await outcome(id)).state_after, 'settled');
     const r = await row(s.id);
     assert.deepEqual([r.check_state, r.checks_commit_sha, r.check_error_detail], ['skipped', SHA('9'), 'branch has no commits beyond main']);
     assert.equal((await workOf(s, WORK.prepare)).length, 0);
-    assert.deepEqual((await workOf(s, WORK.followUps)).map((w) => w.input.state), ['skipped']);
+    assert.deepEqual(await toldBot(s), [['Verdict', 'skipped']]);
   });
 
   await t.test('P11 a mechanical merge carries a green verdict to the merged head; anything else is checked', async () => {
@@ -615,7 +620,7 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.deepEqual(await reply(recheck), { state: 'checking', head: SHA('7'), url: `https://pv--s${s.id}.apps.test`, verdict: null });
   });
   await t.test('P14 a run\'s media is published with its verdict, and a stale run\'s never is', async () => {
-    const s = await proposal(await app(), { status: 'active' });
+    const s = await proposal(await app(), { status: 'active', bot: true });
     const media = async (runId, id) => pool.query(
       `INSERT INTO check_run_media (id, run_id, session_id, commit_hash, kind, media, content_type, data)
        VALUES ($1, $2, $3, $4, 'after', 'png', 'image/png', decode('00', 'hex'))`, [id, runId, s.id, SHA('a')]);
@@ -649,7 +654,7 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     work.answer.set(WORK.run, verdict('passing'));
     const r = await row(s.id);
     assert.equal(r.check_state, 'pending', 'the stale verdict was not stored');
-    assert.equal((await workOf(s, WORK.followUps)).length, 1, 'and set nothing off (review finding)');
+    assert.equal((await toldBot(s)).length, 1, 'and set nothing off (review finding)');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM session_visuals WHERE session_id = $1', [s.id])).rows[0].n, 1,
       'nor its media');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM check_run_media WHERE session_id = $1', [s.id])).rows[0].n, 0);

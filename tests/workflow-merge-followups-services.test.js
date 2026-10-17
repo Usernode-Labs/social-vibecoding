@@ -118,16 +118,27 @@ test('included.find names each carried change with the head that matched', async
   assert.deepEqual(out, { ids: [3, 4], found: [{ id: 3, head: 'c'.repeat(40) }, { id: 4, head: 'd'.repeat(40) }] });
 });
 
-test('the bot, the DM, the journey and the main check run strict, so a failure is retried', async () => {
+test('the journey and the main check run strict, so a failure is retried', async () => {
   const { handlers: h } = withRows((sql) => (/FROM apps/.test(sql) ? [{ id: 2 }] : [{ id: 5, app_id: 2 }]));
-  await call(h, WORK.bot, { sessionId: 5, before: '2026-10-09T00:00:00.000Z' });
-  assert.equal(seen.bot.strict, true);
-  await call(h, WORK.dm, { sessionId: 5, sha: 'a'.repeat(40) });
-  assert.equal(seen.dm.deps.strict, true);
   await call(h, WORK.journey, { sessionId: 5, sha: 'a'.repeat(40), at: '2026-10-09T00:00:00.000Z' });
   assert.equal(seen.journey.strict, true);
   await call(h, WORK.mainCheck, { appId: 2, sessionId: 5, prNumber: 8, mergeSha: 'a'.repeat(40) });
   assert.equal(seen.mainCheck.strict, true);
+});
+
+test('the bot\'s items an older release queued hand the merge and the live to its change machine, keyed by the item', async () => {
+  const told = [];
+  const h = mergeFollowupsServices({ config: {}, pool, botNote: async (...args) => { told.push(args); return 1; } });
+  const run = (kind, input) => h[kind].run({ input, workId: `w-${kind}`, key: kind, attempt: 1, resumeFrom: null, checkpoint: async () => {} });
+  await run(WORK.bot, { sessionId: 5, before: '2026-10-09T00:00:00.000Z' });
+  await run(WORK.dm, { sessionId: 5, sha: 'a'.repeat(40) });
+  await run(WORK.live, { sessionId: 5 });
+  assert.deepEqual(told, [
+    [5, 'Merged', { before: '2026-10-09T00:00:00.000Z' }, { requestKey: `shim:w-${WORK.bot}` }],
+    [5, 'Live', {}, { requestKey: `shim:w-${WORK.dm}` }],
+    [5, 'Live', {}, { requestKey: `shim:w-${WORK.live}` }],
+  ]);
+  assert.equal(seen.bot, null, 'the bot\'s own code is the change machine\'s to call now');
 });
 
 test('an app.deliver item left from before asks app-delivery for its deploy itself, keyed by the item', async () => {

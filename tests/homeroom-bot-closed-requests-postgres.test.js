@@ -138,11 +138,11 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
       { sessionId: both, reason: 'request-closed' },
     ], 'the system archive, which closes the pull request and says so in its own thread');
     assert.deepEqual(github.asked.sort(), [12, 14], 'GitHub is asked only about the linked requests not just closed');
-    assert.deepEqual(h.lines, [
-      { appId: app.id, content: '“Watering reminders” was withdrawn: this request is closed.', msgType: 'system', thread: { type: 'issue', ref: 10 } },
-      { appId: app.id, content: '“Sunlight log” was withdrawn: this request is closed.', msgType: 'system', thread: { type: 'issue', ref: 13 } },
-      { appId: app.id, content: '“Sunlight log” was withdrawn: this request is closed.', msgType: 'system', thread: { type: 'issue', ref: 14 } },
-    ], 'a line on each of its requests, in the request\'s own thread');
+    // The line on each of its requests is the proposal machine's close
+    // (reason request-closed), written with the close: a retry cannot lose
+    // it (tests/workflow-proposal-postgres.test.js P13). Nothing here writes one.
+    assert.deepEqual(h.lines, []);
+    assert.equal(closedRequests.closedNote('Watering reminders'), '“Watering reminders” was withdrawn: this request is closed.');
     assert.deepEqual(h.woken, [{ appId: app.id }], 'the bot is woken for the project, so a held request takes the slot');
     assert.equal(await statusOf(pair), 'promoted', 'one of its requests is still open');
     assert.equal(await statusOf(persons), 'promoted', 'a person\'s proposal is theirs');
@@ -225,6 +225,9 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
     assert.equal(await closedRequests.noteRequestsClosed(down, { appId: app.id, closed: [20], deps: h.deps }), null);
     await assert.rejects(closedRequests.noteRequestsClosed(down, { appId: app.id, closed: [20], strict: true, deps: h.deps }), /connection lost/,
       'the merge-followups machine retries what it could not do');
+    // A failed GitHub read is retried by a durable caller, never settled as "open".
+    await assert.rejects(closedRequests.noteRequestsClosed(pool, { appId: app.id, closed: [20], strict: true, deps: h.deps }), /rate limited/);
+    assert.equal(await statusOf(unsure), 'promoted');
   });
 
   await t.test('the sweep withdraws one whose requests GitHub confirms closed, never on the open list alone', async () => {
@@ -275,11 +278,13 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
     const lifecyclePath = require.resolve('../src/services/session-lifecycle');
     const orig = require.cache[lifecyclePath];
     const archived = [];
+    const reasons = [];
     require.cache[lifecyclePath] = {
       id: lifecyclePath, filename: lifecyclePath, loaded: true, paths: [],
       exports: {
         async archiveSession(args) {
           archived.push(args.sessionId);
+          reasons.push(args.reason);
           await pool.query(`UPDATE chat_sessions SET status = 'archived', archived_at = NOW() WHERE id = $1`, [args.sessionId]);
           return { archived: true };
         },
@@ -315,10 +320,9 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
       assert.deepEqual(queue.map((q) => [q.issue_number, q.reason]), [[40, bot.CAP_FREED_REASON]],
         'the held request takes the freed slot in the same refresh');
       assert.equal(out.queued, 1);
-      const { rows: [line] } = await pool.query(
-        `SELECT content FROM chat_messages WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 41`, [app.id],
-      );
-      assert.equal(line.content, '“Repotting reminders” was withdrawn: this request is closed.');
+      // Withdrawn as request-closed: the proposal machine's close says so in
+      // the request's thread (tests/workflow-proposal-postgres.test.js P13).
+      assert.deepEqual(reasons, ['request-closed']);
     } finally {
       if (orig) require.cache[lifecyclePath] = orig; else delete require.cache[lifecyclePath];
     }

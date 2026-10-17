@@ -52,7 +52,6 @@ function counter({ name = 'kt-counter', version = 1 } = {}) {
           to: (s, e, f) => ({
             ...same(s, { count: s.data.count + e.payload.n, log: [...s.data.log, e.payload.n], overlaps: s.data.overlaps + (f.exclusive ? 0 : 1) }),
             writes: [{ type: 'log', n: e.payload.n }],
-            notify: [{ type: 'counted' }],
           }),
         },
         Explode: { to: () => { throw new Error('boom'); } },
@@ -128,10 +127,8 @@ function counter({ name = 'kt-counter', version = 1 } = {}) {
       const { rows: [l] } = await tx.query('SELECT status FROM kt_legacy WHERE key = $1', [ctx.key]);
       return { count: after.data.count, projected: l.status };
     },
-    notifiers: { counted: () => { notified++; } },
   });
 }
-let notified = 0;
 
 test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
@@ -964,7 +961,6 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     assert.deepEqual([fresh.status, fresh.reason], ['rejected', 'not_positive']);
     assert.ok(Date.now() - started < 3000, 'answered by notification, not by the budget');
     await r.stop();
-    assert.ok(notified > 0, 'post-commit notifiers ran');
   });
 
   await t.test('admin reads: state counts, instance list and timeline', async () => {

@@ -97,6 +97,18 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   const proposal = async (status = 'merging') => (await pool.query(
     `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title) VALUES ($1, $2, $3, $4, 'Change') RETURNING *`,
     [app.id, author.id, status, ++seq])).rows[0];
+  // One of the Homeroom bot's changes: its DM is the bot's change machine's
+  // (src/workflow/bot-change/), told by the merge's own write.
+  const { rows: [botUser] } = await pool.query(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE) RETURNING id`);
+  const botProposal = async () => {
+    const { rows: [s] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, linked_issues) VALUES ($1, $2, 'merging', $3, 'Change', $4) RETURNING *`,
+      [app.id, botUser.id, ++seq, [seq]]);
+    await pool.query(`INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id) VALUES ($1, $2, 'live', 'ready', $3)`,
+      [app.id, seq, s.id]);
+    return s;
+  };
   const state = async (s) => (await pool.query(
     `SELECT state FROM wf_instances WHERE machine = 'merge-followups' AND key = $1`, [`session:${s.id}`])).rows[0]?.state;
   const until = async (check, what) => {
@@ -135,7 +147,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   });
 
   await t.test('a confirmed merge goes live through the real handlers', async () => {
-    const s = await proposal();
+    const s = await botProposal();
     await confirmed({ sessionId: s.id, appId: app.id, mergeSha: SHA('a') });
     await until(async () => (await state(s)) === 'live', 'live');
     const r = (await pool.query('SELECT status, live_at, merge_commit_sha FROM chat_sessions WHERE id = $1', [s.id])).rows[0];
@@ -143,7 +155,8 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     assert.ok(r.live_at);
     assert.ok(calls.some((c) => c[0] === 'deploy' && c[2].reuseRunningRevision === SHA('a')),
       'app-delivery deploys, offered the merge commit');
-    await until(async () => calls.some((c) => c[0] === 'dm' && c[1] === s.id), 'the DM');
+    await until(async () => calls.some((c) => c[0] === 'dm' && c[1] === s.id), 'the DM, from the bot\'s change machine');
+    assert.equal((await pool.query(`SELECT state FROM wf_instances WHERE machine = 'bot-change' AND key = $1`, [`session:${s.id}`])).rows[0]?.state, 'live');
     // The preview goes once the deploy is answered (demo mode deploys its build).
     await until(async () => calls.some((c) => c[0] === 'teardown' && c[1] === s.id), 'the teardown');
     assert.ok(calls.some((c) => c[0] === 'teardown' && c[1] === s.id && c[2] === 'merged'));
@@ -281,5 +294,22 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     } finally {
       if (was === undefined) delete process.env.GIT_SHA; else process.env.GIT_SHA = was;
     }
+  });
+
+  await t.test('a change of the bot\'s an older release put up for a vote is adopted by its change machine at boot; a shim\'s note about anybody else\'s is dropped', async () => {
+    const { rows: [s1] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, linked_issues, check_state, reviewed_head_sha, checks_commit_sha)
+       VALUES ($1, $2, 'promoted', $3, 'Older', $4, 'passing', $5, $5) RETURNING *`, [app.id, botUser.id, ++seq, [seq], SHA('e')]);
+    await pool.query(`INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id) VALUES ($1, $2, 'live', 'ready', $3)`,
+      [app.id, seq, s1.id]);
+    // The boot of a leader adopts it (startWorkflowLoops → adoptBotChanges).
+    await platform.startWorkflow(config, { loops: true });
+    assert.equal(await platform.adoptBotChanges(), 0, 'once: the boot did');
+    const inst = async (id) => (await pool.query(`SELECT state FROM wf_instances WHERE machine = 'bot-change' AND key = $1`, [`session:${id}`])).rows[0]?.state;
+    await until(async () => (await inst(s1.id)) === 'ready', 'adopted, and decided from its row: ready to try');
+    // An older release's shim names a session of somebody else's: nothing is appended.
+    const theirs = await proposal('promoted');
+    assert.equal(await platform.botNote(theirs.id, 'Verdict', { state: 'passing' }), 0);
+    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_events WHERE machine = 'bot-change' AND key = $1`, [`session:${theirs.id}`])).rows[0].n, 0);
   });
 });

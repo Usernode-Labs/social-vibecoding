@@ -1007,25 +1007,24 @@ test('WP1: what the run has seen moves past its own plan comment as soon as it i
 });
 
 test('WP1: a merge stops the rest of the bot\'s work on its request, in a work item of its own apart from the merged DM', () => {
-  // The merge-followups machine (src/workflow/merge-followups/) asks for
-  // each as its own durable work: bot.requestMerged when the merge is
-  // recorded, bot.dmMerged and bot.announceLive once the change is live.
-  // Each is retried on its own, and none is a reason the merge fails: the
-  // merge is already recorded when they run.
+  // The merge-followups machine tells the bot's change machine when the
+  // merge is recorded (Merged, bounded to what had started before it) and
+  // once the change is live (Live); that machine asks for each as its own
+  // durable work: bot.stopRequestWork, then bot.tellLive and
+  // bot.commentLive. Each is retried on its own, and none is a reason the
+  // merge fails: the merge is already recorded when they run.
   const machine = read('src/workflow/merge-followups/machine.ts');
-  assert.match(machine, /bot: 'bot\.requestMerged',\n\s*dm: 'bot\.dmMerged',\n\s*live: 'bot\.announceLive',/);
-  const settle = machine.slice(machine.indexOf('function settleWork('), machine.indexOf('function settleWrites('));
-  assert.match(settle, /\{ kind: WORK\.bot, key: 'bot', input: \{ sessionId: d\.sessionId, before: d\.mergedAt \} \}/,
-    'bounded to what had started before the merge');
-  const merged = machine.slice(machine.indexOf('function merged('), machine.indexOf('\n}\n', machine.indexOf('function merged(')));
-  assert.match(merged, /work\.push\(\.\.\.settleWork\(d, s\.linkedIssues, false/, 'asked for when the merge is recorded');
+  const writes = machine.slice(machine.indexOf('function settleWrites('), machine.indexOf('\n}\n', machine.indexOf('function settleWrites(')));
+  assert.match(writes, /toBotChange\(d\.sessionId, 'Merged', \{ before: d\.mergedAt \}\)/, 'bounded to what had started before the merge');
   const toLive = machine.slice(machine.indexOf('function toLive('), machine.indexOf('function lineInput('));
-  assert.match(toLive, /\{ kind: WORK\.dm, key: 'dm'/, 'the merged DM waits for live');
-  assert.doesNotMatch(toLive, /WORK\.bot\b/, 'and is not the same item');
-
-  const services = read('src/workflow/merge-followups/services.ts');
-  const bot = services.slice(services.indexOf('[WORK.bot]: {'), services.indexOf('[WORK.dm]: {'));
-  assert.match(bot, /legacy\('services\/homeroom-bot'\)\.noteRequestMerged\(pool, \{ id: input\.sessionId \},\s*\{ before: input\.before, strict: true \}\)/,
+  assert.match(toLive, /toBotChange\(d\.sessionId, 'Live'\)/, 'the merged DM waits for live');
+  const bc = read('src/workflow/bot-change/machine.ts');
+  assert.match(bc, /\{ kind: WORK\.merged, key: 'merged', input: \{ sessionId: d\.sessionId, before: e\.payload\.before \} \}/);
+  assert.match(bc, /\{ kind: WORK\.liveDm, key: 'live-dm', input: \{ sessionId: d\.sessionId \} \},\n\s+\{ kind: WORK\.livePost, key: 'live-post', input: \{ sessionId: d\.sessionId \} \},/,
+    'and is not the same item');
+  const services = read('src/workflow/bot-change/services.ts');
+  const merged = services.slice(services.indexOf('[WORK.merged]: {'), services.indexOf('[WORK.liveDm]: {'));
+  assert.match(merged, /legacy\('services\/homeroom-bot'\)\.noteRequestMerged\(pool, \{ id: Number\(input\.sessionId\) \},\s*\{ before: input\.before \?\? null, strict: true \}\)/,
     'a failure is reported, so the item is retried');
 });
 

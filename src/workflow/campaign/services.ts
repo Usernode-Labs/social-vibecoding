@@ -52,9 +52,10 @@ export function campaignServices({ pool }: CampaignServiceDeps): Record<string, 
             out = await fm.runAppChange({
               campaign: c, app, exemplarSummary: input.exemplar || null,
               stopped: async () => signal.aborted || await stopped(),
-              onUsage: (usage: any, servedModel: any) => {
-                legacy('services/limits').recordSpend(pool, userId, llm.estimateCostCents(usage, servedModel)).catch(() => {});
-              },
+              // Recorded before the next call (fleet-maintenance.js awaits it):
+              // the spending cap reads it.
+              onUsage: (usage: any, servedModel: any) =>
+                legacy('services/limits').recordSpend(pool, userId, llm.estimateCostCents(usage, servedModel)),
             });
           } catch (err: any) {
             if (err?.code === 'campaign_stopped' && !signal.aborted) return halted;

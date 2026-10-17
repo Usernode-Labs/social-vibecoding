@@ -58,11 +58,13 @@ function retryDelayMs(attempts, baseMs, maxMs) {
 }
 
 class MobilePushWorker {
-  constructor({ pool, config, provider, options = {} }) {
+  constructor({ pool, config, provider, options = {}, badges = null }) {
     this.pool = pool;
     this.config = config;
     this.provider = provider;
     this.options = { ...DEFAULTS, ...options };
+    // mobile-push-badge.js's sync, for the badge rows (drainBadges).
+    this.badges = badges;
     this.timer = null;
     this.running = null;
     this.stopping = true;
@@ -240,7 +242,41 @@ class MobilePushWorker {
     );
     const failed = results.find((result) => result.status === 'rejected');
     if (failed) throw failed.reason;
-    return jobs.length;
+    return jobs.length + await this.drainBadges();
+  }
+
+  // Phone icons owed a re-badge (mobile_push_badge_syncs, written by the
+  // workflow transitions that told people their bell changed: platform.ts
+  // publishPushes). A row settles for the badge debounce first, so a burst
+  // is one push; it is claimed for a minute (a process that ends with it
+  // leaves it to the next pass), synced as mobile-push-badge.js syncs, and
+  // deleted unless a newer change queued it again meanwhile. Best-effort
+  // like the sync itself: a failed push is logged, never retried.
+  async drainBadges() {
+    if (!this.badges || this.stopping) return 0;
+    const { rows } = await this.pool.query(
+      `UPDATE mobile_push_badge_syncs s
+          SET claimed_until = NOW() + INTERVAL '1 minute'
+         FROM (SELECT user_id FROM mobile_push_badge_syncs
+                WHERE queued_at <= NOW() - ($1::bigint * INTERVAL '1 millisecond')
+                  AND (claimed_until IS NULL OR claimed_until < NOW())
+                ORDER BY queued_at LIMIT $2 FOR UPDATE SKIP LOCKED) due
+        WHERE s.user_id = due.user_id
+        RETURNING s.user_id, s.queued_at::text AS queued_at`,
+      [this.badges.debounceMs, this.options.batchSize]
+    );
+    for (const row of rows) {
+      try {
+        await this.badges.syncUser(Number(row.user_id));
+      } catch (err) {
+        log.warn('mobile-push', 'badge sync failed', { code: typeof err?.code === 'string' ? err.code : 'unknown' });
+      }
+      // Its time as Postgres wrote it (text keeps the microseconds a Date
+      // drops): a newer change queued since keeps the row.
+      await this.pool.query('DELETE FROM mobile_push_badge_syncs WHERE user_id = $1 AND queued_at = $2::timestamptz',
+        [row.user_id, row.queued_at]);
+    }
+    return rows.length;
   }
 
   async loadDelivery(job) {

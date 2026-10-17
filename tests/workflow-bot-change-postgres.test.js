@@ -1,0 +1,353 @@
+'use strict';
+
+// The Homeroom bot's change machine (step 8, src/workflow/bot-change/)
+// against the full PostgreSQL schema: what one of the bot's changes up for a
+// vote has its requester and approvers hear, and when it goes back to the
+// bot, decided under the instance's lock from the change's row, with the
+// work that sends it fake. Each [main] bug the step fixes
+// (workflow-foundation's trace-bot-notes.md §7) is named where it is pinned.
+//
+// Run with: TEST_DATABASE_URL=postgres://… node --test tests/workflow-bot-change-postgres.test.js
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const { Pool } = require('pg');
+const { createRuntime, defineMachine } = require('../src/workflow/kernel/index.ts');
+const { botChange, sessionKey, MACHINE, WORK, FIX_LOOK_MS } = require('../src/workflow/bot-change/machine.ts');
+const { toBotChange, writeBotChange } = require('../src/workflow/rules/bot-notes.ts');
+const { READY_HOLD_MS } = require('../src/workflow/rules/bot-readiness.ts');
+
+const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
+const SHA = (c) => c.repeat(40).slice(0, 40);
+
+test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { timeout: 240000 }, async (t) => {
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  admin.on('error', () => {});
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check'); return;
+  }
+  const dbName = 'wf_botchange_' + crypto.randomBytes(6).toString('hex');
+  await admin.query(`CREATE DATABASE ${dbName}`);
+  const url = new URL(DSN); url.pathname = '/' + dbName;
+  const pool = new Pool({ connectionString: String(url), max: 8 });
+  pool.on('error', () => {});
+  const runtimes = [];
+  t.after(async () => {
+    for (const r of runtimes) await r.stop();
+    await pool.end();
+    await admin.query(`DROP DATABASE ${dbName}`);
+    await admin.end();
+  });
+  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+
+  // ── Fixture ─────────────────────────────────────────────────────────
+  let seq = 0;
+  const { rows: [bot] } = await pool.query(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE) RETURNING id`);
+  const { rows: [asker] } = await pool.query(`INSERT INTO users (username, password) VALUES ('asker', 'x') RETURNING id`);
+  const { rows: [person] } = await pool.query(`INSERT INTO users (username, password) VALUES ('person', 'x') RETURNING id`);
+  const { rows: [app] } = await pool.query(
+    `INSERT INTO apps (name, slug, created_by, repo_url, status) VALUES ('Clubs', 'clubs', $1, 'https://github.com/acme/clubs', 'running') RETURNING *`,
+    [asker.id]);
+  const asTransition = async (fn) => {
+    const cl = await pool.connect();
+    try { await cl.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`); await fn(cl); await cl.query('COMMIT'); } finally { cl.release(); }
+  };
+  // One of the bot's changes up for a vote, for request #n, its run, and
+  // who asked for it. `owner`: somebody else's change instead.
+  async function change({ owner = bot.id, status = 'promoted', head = SHA('a'), run = true } = {}) {
+    const n = ++seq;
+    const { rows: [s] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, reviewed_head_sha, checks_commit_sha, linked_issues, pr_title, pr_number, approval_epoch)
+       VALUES ($1, $2, $3, $4, $4, $5, $6, $7, 1) RETURNING *`,
+      [app.id, owner, status, head, [n], `Change ${n}`, 100 + n]);
+    if (run) {
+      await pool.query(
+        `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id) VALUES ($1, $2, 'live', 'ready', $3)`,
+        [app.id, n, s.id]);
+      await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, $2, $3)', [app.id, n, asker.id]);
+    }
+    return { ...s, issueNumber: n, head };
+  }
+  // The checks' verdict on its head, as the preview machine leaves it.
+  const verdict = (s, state, results = []) => asTransition((cl) => cl.query(
+    `UPDATE chat_sessions SET check_state = $2, checks_checked_at = NOW(), test_results = $3::jsonb WHERE id = $1`,
+    [s.id, state, JSON.stringify(results)]));
+  // Its shots slot, as the shots machine leaves it.
+  const shots = (s, { state, runId = null, results = [], stories = 1, at = 'NOW()' }) => asTransition((cl) => cl.query(
+    `UPDATE chat_sessions SET shots_state = $2, shots_run_id = $3, shots_updated_at = ${at},
+            shots_detail = $4::jsonb WHERE id = $1`,
+    [s.id, state, runId, JSON.stringify({
+      headSha: s.head, intent: { stories: Array.from({ length: stories }, (_, i) => ({ claim: `Story ${i + 1}` })) },
+      claims: [{ id: 'c1', claim: 'The host shows on each meeting', steps: ['Open a meeting'] }],
+      shotResults: results,
+    })]));
+  const inst = async (s) => (await pool.query('SELECT * FROM wf_instances WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(s.id)])).rows[0];
+
+  // Fake work: each call recorded; `answer` per kind.
+  const work = { calls: [], answer: new Map() };
+  const fake = (kind) => ({
+    maxAttempts: 2, backoffMs: () => 0, leaseMs: 600,
+    async run({ input, key }) {
+      work.calls.push({ kind, key, input });
+      const a = work.answer.get(kind);
+      return typeof a === 'function' ? await a(input, key) : (a ?? { ok: true });
+    },
+  });
+  const services = Object.fromEntries(Object.values(WORK).map((k) => [k, fake(k)]));
+  const pushes = [];
+  const bc = botChange();
+  // A machine standing for the senders (named as the proposal machine, which
+  // sends Proposed): its one transition writes what theirs write for the bot.
+  const sender = defineMachine({
+    name: 'proposal', version: 1, events: { Tell: (p) => p }, create: ['Tell'],
+    decode: (row) => ({ name: row.state, data: row.data }),
+    authorize: { Tell: () => true },
+    transitions: { '(none)': { Tell: { to: (_s, e) => ({ next: { name: 'done', data: {} }, writes: [toBotChange(e.payload.sessionId, e.payload.event, e.payload.payload || {})] }) } },
+      done: { Tell: { to: (_s, e) => ({ next: { name: 'done', data: {} }, writes: [toBotChange(e.payload.sessionId, e.payload.event, e.payload.payload || {})] }) } } },
+    writes: { botChange: writeBotChange },
+  });
+  const rt = createRuntime({ pool, machines: [bc, sender], pollMs: 50, publish: async (_q, p) => { pushes.push(...p); }, services });
+  runtimes.push(rt);
+
+  let rk = 0;
+  const system = { kind: 'system' };
+  const settle = async () => {
+    for (let i = 0; i < 60; i++) {
+      await rt.drain();
+      if (!(await rt.runServices())) { await rt.drain(); return; }
+    }
+  };
+  const tell = async (s, type, payload = {}) => {
+    const id = await rt.append(bc, sessionKey(s.id), { type, payload: { sessionId: s.id, ...payload } }, { requestKey: `t-${++rk}`, source: system });
+    await settle();
+    return (await pool.query('SELECT result, reason FROM wf_events WHERE id = $1', [id])).rows[0];
+  };
+  const calls = (kind) => work.calls.filter((c) => c.kind === kind);
+  const reset = () => { work.calls.length = 0; work.answer.clear(); pushes.length = 0; };
+  // Its deadline, made due, and the clock's Look applied.
+  const fire = async (s) => {
+    await asTransition((cl) => cl.query('UPDATE wf_instances SET deadline_at = now() WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(s.id)]));
+    await rt.fireTimers();
+    await settle();
+  };
+
+  await t.test('B-create: only a change of the bot\'s, up for a vote, is followed', async () => {
+    reset();
+    const theirs = await change({ owner: person.id, run: false });
+    assert.equal((await tell(theirs, 'Proposed')).reason, 'not_a_bot_change');
+    assert.equal(await inst(theirs), undefined, 'nothing is kept for it');
+    const underway = await change({ status: 'active' });
+    assert.equal((await tell(underway, 'Verdict', { head: underway.head, state: 'passing' })).reason, 'not_up_for_vote');
+    const s = await change();
+    assert.equal((await tell(s, 'Proposed')).result, 'accepted');
+    assert.equal((await inst(s)).state, 'checking', 'no verdict yet');
+    assert.ok(pushes.some((p) => p.kind === 'user' && p.routing.userId === asker.id && p.data.type === 'homeroom_bot_work_changed'),
+      'the requester\'s tray reads again (was bot.proposalChanged)');
+  });
+
+  await t.test('B-sender: another machine\'s transition tells it by its own write, for the bot\'s sessions only', async () => {
+    reset();
+    const s = await change();
+    const theirs = await change({ owner: person.id, run: false });
+    await rt.append(sender, `x:${s.id}`, { type: 'Tell', payload: { sessionId: s.id, event: 'Proposed' } }, { requestKey: `s-${++rk}`, source: system });
+    await rt.append(sender, `x:${theirs.id}`, { type: 'Tell', payload: { sessionId: theirs.id, event: 'Proposed' } }, { requestKey: `s-${++rk}`, source: system });
+    await settle();
+    assert.equal((await inst(s)).state, 'checking');
+    const { rows } = await pool.query(`SELECT count(*)::int AS n FROM wf_events WHERE machine = $1 AND key = $2`, [MACHINE, sessionKey(theirs.id)]);
+    assert.equal(rows[0].n, 0, 'no message about somebody else\'s session');
+  });
+
+  await t.test('B-ready: a passing verdict with nothing declared is ready to try, said once per epoch (bugs 2, 7)', async () => {
+    reset();
+    const s = await change();
+    await tell(s, 'Proposed');
+    await verdict(s, 'passing');
+    await tell(s, 'Verdict', { head: s.head, state: 'passing' });
+    assert.equal((await inst(s)).state, 'ready');
+    assert.deepEqual(calls(WORK.ready).map((c) => [c.key, c.input.epoch, c.input.broken]), [['ready:1', 1, []]]);
+    // Told by the verdict and the settle and the clock at once: one card.
+    await tell(s, 'ShotsSettled');
+    await tell(s, 'Verdict', { head: s.head, state: 'passing' });
+    assert.equal(calls(WORK.ready).length, 1, 'one decider: the card (and the approvers\' bells) asked for once');
+    // A new epoch (its votes cleared) is a new card.
+    await asTransition((cl) => cl.query('UPDATE chat_sessions SET approval_epoch = 2 WHERE id = $1', [s.id]));
+    await tell(s, 'Verdict', { head: s.head, state: 'passing' });
+    assert.deepEqual(calls(WORK.ready).map((c) => c.key), ['ready:1', 'ready:2']);
+  });
+
+  await t.test('B-hold: its shots still to come hold it, by the transaction\'s clock, moved by their activity (bugs 5, 6)', async () => {
+    reset();
+    const s = await change();
+    await tell(s, 'Proposed');
+    await shots(s, { state: 'exploring', runId: crypto.randomBytes(16).toString('hex') });
+    await verdict(s, 'passing');
+    await tell(s, 'Verdict', { head: s.head, state: 'passing' });
+    let i = await inst(s);
+    assert.equal(i.state, 'waiting_on_shots');
+    assert.ok(Math.abs(new Date(i.deadline_at).getTime() - (Date.now() + READY_HOLD_MS)) < 60000, 'held 45 minutes from now');
+    assert.equal(calls(WORK.ready).length, 0);
+    // The clock comes while the run still moves (its slot moved 10 minutes
+    // ago): held on, from that move (the sweep's window ignored it, bug 5).
+    await shots(s, { state: 'exploring', runId: crypto.randomBytes(16).toString('hex'), at: `NOW() - INTERVAL '10 minutes'` });
+    await asTransition((cl) => cl.query(`UPDATE chat_sessions SET checks_checked_at = NOW() - INTERVAL '50 minutes' WHERE id = $1`, [s.id]));
+    await fire(s);
+    i = await inst(s);
+    assert.equal(i.state, 'waiting_on_shots');
+    assert.ok(Math.abs(new Date(i.deadline_at).getTime() - (Date.now() + READY_HOLD_MS - 10 * 60000)) < 60000);
+    // No settle ever comes: held long enough, it is ready anyway, by the
+    // machine's own timer (the leader's sweep and its window are gone).
+    await shots(s, { state: 'exploring', runId: crypto.randomBytes(16).toString('hex'), at: `NOW() - INTERVAL '50 minutes'` });
+    await fire(s);
+    assert.equal((await inst(s)).state, 'ready');
+    assert.equal(calls(WORK.ready).length, 1);
+  });
+
+  const broken = [{ id: 'c1', status: 'failed', reason: 'The host was missing' }];
+
+  await t.test('B-fix: shots showing part of it failing send it back to the bot, once per head, then ready with what does not work (bugs 3, 4, Q3)', async () => {
+    reset();
+    const s = await change();
+    await tell(s, 'Proposed');
+    await verdict(s, 'passing');
+    await shots(s, { state: 'verified', results: broken });
+    work.answer.set(WORK.fix, { queued: true });
+    await tell(s, 'ShotsSettled');
+    let i = await inst(s);
+    assert.equal(i.state, 'with_the_bot');
+    assert.deepEqual(calls(WORK.fix).map((c) => [c.key, c.input.head]), [[`fix:${s.head.slice(0, 12)}:1`, s.head]]);
+    assert.equal(calls(WORK.ready).length, 0, 'no card while the bot fixes it');
+    // The round is waiting in the bot's queue: the clock waits on.
+    await pool.query('INSERT INTO homeroom_bot_queue (app_id, issue_number, reason) VALUES ($1, $2, $3)', [app.id, s.issueNumber, 'checks_failing']);
+    await fire(s);
+    assert.equal((await inst(s)).state, 'with_the_bot');
+    assert.equal(calls(WORK.fix).length, 1);
+    assert.ok(new Date((await inst(s)).deadline_at).getTime() > Date.now() + FIX_LOOK_MS - 60000);
+    // The row went with nothing recorded (a follow-up deleted it, bug 3;
+    // a release took the round, bug 4): asked once more.
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2', [app.id, s.issueNumber]);
+    await fire(s);
+    assert.deepEqual(calls(WORK.fix).map((c) => c.key), [`fix:${s.head.slice(0, 12)}:1`, `fix:${s.head.slice(0, 12)}:2`]);
+    // Lost again: the requester is told it is ready, saying what does not work.
+    await fire(s);
+    i = await inst(s);
+    assert.equal(i.state, 'ready');
+    assert.deepEqual(calls(WORK.ready).map((c) => c.input.broken), [['The host shows on each meeting']]);
+  });
+
+  await t.test('B-round: the bot\'s round on the head ends: ready, saying what does not work (bug 4)', async () => {
+    reset();
+    const s = await change();
+    await tell(s, 'Proposed');
+    await verdict(s, 'passing');
+    await shots(s, { state: 'verified', results: broken });
+    work.answer.set(WORK.fix, { queued: true });
+    await tell(s, 'ShotsSettled');
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id, checks_head_sha) VALUES ($1, $2, 'live', 'person', $3, $4)`,
+      [app.id, s.issueNumber, s.id, s.head]);
+    await tell(s, 'FixRoundEnded', { head: s.head });
+    assert.equal((await inst(s)).state, 'ready');
+    assert.equal(calls(WORK.ready).length, 1);
+    assert.deepEqual(calls(WORK.ready)[0].input.broken, ['The host shows on each meeting']);
+  });
+
+  await t.test('B-refused: the bot does not take the round (off, not on the app): ready with what does not work at once', async () => {
+    reset();
+    const s = await change();
+    await tell(s, 'Proposed');
+    await verdict(s, 'passing');
+    await shots(s, { state: 'verified', results: broken });
+    work.answer.set(WORK.fix, { queued: false, why: 'off' });
+    await tell(s, 'ShotsSettled');
+    const i = await inst(s);
+    assert.equal(i.state, 'ready');
+    assert.equal(i.data.fix.refused, 'off');
+    assert.equal(calls(WORK.ready).length, 1);
+  });
+
+  await t.test('B-failing: failing checks go back to the bot; not taken, its requester hears it needs a look', async () => {
+    reset();
+    const s = await change();
+    await tell(s, 'Proposed');
+    await verdict(s, 'failing', [{ name: 'host shows', status: 'fail', failureReason: 'expected host' }]);
+    work.answer.set(WORK.fix, { queued: false, why: 'infra' });
+    await tell(s, 'Verdict', { head: s.head, state: 'failing' });
+    assert.equal(calls(WORK.fix).length, 1);
+    assert.equal(calls(WORK.ready).length, 0, 'a failing change is never "ready to try"');
+    assert.deepEqual(calls(WORK.needsLook).map((c) => c.key), ['needs-look:1']);
+    // Its checks run again and pass on the same epoch: ready now.
+    await verdict(s, 'passing');
+    await tell(s, 'Verdict', { head: s.head, state: 'passing' });
+    assert.deepEqual(calls(WORK.ready).map((c) => c.key), ['ready:1']);
+  });
+
+  await t.test('B-stopped, B-live, B-closed: the preview that will not start, the merge and its live, the close', async () => {
+    reset();
+    const s = await change();
+    await tell(s, 'Proposed');
+    await tell(s, 'PreviewStopped', { head: s.head });
+    await tell(s, 'PreviewStopped', { head: s.head });
+    assert.deepEqual(calls(WORK.stopped).map((c) => c.key), ['stopped:1'], 'once per epoch');
+    await asTransition((cl) => cl.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [s.id]));
+    await tell(s, 'Merged', { before: new Date().toISOString() });
+    assert.equal((await inst(s)).state, 'merged');
+    assert.equal(calls(WORK.merged).length, 1, 'the bot\'s other work on the request stops');
+    await tell(s, 'Live');
+    await tell(s, 'Live');
+    assert.equal((await inst(s)).state, 'live');
+    assert.deepEqual([calls(WORK.liveDm).length, calls(WORK.livePost).length, calls(WORK.merged).length], [1, 1, 1]);
+    // A change merged and live with no Merged first (an included one).
+    const t2 = await change({ status: 'merged' });
+    await tell(t2, 'Live');
+    assert.deepEqual(calls(WORK.merged).map((c) => c.input.sessionId), [s.id, t2.id]);
+    // Closed: the tray reads again, and nothing more is said.
+    const c = await change();
+    await tell(c, 'Proposed');
+    pushes.length = 0;
+    await tell(c, 'Closed', { reason: 'closed' });
+    assert.equal((await inst(c)).state, 'closed');
+    assert.ok(pushes.some((p) => p.kind === 'user' && p.data.type === 'homeroom_bot_work_changed'));
+    assert.equal((await tell(c, 'Verdict', { head: c.head, state: 'passing' })).reason, 'ended');
+  });
+
+  await t.test('B-retry: a note that failed for good is asked again by an admin, from its checkpoint', async () => {
+    reset();
+    const s = await change();
+    await tell(s, 'Proposed');
+    await verdict(s, 'passing');
+    work.answer.set(WORK.ready, () => { throw new Error('the DM server is down'); });
+    await tell(s, 'Verdict', { head: s.head, state: 'passing' });
+    let i = await inst(s);
+    assert.equal(i.data.notes['ready:1'].status, 'exhausted');
+    work.answer.set(WORK.ready, { messageId: 7 });
+    const id = await rt.append(bc, sessionKey(s.id), { type: 'RetryFollowup', payload: { workKey: 'ready:1' } },
+      { requestKey: `r-${++rk}`, source: { kind: 'admin' } });
+    await settle();
+    assert.equal((await pool.query('SELECT result FROM wf_events WHERE id = $1', [id])).rows[0].result, 'accepted');
+    i = await inst(s);
+    assert.equal(i.data.notes['ready:1'].status, 'retried');
+    assert.equal(Object.values(i.data.notes).filter((n) => n.status === 'done').length, 1);
+  });
+
+  await t.test('kernel: no notifier, and nothing a transition returns runs after COMMIT', async () => {
+    assert.throws(() => defineMachine({ name: 'old-style', version: 1, events: {}, decode: (r) => r, authorize: {}, transitions: {}, notifiers: {} }),
+      /notifiers are gone/);
+    const kicking = defineMachine({
+      name: 'kicking', version: 1, events: { Go: (p) => p }, create: ['Go'],
+      decode: (row) => ({ name: row.state, data: row.data }), authorize: { Go: () => true },
+      transitions: { '(none)': { Go: { to: () => ({ next: { name: 'gone', data: {} }, notify: [{ type: 'kick' }] }) } }, gone: { Go: { ignore: 'gone' } } },
+    });
+    const kr = createRuntime({ pool, machines: [kicking], pollMs: 50, publish: async () => {}, services: {} });
+    runtimes.push(kr);
+    const id = await kr.append(kicking, 'k:1', { type: 'Go', payload: {} }, { requestKey: 'k-1', source: system });
+    await kr.drain();
+    const { rows: [e] } = await pool.query('SELECT result, error FROM wf_events WHERE id = $1', [id]);
+    assert.equal(e.result, 'faulted');
+    assert.match(JSON.stringify(e.error), /returned notify/);
+  });
+});

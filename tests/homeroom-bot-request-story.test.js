@@ -184,6 +184,68 @@ test('strict: a failed lookup of the pending post is thrown, never taken for non
   assert.deepEqual([inserted.length, messages.length], [0, 0], 'the thread message is not said again');
 });
 
+// trace-bot-notes bugs 9 and 10: the bubble's row went in and its id was
+// never kept (its broadcast threw after the INSERT, or the process ended),
+// or GitHub could not be read for the comment a cut-short post made: the
+// retry finds the bubble by the post's mark, and a failed read is retried,
+// never taken for "not posted".
+test('strict: a retry finds the thread message it made before by its mark, and a failed comment lookup is thrown', async () => {
+  const posts = new Map([[99, { id: 99, pending: true, github_comment_id: null, thread_message_id: null }]]);
+  const chat = [];   // chat_messages rows the bot inserted, with their metadata
+  let lookupDown = true;
+  const pool = {
+    async query(sql, params) {
+      if (/FROM homeroom_bot_runs r\s+JOIN apps a/.test(sql)) {
+        return { rows: [{ run_id: 40, app_id: 3, issue_number: 12, slug: 'plant-pal', name: 'Plant Pal', repo_url: 'https://github.com/o/plant-pal', title: 'Dark mode' }] };
+      }
+      if (/kind = 'live' AND pending IS NOT TRUE LIMIT 1/.test(sql)) return { rows: [] };
+      if (/WHERE run_id = \$1 AND kind = \$2 AND pending IS TRUE/.test(sql)) {
+        return { rows: [...posts.values()].filter((r) => r.pending).map((r) => ({ ...r, created_at: new Date() })) };
+      }
+      if (/metadata->>'hrbotPost' = \$3/.test(sql)) {
+        return { rows: chat.filter((m) => m.metadata.hrbotPost === params[2]).map((m) => ({ id: m.id })) };
+      }
+      if (/FROM users WHERE username/.test(sql)) return { rows: [BOT] };
+      if (/SET github_comment_id = \$2, thread_message_id = \$3, pending = NULL/.test(sql)) {
+        Object.assign(posts.get(params[0]), { github_comment_id: params[1], thread_message_id: params[2], pending: null });
+      }
+      if (/SET github_comment_id = \$2 WHERE id = \$1/.test(sql)) posts.get(params[0]).github_comment_id = params[1];
+      return { rows: [] };
+    },
+  };
+  let broadcastFails = true;
+  const comments = [];
+  const deps = {
+    github: {
+      async fetchIssueComments() { if (lookupDown) throw Object.assign(new Error('GitHub 502'), { status: 502 }); return { comments: [] }; },
+      async createIssueComment(o, r, n, text) { comments.push(text); return { id: 5, created_at: 'now' }; },
+    },
+    ws: {
+      // The row goes in, then its broadcast throws: what sendBotMessage does
+      // when its user_blocks read fails after the INSERT.
+      async sendBotMessage(_p, _a, msg) {
+        chat.push({ id: 700 + chat.length, metadata: msg.metadata });
+        if (broadcastFails) throw new Error('user_blocks read failed');
+        return { id: 700 + chat.length - 1 };
+      },
+      async sendSystemMessage() {},
+    },
+  };
+  await assert.rejects(live.announceLive(pool, { session: { id: 51 }, deps, strict: true }), /GitHub 502/,
+    'a failed lookup of its comment is retried, not taken for none');
+  assert.equal(comments.length, 0);
+  lookupDown = false;
+  await assert.rejects(live.announceLive(pool, { session: { id: 51 }, deps, strict: true }), /the thread message \(user_blocks read failed\)/);
+  assert.equal(chat.length, 1);
+  assert.equal(chat[0].metadata.hrbotPost, '99', 'its message carries the post\'s mark');
+  broadcastFails = false;
+  const out = await live.announceLive(pool, { session: { id: 51 }, deps, strict: true });
+  assert.ok(out && out.thread);
+  assert.equal(chat.length, 1, 'the bubble is not posted a second time');
+  assert.equal(posts.get(99).thread_message_id, 700, 'and the one it made is the one kept');
+  assert.equal(comments.length, 1);
+});
+
 test('announceLive says it on the request once, in both places, untagged', async () => {
   const f = fakeLive();
   const out = await live.announceLive(f.pool, { session: { id: 51 }, deps: f.deps });
@@ -203,27 +265,26 @@ test('announceLive says it on the request once, in both places, untagged', async
   assert.equal(await live.announceLive(other.pool, { session: null }), null);
 });
 
-test('the merge-followups machine asks for it once the change is live, strictly, so a failure is retried', async (t) => {
-  // machine.ts toLive asks for bot.announceLive with the dm; services.ts
-  // runs it with the change's row and GitHub.
-  const { WORK } = require('../src/workflow/merge-followups/machine.ts');
-  const { mergeFollowupsServices } = require('../src/workflow/merge-followups/services.ts');
-  assert.equal(WORK.live, 'bot.announceLive');
+test('the bot\'s change machine asks for it once the change is live, strictly, so a failure is retried', async (t) => {
+  // The merge-followups machine's live tells the bot's change machine
+  // (its write); that machine's bot.commentLive runs it with the change's row.
+  const { WORK } = require('../src/workflow/bot-change/machine.ts');
+  const { botChangeServices } = require('../src/workflow/bot-change/services.ts');
+  assert.equal(WORK.livePost, 'bot.commentLive');
   const machine = require('node:fs').readFileSync(require.resolve('../src/workflow/merge-followups/machine.ts'), 'utf8');
   const toLive = machine.slice(machine.indexOf('function toLive('), machine.indexOf('function lineInput('));
-  assert.match(toLive, /\{ kind: WORK\.live, key: 'live', input: \{ sessionId: d\.sessionId \} \}/);
+  assert.match(toLive, /writes\.push\(toBotChange\(d\.sessionId, 'Live'\)\);/);
   const row = { id: 51, app_id: 3, app_slug: 'plant-pal', pr_title: 'Dark mode' };
-  const pool = { async query(sql) { return { rows: /FROM chat_sessions cs JOIN apps a/.test(sql) ? [row] : [] }; } };
+  const pool = { async query(sql) { return { rows: /FROM chat_sessions WHERE id = \$1/.test(sql) ? [row] : [] }; } };
   const asked = [];
   t.mock.method(live, 'announceLive', async (p, args) => { asked.push([p, args]); return { github: {}, thread: {} }; });
-  const run = (input) => mergeFollowupsServices({ config: {}, pool })[WORK.live]
-    .run({ input, key: 'live', attempt: 1, resumeFrom: null, checkpoint: async () => {} });
+  const run = (input) => botChangeServices({ config: {}, pool })[WORK.livePost]
+    .run({ input, key: 'live-post', attempt: 1, resumeFrom: null, checkpoint: async () => {} });
   assert.deepEqual(await run({ sessionId: 51 }), { posted: true });
   assert.equal(asked.length, 1);
   assert.equal(asked[0][0], pool);
   assert.equal(asked[0][1].session, row, 'the change as it reads now');
   assert.equal(asked[0][1].strict, true);
-  assert.ok(asked[0][1].deps.github, 'and GitHub to comment with');
   t.mock.restoreAll();
 
   // Strict: a failure throws, for the work item to be retried; otherwise it

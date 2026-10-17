@@ -76,7 +76,6 @@ export interface MessageRequest {
   appId?: number | null;
 }
 export interface TimerRequest { at: Date; event: { type: string; payload?: Json } }
-export interface Notification { type: string; [field: string]: unknown }
 
 // What browsers should hear. Pushes are published inside the transition's
 // transaction (RuntimeOptions.publish) and reach them only if it commits:
@@ -97,7 +96,6 @@ export interface Outcome<S extends State = State> {
   messages?: MessageRequest[];
   timer?: TimerRequest | null;   // undefined keeps the deadline, null clears it
   push?: Push[];
-  notify?: Notification[];
 }
 
 // Guards and authorisation return true to pass or a rejection.
@@ -124,7 +122,6 @@ export type Authorize<S extends State, F> = (event: Event<any>, facts: F, state:
 // just inserted): committed with the event, as the outcome's own messages are.
 export interface WriteContext extends TransitionContext { push(p: Push): void; message(m: MessageRequest): void }
 export type WriteHandler = (tx: Tx, write: any, ctx: WriteContext) => Promise<unknown>;
-export type Notifier = (notification: any) => void | Promise<void>;
 
 // What a machine module writes. Plain objects are authoring syntax only:
 // defineMachine converts every table to a Map once, and the kernel reads
@@ -151,7 +148,6 @@ export interface MachineDefinition<S extends State = State, F = unknown> {
   // are the ones the transition decided on, so an answer they already hold
   // (was this vote a retraction?) needs no query.
   reply?: (tx: Tx, event: Event<any>, after: S, ctx: TransitionContext, facts: F) => Promise<Json | undefined>;
-  notifiers?: Record<string, Notifier>;
   // States in which an instance waits on something nobody inside the
   // platform can hurry, each with the words Admin → Workflows shows beside
   // it under "Needs a person" (a merge GitHub has not answered).

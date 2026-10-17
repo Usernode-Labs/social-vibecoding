@@ -11,6 +11,12 @@
     "app-delivery": {
       "services | uses src/services/staging.js:deployProduction": "the production deploy, taken over from merge-followups (app.deliver) and governance-proposal (app.rebuildProduction), whose work paths and their staging.rebuildProduction call were deleted with this machine's flag",
       "services | uses src/services/github.js:getCommitTree": "demo mode's preview image, offered to the deploy when its tree is the merged tree: taken over from merge-followups (app.deliver), whose call went with its work path"
+    },
+    "bot-change": {
+      "services | uses src/services/homeroom-bot-dm.js:noteChangeStopped": "the quiet line when a change's preview will not start, taken over from preview (preview.stopped, whose handler is a one-release shim that appends PreviewStopped); strict now: a failure is retried, never reported as done",
+      "services | uses src/services/homeroom-bot-dm.js:noteProposalMerged": "whoever the bot built a change for hears it is live, taken over from merge-followups (bot.dmMerged, a one-release shim now); its timeline stages are awaited and kept once",
+      "services | uses src/services/homeroom-bot-live.js:announceLive": "the request's \"It's live\" on GitHub and in its thread, taken over from merge-followups (bot.announceLive, a one-release shim now); a retry finds the comment and the thread message it made before (a failed lookup is retried, not taken for none)",
+      "services | uses src/services/homeroom-bot.js:noteRequestMerged": "the bot's other work on a merged change's request stops, taken over from merge-followups (bot.requestMerged, a one-release shim now); its wake reaches the loop wherever it runs"
     }
   },
   "io": {
@@ -105,25 +111,16 @@
       "services | uses src/services/limits.js:recordSpend": "records what the AI's calls cost against the platform account (campaign.change), as runCampaign's loop did; a row, non-fatal",
       "services | uses src/services/llm.js:estimateCostCents": "what one model call cost, from its usage (pure), for the spend record",
       "services | uses src/services/llm.js:isEnabled": "whether the model is configured on this platform (pure, configuration): a campaign's change fails at once without it"
+    },
+    "bot-change": {
+      "services | uses src/services/homeroom-bot-dm.js:tellReady": "the ready-to-try card, its record, the approvers' bells and the chip, cut out of noteChangeReady (which also decided, from the wall clock, swallowed every error and ran from four callers): it sends what the machine decided, keyed per epoch, and throws what it could not do",
+      "services | uses src/services/homeroom-bot.js:queueChecksFix": "the bot's queue row for a fix round on a head, and the loop's wake in the same statement, cut out of noteProposalChecks (which swallowed errors, defaulted the settings on a read error and reported queued for a row it did not touch): it reports whether the bot takes it, and why not",
+      "services | uses src/services/homeroom-bot-dm.js:noteNeedsLook": "the \"needs a look\" line for failing checks the bot will not fix, keyed per epoch, strict (a failure is retried) and recorded on a retry too, outside the loop that also sends it for built changes with no proposal"
     }
   },
   "handOff": {
-    "preview": {
-      "services | uses src/services/homeroom-bot-dm.js:noteChangeReady": "the Homeroom bot hears that its change is ready to try (verdict.followUps); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)",
-      "services | uses src/services/homeroom-bot-dm.js:noteChangeStopped": "the Homeroom bot hears that its change's preview will not start (preview.stopped); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)",
-      "services | uses src/services/homeroom-bot.js:noteProposalChecks": "the Homeroom bot queues a turn to fix its proposal's failing checks (verdict.followUps); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)"
-    },
     "governance-proposal": {
-      "services | uses src/services/homeroom-bot-closed-requests.js:noteRequestsClosed": "a close vote closed a request: the Homeroom bot's proposals for it are withdrawn and the bot is woken (bot.requestsClosed work, taken over from the deleted close-issue apply); goes when the last step migrates the bot's wake"
-    },
-    "merge-followups": {
-      "services | uses src/services/homeroom-bot-live.js:announceLive": "the request's \"It's live\" on GitHub and in its thread, once a change the bot built is live (bot.announceLive work, taken over from the deleted merge tail); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)"
-    },
-    "shots": {
-      "services | uses src/services/homeroom-bot-dm.js:noteShotsSettled": "bot.shotsSettled: tells the Homeroom bot a change of its is ready to try (or goes back to it) once its shots settled; was shots-state.noteSettled's setImmediate after commit; goes with the step that migrates the bot's wake (the rest)"
-    },
-    "proposal": {
-      "services | uses src/services/homeroom-bot-dm.js:noteProposalChanged": "bot.proposalChanged: one of the Homeroom bot's proposals went up for a vote or closed, and the activity tray of whoever asked for it reads again (was the promote route's and finalizeArchivedSession's call); goes with the last step (\"the rest\": the bot's notes as reactions to the stream)"
+      "services | uses src/services/homeroom-bot-closed-requests.js:noteRequestsClosed": "a close vote closed a request: the Homeroom bot's proposals for it are withdrawn (each through the proposal machine's Close, whose transaction writes the request's note) once GitHub reads every request they are for closed (bot.requestsClosed work); a failed GitHub read is retried. Goes with the step that migrates the bot's own read-and-fix loop (the roadmap's bot-loop step), which owns which of its requests are worked on"
     }
   },
   "machines": {
@@ -147,10 +144,6 @@
       "services | uses src/services/llm.js:isEnabled"
     ],
     "governance-proposal": [
-      "notifiers | notifier boardChange",
-      "notifiers | notifier scoreVote",
-      "notifiers | uses src/services/topochain/challenge-scorer.js:scoreOnVote",
-      "notifiers | uses src/services/ws.js:noteBoardChange",
       "ownership | issues.status ← src/services/homeroom-bot-move.js#closeNow",
       "ownership | issues.status ← src/services/issue-close-watcher.js#closeTwinRows",
       "services | uses src/services/github.js:getIssue",
@@ -163,10 +156,6 @@
     ],
     "kernel": [],
     "merge-followups": [
-      "notifiers | notifier badgeSync",
-      "notifiers | notifier boardChange",
-      "notifiers | uses src/services/mobile-push.js:scheduleBadgeSync",
-      "notifiers | uses src/services/ws.js:noteBoardChange",
       "ownership | chat_sessions.included_in_session_id ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
       "ownership | chat_sessions.included_in_session_id ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
       "ownership | chat_sessions.live_at ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
@@ -190,9 +179,6 @@
       "services | uses src/services/github.js:compareCommitAncestry",
       "services | uses src/services/github.js:isEnabled",
       "services | uses src/services/github.js:listPullRequestCommitShas",
-      "services | uses src/services/homeroom-bot-dm.js:noteProposalMerged",
-      "services | uses src/services/homeroom-bot-live.js:announceLive",
-      "services | uses src/services/homeroom-bot.js:noteRequestMerged",
       "services | uses src/services/included-changes.js:CANDIDATES_SQL",
       "services | uses src/services/included-changes.js:closeRequests",
       "services | uses src/services/included-changes.js:containedIn",
@@ -209,6 +195,7 @@
       "shared | uses src/services/github.js:isEnabled"
     ],
     "platform": [
+      "web | state src/workflow/platform.ts#botChanges",
       "web | state src/workflow/platform.ts#campaigns",
       "web | state src/workflow/platform.ts#deliveries",
       "web | state src/workflow/platform.ts#kernelPool",
@@ -314,9 +301,6 @@
       "services | uses src/services/docker.js:execFileAsync",
       "services | uses src/services/docker.js:inspectContainer",
       "services | uses src/services/github.js:isEnabled",
-      "services | uses src/services/homeroom-bot-dm.js:noteChangeReady",
-      "services | uses src/services/homeroom-bot-dm.js:noteChangeStopped",
-      "services | uses src/services/homeroom-bot.js:noteProposalChecks",
       "services | uses src/services/kubernetes.js:PREVIEW_ATTEMPT_ANNOTATION",
       "services | uses src/services/kubernetes.js:appResourceName",
       "services | uses src/services/kubernetes.js:attemptFence",
@@ -354,7 +338,6 @@
       "ownership | chat_sessions.shots_updated_at ← src/routes/sessions.js#setHeadlessStep (dynamic SET)",
       "ownership | chat_sessions.shots_updated_at ← src/services/proposal-update.js#applyTestingMetadata (dynamic SET)",
       "services | uses src/services/durable-steps.js:durable",
-      "services | uses src/services/homeroom-bot-dm.js:noteShotsSettled",
       "services | uses src/services/pr-metadata.js:syncShotsPrBlock",
       "services | uses src/services/shots-orchestrator.js:buildCopies",
       "services | uses src/services/shots-orchestrator.js:cleanupRun",
@@ -405,13 +388,21 @@
       "services | uses src/services/github.js:isEnabled",
       "services | uses src/services/github.js:markPrReadyForReview",
       "services | uses src/services/github.js:reopenPR",
-      "services | uses src/services/homeroom-bot-dm.js:noteProposalChanged",
       "services | uses src/services/limits.js:resolveBillingPath",
       "services | uses src/services/pr-metadata.js:applyPrMetadata",
       "services | uses src/services/proposal-update.js:updateLinkedIssues",
       "services | uses src/services/sync-main.js:runSyncWork",
       "services | uses src/services/worker.js:removeCcVolume",
       "services | uses src/services/worker.js:removeWorker"
+    ],
+    "bot-change": [
+      "services | uses src/services/homeroom-bot-dm.js:noteChangeStopped",
+      "services | uses src/services/homeroom-bot-dm.js:noteNeedsLook",
+      "services | uses src/services/homeroom-bot-dm.js:noteProposalMerged",
+      "services | uses src/services/homeroom-bot-dm.js:tellReady",
+      "services | uses src/services/homeroom-bot-live.js:announceLive",
+      "services | uses src/services/homeroom-bot.js:noteRequestMerged",
+      "services | uses src/services/homeroom-bot.js:queueChecksFix"
     ]
   }
 }

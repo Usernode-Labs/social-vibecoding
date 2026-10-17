@@ -6,13 +6,13 @@
 
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type {
-  Check, DomainWrite, Event, Json, Machine, Notification, Outcome, Push, TransitionContext, Tx, WorkRequest,
+  Check, DomainWrite, Event, Json, Machine, Outcome, Push, TransitionContext, Tx, WorkRequest,
   WorkResultPayload, WriteContext,
 } from '../kernel/index.ts';
 import { applyProposal } from '../rules/illustrations.ts';
 import { decrypt, encrypt } from '../rules/secrets.ts';
 import { deleteValue, setValue } from '../rules/platform-vars.ts';
-import { appUpdate, chatLine, issuesClosed, issueUpdate as issuePush } from '../pushes.ts';
+import { appUpdate, boardMoved, chatLine, issuesClosed, issueUpdate as issuePush } from '../pushes.ts';
 import { GOVERNANCE_KINDS, readFacts } from './facts.ts';
 import type { Facts, Issue } from './facts.ts';
 import { evaluate, nextCheck, withVote } from './gate.ts';
@@ -99,12 +99,7 @@ export interface MachineDeps {
   dataKey: string;               // config.dataEncryptionKey, to check a secret decrypts
   backstopMs?: number;           // re-evaluate an open proposal at least this often
   targetCheckMs?: number;        // how often an open close proposal checks its target on GitHub
-  // One implementation per NOTIFIERS entry: post-commit kicks into flows not
-  // migrated yet. What browsers hear is a push, published with the transition.
-  notifiers: Record<string, (n: any) => void | Promise<void>>;
 }
-
-export const NOTIFIERS = ['boardChange', 'scoreVote'] as const;
 
 // ── Copy ────────────────────────────────────────────────────────────────
 
@@ -159,13 +154,10 @@ const chat = (event: Event<any>, issue: Issue, content: string, thread: { type: 
 const governanceThread = (issue: Issue) => ({ type: 'governance', ref: issue.id });
 const issueUpdate = (issue: Issue, action: string, extra: Record<string, Json> = {}): Push =>
   issuePush({ action, appId: issue.appId, appSlug: issue.app.slug, issueId: issue.id, ...extra });
-// A request board changed: the Workshop re-places its cards (the kick
-// ws.pushIssueUpdate gave its in-process listeners; services/workshop-themes.js).
-const boardChange = (appId: number | null, appSlug: string | null): Notification => ({ type: 'boardChange', appId, appSlug });
 
 // The thread lines an outcome writes push themselves (the chat and vote
 // writes), with the rows they inserted.
-interface Extra { writes?: DomainWrite[]; push?: Push[]; notify?: Notification[] }
+interface Extra { writes?: DomainWrite[]; push?: Push[] }
 
 function close(
   name: Closed, issue: Issue, event: Event<any>, ctx: TransitionContext,
@@ -186,8 +178,8 @@ function close(
     work,
     messages: asked.length ? [deliveryRequest(issue.appId)] : undefined,
     timer: null,
-    push: [...(extra.push || []), issueUpdate(issue, 'closed')],
-    notify: [...(extra.notify || []), boardChange(issue.appId, issue.app.slug)],
+    // A request board changed: the Workshop re-places its cards.
+    push: [...(extra.push || []), boardMoved(issueUpdate(issue, 'closed'))],
   };
 }
 
@@ -214,7 +206,6 @@ function apply(
   const work: WorkRequest[] = [];
   const asked: { key: string; input: Json }[] = [];
   const push: Push[] = [...(extra.push || [])];
-  const notify: Notification[] = [...(extra.notify || [])];
   if (issue.kind === 'close_issue') {
     const n = Number(p.issueNumber);
     writes.push(chat(event, issue, line, { type: 'issue', ref: n }));
@@ -241,7 +232,7 @@ function apply(
   // A maintenance campaign is started by the apply's own write: it inserts
   // the campaign's row and messages the campaign machine (src/workflow/campaign/).
   const audit = { appliedAt: at, appliedBy: by ? `admin:${by.admin}` : 'group-vote', ...tally };
-  return close('applied', issue, event, ctx, audit, { writes, work, asked, push, notify });
+  return close('applied', issue, event, ctx, audit, { writes, work, asked, push });
 }
 
 type Timing = Required<Pick<MachineDeps, 'backstopMs' | 'targetCheckMs'>>;
@@ -268,7 +259,7 @@ function awaitTarget(
 ): Outcome<GovState> {
   const data: OpenData = { ...s.data, evaluation: e, applyAfterCheck: by };
   return {
-    next: { name: 'open', data }, writes: extra.writes, push: extra.push, notify: extra.notify, work: targetCheckWork(data, issue, ctx),
+    next: { name: 'open', data }, writes: extra.writes, push: extra.push, work: targetCheckWork(data, issue, ctx),
     timer: { at: new Date(ctx.now.getTime() + timing.backstopMs), event: { type: 'Evaluate' } },
   };
 }
@@ -289,7 +280,7 @@ function decide(
   const stale = !data.targetCheckedAt || ctx.now.getTime() - Date.parse(data.targetCheckedAt) >= timing.targetCheckMs;
   const work = checksTarget(issue) && stale ? targetCheckWork(data, issue, ctx) : [];
   return {
-    next: { name: 'open', data }, writes: extra.writes, push: extra.push, notify: extra.notify, work,
+    next: { name: 'open', data }, writes: extra.writes, push: extra.push, work,
     timer: { at: nextCheck(e, ctx.now, timing.backstopMs), event: { type: 'Evaluate' } },
   };
 }
@@ -324,9 +315,8 @@ function followupResult(s: { name: Closed; data: ClosedData }, e: Event<WorkResu
     next: { name: s.name, data: { ...s.data, followups } },
     push: closed ? [
       issuesClosed({ owner: String(input.owner), repo: String(input.repo), numbers: [Number(input.number)] }),
-      issuePush({ action: 'github_synced', appSlug: input.appSlug ?? null, appId: input.appId ?? null, source: 'close_issue_vote' }),
+      boardMoved(issuePush({ action: 'github_synced', appSlug: input.appSlug ?? null, appId: input.appId ?? null, source: 'close_issue_vote' })),
     ] : undefined,
-    notify: closed ? [boardChange(input.appId as number ?? null, input.appSlug as string ?? null)] : undefined,
   };
 }
 
@@ -380,7 +370,6 @@ const pendingFollowup = (s: any, e: Event<WorkResultPayload>): Check =>
 // ── The machine ─────────────────────────────────────────────────────────
 
 export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> {
-  for (const n of NOTIFIERS) if (typeof deps.notifiers[n] !== 'function') throw new Error(`governance-proposal: notifier ${n} missing`);
   const timing = { backstopMs: deps.backstopMs ?? 10 * 60 * 1000, targetCheckMs: deps.targetCheckMs ?? 60 * 60 * 1000 };
   const user = (e: Event<any>) => e.actor === `user:${e.payload.userId}`;
   const closedRow = {
@@ -486,9 +475,11 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
               ? chat(e, issue, `${e.payload.username} voted ${vote} on ${voteSubject(issue)}${r ? `: “${r}”` : ''}`, governanceThread(issue), 'vote')
               : null;
             const writes: DomainWrite[] = [{ type: 'vote', issueId: issue.id, appId: issue.appId, userId: e.payload.userId, vote, reason: r, line }];
-            const push = [issueUpdate(issue, 'voted', vote ? { vote } : { toggled: true })];
-            const notify: Notification[] = [boardChange(issue.appId, issue.app.slug), ...(vote ? [{ type: 'scoreVote' }] : [])];
-            return decide(s as any, e, f, ctx, timing, withVote(f.gate!, f.voter!, vote), { writes, push, notify });
+            // The Workshop re-places the board's cards. A vote cast is scored for
+            // "Vote on a change" by the route once it is accepted (routes/issues.js),
+            // as a vote on a request or a change is.
+            const push = [boardMoved(issueUpdate(issue, 'voted', vote ? { vote } : { toggled: true }))];
+            return decide(s as any, e, f, ctx, timing, withVote(f.gate!, f.voter!, vote), { writes, push });
           },
         }),
         Evaluate: watchingOutside({ to: (s, e, f, ctx) => decide(s as any, e, f, ctx, timing) }),
@@ -560,7 +551,6 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
       }
       return { result: await kindResult(tx, after, facts) };
     },
-    notifiers: deps.notifiers,
   });
 }
 

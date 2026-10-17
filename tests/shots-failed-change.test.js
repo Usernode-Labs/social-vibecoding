@@ -231,16 +231,18 @@ test('holdsReady waits for shots on the head, and only while they can still come
   assert.equal(hold({ ...running, checks_checked_at: late, shots_updated_at: late }), false);
 });
 
-test('every way the shots slot settles tells whoever waits on it, as durable work', () => {
-  // The shots machine (src/workflow/shots/) asks bot.shotsSettled whenever
-  // the slot settles: a published, failed, waived or closed run, a run that
-  // will not start, a declaration that needs none; a run still under way
-  // tells nobody. Work, not a callback after commit: a crash loses none
-  // (tests/workflow-shots-postgres.test.js S1, S3).
+test('every way the shots slot settles tells whoever waits on it, by a message that commits with it', () => {
+  // The shots machine (src/workflow/shots/) writes the bot's message
+  // whenever the slot settles: a published, failed, waived or closed run, a
+  // run that will not start, a declaration that needs none; a run still
+  // under way tells nobody. A write in the settle's transaction, not a
+  // callback after commit: a crash loses none (tests/workflow-shots-postgres.test.js S1, S3).
   const machine = read('src/workflow/shots/machine.ts');
-  assert.match(machine, /\{ kind: WORK\.settled, key: `settled:v\$\{ctx\.version \+ 1\}`, input: \{ sessionId: d\.sessionId \} \}/);
+  assert.match(machine, /const settledNote = \(d: Data\): DomainWrite => toBotChange\(d\.sessionId, 'ShotsSettled'\);/);
+  assert.equal(machine.match(/settledNote\(/g).length, 6, 'each way it settles');
   const services = read('src/workflow/shots/services.ts');
-  assert.match(services, /legacy\('services\/homeroom-bot-dm'\)\.noteShotsSettled\(pool, input\.sessionId\)/);
+  assert.match(services, /botNote\(Number\(input\.sessionId\), 'ShotsSettled', \{\}, \{ requestKey: `shim:\$\{workId\}` \}\)/,
+    'an item an older release queued hands it over for one release');
   assert.doesNotMatch(read('src/services/shots-state.js'), /settleListener|setImmediate/);
 });
 
@@ -404,38 +406,27 @@ test('ready to try waits for the shots on its head, and carries what they show f
   assert.deepEqual(failing.broken, [], 'a change that fails its checks is the checks\' round, as before');
 });
 
-test('a change its shots show failing goes back to the bot first; once that round is spent, its card says what is wrong', async (t) => {
-  const bot = require('../src/services/homeroom-bot');
-  const real = bot.noteProposalChecks;
-  t.after(() => { bot.noteProposalChecks = real; });
-
-  let asked = 0;
-  bot.noteProposalChecks = async ({ query }, { sessionId }) => { asked += 1; assert.equal(sessionId, 6269); return true; };
-  const handed = readinessPool(sessionRow());
-  assert.equal(await dm.noteChangeReady(handed, 6269, { bot: { id: 77 }, domain: 'onhomeroom.test' }), null);
-  assert.equal(asked, 1, 'the fix round is asked for');
-  assert.ok(!handed.asked.some((s) => /homeroom_bot_requesters/.test(s)), 'and nobody is told it is ready');
-
-  bot.noteProposalChecks = async () => false;
-  const spent = readinessPool(sessionRow());
-  await dm.noteChangeReady(spent, 6269, { bot: { id: 77 }, domain: 'onhomeroom.test' });
-  assert.ok(spent.asked.some((s) => /homeroom_bot_requesters/.test(s)), 'with no round due, its requester hears');
-
-  // A change whose shots are all fine never asks for a round.
-  let roundAsked = false;
-  bot.noteProposalChecks = async () => { roundAsked = true; return true; };
-  const fine = readinessPool(sessionRow({ shots_detail: { ...sessionRow().shots_detail, shotResults: [{ id: 'invite-suggestions', status: 'ready' }] } }));
-  await dm.noteChangeReady(fine, 6269, { bot: { id: 77 }, domain: 'onhomeroom.test' });
-  assert.equal(roundAsked, false);
+test('a change its shots show failing goes back to the bot first; once that round is spent, its card says what is wrong', () => {
+  // The bot's change machine decides (src/workflow/bot-change/), from the
+  // row, with the rules every caller reads (src/workflow/rules/bot-readiness.ts).
+  const rules = require('../src/workflow/rules/bot-readiness.ts');
+  const row = sessionRow();
+  const r = rules.readiness(row, Date.now());
+  assert.equal(r.checked, true);
+  assert.equal(r.broken.length, 1);
+  assert.ok(rules.checksDue({ ...row, looked: false }), 'a fix round is due: it goes back to the bot first');
+  assert.equal(rules.checksDue({ ...row, looked: true }), null, 'once the round looked at the head, none is: its card goes out, saying what is wrong');
+  const fine = { ...row, shots_detail: { ...row.shots_detail, shotResults: [{ id: 'invite-suggestions', status: 'ready' }] } };
+  assert.equal(rules.checksDue({ ...fine, looked: false }), null, 'a change whose shots are all fine never asks for a round');
 
   const src = read('src/services/homeroom-bot-dm.js');
-  assert.match(src, /if \(approval && !broken\.length\) await noteApproversReady/,
+  assert.match(src, /if \(approval && !broken\.length\) \{\n\s+await noteApproversReady/,
     'nobody else is asked to approve a change part of which does not work');
   const botSrc = read('src/services/homeroom-bot.js');
   assert.match(botSrc, /cs\.shots_state, cs\.shots_detail/, 'the fix round reads the shots on the head');
-  assert.match(botSrc, /if \(broken\.length\) \{\n\s+\(deps\.dm \|\| require\('\.\/homeroom-bot-dm'\)\)\.noteChangeReady\(pool, session\.id/,
-    'a hand-off to a person sends the card that waited on the round');
-  assert.match(botSrc, /sweepHeldReady\?\.\(pool/, 'and a change held past the limit is sent by the refresh');
+  assert.match(botSrc, /await fixRoundEnded\(session\.id, head, deps\);\n\s+return \{ ran: true, verdict, runId, acted: 'checks_person' \};/,
+    'a hand-off to a person tells the change machine, which sends the card that waited on the round');
+  assert.doesNotMatch(botSrc, /sweepHeldReady/, 'a change held past the limit is the change machine\'s timer, not the refresh\'s');
 });
 
 test('the card and its message say what does not work instead of "ready to try"', () => {
@@ -491,24 +482,17 @@ test('what does not work travels with the message to every device', () => {
   assert.equal('broken' in normalizeBotMeta({ homeroomBot: { kind: 'proposal', ready: { group: false } } }).homeroomBot.ready, false);
 });
 
-test('the refresh asks again about a change of the bot\'s that waited past the limit on its shots', async () => {
-  const asked = [];
-  const pool = {
-    async query(sql, params) {
-      asked.push({ s: String(sql), params });
-      if (/AND cs\.checks_checked_at <= NOW\(\)/.test(String(sql))) return { rows: [{ id: 6269 }] };
-      return { rows: [] };
-    },
-  };
-  assert.equal(await dm.sweepHeldReady(pool), 1);
-  const sweep = asked[0];
-  assert.match(sweep.s, /u\.username = \$1 AND u\.is_synthetic = TRUE/);
-  assert.match(sweep.s, /cs\.status = 'promoted' AND cs\.check_state IN \('passing', 'skipped'\)/);
-  assert.deepEqual(sweep.params, ['homeroom_bot', shotsState.READY_HOLD_MS, 20 * 60 * 1000]);
-  assert.ok(asked.slice(1).some(({ s, params }) => /FROM chat_sessions WHERE id = \$1/.test(s) && params[0] === 6269),
-    'each one found is asked whether it is ready now');
-  const broken = { async query() { throw new Error('db down'); } };
-  assert.equal(await dm.sweepHeldReady(broken), 0, 'never throws');
+test('a change of the bot\'s held on its shots is held until a time, from the later of its verdict and the slot\'s last move', () => {
+  // The change machine sets its timer there (src/workflow/bot-change/); the
+  // refresh's 20-minute window, which ignored the slot's moves and skipped
+  // whatever a pause of the loop spanned, is gone.
+  const rules = require('../src/workflow/rules/bot-readiness.ts');
+  const now = Date.parse('2026-10-16T12:00:00Z');
+  const row = sessionRow({ shots_state: 'exploring', shots_detail: { headSha: HEAD, required: true, intent: chores() },
+    checks_checked_at: new Date(now - 50 * 60000), shots_updated_at: new Date(now - 10 * 60000) });
+  assert.equal(rules.heldUntil(row, HEAD, now), now - 10 * 60000 + rules.READY_HOLD_MS, 'from the slot\'s last move');
+  assert.equal(rules.heldUntil({ ...row, shots_updated_at: new Date(now - 50 * 60000) }, HEAD, now), null, 'held long enough');
+  assert.equal(typeof dm.sweepHeldReady, 'undefined');
 });
 
 test('with no phone to push to, the email says it is built but not everything works', () => {

@@ -23,7 +23,7 @@ import type {
  * B7: a change Homeroom bot built, ready to try, as a card in place of the
  * message's words (./message-row.tsx), which still say it for the inbox and
  * the push. Sent once its preview is up and its checks passed or were not
- * needed (services/homeroom-bot-dm.js noteChangeReady).
+ * needed (services/homeroom-bot-dm.js tellReady).
  *
  *   Try it            its preview, over the chat (AppView.ensureStaging);
  *   Approve           when the person's own Yes counts and is not in yet:
