@@ -493,7 +493,7 @@ async function cardUnderPlan(pool, { app, issueNumber, runId, planMessageId, req
  *
  * #4242: built is not yet "waiting for approval". Its requester hears it is
  * ready to try only once its checks and its before & after shots let it
- * (homeroom-bot-dm.js noteChangeReady), and the card used to say "Waiting
+ * (the bot's change machine: homeroom-bot-dm.js tellReady), and the card used to say "Waiting
  * for approval" long before that, with no message and no push behind it.
  * Until the proposal's news has gone out (`told`, false: cardRows) it is
  * `checking`; when nothing will go out without a person (`needs_look`, the

@@ -43,7 +43,7 @@
 // "mark as done" answered a 500 on every tap while its one check, which
 // only loads the page, passed). That is the change not working, and the
 // bot's own to fix before anybody is asked to approve it
-// (homeroom-bot-dm.noteChangeReady holds the "ready to try" card back until
+// (the bot's change machine, src/workflow/bot-change/, holds the "ready to try" card back until
 // this round has run). It is due once per head, like a failing check, and
 // within the same MAX_REVISIONS.
 //
@@ -558,31 +558,11 @@ const INFRA_FAILING_SHARE = 0.5;
 // real failure reads.
 const INFRA_REASON_RE = /net::ERR_|ECONNREFUSED|ECONNRESET|EAI_AGAIN|socket hang up|\b50[234]\b|Bad Gateway|Service Unavailable|Gateway Time-?out|Navigation timeout|page\.goto: Timeout|Target (?:page, context or browser )?(?:has been )?closed|Page crashed/i;
 
-/** A check row's reason, as the proposal's own checks panel reads it. */
-function failureReason(row) {
-  const direct = String(row?.failureReason == null ? '' : row.failureReason).trim();
-  if (direct) return direct;
-  const errors = Array.isArray(row?.consoleErrors) ? row.consoleErrors : [];
-  const first = errors.find((e) => e && e.message);
-  return first ? String(first.message) : '';
-}
-
-/**
- * The checks that block the proposal, from its stored `test_results`: a
- * row that did not pass and is not advisory (the merge gate's own rule,
- * visuals.classifyTests). { failing: [{ name, path, reason }], total }.
- */
-function failingChecks(testResults) {
-  const rows = Array.isArray(testResults) ? testResults.filter((r) => r && typeof r === 'object') : [];
-  const failing = rows
-    .filter((r) => r.status !== 'pass' && !r.advisory)
-    .map((r) => ({
-      name: clipText(r.name || r.path || 'unnamed check', 200),
-      path: r.path ? clipText(r.path, 200) : null,
-      reason: clipText(failureReason(r), FAILING_REASON_CHARS),
-    }));
-  return { failing, total: rows.length };
-}
+// A check row's reason, the checks that block a proposal, and the fix it is
+// due: one copy, shared with the Homeroom bot's change machine, which
+// decides from them (src/workflow/rules/bot-readiness.ts).
+const readinessRules = require('../workflow/rules/bot-readiness.ts');
+const { failureReason, failingChecks } = readinessRules;
 
 /**
  * Whether a failing run looks like the platform's fault rather than the
@@ -640,17 +620,7 @@ function skippedClaims(row) {
  * round. One round per commit, and never a loop of them.
  */
 function checksDue(row) {
-  if (!row) return null;
-  const head = String(row.reviewed_head_sha || '').toLowerCase();
-  if (!head || row.looked) return null;
-  const onHead = String(row.checks_commit_sha || '').toLowerCase() === head;
-  const { failing, total } = onHead && row.check_state === 'failing'
-    ? failingChecks(row.test_results)
-    : { failing: [], total: Array.isArray(row.test_results) ? row.test_results.length : 0 };
-  const broken = brokenClaims(row);
-  const skipped = row.fix_revised ? [] : skippedClaims(row);
-  if (!failing.length && !broken.length && !skipped.length) return null;
-  return { head, failing, total, ...(broken.length ? { broken } : {}), ...(skipped.length ? { skipped } : {}) };
+  return readinessRules.checksDue(row);
 }
 
 /** Pure: whether a due fix is only shots that could not reach a change (no failing check, nothing broken). */

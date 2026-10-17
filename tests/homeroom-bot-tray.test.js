@@ -373,31 +373,19 @@ test('#8 (WP3): the tray reads again when one of the bot\'s proposals is promote
   const merged = dmSrc.slice(dmSrc.indexOf('async function noteProposalMerged('), dmSrc.indexOf('// ── A person writing to the bot'));
   assert.match(merged, /if \(requester\) require\('\.\/homeroom-bot-tray'\)\.noteWorkChanged\(requester\.userId, deps\);\n {2}const settings = /,
     'merged: before anything about the DM, whose list it may not be on');
-  // Promoted and closed are the proposal machine's moves: each asks for its
-  // work 'bot', whose handler reads the tray again.
+  // Promoted and closed are the proposal machine's moves: each tells the
+  // bot's change machine by its own write, and that machine's transition
+  // pushes the tray's re-read to whoever asked (src/workflow/bot-change/).
   const machine = read('src/workflow/proposal/machine.ts');
-  assert.match(machine, /const botNote = \(d: Data, n: number\): WorkRequest => \(\{ kind: WORK\.bot,/);
-  assert.match(machine, /if \(row\.ownerSynthetic\) work\.push\(botNote\(d, promoting\.n\)\);\n {2}return step\(next, \{\n {4}writes: \[\n {6}\{ type: 'promoted'/,
-    'promoted: once its pull request is up, when it is the bot\'s');
+  assert.match(machine, /\/\/ A change of the Homeroom bot's: its change machine follows it from here\.\n {6}toBotChange\(d\.sessionId, 'Proposed'\),/,
+    'promoted: once its pull request is up');
   const close = machine.slice(machine.indexOf('function close('), machine.indexOf('\n}\n', machine.indexOf('function close(')));
-  assert.match(close, /const destroy = destroyWorker\(d, n\);[\s\S]*?const work: WorkRequest\[\] = \[destroy, botNote\(d, n\)\];/, 'closed, by any path');
-  const services = read('src/workflow/proposal/services.ts');
-  const bot = services.slice(services.indexOf('[WORK.bot]: {'));
-  assert.match(bot, /await legacy\('services\/homeroom-bot-dm'\)\.noteProposalChanged\(pool, Number\(input\.sessionId\)\);/);
-
+  assert.match(close, /writes\.push\(toBotChange\(d\.sessionId, 'Closed', \{ reason \}\)\);/, 'closed, by any path');
+  const bc = read('src/workflow/bot-change/machine.ts');
+  assert.match(bc, /const tray = \(f: Facts\): Push\[\] => \(f\.requesterId \? \[toUser\(f\.requesterId, \{ type: 'homeroom_bot_work_changed' \}\)\] : \[\]\);/);
   // Whoever asked for the request its run is on, found by its proposal or
   // by its build (a proposal just promoted is not recorded on its run yet).
-  const dm = require('../src/services/homeroom-bot-dm');
-  const pushed = [];
-  const ws = { pushToUser(id, event) { pushed.push([id, event.type]); return 1; } };
-  const queries = [];
-  const pool = { async query(sql, params) { queries.push([sql, params]); return { rows: params[0] === 40 ? [{ user_id: 7 }] : [] }; } };
-  assert.equal(await dm.noteProposalChanged(pool, 40, { ws }), 7);
-  assert.deepEqual(pushed, [[7, 'homeroom_bot_work_changed']]);
-  assert.match(queries[0][0], /WHERE r\.proposal_session_id = \$1 OR r\.build_session_id = \$1/);
-  assert.equal(await dm.noteProposalChanged(pool, 41, { ws }), null, 'somebody else\'s session: nobody');
-  assert.equal(await dm.noteProposalChanged({ async query() { throw new Error('down'); } }, 40, { ws }), null, 'never throws');
-  assert.equal(pushed.length, 1);
+  assert.match(read('src/workflow/bot-change/facts.ts'), /WHERE r\.proposal_session_id = cs\.id OR r\.build_session_id = cs\.id ORDER BY r\.id DESC LIMIT 1/);
 });
 
 test('History lists at most its limit of requests', () => {

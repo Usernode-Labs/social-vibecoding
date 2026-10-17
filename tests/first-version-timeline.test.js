@@ -135,11 +135,12 @@ test('the pipeline writes each stage where it happens', () => {
   assert.match(bot, /stage: 'first_look_saved', detail: \{ from: 'saved_screen' \}/);
   assert.match(bot, /if \(drawn\) void timeline\.record\(pool, \{ runId, stage: 'first_look_saved', detail: \{ from: 'spec' \} \}\);\s+return drawn;/);
   // Merged, and live: noteProposalMerged is asked once production runs the
-  // change (the merge-followups machine), so both are recorded then.
+  // change (the bot's change machine), so both are recorded then, each once
+  // and awaited (its work runs again when a later part fails: trace-bot-notes bug 12).
   const dm = read('src/services/homeroom-bot-dm.js');
   assert.match(dm, /SELECT r\.id AS run_id, r\.app_id, r\.issue_number/);
-  assert.match(dm, /void timeline\.record\(pool, \{ runId: run\.run_id, stage: 'merged', sessionId: session\.id \}\);/);
-  assert.match(dm, /void timeline\.record\(pool, \{ runId: run\.run_id, stage: 'live', sessionId: session\.id \}\);/);
+  assert.match(dm, /await timeline\.record\(pool, \{ runId: run\.run_id, stage: 'merged', sessionId: session\.id, once: true, strict: !!deps\.strict \}\);/);
+  assert.match(dm, /await timeline\.record\(pool, \{ runId: run\.run_id, stage: 'live', sessionId: session\.id, once: true, strict: !!deps\.strict \}\);/);
   // And at Make it, before there is a run.
   assert.match(read('src/services/first-version-plan.js'), /appId: app\.id, stage: 'plan_written', detail: \{ source: 'make_it', questions: made\.plan\.questions\.length \},/);
 });

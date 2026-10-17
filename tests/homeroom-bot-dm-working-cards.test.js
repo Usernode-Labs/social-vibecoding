@@ -145,7 +145,7 @@ test('a change nothing will offer without a person rings its requester, once, an
   // Where nothing was said before: the platform-looking failure the bot
   // leaves for a re-run, and the refresh's look for builds with no proposal.
   const bot = read('src/services/homeroom-bot.js');
-  const checks = bot.slice(bot.indexOf('async function noteProposalChecks('), bot.indexOf('async function runChecksFix('));
-  assert.match(checks, /if \(followup\.checksLookLikeInfra\(due\)\) \{[\s\S]*if \(due\.failing\.length\) await require\('\.\/homeroom-bot-dm'\)\.noteNeedsLook\(pool, \{ sessionId: row\.id, why: 'checks' \}\);\n\s+return false;/);
+  const checks = bot.slice(bot.indexOf('async function queueChecksFix('), bot.indexOf('async function runChecksFix('));
+  assert.match(checks, /if \(followup\.checksLookLikeInfra\(due\)\) \{[\s\S]*if \(due\.failing\.length\) await require\('\.\/homeroom-bot-dm'\)\.noteNeedsLook\(pool, \{ sessionId: row\.id, why: 'checks', strict: true \}\);\n\s+return \{ queued: false, why: 'infra' \};/);
   assert.match(bot, /\.sweepUnproposedBuilds\?\.\(pool, \{ ws: deps\.ws \|\| null \}\);/);
 });

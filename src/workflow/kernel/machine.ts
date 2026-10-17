@@ -3,7 +3,7 @@
 
 import { createHash } from 'node:crypto';
 import type {
-  Authorize, Check, Decoder, Event, Ignored, Json, MachineDefinition, Notifier, Rejection, State,
+  Authorize, Check, Decoder, Event, Ignored, Json, MachineDefinition, Rejection, State,
   TableEntry, Transition, WriteHandler,
 } from './types.ts';
 
@@ -58,7 +58,6 @@ export interface Machine<S extends State = State, F = unknown> {
   readonly authorize: ReadonlyMap<string, Authorize<S, F>>;
   readonly transitions: ReadonlyMap<string, ReadonlyMap<string, TableEntry<S, F>>>;
   readonly writes: ReadonlyMap<string, WriteHandler>;
-  readonly notifiers: ReadonlyMap<string, Notifier>;
   readonly attention: ReadonlyMap<string, string>;
   readonly decode: MachineDefinition<S, F>['decode'];
   readonly facts?: MachineDefinition<S, F>['facts'];
@@ -75,6 +74,8 @@ export function defineMachine<S extends State, F>(def: MachineDefinition<S, F>):
   const fail = (msg: string): never => { throw new Error(`defineMachine(${def.name}): ${msg}`); };
   if (!NAME.test(def.name)) fail('name must be kebab-case');
   if (!Number.isInteger(def.version) || def.version < 1) fail('version must be a positive integer');
+  // Nothing runs after a transition commits: there are no notifiers.
+  if ((def as { notifiers?: unknown }).notifiers !== undefined) fail('notifiers are gone: use a push, work or a message');
 
   // The boundary: authoring objects become Maps and Sets here, once.
   const own = toMap(def.events);
@@ -122,7 +123,6 @@ export function defineMachine<S extends State, F>(def: MachineDefinition<S, F>):
     version: def.version,
     states, create, terminal, events, authorize, transitions,
     writes: toMap(def.writes),
-    notifiers: toMap(def.notifiers),
     attention,
     decode: def.decode,
     facts: def.facts,

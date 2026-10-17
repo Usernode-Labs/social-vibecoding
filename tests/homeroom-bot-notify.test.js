@@ -314,28 +314,50 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
       'the change went up with its checks still running: nothing yet');
     assert.equal(await dm.untaggedRequester(pool, { appId: app.id, issueNumber: 9, bot, told }), maya.username,
       'and the post on the request does not tag her instead');
-    assert.equal(await dm.noteChangeReady(pool, change.id, { bot, domain: 'x' }), null, 'still pending: not ready');
+    // Whether it is ready is the bot's change machine's to decide, from the
+    // row (src/workflow/bot-change/, rules/bot-readiness.ts); the card is
+    // tellReady's to send once it has.
+    const rules = require('../src/workflow/rules/bot-readiness.ts');
+    const rowOf = async () => (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [change.id])).rows[0];
+    assert.equal(rules.readiness(await rowOf(), Date.now()).ready, false, 'still pending: not ready');
 
     await pool.query(`UPDATE chat_sessions SET check_state = 'passing' WHERE id = $1`, [change.id]);
-    const ready = await dm.noteChangeReady(pool, change.id, { bot, domain: 'x' });
+    assert.equal(rules.readiness(await rowOf(), Date.now()).ready, true);
+    const ready = await dm.tellReady(pool, change.id, { epoch: 0, deps: { bot, domain: 'x' } });
     assert.ok(ready?.messageId, 'checks passed: ready to try');
     const { rows: [msg] } = await pool.query('SELECT idempotency_key, metadata FROM conversation_messages WHERE id = $1', [ready.messageId]);
     assert.equal(msg.idempotency_key, `hrbot-ready-${change.id}-0`);
     assert.equal(msg.metadata.homeroomBot.kind, 'proposal');
-    const again = await dm.noteChangeReady(pool, change.id, { bot, domain: 'x' });
+    const again = await dm.tellReady(pool, change.id, { epoch: 0, deps: { bot, domain: 'x' } });
     assert.equal(again.duplicate, true, 'a second verdict on the same round says nothing new');
+    // trace-bot-notes bug 1: the DM went out and its process ended before
+    // it was recorded. The retry finds it sent and records it now (the
+    // activity card reads the record), saying nothing new.
+    const recorded = () => pool.query(`SELECT 1 FROM homeroom_bot_dm_messages WHERE message_id = $1 AND kind = 'proposal'`, [ready.messageId]);
+    assert.equal((await recorded()).rowCount, 1);
+    await pool.query('DELETE FROM homeroom_bot_dm_messages WHERE message_id = $1', [ready.messageId]);
+    const retried = await dm.tellReady(pool, change.id, { epoch: 0, deps: { bot, domain: 'x' } });
+    assert.deepEqual([retried.duplicate, retried.messageId], [true, ready.messageId]);
+    assert.equal((await recorded()).rowCount, 1, 'recorded by the retry');
     const { rows: rang } = await pool.query('SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id OFFSET $2', [maya.id, before]);
     assert.deepEqual(moments(rang), ['ready/ready:Plant Pal'], 'one ring, when it was ready');
 
     // Approvals were cleared (it changed): ready again is news again.
     await pool.query('UPDATE chat_sessions SET approval_epoch = approval_epoch + 1 WHERE id = $1', [change.id]);
-    const next = await dm.noteChangeReady(pool, change.id, { bot, domain: 'x' });
+    assert.deepEqual(await dm.tellReady(pool, change.id, { epoch: 0, deps: { bot, domain: 'x' } }), { stale: true, notUp: true },
+      'the epoch it was decided for moved on: nothing sent, and the machine decides again');
+    const next = await dm.tellReady(pool, change.id, { epoch: 1, deps: { bot, domain: 'x' } });
     assert.ok(next?.messageId && !next.duplicate && next.messageId !== ready.messageId);
+    // A retry (or an admin's) after it merged or closed says nothing: no
+    // ready card, no Approve, the chip not moved back from Live.
+    await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [change.id]);
+    assert.deepEqual(await dm.tellReady(pool, change.id, { epoch: 1, deps: { bot, domain: 'x' } }), { stale: true, notUp: true });
+    await pool.query(`UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`, [change.id]);
 
     // Its preview will not start: while it is tried again that is quiet (one
     // story: no bell, no push), and never "ready".
     await pool.query(`UPDATE chat_sessions SET check_state = 'error' WHERE id = $1`, [change.id]);
-    assert.equal(await dm.noteChangeReady(pool, change.id, { bot, domain: 'x' }), null);
+    assert.equal(rules.readiness(await rowOf(), Date.now()).ready, false);
     const stuck = await dm.noteChangeStopped(pool, change.id, { deps: { bot } });
     const { rows: [stuckMsg] } = await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [stuck.messageId]);
     assert.match(stuckMsg.content, /its preview didn't start, so it isn't ready to try yet/);
@@ -367,15 +389,15 @@ test('WP-F: a merged change is "live" when the machine says it is, and a stop sa
   assert.deepEqual(['needs_you', 'question', 'ready', 'stopped', 'on_hold', 'held', 'live'].map((m) => dm.BUILD_KINDS[m]),
     ['build_needs_you', 'build_needs_you', 'build_ready', 'build_stopped', 'build_stopped', 'build_stopped', 'build_live']);
   // The chat chip moves to Live when the change is live, not on the merge:
-  // the merge-followups machine asks for the DM only once it is live
-  // (machine.ts toLive's bot.dmMerged work), so the DM says live and marks
-  // the chat live at once.
+  // the merge-followups machine tells the bot's change machine only once it
+  // is live (machine.ts toLive's write), whose work asks for the DM, so the
+  // DM says live and marks the chat live at once.
   const src = fs.readFileSync(require.resolve('../src/services/homeroom-bot-dm.js'), 'utf8');
   const merged = src.slice(src.indexOf('async function noteProposalMerged('), src.indexOf('// ── A person writing to the bot'));
   assert.match(merged, /const live = true;\n {2}\/\/ B9: [^\n]*\n {2}await noteChatLive\(pool, run, deps\);/);
   const machine = fs.readFileSync(require.resolve('../src/workflow/merge-followups/machine.ts'), 'utf8');
   const toLive = machine.slice(machine.indexOf('function toLive('), machine.indexOf('function lineInput('));
-  assert.match(toLive, /\{ kind: WORK\.dm, key: 'dm', input: \{ sessionId: d\.sessionId, sha: deliveredSha \} \}/);
-  const services = fs.readFileSync(require.resolve('../src/workflow/merge-followups/services.ts'), 'utf8');
-  assert.match(services, /\[WORK\.dm\]: \{[\s\S]*?legacy\('services\/homeroom-bot-dm'\)\.noteProposalMerged\(pool, \{ id: input\.sessionId \}/);
+  assert.match(toLive, /writes\.push\(toBotChange\(d\.sessionId, 'Live'\)\);/);
+  const services = fs.readFileSync(require.resolve('../src/workflow/bot-change/services.ts'), 'utf8');
+  assert.match(services, /\[WORK\.liveDm\]: \{[\s\S]*?legacy\('services\/homeroom-bot-dm'\)\.noteProposalMerged\(pool, \{ id: Number\(input\.sessionId\) \}/);
 });

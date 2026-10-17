@@ -4,11 +4,12 @@
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
+import type { BotNote } from '../rules/bot-notes.ts';
 import { parseGithubUrl } from '../rules/github-url.ts';
 import { permanent } from '../work-errors.ts';
 import { WORK } from './machine.ts';
 
-interface Deps { config: any; pool: Pool }
+interface Deps { config: any; pool: Pool; botNote?: BotNote }
 
 const SHA = /^[0-9a-f]{40}$/i;
 const gone = (err: any) => err?.status === 404 || err?.status === 410;
@@ -19,7 +20,7 @@ const refused = (code: string, message: string) => Object.assign(permanent(messa
 const SYNC_ATTEMPTS = 2;
 const quick = (attempt: number) => Math.min(20 * 1000, 2000 * 2 ** (attempt - 1));
 
-export function proposalServices({ config, pool }: Deps): Record<string, WorkHandler> {
+export function proposalServices({ config, pool, botNote }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
   // The proposal machine's instance of the session: what it decided last.
   const lifecycle = async (id: number) => (await pool.query(
@@ -330,14 +331,20 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
       },
     },
 
-    // One of the Homeroom bot's proposals moved (up for a vote, closed): the
-    // activity tray of whoever asked for it reads again.
+    // One release only: an item an older release queued when one of the
+    // Homeroom bot's proposals moved (up for a vote, closed). The bot's
+    // change machine hears it (its tray push goes with it); since this
+    // release the transition tells it (rules/bot-notes.ts).
     [WORK.bot]: {
       maxAttempts: 3,
       backoffMs: (n) => 30 * 1000 * n,
-      async run({ input }): Promise<Json> {
-        await legacy('services/homeroom-bot-dm').noteProposalChanged(pool, Number(input.sessionId));
-        return { noted: true };
+      async run({ input, workId }): Promise<Json> {
+        const id = Number(input.sessionId);
+        const { rows: [r] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [id]);
+        if (!r || !botNote) return { noted: false };
+        const type = ['promoted', 'merging', 'merged'].includes(r.status) ? 'Proposed' : 'Closed';
+        await botNote(id, type, type === 'Closed' ? { reason: 'closed' } : {}, { requestKey: `shim:${workId}` });
+        return { handedOff: type };
       },
     },
   };

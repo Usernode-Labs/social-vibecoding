@@ -14705,3 +14705,20 @@ COMMENT ON TABLE shots_eval_pairs IS 'staging:private';
 -- people, shown only on the invited person's invitation card until they
 -- answer it. Nullable: most invitations carry none.
 ALTER TABLE conversation_members ADD COLUMN IF NOT EXISTS invite_note TEXT;
+
+-- A phone icon owed a re-badge: a workflow transition that told somebody
+-- their bell changed (a `notifications_changed` push) writes this row in its
+-- own transaction (src/workflow/platform.ts publishPushes), and the mobile
+-- push worker drains it, recounting the unread total and sending a
+-- badge-only push to each of their iOS registrations
+-- (services/mobile-push-worker.js drainBadges). One row per person:
+-- `queued_at` moves on a newer change, so a burst settles into one push.
+-- `claimed_until`: the worker taking it; a row whose claim lapsed (the
+-- worker's process ended) is taken again.
+CREATE TABLE IF NOT EXISTS mobile_push_badge_syncs (
+  user_id        INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  queued_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  claimed_until  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_mobile_push_badge_syncs_due ON mobile_push_badge_syncs(queued_at);
+COMMENT ON TABLE mobile_push_badge_syncs IS 'staging:private';

@@ -21,9 +21,10 @@ import { createHash } from 'node:crypto';
 import type { Json, Pool, WorkContext, WorkHandler } from '../kernel/index.ts';
 import { LeaseLost } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
+import type { BotNote } from '../rules/bot-notes.ts';
 import { PREPARE_CLAIMS, WORK } from './machine.ts';
 
-interface Deps { config: any; pool: Pool }
+interface Deps { config: any; pool: Pool; botNote?: BotNote }
 
 // How long a prepare or a checks run holds its lease between renewals. A
 // cancelled one learns it at its next checkpoint or renewal; the machine
@@ -67,7 +68,7 @@ export function unitEarlyRunId(sessionId: number, n: number): string {
   return uuidOf(`preview-unit-early:${sessionId}:${n}`);
 }
 
-export function previewServices({ config, pool }: Deps): Record<string, WorkHandler> {
+export function previewServices({ config, pool, botNote }: Deps): Record<string, WorkHandler> {
   const staging = () => legacy('services/staging');
   const visuals = () => legacy('services/visuals');
   const kubernetes = () => legacy('services/kubernetes');
@@ -411,35 +412,33 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
       },
     },
 
-    // Hand-off: what a settled verdict sets off, awaited so the item reports
-    // only once it is done: the Homeroom bot's note (a change of its that is
-    // ready to try, or one whose checks fail). (The merge queue and the
-    // shots machine hear the verdict from the transition; an item an older
-    // release queued hands the head over in its result.)
+    // One release only: what a settled verdict set off when an older
+    // release queued it. The Homeroom bot's change machine hears the verdict
+    // (a session that is not the bot's is refused there and nothing is
+    // kept), and an item from before the shots machine was told by message
+    // hands the head over in its result. Since this release the transition
+    // tells both.
     [WORK.followUps]: {
       maxAttempts: 3,
-      async run({ input }): Promise<Json> {
+      async run({ input, workId }): Promise<Json> {
         const { sessionId, head, state, deferred } = input;
-        if (!deferred) {
-          if (state === 'passing' || state === 'skipped') {
-            await legacy('services/homeroom-bot-dm').noteChangeReady(pool, sessionId);
-          } else if (state === 'failing') {
-            await legacy('services/homeroom-bot').noteProposalChecks(pool, { sessionId });
-          }
+        const sha = /^[0-9a-f]{40}$/.test(String(head || '')) ? String(head).toLowerCase() : null;
+        if (!deferred && botNote && ['passing', 'skipped', 'failing'].includes(state)) {
+          await botNote(Number(sessionId), 'Verdict', { head: sha, state }, { requestKey: `shim:${workId}` });
         }
-        if (!input.shotsTold && /^[0-9a-f]{40}$/.test(String(head || ''))) return { done: true, handOff: String(head).toLowerCase() };
+        if (!input.shotsTold && sha) return { done: true, handOff: sha };
         return { done: true };
       },
     },
 
-    // Hand-off once per failure streak, for a change whose preview will not
-    // start: the Homeroom bot's note on a change of its. (An imported pull
-    // request's shots hear it from the transition; an item an older release
-    // queued hands that over in its result.)
+    // One release only: a change's preview would not start, as an older
+    // release queued it. The bot's change machine hears it; an imported
+    // pull request's shots, from before they were told by message, in its
+    // result.
     [WORK.stopped]: {
       maxAttempts: 3,
-      async run({ input }): Promise<Json> {
-        await legacy('services/homeroom-bot-dm').noteChangeStopped(pool, input.sessionId, { why: 'preview' });
+      async run({ input, workId }): Promise<Json> {
+        if (botNote) await botNote(Number(input.sessionId), 'PreviewStopped', {}, { requestKey: `shim:${workId}` });
         if (!input.shotsTold && input.imported) return { noted: true, stopped: null };
         return { noted: true };
       },

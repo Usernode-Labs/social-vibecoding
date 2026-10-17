@@ -97,6 +97,21 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
         });
       }
       return;
+    case 'app_access':
+      // What another process changed about an app's visibility, governance
+      // or admins (app-access.js shareAccessChange), for this process's own
+      // caches. Nothing is sent to sockets.
+      if (!oversize) {
+        appAccess.invalidateVisibilityHere(r.appId ?? payload?.appId ?? null, payload?.slug || null);
+        const id = payload?.appId ?? null;
+        if (id != null) {
+          require('./governance').invalidateGovernanceHere(Number(id));
+          require('./app-admins').invalidateAppAdminsHere(Number(id));
+        } else {
+          require('./app-admins').invalidateAppAdminsHere(null);
+        }
+      }
+      return;
     case 'issues_cache':
       // What another process learned of a repo's issues (github.js
       // shareIssuesChange), for this process's own copy. Nothing is sent to
@@ -148,6 +163,17 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
 // `App.resyncCurrentView`, a chat room with `GroupChat.resyncLoaded`. It says
 // only "re-read", so it leaks nothing to anyone in any room.
 function _onBusListening() {
+  // And what it missed may have invalidated this process's own caches (a
+  // merge's issues_closed, an app made private): they are read again rather
+  // than trusted until their TTL.
+  try {
+    appAccess.invalidateAllVisibility();
+    require('./governance').invalidateGovernanceHere(null);
+    require('./app-admins').invalidateAppAdminsHere(null);
+    require('./github').expireIssuesCachesHere();
+  } catch (err) {
+    log.warn('ws', 'Could not clear the caches after the bus came back', { err: err.message });
+  }
   const hint = { type: 'resync_hint' };
   deliverGlobal(hint);
   for (const appId of rooms.keys()) deliverToRoom(appId, hint);
@@ -2461,7 +2487,7 @@ function broadcastToAdmins(payload) {
 // above (and any external caller) read naturally and don't have to churn.
 function deliverToUser(userId, payload) {
   if (payload.type === 'app_blocks_changed') {
-    appAccess.invalidateVisibility(payload.appId, payload.slug);
+    appAccess.invalidateVisibilityHere(payload.appId, payload.slug);
     if (payload.blocked) {
       for (const client of rooms.get(payload.appId) || []) {
         if (client.user.id === userId) client.ws.close(4004, 'App blocked');

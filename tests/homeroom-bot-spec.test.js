@@ -368,7 +368,8 @@ test('live.post puts the card in the thread and the full spec on GitHub', async 
   assert.equal(comments[0].body, live.specCommentText(SPEC));
   assert.deepEqual(sent, [{
     // In Homeroom the card is the bot's own words (homeroom-bot-words.js).
-    appId: 9, user: BOT, content: firstPerson(card.content), metadata: card.metadata,
+    // With the post's mark, so a retry finds it (homeroom-bot-live.js threadMessageOf).
+    appId: 9, user: BOT, content: firstPerson(card.content), metadata: { ...card.metadata, hrbotPost: '1' },
     thread: { type: 'issue', ref: 12 }, msgType: 'spec_share',
   }]);
   assert.equal(sent[0].content, '📋 Plan v3: Hourly feed refresh. I\'m building it now.');

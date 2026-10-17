@@ -60,12 +60,20 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
       `INSERT INTO users (username, password) VALUES ($1, 'x') RETURNING id, username`, [`sh_${++seq}`]);
     return u;
   }
+  // The proposals are the Homeroom bot's: whoever waits on the slot hears
+  // it settled through its change machine (a write of the settle's own,
+  // rules/bot-notes.ts).
+  const { rows: [botUser] } = await pool.query(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE) RETURNING id, username`);
+  const settledTold = async (s) => (await pool.query(
+    `SELECT count(*)::int AS n FROM wf_events WHERE machine = 'bot-change' AND key = $1 AND type = 'ShotsSettled'`,
+    [`session:${s.id}`])).rows[0].n;
   async function proposal({ status = 'promoted', source = null, head = SHA('a'), ready = false } = {}) {
     const owner = await user();
     const { rows: [a] } = await pool.query(
       `INSERT INTO apps (name, slug, created_by, repo_url) VALUES ($1::text, $1::text, $2, 'https://github.com/acme/' || $1::text) RETURNING *`,
       [`sh-app-${++seq}`, owner.id]);
-    const by = await user();
+    const by = botUser;
     const { rows: [s] } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, status, source, branch_name, pr_number, reviewed_head_sha, imported_pr_head_sha,
                                   staging_commit_sha, staging_url)
@@ -195,7 +203,7 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
     assert.deepEqual(arts.map((a) => [a.side, a.data.toString()]), [['base', 'fake-png'], ['head', 'fake-png']]);
     assert.equal((await pool.query('SELECT 1 FROM shot_run_control WHERE run_id = $1', [run.id])).rowCount, 0, 'workspace gone');
     assert.deepEqual(calls(WORK.cleanup).map((c) => [c.input.runId, c.input.stopTurn, c.input.worker]), [[run.id, true, false]]);
-    assert.ok(calls(WORK.settled).length >= 1, 'the bot hears the slot settled');
+    assert.ok(await settledTold(s) >= 1, 'the bot hears the slot settled');
     assert.ok(calls(WORK.prBlock).length >= 2, 'the PR block at the run\'s start and when it settles');
     assert.ok(pushed.some((p) => p.data.type === 'vote_update' && p.data.action === 'shots' && p.data.shotsState === 'verified'));
     // The same head again stands: nothing is taken twice.
@@ -261,7 +269,8 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
     assert.equal((await instance(s)).state, 'not_needed');
     assert.equal((await row(s)).shots_state, 'not_required');
     assert.equal(calls(WORK.revision).length, 0);
-    assert.equal(calls(WORK.settled).length, 1);
+    assert.equal(await settledTold(s), 1);
+    assert.equal(calls(WORK.settled).length, 0, 'by message, not work');
   });
 
   await t.test('S4 the proposal\'s agent busy: the run waits, and goes on once it is free', async () => {
@@ -831,7 +840,7 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
     await send(s, 'UiUndeclared', { head: SHA('a') }, fromPreview);
     for (let n = 0; n < 3; n++) await send(s, 'HeadReady', { head: SHA('a') }, fromPreview);
     await settle();
-    assert.equal(calls(WORK.settled).length, 1, 'no declaration: said once');
+    assert.equal(await settledTold(s), 1, 'no declaration: said once');
     work.answer.set(WORK.copies, () => ({ failed: { code: 'shots_build_failed', message: 'The after build failed.', fault: null } }));
     await declare(s);
     await send(s, 'HeadReady', { head: SHA('a') }, fromPreview);

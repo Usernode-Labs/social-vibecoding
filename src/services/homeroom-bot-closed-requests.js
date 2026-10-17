@@ -95,28 +95,40 @@ function numbersOf(list) {
   return [...new Set((Array.isArray(list) ? list : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
 }
 
-/** Pure: the line a withdrawal leaves on each of its requests. */
-function closedNote(title) {
-  const what = title ? `“${String(title).slice(0, 120)}”` : 'Homeroom bot\'s change for this request';
-  return `${what} was withdrawn: this request is closed.`;
-}
+/** Pure: the line a withdrawal leaves on each of its requests (the proposal machine's close writes it). */
+const { withdrawnNote: closedNote } = require('../workflow/rules/bot-notes.ts');
+
+const NETWORK_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND', 'EPIPE', 'UND_ERR_SOCKET']);
+const transient = (err) => err?.status === 429 || Number(err?.status) >= 500 || NETWORK_CODES.has(err?.code);
 
 // Whether GitHub says #n is a closed issue. Only a positive answer counts: a
-// failed read, a pull request or anything else keeps the proposal up.
-function githubClosed(repo, deps) {
+// pull request or anything else keeps the proposal up. A failed read keeps
+// it up too, except for a durable caller (`strict`), which is told: its
+// retry reads again, rather than settling the proposal as up for good.
+function githubClosed(repo, deps, { strict = false } = {}) {
   const memo = new Map();
   return (n) => {
     if (!memo.has(n)) {
       const github = deps.github || require('./github');
       memo.set(n, !repo ? Promise.resolve(false) : Promise.resolve()
         .then(() => github.getIssue(repo.owner, repo.repo, n))
-        .then((issue) => !!issue && issue.state === 'closed' && !issue.pull_request, () => false));
+        .then((issue) => !!issue && issue.state === 'closed' && !issue.pull_request, (err) => {
+          // What may answer on a retry (GitHub down, rate limited, the
+          // network) is retried by a durable caller; anything else (gone,
+          // forbidden, not configured) keeps the proposal up, as before.
+          if (strict && transient(err)) throw err;
+          return false;
+        }));
     }
     return memo.get(n);
   };
 }
 
+// Withdrawn through the proposal machine, whose close (reason
+// `request-closed`) also writes the line each of its requests' threads
+// says, in the same transaction: a crash between the two cannot lose it.
 async function withdrawOne(pool, session, numbers, deps) {
+  void numbers;
   const lifecycle = deps.sessionLifecycle || require('./session-lifecycle');
   let archived = false;
   try {
@@ -127,21 +139,15 @@ async function withdrawOne(pool, session, numbers, deps) {
     const { rows } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [session.id]);
     archived = rows[0]?.status === 'archived';
   }
-  if (!archived) return false;
-  const ws = deps.ws || require('./ws');
-  for (const n of numbers) {
-    await Promise.resolve(ws.sendSystemMessage(pool, Number(session.app_id), closedNote(session.title),
-      'system', null, { type: 'issue', ref: n })).catch(() => {});
-  }
-  return true;
+  return !!archived;
 }
 
-async function withdrawWhereAllClosed(pool, sessions, { known = new Set(), deps = {} }) {
+async function withdrawWhereAllClosed(pool, sessions, { known = new Set(), deps = {}, strict = false }) {
   const withdrawn = [];
   for (const session of sessions) {
     const linked = numbersOf(session.linked_issues);
     if (!linked.length) continue;
-    const isClosed = deps.isClosed || githubClosed(parseRepo(session.repo_url), deps);
+    const isClosed = deps.isClosed || githubClosed(parseRepo(session.repo_url), deps, { strict });
     let allClosed = true;
     for (const n of linked) {
       if (known.has(n)) continue;
@@ -266,9 +272,12 @@ async function recordClosed(pool, { appId, numbers }) {
   await pool.query(RECORD_CLOSED_SQL, [Number(appId), list]);
 }
 
+// The bot's loop, wherever it runs, hears a slot came free (the bus: this
+// runs in the workflow's work, which need not be the loop's process). A
+// hint: a lost one waits for the loop's next refresh.
 function wakeFor(appId, deps) {
   try {
-    (deps.wake || require('./homeroom-bot').wake)({ appId: Number(appId) });
+    (deps.wake || require('./homeroom-bot').wakeApp)({ appId: Number(appId) });
   } catch (err) {
     log.warn('homeroom-bot-closed-requests', 'Could not wake the bot after a withdrawal', { appId, err: err.message });
   }
@@ -296,7 +305,7 @@ async function noteRequestsClosed(pool, { appId, closed, strict = false, deps = 
       log.warn('homeroom-bot-closed-requests', 'Could not record requests as closed', { appId, closed: numbers, err: err.message });
     }
     const { rows } = await pool.query(LINKED_TO_ANY_SQL, [Number(appId), BOT_USERNAME, numbers]);
-    const withdrawn = await withdrawWhereAllClosed(pool, rows, { known: new Set(numbers), deps });
+    const withdrawn = await withdrawWhereAllClosed(pool, rows, { known: new Set(numbers), deps, strict });
     if (withdrawn.length) {
       log.info('homeroom-bot-closed-requests', 'Withdrew the bot\'s proposals for closed requests', { appId, closed: numbers, withdrawn });
       wakeFor(appId, deps);

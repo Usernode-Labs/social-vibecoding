@@ -552,7 +552,8 @@ test('a person\'s reply comes first; a fix still due after it is queued again', 
   assert.doesNotMatch(h.calls.exec[0].opts.prompt, /"action": "revise" \| "person"/, 'and answers as a reply turn does');
   const again = queued(h);
   assert.equal(again.length, 1, 'the checks are looked at on the next pass');
-  assert.deepEqual(again[0].params, [9, 50, bot.CHECKS_REASON]);
+  assert.deepEqual(again[0].params.slice(0, 3), [9, 50, bot.CHECKS_REASON]);
+  assert.match(again[0].s, /pg_notify/, 'the loop is woken in the same statement, wherever it runs');
 });
 
 // ── Getting it queued ────────────────────────────────────────────────────
@@ -579,7 +580,9 @@ test('a failing verdict on the bot\'s proposal queues its issue; anything else d
   assert.deepEqual(yes.asked[0].params, [5001, 'homeroom_bot'], 'the bot\'s own proposals only');
   assert.match(yes.asked[0].s, /cs\.status = 'promoted'/);
   const insert = yes.asked.find((q) => /INSERT INTO homeroom_bot_queue/.test(q.s));
-  assert.deepEqual(insert.params, [9, 50, bot.CHECKS_REASON]);
+  assert.deepEqual(insert.params.slice(0, 3), [9, 50, bot.CHECKS_REASON]);
+  assert.match(insert.s, /SELECT pg_notify\(\$4, \$5\)/, 'and its wake, in the same statement (a NOTIFY commits with the row)');
+  assert.match(insert.params[4], /"k":"homeroom_bot"/);
 
   for (const [pool, why] of [
     [notePool(null), 'somebody else\'s proposal'],
@@ -595,48 +598,38 @@ test('a failing verdict on the bot\'s proposal queues its issue; anything else d
   assert.equal(await bot.noteProposalChecks({ async query() { throw new Error('down'); } }, { sessionId: 1 }), false, 'never throws');
 });
 
-test('every settled verdict reaches the bot, through the preview machine\'s follow-ups', () => {
+test('every settled verdict reaches the bot\'s change machine, by the preview machine\'s own write', () => {
   // The machine is where every verdict settles: a run's (live or collected),
-  // and a skipped one (staging-recovery hands it over). Each queues the
-  // follow-ups work with its state.
+  // and a skipped one (staging-recovery hands it over). Each writes the
+  // bot's message with it (rules/bot-notes.ts), for passing, skipped and
+  // failing verdicts; the change machine decides from the row
+  // (src/workflow/bot-change/): ready to try, or back to the bot.
   const machine = read('src/workflow/preview/machine.ts');
-  assert.match(machine, /kind: WORK\.followUps, key: `follow-ups:\$\{run\.key\}`,\n\s+input: \{ sessionId: d\.sessionId, appId: d\.appId, head: run\.head, state, deferred, trigger: d\.trigger, shotsTold: true \},/);
-  assert.match(machine, /work: \[followUps\(d, run, 'skipped'\)\]/);
-  assert.match(machine, /followUps\(d, run, state\),/);
+  assert.match(machine, /const BOT_VERDICTS: ReadonlySet<string> = new Set\(\['passing', 'skipped', 'failing'\]\);/);
+  assert.match(machine, /\.\.\.toBot\(d, e\.payload\.head, 'skipped'\)\]/);
+  assert.match(machine, /writes: \[settle, \.\.\.\(stores \? toBot\(d, run\.head, state\) : \[\]\)\],/);
   assert.match(read('src/services/staging-recovery.js'),
     /async function recordChecksSkipped\(\{ session, commitSha, reason \}\) \{\n\s+await workflow\(\)\.skipped\(\{ session, head: commitSha, reason \}\)/);
-  // B4: a passing or skipped one is the bot's change being ready to try; a
-  // failing one is the bot's to fix.
-  const services = read('src/workflow/preview/services.ts');
-  const work = services.slice(services.indexOf('[WORK.followUps]: {'), services.indexOf('[WORK.stopped]: {'));
-  assert.match(work, /if \(!deferred\) \{\n\s+if \(state === 'passing' \|\| state === 'skipped'\) \{\n\s+await legacy\('services\/homeroom-bot-dm'\)\.noteChangeReady\(pool, sessionId\);/);
-  assert.match(work, /\} else if \(state === 'failing'\) \{\n\s+await legacy\('services\/homeroom-bot'\)\.noteProposalChecks\(pool, \{ sessionId \}\);/);
+  // A failing one is the bot's to fix: its change machine's work queues it.
+  const services = read('src/workflow/bot-change/services.ts');
+  assert.match(services, /legacy\('services\/homeroom-bot'\)\.queueChecksFix\(pool, \{ sessionId: Number\(input\.sessionId\), head: String\(input\.head\) \}\)/);
   const schema = read('src/db/schema.sql');
   assert.match(schema, /ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha TEXT;/);
 });
 
-test('the follow-ups cost an error verdict nothing, and a passing one only the ready check', async () => {
+test('an older release\'s follow-ups read nothing themselves: the bot\'s change machine reads the row', async () => {
   const { previewServices } = require('../src/workflow/preview/services.ts');
   const { WORK } = require('../src/workflow/preview/machine.ts');
   const asked = [];
+  const told = [];
   const pool = { async query(sql) { asked.push(String(sql)); return { rows: [] }; } };
-  const followUps = (state) => previewServices({ config: {}, pool })[WORK.followUps]
-    .run({ input: { sessionId: 5001, appId: 9, head: null, state } });
+  const followUps = (state) => previewServices({ config: {}, pool, botNote: async (id, type, p) => { told.push([type, p.state]); } })[WORK.followUps]
+    .run({ input: { sessionId: 5001, appId: 9, head: null, state }, workId: `w-${state}` });
   await followUps('error');
-  assert.equal(asked.length, 0);
-  // B4: passing asks whether the change is ready to try (with what its
-  // before & after shots on that head say). The app's merge queue is the
-  // machine's message, not a read here.
   await followUps('passing');
-  assert.deepEqual(asked.map((s) => s.replace(/\s+/g, ' ').trim()), [
-    'SELECT status, check_state, approval_epoch, source, reviewed_head_sha, imported_pr_head_sha, '
-      + 'checks_commit_sha, handoff_head_sha, checks_checked_at, shots_state, shots_run_id, shots_detail, shots_updated_at, '
-      + 'pr_title, pr_title_fallback, session_title '
-      + 'FROM chat_sessions WHERE id = $1',
-  ]);
-  asked.length = 0;
   await followUps('failing');
-  assert.ok(asked.some((s) => /AS looked/.test(s)), 'a failing one is looked up');
+  assert.equal(asked.length, 0);
+  assert.deepEqual(told, [['Verdict', 'passing'], ['Verdict', 'failing']]);
 });
 
 // ── A declared change its shots show failing (Flat 4B Chores) ───────────
@@ -682,21 +675,21 @@ test('a change its shots show failing: one build turn fixes it, said as what did
 test('a change its shots show failing, with no revisions left: handed to a person, and its card goes out saying what is wrong', async (t) => {
   const told = [];
   const h = harness({ row: brokenRow(), revisions: followup.MAX_REVISIONS });
-  h.deps.dm = { ...require('../src/services/homeroom-bot-dm'), noteChangeReady: async (_pool, id) => { told.push(id); return null; } };
+  h.deps.botNote = async (id, type) => { told.push([type, id]); return 1; };
   const out = await run(t, h);
   assert.equal(out.verdict, 'person');
   assert.equal(h.calls.exec.length, 0);
   assert.match(h.calls.posts[0].text, /can't get this change working on its own: "Tapping "mark as done" ticks a chore off\." didn't work when Homeroom tried it/);
   assert.match(h.calls.posts[0].dm.reason, /^part of it does not work yet/);
-  assert.deepEqual(told, [5001], 'the ready card that waited on this round is sent now');
+  assert.deepEqual(told, [['FixRoundEnded', 5001]], 'the bot\'s change machine hears the round ended: the ready card that waited on it goes out now');
 });
 
-test('a red-checks hand-off with nothing failing in the shots does not send a ready card', async (t) => {
+test('a red-checks hand-off tells the change machine its round ended; with its checks failing, no ready card follows (bot-change decides)', async (t) => {
   const told = [];
   const h = harness({ revisions: followup.MAX_REVISIONS });
-  h.deps.dm = { ...require('../src/services/homeroom-bot-dm'), noteChangeReady: async (_pool, id) => { told.push(id); return null; } };
+  h.deps.botNote = async (id, type) => { told.push([type, id]); return 1; };
   await run(t, h);
-  assert.deepEqual(told, []);
+  assert.deepEqual(told, [['FixRoundEnded', 5001]]);
 });
 
 // ── A declared change its shots skipped for want of data it can seed ────
@@ -755,13 +748,13 @@ test('a skip it adds no data for says nothing, marks the head, and sends the car
   ]) {
     const told = [];
     const h = harness({ row: skippedRow(), ...opts });
-    h.deps.dm = { ...require('../src/services/homeroom-bot-dm'), noteChangeReady: async (_pool, id) => { told.push(id); return null; } };
+    h.deps.botNote = async (id, type) => { told.push([type, id]); return 1; };
     const out = await run(t, h);
     assert.equal(out.acted, 'checks_shots_left');
     assert.equal(h.calls.posts.length + h.calls.onProposal.length, 0, 'the shots card already gives the reason');
     assert.equal(h.calls.reconciled.length, 0);
     assert.equal(insertOf(h).params[21], HEAD, 'never asked again for the same head');
-    assert.deepEqual(told, [5001]);
+    assert.deepEqual(told, [['FixRoundEnded', 5001]]);
   }
 });
 

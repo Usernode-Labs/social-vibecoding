@@ -12,7 +12,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
-const { governanceProposal, issueKey, MACHINE, NOTIFIERS } = require('../src/workflow/governance-proposal/machine.ts');
+const { governanceProposal, issueKey, MACHINE } = require('../src/workflow/governance-proposal/machine.ts');
 const { GOVERNANCE_KINDS } = require('../src/services/governance-kinds');
 const secrets = require('../src/services/secrets');
 
@@ -76,8 +76,6 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     return i;
   }
 
-  const notified = [];
-  const notifiers = Object.fromEntries(NOTIFIERS.map((n) => [n, (x) => { notified.push(x); }]));
   const work = { calls: [], fail: new Set(), result: {} };
   const fake = (kind) => ({
     maxAttempts: 2, backoffMs: () => 0,
@@ -91,7 +89,7 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
       return work.result[kind] || { ok: true };
     },
   });
-  const machine = governanceProposal({ dataKey: DATA_KEY, notifiers });
+  const machine = governanceProposal({ dataKey: DATA_KEY });
   // What browsers hear: published in the transition's transaction.
   const pushed = [];
   const rt = createRuntime({
@@ -152,7 +150,10 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     assert.ok(pushed.some((p) => p.kind === 'room' && p.routing.appId === a.id && p.data.type === 'chat'
       && p.data.content === `${v1.username} voted down on close proposal for issue #7: “not yet”` && p.data.thread.type === 'governance'),
     'the vote line, to the app\'s room');
-    assert.ok(notified.some((n) => n.type === 'boardChange' && n.appId === a.id), 'the Workshop\'s board-change kick, once, where it decided');
+    // The Workshop's board-change kick rides the vote's own push: every web
+    // process that relays it re-places the cards (no post-commit notifier).
+    assert.ok(pushed.some((p) => p.kind === 'scoped' && p.routing.appId === a.id && p.routing.boardChange === true
+      && p.data.type === 'issue_update' && p.data.action === 'voted'), 'the board change, on the vote\'s push');
     await send(i, 'Withdraw', { userId: author.id, username: author.username }, { actor: `user:${author.id}` });
     await rt.drain();
     const late = await vote(i, v2, 'up');
@@ -204,7 +205,6 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
       ['Start', { campaignId: camp.id }, 'message', MACHINE]);
     assert.equal((await pool.query(
       `SELECT count(*)::int AS n FROM wf_work WHERE machine = $1 AND key = $2 AND kind = 'campaign.run'`, [MACHINE, issueKey(c.id)])).rows[0].n, 0);
-    assert.ok(!notified.some((n) => n.type === 'startCampaign'));
     // secret_change: the secret, the redeploy asked of app-delivery, and no ciphertext left behind.
     const valueEnc = secrets.encrypt('hunter2-value', DATA_KEY);
     const sec = await issue(a, author, 'secret_change', { key: 'API_KEY', action: 'set', valueEnc, valueLast4: 'alue' });

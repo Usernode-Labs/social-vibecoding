@@ -10,7 +10,7 @@
 import { NONE, WORK_EVENTS, assertJson, canonicalHash, isIgnored, isRejection } from './machine.ts';
 import type { Machine, WorkResultPayload } from './machine.ts';
 import type {
-  Event, Json, Logger, MessageRequest, Notification, Outcome, Pool, PoolClient, Push, Queryable, State, TransitionContext, Tx,
+  Event, Json, Logger, MessageRequest, Outcome, Pool, PoolClient, Push, Queryable, State, TransitionContext, Tx,
 } from './types.ts';
 
 export interface PipelineOptions {
@@ -220,21 +220,16 @@ async function processOne(opts: PipelineOptions, names: string[], versions: numb
       await client.query('ROLLBACK');
       return { kind: 'pass', id: Number(row.id) };
     }
-    let notifications: Notification[];
+    // Nothing runs after COMMIT: everything an event sets off committed with
+    // it (state, writes, work, messages, pushes).
     try {
-      notifications = await applyEvent(client, machine, row, opts.publish);
+      await applyEvent(client, machine, row, opts.publish);
       await client.query('COMMIT');
     } catch (err) {
       // Nothing of the event's transaction survives, the machine's writes
       // included; the failure is recorded in a transaction of its own.
       await client.query('ROLLBACK').catch(() => {});
-      notifications = [];
       await recordFailure(client, opts, machine, row, err);
-    }
-    for (const n of notifications) {
-      Promise.resolve()
-        .then(() => machine.notifiers.get(n.type)!(n))
-        .catch((err) => opts.log.warn('workflow', 'notification failed', { machine: row!.machine, type: n.type, message: err?.message }));
     }
     return { kind: 'done', id: Number(row.id) };
   } catch (err) {
@@ -371,7 +366,7 @@ const CANCEL_WORK = `
 const json = (v: Json | undefined) => (v == null ? null : JSON.stringify(v));
 
 async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: Picked,
-  publish?: PipelineOptions['publish']): Promise<Notification[]> {
+  publish?: PipelineOptions['publish']): Promise<void> {
   const eventId = Number(row.id);
   const inst = row.instance;
   // A '(none)' row is left by a creating event that timed out or faulted.
@@ -393,7 +388,6 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
   };
   const rejectWith = async (reason: string) => {
     await finishUnchanged({ result: 'rejected', reason });
-    return [];
   };
 
   // 1. Replay before anything else: no facts, flags, authority or guard.
@@ -406,7 +400,7 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
       result: 'replayed', stateAfter: receipt.outcome.state, versionAfter: receipt.outcome.version,
       emitted: { replayOf: Number(receipt.event_id) }, reply: receipt.outcome.reply ?? null,
     });
-    return [];
+    return;
   }
 
   // 2. Decode once, at the boundary.
@@ -439,8 +433,10 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
   if (!outcome?.next || !machine.states.has(outcome.next.name)) {
     throw new Error(`${machine.name}: transition ${state.name}.${event.type} produced undeclared state ${outcome?.next?.name}`);
   }
-  for (const n of outcome.notify || []) {
-    if (!machine.notifiers.has(n.type)) throw new Error(`${machine.name}: no notifier ${n.type}`);
+  // Post-commit kicks are gone (a crash between COMMIT and the kick lost
+  // it): what an event sets off is a push, work or a message.
+  if ((outcome as { notify?: unknown }).notify !== undefined) {
+    throw new Error(`${machine.name}: transition ${state.name}.${event.type} returned notify; use a push, work or a message`);
   }
   const data = outcome.next.data ?? null;
   assertJson(data);
@@ -529,12 +525,10 @@ async function applyEvent(client: PoolClient, machine: Machine<any, any>, row: P
       work, messages,
       ...(cancelled.length ? { cancelled } : {}),
       timer: timer === undefined ? undefined : timer && { at: timer.at.toISOString(), type: timer.event.type },
-      notify: (outcome.notify || []).map((n) => n.type),
       push: pushes.length ? pushes.map((p) => `${p.kind}:${String(p.data.type ?? '')}`) : undefined,
     }),
     json(reply),
   ]);
-  return outcome.notify || [];
 }
 
 // The pipeline settles a work item when it applies that item's result,

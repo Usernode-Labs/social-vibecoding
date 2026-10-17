@@ -12,7 +12,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
-const { mergeFollowups, sessionKey, MACHINE, NOTIFIERS, WORK } = require('../src/workflow/merge-followups/machine.ts');
+const { mergeFollowups, sessionKey, MACHINE, WORK } = require('../src/workflow/merge-followups/machine.ts');
 const secrets = require('../src/services/secrets');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -77,8 +77,6 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     'SELECT kind, work_key, input, status FROM wf_work WHERE machine = $1 AND key = $2 ORDER BY created_at, work_key',
     [MACHINE, sessionKey(s.id)])).rows;
 
-  const notified = [];
-  const notifiers = Object.fromEntries(NOTIFIERS.map((n) => [n, (x) => { notified.push(x); }]));
   // What browsers hear: published in the transition's transaction.
   const pushed = [];
   // Fake work: records each call; `results` answers per kind, `fail` makes
@@ -95,7 +93,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
       return typeof r === 'function' ? r(input) : (r || { ok: true });
     },
   });
-  const machine = mergeFollowups({ dataKey: DATA_KEY, notifiers });
+  const machine = mergeFollowups({ dataKey: DATA_KEY });
   const rt = createRuntime({
     pool, machines: [machine], pollMs: 50, publish: async (q, list) => { pushed.push(...list); },
     services: Object.fromEntries(Object.values(WORK).map((k) => [k, fake(k)])),
@@ -179,7 +177,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     // The deploy is asked of app-delivery; the preview waits for its answer
     // (demo mode deploys its build).
     const kinds = (await workOf(s)).map((w) => w.kind).sort();
-    assert.deepEqual(kinds, [WORK.bot, WORK.find, WORK.issues, WORK.mainCheck, WORK.retire].sort());
+    assert.deepEqual(kinds, [WORK.find, WORK.issues, WORK.mainCheck, WORK.retire].sort());
     assert.equal((await asked(a)).length, 1);
   });
 
@@ -189,7 +187,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.equal((await merge(s, { observedBy: 'recovery', tally: null })).result, 'accepted');
     assert.equal((await row(s.id)).status, 'merged');
     const kinds = (await workOf(s)).map((w) => w.kind).sort();
-    assert.deepEqual(kinds, [WORK.bot, WORK.find, WORK.issues, WORK.mainCheck, WORK.retire].sort());
+    assert.deepEqual(kinds, [WORK.find, WORK.issues, WORK.mainCheck, WORK.retire].sort());
     assert.equal((await asked(a)).length, 1);
     assert.equal((await events(s, 'pr_merged')).length, 1);
   });
@@ -243,10 +241,10 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.equal(live.metadata.merged.votes, '2/3');
     assert.equal(live.metadata.wfEvent > 0, true);
     const kinds = work.calls.filter((c) => c.input.sessionId === s.id).map((c) => c.kind);
-    assert.ok(kinds.includes(WORK.dm) && kinds.includes(WORK.journey), 'the DM and the journey record follow live');
-    assert.ok(kinds.includes(WORK.live), 'and the request\'s "It\'s live"');
-    const dm = work.calls.find((c) => c.kind === WORK.dm && c.input.sessionId === s.id);
-    assert.equal(dm.input.sha, SHA('a'));
+    assert.ok(kinds.includes(WORK.journey), 'the journey record follows live');
+    // The bot's DM and "It's live" are its change machine's, told by the
+    // live's own write for a change of the bot's (workflow-bot-change-postgres).
+    assert.ok(!kinds.includes(WORK.dm) && !kinds.includes(WORK.live) && !kinds.includes(WORK.bot));
     const heard = pushed.filter((p) => p.routing.appId === a.id);
     assert.ok(heard.some((p) => p.kind === 'scoped' && p.data.type === 'app_version_changed' && p.data.sha === SHA('a')), 'the version pill');
     assert.ok(heard.some((p) => p.kind === 'room' && p.data.type === 'chat' && p.data.content === live.content && p.data.id > 0
@@ -258,9 +256,9 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.ok(toAuthor.some((p) => p.data.type === 'notification_new' && p.data.notificationId === n.id && !p.data.notification));
     // The requests it closed: the issue lists re-read once that work ended.
     assert.ok(heard.some((p) => p.data.type === 'issue_update' && p.data.action === 'github_synced' && p.data.source === 'pr_merged'));
-    // Kicks into flows not migrated yet, once, where it decided.
-    assert.ok(notified.some((x) => x.type === 'badgeSync' && x.sessionId === s.id), 'the phone badges of everyone with a bell row');
-    assert.ok(notified.some((x) => x.type === 'boardChange' && x.appId === a.id), 'the Workshop re-places the requests it closed');
+    // The Workshop re-places the requests it closed: the board change rides
+    // the push every web process relays (no post-commit notifier).
+    assert.ok(heard.some((p) => p.routing.boardChange === true && p.data.type === 'issue_update'), 'the board change, on the push');
   });
 
   await t.test('F6: a failed deploy is visible, and a later deploy makes it live', async () => {
@@ -555,13 +553,12 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     const a = await app();
     const s = await proposal(a, { linked: [5, 6] });
     pushed.length = 0;
-    notified.length = 0;
     await merge(s);
     const closed = pushed.filter((p) => p.kind === 'issues_closed');
     assert.deepEqual(closed.map((p) => [p.routing, p.data.numbers]), [[{ owner: 'acme', repo: a.slug }, [5, 6]]]);
     // And the lists re-read at once, not only once the close work ends.
-    assert.ok(pushed.some((p) => p.data.type === 'issue_update' && p.data.action === 'github_synced' && p.data.source === 'pr_merged'));
-    assert.ok(notified.some((x) => x.type === 'boardChange' && x.appId === a.id));
+    assert.ok(pushed.some((p) => p.data.type === 'issue_update' && p.data.action === 'github_synced' && p.data.source === 'pr_merged'
+      && p.routing.boardChange === true), 'and the Workshop re-places them, from the push');
     work.results.set(WORK.issues, { closed: [5], skipped: [], stillOpen: [9] });
     try { await settle(); } finally { work.results.delete(WORK.issues); }
     const ended = pushed.filter((p) => p.kind === 'issues_closed').at(-1);

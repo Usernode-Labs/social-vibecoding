@@ -214,31 +214,21 @@ function sessionRow(extra = {}) {
   };
 }
 
-test('ready to try waits on the bot\'s round for a seedable skip; with no round due, its card goes out as usual', async (t) => {
+test('ready to try waits on the bot\'s round for a seedable skip; with no round due, its card goes out as usual', async () => {
   const settled = await dm.changeReadiness(readinessPool(sessionRow()), 7818);
   assert.equal(settled.ready, true);
   assert.equal(settled.skipped.length, 1);
   assert.deepEqual(settled.broken, []);
 
-  const bot = require('../src/services/homeroom-bot');
-  const real = bot.noteProposalChecks;
-  t.after(() => { bot.noteProposalChecks = real; });
-  let asked = 0;
-  bot.noteProposalChecks = async (_pool, { sessionId }) => { asked += 1; assert.equal(sessionId, 7818); return true; };
-  const handed = readinessPool(sessionRow());
-  assert.equal(await dm.noteChangeReady(handed, 7818, { bot: { id: 77 }, domain: 'onhomeroom.test' }), null);
-  assert.equal(asked, 1, 'the round is asked for');
-  assert.ok(!handed.asked.some((s) => /homeroom_bot_requesters/.test(s)), 'and nobody is told it is ready yet');
-
-  bot.noteProposalChecks = async () => false;
-  const spent = readinessPool(sessionRow());
-  await dm.noteChangeReady(spent, 7818, { bot: { id: 77 }, domain: 'onhomeroom.test' });
-  assert.ok(spent.asked.some((s) => /homeroom_bot_requesters/.test(s)), 'with no round due, its requester hears');
-
-  let roundAsked = false;
-  bot.noteProposalChecks = async () => { roundAsked = true; return true; };
-  await dm.noteChangeReady(readinessPool(sessionRow(shotsRow({ reason: NOT_SEEDABLE[1] }))), 7818, { bot: { id: 77 }, domain: 'onhomeroom.test' });
-  assert.equal(roundAsked, false, 'a skip no seed can fix never asks for a round');
+  // The bot's change machine decides from the row (src/workflow/bot-change/),
+  // with the rules every caller reads (src/workflow/rules/bot-readiness.ts).
+  const rules = require('../src/workflow/rules/bot-readiness.ts');
+  const row = sessionRow();
+  assert.equal(rules.checksDue({ ...row, looked: false }).skipped.length, 1, 'the round is due: no card yet');
+  assert.equal(rules.checksDue({ ...row, looked: true }), null, 'once looked at, no round is due: its card goes out as usual');
+  assert.equal(rules.checksDue({ ...row, looked: false, fix_revised: true }), null, 'a skip is never a second round');
+  assert.equal(rules.checksDue({ ...sessionRow(shotsRow({ reason: NOT_SEEDABLE[1] })), looked: false }), null,
+    'a skip no seed can fix never asks for a round');
 });
 
 // ── Anyone else's proposal: get_proposal's nextStep ──────────────────────

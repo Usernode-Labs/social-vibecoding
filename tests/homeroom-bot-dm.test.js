@@ -289,16 +289,16 @@ test('#7 (WP3): "live now" is said when the change is live, and the platform\'s 
     { id: 'open_app', label: 'Open Page Turners', style: 'primary', type: 'open', target: '#app/page-turners/app' });
   assert.equal(dm.openAppAction({ slug: '', appName: 'X' }), null);
 
-  // It says live: the merge-followups machine asks for it only once the
-  // change is live (machine.ts toLive's bot.dmMerged work), so nothing here
-  // reads the app's health or waits for it.
+  // It says live: the bot's change machine asks for it only once the
+  // change is live (the merge-followups machine's toLive tells it), so
+  // nothing here reads the app's health or waits for it.
   const src = read('src/services/homeroom-bot-dm.js');
   const merged = src.slice(src.indexOf('async function noteProposalMerged('), src.indexOf('// ── A person writing to the bot'));
   assert.match(merged, /^async function noteProposalMerged\(pool, session, \{ deps = \{\} \} = \{\}\)/);
   assert.match(merged, /const live = true;/);
   assert.doesNotMatch(merged, /probeHealth|liveAfterMerge/);
-  const services = read('src/workflow/merge-followups/services.ts');
-  assert.match(services, /legacy\('services\/homeroom-bot-dm'\)\.noteProposalMerged\(pool, \{ id: input\.sessionId \},\s*\{ deps: \{ strict: true \} \}\)/);
+  const services = read('src/workflow/bot-change/services.ts');
+  assert.match(services, /legacy\('services\/homeroom-bot-dm'\)\.noteProposalMerged\(pool, \{ id: Number\(input\.sessionId\) \},\s*\{ deps: \{ strict: true \} \}\)/);
 });
 
 test('an answer is posted on the request saying where it came from', () => {

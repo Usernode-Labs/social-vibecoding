@@ -1728,6 +1728,11 @@ function issueRoutes(config) {
       if (isGovernanceKind(issue.kind)) {
         const reply = await workflow().voteOnProposal(issue, req.user,
           { vote, reason, requestKey: req.get('Idempotency-Key') || undefined });
+        // "Vote on a change" counts it now, as a vote on a request or a
+        // change does below (challengeScorer.scoreOnVote, idempotent: a
+        // replayed vote credits nothing twice). Not a retraction, not one
+        // still pending. A lost one is credited at the rule's next pass.
+        if (reply.status === 200 && reply.body?.ok && !reply.body.toggled) await challengeScorer.scoreOnVote(pool, config);
         return res.status(reply.status).json(reply.body);
       }
 

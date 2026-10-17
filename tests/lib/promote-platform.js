@@ -59,7 +59,6 @@ async function startPromotePlatform(t, { name = 'wf_promote' } = {}) {
       return behaviour.applyPrMetadata ? behaviour.applyPrMetadata(args) : null;
     },
   });
-  stub('../../src/services/homeroom-bot-dm', { ...require('../../src/services/homeroom-bot-dm'), noteProposalChanged: async () => null });
 
   const platform = require('../../src/workflow/platform.ts');
   t.after(async () => {

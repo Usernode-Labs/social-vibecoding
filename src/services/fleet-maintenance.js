@@ -304,7 +304,10 @@ async function runAppChange({ campaign, app, exemplarSummary, onUsage, stopped =
       },
     });
     if (onUsage && res.usage) {
-      try { onUsage(res.usage, res.servedModel); } catch { /* accounting never fails the run */ }
+      // Awaited, so a spend is recorded before the next call (a crash after
+      // the model answered and before its row lost it, under-counting the
+      // cap); a failed record never fails the run.
+      try { await onUsage(res.usage, res.servedModel); } catch { /* accounting never fails the run */ }
     }
 
     if (!res.toolUses.length) {

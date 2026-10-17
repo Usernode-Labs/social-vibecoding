@@ -475,9 +475,14 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
       assert.equal((await pool.query('SELECT read_at FROM notifications WHERE user_id = $1', [asker.id])).rows[0].read_at !== null, true, `${reason}: the bell stops asking`);
       assert.equal((await pool.query(`SELECT 1 FROM chat_messages WHERE thread_type = 'session' AND thread_ref = $1`, [s.id])).rowCount, 1, reason);
       const kinds = (await workOf(s)).map((w) => w.kind).sort();
-      assert.deepEqual(kinds, [WORK.bot, WORK.close, WORK.destroy].sort(), reason);
+      assert.deepEqual(kinds, [WORK.close, WORK.destroy].sort(), reason);
       const [retire] = await sentTo(s, 'preview');
       assert.deepEqual([retire.type, retire.payload.terminal], ['RetireRequested', true], `${reason}: the preview goes for good, built or not (bug 15)`);
+      // A withdrawal because its requests closed says so in each request's
+      // thread, with the close (the bot's retry cannot lose it: trace-bot-notes bug 11).
+      const said = (await pool.query(`SELECT content FROM chat_messages WHERE thread_type = 'issue' AND thread_ref = 5 AND app_id = $1`, [s.app_id])).rows;
+      if (reason === 'request-closed') assert.match(said.at(-1)?.content || '', /was withdrawn: this request is closed\.$/, reason);
+      else assert.equal(said.length, 0, reason);
       assert.ok(pushed.some((p) => p.data.type === 'issue_update' && p.data.source === 'session_archived' && p.data.appId === s.app_id), reason);
     }
   });

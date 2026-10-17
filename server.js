@@ -4931,13 +4931,17 @@ const FRESHNESS_REFRESH_COOLDOWN_MS = Math.max(
 // created since the leader started): its idle check and its hourly review
 // check are the machine's timers, armed on adoption. So is a maintenance
 // campaign an older release was driving, once its driver lets it go (a
-// rollout's transitional piece: platform.adoptCampaigns).
+// rollout's transitional piece: platform.adoptCampaigns), and a change of the
+// Homeroom bot's an older release put up for a vote during the rollout
+// (platform.adoptBotChanges).
 const adoptProposals = async () => {
   const platform = require('./src/workflow/platform.ts');
   await platform.adoptProposals()
     .catch((err) => log.warn('server', 'Adopting sessions for the proposal machine failed', { err: err.message }));
   await platform.adoptCampaigns()
     .catch((err) => log.warn('server', 'Adopting maintenance campaigns failed', { err: err.message }));
+  await platform.adoptBotChanges()
+    .catch((err) => log.warn('server', 'Adopting the Homeroom bot\'s changes failed', { err: err.message }));
 };
 
 function startSessionAutoPauseSweeper(config) {

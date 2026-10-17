@@ -71,6 +71,20 @@ const BY_RUN_SQL = `INSERT INTO events (user_id, app_id, session_id, event_type,
    WHERE r.id = $1::int AND r.mode = 'live'
   RETURNING id`;
 
+// A stage said once per run (`once`: a durable caller that may run again,
+// the bot's change machine's live note): a second record of it is not kept.
+const ONCE_BY_RUN_SQL = `INSERT INTO events (user_id, app_id, session_id, event_type, metadata)
+  SELECT f.user_id, f.app_id, $2::int, $3::text,
+         $4::jsonb || jsonb_build_object('runId', r.id, 'issueNumber', r.issue_number)
+    FROM homeroom_bot_runs r
+    JOIN homeroom_bot_first_versions f
+      ON f.app_id = r.app_id AND f.issue_number = r.issue_number AND f.bot_builds
+   WHERE r.id = $1::int AND r.mode = 'live'
+     AND NOT EXISTS (SELECT 1 FROM events e
+                      WHERE e.app_id = f.app_id AND e.event_type = $3::text
+                        AND e.metadata->>'stage' = $4::jsonb->>'stage' AND e.metadata->>'runId' = r.id::text)
+  RETURNING id`;
+
 const BY_APP_SQL = `INSERT INTO events (user_id, app_id, event_type, metadata)
   SELECT f.user_id, f.app_id, $2::text, $3::jsonb || jsonb_build_object('issueNumber', f.issue_number)
     FROM homeroom_bot_first_versions f
@@ -107,18 +121,22 @@ function positive(value) {
  * for a plan written at Make it, by its project (`appId`). Resolves whether
  * a row was written; never throws.
  */
-async function record(pool, { runId = null, appId = null, stage, sessionId = null, detail = null } = {}) {
+async function record(pool, { runId = null, appId = null, stage, sessionId = null, detail = null, once = false, strict = false } = {}) {
   try {
     if (!pool || !STAGES.includes(stage)) return false;
     const run = positive(runId);
     const app = positive(appId);
     if (!run && !app) return false;
     const metadata = JSON.stringify({ ...cleanDetail(detail), stage });
-    const { rows } = run
-      ? await pool.query(BY_RUN_SQL, [run, positive(sessionId), events.EVENT_TYPES.FIRST_VERSION_STAGE, metadata])
-      : await pool.query(BY_APP_SQL, [app, events.EVENT_TYPES.FIRST_VERSION_STAGE, metadata]);
+    const byRun = [run, positive(sessionId), events.EVENT_TYPES.FIRST_VERSION_STAGE, metadata];
+    let rows;
+    if (run && once) ({ rows } = await pool.query(ONCE_BY_RUN_SQL, byRun));
+    else if (run) ({ rows } = await pool.query(BY_RUN_SQL, byRun));
+    else ({ rows } = await pool.query(BY_APP_SQL, [app, events.EVENT_TYPES.FIRST_VERSION_STAGE, metadata]));
     return rows.length > 0;
   } catch (err) {
+    // A durable caller (`strict`, recording once) is told, and retries.
+    if (strict) throw err;
     log.debug('first-version-timeline', 'A first version\'s stage was not recorded', { runId, appId, stage, err: err && err.message });
     return false;
   }
@@ -137,6 +155,7 @@ module.exports = {
   STAGES,
   STAGE_OF_STEP,
   BY_RUN_SQL,
+  ONCE_BY_RUN_SQL,
   BY_APP_SQL,
   cleanDetail,
   record,

@@ -50,9 +50,15 @@ const explicitApproval = require('./explicit-approval');
 const ADMIN_CACHE_TTL_MS = 10 * 1000;
 const adminCache = new Map(); // appId -> { at, ids: number[] }
 
-function invalidateAppAdmins(appId) {
+function invalidateAppAdminsHere(appId) {
   if (appId != null) adminCache.delete(Number(appId));
   else adminCache.clear();
+}
+
+// Here and in every other process (access-change.js).
+function invalidateAppAdmins(appId) {
+  invalidateAppAdminsHere(appId);
+  require('./access-change').shareAccessChange(appId ?? null);
 }
 
 // Resolved app-admin user ids for one app. TTL-cached.
@@ -375,6 +381,7 @@ async function sweepExplicitApproval(pool, session) {
 
 module.exports = {
   invalidateAppAdmins,
+  invalidateAppAdminsHere,
   getAppAdminIds,
   isAppAdmin,
   canManageApp,
