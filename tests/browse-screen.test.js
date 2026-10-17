@@ -149,6 +149,9 @@ function makeBrowse(opts = {}) {
       return { ok, status: ok ? 200 : 500, json };
     },
     setTimeout, clearTimeout, setInterval, clearInterval,
+    // Browse.siteFor parses candidates with `new URL` (#5364); URL, unlike
+    // URLSearchParams, is not a vm-context built-in.
+    URL,
     URLSearchParams,
     // The Sort control remembers the reader's choice (#1383). Backed by a
     // plain object the caller seeds through `opts.storage` and reads back
@@ -690,6 +693,83 @@ test('an empty chip says which set is empty', () => {
   assert.equal(state.empty, 'No new apps match “zzz”.');
   Browse.setFilter('all');
   assert.equal(state.empty, 'No apps match “zzz”.', 'All keeps the sentence it always had');
+});
+
+// ── Open site (#5364) ─────────────────────────────────────────────
+
+// siteFor decides when the "Open site" row shows. Its rules ARE the feature:
+// an address opens, plain words and phrases never trigger, and only http/https
+// web pages (a dotted host) are offered.
+test('siteFor accepts web addresses and rejects everything else', () => {
+  const { Browse } = makeBrowse();
+  const ok = (query, href, label) => {
+    const site = Browse.siteFor(query);
+    assert.ok(site, `accepts ${JSON.stringify(query)}`);
+    assert.equal(site.href, href);
+    assert.equal(site.label, label);
+  };
+  ok('example.com', 'https://example.com/', 'example.com');
+  ok('www.example.org/page', 'https://www.example.org/page', 'www.example.org/page');
+  ok('https://Example.com/', 'https://example.com/', 'Example.com');
+  ok('http://x.io:8080/a', 'http://x.io:8080/a', 'x.io:8080/a');
+  const no = (query) => {
+    assert.equal(Browse.siteFor(query), null, `rejects ${JSON.stringify(query)}`);
+  };
+  no('');
+  no('   ');
+  no('notes');
+  no('my app');
+  no('1.5');
+  no('javascript:alert(1)');
+  no('https://localhost');
+  no('ftp://x.com');
+});
+
+// The store wiring: a site-shaped query publishes the row descriptor and the
+// site row counts as a result, so the "No apps match" line never sits under
+// it; any other query publishes null and search behaves as it always did.
+test('a web-address query publishes the site row and hides the empty line', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [app({ slug: 'notes', name: 'Notes' })];
+  Browse.setQuery('example.com', { immediate: true });
+  // Field-by-field: the descriptor is built in the vm context, so its
+  // prototype is not this realm's Object.prototype and deepEqual would
+  // reject the very same shape.
+  assert.equal(state.site && state.site.href, 'https://example.com/');
+  assert.equal(state.site && state.site.label, 'example.com');
+  assert.equal(state.empty, null, 'the site row is a result, not a miss');
+  assert.deepEqual(slugs(state), [], 'app matching itself is unchanged');
+  Browse.setQuery('Notes', { immediate: true });
+  assert.equal(state.site, null);
+  assert.deepEqual(slugs(state), ['notes']);
+  assert.equal(state.empty, null);
+  Browse.setQuery('zzz', { immediate: true });
+  assert.equal(state.site, null);
+  assert.equal(state.empty, 'No apps match “zzz”.');
+  Browse.setQuery('', { immediate: true });
+  assert.equal(state.site, null);
+});
+
+// The row is drawn by BrowseRows, ahead of every app row, in both the grouped
+// and ungrouped layouts, and the field's Enter opens the site.
+test('the site row renders first and Enter opens it', () => {
+  const listSrc = read('frontend/src/features/apps/browse-list.tsx');
+  assert.match(listSrc, /function SiteRow\(/);
+  assert.match(listSrc, /as="a"\n\s+href=\{site\.href\}\n\s+target="_blank"\n\s+rel="noopener noreferrer"/);
+  // The site row is not an app row: it has no data-slug and no Join button,
+  // so the selectors and checks that read rows by slug never see it.
+  const siteRowSrc = listSrc.slice(listSrc.indexOf('function SiteRow('), listSrc.indexOf('export function BrowseRows'));
+  assert.ok(siteRowSrc.includes('as="a"') && !siteRowSrc.includes('data-slug'),
+    'the site row carries no data-slug');
+  assert.match(listSrc, /const siteRow = site \? <SiteRow site=\{site\} \/> : null;/);
+  assert.match(listSrc, /<>\{siteRow\}\{renderRows\(rows\)\}<\/>/);
+  assert.match(listSrc, /\{siteRow\}\n\s+\{grouped \?/);
+  assert.match(listSrc, /t\('discover:site\.subtitle'\)/);
+  const screenSrc = read('frontend/src/features/apps/browse-screen.tsx');
+  assert.match(screenSrc, /site=\{state\.site\}/);
+  assert.match(screenSrc, /e\.key === 'Enter'[\s\S]*?siteFor\?\.\(e\.currentTarget\.value\)[\s\S]*?window\.open\(site\.href, '_blank', 'noopener'\)/);
+  // The store ships the prerender value: no query, no site row.
+  assert.match(read('frontend/src/features/apps/browse-store.js'), /site: null,/);
 });
 
 test('the chip is remembered for the session only, and ?filter= seeds the first entry', () => {
@@ -1246,7 +1326,7 @@ test('showDetail / showList publish the level, which drives both containers', ()
   // borrows the chevron.
   assert.equal(chrome.backIcon, 'none');
   assert.equal(chrome.backHref, undefined, 'an empty slot needs no target');
-  assert.equal(chrome.title, 'All apps');
+  assert.equal(chrome.title, 'Discover');
 });
 
 test('handleBack claims the header button only on the detail level', () => {
@@ -1767,7 +1847,7 @@ test('navigateToBrowse / _exitBrowse follow the screen pattern', () => {
     APP_SRC.indexOf('_exitBrowse() {')
   );
   assert.match(nav, /setHeaderTitle\(PlatformI18n\.t\('shell:title\.allApps'\)\)/);
-  assert.equal(message('shell:title.allApps'), 'All apps');
+  assert.equal(message('shell:title.allApps'), 'Discover');
   assert.match(nav, /App\._inBrowse = true/);
   assert.match(nav, /Browse\.open\(slug \|\| null, \{ chrome: false \}\)/);
   assert.match(nav, /App\._showOnlyScreen\('browse-screen'\)/);

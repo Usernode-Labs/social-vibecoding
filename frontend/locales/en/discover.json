@@ -80,16 +80,20 @@
     "description": "Tooltip of the \"Invite-only build\" chip on an app. \"Build\" is a verb: develop changes to the app."
   },
   "browse.headerTitle": {
-    "text": "All apps",
+    "text": "Discover",
     "description": "Title in the header bar of the Discover screen while it shows the list of every app."
   },
   "search.placeholder": {
-    "text": "Search all apps…",
-    "description": "Placeholder inside the search field at the top of the Discover screen, which filters the list of every app."
+    "text": "Browse apps and communities…",
+    "description": "Placeholder inside the search field at the top of the Discover screen, which filters the list of every app and also accepts a web address, which is then offered to open in a new browser tab."
   },
   "search.label": {
-    "text": "Search all apps",
+    "text": "Browse apps and communities",
     "description": "Accessible name of the search field at the top of the Discover screen."
+  },
+  "site.subtitle": {
+    "text": "Open site in a new tab",
+    "description": "Second line of the row at the top of Discover's list that appears while the search text is a web address, and opens that site in a new browser tab when tapped. The row's first line is the address itself."
   },
   "search.clear": {
     "text": "Clear search",

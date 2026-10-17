@@ -1474,7 +1474,7 @@
       "name": "Browse renders app-store rows with a Join button, under a bar with no back slot (#2639, #2718)",
       "path": "/#apps",
       "expectSelector": "body:has(#browse-screen:not(.hidden)):has(#platform-header #notifications-btn ~ #platform-mark-btn):has(#platform-header a#back-btn.hidden) #browse-list .browse-row .browse-add-btn",
-      "expectText": "All apps"
+      "expectText": "Discover"
     },
     {
       "name": "Browse rows carry a compact Join pill whose accessible name says what is joined (communities; QA 2026-09-24 Q10)",

@@ -25,7 +25,8 @@
 import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 
-import { CheckIcon, PlusIcon } from '@/components/ui/icons';
+import { CheckIcon, GlobeIcon, PlusIcon } from '@/components/ui/icons';
+import { IconTile } from '@/components/ui/icon-tile';
 import { ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { Button } from '@/components/ui/button';
 import { useMessages } from '../../lib/i18n/react';
@@ -235,8 +236,50 @@ function Row({ view, headingSays }: {
   );
 }
 
-export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded = false }: {
+/**
+ * The "Open site" row (#5364): drawn while the search text is a web address,
+ * above every app row. An app row cannot be an anchor because it wraps its
+ * own Join button; this row wraps nothing, so it IS one — an absolute external
+ * href with target="_blank", which NavLink has nothing to do with (it is never
+ * handed to wireModified, and the router does not intercept it). It carries no
+ * data-slug, so every selector that reads `.browse-row[data-slug]` and the
+ * Join button skip it.
+ */
+function SiteRow({ site }: { site: { href: string; label: string } }): ReactNode {
+  const t = useMessages('discover');
+  return (
+    <ListRow
+      as="a"
+      href={site.href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="browse-row browse-site-row md:col-span-full"
+      inset="none"
+      chevron={false}
+      contentClassName="browse-row-content"
+      titleClassName="browse-row-title"
+      subtitleClassName="browse-row-meta"
+      leading={(
+        // The grey tile an app's icon would sit in, holding a globe: the row
+        // leaves Homeroom, so it has no app artwork.
+        <IconTile className="w-11 h-11 shrink-0 rounded-xl" aria-hidden="true">
+          <GlobeIcon className="w-5 h-5" aria-hidden="true" />
+        </IconTile>
+      )}
+      title={<span className="browse-row-name truncate">{site.label}</span>}
+      subtitle={<span className="block truncate">{t('discover:site.subtitle')}</span>}
+    />
+  );
+}
+
+export function BrowseRows({ rows, site = null, curated = false, grouped = true, moreExpanded = false }: {
   rows: RowView[] | null;
+  /**
+   * The "Open site" row's descriptor from Browse.siteFor, or null: while the
+   * search text is a web address, one row above the app matches offers to
+   * open that site in a new tab (#5364).
+   */
+  site?: { href: string; label: string } | null;
   /** Tuck the `more` tier (demos, apps needing fixes) behind Show more. */
   curated?: boolean;
   /**
@@ -248,10 +291,11 @@ export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded
 }): ReactNode {
   const t = useMessages('discover');
   if (!rows) return null;
+  const siteRow = site ? <SiteRow site={site} /> : null;
   const renderRows = (items: RowView[], headingSays?: string) => items.map((view) => (
     <Row key={view.slug} view={view} headingSays={headingSays} />
   ));
-  if (!curated) return <>{renderRows(rows)}</>;
+  if (!curated) return <>{siteRow}{renderRows(rows)}</>;
   const shown = rows.filter((view) => view.directoryTier !== 'more');
   const ready = rows.filter((view) => view.directoryTier === 'ready');
   const unreviewed = rows.filter((view) => view.directoryTier !== 'ready' && view.directoryTier !== 'more');
@@ -270,6 +314,7 @@ export function BrowseRows({ rows, curated = false, grouped = true, moreExpanded
   const headingClass = 'md:col-span-full';
   return (
     <>
+      {siteRow}
       {grouped ? (
         <>
           {ready.length ? <SectionHeader className={headingClass}>{t('discover:list.heading.reviewedWorking')}</SectionHeader> : null}

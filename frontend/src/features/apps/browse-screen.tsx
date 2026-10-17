@@ -109,6 +109,7 @@ export function BrowseScreen() {
   const state = useStoreState(browseStore) as {
     level: 'list' | 'detail';
     rows: any[] | null;
+    site: { href: string; label: string } | null;
     empty: string | null;
     error: boolean;
     detail: any;
@@ -185,7 +186,17 @@ export function BrowseScreen() {
             className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
             onInput={(e) => browse()?.setQuery(e.currentTarget.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Escape' && e.currentTarget.value) {
+              // Enter opens the site when the field holds a web address —
+              // what a browser's address bar does (#5364). The live value is
+              // read, not the debounced one, so Enter does not wait for the
+              // 100ms coalesce.
+              if (e.key === 'Enter') {
+                const site = browse()?.siteFor?.(e.currentTarget.value);
+                if (site) {
+                  e.preventDefault();
+                  try { window.open(site.href, '_blank', 'noopener'); } catch (err) { /* ignore */ }
+                }
+              } else if (e.key === 'Escape' && e.currentTarget.value) {
                 e.preventDefault();
                 clear(false);
               }
@@ -302,7 +313,7 @@ export function BrowseScreen() {
                 onRetry={() => browse()?._load?.()}
               />
             )
-            : <BrowseRows rows={state.rows} curated={state.curated} grouped={state.grouped} moreExpanded={state.moreExpanded} />}
+            : <BrowseRows rows={state.rows} site={state.site} curated={state.curated} grouped={state.grouped} moreExpanded={state.moreExpanded} />}
         </div>
         {/*
             The nothing-to-show line. On a phone it stands in for the list as

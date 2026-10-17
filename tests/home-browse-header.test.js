@@ -188,7 +188,7 @@ for (const improveAvailable of [true, false]) {
     assert.doesNotMatch(label(home), /Homeroom/,
       'and draws it INSTEAD of the word, not beside it');
     assert.equal(label(browse),
-      '<span id="header-title-name" class="min-w-0 truncate">All apps</span>',
+      '<span id="header-title-name" class="min-w-0 truncate">Discover</span>',
       'Browse names the destination in words, in the same slot');
     // Two writers own this transition — the screen reveal and Browse's own
     // chrome sync — and the LATER one wins, so they have to AGREE or one

@@ -649,6 +649,35 @@ const Browse = {
     return (apps || []).slice().sort(cmp);
   },
 
+  // A query that looks like a web address offers to open the site, the way a
+  // browser's address bar does (#5364). The row is appended to the same list
+  // the app matches render in; app search itself is untouched (Home.filterApps).
+  //
+  // Pure — unit-tested in tests/browse-screen.test.js. Returns
+  // { href, label } or null:
+  //   href  — the address to open, https:// added when the person left it off
+  //   label — the address as they typed it, without the http(s):// prefix and
+  //           without a trailing /
+  siteFor(query) {
+    const raw = String(query == null ? '' : query).trim();
+    if (!raw || /\s/.test(raw)) return null;
+    let candidate = raw;
+    if (!/^https?:\/\//i.test(candidate)) {
+      // A bare "name.tld" shape, optionally a :port and a path/query/hash.
+      // Plain words ("notes"), decimals ("1.5") and phrases never trigger.
+      if (!/^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(:\d+)?([\/?#].*)?$/i.test(candidate)) return null;
+      candidate = `https://${candidate}`;
+    }
+    let url;
+    try { url = new URL(candidate); } catch (err) { return null; }
+    // Only web pages open. This also rejects javascript:, data:, a host with
+    // no dot (https://localhost) and anything malformed URL cannot parse.
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    if (!url.hostname.includes('.')) return null;
+    const label = raw.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    return { href: url.href, label };
+  },
+
   // The rows for the current chip and query. The chip picks the set first
   // (filterApps), then the sort orders it, then the search narrows it. The
   // search covers every app the chip admits (home's own search is scoped to
@@ -756,8 +785,12 @@ const Browse = {
     const apps = Browse.visibleApps();
     const query = (Browse._query || '').trim();
     const rows = apps.map((a) => Browse.rowView(a));
+    // The "Open site" row, when the query is a web address (#5364). It rides
+    // the list descriptor; browse-list.tsx draws it above the app rows.
+    const site = Browse.siteFor(query);
 
     Browse._store.set({
+      site,
       rows,
       // Republished on every list render so the <select> and the
       // #browse-list[data-sort] anchor can never lag the rows they describe.
@@ -775,7 +808,9 @@ const Browse = {
       grouped: Browse._sort === 'recommended' && !query,
       moreExpanded: Browse._moreExpanded,
       error: false,
-      empty: rows.length ? null : Browse.emptyText(query, Browse._filter),
+      // The site row IS a result, so the "No apps match" line never shows
+      // right under it.
+      empty: site ? null : (rows.length ? null : Browse.emptyText(query, Browse._filter)),
     });
 
     Browse._maybeShotDetail(rows);
