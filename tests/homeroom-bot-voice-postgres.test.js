@@ -379,6 +379,7 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.equal(out.outcome, 'quiet');
     assert.equal(out.throughId, id, 'read through, so it is not read again');
     assert.equal(sent.length, 0);
+    assert.deepEqual(asked.map((a) => a.messages.map((m) => Number(m.id))), [[id]], 'the chat\'s older ask has the mention');
     assert.equal(await voice.enabledFor(pool, 'chat'), false);
     assert.equal(await voice.enabledFor(pool, 'session'), true);
     await pool.query(`DELETE FROM platform_settings WHERE key = 'homeroom_bot_voice_chat'`);

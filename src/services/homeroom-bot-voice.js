@@ -475,7 +475,8 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
     record.throughId = said.through;
     return finishWith('replied');
   }
-  if (!voiceOn(settings, place)) {
+  const chatPlace = place.type === 'chat' || place.type === 'category';
+  if (!voiceOn(settings, place) && !chatPlace) {
     record.throughId = (await newestIn(pool, { app, place })) || through;
     return finishWith('quiet');
   }
@@ -491,9 +492,10 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
   record.throughId = messages.length ? Math.max(since, Number(messages[messages.length - 1].id)) : since;
   if (!fresh.length) return finishWith('quiet');
   // Which of them were to the bot (the gate, for each): the newest of those
-  // is who it answers.
+  // is who it answers. (With the voice off in a chat, nobody: the chat's
+  // older ask has them, below.)
   const addressed = [];
-  for (const m of fresh) {
+  for (const m of voiceOn(settings, place) ? fresh : []) {
     const speaker = await personRow(pool, m.user_id);
     const decided = await gate(pool, {
       app, place, row: { ...m, deleted_at: null, thread_type: place.type === 'chat' ? null : place.type }, bot, settings, speaker, deps,
@@ -502,7 +504,7 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
   }
   // What the project's chat does with what nobody said to the bot: a
   // newcomer's idea, offered to be suggested (homeroom-bot-chat.js).
-  if (place.type === 'chat' || place.type === 'category') {
+  if (chatPlace) {
     const told = new Set(addressed.map((a) => Number(a.message.id)));
     await chatModule(deps).heardInChat(pool, cfg, { app, place, messages: fresh.filter((m) => !told.has(Number(m.id))), deps });
   }
