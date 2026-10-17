@@ -283,7 +283,7 @@ test('a mention in a project\'s chat is the voice\'s while it is on there; the n
   assert.ok(note.indexOf('enabledFor') < note.indexOf('return await maybeOffer'), 'decided before anything is read for it');
   // The chat place's turn hands it what nobody said to the bot.
   const src = read('src/services/homeroom-bot-voice.js');
-  assert.match(src, /await chatModule\(deps\)\.heardInChat\(pool, cfg, \{ app, place, messages: fresh\.filter\(\(m\) => !told\.has\(Number\(m\.id\)\)\), deps \}\);/);
+  assert.match(src, /\? chatModule\(deps\)\.heardInChat\(pool, cfg, \{ app, place, messages: fresh\.filter\(\(m\) => !told\.has\(Number\(m\.id\)\)\), deps \}\)/);
 });
 
 test('the change follow-up takes the asks and lets the voice tell the people who asked; no working or wait notes for them', () => {

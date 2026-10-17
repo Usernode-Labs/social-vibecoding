@@ -55,7 +55,8 @@ test('B9: the chat place\'s turn hands a mention over once it is heard, and only
   // Heard in the message's own transaction (ws.js), handed over by the chat
   // place's turn (the bot-voice machine's work), never floated after it.
   const voiceSrc = read('src/services/homeroom-bot-voice.js');
-  assert.match(voiceSrc, /if \(place\.type === 'chat' \|\| place\.type === 'category'\) \{[\s\S]{0,200}heardInChat\(pool, cfg,/);
+  assert.match(voiceSrc, /const chatPlace = place\.type === 'chat' \|\| place\.type === 'category';/);
+  assert.match(voiceSrc, /\? chatModule\(deps\)\.heardInChat\(pool, cfg, \{ app, place, messages: fresh\.filter/);
   const chatSrc = read('src/services/homeroom-bot-chat.js');
   assert.match(chatSrc, /if \(\(thread && thread\.type !== 'category'\) \|\| postedVia === 'agent' \|\| !appId \|\| !userId\) return null;/,
     'a reply thread, an issue\'s or a proposal\'s discussion is not a place to ask the bot');

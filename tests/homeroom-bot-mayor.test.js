@@ -218,12 +218,12 @@ test('#3707: everything the DM model sends answers one of her messages, and quot
   // send from leaving its quote off.
   const src = read('src/services/homeroom-bot-mayor.js');
   const sends = src.match(/dm\.sendDm\(pool, \{[\s\S]*?\}\);/g) || [];
-  assert.equal(sends.length, 3, 'a turn\'s answer, its offer and the answer to a tap');
+  assert.equal(sends.length, 4, 'a turn\'s answer, its offer, the answer to a tap, and a tap whose act failed for good');
   // B3: the answer to a tap (settleOffer) quotes what was typed or quoted
   // when there was one; a button's tap has no message of hers to quote.
   // One story: a tap with nothing typed is answered where its offer is (the
   // offer's own message, never quoted, names its thread).
-  for (const send of sends) assert.match(send, /replyToId: message\.id|replyToId, \.\.\.extra|replyToId: replyToId \|\| action\.message_id \|\| null, \.\.\.extra/);
+  for (const send of sends) assert.match(send, /replyToId: message\.id|replyToId, \.\.\.extra|replyToId: replyToId \|\| action\.message_id \|\| null, \.\.\.extra|replyToId: action\.message_id \|\| null,/);
   assert.match(src, /settleOffer\(pool, config, \{\s*bot, user, settings, action, yes, deps, replyToId: message\.id,/);
 });
 
