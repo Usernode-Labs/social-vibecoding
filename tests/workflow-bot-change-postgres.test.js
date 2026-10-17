@@ -182,6 +182,34 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     assert.deepEqual(calls(WORK.ready).map((c) => c.key), ['ready:1', 'ready:2']);
   });
 
+  await t.test('B-unsent: a ready card not sent because a merge began keeps its epoch untold; back up for its vote, it is asked again (PR review)', async () => {
+    reset();
+    const s = await change();
+    await tell(s, 'Proposed');
+    await verdict(s, 'passing');
+    // The merge begins before the card's work runs: tellReady sends nothing.
+    work.answer.set(WORK.ready, async () => {
+      await asTransition((cl) => cl.query(`UPDATE chat_sessions SET status = 'merging' WHERE id = $1`, [s.id]));
+      return { messageId: null, stale: true, notUp: true };
+    });
+    await tell(s, 'Verdict', { head: s.head, state: 'passing' });
+    let i = await inst(s);
+    assert.equal(i.data.told, null, 'nobody was told: the epoch is not used up');
+    assert.ok(i.deadline_at, 'its clock looks again while it is being merged');
+    // GitHub refused the merge: back up for its vote, on the same epoch.
+    work.answer.set(WORK.ready, { messageId: 9, stale: false, notUp: false });
+    await asTransition((cl) => cl.query(`UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`, [s.id]));
+    await fire(s);
+    i = await inst(s);
+    assert.equal(i.state, 'ready');
+    assert.equal(i.data.told, 1);
+    const keys = calls(WORK.ready).map((c) => c.key);
+    assert.equal(keys.length, 2, 'asked again');
+    assert.equal(keys[0], 'ready:1');
+    assert.match(keys[1], /^ready:1:v\d+$/, 'under a key of its own (the DM\'s own key is the epoch\'s)');
+    assert.deepEqual(calls(WORK.ready).map((c) => c.input.epoch), [1, 1]);
+  });
+
   await t.test('B-hold: its shots still to come hold it, by the transaction\'s clock, moved by their activity (bugs 5, 6)', async () => {
     reset();
     const s = await change();

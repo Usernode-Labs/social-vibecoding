@@ -150,10 +150,9 @@ function decide(s: Live | null, f: Facts, ctx: TransitionContext, base: Data, ex
   const kept = (s?.name as Name) || 'checking';
   // (A timer that fired is spent: a look while it is being merged arms the
   // next one for what it was waiting on.)
-  if (row.status === 'merging') {
-    const waits = kept === 'with_the_bot' || kept === 'waiting_on_shots';
-    return at(kept === 'merged' ? 'checking' : kept, waits ? { timer: lookIn(ctx) } : {});
-  }
+  // While it is being merged its clock looks again until it is merged or
+  // back up for its vote: what it waited on, or a card it was not sent.
+  if (row.status === 'merging') return at(kept === 'merged' ? 'checking' : kept, { timer: lookIn(ctx) });
   if (row.status === 'merged') return at('merged', { timer: null });
   if (row.status !== 'promoted') return at('checking', { timer: null });
   const r = readiness(row, now);
@@ -176,10 +175,13 @@ function decide(s: Live | null, f: Facts, ctx: TransitionContext, base: Data, ex
   // failure looks like the platform's and it said so itself): nobody else is
   // told anything, as on [main].
   if (!r.checked) return at('checking', { timer: null });
-  // Ready to try: said once per epoch, saying what does not work.
+  // Ready to try: said once per epoch, saying what does not work. An epoch
+  // asked before and not sent (it was being merged meanwhile) is asked
+  // again under a key of its own; the DM's own key is the epoch's.
   if (d.told === r.epoch) return at('ready', { timer: null });
   const broken = words(r.broken);
-  const work: WorkRequest[] = [{ kind: WORK.ready, key: `ready:${r.epoch}`,
+  const first = `ready:${r.epoch}`;
+  const work: WorkRequest[] = [{ kind: WORK.ready, key: d.notes[first] ? `${first}:v${ctx.version + 1}` : first,
     input: { sessionId: d.sessionId, epoch: r.epoch, broken } }];
   d = asked({ ...d, told: r.epoch }, work);
   return at('ready', { work, timer: null });
@@ -280,6 +282,15 @@ function workResult(status: Note['status']) {
       const prev = live.data.notes[e.payload.workKey]!;
       const notes = { ...live.data.notes, [e.payload.workKey]: { ...prev, status, ...(e.payload.error ? { error: e.payload.error.message.slice(0, 500) } : {}) } };
       let d: Data = { ...live.data, notes };
+      // A ready card not sent because it was no longer up for a vote (being
+      // merged, say): its epoch is not told, and is considered again now and
+      // on every later look (a merge GitHub refuses puts it back up).
+      if (e.payload.kind === WORK.ready && status === 'done' && (e.payload.result as any)?.notUp) {
+        const epoch = Number((prev.input as any)?.epoch);
+        if (d.told === epoch) d = { ...d, told: null };
+        if (!FINAL.has(live.name) && live.name !== 'merged' && live.name !== 'closed' && f.row) return decide(live, f, ctx, d);
+        return step(live.name as Name, d);
+      }
       const fix = live.data.fix;
       // A fix result about the head the bot has now; one about a head the
       // change has left only settles its note.

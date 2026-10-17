@@ -344,14 +344,14 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
 
     // Approvals were cleared (it changed): ready again is news again.
     await pool.query('UPDATE chat_sessions SET approval_epoch = approval_epoch + 1 WHERE id = $1', [change.id]);
-    assert.deepEqual(await dm.tellReady(pool, change.id, { epoch: 0, deps: { bot, domain: 'x' } }), { stale: true },
-      'the epoch it was decided for moved on: the machine decides again');
+    assert.deepEqual(await dm.tellReady(pool, change.id, { epoch: 0, deps: { bot, domain: 'x' } }), { stale: true, notUp: true },
+      'the epoch it was decided for moved on: nothing sent, and the machine decides again');
     const next = await dm.tellReady(pool, change.id, { epoch: 1, deps: { bot, domain: 'x' } });
     assert.ok(next?.messageId && !next.duplicate && next.messageId !== ready.messageId);
     // A retry (or an admin's) after it merged or closed says nothing: no
     // ready card, no Approve, the chip not moved back from Live.
     await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [change.id]);
-    assert.deepEqual(await dm.tellReady(pool, change.id, { epoch: 1, deps: { bot, domain: 'x' } }), { stale: true });
+    assert.deepEqual(await dm.tellReady(pool, change.id, { epoch: 1, deps: { bot, domain: 'x' } }), { stale: true, notUp: true });
     await pool.query(`UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`, [change.id]);
 
     // Its preview will not start: while it is tried again that is quiet (one

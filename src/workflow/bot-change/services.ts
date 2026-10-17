@@ -25,7 +25,10 @@ export function botChangeServices({ pool }: Deps): Record<string, WorkHandler> {
       async run({ input }): Promise<Json> {
         const told = await legacy('services/homeroom-bot-dm').tellReady(pool, Number(input.sessionId),
           { epoch: Number(input.epoch), broken: Array.isArray(input.broken) ? input.broken : [] });
-        return { messageId: told?.messageId ?? null, stale: !!told?.stale };
+        // Not sent because it is no longer up for a vote with its checks
+        // passed, or its epoch moved (`notUp`: the machine considers it
+        // again); or a newer build's news overtook it (`stale` alone).
+        return { messageId: told?.messageId ?? null, stale: !!told?.stale, notUp: !!told?.notUp };
       },
     },
 

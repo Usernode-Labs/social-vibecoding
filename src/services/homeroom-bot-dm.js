@@ -2480,7 +2480,9 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], de
   // Decided for another epoch, or no longer up for a vote with its checks
   // passed (merged, closed, a newer verdict since: a retry, or an admin's,
   // after the fact): the machine decides again from its next look.
-  if (Number(state.epoch) !== Number(epoch) || !state.checked) return { stale: true };
+  // `notUp`: nothing was sent for it, and the machine considers the epoch
+  // again (a merge that GitHub refuses puts it back up for its vote).
+  if (Number(state.epoch) !== Number(epoch) || !state.checked) return { stale: true, notUp: true };
   const { rows } = await pool.query(
     `SELECT r.id AS run_id, r.issue_number, a.id, a.slug, a.name
        FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id
