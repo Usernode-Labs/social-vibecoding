@@ -174,7 +174,8 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.deepEqual({ ...bounty }, { status: 'awarded', awarded_user_id: s.author.id });
     const said = (await lines(s)).map((l) => l.content);
     assert.ok(said.some((c) => /Secret "API_TOKEN" was declared and set/.test(c)));
-    assert.ok(said.some((c) => /Bounty on issue #7/.test(c)));
+    // #5249: kudos is parked, so the bounty is paid quietly: no line says so.
+    assert.ok(!said.some((c) => /Bounty on issue #7/.test(c)), 'a parked bounty is paid without a line');
     assert.ok(!said.some((c) => /is live/.test(c)), 'nothing says live yet');
     // The deploy is asked of app-delivery; the preview waits for its answer
     // (demo mode deploys its build).

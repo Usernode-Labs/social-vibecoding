@@ -3,18 +3,19 @@
 const crypto = require('crypto');
 const { ALLOWED_KINDS } = require('./mobile-push-preferences');
 const notifyCopy = require('./homeroom-bot-notify-copy');
+const { PARKED_NOTIFICATION_KINDS } = require('./kudos-parked');
 
 const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const RECIPIENT_CONTEXT = 'usernode-social-push-recipient-v1';
 const PUSH_ENV_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 
-// #5249: kinds whose feature is parked. Their notification rows are still
-// written (nothing is deleted or rewired server-side), but no phone is
-// woken for one: the worker settles such a delivery as kind_not_allowed and
-// buildMessage refuses it. Kudos is parked on the client by
-// frontend/src/features/leaderboard/kudos-parked.ts; take its kind out of
-// this set when that switch goes back to false.
-const PARKED_PUSH_KINDS = new Set(['kudos']);
+// #5249: kinds whose feature is parked. No phone is woken for one: the
+// worker settles such a delivery as kind_not_allowed and buildMessage
+// refuses it. The set is services/kudos-parked.js's PARKED_NOTIFICATION_KINDS,
+// the same one the bell's list and its unread count skip, so it empties when
+// that switch (and the client's, frontend/src/features/leaderboard/
+// kudos-parked.ts) goes back to false.
+const PARKED_PUSH_KINDS = new Set(PARKED_NOTIFICATION_KINDS);
 
 function isPushParked(kind) {
   return PARKED_PUSH_KINDS.has(kind);

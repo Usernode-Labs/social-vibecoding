@@ -14,7 +14,6 @@ const {
 const ACTION_ID_RE = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$/;
 const APP_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const NUMERIC_ID_RE = /^[1-9]\d{0,18}$/;
-const USERNAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
 const SETTING_KEYS = new Set(inventory.settings.map((item) => item.key));
 const COMPACT_APP_QUERY = Object.freeze([{ name: 'view', value: 'global-chat' }]);
 
@@ -157,7 +156,6 @@ function contextualCopy(actionId, definition, parameters, requestedTarget) {
     'conversation.detail': [`Open ${target}`, `Here are the details for ${target}.`],
     'notification.detail': [`Open ${target}`, `Here are the details for ${target}.`],
     'leaderboard.profile': [`Profile for ${target}`, `Here is the profile for ${target}.`],
-    'leaderboard.prs': [`Merged work by ${target}`, `Here is the merged work by ${target}.`],
     'settings.inspect': [`Open ${target}`, `Here are the current values for ${target}.`],
   };
   const [label, message] = copies[actionId] || [definition.label, definition.message];
@@ -558,11 +556,14 @@ const ACTIONS = Object.freeze({
     domain: 'general',
     steps: [routeStep('GET', '/api/me/public-profile')],
   }),
+  // #5249: the Standings ranking (the Challenges screen's Standings tab,
+  // GET /api/v4/leaderboard), first ten rows. It read the kudos board
+  // (GET /api/leaderboard/users) before kudos was parked.
   'leaderboard.users': fixed({
     label: 'View leaderboard',
     message: 'Here is the leaderboard.',
     domain: 'general',
-    steps: [routeStep('GET', '/api/leaderboard/users')],
+    steps: [routeStep('GET', '/api/v4/leaderboard', {}, [{ name: 'per_page', value: '10' }])],
   }),
 
   // Inline result actions. These carry exact ids from an authoritative result
@@ -673,13 +674,6 @@ const ACTIONS = Object.freeze({
     parameters: (value) => exactParameters(value, { userId: NUMERIC_ID_RE }),
     steps: ({ userId }) => [routeStep(
       'GET', '/api/v4/users/:userId/profile', { userId },
-    )],
-  }),
-  'leaderboard.prs': Object.freeze({
-    label: 'Merged work', message: 'Here is this contributor’s merged work.', domain: 'general',
-    parameters: (value) => exactParameters(value, { username: USERNAME_RE }),
-    steps: ({ username }) => [routeStep(
-      'GET', '/api/leaderboard/users/:username/prs', { username },
     )],
   }),
 });

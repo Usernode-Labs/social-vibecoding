@@ -7,6 +7,7 @@ const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const { rankedUsers, weekStartUtc } = require('../services/leaderboard-users');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const { kudosParked, refuseParked } = require('../services/kudos-parked');
 const {
   WEEKLY_KUDOS_LIMIT,
   WEEKLY_BOUNTY_LIMIT,
@@ -153,6 +154,10 @@ async function loadKudosForSession(pool, sessionId, viewerUserId) {
 function kudosRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+  // #5249: while kudos is parked, giving and retracting answer 410 Gone
+  // (services/kudos-parked.js). The reads below keep working: the person
+  // page, Me and the admin console still read what was given before.
+  const parked = kudosParked(config);
 
   // Per-app visibility gate for the session-id-addressed kudos routes:
   // collab-level access, 404 on deny (kudos is a build-surface signal).
@@ -171,9 +176,11 @@ function kudosRoutes(config) {
   //   403 forbidden    — would be self-kudos (author == giver)
   //   409 conflict     — already gave kudos to this PR
   //   429 too_many     — weekly quota exceeded
+  //   410 gone         — kudos is parked (#5249)
   // --------------------------------------------------------------
   router.post('/api/sessions/:id/kudos', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    if (parked) return refuseParked(res);
     const sessionId = parseInt(req.params.id, 10);
     if (!Number.isFinite(sessionId)) {
       return res.status(400).json({ error: 'Invalid session id' });
@@ -352,6 +359,7 @@ function kudosRoutes(config) {
   // --------------------------------------------------------------
   router.delete('/api/sessions/:id/kudos', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    if (parked) return refuseParked(res);
     const sessionId = parseInt(req.params.id, 10);
     if (!Number.isFinite(sessionId)) {
       return res.status(400).json({ error: 'Invalid session id' });

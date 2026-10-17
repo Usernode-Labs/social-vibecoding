@@ -296,6 +296,16 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
     );
     assert.deepEqual(await involved(), ['a proposal is linked to it']);
     await pool.query('DELETE FROM chat_sessions WHERE app_id = $1', [ears.id]);
+    // #5249: an open bounty pledged before kudos was parked still sends it to
+    // a vote, and the reply names it without the word kudos.
+    await pool.query(
+      `INSERT INTO issue_bounties (app_id, github_issue_number, giver_user_id, week_start) VALUES ($1, 8, $2, CURRENT_DATE)`,
+      [ears.id, sam.id],
+    );
+    const withBounty = await involved();
+    assert.deepEqual(withBounty, ['others are involved in it']);
+    assert.ok(!withBounty.some((r) => /kudos/i.test(r)), 'no kudos in the reply');
+    await pool.query('DELETE FROM issue_bounties WHERE app_id = $1', [ears.id]);
     gh.threads.set('ear-trainer#8', [{ id: 56, author: 'someone-else', body: 'Me too' }]);
     assert.deepEqual(await involved(), ['others commented on it']);
     gh.threads.delete('ear-trainer#8');

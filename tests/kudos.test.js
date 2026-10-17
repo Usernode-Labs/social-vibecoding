@@ -316,13 +316,16 @@ function makeMockPool(initial = {}) {
 // Build an Express app with the kudos routes mounted and a tiny
 // shim that injects req.user from the X-Test-User header. Returns
 // `{ app, baseUrl, close }` once the http server is listening.
-async function startTestServer(pool, user = { id: 1, username: 'alice' }) {
+// The give/retract suites exercise kudos as it works when it is not parked,
+// so the routes are mounted with the switch off (services/kudos-parked.js);
+// `{ parked: true }` is the shipped default (#5249).
+async function startTestServer(pool, user = { id: 1, username: 'alice' }, { parked = false } = {}) {
   return withMockPool(pool, async () => {
     const { kudosRoutes } = require('../src/routes/kudos');
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => { req.user = user; next(); });
-    app.use(kudosRoutes({}));
+    app.use(kudosRoutes(parked ? {} : { kudosParked: false }));
     return new Promise((resolve) => {
       const server = app.listen(0, () => {
         const port = server.address().port;
@@ -409,6 +412,31 @@ test('POST kudos: succeeds WEEKLY_KUDOS_LIMIT times, the next hits 429 quota', a
     // The message quotes the live cap, so it can never promise a number
     // the server does not actually enforce.
     assert.match(body.error, new RegExp(String(WEEKLY_KUDOS_LIMIT)));
+  } finally {
+    await close();
+  }
+});
+
+// #5249: kudos is parked by default (services/kudos-parked.js). Giving and
+// retracting answer 410 Gone and write nothing, no kudos and no
+// notification; reading a change's kudos and the budget still answer.
+test('parked: POST and DELETE kudos answer 410 and write nothing; the reads still answer', async () => {
+  const pool = makeMockPool({
+    sessions: [[10, { id: 10, user_id: 999, status: 'merged', app_id: 1 }]],
+  });
+  const { baseUrl, close } = await startTestServer(pool, { id: 1, username: 'alice' }, { parked: true });
+  try {
+    for (const method of ['POST', 'DELETE']) {
+      const r = await fetch(`${baseUrl}/api/sessions/10/kudos`, { method });
+      assert.equal(r.status, 410, `${method} is refused`);
+      assert.deepEqual(await r.json(), { error: 'kudos_parked', message: 'Kudos are paused.' });
+    }
+    assert.equal(pool.state.kudos.length, 0, 'no kudos row');
+    assert.equal(pool.state.notifications.length, 0, 'and no kudos notification');
+    const read = await fetch(`${baseUrl}/api/sessions/10/kudos`);
+    assert.equal(read.status, 200, 'GET still works');
+    const budget = await fetch(`${baseUrl}/api/me/kudos-budget`);
+    assert.equal(budget.status, 200);
   } finally {
     await close();
   }
