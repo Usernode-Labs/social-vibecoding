@@ -488,6 +488,39 @@ const TEMPLATES = Object.freeze([
   groupChallenge('challenge-miles', { title: 'Miles challenge', plural: 'miles', one: 'mile', example: 'e.g. 3.1', goal: 200, decimals: true, change: 'add a weekly goal' }),
   groupChallenge('challenge-steps', { title: 'Steps challenge', plural: 'steps', one: 'step', example: 'e.g. 8000', goal: 1000000, decimals: false, change: 'add a daily step streak' }),
   groupChallenge('challenge-books', { title: 'Reading challenge', plural: 'books', one: 'book', example: 'e.g. 1', goal: 20, decimals: false, change: 'add a cover for each book' }),
+  // One app for the race itself (request #5359, Marc: "Add Hyrox-specific
+  // content"): the eight stations and the eight 1 km runs between them, in
+  // the order the race is run, and a training log each person keeps for
+  // themselves. Open and Pro are named in the screen's own words; the
+  // sleds' weights and the counts are what the race day says, never data
+  // here.
+  Object.freeze({
+    id: 'hyrox-training',
+    ready: true,
+    exampleScreen: exampleScreen('hyrox-training'),
+    exampleChange: 'add a training week plan',
+    title: 'Hyrox training',
+    summary: 'The Hyrox race\'s eight stations and eight 1 km runs, in the order it is run, and a training log of every session you put in.',
+    icon: '🏋️',
+    features: Object.freeze([
+      '**The race in order**: the eight runs of 1 km and the station after each, from the SkiErg to the wall balls, with a line on what each station is. Open and Pro differ in the sleds, the carry, the lunges and the wall balls.',
+      '**Log a session**: what you trained (a station, the 1 km run, or a full race simulation), how many minutes it took, and a note if you like. Yours alone: nobody sees anybody else\'s log.',
+      '**Your sessions**: everything you put in, latest first, with how today and this week add up, and a session of yours can be taken back.',
+    ]),
+    tables: '`training_sessions`',
+    tests: Object.freeze([
+      {
+        id: 'hyrox.race',
+        name: 'The race shows its eight stations and eight runs in order',
+        path: '/',
+        expectSelector: '#race [data-leg][data-station]',
+        visual: true,
+        impact: IMPACT,
+      },
+      { name: 'A session can be logged', path: '/', expectSelector: '#log-form select[name="workout"]' },
+      { name: 'Your sessions load', path: '/', expectSelector: '#sessions[data-loaded]' },
+    ]),
+  }),
   gameStarter({
     id: 'game-board',
     title: 'Board game starter',

@@ -1762,5 +1762,57 @@
   "tour.step.meetBot.body": {
     "text": "Ask it to build a change, file an idea or fix a bug for you. Find it in Messages.",
     "description": "Body of the Home tour's stop pointing at the Messages tab: what Homeroom bot does for the reader and where to find it. \"Messages\" is the tab's name."
+  },
+  "firstSession.template.hyrox.title": {
+    "text": "Hyrox training",
+    "description": "Title of one of the examples of what a group can make (Hyrox training), in the list of more ideas on the \"What do you want to make?\" screen."
+  },
+  "firstSession.template.hyrox.line": {
+    "text": "The race's stations and runs, logged",
+    "description": "Line under \"Hyrox training\" in the list of more ideas on the \"What do you want to make?\" screen: what it is for."
+  },
+  "firstSession.template.hyrox.short": {
+    "text": "Hyrox training",
+    "description": "Label of a row in the list of more ideas on the screen that asks a member \"What do you want to make?\": picks Hyrox training as the starting idea for the new project."
+  },
+  "firstSession.template.hyrox.note": {
+    "text": "I'm making us a Hyrox training log. Join and log your sessions.",
+    "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the Hyrox training idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
+  },
+  "firstSession.template.hyrox.namePlaceholder": {
+    "text": "For example, Race Prep",
+    "description": "Placeholder in the empty name field on the \"What do you want to make?\" screen while the Hyrox training idea is picked: an example of such a project's name."
+  },
+  "firstSession.template.hyrox.race.label": {
+    "text": "Hyrox training",
+    "description": "Chip under the Hyrox training sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.hyrox.race.sentence": {
+    "text": "A training log for <0>Hyrox</0>: the race's eight stations and eight runs, and every session you put in.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the Hyrox training idea is picked. It is also sent as the description of what to make. <0>…</0> wraps the words the choice filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.hyrox.race.name": {
+    "text": "Hyrox Training",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the Hyrox training idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.hyrox.race.description": {
+    "text": "A Hyrox training log",
+    "description": "One-line description saved with a new project made from the Hyrox training idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.hyrox.own.sentence": {
+    "text": "A training log for <0>{{words}}</0>: every session you put in.",
+    "description": "Sentence of the Hyrox training idea on the \"What do you want to make?\" screen when the maker fills its blank with their own words. {{words}} is what they type; <0>…</0> wraps it and is shown as a field; keep the tags and the placeholder."
+  },
+  "firstSession.template.hyrox.own.example": {
+    "text": "race prep",
+    "description": "Placeholder in the blank of the Hyrox training sentence when the maker fills it in themselves: an example. It must read naturally in that blank."
+  },
+  "firstSession.template.hyrox.own.name": {
+    "text": "{{words}} Training",
+    "description": "Name suggested for a new project made from the Hyrox training idea with the maker's own words. {{words}} is what they typed in the sentence's blank, with each word capitalized."
+  },
+  "firstSession.template.hyrox.own.description": {
+    "text": "A training log",
+    "description": "One-line description saved with a new project made from the Hyrox training idea in the maker's own words, shown under the project's name. At most 90 characters."
   }
 }

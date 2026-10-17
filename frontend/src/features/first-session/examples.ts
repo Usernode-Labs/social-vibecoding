@@ -219,6 +219,19 @@ export const TEMPLATES: readonly Template[] = [
     own: { sentence: 'onboarding:firstSession.template.challenge.own.sentence', example: 'onboarding:firstSession.template.challenge.own.example', name: 'onboarding:firstSession.template.challenge.own.name', description: 'onboarding:firstSession.template.challenge.own.description' },
     note: 'onboarding:firstSession.template.challenge.note',
   },
+  {
+    key: 'hyrox',
+    emoji: '🏋️',
+    title: 'onboarding:firstSession.template.hyrox.title',
+    namePlaceholder: 'onboarding:firstSession.template.hyrox.namePlaceholder',
+    line: 'onboarding:firstSession.template.hyrox.line',
+    short: 'onboarding:firstSession.template.hyrox.short',
+    choices: [
+      { key: 'race', label: 'onboarding:firstSession.template.hyrox.race.label', sentence: 'onboarding:firstSession.template.hyrox.race.sentence', name: 'onboarding:firstSession.template.hyrox.race.name', description: 'onboarding:firstSession.template.hyrox.race.description', template: 'hyrox-training' },
+    ],
+    own: { sentence: 'onboarding:firstSession.template.hyrox.own.sentence', example: 'onboarding:firstSession.template.hyrox.own.example', name: 'onboarding:firstSession.template.hyrox.own.name', description: 'onboarding:firstSession.template.hyrox.own.description' },
+    note: 'onboarding:firstSession.template.hyrox.note',
+  },
 ];
 
 /**

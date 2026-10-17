@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {{DEV_CONSOLE_FORWARDER}}
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <!-- This app's precompiled Tailwind (npm run build writes it on every
+       image build; tailwind.config.js says which files it scans). -->
+  <link rel="stylesheet" href="/tailwind.css">
+  <!-- The platform bridge, centrally hosted and loaded by RELATIVE path.
+       Never vendor it and never write a hostname in front of it. It is also
+       how the app answers the shell, so keep it even if no bridge API is
+       called. -->
+  <script src="/usernode-bridge/v1/bridge.js"></script>
+  <!-- Follow the viewer's Homeroom theme (the bridge reports it), with the
+       OS preference as the fallback outside Homeroom. -->
+  <script>
+    (function () {
+      var media = window.matchMedia('(prefers-color-scheme: dark)');
+      function applyTheme() {
+        var theme = (window.usernode && window.usernode.theme) || (media.matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.style.colorScheme = theme;
+      }
+      applyTheme();
+      window.addEventListener('usernode:theme-changed', applyTheme);
+      media.addEventListener('change', applyTheme);
+    })();
+  </script>
+</head>
+<body class="min-h-screen bg-ground text-fg">
+  <main class="mx-auto flex max-w-xl flex-col gap-8 px-4 py-8">
+    <header class="flex flex-col gap-1">
+      <h1 class="text-title">{{APP_NAME}}</h1>
+      <p class="text-body text-muted">A Hyrox race is eight 1 km runs with a station after each. Train the stations, the run, or the whole thing, and every session is logged here.</p>
+    </header>
+
+    <!-- The race, in the order it is run. Static, so it is there before
+         anything loads. -->
+    <section id="race" class="flex flex-col" aria-label="The race">
+      <h2 class="section-label">The race</h2>
+      <div class="card flex flex-col" data-legs>
+        <div class="flex items-baseline gap-3 px-4 py-3" data-leg data-run>
+          <span class="text-small text-muted tabular-nums">Run 1</span>
+          <span class="text-body">1 km</span>
+        </div>
+        <div class="flex items-baseline gap-3 border-t border-line px-4 py-3" data-leg data-station="SkiErg">
+          <span class="text-small text-muted tabular-nums whitespace-nowrap">Station 1</span>
+          <div class="flex flex-col">
+            <span class="text-body">SkiErg</span>
+            <span class="text-small text-muted">1000 m on the ski erg</span>
+          </div>
+        </div>
+        <div class="flex items-baseline gap-3 border-t border-line px-4 py-3" data-leg data-run>
+          <span class="text-small text-muted tabular-nums">Run 2</span>
+          <span class="text-body">1 km</span>
+        </div>
+        <div class="flex items-baseline gap-3 border-t border-line px-4 py-3" data-leg data-station="Sled Push">
+          <span class="text-small text-muted tabular-nums whitespace-nowrap">Station 2</span>
+          <div class="flex flex-col">
+            <span class="text-body">Sled Push</span>
+            <span class="text-small text-muted">Push the sled the length of the lane</span>
+          </div>
+        </div>
+        <div class="flex items-baseline gap-3 border-t border-line px-4 py-3" data-leg data-run>
+          <span class="text-small text-muted tabular-nums">Run 3</span>
+          <span class="text-body">1 km</span>
+        </div>
+        <div class="flex items-baseline gap-3 border-t border-line px-4 py-3" data-leg data-station="Sled Pull">
+          <span class="text-small text-muted tabular-nums whitespace-nowrap">Station 3</span>
+          <div class="flex flex-col">
+            <span class="text-body">Sled Pull</span>
+            <span class="text-small text-muted">Pull the sled back, hand over hand on the rope</span>
+          </div>
+        </div>
+        <div class="flex items-baseline gap-3 border-t border-line px-4 py-3" data-leg data-run>
+          <span class="text-small text-muted tabular-nums">Run 4</span>
+          <span class="text-body">1 km</span>
+        </div>
+        <div class="flex items-baseline gap-3 border-t border-line px-4 py-3" data-leg data-station="Burpee Broad Jumps">
+          <span class="text-small text-muted tabular-nums whitespace-nowrap">Station 4</span>
+          <div class="flex flex-col">
+            <span class="text-body">Burpee Broad Jumps</span>
+            <span class="text-small text-muted">A burpee, then a broad jump, again and again</span>
+          </div>
+        </div>
+        <div class="flex items-baseline gap-3 border-t border-line px-4 py-3" data-leg data-run>
+          <span class="text-small text-muted tabular-nums">Run 5</span>
+          <span class="text-body">1 km</span>
+        </div>
+        <div class="flex items-baseline gap-3 border-t border-line px-4 py-3" data-leg data-station="Rowing">
+          <span class="text-small text-muted tabular-nums whitespace-nowrap">Station 5</span>
+          <div class="flex flex-col">
+            <span class="text-body">Rowing</span>
+            <span class="text-small text-muted">1000 m on the rower</span>
+          </div>
+        </div>
+        <div class="flex items-baseline gap-3 border-t border-line px-4 py-3" data-leg data-run>
+          <span class="text-small text-muted tabular-nums">Run 6</span>
+          <span class="text-body">1 km</span>
+        </div>
+        <div class="flex items-baseline gap-3 border-t border-line px-4 py-3" data-leg data-station="Farmers Carry">
+          <span class="text-small text-muted tabular-nums whitespace-nowrap">Station 6</span>
+          <div class="flex flex-col">
+            <span class="text-body">Farmers Carry</span>
+            <span class="text-small text-muted">A heavy weight in each hand, carried the length of the lane</span>
+          </div>
+        </div>
+        <div class="flex items-baseline gap-3 border-t border-line px-4 py-3" data-leg data-run>
+          <span class="text-small text-muted tabular-nums">Run 7</span>
+          <span class="text-body">1 km</span>
+        </div>
+        <div class="flex items-baseline gap-3 border-t border-line px-4 py-3" data-leg data-station="Sandbag Lunges">
+          <span class="text-small text-muted tabular-nums whitespace-nowrap">Station 7</span>
+          <div class="flex flex-col">
+            <span class="text-body">Sandbag Lunges</span>
+            <span class="text-small text-muted">Lunges with the sandbag on your shoulders</span>
+          </div>
+        </div>
+        <div class="flex items-baseline gap-3 border-t border-line px-4 py-3" data-leg data-run>
+          <span class="text-small text-muted tabular-nums">Run 8</span>
+          <span class="text-body">1 km</span>
+        </div>
+        <div class="flex items-baseline gap-3 border-t border-line px-4 py-3" data-leg data-station="Wall Balls">
+          <span class="text-small text-muted tabular-nums whitespace-nowrap">Station 8</span>
+          <div class="flex flex-col">
+            <span class="text-body">Wall Balls</span>
+            <span class="text-small text-muted">Wall balls to the target until the count is done</span>
+          </div>
+        </div>
+      </div>
+      <p class="mt-2 px-1 text-small text-muted">Open and Pro divisions differ in the sleds' weights, the carry, the lunges and the wall balls.</p>
+    </section>
+
+    <!-- Log a session: the screen's one action. -->
+    <section id="log" class="flex flex-col">
+      <h2 class="section-label">Log a session</h2>
+      <form id="log-form" class="card flex flex-col gap-3 px-4 py-4">
+        <label class="flex flex-col gap-1">
+          <span class="section-label mb-0">What you trained</span>
+          <select name="workout" class="field">
+            <option value="SkiErg">SkiErg</option>
+            <option value="Sled Push">Sled Push</option>
+            <option value="Sled Pull">Sled Pull</option>
+            <option value="Burpee Broad Jumps">Burpee Broad Jumps</option>
+            <option value="Rowing">Rowing</option>
+            <option value="Farmers Carry">Farmers Carry</option>
+            <option value="Sandbag Lunges">Sandbag Lunges</option>
+            <option value="Wall Balls">Wall Balls</option>
+            <option value="1 km run">1 km run</option>
+            <option value="Full race simulation">Full race simulation</option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="section-label mb-0">Minutes</span>
+          <input name="minutes" type="number" min="1" max="600" step="1" inputmode="numeric" placeholder="e.g. 45">
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="section-label mb-0">A note, if you like</span>
+          <input name="note" type="text" maxlength="200" placeholder="e.g. four lengths at Open weight">
+        </label>
+        <p id="log-error" class="text-small" hidden></p>
+        <button type="submit" class="btn-primary min-h-14 text-heading">Log session</button>
+      </form>
+    </section>
+
+    <!-- Your sessions. Each person's own: nobody sees anybody else's. -->
+    <section id="sessions" class="flex flex-col">
+      <h2 class="section-label">Your sessions</h2>
+      <p id="week" class="px-1 text-small text-muted" hidden></p>
+      <!-- Loading: a shape where the list will be. -->
+      <div id="sessions-loading" class="flex flex-col gap-2" aria-label="Loading">
+        <div class="skeleton h-14 w-full"></div>
+        <div class="skeleton h-14 w-full"></div>
+      </div>
+      <div id="sessions-empty" class="state-empty card" hidden>
+        <p class="text-heading">No sessions yet</p>
+        <p class="text-body text-muted">Log your first one above, after a run, a station or the whole race.</p>
+      </div>
+      <!-- A visitor with no account can read the race but keeps no log. -->
+      <div id="sessions-guest" class="state-empty card" hidden>
+        <p class="text-heading">Make an account to keep your training log.</p>
+      </div>
+      <!-- Error: only when the log failed to load. The race still shows. -->
+      <div id="sessions-error" class="state-error card" hidden>
+        <p class="text-heading">Your sessions did not load</p>
+        <p class="text-body text-muted">Check your connection and try again.</p>
+        <button id="retry" type="button" class="btn-secondary">Retry</button>
+      </div>
+      <div id="sessions-list" class="card flex flex-col" hidden></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
