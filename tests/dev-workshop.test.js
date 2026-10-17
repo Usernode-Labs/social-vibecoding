@@ -542,15 +542,16 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   };
   assert.ok(!cell('unclaimed').includes('dev-ws-dash-dot'), 'the unclaimed figure carries no mark');
 
-  // #4745: WITH SOMETHING WAITING, THE VOTES FIGURE IS A BUTTON. One waiting
-  // change is on the seeded board, so the tap has somewhere to go: the cell
-  // renders as a button carrying `data-ws-dash-open`, with the same class,
-  // the same figure and the same "on you" line the span had. The other three
-  // stay spans — only the votes figure routes a tap.
+  // #4745, #5369: WITH SOMETHING TO SHOW, A FIGURE IS A BUTTON. The seeded
+  // board has all four nonzero, so all four render as buttons carrying
+  // `data-ws-dash-open`, with the same classes, figures and sub-lines the
+  // spans had. Votes routes its own tap (one waiting item's page, or All
+  // items when several wait); the other three set the stage filter All
+  // items reads.
   assert.match(html, /<button type="button" class="dev-ws-dash-cell dev-ws-dash-cell-warn" data-ws-dash-cell="votes" data-ws-dash-open="">/);
-  assert.match(html, /<span class="dev-ws-dash-cell" data-ws-dash-cell="open"/);
-  assert.match(html, /<span class="dev-ws-dash-cell" data-ws-dash-cell="unclaimed"/);
-  assert.match(html, /<span class="dev-ws-dash-cell dev-ws-dash-cell-good" data-ws-dash-cell="shipped"/);
+  assert.match(html, /<button type="button" class="dev-ws-dash-cell" data-ws-dash-cell="open" data-ws-dash-open="">/);
+  assert.match(html, /<button type="button" class="dev-ws-dash-cell" data-ws-dash-cell="unclaimed" data-ws-dash-open="">/);
+  assert.match(html, /<button type="button" class="dev-ws-dash-cell dev-ws-dash-cell-good" data-ws-dash-cell="shipped" data-ws-dash-open=""/);
 
   // UNDER WAITING ON VOTES, HOW MANY WAIT ON YOU (After-Workshop-B): the
   // place bar's own count, in the accent, because it asks for the viewer.
@@ -562,6 +563,11 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   assert.match(WORKSHOP, /refs\.length === 1\) callAppView\('openTopic', refs\[0\]\.kind, refs\[0\]\.id\)/,
     'one waiting opens that item\'s page');
   assert.match(WORKSHOP, /else openTab\('all'\)/, 'several waiting open All items');
+  // #5369: the other three figures set the stage filter, then open All items
+  // — where the filter chip names the figure and the lists hold only what it
+  // counted.
+  assert.match(WORKSHOP, /onStage=\{\(s\) => \{ callAppView\('openWorkshopStage', s\); openTab\('all'\); \}\}/,
+    'the open, unclaimed and shipped figures open All items on their stage');
   assert.match(CSS, /button\.dev-ws-dash-cell:focus-visible \{ outline: 2px solid var\(--accent\); outline-offset: 2px; \}/,
     'a keyboard focus ring, the chips\' own');
   assert.match(CSS, /button\.dev-ws-dash-cell:hover \.dev-ws-dash-label \{ color: var\(--accent\); \}/,
@@ -576,6 +582,11 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   // achievement.
   const quiet = makeAppView();
   seed(quiet);
+  // #5369: everything a figure counts is zeroed, not just votes and shipped —
+  // the open and unclaimed figures are buttons now too, so the resting board
+  // has to be empty of their counts as well for the "nothing is tappable"
+  // reading to be the resting one.
+  quiet._ghIssues = [];
   quiet._proposals = [];
   quiet._merged = [];
   quiet._mergedTotal = 0;
@@ -598,6 +609,55 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   assert.ok(!html.includes('dev-ws-open-line') && !html.includes('open items across'), 'no sentence repeats the figures');
   assert.ok(!html.includes('dev-ws-lead-title'), 'nor a heading over one');
   assert.equal(message('project:workshop.overview.mostOpenIn'), '<0>Most open work is in</0><1></1>');
+});
+
+test('#5369: a stage filter narrows the theme lists, and the dashboard figures stay whole', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12', 'issue:13'] }]);
+  const whole = AppView._workshopView();
+  assert.equal(whole.dashboard.open, 3, 'two requests and the waiting proposal');
+  assert.equal(whole.dashboard.unclaimed, 2, 'both requests untouched');
+  assert.equal(whole.dashboard.shippedWeek, 1, 'the merge, live this week');
+  // (A theme with nothing matched in it is not drawn at all, so the lookup
+  // can come back empty — that reads as zero rows.)
+  const themeRows = (v) => {
+    const t = v.themes.find((x) => x.id === 't');
+    return t ? t.lanes.reduce((n, l) => n + l.rows.length, 0) : 0;
+  };
+  assert.equal(themeRows(whole), 2, 'the theme holds both requests');
+
+  // stage 'open': the shipped merge leaves the lists; the figures do not
+  // move — they count the whole board, whatever All items is narrowed to
+  // (#2915's rule, one filter further).
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), stage: 'open' };
+  let v = AppView._workshopView();
+  assert.equal(v.meta.filtered, true, 'the tab strip is told a filter is waiting');
+  assert.equal(v.dashboard.open, 3);
+  assert.equal(v.dashboard.unclaimed, 2);
+  assert.equal(v.dashboard.shippedWeek, 1);
+  assert.equal(themeRows(v), 2, 'requests and the proposal are open; the theme holds the requests');
+
+  // stage 'unclaimed': still the two untouched requests — a claimed or
+  // assigned one would drop out here, and on this board none is taken.
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), stage: 'unclaimed' };
+  v = AppView._workshopView();
+  assert.equal(v.dashboard.open, 3, 'the figures stay whole under any stage');
+  assert.equal(themeRows(v), 2);
+
+  // stage 'shipped': the theme (open work) empties; the week figure is the
+  // same one the tile showed.
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), stage: 'shipped' };
+  v = AppView._workshopView();
+  assert.equal(v.dashboard.shippedWeek, 1);
+  assert.equal(themeRows(v), 0, 'nothing in the theme went live');
+
+  // An unknown stored value reads as no filter at all — an older tab's
+  // storage must not half-narrow the board.
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), stage: 'bogus' };
+  v = AppView._workshopView();
+  assert.equal(v.meta.filtered, false, 'an unknown stage is not a filter');
+  assert.equal(themeRows(v), 2, 'and it narrows nothing');
 });
 
 test('live this week says what last week came to, the whole rate on hover, and nothing off a paged history', () => {
@@ -6160,7 +6220,9 @@ test('#2176: "shipped this week" is the calendar week from Monday 00:00 UTC, not
   assert.equal(d.shippedWeek, 1, 'only what landed since Monday');
   assert.equal(d.shippedPrevWeek, 2, 'the whole seven days before that Monday');
   const html = workshopHtml(AppView, 'workshop');
-  assert.match(html, /data-ws-dash-cell="shipped" title="This calendar week, counted from Monday 00:00 UTC\."/,
+  // #5369: with a count on it the shipped figure is a button — the title
+  // sits behind the tap affordance attribute the button carries.
+  assert.match(html, /data-ws-dash-cell="shipped"( data-ws-dash-open="")? title="This calendar week, counted from Monday 00:00 UTC\."/,
     'the tile says which week it means');
 });
 

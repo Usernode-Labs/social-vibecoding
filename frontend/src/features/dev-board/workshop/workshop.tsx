@@ -848,13 +848,18 @@ function pace(d: Dash): string {
  * "Live this week" wears a `+` when the merged history is paged, because the
  * number is then a floor and not a total.
  *
- * ── AND THE VOTES FIGURE OPENS THE VOTE (#4745) ──
+ * ── AND A FIGURE WITH SOMETHING TO SHOW OPENS IT (#4745, #5369) ──
  * With a change or a group decision up for a vote, "waiting on a vote" is a
  * button: one waiting opens that item's page, several open All items, where
- * every one of them is listed. The other three figures stay spans, and a
- * zero stays a plain number — there is nothing to open.
+ * every one of them is listed. #5369: the other three figures are buttons
+ * too, whenever their number is not zero — each opens All items narrowed to
+ * exactly what it counts (open items, open requests nobody has taken,
+ * changes live this week), through AppView.openWorkshopStage. A zero stays a
+ * plain number — there is nothing to open.
  */
-function DashTiles({ d, owed, onVotes }: { d: Dash; owed: number; onVotes?: () => void }): ReactNode {
+type DashStage = 'open' | 'unclaimed' | 'shipped';
+
+function DashTiles({ d, owed, onVotes, onStage }: { d: Dash; owed: number; onVotes?: () => void; onStage?: (stage: DashStage) => void }): ReactNode {
   const t = useMessages('project');
   const rate = !d.partial && d.shippedPrevWeek > 0 ? (d.shippedWeek > d.shippedPrevWeek ? 'up' : d.shippedWeek < d.shippedPrevWeek ? 'down' : 'same') : null;
   const cells: { key: string; n: number; label: string; tone?: string; title?: string; sub?: ReactNode }[] = [
@@ -888,10 +893,13 @@ function DashTiles({ d, owed, onVotes }: { d: Dash; owed: number; onVotes?: () =
   return (
     <div className="dev-ws-dash" data-ws-dash="">
       {cells.map((c) => {
-        // #4745: only the votes figure, only while something actually waits,
-        // and only when the caller can route the tap. The markup is otherwise
-        // like-for-like with the span — the same class, the same attribute.
-        const tappable = c.key === 'votes' && c.n > 0 && !!onVotes;
+        // #4745, #5369: a figure with something to show and a handler to
+        // route the tap is a button. Votes routes to its own handler (one
+        // waiting item's page, or All items); the other three set the stage
+        // filter All items reads. The markup is otherwise like-for-like with
+        // the span — the same class, the same attribute.
+        const tappable = c.n > 0 && (c.key === 'votes' ? !!onVotes : !!onStage);
+        const onTap = c.key === 'votes' ? onVotes : () => onStage && onStage(c.key as DashStage);
         const cls = c.tone ? `dev-ws-dash-cell dev-ws-dash-cell-${c.tone}` : 'dev-ws-dash-cell';
         const content = (
           <>
@@ -913,7 +921,7 @@ function DashTiles({ d, owed, onVotes }: { d: Dash; owed: number; onVotes?: () =
             className={cls}
             data-ws-dash-cell={c.key}
             data-ws-dash-open=""
-            onClick={onVotes}
+            onClick={onTap}
             title={c.title}
           >
             {content}
@@ -5037,8 +5045,10 @@ export function DevWorkshop(): ReactNode {
           </div>
           {/* #4745: the votes figure routes its tap — the one waiting item's
               page when exactly one waits, All items otherwise, where every
-              waiting change is listed. With nothing waiting the figure is
-              not a button and the handler is never called. */}
+              waiting change is listed. #5369: the other three figures set
+              All items' stage filter to what they count. With nothing to
+              show a figure is not a button and the handlers are never
+              called. */}
           <DashTiles
             d={v.dashboard}
             owed={owed}
@@ -5047,6 +5057,7 @@ export function DevWorkshop(): ReactNode {
               if (refs.length === 1) callAppView('openTopic', refs[0].kind, refs[0].id);
               else openTab('all');
             }}
+            onStage={(s) => { callAppView('openWorkshopStage', s); openTab('all'); }}
           />
           {/* Where the open work is: the categories with the most of it, as
               chips. It replaced the model's paragraph about the open work
