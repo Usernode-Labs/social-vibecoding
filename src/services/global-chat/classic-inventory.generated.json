@@ -228,6 +228,15 @@
       "mobileSupported": true
     },
     {
+      "key": "accessibility",
+      "label": "Accessibility",
+      "group": "Preferences",
+      "gate": null,
+      "capabilityId": "settings.open.accessibility",
+      "classicPath": "#settings/accessibility",
+      "mobileSupported": true
+    },
+    {
       "key": "language",
       "label": "Language",
       "group": "Preferences",

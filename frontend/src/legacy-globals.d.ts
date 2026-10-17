@@ -371,5 +371,15 @@ declare global {
       apply(): void;
       onChange(fn: (mode: string) => void): void;
     };
+    /** The inline head-blocking display module in src/head.html (#3969):
+     *  text size and high contrast, as data-* attributes on <html>. */
+    Display?: {
+      getTextSize(): 'normal' | 'large' | 'larger';
+      setTextSize(size: string): void;
+      getContrast(): boolean;
+      setContrast(on: boolean): void;
+      apply(): void;
+      onChange(fn: () => void): void;
+    };
   }
 }

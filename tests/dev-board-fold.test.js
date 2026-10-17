@@ -1655,9 +1655,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // chips are gone, and with them the check that selected one. 734 leaves
   // 146 slots.
   //
+  // 734 → 735: +1 (#3969): the Accessibility settings page ships text size
+  // and high contrast controls (?demo=1#settings/accessibility), a route no
+  // other check reaches. 735 leaves 145 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 734);
+  checkCap.assertPinned(DAPP.tests.length, 735);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
