@@ -549,23 +549,6 @@ const SAMPLES = {
       }),
     },
   },
-  'hyrox-training': {
-    name: 'Hyrox Training',
-    ready: '#sessions[data-loaded] [data-session]',
-    api: {
-      '/api/sessions': {
-        me: ME,
-        today: { count: 1, minutes: 45 },
-        week: { count: 3, minutes: 155 },
-        sessions: [
-          { id: 1, workout: 'Wall Balls', minutes: 45, note: 'Rounds of 15, Open weight', doneAt: at('2026-10-16T18:05:00-07:00') },
-          { id: 2, workout: 'Sled Push', minutes: 30, note: 'Four lengths', doneAt: at('2026-10-14T07:25:00-07:00') },
-          { id: 3, workout: '1 km run', minutes: 25, note: 'Three of them, steady', doneAt: at('2026-10-13T07:40:00-07:00') },
-          { id: 4, workout: 'Full race simulation', minutes: 80, note: 'Open division', doneAt: at('2026-10-11T09:15:00-07:00') },
-        ],
-      },
-    },
-  },
 };
 
 // The platform bridge, as much of it as these screens read: the theme, and

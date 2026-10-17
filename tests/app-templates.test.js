@@ -18,7 +18,7 @@
 //
 //   1. THE ALLOW-LIST. POST /api/apps takes `template` from
 //      services/app-templates.js's TEMPLATE_IDS and nothing else: `empty`,
-//      the twenty-one ready-made apps and the four game starters; absent is
+//      the twenty ready-made apps and the four game starters; absent is
 //      `empty`; a deleted starter's id is refused, not swapped.
 //   2. EMPTY IS THE DEFAULT. Absent and `empty` write exactly the same
 //      files (#4047 dropped the scaffold's Press! demo, so "always got" is
@@ -57,7 +57,6 @@ const READY = [
   'find-a-time-book-club', 'find-a-time-game-night', 'find-a-time-trip',
   'potluck-planner', 'signup-shifts', 'signup-rsvp',
   'challenge-miles', 'challenge-steps', 'challenge-books',
-  'hyrox-training',
 ];
 const GAMES = ['game-board', 'game-space', 'game-blocks', 'game-trivia'];
 
@@ -69,7 +68,7 @@ const file = (files, p) => {
 
 const generate = (id, name = 'Demo App') => getTemplateFiles(name, 'demo-app-abc123', 'postgres://x', null, { template: id });
 
-test('the allow-list: Empty, the default, the twenty-one ready-made apps and the four game starters; a deleted starter is refused', () => {
+test('the allow-list: Empty, the default, the twenty ready-made apps and the four game starters; a deleted starter is refused', () => {
   assert.deepEqual([...appTemplates.TEMPLATE_IDS], ['empty', ...READY, ...GAMES]);
   assert.deepEqual([...appTemplates.READY_IDS], READY);
   assert.equal(appTemplates.DEFAULT_TEMPLATE, 'empty');
@@ -182,7 +181,7 @@ test('each ready-made app is a directory of its own files; the four tier lists s
   assert.deepEqual(appTemplates.starterFiles('empty'), []);
   for (const id of DELETED) assert.deepEqual(appTemplates.starterFiles(id), [], id);
   const dirs = new Set(READY.map((id) => appTemplates.dirOf(id)));
-  assert.deepEqual([...dirs].sort(), ['chore-list', 'find-a-time', 'grocery-list', 'group-challenge', 'group-poll', 'hyrox-training', 'lending-library', 'potluck-planner', 'signup-sheet', 'study-timer', 'tier-list']);
+  assert.deepEqual([...dirs].sort(), ['chore-list', 'find-a-time', 'grocery-list', 'group-challenge', 'group-poll', 'lending-library', 'potluck-planner', 'signup-sheet', 'study-timer', 'tier-list']);
   const games = new Set(GAMES.map((id) => appTemplates.dirOf(id)));
   const shared = new Set(GAMES.map((id) => appTemplates.get(id).shared));
   assert.deepEqual([...shared], ['_game-room'], 'every game starter shares one game room');

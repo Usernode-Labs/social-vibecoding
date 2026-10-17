@@ -187,10 +187,10 @@ test('the story: label, headline, "For example" and the three examples, then one
 // time, a sign-up sheet and a group challenge are behind "Something else…".
 test('the front three on the story and the make screen, the rest behind Something else, each a whole starting point', () => {
   const { TEMPLATES, FRONT, FRONT_KEYS, MORE, OWN, sentence, suggestedName, firstChoice, descriptionOf } = loadTsx(`${DIR}/examples.ts`);
-  assert.deepEqual(TEMPLATES.map((t) => t.key), ['tier', 'poll', 'game', 'organizer', 'findtime', 'signup', 'challenge', 'hyrox']);
+  assert.deepEqual(TEMPLATES.map((t) => t.key), ['tier', 'poll', 'game', 'organizer', 'findtime', 'signup', 'challenge']);
   assert.deepEqual([...FRONT_KEYS], ['tier', 'game', 'organizer'], 'one list of the front three, for a test of what shows first');
   assert.deepEqual(FRONT.map((t) => t.key), ['tier', 'game', 'organizer']);
-  assert.deepEqual(MORE.map((t) => t.key), ['poll', 'findtime', 'signup', 'challenge', 'hyrox'], 'the rest, in the catalog\'s order');
+  assert.deepEqual(MORE.map((t) => t.key), ['poll', 'findtime', 'signup', 'challenge'], 'the rest, in the catalog\'s order');
   for (const t of TEMPLATES) {
     // What a person reads is a message id (frontend/locales/en/onboarding.json);
     // the sentence's head is the catalog's, up to its blank.
@@ -592,7 +592,7 @@ test('a template fills in the description and the name; words of their own let g
   tiles(tree)[3].props.onClick();
   tree = draw();
   assert.ok(sheet(tree), 'the fourth tile opens the sheet');
-  assert.deepEqual(sheetRows(tree).map((r) => r.props['data-make-more']), ['idea', 'poll', 'findtime', 'signup', 'challenge', 'hyrox'], 'Your own idea first, then the rest');
+  assert.deepEqual(sheetRows(tree).map((r) => r.props['data-make-more']), ['idea', 'poll', 'findtime', 'signup', 'challenge'], 'Your own idea first, then the rest');
   sheet(tree).props.onPickIdea();
   tree = draw();
   assert.equal(sheet(tree), undefined, 'a pick shuts it');
