@@ -240,8 +240,8 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // suggesting. Now the open list is a listbox the textarea drives through
   // `aria-activedescendant`: the first row is highlighted, ArrowUp/ArrowDown
   // move the highlight, Enter or Tab picks it, and Escape closes the list
-  // for the text as it stands (typing brings it back). Enter sends only
-  // while no list is showing.
+  // for the text as it stands (typing brings it back). Enter is a new line;
+  // Ctrl/Cmd+Enter sends while no list is showing (#5361).
   const listId = useId();
   const [highlight, setHighlight] = useState(0);
   const [dismissedAt, setDismissedAt] = useState<string | null>(null);
@@ -328,7 +328,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     updateValue(next.value);
   }
 
-  /** The menu's keys, ahead of Enter-to-send. True when the key was the menu's. */
+  /** The menu's keys, ahead of the send chord. True when the key was the menu's. */
   function onEmojiKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): boolean {
     if (!emojiOpen || !emoji || event.nativeEvent.isComposing) return false;
     // The caret can have moved off the token since the last keystroke (the
@@ -559,7 +559,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : (prompt || t('messages:composer.placeholder'))} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
+        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : (prompt || t('messages:composer.placeholder'))} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
         <SpeakButton scope={`messages:${scope}`} getText={() => inputRef.current?.value || ''} onText={updateValue} maxLength={8000} onBusyChange={setDictating} disabled={!boxShown} />
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={dictating || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label={t('messages:composer.send')}><ArrowUpIcon aria-hidden="true" /></button>
       </div>

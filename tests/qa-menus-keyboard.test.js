@@ -267,8 +267,12 @@ test('Q13: Enter, Tab and the arrows belong to an open suggestion list before th
   const src = read('frontend/src/features/messages/composer.tsx');
   // The :emoji menu (#2985) takes its keys ahead of this list; the two never
   // show together, since that menu opens only with no @ or # list up.
-  assert.match(src, /onKeyDown=\{\(event\) => \{ if \(onEmojiKeyDown\(event\)\) return; if \(suggestionKeys\(event\)\) return; if \(event\.key === 'Enter'/,
-    'the list gets the key first; Enter sends only when no list took it');
+  assert.match(src, /onKeyDown=\{\(event\) => \{ if \(onEmojiKeyDown\(event\)\) return; if \(suggestionKeys\(event\)\) return; if \(event\.key === 'Enter' && \(event\.metaKey \|\| event\.ctrlKey\)/,
+    'the list gets the key first; the send chord fires only when no list took it');
+  // #5361: plain Enter is a newline (as in the workshop agent chat), so the
+  // old plain-Enter-sends rule must be gone from the composer's send branch.
+  assert.doesNotMatch(src, /event\.key === 'Enter' && !event\.shiftKey && !event\.nativeEvent\.isComposing\) \{ event\.preventDefault\(\); submit\(\)/,
+    'plain Enter no longer sends');
   const keys = src.slice(src.indexOf('function suggestionKeys('), src.indexOf('function insertChannel('));
   assert.match(keys, /event\.key === 'ArrowDown' \|\| event\.key === 'ArrowUp'/);
   assert.match(keys, /\(event\.key === 'Enter' && !event\.shiftKey\) \|\| \(event\.key === 'Tab' && !event\.shiftKey\)/);
