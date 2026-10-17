@@ -3542,7 +3542,7 @@ const App = {
         // paths broadcast pills on the status event, not 'quick_replies'
         // (that handler attaches to the last ASSISTANT row, which a
         // recovered turn doesn't have).
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, scoutOutput: data.scoutOutput, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true, plainText: data.plainText === true });
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, scoutOutput: data.scoutOutput, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true, plainText: data.plainText === true, plainContent: data.plainContent });
         // #990: keep a live cue where the next message will land, for the
         // whole gap between this step line and whatever follows it. Parity
         // with both dev-chat.js status handlers.

@@ -484,24 +484,57 @@ async function runSyncMainWith(execImpl) {
   try {
     const result = await h.subject.runSyncMain({}, pool, 7, { sessionRow: h.ownerRow() });
     const row = pool.calls.filter((c) => /INSERT INTO chat_session_messages/.test(c.sql)).at(-1);
-    return { result, content: row.params[1], metadata: JSON.parse(row.params[2]), updates: h.updates };
+    // The terminal status event as it went out live.
+    const live = h.globals.filter((g) => g.event === 'status').at(-1);
+    return { result, content: row.params[1], metadata: JSON.parse(row.params[2]), updates: h.updates, live };
   } finally {
     h.restore();
   }
 }
 
-// The owner's transcript (the dev chat), through its real renderer.
-function renderOwner(content, metadata) {
-  const tf = path.join(__dirname, 'dev-chat-transcript.test.js');
-  const ts = fs.readFileSync(tf, 'utf8');
-  const { makeDevChat } = compileSlice(path.join(__dirname, 'sync-round3-transcript.cjs'),
-    ts.slice(0, ts.indexOf('// ── 1.')), 'module.exports = { makeDevChat };');
-  // Rows reach the dev chat with their metadata's markers lifted onto them
-  // (the load path in dev-chat.js); plainText is the one this row carries.
-  return makeDevChat().render([{
-    role: 'system', id: 42, content, metadata, plainText: metadata.plainText === true,
-    created_at: '2026-10-17T00:00:00Z',
-  }]);
+function devChatHarness(name) {
+  const ts = fs.readFileSync(path.join(__dirname, 'dev-chat-transcript.test.js'), 'utf8');
+  return compileSlice(path.join(__dirname, name), ts.slice(0, ts.indexOf('// ── 1.')), 'module.exports = { makeDevChat };').makeDevChat;
+}
+
+// A dev chat as it was before the plainText marker: the one new piece of
+// client code, DevChat._asPlainText, does nothing. (The base commit's own
+// renderer is checked too, where its history is in the checkout.)
+const OLD_CLIENT = { _asPlainText: (row) => row };
+
+// A stored row as GET /api/sessions/:id sends it, read the way the dev
+// chat's load path reads it (the metadata's markers lifted onto the row).
+function ownerHistoryMessage(content, metadata, { old = false } = {}) {
+  const wire = require('../src/services/plain-text-rows').forOwnerHistory({
+    role: 'system', id: 42, content, metadata, created_at: '2026-10-17T00:00:00Z',
+  });
+  return old ? wire : { ...wire, plainText: metadata.plainText === true };
+}
+
+// The owner's transcript (the dev chat), through its real renderer, from the
+// owner-history wire form.
+function renderOwner(content, metadata, { old = false } = {}) {
+  const makeDevChat = devChatHarness('sync-round3-transcript.cjs');
+  return makeDevChat(old ? OLD_CLIENT : {}).render([ownerHistoryMessage(content, metadata, { old })]);
+}
+
+// The three live status handlers (two in dev-chat.js, the WebSocket one in
+// app.js), run on a status event's payload as their source writes them.
+const LIVE_SYSTEM_PUSH = "DevChat.messages.push({ role: 'system', content: data.text,";
+function liveStatusMessages(data) {
+  const lines = [];
+  for (const file of ['frontend/src/features/dev-chat/dev-chat.js', 'public/js/app.js']) {
+    for (const line of fs.readFileSync(path.join(ROOT, file), 'utf8').split('\n')) {
+      if (line.includes(LIVE_SYSTEM_PUSH) && !line.includes('billingSwitch: true')) lines.push(line.trim());
+    }
+  }
+  assert.equal(lines.length, 3, 'three live status handlers');
+  return lines.map((line) => {
+    const DevChat = { messages: [] };
+    // eslint-disable-next-line no-new-func
+    new Function('DevChat', 'data', line)(DevChat, data);
+    return DevChat.messages;
+  });
 }
 
 // The shared read-only transcript: the share sanitiser, then its renderer.
@@ -599,10 +632,10 @@ test('the dev chat draws a plainText row as text, and an unmarked system row as 
   assert.match(unmarked, /<b>bold<\/b>/, 'other system rows keep their markup');
   const src = fs.readFileSync(path.join(ROOT, 'frontend/src/features/dev-chat/dev-chat.js'), 'utf8');
   assert.match(src, /if \(m\.metadata\.plainText === true\) m\.plainText = true;/, 'the load path lifts the marker');
-  assert.equal((src.match(/content: data\.text, turnError: data\.turnError,[^\n]*_active: true, plainText: data\.plainText === true \}\);/g) || []).length, 2, 'both live status paths carry it');
+  assert.equal((src.match(/content: data\.text, turnError: data\.turnError,[^\n]*_active: true, plainText: data\.plainText === true, plainContent: data\.plainContent \}\);/g) || []).length, 2, 'both live status paths carry it');
   assert.match(src, /rows\.push\(DevChat\._asPlainText\(DevChat\._withRunningLabel\(\{/, 'the generic row honours it');
   const app = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
-  assert.match(app, /content: data\.text, ccOutput: data\.ccOutput,[^\n]*_active: true, plainText: data\.plainText === true \}\);/, 'and the WebSocket path');
+  assert.match(app, /content: data\.text, ccOutput: data\.ccOutput,[^\n]*_active: true, plainText: data\.plainText === true, plainContent: data\.plainContent \}\);/, 'and the WebSocket path');
 });
 
 test('a file name with a newline is staged whole', () => {
@@ -626,5 +659,105 @@ test('a resolver that aborts the merge or resets the branch itself is refused, a
     const ran = runSync(fx, 'resolve');
     assertAbandoned(fx, ran);
     assert.equal(reasonOf(ran.result), 'The resolver ran git itself, so the merge was not pushed.', command);
+  }
+});
+
+// ── Review round 4 of proposal 8758 (Codex) ─────────────────────────────
+// A tab opened before this shipped keeps its HTML renderer across a deploy:
+// the owner's transports carry the row escaped for it, and the sentence
+// plain beside it for a current tab (services/plain-text-rows.js).
+
+const ARTIFACT = '<img src=x onerror=globalThis.__review8758=1>';
+const ARTIFACT_TEXT = '&lt;img src=x onerror=globalThis.__review8758=1&gt;';
+
+async function refusedWithArtifact() {
+  const fx = fixture();
+  inject(fx, `printf 'output' > '${ARTIFACT}'`);
+  const ran = runSync(fx, 'resolve');
+  assertAbandoned(fx, ran);
+  const state = {};
+  require('../src/services/worker').parseLine(ran.result, () => {}, state);
+  return runSyncMainWith(async () => ({ ...state, exitCode: 0 }));
+}
+
+test('the owner\'s history and live status carry the row escaped, with the sentence beside it; storage stays plain', async () => {
+  const out = await refusedWithArtifact();
+  assert.equal(out.result.ok, false);
+  assert.ok(out.content.includes(ARTIFACT), 'stored plain');
+  const wire = ownerHistoryMessage(out.content, out.metadata, { old: true });
+  assert.ok(wire.content.includes(ARTIFACT_TEXT) && !wire.content.includes(ARTIFACT), 'history content escaped');
+  assert.equal(wire.plainContent, out.content, 'history plainContent is the sentence');
+  assert.ok(out.live.text.includes(ARTIFACT_TEXT) && !out.live.text.includes(ARTIFACT), 'live text escaped');
+  assert.equal(out.live.plainContent, out.content, 'live plainContent is the sentence');
+  assert.equal(out.live.plainText, true);
+  // Rows without the marker are untouched on both transports.
+  const plain = require('../src/services/plain-text-rows');
+  const other = { role: 'system', content: '<b>ok</b>', metadata: {} };
+  assert.equal(plain.forOwnerHistory(other), other);
+  assert.deepEqual(plain.statusEvent('<b>ok</b>', { x: 1 }), { text: '<b>ok</b>', x: 1 });
+  // GET /api/sessions/:id sends its messages through it.
+  const routes = fs.readFileSync(path.join(ROOT, 'src/routes/sessions.js'), 'utf8');
+  const mapped = routes.indexOf('const messages = storedMessages.map(plainTextRows.forOwnerHistory);');
+  assert.ok(mapped > 0, 'the history route maps its rows');
+  assert.ok(routes.indexOf('res.json({ session, messages, drafts });', mapped) > mapped, 'and answers with the mapped rows');
+});
+
+test('a tab from before the marker shows the refusal as text, from history and from every live handler', async () => {
+  const out = await refusedWithArtifact();
+  const makeOld = devChatHarness('sync-round4-old.cjs');
+  const fromHistory = renderOwner(out.content, out.metadata, { old: true });
+  const fromLive = liveStatusMessages(out.live).map((msgs) => makeOld(OLD_CLIENT).render(msgs));
+  for (const html of [fromHistory, ...fromLive]) {
+    assert.doesNotMatch(html, /<img src=x onerror/, 'no live element in an old tab');
+    assert.ok(html.includes(ARTIFACT_TEXT), 'shown once as text');
+    assert.doesNotMatch(html, /&amp;lt;img/, 'not escaped twice');
+  }
+});
+
+test('a current tab shows it once as text, from history and from every live handler', async () => {
+  const out = await refusedWithArtifact();
+  const makeNew = devChatHarness('sync-round4-new.cjs');
+  const fromHistory = renderOwner(out.content, out.metadata);
+  const fromLive = liveStatusMessages(out.live).map((msgs) => makeNew().render(msgs));
+  for (const html of [fromHistory, ...fromLive]) {
+    assert.doesNotMatch(html, /<img src=x onerror/);
+    assert.ok(html.includes(ARTIFACT_TEXT), 'shown once as text');
+    assert.doesNotMatch(html, /&amp;lt;img/, 'the escaped transport form is not escaped again');
+  }
+});
+
+test('the base commit\'s own dev chat shows the refusal as text (where its history is checked out)', async (t) => {
+  const base = '74bb8c74337a07801db7078a6530b65f0a5ce92f';
+  let oldSrc;
+  try {
+    oldSrc = execFileSync('git', ['show', `${base}:frontend/src/features/dev-chat/dev-chat.js`], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch {
+    t.skip('the base commit is not in this checkout (a shallow clone); the OLD_CLIENT model above stands in');
+    return;
+  }
+  const out = await refusedWithArtifact();
+  const ts = fs.readFileSync(path.join(__dirname, 'dev-chat-transcript.test.js'), 'utf8');
+  const assignment = "const DEV_CHAT_SRC = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');";
+  const prefix = ts.slice(0, ts.indexOf('// ── 1.'));
+  assert.ok(prefix.includes(assignment));
+  const { makeDevChat } = compileSlice(path.join(__dirname, 'sync-round4-base.cjs'),
+    prefix.replace(assignment, `const DEV_CHAT_SRC = ${JSON.stringify(oldSrc)};`), 'module.exports = { makeDevChat };');
+  const history = makeDevChat().render([ownerHistoryMessage(out.content, out.metadata, { old: true })]);
+  const lines = [];
+  for (const file of ['frontend/src/features/dev-chat/dev-chat.js', 'public/js/app.js']) {
+    const src = execFileSync('git', ['show', `${base}:${file}`], { cwd: ROOT, encoding: 'utf8' });
+    for (const line of src.split('\n')) if (line.includes(LIVE_SYSTEM_PUSH) && !line.includes('billingSwitch: true')) lines.push(line.trim());
+  }
+  assert.equal(lines.length, 3);
+  const live = lines.map((line) => {
+    const DevChat = { messages: [] };
+    // eslint-disable-next-line no-new-func
+    new Function('DevChat', 'data', line)(DevChat, out.live);
+    return makeDevChat().render(DevChat.messages);
+  });
+  for (const html of [history, ...live]) {
+    assert.doesNotMatch(html, /<img src=x onerror/);
+    assert.ok(html.includes(ARTIFACT_TEXT));
+    assert.doesNotMatch(html, /&amp;lt;img/);
   }
 });

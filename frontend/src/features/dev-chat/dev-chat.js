@@ -930,9 +930,17 @@ const DevChat = {
    * A system row whose content is a sentence, not markup (its metadata says
    * `plainText`; sync-main.js marks a sync's outcome, which can carry a
    * worker's reason): drawn through the text path, so React escapes it once.
+   * GET /api/sessions/:id and the status event carry the sentence as
+   * `plainContent` beside an escaped `content`.
    */
   _asPlainText(row, msg) {
-    if (msg && (msg.plainText === true || (msg.metadata && msg.metadata.plainText === true))) delete row.html;
+    if (!msg || !(msg.plainText === true || (msg.metadata && msg.metadata.plainText === true))) return row;
+    // `content` reaches a current tab HTML-escaped, for a tab from before
+    // this marker (services/plain-text-rows.js); the sentence is in
+    // `plainContent`, and the text path escapes it once. A running label
+    // that replaced the text stays.
+    if (typeof msg.plainContent === 'string' && row.text === (msg.content || '')) row.text = msg.plainContent;
+    delete row.html;
     return row;
   },
 
@@ -5160,7 +5168,7 @@ const DevChat = {
                 // #786: quickReplies ride the status event so a
                 // restart-recovery breadcrumb repaints the pill bar live
                 // (the server persists them on the same system row).
-                DevChat.messages.push({ role: 'system', content: data.text, turnError: data.turnError, stopLanding: data.stopLanding, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true, plainText: data.plainText === true });
+                DevChat.messages.push({ role: 'system', content: data.text, turnError: data.turnError, stopLanding: data.stopLanding, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true, plainText: data.plainText === true, plainContent: data.plainContent });
                 // #990: a step line means work is under way with nothing else
                 // painting yet — put the dots where the next message will
                 // land, and keep them there until it does. Set before the
@@ -5837,7 +5845,7 @@ const DevChat = {
         const sealMsg = lastAssistantMsg();
         if (sealMsg) sealMsg._finalized = true;
         // #786: carry quickReplies (see the POST-SSE status handler).
-        DevChat.messages.push({ role: 'system', content: data.text, turnError: data.turnError, stopLanding: data.stopLanding, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true, plainText: data.plainText === true });
+        DevChat.messages.push({ role: 'system', content: data.text, turnError: data.turnError, stopLanding: data.stopLanding, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true, plainText: data.plainText === true, plainContent: data.plainContent });
         // #990: keep a live cue where the next message will land — see the
         // POST-SSE status handler. Set before the render so both channels
         // emit the indicator inside the same innerHTML write.

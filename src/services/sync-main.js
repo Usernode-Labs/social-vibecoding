@@ -13,6 +13,7 @@ const worker = require('./worker');
 const limits = require('./limits');
 const events = require('./events');
 const { activeWorkers, beginSessionOperation } = require('./active-workers');
+const plainTextRows = require('./plain-text-rows');
 
 
 // Translate the worker's terse "[sync_*]" phase markers into the
@@ -233,7 +234,10 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
     } catch (_) { /* ws/bus failures are non-fatal */ }
   };
   const sendStatus = async (text, metadata) => {
-    send('status', { text, ...(metadata || {}) });
+    // A plainText row goes escaped in `text`, with the sentence beside it,
+    // so a dev chat opened before this shipped still shows it as text
+    // (services/plain-text-rows.js). The stored row below stays plain.
+    send('status', plainTextRows.statusEvent(text, metadata));
     try {
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, metadata)
@@ -428,10 +432,11 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
     // real merge); a behind==0 short-circuit leaves no row, matching the
     // banner-only behaviour callers had before this change.
     // plainText: the row's content is a sentence, not markup. The reason in
-    // it is data from the worker (an agent's sentence, a file name), so the
-    // dev chat draws this row as text, and each renderer escapes it once:
-    // the owner's transcript through React, the shared transcript in
-    // session-transcript.js, the banner and a toast as text.
+    // it is data from the worker (an agent's sentence, a file name), so it is
+    // stored plain and every renderer escapes it once: the dev chat through
+    // React (and a tab from before this through its HTML path, which gets it
+    // escaped on the wire: services/plain-text-rows.js), the shared
+    // transcript in session-transcript.js, the banner and a toast as text.
     const syncMeta = { plainText: true, syncMain: { syncResult, behind: result.behind || 0, sha: result.sha || null, pushOk: !!result.pushOk, ...(result.syncReason ? { reason: result.syncReason } : {}) } };
 
     // The worker owns the Git merge/push, but a CLI-handoff proposal also

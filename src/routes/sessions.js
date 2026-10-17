@@ -180,6 +180,7 @@ const { listDrafts } = require('./chat-drafts');
 // Read-only transcript sharing: the deny-by-default row/metadata allowlist
 // shared by GET /transcript and POST /fork (see services/transcript-share.js).
 const transcriptShare = require('../services/transcript-share');
+const plainTextRows = require('../services/plain-text-rows');
 const appAccess = require('../services/app-access');
 const listTestResults = require('../services/list-test-results');
 const communities = require('../services/communities');
@@ -3942,13 +3943,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           .catch((err) => log.warn('sessions', 'session_opened dismiss failed', { err: err.message }));
       }
 
-      const { rows: messages } = await pool.query(
+      const { rows: storedMessages } = await pool.query(
         `SELECT id, role, content, model, token_count, cost_cents, metadata, created_at
          FROM chat_session_messages
          WHERE session_id = $1
          ORDER BY id ASC`,
         [req.params.id]
       );
+      // A plainText system row (a sync's outcome) goes HTML-escaped in
+      // `content` with the sentence in `plainContent`, so a dev chat opened
+      // before that marker existed still shows it as text
+      // (services/plain-text-rows.js). Storage stays plain.
+      const messages = storedMessages.map(plainTextRows.forOwnerHistory);
 
       // #195: attach the session's stored before/after capture ids so the
       // staging card can render its visual tiles on history reload (the
