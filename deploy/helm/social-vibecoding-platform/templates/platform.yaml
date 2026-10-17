@@ -208,6 +208,7 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: LOG_LEVEL, value: {{ .Values.config.logLevel | quote }}}
             - {name: FIREBASE_PHONE_AUTH_ENABLED, value: {{ .Values.config.firebasePhoneAuthEnabled | quote }}}
             - {name: WORKER_MEMORY, value: {{ .Values.config.workerMemory | quote }}}
+            - {name: WORKER_MEMORY_PLATFORM_REPO, value: {{ .Values.config.workerMemoryPlatformRepo | quote }}}
             - {name: WORKER_CPUS, value: {{ .Values.config.workerCpus | quote }}}
             - {name: CAPTURE_MEMORY, value: {{ .Values.config.captureMemory | quote }}}
             - {name: CAPTURE_CPUS, value: {{ .Values.config.captureCpus | quote }}}

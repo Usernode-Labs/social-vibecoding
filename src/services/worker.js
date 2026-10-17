@@ -24,6 +24,25 @@ const WORKER_IMAGE = 'usernode-worker:latest';
 // without a code deploy. Defaults preserve historical 2g/2-CPU behavior.
 const WORKER_MEMORY = process.env.WORKER_MEMORY || '2g';
 const WORKER_CPUS = process.env.WORKER_CPUS || '2';
+// A worker on the platform's own repository holds the agent, the whole
+// platform it boots to look at its change, and a browser. At 2g it ran out:
+// 17 Oct 2026, 33 of the Homeroom bot's 40 builds in two weeks that ended
+// "no change" had been OOM-killed partway through (exit 137), almost all of
+// them on this repository. A limit, not a request: nothing more is reserved.
+const WORKER_MEMORY_PLATFORM_REPO = process.env.WORKER_MEMORY_PLATFORM_REPO || '4g';
+const DEFAULT_PLATFORM_REPO_URL = 'https://github.com/Usernode-Labs/social-vibecoding';
+
+/** Pure: the memory limit of a worker on `owner/name` (WORKER_MEMORY units). */
+function workerMemoryFor(repoOwner, repoName, env = process.env) {
+  const url = env.USERNODE_PLATFORM_REPO || env.USERNODE_REPO_URL || DEFAULT_PLATFORM_REPO_URL;
+  const m = String(url).match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?\/?$/i);
+  const platform = m && repoOwner && repoName
+    && m[1].toLowerCase() === String(repoOwner).toLowerCase()
+    && m[2].toLowerCase() === String(repoName).toLowerCase();
+  return platform
+    ? (env.WORKER_MEMORY_PLATFORM_REPO || WORKER_MEMORY_PLATFORM_REPO)
+    : (env.WORKER_MEMORY || WORKER_MEMORY);
+}
 const WARM_READY_TIMEOUT_MS = 5 * 60 * 1000;
 let accountDeletionGuard = async () => {};
 function setAccountDeletionGuard(guard) { accountDeletionGuard = guard; }
@@ -1607,6 +1626,11 @@ function parseLine(line, onProgress, state) {
       // Run 190: how many servers the agent left running that the stop guard
       // stopped as the turn ended: telemetry_metrics.stop_hook_servers_stopped.
       else if (k === 'stop_hook_servers_stopped') state.stopHookServersStopped = /^\d+$/.test(v || '') ? parseInt(v, 10) : null;
+      // The container's memory as the agent finished (worker/memory-fields.sh):
+      // telemetry_metrics worker_memory_peak_mib, _limit_mib, worker_oom_kill_count.
+      else if (k === 'mem_peak_mib') state.workerMemoryPeakMib = /^\d+$/.test(v || '') ? parseInt(v, 10) : null;
+      else if (k === 'mem_limit_mib') state.workerMemoryLimitMib = /^\d+$/.test(v || '') ? parseInt(v, 10) : null;
+      else if (k === 'mem_oom_kills') state.workerOomKillCount = /^\d+$/.test(v || '') ? parseInt(v, 10) : null;
     }
     state.resultSeen = true;
     const terminalExit = Number.isInteger(state.agentExit) ? state.agentExit : state.ccExit;
@@ -1930,6 +1954,11 @@ function newWatchState() {
     // the guard, so "none asked for" stays apart from "none needed".
     stopHookBlocks: null,
     stopHookServersStopped: null,
+    // The container's memory as the agent finished (worker/memory-fields.sh),
+    // null when its runner could not read it.
+    workerMemoryPeakMib: null,
+    workerMemoryLimitMib: null,
+    workerOomKillCount: null,
     // Claude Code result events seen this turn: a run that goes on after its
     // first (a background task's end wakes it) adds each later one's usage.
     claudeResultsSeen: 0,
@@ -3019,6 +3048,9 @@ async function _bootstrapWarmContainer(sessionId, {
     // "Benchmark trials"). Set only for one; every other worker is unchanged.
     ...(pinnedBase ? { USERNODE_PINNED_BASE: pinnedBase } : {}),
   };
+  // Chosen when the worker is made, so every turn on it (a plan, its build,
+  // a review's fix, the shots) has the same room (workerMemoryFor).
+  const memory = workerMemoryFor(repoOwner, repoName);
   if (usesKubernetesWorkers()) {
     // Same bounded retry as the Docker path below: same attempts, same
     // backoff, same halved budget after the first, and only for the
@@ -3028,7 +3060,7 @@ async function _bootstrapWarmContainer(sessionId, {
     for (let attempt = 1; attempt <= BOOTSTRAP_MAX_ATTEMPTS; attempt += 1) {
       try {
         const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
-          sessionId, env: safeEnv, onProgress, temporary,
+          sessionId, env: safeEnv, onProgress, temporary, memory,
           timeoutMs: attempt === 1 ? WARM_READY_TIMEOUT_MS : Math.round(WARM_READY_TIMEOUT_MS / 2),
           retryAttempt: attempt === 1 ? null : attempt,
           reclaimVolumes: async () => {
@@ -3041,7 +3073,7 @@ async function _bootstrapWarmContainer(sessionId, {
           },
         });
         containerName = result.runtimeName;
-        log.info('worker', 'Warm worker Pod ready', { runtimeName: containerName, pvc: result.pvcName, attempt });
+        log.info('worker', 'Warm worker Pod ready', { runtimeName: containerName, pvc: result.pvcName, attempt, memory });
         return containerName;
       } catch (err) {
         Object.defineProperty(err, 'bootstrapFailed', { value: true, configurable: true });
@@ -3076,7 +3108,7 @@ async function _bootstrapWarmContainer(sessionId, {
     // is defence in depth so the whole platform shares one hostname rule.
     '--hostname', docker.containerHostname(containerName),
     '--network', network,
-    '--memory', WORKER_MEMORY,
+    '--memory', memory,
     '--cpus', WORKER_CPUS,
     '--security-opt', 'no-new-privileges:true',
     // Warm-runtime migration marker. No secrets are injected at bootstrap,
@@ -4581,6 +4613,14 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
           if (state.execExitSeen) return state;
           state.markerlessCause = termination?.oomKilled ? 'oom_killed'
             : termination && termination.status !== 'running' ? 'container_gone' : verdict.cause;
+          // Said here as the Docker path says it: 17 Oct 2026, the bot's
+          // builds that its worker's OOM killed left only "Turn liveness
+          // probe failed" in the log, and why had to be read from the
+          // cluster's metrics before the Pod was gone.
+          log.warn('worker', 'Turn ended without an exit marker', {
+            sessionId, containerName, journal, linesConsumed, cause: state.markerlessCause,
+            inspect: termination ? `${termination.status} oom=${termination.oomKilled}` : 'unavailable',
+          });
           return state;
         }
       }
@@ -4588,6 +4628,9 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
     }
     state.exitCode = -1;
     state.markerlessCause = 'probe_unobservable';
+    log.warn('worker', 'Turn ended without an exit marker', {
+      sessionId, containerName, journal, linesConsumed, cause: state.markerlessCause, inspect: 'deadline',
+    });
     return state;
   }
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -5993,6 +6036,7 @@ function describePushFailure(err) {
 
 module.exports = {
   usesKubernetesWorkers,
+  workerMemoryFor,
   getWorkerStatus,
   stopWorker,
   describePushFailure,

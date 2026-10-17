@@ -637,6 +637,41 @@ test('temporary shots worker uses pod storage without allocating a PVC', async (
   const deployment = written.find((item) => item.kind === 'Deployment').body;
   assert.deepEqual(deployment.spec.template.spec.volumes, [{ name: 'state', emptyDir: {} }]);
   assert.equal(deployment.metadata.labels['social.usernode.io/storage-mode'], 'temporary');
+  // No limit given and none configured: the historical 2Gi.
+  assert.equal(deployment.spec.template.spec.containers[0].resources.limits.memory, '2Gi');
+});
+
+test('a worker\'s memory limit is the one it is made with, in Kubernetes units, else the configured one', async () => {
+  const limits = [];
+  kubernetes._setClientsForTest({
+    core: {
+      readNamespacedSecret: async () => { throw notFound(); },
+      createNamespacedSecret: async ({ body }) => body,
+      listNamespacedPod: async () => ({ items: [{
+        metadata: { name: 'worker-pod', annotations: { 'social.usernode.io/env-checksum': kubernetes._envChecksumForTest({}) } },
+        spec: { containers: [{ name: 'worker', image: config().kubernetes.workerImage }] },
+        status: { phase: 'Running', conditions: [{ type: 'Ready', status: 'True' }],
+          containerStatuses: [{ name: 'worker', ready: true, state: { running: {} } }] },
+      }] }),
+      readNamespacedPodLog: async () => '__USERNODE_PHASE__ warm-ready',
+    },
+    apps: {
+      readNamespacedDeployment: async ({ name }) => {
+        if (limits.length) {
+          return { metadata: { name, generation: 1 }, status: { observedGeneration: 1,
+            replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+        }
+        throw notFound();
+      },
+      createNamespacedDeployment: async ({ body }) => { limits.push(body.spec.template.spec.containers[0].resources.limits.memory); return body; },
+      replaceNamespacedDeployment: async ({ body }) => { limits.push(body.spec.template.spec.containers[0].resources.limits.memory); return body; },
+    },
+  });
+  // A worker on the platform's own repository (worker.js workerMemoryFor).
+  await kubernetes.ensureWorker(config(), { sessionId: 45, env: {}, temporary: true, memory: '4g' });
+  await kubernetes.ensureWorker({ ...config(), workerMemory: '2g' }, { sessionId: 45, env: {}, temporary: true });
+  await kubernetes.ensureWorker(config(), { sessionId: 45, env: {}, temporary: true, memory: '1280m' });
+  assert.deepEqual(limits, ['4Gi', '2Gi', '1280Mi']);
 });
 
 test('a worker setup retry stamps its attempt on the Pod template, so the stuck Pod is replaced', async () => {

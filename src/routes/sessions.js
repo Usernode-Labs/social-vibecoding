@@ -10448,6 +10448,11 @@ const CODEX_LEDGER_ERROR_CODES = {
   credential_failure: 'credential_failure',
 };
 function codexLedgerErrorCode(result) {
+  // 17 Oct 2026: a turn whose worker went from under it (OOM-killed, its
+  // container gone) is the worker's failure, not the provider's: without a
+  // code its row read error_class 'provider'. Why is in its telemetry
+  // (markerless_cause).
+  if (result?.markerlessCause) return 'worker_lost';
   return CODEX_LEDGER_ERROR_CODES[result?.agentErrorCode] || null;
 }
 

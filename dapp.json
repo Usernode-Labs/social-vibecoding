@@ -186,6 +186,12 @@
       "description": "Docker memory limit for each worker container, in docker's own units (e.g. `1280m`). MAX_GLOBAL_SESSIONS × WORKER_MEMORY is the worst-case worker footprint."
     },
     {
+      "key": "WORKER_MEMORY_PLATFORM_REPO",
+      "group": "Scaling",
+      "default": "4g",
+      "description": "Memory limit for a worker on the platform's own repository, whose agent boots the whole platform and a browser beside itself. Same units as WORKER_MEMORY."
+    },
+    {
       "key": "WORKER_CPUS",
       "group": "Scaling",
       "default": "1",

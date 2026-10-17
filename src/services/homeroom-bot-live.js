@@ -3003,7 +3003,7 @@ async function buildSeesImages({ pool, config, userId, model }) {
 
 /**
  * Why a coding turn Claude Code ran failed, or null when it did not (or ran
- * in Codex). An OpenRouter model the platform maps to Claude Code (#3296)
+ * in Codex, unless its worker went from under it: workerLostReason). An OpenRouter model the platform maps to Claude Code (#3296)
  * runs in run-cc.sh, which commits and pushes whatever a turn leaves, even
  * when the agent failed partway: what a person's dev chat wants, and never
  * what the bot may propose. The Codex runner refuses to commit or push a
@@ -3019,7 +3019,12 @@ async function buildSeesImages({ pool, config, userId, model }) {
  * turns failed.
  */
 function failedClaudeTurn(result) {
-  if (!result || result.agentHarness !== 'claude') return null;
+  if (!result) return null;
+  // A turn whose worker went from under it failed under either CLI: neither
+  // runner reached its end, so nothing was committed (workerLostReason).
+  const lost = workerLostReason(result);
+  if (lost) return lost;
+  if (result.agentHarness !== 'claude') return null;
   // The notice first: run-cc.sh exits 1 after a turn that ended on it, so
   // "exited with code 1" was all the run kept of an OpenRouter 429.
   const api = agentApiFailure(result.lastResultText);
@@ -3029,6 +3034,57 @@ function failedClaudeTurn(result) {
   if (result.ccIsError === true) return 'the agent reported an error';
   if (exited(result.exitCode)) return `the agent exited with code ${result.exitCode}`;
   return null;
+}
+
+// 17 Oct 2026: 33 of the bot's 40 builds in two weeks that ended "the build
+// produced no change to propose" had not ended at all: their worker was
+// OOM-killed partway through (exit 137), after the agent had edited a median
+// of 20 files. The worker said so (markerlessCause, with exit code -1), and
+// failedClaudeTurn, reading only positive exit codes, did not, so the build
+// fell through to "no change" and its requester read "I ended up with no
+// changes to show you". Each cause in words for the run's record; none says
+// "restart" or "start", which the requester's words read as other causes
+// (homeroom-bot-dm.js buildFailedCause).
+const WORKER_LOST_WORDS = Object.freeze({
+  oom_killed: 'its worker ran out of memory',
+  container_gone: 'its worker stopped partway through',
+  turn_process_gone: 'the agent stopped partway through without a result',
+  probe_unobservable: 'the platform lost sight of its worker',
+});
+
+/**
+ * Why a coding turn's process went before it finished, or null: the
+ * worker's own reading of a turn that left no exit marker (worker.js
+ * markerlessCause), or an exit code below zero, which the worker records
+ * for one it could not read. Pure.
+ */
+function workerLostReason(result) {
+  if (!result) return null;
+  if (result.markerlessCause) {
+    return WORKER_LOST_WORDS[result.markerlessCause] || 'the agent ended without a result';
+  }
+  const code = Number(result.exitCode);
+  if (result.exitCode != null && Number.isInteger(code) && code < 0) return 'the agent ended without a result';
+  return null;
+}
+
+/**
+ * Why a build turn failed, under either CLI, or null when it did not: what
+ * failedClaudeTurn reads, and what else turnFault counts as a failure (the
+ * runner's own error, a Codex agent's exit code or error). One reading, so
+ * a turn turnFault calls failed always has a reason, and is never left to be
+ * read as one that changed nothing. Pure.
+ */
+function turnFailureReason(result) {
+  if (!result) return null;
+  const said = failedClaudeTurn(result);
+  if (said) return said;
+  if (result.fatalError) return `the worker reported an error: ${clipText(String(result.fatalError), 160)}`;
+  if (result.ccIsError === true) return 'the agent reported an error';
+  const nonzero = (v) => (v != null && Number(v) !== 0 ? Number(v) : null);
+  const exit = nonzero(result.agentExit) ?? nonzero(result.ccExit) ?? nonzero(result.exitCode);
+  if (exit == null) return null;
+  return Number.isInteger(exit) && exit > 0 ? `the agent exited with code ${exit}` : 'the agent ended without a result';
 }
 
 /**
@@ -3492,11 +3548,7 @@ function turnLanded(result) {
 function turnFault({ routed, stopped }) {
   if (stopped) return 'stopped';
   if (routed?.error) return 'failed';
-  const r = (routed && routed.result) || {};
-  const exited = (code) => code != null && Number(code) !== 0;
-  if (failedClaudeTurn(r) || r.fatalError || r.ccIsError === true
-    || exited(r.exitCode) || exited(r.agentExit) || exited(r.ccExit)) return 'failed';
-  return null;
+  return turnFailureReason((routed && routed.result) || {}) ? 'failed' : null;
 }
 
 /**
@@ -4543,7 +4595,10 @@ async function buildAndPropose({
   // "exited with code 1". A failed turn is a failed build, whatever it left
   // behind (failedClaudeTurn), unless it is a first version's whose work so
   // far is kept below.
-  const turnFailed = stopped || routed?.error ? null : failedClaudeTurn(result);
+  // turnFailureReason, not failedClaudeTurn alone: a turn turnFault called
+  // failed is said as failed, with why, never as a build that changed
+  // nothing (17 Oct 2026, workerLostReason).
+  const turnFailed = stopped || routed?.error ? null : turnFailureReason(result);
   let faultReason = null;
   if (stopped) faultReason = 'the build ran past its time limit';
   else if (routed?.error) faultReason = `the build turn failed (${routed.error})`;
@@ -5069,6 +5124,8 @@ module.exports = {
   ONE_GO_LINES,
   STARTER_INLINE_MAX_CHARS,
   failedClaudeTurn,
+  workerLostReason,
+  turnFailureReason,
   failureDetail,
   stampSessionModel,
   draftSpec,
