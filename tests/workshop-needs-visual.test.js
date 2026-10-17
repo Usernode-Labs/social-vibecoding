@@ -144,7 +144,7 @@ test('"more" grows the caption over the picture, with the summary in full, what 
   assert.equal(message('project:needsYou.caption.less'), 'less');
   // Open, the caption scrolls and the picture is dimmed under it.
   assert.match(CSS, /\.dev-ws-item\[data-ws-open\] > \.dev-ws-item-caption \{\s*overflow-y: auto;/);
-  assert.match(CSS, /\.dev-ws-item\[data-ws-open\] > \.dev-ws-item-scrim \{[^}]*background: rgba\(0, 0, 0, \.62\);/);
+  assert.match(CSS, /\.dev-ws-item\[data-ws-open\] > \.dev-ws-item-scrim \{[^}]*background: var\(--dc-sheet-solid\); opacity: \.94;/);
   // One toggle for "more", "less", a tap on a drawn picture and the D key;
   // the next item arrives folded.
   assert.match(WORKSHOP, /const toggleMore = useCallback\(\(\) => setCaptionOpen\(\(o\) => !o\), \[\]\);/);
@@ -233,15 +233,36 @@ test('Description left the rail: Vote, Comments, Ask, Try it, More, and one shee
   assert.match(CSS, /\.dev-ws-talk > \[role="tabpanel"\]\[hidden\] \{ display: none; \}/);
 });
 
-test('the by-line is the caption\'s, in white on the card and in the page\'s ink in the panel', () => {
-  assert.match(CSS, /\n\.dev-ws-item-caption \.dev-ws-item-avatar \{ box-shadow: 0 0 0 2px rgba\(255, 255, 255, \.9\); \}/);
-  assert.match(CSS, /\n\.dev-ws-item:not\(\.dev-ws-needs-done\) \{\n  --text-primary: #fff;/, 'the card is a dark scheme of its own');
+test('#5394: the card is in the page\'s scheme, and the by-line reads in its ink', () => {
+  // The avatar ring is the card's own plane colour, so it reads over the
+  // picture in either theme.
+  assert.match(CSS, /\n\.dev-ws-item-caption \.dev-ws-item-avatar \{ box-shadow: 0 0 0 2px var\(--dc-sheet-solid\); \}/);
+  // The card redefines no token: everything inside reads the theme's own
+  // values, drawn as GroupedList draws its cards -- the plane fill and the
+  // one hairline.
+  const itemRule = /\n\.dev-ws-item:not\(\.dev-ws-needs-done\) \{([^}]*)\}/.exec(CSS);
+  assert.ok(itemRule, 'the needs item rule');
+  assert.doesNotMatch(itemRule[1], /--[\w-]+:/, 'no custom property is redefined');
+  assert.match(itemRule[1], /background-color: var\(--dc-sheet-solid\);/);
+  assert.match(itemRule[1], /box-shadow: inset 0 0 0 1px var\(--app-sheet-line\);/);
+  // The tint pair stays on the cards in markup (it feeds .dev-topic-hero
+  // elsewhere) but draws no gradient of its own here.
+  assert.doesNotMatch(CSS, /\.dev-ws-item\[data-ws-tint=/);
+  const itemRules = CSS.slice(CSS.indexOf('.dev-ws-item:not(.dev-ws-needs-done)'), CSS.indexOf('.dev-ws-needs-stage'));
+  assert.ok(!itemRules.includes('#14171f'), 'no forced dark ground in the item rules');
+  // The eyebrow is the section label: small caps at 12px, tracked .06em,
+  // in the muted ink.
+  assert.match(CSS, /\.dev-ws-item-top > \.dev-ws-eyebrow \{ font-size: 12px; font-weight: 700; letter-spacing: \.06em; color: var\(--text-muted\);/);
+  // The rail's discs are solid in the card's colour with the hairline and a
+  // small drop, so they read over any screenshot (#5298).
+  assert.match(CSS, /\n\.dev-ws-rail-ic \{\n  width: 44px; height: 44px; border-radius: 9999px;\n  display: grid; place-items: center;\n  background-color: var\(--dc-sheet-solid\);\n  color: var\(--text-primary\);\n  box-shadow: inset 0 0 0 1px var\(--app-sheet-line\), 0 1px 3px rgba\(0, 0, 0, \.12\);\n\}/);
 });
 
-test('#5039: the caption\'s words sit on a soft panel of the card\'s own dark colour', () => {
+test('#5039: the caption\'s words sit on a solid panel of the card\'s own colour', () => {
   // Every pictured card gets it; a pictureless card, where the words fill
   // the card and nothing sits behind them, does not.
-  assert.match(CSS, /\n\.dev-ws-item:not\(\[data-ws-picture="none"\]\) > \.dev-ws-item-caption \{\n  padding: 10px 12px; border-radius: 16px;\n  background: rgba\(20, 23, 31, \.55\);\n  -webkit-backdrop-filter: blur\(10px\); backdrop-filter: blur\(10px\);\n\}/);
+  assert.match(CSS, /\n\.dev-ws-item:not\(\[data-ws-picture="none"\]\) > \.dev-ws-item-caption \{\n  padding: 10px 12px; border-radius: 16px;\n  background: var\(--dc-sheet-solid\);\n  box-shadow: inset 0 0 0 1px var\(--app-sheet-line\);\n\}/);
+  assert.ok(!CSS.slice(CSS.indexOf('.dev-ws-item:not([data-ws-picture="none"]) > .dev-ws-item-caption'), CSS.indexOf('.dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption > :first-child')).includes('rgba(20, 23, 31'), 'no dark glass panel');
 });
 
 test('a change with no picture at all is led by its words, with nothing drawn in the picture\'s place', () => {

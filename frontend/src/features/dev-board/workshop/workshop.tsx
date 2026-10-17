@@ -1997,7 +1997,9 @@ const FeedItem = memo(function FeedItem({ row, index, tint, near, voted, wide, s
       </div>
       {shots && row.visuals ? <ShotsPicture v={row.visuals} near={near} wide={wide} />
         : picture.kind === 'diagram' ? (
-          <Diagram d={picture.d} source={picture.source} onOpen={onMore} onFail={picture.fail} defer={!near} dark className="dev-ws-media-diagram" />
+          // #5394: the card is the page's scheme now, so the diagram follows
+          // the viewer's theme (Diagram falls back to isDark() itself).
+          <Diagram d={picture.d} source={picture.source} onOpen={onMore} onFail={picture.fail} defer={!near} className="dev-ws-media-diagram" />
         )
           : row.visuals ? <BeforeAfter v={row.visuals} near={near} onFull={onFull} />
             : picture.kind === 'touches' ? <TouchesPicture t={picture.t} nothingVisible={!!row.nothingVisible} onOpen={onMore} />
