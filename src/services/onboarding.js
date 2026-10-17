@@ -318,21 +318,32 @@ function parseTourEnd(body) {
 
 async function markTourDone(pool, userId, body) {
   const { ended, step } = parseTourEnd(body);
-  const marked = await pool.query(
-    `UPDATE users
-        SET tour_done_at = NOW(),
-            getting_started_seen = CASE WHEN $2::text IS NULL THEN getting_started_seen
-              ELSE COALESCE(getting_started_seen, '{}'::jsonb)
-                   || jsonb_build_object('tour_ended', $2::text, 'tour_step', $3::int) END
-      WHERE id = $1 AND tour_done_at IS NULL`,
-    [userId, ended, step]
-  );
   // #4604: the tour's last stop but one points at Messages, where Homeroom
   // bot says hello, once. Only on the first end (a replay greets nobody),
   // and not on a backfill, which is a browser reporting a tour ended long
-  // ago. greetTourFinisher keeps the once-ever rule and never throws.
-  if (marked && marked.rowCount > 0 && ended !== 'backfill') {
-    void require('./homeroom-bot-dm').greetTourFinisher(pool, { userId });
+  // ago. Owed in the same transaction as the end (the person's DM machine
+  // says it, src/workflow/bot-dm/), which keeps the once-ever rule.
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const marked = await client.query(
+      `UPDATE users
+          SET tour_done_at = NOW(),
+              getting_started_seen = CASE WHEN $2::text IS NULL THEN getting_started_seen
+                ELSE COALESCE(getting_started_seen, '{}'::jsonb)
+                     || jsonb_build_object('tour_ended', $2::text, 'tour_step', $3::int) END
+        WHERE id = $1 AND tour_done_at IS NULL`,
+      [userId, ended, step]
+    );
+    if (marked && marked.rowCount > 0 && ended !== 'backfill') {
+      await require('../workflow/platform.ts').greet(client, { userId, kind: 'tour' });
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
   }
   return { ok: true };
 }

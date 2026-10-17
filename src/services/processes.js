@@ -56,8 +56,6 @@ const KINDS = Object.freeze([
   'shots_eval',     // a shots eval trial (shots-eval-runner.js)
   'global_turn',    // a Global Chat turn (routes/global-chat.js)
   'bench_trial',    // a bench trial run here (bench/lane.js)
-  'dm_defer',       // a DM answer this process will ask again, by message id: a MARKER (homeroom-bot-mayor.js)
-  'dm_answer',      // that answer being asked again now, by message id (homeroom-bot-mayor.js)
   'app_heal',       // an app being healed, by slug (app-heal.js)
   'warm',           // a session's worker this process keeps warm (worker.js): a MARKER
 ]);
@@ -65,7 +63,7 @@ const KNOWN = new Set(KINDS);
 // What a process has rather than does: another process reads it (a worker
 // warm here is not an orphan there, nor one to evict), but a drain does not
 // wait for it, and it is not counted as work (localCount, localSnapshot).
-const MARKERS = new Set(['warm', 'dm_defer']);
+const MARKERS = new Set(['warm']);
 
 const ID = `${os.hostname()}:${process.pid}:${crypto.randomBytes(4).toString('hex')}`;
 

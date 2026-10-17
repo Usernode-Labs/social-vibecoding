@@ -40,6 +40,7 @@ const limits = require('../src/services/limits');
 const express = require('express');
 const path = require('node:path');
 const vm = require('node:vm');
+const { tapsNow } = require('./lib/bot-replies');
 
 // app-view.js as the browser runs it, signed in as `user`, for a request's
 // chip and buttons (the harness tests/issue-inprogress-render.test.js uses).
@@ -577,7 +578,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   // A tap reads the request from GitHub again, which a copy cannot, and
   // says so rather than opening a vote.
   const tapped = await mayor.decideOfferTap(pool, {}, {
-    user: viewer, actionId: action.id, choice: 'yes', deps: { github: { isEnabled: () => false } },
+    user: viewer, actionId: action.id, choice: 'yes', deps: { replies: tapsNow(pool, {}, { github: { isEnabled: () => false } }) },
   });
   assert.equal(tapped.ok, true);
   const { messages: after } = await conversations.listMessages(pool, viewer, demoStates.IDS.botConversation);

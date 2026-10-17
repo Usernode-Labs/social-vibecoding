@@ -1719,10 +1719,24 @@
     },
     {
       "source": "src/workflow/platform.ts",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "ceba6e953f4de0b148dd",
+      "count": 1,
+      "preview": "insertSql"
+    },
+    {
+      "source": "src/workflow/platform.ts",
       "kind": "structural-template",
       "fingerprint": "4cb190fab746c444e38d",
       "count": 1,
       "preview": "`SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = $1 AND pv.vote = 'yes' AND"
+    },
+    {
+      "source": "src/workflow/platform.ts",
+      "kind": "structural-template",
+      "fingerprint": "bcf7fbb54cdbe89f1bec",
+      "count": 1,
+      "preview": "`WITH m AS (${insertSql}), e AS ( INSERT INTO wf_events (machine, key, app_id, type, payload, source, actor, request_key, caused_by) SELECT $${n + 1}, $${n + 2}"
     },
     {
       "source": "src/workflow/preview/facts.ts",

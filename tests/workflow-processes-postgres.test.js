@@ -788,4 +788,125 @@ test('workflow machines in a process of their own, and through its crash', { tim
       await procs.release(pool, 'github.clone');
     }
   });
+
+  // ── The Homeroom bot's replies (bot-voice, bot-dm) ──────────────────
+  // What a person writes is an event in the statement or transaction that
+  // stores it, on the web side; the turn that answers runs in the workflow
+  // process, and a crash in the settle window or in the model's call still
+  // ends in one reply.
+  const replyBot = (await pool.query(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE)
+     ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE RETURNING id, username`)).rows[0];
+  await pool.query(`INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_mode', 'live')
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+  const settleNow = async (key) => {
+    const cx = await pool.connect();
+    try {
+      await cx.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`);
+      await cx.query(`UPDATE wf_instances SET deadline_at = now() WHERE machine = 'bot-voice' AND key = $1 AND deadline_at IS NOT NULL`, [key]);
+      await cx.query(`SELECT pg_notify('wf_timer', (EXTRACT(EPOCH FROM now()) * 1000)::bigint::text)`);
+      await cx.query('COMMIT');
+    } finally { cx.release(); }
+  };
+  const botReplies = async (a, thread) => (await pool.query(
+    `SELECT content FROM chat_messages WHERE app_id = $1 AND user_id = $2 AND thread_type = 'message' AND thread_ref = $3 ORDER BY id`,
+    [a.id, replyBot.id, thread])).rows.map((r) => r.content);
+  async function mentionInChat({ crashAt } = {}) {
+    const a = await app();
+    const person = await user();
+    // On the web side: the message and its Heard event in one statement.
+    const [row] = await platform.insertHeard(pool,
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
+       VALUES ($1, $2, $3, 'message', '{}', NULL, NULL) RETURNING id, created_at`,
+      [a.id, person.id, '@Homeroom bot can you add a dark mode?'], { appId: a.id, thread: null });
+    const key = `place:${a.id}:chat:`;
+    await procs.until(async () => (await instance('bot-voice', key))?.state === 'settling', 'the place to settle');
+    if (crashAt === 'settling') {
+      // Killed while the place settles: nothing but the instance knows the
+      // reply is owed. The next process's timer asks for the turn.
+      await workflow.kill();
+      await startWorkflow();
+    }
+    if (crashAt === 'bot.model') await procs.arm(pool, 'bot.model');
+    await settleNow(key);
+    if (crashAt === 'bot.model') {
+      await procs.reached(pool, 'bot.model');
+      await workflow.kill();
+      await procs.release(pool, 'bot.model');
+      await procs.expireLeases(pool);
+      await startWorkflow();
+    }
+    await procs.until(async () => (await instance('bot-voice', key))?.state === 'quiet' && (await botReplies(a, row.id)).length,
+      'the bot to answer in a reply thread');
+    return {
+      replies: await botReplies(a, row.id),
+      state: (await instance('bot-voice', key)).state,
+      through: (await instance('bot-voice', key)).data.through === row.id,
+      models: (await pool.query(`SELECT count(*)::int AS n FROM homeroom_bot_voice_turns WHERE place_key = $1 AND finished_at IS NOT NULL`, [`${a.id}:chat:`])).rows[0].n > 0,
+    };
+  }
+
+  let voiceUninterrupted;
+  await t.test('bot voice: a mention stored on the web side is answered by a turn in the workflow process', async () => {
+    voiceUninterrupted = await mentionInChat();
+    assert.deepEqual(voiceUninterrupted.replies, ['Here is my answer in the place.']);
+    assert.equal(voiceUninterrupted.state, 'quiet');
+    assert.equal(voiceUninterrupted.through, true, 'read through the message it answered');
+  });
+
+  await t.test('bot voice, restarted: killed while the place settles; the next process answers it (bug 1)', async () => {
+    assert.deepEqual(await mentionInChat({ crashAt: 'settling' }), voiceUninterrupted, 'one reply, as without the crash');
+  });
+
+  await t.test('bot voice, restarted: killed in the turn\'s model call; the next process answers once', async () => {
+    assert.deepEqual(await mentionInChat({ crashAt: 'bot.model' }), voiceUninterrupted, 'one reply, as without the crash');
+  });
+
+  const conversationsSvc = require('../src/services/conversations');
+  const dmAnswers = async (conversationId, messageId) => (await pool.query(
+    `SELECT content, idempotency_key FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND reply_to_id = $3 ORDER BY id`,
+    [conversationId, replyBot.id, messageId])).rows;
+  async function dmToTheBot({ crashAt } = {}) {
+    const person = { ...(await user()), hasPlatformAccess: true };
+    const opened = await conversationsSvc.ensureAdmittedDirect(pool, replyBot.id, person.id);
+    if (crashAt === 'down') await workflow.kill();
+    if (crashAt === 'bot.model') await procs.arm(pool, 'bot.model');
+    // On the web side: the message, and the answer it is owed, in one
+    // transaction (what routes/conversations.js does).
+    const sent = await conversationsSvc.sendMessage(pool, person, opened.conversationId, { content: 'what are you working on for me?' }, {
+      afterInsert: (db, m) => require('../src/services/homeroom-bot-dm').heardInDm(db, {
+        user: person, conversationId: opened.conversationId, messageId: m.messageId, membership: m.membership, memberIds: m.memberIds,
+      }),
+    });
+    if (crashAt === 'down') await startWorkflow();
+    if (crashAt === 'bot.model') {
+      await procs.reached(pool, 'bot.model');
+      await workflow.kill();
+      await procs.release(pool, 'bot.model');
+      await procs.expireLeases(pool);
+      await startWorkflow();
+    }
+    const key = `person:${person.id}`;
+    await procs.until(async () => (await instance('bot-dm', key))?.state === 'idle' && (await dmAnswers(opened.conversationId, sent.messageId)).length,
+      'the bot to answer the DM');
+    return {
+      answers: (await dmAnswers(opened.conversationId, sent.messageId)).map((r) => [r.content, r.idempotency_key.replace(/\d+/, 'N')]),
+      state: (await instance('bot-dm', key)).state,
+    };
+  }
+
+  let dmUninterrupted;
+  await t.test('bot DM: a message sent on the web side is answered in the workflow process', async () => {
+    dmUninterrupted = await dmToTheBot();
+    assert.deepEqual(dmUninterrupted.answers, [['Here is my answer in the DM.', 'hrbot-mayor-N']]);
+    assert.equal(dmUninterrupted.state, 'idle');
+  });
+
+  await t.test('bot DM: a message sent while no workflow process runs is answered once one does (bugs 9-10)', async () => {
+    assert.deepEqual(await dmToTheBot({ crashAt: 'down' }), dmUninterrupted);
+  });
+
+  await t.test('bot DM, restarted: killed in the answer\'s model call; the next process answers once (bug 10)', async () => {
+    assert.deepEqual(await dmToTheBot({ crashAt: 'bot.model' }), dmUninterrupted, 'one answer, under its key, as without the crash');
+  });
 });
