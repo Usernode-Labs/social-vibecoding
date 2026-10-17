@@ -20458,6 +20458,13 @@ button.dev-ws-dash-cell {
 }
 button.dev-ws-dash-cell:hover .dev-ws-dash-label { color: var(--accent); }
 button.dev-ws-dash-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* #5369, revised in the change's discussion: the three stage figures are
+   NOT buttons. They stay the spans they always were, as unstyled clickable
+   wrappers — the pointer cursor and a keyboard focus ring are the whole
+   affordance, and nothing repaints on hover, so nothing on the strip looks
+   like a button or a link. Votes keeps the button #4745 made it, above. */
+span.dev-ws-dash-cell[data-ws-dash-open] { cursor: pointer; }
+span.dev-ws-dash-cell[data-ws-dash-open]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* The grouping tabs. A SEGMENTED strip, not two loose chips: the two panes
    are alternatives over one board, and a shared rail says that where a gap
    between pills would read as two unrelated toggles. Deliberately NOT
