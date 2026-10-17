@@ -650,7 +650,8 @@ function voiceStub(asks, { gaveUp = [] } = {}) {
     async finishAsks(p, args) { calls.finished.push(args); },
     async asksWaiting() { return false; },
     async dropAsks() {},
-    async reportFollowUp(p, c, args) { calls.reports.push(args); return 1; },
+    // What ends the asks runs in the report's own transaction (`finish`).
+    async reportFollowUp(p, c, args) { calls.reports.push(args); if (args.finish) await args.finish(p); return 1; },
   };
 }
 const ASK = {

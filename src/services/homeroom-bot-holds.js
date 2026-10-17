@@ -32,6 +32,13 @@
 // bot, and only on apps the bot acts on for real (the refresh calls this on
 // live apps only). Mentions older than MENTION_WINDOW_HOURS are left alone,
 // so nothing from before this existed is answered late.
+//
+// 17 Oct 2026: the refresh decides the answer; the request's place says it
+// (its bot-voice machine, src/workflow/bot-voice/): the answer's row is
+// written, pending, with the decision to say it, and its work says it
+// (sayHeld), strictly, until it has. So a pending answer is one certain to
+// be said, and `decide` reads it as said: a crash after deciding can no
+// longer leave a go-ahead whose holders were never told.
 
 const log = require('./logger');
 const live = require('./homeroom-bot-live');
@@ -248,11 +255,11 @@ async function answerMentions(pool, { app, repo, github, bot, holders, deps = {}
       if (verdict.action === 'clear') { cleared.add(n); continue; }
       if (verdict.action === 'none') continue;
       const asker = verdict.mention.username;
+      const owe = deps.owe || ((args) => require('../workflow/platform.ts').heldAnswerOwed(pool, args));
       if (verdict.action === 'leave') {
-        await live.post({
-          pool, github, ws, app, repo, issueNumber: n, kind: LEAVING_KIND,
-          text: leavingText(verdict.holds, now), sender: bot, senderId: bot.id, mention: asker,
-          notifications: deps.notifications || null,
+        await owe({
+          appId: Number(app.id), issueNumber: n, kind: LEAVING_KIND, text: leavingText(verdict.holds, now),
+          mentionId: Number(verdict.mention.id), mention: asker, mentions: [],
         });
         log.info('homeroom-bot', 'Left a held request to its holders', { app: app.slug, issueNumber: n, asker });
         continue;
@@ -261,10 +268,9 @@ async function answerMentions(pool, { app, repo, github, bot, holders, deps = {}
       const holderNames = holdsByPerson(verdict.others).map((hold) => hold.username).filter(Boolean);
       const quiet = await optedOut(pool, app.id, n, holderNames);
       const tagged = holderNames.filter((name) => !quiet.has(name.toLowerCase()));
-      await live.post({
-        pool, github, ws, app, repo, issueNumber: n, kind: GOING_KIND,
-        text: goingText({ asker, holders: holderNames }), sender: bot, senderId: bot.id,
-        mentions: holderNames.length ? tagged : [asker], notifications: deps.notifications || null,
+      await owe({
+        appId: Number(app.id), issueNumber: n, kind: GOING_KIND, text: goingText({ asker, holders: holderNames }),
+        mentionId: Number(verdict.mention.id), mention: null, mentions: holderNames.length ? tagged : [asker],
       });
       log.info('homeroom-bot', 'Going ahead on a held request, as asked', { app: app.slug, issueNumber: n, asker, holders: holderNames });
       cleared.add(n);
@@ -273,6 +279,28 @@ async function answerMentions(pool, { app, repo, github, bot, holders, deps = {}
     log.warn('homeroom-bot', 'Could not answer mentions on held requests', { app: app?.slug, err: err.message });
   }
   return cleared;
+}
+
+/**
+ * Say the answer to a mention on a held request (the request's bot-voice
+ * machine's `voice.post` work): its post, written pending when the answer
+ * was decided, taken up and said strictly (homeroom-bot-live.js post), so a
+ * retry says only what had not gone out. Throws on a failure a retry can
+ * cure. Resolves { postId } or { skipped }.
+ */
+async function sayHeld(pool, { appId, issueNumber, kind, text, mention = null, mentions = [], deps = {} }) {
+  const { rows: [app] } = await pool.query('SELECT * FROM apps WHERE id = $1', [Number(appId)]);
+  if (!app) return { skipped: 'gone' };
+  const repo = (deps.botSvc || require('./homeroom-bot')).parseRepo(app.repo_url);
+  if (!repo) return { skipped: 'no_repo' };
+  const bot = await (deps.dm || require('./homeroom-bot-dm')).botAccount(pool);
+  if (!bot) throw new Error('Homeroom bot is not available');
+  const out = await live.post({
+    pool, github: deps.github || require('./github'), ws: deps.ws || require('./ws'), app, repo, issueNumber: Number(issueNumber),
+    kind, text, sender: bot, senderId: bot.id, mention, mentions, notifications: deps.notifications || null,
+    strict: true, takeUpPending: true,
+  });
+  return { postId: out?.postId ?? null };
 }
 
 /**
@@ -398,6 +426,7 @@ module.exports = {
   decide,
   recentMentions,
   answerMentions,
+  sayHeld,
   goneAhead,
   PROMISED_SQL,
   takenKey,

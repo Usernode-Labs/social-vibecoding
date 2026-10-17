@@ -101,7 +101,11 @@ async function moveGate(pool, { app, issueNumber, user, deps = {} }) {
   try {
     raw = await github.getIssue(repo.owner, repo.repo, n);
   } catch (err) {
+    if (err?.status === 404) return { ok: false, code: 'not_found', error: 'There is no such request.' };
     log.warn('homeroom-bot-move', 'Could not read a request to move', { app: app.slug, issueNumber: n, err: err.message });
+    // Under a tap's claim (its act's work), a read a retry can cure is
+    // thrown, so the work tries again rather than fail the tap.
+    if (mayorModule().retryAct(err, deps.actKey)) throw err;
     return { ok: false, code: 'unreadable', error: 'Its request cannot be read right now.' };
   }
   if (!raw || raw.pull_request) return { ok: false, code: 'not_found', error: 'There is no such request.' };
@@ -311,6 +315,8 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
   try {
     filed = await mayor.fileRequest(pool, config, {
       user: credited, app: target, settings, deps,
+      // Filed once per move: a retry of its act finds it (the tap's work).
+      fileKey: `dm-action:${action.id}`,
       title: clip(gate.issue.title || action.title, MAX_TITLE_CHARS),
       details: clip(gate.issue.body, MAX_BODY_CHARS),
       askedText: gate.issue.title || action.title,
@@ -319,6 +325,8 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
     });
   } catch (err) {
     log.warn('homeroom-bot-move', 'Could not file a moved request', { app: app.slug, issueNumber: n, err: err.message });
+    // A failure a retry can cure: the act's work tries again, its claim kept.
+    if (mayor.retryAct(err, deps.actKey)) throw err;
     return failed(err.message, 'I couldn\'t move it just now. Try again in a minute.');
   }
   await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);

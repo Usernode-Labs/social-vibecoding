@@ -200,7 +200,8 @@ test('mentions resolve exact active-member usernames including long hyphenated n
   assert.equal(conversations.mentionsUsername(`hello @${long}!`, long), true);
   assert.equal(conversations.mentionsUsername('hello @ann-marie', 'ann'), false);
   assert.equal(conversations.mentionsUsername('mail@host.example', 'host.example'), false);
-  assert.match(serviceSource, /mentionsUsername\(content, member\.username\)/);
+  // What is sent (a hello may stand in for the content, conversations.js prepare).
+  assert.match(serviceSource, /mentionsUsername\(sendContent, member\.username\)/);
 });
 
 test('attachment path owns raw parsing and enforces retained private access', () => {

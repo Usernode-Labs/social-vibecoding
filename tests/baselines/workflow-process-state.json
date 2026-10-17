@@ -115,6 +115,18 @@
     "bot-change": {
       "services | uses src/services/homeroom-bot-dm.js:tellReady": "the ready-to-try card, its record, the approvers' bells and the chip, cut out of noteChangeReady (which also decided, from the wall clock, swallowed every error and ran from four callers): it sends what the machine decided, keyed per epoch, and throws what it could not do",
       "services | uses src/services/homeroom-bot.js:queueChecksFix": "the bot's queue row for a fix round on a head, and the loop's wake in the same statement, cut out of noteProposalChecks (which swallowed errors, defaulted the settings on a read error and reported queued for a row it did not touch): it reports whether the bot takes it, and why not"
+    },
+    "bot-voice": {
+      "services | uses src/services/homeroom-bot-holds.js:sayHeld": "a held request's answer (voice.post): its post row, written pending by the transition that decided it, said on GitHub and in the request's thread through homeroom-bot-live.js post (strict, taken up by its row), cut out of answerMentions, which posted it from the bot's refresh and counted a half-sent post as said; keeps nothing",
+      "services | uses src/services/homeroom-bot-voice.js:actOnOffer": "the act of a tap under one of the voice's offers (voice.act): withdraw, propose closing, or file, claimed by its work item so a retry carries on, cut out of decideOffer, which claimed it in a route and left it 'deciding' for good when its process went; keeps nothing",
+      "services | uses src/services/homeroom-bot-voice.js:runTurn": "the bot's turn in one place (voice.turn): what was said since the place's `through`, gated, answered by its model or not, the reply marked with the turn's key so a retry finds it; cut out of runPlace, which ran from an in-process settle timer (the pending Map) with a claim a dead process held for five minutes; keeps nothing",
+      "services | uses src/services/homeroom-bot-voice.js:sayReport": "one place's report of a follow-up (voice.report), composed and said once by its mark, cut out of reportFollowUp, which composed it in the follow-up's memory after its queue row was gone; keeps nothing"
+    },
+    "bot-dm": {
+      "services | uses src/services/homeroom-bot-dm.js:answerOwed": "the answer to one message in a person's DM (dm.answer): every code path and the model's turn (noteUserMessage), or a later try (answerLater), cut out of the route's setImmediate, the per-process promise chain and the deferred-try timers; a reply already sent under the message's keys ends it, and each effect is keyed by the work item; keeps nothing",
+      "services | uses src/services/homeroom-bot-dm.js:greet": "a hello owed to a person (dm.hello): the joiner's or the tour's, claimed in the transaction that sends it (sendDm's `hello`), cut out of the floating calls after an invite redeem and the tour's end and of claimHello, which claimed it before sending; keeps nothing",
+      "services | uses src/services/homeroom-bot-dm.js:sayCouldNotAnswer": "the one fixed line when an answer's work failed for good (dm.sorry), under the answer's own key, so it is nothing when an answer did go out; keeps nothing",
+      "services | uses src/services/homeroom-bot-mayor.js:actOnTap": "the act of a tap under one of the bot's DM offers, or Build it under a plan (dm.act), claimed by its work item so a retry carries on, its filing keyed by the action; cut out of decideOfferTap and settleOffer, which claimed it in a route before acting; keeps nothing"
     }
   },
   "handOff": {
@@ -197,6 +209,7 @@
       "web | state src/workflow/platform.ts#botChanges",
       "web | state src/workflow/platform.ts#campaigns",
       "web | state src/workflow/platform.ts#deliveries",
+      "web | state src/workflow/platform.ts#dms",
       "web | state src/workflow/platform.ts#kernelPool",
       "web | state src/workflow/platform.ts#log",
       "web | state src/workflow/platform.ts#machine",
@@ -206,6 +219,7 @@
       "web | state src/workflow/platform.ts#queues",
       "web | state src/workflow/platform.ts#runtime",
       "web | state src/workflow/platform.ts#shotRuns",
+      "web | state src/workflow/platform.ts#voices",
       "web | uses src/db/pool.js:getPool",
       "web | uses src/routes/votes.js:VOTE_REASON_MAX",
       "web | uses src/routes/votes.js:VOTE_REASON_REQUIRED",
@@ -401,6 +415,18 @@
       "services | uses src/services/homeroom-bot-live.js:announceLive",
       "services | uses src/services/homeroom-bot.js:noteRequestMerged",
       "services | uses src/services/homeroom-bot.js:queueChecksFix"
+    ],
+    "bot-voice": [
+      "services | uses src/services/homeroom-bot-holds.js:sayHeld",
+      "services | uses src/services/homeroom-bot-voice.js:actOnOffer",
+      "services | uses src/services/homeroom-bot-voice.js:runTurn",
+      "services | uses src/services/homeroom-bot-voice.js:sayReport"
+    ],
+    "bot-dm": [
+      "services | uses src/services/homeroom-bot-dm.js:answerOwed",
+      "services | uses src/services/homeroom-bot-dm.js:greet",
+      "services | uses src/services/homeroom-bot-dm.js:sayCouldNotAnswer",
+      "services | uses src/services/homeroom-bot-mayor.js:actOnTap"
     ]
   }
 }

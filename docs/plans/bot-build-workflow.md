@@ -179,6 +179,7 @@ half minutes on four lanes). `tests/durable-steps.test.js`,
 ## What is not on the machine
 
 The bot's reads (triage), its follow-ups and checks fixes on its own
-proposals, and its DMs keep their own paths: a read that a restart cuts is
+proposals keep their own paths (its DMs and its voice are the `bot-dm` and
+`bot-voice` machines, docs/workflows.md): a read that a restart cuts is
 read again from the queue, and a follow-up finishes through its proposal's
 tail as before.

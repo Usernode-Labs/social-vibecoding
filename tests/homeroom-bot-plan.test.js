@@ -33,6 +33,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const bot = require('../src/services/homeroom-bot');
 const dm = require('../src/services/homeroom-bot-dm');
 const live = require('../src/services/homeroom-bot-live');
+const { tapsNow } = require('./lib/bot-replies');
 
 const fence = (obj) => `Done.\n\n\`\`\`json\n${JSON.stringify(obj)}\n\`\`\``;
 
@@ -505,7 +506,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
 
   await t.test('Build it, from any device, builds once, with the choices tapped and the rest suggested', async () => {
     const card = await planMessage(first);
-    const tapped = await mayor.decideOfferTap(pool, {}, { user: maya, actionId: card.meta.actionId, choice: 'build', answers: ['Phone alert', ''] });
+    const tapped = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: card.meta.actionId, choice: 'build', answers: ['Phone alert', ''] });
     assert.deepEqual(tapped, { ok: true, choice: 'build', label: 'Build it' });
     const run = await runRow(first);
     assert.equal(run.awaiting_go_at, null);
@@ -523,9 +524,15 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.ok(!run.build_note.includes(live.PLAN_LINES_HEAD) && !run.build_note.includes(live.MADE_SCREEN_CHOICES_HEAD));
     const after = await planMessage(first);
     assert.deepEqual([after.meta.status, after.meta.chosen, after.meta.choices], ['answered', 'build', ['Phone alert', 'Just me']]);
-    const again = await mayor.decideOfferTap(pool, {}, { user: maya, actionId: card.meta.actionId, choice: 'build' });
+    const again = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: card.meta.actionId, choice: 'build' });
     assert.deepEqual([again.ok, again.status, again.error], [false, 409, 'already_decided']);
-    assert.equal((await mayor.decideOfferTap(pool, {}, { user: maya, actionId: card.meta.actionId, choice: 'maybe' })).status, 400);
+    assert.equal((await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: card.meta.actionId, choice: 'maybe' })).status, 400);
+    // Its act retried after it went ahead (a restart before it reported):
+    // it went, and stays done, never "plan gone".
+    const retried = await mayor.actOnTap(pool, {}, { userId: maya.id, actionId: card.meta.actionId, choice: 'build', key: `action:${card.meta.actionId}` });
+    assert.deepEqual(retried, { done: true, why: null });
+    const { rows: [action] } = await pool.query('SELECT status, error FROM homeroom_bot_dm_actions WHERE id = $1', [card.meta.actionId]);
+    assert.deepEqual([action.status, action.error], ['done', null]);
     await pool.query('UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL, build_ok = FALSE, build_error = $2 WHERE id = $1', [first, 'test: done']);
   });
 
@@ -574,7 +581,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.equal(card.meta.status, 'closed');
     const { rows: [action] } = await pool.query('SELECT status FROM homeroom_bot_dm_actions WHERE id = $1', [card.meta.actionId]);
     assert.equal(action.status, 'declined');
-    const late = await mayor.decideOfferTap(pool, {}, { user: maya, actionId: card.meta.actionId, choice: 'build' });
+    const late = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: card.meta.actionId, choice: 'build' });
     assert.equal(late.status, 409, 'a closed plan builds nothing');
   });
 
@@ -753,7 +760,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     const { rows: [planRow] } = await pool.query('SELECT thread_root_id FROM conversation_messages WHERE id = $1', [plan.id]);
     assert.equal(Number(planRow.thread_root_id), above.messageId, 'the plan is in the card\'s thread');
 
-    const tapped = await mayor.decideOfferTap(pool, {}, { user: maya, actionId: plan.meta.actionId, choice: 'build' });
+    const tapped = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: plan.meta.actionId, choice: 'build' });
     assert.equal(tapped.ok, true);
     const under = await activity.requestCard(pool, { userId: maya.id, appId: app.id, issueNumber: 1 });
     assert.equal(under.messageId, above.messageId, 'the same card: the thread\'s first message');
@@ -777,7 +784,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     });
     assert.ok(cards.some((c) => c.messageId === under.messageId), 'its card is still read');
 
-    const again = await mayor.decideOfferTap(pool, {}, { user: maya, actionId: plan.meta.actionId, choice: 'build' });
+    const again = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: plan.meta.actionId, choice: 'build' });
     assert.equal(again.status, 409);
     assert.equal((await activity.requestCard(pool, { userId: maya.id, appId: app.id, issueNumber: 1 })).messageId, under.messageId,
       'a second tap moves nothing');

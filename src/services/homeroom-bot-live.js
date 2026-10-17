@@ -1716,7 +1716,7 @@ async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
   proposalSessionId = null, sender = null, threadMessage = null, dm = null, untag = null, onlyProposal = false,
-  skipIssueThread = false, skipGithub = false, homeroomText = null, strict = false,
+  skipIssueThread = false, skipGithub = false, homeroomText = null, strict = false, takeUpPending = false,
 }) {
   // Answered where it was asked: a reply to people who wrote only in the
   // change's own discussion is said there alone, with no GitHub comment and
@@ -1749,6 +1749,9 @@ async function post({
   // ("looking" is claimed by its insert, once per issue, and is not taken up.)
   // A durable caller (`strict`) is told the lookup failed: taken for "none",
   // its retry would insert a second post and say again what went out.
+  // `takeUpPending` (a post of no run's, written pending by the workflow
+  // machine that decided it: a held request's answer, bot-voice's
+  // voice.post): that row is taken up the same way.
   const had = runId && kind !== 'looking' ? (await pool.query(
     `SELECT id, github_comment_id, thread_message_id, created_at FROM homeroom_bot_posts
       WHERE run_id = $1 AND kind = $2 AND pending IS TRUE ORDER BY id DESC LIMIT 1`,
@@ -1756,7 +1759,11 @@ async function post({
   ).catch((err) => {
     if (strict) throw err;
     return { rows: [] };
-  })).rows[0] || null : null;
+  })).rows[0] || null : takeUpPending && kind !== 'looking' ? (await pool.query(
+    `SELECT id, github_comment_id, thread_message_id, created_at FROM homeroom_bot_posts
+      WHERE app_id = $1 AND issue_number = $2 AND kind = $3 AND run_id IS NULL AND pending IS TRUE ORDER BY id DESC LIMIT 1`,
+    [app.id, issueNumber, kind],
+  )).rows[0] || null : null;
   let postId = had ? had.id : null;
   if (!postId) {
     const { rows } = await pool.query(

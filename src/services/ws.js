@@ -1415,7 +1415,18 @@ async function handleMessage(pool, client, msg) {
         attRows = attIds.map((id) => found.find((r) => r.id === id));
       }
 
-      const metadata = (quote || attRows.length) ? {} : null;
+      // `client.relayKey` (server-side callers only: the Homeroom bot passing
+      // a person's DM words on, from its workflow work): the post's mark, so
+      // a retry after a restart finds it and posts it nowhere twice.
+      const relayKey = typeof client.relayKey === 'string' && client.relayKey ? client.relayKey.slice(0, 200) : null;
+      if (relayKey) {
+        const { rows: had } = await pool.query(
+          `SELECT id, created_at FROM chat_messages WHERE app_id = $1 AND user_id = $2 AND metadata->>'relayKey' = $3 LIMIT 1`,
+          [client.appId, client.user.id, relayKey]);
+        if (had.length) return { ok: true, message: { id: Number(had[0].id), createdAt: had[0].created_at }, again: true };
+      }
+      const metadata = (quote || attRows.length || relayKey) ? {} : null;
+      if (relayKey) metadata.relayKey = relayKey;
       if (quote) metadata.quote = quote;
       if (attRows.length) {
         // Render-time summary rides in the message row's metadata so
@@ -1439,6 +1450,14 @@ async function handleMessage(pool, client, msg) {
       // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
       const insertParams = [client.appId, client.user.id, content, JSON.stringify(metadata || {}),
         thread ? thread.type : null, thread ? thread.ref : null, postedVia];
+      // 17 Oct 2026: a person's message in any place but a governance vote's
+      // is heard by the Homeroom bot's voice there (src/workflow/bot-voice/)
+      // in the statement that inserts it: an answer it owes is never only in
+      // this process's memory. Never a connector's post.
+      const heard = postedVia !== 'agent' && (!thread || thread.type !== 'governance');
+      const insert = (db) => (heard
+        ? require('../workflow/platform.ts').insertHeard(db, insertSql, insertParams, { appId: client.appId, thread: thread || null })
+        : db.query(insertSql, insertParams).then((r) => r.rows));
       let rows;
       if (attRows.length) {
         // Insert + link atomically — a half-linked send would render
@@ -1446,7 +1465,7 @@ async function handleMessage(pool, client, msg) {
         const cx = await pool.connect();
         try {
           await cx.query('BEGIN');
-          ({ rows } = await cx.query(insertSql, insertParams));
+          rows = await insert(cx);
           await cx.query(
             `UPDATE chat_message_attachments SET message_id = $1 WHERE id = ANY($2)`,
             [rows[0].id, attIds]
@@ -1459,7 +1478,7 @@ async function handleMessage(pool, client, msg) {
           cx.release();
         }
       } else {
-        ({ rows } = await pool.query(insertSql, insertParams));
+        rows = await insert(pool);
       }
 
       // #2387 follow-up: a reply in a reply thread is drawn in the general
@@ -1496,24 +1515,9 @@ async function handleMessage(pool, client, msg) {
       };
 
       await broadcastFromSender(pool, client.appId, outMsg, client.user.id);
-      // B9: a message in the main stream that mentions Homeroom bot asks it
-      // for something (services/homeroom-bot-chat.js). Not awaited: the read
-      // takes a moment, and the room has the message already. Never an edit
-      // (that is chat_edit), and never a connector's post.
-      if (!thread || thread.type === appChat.CATEGORY_THREAD) {
-        void require('./homeroom-bot-chat').noteChatMessage(pool, null, {
-          appId: client.appId, userId: client.user.id, messageId: rows[0].id, content, thread, postedVia,
-        }).catch((err) => log.warn('ws', 'Homeroom bot hand-over failed', { err: err.message }));
-      }
-      // 10 October: the bot's voice hears a person's message in any place
-      // but a governance vote's, and answers when it was spoken to
-      // (services/homeroom-bot-voice.js decides, in code, before any model
-      // runs). Not awaited, and never a connector's post.
-      if (postedVia !== 'agent' && (!thread || thread.type !== 'governance')) {
-        void require('./homeroom-bot-voice').noteMessage(pool, null, {
-          appId: client.appId, messageId: rows[0].id, hint: { content, thread, quoted: !!quote },
-        }).catch((err) => log.warn('ws', 'Homeroom bot voice hand-over failed', { err: err.message }));
-      }
+      // What the Homeroom bot does with it (its voice's answer, a
+      // newcomer's offer, the chat's ask) is the place's workflow machine's:
+      // heard above, in the insert's transaction.
       // WP-E: somebody an invite brought, writing here for the first time:
       // the link's maker hears they said hi (services/invite-activity.js).
       // Not awaited here; the small-group ring below waits for it, so the

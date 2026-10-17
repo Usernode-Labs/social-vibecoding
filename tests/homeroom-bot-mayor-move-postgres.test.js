@@ -189,7 +189,30 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
     'SELECT * FROM homeroom_bot_dm_actions WHERE message_id = $1', [messageId],
   )).rows[0];
   const tap = (action, choice, who = ada) => mayor.decideOfferTap(pool, CONFIG, {
-    user: who, actionId: action.id, choice, deps: { bot, workflow, domain: 'app.test' },
+    user: who, actionId: action.id, choice, deps: { bot, workflow, domain: 'app.test', replies },
+  });
+  // A tap is decided in the person's DM machine and done by its work
+  // (mayor.actOnTap): here, at once, keyed as the machine keys it.
+  const replies = {
+    async tapDmAction(a) {
+      await mayor.actOnTap(pool, CONFIG, { ...a, key: `action:${a.actionId}`, deps: { bot, workflow, domain: 'app.test' } });
+      return { ok: true };
+    },
+  };
+
+  // Review round 3 (#5399): under a tap's claim, a read of the request that
+  // fails for a moment is thrown to the act's work; anywhere else it is
+  // the gate's "cannot be read right now", as before.
+  await t.test('a move\'s request read that fails for a moment is the tap\'s work\'s to retry', async () => {
+    const move = require('../src/services/homeroom-bot-move');
+    const real = githubStub.getIssue;
+    githubStub.getIssue = async () => { throw Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }); };
+    try {
+      await assert.rejects(move.moveGate(pool, { app: ears, issueNumber: 3, user: ada, deps: { actKey: 'action:1' } }), /ECONNRESET/);
+      assert.equal((await move.moveGate(pool, { app: ears, issueNumber: 3, user: ada })).code, 'unreadable');
+    } finally {
+      githubStub.getIssue = real;
+    }
   });
 
   await t.test('the chat model offers it; Move it to Homeroom by its untouched author files it there and closes the original', async () => {

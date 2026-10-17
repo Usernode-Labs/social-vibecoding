@@ -183,8 +183,16 @@ test('#4525: an offer to open a vote on closing a request, decided by its tap', 
     `SELECT payload, created_by, status FROM issues WHERE app_id = $1 AND kind = 'close_issue' ORDER BY id`, [ears.id],
   );
   const tap = (action, choice, who = ada) => mayor.decideOfferTap(pool, CONFIG, {
-    user: who, actionId: action.id, choice, deps: { bot, workflow, domain: 'app.test' },
+    user: who, actionId: action.id, choice, deps: { bot, workflow, domain: 'app.test', replies },
   });
+  // A tap is decided in the person's DM machine and done by its work
+  // (mayor.actOnTap): here, at once, keyed as the machine keys it.
+  const replies = {
+    async tapDmAction(a) {
+      await mayor.actOnTap(pool, CONFIG, { ...a, key: `action:${a.actionId}`, deps: { bot, workflow, domain: 'app.test' } });
+      return { ok: true };
+    },
+  };
   const lastAck = () => pool.query(
     'SELECT content FROM conversation_messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT 1', [opened.conversationId],
   );
@@ -240,6 +248,47 @@ test('#4525: an offer to open a vote on closing a request, decided by its tap', 
     const { rows: votes } = await closeVotes();
     assert.equal(votes.length, 2);
     assert.equal(votes[1].payload.issueNumber, 7);
+  });
+
+  // Review round 3 (#5399): a read of the request that fails for a moment
+  // (the network, a GitHub rate limit, which is a 403 as often as a 429)
+  // is the tap's work's to retry with its claim, never a tap failed for
+  // good with no vote opened.
+  await t.test('a close tap whose request cannot be read for a moment is retried by its work, and opens one vote', async () => {
+    await request(31, { title: 'Metronome click' });
+    const offered = await turn('close #31 please', [
+      [['offer_close_request', { project: 'ear-trainer', number: 31, reason: 'Done.' }]],
+      [['reply', { text: 'Tap below.' }]],
+    ]);
+    const action = await actionOf(offered.messageId);
+    const before = (await closeVotes()).rows.length;
+    const real = githubStub.getIssue;
+    let reads = 0;
+    githubStub.getIssue = async (...args) => {
+      reads += 1;
+      if (reads === 1) throw Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+      if (reads === 2) {
+        throw Object.assign(new Error('You have exceeded a secondary rate limit.'), {
+          status: 403, response: { status: 403, headers: { 'retry-after': '60', 'x-ratelimit-remaining': '4000' } } });
+      }
+      return real(...args);
+    };
+    try {
+      const act = () => mayor.actOnTap(pool, CONFIG, {
+        userId: ada.id, actionId: action.id, choice: 'yes', key: `action:${action.id}`, deps: { bot, workflow, domain: 'app.test' } });
+      await assert.rejects(act(), /ECONNRESET/, 'thrown to the work');
+      await assert.rejects(act(), /secondary rate limit/, 'a rate limit too, though GitHub says 403');
+      const { rows: [kept] } = await pool.query('SELECT status, decided_key FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
+      assert.deepEqual([kept.status, kept.decided_key], ['done', `action:${action.id}`], 'its claim kept, not failed');
+      assert.deepEqual(await act(), { done: true, why: null });
+      assert.equal((await closeVotes()).rows.length, before + 1, 'one vote opened');
+    } finally {
+      githubStub.getIssue = real;
+    }
+    // What GitHub refuses for good is still said at once.
+    const budgetPrimary = Object.assign(new Error('API rate limit exceeded for user ID 1'), { status: 403 });
+    assert.equal(mayor.retryAct(budgetPrimary, 'action:1'), true);
+    assert.equal(mayor.retryAct(Object.assign(new Error('Resource not accessible by integration'), { status: 403 }), 'action:1'), false);
   });
 
   await t.test('Keep it open proposes nothing', async () => {

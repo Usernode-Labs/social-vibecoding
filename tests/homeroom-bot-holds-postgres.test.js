@@ -111,9 +111,31 @@ test('a mention on a claimed request is answered, a second one is the go-ahead, 
     },
   };
   const notifications = { async createMentionNotifications() { return []; }, async hydrateAndPush() {} };
-  const refresh = () => bot.refreshApp(pool, app, {
-    github, bot: homeroomBot, ws, notifications, capRoom: { proposals_per_app: 1, proposals_total: 1, question_tripwire: 1 },
+  // The refresh decides an answer; the request's place (the bot-voice
+  // machine, src/workflow/bot-voice/) owes it, writing its post pending, and
+  // its work says it (holds.sayHeld), here with GitHub and the room faked.
+  const { createRuntime } = require('../src/workflow/kernel/index.ts');
+  const { botVoice, WORK } = require('../src/workflow/bot-voice/machine.ts');
+  const voiceMachine = botVoice();
+  const rt = createRuntime({
+    pool, machines: [voiceMachine], pollMs: 50, publish: async () => {},
+    services: {
+      [WORK.post]: { maxAttempts: 2, backoffMs: () => 0, async run({ input }) {
+        return holds.sayHeld(pool, { ...input, deps: { github, ws, notifications } });
+      } },
+    },
   });
+  t.after(() => rt.stop());
+  const settle = async () => {
+    for (let i = 0; i < 20; i++) { await rt.drain(); if (!(await rt.runServices())) { await rt.drain(); return; } }
+  };
+  const refresh = async () => {
+    const out = await bot.refreshApp(pool, app, {
+      github, bot: homeroomBot, ws, notifications, capRoom: { proposals_per_app: 1, proposals_total: 1, question_tripwire: 1 },
+    });
+    await settle();
+    return out;
+  };
   const queued = async () => (await pool.query(
     'SELECT issue_number, reason FROM homeroom_bot_queue WHERE app_id = $1', [app.id],
   )).rows;
@@ -178,7 +200,45 @@ test('a mention on a claimed request is answered, a second one is the go-ahead, 
   await t.test('only on a live app: a shadow app neither answers nor goes ahead', async () => {
     await say(evan, '@homeroom_bot please');
     const out = await bot.refreshApp(pool, app, { github, bot: homeroomBot, ws, notifications, capRoom: null });
+    await settle();
     assert.equal(out.queued, 0);
     assert.equal(messages.length, 2);
+  });
+
+  await t.test('an answer owed is said once it is decided, and counted as said from then: a failed post is retried, never marked said', async () => {
+    // Somebody new holds it, and a person asks the bot: the answer is owed
+    // (its row pending) before anything is said, and a GitHub that fails
+    // keeps it owed until it is said.
+    await pool.query(`DELETE FROM issue_claims WHERE app_id = $1 AND user_id = $2`, [app.id, sam.id]);
+    await pool.query(`INSERT INTO issue_claims (app_id, github_issue_number, user_id) VALUES ($1, 75, $2)`, [app.id, sam.id]);
+    let down = true;
+    const createIssueComment = github.createIssueComment;
+    github.createIssueComment = async (...args) => {
+      if (down) throw Object.assign(new Error('GitHub is down'), { status: 502 });
+      return createIssueComment(...args);
+    };
+    await say(chin, '@homeroom_bot is this still on?');
+    await bot.refreshApp(pool, app, {
+      github, bot: homeroomBot, ws, notifications, capRoom: { proposals_per_app: 1, proposals_total: 1, question_tripwire: 1 },
+    });
+    await rt.drain();
+    const { rows: [owed] } = await pool.query(
+      `SELECT kind, pending FROM homeroom_bot_posts WHERE app_id = $1 ORDER BY id DESC LIMIT 1`, [app.id]);
+    assert.deepEqual([owed.kind, owed.pending], [holds.LEAVING_KIND, true], 'owed from the decision');
+    await rt.runServices();
+    await rt.drain();
+    const { rows: [still] } = await pool.query(
+      `SELECT pending, thread_message_id FROM homeroom_bot_posts WHERE app_id = $1 ORDER BY id DESC LIMIT 1`, [app.id]);
+    assert.equal(still.pending, true, 'GitHub failed: not said yet, and tried again');
+    down = false;
+    await settle();
+    const { rows: [said] } = await pool.query(
+      `SELECT pending, github_comment_id FROM homeroom_bot_posts WHERE app_id = $1 ORDER BY id DESC LIMIT 1`, [app.id]);
+    assert.equal(said.pending, null);
+    assert.ok(said.github_comment_id);
+    const bubbles = messages.filter((m) => /is still on|leaving it to them/.test(m.content));
+    assert.ok(bubbles.length >= 1);
+    assert.equal(new Set(bubbles.map((m) => m.content)).size, bubbles.length, 'its bubble once');
+    github.createIssueComment = createIssueComment;
   });
 });
