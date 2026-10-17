@@ -3489,6 +3489,30 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
   overflow-x: hidden;
 }
 
+/* ── AND THE FEED'S FAR EDGE BOUNCES AGAIN (#3566) ──────────────────────
+   "Should be able to overscroll on home page down, doesn't feel as native
+   because can't." The `contain` above keeps the kit's pull-to-refresh
+   uncontested at the top, and on an element scroller it stills the rubber
+   band at BOTH ends — at the foot of the feed a drag moved nothing, in the
+   bounded shell (installed, native WebView, desktop) where this element is
+   the scroller. On a phone browser the document pages instead and the
+   viewport takes the #3565 rule further up. There is no per-edge
+   `overscroll-behavior`, so the edge is told apart by where the feed is,
+   exactly as the viewport's is: lib/browser-scroll.ts marks the element
+   `data-scroller-past-top` from PAST_TOP_PX below its rest top (the parked
+   search bar's height, the same "not scrolled" the wallpaper's star reads)
+   and only the mark hands the far edge back. `auto`, not `contain`: the
+   feed's own scroll view does the bouncing, and any overscroll that would
+   chain past it dies at the viewport's `none` above. A pull back up drops
+   the mark PAST_TOP_PX short of the rest top, so the search reveal and the
+   pull-to-refresh that takes over from it always meet `contain`.
+   Phones only, like the viewport's rule above. */
+@media (pointer: coarse) {
+  #home-screen[data-scroller-past-top] {
+    overscroll-behavior-y: auto;
+  }
+}
+
 /* ── `.touch-target-32`: the kit's hit-slop, sized for a dense row ──────
    QA 2026-09-24 Q19. `.un-touch-target` (native.css) grows a control's hit
    box to 44px, which is right for a lone icon in a bar. In a DENSE row it is

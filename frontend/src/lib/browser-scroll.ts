@@ -5,6 +5,8 @@
  * offset, to undo a stranded pan); React continues to own the screen roots. Controllers use PlatformUI.scrollElement() when
  * reading or restoring a page's position.
  */
+import { restTop } from './wallpaper-scroll';
+
 export const MOBILE_PAGE_QUERY = '(max-width: 767px), (hover: none) and (pointer: coarse)';
 export const INSTALLED_QUERY = '(display-mode: standalone), (display-mode: fullscreen)';
 
@@ -162,6 +164,27 @@ export function createBrowserScroll(doc: Document, win: Window) {
     if (past) html.dataset.browserPastTop = '';
     else delete html.dataset.browserPastTop;
   };
+  // #3566: the bounded shell's page root is its own scroller, and the same
+  // dead far edge #3565 freed on the paged document lives on the element.
+  // app.css holds `#home-screen` at `overscroll-behavior-y: contain` so the
+  // kit's pull-to-refresh owns the top, and on an element scroller that
+  // stills the rubber band at BOTH ends: at the foot of the feed a drag
+  // moved nothing at all. There is no per-edge `overscroll-behavior`, so the
+  // element itself is marked, from PAST_TOP_PX below its rest top — the
+  // parked search bar's height, the same "not scrolled" the wallpaper's star
+  // measures from (restTop, shared above) — and only the mark gives the
+  // feed's far edge its bounce back. A drag back up drops the mark
+  // PAST_TOP_PX short of the rest top, so the search reveal and the
+  // pull-to-refresh that takes over from it always meet `contain`.
+  const markHomePastTop = () => {
+    const el = doc.getElementById('home-screen');
+    if (!el) return;
+    const past = !el.classList.contains('hidden')
+      && el.scrollTop >= restTop(doc, 'home-screen') + PAST_TOP_PX;
+    if (past === (el.dataset.scrollerPastTop !== undefined)) return;
+    if (past) el.dataset.scrollerPastTop = '';
+    else delete el.dataset.scrollerPastTop;
+  };
   const positions = new Map<string, number>();
   const originalRestoration = win.history?.scrollRestoration;
   const root = () => (doc.scrollingElement || doc.documentElement) as HTMLElement;
@@ -186,7 +209,17 @@ export function createBrowserScroll(doc: Document, win: Window) {
       if (win.history.scrollRestoration !== restoration) win.history.scrollRestoration = restoration;
     }
     const next = enabled ? pageScroller(doc, preferred()) : null;
-    if (next === active) return;
+    if (next === active) {
+      // This runs on every batch of DOM mutations. A route away from Home
+      // hides its feed, and its mark must not survive to meet a later pull
+      // at the top — cleared here without a layout read. A feed shown again
+      // stays unmarked until it scrolls, which its first dragged pixel is.
+      const home = doc.getElementById('home-screen');
+      if (home?.classList.contains('hidden') && home.dataset.scrollerPastTop !== undefined) {
+        delete home.dataset.scrollerPastTop;
+      }
+      return;
+    }
     const previous = active;
     // lastTop survives layout clamping when a route hides the outgoing page.
     remember();
@@ -201,6 +234,9 @@ export function createBrowserScroll(doc: Document, win: Window) {
     // A restored offset fires no scroll event when it lands where the last
     // page left the document, and leaving the paged layout fires none at all.
     markPastTop();
+    // A context switch or a restored element offset fires no scroll event of
+    // its own; the mark is recomputed from where the feed now sits.
+    markHomePastTop();
     // Notify effects which also follow the page when the offset stays at 0.
     win.dispatchEvent(new Event('usernode:page-scroll'));
   };
@@ -229,6 +265,9 @@ export function createBrowserScroll(doc: Document, win: Window) {
       else if (!active && event.target === pageScroller(doc, preferred())) {
         const el = event.target as HTMLElement;
         positions.set(el.id, el.scrollTop);
+        // #3566: the request is Home. Its own scrolls carry the mark; the
+        // other feeds keep their containment at both edges.
+        if (el.id === 'home-screen') markHomePastTop();
       }
     },
   };

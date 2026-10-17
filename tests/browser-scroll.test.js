@@ -390,3 +390,93 @@ test('#3565: only the mark gives the viewport back its bounce, on a phone, and n
   assert.equal(rules.length, 1, rules.map(([, sel]) => sel.trim()).join(' | '));
   assert.match(rules[0][1], /\[data-browser-past-top\]/);
 });
+
+// ── #3566: the bounded shell's home feed bounces at its foot again ──────
+// "Should be able to overscroll on home page down, doesn't feel as native
+// because can't." #3565 gave the paged document's far edge back; in the
+// bounded shell the page root is an element scroller wearing app.css's
+// `overscroll-behavior-y: contain`, and that stills the rubber band at both
+// of the element's ends. The element is marked from PAST_TOP_PX below its
+// rest top — Home's rest top is the parked search bar's height, not zero —
+// and only the mark lets a phone's feed bounce at its far edge.
+
+const homeMarked = (el) => el.dataset.scrollerPastTop !== undefined;
+
+test('#3566: the home feed element is marked from PAST_TOP_PX below its rest top, in the bounded shell', () => {
+  const { add, win, controller } = fixture();
+  const home = add('home-screen');
+  add('browse-screen', true);
+  add('home-search-bar').offsetHeight = 56;
+  win.mobile = false; // installed, native WebView and desktop: the element scrolls
+  controller.sync();
+  assert.equal(homeMarked(home), false, 'a feed parked at its rest top is not marked');
+  home.scrollTop = 56;
+  controller.onScroll({ target: home });
+  assert.equal(homeMarked(home), false, 'the rest top itself reads as the top');
+  home.scrollTop = 56 + PAST_TOP_PX;
+  controller.onScroll({ target: home });
+  assert.equal(homeMarked(home), true);
+  assert.equal(home.dataset.scrollerPastTop, '', 'a bare attribute, which is what app.css selects on');
+  home.scrollTop = 900;
+  controller.onScroll({ target: home });
+  assert.equal(homeMarked(home), true, 'the foot of a long feed is marked');
+  home.scrollTop = 56 + PAST_TOP_PX - 1;
+  controller.onScroll({ target: home });
+  assert.equal(homeMarked(home), false,
+    'a pull back up drops the mark short of the rest top, so the search reveal and the pull-to-refresh that takes over from it keep their contain');
+
+  // With the bar unmeasurable the rest top is zero and the margin reads from
+  // the feed's own top.
+  add('home-search-bar').offsetHeight = 0;
+  home.scrollTop = PAST_TOP_PX;
+  controller.onScroll({ target: home });
+  assert.equal(homeMarked(home), true);
+  home.scrollTop = PAST_TOP_PX - 1;
+  controller.onScroll({ target: home });
+  assert.equal(homeMarked(home), false);
+});
+
+test('#3566: only Home carries the mark, and hiding the feed takes it away', () => {
+  const { add, win, controller } = fixture();
+  const home = add('home-screen');
+  const browse = add('browse-screen', true);
+  win.mobile = false;
+  controller.sync();
+  home.scrollTop = 900;
+  controller.onScroll({ target: home });
+  assert.equal(homeMarked(home), true);
+  controller.sync();
+  assert.equal(homeMarked(home), true, 'a mutation batch with Home showing leaves the mark');
+  home.hidden = true;
+  browse.hidden = false;
+  controller.sync();
+  assert.equal(homeMarked(home), false, 'a route away from Home clears the mark without a scroll event');
+  browse.scrollTop = 900;
+  controller.onScroll({ target: browse });
+  assert.equal(browse.dataset.scrollerPastTop, undefined,
+    'the request is Home; Discover keeps its containment at both edges');
+  home.hidden = false;
+  browse.hidden = true;
+  controller.sync();
+  assert.equal(homeMarked(home), false, 'a feed shown again is unmarked until it scrolls');
+  home.scrollTop = 900;
+  controller.onScroll({ target: home });
+  assert.equal(homeMarked(home), true, 'and its first scroll marks it again');
+});
+
+test('#3566: only the marked feed element gets its bounce back, on a phone, at its far edge', () => {
+  const CSS = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'public/css/app.css'), 'utf8');
+  // The containment is unchanged: the kit's pull-to-refresh still owns the
+  // top of the feed, and the anonymous landing scroller keeps its own.
+  assert.match(CSS, /#home-screen,\n#auth-landing-scroll \{\n  overscroll-behavior-y: contain;\n  overflow-x: hidden;\n\}/);
+  assert.match(CSS, /@media \(pointer: coarse\) \{\n  #home-screen\[data-scroller-past-top\] \{\n    overscroll-behavior-y: auto;\n  \}\n\}/,
+    'a phone\'s feed bounces at its far edge only while the element is marked, and `auto` lets its own scroll view do the bouncing');
+  // The element's mark must never reach the landing scroller: its kit
+  // pull-to-refresh owns the whole of its top, and nothing else scrolls in
+  // it that this rule could answer for.
+  const rules = [...CSS.matchAll(/([^{}]*)\{([^{}]*)\}/g)]
+    .filter(([, sel, body]) => /data-scroller-past-top/.test(sel) && /overscroll-behavior/.test(body));
+  assert.equal(rules.length, 1, rules.map(([, sel]) => sel.trim()).join(' | '));
+  assert.match(rules[0][1], /#home-screen\[data-scroller-past-top\]/);
+});
