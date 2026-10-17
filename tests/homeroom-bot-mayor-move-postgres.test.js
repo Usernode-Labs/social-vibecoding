@@ -189,8 +189,16 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
     'SELECT * FROM homeroom_bot_dm_actions WHERE message_id = $1', [messageId],
   )).rows[0];
   const tap = (action, choice, who = ada) => mayor.decideOfferTap(pool, CONFIG, {
-    user: who, actionId: action.id, choice, deps: { bot, workflow, domain: 'app.test' },
+    user: who, actionId: action.id, choice, deps: { bot, workflow, domain: 'app.test', replies },
   });
+  // A tap is decided in the person's DM machine and done by its work
+  // (mayor.actOnTap): here, at once, keyed as the machine keys it.
+  const replies = {
+    async tapDmAction(a) {
+      await mayor.actOnTap(pool, CONFIG, { ...a, key: `action:${a.actionId}`, deps: { bot, workflow, domain: 'app.test' } });
+      return { ok: true };
+    },
+  };
 
   await t.test('the chat model offers it; Move it to Homeroom by its untouched author files it there and closes the original', async () => {
     await request(6, { title: 'Header covers the app' });

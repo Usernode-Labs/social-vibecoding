@@ -244,9 +244,9 @@ function collaboratorRoutes(config) {
         ? await welcomeFor(pool, { appId, userId: req.user.id }).catch(() => null)
         : null;
       if (welcome) {
-        void require('../services/homeroom-bot-dm').greetJoiner(pool, {
-          user: req.user, app: { id: appId, slug: welcome.slug, name: welcome.name },
-        });
+        // Owed to their DM machine (src/workflow/bot-dm/), whose work says it.
+        await require('../workflow/platform.ts').greet(pool, { userId: req.user.id, kind: 'joiner', appId })
+          .catch((err) => log.warn('collaborators', 'Could not owe a joiner their hello', { appId, err: err.message }));
       }
       res.json({
         ok: true,

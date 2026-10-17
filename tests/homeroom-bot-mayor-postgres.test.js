@@ -186,19 +186,29 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       async close() { platformClosed += 1; },
     };
   }
-  // #3772: what a turn that could not answer asked to run again later, kept
-  // here rather than on a timer.
+  // #3772: what a turn that could not answer asked to run again later (the
+  // person's DM machine sets its timer, src/workflow/bot-dm/), kept here
+  // with the later try the machine's work would run.
   const scheduled = [];
   async function turn(text, chat, extra = {}) {
     const message = await say(text, extra.input || {});
+    const deps = { chat, apiKey: 'sk-test', openMcp, sleep: async () => {}, ...(extra.deps || {}) };
+    deps.onLater = (n) => scheduled.push({
+      ms: mayor.DEFER_DELAYS_MS[n - 1],
+      work: () => mayor.answerLater(pool, CONFIG, { bot, user: ada, conversationId: opened.conversationId, message, deps }, n),
+    });
     return mayor.runDmTurn(pool, CONFIG, {
-      bot, user: ada, settings: extra.settings || settings, conversationId: opened.conversationId, message,
-      deps: {
-        chat, apiKey: 'sk-test', openMcp, sleep: async () => {}, schedule: (work, ms) => scheduled.push({ work, ms }),
-        ...(extra.deps || {}),
-      },
+      bot, user: ada, settings: extra.settings || settings, conversationId: opened.conversationId, message, deps,
     });
   }
+  // A tap is decided in the person's DM machine and done by its work
+  // (mayor.actOnTap): here, at once, keyed as the machine keys it.
+  const replies = {
+    async tapDmAction(a) {
+      await mayor.actOnTap(pool, CONFIG, { ...a, key: `action:${a.actionId}`, deps: { bot } });
+      return { ok: true };
+    },
+  };
   async function read(sent) {
     return conversations.getMessage(pool, ada, opened.conversationId, sent.messageId);
   }
@@ -587,19 +597,23 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(meta.actionId, Number(action.id), 'and name what a tap decides');
 
     const before = created.length;
-    const foreign = await mayor.decideOfferTap(pool, CONFIG, { user: sam, actionId: action.id, choice: 'yes', deps: { bot } });
+    const foreign = await mayor.decideOfferTap(pool, CONFIG, { user: sam, actionId: action.id, choice: 'yes', deps: { bot, replies } });
     assert.deepEqual(foreign, { ok: false, status: 404, error: 'No such choice' }, 'only the person it was offered to');
-    assert.equal((await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'maybe', deps: { bot } })).status, 400);
+    assert.equal((await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'maybe', deps: { bot, replies } })).status, 400);
 
-    const tapped = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'yes', deps: { bot } });
+    const tapped = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'yes', deps: { bot, replies } });
     assert.deepEqual(tapped, { ok: true, choice: 'yes', label: 'File it' });
     assert.equal(created.length, before + 1, 'filed');
     const after = (await read(offered)).metadata.homeroomBot;
     assert.deepEqual([after.status, after.answer, after.chosen], ['answered', 'File it', 'yes']);
 
-    const again = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'yes', deps: { bot } });
+    const again = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'yes', deps: { bot, replies } });
     assert.equal(again.status, 409, 'a second tap, here or on another device, does nothing');
     assert.equal(created.length, before + 1, 'filed once');
+    // Its act retried after a restart (the same work item): its own claim
+    // passes, and the request it filed is found, not filed twice.
+    await mayor.actOnTap(pool, CONFIG, { userId: ada.id, actionId: action.id, choice: 'yes', key: `action:${action.id}`, deps: { bot } });
+    assert.equal(created.length, before + 1, 'still filed once');
     const { rows: [filed] } = await pool.query('SELECT issue_number FROM homeroom_bot_dm_actions WHERE id = $1', [action.id]);
     tapFiled = Number(filed.issue_number);
   });
@@ -613,7 +627,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const { rows: [{ n: messagesBefore }] } = await pool.query(
       'SELECT COUNT(*)::int AS n FROM conversation_messages WHERE conversation_id = $1', [opened.conversationId],
     );
-    const tapped = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'no', deps: { bot } });
+    const tapped = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'no', deps: { bot, replies } });
     assert.deepEqual(tapped, { ok: true, choice: 'no', label: 'Not now' });
     const { rows: [{ n: messagesAfter }] } = await pool.query(
       'SELECT COUNT(*)::int AS n FROM conversation_messages WHERE conversation_id = $1', [opened.conversationId],
@@ -635,13 +649,14 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       bot, user: ada, settings, conversationId: opened.conversationId, message,
       deps: { chat: scripted(steps), apiKey: 'sk-test', openMcp },
     });
-    // Two questions sent before either is answered: each answer points at its own.
+    // Two questions sent before either is answered (her DM machine answers
+    // them one after the other): each answer points at its own.
     const first = await say('is Pin notes up for a vote yet?');
     const second = await say('and what about dark mode?');
-    const answers = await Promise.all([
-      run(first, [[['reply', { text: 'Yes, Pin notes is up for a vote.' }]]]),
-      run(second, [[['reply', { text: 'Dark mode waits for your answer.' }]]]),
-    ]);
+    const answers = [
+      await run(first, [[['reply', { text: 'Yes, Pin notes is up for a vote.' }]]]),
+      await run(second, [[['reply', { text: 'Dark mode waits for your answer.' }]]]),
+    ];
     const [one, two] = await Promise.all(answers.map(read));
     assert.ok(one.id > second.id && two.id > one.id, 'both answers land after both questions');
     assert.equal(one.reply.id, first.id);
@@ -1168,28 +1183,14 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     }
     assert.equal(scheduled.length, 0);
 
-    // Written to since: that message's own turn answers, and this one is not asked again.
-    scheduled.length = 0;
-    await turn('one more?', flaky);
-    await say('never mind');
-    assert.equal(await scheduled[0].work(), null);
+    // (Written to since, the try is not asked at all: the DM machine drops it,
+    // workflow-bot-replies-postgres.test.js.)
     await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
   });
 
-  await t.test('her turns run one after another, never side by side', async () => {
-    let active = 0;
-    let most = 0;
-    const slow = async () => {
-      active += 1; most = Math.max(most, active);
-      await new Promise((r) => setTimeout(r, 30));
-      active -= 1;
-      const calls = [{ id: 'c', type: 'function', function: { name: 'reply', arguments: '{"text":"ok"}' } }];
-      return { content: '', toolCalls: calls, assistantMessage: { role: 'assistant', content: null, tool_calls: calls }, usage: {} };
-    };
-    await Promise.all([turn('one', slow), turn('two', slow), turn('three', slow)]);
-    assert.equal(most, 1);
-    assert.equal(mayor._chainsForTests(), 0, 'nothing is left waiting');
-  });
+  // Her turns run one after another, never side by side, wherever they run:
+  // the person's DM machine answers one message at a time
+  // (workflow-bot-replies-postgres.test.js), so there is no chain here.
 
   // ── #3740: a change to one of the bot's own proposals, asked for in the DM ──
   //

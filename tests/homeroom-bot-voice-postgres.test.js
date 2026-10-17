@@ -9,11 +9,16 @@
 //   - mentioned in a project's chat, it answers in a reply thread under the
 //     message, and offers to file a request with File it / Not now, which
 //     only the person it was offered to decides, once;
-//   - a burst is one turn: a second turn while one holds the place is
-//     refused, and a turn reads only what is new since the last;
-//   - when the change's update ends, the people who asked hear what came of
-//     it, where they asked (reportFollowUp), in the plain words when no
-//     model answers.
+//   - a turn (the bot-voice machine's work, runTurn) reads only what is new
+//     since the place's last; a retry of the same turn finds its reply by its
+//     mark and says and asks nothing twice; an older release's turn still
+//     holding the place makes it wait;
+//   - a tap's act (actOnOffer) is done once, and carries on after a restart
+//     cut it short after its claim;
+//   - when the change's update ends, the people who asked are owed what came
+//     of it (reportFollowUp, an event in the asks' own transaction), said
+//     once where they asked (sayReport), in the plain words when no model
+//     answers.
 //
 // Skips when no PostgreSQL is reachable, like the repository's other
 // postgres tests.
@@ -141,16 +146,12 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
      VALUES ($1, $2, $3, 'message', $4, $5, $6) RETURNING id`,
     [app.id, who.id, content, JSON.stringify(metadata), thread?.type || null, thread?.ref ?? null],
   )).rows[0].id;
-  // Every turn runs when the test says so, not after a timer.
-  const due = [];
-  const base = (model) => ({
-    ws, notifications, chat: model.chat, apiKey: 'test-key', noPlatform: true, schedule: (fn) => { due.push(fn); return true; },
-  });
-  const runDue = async () => {
-    const out = [];
-    while (due.length) out.push(await due.shift()());
-    return out;
-  };
+  // A turn is the bot-voice machine's work (src/workflow/bot-voice/): here
+  // it runs when the test says so, keyed as the machine keys it.
+  const base = (model) => ({ ws, notifications, chat: model.chat, apiKey: 'test-key', noPlatform: true });
+  let turns = 0;
+  const turn = (place, model, { through = 0, key = `t${++turns}`, deps = {} } = {}) =>
+    voice.runTurn(pool, {}, { appId: app.id, place, through, turnKey: key, deps: { ...base(model), ...deps } });
 
   await t.test('asked to change its own change, it queues the ask and says so where it was asked', async () => {
     sent.length = 0;
@@ -160,10 +161,9 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     ]);
     const place = { type: 'session', ref: change.id };
     const id = await say(evan, 'Can the header be blue on every page, not just home?', place);
-    const heard = await voice.noteMessage(pool, {}, { appId: app.id, messageId: id, deps: base(model) });
-    assert.deepEqual(heard, { scheduled: true, why: 'own_change' });
-    const [turn] = await runDue();
-    assert.equal(turn.outcome, 'replied');
+    const first = await turn(place, model, { key: 'own-1' });
+    assert.equal(first.outcome, 'replied');
+    assert.equal(first.throughId, id, 'what it read through is the place\'s');
 
     const { rows: asks } = await pool.query('SELECT * FROM homeroom_bot_change_asks WHERE session_id = $1', [change.id]);
     assert.equal(asks.length, 1);
@@ -179,39 +179,52 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.deepEqual(sent[0].thread, place, 'in the change\'s discussion');
     assert.equal(sent[0].metadata.quote.refMsgId, id, 'quoting who it answers');
     assert.equal(sent[0].metadata.homeroomBot.kind, 'voice');
+    assert.equal(sent[0].metadata.homeroomBot.turn.key, 'own-1', 'the reply carries its turn\'s mark');
     assert.doesNotMatch(sent[0].content, /^Homeroom bot/);
     // The model saw the place and the facts, and only this project.
-    const first = model.seen[0];
-    assert.match(first.messages[1].content, /Can the header be blue on every page/);
-    assert.match(first.messages[1].content, /built by you/);
-    assert.ok(first.tools.some((tl) => tl.function.name === 'update_change'));
+    const seen = model.seen[0];
+    assert.match(seen.messages[1].content, /Can the header be blue on every page/);
+    assert.match(seen.messages[1].content, /built by you/);
+    assert.ok(seen.tools.some((tl) => tl.function.name === 'update_change'));
 
     const { rows: [record] } = await pool.query(
-      `SELECT outcome, place_key, reply_message_id, through_message_id, tools FROM homeroom_bot_voice_turns ORDER BY id DESC LIMIT 1`,
+      `SELECT outcome, place_key, reply_message_id, through_message_id, tools, turn_key FROM homeroom_bot_voice_turns ORDER BY id DESC LIMIT 1`,
     );
     assert.equal(record.outcome, 'replied');
     assert.equal(record.place_key, `${app.id}:session:${change.id}`);
     assert.equal(record.reply_message_id, sent[0].id);
+    assert.equal(record.turn_key, 'own-1');
     assert.deepEqual(record.tools, ['update_change', 'reply']);
 
-    // The same message is not answered again: the next turn reads nothing new.
-    due.push(() => voice.runPlace(pool, {}, { appId: app.id, place, deps: base(model) }));
-    const [again] = await runDue();
+    // The same turn asked again (its work retried after a restart): its
+    // reply is found by its mark, nothing is said or asked twice.
+    const retried = await turn(place, scripted([{ text: 'a second answer' }]), { key: 'own-1' });
+    assert.deepEqual([retried.outcome, retried.replyId, retried.throughId], ['replied', sent[0].id, id]);
+    assert.equal(sent.length, 1);
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM homeroom_bot_change_asks WHERE session_id = $1', [change.id])).rows[0].n, 1);
+
+    // The next turn reads after what this one read: nothing new.
+    const again = await turn(place, model, { through: first.throughId });
     assert.equal(again.outcome, 'quiet');
     assert.equal(sent.length, 1);
   });
 
   await t.test('words a DM passed on as an ask are the follow-up\'s, not answered again', async () => {
     const place = { type: 'session', ref: change.id };
+    const before = sent.length;
     const id = await say(sam, 'Make the footer smaller too', place);
-    const asked = await voice.recordAsk(pool, {
+    const ask = (deps) => voice.recordAsk(pool, {
       appId: app.id, sessionId: change.id, issueNumber: 12, askerId: sam.id, instruction: 'Make the footer smaller too',
-      source: 'dm', place, messageId: id, deps: base(scripted([{ text: 'x' }])),
+      source: 'dm', place, messageId: id, deps,
     });
+    const asked = await ask(base(scripted([{ text: 'x' }])));
     assert.ok(asked.id);
     assert.equal(asked.running, false);
-    const heard = await voice.noteMessage(pool, {}, { appId: app.id, messageId: id, deps: base(scripted([{ text: 'x' }])) });
-    assert.deepEqual(heard, { scheduled: false, why: 'queued_as_ask' });
+    const twice = await ask(base(scripted([{ text: 'x' }])));
+    assert.equal(twice.id, asked.id, 'one ask per change and message, whoever records it again');
+    const quiet = await turn(place, scripted([{ text: 'x' }]), { through: id - 1 });
+    assert.equal(quiet.outcome, 'quiet', 'queued as an ask: the follow-up answers it');
+    assert.equal(sent.length, before);
   });
 
   await t.test('mentioned in the project\'s chat, it answers in a reply thread and offers to file it', async () => {
@@ -223,16 +236,17 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
       { tool: 'offer_request', args: { title: 'Sort the list by due date', details: 'Could the list sort by due date?' } },
       { tool: 'reply', args: { text: 'That sounds like a good request. I drafted it: tap File it under this to send it to the group.' } },
     ]);
+    const chat = { type: 'chat', ref: null };
+    const since = (await pool.query('SELECT COALESCE(MAX(id), 0) AS n FROM chat_messages')).rows[0].n;
+    // People talking to each other: a turn reads it and says nothing.
+    const talk = await say(sam, 'thanks everyone');
+    const quiet = await turn(chat, scripted([{ text: 'x' }]), { through: Number(since) });
+    assert.equal(quiet.outcome, 'quiet');
+    assert.equal(quiet.throughId, talk);
+    assert.equal(sent.length, 0);
     const id = await say(sam, '@Homeroom bot could the list sort by due date?');
-    const quiet = await voice.noteMessage(pool, {}, {
-      appId: app.id, messageId: await say(sam, 'thanks everyone'), hint: { content: 'thanks everyone', thread: null, quoted: false }, deps: base(model),
-    });
-    assert.deepEqual(quiet, { scheduled: false, why: 'not_addressed' }, 'people talking to each other read nothing');
-    const heard = await voice.noteMessage(pool, {}, {
-      appId: app.id, messageId: id, hint: { content: '@Homeroom bot could the list sort by due date?', thread: null, quoted: false }, deps: base(model),
-    });
-    assert.deepEqual(heard, { scheduled: true, why: 'mentioned' });
-    await runDue();
+    const answered = await turn(chat, model, { through: quiet.throughId });
+    assert.equal(answered.outcome, 'replied');
     assert.equal(sent.length, 1);
     assert.deepEqual(sent[0].thread, { type: 'message', ref: id }, 'in a reply thread under the message, not in the room\'s stream');
     const offer = sent[0].metadata.homeroomBot.offer;
@@ -245,29 +259,67 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.equal(row.args.title, 'Sort the list by due date');
     assert.equal(row.args.messageId, id);
 
-    // Only the person it was offered to decides it, and only once.
-    const other = await voice.decideOffer(pool, {}, { app, user: evan, messageId: sent[0].id, choice: 'yes', deps: { ws } });
-    assert.equal(other.status, 403);
-    // File it, with the filing itself stood in for.
+    // A tap is decided in its place's machine (the route only appends it).
+    const tapped = [];
+    const replies = { async tapVoiceOffer(args) { tapped.push(args); return { ok: true }; } };
+    const routed = await voice.decideOffer(pool, {}, { app, user: sam, messageId: sent[0].id, choice: 'yes', deps: { replies } });
+    assert.equal(routed.ok, true);
+    assert.deepEqual(tapped, [{ appId: app.id, offerId: offer.id, messageId: sent[0].id, userId: sam.id, choice: 'yes' }]);
+    assert.equal((await voice.decideOffer(pool, {}, { app, user: sam, messageId: 999999, choice: 'yes', deps: { replies } })).status, 404);
+    // File it, its act (the machine's voice.act work), with the filing
+    // itself stood in for.
     const filed = [];
     const chatSvc = {
       ...require('../src/services/homeroom-bot-chat'),
-      async fileMessage(p, cfg, args) { filed.push(args); return { messageId: args.messageId, kind: 'filed', issueNumber: 13 }; },
+      async fileMessage(p, cfg, args) {
+        filed.push(args);
+        await p.query(
+          `INSERT INTO chat_bot_requests (chat_message_id, app_id, requester_id, kind, issue_number, title) VALUES ($1, $2, $3, 'filed', 13, $4)`,
+          [args.messageId, app.id, sam.id, args.title]);
+        return { messageId: args.messageId, kind: 'filed', issueNumber: 13 };
+      },
       pushCard() {},
     };
-    const yes = await voice.decideOffer(pool, {}, { app, user: sam, messageId: sent[0].id, choice: 'yes', deps: { ws, chatSvc } });
-    assert.equal(yes.ok, true);
-    assert.equal(yes.decision, 'done');
+    const act = (key) => voice.actOnOffer(pool, {}, { offerId: offer.id, userId: sam.id, choice: 'yes', key, deps: { ws, chatSvc } });
+    assert.deepEqual(await act('offer:1'), { decision: 'done' });
     assert.equal(filed.length, 1);
     assert.equal(filed[0].title, 'Sort the list by due date');
     assert.equal(filed[0].messageId, id, 'the chip goes on their message');
+    assert.equal(filed[0].fileKey, `voice-offer:${offer.id}`, 'filed under the act\'s key');
     assert.match(sent[sent.length - 1].content, /Filed as request #13/);
-    const again = await voice.decideOffer(pool, {}, { app, user: sam, messageId: sent[0].id, choice: 'no', deps: { ws } });
-    assert.equal(again.status, 409, 'decided once');
+    const saidCount = sent.length;
+    // Its work retried after it settled: nothing is filed or said twice.
+    assert.deepEqual(await act('offer:1'), { decision: 'done' });
+    assert.equal(filed.length, 1);
+    assert.equal(sent.length, saidCount);
+    // Another act on it (a tap an older release decided) does nothing.
+    assert.deepEqual(await act('offer:other'), { decision: 'already' });
     const { rows: [message] } = await pool.query('SELECT metadata FROM chat_messages WHERE id = $1', [sent[0].id]);
     assert.equal(message.metadata.homeroomBot.offer.status, 'done');
     assert.deepEqual(message.metadata.homeroomBot.actions, [], 'the buttons go for everybody');
     assert.ok(broadcasts.some((f) => f.type === 'chat_message_updated' && f.id === sent[0].id));
+  });
+
+  await t.test('a tap\'s act cut short after its claim carries on when its work is retried', async () => {
+    sent.length = 0;
+    const id = await say(sam, '@Homeroom bot add a dark mode');
+    const { rows: [o] } = await pool.query(
+      `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id) VALUES ($1, 'file_request', $2, $3) RETURNING id`,
+      [app.id, JSON.stringify({ title: 'Dark mode', details: 'Add a dark mode', messageId: id }), sam.id]);
+    const reply = await say(homeroomBot, 'I drafted it.', { type: 'message', ref: id }, { homeroomBot: { kind: 'voice', offer: { id: o.id, status: 'open' } } });
+    await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1', [o.id, reply]);
+    // The first attempt claimed it, and its process went.
+    await pool.query(`UPDATE homeroom_bot_voice_offers SET status = 'deciding', decided_key = 'offer:cut' WHERE id = $1`, [o.id]);
+    const filed = [];
+    const chatSvc = {
+      ...require('../src/services/homeroom-bot-chat'),
+      async fileMessage(p, cfg, args) { filed.push(args); return { messageId: args.messageId, kind: 'filed', issueNumber: 14 }; },
+      pushCard() {},
+    };
+    const out = await voice.actOnOffer(pool, {}, { offerId: o.id, userId: sam.id, choice: 'yes', key: 'offer:cut', deps: { ws, chatSvc } });
+    assert.deepEqual(out, { decision: 'done' }, 'its own claim passes');
+    assert.equal(filed.length, 1);
+    assert.match(sent[sent.length - 1].content, /Filed as request #14/);
   });
 
   await t.test('mentioned in the project\'s chat, it offers a vote on closing a request by its number', async () => {
@@ -282,14 +334,11 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
       { tool: 'offer_close_request', args: { number: 12, why: 'Already done' } },
       { tool: 'reply', args: { text: 'If #12 is done, tap Propose to close below to open a vote on closing it. Nothing happens until you do.' } },
     ]);
+    const chat = { type: 'chat', ref: null };
     const words = '@Homeroom bot request #12 is done, can you propose closing it?';
+    const before = (await pool.query('SELECT COALESCE(MAX(id), 0) AS n FROM chat_messages')).rows[0].n;
     const id = await say(evan, words);
-    const heard = await voice.noteMessage(pool, {}, {
-      appId: app.id, messageId: id, hint: { content: words, thread: null, quoted: false },
-      deps: { ...base(model), mayor },
-    });
-    assert.deepEqual(heard, { scheduled: true, why: 'mentioned' });
-    await runDue();
+    await turn(chat, model, { through: Number(before), deps: { mayor } });
     assert.equal(sent.length, 1);
     assert.deepEqual(sent[0].thread, { type: 'message', ref: id }, 'in a reply thread under the message');
     const offer = sent[0].metadata.homeroomBot.offer;
@@ -309,43 +358,54 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
       { tool: 'offer_close_request', args: {} },
       { tool: 'reply', args: { text: 'Which request: its number, and I can offer a vote on closing it.' } },
     ]);
-    const id2 = await say(evan, '@Homeroom bot please propose closing it.');
-    await voice.noteMessage(pool, {}, {
-      appId: app.id, messageId: id2, hint: { content: '@Homeroom bot please propose closing it.', thread: null, quoted: false },
-      deps: { ...base(again), mayor },
-    });
-    await runDue();
+    await say(evan, '@Homeroom bot please propose closing it.');
+    await turn(chat, again, { through: id, deps: { mayor } });
     assert.equal(sent.length, 2);
     assert.equal(sent[1].metadata.homeroomBot.offer, undefined, 'nothing offered without a number');
     assert.deepEqual(closeCalls, [12], 'the gate was not called again');
   });
 
   await t.test('switched off in chats, a mention is the old path\'s and the voice says nothing', async () => {
+    sent.length = 0;
     await pool.query(
       `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_voice_chat', 'off')
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     );
+    const before = (await pool.query('SELECT COALESCE(MAX(id), 0) AS n FROM chat_messages')).rows[0].n;
     const id = await say(sam, '@Homeroom bot hello?');
-    const heard = await voice.noteMessage(pool, {}, { appId: app.id, messageId: id, deps: base(scripted([{ text: 'x' }])) });
-    assert.deepEqual(heard, { scheduled: false, why: 'switched_off' });
+    const asked = [];
+    const chatSvc = { ...require('../src/services/homeroom-bot-chat'), async heardInChat(p, cfg, a) { asked.push(a); return 0; } };
+    const out = await turn({ type: 'chat', ref: null }, scripted([{ text: 'x' }]), { through: Number(before), deps: { chatSvc } });
+    assert.equal(out.outcome, 'quiet');
+    assert.equal(out.throughId, id, 'read through, so it is not read again');
+    assert.equal(sent.length, 0);
     assert.equal(await voice.enabledFor(pool, 'chat'), false);
     assert.equal(await voice.enabledFor(pool, 'session'), true);
     await pool.query(`DELETE FROM platform_settings WHERE key = 'homeroom_bot_voice_chat'`);
   });
 
-  await t.test('one turn at a time in one place', async () => {
-    const turns = await pool.query('SELECT COUNT(*)::int AS n FROM homeroom_bot_voice_turns WHERE finished_at IS NULL');
-    assert.equal(turns.rows[0].n, 0, 'every turn let go of its place');
+  await t.test('one turn at a time in one place: an older release\'s turn holds it, a retried turn takes its own row up', async () => {
+    const open = await pool.query('SELECT COUNT(*)::int AS n FROM homeroom_bot_voice_turns WHERE finished_at IS NULL');
+    assert.equal(open.rows[0].n, 0, 'every turn let go of its place');
+    const chat = { type: 'chat', ref: null };
     await pool.query(
       `INSERT INTO homeroom_bot_voice_turns (app_id, place_type, place_ref, place_key) VALUES ($1, 'chat', NULL, $2)`,
       [app.id, `${app.id}:chat:`],
     );
-    const busy = await voice.runPlace(pool, {}, { appId: app.id, place: { type: 'chat', ref: null }, deps: base(scripted([{ text: 'x' }])) });
-    assert.deepEqual(busy, { outcome: 'busy' });
+    await assert.rejects(turn(chat, scripted([{ text: 'x' }])), { code: 'place_busy' }, 'its work asks again later');
     await pool.query('UPDATE homeroom_bot_voice_turns SET finished_at = NOW() WHERE finished_at IS NULL');
+    // A turn a restart cut short leaves its own row: its retry takes it up.
+    await pool.query(
+      `INSERT INTO homeroom_bot_voice_turns (app_id, place_type, place_ref, place_key, turn_key) VALUES ($1, 'chat', NULL, $2, 'cut-1')`,
+      [app.id, `${app.id}:chat:`],
+    );
+    const latest = (await pool.query('SELECT MAX(id) AS n FROM chat_messages')).rows[0].n;
+    const out = await turn(chat, scripted([{ text: 'x' }]), { key: 'cut-1', through: Number(latest) });
+    assert.equal(out.outcome, 'quiet');
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM homeroom_bot_voice_turns WHERE turn_key = $1', ['cut-1'])).rows[0].n, 1);
   });
 
-  await t.test('when the update ends, the people who asked hear what came of it, where they asked', async () => {
+  await t.test('when the update ends, the people who asked are owed what came of it, said once where they asked', async () => {
     sent.length = 0;
     await pool.query(`UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`, [change.id]);
     const runTag = 'fu-test-1';
@@ -353,20 +413,35 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.equal(asks.length, 2, 'both asks waiting on it, oldest first');
     assert.deepEqual(asks.map((a) => a.asker), [evan.username, sam.username]);
     const { rows: [session] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [change.id]);
-    // No model answers: the plain words go.
-    const failing = { chat: async () => { throw Object.assign(new Error('down'), { code: 'provider_error' }); }, sleep: async () => {} };
+    const outcome = { action: 'revise', moved: true, summary: 'The header is blue on every page, and the footer is smaller.' };
+    // Owed, in the transaction that ends the asks: an event for the place.
     const n = await voice.reportFollowUp(pool, {}, {
-      app, session, bot: homeroomBot, asks,
-      outcome: { action: 'revise', moved: true, summary: 'The header is blue on every page, and the footer is smaller.' },
+      app, session, asks, outcome, runTag, finish: (db) => voice.finishAsks(db, { runTag, runId: null }),
+    });
+    assert.equal(n, 1, 'both were asked in the change\'s discussion: one report there');
+    const { rows: events } = await pool.query(`SELECT machine, key, type, payload FROM wf_events WHERE type = 'Report'`);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].machine, 'bot-voice');
+    assert.equal(events[0].key, `place:${app.id}:session:${change.id}`);
+    assert.deepEqual(events[0].payload.asks, asks.map((a) => a.id));
+    const { rows } = await pool.query('SELECT status FROM homeroom_bot_change_asks WHERE session_id = $1 ORDER BY id', [change.id]);
+    assert.deepEqual(rows.map((r) => r.status), ['done', 'done'], 'ended with the report owed');
+    // Said by the place's work. No model answers: the plain words go.
+    const failing = { chat: async () => { throw Object.assign(new Error('down'), { code: 'provider_error' }); }, sleep: async () => {} };
+    const report = () => voice.sayReport(pool, {}, {
+      appId: app.id, place: { type: 'session', ref: change.id }, sessionId: change.id, runTag, asks: asks.map((a) => a.id), outcome,
       deps: { ws, notifications, apiKey: 'test-key', ...failing },
     });
-    assert.equal(n, 1, 'both were asked in the change\'s discussion: one message there');
+    const said = await report();
+    assert.equal(sent.length, 1);
+    assert.equal(said.id, sent[0].id);
     assert.deepEqual(sent[0].thread, { type: 'session', ref: change.id });
     assert.equal(sent[0].content, 'Done: The header is blue on every page, and the footer is smaller.');
     assert.equal(sent[0].metadata.quote.author, sam.username, 'quoting the newest ask');
-    await voice.finishAsks(pool, { runTag, runId: null });
-    const { rows } = await pool.query('SELECT status FROM homeroom_bot_change_asks WHERE session_id = $1 ORDER BY id', [change.id]);
-    assert.deepEqual(rows.map((r) => r.status), ['done', 'done']);
+    // Its work retried after it said it: said once.
+    const again = await report();
+    assert.equal(again.id, sent[0].id);
+    assert.equal(sent.length, 1);
     assert.equal(await voice.asksWaiting(pool, change.id), false);
   });
 
@@ -424,7 +499,7 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.ok(summary.asks.byStatus.done >= 2);
     assert.equal(summary.asks.bySource.chat, 1);
     assert.deepEqual(summary.asks.waiting.map((w) => [w.change, w.status, w.asks]), [[change.id, 'queued', 1]]);
-    assert.deepEqual(summary.offers.file_request, { done: 1 });
+    assert.deepEqual(summary.offers.file_request, { done: 2 });
     assert.doesNotMatch(JSON.stringify(summary), /logo|header|due date|Sort the list/, 'never the words');
     // And it rides with the console's payload, which the connector reads.
     const payload = await require('../src/services/homeroom-bot').adminPayload(pool, {}, {});

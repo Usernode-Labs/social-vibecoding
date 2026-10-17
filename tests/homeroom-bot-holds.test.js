@@ -131,6 +131,9 @@ function fakePool({ mentions = [], notes = [], optouts = [] }) {
       if (/SELECT issue_number, kind, created_at FROM homeroom_bot_posts/.test(s)) return { rows: notes };
       if (/FROM homeroom_bot_mention_optouts/.test(s)) return { rows: optouts.map((username) => ({ username })) };
       if (/INSERT INTO homeroom_bot_posts/.test(s)) { posts.push(params[3]); return { rows: [{ id: posts.length }] }; }
+      // sayHeld: the app, and the pending row the machine wrote (none here).
+      if (/SELECT \* FROM apps WHERE id/.test(s)) return { rows: [{ ...APP, repo_url: `https://github.com/${REPO.owner}/${REPO.repo}` }] };
+      if (/run_id IS NULL AND pending IS TRUE/.test(s)) return { rows: [] };
       if (/UPDATE homeroom_bot_posts/.test(s)) return { rows: [] };
       throw new Error(`unexpected query: ${s.slice(0, 80)}`);
     },
@@ -140,13 +143,28 @@ function fakePool({ mentions = [], notes = [], optouts = [] }) {
 function fakes() {
   const comments = [];
   const messages = [];
-  return {
+  const owed = [];
+  const f = {
     comments,
     messages,
+    owed,
     github: { async createIssueComment(owner, repo, n, text) { comments.push({ n, text }); return { id: comments.length }; } },
     ws: { async sendBotMessage(pool, appId, { content, thread }) { messages.push({ content, thread }); return { id: 100 + messages.length }; } },
     notifications: { async createMentionNotifications() { return []; }, async hydrateAndPush() {} },
   };
+  // The refresh owes the answer to the request's place (bot-voice), whose
+  // work then says it (sayHeld): both, here, one after the other.
+  f.owe = (pool) => async (args) => {
+    owed.push(args);
+    await holds.sayHeld(pool, {
+      ...args,
+      deps: {
+        botSvc: { parseRepo: () => REPO }, dm: { async botAccount() { return BOT; } },
+        github: f.github, ws: f.ws, notifications: f.notifications,
+      },
+    });
+  };
+  return f;
 }
 
 const APP = { id: 9, slug: 'todo-list-b91765' };
@@ -159,9 +177,11 @@ test('answerMentions posts the answer, tagging the person who asked, and keeps t
   const cleared = await holds.answerMentions(pool, {
     app: APP, repo: REPO, github: f.github, bot: BOT, now: NOW,
     holders: new Map([[75, [claim('chinchan8', DAYS3)]], [76, [claim('sam', 10)]]]),
-    deps: { ws: f.ws, notifications: f.notifications },
+    deps: { ws: f.ws, notifications: f.notifications, owe: f.owe(pool) },
   });
   assert.deepEqual([...cleared], []);
+  assert.deepEqual(f.owed.map((o) => [o.issueNumber, o.kind, o.mentionId, o.mention]), [[75, holds.LEAVING_KIND, 1, 'evan']],
+    'owed to the request\'s place, keyed by the mention it answers');
   assert.deepEqual(pool.posts, [holds.LEAVING_KIND], 'one answer, on the request that was mentioned');
   // The thread copy is the bot's own words (homeroom-bot-words.js); GitHub keeps the note as written.
   assert.match(f.messages[0].content, /^@evan chinchan8 claimed this request 3 days ago, so I'm leaving it to them\./);
@@ -177,7 +197,7 @@ test('answerMentions goes ahead on the second mention, tagging whoever held it u
   const cleared = await holds.answerMentions(pool, {
     app: APP, repo: REPO, github: f.github, bot: BOT, now: NOW,
     holders: new Map([[75, [claim('chinchan8', DAYS3), claim('evan', 3)]]]),
-    deps: { ws: f.ws, notifications: f.notifications },
+    deps: { ws: f.ws, notifications: f.notifications, owe: f.owe(pool) },
   });
   assert.deepEqual([...cleared], [75]);
   assert.deepEqual(pool.posts, [holds.GOING_KIND]);
@@ -188,7 +208,7 @@ test('answerMentions goes ahead on the second mention, tagging whoever held it u
   await holds.answerMentions(optedOut, {
     app: APP, repo: REPO, github: quiet.github, bot: BOT, now: NOW,
     holders: new Map([[75, [claim('chinchan8', DAYS3)]]]),
-    deps: { ws: quiet.ws, notifications: quiet.notifications },
+    deps: { ws: quiet.ws, notifications: quiet.notifications, owe: quiet.owe(optedOut) },
   });
   assert.match(quiet.messages[0].content, /^evan asked me/, 'somebody who asked not to be tagged is not');
 });

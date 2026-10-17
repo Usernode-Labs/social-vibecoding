@@ -195,12 +195,17 @@ test('a request\'s status, in the words the model repeats', () => {
   assert.equal(mayor.statusOf({}), 'looked at; nothing new since');
 });
 
-test('it is wired after the send, never into it, and files a request the way the route does', () => {
+test('it hears the send in its own transaction, never into the answer, and files a request the way the route does', () => {
   const dm = read('src/services/homeroom-bot-dm.js');
   assert.match(dm, /const decided = await mayor\.decideOffer\(pool, config, \{ bot, user, settings, conversationId, message, deps \}\);/);
   assert.match(dm, /if \(settings\.dmChat !== false\) \{\n    return mayor\.runDmTurn\(/);
+  // The person's DM machine hears it in the message's own transaction
+  // (src/workflow/bot-dm/), and its work answers: nothing floats after the
+  // response.
   const route = read('src/routes/conversations.js');
-  assert.match(route, /setImmediate\(\(\) => \{\n\s+require\('\.\.\/services\/homeroom-bot-dm'\)\.noteUserMessage\(/);
+  assert.match(route, /afterInsert: \(db, sent\) => require\('\.\.\/services\/homeroom-bot-dm'\)\.heardInDm\(db, \{/);
+  assert.doesNotMatch(route, /setImmediate|noteUserMessage/);
+  assert.match(dm, /await require\('\.\.\/workflow\/platform\.ts'\)\.dmWritten\(db, \{/);
   const src = read('src/services/homeroom-bot-mayor.js');
   assert.match(src, /INSERT INTO issues \(app_id, github_issue_number, title, description, kind, payload, created_by\)/);
   // #4271: the new-request row and the mentions, in one call (notifications.js).
@@ -292,8 +297,10 @@ test('#3772: a later try is promised only for a provider\'s failure, three times
   assert.doesNotMatch(mayor.DEFERRED_TEXT, /try again/i);
   assert.match(mayor.DEFERRED_TEXT, /you don't need to send it again/);
   assert.doesNotMatch(`${mayor.DEFERRED_TEXT} ${mayor.DEFERRED_GAVE_UP_TEXT}`, /—|lookups/);
-  // A process that is gone picks them up when the bot starts.
-  assert.match(read('src/services/homeroom-bot.js'), /require\('\.\/homeroom-bot-mayor'\)\.resumeDeferred\(getPool\(config\), config\)/);
+  // The person's DM machine's timer asks them, so a process that is gone
+  // leaves nothing to pick up; an older release's are adopted once at the
+  // leader's boot (workflow/platform.ts adoptDeferredDms).
+  assert.match(read('src/workflow/platform.ts'), /await adoptDeferredDms\(\);/);
 });
 
 test('#3769: a reply never opens with a bracketed note, and the history no longer teaches one', () => {

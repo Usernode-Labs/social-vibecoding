@@ -119,6 +119,11 @@ async function connectPool() {
       key TEXT PRIMARY KEY, value TEXT NOT NULL, description TEXT,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL);
+    -- What a redemption owes the Homeroom bot's DM machine (a joiner's hello),
+    -- appended in the redemption's own transaction: the event stream's columns.
+    CREATE TABLE wf_events (
+      id BIGSERIAL PRIMARY KEY, machine TEXT NOT NULL, key TEXT NOT NULL, app_id INTEGER, type TEXT NOT NULL,
+      payload JSONB NOT NULL, source JSONB NOT NULL, actor TEXT, request_key TEXT NOT NULL, caused_by BIGINT);
   `);
   await pool.query(stageSixBlock());
   // The fixture: ada (who had access before the invite tree), an open
@@ -201,6 +206,10 @@ test('invite links against a real PostgreSQL', async (t) => {
       assert.equal((await invites.redeem(pool, { token, user: bo })).status, 'member');
       const { rows } = await pool.query('SELECT uses FROM community_invites WHERE token = $1', [token]);
       assert.equal(rows[0].uses, 1);
+      // Their hello is owed to the bot's DM machine in the redemption itself,
+      // once (a second redemption joins nobody new).
+      const { rows: greets } = await pool.query(`SELECT machine, key, type, payload FROM wf_events WHERE type = 'Greet' AND key = 'person:2'`);
+      assert.deepEqual(greets.map((g) => [g.machine, g.payload.kind, g.payload.appId]), [['bot-dm', 'joiner', 1]]);
     });
 
     await t.test('somebody still waiting joins as a private member, and letting them in keeps them in', async () => {

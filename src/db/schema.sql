@@ -10638,7 +10638,7 @@ COMMENT ON TABLE homeroom_bot_hellos IS 'staging:private';
 -- WP-F: somebody who joins by an invite link is greeted as a 'joiner'
 -- (homeroom-bot-dm.js greetJoiner). Everybody who had platform access when
 -- the bot went on for everyone, and had not met it, was greeted once as a
--- 'welcome' (homeroom-bot-welcome.js). #4604: somebody who ends the
+-- 'welcome' (a leader sweep, done on 2026-10-09 and deleted since). #4604: somebody who ends the
 -- welcome tour without having met it is greeted as a 'tour'
 -- (homeroom-bot-dm.js greetTourFinisher).
 DO $$
@@ -14722,3 +14722,38 @@ CREATE TABLE IF NOT EXISTS mobile_push_badge_syncs (
 );
 CREATE INDEX IF NOT EXISTS idx_mobile_push_badge_syncs_due ON mobile_push_badge_syncs(queued_at);
 COMMENT ON TABLE mobile_push_badge_syncs IS 'staging:private';
+
+-- ── The bot's replies and hellos, on workflow machines ────────────────────
+-- (docs/workflows.md bot-voice, bot-dm.) What a person writes to the bot is
+-- an event in the transaction that stores it; the answer, a tap's act and
+-- a hello are work, keyed so a retry says and does nothing twice.
+--
+-- A tap's act (homeroom-bot-mayor.js settleOffer, homeroom-bot-dm.js
+-- decidePlanTap, homeroom-bot-voice.js actOnOffer) decides its offer once,
+-- first come first served, by moving it out of 'open'. `decided_key` is the
+-- work item that did: a retry of that same item after a restart passes its
+-- own claim and carries the act on, where a claim written before the act
+-- used to leave "already decided" with nothing done.
+ALTER TABLE homeroom_bot_dm_actions ADD COLUMN IF NOT EXISTS decided_key TEXT;
+ALTER TABLE homeroom_bot_voice_offers ADD COLUMN IF NOT EXISTS decided_key TEXT;
+-- A voice turn's work item (bot-voice's `turn:<n>`, with its place): the
+-- turn's record row is that item's, so a retry after a restart takes its own
+-- row up again instead of waiting out a claim it left.
+ALTER TABLE homeroom_bot_voice_turns ADD COLUMN IF NOT EXISTS turn_key TEXT;
+-- One ask per change and message: a turn asked again after a restart (its
+-- work item retried) records the words it already recorded once.
+CREATE UNIQUE INDEX IF NOT EXISTS homeroom_bot_change_asks_once
+  ON homeroom_bot_change_asks(session_id, message_id) WHERE message_id IS NOT NULL;
+-- The newcomer's offer: one row per model read of a newcomer's message
+-- (homeroom-bot-chat.js maybeOffer), so its budget (per person a day, and
+-- for everybody an hour) holds across processes and restarts.
+CREATE TABLE IF NOT EXISTS homeroom_bot_offer_reads (
+  id          BIGSERIAL PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  message_id  INTEGER NOT NULL,
+  read_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_offer_reads_user ON homeroom_bot_offer_reads(user_id, read_at DESC);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_offer_reads_at ON homeroom_bot_offer_reads(read_at DESC);
+COMMENT ON TABLE homeroom_bot_offer_reads IS 'staging:private';

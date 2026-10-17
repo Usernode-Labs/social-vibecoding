@@ -112,7 +112,8 @@ const MAX_RETRY_AFTER_WAIT_MS = 20_000;
 // #3772: a turn no model request could answer is asked again on its own,
 // this long after it failed, then after the next, so a busy provider never
 // leaves the person to send it again.
-const DEFER_DELAYS_MS = Object.freeze([60_000, 180_000, 600_000]);
+// The person's DM machine keeps the timer (src/workflow/bot-dm/).
+const { DEFER_DELAYS_MS } = require('../workflow/rules/bot-replies.ts');
 // The failures a later try can get past: the provider's, never the key's.
 const DEFERRABLE_ERRORS = new Set([
   'rate_limited', 'timeout', 'network', 'provider_unavailable', 'provider_error', 'invalid_response',
@@ -224,6 +225,11 @@ const OFF_TEXT = 'I\'m switched off right now, so I\'m not working on anything. 
 const BUSY_TEXT = 'You\'ve sent me a lot in the last hour. Give me a little while and ask again.';
 // The last resort, when nothing below could answer at all.
 const BROKEN_TEXT = 'I couldn\'t answer just now. Try again in a minute.';
+// Its DM answer's key: what it sends in answer to message `id` (`attempt`: a
+// later try's), so it is said once whichever path says it.
+function answerKey(id, attempt = 0) {
+  return `hrbot-mayor-${Number(id)}${attempt ? `-d${Number(attempt)}` : ''}`;
+}
 // #3733: the bot's key does not work. Asking again cannot help until an
 // admin fixes it, so this never says to try again.
 const KEY_TEXT = 'I can\'t reach my model right now because my access to it isn\'t working, so I couldn\'t read your '
@@ -277,18 +283,10 @@ function botModule(deps) { return deps.botSvc || require('./homeroom-bot'); }
 function liveModule(deps) { return deps.liveSvc || require('./homeroom-bot-live'); }
 
 // ── One person's turns, one after another ─────────────────────────────────
-
-const chains = new Map();
-
-function serialize(userId, work) {
-  const key = Number(userId);
-  const prior = chains.get(key) || Promise.resolve();
-  const next = prior.then(work, work);
-  const tail = next.catch(() => null);
-  chains.set(key, tail);
-  tail.then(() => { if (chains.get(key) === tail) chains.delete(key); });
-  return next;
-}
+//
+// The person's DM machine (src/workflow/bot-dm/) answers their messages one
+// at a time, in the order written, wherever its work runs: the in-process
+// promise chain that did it within one process is gone.
 
 // ── The prompt ────────────────────────────────────────────────────────────
 
@@ -2118,56 +2116,22 @@ async function recordsAnswer(pool, ctx) {
  * noteUserMessage. Resolves what was sent, or null.
  */
 function runDmTurn(pool, config, { bot, user, settings, conversationId, message, deps = {} }) {
-  return serialize(user.id, () => turn(pool, config, { bot, user, settings, conversationId, message, deps }));
+  return turn(pool, config, { bot, user, settings, conversationId, message, deps });
 }
 
 // ── Asked again later (#3772) ─────────────────────────────────────────────
-
-function defaultSchedule(work, ms) {
-  const handle = setTimeout(work, ms);
-  handle.unref?.();
-  return handle;
-}
-
-/**
- * Ask the turn for `message` again, try `attempt`, after its delay. Never
- * throws. The process marks the message as its own while it waits
- * (services/processes.js 'dm_defer', a marker no drain waits for), and holds
- * it while the try runs ('dm_answer', which a drain does): resumeDeferred
- * elsewhere leaves either alone. A process that exits while it waits leaves
- * the message to the leader's minute sweep.
- */
-function scheduleDeferred(pool, config, args, attempt) {
-  const schedule = args.deps?.schedule || defaultSchedule;
-  const processes = require('./processes');
-  const id = args.message?.id;
-  const unmark = id != null ? processes.hold('dm_defer', id) : () => {};
-  schedule(() => {
-    const release = id != null ? processes.hold('dm_answer', id) : () => {};
-    unmark();
-    return deferredTurn(pool, config, args, attempt).catch((err) => {
-      log.warn('homeroom-bot-mayor', 'A DM answer asked again failed', { userId: args.user?.id, attempt, err: err.message });
-      return null;
-    }).finally(release);
-  }, DEFER_DELAYS_MS[attempt - 1]);
-}
-
-const DEFER_HOLD_KINDS = ['dm_defer', 'dm_answer'];
+//
+// A turn no model request could answer says so and is asked again on its
+// own: the person's DM machine sets its timer (60 s, 3 min, 10 min) when the
+// answer's work reports `later` (deps.onLater, below), and the try is that
+// machine's work again (answerLater). A newer message from them drops it.
 
 /**
  * One later try at a message the model could not answer: its whole turn
- * again, under its own key, with the bot typing. Skipped when the person has
- * written since (that message's turn reads this one too) or the bot left
+ * again, under its own key, with the bot typing. Skipped when the bot left
  * their list. Resolves what was sent, or null.
  */
-async function deferredTurn(pool, config, { bot, user, conversationId, message, deps = {} }, attempt) {
-  const { rows: newer } = await pool.query(
-    `SELECT 1 FROM conversation_messages
-      WHERE conversation_id = $1 AND sender_id = $2 AND id > $3 AND deleted_at IS NULL AND thread_root_id IS NULL
-      LIMIT 1`,
-    [conversationId, user.id, message.id],
-  );
-  if (newer.length) return null;
+async function answerLater(pool, config, { bot, user, conversationId, message, deps = {} }, attempt) {
   const dm = dmModule(deps);
   const settings = await botModule(deps).readSettings(pool);
   if (!dm.hasBot(settings, user)) return null;
@@ -2180,85 +2144,12 @@ async function deferredTurn(pool, config, { bot, user, conversationId, message, 
     : run();
 }
 
-/**
- * After a restart: the answers a process that has gone was to ask again. A
- * message whose newest turn said it would answer later ('deferred', or a
- * plain answer marked `later`) and has had fewer than every try is asked
- * again, soon, unless a live process still holds it (scheduleDeferred: a web
- * process, which answers DMs and never leads, docs/plans/web-and-conductor.md,
- * or the replaced leader finishing its work). Called by the leader as the
- * bot starts (homeroom-bot.js start), and every minute after for what a
- * process that died left (`minAgeSeconds`: a turn just written is not yet
- * held). Never throws; resolves how many it picked up.
- */
-async function resumeDeferred(pool, config, deps = {}, { minAgeSeconds = 0 } = {}) {
-  try {
-    const bot = await dmModule(deps).botAccount(pool);
-    if (!bot) return 0;
-    const { rows: found } = await pool.query(
-      `SELECT t.message_id, t.conversation_id, t.tries, u.id AS user_id, u.username,
-              u.is_synthetic, u.has_platform_access, u.is_admin, u.private_member_since,
-              m.content, m.reply_to_id
-         FROM (
-           SELECT DISTINCT ON (message_id) message_id, conversation_id, user_id, fallback, created_at,
-                  COUNT(*) OVER (PARTITION BY message_id)::int AS tries
-             FROM homeroom_bot_dm_turns
-            WHERE message_id IS NOT NULL AND created_at > NOW() - INTERVAL '20 minutes'
-            ORDER BY message_id, id DESC
-         ) t
-         JOIN users u ON u.id = t.user_id
-         JOIN conversation_messages m ON m.id = t.message_id AND m.deleted_at IS NULL
-        WHERE t.fallback IN ('deferred', 'plain_later') AND t.tries <= $1
-          AND t.created_at < NOW() - make_interval(secs => $2)
-          -- Written to since: that message's turn reads this one too
-          -- (deferredTurn skips it), so it is not picked up again and again.
-          AND NOT EXISTS (
-            SELECT 1 FROM conversation_messages n
-             WHERE n.conversation_id = t.conversation_id AND n.sender_id = t.user_id AND n.id > t.message_id
-               AND n.deleted_at IS NULL AND n.thread_root_id IS NULL)`,
-      [DEFER_DELAYS_MS.length, Math.max(0, Number(minAgeSeconds) || 0)],
-    );
-    const processes = deps.processes || require('./processes');
-    const rows = [];
-    for (const row of found) {
-      if (DEFER_HOLD_KINDS.some((kind) => processes.heldHere(kind, row.message_id))) continue;
-      // Exact, not the mirror: a duplicate answer is what this prevents. A
-      // holder this process cannot read is one it must not act over.
-      let holders;
-      try { holders = await processes.holders(DEFER_HOLD_KINDS, row.message_id, pool); } catch { continue; }
-      if (!holders.length) rows.push(row);
-    }
-    for (const row of rows) {
-      // What dm.hasBot reads about the person (deferredTurn checks it), as the
-      // auth middleware builds it: with only an id and a name, every answer a
-      // restart picked up was dropped there without a word.
-      const user = {
-        id: Number(row.user_id),
-        username: row.username,
-        isSynthetic: !!row.is_synthetic,
-        hasPlatformAccess: !!row.has_platform_access,
-        isAdmin: !!row.is_admin,
-        privateMember: !row.has_platform_access && !row.is_admin && row.private_member_since != null,
-      };
-      const message = { id: Number(row.message_id), content: row.content, reply: row.reply_to_id ? { id: Number(row.reply_to_id) } : null };
-      scheduleDeferred(pool, config, {
-        bot, user, conversationId: Number(row.conversation_id), message, deps,
-      }, Math.min(Number(row.tries), DEFER_DELAYS_MS.length));
-    }
-    if (rows.length) log.info('homeroom-bot-mayor', 'Picked up DM answers to ask again after a restart', { count: rows.length });
-    return rows.length;
-  } catch (err) {
-    log.warn('homeroom-bot-mayor', 'Could not pick up DM answers to ask again', { err: err.message });
-    return 0;
-  }
-}
-
 async function turn(pool, config, { bot, user, settings, conversationId, message, deps }) {
   const dm = dmModule(deps);
   // #3707: every answer quotes the message it answers, so with several in
   // flight each one points at its own. #3772: a later try at the same
   // message (deferAttempt) answers under a key of its own.
-  const key = `hrbot-mayor-${message.id}${deps.deferAttempt ? `-d${deps.deferAttempt}` : ''}`;
+  const key = answerKey(message.id, deps.deferAttempt || 0);
   // B4: every one of these answers what they just wrote, so it rings as a reply.
   const say = (content, extra = {}) => dm.sendDm(pool, {
     bot, userId: user.id, content, idempotencyKey: key, replyToId: message.id, moment: 'reply', ...extra,
@@ -2505,11 +2396,12 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     }
   }
   if (defer) {
-    // #3772: asked again on its own. A later try says nothing until it has
-    // an answer, and the last one says it could not.
+    // #3772: asked again on its own (the DM machine's timer, told through
+    // onLater). A later try says nothing until it has an answer, and the
+    // last one says it could not.
     const next = (deps.deferAttempt || 0) + 1;
     if (next > DEFER_DELAYS_MS.length) return say(DEFERRED_GAVE_UP_TEXT);
-    scheduleDeferred(pool, config, { bot, user, conversationId, message, deps }, next);
+    if (typeof deps.onLater === 'function') deps.onLater(next);
     if (deps.deferAttempt) return null;
   }
   if (fallback === 'key' || fallback === 'broken' || fallback === 'deferred') return say(text);
@@ -2658,7 +2550,16 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
         question: withdraw ? `Withdraw this proposal on ${name}?` : `File this as a request on ${name}?`,
       }),
   });
-  if (sent?.messageId) {
+  if (sent?.messageId && sent.duplicate) {
+    // Offered already, by an attempt a restart cut short: that offer is
+    // the one under the message; this one was never shown.
+    await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE id = $1 AND message_id IS NULL', [action.id]);
+    await pool.query(
+      `UPDATE homeroom_bot_dm_actions a SET message_id = $2
+        WHERE a.id = (SELECT id FROM homeroom_bot_dm_actions WHERE user_id = $3 AND conversation_id = $4 AND message_id IS NULL ORDER BY id DESC LIMIT 1)
+          AND NOT EXISTS (SELECT 1 FROM homeroom_bot_dm_actions WHERE message_id = $2)`,
+      [action.id, sent.messageId, user.id, conversationId]);
+  } else if (sent?.messageId) {
     await pool.query('UPDATE homeroom_bot_dm_actions SET message_id = $2 WHERE id = $1', [action.id, sent.messageId]);
   }
   return sent;
@@ -2778,9 +2679,10 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
  * B3: a tap on an offer's button (POST /api/conversations/homeroom-bot/
  * actions/:actionId), decided exactly as its typed words are, by the person
  * it was offered to and only once: a second tap, on this device or another,
- * is a 409 and does nothing, and every device already shows the choice
- * (setQuestionState). Resolves { ok: true, choice, label } or
- * { ok: false, status, error }.
+ * is a 409 and does nothing, and every device shows the choice
+ * (setQuestionState). Decided in the person's DM machine
+ * (src/workflow/bot-dm/), whose work then does it (actOnTap). Resolves
+ * { ok: true, choice, label } or { ok: false, status, error }.
  */
 async function decideOfferTap(pool, config, { user, actionId, choice, answers = [], deps = {} }) {
   if (choice !== 'yes' && choice !== 'no' && choice !== 'build') {
@@ -2790,25 +2692,51 @@ async function decideOfferTap(pool, config, { user, actionId, choice, answers = 
   if (!user?.id || !Number.isInteger(id) || id <= 0) return { ok: false, status: 404, error: 'No such choice' };
   const { rows } = await pool.query('SELECT * FROM homeroom_bot_dm_actions WHERE id = $1 AND user_id = $2', [id, user.id]);
   const action = rows[0];
-  // B6: Build it under a first version's plan, with the choices tapped.
-  if (action?.kind === 'build_plan') {
-    if (action.status !== 'open') return { ok: false, status: 409, error: 'already_decided', decided: action.status };
-    return dmModule(deps).decidePlanTap(pool, { user, action, choice, answers, deps });
+  const plan = action?.kind === 'build_plan';
+  if (!action || (!plan && !OFFER_ANSWERS[action.kind])) return { ok: false, status: 404, error: 'No such choice' };
+  if (plan ? choice !== 'build' : choice === 'build') {
+    return { ok: false, status: 400, error: plan ? 'choice must be build' : 'choice must be yes or no' };
   }
-  if (choice === 'build') return { ok: false, status: 400, error: 'choice must be yes or no' };
-  if (!action || !OFFER_ANSWERS[action.kind]) return { ok: false, status: 404, error: 'No such choice' };
   if (action.status !== 'open') return { ok: false, status: 409, error: 'already_decided', decided: action.status };
-  const dm = dmModule(deps);
-  const bot = deps.bot || await dm.botAccount(pool);
-  if (!bot) return { ok: false, status: 503, error: 'Homeroom bot is not available' };
-  const settings = await botModule(deps).readSettings(pool);
-  const yes = choice === 'yes';
-  const sent = await settleOffer(pool, config, {
-    bot, user, settings, action, yes, deps, replyToId: null, ackKey: `hrbot-offer-tap-${action.id}`, tapped: true,
+  const out = await (deps.replies || require('../workflow/platform.ts')).tapDmAction({
+    userId: Number(user.id), actionId: id, choice, answers: Array.isArray(answers) ? answers.slice(0, 2) : [],
   });
-  if (sent?.alreadyDecided) return { ok: false, status: 409, error: 'already_decided' };
+  if (!out.ok) return { ok: false, status: out.status || 409, error: out.error || 'already_decided' };
+  if (plan) return { ok: true, choice: 'build', label: 'Build it' };
   const [yesWord, noWord] = OFFER_ANSWERS[action.kind];
-  return { ok: true, choice, label: yes ? yesWord : noWord };
+  return { ok: true, choice, label: choice === 'yes' ? yesWord : noWord };
+}
+
+/**
+ * The act of a tap under one of the bot's DM offers, or Build it under a
+ * plan (the person's DM machine's `dm.act`, `key` its work item's): the
+ * offer claimed by this item (a retry after a restart passes its own claim
+ * and carries the act on), then done and answered, as a typed answer is.
+ * Throws on a failure a retry can cure. Resolves what it did.
+ */
+async function actOnTap(pool, config, { userId, actionId, choice, answers = [], key, deps = {} }) {
+  const { rows: [action] } = await pool.query('SELECT * FROM homeroom_bot_dm_actions WHERE id = $1 AND user_id = $2', [Number(actionId), Number(userId)]);
+  if (!action) return { done: false, why: 'gone' };
+  const dm = dmModule(deps);
+  const { rows: [u] } = await pool.query(
+    'SELECT id, username, is_synthetic, has_platform_access, is_admin, private_member_since FROM users WHERE id = $1', [Number(userId)]);
+  if (!u) return { done: false, why: 'gone' };
+  const user = {
+    id: Number(u.id), username: u.username, isSynthetic: !!u.is_synthetic, hasPlatformAccess: !!u.has_platform_access,
+    isAdmin: !!u.is_admin, privateMember: !u.has_platform_access && !u.is_admin && u.private_member_since != null,
+  };
+  if (action.kind === 'build_plan') {
+    const went = await dm.decidePlanTap(pool, { user, action, choice: 'build', answers, deps, claimKey: key });
+    return { done: !!went?.ok, why: went?.error || null };
+  }
+  const bot = deps.bot || await dm.botAccount(pool);
+  if (!bot) throw new Error('Homeroom bot is not available');
+  const settings = await botModule(deps).readSettings(pool);
+  const sent = await settleOffer(pool, config, {
+    bot, user, settings, action, yes: choice === 'yes', deps, replyToId: null, ackKey: `hrbot-offer-tap-${action.id}`, tapped: true,
+    claimKey: key,
+  });
+  return { done: !sent?.alreadyDecided, why: sent?.alreadyDecided ? 'already_decided' : null };
 }
 
 /**
@@ -2841,7 +2769,7 @@ async function alreadyFiled(pool, action) {
  * reply, since the line under the buttons already says what was chosen.
  */
 async function settleOffer(pool, config, {
-  bot, user, settings, action, yes, deps = {}, replyToId = null, ackKey, tapped = false,
+  bot, user, settings, action, yes, deps = {}, replyToId = null, ackKey, tapped = false, claimKey = null,
 }) {
   const dm = dmModule(deps);
   const no = !yes;
@@ -2853,10 +2781,15 @@ async function settleOffer(pool, config, {
     bot, userId: user.id, content, idempotencyKey: ackKey, replyToId: replyToId || action.message_id || null, ...extra,
   });
   // Decided once: the first tap wins, and a second says what happened.
+  // `claimKey`: the workflow work item deciding it (a tap's act, or the
+  // answer to a typed or quoted decision): a retry of that same item after a
+  // restart passes its own claim and carries the act on.
+  const key = claimKey || deps.workKey || null;
   const { rows: claimed } = await pool.query(
-    `UPDATE homeroom_bot_dm_actions SET status = $3, decided_at = NOW()
-      WHERE id = $1 AND user_id = $2 AND status = 'open' RETURNING id`,
-    [action.id, user.id, yes ? 'done' : 'declined'],
+    `UPDATE homeroom_bot_dm_actions SET status = $3, decided_at = COALESCE(decided_at, NOW()), decided_key = $4
+      WHERE id = $1 AND user_id = $2
+        AND (status = 'open' OR ($4::text IS NOT NULL AND decided_key = $4 AND status = $3)) RETURNING id`,
+    [action.id, user.id, yes ? 'done' : 'declined', key],
   );
   if (!claimed.length) {
     if (tapped) return { alreadyDecided: true };
@@ -2888,7 +2821,7 @@ async function settleOffer(pool, config, {
     // B4: what they asked for: the request as it is filed (askedFor).
     const askedText = askedFor(action);
     const filed = await fileRequest(pool, config, {
-      user, app, title: action.title, details: action.details, settings, deps, askedText,
+      user, app, title: action.title, details: action.details, settings, deps, askedText, fileKey: `dm-action:${action.id}`,
     });
     await pool.query('UPDATE homeroom_bot_dm_actions SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);
     const name = app.name || app.slug;
@@ -2956,11 +2889,20 @@ function askedFor(action) {
  * of the queue.
  */
 async function fileRequest(pool, config, {
-  user, app, title, details, settings, deps = {}, askedText = null, footer = null, reason = 'dm_request',
+  user, app, title, details, settings, deps = {}, askedText = null, footer = null, reason = 'dm_request', fileKey = null,
 }) {
   const github = deps.github || require('./github');
   const ws = deps.ws || require('./ws');
   const notifications = deps.notifications || require('./notifications');
+  // `fileKey`: the tap's act it is filed for (workflow work). A retry after
+  // a restart finds the request that act filed and files no second one.
+  // (Between GitHub answering and the row below, a restart can still file
+  // it twice: nothing on GitHub can be looked up by a key at once.)
+  if (fileKey) {
+    const { rows: [had] } = await pool.query(
+      `SELECT github_issue_number FROM issues WHERE app_id = $1 AND payload->>'fileKey' = $2 LIMIT 1`, [app.id, String(fileKey)]);
+    if (had) return { issueNumber: Number(had.github_issue_number), queueId: null, again: true };
+  }
   const m = String(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
   if (!m || !github.isEnabled()) throw new Error('github_unavailable');
   const body = [
@@ -2978,8 +2920,8 @@ async function fileRequest(pool, config, {
   try { github.noteIssueCreated?.(m[1], m[2], created); } catch {}
   const { rows: issueRows } = await pool.query(
     `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
-     VALUES ($1, $2, $3, $4, 'general', '{}', $5) RETURNING id`,
-    [app.id, issueNumber, title, body, user.id],
+     VALUES ($1, $2, $3, $4, 'general', $6, $5) RETURNING id`,
+    [app.id, issueNumber, title, body, user.id, JSON.stringify(fileKey ? { fileKey: String(fileKey) } : {})],
   );
   await pool.query(
     `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, asked_text)
@@ -3428,7 +3370,7 @@ async function reviseAttached(pool, config, { bot, user, settings, conversationI
     return null;
   }
   if (!change) return null;
-  return serialize(user.id, async () => {
+  return (async () => {
     const ctx = { bot, user, settings, config, deps, userText: text, cards: [], revised: false, conversationId };
     let result;
     try {
@@ -3451,7 +3393,7 @@ async function reviseAttached(pool, config, { bot, user, settings, conversationI
       objects: ctx.cards,
       metadata: { kind: 'chat' },
     });
-  });
+  })();
 }
 
 // ── Withdrawing one of its own proposals (#11, WP3) ──
@@ -3928,7 +3870,7 @@ async function reportProblem(pool, ctx, args) {
   }
   const about = await reportSubject(pool, ctx, args);
   if (about.app) ctx.appIds.add(Number(about.app.id));
-  const filed = await feedback.filePlatformReport(pool, ctx.config, {
+  const file = async () => feedback.filePlatformReport(pool, ctx.config, {
     user,
     title: summary,
     body: reportBody({ details, about }),
@@ -3937,6 +3879,9 @@ async function reportProblem(pool, ctx, args) {
     via: 'through Homeroom bot',
     fetchImpl: deps.fetch || null,
   });
+  // Filed once per answer: a retry of the answer's work after a restart
+  // (deps.once, its checkpoint) gets the report it filed, not a second one.
+  const filed = typeof deps.once === 'function' ? await deps.once('report_problem', file) : await file();
   if (!filed.ok) {
     return { ok: false, error: 'It could not be sent just now. Nothing was sent. They can use Send feedback instead.' };
   }
@@ -4044,9 +3989,9 @@ module.exports = {
   commentText,
   commentOnRequest,
   startRequest,
-  resumeDeferred,
-  scheduleDeferred,
-  deferredTurn,
+  answerLater,
+  actOnTap,
+  answerKey,
   // #11 (WP3)
   withdrawGate,
   withdrawNote,
@@ -4066,5 +4011,4 @@ module.exports = {
   ownOpenProposals,
   MAX_TOOL_RESULT_CHARS,
   DEFAULT_MODEL,
-  _chainsForTests() { return chains.size; },
 };

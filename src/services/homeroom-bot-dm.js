@@ -534,9 +534,23 @@ async function hasOthers(pool, appId, appSlug = null) {
  * ring is shown in the main chat too (`alsoInChat`). `threadRootId` names
  * the thread outright; false keeps the message in the main chat.
  */
+// B5: a person's one hello, claimed in the transaction that sends it (a
+// row per person, homeroom_bot_hellos): `known` when the bot wrote to them
+// before hellos existed, else the kind asked for. It returns the kind stored.
+const CLAIM_HELLO_SQL = `
+  INSERT INTO homeroom_bot_hellos (user_id, kind)
+  SELECT $1::int, CASE WHEN EXISTS (
+           SELECT 1 FROM conversation_messages m
+             JOIN conversations c ON c.id = m.conversation_id AND c.kind = 'direct'
+             JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = $1::int
+            WHERE m.sender_id = $2::int
+         ) THEN 'known' ELSE $3::text END
+  ON CONFLICT (user_id) DO NOTHING
+  RETURNING kind`;
+
 async function sendDm(pool, {
   bot, userId, content, metadata = null, idempotencyKey = null, objects = null, replyToId = null, withoutCards = null,
-  moment = undefined, threadRootId = undefined,
+  moment = undefined, threadRootId = undefined, hello = null,
 }) {
   if (!bot?.id || !userId) return null;
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, userId);
@@ -570,13 +584,36 @@ async function sendDm(pool, {
   const firstNews = !!metadata?.firstVersion && (story === 'ready' || story === 'live');
   const muted = firstNews
     && (await firstVersionNotify(pool, { appSlug: metadata.appSlug, userId }).catch(() => null)) === false;
+  // `hello` ({ kind, content, metadata }): the person's one hello, said by
+  // this message when it is theirs to have, decided in the message's own
+  // transaction, so a hello is never claimed and then not sent (a crash
+  // between the two used to leave somebody greeted by nobody, ever).
+  // `content` and `metadata` are the message as it reads with the hello;
+  // without them the message is the hello alone, and is not sent at all when
+  // the person has had theirs.
+  let greeted = false;
+  const helloStored = hello?.metadata
+    ? storyMetadata(hello.metadata, { moment: story, threadRootId: root }) : null;
+  const helloHooks = hello?.kind ? {
+    prepare: async (db) => {
+      const { rows: claimed } = await db.query(CLAIM_HELLO_SQL, [Number(userId), Number(bot.id), String(hello.kind)]);
+      greeted = claimed[0]?.kind === hello.kind;
+      if (!greeted) return hello.content ? null : { refuse: true };
+      return hello.content
+        ? { content: clip(hello.content, conversations.MAX_MESSAGE_LENGTH || 8000), metadata: helloStored ? { [META]: helloStored } : null }
+        : null;
+    },
+    afterInsert: async (db, { messageId: id }) => {
+      if (greeted) await db.query('UPDATE homeroom_bot_hellos SET message_id = $2 WHERE user_id = $1', [Number(userId), id]);
+    },
+  } : {};
   const send = (withCards) => conversations.sendMessage(pool, { id: bot.id }, opened.conversationId,
     withCards.length
       ? { ...input, objects: withCards }
       : { ...input, ...(cards.length && withoutCards ? { content: clip(withoutCards, conversations.MAX_MESSAGE_LENGTH || 8000) } : {}) },
     {
       metadata: stored ? { [META]: stored } : null, notify: !!story && !muted, notificationDetail: detail,
-      notificationKind: (story && BUILD_KINDS[story]) || null,
+      notificationKind: (story && BUILD_KINDS[story]) || null, ...helloHooks,
     });
   let result = await send(cards);
   if (!result && cards.length) {
@@ -629,6 +666,7 @@ async function sendDm(pool, {
     messageId,
     duplicate: !!result.duplicate,
     threadRootId: root || null,
+    ...(hello?.kind ? { hello: greeted } : {}),
   };
 }
 
@@ -2077,17 +2115,23 @@ async function closePlanCards(pool, runIds, { stopped = false, ws = null, bot = 
 // Newcomer run seven (14 Oct 2026): `planShown` false when it was decided
 // without the card's Build it (buildFromAnswers): the plan's bullets were
 // never put to its maker, so goAhead writes them as the plan's own lines.
-async function decidePlanTap(pool, { user, action, choice, answers = [], deps = {}, planShown = true }) {
+async function decidePlanTap(pool, { user, action, choice, answers = [], deps = {}, planShown = true, claimKey = null }) {
   if (choice !== 'build') return { ok: false, status: 400, error: 'choice must be build' };
   const { rows: [card] } = await pool.query(
     'SELECT run_id, conversation_id FROM homeroom_bot_dm_messages WHERE message_id = $1 AND user_id = $2 AND kind = $3',
     [action.message_id, user.id, PLAN_KIND],
   );
   if (!card?.run_id) return { ok: false, status: 404, error: 'No such choice' };
+  // Decided once. `claimKey` (or the answer's own, deps.workKey): the
+  // workflow work item deciding it; a retry of that item after a restart
+  // passes its own claim and goes ahead (goAhead is guarded by the run's
+  // own state, so a plan gone ahead with already is not built twice).
+  const key = claimKey || deps.workKey || null;
   const { rows: claimed } = await pool.query(
-    `UPDATE homeroom_bot_dm_actions SET status = 'done', decided_at = NOW()
-      WHERE id = $1 AND user_id = $2 AND status = 'open' RETURNING id`,
-    [action.id, user.id],
+    `UPDATE homeroom_bot_dm_actions SET status = 'done', decided_at = COALESCE(decided_at, NOW()), decided_key = $3
+      WHERE id = $1 AND user_id = $2 AND (status = 'open' OR ($3::text IS NOT NULL AND decided_key = $3 AND status = 'done'))
+      RETURNING id`,
+    [action.id, user.id, key],
   );
   if (!claimed.length) return { ok: false, status: 409, error: 'already_decided' };
   const went = await (deps.botSvc || settingsModule()).goAhead(pool, {
@@ -3245,7 +3289,8 @@ async function announceFirstVersion(pool, run, { live = false, deps = {} } = {})
  */
 async function noteProposalMerged(pool, session, { deps = {} } = {}) {
   // What was still asked of it goes: it can no longer change.
-  if (session?.id) await (deps.voice || require('./homeroom-bot-voice')).dropAsks(pool, session.id);
+  // Strict in durable work: a drop that failed is retried with it.
+  if (session?.id) await (deps.voice || require('./homeroom-bot-voice')).dropAsks(pool, session.id, { strict: !!deps.strict });
   if (!session?.id) return null;
   const { rows } = await pool.query(
     `SELECT r.id AS run_id, r.app_id, r.issue_number, a.slug, a.name, a.self_hosted, a.runtime_kind, a.runtime_name
@@ -3542,9 +3587,11 @@ async function postOnRequest(pool, { user, target, text, prepared = false, reaso
   const question = target.question_status === 'open';
   const ws = deps.ws || require('./ws');
   const content = prepared ? clip(text, 3900) : mirroredText(text, { question });
+  // Posted once per answer (its work item's key): a retry finds it.
+  const relayKey = deps.workKey ? `${deps.workKey}:on:${app.id}:${Number(target.issue_number)}` : undefined;
   const posted = await ws.handleMessage(
     pool,
-    { user, appId: app.id, appSlug: app.slug, postedVia: null, viaBotDm: true },
+    { user, appId: app.id, appSlug: app.slug, postedVia: null, viaBotDm: true, relayKey },
     { type: 'chat', content, thread: { type: 'issue', ref: Number(target.issue_number) } },
   ).catch((err) => ({ ok: false, code: err.message }));
   if (!posted?.ok) {
@@ -3618,9 +3665,11 @@ async function postOnProposal(pool, {
   user, app, sessionId, issueNumber, text, deps = {}, payerId = null, queueReason = 'dm_revise',
 }) {
   const ws = deps.ws || require('./ws');
+  // Posted once per answer (its work item's key): a retry finds it.
+  const relayKey = deps.workKey ? `${deps.workKey}:on-change:${Number(sessionId)}` : undefined;
   const posted = await ws.handleMessage(
     pool,
-    { user, appId: app.id, appSlug: app.slug, postedVia: null },
+    { user, appId: app.id, appSlug: app.slug, postedVia: null, relayKey },
     { type: 'chat', content: clip(text, 3900), thread: { type: 'session', ref: Number(sessionId) } },
   ).catch((err) => ({ ok: false, code: err.message }));
   if (!posted?.ok) {
@@ -3812,6 +3861,93 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
   // #3684: typing from here until the answer is sent (whileTyping above).
   return whileTyping(pool, { botId: bot.id, conversationId, ws: deps.ws },
     () => answerUserMessage(pool, config, { bot, user, settings, conversationId, message, deps }));
+}
+
+/**
+ * A person wrote in a conversation (routes/conversations.js, inside
+ * conversations.sendMessage's transaction, `db`): when it is their DM with
+ * the bot, their DM machine hears it in that transaction, so the answer it
+ * owes outlives the process that took the message.
+ */
+async function heardInDm(db, { user, conversationId, messageId, membership, memberIds = [] }) {
+  if (!user?.id || user.isSynthetic || membership?.kind !== 'direct' || memberIds.length !== 1) return false;
+  const { rows } = await db.query(
+    'SELECT 1 FROM users WHERE id = $1 AND username = $2 AND is_synthetic = TRUE', [Number(memberIds[0]), BOT_USERNAME]);
+  if (!rows.length) return false;
+  await require('../workflow/platform.ts').dmWritten(db, {
+    userId: Number(user.id), conversationId: Number(conversationId), messageId: Number(messageId),
+  });
+  return true;
+}
+
+/**
+ * The answer to one message in a person's DM with the bot (their DM
+ * machine's `dm.answer` work, src/workflow/bot-dm/; `workKey` its key): what
+ * noteUserMessage always did, or a later try at an answer the model could
+ * not give (`attempt`). Said once: a reply already sent under this message's
+ * keys (an attempt a restart cut short) ends it; every effect it has on the
+ * way is keyed by `workKey` (a post by its mark, an ask by its message, a
+ * claimed offer by its item, a report by the checkpoint `once`). Throws on a
+ * failure a retry can cure. Resolves { sent, later }: `later` is the try the
+ * machine asks next, when the model could not answer.
+ */
+async function answerOwed(pool, config, { userId, conversationId, messageId, attempt = 0, workKey, once = null, deps = {} }) {
+  const bot = deps.bot || await botAccount(pool);
+  if (!bot) return { sent: false, skipped: 'no_bot' };
+  if (await answeredAlready(pool, { botId: bot.id, conversationId, messageId, attempt })) return { sent: true, skipped: 'answered' };
+  const { rows: [u] } = await pool.query(
+    `SELECT id, username, is_synthetic, has_platform_access, is_admin, private_member_since FROM users
+      WHERE id = $1 AND anonymised_at IS NULL`, [Number(userId)]);
+  if (!u) return { sent: false, skipped: 'gone' };
+  // What hasBot reads about the person, as the auth middleware builds it.
+  const user = {
+    id: Number(u.id), username: u.username, isSynthetic: !!u.is_synthetic, hasPlatformAccess: !!u.has_platform_access,
+    isAdmin: !!u.is_admin, privateMember: !u.has_platform_access && !u.is_admin && u.private_member_since != null,
+  };
+  const message = await conversations.getMessage(pool, user, Number(conversationId), Number(messageId));
+  if (!message || message.deletedAt || message.deleted_at) return { sent: false, skipped: 'gone' };
+  let later = null;
+  const turnDeps = { ...deps, bot, workKey, once, onLater: (n) => { later = n; } };
+  const mayor = deps.mayor || require('./homeroom-bot-mayor');
+  const sent = attempt > 0
+    ? await mayor.answerLater(pool, config, { bot, user, conversationId: Number(conversationId), message, deps: turnDeps }, attempt)
+    : await noteUserMessage(pool, config, { user, conversationId: Number(conversationId), message, deps: turnDeps });
+  return { sent: !!sent, later };
+}
+
+/**
+ * Whether the bot already answered message `messageId` (a later try:
+ * `attempt`), by the keys its answers to that message use (`hrbot-<kind>-
+ * <messageId>`, a later try's `hrbot-mayor-<messageId>-d<n>`).
+ */
+// The keys an answer to a person's message is sent under, by what answered it.
+const ANSWER_KEY_KINDS = Object.freeze(['mayor', 'ack', 'plan-change', 'finish', 'revise', 'offer']);
+async function answeredAlready(pool, { botId, conversationId, messageId, attempt = 0 }) {
+  const pattern = attempt > 0
+    ? `^hrbot-mayor-${Number(messageId)}-d${Number(attempt)}$`
+    : `^hrbot-(${ANSWER_KEY_KINDS.join('|')})-${Number(messageId)}$`;
+  const { rows } = await pool.query(
+    `SELECT 1 FROM conversation_messages
+      WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key ~ $3 LIMIT 1`,
+    [Number(conversationId), Number(botId), pattern],
+  );
+  return rows.length > 0;
+}
+
+/**
+ * The answer to a message failed for good (its work exhausted): the person
+ * hears the bot could not answer, once, under the answer's own key (so it
+ * is nothing when an answer did go out). Throws on a failure.
+ */
+async function sayCouldNotAnswer(pool, { userId, conversationId, messageId, deps = {} }) {
+  const bot = deps.bot || await botAccount(pool);
+  if (!bot) return null;
+  if (await answeredAlready(pool, { botId: bot.id, conversationId, messageId })) return null;
+  const mayor = deps.mayor || require('./homeroom-bot-mayor');
+  return sendDm(pool, {
+    bot, userId: Number(userId), content: mayor.BROKEN_TEXT, idempotencyKey: mayor.answerKey(messageId),
+    replyToId: Number(messageId), moment: 'reply',
+  });
 }
 
 /** What noteUserMessage does with a message from somebody it works for, while the bot types. */
@@ -4133,11 +4269,13 @@ function joinerHello(appName) {
 
 /**
  * WP-F: greet somebody who just joined a community through an invite link
- * (community-invites.js redeem), once ever, and only when the bot builds for
- * them and is switched on: a hello offering what it cannot do would be a
- * false claim. Quiet: it rings nothing. Never throws.
+ * (community-invites.js redeem, collaborators.js accept: their DM machine's
+ * `dm.hello` work, src/workflow/bot-dm/), once ever, and only when the bot
+ * builds for them and is switched on: a hello offering what it cannot do
+ * would be a false claim. Quiet: it rings nothing. `strict` (the work):
+ * a failure throws, so it is tried again; else it never throws.
  */
-async function greetJoiner(pool, { user, app }) {
+async function greetJoiner(pool, { user, app, strict = false }) {
   try {
     if (!user?.id || !app?.id) return null;
     const settings = await settingsModule().readSettings(pool);
@@ -4152,9 +4290,10 @@ async function greetJoiner(pool, { user, app }) {
     })) return null;
     const bot = await botAccount(pool);
     if (!bot) return null;
-    if (!await claimHello(pool, { userId: user.id, botId: bot.id, kind: 'joiner' })) return null;
     const name = app.name || app.slug;
     const hello = joinerHello(name);
+    // The message is the hello alone: sent only when it is theirs to have
+    // (one already sent is not sent again).
     const sent = await sendDm(pool, {
       bot,
       userId: user.id,
@@ -4164,10 +4303,11 @@ async function greetJoiner(pool, { user, app }) {
         kind: 'hello_joiner', appSlug: app.slug, appName: name,
         hello, actions: promptActions(JOINER_PROMPTS), status: 'open',
       },
+      hello: { kind: 'joiner' },
     });
-    if (sent) await noteHelloSent(pool, user.id, sent.messageId);
-    return sent;
+    return sent && !sent.duplicate ? sent : null;
   } catch (err) {
+    if (strict) throw err;
     log.warn('homeroom-bot-dm', 'Could not greet a joiner', { userId: user?.id, err: err.message });
     return null;
   }
@@ -4183,16 +4323,18 @@ const TOUR_PROMPTS = Object.freeze(['What can I ask for?', 'How does the group d
 
 /**
  * #4604: greet somebody who has just ended the welcome tour
- * (onboarding.js markTourDone), once ever: their one hello (claimHello, as a
- * 'tour'), so somebody already greeted as a maker, member, joiner or in the
- * welcome sweep, or written to before hellos existed, hears nothing. Only
- * when the bot is on and builds for them, as greetJoiner. #4897: a test
- * account is greeted like anybody, as every other hello greets it, so a
- * tester finds in Messages what the tour promised; only the welcome DM,
- * which puts staff into a group with it, waits for test_account_welcome_dm.
- * Quiet: it rings nothing. Never throws.
+ * (onboarding.js markTourDone, through their DM machine's `dm.hello` work),
+ * once ever: their one hello (sendDm's `hello`, as a 'tour', claimed in the
+ * message's own transaction), so somebody already greeted as a maker,
+ * member, joiner or in the welcome of 9 Oct 2026, or written to before
+ * hellos existed, hears nothing. Only when the bot is on and builds for
+ * them, as greetJoiner. #4897: a test account is greeted like anybody, as
+ * every other hello greets it, so a tester finds in Messages what the tour
+ * promised; only the welcome DM, which puts staff into a group with it,
+ * waits for test_account_welcome_dm. Quiet: it rings nothing. `strict` (the
+ * work): a failure throws, so it is tried again; else it never throws.
  */
-async function greetTourFinisher(pool, { userId }) {
+async function greetTourFinisher(pool, { userId, strict = false }) {
   try {
     if (!userId) return null;
     const settings = await settingsModule().readSettings(pool);
@@ -4209,29 +4351,38 @@ async function greetTourFinisher(pool, { userId }) {
     })) return null;
     const bot = await botAccount(pool);
     if (!bot) return null;
-    if (!await claimHello(pool, { userId, botId: bot.id, kind: 'tour' })) return null;
-    let sent;
-    try {
-      sent = await sendDm(pool, {
-        bot,
-        userId,
-        idempotencyKey: `hrbot-tour-${userId}`,
-        content: TOUR_HELLO,
-        metadata: { kind: 'hello_tour', hello: TOUR_HELLO, actions: promptActions(TOUR_PROMPTS), status: 'open' },
-      });
-    } catch (err) {
-      // Give the claim back, so a later tour end can try again.
-      await pool.query(
-        "DELETE FROM homeroom_bot_hellos WHERE user_id = $1 AND kind = 'tour' AND message_id IS NULL", [userId],
-      ).catch(() => {});
-      throw err;
-    }
-    if (sent) await noteHelloSent(pool, userId, sent.messageId);
-    return sent;
+    // The message is the hello alone: sent only when it is theirs to have
+    // (one already sent is not sent again).
+    const sent = await sendDm(pool, {
+      bot,
+      userId,
+      idempotencyKey: `hrbot-tour-${userId}`,
+      content: TOUR_HELLO,
+      metadata: { kind: 'hello_tour', hello: TOUR_HELLO, actions: promptActions(TOUR_PROMPTS), status: 'open' },
+      hello: { kind: 'tour' },
+    });
+    return sent && !sent.duplicate ? sent : null;
   } catch (err) {
+    if (strict) throw err;
     log.warn('homeroom-bot-dm', 'Could not greet a tour finisher', { userId, err: err.message });
     return null;
   }
+}
+
+/**
+ * A hello owed to a person (their DM machine's `dm.hello` work): the
+ * joiner's or the tour's. Throws on a failure a retry can cure. Resolves
+ * what was sent, or null (the bot is off, does not build for them, or they
+ * had their hello).
+ */
+async function greet(pool, { userId, kind, appId = null }) {
+  if (kind === 'tour') return greetTourFinisher(pool, { userId, strict: true });
+  if (kind === 'joiner') {
+    const { rows: [app] } = await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [Number(appId)]);
+    if (!app) return null;
+    return greetJoiner(pool, { user: { id: Number(userId) }, app, strict: true });
+  }
+  return null;
 }
 
 /** Pure: `labels` as prompt buttons (types.ts HomeroomBotAction), at most three. */
@@ -4405,39 +4556,6 @@ async function retireSuggestions(pool, {
 }
 
 /**
- * B5: claim `userId`'s one hello, as `kind` ('maker' or 'member'). True only
- * for the first claim: a second device, a retry or a later project gets
- * false. Somebody the bot already wrote to before hellos existed is
- * recorded as known and never greeted. Never throws.
- */
-async function claimHello(pool, { userId, botId, kind }) {
-  try {
-    const { rows } = await pool.query(
-      `INSERT INTO homeroom_bot_hellos (user_id, kind)
-       SELECT $1::int, CASE WHEN EXISTS (
-                SELECT 1 FROM conversation_messages m
-                  JOIN conversations c ON c.id = m.conversation_id AND c.kind = 'direct'
-                  JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = $1::int
-                 WHERE m.sender_id = $2::int
-              ) THEN 'known' ELSE $3::text END
-       ON CONFLICT (user_id) DO NOTHING
-       RETURNING kind`,
-      [Number(userId), Number(botId), kind],
-    );
-    return rows[0]?.kind === kind;
-  } catch (err) {
-    log.warn('homeroom-bot-dm', 'Could not claim a hello (none sent)', { userId, err: err.message });
-    return false;
-  }
-}
-
-/** B5: which message a hello went out in, for the record. Never throws. */
-async function noteHelloSent(pool, userId, messageId) {
-  if (!messageId) return;
-  await pool.query('UPDATE homeroom_bot_hellos SET message_id = $2 WHERE user_id = $1', [userId, messageId]).catch(() => {});
-}
-
-/**
  * B5: a person wrote the words of one of the bot's open prompts (tapped, or
  * typed): those buttons give way to "You asked: ..." on every device. Never
  * throws; resolves whether one was settled.
@@ -4532,19 +4650,21 @@ async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = f
     return null;
   }
   const name = app.name || app.slug;
-  // B5: a maker's first project is where the bot says hello, once.
-  const hello = await claimHello(pool, { userId: user.id, botId: bot.id, kind: 'maker' });
+  // B5: a maker's first project is where the bot says hello, once: decided
+  // in the message's own transaction (sendDm's `hello`).
+  const plain = { kind: 'first_version_started', appSlug: app.slug, appName: name };
   const sent = await sendDm(pool, {
     bot,
     userId: user.id,
     idempotencyKey: `hrbot-create-${app.id}`,
-    content: firstVersionStartedText({ name, hello: !!hello, earlyPlan, off: settings.mode === 'off' }),
-    metadata: {
-      kind: 'first_version_started', appSlug: app.slug, appName: name,
-      ...(hello ? { hello: MAKER_HELLO, actions: promptActions(MAKER_PROMPTS), status: 'open' } : {}),
+    content: firstVersionStartedText({ name, hello: false, earlyPlan, off: settings.mode === 'off' }),
+    metadata: plain,
+    hello: {
+      kind: 'maker',
+      content: firstVersionStartedText({ name, hello: true, earlyPlan, off: settings.mode === 'off' }),
+      metadata: { ...plain, hello: MAKER_HELLO, actions: promptActions(MAKER_PROMPTS), status: 'open' },
     },
   });
-  if (hello) await noteHelloSent(pool, user.id, sent?.messageId);
   log.info('homeroom-bot-dm', 'Project will be built from its description', { app: app.slug, userId: user.id });
   return sent ? { conversationId: sent.conversationId } : null;
 }
@@ -5211,8 +5331,7 @@ module.exports = {
   finishOnTryAgain,
   suggestsOnly,
   retireSuggestions,
-  claimHello,
-  noteHelloSent,
+  greet,
   settlePrompt,
   READY_CHECKS,
   readyKey,
@@ -5322,6 +5441,10 @@ module.exports = {
   MIRRORED_FROM_DM,
   mirroredText,
   noteUserMessage,
+  heardInDm,
+  answerOwed,
+  answeredAlready,
+  sayCouldNotAnswer,
   normalizeBrief,
   firstVersionIssue,
   firstVersionStartedText,

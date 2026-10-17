@@ -311,6 +311,8 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
   try {
     filed = await mayor.fileRequest(pool, config, {
       user: credited, app: target, settings, deps,
+      // Filed once per move: a retry of its act finds it (the tap's work).
+      fileKey: `dm-action:${action.id}`,
       title: clip(gate.issue.title || action.title, MAX_TITLE_CHARS),
       details: clip(gate.issue.body, MAX_BODY_CHARS),
       askedText: gate.issue.title || action.title,

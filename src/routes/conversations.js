@@ -479,7 +479,15 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       // thread included, is for that community's members (reading is not).
       const join = await communities.generalNeedsJoin(pool, id, req.user, config?.selfAppSlug);
       if (join) return res.status(403).json(join);
-      const result = await conversations.sendMessage(pool, req.user, id, input);
+      // #3624: a message to the Homeroom bot is owed an answer: the person's
+      // DM machine hears it in the message's own transaction
+      // (src/workflow/bot-dm/), and its work answers, wherever it runs. The
+      // message is sent whatever the bot does with it.
+      const result = await conversations.sendMessage(pool, req.user, id, input, {
+        afterInsert: (db, sent) => require('../services/homeroom-bot-dm').heardInDm(db, {
+          user: req.user, conversationId: id, messageId: sent.messageId, membership: sent.membership, memberIds: sent.memberIds,
+        }),
+      });
       if (result?.error) return sendMessageError(res, result.error);
       if (!result) return sendNotFound(res);
       if (!result.duplicate) {
@@ -493,14 +501,6 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
             // #2387: which thread it joined (null: the main stream).
             threadRootId: result.message.threadRootId,
           });
-        });
-        // #3624: a message to the Homeroom bot is an answer to its question
-        // (or a reply about a request). Handled after the response, never
-        // into it: the message is sent whatever the bot does with it.
-        setImmediate(() => {
-          require('../services/homeroom-bot-dm').noteUserMessage(pool, config, {
-            user: req.user, conversationId: id, message: result.message,
-          }).catch((err) => log.warn('conversations', 'Homeroom bot DM handling failed', { id, err: err.message }));
         });
       }
       return res.status(result.duplicate ? 200 : 201).json({ message: result.message, duplicate: result.duplicate });

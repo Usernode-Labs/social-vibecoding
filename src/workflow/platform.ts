@@ -33,6 +33,12 @@ import { MACHINE as CAMPAIGN, campaign, campaignKey } from './campaign/machine.t
 import { campaignServices } from './campaign/services.ts';
 import { MACHINE as BOT_CHANGE, botChange, sessionKey as botChangeKey } from './bot-change/machine.ts';
 import { botChangeServices } from './bot-change/services.ts';
+import { botVoice } from './bot-voice/machine.ts';
+import { botVoiceServices } from './bot-voice/services.ts';
+import { botDm } from './bot-dm/machine.ts';
+import { botDmServices } from './bot-dm/services.ts';
+import { DM as BOT_DM, VOICE as BOT_VOICE, dmKey, placeOf, voiceKey } from './rules/bot-replies.ts';
+import type { Place } from './rules/bot-replies.ts';
 import { BOT_USERNAME } from './rules/bot-notes.ts';
 
 const pg = createRequire(import.meta.url)('pg');
@@ -53,6 +59,9 @@ let proposals: ReturnType<typeof proposal> | null = null;
 let queues: ReturnType<typeof mergeQueue> | null = null;
 let campaigns: ReturnType<typeof campaign> | null = null;
 let botChanges: ReturnType<typeof botChange> | null = null;
+// The Homeroom bot's replies: a place in a project, a person's DM.
+let voices: ReturnType<typeof botVoice> | null = null;
+let dms: ReturnType<typeof botDm> | null = null;
 let log: Logger | null = null;
 
 // What the ownership triggers read, synced on every boot: enabled:<machine>
@@ -148,14 +157,16 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   queues = mergeQueue();
   campaigns = campaign();
   botChanges = botChange();
-  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns, botChanges];
+  voices = botVoice();
+  dms = botDm();
+  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms];
   // `botNote`: the one-release shims of the work kinds older releases queued
   // to reach the bot (each appends its event to the bot's change machine).
   const shimDeps = { ...deps, botNote };
   const services = {
     ...governanceServices({ ...deps, adoptCampaigns }), ...mergeFollowupsServices(shimDeps), ...botBuildServices(deps),
     ...appDeliveryServices(deps), ...previewServices(shimDeps), ...shotsServices(shimDeps), ...proposalServices(shimDeps),
-    ...campaignServices(deps), ...botChangeServices(deps),
+    ...campaignServices(deps), ...botChangeServices(deps), ...botVoiceServices(deps), ...botDmServices(deps),
   };
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!,
@@ -177,6 +188,8 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     queues = null;
     campaigns = null;
     botChanges = null;
+    voices = null;
+    dms = null;
     throw err;
   }
   runtime = started;
@@ -217,6 +230,7 @@ export async function startWorkflowLoops(): Promise<void> {
   await adoptMergeQueues();
   await adoptCampaigns();
   await adoptBotChanges();
+  await adoptDeferredDms();
   await retryPlatformFaults();
 }
 
@@ -259,6 +273,116 @@ export async function botNote(sessionId: number, type: string, payload: Record<s
   return runtime.append(botChanges, botChangeKey(sessionId), { type, payload: { sessionId, ...payload } as any },
     { requestKey: o.requestKey || `${type}:${sessionId}:${randomUUID()}`, source: o.source || { kind: 'system', name: 'bot' },
       appId: o.appId ?? own.app_id });
+}
+
+// ── The Homeroom bot's replies (bot-voice, bot-dm) ─────────────────────
+
+// A person wrote in a project (services/ws.js handleMessage): the place's
+// voice hears it, in the transaction that stores the message, so an answer
+// owed is never only in the memory of the process that took it. `db` is
+// that transaction. Nothing for a place the voice has no part in (a
+// governance vote's thread).
+export async function heardInProject(db: Queryable, p: { appId: number; messageId: number; thread: { type?: unknown; ref?: unknown } | null }): Promise<void> {
+  const place = placeOf(p.thread);
+  if (!place) return;
+  await appendEvent(db, BOT_VOICE, voiceKey(p.appId, place),
+    { type: 'Heard', payload: { appId: p.appId, place: place as any, messageId: p.messageId } },
+    { requestKey: `heard:${p.messageId}`, source: { kind: 'route', name: 'chat' }, appId: p.appId });
+}
+
+// A person wrote in their DM with the bot (routes/conversations.js, in
+// conversations.sendMessage's own transaction, `db`).
+export async function dmWritten(db: Queryable, p: { userId: number; conversationId: number; messageId: number; attempt?: number }): Promise<void> {
+  await appendEvent(db, BOT_DM, dmKey(p.userId),
+    { type: 'Wrote', payload: { userId: p.userId, conversationId: p.conversationId, messageId: p.messageId, attempt: p.attempt || 0 } },
+    { requestKey: `wrote:${p.messageId}${p.attempt ? `:d${p.attempt}` : ''}`, source: { kind: 'route', name: 'dm' } });
+}
+
+// A hello of `kind` is owed to a person (joining by an invite, the tour's
+// end): in the caller's transaction when it has one, so it commits with
+// what makes it owed.
+export async function greet(db: Queryable, p: { userId: number; kind: string; appId?: number | null }): Promise<void> {
+  await appendEvent(db, BOT_DM, dmKey(Number(p.userId)),
+    { type: 'Greet', payload: { userId: Number(p.userId), kind: p.kind, appId: p.appId == null ? null : Number(p.appId) } },
+    { requestKey: `greet:${Number(p.userId)}:${p.kind}`, source: { kind: 'system', name: 'hello' }, appId: p.appId == null ? null : Number(p.appId) });
+}
+
+// What came of a change people asked for (the bot's follow-up,
+// homeroom-bot-voice.js oweReport): the place they asked in owes them a
+// report, appended in the transaction that ends their asks.
+export async function reportOwed(db: Queryable, p: { appId: number; place: Place; sessionId: number; runTag: string; asks: number[]; outcome: unknown }): Promise<void> {
+  await appendEvent(db, BOT_VOICE, voiceKey(p.appId, p.place),
+    { type: 'Report', payload: { appId: p.appId, place: p.place as any, sessionId: p.sessionId, runTag: p.runTag, asks: p.asks, outcome: (p.outcome ?? {}) as any } },
+    { requestKey: `report:${p.runTag}:${voiceKey(p.appId, p.place)}`, source: { kind: 'system', name: 'follow-up' }, appId: p.appId });
+}
+
+// The answer to a mention of the bot on a request a person holds (the
+// bot's refresh, homeroom-bot-holds.js answerMentions): owed by the
+// request's place, which writes its post row with the decision.
+export async function heldAnswerOwed(db: Queryable, p: { appId: number; issueNumber: number; kind: string; text: string; mentionId: number; mention?: string | null; mentions?: string[] }): Promise<void> {
+  const place: Place = { type: 'issue', ref: p.issueNumber };
+  await appendEvent(db, BOT_VOICE, voiceKey(p.appId, place),
+    { type: 'HeldAnswer', payload: { appId: p.appId, place: place as any, kind: p.kind, text: p.text, mentionId: p.mentionId, mention: p.mention ?? null, mentions: p.mentions || [] } },
+    { requestKey: `held:${p.mentionId}:${p.kind}`, source: { kind: 'system', name: 'holds' }, appId: p.appId });
+}
+
+const TAP_STATUS = new Map<string, { status: number; error: string }>([
+  ['no_such_offer', { status: 404, error: 'Nothing to decide here.' }],
+  ['no_such_choice', { status: 404, error: 'No such choice' }],
+  ['not_for_you', { status: 403, error: 'Only the person it was offered to can decide it.' }],
+  ['already_decided', { status: 409, error: 'already_decided' }],
+  ['wrong_choice', { status: 400, error: 'That choice does not fit this offer.' }],
+]);
+function tapAnswer(out: EventOutcome): { ok: boolean; status?: number; error?: string; pending?: boolean } {
+  if (out.status === 'accepted' || out.status === 'replayed') return { ok: true };
+  if (out.status === 'pending') return { ok: true, pending: true };
+  return { ok: false, ...(TAP_STATUS.get(String(out.reason)) || { status: 409, error: String(out.reason || 'refused') }) };
+}
+
+// A tap under one of the voice's offers (routes/chat.js): decided once in
+// the place its message is in; the act is that place's work.
+export async function tapVoiceOffer(p: { appId: number; offerId: number; messageId: number; userId: number; choice: string }) {
+  if (!runtime || !voices) throw new Error('The workflow runtime is not running in this process');
+  const { rows: [m] } = await kernelPool!.query('SELECT thread_type, thread_ref FROM chat_messages WHERE id = $1 AND app_id = $2', [p.messageId, p.appId]);
+  const place = m ? placeOf(m.thread_type ? { type: m.thread_type, ref: m.thread_ref } : null) : null;
+  if (!place) return { ok: false, status: 404, error: 'Nothing to decide here.' };
+  const out = await runtime.appendAndWait(voices, voiceKey(p.appId, place),
+    { type: 'OfferTapped', payload: { appId: p.appId, place: place as any, offerId: p.offerId, userId: p.userId, choice: p.choice } },
+    { requestKey: `tap-offer:${p.offerId}:${p.userId}:${randomUUID()}`, source: { kind: 'route', name: 'bot-offer' }, actor: `user:${p.userId}`, appId: p.appId });
+  return tapAnswer(out);
+}
+
+// A tap under one of the bot's offers in a person's DM, or Build it under a
+// plan (routes/conversations.js): decided once in their DM's instance.
+export async function tapDmAction(p: { userId: number; actionId: number; choice: string; answers?: unknown[] }) {
+  if (!runtime || !dms) throw new Error('The workflow runtime is not running in this process');
+  const out = await runtime.appendAndWait(dms, dmKey(p.userId),
+    { type: 'Tapped', payload: { userId: p.userId, actionId: p.actionId, choice: p.choice, answers: (p.answers || []) as any } },
+    { requestKey: `tap-action:${p.actionId}:${randomUUID()}`, source: { kind: 'route', name: 'bot-action' }, actor: `user:${p.userId}` });
+  return tapAnswer(out);
+}
+
+// A later try an older release owed (homeroom-bot-mayor.js's in-memory
+// deferred tries, which a restart lost: its turn rows say so), taken by the
+// person's DM machine once, at the leader's boot. Transitional: an answer
+// deferred since this release is the machine's own timer.
+export async function adoptDeferredDms(): Promise<number> {
+  if (!runtime || !dms) return 0;
+  const { rows } = await kernelPool!.query(
+    `SELECT t.message_id, t.conversation_id, t.user_id, t.tries FROM (
+       SELECT DISTINCT ON (message_id) message_id, conversation_id, user_id, fallback,
+              COUNT(*) OVER (PARTITION BY message_id)::int AS tries
+         FROM homeroom_bot_dm_turns
+        WHERE message_id IS NOT NULL AND created_at > NOW() - INTERVAL '20 minutes'
+        ORDER BY message_id, id DESC) t
+      WHERE t.fallback IN ('deferred', 'plain_later') AND t.tries <= 3 AND t.conversation_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'person:' || t.user_id)`, [BOT_DM]);
+  for (const r of rows) {
+    await dmWritten(kernelPool!, { userId: Number(r.user_id), conversationId: Number(r.conversation_id), messageId: Number(r.message_id), attempt: Number(r.tries) })
+      .catch((err: Error) => log!.warn('workflow', 'Could not adopt a DM answer to ask again', { messageId: r.message_id, message: err.message }));
+  }
+  if (rows.length) log!.info('workflow', 'Adopted DM answers to ask again', { count: rows.length });
+  return rows.length;
 }
 
 // A campaign an older release started (no instance yet: running, or done
@@ -394,6 +518,8 @@ export async function stopWorkflow(): Promise<void> {
   queues = null;
   campaigns = null;
   botChanges = null;
+  voices = null;
+  dms = null;
   await r?.stop();
   await kernelPool?.end();
   kernelPool = null;

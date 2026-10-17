@@ -636,10 +636,6 @@ let wakeRequested = false;
 // (lastBuildDrain), which run five (13 Oct 2026) first read it as.
 let lastPass = null;
 let passStartedAt = null;
-// The minute sweep for DM answers a process that died had promised
-// (homeroom-bot-mayor.js resumeDeferred).
-let deferResumeTimer = null;
-const DEFER_RESUME_MS = 60 * 1000;
 
 // Failures the platform, not the model, produced: the worker could not be
 // bootstrapped, the bot has no key or model, the ledger refused the turn.
@@ -5618,9 +5614,11 @@ async function runFollowUp(pool, config, {
   const asksFailed = async (error, { refund = false } = {}) => {
     const gaveUp = await voice.releaseAsks(pool, { runTag, refund }).catch(() => []);
     if (gaveUp.length) {
+      // Owed by the places they asked in, and said by their work.
       await voice.reportFollowUp(pool, config, {
-        app, session: reportSession, bot, asks: gaveUp, outcome: { action: 'failed', why: replyFailedWhy(error) }, deps: voiceDeps,
-      });
+        app, session: reportSession, asks: gaveUp, runTag: `${runTag}-failed`, deps: voiceDeps,
+        outcome: { action: 'failed', why: replyFailedWhy(error) },
+      }).catch((err) => log.warn('homeroom-bot', 'Could not owe the people who asked a report', { app: app.slug, err: err.message }));
     }
     if (!refund) await requeueAsks();
   };
@@ -5754,11 +5752,14 @@ async function runFollowUp(pool, config, {
     if (asks.length) {
       // Merged or closed before its update: what was asked of it goes, and
       // the people who asked hear so.
-      await voice.finishAsks(pool, { runTag, status: 'dropped' }).catch(() => {});
-      await voice.dropAsks(pool, proposal.id);
+      // Ended and reported in one transaction.
       await voice.reportFollowUp(pool, config, {
-        app, session: reportSession, bot, asks, outcome: { action: 'gone' }, deps: voiceDeps,
-      });
+        app, session: reportSession, asks, outcome: { action: 'gone' }, runTag, deps: voiceDeps,
+        finish: async (db) => {
+          await voice.finishAsks(db, { runTag, status: 'dropped' });
+          await voice.dropAsks(db, proposal.id, { strict: true });
+        },
+      }).catch((err) => log.warn('homeroom-bot', 'Could not owe the people who asked a report', { app: app.slug, err: err.message }));
     }
     return { ran: false, reason: 'has_proposal' };
   }
@@ -6054,11 +6055,13 @@ async function runFollowUp(pool, config, {
   if (asks.length) {
     // The people who asked hear what came of it, where they asked, in the
     // voice's own words.
+    // The asks end and their report is owed in one transaction: said by the
+    // places' own work, it survives a restart, and is said once.
     await voice.reportFollowUp(pool, config, {
-      app, session, bot, asks, deps: voiceDeps,
+      app, session, asks, runTag, deps: voiceDeps,
       outcome: { action, moved, summary: parsed?.summary || null, reply: parsed?.reply || null, planVersion },
-    });
-    await voice.finishAsks(pool, { runTag, runId }).catch(() => {});
+      finish: (db) => voice.finishAsks(db, { runTag, runId }),
+    }).catch((err) => log.warn('homeroom-bot', 'Could not owe the people who asked a report', { app: app.slug, err: err.message }));
   }
   // #4612: the updated plan, where the first plan was posted: the spec card
   // in the change's discussion, then its copy on the GitHub issue. Its own
@@ -10348,24 +10351,8 @@ function start(config) {
   // The build lane, on its own timer: a build never holds up a triage pass.
   buildLaneOn = true;
   scheduleBuilds(config, FIRST_PASS_DELAY_MS);
-  // #3772: the DM answers a process that is gone had promised to ask again.
-  const resume = setTimeout(() => {
-    if (stopped) return;
-    const { getPool } = require('../db/pool');
-    require('./homeroom-bot-mayor').resumeDeferred(getPool(config), config);
-  }, FIRST_PASS_DELAY_MS);
-  if (typeof resume.unref === 'function') resume.unref();
-  // And every minute after: the web processes answer DMs and never lead
-  // (docs/plans/web-and-conductor.md), so one that died left its promises
-  // with no election to pick them up. What a live process holds is its own.
-  if (!deferResumeTimer) {
-    deferResumeTimer = setInterval(() => {
-      if (refusingNew()) return;
-      const { getPool } = require('../db/pool');
-      require('./homeroom-bot-mayor').resumeDeferred(getPool(config), config, {}, { minAgeSeconds: 60 });
-    }, DEFER_RESUME_MS);
-    if (typeof deferResumeTimer.unref === 'function') deferResumeTimer.unref();
-  }
+  // #3772's later tries at a DM answer are the person's DM machine's own
+  // timer now (src/workflow/bot-dm/): nothing here picks them up.
 }
 
 /**
@@ -10397,8 +10384,6 @@ function stop() {
   stopped = true;
   if (timer) clearTimeout(timer);
   timer = null;
-  if (deferResumeTimer) clearInterval(deferResumeTimer);
-  deferResumeTimer = null;
   buildLaneOn = false;
   if (buildTimer) clearTimeout(buildTimer);
   buildTimer = null;
@@ -11610,7 +11595,6 @@ module.exports = {
     passStartedAt = null; liveDispatchRunning = false; liveDispatchAgain = false; liveDispatchDone = Promise.resolve();
     liveKick = null; liveKickSeams = {};
     if (timer) clearTimeout(timer);
-    if (deferResumeTimer) clearInterval(deferResumeTimer); deferResumeTimer = null;
     timer = null; loopConfig = null; pendingApps.clear(); spentRetries.clear(); refreshAllRequested = false; wakeRequested = false;
     buildsInFlight.clear(); buildLaneOn = false; buildDrainRunning = false; buildDrainAgain = false;
     buildFault = null; lastBuildDrain = null;

@@ -183,8 +183,16 @@ test('#4525: an offer to open a vote on closing a request, decided by its tap', 
     `SELECT payload, created_by, status FROM issues WHERE app_id = $1 AND kind = 'close_issue' ORDER BY id`, [ears.id],
   );
   const tap = (action, choice, who = ada) => mayor.decideOfferTap(pool, CONFIG, {
-    user: who, actionId: action.id, choice, deps: { bot, workflow, domain: 'app.test' },
+    user: who, actionId: action.id, choice, deps: { bot, workflow, domain: 'app.test', replies },
   });
+  // A tap is decided in the person's DM machine and done by its work
+  // (mayor.actOnTap): here, at once, keyed as the machine keys it.
+  const replies = {
+    async tapDmAction(a) {
+      await mayor.actOnTap(pool, CONFIG, { ...a, key: `action:${a.actionId}`, deps: { bot, workflow, domain: 'app.test' } });
+      return { ok: true };
+    },
+  };
   const lastAck = () => pool.query(
     'SELECT content FROM conversation_messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT 1', [opened.conversationId],
   );
