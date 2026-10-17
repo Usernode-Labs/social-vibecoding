@@ -270,6 +270,30 @@ module.exports = function install(fakes) {
       return { outcome: 'clean', sha: 'd'.repeat(40), message: 'Merged main cleanly.' };
     },
   });
+  // The Homeroom bot's chat model (its voice in projects, its DM): one
+  // scripted answer, a reply that names the message it answers, stopping at
+  // `bot.model` while it is asked. Its key is the bot's own, read from the
+  // credential store, which answers here that it has one.
+  const openrouter = require(path.join(SRC, 'services/global-chat/openrouter'));
+  fakes.stub(path.join(SRC, 'services/global-chat/openrouter'), {
+    ...openrouter,
+    async streamChat(req) {
+      const last = [...(req.messages || [])].reverse().find((m) => m.role === 'user');
+      await fakes.record('bot.model', { pid: process.pid });
+      await fakes.pause('bot.model');
+      const words = String(last?.content || '');
+      const asked = /#(\d+)/.exec(words.slice(words.lastIndexOf('Answer what was said to you'))) ? 'the place' : 'the DM';
+      const calls = [{ id: 'c1', type: 'function', function: { name: 'reply', arguments: JSON.stringify({ text: `Here is my answer in ${asked}.` }) } }];
+      return { content: '', toolCalls: calls, assistantMessage: { role: 'assistant', content: null, tool_calls: calls },
+        usage: { inputTokens: 1, outputTokens: 1, costUsd: 0 } };
+    },
+  });
+  const store = require(path.join(SRC, 'services/credential-store'));
+  fakes.stub(path.join(SRC, 'services/credential-store'), {
+    ...store,
+    async readMetadata() { return { status: 'valid' }; },
+    async readSecret() { return 'sk-fake-bot-key'; },
+  });
   // Not an outside service, a probe: whether the Workshop hears a board
   // change in this process (its listener is registered by server.js only).
   const themes = require(path.join(SRC, 'services/workshop-themes'));
