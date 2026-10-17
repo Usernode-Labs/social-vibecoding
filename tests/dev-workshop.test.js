@@ -542,16 +542,16 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   };
   assert.ok(!cell('unclaimed').includes('dev-ws-dash-dot'), 'the unclaimed figure carries no mark');
 
-  // #4745, #5369: WITH SOMETHING TO SHOW, A FIGURE IS A BUTTON. The seeded
-  // board has all four nonzero, so all four render as buttons carrying
-  // `data-ws-dash-open`, with the same classes, figures and sub-lines the
-  // spans had. Votes routes its own tap (one waiting item's page, or All
-  // items when several wait); the other three set the stage filter All
-  // items reads.
+  // #4745, #5369, revised in the change's discussion: WITH SOMETHING TO
+  // SHOW, A FIGURE OPENS IT — votes as the button it always was, the other
+  // three as the spans they always were, carrying `data-ws-dash-open` and
+  // made clickable as unstyled wrappers (`role="button"`, focusable, Enter
+  // and Space), NOT as buttons or link text. Same classes, same figures and
+  // sub-lines as the resting spans.
   assert.match(html, /<button type="button" class="dev-ws-dash-cell dev-ws-dash-cell-warn" data-ws-dash-cell="votes" data-ws-dash-open="">/);
-  assert.match(html, /<button type="button" class="dev-ws-dash-cell" data-ws-dash-cell="open" data-ws-dash-open="">/);
-  assert.match(html, /<button type="button" class="dev-ws-dash-cell" data-ws-dash-cell="unclaimed" data-ws-dash-open="">/);
-  assert.match(html, /<button type="button" class="dev-ws-dash-cell dev-ws-dash-cell-good" data-ws-dash-cell="shipped" data-ws-dash-open=""/);
+  assert.match(html, /<span class="dev-ws-dash-cell" data-ws-dash-cell="open" data-ws-dash-open="" role="button" tabindex="0"/);
+  assert.match(html, /<span class="dev-ws-dash-cell" data-ws-dash-cell="unclaimed" data-ws-dash-open="" role="button" tabindex="0"/);
+  assert.match(html, /<span class="dev-ws-dash-cell dev-ws-dash-cell-good" data-ws-dash-cell="shipped" data-ws-dash-open="" role="button" tabindex="0"/);
 
   // UNDER WAITING ON VOTES, HOW MANY WAIT ON YOU (After-Workshop-B): the
   // place bar's own count, in the accent, because it asks for the viewer.
@@ -568,10 +568,16 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   // counted.
   assert.match(WORKSHOP, /onStage=\{\(s\) => \{ callAppView\('openWorkshopStage', s\); openTab\('all'\); \}\}/,
     'the open, unclaimed and shipped figures open All items on their stage');
-  assert.match(CSS, /button\.dev-ws-dash-cell:focus-visible \{ outline: 2px solid var\(--accent\); outline-offset: 2px; \}/,
+  assert.match(CSS, /span\.dev-ws-dash-cell\[data-ws-dash-open\] \{ cursor: pointer; \}/,
+    'the wrapper\'s whole affordance is the pointer, nothing restyles');
+  assert.match(CSS, /span\.dev-ws-dash-cell\[data-ws-dash-open\]:focus-visible \{ outline: 2px solid var\(--accent\); outline-offset: 2px; \}/,
     'a keyboard focus ring, the chips\' own');
+  assert.ok(!/span\.dev-ws-dash-cell\[data-ws-dash-open\]:hover/.test(CSS),
+    'and no hover repaint: the figures keep the look they always had');
+  assert.match(CSS, /button\.dev-ws-dash-cell:focus-visible \{ outline: 2px solid var\(--accent\); outline-offset: 2px; \}/,
+    'votes keeps its own keyboard focus ring');
   assert.match(CSS, /button\.dev-ws-dash-cell:hover \.dev-ws-dash-label \{ color: var\(--accent\); \}/,
-    'and the hover affordance beside it');
+    'and its hover affordance beside it');
   // Open and unclaimed have no line: nothing stores what they were last week.
   assert.ok(!cell('open').includes('dev-ws-dash-sub') && !cell('unclaimed').includes('dev-ws-dash-sub'),
     'no trend nobody can stand behind');
@@ -583,9 +589,9 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   const quiet = makeAppView();
   seed(quiet);
   // #5369: everything a figure counts is zeroed, not just votes and shipped —
-  // the open and unclaimed figures are buttons now too, so the resting board
-  // has to be empty of their counts as well for the "nothing is tappable"
-  // reading to be the resting one.
+  // the open and unclaimed figures are clickable now too, so the resting
+  // board has to be empty of their counts as well for the "nothing is
+  // tappable" reading to be the resting one.
   quiet._ghIssues = [];
   quiet._proposals = [];
   quiet._merged = [];
@@ -599,6 +605,7 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   // #4745: nothing waiting, nothing to open — the figure is the span it
   // always was, with no tap affordance anywhere on the strip.
   assert.ok(!calm.includes('data-ws-dash-open'), 'a resting figure does nothing when tapped');
+  assert.ok(!calm.includes('role="button"'), 'and no resting figure is clickable');
   assert.ok(!/<button type="button" class="dev-ws-dash-cell/.test(calm), 'and no figure is a button');
 
   // WHERE THE OPEN WORK IS, in chips, under the figures: it took the place
@@ -6220,9 +6227,10 @@ test('#2176: "shipped this week" is the calendar week from Monday 00:00 UTC, not
   assert.equal(d.shippedWeek, 1, 'only what landed since Monday');
   assert.equal(d.shippedPrevWeek, 2, 'the whole seven days before that Monday');
   const html = workshopHtml(AppView, 'workshop');
-  // #5369: with a count on it the shipped figure is a button — the title
-  // sits behind the tap affordance attribute the button carries.
-  assert.match(html, /data-ws-dash-cell="shipped"( data-ws-dash-open="")? title="This calendar week, counted from Monday 00:00 UTC\."/,
+  // #5369: with a count on it the shipped figure is clickable — the title
+  // sits behind the tap affordance attributes the wrapper carries (the
+  // button on votes, the unstyled span wrapper here).
+  assert.match(html, /data-ws-dash-cell="shipped"( data-ws-dash-open="" role="button" tabindex="0")? title="This calendar week, counted from Monday 00:00 UTC\."/,
     'the tile says which week it means');
 });
 
