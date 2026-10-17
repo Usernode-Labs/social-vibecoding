@@ -117,9 +117,7 @@ stub('../src/services/worker', {
   async destroyCcVolume() { throw new Error('the unfenced removal is not used'); },
   retireWorker() { throw new Error('the in-memory hold is not read'); },
 });
-const seen = { bot: null, dm: null, journey: null };
-stub('../src/services/homeroom-bot', { async noteRequestMerged(p, s, deps) { seen.bot = deps; return {}; } });
-stub('../src/services/homeroom-bot-dm', { async noteProposalMerged(p, s, opts) { seen.dm = opts; return true; } });
+const seen = { journey: null };
 stub('../src/services/journey-events', { async recordChangeLive(p, args) { seen.journey = args; return {}; } });
 // The main check is the main-check machine's: nothing here reaches main-watch.
 stub('../src/services/main-watch', {});
@@ -204,29 +202,11 @@ test('a main.check item an older release queued only reports: its transition ask
   assert.deepEqual(asked, [], 'it reads and runs nothing');
 });
 
-test('the bot\'s items an older release queued hand the merge and the live to its change machine, keyed by the item', async () => {
-  const told = [];
-  const h = mergeFollowupsServices({ config: {}, pool, botNote: async (...args) => { told.push(args); return 1; } });
-  const run = (kind, input) => h[kind].run({ input, workId: `w-${kind}`, key: kind, attempt: 1, resumeFrom: null, checkpoint: async () => {} });
-  await run(WORK.bot, { sessionId: 5, before: '2026-10-09T00:00:00.000Z' });
-  await run(WORK.dm, { sessionId: 5, sha: 'a'.repeat(40) });
-  await run(WORK.live, { sessionId: 5 });
-  assert.deepEqual(told, [
-    [5, 'Merged', { before: '2026-10-09T00:00:00.000Z' }, { requestKey: `shim:w-${WORK.bot}` }],
-    [5, 'Live', {}, { requestKey: `shim:w-${WORK.dm}` }],
-    [5, 'Live', {}, { requestKey: `shim:w-${WORK.live}` }],
-  ]);
-  assert.equal(seen.bot, null, 'the bot\'s own code is the change machine\'s to call now');
-});
-
-test('an app.deliver item left from before asks app-delivery for its deploy itself, keyed by the item', async () => {
-  // Whichever release applies its result (an older Pod's code would not
-  // ask), the deploy it stood for is asked here.
-  const asked = [];
-  const h = mergeFollowupsServices({ config: {}, pool, requestDeploy: async (...args) => { asked.push(args); return 1; } });
-  const reuse = { imageRef: 'img', buildRef: 'b', commitSha: 'c'.repeat(40), owner: 'acme', repo: 'shop' };
-  const out = await h[WORK.deliver].run({ input: { appId: 2, sessionId: 5, mergeSha: 'a'.repeat(40), prNumber: 8, reuse },
-    workId: 'w-1', key: 'deliver', attempt: 1, resumeFrom: null, checkpoint: async () => {} });
-  assert.deepEqual(out, { handOff: true });
-  assert.deepEqual(asked, [[2, 'merge', { prNumber: 8, revision: 'a'.repeat(40), reuse, requestKey: 'handoff:w-1' }]]);
+test('every work kind has its handler, and none is left for the kinds older releases queued', () => {
+  // A retry queues only a kind with a handler (machine.ts RETRYABLE, read
+  // off WORK): the two lists are one.
+  assert.deepEqual(Object.keys(handlers).sort(), Object.values(WORK).sort());
+  for (const old of ['app.deliver', 'bot.requestMerged', 'bot.dmMerged', 'bot.announceLive']) {
+    assert.equal(handlers[old], undefined, `${old} has no handler`);
+  }
 });

@@ -94,8 +94,7 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
   const pushed = [];
   const rt = createRuntime({
     pool, machines: [machine], pollMs: 50, publish: async (q, list) => { pushed.push(...list); },
-    services: { 'github.closeIssue': fake('github.closeIssue'), 'app.rebuildProduction': fake('app.rebuildProduction'),
-      'governance.checkTarget': fake('governance.checkTarget'), 'campaign.run': fake('campaign.run'),
+    services: { 'github.closeIssue': fake('github.closeIssue'), 'governance.checkTarget': fake('governance.checkTarget'),
       'bot.requestsClosed': fake('bot.requestsClosed') },
   });
   runtimes.push(rt);
@@ -461,42 +460,41 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
       await rt.drain();
       const done = Object.values(await followup()).filter((f) => f.kind === 'app-delivery').map((f) => f.status);
       assert.deepEqual(done, ['retried', 'done']);
-      // A rebuild recorded before every deploy was app-delivery's: its item
-      // left at the release hands the redeploy to app-delivery, and an admin's
-      // retry of one that failed asks app-delivery too.
-      const sec2 = await issue(a, author, 'secret_change', { key: 'API_KEY2', action: 'set', valueEnc: secrets.encrypt('w', DATA_KEY) });
-      await file(sec2);
-      await vote(sec2, voter, 'up');
-      const asBefore = async (i, status) => {
+      // A follow-up an older release recorded, failed for good (no item of
+      // its kind is left to run).
+      const asBefore = async (i, key, kind, input) => {
         const c = await pool.connect();
         try {
           await c.query('BEGIN');
           await c.query("SET LOCAL app.wf_writer = 'transition'");
-          await c.query(`UPDATE wf_instances SET data = jsonb_set(data, '{followups,rebuild}', $3::jsonb) WHERE machine = $1 AND key = $2`,
-            [MACHINE, issueKey(i.id), JSON.stringify({ kind: 'app.rebuildProduction', input: { appId: a.id }, status })]);
-          if (status === 'pending') {
-            await c.query(`INSERT INTO wf_work (machine, key, kind, work_key, input) VALUES ($1, $2, 'app.rebuildProduction', 'rebuild', $3)`,
-              [MACHINE, issueKey(i.id), JSON.stringify({ appId: a.id })]);
-          }
+          await c.query(`UPDATE wf_instances SET data = jsonb_set(data, ARRAY['followups', $3::text], $4::jsonb) WHERE machine = $1 AND key = $2`,
+            [MACHINE, issueKey(i.id), key, JSON.stringify({ kind, input, status: 'exhausted' })]);
           await c.query('COMMIT');
         } catch (err) { await c.query('ROLLBACK'); throw err; } finally { c.release(); }
       };
-      await asBefore(sec2, 'pending');
-      const before = (await asked()).length;
-      work.result['app.rebuildProduction'] = { handOff: true };
-      try { await settle(); } finally { delete work.result['app.rebuildProduction']; }
-      assert.equal((await asked()).length, before + 1, 'handed to app-delivery');
-      assert.deepEqual((await inst(sec2)).data.followups.rebuild, { kind: 'app-delivery', input: { appId: a.id }, status: 'pending' });
+      // A rebuild recorded before every deploy was app-delivery's: an admin's
+      // retry of one that failed asks app-delivery.
       const sec3 = await issue(a, author, 'secret_change', { key: 'API_KEY3', action: 'set', valueEnc: secrets.encrypt('x', DATA_KEY) });
       await file(sec3);
       await vote(sec3, voter, 'up');
-      await asBefore(sec3, 'exhausted');
+      await asBefore(sec3, 'rebuild', 'app.rebuildProduction', { appId: a.id });
       const prior = (await asked()).length;
-      await send(sec3, 'RetryFollowup', { workKey: 'rebuild' }, { source: { kind: 'admin' } });
+      const retried = await send(sec3, 'RetryFollowup', { workKey: 'rebuild' }, { source: { kind: 'admin' } });
       await rt.drain();
+      assert.equal((await event(retried)).result, 'accepted');
       assert.equal((await asked()).length, prior + 1, 'the retry asks app-delivery');
-      assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_work WHERE key = $1 AND kind = 'app.rebuildProduction' AND status = 'queued'`,
+      assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_work WHERE key = $1 AND kind = 'app.rebuildProduction'`,
         [issueKey(sec3.id)])).rows[0].n, 0, 'no rebuild of its own');
+      // A campaign an older release applied queued campaign.run, which has no
+      // handler now (the campaign machine holds every campaign): its retry is
+      // refused, and queues nothing.
+      await asBefore(sec3, 'campaign', 'campaign.run', { campaignId: 1 });
+      const refused = await send(sec3, 'RetryFollowup', { workKey: 'campaign' }, { source: { kind: 'admin' } });
+      await settle();
+      assert.deepEqual([(await event(refused)).result, (await event(refused)).reason], ['rejected', 'not_retryable']);
+      assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_work WHERE key = $1 AND kind = 'campaign.run'`,
+        [issueKey(sec3.id)])).rows[0].n, 0);
+      assert.equal((await inst(sec3)).data.followups.campaign.status, 'exhausted', 'its record is left as it was');
     }
   });
 

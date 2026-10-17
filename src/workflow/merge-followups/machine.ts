@@ -28,11 +28,8 @@ export const sessionKey = (sessionId: number) => `session:${sessionId}`;
 
 // Work kinds. delivery.verify (and app-delivery's answer, a message) decide
 // `live`; the rest only have to happen. The deploy is app-delivery's: the
-// merge asks it by message. app.deliver is the deploy a merge recorded
-// before that ran itself: an item of it left from then hands the merge to
-// app-delivery instead (services.ts), and is removed once none can be left.
+// merge asks it by message.
 export const WORK = Object.freeze({
-  deliver: 'app.deliver',
   nudge: 'host.nudgeDeployer',
   verify: 'delivery.verify',
   teardown: 'preview.teardown',
@@ -41,13 +38,14 @@ export const WORK = Object.freeze({
   issues: 'issues.closeAfterMerge',
   closePr: 'github.closePullRequest',
   mainCheck: 'main.check',
-  // Queued by an older release only: their handlers hand the merge and the
-  // live to the Homeroom bot's change machine (services.ts, one release).
-  bot: 'bot.requestMerged',
-  dm: 'bot.dmMerged',
-  live: 'bot.announceLive',
   journey: 'journey.changeLive',
 });
+// The deploy a merge recorded before every deploy was app-delivery's: no item
+// of it is left to run, and a follow-up of it in an old instance's record is
+// asked again through Retry delivery.
+const OLD_DELIVER = 'app.deliver';
+// The kinds a follow-up can be retried as: those with a handler.
+const RETRYABLE: ReadonlySet<string> = new Set(Object.values(WORK));
 
 // Post-commit kicks into flows not migrated yet. What browsers hear is a
 // push, published with the transition (thread lines, the vote card, the
@@ -468,24 +466,14 @@ function andWork(out: Outcome<MFState>, work: WorkRequest[]): Outcome<MFState> {
   return { ...out, next: { name: next.name, data: track(next.data, work) }, work: [...(out.work || []), ...work] };
 }
 
-// A work result updates its follow-up; delivery.verify (and an app.deliver
-// that deployed before app-delivery ran every deploy) can also make the
-// change live, and included.find hands the carried changes on. An
-// app.deliver's first result, whatever it is, lets the preview go, unless
-// it handed the merge to app-delivery, whose answer does (or the merge is
-// live already: another deploy contained it first).
-const handedOff = (e: Event<WorkResultPayload>) => e.payload.kind === WORK.deliver
-  && !!(e.payload.result as { handOff?: boolean } | null)?.handOff;
+// A work result updates its follow-up; delivery.verify can also make the
+// change live, and included.find hands the carried changes on.
 function workResult(status: Followup['status']) {
   const decide = resultOf(status);
   return {
     guard: (s: any, e: Event<WorkResultPayload>): Check =>
       (s.data.followups[e.payload.workKey]?.status === 'pending' ? ok() : reject('stale_result')),
-    to: (s: any, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext): Outcome<MFState> => {
-      const out = decide(s, e, f, ctx);
-      const letGo = e.payload.kind === WORK.deliver && (!handedOff(e) || s.name === 'live') && !s.data.followups.teardown;
-      return letGo ? andTeardown(out) : out;
-    },
+    to: (s: any, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext): Outcome<MFState> => decide(s, e, f, ctx),
   };
 }
 
@@ -496,16 +484,6 @@ function resultOf(status: Followup['status']) {
     const d: Data = { ...s.data, followups: { ...s.data.followups,
       [p.workKey]: { ...prev, status, ...(p.error ? { error: p.error.message } : {}) } } };
     const result = (p.result || {}) as { sha?: string; contains?: boolean; ids?: number[]; found?: { id: number; head: string }[] };
-    if (p.kind === WORK.deliver && s.name !== 'live') {
-      // Recorded before every deploy was app-delivery's: the merge asks it
-      // now, as it would have, with the preview build the item offered.
-      if (status === 'done' && handedOff(e)) {
-        const asked = { ...d, delivery: DELIVERY, answered: false };
-        return outcome('delivering', asked, { messages: [deliveryRequest(asked, (prev.input as { reuse?: Json }).reuse ?? null)] });
-      }
-      if (status === 'done') return deployedBuild(e, s.name, d, result.sha ? String(result.sha).toLowerCase() : null, ctx);
-      if (s.name === 'delivering') return toFailed(e, d, p.error?.message || 'the deploy failed');
-    }
     if (p.kind === WORK.verify && status === 'done' && result.contains && s.name !== 'live') {
       return toLive(e, d, result.sha || null, ctx);
     }
@@ -624,7 +602,7 @@ const deployed = {
 };
 
 // app-delivery's answer to this merge's own request. Its first answer,
-// whatever it is, lets the preview go (as app.deliver's first result does).
+// whatever it is, lets the preview go.
 const fromDelivery = (s: any, e: Event<any>): Check =>
   (s.data.role === 'merge' && s.data.delivery === DELIVERY && e.source.kind === 'message'
     && e.source.from.machine === DELIVERY && e.source.from.key === deliveryKey(s.data.appId) ? ok() : reject('not_asked'));
@@ -644,8 +622,8 @@ const deliveryFailed = {
 const retryFollowup = {
   guard: (s: any, e: Event<any>): Check => {
     const f = s.data.followups[e.payload.workKey];
-    if (f?.kind === WORK.deliver) return reject('use_retry_delivery');
-    return f && ['failed', 'exhausted'].includes(f.status) ? ok() : reject('not_retryable');
+    if (f?.kind === OLD_DELIVER) return reject('use_retry_delivery');
+    return f && RETRYABLE.has(f.kind) && ['failed', 'exhausted'].includes(f.status) ? ok() : reject('not_retryable');
   },
   to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFState> => {
     const prev = s.data.followups[e.payload.workKey]!;

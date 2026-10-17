@@ -107,13 +107,8 @@ test('governance.checkTarget reports whether the target is still open', async ()
   assert.deepEqual(await run(404), { open: false });
 });
 
-test('an app.rebuildProduction item left from before asks app-delivery for the redeploy itself, keyed by the item', async () => {
-  // Whichever release applies its result (an older Pod's code would only
-  // mark it done), the redeploy is asked here.
-  const asked = [];
-  const s = governanceServices({ config: {}, pool: { query: async () => ({ rows: [] }) },
-    requestDeploy: async (...args) => { asked.push(args); return 1; } });
-  const out = await s['app.rebuildProduction'].run({ ...ctx({ appId: 7 }).ctx, workId: 'w-2' });
-  assert.deepEqual(out, { handOff: true });
-  assert.deepEqual(asked, [[7, 'secret_change', { requestKey: 'handoff:w-2' }]]);
+test('its handlers are the kinds a retry may queue; none is left for an older release\'s rebuild or campaign', () => {
+  // machine.ts RETRYABLE_WORK lists the same three: a handler added here is
+  // retryable only once it is added there too.
+  assert.deepEqual(Object.keys(services).sort(), ['bot.requestsClosed', 'github.closeIssue', 'governance.checkTarget']);
 });

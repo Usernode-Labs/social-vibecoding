@@ -6,45 +6,19 @@
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import type { BotNote } from '../rules/bot-notes.ts';
 import { backoff, closeAndComment, gone, permanent } from '../github-work.ts';
 import { INCLUDED_CANDIDATES_SQL, includedIn, liveShotsRun } from './facts.ts';
 import { WORK } from './machine.ts';
 
-// requestDeploy: platform.ts's, for the deploy work left from before.
-interface Deps {
-  config: any; pool: Pool; requestDeploy?: (appId: number, reason: string, o?: Record<string, unknown>) => Promise<number>;
-  botNote?: BotNote;
-}
+interface Deps { config: any; pool: Pool }
 
-export function mergeFollowupsServices({ config, pool, requestDeploy, botNote }: Deps): Record<string, WorkHandler> {
+export function mergeFollowupsServices({ config, pool }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
   const session = async (id: number) => (await pool.query(
     `SELECT cs.*, a.slug AS app_slug, a.repo_url FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
     [id])).rows[0] || null;
-  const app = async (id: number) => (await pool.query('SELECT * FROM apps WHERE id = $1', [id])).rows[0] || null;
 
   return {
-    // The merge's own deploy, as merges recorded it before every deploy
-    // was app-delivery's. An item of it left from then deploys nothing: it
-    // asks app-delivery for the deploy it stood for, here, so the deploy is
-    // asked whichever release applies its result (during a rollout an older
-    // Pod may, and its code would not ask), and answers `handOff`: the
-    // machine then asks app-delivery on the merge's behalf too (one more
-    // request, served by the same deploys). The request key is the item's,
-    // so a retry asks once.
-    [WORK.deliver]: {
-      maxAttempts: 5,
-      backoffMs: backoff,
-      async run({ input, workId }): Promise<Json> {
-        await requestDeploy!(Number(input.appId), 'merge', {
-          prNumber: input.prNumber ?? null, revision: input.mergeSha ?? null, reuse: input.reuse ?? null,
-          requestKey: `handoff:${workId}`,
-        });
-        return { handOff: true };
-      },
-    },
-
     // Docker self-hosting: the host deployer fetches at once instead of on
     // its poll (Kubernetes releases through Argo CD: nothing to tell).
     [WORK.nudge]: {
@@ -185,36 +159,6 @@ export function mergeFollowupsServices({ config, pool, requestDeploy, botNote }:
       maxAttempts: 5,
       backoffMs: backoff,
       async run(): Promise<Json> { return { handedOff: true }; },
-    },
-
-    // One release only: what an older release queued for a change of the
-    // Homeroom bot's once merged (its other work on the request stops) and
-    // once live (its requester's DM, the request's "It's live"). The bot's
-    // change machine hears it and does each once; since this release the
-    // merge's own writes tell it.
-    [WORK.bot]: {
-      maxAttempts: 5,
-      backoffMs: backoff,
-      async run({ input, workId }): Promise<Json> {
-        if (botNote) await botNote(Number(input.sessionId), 'Merged', { before: input.before ?? null }, { requestKey: `shim:${workId}` });
-        return { handedOff: true };
-      },
-    },
-    [WORK.dm]: {
-      maxAttempts: 5,
-      backoffMs: backoff,
-      async run({ input, workId }): Promise<Json> {
-        if (botNote) await botNote(Number(input.sessionId), 'Live', {}, { requestKey: `shim:${workId}` });
-        return { handedOff: true };
-      },
-    },
-    [WORK.live]: {
-      maxAttempts: 5,
-      backoffMs: backoff,
-      async run({ input, workId }): Promise<Json> {
-        if (botNote) await botNote(Number(input.sessionId), 'Live', {}, { requestKey: `shim:${workId}` });
-        return { handedOff: true };
-      },
     },
 
     // The admin Journey's change_live record, at the merge's time.

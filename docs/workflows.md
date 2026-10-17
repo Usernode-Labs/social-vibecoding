@@ -741,11 +741,11 @@ What a merged pull request still has to do once GitHub has merged it
   with the requests just closed hidden from it. A merge and its close work publish an
   `issues_closed` push, which every web process applies to its own copy (`ws.js`); no
   browser receives it.
-- **Work from before.** An `app.deliver` item a merge recorded before every deploy was
-  app-delivery's (and governance's `app.rebuildProduction`) deploys nothing now: it
-  hands the merge (or the secret change) to `app-delivery`. An older release's
-  `preview.teardown` and `main.check` items only report, and their results send the
-  message this release sends at the merge. These handlers go once no such item can be left.
+- **Work from before.** An older release's `preview.teardown` and `main.check` items only
+  report, and their results send the message this release sends at the merge. These two
+  handlers go once no such item can be left. (A follow-up of a kind no handler runs any
+  more, in an old instance's record, is not retried; an old `app.deliver` one is asked
+  again through Retry delivery.)
 
 ### app-delivery
 
@@ -1019,10 +1019,9 @@ on, `reviewed_head_sha` and `approval_epoch`, and what makes each platform sync 
   minutes (doubling to thirty) until the row reads `merged`, since an older release's pod
   may refuse the message during a rollout; a second `Merged` is ignored there. A merge
   that lands any other way while the gate, an attempt or a sync runs ends them and tells
-  the queue. A claim
-  an older release made (`MergeClaim`, during a rollout) is asked about on GitHub once it
-  is five minutes old, and each boot re-arms a proposal waiting on GitHub with no clock
-  (`Rearm`). Every other exit from review voids the votes.
+  the queue. A `merging` row adopted with no attempt of its own is asked about on GitHub
+  once it is five minutes old, and each boot re-arms a proposal waiting on GitHub with no
+  clock (`Rearm`). Every other exit from review voids the votes.
 - **Sync with main** is a move of this machine too (`SyncRequested`: a person's Sync, the
   resume auto-sync, the queue's conflict lane, a boot failure, a check main fixed, the
   Homeroom bot's fix or hand-off). Under the lock it refuses a sync while one runs, while
@@ -1055,8 +1054,7 @@ on, `reviewed_head_sha` and `approval_epoch`, and what makes each platform sync 
 A fleet maintenance campaign (`src/workflow/campaign/`), from the moment its governance
 vote passes until every app it reaches has an outcome: an AI makes one small change in
 each app's repository and each change goes up for that app's vote. One instance per
-campaign, started by the governance apply's message (or, during a rollout, by the leader's
-adoption of a campaign an older release was driving, once its driver lets its lease go).
+campaign, started by the governance apply's message.
 `maintenance_campaigns.status` and every `maintenance_campaign_apps` row are its
 projections, and its guard refuses them to anyone else.
 
@@ -1078,8 +1076,7 @@ projections, and its guard refuses them to anyone else.
   the requests, the preview of that head) and tells the campaign `ProposalOpened` or
   `ProposalRefused`. A promote the proposal's guard refused outright sends no answer: the
   campaign's clock (set once an app goes up for a vote, not pushed back by later events)
-  reads it off the event within five minutes; one not applied yet is waited for, and one
-  an older release refused during a rollout is sent again (up to six times). A proposal
+  reads it off the event within five minutes; one not applied yet is waited for. A proposal
   that could not go up for a vote is closed with its pull request (`Close`, reason
   `campaign-refused`): nobody can act on the platform account's underway change. The
   next app starts as soon as the previous change is pushed. From then on each proposal is the proposal machine's;
@@ -1096,14 +1093,9 @@ projections, and its guard refuses them to anyone else.
   change under way is not cancelled: its work reads the stop before the AI's every call,
   before the push and before the pull request, and a change that already opened its
   pull request goes up for a vote like the opened ones, which stay).
-- **During a rollout** an older release's `campaign.run` item only asks for that
-  adoption, and the adoption fences the old lease off (`runner_id 'workflow'`, an endless
-  lease; a fenced campaign with no instance, as in a staging copy, is adopted again). A
-  campaign that ended before the machine took it keeps the app rows it had. Both go, with
-  the lease columns, once no older release can run. A release revert finds every adopted
-  campaign fenced and guarded: freeing one for the older code is
-  `DELETE FROM wf_settings WHERE key = 'enabled:campaign'` and
-  `UPDATE maintenance_campaigns SET runner_id = NULL, lease_until = NULL WHERE runner_id = 'workflow'`.
+- **The lease columns** (`runner_id`, `lease_until` on `maintenance_campaigns`, `runner_id` on its
+  app rows) are no longer written; they go in a later release (an older Pod read them during
+  this one's rollout).
 
 ### bot-change
 
@@ -1151,13 +1143,6 @@ requires a run of the bot's that proposed the session.
   "It's live" by its post record (its comment found again by a lookup that throws when it
   cannot read, its thread message by the post's mark on it). Admin → Workflows retries a
   note that failed for good (`RetryFollowup`).
-- **During a rollout** an older release still queues `verdict.followUps`,
-  `preview.stopped`, `bot.shotsSettled`, `bot.proposalChanged`, `bot.requestMerged`,
-  `bot.dmMerged` and `bot.announceLive`: each handler only appends the matching event
-  (keyed by its work id, for a session of the bot's) and returns, for one release. The
-  leader's boot and its minute sweep adopt every change of the bot's in review or being
-  merged that no instance holds and no event is on its way to; it decides from the row, and its DM keys are the older release's, so a change
-  already told is not told again. A release revert leaves the instances unread.
 
 ### bot-voice
 

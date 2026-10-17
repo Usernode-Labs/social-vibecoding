@@ -13,6 +13,9 @@ const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
 const { mergeFollowups, sessionKey, MACHINE, WORK } = require('../src/workflow/merge-followups/machine.ts');
+// Kinds only older releases queued: none has a handler now, and none is
+// queued again.
+const OLD = Object.freeze({ deliver: 'app.deliver', bot: 'bot.requestMerged', dm: 'bot.dmMerged', live: 'bot.announceLive' });
 const secrets = require('../src/services/secrets');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -264,7 +267,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.ok(kinds.includes(WORK.journey), 'the journey record follows live');
     // The bot's DM and "It's live" are its change machine's, told by the
     // live's own write for a change of the bot's (workflow-bot-change-postgres).
-    assert.ok(!kinds.includes(WORK.dm) && !kinds.includes(WORK.live) && !kinds.includes(WORK.bot));
+    assert.ok(!kinds.includes(OLD.dm) && !kinds.includes(OLD.live) && !kinds.includes(OLD.bot));
     const heard = pushed.filter((p) => p.routing.appId === a.id);
     assert.ok(heard.some((p) => p.kind === 'scoped' && p.data.type === 'app_version_changed' && p.data.sha === SHA('a')), 'the version pill');
     assert.ok(heard.some((p) => p.kind === 'room' && p.data.type === 'chat' && p.data.content === live.content && p.data.id > 0
@@ -356,7 +359,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.ok(!said.some((c) => /went live|is live/.test(c)));
     const closePr = (await workOf(carried)).find((w) => w.kind === WORK.closePr);
     assert.match(closePr.input.comment, /^Included in #\d+, which merged\.$/);
-    assert.ok(!(await workOf(carried)).some((w) => w.kind === WORK.deliver), 'its carrier delivers it');
+    assert.ok(!(await workOf(carried)).some((w) => w.kind === OLD.deliver), 'its carrier delivers it');
     // The busy one moved on: left as it was, and free to merge on its own later.
     assert.equal(await instance(busy), undefined);
     assert.equal((await row(busy.id)).status, 'promoted');
@@ -521,7 +524,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     const a = await app({ selfHosted: true });
     const s = await proposal(a);
     await merge(s);
-    assert.ok(!(await workOf(s)).some((w) => w.kind === WORK.deliver), 'no rebuild for the self-hosted app');
+    assert.ok(!(await workOf(s)).some((w) => w.kind === OLD.deliver), 'no rebuild for the self-hosted app');
     // The host deployer's nudge is durable work now, not a notifier.
     assert.equal((await workOf(s)).find((w) => w.kind === WORK.nudge)?.input?.sha, SHA('a'));
     await settle();
@@ -796,7 +799,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
       const a = await app();
       const s = await proposal(a);
       await merge(s);
-      assert.ok(!(await workOf(s)).some((w) => w.kind === WORK.deliver), 'no deploy of its own');
+      assert.ok(!(await workOf(s)).some((w) => w.kind === OLD.deliver), 'no deploy of its own');
       assert.equal((await retireAsked(s)).length, 0, 'the preview waits for the answer');
       const [req] = await asked(a);
       assert.deepEqual(req.payload, { appId: a.id, reason: 'merge', prNumber: s.pr_number, revision: SHA('a'), reuse: null });
@@ -856,10 +859,9 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     }
   });
 
-  // A merge recorded before every deploy was app-delivery's ran its own
-  // deploy (app.deliver work). Its item left at the release hands it to
-  // app-delivery, and an admin's retry of one that failed asks app-delivery.
-  const asBefore = async (s, { state = null, deliver = 'pending' } = {}) => {
+  // A follow-up an older release recorded, failed for good, in the
+  // instance's record (no item left: every one of those kinds is settled).
+  const oldFollowup = async (s, { key, kind, state = null }) => {
     const c = await pool.connect();
     try {
       await c.query('BEGIN');
@@ -867,60 +869,21 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
       const input = { appId: s.app_id, sessionId: s.id, mergeSha: SHA('a'), prNumber: s.pr_number, reuse: null };
       await c.query(
         `UPDATE wf_instances SET state = COALESCE($3, state),
-                data = jsonb_set(data - 'delivery' - 'answered', '{followups,deliver}', $4::jsonb)
+                data = jsonb_set(data - 'delivery' - 'answered', ARRAY['followups', $4::text], $5::jsonb)
           WHERE machine = $1 AND key = $2`,
-        [MACHINE, sessionKey(s.id), state, JSON.stringify({ kind: WORK.deliver, input, status: deliver })]);
-      if (deliver === 'pending') {
-        await c.query(`INSERT INTO wf_work (machine, key, kind, work_key, input) VALUES ($1, $2, $3, 'deliver', $4)`,
-          [MACHINE, sessionKey(s.id), WORK.deliver, JSON.stringify(input)]);
-      }
+        [MACHINE, sessionKey(s.id), state, key, JSON.stringify({ kind, input, status: 'exhausted' })]);
       await c.query('COMMIT');
     } catch (err) { await c.query('ROLLBACK'); throw err; } finally { c.release(); }
   };
 
-  await t.test('an app.deliver item from before hands the merge to app-delivery, which deploys it', async () => {
-    const a = await app();
-    const s = await proposal(a);
-    await merge(s);
-    await asBefore(s);
-    assert.equal((await instance(s)).data.delivery, undefined);
-    work.results.set(WORK.deliver, { handOff: true });
-    try { await settle(); } finally { work.results.delete(WORK.deliver); }
-    const i = await instance(s);
-    assert.equal(i.state, 'delivering');
-    assert.equal(i.data.delivery, 'app-delivery');
-    assert.equal((await asked(a)).length, 2, 'asked again, as the old item would have deployed');
-    assert.equal((await retireAsked(s)).length, 0, 'the preview waits for app-delivery\'s answer');
-    // Its own answer comes first: an earlier deploy does not count.
-    const early = await send(s, 'Deployed', { sha: SHA('a') });
-    await settle();
-    assert.equal((await outcome(early)).reason, 'awaiting_own_answer');
-    await deliveryAnswer(s, 'Delivered', { sha: SHA('a') });
-    await settle();
-    assert.equal((await instance(s)).state, 'live');
-    assert.equal((await retireAsked(s)).length, 1);
-  });
-
-  await t.test('a merge from before that another deploy made live first still lets its preview go when its item hands off', async () => {
-    const a = await app();
-    const s = await proposal(a);
-    await merge(s);
-    await asBefore(s);
-    // App-delivery's deploy of the merge commit, heard before the item ran.
-    await send(s, 'Deployed', { sha: SHA('a') });
-    await rt.drain();
-    assert.equal((await instance(s)).state, 'live');
-    assert.equal((await retireAsked(s)).length, 0);
-    work.results.set(WORK.deliver, { handOff: true });
-    try { await settle(); } finally { work.results.delete(WORK.deliver); }
-    assert.equal((await retireAsked(s)).length, 1, 'the preview goes');
-  });
-
+  // A merge recorded before every deploy was app-delivery's ran its own
+  // deploy (app.deliver work). An admin's retry of one that failed is
+  // refused for Retry delivery, which asks app-delivery.
   await t.test('an admin\'s retry of a merge whose own deploy failed before asks app-delivery', async () => {
     const a = await app();
     const s = await proposal(a);
     await merge(s);
-    await asBefore(s, { state: 'deploy_failed', deliver: 'exhausted' });
+    await oldFollowup(s, { key: 'deliver', kind: OLD.deliver, state: 'deploy_failed' });
     const refused = await send(s, 'RetryFollowup', { workKey: 'deliver' }, { kind: 'admin' });
     await rt.drain();
     assert.equal((await outcome(refused)).reason, 'use_retry_delivery');
@@ -930,10 +893,24 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.equal(i.state, 'delivering');
     assert.equal(i.data.delivery, 'app-delivery');
     assert.equal((await asked(a)).length, 2);
-    assert.ok(!(await workOf(s)).some((w) => w.kind === WORK.deliver), 'no deploy of its own');
+    assert.ok(!(await workOf(s)).some((w) => w.kind === OLD.deliver), 'no deploy of its own');
     await deliveryAnswer(s, 'Delivered', { sha: SHA('a') });
     await settle();
     assert.equal((await instance(s)).state, 'live');
+  });
+
+  await t.test('a retry of a follow-up whose kind has no handler is refused, and queues nothing', async () => {
+    const a = await app();
+    const s = await proposal(a);
+    await merge(s);
+    await settle();
+    await oldFollowup(s, { key: 'bot', kind: OLD.bot });
+    const before = (await workOf(s)).length;
+    const refused = await send(s, 'RetryFollowup', { workKey: 'bot' }, { kind: 'admin' });
+    await settle();
+    assert.equal((await outcome(refused)).reason, 'not_retryable');
+    assert.equal((await workOf(s)).length, before);
+    assert.equal((await instance(s)).data.followups.bot.status, 'exhausted', 'its record is left as it was');
   });
 
   await t.test('an answer from anyone but app-delivery, or to a merge that did not ask it, is refused', async () => {

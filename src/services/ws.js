@@ -147,10 +147,6 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
     case 'shots_eval_wake':
       require('./shots-eval-runner').wakeHere();
       return;
-    // An older release's merge queue asking another process for a pass
-    // (during a rollout): the merge queue is a workflow machine now.
-    case 'merge_kick':
-      return;
     default:
       log.warn('ws', 'unknown bus kind', { kind });
   }

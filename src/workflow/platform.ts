@@ -152,12 +152,9 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   // The suite on each new main, with its switches from the environment.
   const checks = mainCheck(mainCheckDeps(process.env));
   const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks];
-  // `botNote`: the one-release shims of the work kinds older releases queued
-  // to reach the bot (each appends its event to the bot's change machine).
-  const shimDeps = { ...deps, botNote };
   const services = {
-    ...governanceServices({ ...deps, adoptCampaigns }), ...mergeFollowupsServices(shimDeps), ...botBuildServices(deps),
-    ...appDeliveryServices(deps), ...previewServices(shimDeps), ...shotsServices(shimDeps), ...proposalServices(shimDeps),
+    ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
+    ...appDeliveryServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
     ...campaignServices(deps), ...botChangeServices(deps), ...botVoiceServices(deps), ...botDmServices(deps),
     ...mainCheckServices(deps),
   };
@@ -210,8 +207,6 @@ export async function startWorkflowLoops(): Promise<void> {
   await adoptProposals();
   await rearmWaitingProposals();
   await adoptMergeQueues();
-  await adoptCampaigns();
-  await adoptBotChanges();
   await adoptDeferredDms();
   await adoptMainChecks();
   await retryPlatformFaults();
@@ -269,35 +264,9 @@ async function adoptMainChecks(): Promise<number> {
   return rows.length;
 }
 
-// The Homeroom bot's changes up for a vote that its change machine does not
-// hold yet (proposed by an older release) are adopted from their rows: the
-// machine decides from the row, and what it sends is keyed as the older
-// release keyed it, so a change already told is not told again. Once per
-// release; the leader's minute sweep (server.js) runs it again for the rare
-// change whose promote an older release accepted during the rollout.
-export async function adoptBotChanges(limit = 500): Promise<number> {
-  if (!runtime) return 0;
-  const { rows } = await kernelPool!.query(
-    `SELECT cs.id, cs.app_id, cs.status FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
-      WHERE cs.status IN ('promoted', 'merging') AND u.username = $2 AND u.is_synthetic = TRUE
-        AND EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.proposal_session_id = cs.id OR r.build_session_id = cs.id)
-        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'session:' || cs.id)
-        -- nor one an event is already on its way to (an adoption not yet applied)
-        AND NOT EXISTS (SELECT 1 FROM wf_events e WHERE e.machine = $1 AND e.key = 'session:' || cs.id AND e.status = 'pending')
-      ORDER BY cs.id LIMIT $3`, [BOT_CHANGE, BOT_USERNAME, limit]);
-  for (const r of rows) {
-    await botNote(r.id, 'Proposed', {}, { requestKey: `adopt:${r.id}`, source: { kind: 'system', name: 'adopt' }, appId: r.app_id })
-      .catch((err: Error) => log!.warn('workflow', 'Could not adopt a change of the Homeroom bot\'s', { sessionId: r.id, message: err.message }));
-  }
-  if (rows.length) log!.info('workflow', 'Adopted the Homeroom bot\'s changes', { count: rows.length });
-  return rows.length;
-}
-
 // The bot's change machine hears `type` about session `sessionId`: from the
-// bot's loop (FixRoundEnded, homeroom-bot.js) and from the one-release
-// shims of the work kinds older releases queued. Only for a session of the
-// bot's (a shim's item may be about anybody's); the machine's guard refuses
-// one no run of the bot's proposed.
+// bot's loop (FixRoundEnded, homeroom-bot.js). Only for a session of the
+// bot's; the machine's guard refuses one no run of the bot's proposed.
 export async function botNote(sessionId: number, type: string, payload: Record<string, unknown> = {},
   o: { requestKey?: string; source?: Source; appId?: number | null } = {}): Promise<EventOutcome | number> {
   if (!runtime) throw new Error('The workflow runtime is not running in this process');
@@ -437,29 +406,6 @@ export async function adoptDeferredDms(): Promise<number> {
       .catch((err: Error) => log!.warn('workflow', 'Could not adopt a DM answer to ask again', { messageId: r.message_id, message: err.message }));
   }
   if (rows.length) log!.info('workflow', 'Adopted DM answers to ask again', { count: rows.length });
-  return rows.length;
-}
-
-// A campaign an older release started (no instance yet: running, or done
-// and retryable) is taken by the campaign machine once no older driver holds
-// its lease, so a driver finishing an app records its pull request before
-// the machine takes the campaign. The leader's boot and its minute sweep
-// (server.js) ask. Transitional: an apply since this release starts its
-// campaign itself (the governance machine's message); deleted with the lease
-// columns once no older release can run.
-export async function adoptCampaigns(): Promise<number> {
-  if (!runtime) return 0;
-  const { rows } = await kernelPool!.query(
-    `SELECT mc.id FROM maintenance_campaigns mc
-      WHERE (mc.lease_until IS NULL OR mc.lease_until < now() OR mc.runner_id = 'workflow')
-        AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'campaign:' || mc.id)
-      ORDER BY mc.id`, [CAMPAIGN]);
-  for (const r of rows) {
-    await runtime.append(CAMPAIGN, campaignKey(r.id), { type: 'Start', payload: { campaignId: r.id } },
-      { requestKey: `adopt:${r.id}`, source: { kind: 'system', name: 'adopt' } })
-      .catch((err: Error) => log!.warn('workflow', 'Could not adopt a maintenance campaign', { campaignId: r.id, message: err.message }));
-  }
-  if (rows.length) log!.info('workflow', 'Adopted maintenance campaigns', { count: rows.length });
   return rows.length;
 }
 

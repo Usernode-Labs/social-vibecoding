@@ -6,10 +6,9 @@
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import type { BotNote } from '../rules/bot-notes.ts';
 import { WORK } from './machine.ts';
 
-interface Deps { config: any; pool: Pool; botNote?: BotNote }
+interface Deps { config: any; pool: Pool }
 
 // Building copies is the cost (two images, two databases, two runtimes):
 // at most four runs build at once (Bruno, 2026-10-15). An agent runs in its
@@ -34,7 +33,7 @@ function failureOf(error: any): Json {
   };
 }
 
-export function shotsServices({ config, pool, botNote }: Deps): Record<string, WorkHandler> {
+export function shotsServices({ config, pool }: Deps): Record<string, WorkHandler> {
   return {
     // The exact before revision of the head (GitHub's merge base). Nothing
     // is built yet: a head GitHub cannot compare is a run that never starts,
@@ -137,17 +136,6 @@ export function shotsServices({ config, pool, botNote }: Deps): Record<string, W
           runId: input.runId, sessionId: input.sessionId, appSlug: input.appSlug,
           worker: input.worker === true, stopTurn: input.stopTurn === true,
         });
-      },
-    },
-
-    // One release only: the slot settled, as an older release queued it.
-    // The Homeroom bot's change machine hears it; since this release the
-    // transition tells it.
-    [WORK.settled]: {
-      maxAttempts: 3,
-      async run({ input, workId }): Promise<Json> {
-        if (botNote) await botNote(Number(input.sessionId), 'ShotsSettled', {}, { requestKey: `shim:${workId}` });
-        return { told: true };
       },
     },
 

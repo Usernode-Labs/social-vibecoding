@@ -14090,8 +14090,9 @@ CREATE TRIGGER chat_sessions_wf_proposal_owned
 
 -- campaign (src/workflow/campaign/) owns a fleet maintenance campaign once it
 -- holds it: the campaign's status, when it ended, and each app's record (its
--- state and error), projected from the instance; and the older release's
--- lease, which it fences off for good. INSERTs are not guarded (the
+-- state and error), projected from the instance; and the lease columns an
+-- older release's driver used, written by nothing now and dropped in a later
+-- release. INSERTs are not guarded (the
 -- governance apply inserts the campaign, the machine its app rows), nor are
 -- the columns a foreign key empties (a deleted proposal, issue or author).
 DROP TRIGGER IF EXISTS maintenance_campaigns_wf_owned ON maintenance_campaigns;

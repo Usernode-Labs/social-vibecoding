@@ -387,18 +387,18 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     }
   });
 
-  await t.test('a change of the bot\'s an older release put up for a vote is adopted by its change machine at boot; a shim\'s note about anybody else\'s is dropped', async () => {
+  await t.test('a note for the bot\'s change machine reaches it for a change of the bot\'s, and nothing about anybody else\'s', async () => {
     const { rows: [s1] } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, linked_issues, check_state, reviewed_head_sha, checks_commit_sha)
        VALUES ($1, $2, 'promoted', $3, 'Older', $4, 'passing', $5, $5) RETURNING *`, [app.id, botUser.id, ++seq, [seq], SHA('e')]);
     await pool.query(`INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id) VALUES ($1, $2, 'live', 'ready', $3)`,
       [app.id, seq, s1.id]);
-    // The boot of a leader adopts it (startWorkflowLoops → adoptBotChanges).
     await platform.startWorkflow(config, { loops: true });
-    assert.equal(await platform.adoptBotChanges(), 0, 'once: the boot did');
+    // Its first note creates the instance, decided from its row.
+    assert.notEqual(await platform.botNote(s1.id, 'Proposed', {}), 0);
     const inst = async (id) => (await pool.query(`SELECT state FROM wf_instances WHERE machine = 'bot-change' AND key = $1`, [`session:${id}`])).rows[0]?.state;
-    await until(async () => (await inst(s1.id)) === 'ready', 'adopted, and decided from its row: ready to try');
-    // An older release's shim names a session of somebody else's: nothing is appended.
+    await until(async () => (await inst(s1.id)) === 'ready', 'decided from its row: ready to try');
+    // A session of somebody else's: nothing is appended.
     const theirs = await proposal('promoted');
     assert.equal(await platform.botNote(theirs.id, 'Verdict', { state: 'passing' }), 0);
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM wf_events WHERE machine = 'bot-change' AND key = $1`, [`session:${theirs.id}`])).rows[0].n, 0);

@@ -89,10 +89,11 @@ const fromMerge = (e: Event<any>) => e.source.kind === 'message' && e.source.fro
 // follow-up of this kind, answered by message rather than by a work result.
 const DELIVERY_FOLLOWUP = 'app-delivery';
 // The rebuild a secret change ran itself before every deploy was
-// app-delivery's. An item of it left from then deploys nothing: it hands
-// the redeploy to app-delivery (services.ts), and is removed once none can
-// be left.
+// app-delivery's: no item of it is left to run, and a follow-up of it in an
+// old record is asked again of app-delivery.
 const OWN_REBUILD = 'app.rebuildProduction';
+// The follow-up kinds a retry can queue: those with a handler (services.ts).
+const RETRYABLE_WORK: ReadonlySet<string> = new Set(['github.closeIssue', 'governance.checkTarget', 'bot.requestsClosed']);
 const deliveryRequest = (appId: number) => ({
   to: { machine: DELIVERY, key: `app:${appId}` }, event: { type: 'DeployRequested', payload: { appId, reason: 'secret_change' } },
 });
@@ -302,13 +303,6 @@ function supersede(issue: Issue, event: Event<any>, ctx: TransitionContext, caus
 // list lags; pushes.ts issuesClosed), then the open-issues lists re-read.
 function followupResult(s: { name: Closed; data: ClosedData }, e: Event<WorkResultPayload>, status: Followup['status']): Outcome<GovState> {
   const prev = s.data.followups[e.payload.workKey]!;
-  // A rebuild recorded before every deploy was app-delivery's handed the
-  // redeploy to it: the follow-up is now its request, answered by message.
-  if (status === 'done' && e.payload.kind === OWN_REBUILD && (e.payload.result as { handOff?: boolean } | null)?.handOff) {
-    const asked = { kind: DELIVERY_FOLLOWUP, input: prev.input, status: 'pending' as const };
-    return { next: { name: s.name, data: { ...s.data, followups: { ...s.data.followups, [e.payload.workKey]: asked } } },
-      messages: [deliveryRequest(Number((prev.input as any).appId))] };
-  }
   const followups = { ...s.data.followups, [e.payload.workKey]: { ...prev, status, ...(e.payload.error ? { error: e.payload.error.message } : {}) } };
   const input = (prev.input || {}) as Record<string, Json>;
   const closed = status === 'done' && e.payload.kind === 'github.closeIssue' && input.bustCache
@@ -382,8 +376,11 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
     Delivered: { guard: fromDelivery, to: (s: any, e: Event<any>) => deliveryAnswer(s, 'done', null) },
     DeliveryFailed: { guard: fromDelivery, to: (s: any, e: Event<any>) => deliveryAnswer(s, 'failed', e.payload.message) },
     RetryFollowup: {
-      guard: (s: any, e: Event<any>) => (['failed', 'exhausted'].includes(s.data.followups[e.payload.workKey]?.status)
-        ? ok() : reject('not_retryable')),
+      guard: (s: any, e: Event<any>) => {
+        const f = s.data.followups[e.payload.workKey];
+        const retryable = !!f && (f.kind === DELIVERY_FOLLOWUP || f.kind === OWN_REBUILD || RETRYABLE_WORK.has(f.kind));
+        return retryable && ['failed', 'exhausted'].includes(f.status) ? ok() : reject('not_retryable');
+      },
       to: (s: any, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<GovState> => {
         const prev = s.data.followups[e.payload.workKey] as Followup;
         const key = `${e.payload.workKey.replace(/~\d+$/, '')}~${ctx.version + 1}`;

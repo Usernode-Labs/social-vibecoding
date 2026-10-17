@@ -6,15 +6,9 @@ import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { backoff, closeAndComment, gone, permanent } from '../github-work.ts';
 
-// requestDeploy: platform.ts's, for the rebuild work left from before;
-// adoptCampaigns: platform.ts's, for the campaign work left from before.
-interface Deps {
-  config: any; pool: Pool;
-  requestDeploy?: (appId: number, reason: string, o?: Record<string, unknown>) => Promise<number>;
-  adoptCampaigns?: () => Promise<number>;
-}
+interface Deps { config: any; pool: Pool }
 
-export function governanceServices({ config, pool, requestDeploy, adoptCampaigns }: Deps): Record<string, WorkHandler> {
+export function governanceServices({ config, pool }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
   return {
     // Close a GitHub issue, then comment on it (github-work.ts). The
@@ -27,35 +21,6 @@ export function governanceServices({ config, pool, requestDeploy, adoptCampaigns
         const done = await closeAndComment(ctx, 'issue');
         if ((done as { gone?: boolean }).gone) return done;
         return { closed: true };
-      },
-    },
-
-    // A secret change's own rebuild, as the machine recorded it before
-    // every deploy was app-delivery's. An item of it left from then deploys
-    // nothing: it asks app-delivery for the redeploy here, so it is asked
-    // whichever release applies its result (an older Pod's code would only
-    // mark it done), and answers `handOff`, which the machine reads as its
-    // follow-up now being app-delivery's (machine.ts). The request key is
-    // the item's, so a retry asks once.
-    'app.rebuildProduction': {
-      maxAttempts: 5,
-      backoffMs: backoff,
-      async run({ input, workId }): Promise<Json> {
-        await requestDeploy!(Number(input.appId), 'secret_change', { requestKey: `handoff:${workId}` });
-        return { handOff: true };
-      },
-    },
-
-    // A campaign an older release applied queued this item (it ran
-    // fleet-maintenance's old driver): the campaign machine takes the
-    // campaign instead (platform.adoptCampaigns), and the item is done.
-    // Transitional: deleted once no older release can run.
-    'campaign.run': {
-      maxAttempts: 5,
-      backoffMs: backoff,
-      async run(): Promise<Json> {
-        await adoptCampaigns!();
-        return { handOff: 'campaign' };
       },
     },
 

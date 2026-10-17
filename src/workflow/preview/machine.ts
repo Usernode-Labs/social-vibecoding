@@ -48,14 +48,6 @@ export const WORK = Object.freeze({
   retireAttempt: 'preview.retireAttempt',
   dropClaims: 'preview.dropClaims',
   retire: 'preview.retire',
-  // Left only for the items an older release queued: `preview.ready` and a
-  // verdict's follow-ups hand their head to the shots machine, and the
-  // follow-ups and `preview.stopped` hand the bot's note to its change
-  // machine (services.ts, one release). Since then the transitions tell
-  // both by message.
-  ready: 'preview.ready',
-  followUps: 'verdict.followUps',
-  stopped: 'preview.stopped',
 });
 
 // ── States ──────────────────────────────────────────────────────────────
@@ -1060,12 +1052,7 @@ function workResult(name: Name, outcome: 'succeeded' | 'failed' | 'exhausted', d
       // Everything else only has to happen; a retired attempt leaves the list.
       const d = s.data;
       const retiring = p.kind === WORK.retireAttempt ? d.retiring.filter((a) => a.key !== p.workKey) : d.retiring;
-      // An item an older release queued, before the shots machine was told
-      // by message: its handler hands its head over (services.ts).
-      const r = (outcome === 'succeeded' ? p.result : null) as { handOff?: string; stopped?: string | null } | null;
-      const messages = r?.handOff ? [toShots(d, 'HeadReady', { head: r.handOff })]
-        : r && 'stopped' in r ? [toShots(d, 'PreviewStopped', { head: r.stopped ?? null })] : [];
-      return step({ name, data: { ...d, retiring }, messages });
+      return step({ name, data: { ...d, retiring } });
     },
   };
 }

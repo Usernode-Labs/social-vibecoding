@@ -240,9 +240,7 @@ test('every way the shots slot settles tells whoever waits on it, by a message t
   const machine = read('src/workflow/shots/machine.ts');
   assert.match(machine, /const settledNote = \(d: Data\): DomainWrite => toBotChange\(d\.sessionId, 'ShotsSettled'\);/);
   assert.equal(machine.match(/settledNote\(/g).length, 6, 'each way it settles');
-  const services = read('src/workflow/shots/services.ts');
-  assert.match(services, /botNote\(Number\(input\.sessionId\), 'ShotsSettled', \{\}, \{ requestKey: `shim:\$\{workId\}` \}\)/,
-    'an item an older release queued hands it over for one release');
+  assert.doesNotMatch(read('src/workflow/shots/services.ts'), /botNote/, 'no work of its own tells the bot');
   assert.doesNotMatch(read('src/services/shots-state.js'), /settleListener|setImmediate/);
 });
 

@@ -694,8 +694,9 @@ test('workflow machines in a process of their own, and through its crash', { tim
   async function campaignThrough({ crashAt } = {}) {
     await workflow.stop();
     await startWorkflow(MODEL);
-    // The fleet: one app; the campaign's own row as its governance apply
-    // inserts it (the apply is pinned in the governance suite).
+    // The fleet: one app, and the campaign proposed on the platform's own app
+    // and applied by an admin from the web side; the apply inserts its row and
+    // starts it (the apply is pinned in the governance suite).
     // (Its slug filter names only its own app.)
     const models = (await procs.effects(pool, 'llm.call')).length;
     const self = (await pool.query(`SELECT * FROM apps WHERE self_hosted = TRUE LIMIT 1`)).rows[0] || await app({ selfHosted: true });
@@ -706,14 +707,18 @@ test('workflow machines in a process of their own, and through its crash', { tim
        RETURNING *`, [`skip-${++seq}`, author.id]);
     await pool.query(`UPDATE apps SET status = 'running' WHERE id = $1`, [target.id]);
     const { rows: [issue] } = await pool.query(
-      `INSERT INTO issues (app_id, title, kind, payload, created_by, status) VALUES ($1, 'Maintenance campaign: JWT', 'maintenance_campaign', '{}', $2, 'closed')
-       RETURNING id`, [self.id, author.id]);
-    const { rows: [c] } = await pool.query(
-      `INSERT INTO maintenance_campaigns (issue_id, title, instructions, target_filter, status, created_by)
-       VALUES ($1, 'JWT', 'Use the public key', $3, 'running', $2) RETURNING id`, [issue.id, author.id, JSON.stringify([target.slug, skipped.slug])]);
+      `INSERT INTO issues (app_id, title, kind, payload, created_by) VALUES ($1, 'Maintenance campaign: JWT', 'maintenance_campaign', $2, $3)
+       RETURNING *`, [self.id, JSON.stringify({ title: 'JWT', instructions: 'Use the public key', targetFilter: [target.slug, skipped.slug] }), author.id]);
+    const { rows: [adminUser] } = await pool.query(
+      `INSERT INTO users (username, password, is_admin, has_platform_access) VALUES ($1, 'x', TRUE, TRUE) RETURNING id, username`,
+      [`campaign_admin_${++seq}`]);
+    await platform.fileProposal(issue.id, self.id);
     if (crashAt) await procs.arm(pool, crashAt);
     // The web side asks; the workflow process decides and works.
-    await platform.adoptCampaigns();
+    const applied = await platform.adminApplyProposal({ ...issue, status: 'open' }, adminUser);
+    assert.equal(applied.status, 200, JSON.stringify(applied.body));
+    const c = await procs.until(async () => (await pool.query('SELECT id FROM maintenance_campaigns WHERE issue_id = $1', [issue.id])).rows[0],
+      'the campaign\'s row, inserted by the apply');
     if (crashAt) {
       await procs.reached(pool, crashAt);
       await workflow.kill();

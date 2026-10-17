@@ -1,8 +1,7 @@
 // campaign: a fleet maintenance campaign, from the moment its governance
 // vote passes until every app it reaches has an outcome. One instance per
 // campaign (`campaign:<id>`), created by the governance machine's apply (a
-// message its write sends with the row it inserts), or by the leader's
-// adoption of a campaign an older release started.
+// message its write sends with the row it inserts).
 //
 //   running ── every app proposed, skipped or failed ─▶ done ── RetryApp ─▶ running
 //      └── Stop ─▶ stopped
@@ -41,11 +40,6 @@ export const NO_CAP = 1_000_000;
 // is looked at again this often (a promote the proposal machine refused
 // outright sends no answer).
 export const CHECK_MS = 5 * 60 * 1000;
-// The runner the older release's lease reads once the machine holds a
-// campaign: its takeLease never takes it (a transitional fence, deleted with
-// the lease columns).
-export const FENCE = 'workflow';
-
 // ── State ───────────────────────────────────────────────────────────────
 
 export type AppState = 'waiting' | 'changing' | 'proposing' | 'proposed' | 'skipped' | 'failed' | 'not_reached';
@@ -63,9 +57,6 @@ export interface AppRec {
   // Its change made again from scratch after its proposal closed: a branch
   // of its own (the closed proposal's may still be closing its pull request).
   gen?: number;
-  // Promotes sent again after an older release's proposal machine refused
-  // them during a rollout (it did not take a campaign's messages yet).
-  resent?: number;
 }
 export interface Data {
   campaignId: number;
@@ -120,9 +111,6 @@ const EVENTS = {
 const step = (next: Live, more: Omit<Outcome<CState>, 'next'> = {}): Outcome<CState> => ({ next, ...more });
 const workKey = (a: AppRec) => `app:${a.appId}:${a.n}`;
 const branchOf = (d: Data, a: AppRec) => `maint/c${d.campaignId}/${a.slug}${a.gen ? `-${a.gen + 1}` : ''}`;
-// How often a promote an older release refused is sent again (a rollout
-// lasts minutes; the check runs every CHECK_MS).
-const RESENDS = 6;
 const withApp = (d: Data, appId: number, change: Partial<AppRec>): Data =>
   ({ ...d, apps: d.apps.map((a) => (a.appId === appId ? { ...a, ...change } : a)) });
 const count = (d: Data, ...states: AppState[]) => d.apps.filter((a) => states.includes(a.state)).length;
@@ -170,8 +158,8 @@ function clocked(out: Outcome<CState>, ctx: TransitionContext, before: CState | 
   return { ...out, timer: waiting ? { at: new Date(ctx.now.getTime() + CHECK_MS), event: { type: 'Check' } } : null };
 }
 
-// The app's record from the row an older release left: a driver that died
-// on an app left it 'running', and it is changed again.
+// The app's record from its row, when one is there before the campaign
+// starts (a row left 'running' is changed again).
 function adopted(r: AppRow): AppRec {
   const base = { appId: r.appId, slug: r.slug, n: 0, sessionId: r.sessionId, prNumber: r.prNumber, error: r.error, resumable: false };
   switch (r.state) {
@@ -191,8 +179,7 @@ function start(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<CState>
   };
   const name: Name = c.status === 'done' ? 'done' : c.status === 'cancelled' ? 'stopped' : 'running';
   const s: Live = { name, data };
-  // Its app rows (the targets, fixed now), and the older release's lease
-  // fenced off for good.
+  // Its app rows (the targets, fixed now).
   const writes: DomainWrite[] = [{ type: 'adopt', campaignId: c.id, appIds: data.apps.map((a) => a.appId) }];
   return clocked(next(s, { writes }), ctx, null);
 }
@@ -271,7 +258,7 @@ function retry(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcom
   // push carries its checkpoint on.
   const proposed = a.sessionId != null;
   const d = withApp(s.data, a.appId, {
-    state: 'waiting', error: null, sessionId: null, resent: 0,
+    state: 'waiting', error: null, sessionId: null,
     resumable: a.state === 'failed' && a.resumable && !proposed,
     ...(proposed ? { gen: (a.gen || 0) + 1 } : {}),
   });
@@ -322,11 +309,6 @@ function checked(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outc
       d = withApp(d, a.appId, { state: 'proposed', sessionId: q.sessionId, prNumber: q.prNumber ?? a.prNumber });
     } else if (q.status === 'archived') {
       fail('Closed before it went up for a vote');
-    } else if (q.promote?.result === 'rejected' && q.promote.reason === 'not_a_producer' && (a.resent || 0) < RESENDS
-      && q.sessionId && s.data.proposerId) {
-      // An older release's proposal machine took it during a rollout.
-      d = withApp(d, a.appId, { resent: (a.resent || 0) + 1 });
-      messages.push(promoteMessage({ sessionId: q.sessionId, appId: a.appId, userId: s.data.proposerId, head: null, key: campaignKey(d.campaignId) }));
     } else if (q.promote?.result === 'rejected') {
       fail(`Could not put it up for a vote: ${q.promote.reason || 'refused'}`);
       if (q.sessionId) messages.push(closeMessage(q.sessionId, a.appId));
@@ -374,8 +356,6 @@ export function campaign(): Machine<CState, Facts> {
       guard: (_s: CState, e: Event<any>, f: Facts, ctx: TransitionContext): Check => {
         if (ctx.key !== campaignKey(e.payload.campaignId)) return reject('key_mismatch');
         if (!f.campaign) return reject('not_found');
-        // An older release's driver is on it: adopted once it lets go.
-        if (f.campaign.drivenElsewhere) return reject('driven_elsewhere');
         return ok();
       },
       to: (_s: CState, e: Event<any>, f: Facts, ctx: TransitionContext) => start(e, f, ctx),
@@ -467,17 +447,13 @@ export function campaign(): Machine<CState, Facts> {
 
 // ── Domain writes ───────────────────────────────────────────────────────
 
-// The campaign's app rows (the targets, fixed at its start; rows an older
-// release seeded are kept as they are), and the older release's lease
-// fenced off: its takeLease never takes a campaign this machine holds.
+// The campaign's app rows (the targets, fixed at its start; rows already
+// there are kept as they are).
 async function writeAdopt(tx: Tx, w: any) {
   await tx.query(
     `INSERT INTO maintenance_campaign_apps (campaign_id, app_id)
      SELECT $1, x FROM unnest($2::int[]) AS x
      ON CONFLICT (campaign_id, app_id) DO NOTHING`, [w.campaignId, w.appIds]);
-  await tx.query(
-    `UPDATE maintenance_campaigns SET runner_id = $2, lease_until = 'infinity' WHERE id = $1`, [w.campaignId, FENCE]);
-  await tx.query('UPDATE maintenance_campaign_apps SET runner_id = $2 WHERE campaign_id = $1', [w.campaignId, FENCE]);
 }
 
 // A change made: its proposal's row (the platform's, its pull request open,
