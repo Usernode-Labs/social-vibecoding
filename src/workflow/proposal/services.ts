@@ -316,11 +316,7 @@ export function proposalServices({ config, pool, botNote }: Deps): Record<string
       concurrency: 4,
       async run(ctx): Promise<Json> {
         const { input, signal } = ctx;
-        const durableSteps = legacy('services/durable-steps');
-        const steps = durableSteps.durable({
-          resumeFrom: ctx.resumeFrom, checkpoint: ctx.checkpoint, signal, attempt: ctx.attempt,
-          lostAttempts: ctx.lostAttempts || 0, owner: `proposal/sync:${input.sessionId}:${input.n}`,
-        });
+        const steps = ctx.steps({ owner: `proposal/sync:${input.sessionId}:${input.n}` });
         const out = await legacy('services/sync-main').runSyncWork(config, pool, {
           sessionId: Number(input.sessionId), reason: String(input.reason), measureFirst: !!input.measureFirst,
           waitForIdle: !!input.waitForIdle, githubConflict: !!input.githubConflict, last: ctx.attempt >= SYNC_ATTEMPTS, steps,

@@ -19,7 +19,7 @@
 // request saying why. A person's proposal is theirs, and one already approved
 // (merging, merged) is past withdrawing. What calls this:
 //   - every observed close after a merge, the bot's or a person's
-//     (issue-close-watcher.js, and included-changes.js for a change that went
+//     (issue-close-watcher.js, and merge-followups/facts.ts for a change that went
 //     live inside another);
 //   - a passed close-issue vote (the governance machine's bot.requestsClosed
 //     work, src/workflow/governance-proposal/services.ts);
@@ -194,9 +194,12 @@ function doneElsewhereText({ title, username }) {
  * Tell each person who asked the bot for one of `numbers` (just closed) that
  * somebody else's change shipped it, once (rings as done another way:
  * homeroom-bot-dm.js STORY_MOMENTS `request_closed`), and re-read their open
- * tray. Best effort, never throws; resolves how many were told.
+ * tray. Resolves how many were told. Best effort, never throws, unless
+ * `strict` (a durable caller's work, which retries): then a read or a DM
+ * that failed throws, and the retry tells only who was not told yet (each
+ * DM is keyed per request and person).
  */
-async function tellDoneElsewhere(pool, { appId, numbers, deps = {} }) {
+async function tellDoneElsewhere(pool, { appId, numbers, deps = {}, strict = false }) {
   let told = 0;
   try {
     const { rows } = await pool.query(DONE_ELSEWHERE_SQL, [Number(appId), numbers, BOT_USERNAME]);
@@ -219,6 +222,7 @@ async function tellDoneElsewhere(pool, { appId, numbers, deps = {} }) {
         },
         idempotencyKey: `hrbot-done-elsewhere-${Number(appId)}-${n}-${Number(row.user_id)}`,
       }).catch((err) => {
+        if (strict) throw err;
         log.warn('homeroom-bot-closed-requests', 'Could not tell a requester their request was done another way', { appId, n, err: err.message });
         return null;
       });
@@ -226,6 +230,7 @@ async function tellDoneElsewhere(pool, { appId, numbers, deps = {} }) {
       tray.noteWorkChanged(Number(row.user_id));
     }
   } catch (err) {
+    if (strict) throw err;
     log.warn('homeroom-bot-closed-requests', 'Could not tell requesters their requests were done another way', { appId, err: err.message });
   }
   return told;
@@ -312,7 +317,7 @@ async function noteRequestsClosed(pool, { appId, closed, strict = false, deps = 
     }
     // 16 Oct 2026 (V4): whoever asked the bot for one of them hears it was
     // done another way, when somebody else's merged change shipped it.
-    if (deps.tellDoneElsewhere !== false) await tellDoneElsewhere(pool, { appId: Number(appId), numbers, deps });
+    if (deps.tellDoneElsewhere !== false) await tellDoneElsewhere(pool, { appId: Number(appId), numbers, deps, strict });
     return { withdrawn };
   } catch (err) {
     if (strict) throw err;

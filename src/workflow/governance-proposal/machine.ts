@@ -83,6 +83,8 @@ const EVENTS = {
 };
 
 const DELIVERY = 'app-delivery';
+// A message from a merge's follow-ups (merge-followups' issues.closeAfterMerge result).
+const fromMerge = (e: Event<any>) => e.source.kind === 'message' && e.source.from.machine === 'merge-followups';
 // A secret change's redeploy, asked of app-delivery: recorded as a
 // follow-up of this kind, answered by message rather than by a work result.
 const DELIVERY_FOLLOWUP = 'app-delivery';
@@ -439,12 +441,14 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
       return readFacts(tx, issueId, event, state.name === 'open' || state.name === NONE, deps.dataKey);
     },
     authorize: {
-      Filed: (e) => (['route', 'system', 'admin'].includes(e.source.kind) ? ok() : reject('not_allowed')),
+      // A merge's follow-ups file a close proposal whose target it saw
+      // closed, then tell it (TargetClosed): messages, in its transaction.
+      Filed: (e) => (['route', 'system', 'admin'].includes(e.source.kind) || fromMerge(e) ? ok() : reject('not_allowed')),
       VoteCast: (e) => (e.source.kind === 'route' && user(e) ? ok() : reject('not_the_voter')),
       Evaluate: (e) => (e.source.kind === 'timer' || e.source.kind === 'admin' ? ok() : reject('internal_only')),
       AdminApply: (e) => (e.source.kind === 'admin' && user(e) ? ok() : reject('admin_only')),
       Withdraw: (e, f) => (user(e) && f.issue?.createdBy === e.payload.userId ? ok() : reject('not_author')),
-      TargetClosed: (e) => (e.source.kind === 'system' || e.source.kind === 'route' ? ok() : reject('internal_only')),
+      TargetClosed: (e) => (e.source.kind === 'system' || e.source.kind === 'route' || fromMerge(e) ? ok() : reject('internal_only')),
       RetryFollowup: (e) => (e.source.kind === 'admin' ? ok() : reject('admin_only')),
       Delivered: (e) => (e.source.kind === 'message' && e.source.from.machine === DELIVERY ? ok() : reject('internal_only')),
       DeliveryFailed: (e) => (e.source.kind === 'message' && e.source.from.machine === DELIVERY ? ok() : reject('internal_only')),

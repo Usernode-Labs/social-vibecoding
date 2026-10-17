@@ -13206,7 +13206,7 @@ CREATE INDEX IF NOT EXISTS edge_grant_redemptions_expiry_idx
 CREATE INDEX IF NOT EXISTS sessions_token_sha256_idx
   ON sessions (encode(sha256(token::bytea), 'hex'));
 
--- A change that went live inside another one (services/included-changes.js):
+-- A change that went live inside another one (workflow/merge-followups/facts.ts):
 -- when a change merges, an open change whose head commit is one of the
 -- merged pull request's own commits was built on, so its work is live too.
 -- It is marked merged with the merge it went live in (merged_at and
@@ -13907,6 +13907,11 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS live_at TIMESTAMPTZ;
 -- merge recovery records late checks the builds booted since it merged
 -- (merge-followups), since live_at is when production first ran it.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS booted_shas JSONB NOT NULL DEFAULT '[]'::jsonb;
+-- When an app's teardown started (services/app-teardown.js): the row goes
+-- last, so until then the app reads as one whose runtime is missing. The heal
+-- sweep leaves it alone, and a deploy that finishes meanwhile removes what it
+-- put back, in every process. Cleared by a teardown that fails.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS teardown_started_at TIMESTAMPTZ;
 UPDATE chat_sessions cs SET live_at = COALESCE(cs.merged_at, cs.created_at, NOW())
  WHERE cs.status = 'merged' AND cs.live_at IS NULL
    AND NOT EXISTS (SELECT 1 FROM wf_instances w

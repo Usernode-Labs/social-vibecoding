@@ -10,7 +10,7 @@
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { appendEvent, createRuntime } from './kernel/index.ts';
-import type { EventOutcome, Logger, Pool, Push, Queryable, Runtime } from './kernel/index.ts';
+import type { EventOutcome, Json, Logger, Pool, Push, Queryable, Runtime } from './kernel/index.ts';
 import { legacy } from './legacy.ts';
 import { GOVERNANCE_KINDS } from './governance-proposal/facts.ts';
 import { MACHINE, governanceProposal, issueKey } from './governance-proposal/machine.ts';
@@ -40,28 +40,16 @@ import { botDmServices } from './bot-dm/services.ts';
 import { DM as BOT_DM, VOICE as BOT_VOICE, dmKey, placeOf, voiceKey } from './rules/bot-replies.ts';
 import type { Place } from './rules/bot-replies.ts';
 import { BOT_USERNAME } from './rules/bot-notes.ts';
+import { activeUserStats } from './rules/electorate.ts';
+import { appMetaFromRow } from './rules/governance-gate.ts';
+import { countedVotePredicateSql } from './rules/vote-predicate.ts';
+import { VOTE_REASON_MAX, VOTE_REASON_REQUIRED } from './rules/vote-reason.ts';
+import { BUS_CHANNEL, workflowBody } from './pushes.ts';
 
 const pg = createRequire(import.meta.url)('pg');
 
 let runtime: Runtime | null = null;
 let kernelPool: Pool & { end(): Promise<void> } | null = null;
-// The machines this process registered: every one, in every process (their
-// old paths are deleted).
-let machine: ReturnType<typeof governanceProposal> | null = null;
-let merges: ReturnType<typeof mergeFollowups> | null = null;
-// The Homeroom bot's builds and the bench's trials: on in every process that
-// runs the workflow, which is every process (docs/plans/bot-build-workflow.md).
-const builds = botBuild();
-let deliveries: ReturnType<typeof appDelivery> | null = null;
-let previews: ReturnType<typeof preview> | null = null;
-let shotRuns: ReturnType<typeof shots> | null = null;
-let proposals: ReturnType<typeof proposal> | null = null;
-let queues: ReturnType<typeof mergeQueue> | null = null;
-let campaigns: ReturnType<typeof campaign> | null = null;
-let botChanges: ReturnType<typeof botChange> | null = null;
-// The Homeroom bot's replies: a place in a project, a person's DM.
-let voices: ReturnType<typeof botVoice> | null = null;
-let dms: ReturnType<typeof botDm> | null = null;
 let log: Logger | null = null;
 
 // What the ownership triggers read, synced on every boot: enabled:<machine>
@@ -112,7 +100,6 @@ async function recordBooted(pool: Pool): Promise<void> {
 // a restart, and it runs where the sender runs. Off where the platform
 // sends no pushes (nothing would drain the rows).
 export async function publishPushes(q: Queryable, pushes: Push[], { badges = false }: { badges?: boolean } = {}): Promise<void> {
-  const bus = legacy('services/ws-bus');
   const owed = badges ? [...new Set(pushes
     .filter((p) => p.kind === 'user' && p.data.type === 'notifications_changed')
     .map((p) => Number((p.routing as { userId?: unknown } | undefined)?.userId))
@@ -124,7 +111,7 @@ export async function publishPushes(q: Queryable, pushes: Push[], { badges = fal
        ON CONFLICT (user_id) DO UPDATE SET queued_at = now(), claimed_until = NULL
        RETURNING 1)
      SELECT pg_notify($1, body) FROM unnest($2::text[]) WITH ORDINALITY AS t(body, n) ORDER BY n`,
-    [bus.CHANNEL, pushes.map((p) => bus.workflowBody(p.kind, p.routing ?? null, p.data)), owed]);
+    [BUS_CHANNEL, pushes.map((p) => workflowBody(p.kind, (p.routing ?? null) as Json, p.data)), owed]);
 }
 
 export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {
@@ -141,24 +128,25 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   workflowPool.on('error', (err: Error) => log!.warn('workflow', 'Idle workflow database connection lost', { message: err.message }));
   kernelPool = workflowPool;
   const deps = { config, pool: appPool, requestDeploy };
-  machine = governanceProposal({ dataKey: config.dataEncryptionKey });
-  merges = mergeFollowups({ dataKey: config.dataEncryptionKey });
-  deliveries = appDelivery();
+  const machine = governanceProposal({ dataKey: config.dataEncryptionKey });
+  const merges = mergeFollowups({ dataKey: config.dataEncryptionKey });
+  const deliveries = appDelivery();
   // A cancelled prepare learns it at its next checkpoint or lease renewal;
   // its attempt is retired, and a retirement runs, a lease and more later
   // (and never while it serves: services.ts).
-  previews = preview({ maxRetries: config.checkMaxAutoRetries ?? 6, retireAfterMs: PREPARE_LEASE_MS + 30000 });
-  shotRuns = shots({
+  const previews = preview({ maxRetries: config.checkMaxAutoRetries ?? 6, retireAfterMs: PREPARE_LEASE_MS + 30000 });
+  const shotRuns = shots({
     execute: !!config.shots?.execute,
     agentBudgetMs: Number(config.shots?.maxAgentMs) || 480_000,
     runBudgetMs: Number(config.shots?.maxRunMs) || 1_440_000,
   });
-  proposals = proposal(proposalDeps(config));
-  queues = mergeQueue();
-  campaigns = campaign();
-  botChanges = botChange();
-  voices = botVoice();
-  dms = botDm();
+  const proposals = proposal(proposalDeps(config));
+  const queues = mergeQueue();
+  const campaigns = campaign();
+  const botChanges = botChange();
+  const voices = botVoice();
+  const dms = botDm();
+  const builds = botBuild();
   const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms];
   // `botNote`: the one-release shims of the work kinds older releases queued
   // to reach the bot (each appends its event to the bot's change machine).
@@ -179,17 +167,6 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     await started.stop().catch(() => {});
     await kernelPool!.end().catch(() => {});
     kernelPool = null;
-    machine = null;
-    merges = null;
-    deliveries = null;
-    previews = null;
-    shotRuns = null;
-    proposals = null;
-    queues = null;
-    campaigns = null;
-    botChanges = null;
-    voices = null;
-    dms = null;
     throw err;
   }
   runtime = started;
@@ -241,7 +218,7 @@ export async function startWorkflowLoops(): Promise<void> {
 // release; the leader's minute sweep (server.js) runs it again for the rare
 // change whose promote an older release accepted during the rollout.
 export async function adoptBotChanges(limit = 500): Promise<number> {
-  if (!runtime || !botChanges) return 0;
+  if (!runtime) return 0;
   const { rows } = await kernelPool!.query(
     `SELECT cs.id, cs.app_id, cs.status FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
       WHERE cs.status IN ('promoted', 'merging') AND u.username = $2 AND u.is_synthetic = TRUE
@@ -265,12 +242,12 @@ export async function adoptBotChanges(limit = 500): Promise<number> {
 // one no run of the bot's proposed.
 export async function botNote(sessionId: number, type: string, payload: Record<string, unknown> = {},
   o: { requestKey?: string; source?: Source; appId?: number | null } = {}): Promise<EventOutcome | number> {
-  if (!runtime || !botChanges) throw new Error('The workflow runtime is not running in this process');
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
   const { rows: [own] } = await kernelPool!.query(
     `SELECT cs.app_id FROM chat_sessions cs JOIN users u ON u.id = cs.user_id
       WHERE cs.id = $1 AND u.username = $2 AND u.is_synthetic = TRUE`, [sessionId, BOT_USERNAME]);
   if (!own) return 0;
-  return runtime.append(botChanges, botChangeKey(sessionId), { type, payload: { sessionId, ...payload } as any },
+  return runtime.append(BOT_CHANGE, botChangeKey(sessionId), { type, payload: { sessionId, ...payload } as any },
     { requestKey: o.requestKey || `${type}:${sessionId}:${randomUUID()}`, source: o.source || { kind: 'system', name: 'bot' },
       appId: o.appId ?? own.app_id });
 }
@@ -362,11 +339,11 @@ function tapAnswer(out: EventOutcome, refusals: Map<string, { status: number; er
 // A tap under one of the voice's offers (routes/chat.js): decided once in
 // the place its message is in; the act is that place's work.
 export async function tapVoiceOffer(p: { appId: number; offerId: number; messageId: number; userId: number; choice: string }) {
-  if (!runtime || !voices) throw new Error('The workflow runtime is not running in this process');
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
   const { rows: [m] } = await kernelPool!.query('SELECT thread_type, thread_ref FROM chat_messages WHERE id = $1 AND app_id = $2', [p.messageId, p.appId]);
   const place = m ? placeOf(m.thread_type ? { type: m.thread_type, ref: m.thread_ref } : null) : null;
   if (!place) return { ok: false, status: 404, error: 'Nothing to decide here.' };
-  const out = await runtime.appendAndWait(voices, voiceKey(p.appId, place),
+  const out = await runtime.appendAndWait(BOT_VOICE, voiceKey(p.appId, place),
     { type: 'OfferTapped', payload: { appId: p.appId, place: place as any, offerId: p.offerId, userId: p.userId, choice: p.choice } },
     { requestKey: `tap-offer:${p.offerId}:${p.userId}:${randomUUID()}`, source: { kind: 'route', name: 'bot-offer' }, actor: `user:${p.userId}`, appId: p.appId });
   return tapAnswer(out, VOICE_TAP);
@@ -375,8 +352,8 @@ export async function tapVoiceOffer(p: { appId: number; offerId: number; message
 // A tap under one of the bot's offers in a person's DM, or Build it under a
 // plan (routes/conversations.js): decided once in their DM's instance.
 export async function tapDmAction(p: { userId: number; actionId: number; choice: string; answers?: unknown[] }) {
-  if (!runtime || !dms) throw new Error('The workflow runtime is not running in this process');
-  const out = await runtime.appendAndWait(dms, dmKey(p.userId),
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  const out = await runtime.appendAndWait(BOT_DM, dmKey(p.userId),
     { type: 'Tapped', payload: { userId: p.userId, actionId: p.actionId, choice: p.choice, answers: (p.answers || []) as any } },
     { requestKey: `tap-action:${p.actionId}:${randomUUID()}`, source: { kind: 'route', name: 'bot-action' }, actor: `user:${p.userId}` });
   return tapAnswer(out, DM_TAP);
@@ -387,7 +364,7 @@ export async function tapDmAction(p: { userId: number; actionId: number; choice:
 // person's DM machine once, at the leader's boot. Transitional: an answer
 // deferred since this release is the machine's own timer.
 export async function adoptDeferredDms(): Promise<number> {
-  if (!runtime || !dms) return 0;
+  if (!runtime) return 0;
   const { rows } = await kernelPool!.query(
     `SELECT t.message_id, t.conversation_id, t.user_id, t.tries FROM (
        SELECT DISTINCT ON (message_id) message_id, conversation_id, user_id, fallback,
@@ -413,14 +390,14 @@ export async function adoptDeferredDms(): Promise<number> {
 // campaign itself (the governance machine's message); deleted with the lease
 // columns once no older release can run.
 export async function adoptCampaigns(): Promise<number> {
-  if (!runtime || !campaigns) return 0;
+  if (!runtime) return 0;
   const { rows } = await kernelPool!.query(
     `SELECT mc.id FROM maintenance_campaigns mc
       WHERE (mc.lease_until IS NULL OR mc.lease_until < now() OR mc.runner_id = 'workflow')
         AND NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'campaign:' || mc.id)
       ORDER BY mc.id`, [CAMPAIGN]);
   for (const r of rows) {
-    await runtime.append(campaigns, campaignKey(r.id), { type: 'Start', payload: { campaignId: r.id } },
+    await runtime.append(CAMPAIGN, campaignKey(r.id), { type: 'Start', payload: { campaignId: r.id } },
       { requestKey: `adopt:${r.id}`, source: { kind: 'system', name: 'adopt' } })
       .catch((err: Error) => log!.warn('workflow', 'Could not adopt a maintenance campaign', { campaignId: r.id, message: err.message }));
   }
@@ -432,8 +409,8 @@ export async function adoptCampaigns(): Promise<number> {
 // its green proposals, stop it. Each answers with the machine's outcome.
 export async function campaignEvent(campaignId: number, type: 'RetryApp' | 'MergeGreen' | 'Stop',
   payload: Record<string, unknown>, user: { id?: number | null; username?: string | null }): Promise<EventOutcome> {
-  if (!runtime || !campaigns) throw new Error('The workflow runtime is not running in this process');
-  return runtime.appendAndWait(campaigns, campaignKey(campaignId),
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  return runtime.appendAndWait(CAMPAIGN, campaignKey(campaignId),
     { type, payload: { ...payload, userId: user.id ?? null, username: user.username ?? null } },
     { requestKey: `${type}:${campaignId}:${randomUUID()}`, source: { kind: 'route', name: `campaign-${type}` },
       actor: user.id ? `user:${user.id}` : undefined, waitMs: 5000 });
@@ -444,11 +421,11 @@ export async function campaignEvent(campaignId: number, type: 'RetryApp' | 'Merg
 // elapsed, the electorate shrank) merges now. Once per release (the request
 // key names the build); the queue's own state carries everything else.
 export async function adoptMergeQueues(): Promise<number> {
-  if (!runtime || !queues) return 0;
+  if (!runtime) return 0;
   const { rows } = await kernelPool!.query(`SELECT DISTINCT app_id FROM chat_sessions WHERE status = 'promoted'`);
   const release = String(process.env.GIT_SHA || 'dev').slice(0, 40);
   for (const r of rows) {
-    await runtime.append(queues, queueKey(r.app_id), { type: 'MergeWanted', payload: { appId: r.app_id, reason: 'boot' } },
+    await runtime.append(QUEUE, queueKey(r.app_id), { type: 'MergeWanted', payload: { appId: r.app_id, reason: 'boot' } },
       { requestKey: `boot:${release}:${r.app_id}`, source: { kind: 'system', name: 'boot' }, appId: r.app_id })
       .catch((err: Error) => log!.warn('workflow', 'Could not ask an app\'s merge queue at boot', { appId: r.app_id, message: err.message }));
   }
@@ -459,14 +436,14 @@ export async function adoptMergeQueues(): Promise<number> {
 // whose machine set none) gets its clock again, so GitHub is asked what
 // happened. Once per release, like the queues' look.
 export async function rearmWaitingProposals(): Promise<number> {
-  if (!runtime || !proposals) return 0;
+  if (!runtime) return 0;
   const { rows } = await kernelPool!.query(
     `SELECT key, app_id FROM wf_instances
       WHERE machine = $1 AND state IN ('merging', 'unconfirmed') AND deadline_at IS NULL`, [PROPOSAL]);
   const release = String(process.env.GIT_SHA || 'dev').slice(0, 40);
   for (const r of rows) {
     const sessionId = Number(String(r.key).split(':')[1]);
-    await runtime.append(proposals, r.key, { type: 'Rearm', payload: { sessionId } },
+    await runtime.append(PROPOSAL, r.key, { type: 'Rearm', payload: { sessionId } },
       { requestKey: `rearm:${release}:${sessionId}`, source: { kind: 'system', name: 'boot' }, appId: r.app_id })
       .catch((err: Error) => log!.warn('workflow', 'Could not re-arm a proposal at boot', { sessionId, message: err.message }));
   }
@@ -478,7 +455,7 @@ export async function rearmWaitingProposals(): Promise<number> {
 // hold yet is adopted from its row. The leader's sweep runs it again each
 // minute (server.js), for the sessions created since. Resolves how many.
 export async function adoptProposals(limit = 500): Promise<number> {
-  if (!runtime || !proposals) return 0;
+  if (!runtime) return 0;
   const { rows } = await kernelPool!.query(
     `SELECT cs.id, cs.app_id FROM chat_sessions cs
       WHERE cs.status IN ('active', 'promoted', 'merging')
@@ -498,7 +475,7 @@ export async function adoptProposals(limit = 500): Promise<number> {
 // retrying, is retried now instead of at its scheduled retry up to 30
 // minutes on. Once per release (the request key names the build).
 async function retryPlatformFaults(): Promise<void> {
-  if (!previews) return;
+  if (!runtime) return;
   const { rows } = await kernelPool!.query(
     `SELECT key, app_id FROM wf_instances
       WHERE machine = $1
@@ -507,7 +484,7 @@ async function retryPlatformFaults(): Promise<void> {
         AND (data->>'firstFailureAt')::timestamptz > now() - interval '1 day'`, [PREVIEW]);
   const release = String(process.env.GIT_SHA || 'dev').slice(0, 40);
   for (const r of rows) {
-    await runtime!.append(previews, r.key, { type: 'RetryDue', payload: {} },
+    await runtime!.append(PREVIEW, r.key, { type: 'RetryDue', payload: {} },
       { requestKey: `release-retry:${release}:${r.key}`, source: { kind: 'system', name: 'release-retry' }, appId: r.app_id ?? undefined })
       .catch((err: Error) => log!.warn('workflow', 'Could not retry a platform fault at boot', { key: r.key, message: err.message }));
   }
@@ -529,17 +506,6 @@ export function workflowWorkRunning(): number {
 export async function stopWorkflow(): Promise<void> {
   const r = runtime;
   runtime = null;
-  machine = null;
-  merges = null;
-  deliveries = null;
-  previews = null;
-  shotRuns = null;
-  proposals = null;
-  queues = null;
-  campaigns = null;
-  botChanges = null;
-  voices = null;
-  dms = null;
   await r?.stop();
   await kernelPool?.end();
   kernelPool = null;
@@ -550,7 +516,7 @@ export async function stopWorkflow(): Promise<void> {
 // The runtime this process decides with. A route reached before it started,
 // or after it stopped, answers an error rather than deciding without it.
 function running(): Runtime {
-  if (!runtime || !machine) throw new Error('The workflow runtime is not running in this process');
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
   return runtime;
 }
 
@@ -562,7 +528,7 @@ export function workflowRunning(): boolean {
 type Source = { kind: 'route' | 'system' | 'admin'; name?: string };
 
 async function file(issueId: number, appId: number, source: Source = { kind: 'route' }) {
-  return running().append(machine!, issueKey(issueId), { type: 'Filed', payload: { issueId } },
+  return running().append(MACHINE, issueKey(issueId), { type: 'Filed', payload: { issueId } },
     { requestKey: `file:${issueId}`, source, appId });
 }
 
@@ -579,7 +545,7 @@ export async function fileProposal(issueId: number, appId: number): Promise<void
 // has covered.
 async function appendFiled(issue: { id: number; app_id: number; status?: string }, event: { type: string; payload: unknown },
   o: { requestKey: string; source: Source; actor: string }): Promise<EventOutcome> {
-  const send = () => running().appendAndWait(machine!, issueKey(issue.id), event, { ...o, appId: issue.app_id });
+  const send = () => running().appendAndWait(MACHINE, issueKey(issue.id), event, { ...o, appId: issue.app_id });
   const outcome = await send();
   if (outcome.status !== 'rejected' || outcome.reason !== 'no_instance' || issue.status !== 'open') return outcome;
   await file(issue.id, issue.app_id);
@@ -603,8 +569,7 @@ function failed(outcome: EventOutcome): Reply | null {
   if (outcome.status === 'faulted') return { status: 500, body: { error: 'Internal server error' } };
   if (outcome.status === 'rejected') {
     if (outcome.reason === 'reason_required') {
-      const votes = legacy('routes/votes');
-      return { status: 400, body: { error: 'reason_required', message: votes.VOTE_REASON_REQUIRED, maxLength: votes.VOTE_REASON_MAX } };
+      return { status: 400, body: { error: 'reason_required', message: VOTE_REASON_REQUIRED, maxLength: VOTE_REASON_MAX } };
     }
     return REJECTIONS.get(outcome.reason || '') || { status: 409, body: { error: outcome.reason } };
   }
@@ -661,23 +626,6 @@ export async function adminApplyProposal(
   return { status: 200, body: { ok: true, applied, secretChanged: issue.kind === 'secret_change' ? applied : null } };
 }
 
-// A close proposal's target was closed elsewhere (a merged PR's `Closes #N`,
-// the issue-close watcher): tell each open proposal for those numbers.
-export async function targetsClosed(appId: number, numbers: number[], cause: { kind: string; prNumber?: number }): Promise<number[]> {
-  running();
-  const { rows } = await kernelPool!.query(
-    `SELECT id, (payload->>'issueNumber')::int AS n FROM issues
-      WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open'
-        AND (payload->>'issueNumber')::int = ANY($2::int[])`, [appId, numbers]);
-  for (const r of rows) {
-    // Filing an enrolled row is a no-op (a replay, or `already_filed`).
-    await file(r.id, appId, { kind: 'system', name: 'target-closed' });
-    await running().append(machine!, issueKey(r.id), { type: 'TargetClosed', payload: { issueNumber: r.n, cause } },
-      { requestKey: `target:${r.n}:${cause.kind}:${cause.prNumber ?? ''}`, source: { kind: 'system', name: 'target-closed' }, appId });
-  }
-  return rows.map((r: { id: number }) => r.id);
-}
-
 // ── Merge follow-ups ────────────────────────────────────────────────────
 
 const count = (n: unknown) => (Number.isInteger(n) && (n as number) >= 0 ? n as number : null);
@@ -688,13 +636,13 @@ const count = (n: unknown) => (Number.isInteger(n) && (n as number) >= 0 ? n as 
 // and the app's active members.
 export async function mergeObserved(m: { sessionId: number; appId: number; mergeSha: string | null; mergedAt: string | null }): Promise<number> {
   const pool = kernelPool!;
-  const { countedVotePredicateSql } = legacy('services/pr-vote-revision');
   const { rows: [v] } = await pool.query(
     `SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id
       WHERE pv.session_id = $1 AND pv.vote = 'yes' AND ${countedVotePredicateSql('pv', 'cs')}
       GROUP BY cs.votes_required`, [m.sessionId]);
-  const stats = await legacy('services/active-users').getActiveUserStats(pool, m.appId).catch(() => null);
-  return runtime!.append(merges!, sessionKey(m.sessionId), { type: 'Merged', payload: {
+  const stats = await pool.query('SELECT self_hosted, collab_visibility FROM apps WHERE id = $1', [m.appId])
+    .then(({ rows: [a] }) => activeUserStats(pool, m.appId, appMetaFromRow(a))).catch(() => null);
+  return runtime!.append(MERGE, sessionKey(m.sessionId), { type: 'Merged', payload: {
     sessionId: m.sessionId, mergeSha: m.mergeSha, mergedAt: m.mergedAt || new Date().toISOString(), force: false,
     observedBy: 'recovery',
     tally: { yes: v?.yes ?? 0, required: count(v?.votes_required), active: count(stats?.active) },
@@ -706,13 +654,13 @@ export async function mergeObserved(m: { sessionId: number; appId: number; merge
 // contains it. (A child app's deploys are app-delivery's, which tells the
 // merges waiting on it.)
 async function productionDeployed(appId: number, sha: string): Promise<void> {
-  if (!runtime || !merges || !/^[0-9a-f]{40}$/i.test(String(sha || ''))) return;
+  if (!runtime || !/^[0-9a-f]{40}$/i.test(String(sha || ''))) return;
   const { rows } = await kernelPool!.query(
     `SELECT key FROM wf_instances
       WHERE machine = $1 AND app_id = $2 AND state IN ('delivering', 'deploy_failed') AND data->>'role' = 'merge'`,
     [MERGE, appId]);
   for (const r of rows) {
-    await runtime.append(merges, r.key, { type: 'Deployed', payload: { sha: sha.toLowerCase() } },
+    await runtime.append(MERGE, r.key, { type: 'Deployed', payload: { sha: sha.toLowerCase() } },
       { requestKey: `deployed:${sha.toLowerCase()}`, source: { kind: 'system', name: 'deploy' }, appId });
   }
 }
@@ -739,7 +687,7 @@ export async function requestBuild(b: {
   target: BuildTarget; id: number; nonce?: string | null; appId: number | null; input: Record<string, unknown>;
 }): Promise<string> {
   const key = buildKey(b.target, b.id, b.nonce ?? null);
-  await runtime!.append(builds, key, { type: 'Requested', payload: { target: b.target, id: b.id, nonce: b.nonce ?? null, input: b.input } },
+  await runtime!.append(BUILD, key, { type: 'Requested', payload: { target: b.target, id: b.id, nonce: b.nonce ?? null, input: b.input } },
     { requestKey: `request:${key}`, source: { kind: 'system', name: 'bot-build' }, appId: b.appId ?? null });
   return key;
 }
@@ -773,7 +721,7 @@ export async function buildsUnderWay(target?: BuildTarget): Promise<{ key: strin
 export async function requestDeploy(appId: number, reason: string, o: {
   prNumber?: number | null; revision?: string | null; reuse?: unknown; requestKey?: string;
 } = {}): Promise<number> {
-  return runtime!.append(deliveries!, appKey(appId), { type: 'DeployRequested', payload: {
+  return runtime!.append(DELIVERY, appKey(appId), { type: 'DeployRequested', payload: {
     appId, reason, prNumber: o.prNumber ?? null, revision: o.revision ?? null, reuse: o.reuse ?? null,
   } }, { requestKey: o.requestKey ?? `deploy:${reason}:${randomUUID()}`, source: { kind: 'system', name: reason }, appId });
 }
@@ -783,7 +731,7 @@ export async function requestDeploy(appId: number, reason: string, o: {
 // Whether the preview machine runs in this process: in every process once
 // its runtime has started (a failed start ends the process: server.js).
 export function previewsEnabled(): boolean {
-  return runtime !== null && previews !== null;
+  return runtime !== null;
 }
 
 // The preview machine's instance of a session, as the sources and readers
@@ -815,14 +763,14 @@ async function versioned(sessionId: number, what: string): Promise<string> {
 // A source announces a head (exact, 40 hex).
 export async function submitRevision(r: { sessionId: number; appId: number; head: string; source: string;
   trigger?: string | null; carryFrom?: string | null }): Promise<EventOutcome> {
-  return runtime!.appendAndWait(previews!, previewKey(r.sessionId), { type: 'RevisionSubmitted', payload: {
+  return runtime!.appendAndWait(PREVIEW, previewKey(r.sessionId), { type: 'RevisionSubmitted', payload: {
     sessionId: r.sessionId, head: r.head, source: r.source, trigger: r.trigger ?? null, carryFrom: r.carryFrom ?? null,
   } }, { requestKey: `rev:${r.head}:${r.source}:${randomUUID()}`, source: sys(r.source), appId: r.appId, waitMs: 2000 });
 }
 
 // A person asks for the preview (ensure: the Preview click; deploy).
 export async function requestPreview(r: { sessionId: number; appId: number; head: string; reason: string; actor?: string | null }): Promise<EventOutcome> {
-  return runtime!.appendAndWait(previews!, previewKey(r.sessionId), { type: 'PreviewRequested', payload: {
+  return runtime!.appendAndWait(PREVIEW, previewKey(r.sessionId), { type: 'PreviewRequested', payload: {
     sessionId: r.sessionId, head: r.head, reason: r.reason,
   } }, { requestKey: await versioned(r.sessionId, `${r.reason}:${r.head}`), source: { kind: 'route', name: r.reason },
     actor: r.actor ?? undefined, appId: r.appId, waitMs: 2000 });
@@ -830,7 +778,7 @@ export async function requestPreview(r: { sessionId: number; appId: number; head
 
 export async function requestRecheck(r: { sessionId: number; appId: number; reason: string; trigger?: string | null;
   actor?: string | null; system?: boolean }): Promise<EventOutcome> {
-  return runtime!.appendAndWait(previews!, previewKey(r.sessionId), { type: 'RecheckRequested', payload: {
+  return runtime!.appendAndWait(PREVIEW, previewKey(r.sessionId), { type: 'RecheckRequested', payload: {
     reason: r.reason, trigger: r.trigger ?? null,
   } }, { requestKey: await versioned(r.sessionId, `recheck:${r.reason}`), source: r.system ? sys(r.reason) : { kind: 'route', name: r.reason },
     actor: r.actor ?? undefined, appId: r.appId, waitMs: 2000 });
@@ -840,28 +788,28 @@ export async function requestRecheck(r: { sessionId: number; appId: number; reas
 // doing (services/unit-suite-reuse.js owePendingRun): the machine stamps the
 // head's stored verdict pending, if it is the head's and not pending already.
 export async function recheckFolded(r: { sessionId: number; appId: number; head: string }): Promise<EventOutcome> {
-  return runtime!.appendAndWait(previews!, previewKey(r.sessionId), { type: 'RecheckFolded', payload: { head: r.head } },
+  return runtime!.appendAndWait(PREVIEW, previewKey(r.sessionId), { type: 'RecheckFolded', payload: { head: r.head } },
     { requestKey: `folded:${r.head}:${randomUUID()}`, source: { kind: 'route', name: 'manual-recheck' }, appId: r.appId, waitMs: 2000 });
 }
 
 export async function checksSkipped(sessionId: number, appId: number, head: string, reason: string,
   expected: string | null = null): Promise<EventOutcome> {
-  return runtime!.appendAndWait(previews!, previewKey(sessionId), { type: 'ChecksSkipped', payload: { sessionId, head, reason, expected } },
+  return runtime!.appendAndWait(PREVIEW, previewKey(sessionId), { type: 'ChecksSkipped', payload: { sessionId, head, reason, expected } },
     { requestKey: `skipped:${head}:${randomUUID()}`, source: sys('checks-skipped'), appId, waitMs: 2000 });
 }
 
 export async function checksCleared(sessionId: number, appId: number, reason: string): Promise<EventOutcome> {
-  return runtime!.appendAndWait(previews!, previewKey(sessionId), { type: 'ChecksCleared', payload: { reason, sessionId } },
+  return runtime!.appendAndWait(PREVIEW, previewKey(sessionId), { type: 'ChecksCleared', payload: { reason, sessionId } },
     { requestKey: `cleared:${reason}:${randomUUID()}`, source: { kind: 'route', name: reason }, appId, waitMs: 2000 });
 }
 
 export async function conflictResolved(sessionId: number, appId: number, head: string): Promise<number> {
-  return runtime!.append(previews!, previewKey(sessionId), { type: 'ConflictResolved', payload: { head } },
+  return runtime!.append(PREVIEW, previewKey(sessionId), { type: 'ConflictResolved', payload: { head } },
     { requestKey: await versioned(sessionId, `clean:${head}`), source: sys('conflict-resolved'), appId });
 }
 
 export async function previewLost(sessionId: number, appId: number, attempt: number, detail: string | null): Promise<number> {
-  return runtime!.append(previews!, previewKey(sessionId), { type: 'PreviewLost', payload: { attempt, detail } },
+  return runtime!.append(PREVIEW, previewKey(sessionId), { type: 'PreviewLost', payload: { attempt, detail } },
     { requestKey: await versioned(sessionId, `lost:${attempt}`), source: sys('preview-lost'), appId });
 }
 
@@ -871,7 +819,7 @@ export async function previewLost(sessionId: number, appId: number, attempt: num
 // checks.
 export async function retirePreview(sessionId: number, appId: number, reason: string, terminal: boolean,
   waitMs = 2000): Promise<EventOutcome> {
-  return runtime!.appendAndWait(previews!, previewKey(sessionId), { type: 'RetireRequested', payload: { reason, terminal, sessionId } },
+  return runtime!.appendAndWait(PREVIEW, previewKey(sessionId), { type: 'RetireRequested', payload: { reason, terminal, sessionId } },
     { requestKey: await versioned(sessionId, `retire:${reason}`), source: sys(reason), appId, waitMs });
 }
 
@@ -881,12 +829,12 @@ export async function retirePreview(sessionId: number, appId: number, reason: st
 export async function operationStarted(o: { sessionId: number; id: string; kind: string; holder: string }): Promise<void> {
   if (!previewsEnabled()) return;   // no runtime: a script or a test
   const { rows: [s] } = await kernelPool!.query('SELECT app_id FROM chat_sessions WHERE id = $1', [o.sessionId]);
-  await runtime!.appendAndWait(previews!, previewKey(o.sessionId), { type: 'OperationStarted', payload: o },
+  await runtime!.appendAndWait(PREVIEW, previewKey(o.sessionId), { type: 'OperationStarted', payload: o },
     { requestKey: `op:${o.id}:start`, source: sys('operation'), appId: s?.app_id ?? null, waitMs: 2000 });
 }
 export async function operationEnded(o: { sessionId: number; id: string }): Promise<void> {
   if (!previewsEnabled()) return;
-  await runtime!.append(previews!, previewKey(o.sessionId), { type: 'OperationEnded', payload: { id: o.id } },
+  await runtime!.append(PREVIEW, previewKey(o.sessionId), { type: 'OperationEnded', payload: { id: o.id } },
     { requestKey: `op:${o.id}:end`, source: sys('operation') });
 }
 
@@ -911,8 +859,8 @@ export async function shotsRunning(sessionId: number): Promise<boolean> {
 }
 
 function shotsMachine() {
-  if (!runtime || !shotRuns) throw new Error('The workflow runtime is not running in this process');
-  return shotRuns;
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  return SHOTS;
 }
 
 type HeadFence = { pin?: 'imported' | 'reviewed' | 'handoff' | null; from?: string | null };
@@ -984,12 +932,12 @@ export async function wantMerge(p: { appId: number; sessionId?: number | null; r
   const appId = Number(p.appId);
   const event = { type: 'MergeWanted', payload: { appId, sessionId: p.sessionId ?? null, reason: p.reason } };
   const opts = { requestKey: `want:${appId}:${randomUUID()}`, source: { kind: 'system' as const, name: p.reason }, appId };
-  if (p.db && !queues) {
+  if (p.db && !runtime) {
     await appendEvent(p.db, mergeQueue(), queueKey(appId), event, opts);
     return;
   }
-  if (!runtime || !queues) throw new Error('The workflow runtime is not running in this process');
-  await runtime.append(queues, queueKey(appId), event, p.db ? { ...opts, db: p.db } : opts);
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  await runtime.append(QUEUE, queueKey(appId), event, p.db ? { ...opts, db: p.db } : opts);
 }
 
 // An admin forces the merge of a proposal in review (M4): the force lasts
@@ -1037,13 +985,13 @@ export async function syncUnderWay(sessionId: number): Promise<{ n: number; reas
 }
 
 function proposalMachine() {
-  if (!runtime || !proposals) throw new Error('The workflow runtime is not running in this process');
-  return proposals;
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  return PROPOSAL;
 }
 
 // Whether the proposal machine runs in this process.
 export function proposalsRunning(): boolean {
-  return runtime !== null && proposals !== null;
+  return runtime !== null;
 }
 
 type ProposalAppend = {
@@ -1062,7 +1010,7 @@ async function proposalEvent(type: string, payload: Record<string, unknown>, o: 
   // In a process that does not run the machines (a script, a test that
   // appends in its own transaction), the events are decoded by a copy of the
   // machine: its deps decide nothing at an append.
-  if (o.db && !proposals) {
+  if (o.db && !runtime) {
     return appendEvent(o.db, proposal(proposalDeps({})), proposalKey(o.sessionId), { type, payload: { sessionId: o.sessionId, ...payload } }, {
       requestKey: o.requestKey || `${type}:${o.sessionId}:${randomUUID()}`,
       source: o.source || sys(type), actor: o.actor ?? undefined, appId: o.appId ?? undefined,
@@ -1294,11 +1242,7 @@ export async function adminEvent(
   if (!ADMIN_EVENTS.get(machineName)?.has(type)) throw new AdminActionError(400, `${type} is not an admin action on ${machineName}`);
   const body = type === 'AdminApply' ? { userId: admin.id, username: admin.username }
     : type === 'RetryFollowup' ? { workKey: String(payload.workKey || '') } : {};
-  const target = machineName === MACHINE ? machine : machineName === MERGE ? merges
-    : machineName === DELIVERY ? deliveries : machineName === PREVIEW ? previews
-      : machineName === BOT_CHANGE ? botChanges : null;
-  if (!target) throw new AdminActionError(409, `${machineName} is not running here`);
-  return runtime.appendAndWait(target, key, { type, payload: body },
+  return runtime.appendAndWait(machineName, key, { type, payload: body },
     { requestKey: `admin:${randomUUID()}`, source: { kind: 'admin', name: 'console' }, actor: `user:${admin.id}` });
 }
 

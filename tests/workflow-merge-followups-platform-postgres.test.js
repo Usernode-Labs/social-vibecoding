@@ -5,9 +5,11 @@
 // app-delivery for its deploy and goes live through the real work handlers
 // (their I/O stubbed), recovery's report reads the tally again, a later
 // deploy reaches the merges still waiting, the admin's Retry delivery works,
-// and a merge accepted before a restart finishes after it. GitHub, the
-// deploy, the watcher and WS pushes are stubbed; everything else is the
-// full PostgreSQL schema.
+// a merge accepted before a restart finishes after it, and a close proposal
+// for a request the merge closes is superseded once the close is seen.
+// GitHub, the deploy, the worker and WS pushes are stubbed (the watcher is
+// the real one for the app whose requests are looked at); everything else
+// is the full PostgreSQL schema.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -45,9 +47,15 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   });
   const realGithub = require('../src/services/github');
   const deploys = { fail: null, sha: null };
+  // GitHub's requests, by number: their state, and the closes asked of it.
+  const ghIssues = new Map();
   stub('../src/services/github', {
     ...realGithub,
     isEnabled: () => true,
+    getPR: async (owner, repo, n) => ({ number: n, body: '', merged: true,
+      base: { ref: 'main', repo: { full_name: `${owner}/${repo}`, default_branch: 'main' } } }),
+    getIssue: async (owner, repo, n) => ({ number: n, state: ghIssues.get(n) || 'open' }),
+    closeIssue: async (owner, repo, n) => { calls.push(['close', n]); ghIssues.set(n, 'closed'); return { number: n, state: 'closed' }; },
     listPullRequestCommitShas: async () => ({ shas: [], complete: true }),
     compareCommitAncestry: async (owner, repo, base, head) => {
       calls.push(['compare', base, head]);
@@ -65,11 +73,27 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     },
     async teardownStaging(row) { calls.push(['teardown', row.id, row.status]); return { removed: true }; },
   });
-  stub('../src/services/worker', { ...require('../src/services/worker'), destroyCcVolume: async (id) => { calls.push(['retire', id]); } });
+  // The fenced, strict removal: the unfenced one is not used.
+  stub('../src/services/worker', {
+    ...require('../src/services/worker'),
+    removeCcVolume: async (id, { proceed }) => {
+      if (!(await proceed())) return { skipped: true };
+      calls.push(['retire', id]);
+      return { removed: true };
+    },
+    destroyCcVolume: async () => { throw new Error('the unfenced removal is not used'); },
+  });
   stub('../src/services/main-watch', { ...require('../src/services/main-watch'), afterMerge: async (c, p, o) => { calls.push(['main-check', o.mergeSha]); return null; } });
+  // The real look for the app whose requests are looked at (`looked`); for
+  // the others, nothing to close.
+  const realWatcher = require('../src/services/issue-close-watcher');
+  const looked = new Set();
   stub('../src/services/issue-close-watcher', {
-    ...require('../src/services/issue-close-watcher'),
-    watchIssuesClosedAfterMerge: async (o) => { calls.push(['watch', o.prNumber]); return { closed: [], skipped: [], stillOpen: [] }; },
+    ...realWatcher,
+    closeAfterMerge: async (o) => {
+      calls.push(['look', o.prNumber, o.look]);
+      return looked.has(o.appId) ? realWatcher.closeAfterMerge(o) : { closed: [], skipped: [], stillOpen: [], waiting: false, targets: [] };
+    },
   });
   stub('../src/services/homeroom-bot', { ...require('../src/services/homeroom-bot'), noteRequestMerged: async () => null });
   stub('../src/services/homeroom-bot-dm', {
@@ -157,11 +181,20 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
       'app-delivery deploys, offered the merge commit');
     await until(async () => calls.some((c) => c[0] === 'dm' && c[1] === s.id), 'the DM, from the bot\'s change machine');
     assert.equal((await pool.query(`SELECT state FROM wf_instances WHERE machine = 'bot-change' AND key = $1`, [`session:${s.id}`])).rows[0]?.state, 'live');
-    // The preview goes once the deploy is answered (demo mode deploys its build).
-    await until(async () => calls.some((c) => c[0] === 'teardown' && c[1] === s.id), 'the teardown');
-    assert.ok(calls.some((c) => c[0] === 'teardown' && c[1] === s.id && c[2] === 'merged'));
-    assert.ok(calls.findIndex((c) => c[0] === 'deploy') < calls.findIndex((c) => c[0] === 'teardown' && c[1] === s.id),
-      'after the deploy');
+    // The preview goes once the deploy is answered (demo mode deploys its
+    // build): the preview machine retires it, asked by this merge's answer.
+    const key = `session:${s.id}`;
+    await until(async () => (await pool.query(
+      `SELECT state FROM wf_instances WHERE machine = 'preview' AND key = $1`, [key])).rows[0]?.state === 'retired', 'the preview retired');
+    const { rows: [ask] } = await pool.query(
+      `SELECT payload, source FROM wf_events WHERE machine = 'preview' AND key = $1 AND type = 'RetireRequested'`, [key]);
+    assert.deepEqual(ask.payload, { sessionId: s.id, reason: 'merged', terminal: true });
+    const { rows: [answer] } = await pool.query(
+      `SELECT id FROM wf_events WHERE machine = 'merge-followups' AND key = $1 AND type = 'Delivered'`, [key]);
+    assert.deepEqual(ask.source.from, { machine: 'merge-followups', key, eventId: Number(answer.id) },
+      'asked by the transition that applied the deploy\'s answer');
+    assert.ok(!calls.some((c) => c[0] === 'teardown' && c[1] === s.id), 'nothing else tears it down');
+    await until(async () => calls.some((c) => c[0] === 'retire' && c[1] === s.id), 'the worker removed, fenced');
     const { rows: [d] } = await pool.query(`SELECT state FROM wf_instances WHERE machine = 'app-delivery' AND key = $1`, [`app:${app.id}`]);
     assert.equal(d.state, 'idle');
     assert.ok(calls.some((c) => c[0] === 'main-check' && c[1] === SHA('a')));
@@ -223,6 +256,56 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     await platform.stopWorkflow();
     await platform.startWorkflow(config, { loops: true });
     await until(async () => (await state(s)) === 'live', 'the accepted merge finished');
+    await quiet();
+  });
+
+  // GitHub did not close the merged PR's `Closes #N`: the first look leaves
+  // it to GitHub, the second closes it, and only then is the close proposal
+  // for it superseded, by the merge's pull request. Before, the merge work
+  // superseded it before it had looked, so a request GitHub (and the
+  // platform) left open lost its close proposal anyway.
+  await t.test('a close proposal for a request the merge closes is superseded once the close is seen, not before', async () => {
+    const { rows: [shop] } = await pool.query(
+      `INSERT INTO apps (name, slug, created_by, repo_url, approvals_required) VALUES ('Shop 2', 'shop-2', $1, 'https://github.com/acme/shop-2', 5) RETURNING *`,
+      [author.id]);
+    looked.add(shop.id);
+    const n = 41;
+    const { rows: [close] } = await pool.query(
+      `INSERT INTO issues (app_id, title, kind, payload, created_by) VALUES ($1, 'Close #41', 'close_issue', $2, $3) RETURNING id`,
+      [shop.id, JSON.stringify({ issueNumber: n, issueTitle: 'Old bug' }), author.id]);
+    await platform.fileProposal(close.id, shop.id);
+    const gov = async () => (await pool.query(
+      `SELECT state FROM wf_instances WHERE machine = 'governance-proposal' AND key = $1`, [`issue:${close.id}`])).rows[0]?.state;
+    await until(async () => (await gov()) === 'open', 'filed');
+    const { rows: [s] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, linked_issues) VALUES ($1, $2, 'merging', $3, 'Change', $4) RETURNING *`,
+      [shop.id, author.id, ++seq, [n]]);
+    const key = `session:${s.id}`;
+    const items = async () => (await pool.query(
+      `SELECT work_key, status FROM wf_work WHERE machine = 'merge-followups' AND key = $1 AND kind = 'issues.closeAfterMerge' ORDER BY created_at`,
+      [key])).rows;
+    await confirmed({ sessionId: s.id, appId: shop.id, mergeSha: SHA('a') });
+    await until(async () => (await items()).length === 2, 'the first look asked for a second');
+    assert.ok(calls.some((c) => c[0] === 'look' && c[1] === s.pr_number && c[2] === 1));
+    assert.ok(!calls.some((c) => c[0] === 'close' && c[1] === n), 'left to GitHub at the first look');
+    assert.equal(await gov(), 'open', 'its request is still open: nothing superseded it');
+    assert.equal((await pool.query('SELECT status FROM issues WHERE id = $1', [close.id])).rows[0].status, 'open');
+    // Thirty seconds on.
+    const [, second] = await items();
+    await pool.query(`BEGIN; SET LOCAL app.wf_writer = 'transition';
+      UPDATE wf_work SET due_at = NOW() WHERE machine = 'merge-followups' AND key = '${key}' AND work_key = '${second.work_key}'; COMMIT`);
+    await until(async () => (await gov()) === 'superseded', 'superseded once the second look closed its request');
+    assert.ok(calls.findIndex((c) => c[0] === 'close' && c[1] === n) > calls.findIndex((c) => c[0] === 'look' && c[1] === s.pr_number && c[2] === 2),
+      'closed at the second look');
+    const { rows: [row] } = await pool.query('SELECT status, payload FROM issues WHERE id = $1', [close.id]);
+    assert.equal(row.status, 'closed');
+    assert.equal(row.payload.supersededBy, `pr-merge:#${s.pr_number}`);
+    const { rows: told } = await pool.query(
+      `SELECT type, result, reason, source FROM wf_events WHERE machine = 'governance-proposal' AND key = $1 AND source->>'kind' = 'message' ORDER BY id`,
+      [`issue:${close.id}`]);
+    assert.deepEqual(told.map((e) => [e.type, e.result, e.reason, e.source.from.machine]),
+      [['Filed', 'rejected', 'already_filed', 'merge-followups'], ['TargetClosed', 'accepted', null, 'merge-followups']],
+      'filed already (a no-op), then told, by the merge');
     await quiet();
   });
 

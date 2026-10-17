@@ -67,7 +67,7 @@ const fakePool = {
   async query(sql, params = []) {
     fx.queries.push({ sql, params });
     if (/SELECT \* FROM apps/.test(sql)) return { rows: fx.poolRows };
-    if (/SELECT 1 FROM apps WHERE id/.test(sql)) return { rows: fx.appDeleted ? [] : [{}] };
+    if (/SELECT teardown_started_at FROM apps WHERE id/.test(sql)) return { rows: fx.appDeleted ? [] : [{ teardown_started_at: null }] };
     return { rows: [] };
   },
 };
@@ -245,10 +245,10 @@ test('failed Kubernetes recovery retains cooldown and does not persist success',
 // under the rebuild, and the Deployment crash-looped for a week.
 test('an app being taken down is not healed', async (t) => {
   const kube = require('../src/services/kubernetes');
-  const teardown = require('../src/services/app-teardown');
   t.mock.method(kube, 'getApplicationStatus', async () => 'not_found');
-  t.mock.method(teardown, 'isTearingDown', (slug) => slug === 'puzzle-chain');
-  const result = await appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool, app());
+  // Marked on its row, which every process reads (services/app-teardown.js).
+  const result = await appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool,
+    app({ teardown_started_at: new Date() }));
   assert.equal(result.status, 'deleting');
   assert.deepEqual(fx.requested, []);
   assert.deepEqual(fx.respawnCalls, []);

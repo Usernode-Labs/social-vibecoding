@@ -1073,7 +1073,7 @@ async function compareCommitAncestry(owner, repo, baseSha, headSha) {
 // its head that its base did not have. GitHub keeps the list after a squash
 // merge, so for a merged pull request it is what the change brought to main,
 // and an open change whose head is on it was built on (included in) this one
-// (services/included-changes.js). GitHub lists at most 250, so `complete` is
+// (workflow/merge-followups/facts.ts). GitHub lists at most 250, so `complete` is
 // false when the list may be short. Lowercase SHAs. Throws on transport
 // errors.
 const PR_COMMITS_CAP = 250;

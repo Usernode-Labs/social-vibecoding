@@ -154,6 +154,21 @@ module.exports = function install(fakes) {
     keep: ['containerHostname', 'parseDockerBuildLine', 'STOP_GRACE_SEC', 'STAGING_STOP_GRACE_SEC'],
     overrides: {
       async removeVolume(name) { await fakes.record('docker.removeVolume', { name }); },
+      // A merge's worker goes through worker.removeCcVolume, which reads the
+      // container by identity and removes the volume with the docker CLI:
+      // no container of that name, and the volume's removal recorded as
+      // removeVolume's is.
+      async execFileAsync(cmd, args) {
+        if (cmd === 'docker' && args[0] === 'inspect') {
+          throw Object.assign(new Error('No such object'), { stderr: `Error: No such object: ${args.at(-1)}` });
+        }
+        if (cmd === 'docker' && args[0] === 'volume' && args[1] === 'rm') {
+          await fakes.record('docker.removeVolume', { name: args.at(-1) });
+          return { stdout: '', stderr: '' };
+        }
+        await fakes.record('fake.unexpected', { module: 'services/docker', fn: `execFileAsync ${cmd} ${args[0]}` });
+        throw Object.assign(new Error(`docker ${args[0]} reaches an outside service this test does not fake`), { code: 'ECONNREFUSED' });
+      },
     },
   });
   outside(fakes, 'services/kubernetes', { keep: [] });

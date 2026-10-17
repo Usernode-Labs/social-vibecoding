@@ -554,7 +554,7 @@ test('maintenance campaigns against the full PostgreSQL schema', { timeout: 2400
     await settle();
     const ids = await Promise.all(apps.map(async (a) => (await stateOf(c, a)).session_id));
     await asTransition(async (cl) => {
-      await cl.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [ids[0]]);
+      await cl.query(`UPDATE chat_sessions SET status = 'merged', live_at = COALESCE(merged_at, NOW()) WHERE id = $1`, [ids[0]]);
       await cl.query(`UPDATE chat_sessions SET status = 'archived' WHERE id = $1`, [ids[1]]);
       await cl.query(`UPDATE chat_sessions SET status = 'active' WHERE id = $1`, [ids[2]]);
     });

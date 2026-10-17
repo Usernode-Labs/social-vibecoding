@@ -49,12 +49,13 @@
 const crypto = require('node:crypto');
 const log = require('./logger');
 
-const CHANNEL = 'usernode_ws';
+// The channel, the payload budget, the machines' sender and their encoder
+// are the workflow's copy (src/workflow/pushes.ts): its transitions publish
+// on this bus inside their own transactions.
+const pushes = require('../workflow/pushes.ts');
 
-// 8000 is the server's hard cap. The envelope around the payload is small but
-// not free (instance id, kind, routing), so budget the inner JSON well under
-// it rather than computing the exact remainder and living on the edge.
-const MAX_PAYLOAD_BYTES = 7000;
+const CHANNEL = pushes.BUS_CHANNEL;
+const MAX_PAYLOAD_BYTES = pushes.BUS_PAYLOAD_BYTES;
 
 // Identifies THIS process for the whole life of the process. Random rather
 // than derived from a hostname or pod name: two pods can share a host, and a
@@ -65,7 +66,7 @@ const INSTANCE_ID = crypto.randomUUID();
 // transaction (src/workflow/platform.ts). It is no instance's own echo, so
 // every instance delivers it, the one whose slot decided included, and it
 // is not a peer: hearing one says nothing about who else is listening.
-const WORKFLOW_SENDER = 'workflow';
+const { WORKFLOW_SENDER } = pushes;
 
 let _client = null;
 let _onMessage = null;
@@ -303,16 +304,8 @@ function flushBatches() {
   for (const key of [..._batches.keys()]) _flushBatch(key);
 }
 
-/**
- * The NOTIFY body for a push a workflow transition publishes: the same
- * envelope as publish, from WORKFLOW_SENDER, and the same resync nudge in
- * place of a payload over the budget. Pure.
- */
-function workflowBody(kind, routing, data) {
-  const body = JSON.stringify({ i: WORKFLOW_SENDER, k: kind, r: routing || null, d: data });
-  if (Buffer.byteLength(body, 'utf8') <= MAX_PAYLOAD_BYTES) return body;
-  return JSON.stringify({ i: WORKFLOW_SENDER, k: kind, r: routing || null, o: 1 });
-}
+// The NOTIFY body for a push a workflow transition publishes (pure).
+const { workflowBody } = pushes;
 
 function _handleNotification(msg) {
   if (!msg || msg.channel !== CHANNEL || !msg.payload) return;

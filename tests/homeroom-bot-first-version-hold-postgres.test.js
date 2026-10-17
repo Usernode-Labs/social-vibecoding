@@ -179,7 +179,7 @@ test('a project\'s first version goes first, against the full PostgreSQL schema'
     const realInfo = logger.info;
     logger.info = (cat, msg, data) => { said.push({ msg, data }); };
     try {
-      await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [pr]);
+      await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [pr]);
       const out = await bot.noteRequestMerged(pool, { id: pr }, { worker: { async stopTurn() {} } });
       assert.deepEqual(out, { skipped: 0, stopped: 0, withdrawn: 0, dequeued: 0 }, 'what it returns is unchanged');
     } finally {

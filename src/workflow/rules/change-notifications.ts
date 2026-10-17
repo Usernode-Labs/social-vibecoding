@@ -213,7 +213,7 @@ export async function settleVoteDigests(
  * approval (or gone) is left alone. Resolves the ids of the people told.
  * Callers run it after the change's status is written: the merge
  * (routes/votes.js), a change carried by another's merge
- * (included-changes.js) and every close (session-lifecycle.js
+ * (merge-followups/facts.ts) and every close (session-lifecycle.js
  * finalizeArchivedSession).
  *
  * `status` stands for the row's when the caller decides it in the same

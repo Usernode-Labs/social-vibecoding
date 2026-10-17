@@ -7,6 +7,27 @@
 
 import type { Json, JsonObject, Push } from './kernel/index.ts';
 
+// The WebSocket bus (services/ws-bus.js), as the transitions publish on it:
+// its channel, the sender every web process recognises as a machine (it
+// relays such a push to its own sockets too: the deciding process has none
+// in hand), and the server's payload budget. One copy, imported back by the
+// bus.
+export const BUS_CHANNEL = 'usernode_ws';
+export const WORKFLOW_SENDER = 'workflow';
+// 8000 is the server's hard cap. The envelope around the payload is small but
+// not free (instance id, kind, routing), so budget the inner JSON well under
+// it rather than computing the exact remainder and living on the edge.
+export const BUS_PAYLOAD_BYTES = 7000;
+
+// The NOTIFY body for a push a transition publishes: the bus's envelope,
+// from WORKFLOW_SENDER, and the bus's resync nudge in place of a payload
+// over the budget. Pure.
+export function workflowBody(kind: string, routing: Json | null, data: Json): string {
+  const body = JSON.stringify({ i: WORKFLOW_SENDER, k: kind, r: routing || null, d: data });
+  if (Buffer.byteLength(body, 'utf8') <= BUS_PAYLOAD_BYTES) return body;
+  return JSON.stringify({ i: WORKFLOW_SENDER, k: kind, r: routing || null, o: 1 });
+}
+
 // Everyone who may view the app (ws.broadcastGlobalScoped).
 function scoped(type: string, data: JsonObject): Push {
   return { kind: 'scoped', routing: { appId: data.appId ?? null, appSlug: data.appSlug ?? null }, data: { type, ...data } };

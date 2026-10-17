@@ -680,7 +680,7 @@ test('the Mayor switches between its own open changes only', async (t) => {
     const { rows: [loose] } = await client.query("INSERT INTO chat_sessions (app_id, user_id) VALUES (3, 7) RETURNING id");
     await assert.rejects(agentSessions.switchActiveChange(client, { agentSessionId: session.id, userId: 7, changeId: loose.id }),
       (err) => err.status === 404, 'a change this conversation did not start');
-    await client.query("UPDATE chat_sessions SET status = 'merged' WHERE id = $1", [first.id]);
+    await client.query("UPDATE chat_sessions SET status = 'merged', live_at = COALESCE(merged_at, NOW()) WHERE id = $1", [first.id]);
     await client.query('UPDATE agent_sessions SET active_change_id = NULL WHERE id = $1', [session.id]);
     await assert.rejects(agentSessions.switchActiveChange(client, { agentSessionId: session.id, userId: 7, changeId: first.id }),
       (err) => err.status === 409, 'a merged change stays closed');

@@ -96,11 +96,7 @@ export function shotsServices({ config, pool, botNote }: Deps): Record<string, W
       concurrency: AGENT_CONCURRENCY,
       async run(ctx): Promise<Json> {
         const { input, signal } = ctx;
-        const durableSteps = legacy('services/durable-steps');
-        const steps = durableSteps.durable({
-          resumeFrom: ctx.resumeFrom, checkpoint: ctx.checkpoint, signal, attempt: ctx.attempt,
-          lostAttempts: ctx.lostAttempts || 0, owner: `shots/${input.runId}`,
-        });
+        const steps = ctx.steps({ owner: `shots/${input.runId}` });
         try {
           const out = await orchestrator().dispatchAgent(config, pool, {
             runId: input.runId, sessionId: input.sessionId, budgetMs: input.budgetMs, steps, signal,

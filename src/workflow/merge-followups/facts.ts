@@ -7,6 +7,7 @@
 
 import type { Tx } from '../kernel/index.ts';
 import { SHOTS_LIVE_STATES, operationsLiveSql, previewWorkingSql, shotsRunningSql } from '../session-work.ts';
+import { reviewedHeadForSession } from '../rules/bot-readiness.ts';
 
 export interface Session {
   id: number;
@@ -61,6 +62,76 @@ export async function liveShotsRun(db: Pick<Tx, 'query'>, sessionId: number): Pr
       WHERE w.machine = 'shots' AND w.key = $1 AND w.state = ANY($2::text[])`,
     [`session:${sessionId}`, [...SHOTS_LIVE_STATES]]);
   return r ? String(r.id || 'run') : null;
+}
+
+// A change that went live inside another one.
+//
+// A change can be built on top of another open change: the Homeroom bot
+// asked to "fix mark as done in Jordan's first version" built its fix on the
+// first version's branch, so the fix's pull request carried the first
+// version's commit as well as its own (Flat 4B Chores, 5 Oct 2026: PR 8 built
+// on PR 3). When the fix merged, the first version's work went live with it,
+// but nothing said so: GitHub squashes, so PR 3's own commit is not on main
+// and GitHub never marked it merged. PR 3 stayed open and still asked for
+// votes, its lazy window would have tried to merge it again, request #1 stayed
+// open, and the App tab kept saying the first version was being built over
+// the live app.
+//
+// So when a change merges, every other change of the app that is up for a
+// vote and whose head commit is one of the merged pull request's own commits
+// (GitHub's list of the commits on it, which it keeps after a squash merge)
+// is INCLUDED in it. The signal is exact and costs one GitHub read per merge,
+// and none when nothing else is up for a vote: a head on that list is a
+// commit the merged change brought to main, so the included change has
+// nothing left that is not live. A head the list does not have (a newer
+// revision, a change never built on) is left alone, and a change already on
+// main before the merge is never on the list, so the other order (the lower
+// change merging first) includes nothing.
+//
+// An included change is marked merged with the merge it went live in
+// (merged_at and merge_commit_sha are that merge's, so its deploy state is
+// that merge's) and `included_in_session_id` names the change that carried
+// it. Being merged is what every reader already understands: the vote panel,
+// Needs you and the lazy window only look at changes up for a vote, a vote on
+// it is refused, its requests read "approved and live", and a project's first
+// version reads live (homeroom-bot-dm.js firstVersionState). What a merge
+// does for a change is then done for it.
+//
+// included.find reads the candidates: the app's other changes up for a vote, with a pull request and a recorded head. Not
+// one whose turn is running (a revision may be on its way, and it decides),
+// and not one holding a secret value for a variable it declares: that value
+// is applied only by the change's own merge (services/pending-secrets.js),
+// so it waits for that. The machine reads the same conditions again under
+// the change's own lock (machine.ts notIncludable).
+export const INCLUDED_CANDIDATES_SQL = `SELECT cs.id, cs.source, cs.reviewed_head_sha, cs.imported_pr_head_sha
+   FROM chat_sessions cs
+  WHERE cs.app_id = $1 AND cs.id <> $2
+    AND cs.status = 'promoted' AND cs.is_headless = FALSE
+    AND cs.pr_number IS NOT NULL AND cs.active_turn IS NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM pending_secret_declarations p
+       WHERE p.session_id = cs.id AND p.status = 'pending'
+    )
+  ORDER BY cs.id`;
+
+const fullSha = (v: unknown): string | null => {
+  const sha = String(v || '').trim().toLowerCase();
+  return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+};
+
+// The candidates whose head (an import's PR head, else the reviewed head)
+// is one of `commitShas`, the merged pull request's own commits, each named
+// with that head. GitHub squashes, so a change built on another open change
+// carries its commit: a head on that list is a commit the merge brought to
+// main. A candidate with no recorded head is never one.
+export function includedIn(candidates: any[], commitShas: unknown): { id: number; head: string }[] {
+  const listed = new Set((Array.isArray(commitShas) ? commitShas : []).map(fullSha).filter(Boolean));
+  const out: { id: number; head: string }[] = [];
+  for (const c of candidates || []) {
+    const head = fullSha(reviewedHeadForSession(c));
+    if (head && listed.has(head)) out.push({ id: Number(c.id), head });
+  }
+  return out;
 }
 
 export function parseRepo(url: unknown): { owner: string; repo: string } | null {

@@ -2,6 +2,7 @@
 // the result as an event. A service never settles a work item; the
 // pipeline does when it applies the result event.
 
+import { steps } from './steps.ts';
 import { assertJson } from './machine.ts';
 import { append } from './stream.ts';
 import { checkout } from './pipeline.ts';
@@ -184,15 +185,20 @@ export async function execute(opts: ServiceOptions, w: Claimed, stopping?: Abort
   }, Math.max(50, Math.floor(leaseMs / 3)));
   let report: Report | null;
   try {
+    const checkpoint = async (v: Json) => {
+      assertJson(v);
+      if (leaseLost) throw new LeaseLost();
+      await renew(`UPDATE wf_work SET checkpoint = $3 WHERE ${live}`, [w.id, w.claim_id, JSON.stringify(v)]);
+    };
     const value = await h.run({
       workId: w.id, kind: w.kind, key: w.work_key, input: w.input, attempt: w.attempt_count, lostAttempts: lost,
       resumeFrom: w.checkpoint ?? null,
-      checkpoint: async (v: Json) => {
-        assertJson(v);
-        if (leaseLost) throw new LeaseLost();
-        await renew(`UPDATE wf_work SET checkpoint = $3 WHERE ${live}`, [w.id, w.claim_id, JSON.stringify(v)]);
-      },
+      checkpoint,
       signal: abort.signal,
+      steps: (o = {}) => steps({
+        resumeFrom: w.checkpoint ?? null, checkpoint, signal: abort.signal, attempt: w.attempt_count, lostAttempts: lost,
+        owner: o.owner ?? null, triesLeft: o.triesLeft ?? 0, log: opts.log,
+      }),
     });
     const result = value === undefined ? null : value;
     assertJson(result);

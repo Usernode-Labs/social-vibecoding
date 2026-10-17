@@ -1,62 +1,32 @@
 'use strict';
 
-// Post-merge issue-close watcher (#135).
+// What a merge does about the requests it closes (#135), for the
+// merge-followups machine's issues.closeAfterMerge work.
 //
 // When a PR merges, GitHub itself closes the issues referenced via closing
-// keywords (`Closes #N`, `Fixes #N`, `Resolves #N`) in the PR body — but it
+// keywords (`Closes #N`, `Fixes #N`, `Resolves #N`) in the PR body, but it
 // does so asynchronously, often a few seconds after the merge reports
-// success. The platform's "Open Issues" panel in the group chat area busts
-// its cache and refetches at merge time, which races that delay: the
-// refetch can see the issue still open and re-cache it as open for the
-// 5-minute fetchPublicIssues TTL, so the panel keeps showing a closed
-// issue.
+// success, and on 2026-09-30 it stopped applying them to merged PRs for
+// hours. So the machine looks twice: at the first look a linked request
+// still open is left to GitHub, and the machine asks for a second look a
+// little later (machine.ts ISSUES_SECOND_LOOK_MS); at the second, the
+// session's LINKED issues still open are closed here (closeLinkedIssues
+// below), and only those, and only after re-reading the PR as merged into
+// the repo's default branch. Numbers that come solely from a hand-edited
+// PR body are looked at but never closed here.
 //
-// This watcher closes the gap: it polls the referenced issues with
-// retry/backoff until they read as closed (or attempts run out), and once
-// closes are observed it busts the open-issues cache and broadcasts the same
-// `github_synced` refresh event the merge path uses, so every group-chat
-// panel refetches and drops the issue.
-//
-// GitHub's own keyword handling is not reliable enough to be the only path:
-// on 2026-09-30 it stopped applying `Closes #N` to merged PRs for hours. So
-// when the polls run out, the watcher closes the session's LINKED issues
-// that are still open itself (closeLinkedIssues below) — and only those,
-// and only after re-reading the PR as merged into the repo's default branch.
-// Numbers that come solely from a hand-edited PR body are watched but never
-// closed here.
-//
-// Every number it sees closed, or closes, also closes the platform's own
-// `general` twin row for that request (closeTwinRows below), which nothing
-// else did on a merge, and withdraws the Homeroom bot's proposals that were
-// built for it alone (withdrawBotProposals below).
-
-// Everything here is best-effort. watchIssuesClosedAfterMerge is
-// fired-and-forgotten from the merge path (the merge-followups machine)
-// and must never block, slow down, or roll back the merge flow — failures
-// are logged and abandoned.
+// Every number seen closed, or closed here, also closes the platform's own
+// `general` twin row for that request (closeTwinRows below), and withdraws
+// the Homeroom bot's proposals that were built for it alone
+// (withdrawBotProposals below). The close proposals whose target it was are
+// the governance machine's: the work names them (targets), and the
+// transition that applies its result tells each one. Every web process
+// forgets its copy of the open issues from the transition's push, too.
+// Nothing here waits or keeps anything between looks: a look is one pass.
 
 const log = require('./logger');
 const github = require('./github');
 const { parseClosingKeywords, sanitizeIssueNumbers } = require('./pr-metadata');
-
-function envInt(name, fallback) {
-  const n = Number(process.env[name]);
-  return Number.isFinite(n) && n >= 0 ? n : fallback;
-}
-
-// Tunables (env-overridable so tests can zero the delays):
-// - GRACE: wait before the first poll — GitHub's auto-close usually lands
-//   within a couple of seconds, so the first check often already sees
-//   everything closed.
-// - ATTEMPTS / BACKOFF: poll rounds; the delay between rounds doubles each
-//   time (3s, 6s, 12s, 24s by default → ~45s of total patience).
-const GRACE_DELAY_MS = envInt('ISSUE_CLOSE_WATCH_GRACE_MS', 2000);
-const MAX_ATTEMPTS = envInt('ISSUE_CLOSE_WATCH_ATTEMPTS', 5);
-const BACKOFF_BASE_MS = envInt('ISSUE_CLOSE_WATCH_BACKOFF_MS', 3000);
-
-function sleep(ms) {
-  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
-}
 
 // Fetch the merged PR once: its body feeds resolveIssueNumbers and its merge
 // state gates closeLinkedIssues. Null when the fetch fails.
@@ -143,41 +113,6 @@ function bustAndBroadcast({ owner, repo, appSlug, appId, closed }) {
     log.warn('issue-close-watcher', 'Cache bust / broadcast failed', {
       repo: `${owner}/${repo}`, err: err.message,
     });
-  }
-}
-
-// Auto-resolve open close-issue governance proposals whose target was just
-// observed closed (or gone). Lazy require of routes/issues (same pattern as
-// the ./ws require in bustAndBroadcast — the routes module requires this
-// service's siblings, never this file, so there's no cycle). `pool` is
-// optional: without one (older call sites, unit tests) this is a silent
-// no-op and the watcher behaves exactly as before. Fired-and-forgotten —
-// a failure must never affect the poll loop. Resolves when it is done (the
-// watch awaits it before it returns, so a durable caller that saw it return
-// knows the proposals were told). `strict` rejects on a failure instead
-// (the merge-followups workflow machine retries its work on it).
-function resolveSupersededProposals({ pool, appId, appSlug, prNumber, numbers, strict = false }) {
-  if (!pool || !appId || !Array.isArray(numbers) || !numbers.length) return Promise.resolve();
-  try {
-    const { resolveSupersededCloseProposals } = require('../routes/issues');
-    return resolveSupersededCloseProposals(pool, {
-      appId,
-      appSlug,
-      numbers,
-      cause: { kind: 'pr-merge', prNumber },
-      strict,
-    }).catch((err) => {
-      if (strict) throw err;
-      log.warn('issue-close-watcher', 'Superseded close-proposal resolve failed', {
-        pr: prNumber, err: err.message,
-      });
-    });
-  } catch (err) {
-    if (strict) return Promise.reject(err);
-    log.warn('issue-close-watcher', 'Superseded close-proposal resolve setup failed', {
-      pr: prNumber, err: err.message,
-    });
-    return Promise.resolve();
   }
 }
 
@@ -281,134 +216,94 @@ async function closeLinkedIssues({ owner, repo, prNumber, pr, linkedIssues, stil
   return { closed, failed };
 }
 
-// Entry point, fired-and-forgotten from the merge path. Polls until every
-// referenced issue reads as closed (or attempts are exhausted), busting
-// the cache + broadcasting whenever new closes are observed. Returns the
-// per-bucket outcome (useful for tests); unexpected throws are absorbed by
-// the caller's .catch(). `pool` (optional) enables auto-resolving open
-// close-issue proposals for observed closes — see resolveSupersededProposals.
-// `strict` (the merge-followups workflow machine): a failure to close the
-// twin rows or the superseded proposals fails the watch, after its polls,
-// so the durable work retries it; otherwise they are logged and dropped.
-async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues, appSlug, appId, pool, strict = false }) {
-  const empty = { closed: [], skipped: [], stillOpen: [] };
+// The open close proposals of the app whose target is one of `numbers`:
+// what the governance machine is told was closed (or is gone).
+async function closeProposalTargets(pool, appId, numbers) {
+  if (!pool || !appId || !numbers.length) return [];
+  const { rows } = await pool.query(
+    `SELECT id, (payload->>'issueNumber')::int AS number FROM issues
+      WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open'
+        AND (payload->>'issueNumber')::int = ANY($2::int[])
+      ORDER BY id`, [appId, numbers]);
+  return rows.map((r) => ({ issueId: Number(r.id), number: Number(r.number) }));
+}
+
+// One look at the requests a merged PR closes (the merge-followups
+// machine's issues.closeAfterMerge). `look` 1: what GitHub has closed;
+// a linked request still open is left to it, and `waiting` asks for the
+// second look. `look` 2: the linked ones still open are closed here. A
+// failure to record a close (twin rows, the bot's proposals) throws, for
+// the work to retry. Answers { closed, skipped, stillOpen, waiting,
+// targets }: `targets` are the close proposals to supersede.
+async function closeAfterMerge({ owner, repo, prNumber, linkedIssues, appId, pool, look = 1 }) {
+  const empty = { closed: [], skipped: [], stillOpen: [], waiting: false, targets: [] };
   if (!github.isEnabled() || !owner || !repo || !prNumber) return empty;
-
-  await sleep(GRACE_DELAY_MS);
-
   const pr = await fetchPr(owner, repo, prNumber);
   const numbers = await resolveIssueNumbers({ owner, repo, prNumber, linkedIssues, pr });
   if (!numbers.length) return empty;
-
-  // #144: optimistically suppress every referenced number up front. The
-  // merge path already did this for linked_issues, but the resolved set
-  // can be wider (hand-edited `Closes #N` in the PR body), and when this
-  // watch is RUN AGAIN after a platform restart (the merge-followups
-  // machine's issues.closeAfterMerge work is retried in a fresh process: the
-  // self-edits app's release rolls the platform right after merge) the
-  // fresh process has an empty suppression list. Anything that turns out to
-  // still be open is unsuppressed below.
-  try {
-    github.noteIssuesClosed(owner, repo, numbers);
-  } catch (err) {
-    log.warn('issue-close-watcher', 'Optimistic issue suppression failed', {
-      repo: `${owner}/${repo}`, err: err.message,
-    });
-  }
-
   const closed = [];
   const skipped = [];
-  // The proposal and twin-row updates it starts, awaited before it returns.
-  // A strict failure is held (never an unhandled rejection mid-poll) and
-  // thrown once they have all settled.
-  const settling = [];
-  const failures = [];
-  const settle = (p) => settling.push(p.catch((err) => { failures.push(err); }));
-  let pending = numbers;
-
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS && pending.length; attempt++) {
-    const stillPending = [];
-    const newlyClosed = [];
-    const newlySkipped = [];
-    for (const n of pending) {
-      const state = await checkIssueState(owner, repo, n);
-      if (state === 'closed') newlyClosed.push(n);
-      else if (state === 'skipped') newlySkipped.push(n);
-      else stillPending.push(n); // 'open' or transient 'error'
-    }
-    if (newlyClosed.length) {
-      closed.push(...newlyClosed);
-      bustAndBroadcast({ owner, repo, appSlug, appId, closed: newlyClosed });
-      settle(closeTwinRows({ pool, appId, prNumber, numbers: newlyClosed, strict }));
-      settle(withdrawBotProposals({ pool, appId, prNumber, numbers: newlyClosed, strict }));
-    }
-    if (newlySkipped.length) skipped.push(...newlySkipped);
-    // Retire close-issue proposals for closed AND skipped numbers: a
-    // skipped 404/410 issue is gone and no later close will ever arrive,
-    // and a skipped-because-PR number can never match a close proposal
-    // (proposals only target numbers verified open at creation).
-    if (newlyClosed.length || newlySkipped.length) {
-      settle(resolveSupersededProposals({
-        pool, appId, appSlug, prNumber,
-        numbers: [...newlyClosed, ...newlySkipped], strict,
-      }));
-    }
-    pending = stillPending;
-    if (pending.length && attempt < MAX_ATTEMPTS) {
-      await sleep(BACKOFF_BASE_MS * 2 ** (attempt - 1));
-    }
+  let open = [];
+  for (const n of numbers) {
+    const state = await checkIssueState(owner, repo, n);
+    if (state === 'closed') closed.push(n);
+    else if (state === 'skipped') skipped.push(n);
+    else open.push(n); // 'open' or a transient 'error'
   }
-
-  if (pending.length) {
-    log.warn('issue-close-watcher', 'Gave up waiting for GitHub to close issues', {
-      repo: `${owner}/${repo}`, pr: prNumber, stillOpen: pending, attempts: MAX_ATTEMPTS,
-    });
-    // Close the linked ones ourselves. What closes stays hidden and is
-    // handled like an observed close; the rest falls through to un-hide.
-    let selfClosed = [];
-    try {
-      ({ closed: selfClosed } = await closeLinkedIssues({
-        owner, repo, prNumber, pr, linkedIssues, stillOpen: pending,
-      }));
-    } catch (err) {
-      log.warn('issue-close-watcher', 'Closing linked issues failed', {
-        repo: `${owner}/${repo}`, pr: prNumber, err: err.message,
-      });
-    }
-    if (selfClosed.length) {
+  const linked = new Set(sanitizeIssueNumbers(linkedIssues));
+  let waiting = false;
+  if (open.some((n) => linked.has(n))) {
+    if (look < 2) waiting = true;
+    else {
+      const { closed: selfClosed } = await closeLinkedIssues({ owner, repo, prNumber, pr, linkedIssues, stillOpen: open });
       closed.push(...selfClosed);
-      bustAndBroadcast({ owner, repo, appSlug, appId, closed: selfClosed });
-      settle(resolveSupersededProposals({ pool, appId, appSlug, prNumber, numbers: selfClosed, strict }));
-      settle(closeTwinRows({ pool, appId, prNumber, numbers: selfClosed, strict }));
-      settle(withdrawBotProposals({ pool, appId, prNumber, numbers: selfClosed, strict }));
-      pending = pending.filter((n) => !selfClosed.includes(n));
+      open = open.filter((n) => !selfClosed.includes(n));
     }
   }
-  if (pending.length) {
-    // These are genuinely still open on GitHub — lift the optimistic
-    // suppression so they aren't hidden from the panel for the full
-    // suppression TTL.
+  if (closed.length) {
+    await closeTwinRows({ pool, appId, prNumber, numbers: closed, strict: true });
+    await withdrawBotProposals({ pool, appId, prNumber, numbers: closed, strict: true });
+  }
+  // A request gone (404, 410) never closes later, and a number that is a
+  // pull request can never be a close proposal's target.
+  const targets = await closeProposalTargets(pool, appId, [...closed, ...skipped]);
+  log.info('issue-close-watcher', 'Looked at the requests a merge closes', {
+    repo: `${owner}/${repo}`, pr: prNumber, look, closed, skipped, stillOpen: open, waiting,
+  });
+  return { closed, skipped, stillOpen: open, waiting, targets };
+}
+
+// The requests of a change that went live inside another one: its own pull
+// request never merges, so nothing closes them but this (the merge-followups
+// machine's issues.closeAfterMerge with closeOnly). Answers { closed,
+// failed: [{ number, status }], targets }; a failure to record a close
+// throws.
+async function closeIncluded({ owner, repo, prNumber, linkedIssues, appId, pool }) {
+  const numbers = sanitizeIssueNumbers(linkedIssues);
+  const closed = [];
+  const failed = [];
+  if (!numbers.length || !github.isEnabled()) return { closed, failed, targets: [] };
+  for (const n of numbers) {
     try {
-      github.unsuppressIssues(owner, repo, pending);
+      await github.closeIssue(owner, repo, n);
+      closed.push(n);
     } catch (err) {
-      log.warn('issue-close-watcher', 'Unsuppress failed', {
-        repo: `${owner}/${repo}`, err: err.message,
+      failed.push({ number: n, status: err.status ?? null });
+      log.warn('issue-close-watcher', 'Could not close a request of an included change', {
+        repo: `${owner}/${repo}`, issueNumber: n, status: err.status, err: err.message,
       });
     }
   }
-  await Promise.all(settling);
-  if (failures.length) throw failures[0];
-  log.info('issue-close-watcher', 'Post-merge close watch done', {
-    repo: `${owner}/${repo}`, pr: prNumber, closed, skipped, stillOpen: pending,
-  });
-
-  return { closed, skipped, stillOpen: pending };
+  if (closed.length) {
+    await closeTwinRows({ pool, appId, prNumber, numbers: closed, strict: true });
+    await withdrawBotProposals({ pool, appId, prNumber, numbers: closed, strict: true });
+  }
+  return { closed, failed, targets: await closeProposalTargets(pool, appId, closed) };
 }
 
 module.exports = {
-  watchIssuesClosedAfterMerge, resolveIssueNumbers, mergedIntoDefaultBranch,
-  // What an observed close does, for a close made elsewhere: a change that
-  // went live inside another one closes its requests itself
-  // (services/included-changes.js), and they then read closed the same way.
-  bustAndBroadcast, resolveSupersededProposals, closeTwinRows, withdrawBotProposals,
+  closeAfterMerge, closeIncluded, resolveIssueNumbers, mergedIntoDefaultBranch,
+  // What an observed close does, for a close made elsewhere (the Homeroom
+  // bot's own closes, homeroom-bot-closed-requests.js).
+  bustAndBroadcast, closeTwinRows,
 };

@@ -260,7 +260,7 @@ async function provisionMissingRepo(config, pool, app) {
 // down app (requestHeal) is never held.
 async function checkAndHealOne(config, pool, app, { probeRunning = false, background = false } = {}) {
   if (app.self_hosted) return { status: 'skipped', slug: app.slug };
-  if (appTeardown.isTearingDown(app.slug)) return { status: 'deleting', slug: app.slug };
+  if (await appTeardown.isTearingDown(pool, app)) return { status: 'deleting', slug: app.slug };
   const runtimeRef = applicationRuntime.productionRef(config, app);
   config = { ...config, appRuntime: runtimeRef.runtimeKind };
   if (inFlight.has(app.slug) || processes.heldElsewhere('app_heal', app.slug)) return { status: 'in_flight', slug: app.slug };

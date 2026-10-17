@@ -20,6 +20,8 @@ export interface PoolClient extends Queryable {
 }
 export interface Pool extends Queryable { connect(): Promise<PoolClient> }
 
+import type { Steps } from './steps.ts';
+
 export interface Logger {
   info(scope: string, message: string, meta?: object): void;
   warn(scope: string, message: string, meta?: object): void;
@@ -164,6 +166,9 @@ export interface WorkContext {
   resumeFrom: Json | null;               // the last checkpoint, if any
   checkpoint(value: Json): Promise<void>; // throws LeaseLost if the claim is gone
   signal: AbortSignal;
+  // The handler's steps, kept in the checkpoint (steps.ts): `owner` names
+  // them, `triesLeft` is how many more tries a failure here leaves.
+  steps(o?: { owner?: string | null; triesLeft?: number }): Steps;
 }
 
 export interface WorkHandler {
