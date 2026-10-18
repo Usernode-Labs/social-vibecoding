@@ -127,6 +127,7 @@ export function SettingsScreen() {
       id="settings-screen"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll dc-lift dc-lift-strip"
       style={{ position: "relative" }}
+      data-page-bounce=""
     >
       {/*
           THE SCREEN IS THE STRIP and the open section is the SHEET, the dev

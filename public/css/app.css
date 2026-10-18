@@ -3489,6 +3489,42 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
   overflow-x: hidden;
 }
 
+/* ── A SHORT PAGE STILL BOUNCES (#3566) ─────────────────────────────────
+   "Should be able to over scroll on home page down, doesn't feel as native
+   because can't", in the installed iPhone app.
+
+   iOS rubber-bands a scroll area only when it has RANGE. A page whose
+   content fits the screen has none, so the drag is handed to the document,
+   which the bounded shell holds still on purpose (`html, body`: overflow
+   hidden, overscroll-behavior-y: none), and nothing moves at either end.
+   A page with real content to scroll already bounced; this gives the short
+   one the same one pixel of range the project page's Workshop tabs got in
+   #3520, so the browser's own rubber band takes the gesture at the foot.
+
+   The scroller declares itself with `data-page-bounce`. The box is absolute
+   against the scroller's padding box, so a flex chain that fills the screen
+   cannot take the pixel back, and it sits past the fold where it is a
+   transparent pixel and changes nothing. A mouse never gets it (no
+   scrollbar for content that fits), and a page the document scrolls keeps
+   the #3565 rule instead, because there the pixel would only lengthen the
+   page. The Needs you panes are fitted on purpose and scroll inside; the
+   exception is its own rule so an engine without :has() drops only that. */
+@media (pointer: coarse) {
+  html:not([data-browser-scroller]) [data-page-bounce] {
+    position: relative;
+  }
+  html:not([data-browser-scroller]) [data-page-bounce]::after {
+    content: '';
+    position: absolute; left: 0; bottom: -1px;
+    width: 1px; height: 1px;
+    pointer-events: none;
+  }
+  /* Its own rule, so an engine without :has() drops only the exception. */
+  html:not([data-browser-scroller]) [data-page-bounce]:has([data-workshop-pane="needs"])::after {
+    content: none;
+  }
+}
+
 /* ── `.touch-target-32`: the kit's hit-slop, sized for a dense row ──────
    QA 2026-09-24 Q19. `.un-touch-target` (native.css) grows a control's hit
    box to 44px, which is right for a lone icon in a bar. In a DENSE row it is

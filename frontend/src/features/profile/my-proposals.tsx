@@ -179,6 +179,7 @@ export function ProfileProposalsScreen(): ReactNode {
       id="profile-proposals-screen"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll"
       style={{ position: 'relative' }}
+      data-page-bounce=""
       data-profile-work={kind}
     >
       {/* `pt-5` clears the header's notch, as on the Workshop screen. The bar

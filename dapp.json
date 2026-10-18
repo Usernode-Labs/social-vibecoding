@@ -3306,9 +3306,9 @@
     },
     {
       "id": "workshop.all-apps",
-      "name": "Workshop links joined communities to their actual app Workshop",
+      "name": "Workshop links joined communities to their actual app Workshop, and a short Communities page can be dragged past its end to spring back (#3566)",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list [data-workshop-section=\"open\"] a[data-workshop-app][href$=\"/workshop\"]",
+      "expectSelector": "#workshop-screen:not(.hidden)[data-page-bounce] #workshop-list [data-workshop-section=\"open\"] a[data-workshop-app][href$=\"/workshop\"]",
       "expectText": "Public communities",
       "visual": true,
       "impact": [
