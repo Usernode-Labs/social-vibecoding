@@ -180,6 +180,7 @@ export function ProfileProposalsScreen(): ReactNode {
       className="hidden flex-1 overflow-y-auto platform-safe-scroll"
       style={{ position: 'relative' }}
       data-profile-work={kind}
+      data-page-bounce=""
     >
       {/* `pt-5` clears the header's notch, as on the Workshop screen. The bar
           is the title, so the screen draws no heading of its own.
