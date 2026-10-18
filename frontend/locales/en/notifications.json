@@ -7,6 +7,18 @@
     "text": "Mark all read",
     "description": "Button at the top of the notifications sheet, on the Unread filter: marks every notification as read."
   },
+  "sheet.markAppRead": {
+    "text": "Mark read",
+    "description": "Small button beside an app's name on the notifications sheet's Unread filter. It marks every unread notification from that app as read."
+  },
+  "sheet.markAppReadLabel": {
+    "text": "Mark all from {{app}} as read",
+    "description": "Accessible name of that button. {{app}} is the project's name."
+  },
+  "sheet.group.other": {
+    "text": "Other",
+    "description": "Heading on the Unread filter over the notifications that belong to no project (messages, friends, account)."
+  },
   "sheet.filters": {
     "text": "Notification filters",
     "description": "Accessible name of the row of three filter buttons (Unread, Messages, All) at the top of the notifications sheet."
@@ -1098,6 +1110,10 @@
   "toast.markAllFailed": {
     "text": "Couldn’t mark notifications as read. Try again.",
     "description": "Brief message shown when \"Mark all read\" failed."
+  },
+  "toast.markAppFailed": {
+    "text": "Couldn’t mark these notifications as read. Try again.",
+    "description": "Brief message shown when the Mark read button beside an app's name on the notifications sheet's Unread filter failed."
   },
   "toast.clearFailed": {
     "text": "Couldn’t clear this notification. Try again.",

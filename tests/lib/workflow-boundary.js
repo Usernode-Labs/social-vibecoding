@@ -21,9 +21,11 @@
 // call: the two-process and restart tests show that.
 //
 // tests/workflow-process-state.test.js gates on it against
-// tests/baselines/workflow-process-state.json, which may only shrink.
-//   node tests/lib/workflow-boundary.js            the list, per machine
-//   node tests/lib/workflow-boundary.js --shrink   drop listed entries that
+// tests/baselines/workflow-process-state.json, which holds only what was
+// reviewed (allowed, io, handOff).
+//   node tests/lib/workflow-boundary.js            what is not reviewed, per machine
+//   node tests/lib/workflow-boundary.js --all      everything, per machine
+//   node tests/lib/workflow-boundary.js --shrink   drop reviewed entries that
 //                                                  are gone (never adds)
 
 const fs = require('node:fs');
@@ -228,31 +230,122 @@ function isReference(id) {
 
 // ── SQL ────────────────────────────────────────────────────────────────
 
-// The tables (and the columns an UPDATE sets) a SQL text writes.
+// The tables (and the columns an UPDATE sets) a SQL text writes. An UPDATE
+// (or an INSERT's ON CONFLICT DO UPDATE) also carries what each column is set
+// to (`sets`, column -> its assignment's text) and its WHERE text, which the
+// other-writer check reads (a write that leaves the machine's rows alone).
 function sqlWrites(text) {
   if (!/\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b/i.test(text)) return [];
   const out = [];
-  for (const m of text.matchAll(/\b(?:INSERT\s+INTO|DELETE\s+FROM)\s+([a-z_][a-z0-9_]*)/gi)) out.push({ table: m[1].toLowerCase(), cols: null });
-  for (const m of text.matchAll(/\bUPDATE\s+([a-z_][a-z0-9_]*)(?:\s+(?:AS\s+)?[a-z_]+)?\s+SET\s+([\s\S]*?)(?:\bWHERE\b|\bFROM\b|\bRETURNING\b|$)/gi)) {
+  const setList = (set) => {
     const cols = new Set();
+    const sets = new Map();
     let depth = 0;
     let start = 0;
-    const set = m[2];
     for (let i = 0; i <= set.length; i++) {
       const ch = set[i];
       if (ch === '(') depth++;
       else if (ch === ')') depth--;
       else if ((ch === ',' && depth === 0) || i === set.length) {
         const piece = set.slice(start, i);
-        const col = /^\s*(?:[a-z_]+\.)?([a-z_][a-z0-9_]*)\s*=/i.exec(piece);
-        if (col) cols.add(col[1].toLowerCase());
+        const col = /^\s*(?:[a-z_]+\.)?([a-z_][a-z0-9_]*)\s*=([\s\S]*)$/i.exec(piece);
+        if (col) { cols.add(col[1].toLowerCase()); sets.set(col[1].toLowerCase(), col[2]); }
         else if (/^\s*\$x/.test(piece)) cols.add('(dynamic)');
         start = i + 1;
       }
     }
-    out.push({ table: m[1].toLowerCase(), cols });
+    return { cols, sets };
+  };
+  for (const m of text.matchAll(/\b(?:INSERT\s+INTO|DELETE\s+FROM)\s+([a-z_][a-z0-9_]*)/gi)) out.push({ table: m[1].toLowerCase(), cols: null });
+  for (const m of text.matchAll(/\bINSERT\s+INTO\s+([a-z_][a-z0-9_]*)[^;]*?\bON\s+CONFLICT\b[^;]*?\bDO\s+UPDATE\s+SET\s+([\s\S]*?)(\bWHERE\b|\bRETURNING\b|;|$)/gi)) {
+    const after = text.slice(m.index + m[0].length);
+    const where = /^WHERE$/i.test(m[3]) ? after.split(/\bRETURNING\b|;/i)[0] : '';
+    out.push({ table: m[1].toLowerCase(), ...setList(m[2]), where });
+  }
+  for (const m of text.matchAll(/(?<!\bDO\s+)\bUPDATE\s+([a-z_][a-z0-9_]*)(?:\s+(?:AS\s+)?[a-z_]+)?\s+SET\s+([\s\S]*?)(\bWHERE\b|\bFROM\b|\bRETURNING\b|$)/gi)) {
+    const after = text.slice(m.index + m[0].length);
+    const where = /^WHERE$/i.test(m[3]) ? after.split(/\bRETURNING\b|;/i)[0] : '';
+    out.push({ table: m[1].toLowerCase(), ...setList(m[2]), where });
   }
   return out;
+}
+
+// The parts of `text` split on `sep` (a keyword or a character) where no
+// parenthesis, quote or CASE is open: a WHERE's top-level conjuncts.
+function topLevel(text, sep) {
+  const out = [];
+  let depth = 0;
+  let quoted = false;
+  let start = 0;
+  const re = new RegExp(`^\\s*${sep}\\b`, 'i');
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "'") quoted = !quoted;
+    if (quoted) continue;
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    else if (/\bCASE\b/i.test(text.slice(i, i + 5)) && /\W|^/.test(text[i - 1] || ' ')) depth++;
+    else if (/^END\b/i.test(text.slice(i, i + 4)) && /\W/.test(text[i - 1] || ' ')) depth--;
+    else if (depth === 0 && /\s/.test(ch) && re.test(text.slice(i))) {
+      out.push(text.slice(start, i));
+      i += text.slice(i).match(re)[0].length - 1;
+      start = i + 1;
+    }
+  }
+  out.push(text.slice(start));
+  return out.map((x) => x.trim()).filter(Boolean);
+}
+
+// Whether an UPDATE leaves alone every row a machine's guard covers, by what
+// it says itself:
+//  - `@enrolled` guards cover the rows the machine holds, and the write
+//    excludes them with the guard's own predicate: a top-level conjunct of
+//    its WHERE that is `NOT wf_holds('<m>', '<prefix>' || <the row's id>)`,
+//    or the column set to itself where it holds the row
+//    (`col = CASE WHEN wf_holds('<m>', '<prefix>' ...) THEN col ...`);
+//  - a guard whose `WHEN (OLD.kind IN (...))` names kinds a top-level
+//    conjunct of the write's WHERE pins away from (`kind = '<other>'`);
+//  - an `@enabled` guard on a move into a value (`NEW.col = 'v'`) the write
+//    never sets: every value it assigns is a literal other than 'v', or the
+//    row's own column, and nothing else.
+// A WHERE with a top-level OR exempts nothing.
+function leavesGuardAlone(w, o) {
+  const where = w.where || '';
+  const conjuncts = topLevel(where, 'OR').length > 1 ? [] : topLevel(where, 'AND');
+  const prefixArg = (key) => new RegExp(`^'${o.prefix}'\\s*\\|\\|\\s*(?:[a-z_]+\\.)?(?:id|\\$\\d+)(?:::\\w+)?\\s*$`, 'i').test(key);
+  const holdsCall = /^\s*wf_holds\(\s*'([a-z0-9-]+)'\s*,\s*(.+)\)\s*$/i;
+  if (o.scope === 'enrolled' && o.prefix) {
+    for (const c of conjuncts) {
+      const m = /^NOT\s+(wf_holds\(.*\))$/is.exec(c);
+      const call = m && holdsCall.exec(m[1]);
+      if (call && call[1] === o.machine && prefixArg(call[2].trim())) return true;
+    }
+    const rhs = w.sets?.get(o.column);
+    const self = new RegExp(`^\\s*CASE\\s+WHEN\\s+(wf_holds\\([^)]*\\))\\s+THEN\\s+(?:[a-z_]+\\.)?${o.column}\\s+ELSE\\b`, 'i').exec(rhs || '');
+    const call = self && holdsCall.exec(self[1]);
+    if (call && call[1] === o.machine && prefixArg(call[2].trim())) return true;
+  }
+  if (o.kinds) {
+    for (const c of conjuncts) {
+      const pinned = /^(?:[a-z_]+\.)?kind\s*=\s*'([a-z_]+)'$/i.exec(c);
+      if (pinned && !o.kinds.has(pinned[1])) return true;
+    }
+  }
+  if (o.scope === 'enabled' && o.into != null) {
+    const rhs = w.sets?.get(o.column);
+    if (rhs != null) {
+      const plain = rhs.replace(/wf_holds\([^)]*\)/gi, 'TRUE').trim();
+      // Each value it can take: the whole of a plain assignment, or each
+      // THEN and ELSE of a CASE (up to the next WHEN, ELSE or END).
+      const values = /^CASE\b/i.test(plain)
+        ? [...plain.matchAll(/\b(?:THEN|ELSE)\s+([\s\S]*?)(?=\s+(?:WHEN|ELSE|END)\b)/gi)].map((m) => m[1].trim())
+        : [plain];
+      const literal = (v) => /^'([^']*)'$/.exec(v);
+      const own = (v) => new RegExp(`^(?:${w.table}\\.)?${o.column}$`, 'i').test(v);
+      if (values.length && values.every((v) => (literal(v) ? literal(v)[1] !== o.into : own(v)))) return true;
+    }
+  }
+  return false;
 }
 
 // SQL text a template interpolates by name: a module's string constant
@@ -360,17 +453,32 @@ function readSchema(root) {
   const guard = /CREATE\s+TRIGGER\s+([a-z_][a-z0-9_]*)\s+BEFORE\s+(?:INSERT\s+OR\s+)?UPDATE(?:\s+OF\s+[^;]*?)?(?:\s+OR\s+INSERT)?\s+ON\s+([a-z_][a-z0-9_]*)[^;]*?EXECUTE\s+FUNCTION\s+wf_guard_owned_columns\(([^;]*?)\);/gi;
   for (const m of schema.matchAll(guard)) {
     const args = [...m[3].matchAll(/'([^']*)'/g)].map((a) => a[1]);
-    const scope = /^@(?:enrolled|enabled)=([a-z0-9-]+)/.exec(args[0] || '');
+    const scope = /^@(enrolled|enabled)=([a-z0-9-]+)(?:\/([a-z_:]+))?/.exec(args[0] || '');
     if (!scope) continue;
-    for (const a of args.slice(1).filter((x) => !x.startsWith('@'))) owned.push({ machine: scope[1], table: m[2].toLowerCase(), column: a.split('.')[0] });
+    // What the guard's WHEN limits it to: kinds, or a move into one value.
+    const when = /\bWHEN\s*\(([\s\S]*?)\)\s*EXECUTE\b/i.exec(m[0])?.[1] || '';
+    const kindList = /\bOLD\.kind\s+IN\s*\(([^)]*)\)/i.exec(when);
+    const kinds = kindList ? new Set([...kindList[1].matchAll(/'([^']*)'/g)].map((k) => k[1])) : null;
+    for (const a of args.slice(1).filter((x) => !x.startsWith('@'))) {
+      const column = a.split('.')[0];
+      const into = new RegExp(`\\bNEW\\.${column}\\s*=\\s*'([^']*)'`, 'i').exec(when)?.[1] ?? null;
+      owned.push({ machine: scope[2], table: m[2].toLowerCase(), column, scope: scope[1], prefix: scope[3] || null, kinds, into });
+    }
   }
   const fns = new Map();
   for (const m of schema.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([a-z_][a-z0-9_]*)\s*\(\s*\)\s+RETURNS\s+TRIGGER\s+AS\s+\$\$([\s\S]*?)\$\$/gi)) {
     fns.set(m[1].toLowerCase(), new Set([...m[2].matchAll(/NEW\.([a-z_][a-z0-9_]*)\s*:=/gi)].map((x) => x[1].toLowerCase())));
   }
+  // Triggers that assign a column on an UPDATE. One that fires on INSERT only
+  // fills a new row, which no machine holds yet and no guard covers (the
+  // guards are BEFORE UPDATE): it is not another writer of an owned column.
+  // A trigger dropped further down the schema is gone.
   const assigning = [];
-  for (const m of schema.matchAll(/CREATE\s+TRIGGER\s+([a-z_][a-z0-9_]*)\s+BEFORE\s+(?:INSERT|UPDATE)(?:\s+OF\s+[^;]*?)?(?:\s+OR\s+(?:INSERT|UPDATE))?\s+ON\s+([a-z_][a-z0-9_]*)[^;]*?EXECUTE\s+FUNCTION\s+([a-z_][a-z0-9_]*)\s*\(/gi)) {
-    for (const col of fns.get(m[3].toLowerCase()) || []) assigning.push({ trigger: m[1], table: m[2].toLowerCase(), column: col });
+  for (const m of schema.matchAll(/CREATE\s+TRIGGER\s+([a-z_][a-z0-9_]*)\s+BEFORE\s+(INSERT|UPDATE)(?:\s+OF\s+[^;]*?)?(?:\s+OR\s+(INSERT|UPDATE))?\s+ON\s+([a-z_][a-z0-9_]*)[^;]*?EXECUTE\s+FUNCTION\s+([a-z_][a-z0-9_]*)\s*\(/gi)) {
+    if (![m[2], m[3]].some((e) => e && e.toUpperCase() === 'UPDATE')) continue;
+    const dropped = new RegExp(`DROP\\s+TRIGGER\\s+IF\\s+EXISTS\\s+${m[1]}\\s+ON\\s+${m[4]}\\s*;(?![\\s\\S]*CREATE\\s+TRIGGER\\s+${m[1]}\\b)`, 'i');
+    if (dropped.test(schema.slice(m.index + m[0].length))) continue;
+    for (const col of fns.get(m[5].toLowerCase()) || []) assigning.push({ trigger: m[1], table: m[4].toLowerCase(), column: col });
   }
   return { tables, owned, assigning };
 }
@@ -404,13 +512,18 @@ const FORBIDDEN = new Map([
   ['kernel', new Set(['state', 'timer', 'hook', 'io'])],
 ]);
 
-function roleOf(name, file, top) {
-  if (name === 'kernel') return 'kernel';
-  if (name === 'platform') return 'web';
-  if (file.startsWith(RULES)) return 'rules';
-  if (!file.startsWith(`${WORKFLOW}${name}/`)) return 'shared';
-  if (!file.endsWith('/services.ts')) return 'decider';
-  return top.endsWith('Notifiers') ? 'notifiers' : 'services';
+// A shared workflow module (outside every machine's folder, not rules/) has
+// the roles of the parts that import it, through any chain of shared
+// modules: a GitHub helper only work handlers import is their I/O, held to
+// what a work handler may do; one a transition imports is held to what a
+// transition may do.
+function roleOf(name, file, top, inherited = null) {
+  if (name === 'kernel') return ['kernel'];
+  if (name === 'platform') return ['web'];
+  if (file.startsWith(RULES)) return ['rules'];
+  if (!file.startsWith(`${WORKFLOW}${name}/`)) return [...(inherited?.get(file) || ['shared'])];
+  if (!file.endsWith('/services.ts')) return ['decider'];
+  return [top.endsWith('Notifiers') ? 'notifiers' : 'services'];
 }
 
 // The names a notifiers factory's returned object has.
@@ -441,6 +554,9 @@ function boundary(root = REPO, allowed = new Set()) {
     // Its files, and the shared workflow modules they import, and what
     // those import in turn.
     const all = new Set(files);
+    const inherited = new Map();   // shared module -> the roles of its importers
+    const fileRoles = (f) => (f.startsWith(`${WORKFLOW}${name}/`) || name === 'platform' || name === 'kernel' || f.startsWith(RULES)
+      ? roleOf(name, f, '').map((r) => (r === 'notifiers' ? 'services' : r)) : [...(inherited.get(f) || [])]);
     const queue = [...files];
     while (queue.length) {
       const f = queue.shift();
@@ -448,21 +564,27 @@ function boundary(root = REPO, allowed = new Set()) {
         if (!(ts.isImportDeclaration(st) || ts.isExportDeclaration(st)) || !st.moduleSpecifier || !ts.isStringLiteral(st.moduleSpecifier)) continue;
         const m = resolve(root, f, st.moduleSpecifier.text, false);
         if (m && m.startsWith(WORKFLOW) && !m.startsWith(`${WORKFLOW}kernel/`) && m !== `${WORKFLOW}platform.ts`
-          && ![...groups.keys()].some((g) => m.startsWith(`${WORKFLOW}${g}/`)) && !all.has(m)) {
-          all.add(m);
-          queue.push(m);
+          && ![...groups.keys()].some((g) => m.startsWith(`${WORKFLOW}${g}/`))) {
+          if (!m.startsWith(RULES)) {
+            if (!inherited.has(m)) inherited.set(m, new Set());
+            const had = inherited.get(m).size;
+            for (const r of fileRoles(f)) inherited.get(m).add(r);
+            if (all.has(m) && inherited.get(m).size > had) queue.push(m);
+          }
+          if (!all.has(m)) { all.add(m); queue.push(m); }
         }
       }
     }
     for (const f of all) {
       const s = scan(f);
-      for (const u of s.uses) add(`${roleOf(name, f, u.top)} | uses ${u.module}${u.what}`, `${f}#${u.top}`);
+      for (const u of s.uses) for (const role of roleOf(name, f, u.top, inherited)) add(`${role} | uses ${u.module}${u.what}`, `${f}#${u.top}`);
       for (const o of s.own) {
-        const role = roleOf(name, f, o.name.split(' ')[0]);
-        if (FORBIDDEN.get(role).has(o.kind)) add(`${role} | ${o.kind} ${f}#${o.name}`, f);
+        for (const role of roleOf(name, f, o.name.split(' ')[0], inherited)) {
+          if (FORBIDDEN.get(role).has(o.kind)) add(`${role} | ${o.kind} ${f}#${o.name}`, f);
+        }
       }
       for (const w of s.writes) {
-        if (roleOf(name, f, w.top) === 'services' && schema.tables.has(w.table)) add(`services | writes ${w.table}`, `${f}#${w.top}`);
+        if (roleOf(name, f, w.top, inherited).includes('services') && schema.tables.has(w.table)) add(`services | writes ${w.table}`, `${f}#${w.top}`);
       }
       if (f.endsWith('/services.ts')) for (const n of notifierNames(s.sf)) add(`notifiers | notifier ${n}`, f);
     }
@@ -489,6 +611,7 @@ function boundary(root = REPO, allowed = new Set()) {
           if (!w.cols) continue;
           for (const o of schema.owned) {
             if (o.table !== w.table || file.startsWith(`${WORKFLOW}${o.machine}/`) || ownsToo(file, o.table, o.column)) continue;
+            if (leavesGuardAlone(w, o)) continue;
             const at = `${file}#${topOf(n)}`;
             if (w.cols.has(o.column)) owners.set(`${o.machine}\u0000ownership | ${o.table}.${o.column} ← ${at}`, at);
             else if (w.cols.has('(dynamic)')) owners.set(`${o.machine}\u0000ownership | ${o.table}.${o.column} ← ${at} (dynamic SET)`, at);
@@ -515,24 +638,33 @@ function boundary(root = REPO, allowed = new Set()) {
 
 const readBaseline = () => JSON.parse(fs.readFileSync(BASELINE, 'utf8'));
 
-module.exports = { boundary, readBaseline, scanFile, sqlWrites, BASELINE, REPO };
+module.exports = { boundary, readBaseline, scanFile, sqlWrites, leavesGuardAlone, BASELINE, REPO };
 
 if (require.main === module) {
   const baseline = readBaseline();
   const now = boundary(REPO, new Set(Object.keys(baseline.allowed)));
   if (process.argv.includes('--shrink')) {
     let removed = 0;
-    for (const [name, list] of Object.entries(baseline.machines)) {
-      const kept = list.filter((e) => now.get(name)?.has(e));
-      removed += list.length - kept.length;
-      baseline.machines[name] = kept;
+    for (const section of ['io', 'handOff']) {
+      for (const [name, entries] of Object.entries(baseline[section] || {})) {
+        for (const entry of Object.keys(entries)) {
+          if (now.get(name)?.has(entry)) continue;
+          delete entries[entry];
+          removed += 1;
+        }
+        if (!Object.keys(entries).length) delete baseline[section][name];
+      }
     }
     fs.writeFileSync(BASELINE, `${JSON.stringify(baseline, null, 2)}\n`);
     console.log(`removed ${removed} entr${removed === 1 ? 'y' : 'ies'} no longer there`);
   } else {
+    // What is not reviewed yet: the entries neither io nor handOff names.
+    const reviewed = (name, e) => ['io', 'handOff'].some((k) => Object.prototype.hasOwnProperty.call(baseline[k]?.[name] || {}, e));
     for (const [name, entries] of now) {
-      console.log(`\n## ${name} (${entries.size})`);
-      for (const [e, from] of entries) console.log(`- ${e}  [${from}]`);
+      const open = [...entries].filter(([e]) => process.argv.includes('--all') || !reviewed(name, e));
+      if (!open.length) continue;
+      console.log(`\n## ${name} (${open.length})`);
+      for (const [e, from] of open) console.log(`- ${e}  [${from}]`);
     }
   }
 }

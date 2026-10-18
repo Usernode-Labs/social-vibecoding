@@ -367,7 +367,7 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
     assert.deepEqual((await metaOf(binsId)).botRequest, { issueNumber: n, status: 'ready', sessionId: built.id });
     assert.deepEqual(frames.at(-1), { type: 'bot_request_status', messageId: binsId, botRequest: { issueNumber: n, status: 'ready', sessionId: built.id } });
     // Approved and merged: going live until the app answers, then Live.
-    await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [built.id]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', live_at = COALESCE(merged_at, NOW()) WHERE id = $1`, [built.id]);
     assert.equal(cardWords(await binsCard()), 'Approved: Add a night-before reminder for bin day. It’s going live.');
     pushed.length = 0;
     await botChat.noteRequestStatus(pool, { appId: app.id, issueNumber: n, status: 'live', deps: deps(null) });

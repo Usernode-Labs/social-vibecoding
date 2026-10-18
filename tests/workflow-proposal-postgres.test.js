@@ -18,7 +18,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
-const { proposal, sessionKey, MACHINE, WORK, CLAIM_STALE_MS } = require('../src/workflow/proposal/machine.ts');
+const { proposal, sessionKey, MACHINE, WORK } = require('../src/workflow/proposal/machine.ts');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const SHA = (c) => c.repeat(40).slice(0, 40);
@@ -530,85 +530,10 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     assert.equal((await row(gone)).pr_number, null);
   });
 
-  // ── The merge claim ─────────────────────────────────────────────────
-
-  await t.test('P16 the merge claim re-reads the gate under the lock: a No since, an epoch moved, a head moved refuse it (bugs 1, 2)', async () => {
-    defaults();
-    // Four active members; two Yes carry it (majority reached), until a No
-    // lands between the merge's gate and its claim.
-    const s = await session({ status: 'promoted', promotedAgo: 60 * 60 * 1000 });
-    const people = [await user(), await user(), await user(), await user()];
-    for (const u of people) {
-      await pool.query('INSERT INTO app_activity (app_id, user_id, seconds_spent) VALUES ($1, $2, 120)', [s.app_id, u.id]);
-      await pool.query(`INSERT INTO community_members (community_id, user_id)
-                        SELECT community_id, $2 FROM apps WHERE id = $1 AND community_id IS NOT NULL ON CONFLICT DO NOTHING`, [s.app_id, u.id]);
-    }
-    await vote(s, people[0], 'yes');
-    await vote(s, people[1], 'yes');
-    await vote(s, people[2], 'no');
-    const claimNo = await send(s, 'MergeClaim', { head: SHA('a'), epoch: 0 });
-    await settle();
-    assert.equal((await outcome(claimNo)).reason, 'not_mergeable', 'the No is counted: the gate as it is now, not as it was (bug 1)');
-    await pool.query('DELETE FROM pr_votes WHERE session_id = $1 AND user_id = $2', [s.id, people[2].id]);
-    const epochMoved = await send(s, 'MergeClaim', { head: SHA('a'), epoch: 7 });
-    const headMoved = await send(s, 'MergeClaim', { head: SHA('c'), epoch: 0 });
-    await settle();
-    assert.equal((await outcome(epochMoved)).reason, 'epoch_moved', 'bug 2: unpromote and re-promote between the gate and the claim');
-    assert.equal((await outcome(headMoved)).reason, 'head_moved');
-    const ok = await send(s, 'MergeClaim', { head: SHA('a'), epoch: 0 });
-    const second = await send(s, 'MergeClaim', { head: SHA('a'), epoch: 0 });
-    await settle();
-    assert.equal((await outcome(ok)).result, 'accepted');
-    assert.equal((await outcome(ok)).reply.claim, (await instance(s)).data.claim.n);
-    assert.equal((await outcome(second)).reason, 'in_progress');
-    assert.equal((await row(s)).status, 'merging');
-    assert.ok((await row(s)).merge_attempt_at);
-    // A forced claim skips the votes.
-    const f = await session({ status: 'promoted', promotedAgo: DAY, approvalsRequired: 5 });
-    const forced = await send(f, 'MergeClaim', { head: SHA('a'), epoch: 0, force: true });
-    await settle();
-    assert.equal((await outcome(forced)).result, 'accepted');
-  });
-
-  await t.test('P17 a release gives the claim back with its votes (Q4); recovery\'s only once the claim is old', async () => {
-    defaults();
-    const s = await session({ status: 'promoted', promotedAgo: DAY, approvalsRequired: 1 });
-    await vote(s, await user(), 'yes');
-    const c = await send(s, 'MergeClaim', { head: SHA('a'), epoch: 0 });
-    await settle();
-    const claim = (await outcome(c)).reply.claim;
-    const wrong = await send(s, 'MergeReleased', { claim: claim + 1 });
-    const early = await send(s, 'MergeReleased', { claim: null, reason: 'stuck' });
-    await settle();
-    assert.equal((await outcome(wrong)).reason, 'stale_claim');
-    assert.equal((await outcome(early)).reason, 'claim_live', 'a live attempt\'s claim is never recovered from under it');
-    await send(s, 'MergeReleased', { claim });
-    await settle();
-    assert.equal((await row(s)).status, 'promoted');
-    assert.equal((await row(s)).approval_epoch, 0, 'its votes stand');
-    // Recovery: an old claim.
-    const c2 = await send(s, 'MergeClaim', { head: SHA('a'), epoch: 0 });
-    await settle();
-    assert.equal((await outcome(c2)).result, 'accepted');
-    await asTransition((c) => c.query(
-      `UPDATE wf_instances SET data = jsonb_set(data, '{claim,at}', to_jsonb((now() - make_interval(secs => $3::bigint / 1000.0))::text))
-        WHERE machine = $1 AND key = $2`, [MACHINE, sessionKey(s.id), CLAIM_STALE_MS + 1000]));
-    const rec = await send(s, 'MergeReleased', { claim: null, reason: 'stuck' });
-    await settle();
-    assert.equal((await outcome(rec)).result, 'accepted');
-  });
-
-  await t.test('P18 a PR closed for good takes the proposal off the vote: votes voided, an imported one stays as imports are (bug 19)', async () => {
-    defaults();
-    const s = await session({ status: 'promoted', promotedAgo: 0 });
-    const imp = await session({ status: 'promoted', promotedAgo: 0, source: 'imported' });
-    for (const x of [s, imp]) await send(x, 'MergeAbandoned', { from: 'promoted', reason: 'pr_closed' });
-    await settle();
-    assert.equal((await row(s)).status, 'paused');
-    assert.equal((await row(s)).approval_epoch, 1);
-    assert.equal((await row(imp)).status, 'active', 'an imported proposal holds no slot');
-    assert.equal((await row(imp)).approval_epoch, 1);
-  });
+  // ── The merge ───────────────────────────────────────────────────────
+  // The claim under the lock, a declined attempt and a pull request closed
+  // for good are the merge queue's path (tests/workflow-merge-postgres.test.js
+  // M2, M6).
 
   await t.test('P19 merged by merge-followups: the proposal hears it, and never writes over it', async () => {
     defaults();
@@ -658,7 +583,7 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
 
   await t.test('P21 every status move names what its caller read: a payload without `from` is refused at the append', async () => {
     const s = await session();
-    for (const type of ['Promote', 'Unpromote', 'Pause', 'Resume', 'Close', 'Reopen', 'MergeAbandoned', 'ReviewHeadMoved']) {
+    for (const type of ['Promote', 'Unpromote', 'Pause', 'Resume', 'Close', 'Reopen', 'ReviewHeadMoved']) {
       await assert.rejects(rt.append(machine, sessionKey(s.id), { type, payload: { sessionId: s.id, userId: s.owner.id, reason: 'manual', cap: 1,
         column: 'reviewed', to: SHA('b') } }, { requestKey: `nofrom-${type}`, source: route }), /from/, type);
     }
@@ -751,19 +676,20 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     defaults();
     const past = new Date(Date.now() - 1000).toISOString();
     const s = await session({ status: 'promoted', promotedAgo: 0 });
-    const claimLate = await send(s, 'MergeClaim', { head: SHA('a'), epoch: 0, deadline: past });
     const headLate = await send(s, 'ReviewHeadMoved', { column: 'reviewed', from: SHA('a'), to: SHA('b'), keepVotes: false, deadline: past });
     const unpromoteLate = await send(s, 'Unpromote', { from: 'promoted', userId: s.owner.id, deadline: past }, route);
     const u = await session();
     const pauseLate = await send(u, 'Pause', { from: 'active', reason: 'lru', deadline: past });
     await settle();
-    for (const id of [claimLate, headLate, unpromoteLate, pauseLate]) assert.equal((await outcome(id)).reason, 'expired');
+    for (const id of [headLate, unpromoteLate, pauseLate]) assert.equal((await outcome(id)).reason, 'expired');
     assert.equal((await row(s)).status, 'promoted');
     assert.equal((await row(s)).reviewed_head_sha, SHA('a'));
     assert.equal((await row(u)).status, 'active');
-    const inTime = await send(s, 'MergeClaim', { head: SHA('a'), epoch: 0, force: true, deadline: new Date(Date.now() + 60000).toISOString() });
+    const inTime = await send(s, 'ReviewHeadMoved', { column: 'reviewed', from: SHA('a'), to: SHA('b'), keepVotes: false,
+      deadline: new Date(Date.now() + 60000).toISOString() });
     await settle();
     assert.equal((await outcome(inTime)).result, 'accepted');
+    assert.equal((await row(s)).reviewed_head_sha, SHA('b'));
   });
 
   await t.test('P27 a close names the proposal underway whichever slot it read: an idle pause between the read and the close does not lose it (review 5)', async () => {

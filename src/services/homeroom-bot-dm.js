@@ -2629,11 +2629,13 @@ async function approvalState(pool, { sessionId, userId = null }) {
   if (!session) return null;
   const governance = require('./governance');
   const { countedVotePredicateSql } = require('./pr-vote-revision');
-  const gov = await governance.getGovernance(pool, session.app_id);
+  // Read uncached: who is belled is decided here, from the work of the
+  // bot-change machine (tellReady), in whichever process runs it.
+  const gov = await governance.readGovernance(pool, session.app_id);
   const electorate = await governance.getElectorate(pool, session.app_id, gov);
   const gate = await governance.governedGate(pool, session.app_id, {
     kind: 'pr', id, openedAt: session.opened_at,
-    explicitApproval: session.explicit_approval === true, authorId: session.user_id ?? null,
+    explicitApproval: session.explicit_approval === true, authorId: session.user_id ?? null, fresh: true,
   });
   const { rows: yes } = await pool.query(
     `SELECT pv.user_id FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id
@@ -3044,7 +3046,9 @@ async function noteChangeStopped(pool, sessionId, { why = 'preview', deps = {}, 
     );
     const run = rows[0];
     if (!run || run.status !== 'promoted') return null;
-    const settings = await settingsModule().readSettings(pool);
+    // Strict (the bot-change machine's work): a failed read is retried, never
+    // read as "no bot" and the line taken for said.
+    const settings = await settingsModule().readSettings(pool, { strict });
     const requester = await requesterOf(pool, run.id, Number(run.issue_number));
     if (!requester || !hasBot(settings, requester)) return null;
     const bot = deps.bot || await botAccount(pool);
@@ -3320,7 +3324,7 @@ async function noteProposalMerged(pool, session, { deps = {} } = {}) {
   const requester = await requesterOf(pool, run.app_id, run.issue_number);
   // #8: their activity tray reads again, whether or not the DM says it.
   if (requester) require('./homeroom-bot-tray').noteWorkChanged(requester.userId, deps);
-  const settings = await settingsModule().readSettings(pool);
+  const settings = await settingsModule().readSettings(pool, { strict: !!deps.strict });
   // #4238: a new project's first version: the bot says so in its channel, once.
   if (requester?.firstVersion && !platform) await announceFirstVersion(pool, run, { live, deps });
   if (!requester || !hasBot(settings, requester)) return null;

@@ -43,22 +43,7 @@ function reviewedHeadSql(sessionAlias = 'cs') {
 // The predicate every tally in the platform is built on, and the alias
 // guard (src/workflow/rules/vote-predicate.ts, one copy: the merged line's
 // credits count with it inside the merge-followups transaction).
-const { checkedAlias, currentVotePredicateSql } = require('../workflow/rules/vote-predicate.ts');
-
-/**
- * The predicate every TALLY counts with: a current vote (above) that also
- * counts toward the app's outcome. A test account's vote on an app a real
- * person made is current — it is the voter's own, shown on their card as
- * theirs and labelled — but it is not counted (D1, services/test-accounts.js;
- * the rule itself is counts_toward_outcome in schema.sql, which the active-
- * member denominator shares). So "what did I vote" reads currentVotePredicateSql
- * and "how many approvals" reads this one. `cs` must expose `app_id`.
- */
-function countedVotePredicateSql(voteAlias = 'pv', sessionAlias = 'cs') {
-  const pv = checkedAlias(voteAlias);
-  const cs = checkedAlias(sessionAlias);
-  return `(${currentVotePredicateSql(pv, cs)} AND counts_toward_outcome(${pv}.user_id, ${cs}.app_id))`;
-}
+const { checkedAlias, countedVotePredicateSql, currentVotePredicateSql } = require('../workflow/rules/vote-predicate.ts');
 
 module.exports = {
   reviewedHeadForSession,

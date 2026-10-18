@@ -402,10 +402,11 @@ function viewerDecides(gov, { approverIds, facts, explicitApproval, explicitReas
 
 // Who made the project, how many are in its community, its active-member
 // electorate, its admins and its named groups' people: the app facts a rule
-// can need. Cached like the governance columns. The platform's own app has
-// no creator (a rule on `creator` there never passes).
-async function rulesFacts(pool, appId, gov) {
-  const hit = factsCache.get(appId);
+// can need. Cached like the governance columns, unless `fresh` (a decision
+// of a workflow machine's work, which no process's cache may decide). The
+// platform's own app has no creator (a rule on `creator` there never passes).
+async function rulesFacts(pool, appId, gov, { fresh = false } = {}) {
+  const hit = fresh ? null : factsCache.get(appId);
   if (hit && Date.now() - hit.at < GOV_CACHE_TTL_MS) return withGroups(hit.value, gov);
   const { rows } = await pool.query(
     `SELECT a.created_by, a.self_hosted, a.collab_visibility,
@@ -581,9 +582,11 @@ async function storedExplicitReason(pool, kind, id) {
 // waives its vote (governance-gate.ts applyFirstVersion). An issue never is
 // one.
 async function governedGate(pool, appId, {
-  kind = 'pr', id, openedAt, now, explicitApproval = false, authorId, explicitReason, firstVersion,
+  kind = 'pr', id, openedAt, now, explicitApproval = false, authorId, explicitReason, firstVersion, fresh = false,
 } = {}) {
-  const gov = await getGovernance(pool, appId);
+  // `fresh`: read uncached, as a workflow machine's work must (a process's
+  // 10-second copy is lost on a restart and differs between processes).
+  const gov = fresh ? await readGovernance(pool, appId) : await getGovernance(pool, appId);
   const first = firstVersion !== undefined
     ? !!firstVersion
     : (kind === 'pr' ? await isFirstVersion(pool, id) : false);
@@ -592,7 +595,7 @@ async function governedGate(pool, appId, {
     // author always, because proposing counts as their yes, and whether they
     // are a person, because only a person's proposing does.
     const [facts, voters, author] = await Promise.all([
-      rulesFacts(pool, appId, gov),
+      rulesFacts(pool, appId, gov, { fresh }),
       voterSets(pool, kind, id),
       authorId !== undefined ? authorId : proposalAuthorId(pool, kind, id),
     ]);

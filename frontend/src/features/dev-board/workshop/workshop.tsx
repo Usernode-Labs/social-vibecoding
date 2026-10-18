@@ -100,6 +100,7 @@ import {
 } from './places';
 import { PlaceBar } from './place-bar';
 import { PlacesTray, useEdgeSwipe } from './places-tray';
+import { drawerStore } from '../../nav-drawer/drawer-store';
 import { ProjectPlaces } from './project-places';
 import { clearPlace, publishPlace, publishSide, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
 import { PlanPage } from './plan-page';
@@ -4514,7 +4515,10 @@ export function DevWorkshop(): ReactNode {
   const placesInColumn = useMediaFlag(PLACES_COLUMN_QUERY);
   useEffect(() => { setTrayOpen(false); }, [tab, v.slug, placesInColumn]);
   useEffect(() => { if (trayOpen) setTrayShown(true); }, [trayOpen]);
-  useEdgeSwipe(!placesInColumn && !trayOpen && !!v.slug && !v.loading, () => {
+  // On a phone the drawer takes the edge (../../nav-drawer/nav-drawer.tsx):
+  // the places are its level 1, and the tray is the wide window's.
+  const { on: drawerOn } = useStoreState(drawerStore);
+  useEdgeSwipe(!placesInColumn && !drawerOn && !trayOpen && !!v.slug && !v.loading, () => {
     trayNav.current = false;
     setTrayOpen(true);
   });

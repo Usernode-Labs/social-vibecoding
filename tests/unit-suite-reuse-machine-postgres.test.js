@@ -560,6 +560,11 @@ test('unit-suite reuse through the preview machine, against the full PostgreSQL 
         return (await pool.query('SELECT result AS status, reason FROM wf_events WHERE id = $1', [ev])).rows[0];
       } finally { if (drained) { drained(); drained = null; } }
     };
+    platform.recheckFolded = async (o) => {
+      const ev = await send({ id: o.sessionId, app_id: o.appId }, 'RecheckFolded', { head: o.head }, { kind: 'route', name: 'manual-recheck' });
+      await rt.drain();
+      return (await pool.query('SELECT result AS status, reason FROM wf_events WHERE id = $1', [ev])).rows[0];
+    };
     const reuseMod = require('../src/services/unit-suite-reuse');
     const realDrain = reuseMod.owePendingRun;
     st.mock.method(reuseMod, 'owePendingRun', (o) => realDrain({ ...o, pollMs: 10, maxWaitMs: 2000 }));
@@ -610,6 +615,51 @@ test('unit-suite reuse through the preview machine, against the full PostgreSQL 
       delete answers.byTrigger['manual-recheck'];
     }
   });
+  // The press folded into a busy session whose checks name the head they
+  // ask about: the verdict stored for it no longer stands, so the machine
+  // stamps it pending (and merge-blocked) until their run answers. On main
+  // the route wrote the stamp itself, which the machine's guard refused on
+  // every proposal it holds: the old pass kept reading passing.
+  await t.test('a request folded into a busy session stamps the held head pending, through the machine', async () => {
+    const s = await proposal({ status: 'promoted', source: 'cli_handoff' });
+    const A = SHA('9');
+    await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [s.id, A]);
+    answers.next = result({ results: [browser, unitPass], unitObserved: UNIT_KEY,
+      history: [{ checkKey: UNIT_KEY, name: unitSuiteRow.UNIT_CHECK_NAME, path: 'package.json', passed: true }] });
+    await submit(s, A);
+    await settle();
+    assert.deepEqual([(await row(s.id)).check_state, (await instance(s)).state], ['passing', 'settled']);
+    await reuse.markFreshOwed(pool, { sessionId: s.id, commitSha: A });
+    const fold = (o) => send({ id: o.sessionId, app_id: o.appId }, 'RecheckFolded', { head: o.head }, { kind: 'route', name: 'manual-recheck' })
+      .then(() => rt.drain());
+    await reuse.owePendingRun({ pool, platform: { recheckFolded: fold }, config: {}, session: await row(s.id),
+      busy: () => true, head: A, pollMs: 10, maxWaitMs: 0, stagingRecovery: { recheckSessionChecks: async () => {} } });
+    const r = await row(s.id);
+    assert.deepEqual([r.check_state, r.checks_commit_sha, r.check_trigger, r.unit_suite_fresh_sha], ['pending', A, 'manual-recheck', A],
+      'the old pass no longer stands for the head they asked about');
+    const { rows: [ev] } = await pool.query(
+      `SELECT result FROM wf_events WHERE machine = 'preview' AND key = $1 AND type = 'RecheckFolded' ORDER BY id DESC LIMIT 1`, [sessionKey(s.id)]);
+    assert.equal(ev.result, 'accepted');
+    // A second press finds it pending already: nothing to stamp.
+    await fold({ sessionId: s.id, appId: s.app_id, head: A });
+    const { rows: [again] } = await pool.query(
+      `SELECT result, reason FROM wf_events WHERE machine = 'preview' AND key = $1 AND type = 'RecheckFolded' ORDER BY id DESC LIMIT 1`, [sessionKey(s.id)]);
+    assert.deepEqual({ ...again }, { result: 'rejected', reason: 'nothing_to_stamp' });
+
+    // A row the machine does not hold (its verdict stored before it ran, or
+    // its preview retired by a reap) is stamped too, adopted from the row, as
+    // the route's own stamp did before (review, 2026-10-17).
+    const loose = await proposal({ status: 'promoted', source: 'cli_handoff' });
+    const H = SHA('8');
+    await pool.query(`UPDATE chat_sessions SET reviewed_head_sha = $2, checks_commit_sha = $2, check_state = 'passing' WHERE id = $1`, [loose.id, H]);
+    assert.equal(await instance(loose), undefined, 'no instance yet');
+    await send({ id: loose.id, app_id: loose.app_id }, 'RecheckFolded', { head: H, sessionId: loose.id }, { kind: 'route', name: 'manual-recheck' });
+    await rt.drain();
+    const r2 = await row(loose.id);
+    assert.deepEqual([r2.check_state, r2.check_trigger], ['pending', 'manual-recheck'], 'stamped from the row');
+    assert.ok(await instance(loose), 'adopted');
+  });
+
   // A same-commit resubmission (submit_work with new testing routes or
   // `recheck: true`: 'testing-update'; shots alone: 'shots-update') replaces
   // the run going, and is a person's request (trigger 'manual-recheck'). When

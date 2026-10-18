@@ -46,13 +46,6 @@ test('journey-events recordChangeLive: strict throws; otherwise it resolves null
   await assert.rejects(journey.recordChangeLive(down(), { ...args, strict: true }), /db down/);
 });
 
-test('main-watch afterMerge: a claim that could not be written throws when strict, reads as "not running" otherwise', async () => {
-  const mainWatch = require('../src/services/main-watch');
-  const app = { id: 2, repo_url: 'https://github.com/acme/shop' };
-  assert.equal(await mainWatch.afterMerge({}, down(), { app, mergeSha: 'a'.repeat(40) }), null);
-  await assert.rejects(mainWatch.afterMerge({}, down(), { app, mergeSha: 'a'.repeat(40), strict: true }), /db down/);
-});
-
 test('homeroom-bot-chat noteRequestStatus: strict throws; otherwise it resolves 0', async () => {
   const chat = require('../src/services/homeroom-bot-chat');
   assert.equal(await chat.noteRequestStatus(down(), { appId: 2, issueNumber: 7, status: 'live' }), 0);

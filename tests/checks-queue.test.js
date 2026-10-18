@@ -200,14 +200,17 @@ test('the merge queue counts a queued run as in flight, so nothing re-drives it'
   assert.match(src, /runInFlight: r\.check_state === 'pending' && r\.check_phase !== 'deferred' && onHead/);
 });
 
-test('main-watch\'s interrupted-run sweep leaves a run alive in the queue, and takes a dead one now, waiting or admitted', () => {
-  const src = stripComments(read('src/services/main-watch.js'));
-  const sweep = src.slice(src.indexOf('async function resumeInterrupted('));
-  assert.match(sweep, /AND NOT EXISTS \(\s*SELECT 1 FROM check_runs cr\s+WHERE cr\.kind = 'main' AND cr\.app_id = apps\.id[\s\S]{0,120}cr\.heartbeat_at >= NOW\(\)/);
-  // A dead row of the merge's own, whether it was waiting or admitted
-  // (tests/main-watch.test.js and checks-queue-postgres pin what follows).
-  assert.match(sweep, /LEFT JOIN LATERAL \(\s*SELECT cr\.run_id, cr\.owner, cr\.admitted_at FROM check_runs cr\s+WHERE cr\.kind = 'main' AND cr\.app_id = apps\.id/);
-  assert.match(sweep, /OR dead\.run_id IS NOT NULL\)/);
+test('a main run a restart interrupted is carried on by its work item, through the queue row it named', () => {
+  // No sweep: the main-check machine's main.suite work is resumable, keeps
+  // the queue row's run id as its checkpoint, and the next attempt adopts
+  // that run's Jobs only once its row was admitted (a waiting row had none).
+  // tests/main-watch.test.js and workflow-main-check-postgres pin what follows.
+  const run = stripComments(read('src/services/main-watch.js'));
+  assert.match(run.slice(run.indexOf('async function runMainSuite(')),
+    /SELECT owner FROM check_runs WHERE run_id = \$1 AND admitted_at IS NOT NULL/);
+  const services = stripComments(read('src/workflow/main-check/services.ts'));
+  assert.match(services, /resumable: true,/);
+  assert.match(services, /onRunId: \(runId: string\) => ctx\.checkpoint\(\{ runId \}\)/);
 });
 
 test('the orphan listing leaves main-watch rows to main-watch, and a row not yet admitted is a waiting one', () => {

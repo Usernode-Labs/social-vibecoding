@@ -4,12 +4,11 @@
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import type { BotNote } from '../rules/bot-notes.ts';
 import { parseGithubUrl } from '../rules/github-url.ts';
 import { permanent } from '../work-errors.ts';
 import { WORK } from './machine.ts';
 
-interface Deps { config: any; pool: Pool; botNote?: BotNote }
+interface Deps { config: any; pool: Pool }
 
 const SHA = /^[0-9a-f]{40}$/i;
 const gone = (err: any) => err?.status === 404 || err?.status === 410;
@@ -20,7 +19,7 @@ const refused = (code: string, message: string) => Object.assign(permanent(messa
 const SYNC_ATTEMPTS = 2;
 const quick = (attempt: number) => Math.min(20 * 1000, 2000 * 2 ** (attempt - 1));
 
-export function proposalServices({ config, pool, botNote }: Deps): Record<string, WorkHandler> {
+export function proposalServices({ config, pool }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
   // The proposal machine's instance of the session: what it decided last.
   const lifecycle = async (id: number) => (await pool.query(
@@ -316,11 +315,7 @@ export function proposalServices({ config, pool, botNote }: Deps): Record<string
       concurrency: 4,
       async run(ctx): Promise<Json> {
         const { input, signal } = ctx;
-        const durableSteps = legacy('services/durable-steps');
-        const steps = durableSteps.durable({
-          resumeFrom: ctx.resumeFrom, checkpoint: ctx.checkpoint, signal, attempt: ctx.attempt,
-          lostAttempts: ctx.lostAttempts || 0, owner: `proposal/sync:${input.sessionId}:${input.n}`,
-        });
+        const steps = ctx.steps({ owner: `proposal/sync:${input.sessionId}:${input.n}` });
         const out = await legacy('services/sync-main').runSyncWork(config, pool, {
           sessionId: Number(input.sessionId), reason: String(input.reason), measureFirst: !!input.measureFirst,
           waitForIdle: !!input.waitForIdle, githubConflict: !!input.githubConflict, last: ctx.attempt >= SYNC_ATTEMPTS, steps,
@@ -328,23 +323,6 @@ export function proposalServices({ config, pool, botNote }: Deps): Record<string
         await steps.flush();
         steps.fence();
         return JSON.parse(JSON.stringify(out)) as Json;
-      },
-    },
-
-    // One release only: an item an older release queued when one of the
-    // Homeroom bot's proposals moved (up for a vote, closed). The bot's
-    // change machine hears it (its tray push goes with it); since this
-    // release the transition tells it (rules/bot-notes.ts).
-    [WORK.bot]: {
-      maxAttempts: 3,
-      backoffMs: (n) => 30 * 1000 * n,
-      async run({ input, workId }): Promise<Json> {
-        const id = Number(input.sessionId);
-        const { rows: [r] } = await pool.query('SELECT status FROM chat_sessions WHERE id = $1', [id]);
-        if (!r || !botNote) return { noted: false };
-        const type = ['promoted', 'merging', 'merged'].includes(r.status) ? 'Proposed' : 'Closed';
-        await botNote(id, type, type === 'Closed' ? { reason: 'closed' } : {}, { requestKey: `shim:${workId}` });
-        return { handedOff: type };
       },
     },
   };

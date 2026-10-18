@@ -452,7 +452,7 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
     });
 
     await t.test('merged: the card says it is live, with no button of its own (#4228)', async () => {
-      await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = $2 WHERE id = $1`, [first.id, at('11:56')]);
+      await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = $2, live_at = $2 WHERE id = $1`, [first.id, at('11:56')]);
       const [live] = await ready();
       assert.deepEqual(live, { messageId: Number(sent.id), state: 'live', actions: [] });
       const read = await activity.cardsFor(pool, { user: { id: alex.id }, deps: {} });
@@ -462,7 +462,7 @@ test('Page Turners, read as it stands: the ready card after each Yes and after t
       assert.equal((await ready())[0].state, 'going_live');
       await pool.query(`UPDATE chat_sessions SET status = 'closed' WHERE id = $1`, [first.id]);
       assert.equal((await ready())[0].state, 'closed');
-      await pool.query(`UPDATE chat_sessions SET status = 'merged' WHERE id = $1`, [first.id]);
+      await pool.query(`UPDATE chat_sessions SET status = 'merged', live_at = COALESCE(merged_at, NOW()) WHERE id = $1`, [first.id]);
     });
 
     await t.test('only the reader\'s own cards, on a project they can still view', async () => {

@@ -1129,7 +1129,7 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_checked_at T
 -- #461: 'skipped' is a TERMINAL, GATE-PASSING verdict recorded when the
 -- checks genuinely cannot / need not run — the branch carries no commits
 -- beyond main, or GitHub isn't configured so no checks infrastructure
--- exists. Written by visuals.storeChecksSkipped (via
+-- exists. Written by the preview machine's storeChecksSkipped (via
 -- staging-recovery.recordChecksSkipped) with the human-readable reason in
 -- check_error_detail (same column the badge tooltip already surfaces); the
 -- merge gate treats it exactly like 'passing', and the next pushed commit
@@ -1181,7 +1181,7 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS captured_at TIMESTAM
 --   consecutive_check_failures : count of back-to-back failed check runs for
 --                              the current commit. Reset to 0 on any passing/
 --                              failing verdict and when a NEW commit starts a
---                              check run (see visuals.setChecksPending). Drives
+--                              check run (see preview/check-store.ts setChecksPending). Drives
 --                              the sweeper's exponential backoff + the
 --                              crash-loop short-circuit (stop auto-retrying a
 --                              deterministically-failing build after N tries).
@@ -9562,16 +9562,7 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_at TIMESTAMPTZ;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_detail JSONB;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_resumed_sha VARCHAR(40);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_paused_sha VARCHAR(40);
--- Carry the derived pauses over. Idempotent: only rows that are red, not
--- resumed for that red, not a red of known flakes alone, and not yet
--- carrying the pause column.
-UPDATE apps
-   SET main_check_paused_sha = main_check_sha
- WHERE main_check_state = 'failing'
-   AND main_check_sha IS NOT NULL
-   AND main_check_paused_sha IS NULL
-   AND lower(coalesce(main_check_resumed_sha, '')) <> lower(main_check_sha)
-   AND (main_check_detail -> 'flakesOnly') IS NULL;
+-- (Their derived pauses are carried over below the main-check guard.)
 
 -- Every verdict main watch reached on a merge commit (services/main-red-fix.js),
 -- kept even when a newer merge took the app's row before it could be stored
@@ -9622,6 +9613,13 @@ CREATE TABLE IF NOT EXISTS main_test_flakes (
   request_filed_at     TIMESTAMPTZ,
   PRIMARY KEY (app_id, file, test)
 );
+-- The work item that took a claim (main_red_requests.claimed_by, and
+-- request_claimed_by here: the main-check machine's wf_work id), written by
+-- the claim's own statement, so the attempt after a crash knows the claim is
+-- its own and carries the filing on, whenever the crash came. Null for a
+-- claim an older release took.
+ALTER TABLE main_red_requests ADD COLUMN IF NOT EXISTS claimed_by TEXT;
+ALTER TABLE main_test_flakes ADD COLUMN IF NOT EXISTS request_claimed_by TEXT;
 
 -- #2253: a ceiling on each app's own Postgres database. Uploaded files have
 -- had a per-app cap since app-files.js; the database had none, and one app
@@ -13206,7 +13204,7 @@ CREATE INDEX IF NOT EXISTS edge_grant_redemptions_expiry_idx
 CREATE INDEX IF NOT EXISTS sessions_token_sha256_idx
   ON sessions (encode(sha256(token::bytea), 'hex'));
 
--- A change that went live inside another one (services/included-changes.js):
+-- A change that went live inside another one (workflow/merge-followups/facts.ts):
 -- when a change merges, an open change whose head commit is one of the
 -- merged pull request's own commits was built on, so its work is live too.
 -- It is marked merged with the merge it went live in (merged_at and
@@ -13907,17 +13905,24 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS live_at TIMESTAMPTZ;
 -- merge recovery records late checks the builds booted since it merged
 -- (merge-followups), since live_at is when production first ran it.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS booted_shas JSONB NOT NULL DEFAULT '[]'::jsonb;
+-- When an app's teardown began removing it (services/app-teardown.js): the
+-- row goes last, so until then the app reads as one whose runtime is missing.
+-- The heal sweep leaves it alone, and a deploy that finishes meanwhile
+-- removes what it put back, in every process. Set after its previews are
+-- retired (the step that may refuse); never cleared, since an app past it is
+-- half removed.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS teardown_started_at TIMESTAMPTZ;
 UPDATE chat_sessions cs SET live_at = COALESCE(cs.merged_at, cs.created_at, NOW())
  WHERE cs.status = 'merged' AND cs.live_at IS NULL
    AND NOT EXISTS (SELECT 1 FROM wf_instances w
                     WHERE w.machine = 'merge-followups' AND w.key = 'session:' || cs.id);
 
--- A row merged by anything but the machine reads as live: one INSERTED as
--- merged (seeds, fixtures, history), or moved into 'merged' where the
--- machine's guard is not on (a database nothing has booted on: test
--- fixtures, a seed before the first boot). Only the machine (the transition
--- pipeline's writer marker) makes a merged row that is not live yet; where
--- its guard is on, only it moves a row into 'merged'.
+-- A row INSERTED as merged (seeds, fixtures, history) reads as live: it was
+-- never the machine's, and no guard covers an insert. Only the machine (the
+-- transition pipeline's writer marker) makes a merged row that is not live
+-- yet, and only it moves a row into 'merged' (chat_sessions_wf_merged), so
+-- the move writes live_at itself; the trigger that filled it on a move made
+-- elsewhere is gone.
 CREATE OR REPLACE FUNCTION chat_sessions_inserted_merged_live() RETURNS TRIGGER AS $$
 BEGIN
   IF current_setting('app.wf_writer', true) IS DISTINCT FROM 'transition' THEN
@@ -13933,11 +13938,6 @@ CREATE TRIGGER chat_sessions_inserted_merged_live
   WHEN (NEW.status = 'merged' AND NEW.live_at IS NULL)
   EXECUTE FUNCTION chat_sessions_inserted_merged_live();
 DROP TRIGGER IF EXISTS chat_sessions_merged_live ON chat_sessions;
-CREATE TRIGGER chat_sessions_merged_live
-  BEFORE UPDATE ON chat_sessions
-  FOR EACH ROW
-  WHEN (NEW.status = 'merged' AND OLD.status IS DISTINCT FROM 'merged' AND NEW.live_at IS NULL)
-  EXECUTE FUNCTION chat_sessions_inserted_merged_live();
 
 -- Only the machine moves a proposal into 'merged' (the merge appends an
 -- event; recovery appends the same one), and once it holds a row it owns
@@ -13983,6 +13983,36 @@ CREATE TRIGGER apps_wf_delivery_owned
         OR OLD.deploy_from_sha IS DISTINCT FROM NEW.deploy_from_sha)
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=app-delivery/app:',
     'deploy_state', 'deploy_started_at', 'deploy_from_sha');
+
+-- main-check (src/workflow/main-check/): the unit suite on each new main,
+-- one instance per app. For an app it holds, it owns the main_check_*
+-- columns (its projection: the merge gate's pause, the board's banner).
+DROP TRIGGER IF EXISTS apps_wf_main_check_owned ON apps;
+CREATE TRIGGER apps_wf_main_check_owned
+  BEFORE UPDATE ON apps
+  FOR EACH ROW
+  WHEN (OLD.main_check_state IS DISTINCT FROM NEW.main_check_state
+        OR OLD.main_check_sha IS DISTINCT FROM NEW.main_check_sha
+        OR OLD.main_check_at IS DISTINCT FROM NEW.main_check_at
+        OR OLD.main_check_detail IS DISTINCT FROM NEW.main_check_detail
+        OR OLD.main_check_paused_sha IS DISTINCT FROM NEW.main_check_paused_sha
+        OR OLD.main_check_resumed_sha IS DISTINCT FROM NEW.main_check_resumed_sha)
+  EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=main-check/app:',
+    'main_check_state', 'main_check_sha', 'main_check_at', 'main_check_detail',
+    'main_check_paused_sha', 'main_check_resumed_sha');
+
+-- Carry the derived pauses over. Idempotent: only rows that are red, not
+-- resumed for that red, not a red of known flakes alone, and not yet
+-- carrying the pause column, on rows the main-check machine does not hold
+-- (it owns the column there).
+UPDATE apps
+   SET main_check_paused_sha = main_check_sha
+ WHERE main_check_state = 'failing'
+   AND main_check_sha IS NOT NULL
+   AND main_check_paused_sha IS NULL
+   AND lower(coalesce(main_check_resumed_sha, '')) <> lower(main_check_sha)
+   AND (main_check_detail -> 'flakesOnly') IS NULL
+   AND NOT wf_holds('main-check', 'app:' || id);
 
 -- preview (src/workflow/preview/): a proposal's preview and its required
 -- checks, one instance per session. For a session it holds, it owns the
@@ -14067,8 +14097,9 @@ CREATE TRIGGER chat_sessions_wf_proposal_owned
 
 -- campaign (src/workflow/campaign/) owns a fleet maintenance campaign once it
 -- holds it: the campaign's status, when it ended, and each app's record (its
--- state and error), projected from the instance; and the older release's
--- lease, which it fences off for good. INSERTs are not guarded (the
+-- state and error), projected from the instance; and the lease columns an
+-- older release's driver used, written by nothing now and dropped in a later
+-- release. INSERTs are not guarded (the
 -- governance apply inserts the campaign, the machine its app rows), nor are
 -- the columns a foreign key empties (a deleted proposal, issue or author).
 DROP TRIGGER IF EXISTS maintenance_campaigns_wf_owned ON maintenance_campaigns;

@@ -21,20 +21,28 @@
 const log = require('./logger');
 const appAccess = require('./app-access');
 
-// Slugs whose teardown is running in this process. The row goes last, so for
-// the whole teardown the app still reads as a running app whose runtime is
-// missing, which is exactly what the self-heal sweep (services/app-heal.js)
-// rebuilds. It asks here first. On 2026-10-05 it did not: a test account was
-// retired, its app's database drop took 30 seconds, and the sweep rebuilt the
+// An app whose teardown has started. The row goes last, so for the whole
+// teardown the app still reads as a running app whose runtime is missing,
+// which is exactly what the self-heal sweep (services/app-heal.js) rebuilds.
+// It asks here first. On 2026-10-05 it did not: a test account was retired,
+// its app's database drop took 30 seconds, and the sweep rebuilt the
 // production Deployment ten seconds in. The row was then deleted, and the
-// Deployment crash-looped against the dropped database for a week. Each slug
-// is also this process's hold (services/processes.js): a heal sweep on
-// another platform process sees the teardown too.
-const tearingDown = require('./processes').heldSet('teardown');
-
-function isTearingDown(slug) {
-  if (tearingDown.has(slug)) return true;
-  try { return require('./processes').heldElsewhere('teardown', slug); } catch { return false; }
+// Deployment crash-looped against the dropped database for a week.
+//
+// The teardown marks the row (apps.teardown_started_at) as it begins to
+// remove anything, so every process reads it at once, and a deploy that
+// finishes while it runs (the app-delivery machine's work, in whichever
+// process claims it) removes what it put back. The mark goes on after the
+// previews are retired, the one step that may refuse and leave the app as
+// it was: a teardown refused there, or whose process dies there, leaves an
+// intact app unmarked. From the mark on, the app is being removed: the mark
+// stays even if a later step fails or its process dies, so a half-removed
+// app is never rebuilt, and deleting it again finishes it. `app` is a row:
+// one read with the column answers from it, any other is read again.
+async function isTearingDown(pool, app) {
+  if (app && Object.prototype.hasOwnProperty.call(app, 'teardown_started_at')) return !!app.teardown_started_at;
+  const { rows: [r] } = await pool.query('SELECT teardown_started_at FROM apps WHERE id = $1', [app.id]);
+  return !!r?.teardown_started_at;
 }
 
 // A deploy or a recovery takes minutes, so an app can be deleted while one
@@ -44,10 +52,8 @@ function isTearingDown(slug) {
 // that fails removes nothing. Resolves whether it removed one.
 async function removeRuntimeIfDeleted(config, pool, app, { who = 'deploy' } = {}) {
   try {
-    if (!isTearingDown(app.slug)) {
-      const { rows } = await pool.query('SELECT 1 FROM apps WHERE id = $1', [app.id]);
-      if (rows.length) return false;
-    }
+    const { rows: [r] } = await pool.query('SELECT teardown_started_at FROM apps WHERE id = $1', [app.id]);
+    if (r && !r.teardown_started_at) return false;
     const applicationRuntime = require('./application-runtime');
     const ref = applicationRuntime.productionRef(config, app);
     await applicationRuntime.remove(config, { ...ref, appId: app.id }, {
@@ -62,16 +68,13 @@ async function removeRuntimeIfDeleted(config, pool, app, { who = 'deploy' } = {}
 }
 
 async function teardownApp(pool, config, app) {
-  tearingDown.add(app.slug);
-  try {
-    await removeApp(pool, config, app);
-  } finally {
-    tearingDown.delete(app.slug);
-  }
+  await removeApp(pool, config, app);
 }
 
 async function removeApp(pool, config, app) {
   await retirePreviews(pool, app);
+  // From here on the app is being removed (isTearingDown above).
+  await pool.query('UPDATE apps SET teardown_started_at = COALESCE(teardown_started_at, NOW()) WHERE id = $1', [app.id]);
   // Teardown through the backend that owns this app. Historical rows
   // without runtime_kind/runtime_name remain Docker-compatible.
   if (app.runtime_name || app.container_id) {

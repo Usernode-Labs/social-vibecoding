@@ -1,0 +1,325 @@
+/**
+ * THE MESSAGES SCREEN AS A DRAWER, ON A PHONE (Evan's design, 18 Oct 2026;
+ * ../nav-drawer/messages-drawer.ts says what it is and when it applies).
+ *
+ * The screen's own two panes become the drawer's levels, moved by transform
+ * on a phone only: the list (`.messages-list-pane`) at 85% of the screen,
+ * the conversation (`.messages-thread-pane`) beside it at 85%. On the list
+ * the last conversation you had open peeks in at the right, drawn from what
+ * it showed when you left it (`ConversationPeek`, ./index.tsx), and a press
+ * on it opens it; with none yet the list takes the whole screen. The pan
+ * follows a finger: a sideways drag on the list, and in a conversation one
+ * that starts at the left edge (EDGE_PX, as the Communities drawer's), except
+ * in Safari on an iPhone, where that edge is the browser's own Back. Let go
+ * past a quarter of the way and it opens the conversation or the list,
+ * through `open()` like a row or the arrow does: the levels are addresses,
+ * and the panes slide on from wherever the finger left them.
+ *
+ * Nothing changes at 768px and up, nor on a phone for an agent, a channel or
+ * a reply thread: the drawer does not hold those routes, and the panes keep
+ * the classes and the layout they had.
+ */
+
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
+
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { pageTakesEdge } from '../dev-board/workshop/places-tray';
+import {
+  depthIn, EDGE_PX, isPan, landingIn, MESSAGES_AT, PAN_SLOP_PX, SLIDE_EASE, SLIDE_MS,
+} from '../nav-drawer/drawer-math';
+import { reducedMotion } from '../nav-drawer/drawer-store';
+import {
+  messagesDepth, messagesDrawerApplies, publishMessagesDrawer, registerMessagesBack,
+} from '../nav-drawer/messages-drawer';
+import { open as openConversation } from './store';
+import type { ConversationDetail, ConversationMessage } from './types';
+
+const PHONE_QUERY = '(max-width: 767.98px)';
+
+/** What the list shows peeking: the last conversation, as it was left. */
+export interface Peek {
+  conversation: ConversationDetail;
+  messages: ConversationMessage[];
+}
+
+/** How many of its last messages the peek keeps. */
+export const PEEK_MESSAGES = 30;
+
+/** What the drawer needs to know from the screen's snapshot. */
+export interface DrawerRoute {
+  open: boolean;
+  conversationId: number | null;
+  appSlug: string | null;
+  agent: unknown;
+  threadRootId: number | null;
+  embedded?: boolean;
+}
+
+function usePhone(): boolean {
+  const [phone, setPhone] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const mq = window.matchMedia(PHONE_QUERY);
+    const apply = () => setPhone(mq.matches);
+    apply();
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
+  }, []);
+  return phone;
+}
+
+export interface MessagesDrawer {
+  on: boolean;
+  level: 0 | 1;
+  peek: Peek | null;
+  /** The pan's handlers, for the layout. */
+  handlers: {
+    onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => void;
+    onPointerMove: (e: ReactPointerEvent<HTMLDivElement>) => void;
+    onPointerUp: (e: ReactPointerEvent<HTMLDivElement>) => void;
+    onPointerCancel: (e: ReactPointerEvent<HTMLDivElement>) => void;
+    onClickCapture: (e: { preventDefault: () => void; stopPropagation: () => void }) => void;
+  } | null;
+}
+
+export function useMessagesDrawer(
+  layoutRef: RefObject<HTMLDivElement | null>,
+  route: DrawerRoute,
+  active: ConversationDetail | null,
+  messages: ConversationMessage[],
+  names: (conversation: ConversationDetail) => { title: string; sub: string },
+): MessagesDrawer {
+  const phone = usePhone();
+  const on = messagesDrawerApplies({
+    phone,
+    open: route.open,
+    conversationId: route.conversationId,
+    appSlug: route.appSlug,
+    agent: route.agent,
+    threadRootId: route.threadRootId,
+    embedded: route.embedded,
+    activeKind: active && active.id === route.conversationId ? active.kind : null,
+  });
+  const level: 0 | 1 = route.conversationId ? 1 : 0;
+  // The conversation on show, kept for the list to show peeking once you go
+  // back to it: a conversation with people, as the server last drew it.
+  const [peek, setPeek] = useState<Peek | null>(null);
+  const showing = on && level === 1 && !!active && active.id === route.conversationId && active.kind !== 'channel'
+    ? active : null;
+  useEffect(() => {
+    if (!showing) return;
+    setPeek((was) => {
+      const kept = messages.slice(-PEEK_MESSAGES);
+      if (was && was.conversation === showing && was.messages.length === kept.length
+        && was.messages[was.messages.length - 1] === kept[kept.length - 1]) return was;
+      return { conversation: showing, messages: kept };
+    });
+  }, [showing, messages]);
+  const peekShown = on && level === 0 ? peek : null;
+
+  // The header's words: the conversation on show, or the one peeking, which
+  // a pan brings in.
+  const named = showing || peek?.conversation || null;
+  const words = named ? names(named) : { title: '', sub: '' };
+  useIsomorphicLayoutEffect(() => {
+    publishMessagesDrawer({ on, level, title: words.title, sub: words.sub });
+  }, [on, level, words.title, words.sub]);
+  useEffect(() => () => publishMessagesDrawer({ on: false, level: 0, title: '', sub: '' }), []);
+  useEffect(() => (on ? registerMessagesBack(() => openConversation(null)) : undefined), [on]);
+
+  // ── Putting the panes somewhere ──
+  // Their transform only. The conversation's pane is also the kit's keyboard
+  // column (`platform-kb-column`), and the kit owns that node's inline
+  // `transition` (it sets it to none so its own ride is the only motion), so
+  // a slide is an animation of the transform, never a transition.
+  const panes = () => {
+    const layout = layoutRef.current;
+    return {
+      layout,
+      list: layout?.querySelector<HTMLElement>(':scope > .messages-list-pane') || null,
+      thread: layout?.querySelector<HTMLElement>(':scope > .messages-thread-pane') || null,
+    };
+  };
+  // Where the panes were last put: a pan leaves them part of the way, and the
+  // pane the route swaps in (the peek and the conversation are two, and the
+  // list's empty pane is not drawn) starts from there.
+  const lastOffset = useRef<number>(MESSAGES_AT[level]);
+  const slides = useRef(new Map<HTMLElement, Animation>());
+  const at = (pane: 'list' | 'thread', offset: number, w: number) =>
+    `translate3d(${(pane === 'list' ? -offset : MESSAGES_AT[1] - offset) * w}px, 0, 0)`;
+  const put = (offset: number, animate: boolean) => {
+    const { layout, list, thread } = panes();
+    const w = Math.max(1, layout?.clientWidth || 1);
+    const from = lastOffset.current;
+    lastOffset.current = offset;
+    for (const [pane, el] of [['list', list], ['thread', thread]] as const) {
+      if (!el) continue;
+      // From where it is on screen: mid-slide, where the slide has it.
+      const running = slides.current.get(el);
+      const shown = running ? getComputedStyle(el).transform : 'none';
+      const start = running && shown !== 'none' ? shown : at(pane, from, w);
+      running?.cancel();
+      const end = at(pane, offset, w);
+      el.style.transform = end;
+      if (!animate || reducedMotion() || typeof el.animate !== 'function' || start === end) continue;
+      const slide = el.animate([{ transform: start }, { transform: end }], { duration: SLIDE_MS, easing: SLIDE_EASE });
+      slides.current.set(el, slide);
+      const done = () => { if (slides.current.get(el) === slide) slides.current.delete(el); };
+      slide.onfinish = done;
+      slide.oncancel = done;
+    }
+  };
+  const clear = () => {
+    const { list, thread } = panes();
+    for (const el of [list, thread]) {
+      if (!el) continue;
+      slides.current.get(el)?.cancel();
+      el.style.transform = '';
+    }
+  };
+  // Where the route says, sliding there from where it was; at once the
+  // first time.
+  const placed = useRef<null | 0 | 1>(null);
+  const peekId = peekShown?.conversation.id ?? null;
+  useIsomorphicLayoutEffect(() => {
+    if (!on) {
+      placed.current = null;
+      clear();
+      messagesDepth.cut(0);
+      return;
+    }
+    const first = placed.current === null;
+    put(MESSAGES_AT[level], !first);
+    if (first) messagesDepth.cut(level);
+    else messagesDepth.slide(level);
+    placed.current = level;
+  }, [on, level, peekId]);
+  useEffect(() => {
+    if (!on) return undefined;
+    const again = () => put(MESSAGES_AT[placed.current ?? level], false);
+    window.addEventListener('resize', again);
+    return () => window.removeEventListener('resize', again);
+  }, [on, level]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Letting go: the level a pan lands on, and its address ──
+  // Short of a quarter, back where it was; past it, the other address, and
+  // the slide runs on from where the finger left the panes as it lands.
+  const landAt = (from: 0 | 1, offset: number, dx: number) => {
+    const to = landingIn(MESSAGES_AT, from, offset, dx) as 0 | 1;
+    if (to === from) {
+      put(MESSAGES_AT[to], true);
+      messagesDepth.slide(to);
+      return;
+    }
+    openConversation(to === 1 ? peekId : null);
+  };
+
+  // ── A finger on the list ──
+  const pan = useRef<null | { id: number; x0: number; y0: number; w: number; on: boolean; dx: number }>(null);
+  const swallow = useRef(false);
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!on || level !== 0 || !peekId || !e.isPrimary || e.button !== 0) return;
+    pan.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, w: Math.max(1, layoutRef.current?.clientWidth || 1), on: false, dx: 0 };
+  };
+  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const p = pan.current;
+    if (!p || e.pointerId !== p.id) return;
+    const dx = e.clientX - p.x0;
+    const dy = e.clientY - p.y0;
+    if (!p.on) {
+      if (!isPan(dx, dy)) {
+        if (Math.abs(dy) > PAN_SLOP_PX * 2) pan.current = null;
+        return;
+      }
+      p.on = true;
+      try { layoutRef.current?.setPointerCapture(e.pointerId); } catch { /* not every pointer can be captured */ }
+      if (layoutRef.current) layoutRef.current.style.userSelect = 'none';
+    }
+    p.dx = dx;
+    const offset = Math.max(0, Math.min(MESSAGES_AT[1], -dx / p.w));
+    put(offset, false);
+    messagesDepth.set(depthIn(MESSAGES_AT, offset));
+  };
+  const onPointerEnd = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const p = pan.current;
+    pan.current = null;
+    if (!p || e.pointerId !== p.id || !p.on) return;
+    if (layoutRef.current) layoutRef.current.style.userSelect = '';
+    swallow.current = true;
+    window.setTimeout(() => { swallow.current = false; }, 0);
+    landAt(0, Math.max(0, Math.min(MESSAGES_AT[1], -p.dx / p.w)), p.dx);
+  };
+
+  // ── A finger at a conversation's left edge ──
+  const landRef = useRef(landAt);
+  landRef.current = landAt;
+  const putRef = useRef(put);
+  putRef.current = put;
+  useEffect(() => {
+    if (!on || level !== 1 || !pageTakesEdge()) return undefined;
+    let p: null | { x0: number; y0: number; w: number; on: boolean; dx: number } = null;
+    const move = (e: TouchEvent) => {
+      const touch = e.touches[0];
+      if (!p || !touch) return;
+      const dx = touch.clientX - p.x0;
+      const dy = touch.clientY - p.y0;
+      if (!p.on) {
+        if (isPan(dx, dy) && dx > 0) p.on = true;
+        else if (Math.abs(dy) > PAN_SLOP_PX || dx < -PAN_SLOP_PX) { stop(); return; }
+        else return;
+      }
+      if (e.cancelable) e.preventDefault();
+      p.dx = dx;
+      const offset = Math.max(0, Math.min(MESSAGES_AT[1], MESSAGES_AT[1] - dx / p.w));
+      putRef.current(offset, false);
+      messagesDepth.set(depthIn(MESSAGES_AT, offset));
+    };
+    const stop = () => {
+      p = null;
+      document.removeEventListener('touchmove', move);
+    };
+    const down = (e: TouchEvent) => {
+      stop();
+      const touch = e.touches[0];
+      if (e.touches.length !== 1 || !touch || touch.clientX > EDGE_PX) return;
+      const target = e.target as Element | null;
+      const layout = layoutRef.current;
+      if (!target || !layout || !layout.contains(target)) return;
+      p = { x0: touch.clientX, y0: touch.clientY, w: Math.max(1, layout.clientWidth || 1), on: false, dx: 0 };
+      document.addEventListener('touchmove', move, { passive: false });
+    };
+    const up = () => {
+      const was = p;
+      stop();
+      if (!was || !was.on) return;
+      landRef.current(1, Math.max(0, Math.min(MESSAGES_AT[1], MESSAGES_AT[1] - was.dx / was.w)), was.dx);
+    };
+    document.addEventListener('touchstart', down, { passive: true });
+    document.addEventListener('touchend', up, { passive: true });
+    document.addEventListener('touchcancel', up, { passive: true });
+    return () => {
+      stop();
+      document.removeEventListener('touchstart', down);
+      document.removeEventListener('touchend', up);
+      document.removeEventListener('touchcancel', up);
+    };
+  }, [on, level]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return {
+    on,
+    level,
+    peek: peekShown,
+    handlers: on ? {
+      onPointerDown,
+      onPointerMove,
+      onPointerUp: onPointerEnd,
+      onPointerCancel: onPointerEnd,
+      onClickCapture: (e) => {
+        if (!swallow.current) return;
+        swallow.current = false;
+        e.preventDefault();
+        e.stopPropagation();
+      },
+    } : null,
+  };
+}

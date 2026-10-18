@@ -462,6 +462,25 @@ export function communityPending(slug: string): boolean {
   return !!slug && !communities.has(slug) && inflight.has(slug);
 }
 
+/**
+ * The record for `slug` as the cache holds it, read only when nothing is
+ * there or on its way: for a view beside the page (the phone's drawer,
+ * ../../nav-drawer/nav-drawer.tsx) that should not ask again for what the
+ * page has just asked for.
+ */
+export function useCachedCommunity(slug: string): CommunityPayload | null {
+  const [, bump] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    listeners.add(bump);
+    return () => { listeners.delete(bump); };
+  }, []);
+  useEffect(() => {
+    if (!slug || communities.has(slug) || inflight.has(slug)) return;
+    void reloadCommunity(slug);
+  }, [slug]);
+  return slug ? communities.get(slug) || null : null;
+}
+
 export function useCommunity(slug: string): CommunityPayload | null {
   const [, bump] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {

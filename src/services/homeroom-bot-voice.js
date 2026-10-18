@@ -614,19 +614,18 @@ async function askState(pool, sessionId) {
 }
 
 /**
- * Whether a turn, an operation or a before & after shots run holds the
- * change's session now, as the follow-up's own start reads it
- * (homeroom-bot-followup.js turnRunningOn). A read that fails says no.
+ * Whether a turn, an operation, a durable build or a before & after shots
+ * run holds the change's session now, read from their durable records
+ * (src/workflow/session-work.ts workedOnSql): the voice's turns are the
+ * bot-voice machine's work, which runs in whichever process claims it, so
+ * no process's own registry of turns can answer. A read that fails says no.
  */
-async function changeBusy(pool, sessionId, deps = {}) {
+async function changeBusy(pool, sessionId) {
   try {
-    return await require('./homeroom-bot-followup').turnRunningOn({
-      pool,
-      session: { id: Number(sessionId) },
-      worker: deps.worker || require('./worker'),
-      activeWorkers: deps.activeWorkers || require('./active-workers').activeWorkers,
-      shotsRunning: deps.shotsRunning || null,
-    });
+    const { workedOnSql } = require('../workflow/session-work.ts');
+    const { rows: [r] } = await pool.query(
+      `SELECT ${workedOnSql()} AS busy FROM chat_sessions cs WHERE cs.id = $1`, [Number(sessionId)]);
+    return !!r?.busy;
   } catch {
     return false;
   }
@@ -652,7 +651,7 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
       `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs WHERE proposal_session_id = $1 AND verdict = 'revise'`, [change.id],
     );
     const asks = await askState(pool, change.id);
-    const busy = await changeBusy(pool, change.id, deps);
+    const busy = await changeBusy(pool, change.id);
     lines.push(`The change${place.type === 'issue' ? ' you built for this request' : ''}: change ${change.id}${change.pr_number ? ` (PR #${change.pr_number})` : ''}, "${clip(change.title, 160)}", ${own ? 'built by you' : 'built by somebody else'}, status ${change.status}${request ? `, for request #${request}` : ''}.`);
     if (change.check_state) lines.push(`Its checks: ${change.check_state}.`);
     if (own) {
@@ -887,7 +886,7 @@ async function recordAsk(pool, {
         place?.type || null, place?.ref == null ? null : Number(place.ref), messageId || null],
     );
     const running = (await askState(pool, sessionId)).running
-      || await changeBusy(pool, sessionId, deps);
+      || await changeBusy(pool, sessionId);
     // Its follow-up first in the queue: null when one has it claimed now
     // (it takes this ask after), undefined when it could not be queued.
     const first = await botModule(deps).enqueueFront(pool, {

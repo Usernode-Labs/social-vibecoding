@@ -279,14 +279,14 @@ export async function readFacts(tx: Tx, sessionId: number, event: Event<any>, o:
   const out: Facts = { ...NO_FACTS, row };
   if (event.type === 'Promote') out.caps = await readCaps(tx, row, false);
   if (event.type === 'Resume' && p.caps) out.caps = await readCaps(tx, row, true);
-  const gated = (event.type === 'MergeClaim' && !p.force) || event.type === 'ReviewCheck';
+  const gated = event.type === 'ReviewCheck';
   if (gated && row.status === 'promoted') {
     out.gate = await readPrGate(tx, {
       sessionId: row.id, appId: row.appId, openedAt: row.promotedAt || row.createdAt,
       // A claim names the protected-settings check it made on the live head;
       // the hourly check reads the stored flag.
-      explicitApproval: event.type === 'MergeClaim' ? !!p.explicitApproval : row.explicitApproval,
-      explicitReason: event.type === 'MergeClaim' ? (p.explicitReason ?? null) : row.explicitReason,
+      explicitApproval: row.explicitApproval,
+      explicitReason: row.explicitReason,
       authorId: row.userId, now: o.now,
     });
   }

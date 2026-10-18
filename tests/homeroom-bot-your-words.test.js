@@ -167,7 +167,7 @@ test('B4: their words and the credit, against the full PostgreSQL schema', { tim
     assert.equal((await cardFor(sam)).state, 'waiting for approval', 'somebody else reads it plainly');
     await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2)', [communityId, sam.id]);
     assert.equal((await cardFor(maya)).state, 'waiting for approval', 'with others in it, it waits for theirs too');
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [up.id]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [up.id]);
     assert.equal((await cardFor(maya)).state, 'live');
   });
 });

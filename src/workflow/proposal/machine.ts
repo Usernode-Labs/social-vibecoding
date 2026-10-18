@@ -7,7 +7,7 @@
 //      ▲  ▲ (slot held / released / none)        │ failed       ▲   │ ready, claimed under the lock
 //      │  └────────────────────────────────────────┘              │   ▼
 //      │                                    refused, moved ◀── merging ── merge.attempt lost ─▶ unconfirmed
-//      │◀── Unpromote, MergeAbandoned ────────────────────────────┘ │ merged                  │ observed
+//      │◀── Unpromote ────────────────────────────────────────────┘ │ merged                  │ observed
 //      │◀── Reopen ── closed ◀── Close (any reason) ── underway, proposing, in_review           │
 //                                       merged ◀── Merged (merge-followups' message) ◀─────────┘
 //
@@ -63,9 +63,6 @@ export const WORK = Object.freeze({
   reopen: 'pr.reopen',
   destroy: 'worker.destroy',
   purge: 'cc.purge',
-  // Queued by an older release only: its handler hands the move to the
-  // bot's change machine (services.ts), for one release.
-  bot: 'bot.proposalChanged',
   gate: 'merge.gate',
   attempt: 'merge.attempt',
   observe: 'merge.observe',
@@ -335,20 +332,6 @@ const EVENTS = {
   Close: (p: any) => ({ ...session(p), from: from(p), reason: word(p?.reason, 'reason'),
     userId: optInt(p?.userId, 'userId'), username: text(p?.username, 100), purgeCc: !!p?.purgeCc }),
   Reopen: (p: any) => ({ ...session(p), from: from(p), userId: int(p?.userId, 'userId'), ...deadline(p) }),
-  // An older release's merge (its routes/votes.js checkAndMerge) asks for the
-  // proposal at the head and epoch it gated on; the vote gate is read again
-  // here unless an admin forces it.
-  MergeClaim: (p: any) => {
-    if (!Number.isInteger(p?.epoch) || p.epoch < 0) throw new Error('epoch must be the approval epoch the merge gated on');
-    return { ...session(p), head: optSha(p?.head, 'head'), epoch: p.epoch as number, force: !!p?.force,
-      explicitApproval: !!p?.explicitApproval, explicitReason: text(p?.explicitReason, 64), ...deadline(p) };
-  },
-  // The attempt ended without merging (`claim`: its claim; null: recovery's,
-  // for a claim whose process is gone).
-  MergeReleased: (p: any) => ({ ...session(p), claim: p?.claim == null ? null : int(p.claim, 'claim'),
-    reason: text(p?.reason, 200) }),
-  // The pull request is closed on GitHub for good: off the vote.
-  MergeAbandoned: (p: any) => ({ ...session(p), from: from(p), reason: text(p?.reason, 200) }),
   // merge-followups moved it into 'merged' (a merge, or a change carried by
   // another's).
   Merged: (p: any) => ({ ...session(p) }),
@@ -406,8 +389,8 @@ function timerFor(s: Live, f: Facts, ctx: TransitionContext, deps: Deps): TimerR
   if (s.name === 'in_review' && deps.reviewCheckMs > 0) {
     return { at: later(ctx, deps.reviewCheckMs), event: { type: 'ReviewCheck' } };
   }
-  // A claim an older release made (its own attempt, in its process): GitHub
-  // is asked about it once it is old enough that its process is gone.
+  // A row adopted as `merging` with no attempt of this machine's: GitHub is
+  // asked about it once it is old enough that whoever merged it is gone.
   if (s.name === 'merging' && !s.data.attempt) {
     const at = s.data.claim?.at ? Date.parse(s.data.claim.at) : ctx.now.getTime();
     return { at: new Date(Math.max(at + CLAIM_STALE_MS, ctx.now.getTime() + 1000)), event: { type: 'ObserveDue' } };
@@ -713,27 +696,9 @@ const reopen: Handler = (s, e, f, ctx, deps) => {
   return step(next, { work, push, timer: timerFor(next, f, ctx, deps), cancel: spared.cancel });
 };
 
-// A claim an older release asks for (its routes/votes.js checkAndMerge,
-// during a rollout): the merge is its process's. If its process goes, the
-// clock asks GitHub what happened once the claim is old (ObserveDue).
-const claim: Handler = (s, e, f, ctx, deps) => {
-  const n = s.data.n + 1;
-  const next: Live = { name: 'merging', data: { ...s.data, n, claim: { n, at: ctx.now.toISOString() } } };
-  return step(next, {
-    writes: [{ type: 'claimed', sessionId: s.data.sessionId }],
-    push: [votes(f, { merging: true, selfHosted: f.row!.selfHosted })],
-    timer: timerFor(next, f, ctx, deps),
-  });
-};
-
-// Back to review: a merge attempt's release keeps the votes (Q4).
-const released: Handler = (s, e, f, ctx, deps) => {
-  const next: Live = { name: 'in_review', data: { ...s.data, claim: null } };
-  return step(next, { timer: timerFor(next, f, ctx, deps) });
-};
-
 // Off the vote for good: its pull request is closed on GitHub and could not
-// be reopened. Every exit from review voids the votes (Q4, bug 19).
+// be reopened (a merge attempt's answer). Every exit from review voids the
+// votes (Q4, bug 19).
 const abandoned: Handler = (s, e, f, ctx, deps) => {
   // Its force, its gate or attempt and its sync end with it (a force never
   // outlives the proposal it was given to).
@@ -937,7 +902,7 @@ function attempted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, dep
 }
 
 // The clock: GitHub is asked whether an unanswered merge happened (an
-// attempt of this machine's, or a claim an older release made).
+// attempt of this machine's, or a row adopted as merging with none).
 const observeDue: Handler = (s, e, f, ctx, deps) => {
   const a = s.data.attempt;
   if (a?.stage === 'merged') {
@@ -1263,29 +1228,6 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
     // purge reports `cc_purged` once done), never races it.
     () => (f.tearingDown ? reject('tearing_down') : ok()),
   )],
-  ['MergeClaim', (s, e, f) => all(
-    () => (s.name === 'in_review' ? ok() : reject(s.name === 'merging' || s.name === 'unconfirmed' ? 'in_progress' : 'not_in_review')),
-    // This release's own merge or sync is under way.
-    () => (s.data.attempt || s.data.sync ? reject('in_progress') : ok()),
-    () => (e.payload.head === f.row!.head ? ok() : reject('head_moved')),
-    () => (e.payload.epoch === f.row!.epoch ? ok() : reject('epoch_moved')),
-    () => (e.payload.force || f.gate?.mergeable ? ok() : reject('not_mergeable')),
-  )],
-  ['MergeReleased', (s, e, f, ctx) => all(
-    () => (s.name === 'merging' ? ok() : reject('not_merging')),
-    // An older release's recovery never gives back an attempt of this one.
-    () => (s.data.attempt ? reject('claim_live') : ok()),
-    () => {
-      const c = s.data.claim;
-      if (e.payload.claim != null) return c && c.n === e.payload.claim ? ok() : reject('stale_claim');
-      // Recovery's: only a claim old enough that its process is gone.
-      return !c || ctx.now.getTime() - Date.parse(c.at) >= CLAIM_STALE_MS ? ok() : reject('claim_live');
-    },
-  )],
-  ['MergeAbandoned', (s, e) => all(
-    () => (s.name === 'merging' || s.name === 'in_review' ? ok() : reject('not_in_review')),
-    () => read(s, e),
-  )],
   ['ReviewHeadMoved', (s, e, f) => all(
     () => (s.name === 'closed' || s.name === 'merged' ? reject('closed') : ok()),
     () => {
@@ -1317,7 +1259,7 @@ const GUARDS = new Map<string, (s: Live, e: Event<any>, f: Facts, ctx: Transitio
 const HANDLERS = new Map<string, Handler>([
   ['Promote', promote], ['Unpromote', unpromote], ['Pause', pause], ['Resume', resume],
   ['IdleCheck', idleCheck], ['ReviewCheck', reviewCheck], ['Close', closeEvent], ['Reopen', reopen],
-  ['MergeClaim', claim], ['MergeReleased', released], ['MergeAbandoned', abandoned], ['Merged', merged],
+  ['Merged', merged],
   ['ReviewHeadMoved', headMoved], ['ApprovalsCleared', approvalsCleared],
   ['MergeRequested', mergeRequested], ['ForceMerge', forceMerge], ['SyncRequested', syncRequested], ['ObserveDue', observeDue],
   ['Rearm', (s, e, f, ctx, deps) => step(s, { timer: timerFor(s, f, ctx, deps) })],
@@ -1325,8 +1267,8 @@ const HANDLERS = new Map<string, Handler>([
 ]);
 // The events that may create the instance (every one but the clock's): the
 // first adopts the proposal from its row, then is handled as for one held.
-const CREATE = ['Adopted', 'Promote', 'Unpromote', 'Pause', 'Resume', 'Close', 'Reopen', 'MergeClaim', 'MergeReleased',
-  'MergeAbandoned', 'Merged', 'ReviewHeadMoved', 'ApprovalsCleared', 'MergeRequested', 'ForceMerge', 'SyncRequested'];
+const CREATE = ['Adopted', 'Promote', 'Unpromote', 'Pause', 'Resume', 'Close', 'Reopen',
+  'Merged', 'ReviewHeadMoved', 'ApprovalsCleared', 'MergeRequested', 'ForceMerge', 'SyncRequested'];
 // The queue's asks are answered whatever the proposal's state: a rejection
 // would leave the queue waiting for an answer that never comes.
 const ANSWERED: ReadonlySet<string> = new Set(['MergeRequested', 'SyncRequested']);
@@ -1443,9 +1385,6 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
       ReviewCheck: timer,
       Close: (e: Event<any>): Check => (closer(e) === true || fromCampaign(e) ? ok() : reject('not_a_producer')),
       Reopen: person,
-      MergeClaim: system,
-      MergeReleased: system,
-      MergeAbandoned: system,
       Merged: fromMerge,
       ReviewHeadMoved: routeOrSystem,
       ApprovalsCleared: routeOrSystem,
@@ -1473,7 +1412,6 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
       if (after.name === NONE) return null;
       const d = (after as Live).data;
       const out: Record<string, Json> = { state: after.name, status: statusOf(after as Live) };
-      if (event.type === 'MergeClaim' && d.claim) out.claim = d.claim.n;
       if (event.type === 'SyncRequested' && d.sync) out.sync = d.sync.n;
       if (d.lastSync) out.lastSync = d.lastSync as unknown as Json;
       if (event.type === 'ReviewHeadMoved' || event.type === 'ApprovalsCleared') {

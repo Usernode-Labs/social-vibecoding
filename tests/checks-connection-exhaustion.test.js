@@ -158,7 +158,9 @@ test('the run block flips the verdict, and only from failing', () => {
   // every row failed — the same exclusion #1381 makes.
   assert.match(block, /checksResult\.results\.filter\(\(r\) => !extraRows\.includes\(r\)\)/);
   // storeChecks stays a pure write: two other suites pin its query order.
-  const store = src.slice(src.indexOf('async function storeChecks('), src.indexOf('async function storeChecksSkipped'));
+  const writers = read('src/workflow/preview/check-store.ts');
+  const store = writers.slice(writers.indexOf('async function storeChecks('), writers.indexOf('async function storeChecksSkipped'));
+  assert.ok(store.length > 0, 'the verdict writer is where it is read from');
   assert.doesNotMatch(store, /connectionCensus|connectionExhaustionDetail/,
     'the persistence path gains no query');
 });

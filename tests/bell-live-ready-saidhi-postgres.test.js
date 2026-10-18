@@ -133,7 +133,7 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     assert.deepEqual(await notifications.settleDecidedChange(pool, first), []);
     assert.equal((await row(moNudge)).read_at, null);
 
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [first]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [first]);
     const told = await notifications.settleDecidedChange(pool, first);
     assert.deepEqual(told, [mo.id], 'only Mo\'s bell changed');
     assert.deepEqual(changedFor(), [mo.id], 'and he hears it, which re-badges his phone');
@@ -194,7 +194,7 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     assert.equal(await notifications.countUnread(pool, sam.id), 5, 'all five asks count');
 
     // The change merges; the best-effort settle never runs.
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [decided]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [decided]);
 
     // #4795: a merged change is decided, so its asks leave the list and stop
     // counting with or without the settle. Nothing here wrote the news rows
@@ -245,7 +245,7 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     const seen = await notify(mo.id, 'change_ready', { sessionId: next, detail: 'epoch:0', read: true });
     const noVote = await notify(priya.id, 'change_ready', { sessionId: next, detail: 'epoch:0', read: true });
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'no')`, [next, priya.id]);
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [next]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [next]);
     const told = await notifications.settleDecidedChange(pool, next);
     assert.deepEqual(told, [], 'nobody\'s row is re-opened: the news arrives as pr_merged or voted_change_merged');
     assert.notEqual((await row(seen)).read_at, null, 'Mo looked: his read row stays read');
@@ -281,7 +281,7 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     // the NULL-safe comparison in the list's filter.
     const mention = await notify(mo.id, 'mention', { sessionId: null });
     const vote = await notify(mo.id, 'proposal_vote', { sessionId: merged, detail: 'yes' });
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [merged]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [merged]);
     await notifications.settleDecidedChange(pool, merged);
     assert.ok(await listed(mo.id, mention), 'a row with no session is never hidden');
     assert.ok(await listed(mo.id, vote), 'a proposal_vote is not an ask about the change');
@@ -302,7 +302,7 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     assert.equal((await row(digest)).read_at, null);
 
     // The other goes live: nothing waits, and its decision settles the digest.
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [b]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [b]);
     assert.equal((await listed(mo.id, digest)).digestWaiting, 0);
     assert.ok((await notifications.settleDecidedChange(pool, b)).includes(mo.id));
     assert.notEqual((await row(digest)).read_at, null);
@@ -443,7 +443,7 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
 
     // A child app's merge is live with the row (the first test's app).
     const child = await change('A child app change');
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() WHERE id = $1`, [child]);
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [child]);
     const childRow = await notify(priya.id, 'voted_change_merged', { sessionId: child, source: null });
     assert.equal((await listed(priya.id, childRow)).sessionStatus, 'merged');
   });

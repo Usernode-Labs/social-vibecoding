@@ -19245,6 +19245,219 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   .dev-ws-tray-root.is-closing .dev-ws-tray, .dev-ws-tray-root.is-closing .dev-ws-tray-scrim { animation: none; }
 }
 
+/* ── THE PHONE'S NAVIGATION DRAWER (features/nav-drawer/) ─────────────
+   Evan's design (18 Oct 2026): under 768px, a community's page is the
+   deepest of three levels on one strip, fixed between the header's foot
+   and the tab bar (the tray's offset): your communities at 85%, the
+   community's places at 80% (the tray's list, in its colour), then the
+   page itself, #app-view, which the drawer moves with a transform while it
+   is off its rest and leaves untransformed on it. Each level peeks in at
+   the right of the one before it, a little dimmed, and a press on it goes
+   there. Transform and opacity only; the widths change at once, never by
+   transition. Nothing here draws at 768px and up: the island renders
+   nothing there, and the header's rules below are the phone's. */
+.nav-drawer {
+  position: fixed; left: 0; right: 0; z-index: 20;
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px));
+  bottom: var(--platform-tabs-h, 0px);
+  overflow: hidden;
+  /* Up and down are the lists' own scrolls; sideways is the pan's. */
+  touch-action: pan-y;
+}
+.nav-drawer.is-resting { visibility: hidden; pointer-events: none; }
+.nav-drawer-strip { position: absolute; inset: 0; will-change: transform; }
+.nav-drawer-outer {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 85%;
+  display: flex; flex-direction: column;
+}
+.nav-drawer.is-searching .nav-drawer-outer { width: 100%; }
+.nav-drawer-places {
+  position: absolute; top: 0; bottom: 0; left: 85%; width: 80%;
+  overflow: hidden;
+  background: var(--dc-sheet-solid, var(--bg-primary));
+  box-shadow: -1px 0 0 var(--app-sheet-line);
+  transition: transform 300ms cubic-bezier(0.33, 1, 0.68, 1);
+}
+/* The search widens level 0 to the screen: the places slide off its edge. */
+.nav-drawer.is-searching .nav-drawer-places { transform: translate3d(15vw, 0, 0); }
+.nav-drawer-places-scroll {
+  position: absolute; inset: 0;
+  overflow-y: auto; overscroll-behavior: contain;
+  padding: 16px 12px 24px;
+}
+.nav-drawer-places.is-peek { cursor: pointer; }
+.nav-drawer-places.is-peek * { pointer-events: none; }
+.nav-drawer-places.is-peek::after,
+.nav-drawer[data-nav-drawer-level="1"] .nav-drawer-cover::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: rgba(0, 0, 0, 0.05);
+}
+.nav-drawer-who { padding: 0 10px 12px; }
+.nav-drawer-who-name {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 17px; font-weight: 650; line-height: 22px; color: var(--text-primary);
+}
+.nav-drawer-who-line { display: block; font-size: 13px; line-height: 18px; color: var(--text-muted); }
+/* The page's edge, peeking: what a press goes back to, and the shadow it
+   casts on the places. It moves with #app-view, over it. */
+.nav-drawer-cover {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 100%;
+  margin: 0; padding: 0; border: 0; background: transparent;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+  will-change: transform;
+}
+.nav-drawer-cover:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; }
+:is(.dark) .nav-drawer-places.is-peek::after,
+:is(.dark) .nav-drawer[data-nav-drawer-level="1"] .nav-drawer-cover::after { background: rgba(0, 0, 0, 0.22); }
+
+/* Level 0: your communities, the search at its top. The field's text is
+   16px so iOS does not zoom the page to it. */
+.nav-drawer-search { flex: none; display: flex; align-items: center; gap: 10px; padding: 12px 16px 4px; }
+.nav-drawer-search-box {
+  flex: 1 1 auto; min-width: 0; height: 36px; padding: 0 12px;
+  display: flex; align-items: center; gap: 8px;
+  border-radius: 12px; background: var(--dc-sheet-solid, var(--bg-primary));
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  color: var(--text-muted);
+}
+.nav-drawer-search-box:focus-within { box-shadow: inset 0 0 0 2px var(--accent); }
+.nav-drawer-search-glyph { flex: none; width: 18px; height: 18px; }
+.nav-drawer-search-input {
+  flex: 1 1 auto; min-width: 0; height: 100%; padding: 0; border: 0; outline: none;
+  background: transparent; color: var(--text-primary);
+  font: inherit; font-size: 16px;
+  -webkit-appearance: none; appearance: none;
+}
+.nav-drawer-search-input::placeholder { color: var(--text-muted); }
+.nav-drawer-search-input::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
+.nav-drawer-search-cancel {
+  flex: none; padding: 0 2px; border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 15px; font-weight: 600; color: var(--accent);
+}
+.nav-drawer-outer-list {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain;
+  padding-bottom: 24px;
+}
+.nav-drawer-outer-list:focus { outline: none; }
+.nav-drawer-outer-none { margin: 20px 20px 0; font-size: 15px; line-height: 20px; color: var(--text-muted); }
+/* The community the drawer is on: its tile ringed in "where you are". */
+.nav-drawer-outer [aria-current="true"] .app-icon-tile { outline: 2px solid var(--lit-ink); outline-offset: 2px; }
+
+/* THE HEADER WITH THE DRAWER (header-drawer.tsx). The arrow is the bar's
+   back disc; the titles are absolutely placed in the h1, so the h1 lets
+   "Communities" sit out past its edge where the arrow is not, and each
+   title shortens itself. The bar's colour: the tinted rules above still
+   paint it, and DrawerUntint lays the bar as it is off a community over
+   them, faded out with depth (`--nav-k`, 0 on your communities, 1 from the
+   places in); the ink goes from the bar's own to white with it. At rest on
+   a page the bar is exactly the tinted bar. */
+@media (max-width: 767.98px) {
+  html[data-nav-drawer] body {
+    --nav-brand-ink: var(--brand-ink);
+    --nav-brand-tint: var(--brand-tint);
+    --nav-brand-line: var(--brand-line);
+    --nav-ink: var(--text-primary);
+  }
+  html[data-nav-drawer][data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
+    --brand-ink: color-mix(in srgb, #fff calc(var(--nav-k, 1) * 100%), var(--nav-brand-ink));
+    --brand-tint: color-mix(in srgb, rgba(255, 255, 255, 0.16) calc(var(--nav-k, 1) * 100%), var(--nav-brand-tint));
+    --brand-line: color-mix(in srgb, rgba(255, 255, 255, 0.32) calc(var(--nav-k, 1) * 100%), var(--nav-brand-line));
+    color: color-mix(in srgb, #fff calc(var(--nav-k, 1) * 100%), var(--nav-ink));
+  }
+  .nav-drawer-untint {
+    position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0;
+    background:
+      linear-gradient(var(--dc-sheet-fill), var(--dc-sheet-fill)),
+      var(--home-washes, var(--dc-sheet-solid));
+  }
+  #header-title:has(> .nav-drawer-titles) { overflow: visible; }
+  .nav-drawer-back { will-change: transform, opacity; }
+  .nav-drawer-titles { position: relative; display: block; width: 100%; height: 28px; }
+  .nav-drawer-title {
+    position: absolute; left: 0; right: 0; top: 50%; margin-top: -17px;
+    display: flex; flex-direction: column; align-items: flex-start;
+    line-height: 1.15; white-space: nowrap;
+    will-change: transform, opacity;
+  }
+  .nav-drawer-title:first-child { opacity: 0; }
+  .nav-drawer-title-name {
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+    font-size: 17px; font-weight: 650; letter-spacing: -0.01em;
+  }
+  .nav-drawer-title-mark { display: block; width: 77.5px; height: 20px; }
+  .nav-drawer-title-page {
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+    font-size: 12px; font-weight: 600; opacity: 0.78;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-drawer-places { transition: none; }
+}
+
+/* ── MESSAGES ON THE SAME DRAWER (features/messages/phone-drawer.tsx) ──
+   Evan's design (18 Oct 2026), on a phone: the conversation list at 85% of
+   the screen in the column's styling (the desktop's sidebar rows: no cards,
+   the conversation you were in lit), the last conversation peeking at its
+   right, and the conversation over the whole screen, moved by transform
+   between the two. The panes stay the inbox's own (#messages-screen >
+   .messages-layout > …), so the declared checks and the wide window's
+   rules are untouched; `messages-drawer` is only ever set under 768px. */
+@media (max-width: 767.98px) {
+  .messages-layout.messages-drawer { position: relative; overflow: hidden; touch-action: pan-y; }
+  .messages-layout.messages-drawer > .messages-list-pane {
+    position: absolute; top: 0; bottom: 0; left: 0; width: 85%;
+    will-change: transform;
+  }
+  .messages-layout.messages-drawer.messages-drawer-alone > .messages-list-pane { width: 100%; }
+  .messages-layout.messages-drawer > .messages-thread-pane {
+    position: absolute; top: 0; bottom: 0; left: 0; width: 100%;
+    margin-top: 0;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
+    will-change: transform;
+  }
+  .messages-layout.messages-drawer > .messages-thread-pane.messages-no-selection { display: none; }
+  /* The list's rows: the column's, one name a row with its last line small under it. */
+  .messages-layout.messages-drawer > .messages-list-pane .messages-toolbar { margin: 12px 12px 4px; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-list-scroll { padding: 0 8px 12px; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-section-head { padding: 12px 10px 4px; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-section-card {
+    display: flex; flex-direction: column; gap: 2px;
+    margin: 0; overflow: visible; border-radius: 0; background: none; box-shadow: none;
+  }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row {
+    min-height: 48px; gap: 10px; padding: 4px 10px; border-radius: 10px;
+  }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row::after { display: none; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > :first-child {
+    flex: 0 0 28px; width: 28px; height: 28px; border-radius: 8px; font-size: 11px;
+  }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > .messages-group-faces > :first-child {
+    position: static; width: 28px; height: 28px; border-radius: 8px; font-size: 11px;
+  }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row > .messages-group-faces > :last-child { display: none; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-row-time,
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-kind-pill,
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-group-tag { display: none; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-row-name { font-size: 15px; font-weight: 400; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-row .messages-row-preview { font-size: 12px; line-height: 16px; }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-active { background: var(--lit-tint); color: var(--lit-ink); }
+  .messages-layout.messages-drawer > .messages-list-pane .messages-conversation-active .messages-row-name { color: inherit; font-weight: 600; }
+  /* The peek: a picture of the conversation, pressed as one. */
+  .messages-thread-peek { overflow: hidden; }
+  .messages-thread-peek > .messages-peek-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+  .messages-thread-peek .messages-thread-scroll { overflow: hidden; }
+  .messages-peek-open {
+    position: absolute; inset: 0; margin: 0; padding: 0; border: 0;
+    background: rgba(0, 0, 0, 0.05); cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  :is(.dark) .messages-peek-open { background: rgba(0, 0, 0, 0.22); }
+  .messages-peek-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; }
+  /* In a conversation the header names it, so its sheet keeps only its discs. */
+  .messages-layout.messages-drawer .messages-thread-header { padding-top: 8px; padding-bottom: 0; }
+}
+
 /* ── The hero's rows (community-card.tsx) ──
    Who is here: the faces, then "Public community · 23 members" as one
    phrase, the audience's glyph leading it. Then one row of what you can do:
@@ -22076,7 +22289,9 @@ html.un-kb #platform-parked {
    #4703 adds a fourth thing the group can hold: the merged header's places
    button, on a phone, on a project page — where the back slot is empty and
    the group used to be gone with it. A group holding it is not empty, so
-   the `:not(:has(...))` asks.
+   the `:not(:has(...))` asks. The phone's drawer's back arrow
+   (features/nav-drawer/header-drawer.tsx) takes that button's seat, and is
+   asked about the same way.
 
    THE GROUP GOES WHEN IT IS EMPTY, and that is not cosmetic: an
    empty-but-present flex item still reserves the header's own `gap-4`, which
@@ -22085,7 +22300,7 @@ html.un-kb #platform-parked {
    reach — the group carries Tailwind's `flex`, app.css loads BEFORE
    tailwind.css, and the utilities win every equal-specificity conflict in
    this file (#938). */
-#platform-header .platform-header-left:has(> #back-btn.hidden):not(:has(> .header-places-btn)) {
+#platform-header .platform-header-left:has(> #back-btn.hidden):not(:has(> .header-places-btn)):not(:has(> .nav-drawer-back)) {
   display: none;
 }
 @media (min-width: 768px) {

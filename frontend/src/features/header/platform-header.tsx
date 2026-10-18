@@ -53,6 +53,7 @@ import { useHeaderLayout } from './use-header-layout';
 import { nativeBackEnabled, useNativeBackNavigation } from './native-back-navigation';
 import { useDismissibleOpen } from '../../lib/back-stack';
 import { HeaderPlace } from '../dev-board/workshop/place-bar';
+import { DrawerBack, DrawerUntint } from '../nav-drawer/header-drawer';
 // ── The bundle's boot seam ────────────────────────────────────────────
 //
 // These six imports and the four inits below rode on the hamburger drawer's
@@ -411,6 +412,10 @@ export function PlatformHeader() {
         className={'un-safe-top-extend relative z-10 flex items-center gap-4 px-4 pt-2 pb-4 shrink-0'
           + ' bg-zinc-200 dark:bg-zinc-900 rounded-b-2xl -mb-2'}
       >
+        {/* The bar as it is off a community, faded out with the drawer's
+            depth (../nav-drawer/header-drawer.tsx DrawerUntint): only while
+            the phone's drawer applies, so never in the prerender. */}
+        <DrawerUntint />
         {/*
             The LEFT group: the back chevron when there is somewhere to go
             back to, then the chip. Nothing else, and NO RESERVED SLOT.
@@ -552,6 +557,13 @@ export function PlatformHeader() {
               a wide window the bar draws none at all.
           */}
           <HeaderPlace slug={backSlug} name={appName || ''} />
+          {/*
+              THE PHONE'S DRAWER'S ARROW (../nav-drawer/header-drawer.tsx),
+              in the places button's seat while the drawer applies: up one
+              level, fading in with depth. Nothing until then, so the
+              prerender and the first client render are untouched.
+          */}
+          <DrawerBack />
         </div>
         {/*
             The screen's only h1 — a NAME, not a control, since #2718. It was

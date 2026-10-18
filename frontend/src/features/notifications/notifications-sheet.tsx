@@ -102,7 +102,7 @@
  */
 
 import { OverlayScrim } from '../../lib/overlay-scrim-view';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { IconTile } from '@/components/ui/icon-tile';
@@ -132,6 +132,11 @@ type ScreenRowView = NotificationRowView & {
   createdAtMs: number;
   who: string;
   appLine: string;
+  /**
+   * #5406: the app the row came from, for the Unread tab's per-app groups.
+   * Conversation kinds carry no app — they group under "Other".
+   */
+  appId?: number | null;
   /**
    * The meta line's attribution — a username, or null. Set only where the
    * source user is the one who DID this; see the note on `rowView` in
@@ -229,6 +234,88 @@ function SectionHead({ children }: { children: ReactNode }): ReactNode {
       {children}
     </div>
   );
+}
+
+/**
+ * #5406: the heading of one app's group of unread notifications on the Unread
+ * tab, with that app's "Mark read" beside it. The heading is the app's name
+ * (the same words each row's meta line already carries); the pill is the
+ * sheet's own "Mark all read" pill in miniature, and clears that app's every
+ * unread notification — including ones the sheet has not paged in — through
+ * the controller's markAppRead. The "Other" group (notifications that belong
+ * to no app) renders no button: nothing but Mark all read owns those.
+ */
+function AppGroupHead({ groupKey, label, appId }: {
+  groupKey: string;
+  label: string;
+  appId: number | null;
+}): ReactNode {
+  const t = useMessages('notifications');
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="flex items-center gap-2 px-4 pt-4 pb-1" data-notif-app-group={groupKey}>
+      <span className="flex-1 min-w-0 truncate text-xs font-medium text-zinc-500 dark:text-zinc-500">
+        {label}
+      </span>
+      {appId != null ? (
+        <button
+          type="button"
+          data-notif-app-read={appId}
+          className={'inline-flex items-center h-8 px-3 rounded-full text-xs font-semibold '
+            + 'bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 '
+            + 'disabled:opacity-40 disabled:hover:bg-zinc-100 dark:disabled:hover:bg-zinc-800 un-touch-target'}
+          disabled={busy}
+          aria-busy={busy ? 'true' : undefined}
+          aria-label={t('notifications:sheet.markAppReadLabel', { app: label })}
+          onClick={(event) => {
+            // Stopped for the reason every handler in this sheet stops its
+            // click: a click that re-renders the list would otherwise bubble
+            // to an outside-click listener that dismisses the sheet.
+            event.stopPropagation();
+            if (busy) return;
+            setBusy(true);
+            Promise.resolve(controller()?.markAppRead(appId))
+              .catch(() => false)
+              .then(() => setBusy(false));
+          }}
+        >
+          {t('notifications:sheet.markAppRead')}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The Unread tab's groups (#5406): rows bucketed by app, in feed order.
+ * The first time an app is seen is its newest notification, so the groups
+ * are ordered by their newest row and the rows keep their order inside a
+ * group. Rows that belong to no app (messages, friends, account) share one
+ * "Other" group, under the key `'other'`; `appId` 0 counts as an app, so the
+ * staging demo mocks group and show the button.
+ */
+type AppGroup = {
+  key: string;
+  appId: number | null;
+  /** The first row's appLine, before the "Other" fallback the renderer applies. */
+  appLine: string;
+  entries: MessagesEntry[];
+};
+
+function groupUnreadByApp(rows: ScreenRowView[]): AppGroup[] {
+  const groups: AppGroup[] = [];
+  const byKey = new Map<string, AppGroup>();
+  for (const view of rows) {
+    const key = view.appId != null ? 'a:' + view.appId : 'other';
+    let group = byKey.get(key);
+    if (!group) {
+      group = { key, appId: view.appId ?? null, appLine: view.appLine || '', entries: [] };
+      byKey.set(key, group);
+      groups.push(group);
+    }
+    group.entries.push({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view });
+  }
+  return groups;
 }
 
 /**
@@ -737,6 +824,26 @@ export function NotificationsSheetView() {
   const matches = searching
     ? entries.filter((entry) => matchesNotificationQuery(entry, needle))
     : entries;
+  // #5406: on Unread in its collapsed state — the one the sheet opens in, and
+  // the list you are trying to empty — the rows group under one heading per
+  // app, with that app's "Mark read" beside it, instead of under Today and
+  // Earlier. Unread only: Messages and All keep the time-grouped flat list,
+  // and once the older rows are revealed on Unread the tab is the archive
+  // again, so it draws Today/Earlier as it always did. `unread` is feed
+  // order (newest first), so groupUnreadByApp's insertion order keeps the
+  // groups newest-first too.
+  const groupedUnread = tab === 'unread' && !olderShown;
+  const appGroups = groupedUnread ? groupUnreadByApp(unread) : [];
+  const renderAppGroup = (group: AppGroup): ReactNode => (
+    <Fragment key={group.key}>
+      <AppGroupHead
+        groupKey={group.key}
+        label={group.key === 'other' || !group.appLine ? t('notifications:sheet.group.other') : group.appLine}
+        appId={group.appId}
+      />
+      {group.entries.map(renderEntry)}
+    </Fragment>
+  );
   const renderEntry = (entry: MessagesEntry): ReactNode => (entry.type === 'session' ? (
     // The same <SessionRow> the Improve panel and then the Agents tab drew,
     // so a session reads the same wherever you meet it and its busy /
@@ -990,22 +1097,26 @@ export function NotificationsSheetView() {
           </p>
         )
       ) : null}
-      {!searching && today.length ? (
+      {!searching && (groupedUnread ? appGroups.map(renderAppGroup) : (
         <>
-          <SectionHead>
-            {t('notifications:sheet.today')}
-          </SectionHead>
-          {today.map(renderEntry)}
+          {today.length ? (
+            <>
+              <SectionHead>
+                {t('notifications:sheet.today')}
+              </SectionHead>
+              {today.map(renderEntry)}
+            </>
+          ) : null}
+          {earlier.length ? (
+            <>
+              <SectionHead>
+                {t('notifications:sheet.earlier')}
+              </SectionHead>
+              {earlier.map(renderEntry)}
+            </>
+          ) : null}
         </>
-      ) : null}
-      {!searching && earlier.length ? (
-        <>
-          <SectionHead>
-            {t('notifications:sheet.earlier')}
-          </SectionHead>
-          {earlier.map(renderEntry)}
-        </>
-      ) : null}
+      ))}
       {!searching && !entries.length ? (
         <p className="px-4 py-8 text-sm text-zinc-500 text-center">
           {tab === 'unread' ? t('notifications:sheet.empty.unread') : t('notifications:sheet.empty.other')}

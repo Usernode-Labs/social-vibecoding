@@ -21,10 +21,9 @@ import { createHash } from 'node:crypto';
 import type { Json, Pool, WorkContext, WorkHandler } from '../kernel/index.ts';
 import { LeaseLost } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import type { BotNote } from '../rules/bot-notes.ts';
 import { PREPARE_CLAIMS, WORK } from './machine.ts';
 
-interface Deps { config: any; pool: Pool; botNote?: BotNote }
+interface Deps { config: any; pool: Pool }
 
 // How long a prepare or a checks run holds its lease between renewals. A
 // cancelled one learns it at its next checkpoint or renewal; the machine
@@ -68,7 +67,7 @@ export function unitEarlyRunId(sessionId: number, n: number): string {
   return uuidOf(`preview-unit-early:${sessionId}:${n}`);
 }
 
-export function previewServices({ config, pool, botNote }: Deps): Record<string, WorkHandler> {
+export function previewServices({ config, pool }: Deps): Record<string, WorkHandler> {
   const staging = () => legacy('services/staging');
   const visuals = () => legacy('services/visuals');
   const kubernetes = () => legacy('services/kubernetes');
@@ -399,48 +398,6 @@ export function previewServices({ config, pool, botNote }: Deps): Record<string,
       async run({ input }): Promise<Json> {
         for (const db of input.dbs || []) await dbManager().dropDatabase(db, { strict: true });
         return { dropped: input.dbs || [] };
-      },
-    },
-
-    // An item an older release queued, when this work started the shots:
-    // its head is handed to the shots machine (the transition that reads
-    // this result tells it). New previews tell it by message.
-    [WORK.ready]: {
-      maxAttempts: 3,
-      async run({ input }): Promise<Json> {
-        return /^[0-9a-f]{40}$/.test(String(input.head || '')) ? { handOff: String(input.head).toLowerCase() } : { done: true };
-      },
-    },
-
-    // One release only: what a settled verdict set off when an older
-    // release queued it. The Homeroom bot's change machine hears the verdict
-    // (a session that is not the bot's is refused there and nothing is
-    // kept), and an item from before the shots machine was told by message
-    // hands the head over in its result. Since this release the transition
-    // tells both.
-    [WORK.followUps]: {
-      maxAttempts: 3,
-      async run({ input, workId }): Promise<Json> {
-        const { sessionId, head, state, deferred } = input;
-        const sha = /^[0-9a-f]{40}$/.test(String(head || '')) ? String(head).toLowerCase() : null;
-        if (!deferred && botNote && ['passing', 'skipped', 'failing'].includes(state)) {
-          await botNote(Number(sessionId), 'Verdict', { head: sha, state }, { requestKey: `shim:${workId}` });
-        }
-        if (!input.shotsTold && sha) return { done: true, handOff: sha };
-        return { done: true };
-      },
-    },
-
-    // One release only: a change's preview would not start, as an older
-    // release queued it. The bot's change machine hears it; an imported
-    // pull request's shots, from before they were told by message, in its
-    // result.
-    [WORK.stopped]: {
-      maxAttempts: 3,
-      async run({ input, workId }): Promise<Json> {
-        if (botNote) await botNote(Number(input.sessionId), 'PreviewStopped', {}, { requestKey: `shim:${workId}` });
-        if (!input.shotsTold && input.imported) return { noted: true, stopped: null };
-        return { noted: true };
       },
     },
   };

@@ -270,7 +270,7 @@ test('shots machine against the full PostgreSQL schema', { timeout: 180000 }, as
     assert.equal((await row(s)).shots_state, 'not_required');
     assert.equal(calls(WORK.revision).length, 0);
     assert.equal(await settledTold(s), 1);
-    assert.equal(calls(WORK.settled).length, 0, 'by message, not work');
+    assert.equal(calls('bot.shotsSettled').length, 0, 'by message, not work');
   });
 
   await t.test('S4 the proposal\'s agent busy: the run waits, and goes on once it is free', async () => {
