@@ -313,7 +313,7 @@ const ITEMS_SQL = `
 // GET /api/workshop/needs-feed (#3270)
 //      → { items: FeedItem[] }
 //   FeedItem = { kind: 'proposal'|'governance', id, title, summary, author,
-//                number, epoch, at, yes, no, approve?,
+//                number, epoch, at, yes, no, approve?, advisory?, uncounted?,
 //                app: { slug, name, icon_url, icon_emoji } }
 //
 // The Communities screen's Needs you tab as ONE FEED: every decision owed by
@@ -336,6 +336,16 @@ const ITEMS_SQL = `
 // query says which rows are on such a project (`solo`: the audience is
 // 'solo' and the viewer's vote counts there); withVotesRequired works out
 // how many Yes votes those need; approvedAlone decides.
+//
+// And whether the viewer's vote can affect the outcome at all (#5365). A
+// change on a project whose deciders do not include the viewer — a
+// non-approver on an approver project, someone outside every group a
+// project's rules name (governance.viewerDecides, the same rule /promoted
+// marks its cards with) — rides as `advisory: true`; a vote recorded but
+// not counted (a test account's, counts_toward_outcome) as `uncounted:
+// true`. withViewerDecides marks the rows and decidingFirst puts the rows
+// whose vote decides first, so a viewer who only wants to vote where it
+// matters can stop when the marked cards begin.
 //
 // The words are the Description sheet's as well since #3488 (the feed is a
 // project's own NeedsFeed now, which renders them in full there), so they
@@ -374,7 +384,11 @@ const NEEDS_FEED_SQL = `
                        'commit', sv.commit_hash, 'scenarioId', sv.scenario_id,
                        'scenarioFingerprint', sv.scenario_fingerprint, 'fellBack', sv.before_fell_back))
               FROM session_visuals sv WHERE sv.session_id = cs.id) AS visuals_agg,
-           NULL::text AS decision_kind, NULL::jsonb AS decision_payload
+           NULL::text AS decision_kind, NULL::jsonb AS decision_payload,
+           -- #5365: whether the change waits on an explicit approval (who
+           -- decides), which withViewerDecides reads through viewerDecides
+           -- exactly as /promoted marks its rows.
+           cs.requires_explicit_approval, cs.explicit_approval_reason::text
       FROM chat_sessions cs
       LEFT JOIN users u ON u.id = cs.user_id
      WHERE ${OWED_PROPOSALS_WHERE}
@@ -385,7 +399,8 @@ const NEEDS_FEED_SQL = `
            NULL::int, NULL::int,
            NULL::text, NULL::jsonb, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
            NULL::jsonb, NULL::text, NULL::jsonb, NULL::text, NULL::jsonb,
-           i.kind::text, i.payload
+           i.kind::text, i.payload,
+           NULL::boolean AS requires_explicit_approval, NULL::text AS explicit_approval_reason
       FROM issues i
       LEFT JOIN users u ON u.id = i.created_by
      WHERE ${OWED_GOVERNANCE_WHERE}
@@ -397,6 +412,11 @@ const NEEDS_FEED_SQL = `
          o.reviewed_head_sha, o.checks_commit_sha, o.handoff_head_sha,
          o.pr_diagram, o.pr_diagram_source, o.pr_touches, o.pr_touches_sha, o.visuals_agg,
          o.decision_kind, o.decision_payload,
+         o.requires_explicit_approval, o.explicit_approval_reason,
+         -- #5365: whether this viewer's vote is counted at all (a test
+         -- account's is not) — the identity/app-access half of the question;
+         -- viewerDecides below covers the approver-and-rules half.
+         counts_toward_outcome($1, a.id) AS counts,
          (o.kind = 'proposal'
            AND (${communities.audienceSql('a', '(SELECT COUNT(*) FROM community_members m WHERE m.community_id = a.community_id)')}) = 'solo'
            AND counts_toward_outcome($1, a.id)) AS solo
@@ -517,6 +537,65 @@ function approvedAlone(row) {
 }
 
 /**
+ * #5365: mark each proposal row with whether the viewer's vote can affect
+ * the outcome. `uncounted` is counts_toward_outcome's answer (a test
+ * account's vote is recorded but not counted); `advisory` is
+ * governance.viewerDecides' (a non-approver on an approver project, or
+ * someone outside every group a rules project's rules name) — the same
+ * facts /promoted marks its cards with (#4747), so a card and its feed row
+ * cannot disagree. Group decisions are never marked: their own page
+ * explains who decides. One governance read per project; a project whose
+ * read fails is left unmarked, so a deciding vote is never hidden at the
+ * back. Resolves the rows. Exported for tests.
+ */
+async function withViewerDecides(pool, rows, userId) {
+  const byApp = new Map();
+  for (const row of rows) {
+    if (row.kind !== 'proposal') continue;
+    if (!byApp.has(row.app_id)) byApp.set(row.app_id, []);
+    byApp.get(row.app_id).push(row);
+  }
+  await Promise.all([...byApp].map(async ([appId, list]) => {
+    try {
+      const gov = await governance.getGovernance(pool, appId);
+      const facts = gov.rules ? await governance.rulesFacts(pool, appId, gov) : null;
+      const approverIds = !gov.rules && gov.approverPolicy === 'invited'
+        ? (await governance.getElectorate(pool, appId, gov)).approverIds
+        : null;
+      for (const row of list) {
+        row.uncounted = row.counts === false;
+        row.advisory = !row.uncounted && !governance.viewerDecides(gov, {
+          approverIds,
+          facts,
+          explicitApproval: !!row.requires_explicit_approval,
+          explicitReason: row.explicit_approval_reason || null,
+        }, userId);
+      }
+    } catch (err) {
+      log.warn('workshop-overview', 'Could not read whether the viewer decides these changes; the cards stay unmarked', { appId, message: err.message });
+    }
+  }));
+  return rows;
+}
+
+/**
+ * #5365: the feed's order as a stable partition — the rows whose vote
+ * decides first, the marked ones (advisory or uncounted) after, each group
+ * keeping its own newest-first order from the query. The spec's
+ * "votes that can actually effect change" first, the advisory ones after:
+ * a viewer who wants to vote only where it matters can stop when the
+ * marked cards begin. Exported for tests.
+ */
+function decidingFirst(items) {
+  const deciding = [];
+  const advisory = [];
+  for (const it of items) {
+    (it.advisory || it.uncounted ? advisory : deciding).push(it);
+  }
+  return [...deciding, ...advisory];
+}
+
+/**
  * A group decision's own facts, the few fields its diagram is drawn from
  * (frontend/src/lib/diagram/decision.ts), named one by one so nothing else
  * in a payload reaches the feed. A secret change carries its key and action,
@@ -605,6 +684,10 @@ function shapeNeedsFeed(rows) {
     yes: row.yes == null ? null : Number(row.yes),
     no: row.no == null ? null : Number(row.no),
     ...(approvedAlone(row) ? { approve: true } : {}),
+    // #5365: only when set — an unmarked row carries no flag at all, so the
+    // card keeps its usual place and wording.
+    ...(row.uncounted ? { uncounted: true } : {}),
+    ...(row.advisory ? { advisory: true } : {}),
     // #4490: the card's picture, the same as a project's Needs you draws.
     ...pictureFields(row),
     app: {
@@ -674,6 +757,9 @@ const DEMO_NEEDS_FEED = [
     kind: 'proposal', id: -104, title: 'Let members share a shopping list',
     summary: 'A shared list on the app\'s home screen that any member can add to and tick off.',
     author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-22T10:00:00Z', yes: 1, no: 1,
+    // #5365: the demo card for an advisory vote, so the feed's label and the
+    // deciding-first order can be seen on ?demo=1 without a governed project.
+    advisory: true,
     // #4490: no diagram, so its picture is "What it touches".
     touches: {
       version: 1, files: 5,
@@ -844,9 +930,10 @@ function workshopOverviewRoutes(config) {
         req.user.id, showSelfHosted, !!req.user.isAdmin, NEEDS_FEED_MAX,
       ]);
       await withPictures(pool, rows, { shotsPresent: !!config.shots?.present });
-      const items = shapeNeedsFeed(await withVotesRequired(pool, rows));
+      await withViewerDecides(pool, rows, req.user.id);
+      const items = decidingFirst(shapeNeedsFeed(await withVotesRequired(pool, rows)));
       if (IS_STAGING && req.query.demo === '1') {
-        return res.json({ items: withDemoNeedsFeed(items), max: NEEDS_FEED_MAX });
+        return res.json({ items: decidingFirst(withDemoNeedsFeed(items)), max: NEEDS_FEED_MAX });
       }
       return res.json({ items, max: NEEDS_FEED_MAX });
     } catch (err) {
@@ -861,7 +948,8 @@ function workshopOverviewRoutes(config) {
 module.exports = {
   workshopOverviewRoutes, demoNeedsVoteRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
   withDemoItems, DEMO_ITEMS, ITEMS_SQL, ITEMS_PER_APP, ITEMS_TOTAL, groupItems,
-  NEEDS_FEED_SQL, NEEDS_FEED_MAX, shapeNeedsFeed, withVotesRequired, withPictures, pictureFields, decisionFacts, DEMO_NEEDS_FEED, withDemoNeedsFeed,
+  NEEDS_FEED_SQL, NEEDS_FEED_MAX, shapeNeedsFeed, withVotesRequired, withViewerDecides, decidingFirst,
+  withPictures, pictureFields, decisionFacts, DEMO_NEEDS_FEED, withDemoNeedsFeed,
   isDemoNeedsProposal,
   OWED_BY_COMMUNITY_SQL, owedByCommunity,
   MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE,

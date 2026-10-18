@@ -1159,6 +1159,10 @@
     "text": "Change · Waiting for your approval",
     "description": "Small label at the top of an item in the Needs you feed: the item is a proposed change to the app and this person has not voted on it yet. Change is a noun."
   },
+  "needsYou.eyebrow.changeAdvisory": {
+    "text": "Change · Your vote is advisory",
+    "description": "Small label at the top of an item in the Needs you feed: the item is a proposed change whose outcome this person's vote does not decide — they are not an approver where only approvers decide, or outside every group the project's rules name. Their vote is recorded but does not affect the result. Change is a noun."
+  },
   "needsYou.previousItem": {
     "text": "Previous item",
     "description": "Accessible name of the small up arrow at the top of an item in the Needs you feed on a phone: goes back to the item before."

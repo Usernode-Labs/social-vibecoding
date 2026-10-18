@@ -1416,6 +1416,11 @@ export function NeedsVoteForm({ row, slug, side, line, boxRef, onSide, onLine, o
         withLine
         solo={solo}
         approve={approves(row)}
+        // #5365: the same line the change's own card shows when the viewer's
+        // vote does not decide it — advisory (#4747), or a test account's
+        // uncounted one.
+        advisory={!!(row.yes && row.yes.advisory)}
+        uncounted={!!(row.yes && row.yes.uncounted)}
         onSide={onSide}
         onLine={onLine}
         onBoxKey={onBoxKey}
@@ -1959,8 +1964,15 @@ const FeedItem = memo(function FeedItem({ row, index, tint, near, voted, wide, s
           // approval" on the same change's page. The item says what the page
           // says: what it is, and that it waits on you
           // (AppView._summarizeRequirements' group headline).
+          // #5365: on a change whose outcome the viewer's vote does not
+          // decide (an advisory vote, or a test account's uncounted one),
+          // it says that instead — the words the change's own card uses.
           <span className="dev-ws-eyebrow">
-            {row.card.attrs && row.card.attrs['data-gov-row'] ? t('project:needsYou.eyebrow.groupDecision') : t('project:needsYou.eyebrow.change')}
+            {row.card.attrs && row.card.attrs['data-gov-row']
+              ? t('project:needsYou.eyebrow.groupDecision')
+              : row.yes && (row.yes.advisory || row.yes.uncounted)
+                ? t('project:needsYou.eyebrow.changeAdvisory')
+                : t('project:needsYou.eyebrow.change')}
           </span>
         )}
         {/* #3517: THE WAY BACK, WHERE A PHONE CAN SEE IT. Swiping down was

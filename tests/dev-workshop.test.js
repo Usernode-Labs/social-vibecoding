@@ -1459,6 +1459,26 @@ test('the vote deck is its own tab; the unclaimed suggestion stays with the stat
   assert.match(needs, /data-ws-needs=""[\s\S]*?data-ws-rail-btn="vote"/);
 });
 
+// #5365: a change whose outcome the viewer's vote does not decide (its
+// /promoted row carries my_vote_advisory) keeps the flag on the queue row's
+// Yes — the item labels it and its vote sheet's picker shows the line — and
+// the deck puts the marked rows last, so the rows whose vote decides come
+// first and a viewer can stop when the marked cards begin.
+test('the queue keeps the advisory flag on its Yes and puts the marked rows last', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._proposals = [...AppView._proposals, {
+    id: 35, pr_number: 42, pr_title: 'Advisory change', status: 'promoted', username: 'dan',
+    created_at: at(1), promoted_at: at(1), last_message_at: at(1), linked_issues: [], my_vote: null,
+    votes_for: 0, votes_against: 0, yes_count: 0, no_count: 0, my_vote_advisory: true,
+  }];
+  const q = plain(AppView._workshopView().queue);
+  assert.deepEqual(q.map((r) => r.card.key), ['proposal:34', 'proposal:35'],
+    'the advisory change is last, after the change the viewer decides');
+  assert.equal(q[1].yes.advisory, true, 'the queue keeps the flag the card’s Yes spec carries');
+  assert.ok(!q[0].yes.advisory, 'the deciding row’s Yes is bare');
+});
+
 test('a quiet theme is not told it has never been built in', () => {
   const AppView = makeAppView();
   seed(AppView);

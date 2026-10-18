@@ -12832,14 +12832,33 @@ const AppView = {
         descriptionHtml: x.kind === 'proposal' ? AppView._proposalSummaryHtml(x.item) : '',
         ask: PlatformI18n.t('changes:workshop.queue.voteAsk'),
         // #3977: a Just-you change's Yes is its approval (B7), and the
-        // item says Approve / Don't approve, as its card does.
-        yes: yes ? { label: yes.label, tally: yes.tally, act: yes.act, ...(yes.approve ? { approve: true } : {}) } : null,
+        // item says Approve / Don't approve, as its card does. #5365: the
+        // queue keeps the advisory/uncounted flags the card's Yes spec
+        // already carries (#4747), so the item can label a vote that does
+        // not decide the change and put it at the back.
+        yes: yes ? {
+          label: yes.label,
+          tally: yes.tally,
+          act: yes.act,
+          ...(yes.approve ? { approve: true } : {}),
+          ...(yes.uncounted ? { uncounted: true } : {}),
+          ...(yes.advisory ? { advisory: true } : {}),
+        } : null,
         no: no ? { label: no.label, tally: no.tally, act: no.act } : null,
         // The facts line's "your yes puts it live", and the end card's "Your
         // yes put it over the line": exactly one more Yes meets the rule.
         ...(x.kind === 'proposal' && AppView._yesPutsItLive(x.item) ? { lastYes: true } : {}),
       });
     }
+
+    // #5365: the rows whose vote decides first, the marked ones after — the
+    // same stable partition the Communities screen's feed keeps (decidingFirst
+    // in src/routes/workshop-overview.js). Within each group the rows keep
+    // their newest-first order, so nothing jumps but the marked cards, and a
+    // viewer who only wants to vote where it matters can stop when they begin.
+    const decidingRows = queue.filter((r) => !(r.yes && (r.yes.advisory || r.yes.uncounted)));
+    const advisoryRows = queue.filter((r) => r.yes && (r.yes.advisory || r.yes.uncounted));
+    queue.splice(0, queue.length, ...decidingRows, ...advisoryRows);
 
     // "Try taking this one next" — the most recently active open issue with
     // nobody on it. Recency rather than age on purpose: an issue the group is
