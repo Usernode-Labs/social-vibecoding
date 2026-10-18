@@ -151,14 +151,6 @@
     "text": "One of your changes is building",
     "description": "Tooltip on the Homeroom logo button while a spinner shows on it: a change this person asked for is being built."
   },
-  "header.inApp.toVote_one": {
-    "text": "{{count}} to vote",
-    "description": "Small pill in the header while an app is running, also its tooltip and accessible name: how many proposals this app's community is waiting for this person to vote on. {{count}} is that number."
-  },
-  "header.inApp.toVote_other": {
-    "text": "{{count}} to vote",
-    "description": "Small pill in the header while an app is running, also its tooltip and accessible name: how many proposals this app's community is waiting for this person to vote on. {{count}} is that number."
-  },
   "header.inApp.suggest": {
     "text": "Suggest",
     "description": "Small button in the header while an app is running: opens the form for suggesting an improvement to the app on screen."
