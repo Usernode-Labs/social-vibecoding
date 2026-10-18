@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, type TouchEvent as ReactTouchEvent } from 'react';
 
 import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import * as api from './api';
@@ -6,6 +6,7 @@ import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, s
 import type { ConversationUser, MessageAttachment, SharedObjectReference } from './types';
 import { fileSize } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { fieldTapDecision, type TapPoint } from '../../lib/tap-focus';
 import { prefixLookup, type PrefixLookup } from '../../lib/prefix-lookup';
 import { orderFriendsFirst, useFriendIds } from '../friends/store';
 import { wantsKeyboardFocus } from '../message-actions/focus';
@@ -58,6 +59,9 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const [addOpen, setAddOpen] = useState(false);
   const addRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // #3571: where a touch on the field began, so touchend can tell a tap from
+  // a drag (lib/tap-focus.ts).
+  const fieldTapStart = useRef<TapPoint | null>(null);
   // #1408: grow with the message, up to the max-height already in app.css.
   useAutoGrow(inputRef, value);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -76,6 +80,32 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   useEffect(() => {
     if (replyId && wantsKeyboardFocus()) inputRef.current?.focus({ preventScroll: true });
   }, [replyId]);
+
+  // #3571: the field's touch tap. Focusing inside the tap with preventScroll
+  // (the kit's modal-field pattern, #3150) raises the keyboard with no pan,
+  // which is what sent the box off screen on mobile Safari — the reservation
+  // had lifted the composer above the keys while iOS's pan had already moved
+  // the visible band to the page's foot (lib/tap-focus.ts).
+  const onFieldTouchStart = (event: ReactTouchEvent<HTMLTextAreaElement>) => {
+    const touch = event.touches[0];
+    fieldTapStart.current = event.touches.length === 1 && touch
+      ? { x: touch.clientX, y: touch.clientY }
+      : null;
+  };
+  const onFieldTouchEnd = (event: ReactTouchEvent<HTMLTextAreaElement>) => {
+    const end = event.changedTouches[0];
+    const decision = fieldTapDecision(
+      fieldTapStart.current,
+      end ? { x: end.clientX, y: end.clientY } : undefined,
+      event,
+      document.activeElement === inputRef.current,
+    );
+    fieldTapStart.current = null;
+    if (decision === 'focus') {
+      event.preventDefault();
+      inputRef.current?.focus({ preventScroll: true });
+    }
+  };
 
   useEffect(() => {
     if (inThread) return undefined;
@@ -467,7 +497,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? 'Reply in thread…' : 'Message…'} aria-label={inThread ? 'Reply in thread' : 'Message'} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
+        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} onTouchStart={onFieldTouchStart} onTouchEnd={onFieldTouchEnd} rows={1} maxLength={8000} placeholder={inThread ? 'Reply in thread…' : 'Message…'} aria-label={inThread ? 'Reply in thread' : 'Message'} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
         <button type="button" onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message"><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
