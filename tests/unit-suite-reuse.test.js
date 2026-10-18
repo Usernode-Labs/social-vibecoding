@@ -53,7 +53,10 @@ const OTHER_TREE = 'f'.repeat(40);
 const MERGE = '9'.repeat(40);
 const DIGEST = `registry.example/usernode-worker@sha256:${'c'.repeat(64)}`;
 const NEW_DIGEST = `registry.example/usernode-worker@sha256:${'d'.repeat(64)}`;
-const config = { workerRuntime: 'kubernetes', kubernetes: { workerImage: DIGEST, workerNamespace: 'w' } };
+// The platform's own app (config.js SELF_APP_SLUG), the one whose tests
+// were audited for tree reuse.
+const SELF = 'usernode-2d5619';
+const config = { workerRuntime: 'kubernetes', selfAppSlug: SELF, kubernetes: { workerImage: DIGEST, workerNamespace: 'w' } };
 const keyArgs = { appId: 10, repoOwner: 'Usernode-Labs', repoName: 'social-vibecoding', commitSha: SHA, jobHash: 'h'.repeat(64) };
 
 function withEnv(name, value, fn) {
@@ -281,7 +284,13 @@ test('a pass is recorded with the run, the commit every shard checked out, the d
     [10, 'usernode-labs/social-vibecoding', SHA, DIGEST, unitSuite.jobHash(), 8401, 'run-a']);
   assert.equal(JSON.parse(ins.params[7]).tests, 6, 'the summary of the whole suite');
   assert.match(ins.sql, /INSERT INTO unit_suite_passes \(app_id, repo, commit_sha, image, job_definition, session_id, run_id, summary, tree_sha\)/);
-  assert.equal(ins.params[8], TREE, 'and the commit\'s tree, as GitHub has it');
+  assert.equal(ins.params[8], null, 'recorded by commit first: nothing waits on GitHub');
+  // Then the commit's tree, as GitHub has it, on the rows of that commit.
+  await unitSuite.settleTreeReads();
+  const set = pool.calls.filter((c) => /UPDATE unit_suite_passes SET tree_sha = \$3/.test(c.sql));
+  assert.equal(set.length, 1);
+  assert.match(set[0].sql, /WHERE app_id = \$1 AND commit_sha = \$2 AND tree_sha IS NULL/, 'never another column, its observation included');
+  assert.deepEqual(set[0].params, [10, SHA, TREE]);
 });
 
 test('a pass whose tree cannot be read is still recorded, for its commit alone', async (t) => {
@@ -292,6 +301,43 @@ test('a pass whose tree cannot be read is still recorded, for its commit alone',
   assert.ok(ins, 'recorded');
   assert.equal(ins.params[2], SHA);
   assert.equal(ins.params[8], null, 'no tree: main-watch cannot copy it, a re-run of the commit still can');
+  await unitSuite.settleTreeReads();
+  assert.equal(pool.calls.filter((c) => /SET tree_sha/.test(c.sql)).length, 0);
+});
+
+test('a GitHub that never answers holds no verdict: the pass is recorded by commit and the tree read gives up', async (t) => {
+  let release;
+  mockRun(t);
+  t.mock.method(github, 'getCommitTree', () => new Promise((res) => { release = res; }));
+  const pool = recordingPool();
+  const before = process.env.UNIT_SUITE_TREE_LOOKUP_MS;
+  // A deadline well past what the verdict may take: the verdict must not
+  // wait for the read at all, not merely for its deadline.
+  process.env.UNIT_SUITE_TREE_LOOKUP_MS = '1500';
+  try {
+    const outcome = await Promise.race([
+      unitSuite.maybeRunUnitSuite(runArgs(pool)),
+      new Promise((res) => setTimeout(() => res('held'), 700)),
+    ]);
+    assert.notEqual(outcome, 'held', 'the verdict did not wait for GitHub');
+    assert.equal(outcome.row.status, 'pass');
+    assert.equal(inserts(pool).length, 1, 'recorded by commit');
+    await unitSuite.settleTreeReads();
+    assert.equal(pool.calls.filter((c) => /SET tree_sha/.test(c.sql)).length, 0, 'gave up at the deadline');
+    release(TREE);
+  } finally {
+    if (before === undefined) delete process.env.UNIT_SUITE_TREE_LOOKUP_MS; else process.env.UNIT_SUITE_TREE_LOOKUP_MS = before;
+  }
+});
+
+test('another project\'s pass is recorded by commit and its tree is never read', async (t) => {
+  mockRun(t);
+  const pool = recordingPool();
+  await unitSuite.maybeRunUnitSuite(runArgs(pool, { repoOwner: 'someone', repoName: 'their-app' }));
+  await unitSuite.settleTreeReads();
+  assert.equal(inserts(pool).length, 1);
+  assert.equal(github.getCommitTree.mock.callCount(), 0);
+  assert.equal(pool.calls.filter((c) => /SET tree_sha/.test(c.sql)).length, 0);
 });
 
 test('nothing is recorded for a red suite, another checkout, no commit, Docker, or with reuse off', async (t) => {
@@ -1233,7 +1279,7 @@ function treeRun(t, { tree = TREE, rows = null, fail = null } = {}) {
     : recordingPool(rows || [{ id: 5, session_id: 8726, run_id: 'run-p', summary: PASS.summary, passed_at: new Date(PASS.passedAt), commit_sha: SHA }]);
   return { pool, trees };
 }
-const treeArgs = (pool) => ({ config, pool, appId: 10, repoOwner: 'Usernode-Labs', repoName: 'social-vibecoding', commitSha: MERGE });
+const treeArgs = (pool, extra = {}) => ({ config, pool, appId: 10, appSlug: SELF, repoOwner: 'Usernode-Labs', repoName: 'social-vibecoding', commitSha: MERGE, ...extra });
 
 test('reusableTreePass: a merge copies the pass of its tree, and the row names the commit and tree it came from', async (t) => {
   const { pool, trees } = treeRun(t);
@@ -1360,6 +1406,138 @@ test('postgres: the tree column arrives on a table that already holds passes, as
     const key = reuse.keyFor(config, { ...keyArgs, treeSha: TREE });
     assert.equal((await reuse.findPass(pool, key, { trigger: 'boot-reconcile' })).runId, 'run-old');
     assert.equal(await reuse.findTreePass(pool, key), null, 'an old row has no tree');
+  } finally {
+    await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});
+    await pool.end().catch(() => {});
+  }
+});
+
+// ── Only the audited repository, and never waiting on GitHub ─────────────
+//
+// Review of #5430: tree reuse was open to every project, but only the
+// platform's own tests were audited for not reading the commit. And a slow
+// GitHub held verdicts. Both pinned here.
+
+test('tree reuse is for the platform\'s own app on the audited repository only', () => {
+  const ok = { appSlug: SELF, repoOwner: 'Usernode-Labs', repoName: 'social-vibecoding' };
+  assert.equal(reuse.treeReuseAudited(config, ok), true);
+  assert.equal(reuse.treeReuseAudited(config, { ...ok, repoOwner: 'usernode-labs', repoName: 'SOCIAL-VIBECODING' }), true, 'GitHub names ignore case');
+  assert.equal(reuse.treeReuseAudited(config, { ...ok, appSlug: 'another-app' }), false, 'another app on the same repository');
+  assert.equal(reuse.treeReuseAudited(config, { ...ok, repoOwner: 'someone' }), false, 'a fork, whose tests nobody audited');
+  assert.equal(reuse.treeReuseAudited(config, { ...ok, repoName: 'their-app' }), false, 'another project');
+  assert.equal(reuse.treeReuseAudited({ ...config, selfAppSlug: undefined }, ok), false, 'no platform app known');
+  assert.equal(reuse.treeReuseAudited(config, { ...ok, appSlug: null }), false);
+  assert.deepEqual([...reuse.TREE_AUDITED_REPOS], ['usernode-labs/social-vibecoding']);
+  // The platform's own app is config.js's SELF_APP_SLUG.
+  assert.match(read('src/config.js'), /const SELF_APP_SLUG = 'usernode-2d5619';/);
+  assert.match(read('src/services/main-watch.js'), /appSlug: app\.slug, repoOwner: parsed\.owner, repoName: parsed\.repo,\s+commitSha: mergeSha, signal,/);
+});
+
+test('regression: a project whose test reads the commit passes one commit of a tree and fails the other, so it never reuses by tree', { skip: (!hasBash || !hasGit) && 'no bash or git' }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'unit-reuse-meta-'));
+  try {
+    const repo = path.join(dir, 'repo');
+    const git = (...args) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+    fs.mkdirSync(repo);
+    git('init', '-q');
+    // The test fails unless the commit's subject is the proposal's.
+    fs.writeFileSync(path.join(repo, 'test.cjs'), [
+      "const s = require('child_process').execFileSync('git', ['log', '-1', '--format=%s'], { encoding: 'utf8' }).trim();",
+      "if (s !== 'proposal head') { console.error('subject: ' + s); process.exit(1); }",
+    ].join('\n'));
+    git('add', 'test.cjs');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'proposal head');
+    const head = git('rev-parse', 'HEAD').stdout.trim();
+    const tree = git('rev-parse', 'HEAD^{tree}').stdout.trim();
+    // The squash merge: the same tree, another commit.
+    const merge = spawnSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit-tree', tree, '-m', 'Squash merge (#1)'],
+      { encoding: 'utf8' }).stdout.trim();
+    git('update-ref', 'refs/heads/merged', merge);
+    assert.equal(git('rev-parse', `${merge}^{tree}`).stdout.trim(), tree);
+    git('config', 'uploadpack.allowReachableSHA1InWant', 'true');
+    // The production checkout of each, then the project's test in it.
+    const script = unitSuite.RUN_SCRIPT;
+    const upTo = script.indexOf('\n', script.indexOf(`${unitSuite.HEAD_SENTINEL}=`)) + 1;
+    const run = (ref) => spawnSync('bash', ['-c', `${script.slice(0, upTo)}node test.cjs`], {
+      encoding: 'utf8', env: { ...process.env, REPO_URL: `file://${repo}`, GIT_REF: ref, PR_NUMBER: '' },
+    }).status;
+    assert.deepEqual([run(head), run(merge)], [0, 1], 'one tree, two verdicts');
+
+    // Its proposal head passed and was observed; main-watch's run of the
+    // merge copies nothing for it, and asks GitHub nothing.
+    t.mock.method(github, 'isEnabled', () => true);
+    const asked = t.mock.method(github, 'getCommitTree', async () => tree);
+    const pool = recordingPool([{ id: 9, session_id: 1, run_id: 'run-p', summary: { tests: 1, pass: 1 }, passed_at: new Date(), commit_sha: head }]);
+    const args = { config, pool, appId: 1234, appSlug: 'commit-reader', repoOwner: 'someone', repoName: 'commit-reader', commitSha: merge };
+    assert.equal(await unitSuite.reusableTreePass(args), null);
+    assert.equal(asked.mock.callCount(), 0);
+    assert.equal(pool.calls.length, 0);
+    // The same project as the platform's app slug still fails the repository test.
+    assert.equal(await unitSuite.reusableTreePass({ ...args, appSlug: SELF }), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('reusableTreePass gives up at its deadline or when the run is cancelled, and the suite runs', async (t) => {
+  reuse._clearTreeCache();
+  t.mock.method(github, 'isEnabled', () => true);
+  t.mock.method(github, 'getCommitTree', () => new Promise(() => {}));
+  const pool = recordingPool([]);
+  const before = process.env.UNIT_SUITE_TREE_LOOKUP_MS;
+  try {
+    process.env.UNIT_SUITE_TREE_LOOKUP_MS = '50';
+    let started = Date.now();
+    assert.equal(await unitSuite.reusableTreePass(treeArgs(pool)), null, 'GitHub never answered');
+    assert.ok(Date.now() - started < 1000, 'bounded');
+    process.env.UNIT_SUITE_TREE_LOOKUP_MS = '600000';
+    const ac = new AbortController();
+    started = Date.now();
+    const pending = unitSuite.reusableTreePass({ ...treeArgs(pool), signal: ac.signal });
+    setTimeout(() => ac.abort(), 20);
+    assert.equal(await pending, null, 'cancelled with its run');
+    assert.ok(Date.now() - started < 1000);
+    const gone = new AbortController();
+    gone.abort();
+    assert.equal(await unitSuite.reusableTreePass({ ...treeArgs(pool), signal: gone.signal }), null, 'already cancelled');
+    assert.equal(pool.calls.length, 0);
+  } finally {
+    if (before === undefined) delete process.env.UNIT_SUITE_TREE_LOOKUP_MS; else process.env.UNIT_SUITE_TREE_LOOKUP_MS = before;
+  }
+  assert.equal(reuse.treeDeadlineMs(), 5000, 'five seconds unless set');
+});
+
+test('postgres: the tree set after the pass keeps its observation, whichever comes first', async (t) => {
+  const conn = await connect();
+  if (!conn) return t.skip('the pg driver is not installed in this environment');
+  if (conn.error) return t.skip(`no postgres reachable at ${DSN}: ${conn.error}`);
+  const schema = `unit_suite_tree_enrich_${process.pid}`;
+  const { pool } = conn;
+  try {
+    await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await pool.query(`CREATE SCHEMA ${schema}`);
+    await pool.query(`SET search_path TO ${schema}`);
+    await pool.query(DDL);
+    await pool.query('CREATE TABLE chat_sessions (id INTEGER PRIMARY KEY, unit_suite_fresh_sha TEXT)');
+    await pool.query('INSERT INTO chat_sessions (id) VALUES (8726), (8727)');
+    const key = reuse.keyFor(config, keyArgs);
+    const merge = reuse.keyFor(config, { ...keyArgs, commitSha: MERGE, treeSha: TREE });
+    // Observed first, tree after.
+    await reuse.recordPass(pool, key, { sessionId: 8726, runId: 'run-p' });
+    await checkStore.markUnitPassObserved(pool, { appId: 10, sessionId: 8726, commitSha: SHA });
+    const { rows: [o1] } = await pool.query('SELECT observed_at FROM unit_suite_passes');
+    assert.equal(await reuse.findTreePass(pool, merge), null, 'no tree yet');
+    assert.equal(await reuse.recordTree(pool, { appId: 10, commitSha: SHA, treeSha: TREE }), 1);
+    const { rows: [o2] } = await pool.query('SELECT observed_at, tree_sha FROM unit_suite_passes');
+    assert.deepEqual([o2.observed_at.getTime(), o2.tree_sha], [o1.observed_at.getTime(), TREE], 'the observation stands');
+    assert.equal((await reuse.findTreePass(pool, merge)).runId, 'run-p');
+    assert.equal(await reuse.recordTree(pool, { appId: 10, commitSha: SHA, treeSha: OTHER_TREE }), 0, 'a tree once set is not replaced');
+    // Tree first, observed after.
+    await reuse.recordPass(pool, { ...key, commitSha: OTHER }, { sessionId: 8727, runId: 'run-q' });
+    assert.equal(await reuse.recordTree(pool, { appId: 10, commitSha: OTHER, treeSha: TREE }), 1);
+    assert.equal((await reuse.findTreePass(pool, merge)).runId, 'run-p', 'unobserved: not copied');
+    await checkStore.markUnitPassObserved(pool, { appId: 10, sessionId: 8727, commitSha: OTHER });
+    assert.equal((await reuse.findTreePass(pool, merge)).runId, 'run-q');
   } finally {
     await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});
     await pool.end().catch(() => {});

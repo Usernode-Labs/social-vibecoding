@@ -44,19 +44,22 @@
 // followed a red suite or a pass more than 3 hours old. What repeats instead
 // is the TREE: a squash merge of a proposal that was level with main lands
 // the proposal's own tree under a new commit, and main-watch runs the suite
-// on it minutes after the proposal passed it (22 of 105 main runs). Main's
-// FIRST run of a merge therefore copies an observed pass of the same tree,
-// matched on the tree in place of the commit and on everything else above
-// (findTreePass). A commit's tree is everything the suite checks out: the
-// commit itself reaches the Job only as the `.git` of a depth-1 clone and
-// the GIT_REF/PR_NUMBER env. No test reads those env names, and run under a
-// logging `git` on 18 Oct 2026, the 434 suites that run git or load a module
-// that does asked the checkout's own repository one thing only, that HEAD is
-// a commit (tests/test-changed.test.js), true of every commit; the pretest
-// asked nothing. The tree is read from GitHub by commit (treeOf), never from
-// a ref that can move. A confirmation of a red, a recheck of a paused main
-// and a first run while main is paused always run the suite (the main-check
-// machine's `reuse`).
+// on it minutes after the proposal passed it (22 of 105 main runs). On the
+// platform's own app (treeReuseAudited: the audit below is of its tests, no
+// other project's), main's FIRST run of a merge therefore copies an observed
+// pass of the same tree, matched on the tree in place of the commit and on
+// everything else above (findTreePass). The commit reaches the Job only as
+// the `.git` of a depth-1 clone and the GIT_REF/PR_NUMBER env. None of the
+// platform's tests reads those env names, and run under a logging `git` on
+// 18 Oct 2026 (a sample, not a guarantee), the 434 suites that run git or
+// load a module that does asked the checkout's own repository one thing
+// only, that HEAD is a commit (tests/test-changed.test.js), true of every
+// commit; the pretest asked nothing. Another project's test may read the
+// commit (`git log -1`), so another project reuses by commit alone. The
+// tree is read from GitHub by commit (treeOf), never from a ref that can
+// move, and never on a path a verdict waits for (withDeadline). A
+// confirmation of a red, a recheck of a paused main and a first run while
+// main is paused always run the suite (the main-check machine's `reuse`).
 
 const crypto = require('crypto');
 const log = require('./logger');
@@ -152,6 +155,75 @@ async function treeOf({ github, owner, repo, commitSha }) {
   } catch (err) {
     log.warn('unit-suite-reuse', 'Could not read the commit\'s tree (non-fatal)', { commitSha, err: err.message });
     return null;
+  }
+}
+
+// Tree reuse is for a repository whose suite was audited to depend on its
+// tree alone, never for every project: two commits of one tree still differ
+// in their `.git` and the Job's GIT_REF/PR_NUMBER, and any project's test or
+// npm lifecycle script may read them (a test of `git log -1 --format=%s`
+// passes one commit and fails the other). The platform's own repository is
+// the one audited (see the header). Both must hold: the run is for the
+// platform's own app (config.selfAppSlug, SELF_APP_SLUG) and its repository
+// is the audited one, so neither a fork with other tests nor another app
+// pointed at a lookalike name qualifies. Everything else reuses by commit.
+const TREE_AUDITED_REPOS = Object.freeze(new Set(['usernode-labs/social-vibecoding']));
+function treeReuseAudited(config, { appSlug, repoOwner, repoName } = {}) {
+  const repo = repoKey(repoOwner, repoName);
+  if (!repo || !TREE_AUDITED_REPOS.has(repo)) return false;
+  const self = config && config.selfAppSlug;
+  return !!self && !!appSlug && String(appSlug) === String(self);
+}
+
+// The longest a tree read (and, for main-watch, the whole tree lookup) may
+// hold anything up. A slow GitHub costs the reuse, never the run: past it the
+// pass stays recorded by commit alone, and main-watch runs the suite.
+function treeDeadlineMs() {
+  const n = Number.parseInt(process.env.UNIT_SUITE_TREE_LOOKUP_MS, 10);
+  return Number.isInteger(n) && n > 0 ? n : 5000;
+}
+
+// `work` or null, whichever comes first: its answer, the deadline, or the
+// signal's abort. Never throws. The work itself is not stopped (a GitHub
+// read cannot be), only no longer waited for.
+function withDeadline(work, { ms = treeDeadlineMs(), signal = null } = {}) {
+  return new Promise((resolve) => {
+    let done = false;
+    let timer = null;
+    const onAbort = () => finish(null);
+    function finish(v) {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
+      resolve(v);
+    }
+    if (signal && signal.aborted) { finish(null); return; }
+    // Not unref'd: a caller waiting on nothing else must still be woken.
+    timer = setTimeout(() => finish(null), ms);
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
+    Promise.resolve().then(work).then(finish, () => finish(null));
+  });
+}
+
+/**
+ * The tree of a commit whose passes are already recorded: set on every row
+ * of that commit that has none yet. A commit names its tree for good, so the
+ * rows' other columns, `observed_at` among them, are left as they are. Never
+ * throws; returns the rows it set.
+ */
+async function recordTree(pool, { appId, commitSha, treeSha } = {}) {
+  if (!pool || !Number(appId) || !isSha(commitSha) || !isSha(treeSha)) return 0;
+  try {
+    const { rowCount } = await pool.query(
+      `UPDATE unit_suite_passes SET tree_sha = $3
+        WHERE app_id = $1 AND commit_sha = $2 AND tree_sha IS NULL`,
+      [Number(appId), String(commitSha).toLowerCase(), String(treeSha).toLowerCase()]
+    );
+    return rowCount || 0;
+  } catch (err) {
+    log.warn('unit-suite-reuse', 'Could not record a pass\'s tree (non-fatal)', { appId, commitSha, err: err.message });
+    return 0;
   }
 }
 
@@ -454,6 +526,11 @@ module.exports = {
   keyFor,
   treeOf,
   _clearTreeCache: () => treeCache.clear(),
+  TREE_AUDITED_REPOS,
+  treeReuseAudited,
+  treeDeadlineMs,
+  withDeadline,
+  recordTree,
   recordPass,
   findPass,
   findTreePass,

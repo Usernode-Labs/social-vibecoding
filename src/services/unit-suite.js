@@ -1542,12 +1542,31 @@ async function recordPassForReuse({
     });
     return false;
   }
-  // The commit's tree, so main-watch can copy this pass for a merge that
-  // lands the same tree (unit-suite-reuse.js findTreePass). Read after the
-  // suite, so nothing waits on it; unreadable, the pass is still recorded
-  // for its commit.
-  const treeSha = await reuse.treeOf({ github, owner: repoOwner, repo: repoName, commitSha: key.commitSha });
-  return reuse.recordPass(pool, { ...key, treeSha }, { sessionId, runId, summary });
+  // Recorded by commit first, so the verdict never waits on GitHub and the
+  // row is there for its run's observation in the same order as before.
+  const recorded = await reuse.recordPass(pool, key, { sessionId, runId, summary });
+  // Then, for the audited repository only, its tree, so main-watch can copy
+  // this pass for a merge that lands the same tree (unit-suite-reuse.js
+  // findTreePass): in the background, bounded, and set on the row without
+  // touching its observation. Slow or unreadable, the row keeps no tree.
+  if (recorded && reuse.TREE_AUDITED_REPOS.has(key.repo)) {
+    const read = reuse.withDeadline(async () => {
+      const treeSha = await reuse.treeOf({ github, owner: repoOwner, repo: repoName, commitSha: key.commitSha });
+      return treeSha ? reuse.recordTree(pool, { appId: key.appId, commitSha: key.commitSha, treeSha }) : 0;
+    }).finally(() => pendingTreeReads.delete(read));
+    pendingTreeReads.add(read);
+  }
+  return recorded;
+}
+
+// The background tree reads still going (tests wait on them).
+const pendingTreeReads = new Set();
+async function settleTreeReads() {
+  while (pendingTreeReads.size) {
+    const all = [...pendingTreeReads];
+    pendingTreeReads.clear();
+    await Promise.all(all);
+  }
 }
 
 /**
@@ -1576,21 +1595,27 @@ async function reusablePass({ config, pool, appId, sessionId = null, repoOwner, 
  * starting the suite, as the outcome it would have produced, or null. The
  * row's `reused` also names the commit and tree it was copied from. Asked
  * only for the first run of a merge while main is not paused (the main-check
- * machine decides). Never throws: anything unreadable runs the suite.
+ * machine decides), and only for the platform's own app on the audited
+ * repository (unit-suite-reuse.js treeReuseAudited). Bounded: past the
+ * deadline (UNIT_SUITE_TREE_LOOKUP_MS, 5 s) or once `signal` aborts it
+ * answers null. Never throws: anything unreadable or slow runs the suite.
  */
-async function reusableTreePass({ config, pool, appId, repoOwner, repoName, commitSha }) {
+async function reusableTreePass({ config, pool, appId, appSlug = null, repoOwner, repoName, commitSha, signal = null }) {
+  const reuse = require('./unit-suite-reuse');
   try {
     if (!isEnabled() || !github.isEnabled()) return null;
-    const reuse = require('./unit-suite-reuse');
+    if (!reuse.treeReuseAudited(config, { appSlug, repoOwner, repoName })) return null;
     const base = reuse.keyFor(config, { appId, repoOwner, repoName, commitSha, jobHash: jobHash() });
     if (!base) return null;
-    const treeSha = await reuse.treeOf({ github, owner: repoOwner, repo: repoName, commitSha: base.commitSha });
-    if (!treeSha) return null;
-    const pass = await reuse.findTreePass(pool, { ...base, treeSha });
-    if (!pass) return null;
-    const outcome = reuse.reusedOutcome(shapeOutcome, pass);
-    const reused = { ...outcome.reused, commitSha: pass.commitSha, treeSha };
-    return { ...outcome, row: { ...outcome.row, reused }, reused };
+    return await reuse.withDeadline(async () => {
+      const treeSha = await reuse.treeOf({ github, owner: repoOwner, repo: repoName, commitSha: base.commitSha });
+      if (!treeSha) return null;
+      const pass = await reuse.findTreePass(pool, { ...base, treeSha });
+      if (!pass) return null;
+      const outcome = reuse.reusedOutcome(shapeOutcome, pass);
+      const reused = { ...outcome.reused, commitSha: pass.commitSha, treeSha };
+      return { ...outcome, row: { ...outcome.row, reused }, reused };
+    }, { signal });
   } catch (err) {
     log.warn('unit-suite', 'Unit-suite tree reuse lookup failed — running the suite', { commitSha, err: err.message });
     return null;
@@ -1871,6 +1896,7 @@ module.exports = {
   jobHash,
   recordPassForReuse,
   reusableTreePass,
+  settleTreeReads,
   reusablePass,
   suiteApplies,
 };

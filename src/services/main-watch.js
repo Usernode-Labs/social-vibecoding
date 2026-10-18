@@ -67,12 +67,14 @@
 // main, which is production itself; a red production is caught by the
 // deploy's own health check and the rollback that follows it.
 //
-// A merge that lands a tree the suite already passed copies that pass. A
-// squash merge of a proposal level with main is the proposal's own tree
-// under a new commit, tested minutes earlier: 15 of 73 main runs from 16 to
-// 18 Oct 2026 (unit-suite-reuse.js findTreePass). Only a first run, only
-// while main is not paused (the main-check machine's `reuse`), and the
-// verdict's detail says so (`reused`: the run, proposal, commit and tree).
+// On the platform's own app, a merge that lands a tree the suite already
+// passed copies that pass. A squash merge of a proposal level with main is
+// the proposal's own tree under a new commit, tested minutes earlier: 15 of
+// 73 main runs from 16 to 18 Oct 2026 (unit-suite-reuse.js findTreePass).
+// Only for the repository whose tests were audited not to read the commit
+// (treeReuseAudited), only a first run, only while main is not paused (the
+// main-check machine's `reuse`), and the verdict's detail says so
+// (`reused`: the run, proposal, commit and tree).
 //
 // The flow is the main-check workflow machine's (src/workflow/main-check/,
 // which applies these rules): this module keeps the suite's run
@@ -296,10 +298,13 @@ async function runSuite(config, pool, app, parsed, mergeSha, { adopt = null, onR
     // when the machine allows it (`reuse`: a first run while main is not
     // paused); the verdict's detail names the pass it copied (`reused`).
     if (reuse) {
-      // A lookup that fails in any way runs the suite (it never throws; this
-      // keeps a throw from becoming an 'error' verdict all the same).
+      // Only the platform's own app on its audited repository; bounded and
+      // cancelled with the run. A lookup that fails, is slow or throws runs
+      // the suite (it never throws; this keeps a throw from becoming an
+      // 'error' verdict all the same).
       const copied = await unitSuite.reusableTreePass({
-        config, pool, appId: app.id, repoOwner: parsed.owner, repoName: parsed.repo, commitSha: mergeSha,
+        config, pool, appId: app.id, appSlug: app.slug, repoOwner: parsed.owner, repoName: parsed.repo,
+        commitSha: mergeSha, signal,
       }).catch(() => null);
       if (copied) {
         log.info('main-watch', 'Unit suite reused from an earlier pass of the same tree', {

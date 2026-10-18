@@ -275,7 +275,8 @@ test('runMainSuite: a first run whose tree already passed copies the pass, takes
     assert.deepEqual(out.detail.reused, FROM, 'the verdict says it was copied, and from which commit and run');
     assert.deepEqual(out.detail.summary, copiedPass.row.summary);
     assert.equal(tree.calls.length, 1);
-    assert.deepEqual([tree.calls[0].appId, tree.calls[0].repoOwner, tree.calls[0].repoName, tree.calls[0].commitSha], [12, 'org', 'demo', SHA]);
+    assert.deepEqual([tree.calls[0].appId, tree.calls[0].appSlug, tree.calls[0].repoOwner, tree.calls[0].repoName, tree.calls[0].commitSha],
+      [12, 'demo', 'org', 'demo', SHA], 'the app, so only the platform\'s own may copy by tree');
     assert.deepEqual([suite.calls.length, enqueued.length, told.length], [0, 0, 0]);
   } finally { tree.restore(); suite.restore(); }
 });
@@ -305,6 +306,40 @@ test('runMainSuite: without the machine\'s leave, or with no pass of the tree, t
     assert.equal(out.state, 'passing');
     assert.equal(suite.calls.length, 1, 'fails closed: the suite ran');
   } finally { tree.restore(); suite.restore(); }
+});
+
+// The real lookup, for the platform's own app, against a GitHub that never
+// answers: the run neither waits on it past its deadline nor after it is
+// cancelled, and the suite runs.
+test('runMainSuite: a GitHub that never answers costs the copy, never the run', async (t) => {
+  const github = require('../src/services/github');
+  const reuse = require('../src/services/unit-suite-reuse');
+  reuse._clearTreeCache();
+  grantingQueue(t);
+  t.mock.method(github, 'isEnabled', () => true);
+  t.mock.method(github, 'getCommitTree', () => new Promise(() => {}));
+  const PLATFORM = { id: 10, slug: 'usernode-2d5619', repo_url: 'https://github.com/Usernode-Labs/social-vibecoding' };
+  const cfg = { ...KUBE, selfAppSlug: 'usernode-2d5619', kubernetes: { ...KUBE.kubernetes, workerImage: `r/w@sha256:${'c'.repeat(64)}` } };
+  const before = process.env.UNIT_SUITE_TREE_LOOKUP_MS;
+  const suite = stubSuite(async () => pass);
+  try {
+    process.env.UNIT_SUITE_TREE_LOOKUP_MS = '50';
+    let started = Date.now();
+    assert.equal((await mainWatch.runMainSuite(cfg, fakePool(), { app: PLATFORM, sha: SHA, reuse: true })).state, 'passing');
+    assert.equal(suite.calls.length, 1, 'past the deadline the suite ran');
+    assert.ok(Date.now() - started < 2000);
+    process.env.UNIT_SUITE_TREE_LOOKUP_MS = '600000';
+    const ac = new AbortController();
+    started = Date.now();
+    const out = mainWatch.runMainSuite(cfg, fakePool(), { app: PLATFORM, sha: SHA, reuse: true, signal: ac.signal });
+    setTimeout(() => ac.abort(), 20);
+    await out;
+    assert.ok(Date.now() - started < 2000, 'a cancelled run is not held by the lookup');
+    assert.equal(github.getCommitTree.mock.callCount(), 2, 'an unanswered read is not remembered: each run asks, and neither waits');
+  } finally {
+    suite.restore();
+    if (before === undefined) delete process.env.UNIT_SUITE_TREE_LOOKUP_MS; else process.env.UNIT_SUITE_TREE_LOOKUP_MS = before;
+  }
 });
 
 // 12 Oct 2026: a release restarted the platform while main was confirming a
