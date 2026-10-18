@@ -550,7 +550,7 @@ test('#3074: an active app costs Recents no row at the cut', () => {
 });
 
 test('#3074: the Active rows are Recents\' rows, the current one lit, and nothing before mount', () => {
-  const { ActiveApps } = loadTsx('frontend/src/features/nav/recents-list.tsx');
+  const { ActiveApps, RecentsByDay } = loadTsx('frontend/src/features/nav/recents-list.tsx');
   assert.equal(renderToHtml(createElement(ActiveApps, { items: [] })), '', 'no section while nothing runs');
   const items = buildActive({
     live: ['notes', 'chess'],
@@ -562,13 +562,35 @@ test('#3074: the Active rows are Recents\' rows, the current one lit, and nothin
   const rows = html.match(/<a class="platform-recent"[^>]*>/g);
   assert.equal(rows.length, 2);
   assert.match(rows[0], /data-recent-key="app:notes"/);
-  assert.match(rows[0], /aria-label="App: Notes, still open"/);
+  assert.match(rows[0], /aria-label="App: Notes, still open, Resume"/);
   assert.match(rows[0], /data-live="true"/);
   assert.match(rows[0], /aria-current="true"/);
   assert.match(rows[0], /data-current="true"/);
   assert.doesNotMatch(rows[1], /aria-current/);
+  assert.match(rows[1], /aria-label="App: Chess, still open, Resume"/,
+    'every Active row names the way back in, the lit one included');
   assert.match(html, /class="app-live-dot platform-recent-live"/, 'the green dot it carries everywhere');
   assert.match(html, /platform-recent-tile/, 'the app\'s own icon');
+
+  // #3618: the pill is a span INSIDE the row's anchor, carrying the dot, and
+  // only an Active row wears it — a Recents row keeps the bare dot.
+  const pill = html.match(/<span class="platform-recent-resume"><span class="app-live-dot platform-recent-live" title="Still open" aria-hidden="true"><\/span>Resume<\/span>/g);
+  assert.equal(pill.length, 2, 'one pill per Active row');
+  assert.match(pill[0], /class="app-live-dot platform-recent-live"/, 'the dot rides at the pill\'s front');
+  assert.match(pill[0], />Resume<\/span>$/, 'the parked strip\'s word');
+  assert.doesNotMatch(html, /<button[^>]*platform-recent-resume/, 'a label in the row, not a second button');
+  const byDay = renderToHtml(createElement(RecentsByDay, {
+    items: [buildRecents({
+      apps: [recentApp('paint', '2026-09-20T10:00:00Z', { iconEmoji: '🎨' })],
+      conversations: [], discussions: [], agents: [], active: [],
+    })[0]],
+    live: ['paint'],
+    showOlder: false,
+    onToggleOlder: () => {},
+  }));
+  assert.doesNotMatch(byDay, /platform-recent-resume/, 'a live Recents row keeps the bare dot');
+  assert.match(byDay, /class="app-live-dot platform-recent-live"/);
+  assert.match(byDay, /aria-label="App: Paint, still open"/);
 
   const list = read('frontend/src/features/nav/recents-list.tsx');
   // Hydration: rows only after mount, the section inside the root and first.
@@ -630,6 +652,22 @@ test('#3074: Active is drawn in the desktop block only, the app you are in lit l
   assert.match(css.slice(at), /^\.platform-active \{[^}]*display: flex;[^}]*flex: none;/);
   assert.match(css, /\.platform-recent\[aria-current="true"\] \{\s*background: var\(--lit-tint\);\s*color: var\(--lit-ink\);\s*\}/);
   assert.match(css, /\.platform-recents-head:last-child \{\s*display: none;\s*\}/, 'no Recents heading over nothing');
+});
+
+test('#3618: the Active row\'s Resume pill is drawn in the desktop block, beside .platform-active', () => {
+  const css = read('public/css/app.css');
+  const desktop = css.indexOf('THE SAME FIVE TABS, STANDING UP');
+  const at = css.indexOf('.platform-recent-resume {');
+  assert.ok(desktop > 0 && at > desktop, 'inside the desktop block; the phone keeps its own strip');
+  assert.match(css.slice(at), /^\.platform-recent-resume \{[^}]*flex: none;[^}]*height: 20px;/,
+    'the parked pill\'s recipe, sized down for the rail\'s 34-pixel row');
+  assert.match(css.slice(at), /border: 1px solid var\(--brand-line\);\s*border-radius: 999px;\s*background: var\(--brand-tint\);\s*color: var\(--brand-ink\);/);
+  // The dot rides inside the pill, a step smaller than a Recents row's.
+  assert.match(css.slice(at), /\.platform-recent-resume \.platform-recent-live \{\s*width: 6px;\s*height: 6px;/);
+  // The lift answers the pointer only where there is one.
+  const guard = css.indexOf('.platform-recent:hover .platform-recent-resume', at);
+  assert.ok(guard > at, 'the pill lifts under the rows\' own (hover: hover) guard');
+  assert.ok(css.lastIndexOf('@media (hover: hover)', guard) > at);
 });
 
 // ── #3555: a channel opens its project's Discussion tab ───────────────

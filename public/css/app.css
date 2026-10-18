@@ -20031,6 +20031,39 @@ html.un-kb #platform-parked {
     background: var(--lit-tint);
     color: var(--lit-ink);
   }
+  /* THE RESUME PILL ON AN ACTIVE ROW (#3618): the parked strip's word for
+     the way back in, in its own pill recipe (`.platform-parked-pill`) sized
+     down for the rail's 34-pixel row. It is a label INSIDE the row's anchor,
+     never a second button, so the row stays one target; the dot rides in it
+     at its front, a step smaller so the word reads first. Only Active rows
+     draw it — a Recents row keeps the bare dot above. */
+  .platform-recent-resume {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 20px;
+    padding: 0 9px 0 7px;
+    border: 1px solid var(--brand-line);
+    border-radius: 999px;
+    background: var(--brand-tint);
+    color: var(--brand-ink);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .platform-recent-resume .platform-recent-live {
+    width: 6px;
+    height: 6px;
+  }
+  /* The pill lifts with the row it names (the row's own guard above): the
+     target is the row, so the pill answers the pointer as its part of it. */
+  @media (hover: hover) {
+    .platform-recent:hover .platform-recent-resume {
+      border-color: var(--brand-ink);
+      color: var(--brand-ink);
+    }
+  }
   /* Only apps are running and none has been left yet: no RECENTS heading
      over nothing. The heading is the list's last child only then. */
   .platform-recents-head:last-child {

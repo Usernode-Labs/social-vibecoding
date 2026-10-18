@@ -1405,7 +1405,11 @@ test('#2902: the green dot reads the frame store, on Home tiles and Recents rows
   assert.match(grid, /\{live \? <LiveAppDot className="app-card-live-dot" \/> : null\}/);
   const recents = read('frontend/src/features/nav/recents-list.tsx');
   assert.match(recents, /live=\{!!item\.app && live\.includes\(item\.app\.slug\)\}/);
-  assert.match(recents, /\{live \? <LiveAppDot className="platform-recent-live" \/> : null\}/);
+  // #3618: the dot branch forks on the row's section — an Active row folds
+  // it into the Resume pill (a span inside the row's anchor, never a
+  // second button); a Recents row keeps the bare dot, as the pin above on
+  // the Recents branch still matches.
+  assert.match(recents, /\{live\s*\n\s*\? \(active\s*\n\s*\? \(\s*\n\s*<span className="platform-recent-resume">\s*\n\s*<LiveAppDot className="platform-recent-live" \/>Resume\s*\n\s*<\/span>\s*\n\s*\)\s*\n\s*: <LiveAppDot className="platform-recent-live" \/>\)\s*\n\s*: null\}/);
   const css = read('public/css/app.css');
   assert.match(css, /\.app-launch-host > iframe\[data-kept\] \{[\s\S]{0,200}visibility: hidden;/,
     'a kept frame keeps its box and is hidden by visibility, not display');

@@ -60,7 +60,10 @@
  * RecentRow. The section sits INSIDE #platform-recents, before its heading,
  * so the rail's children and the declared checks that walk them are
  * unchanged, and like every row it arrives one commit after mount. There is
- * no close button: a frame goes the way it always has.
+ * no close button: a frame goes the way it always has. #3618: each Active
+ * row ends in a Resume pill, the parked strip's word for the way back in,
+ * so closing an app leaves the door written on the row. Only Active rows
+ * carry it — a Recents row keeps the bare dot.
  *
  * ── A channel opens its project's Discussion tab (#3555) ─────────────
  *
@@ -167,11 +170,13 @@ function AppTile({ app }: { app: NonNullable<RecentItem['app']> }) {
   );
 }
 
-function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
+function RecentRow({ item, live, active = false }: { item: RecentItem; live: boolean; active?: boolean }) {
   const Glyph = GLYPHS[item.kind];
   const app = item.app && (item.app.iconUrl || item.app.iconEmoji) ? item.app : null;
   const unread = item.unread ? ', unread' : '';
-  const loaded = live ? `, ${LIVE_APP_LABEL}` : '';
+  // #3618: an Active row's name gains ", Resume", the pill's own word, so
+  // assistive tech hears the action the row's end now names.
+  const loaded = live ? `, ${LIVE_APP_LABEL}${active ? ', Resume' : ''}` : '';
   const doing = item.activity ? `, ${ACTIVITY_LABEL[item.activity].toLowerCase()}` : '';
   return (
     <a
@@ -194,8 +199,22 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
         ? <AgentActivityIcon activity={item.activity} className="platform-recent-glyph" />
         : app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
       <span className="platform-recent-label">{item.label}</span>
-      {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
-      {live ? <LiveAppDot className="platform-recent-live" /> : null}
+      {/* #2902: still loaded — resuming it shows it exactly as it was left.
+          #3618: an ACTIVE row folds the dot into a Resume pill, the parked
+          strip's word for the way back in. The pill is a label inside the
+          row's anchor, never a second button (a button inside an anchor is
+          invalid markup), so the row stays one target; the dot rides in it.
+          A Recents row keeps the bare dot: the section, not the pill, is
+          what says "running now" there. */}
+      {live
+        ? (active
+          ? (
+            <span className="platform-recent-resume">
+              <LiveAppDot className="platform-recent-live" />Resume
+            </span>
+          )
+          : <LiveAppDot className="platform-recent-live" />)
+        : null}
       {item.unread ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
     </a>
   );
@@ -268,7 +287,7 @@ export function ActiveApps({ items }: { items: RecentItem[] }) {
   return (
     <div className="platform-active" role="group" aria-labelledby="platform-active-head">
       <h2 id="platform-active-head" className="platform-recents-head">Active</h2>
-      {items.map((item) => <RecentRow key={item.key} item={item} live />)}
+      {items.map((item) => <RecentRow key={item.key} item={item} live active />)}
     </div>
   );
 }
