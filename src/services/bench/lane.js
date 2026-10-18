@@ -488,6 +488,9 @@ async function cancelRun(pool, runId, deps = {}) {
     "UPDATE bench_trials SET status = 'cancelled', finished_at = NOW() WHERE run_id = $1 AND status = 'pending'",
     [Number(runId)],
   );
+  // Its trials' builds are stopped by their machine, wherever they run.
+  const { rows: running } = await pool.query("SELECT id FROM bench_trials WHERE run_id = $1 AND status = 'running'", [Number(runId)]);
+  await stopTrialBuilds(running.map((r) => Number(r.id)), deps);
   stopRunHere(runId, deps);
   // Trials of the run another platform process is running (one finishing its
   // work after a release): it stops them the same way, told over the bus.
@@ -495,27 +498,35 @@ async function cancelRun(pool, runId, deps = {}) {
   return { ok: true };
 }
 
-function stopRunHere(runId, deps = {}) {
-  const worker = deps.worker || require('../worker');
+// A trial's build is the bot-build machine's work: its Stop is an event to
+// that instance, which ends the work and stops the turn (only that one) in
+// whichever process runs it. Never throws.
+async function stopTrialBuilds(ids, deps = {}) {
+  if (!ids.length) return 0;
+  try {
+    return await (deps.platform || require('../../workflow/platform.ts')).stopBuilds('trial', ids, 'an admin');
+  } catch (err) {
+    log.warn('bench', 'Could not stop the builds of cancelled trials', { trials: ids.length, err: err.message });
+    return 0;
+  }
+}
+
+function stopRunHere(runId) {
   let n = 0;
   for (const [trialId, f] of inFlight) {
     if (f.runId !== Number(runId) || !f.sessionId) continue;
-    Promise.resolve(worker.stopTurn(f.sessionId)).catch(() => {});
+    f.cancelled = true;
     log.info('bench', 'Stopping a trial of a cancelled run', { trialId });
     n += 1;
   }
   return n;
 }
 
-function stopTrialHere(id, deps = {}) {
+function stopTrialHere(id) {
   const f = inFlight.get(id);
   if (!f && !executing.has(id)) return false;
   if (f) f.cancelled = true;
   if (executing.has(id)) cancelledHere.add(id);
-  if (f?.sessionId) {
-    const worker = deps.worker || require('../worker');
-    Promise.resolve(worker.stopTurn(f.sessionId)).catch(() => {});
-  }
   log.info('bench', 'Stopping one trial', { trialId: id });
   return true;
 }
@@ -548,7 +559,8 @@ async function cancelTrial(pool, trialId, deps = {}) {
     [id],
   );
   if (pending) { wake(); return { ok: true, status: 'cancelled' }; }
-  const here = stopTrialHere(id, deps);
+  const stopped = await stopTrialBuilds([id], deps);
+  const here = stopTrialHere(id) || stopped > 0;
   // Executed by another platform process (one finishing its work after a
   // release, while this one only counts its slot): that process stops it.
   const elsewhere = !executing.has(id) && require('../processes').heldElsewhere('bench_trial', id);
@@ -746,10 +758,13 @@ async function recordLostTrial({ pool, config, id, error = null }) {
     const row = await loadTrialContext(pool, id);
     if (!row || row.status !== 'running') return;
     const user = await runner.ensureBenchUser(pool, config);
-    const why = `the trial could not be carried on (${String(error?.message || error || 'lost').slice(0, 300)})`;
+    // Stopped (an admin's cancel): recorded as the cancel it was.
+    const stopped = error?.code === 'stopped';
+    const why = stopped ? 'cancelled by an admin'
+      : `the trial could not be carried on (${String(error?.message || error || 'lost').slice(0, 300)})`;
     await recordTrial(pool, {
       trialRow: { id: row.id, run_id: row.run_id }, row, user, d: liveDeps(),
-      patch: { status: 'infra_fail', error: why, session_id: row.session_id || null },
+      patch: { status: stopped ? 'cancelled' : 'infra_fail', error: why, session_id: row.session_id || null },
     });
   } catch (err) {
     log.warn('bench', 'Could not record a lost trial', { trialId: id, err: err.message });

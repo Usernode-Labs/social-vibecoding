@@ -6,7 +6,8 @@
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import { WORK } from './machine.ts';
+import { MACHINE, WORK, sessionKey } from './machine.ts';
+import { turnOwner } from '../turn-stop.ts';
 
 interface Deps { config: any; pool: Pool }
 
@@ -99,6 +100,7 @@ export function shotsServices({ config, pool }: Deps): Record<string, WorkHandle
         try {
           const out = await orchestrator().dispatchAgent(config, pool, {
             runId: input.runId, sessionId: input.sessionId, budgetMs: input.budgetMs, steps, signal,
+            owner: turnOwner(ctx, MACHINE, sessionKey(Number(input.sessionId))),
             // A run that ended (its item cancelled) never starts its turn:
             // the cancellation reaches this process only at its next lease
             // renewal, and the run's cleanup may already have run.

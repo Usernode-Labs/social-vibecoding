@@ -321,8 +321,13 @@ async function startCodexAttempt({
   // may replace an existing record; every ordinary dispatch still fails
   // closed on any active_turn.
   allowRetryPending = false,
+  // The work item that runs the turn, when workflow work started it
+  // (turn-lifecycle.turnOwner): written with the claim, as execInWorker
+  // writes it for a turn it registers itself.
+  owner = null,
 }) {
   const ctx = runtimeContext || {};
+  const turnOwnerRecord = turnLifecycle.turnOwner(owner);
   const turnId = crypto.randomUUID();
   const durableTurnId = logicalTurnId || crypto.randomUUID();
   const journal = turnLifecycle.journalPathForAttempt(turnId);
@@ -419,6 +424,7 @@ async function startCodexAttempt({
       model: model || '',
       startedAt: new Date().toISOString(),
       byok: false,
+      ...(turnOwnerRecord ? { owner: turnOwnerRecord } : {}),
     }, { turnId: durableTurnId, phase: turnLifecycle.PHASE_DISPATCH_PENDING });
     const registered = await client.query(
       `UPDATE chat_sessions

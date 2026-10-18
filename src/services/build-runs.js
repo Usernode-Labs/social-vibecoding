@@ -188,6 +188,10 @@ async function run(ctx, { config, pool, maxAttempts = null }) {
     attempt: ctx.attempt, lostAttempts: ctx.lostAttempts || 0, owner: `bot-build/${key}`,
     triesLeft: triesLeftOf(ctx, maxAttempts),
   });
+  // The build's turns are this work item's (durable-turn reads it off the
+  // steps and the turn's record names it): its lease is their presence, and
+  // a Stop is an event to the bot-build instance.
+  steps.turnOwner = { machine: 'bot-build', key, kind: ctx.kind || 'build.run', workKey: ctx.key || 'run', workId: ctx.workId || null };
   if (ctx.resumeFrom) {
     log.info('build-runs', 'Carrying a build on from its last saved step', {
       key, attempt: ctx.attempt, lost: ctx.lostAttempts || 0, steps: Object.keys(ctx.resumeFrom).length,

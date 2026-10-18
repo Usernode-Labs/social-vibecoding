@@ -218,11 +218,20 @@ async function release(worker, sessionId, ids) {
  *   head()       the branch tip now, or null when it cannot be read
  *   observe({ headBefore, tip })  a routed result for a turn that landed with
  *     its record gone (the branch moved), or null to start it again
+ *   owner        the work item that runs the turn (turn-lifecycle.turnOwner),
+ *     handed to the dispatch so the record names it
+ *   fullBudgetAgain  a turn started again after its record was lost gets its
+ *     whole clock, not what was left of it (a read, which a restart cannot
+ *     observe on a branch and which a minute of clock cannot finish)
  *
- * Resolves { routed, stopped, followed }. Throws only a stop (the context's).
+ * Resolves { routed, stopped, stoppedBy, followed }: `stoppedBy` is a Stop
+ * asked of the turn on its record (a person's, or its machine's), read as
+ * the turn being stopped, never as it failing. Throws only a stop (the
+ * context's).
  */
 async function runTurn(steps, key, {
   pool, session, mode, budgetMs, dispatch, stop = null, head = null, observe = null, onProgress = null, deps = {},
+  owner = null, fullBudgetAgain = false,
 }) {
   const worker = deps.worker || require('./worker');
   const k = `turn:${key}`;
@@ -239,10 +248,14 @@ async function runTurn(steps, key, {
   };
   const disarm = () => { if (timer) clearTimeout(timer); timer = null; };
 
+  // The work item that runs the turn: given, or the one the durable context
+  // was made for (build-runs.run sets it on a build's steps).
+  const turnOwner = owner || steps?.turnOwner || null;
+  const ownerExtra = turnOwner ? { owner: turnOwner } : {};
   if (!steps.active) {
     arm(budgetMs);
     try {
-      return { routed: await dispatch({}), stopped, followed: false };
+      return { routed: await dispatch({ ...ownerExtra }), stopped, followed: false };
     } catch (err) {
       // The dispatch failing is the turn failing, as a durable step reads it.
       return { routed: { error: `dispatch: ${err.message}` }, stopped, followed: false };
@@ -254,14 +267,24 @@ async function runTurn(steps, key, {
   let saved = steps.get(k) || null;
   if (saved?.phase === 'done') {
     await release(worker, session.id, saved.record);
-    return { routed: saved.out?.routed ?? null, stopped: !!saved.out?.stopped, followed: false, kept: true };
+    return { routed: saved.out?.routed ?? null, stopped: !!saved.out?.stopped, stoppedBy: saved.out?.stoppedBy || null, followed: false, kept: true };
   }
 
+  // A Stop asked of this turn on its record, read before the record goes.
+  const stopAsked = async (record) => {
+    if (!record?.turnId) return null;
+    const rec = await turnLifecycle.loadActiveTurn(pool, session.id).catch(() => null);
+    if (!rec || String(turnLifecycle.turnIdentity(rec)) !== String(record.turnId)) return null;
+    const asked = turnLifecycle.stopRequestOf(rec);
+    return asked ? { by: asked.by || null, at: asked.at } : null;
+  };
   const finish = async (out, record) => {
     steps.fence();
-    await steps.set(k, { ...(saved || {}), phase: 'done', out: { routed: keptRouted(out.routed, { mode }), stopped: !!out.stopped }, record: record || saved?.record || null });
+    const stoppedBy = await stopAsked(record || saved?.record);
+    const kept = { routed: keptRouted(out.routed, { mode }), stopped: !!out.stopped, stoppedBy };
+    await steps.set(k, { ...(saved || {}), phase: 'done', out: kept, record: record || saved?.record || null });
     await release(worker, session.id, record || saved?.record);
-    return out;
+    return { ...out, stoppedBy };
   };
 
   let deadlineAt = null;
@@ -322,9 +345,9 @@ async function runTurn(steps, key, {
   }
 
   // Start it (or start it again): on what is left of its clock, if it had one.
-  const left = deadlineAt ? Math.max(MIN_REDISPATCH_MS, deadlineAt - now()) : budgetMs;
+  const left = deadlineAt && !fullBudgetAgain ? Math.max(MIN_REDISPATCH_MS, deadlineAt - now()) : budgetMs;
   const headBefore = typeof head === 'function' ? await head().catch(() => null) : null;
-  saved = { phase: 'started', mode: mode || null, deadlineAt: deadlineAt || now() + budgetMs, headBefore, record: null };
+  saved = { phase: 'started', mode: mode || null, deadlineAt: deadlineAt && !fullBudgetAgain ? deadlineAt : now() + left, headBefore, record: null };
   await steps.tell({ kind: 'turn_start', key: k });
   await steps.set(k, saved);
   let record = null;
@@ -332,6 +355,7 @@ async function runTurn(steps, key, {
   let routed;
   try {
     routed = await steps.race(dispatch({
+      ...ownerExtra,
       holdTurnRecord: true,
       onTurnRecord: async (r) => {
         record = { turnId: r.turnId || null, journal: r.journal || null };
@@ -352,6 +376,19 @@ async function runTurn(steps, key, {
   return finish({ routed, stopped, followed: false }, record);
 }
 
+/**
+ * A turn's own clock ending it: only the turn its owner runs (by the
+ * record's journal), and recorded as nobody's Stop (worker.stopOwnedTurn
+ * with `stamp: false`). A turn with no owner (run on the inert context) is
+ * stopped as it always was.
+ */
+function clockStop(worker, pool, sessionId, owner) {
+  const own = owner && typeof owner === 'object' ? owner : null;
+  return own
+    ? worker.stopOwnedTurn(pool, { sessionId, machine: own.machine, key: own.key, kinds: [own.kind], stamp: false, release: false })
+    : worker.stopTurn(sessionId);
+}
+
 module.exports = {
-  runTurn, followTurn, keptRouted, allowanceMs, RESTART_ALLOWANCE_MS, MAX_RESTARTS_ALLOWED,
+  runTurn, followTurn, keptRouted, allowanceMs, clockStop, RESTART_ALLOWANCE_MS, MAX_RESTARTS_ALLOWED,
 };

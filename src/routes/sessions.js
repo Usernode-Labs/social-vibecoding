@@ -10200,6 +10200,10 @@ async function runCodexAttemptLoop({
   resumeThreadId, resolveRuntime, dispatchOnce, retryPredicate,
   sendStatus, waitForStopped, prepareRetry, classifyAttemptStatus,
   containerName, mode = 'build', telemetryComponent = null,
+  // The work item that runs the turn, when workflow work started it: on
+  // every attempt's record (startCodexAttempt) and handed to the dispatch
+  // (execInWorker's `owner`).
+  owner = null,
 }) {
   // One logical turn id per coding-tool invocation (plan 7.1); attempt 1
   // gets attempt_number=1, a retry gets attempt_number=2.
@@ -10295,6 +10299,7 @@ async function runCodexAttemptLoop({
         runtimeContext,
         allowRetryPending: allowRetryPendingForAttempt,
         mode,
+        owner,
         telemetryComponent: telemetryComponent
           || (mode === 'scout' ? 'coding_agent_scout' : 'coding_agent_build'),
       });
@@ -10330,6 +10335,7 @@ async function runCodexAttemptLoop({
         // tail_pending until startCodexAttempt atomically installs attempt
         // two's dispatch intent. Persistence stays mandatory at this boundary.
         requireActiveTurnPersistence: allowRetryPendingForAttempt,
+        ...(owner ? { owner } : {}),
       });
     } catch (err) {
       lastError = err;
@@ -10526,6 +10532,19 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
     } catch (err) {
       log.error('sessions', 'Stop session lookup failed', { message: err.message });
       return { status: 500, body: { error: 'Internal server error' } };
+    }
+
+    // A turn the platform runs on this session (a sync with main, the shots
+    // agent, the Homeroom bot's build, read or fix), starting or running,
+    // in whichever process: the Stop is an event to the machine whose work
+    // runs it, which records it as stopped by this person, ends its work
+    // and stops that turn (Q1 of the bot-loop step). No bus forward and no
+    // stop handle: the machine's instance is where it lands, the turn
+    // being spun up included.
+    if (!forwarded) {
+      const platform = require('../workflow/platform.ts');
+      const owned = await platform.stopWorkflowTurn({ sessionId: Number(sessionId), by: user.username, expectedTurnId });
+      if (owned) return owned;
     }
 
     // #937: In classic sessions, `{ force: true }` is offered after a

@@ -127,6 +127,9 @@ const activeWorkersSvc = require('./src/services/active-workers');
 const turnWatchdog = require('./src/services/turn-watchdog');
 const recoveryRetry = require('./src/services/recovery-retry');
 const turnLifecycle = require('./src/services/turn-lifecycle');
+// A turn workflow work runs is its work item's while the item is
+// outstanding: the one test every sweep below applies before taking a turn.
+const { workflowTurnHeldSql } = require('./src/workflow/session-work.ts');
 const stopRegistry = require('./src/services/stop-registry');
 const sessionBus = require('./src/services/session-bus');
 const turnEffects = require('./src/services/turn-effects');
@@ -2448,6 +2451,9 @@ async function sweepOrphanTurns(config, { adopt = adoptOrphanWorker } = {}) {
            WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
              AND w.key = substr(cs.workflow_owner, length(split_part(cs.workflow_owner, '/', 1)) + 2)
              AND w.state = 'building'))
+        -- A turn workflow work runs is its work item's while the item is
+        -- outstanding (session-work.ts workflowTurnHeldSql), in any process.
+        AND NOT ${workflowTurnHeldSql('cs.active_turn')}
       ORDER BY cs.id
       LIMIT 20`,
     [[...turnLifecycle.RECOVERABLE_PHASES], new Date(Date.now() - ORPHAN_MIN_AGE_MS).toISOString(),
@@ -2827,12 +2833,12 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
             a.self_hosted AS app_self_hosted, u.username,
             u.is_synthetic AS user_is_synthetic,
-            (cs.workflow_owner IS NOT NULL AND EXISTS (
+            ((cs.workflow_owner IS NOT NULL AND EXISTS (
               SELECT 1 FROM wf_instances w
                WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
                  AND w.key = substr(cs.workflow_owner, length(split_part(cs.workflow_owner, '/', 1)) + 2)
                  AND w.state = 'building'
-            )) AS workflow_owned
+            )) OR ${workflowTurnHeldSql('cs.active_turn')}) AS workflow_owned
      FROM chat_sessions cs
      JOIN apps a ON cs.app_id = a.id
      JOIN users u ON cs.user_id = u.id
@@ -2873,13 +2879,14 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     return;
   }
 
-  // A durable build's session: its worker and its turns are that build's,
-  // whose work item the next leader claims and carries on from its last
-  // saved step (services/build-runs.js). The worker is kept and registered;
-  // nothing else is done to it here.
+  // A durable build's session, or a turn workflow work runs (its record
+  // names its work item, still outstanding): its worker and its turn are
+  // that work's, which the next leader claims and carries on from its last
+  // saved step. The worker is kept and registered; nothing else is done to
+  // it here.
   if (session.workflow_owned) {
     if (containerState === 'running') worker.adoptWarmWorker(sessionId, containerName);
-    log.info('server', 'Leaving a durable build\'s worker to its build', {
+    log.info('server', 'Leaving a workflow turn\'s worker to its work', {
       containerName, sessionId, owner: session.workflow_owner, state: containerState,
     });
     return;
@@ -5024,6 +5031,7 @@ function startSessionAutoPauseSweeper(config) {
               WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
                 AND w.key = substr(cs.workflow_owner, length(split_part(cs.workflow_owner, '/', 1)) + 2)
                 AND w.state = 'building'))
+           AND NOT ${workflowTurnHeldSql('cs.active_turn')}
          ORDER BY (cs.active_turn->>'startedAt') ASC NULLS FIRST
          LIMIT 20`
       );

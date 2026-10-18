@@ -47,6 +47,8 @@ import { appMetaFromRow } from './rules/governance-gate.ts';
 import { countedVotePredicateSql } from './rules/vote-predicate.ts';
 import { VOTE_REASON_MAX, VOTE_REASON_REQUIRED } from './rules/vote-reason.ts';
 import { BUS_CHANNEL, workflowBody } from './pushes.ts';
+import { TURN_OWNER_SQL } from './session-work.ts';
+import { turnStopServices } from './turn-stop.ts';
 
 const pg = createRequire(import.meta.url)('pg');
 
@@ -156,7 +158,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
     ...appDeliveryServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
     ...campaignServices(deps), ...botChangeServices(deps), ...botVoiceServices(deps), ...botDmServices(deps),
-    ...mainCheckServices(deps),
+    ...mainCheckServices(deps), ...turnStopServices(deps),
   };
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!,
@@ -277,6 +279,36 @@ export async function botNote(sessionId: number, type: string, payload: Record<s
   return runtime.append(BOT_CHANGE, botChangeKey(sessionId), { type, payload: { sessionId, ...payload } as any },
     { requestKey: o.requestKey || `${type}:${sessionId}:${randomUUID()}`, source: o.source || { kind: 'system', name: 'bot' },
       appId: o.appId ?? own.app_id });
+}
+
+// ── A Stop of a turn workflow work runs ────────────────────────────────
+
+// A person's Stop of the session's turn, when the turn is one a machine's
+// work runs (src/workflow/session-work.ts TURN_OWNER_SQL: its record's
+// owner, or the sync, shots run, build or bot look spinning one up): the
+// owning instance hears StopRequested and decides. Resolves the route's
+// answer, or null when no machine runs a turn there (a person's own turn:
+// the route's own path stops it). A job that changed since the person read
+// it is refused as the route refuses it.
+export async function stopWorkflowTurn(p: { sessionId: number; by: string | null; expectedTurnId?: string | null }): Promise<Reply | null> {
+  if (!runtime) return null;
+  const { rows: [owner] } = await kernelPool!.query(TURN_OWNER_SQL, [p.sessionId]);
+  if (!owner?.machine || !owner?.key) return null;
+  if (p.expectedTurnId) {
+    const { rows: [t] } = await kernelPool!.query(
+      `SELECT COALESCE(active_turn->>'turnId', active_turn->>'logicalTurnId', active_turn->>'turnUuid') AS id
+         FROM chat_sessions WHERE id = $1`, [p.sessionId]);
+    if (t?.id && t.id !== p.expectedTurnId) {
+      return { status: 409, body: { error: 'The running job changed. Refresh its status before stopping it.', code: 'turn_changed' } };
+    }
+  }
+  const outcome = await runtime.appendAndWait(owner.machine, owner.key,
+    { type: 'StopRequested', payload: { sessionId: p.sessionId, by: p.by ?? null } as any },
+    { requestKey: `stop:${p.sessionId}:${randomUUID()}`, source: { kind: 'route', name: 'stop' }, actor: p.by ?? undefined, waitMs: 5000 });
+  if (outcome.status === 'rejected') {
+    return { status: 200, body: { ok: true, stopped: false, reason: 'no active turn', code: outcome.reason || null } };
+  }
+  return { status: outcome.status === 'pending' ? 202 : 200, body: { ok: true, stopped: true, stopping: true, phase: null, machine: owner.machine } };
 }
 
 // ── The Homeroom bot's replies (bot-voice, bot-dm) ─────────────────────
@@ -684,6 +716,21 @@ async function releaseBooted(pool: Pool): Promise<void> {
 // start) services/build-runs.js runs them in its process, unkept, as before.
 export function botBuildsRunning(): boolean {
   return runtime !== null;
+}
+
+// Stop the builds of `target` under way for `ids` (the bench's cancel of a
+// run or a trial): each instance hears StopRequested, which ends its work
+// and stops its turn from whichever process runs it. Resolves how many.
+export async function stopBuilds(target: BuildTarget, ids: number[], by: string | null = null): Promise<number> {
+  if (!runtime || !ids.length) return 0;
+  const { rows } = await kernelPool!.query(
+    `SELECT key FROM wf_instances WHERE machine = $1 AND state = 'building'
+        AND data->>'target' = $2 AND (data->>'id')::int = ANY($3::int[])`, [BUILD, target, ids.map(Number)]);
+  for (const r of rows) {
+    await runtime.append(BUILD, r.key, { type: 'StopRequested', payload: { by } as any },
+      { requestKey: `stop:${r.key}`, source: { kind: 'admin', name: 'bench' }, actor: by ?? undefined });
+  }
+  return rows.length;
 }
 
 // Start a build: one instance per build, so asking twice starts it once.
