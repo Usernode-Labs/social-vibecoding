@@ -245,6 +245,70 @@ test('pinch zoom is not a keyboard: the offset is ignored and the kit decides', 
   assert.deepEqual(place(frame), place(frame, { pan: false }));
 });
 
+// ── The composer column against the screen (#3571) ───────────────────────
+//
+// The Messages thread pane, the reply pane, the topic thread, the general
+// chat and the dev chat are all the same shape: a `platform-kb-column`
+// anchored to the screen's bottom, reserving the keyboard inset as
+// padding-bottom and, since #3571, paying the reveal-pan back as a
+// `translate`. Evaluate the shipped declarations against the kit's own
+// keyboard physics, as the modal tests above do for the dialog.
+
+const COLUMN_RULE = /html\.un-kb \.platform-kb-column\s*\{([^}]*)\}/.exec(APP_CSS);
+assert.ok(COLUMN_RULE, 'app.css has the keyboard-up composer column rule');
+const COLUMN_PAD = declared(COLUMN_RULE[1], 'padding-bottom');
+const COLUMN_PAN = declared(COLUMN_RULE[1], 'translate').replace(/^0\s+/, '');
+
+/** Where the shipped CSS puts the composer's bottom edge, in layout
+    coordinates, on a column that fills the screen. */
+function placeComposer(frame) {
+  const kb = physics.keyboardInset({ layoutHeight: frame.layout, vvHeight: frame.vvHeight, vvScale: frame.scale ?? 1 });
+  const vars = {
+    '--un-kb-inset': kb,
+    '--platform-vv-top': visualViewportTop({ offsetTop: frame.offsetTop, scale: frame.scale ?? 1 }),
+  };
+  const pad = evalCss(COLUMN_PAD, { vars });
+  const pan = evalCss(COLUMN_PAN, { vars });
+  return { bottom: frame.layout - pad + pan, pan, kb };
+}
+
+test('iOS Safari: the reservation alone lifted the composer to the band\'s top edge, the translate puts it on the keyboard line', () => {
+  const frame = { ...IOS_SAFARI };
+  const band = bandOf(frame);
+  const lifted = frame.layout - placeComposer({ ...frame, offsetTop: 0 }).bottom;
+  assert.equal(lifted, band.top,
+    'the report: the reserved column\'s composer bottom lands at the band\'s top edge, a sliver of the box on screen');
+  const placed = placeComposer(frame);
+  assert.equal(placed.bottom, band.bottom, 'the composer sits on the keyboard line');
+});
+
+test('every pan iOS can make keeps the composer on the keyboard line or above it, never under the keys', () => {
+  for (const [layout, keyboard] of [[844, 403], [667, 304], [390, 200]]) {
+    const vvHeight = layout - keyboard;
+    // The pan is anywhere from none to all of the keyboard, and the visual
+    // viewport cannot pan past the layout's bottom, so the band's bottom is
+    // always the layout's bottom.
+    for (let offsetTop = 0; offsetTop <= keyboard; offsetTop += Math.max(1, Math.floor(keyboard / 40))) {
+      const frame = { layout, vvHeight, offsetTop };
+      const placed = placeComposer(frame);
+      const band = bandOf(frame);
+      assert.ok(placed.bottom <= band.bottom + 0.5 && placed.bottom >= band.top,
+        `${layout}px layout, keyboard ${keyboard}, pan ${offsetTop}: composer bottom ${placed.bottom} against band ${band.top}–${band.bottom}`);
+    }
+  }
+});
+
+test('where nothing pans the column does not move: Android and the no-keyboard rule', () => {
+  const android = placeComposer({ ...ANDROID });
+  assert.equal(android.pan, 0, 'Android measured no pan');
+  assert.equal(android.bottom, ANDROID.layout - android.kb, 'the column keeps the reservation alone');
+  // The translate is keyed to the kit's keyboard class, so without `un-kb`
+  // the rule does not apply at all — the base rule only eases the padding.
+  const base = /(^|\n)\.platform-kb-column \{([^}]*)\}/.exec(APP_CSS);
+  assert.match(base[2], /transition: padding-bottom 150ms ease-out/);
+  assert.doesNotMatch(base[2], /translate/, 'no pan term outside the keyboard-up rule');
+});
+
 // ── The offset ───────────────────────────────────────────────────────────
 
 test('visualViewportTop: the pan in whole px, 0 for anything that is not one', () => {

@@ -378,6 +378,25 @@ html.un-kb .platform-safe-sheet {
    stays visible, the composer sits above the keys, and nothing needs to pan,
    which leaves the settled pin inert rather than destructive.
 
+   ON iOS THE RESERVATION ALONE STILL LOSES TO THE REVEAL-PAN (#3571). Safari
+   pans the visual viewport down inside the layout viewport to reveal the
+   focused field BEFORE the shell can reserve anything — at focus time the
+   field is still covered — and keeps that pan until blur. So the visible
+   band sits at the layout's bottom while the padding lifts the column's
+   content out of it: on the kit's own measured iPhone geometry (native.js,
+   #1938: layout 714, strip 377, pan 337) only a sliver of the composer
+   stayed at the band's top edge and the transcript went with it, worst with
+   a staged reply draft grown into the field. The reservation is right about
+   the height and wrong about where the band is. `--platform-vv-top`
+   (lib/visual-viewport.ts) publishes that pan, and the `translate` below
+   pays it back — the same term the kit modal takes (#2765) — landing in the
+   same frame iOS moves the page, so the composer's bottom returns to the
+   keyboard line. It is on the column, not the screen root, so the platform
+   header's chrome stays put, and every composer column shares the rule:
+   both Messages panes, the topic thread, the general chat and the dev chat.
+   Android measured no pan and desktop has no keyboard, so there the term
+   reads 0px and nothing moves.
+
    Transition shape copied from the kit's own `.un-kb-avoid`: none while the
    keyboard is up so the bar tracks it exactly, eased on the way out so the
    browser's scrollTop clamp rides the ease instead of snapping.
@@ -391,6 +410,7 @@ html.un-kb .platform-safe-sheet {
 
 html.un-kb .platform-kb-column {
   padding-bottom: var(--un-kb-inset, 0px);
+  translate: 0 var(--platform-vv-top, 0px);
   transition: none;
 }
 

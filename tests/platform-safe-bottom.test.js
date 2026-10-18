@@ -170,8 +170,19 @@ test('every composer column reserves the keyboard inset, exactly once', () => {
   assert.ok(col, 'html.un-kb .platform-kb-column rule is missing');
   assert.match(col[1], /padding-bottom:\s*var\(--un-kb-inset, 0px\)/,
     'the column must reserve the kit-published keyboard inset');
+  assert.match(col[1], /translate:\s*0 var\(--platform-vv-top, 0px\)/,
+    '#3571: the column must also pay back iOS\'s reveal-pan, the same term ' +
+    'the kit modal takes — the reservation alone lifted the composer above ' +
+    'the visible band');
   assert.match(col[1], /transition:\s*none/,
     'no transition while the keyboard is up — the bar tracks it exactly');
+
+  // …and the base rule, on the way out, still eases ONLY its padding. The
+  // pan term must never ease: iOS unwinds it in one frame, like it made it.
+  const base = /(^|\n)\.platform-kb-column \{([^}]*)\}/.exec(APP_CSS);
+  assert.ok(base, 'the base .platform-kb-column rule is missing');
+  assert.match(base[2], /transition: padding-bottom 150ms ease-out/);
+  assert.doesNotMatch(base[2], /translate/);
 
   const COLUMNS = [
     ['frontend/src/features/group-chat/thread-shell.tsx', /className="dev-thread dev-thread-fill platform-kb-column/],
