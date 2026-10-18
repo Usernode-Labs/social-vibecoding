@@ -41,11 +41,11 @@
  * (services/import-manifest.js), so both are votable later like any other
  * line of it.
  *
- * `data-mode` controls "new" vs "import"; `data-import-state` the import
- * sub-states (idle / checking / ok / error); `data-audience`, `data-step`,
- * `data-approvers` and `data-approvals` the rest. CSS in app.css keys off
- * all of them to show and hide sections, so this component only flips
- * attributes and never juggles per-element classes.
+ * `data-mode` names the chosen starter (or "import"); `data-import-state`
+ * the import sub-states (idle / checking / ok / error); `data-audience`,
+ * `data-step`, `data-approvers` and `data-approvals` the rest. CSS in app.css
+ * keys off all of them to show and hide sections, so this component only
+ * flips attributes and never juggles per-element classes.
  *
  * Markup extracted verbatim from Shell.tsx by #1078 chunk A; #1078 chunk I
  * moved the behaviour in and made it stateful. #1910 restyled it in the
@@ -126,7 +126,12 @@ import {
 import { normalizeRepositoryUrl } from './repository-url';
 import { useDialog } from './use-dialog';
 
-type Mode = 'new' | 'import';
+/**
+ * How a new project starts. Five starters (services/create-options.js parses
+ * the same ids) or an existing GitHub repo. `empty` is today's press-counter
+ * starter under its shorter name.
+ */
+type Mode = 'empty' | 'social-productivity' | 'multimedia-social' | 'game-2d' | 'game-3d' | 'import';
 type ImportState = 'idle' | 'checking' | 'ok' | 'error';
 /** Who it is for: services/communities.js's audiences, by their internal names. */
 type Audience = 'solo' | 'invited' | 'open';
@@ -272,6 +277,9 @@ export function createBody(answers: {
 }): Record<string, unknown> {
   const body: Record<string, unknown> = { name: answers.name, audience: answers.audience };
   const importing = answers.mode === 'import';
+  // The starter is chosen for a create, and omitted for an import: its
+  // repository decides what the app is.
+  if (!importing) body.template = answers.mode;
   if (importing && answers.repoUrl) body.repoUrl = answers.repoUrl;
   const description = (answers.description || '').replace(/\s+/g, ' ').trim();
   if (description && !(importing && answers.repo?.description)) body.description = description;
@@ -433,6 +441,17 @@ const STEP_HEADING = 'text-[13px] font-semibold text-zinc-700 dark:text-zinc-300
 /* A row that is there but cannot be pressed yet: dimmed, saying Soon. */
 const SOON = 'create-soon-row w-full text-left ' + CARD + ' px-4 py-3 flex items-center gap-3 text-zinc-500 dark:text-zinc-400';
 const SOON_TAG = 'shrink-0 text-xs font-medium text-zinc-500 dark:text-zinc-400';
+/*
+ * The five starts, in the order the screen lists them. `id` is the `template`
+ * the create sends and the row's `data-mode-pill`.
+ */
+const STARTERS: ReadonlyArray<{ id: Mode; title: string; caption: string }> = [
+  { id: 'empty', title: 'Empty', caption: 'An empty app. Describe what you want and build it with the group.' },
+  { id: 'social-productivity', title: 'Social productivity app', caption: 'A shared task list for your community.' },
+  { id: 'multimedia-social', title: 'Multimedia social app', caption: 'A photo wall people post to, like and report.' },
+  { id: 'game-2d', title: '2D game', caption: 'A catch-the-stars game with a high-score board.' },
+  { id: 'game-3d', title: '3D game', caption: 'A cube-collecting game drawn in 3D.' },
+];
 
 /*
  * "What is it?" (#3572). DESCRIPTION_MAX is the server's limit
@@ -1077,7 +1096,7 @@ export function CreateAppDialog() {
         {created ? (
           <CreateProgress
             appName={created.name}
-            mode={mode ?? 'new'}
+            mode={importing ? 'import' : 'new'}
             surface="pane"
             progress={progress}
             openLabel="Open project"
@@ -1363,32 +1382,28 @@ export function CreateAppDialog() {
             </div>
           </div>
           {/*
-              LAST: how to begin. From scratch; from a template, which is
-              coming; or from a GitHub repo, whose URL and Check open under
-              its row. The check also reads the repo's dapp.json, and the
-              notice under it names each earlier answer the repo replaces.
+              LAST: how to begin. Five starters, then a GitHub repo, whose
+              URL and Check open under its row. The check also reads the
+              repo's dapp.json, and the notice under it names each earlier
+              answer the repo replaces.
           */}
           <div data-create-step="start" className="space-y-2" ref={lastStepRef}>
             <p className={STEP_HEADING}>{`${numberOf('start')}. How do you want to start?`}</p>
-            <button
-              type="button"
-              data-mode-pill="new"
-              aria-pressed={mode === 'new'}
-              className={CHOICE}
-              onClick={() => chooseStart('new')}
-            >
-              <span className="min-w-0 flex-1">
-                <span className={CHOICE_TITLE}>Start from scratch</span>
-                <span className={CHOICE_CAPTION}>An empty app. Describe what you want and build it with the group.</span>
-              </span>
-            </button>
-            <div className={SOON} data-mode-pill="template" aria-disabled="true">
-              <span className="min-w-0 flex-1">
-                <span className={CHOICE_TITLE}>Start from a template</span>
-                <span className={CHOICE_CAPTION}>A ready-made app to make your own.</span>
-              </span>
-              <span className={SOON_TAG}>Soon</span>
-            </div>
+            {STARTERS.map((starter) => (
+              <button
+                key={starter.id}
+                type="button"
+                data-mode-pill={starter.id}
+                aria-pressed={mode === starter.id}
+                className={CHOICE}
+                onClick={() => chooseStart(starter.id)}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className={CHOICE_TITLE}>{starter.title}</span>
+                  <span className={CHOICE_CAPTION}>{starter.caption}</span>
+                </span>
+              </button>
+            ))}
             <button
               type="button"
               data-mode-pill="import"

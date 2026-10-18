@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const nodeAppPackage = require('../templates/node-app/package.json');
 const nodeAppLock = require('../templates/node-app/package-lock.json');
+const { starterFor } = require('../templates/starters');
 
 // Forwarder snippet injected into every scaffolded app's public/index.html.
 // Captures console.log/info/warn/error/debug + uncaught errors +
@@ -315,11 +316,17 @@ connector registered under some other name.
 // Discover and the project's page show) and the first sentence of
 // CLAUDE.md's About section, so the coding agent starts from the same
 // intent. Absent, both stay as they were.
-function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null } = {}) {
+// `template` is the starter chosen on the create screen's last step, stored
+// on the app row so a Retry or a repository repair rebuilds the same one.
+// `empty` (and any unknown id) is this file's own press-counter example,
+// below, unchanged: the four working starters live in ../templates/starters
+// and swap only the example card, its routes and their table bootstrap.
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = 'empty' } = {}) {
   const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
   const governanceBlock = require('./create-options').governanceBlock(governance);
   const about = typeof description === 'string' && description.trim() ? description.trim() : null;
-  return [
+  const starter = starterFor(template);
+  const files = [
     {
       path: 'CLAUDE.md',
       content: `# ${appName} — notes for Claude Code
@@ -989,6 +996,51 @@ start().catch(err => { console.error(err); process.exit(1); });
 `,
     },
   ];
+  return starter ? applyStarter(files, starter) : files;
+}
+
+/**
+ * Swap the empty starter's example for a starter module's own: the docs
+ * paragraph in CLAUDE.md and README.md, the example routes and CREATE TABLE
+ * in server.js, and the example card and script in public/index.html.
+ *
+ * The anchors are text the empty scaffold already ships, so the `empty` path
+ * never enters here and its output stays byte-identical. A missing anchor
+ * leaves that file as it was rather than producing a half-swapped app.
+ */
+function applyStarter(files, starter) {
+  const swap = (text, startMarker, endMarker, replacement) => {
+    const start = text.indexOf(startMarker);
+    const end = start === -1 ? -1 : text.indexOf(endMarker, start + startMarker.length);
+    if (start === -1 || end === -1) return text;
+    return text.slice(0, start) + replacement + text.slice(end);
+  };
+  const body = starter.body();
+  return files.map((file) => {
+    let content = file.content;
+    if (file.path === 'CLAUDE.md') {
+      content = swap(content, 'The screen this app currently ships —',
+        'When the user asks for their first real feature', `${starter.docs.claude}\n\n`);
+    }
+    if (file.path === 'README.md') {
+      content = swap(content, 'The scaffold is a small working demo that proves the plumbing works:',
+        '## Replacing the template', `${starter.docs.readme}\n\n`);
+    }
+    if (file.path === 'server.js') {
+      content = swap(content, '// Button press',
+        "app.use(express.static(path.join(__dirname, 'public')));", starter.routes);
+      content = swap(content, 'async function start() {\n  await pool.query(',
+        '  const server = app.listen', `async function start() {\n${starter.bootstrap}`);
+    }
+    if (file.path === 'public/index.html') {
+      content = swap(content,
+        '    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col items-center gap-5">',
+        '    <p class="text-center text-xs text-zinc-600">', `${body}\n\n`);
+      content = swap(content, '    const params = new URLSearchParams(window.location.search);',
+        '  </script>', `${starter.script}\n`);
+    }
+    return content === file.content ? file : { ...file, content };
+  });
 }
 
 function escapeHtml(str) {

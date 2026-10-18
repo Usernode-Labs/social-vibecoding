@@ -2945,6 +2945,11 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS directory_review_status VARCHAR(16)
   NOT NULL DEFAULT 'unreviewed' CHECK (directory_review_status IN ('unreviewed', 'working', 'demo', 'broken'));
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS directory_reviewed_at TIMESTAMPTZ;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS directory_reviewed_sha VARCHAR(40);
+-- How a project was started (the create screen's last step): `empty` for the
+-- press-counter starter every earlier app has, or one of the working examples
+-- in src/templates/starters/. Read at build and repair time so a Retry
+-- rebuilds the same starter; NOT part of dapp.json, so no vote can change it.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS starter_template VARCHAR(32) NOT NULL DEFAULT 'empty';
 
 -- Fork lineage. NULL for normally-created apps; for a fork it stores a
 -- REFERENCE ONLY to the source app: {"appId": <id>, "slug": "<slug>"}.

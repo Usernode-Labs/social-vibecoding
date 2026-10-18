@@ -79,6 +79,15 @@
  */
 
 const AUDIENCES = new Set(['solo', 'invited', 'open']);
+/**
+ * How a new project starts (the create screen's last step). `empty` is the
+ * press-counter starter every project got before this existed, and the one an
+ * older client, a script or an import gets. The other four are working
+ * examples (src/templates/starters/); the id is stored on the app row so a
+ * Retry or a repository repair rebuilds the same starter.
+ */
+const TEMPLATES = new Set(['empty', 'social-productivity', 'multimedia-social', 'game-2d', 'game-3d']);
+const DEFAULT_TEMPLATE = 'empty';
 const VISIBILITIES = new Set(['public', 'private']);
 const MAX_INVITEES = 20;
 const MAX_APPROVALS_REQUIRED = 50;
@@ -164,6 +173,20 @@ function parseGovernance(raw) {
   return { governance: { approverPolicy: approvers, approvalsRequired } };
 }
 
+/**
+ * The starter a project is created from, or an error naming the valid ids.
+ * Absent is `empty`. An import ignores whatever it sent and records `empty`:
+ * its repository decides what the app is, and no starter is seeded into it.
+ */
+function parseTemplate(raw, { imported = false } = {}) {
+  if (imported) return { template: DEFAULT_TEMPLATE };
+  if (raw == null || raw === '') return { template: DEFAULT_TEMPLATE };
+  if (typeof raw !== 'string' || !TEMPLATES.has(raw)) {
+    return { error: `template must be one of: ${[...TEMPLATES].join(', ')}` };
+  }
+  return { template: raw };
+}
+
 /** The one line, tidied, or null when blank. */
 function parseDescription(raw) {
   if (raw == null) return { description: null };
@@ -180,9 +203,9 @@ function parseDescription(raw) {
  * Everything POST /api/apps needs to know about who a new project is for.
  * Returns `{ error }` for a 400, otherwise
  * `{ audience, collabVisibility, viewVisibility, invitees, inviteEmails,
- * governance, description }`.
+ * governance, description, template }`.
  */
-function parseCreateOptions(body = {}) {
+function parseCreateOptions(body = {}, { imported = false } = {}) {
   let audience = null;
   let collabVisibility;
   let viewVisibility;
@@ -214,6 +237,9 @@ function parseCreateOptions(body = {}) {
   const desc = parseDescription(body.description);
   if (desc.error) return { error: desc.error };
 
+  const tpl = parseTemplate(body.template, { imported });
+  if (tpl.error) return { error: tpl.error };
+
   return {
     audience,
     collabVisibility,
@@ -222,6 +248,7 @@ function parseCreateOptions(body = {}) {
     inviteEmails: mail.emails,
     governance: gov.governance,
     description: desc.description,
+    template: tpl.template,
   };
 }
 
@@ -243,6 +270,9 @@ function governanceBlock(governance) {
 
 module.exports = {
   AUDIENCES,
+  TEMPLATES,
+  DEFAULT_TEMPLATE,
+  parseTemplate,
   MAX_INVITEES,
   DESCRIPTION_MAX,
   parseCreateOptions,

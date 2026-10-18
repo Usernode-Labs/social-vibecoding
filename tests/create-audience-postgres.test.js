@@ -83,13 +83,17 @@ test('creating a project for someone, against the full schema', { timeout: 18000
   });
 
   await t.test('Just me is private, one member, and reads as Just you', async () => {
-    const res = await create({ name: 'Diary', audience: 'solo' });
+    const res = await create({ name: 'Diary', audience: 'solo', template: 'social-productivity' });
     assert.equal(res.status, 201, JSON.stringify(res.data));
     const row = res.data.app;
     assert.deepEqual([row.collab_visibility, row.view_visibility], ['private', 'private']);
     assert.equal(await audienceOf(row.id), 'solo');
     assert.equal(row.approver_policy, 'anyone');
     assert.equal(res.data.invited, 0);
+    const stored = await pool.query('SELECT starter_template FROM apps WHERE id = $1', [row.id]);
+    assert.equal(stored.rows[0].starter_template, 'social-productivity', 'the chosen starter is stored');
+    assert.equal(built.find((r) => r.id === row.id).starter_template, 'social-productivity',
+      'the build receives the starter, so it rebuilds the same one');
   });
 
   await t.test('A public community is open to see and build, and reads as a Public community', async () => {
@@ -97,6 +101,8 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     assert.equal(res.status, 201, JSON.stringify(res.data));
     assert.deepEqual([res.data.app.collab_visibility, res.data.app.view_visibility], ['public', 'public']);
     assert.equal(await audienceOf(res.data.app.id), 'open');
+    const stored = await pool.query('SELECT starter_template FROM apps WHERE id = $1', [res.data.app.id]);
+    assert.equal(stored.rows[0].starter_template, 'empty', 'an absent template is Empty');
   });
 
   await t.test('A private community sends its invites at creation, and reads as a Private community straight away', async () => {
@@ -192,5 +198,8 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     assert.equal(bad.status, 400);
     const badRule = await create({ name: 'Bad rule', audience: 'open', governance: { approvers: 'everyone' } });
     assert.equal(badRule.status, 400);
+    const badTemplate = await create({ name: 'Bad starter', audience: 'solo', template: 'shooter' });
+    assert.equal(badTemplate.status, 400);
+    assert.match(badTemplate.data.error, /social-productivity/, 'an unknown starter names the valid ids');
   });
 });

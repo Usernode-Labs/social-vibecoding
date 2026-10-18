@@ -7,8 +7,9 @@
 //   kind     App; Document and Video there, dimmed, saying Soon
 //   details  the name and the optional "What is it?"
 //   approve  who approves changes — a private or a public community only
-//   start    LAST: from scratch, from a template (Soon), or from a GitHub
-//            repo, whose check also reads its dapp.json
+//   start    LAST: five starters (Empty, Social productivity, Multimedia
+//            social, 2D game, 3D game), or a GitHub repo, whose check also
+//            reads its dapp.json
 //
 // Nothing is chosen for the person: every answer starts empty, pressing a
 // row selects it, and Next — beside Cancel on every step — stays dimmed until
@@ -97,13 +98,16 @@ test('a row selects, and Next beside Cancel moves on once the step is answered',
 
 test('the wire body: who it is for, the people and addresses, and what an import leaves to its repo', () => {
   const { createBody } = mod();
-  const base = { name: 'Book club', mode: 'new', approvers: 'anyone', approvals: null };
+  const base = { name: 'Book club', mode: 'empty', approvers: 'anyone', approvals: null };
   const ada = { kind: 'user', username: 'ada' };
   const sam = { kind: 'email', email: 'sam@example.com' };
   assert.deepEqual(createBody({ ...base, audience: 'solo', invitees: [ada] }),
-    { name: 'Book club', audience: 'solo' }, 'Just me sends no invitees, whatever the rows hold');
+    { name: 'Book club', audience: 'solo', template: 'empty' }, 'Just me sends no invitees, whatever the rows hold');
   assert.deepEqual(createBody({ ...base, audience: 'invited', invitees: [ada, sam] }),
-    { name: 'Book club', audience: 'invited', invitees: ['ada'], inviteEmails: ['sam@example.com'] });
+    { name: 'Book club', audience: 'invited', template: 'empty', invitees: ['ada'], inviteEmails: ['sam@example.com'] });
+  // The starter rides on every create, under its own id.
+  assert.equal(createBody({ ...base, mode: 'game-2d', audience: 'open' }).template, 'game-2d');
+  assert.equal(createBody({ ...base, mode: 'social-productivity', audience: 'solo' }).template, 'social-productivity');
   assert.deepEqual(createBody({ ...base, audience: 'open', approvers: 'invited', approvals: 'majority' }).governance,
     { approvers: 'invited', approvals: 'default' });
   assert.deepEqual(createBody({ ...base, audience: 'open', approvers: 'invited', approvals: 'atLeast', approvalsN: 3 }).governance,
@@ -117,6 +121,7 @@ test('the wire body: who it is for, the people and addresses, and what an import
     { name: 'Book club', audience: 'open', repoUrl: 'https://github.com/o/r', description: 'Ours', governance: { approvers: 'invited', approvals: 'default' } });
   assert.deepEqual(createBody({ ...imp, repo: { description: 'Theirs', governance: { approvers: 'anyone', approvals: null } } }),
     { name: 'Book club', audience: 'open', repoUrl: 'https://github.com/o/r' });
+  assert.equal(createBody({ ...imp, repo: {} }).template, undefined, 'an import records no starter');
   const submit = SRC.slice(SRC.indexOf('async function submit(event: FormEvent) {'), SRC.indexOf('  const stepIndex'));
   assert.match(submit, /const body = createBody\(\{/);
   assert.match(submit, /invitees: people,/);
@@ -190,12 +195,18 @@ test('the kind step and the last step: rows, with what is not ready yet dimmed a
   assert.match(kind, /data-kind-pill="video" aria-disabled="true"/);
   assert.match(kind, /A video you make together, from script to cut\./);
   const start = SRC.slice(SRC.indexOf('data-create-step="start"'), SRC.indexOf('id="create-error"'));
-  assert.ok(start.indexOf('data-mode-pill="new"') < start.indexOf('data-mode-pill="template"')
-    && start.indexOf('data-mode-pill="template"') < start.indexOf('data-mode-pill="import"')
-    && start.indexOf('data-mode-pill="import"') < start.indexOf('id="create-import-block"'),
-    'scratch, template, repo, then the repo check under them');
-  assert.match(start, /Start from scratch/);
-  assert.match(start, /Start from a template/);
+  const order = ['empty', 'social-productivity', 'multimedia-social', 'game-2d', 'game-3d', 'import'];
+  const at = order.map((id) => start.indexOf(`data-mode-pill="${id}"`));
+  assert.ok(at.every((i) => i !== -1), 'every starter row is there');
+  assert.deepEqual([...at].sort((a, b) => a - b), at, 'Empty, the four starters, then Import, in order');
+  assert.ok(at[at.length - 1] < start.indexOf('id="create-import-block"'), 'the repo check opens under Import');
+  assert.doesNotMatch(start, /data-mode-pill="new"/, 'the old from-scratch id is gone');
+  assert.doesNotMatch(start, /data-mode-pill="template"|Start from a template/, 'the Soon template row is gone');
+  assert.match(start, />Empty</);
+  assert.match(start, /Social productivity app/);
+  assert.match(start, /Multimedia social app/);
+  assert.match(start, /2D game/);
+  assert.match(start, /3D game/);
   assert.match(start, /Import a GitHub repo/);
   assert.match(SRC, /\{`\$\{numberOf\('start'\)\}\. How do you want to start\?`\}/);
   assert.match(SRC, />\s*A majority\s*</, '"Most of them" reads "A majority"');
@@ -229,7 +240,10 @@ test('every selected choice wears the Create button\'s accent, the moment it is 
   const fill = CSS.slice(CSS.indexOf('#create-card[data-audience="solo"]      .create-who-pill[data-audience-pill="solo"],'));
   const block = fill.slice(0, fill.indexOf('}') + 1);
   for (const sel of ['.create-who-pill[data-audience-pill="open"]', '.create-kind-row[data-kind-pill="app"]',
-    '.create-mode-pill[data-mode-pill="import"]', '.create-approver-pill[data-approver-pill="invited"]',
+    '.create-mode-pill[data-mode-pill="empty"]', '.create-mode-pill[data-mode-pill="social-productivity"]',
+    '.create-mode-pill[data-mode-pill="multimedia-social"]', '.create-mode-pill[data-mode-pill="game-2d"]',
+    '.create-mode-pill[data-mode-pill="game-3d"]', '.create-mode-pill[data-mode-pill="import"]',
+    '.create-approver-pill[data-approver-pill="invited"]',
     '.create-approvals-pill[data-approvals-pill="atLeast"]']) {
     assert.ok(block.includes(sel), sel);
   }
@@ -256,7 +270,7 @@ test('the shot links land on the state they name, and each has a check', () => {
   assert.match(group.expectSelector, /\[data-step="invite"\] \[data-create-step="invite"\] #create-invite-block #create-invitees/);
   assert.equal(group.expectText, 'Who do you want to invite?');
   const imp = byPath.get('/?shot=create-import#create');
-  assert.match(imp.expectSelector, /\[data-mode-pill="new"\] \+ \[data-mode-pill="template"\] \+ \[data-mode-pill="import"\] \+ #create-import-block/);
+  assert.match(imp.expectSelector, /\[data-mode-pill="empty"\] \+ \[data-mode-pill="social-productivity"\] \+ \[data-mode-pill="multimedia-social"\] \+ \[data-mode-pill="game-2d"\] \+ \[data-mode-pill="game-3d"\] \+ \[data-mode-pill="import"\] \+ #create-import-block/);
   assert.equal(byPath.get('/?shot=create-access#create'), undefined, 'the retired step has no check left');
 });
 

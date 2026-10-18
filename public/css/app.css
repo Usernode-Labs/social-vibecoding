@@ -12300,8 +12300,8 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 #create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-approver-pill) .create-choice-caption {
   color: var(--text-muted);
 }
-/* A row that is there but cannot be pressed yet (Document, Video, a
-   template): it takes no fill and no pointer. */
+/* A row that is there but cannot be pressed yet (Document, Video): it takes
+   no fill and no pointer. */
 #create-card .create-soon-row { cursor: default; }
 /* NOTHING IS CHOSEN FOR THE PERSON, AND A ROW IS A SELECTION. Every answer
    starts empty (the attributes are ""), so no row is filled on arrival.
@@ -12311,7 +12311,11 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 #create-card[data-audience="invited"]   .create-who-pill[data-audience-pill="invited"],
 #create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"],
 #create-card[data-kind="app"]           .create-kind-row[data-kind-pill="app"],
-#create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"],
+#create-card[data-mode="empty"]         .create-mode-pill[data-mode-pill="empty"],
+#create-card[data-mode="social-productivity"] .create-mode-pill[data-mode-pill="social-productivity"],
+#create-card[data-mode="multimedia-social"]   .create-mode-pill[data-mode-pill="multimedia-social"],
+#create-card[data-mode="game-2d"]       .create-mode-pill[data-mode-pill="game-2d"],
+#create-card[data-mode="game-3d"]       .create-mode-pill[data-mode-pill="game-3d"],
 #create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"],
 #create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"],
 #create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"],
@@ -12326,7 +12330,11 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 #create-card[data-audience="invited"]   .create-who-pill[data-audience-pill="invited"] .create-choice-caption,
 #create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"] .create-choice-caption,
 #create-card[data-kind="app"]           .create-kind-row[data-kind-pill="app"] .create-choice-caption,
-#create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"] .create-choice-caption,
+#create-card[data-mode="empty"]         .create-mode-pill[data-mode-pill="empty"] .create-choice-caption,
+#create-card[data-mode="social-productivity"] .create-mode-pill[data-mode-pill="social-productivity"] .create-choice-caption,
+#create-card[data-mode="multimedia-social"]   .create-mode-pill[data-mode-pill="multimedia-social"] .create-choice-caption,
+#create-card[data-mode="game-2d"]       .create-mode-pill[data-mode-pill="game-2d"] .create-choice-caption,
+#create-card[data-mode="game-3d"]       .create-mode-pill[data-mode-pill="game-3d"] .create-choice-caption,
 #create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"] .create-choice-caption,
 #create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"] .create-choice-caption,
 #create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"] .create-choice-caption {

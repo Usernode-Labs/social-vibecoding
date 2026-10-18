@@ -38,6 +38,21 @@ test('a body with no audience keeps today\'s two fields, defaults and rule', () 
   assert.match(route, /const validateVisibilityCombo = createOptions\.visibilityComboError;/);
 });
 
+test('the starter chosen on the last step: an accepted id, Empty by default, and imports always Empty', () => {
+  assert.equal(options.parseCreateOptions({}).template, 'empty', 'an older client, a script or no answer is Empty');
+  for (const id of ['empty', 'social-productivity', 'multimedia-social', 'game-2d', 'game-3d']) {
+    assert.equal(options.parseCreateOptions({ template: id }).template, id, id);
+  }
+  const unknown = options.parseCreateOptions({ template: 'shooter' });
+  assert.match(unknown.error, /template must be one of/);
+  assert.match(unknown.error, /social-productivity/);
+  assert.equal(options.parseCreateOptions({ template: 3 }).error !== undefined, true, 'a non-string is refused');
+  assert.equal(options.parseCreateOptions({ template: 'game-3d' }, { imported: true }).template, 'empty',
+    'an import keeps its repository and records Empty');
+  assert.equal(options.parseCreateOptions({ template: 'not-a-starter' }, { imported: true }).template, 'empty',
+    'and an import ignores an invalid one rather than failing');
+});
+
 test('invitees are usernames, for a private community only, deduplicated and bounded', () => {
   const group = options.parseCreateOptions({ audience: 'invited', invitees: [' @Ada ', 'ada', 'grace', '', '@'] });
   assert.deepEqual(group.invitees, ['Ada', 'grace'], '@ and case do not make a second invite');
@@ -97,8 +112,10 @@ test('the new repository\'s dapp.json carries a non-default rule, and only then'
   assert.deepEqual(readGovernance(dapp({ approverPolicy: 'invited', approvalsRequired: 3 })),
     { approvers: 'invited', approvals: 3 });
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
-  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\) \}/g) || []).length, 2,
+  assert.equal((creator.match(/governance: governanceOf\(appRow\),\s*description: descriptionOf\(appRow\),/g) || []).length, 2,
     'both template paths (GitHub and local) pass the row\'s rule and its line');
+  assert.equal((creator.match(/template: appRow\.starter_template/g) || []).length, 2,
+    'both template paths rebuild the starter the project was created from');
 });
 
 test('"What is it?" is one optional line, tidied and bounded', () => {

@@ -1462,9 +1462,9 @@
       "expectText": "Project name"
     },
     {
-      "name": "Create-app dialog's last step offers from scratch, a template (soon) or a GitHub repo, and the repo URL field and Check pill open under it in one white card (#1910)",
+      "name": "Create-app dialog's last step offers five starters then a GitHub repo, and the repo URL field and Check pill open under the import row in one white card (#1910)",
       "path": "/?shot=create-import#create",
-      "expectSelector": "#create-card[data-step=\"start\"][data-mode=\"import\"][data-import-state=\"idle\"] [data-mode-pill=\"new\"] + [data-mode-pill=\"template\"] + [data-mode-pill=\"import\"] + #create-import-block .rounded-2xl.bg-white #import-check.rounded-full",
+      "expectSelector": "#create-card[data-step=\"start\"][data-mode=\"import\"][data-import-state=\"idle\"] [data-mode-pill=\"empty\"] + [data-mode-pill=\"social-productivity\"] + [data-mode-pill=\"multimedia-social\"] + [data-mode-pill=\"game-2d\"] + [data-mode-pill=\"game-3d\"] + [data-mode-pill=\"import\"] + #create-import-block .rounded-2xl.bg-white #import-check.rounded-full",
       "expectText": "GitHub repo URL"
     },
     {
