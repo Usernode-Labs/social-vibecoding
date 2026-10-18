@@ -623,6 +623,14 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS build_ref VARCHAR(253);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS runtime_kind VARCHAR(32) NOT NULL DEFAULT 'docker';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS runtime_name VARCHAR(253);
 
+-- The starting point a project was created from (services/app-templates.js):
+-- 'empty' (Start from scratch, today's Press! scaffold), 'social',
+-- 'multimedia', '2d' or '3d'. The create route writes it in the same
+-- statement as the name, and createApp, Retry and repository repair read it,
+-- so a failed create rebuilds the same starter. Existing projects and
+-- GitHub imports hold the default and keep exactly what they had.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS template VARCHAR(32) NOT NULL DEFAULT 'empty';
+
 -- Activity tracking (for home screen sort)
 CREATE TABLE IF NOT EXISTS app_activity (
   id             SERIAL PRIMARY KEY,

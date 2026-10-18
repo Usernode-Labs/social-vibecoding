@@ -97,8 +97,12 @@ test('the new repository\'s dapp.json carries a non-default rule, and only then'
   assert.deepEqual(readGovernance(dapp({ approverPolicy: 'invited', approvalsRequired: 3 })),
     { approvers: 'invited', approvals: 3 });
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
-  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\) \}/g) || []).length, 2,
-    'both template paths (GitHub and local) pass the row\'s rule and its line');
+  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\), template: templateOf\(appRow\) \}/g) || []).length, 2,
+    'both template paths (GitHub and local) pass the row\'s rule, its line and its starting point');
+  assert.match(creator, /function templateOf\(row\) \{\s*return row\?\.template \|\| 'empty';/);
+  const heal = fs.readFileSync(path.join(__dirname, '../src/services/app-heal.js'), 'utf8');
+  assert.match(heal, /getTemplateFiles\(app\.name, app\.slug, dbUrl, null, \{ template: app\.template \|\| 'empty' \}\)/,
+    'repository repair rebuilds the starter the app was created from');
 });
 
 test('"What is it?" is one optional line, tidied and bounded', () => {
@@ -116,7 +120,26 @@ test('"What is it?" is one optional line, tidied and bounded', () => {
   assert.equal(desc('A fork of ours', { imported: true }).description, 'A fork of ours');
 });
 
+test('the starting point: the five keys, the empty default, and no template on an import', () => {
+  const tpl = (template, extra = {}, opts) => options.parseCreateOptions({ audience: 'solo', template, ...extra }, opts);
+  assert.equal(tpl(undefined).template, 'empty', 'an older client starts from today\'s scaffold');
+  for (const key of ['empty', 'social', 'multimedia', '2d', '3d']) {
+    assert.equal(tpl(key).template, key, key);
+  }
+  assert.equal(tpl('nonsense').error,
+    'template must be one of empty, social, multimedia, 2d or 3d');
+  assert.equal(tpl(2).error,
+    'template must be one of empty, social, multimedia, 2d or 3d');
+  assert.equal(tpl('social', { repoUrl: 'https://github.com/o/r' }).error,
+    'A template applies only to a new project, not an import.');
+  assert.equal(tpl('social', {}, { imported: true }).error,
+    'A template applies only to a new project, not an import.');
+  assert.equal(tpl(undefined, { repoUrl: 'https://github.com/o/r' }).template, 'empty',
+    'an import with no template is fine');
+});
+
 test('the new repository\'s dapp.json and CLAUDE.md carry the line, and only when there is one', () => {
+
   const files = (description) => getTemplateFiles('Notes', 'notes-abc123', 'postgres://x', null, { description });
   const dapp = (description) => JSON.parse(files(description).find((f) => f.path === 'dapp.json').content);
   assert.deepEqual(dapp(null), { secrets: [] });

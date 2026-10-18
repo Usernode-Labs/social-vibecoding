@@ -3023,10 +3023,12 @@ deleted**: the whole screen is placeholder content, not product intent.
 When the user asks for their first real feature, replace the template
 screen rather than building alongside it — remove the sentinel block
 (both comments and everything between them), remove or repurpose the
-"Try the example" card and its demo endpoints (`/api/press`,
-`/api/leaderboard`, the `presses` table) as appropriate, and rewrite the
-scaffolded `README.md` to describe the actual app. Keep the dev-console
-forwarder `<script>` when rewriting the HTML.
+"Try the example" card, its demo endpoints and its tables as
+appropriate, and rewrite the scaffolded `README.md` to describe the
+actual app. The starter may be the Press! example or one of the Social
+productivity, Multimedia social, 2D game and 3D game demos; `CLAUDE.md`
+in the repo names the routes and tables this particular one uses. Keep
+the dev-console forwarder `<script>` when rewriting the HTML.
 
 ## Platform-level problems & missing capabilities: escalate, don't file workarounds
 

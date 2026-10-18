@@ -76,7 +76,20 @@
  * it shows (two lines in the hub hero, on Discover and on the join screen,
  * three beside the icon in the About pane), and the line in dapp.json stays
  * as it was written.
+ *
+ * ── Where it starts ────────────────────────────────────────────────────
+ *
+ * `template` is the starting point chosen on the create screen's last step
+ * (services/app-templates.js): `empty` (Start from scratch, today's
+ * scaffold), `social`, `multimedia`, `2d` or `3d`. It is stored on the app
+ * row so Retry and repository repair rebuild the same starter. Absent means
+ * `empty`, so an older client is unchanged; an unknown key is refused rather
+ * than silently falling back, because a picker that sent one is a bug the
+ * creator would otherwise never see. An import brings its own code, so a
+ * template beside a repo URL is refused: the two answers are exclusive.
  */
+
+const { TEMPLATE_KEYS, isTemplateKey } = require('./app-templates');
 
 const AUDIENCES = new Set(['solo', 'invited', 'open']);
 const VISIBILITIES = new Set(['public', 'private']);
@@ -177,12 +190,27 @@ function parseDescription(raw) {
 }
 
 /**
+ * The starting point, or `empty`. A template only applies to a brand-new
+ * project: an import brings its own code.
+ */
+function parseTemplate(raw, { imported = false } = {}) {
+  if (raw == null) return { template: 'empty' };
+  if (imported) {
+    return { error: 'A template applies only to a new project, not an import.' };
+  }
+  if (!isTemplateKey(raw)) {
+    return { error: `template must be one of ${TEMPLATE_KEYS.join(', ').replace(/, ([^,]*)$/, ' or $1')}` };
+  }
+  return { template: raw };
+}
+
+/**
  * Everything POST /api/apps needs to know about who a new project is for.
  * Returns `{ error }` for a 400, otherwise
  * `{ audience, collabVisibility, viewVisibility, invitees, inviteEmails,
- * governance, description }`.
+ * governance, description, template }`.
  */
-function parseCreateOptions(body = {}) {
+function parseCreateOptions(body = {}, { imported = false } = {}) {
   let audience = null;
   let collabVisibility;
   let viewVisibility;
@@ -214,6 +242,9 @@ function parseCreateOptions(body = {}) {
   const desc = parseDescription(body.description);
   if (desc.error) return { error: desc.error };
 
+  const tpl = parseTemplate(body.template, { imported: imported || !!body.repoUrl });
+  if (tpl.error) return { error: tpl.error };
+
   return {
     audience,
     collabVisibility,
@@ -222,6 +253,7 @@ function parseCreateOptions(body = {}) {
     inviteEmails: mail.emails,
     governance: gov.governance,
     description: desc.description,
+    template: tpl.template,
   };
 }
 

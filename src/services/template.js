@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const nodeAppPackage = require('../templates/node-app/package.json');
 const nodeAppLock = require('../templates/node-app/package-lock.json');
+const { starterFor } = require('./app-templates');
 
 // Forwarder snippet injected into every scaffolded app's public/index.html.
 // Captures console.log/info/warn/error/debug + uncaught errors +
@@ -315,10 +316,19 @@ connector registered under some other name.
 // Discover and the project's page show) and the first sentence of
 // CLAUDE.md's About section, so the coding agent starts from the same
 // intent. Absent, both stay as they were.
-function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null } = {}) {
+//
+// `template` is the starting point chosen in the create dialog
+// (services/app-templates.js): empty (today's Press! scaffold), social,
+// multimedia, 2d or 3d. The shared shell below — head, body, the "What's
+// already working" card, the starter notice and the footer — is one set of
+// strings; the starter module supplies the page's welcome line, its example
+// card, its script, its routes, its tables and its README/CLAUDE paragraphs.
+// `empty` reproduces the pre-template output unchanged.
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = 'empty' } = {}) {
   const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
   const governanceBlock = require('./create-options').governanceBlock(governance);
   const about = typeof description === 'string' && description.trim() ? description.trim() : null;
+  const starter = starterFor(template);
   return [
     {
       path: 'CLAUDE.md',
@@ -385,9 +395,7 @@ the platform fixes the base commit, and none of this applies.
 ## Starter template
 
 The screen this app currently ships — the hero, the "What's already
-working" card, and the Press! example (the demo markup in
-\`public/index.html\`, the \`/api/press\` and \`/api/leaderboard\` routes, and
-the \`presses\` table bootstrap in \`server.js\`) — is placeholder content
+working" card, and ${starter.claudeDemo} — is placeholder content
 from the Homeroom starter template, not product intent.
 
 When the user asks for their first real feature, REPLACE the template
@@ -395,8 +403,7 @@ screen rather than building alongside it:
 
 - remove the \`usernode-starter-notice@1\` block in \`public/index.html\`
   (both sentinel comments and everything between them),
-- remove or repurpose the "Try the example" card, its demo endpoints and
-  the \`presses\` table as appropriate,
+${starter.claudeRemove}
 - rewrite \`README.md\` to describe the actual app.
 
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` when rewriting the
@@ -445,10 +452,8 @@ The scaffold is a small working demo that proves the plumbing works:
 - **Sign-in** — the server verifies the platform-issued user token
   (an RS256 JWT) on every request, so the app already knows who is
   using it. No accounts to build.
-- **Database** — the app has its own private Postgres database; the
-  demo stores button presses in a \`presses\` table.
-- **Live API** — two example routes (\`/api/press\`,
-  \`/api/leaderboard\`) read and write through a real Express server.
+- **Database** — the app has its own private Postgres database; ${starter.readmeDatabase}
+- **Live API** — ${starter.readmeApi}
 - **Styling** — Tailwind CSS, precompiled by \`npm run build\` during
   image creation with either Kubernetes/Paketo or standalone Docker.
 
@@ -767,34 +772,7 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 // fresh load.
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
-// Button press
-app.post('/api/press', async (req, res) => {
-  try {
-    await pool.query(\`
-      INSERT INTO presses (user_id, username) VALUES ($1, $2)
-    \`, [req.user.id, req.user.username]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Leaderboard
-app.get('/api/leaderboard', async (_req, res) => {
-  try {
-    const { rows } = await pool.query(\`
-      SELECT username, COUNT(*) as presses
-      FROM presses
-      GROUP BY username
-      ORDER BY presses DESC
-      LIMIT 50
-    \`);
-    res.json({ leaderboard: rows });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
+${starter.routes}
 app.use(express.static(path.join(__dirname, 'public')));
 
 // HTML shell: serve the app if authenticated. Unauthenticated top-level
@@ -834,12 +812,7 @@ app.get('*', (req, res) => {
 
 async function start() {
   await pool.query(\`
-    CREATE TABLE IF NOT EXISTS presses (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL,
-      username VARCHAR(255) NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
+${starter.bootstrapSql}
   \`);
   const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
@@ -895,7 +868,7 @@ start().catch(err => { console.error(err); process.exit(1); });
     <section class="rounded-2xl border border-violet-500/30 bg-gradient-to-b from-violet-600/20 to-transparent p-6 text-center flex flex-col items-center gap-3">
       <span class="inline-block rounded-full bg-violet-600/20 text-violet-300 text-xs font-semibold uppercase tracking-wide px-3 py-1">Starter template</span>
       <h1 class="text-2xl font-bold">${escapeHtml(appName)}</h1>
-      <p class="text-sm text-zinc-300 leading-relaxed">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
+${starter.welcome}
       <p class="text-sm text-zinc-300 leading-relaxed">Tap the <strong class="text-violet-300 font-semibold">Homeroom icon</strong> in the header and choose <strong class="text-violet-300 font-semibold">Start a new change</strong> to start building your app. Describe what you'd like in plain English, and it will be turned into your real app.</p>
     </section>
 
@@ -932,58 +905,12 @@ start().catch(err => { console.error(err); process.exit(1); });
         <h2 class="text-sm font-medium text-zinc-500">Try the example</h2>
         <span class="text-xs text-zinc-600">This example will be replaced</span>
       </div>
-
-      <button id="press-btn" class="w-32 h-32 rounded-full bg-violet-600 hover:bg-violet-500 active:scale-95 transition-all text-white text-xl font-bold shadow-lg shadow-violet-600/30">
-        Press!
-      </button>
-
-      <div id="count" class="text-lg text-zinc-400">0 total presses</div>
-
-      <div class="w-full max-w-sm">
-        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">Leaderboard</h3>
-        <div id="leaderboard" class="space-y-1"></div>
-      </div>
-    </section>
+${starter.exampleCard}    </section>
 
     <p class="text-center text-xs text-zinc-600">Built on Homeroom — this template screen disappears once you build your real app.</p>
   </main>
 
-  <script>
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get('token') || '';
-    const headers = token ? { 'x-usernode-token': token } : {};
-
-    async function loadLeaderboard() {
-      const res = await fetch('/api/leaderboard', { headers });
-      if (!res.ok) return;
-      const { leaderboard } = await res.json();
-      const el = document.getElementById('leaderboard');
-      if (!leaderboard.length) {
-        el.innerHTML = '<p class="text-center text-zinc-600 text-sm">No presses yet</p>';
-        return;
-      }
-      el.innerHTML = leaderboard.map((r, i) =>
-        '<div class="flex justify-between px-3 py-1 rounded ' + (i === 0 ? 'bg-violet-600/20 text-violet-300' : 'text-zinc-400') + '">' +
-        '<span>' + (i + 1) + '. ' + r.username + '</span>' +
-        '<span class="font-mono">' + r.presses + '</span></div>'
-      ).join('');
-      const total = leaderboard.reduce((s, r) => s + parseInt(r.presses), 0);
-      document.getElementById('count').textContent = total + ' total presses';
-    }
-
-    document.getElementById('press-btn').addEventListener('click', async () => {
-      try {
-        const res = await fetch('/api/press', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...headers },
-        });
-        if (res.ok) loadLeaderboard();
-        else if (res.status === 401) document.getElementById('count').textContent = 'Sign in to press!';
-      } catch {}
-    });
-
-    loadLeaderboard();
-  </script>
+  <script>${starter.script}</script>
 </body>
 </html>
 `,
