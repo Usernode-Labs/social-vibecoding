@@ -208,6 +208,10 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     await send(lane.MACHINE, lane.KEY, 'Tick', {});
     assert.deepEqual(calls(lane.WORK.refresh).at(-1).input.apps, [app2.id], 'that project alone');
     assert.equal(calls(lane.WORK.sweep).length, 1, 'the sweeps go with the full one only');
+    // A first version just filed (newcomer run nine): its project at once,
+    // not after the settle.
+    await send(lane.MACHINE, lane.KEY, 'RefreshAsked', { appId: app.id, now: true });
+    assert.deepEqual(calls(lane.WORK.refresh).at(-1).input.apps, [app.id], 'refreshed at once');
   });
 
   // A request an admin must look at (its instance flagged) holds no slot,
@@ -387,6 +391,42 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     await oweOnly(app2.id, 112, { reason: 'dm_answer', priority: 0 });
     assert.equal((await inst(request.MACHINE, requestKey(app2.id, 112))).data.owed.heldUntil, null, 'a person\'s ask lifts it');
     work.answer.set(request.WORK.look, { outcome: 'done' });
+  });
+
+  // GitHub's hourly budget nearly used up (services/github-budget.js): a look
+  // or a refresh that finds it so reads nothing; the request stays owed, and
+  // the lane grants nothing and refreshes nothing until the reset, then runs
+  // a full refresh.
+  await t.test('github: a look held by GitHub\'s budget stays owed, and the lane waits for the reset', async () => {
+    reset();
+    const unpause = () => asTransition((cl) => cl.query(`UPDATE wf_instances SET data = data - 'github' - 'fault' WHERE machine = $1 AND key = $2`, [lane.MACHINE, lane.KEY]));
+    await unpause();
+    const until = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    work.answer.set(request.WORK.look, { outcome: 'github', until });
+    await owe(app2.id, 13);
+    await send(lane.MACHINE, lane.KEY, 'Look', {});
+    const i = await inst(request.MACHINE, requestKey(app2.id, 13));
+    assert.equal(i.state, 'queued', 'owed as it was');
+    assert.equal(i.data.faults || 0, 0, 'no fault of its own');
+    let l = await inst(lane.MACHINE, lane.KEY);
+    assert.equal(l.data.github.until, until);
+    const looks = calls(request.WORK.look).length;
+    await owe(app2.id, 14);
+    await send(lane.MACHINE, lane.KEY, 'Look', {});
+    assert.equal(calls(request.WORK.look).length, looks, 'nothing granted until the reset');
+    assert.ok(Date.parse(l.deadline_at) <= Date.parse(until), 'its clock wakes it by then');
+    // A refresh the budget held moves the next full refresh to the reset.
+    await unpause();
+    await asTransition((cl) => cl.query(`UPDATE wf_instances SET data = jsonb_set(data, '{refresh,due}', to_jsonb($3::text)) WHERE machine = $1 AND key = $2`,
+      [lane.MACHINE, lane.KEY, new Date(Date.now() - 1000).toISOString()]));
+    work.answer.set(request.WORK.look, { outcome: 'done' });
+    work.answer.set(lane.WORK.refresh, { github: until });
+    await send(lane.MACHINE, lane.KEY, 'Tick', {});
+    l = await inst(lane.MACHINE, lane.KEY);
+    assert.equal(l.data.github.until, until);
+    assert.equal(l.data.refresh.due, until, 'a full refresh once it resets');
+    work.answer.delete(lane.WORK.refresh);
+    await unpause();
   });
 
   await t.test('interrupt: a person writing during a read stops its turn and reads it again, once, carrying what it spent', async () => {

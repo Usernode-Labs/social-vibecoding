@@ -7889,11 +7889,11 @@ async function noteRequestMerged(pool, session, deps = {}) {
         sessionId: Number(merged.id), appId, issues, ...out,
       });
       // What waited on it is looked at again soon.
-      await platform().botRefresh(appId).catch(() => {});
+      await (deps.platform || platform()).botRefresh(appId).catch(() => {});
     }
     // The project's first version is live: what waited for it
-    // (FIRST_VERSION_PENDING_SQL) is picked up now, from the new main, on
-    // whichever Pod runs the loop, rather than on its next idle pass.
+    // (FIRST_VERSION_PENDING_SQL) is picked up now, from the new main, by
+    // the lane's refresh of its project rather than its next full one.
     const { rows: firstVersion } = await pool.query(
       `SELECT issue_number FROM homeroom_bot_first_versions
         WHERE app_id = $1 AND bot_builds AND issue_number = ANY($2::int[])
@@ -8789,9 +8789,11 @@ function noteIssueActivity({ appId, issueNumber, reason = 'activity', messageId 
   const id = Number(appId);
   const n = Number(issueNumber);
   if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(n) || n <= 0) return false;
+  // A first version just filed is read as soon as it is (newcomer run nine:
+  // its project refreshed at once, not after the settle).
   const p = INTERRUPTING_ACTIVITY.has(String(reason))
     ? platform().botActivityNow({ appId: id, issueNumber: n, messageId })
-    : platform().botRefresh(id);
+    : platform().botRefresh(id, { now: String(reason) === 'first_version' });
   Promise.resolve(p).catch((err) => log.warn('homeroom-bot', 'Could not tell the bot about activity on a request', { appId: id, issueNumber: n, err: err.message }));
   return true;
 }
@@ -8957,6 +8959,12 @@ async function lookAt(config, pool, { input, steps, signal = null, owner = null,
   const issueNumber = Number(input.issueNumber);
   const settings = await readSettings(pool, { strict: true });
   if (settings.mode === 'off') return { outcome: 'requeue', reason: input.owed?.reason || 'refresh', priority: input.owed?.priority ?? 2 };
+  // A look reads GitHub, and it is background work: while GitHub's hourly
+  // budget is nearly used up it waits for the reset, its debt kept, so
+  // people's own work keeps the reserve (services/github-budget.js). Not
+  // an attempt that carries a look on: its turn may be under way.
+  const held = steps?.resumed ? null : githubHoldUntil(deps);
+  if (held) return { outcome: 'github', until: held };
   const bot = await ensureBotUser(pool, config);
   const { rows: [app] = [] } = await pool.query('SELECT id, slug, name, repo_url, self_hosted, status FROM apps WHERE id = $1', [appId]);
   if (!app) return { outcome: 'done' };
@@ -9035,6 +9043,10 @@ async function lookOutcome(r, L, { pool, settings, bot, app, item, deps }) {
 async function startBuild(config, pool, { appId, issueNumber, runId, replyTo, person = null, deps = {} }) {
   const settings = await readSettings(pool, { strict: true });
   if (settings.mode === 'off') return { outcome: 'skipped', why: 'off' };
+  // A build reads GitHub and opens a pull request: held, as a look is,
+  // while the hourly budget is nearly used up.
+  const held = githubHoldUntil(deps);
+  if (held) return { outcome: 'github', until: held };
   const bot = await ensureBotUser(pool, config);
   const { rows: [app] = [] } = await pool.query('SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = $1', [Number(appId)]);
   const { rows: [run] = [] } = await pool.query('SELECT * FROM homeroom_bot_runs WHERE id = $1', [Number(runId)]);
@@ -9079,6 +9091,10 @@ async function startBuild(config, pool, { appId, issueNumber, runId, replyTo, pe
 async function refresh(config, pool, { n = 0, apps = null, deps = {} } = {}) {
   const settings = await readSettings(pool, { strict: true });
   if (settings.mode === 'off') return { apps: 0 };
+  // Every project read against GitHub: background work, which waits for
+  // the hourly budget's reset (the lane runs a full refresh then).
+  const held = githubHoldUntil(deps);
+  if (held) return { github: held };
   const bot = await ensureBotUser(pool, config);
   const refreshDeps = { ...deps, bot, refreshN: n };
   // A project waiting for its first version whose creation hook missed it
@@ -9106,6 +9122,8 @@ async function refresh(config, pool, { n = 0, apps = null, deps = {} } = {}) {
 async function sweep(config, pool, { deps = {} } = {}) {
   const settings = await readSettings(pool, { strict: true });
   if (settings.mode === 'off') return {};
+  const held = githubHoldUntil(deps);
+  if (held) return { github: held };
   const bot = await ensureBotUser(pool, config);
   const out = {};
   const each = async (name, fn) => {
@@ -9162,6 +9180,14 @@ async function sweepWaitingBuilds(pool, deps = {}) {
     told += 1;
   }
   return told;
+}
+
+// When GitHub's hourly budget, nearly used up, resets (an ISO time), or null
+// when background work may spend it (services/github-budget.js).
+function githubHoldUntil(deps = {}) {
+  const now = deps.now ? deps.now() : Date.now();
+  const hold = (deps.githubBudget || githubBudget).backgroundHold({ now });
+  return hold ? new Date(now + Math.max(1000, Number(hold.retryInMs) || 0)).toISOString() : null;
 }
 
 // The workflow's own appends, reached lazily (the platform module loads the

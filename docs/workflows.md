@@ -734,11 +734,14 @@ project's triage session, three builds per project.
   age), as `Granted` messages; what is in use is read from the requests (their `slot`, and
   grants not applied yet), never kept here.
 - **Pauses**: a fault (a look's platform failure) pauses every grant 2 minutes doubling to
-  an hour, ended by a look that ran; the bot's weekly cap a minute at a time. A request an
-  admin must look at (its instance flagged) holds no slot.
+  an hour, ended by a look that ran; the bot's weekly cap a minute at a time; GitHub's
+  hourly budget nearly used up (`services/github-budget.js`: a look, a build's start, the
+  refresh or a sweep found it so, reading nothing), with no grant and no refresh until it
+  resets, then a full refresh. A request an admin must look at (its instance flagged)
+  holds no slot.
 - **The refresh** (`bot.refresh`) every five minutes, and 20 seconds after a project is asked
-  for (a person wrote on an idle request, a merge, a settings change), with the five-minute
-  sweeps beside each full one (`bot.sweep`). Its one deadline is the earliest of those, a
+  for (a person wrote on an idle request, a merge, a settings change), at once for a first
+  version just filed, with the five-minute sweeps beside each full one (`bot.sweep`). Its one deadline is the earliest of those, a
   pause's end and the next waiting request becoming eligible.
 
 ### governance-proposal

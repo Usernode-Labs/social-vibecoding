@@ -422,8 +422,12 @@ test('a change its shots show failing goes back to the bot first; once that roun
     'nobody else is asked to approve a change part of which does not work');
   const botSrc = read('src/services/homeroom-bot.js');
   assert.match(botSrc, /cs\.shots_state, cs\.shots_detail/, 'the fix round reads the shots on the head');
-  assert.match(botSrc, /await fixRoundEnded\(session\.id, head, deps\);\n\s+return \{ ran: true, verdict, runId, acted: 'checks_person' \};/,
-    'a hand-off to a person tells the change machine, which sends the card that waited on the round');
+  // A hand-off to a person ends the round on the look (its request's
+  // instance answers bot-change FixRoundEnded 'looked'), and the change
+  // machine sends the card that waited on the round.
+  const handOff = botSrc.slice(botSrc.indexOf('const handOff = async ('), botSrc.indexOf("acted: 'checks_person' };"));
+  assert.match(handOff, /\n\s+roundEnded\(\);\n/, 'a hand-off to a person ends the round');
+  assert.match(botSrc, /const roundEnded = \(\) => \{ look\.out\.fix = \{ outcome: 'looked' \}; \};/);
   assert.doesNotMatch(botSrc, /sweepHeldReady/, 'a change held past the limit is the change machine\'s timer, not the refresh\'s');
 });
 

@@ -1,17 +1,16 @@
 'use strict';
 
 // The `later` scope of the Homeroom bot's configurations
-// (src/services/bot-configs.js): every build that is not a first version,
-// live or shadow, follows the later scope's current version.
+// (src/services/bot-configs.js): every live build that is not a first
+// version follows the later scope's current version.
 //
 //   - the seed: an Opus spec and a GLM build, current, beside all GLM;
-//   - ROUTING: a later live build and a later shadow build take their spec
+//   - ROUTING: a later live build takes its spec
 //     and build models, the CLI each runs in and the spec's effort from the
 //     current later version, name it on the run, queue its side versions
 //     and record its result; with no current later version (or one the
 //     catalog cannot run, or a lookup that fails) they are built exactly as
-//     before; a first version is untouched, and so is a first version's
-//     shadow build;
+//     before; a first version is untouched;
 //   - a SIDE BUILD of a later change replays the run's plan at its commit,
 //     in its own worker on a `bench/` branch, never proposed and never
 //     pushed anywhere else, with the later spec prompt and no capture; it
@@ -53,7 +52,6 @@ const PLATFORM = { id: 1, slug: 'usernode-2d5619', name: 'Homeroom', repo_url: '
 const REAL = Object.fromEntries(['currentVersion', 'laterVersion', 'spawnSideBuilds', 'finishLive', 'recipeGuidance', 'abandonSideBuilds']
   .map((n) => [n, configs[n]]));
 const REAL_LIVE = { buildAndPropose: live.buildAndPropose, post: live.post };
-const ENV_BEFORE = process.env.USERNODE_ENV;
 
 /** Stub the configurations' doors the bot reaches for; what each was asked is kept. */
 function stubConfigs(t, { later = LATER, first = FIRST } = {}) {
@@ -199,98 +197,6 @@ test('the platform\'s own repository: a later change\'s side builds follow the s
   stubBuild(t);
   await bot.buildLive(buildLiveArgs({ app: PLATFORM, repo: { owner: 'Usernode-Labs', repo: 'social-vibecoding' } }).args);
   assert.match(seen.spawned[0].skipReason, /platform's own repository/);
-});
-
-// ── A later shadow build ────────────────────────────────────────────────
-
-function lane({ firstVersion = false } = {}) {
-  const calls = { queries: [], builds: [] };
-  const pool = {
-    async query(sql, params) {
-      const s = String(sql);
-      calls.queries.push({ s, params });
-      if (/FROM apps WHERE id = \$1/.test(s)) return { rows: [APP] };
-      if (/SELECT first_version FROM homeroom_bot_requesters/.test(s)) return { rows: firstVersion ? [{ first_version: true }] : [] };
-      if (/INSERT INTO homeroom_bot_run_snapshots/.test(s)) return { rows: [{ id: 654 }] };
-      return { rows: [], rowCount: 1 };
-    },
-  };
-  const deps = {
-    github: {
-      isEnabled: () => true,
-      getBotUsername: async () => 'usernode-bot',
-      async fetchPublicIssue() { return { issue: { number: 12, title: 'Refresh feeds', body: 'hourly', state: 'open' } }; },
-      async fetchIssueComments() { return { comments: [] }; },
-    },
-    limits: { async checkBudget() { return { ok: true }; }, async recordSpend() {} },
-    threadContext: { async loadIssueThread() { return { messages: [] }; } },
-    managedOpenRouter: { async usesIncludedKey() { return false; } },
-    sessions: { buildHeadlessSeed: (n) => `ISSUE #${n}` },
-    worker: {}, agentTurn: {}, activeWorkers: new Set(), sessionLifecycle: {},
-  };
-  return { pool, deps, calls };
-}
-
-async function shadowWith(t, h, outcome) {
-  t.after(() => Object.assign(live, REAL_LIVE));
-  // A shadow build happens only where nothing is live: outside a staging
-  // copy every app but a paused one is (live.liveScope).
-  process.env.USERNODE_ENV = 'staging';
-  t.after(() => { if (ENV_BEFORE === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = ENV_BEFORE; });
-  live.buildAndPropose = async (args) => { h.calls.builds.push(args); return outcome; };
-  bot._resetForTests();
-  return bot.runQueuedBuild(h.pool, {}, {
-    bot: { id: 77, username: 'homeroom_bot' },
-    claim: { id: 901, app_id: APP.id, issue_number: 12, build_note: 'Add an hourly refresh.' },
-    settings: { mode: 'shadow', pausedApps: [], shadowBuilds: true, buildConcurrency: 2, shadowBuildPlatform: false, turnSeconds: 1200 },
-    deps: h.deps,
-  });
-}
-
-const BUILT = { ok: true, sessionId: 6001, branchName: 'dev/homeroom_bot-s6001', sha: 'c'.repeat(40), commits: 2, costUsd: 0.7 };
-
-test('a later shadow build is built by the later version too: never proposed, its side builds queued, its result recorded', async (t) => {
-  const seen = stubConfigs(t);
-  const h = lane();
-  assert.equal(await shadowWith(t, h, BUILT), 'shadow_built');
-  const a = h.calls.builds[0];
-  assert.equal(a.propose, false, 'never proposed');
-  assert.equal(a.model, GLM);
-  assert.equal(a.specModel, OPUS);
-  assert.equal(a.harnessOf, live.recipeHarness);
-  assert.equal(a.firstVersion, false);
-  assert.deepEqual(seen.spawned.map((s) => [s.botRunId, s.scope, s.snapshotId, s.skipReason]), [[901, 'later', 654, null]]);
-  assert.equal(seen.finished.length, 1);
-  assert.equal(seen.finished[0].built, BUILT);
-  const recorded = h.calls.queries.find((q) => /SET build_ok = \$2/.test(q.s));
-  assert.equal(recorded.params[9], GLM, 'the run records the model that built it');
-  assert.ok(h.calls.queries.some((q) => /SET bot_config_version_id = \$2/.test(q.s) && q.params[1] === 21));
-});
-
-test('a later shadow build with no current later version, and a first version\'s shadow build, are built as before', async (t) => {
-  let seen = stubConfigs(t, { later: null });
-  let h = lane();
-  await shadowWith(t, h, BUILT);
-  assert.equal(h.calls.builds[0].model, null, 'the stage setting (none in this config)');
-  assert.equal(h.calls.builds[0].harnessOf, undefined);
-  assert.deepEqual(seen.spawned, []);
-  assert.deepEqual(seen.finished, []);
-
-  seen = stubConfigs(t);
-  h = lane({ firstVersion: true });
-  await shadowWith(t, h, BUILT);
-  assert.equal(seen.laterAsked, 0, 'a first version\'s shadow build reads no configuration, as before');
-  assert.equal(h.calls.builds[0].firstVersion, true);
-  assert.equal(h.calls.builds[0].harnessOf, undefined);
-  assert.deepEqual(seen.spawned, []);
-});
-
-test('a platform fault hands a later shadow build back without recording a result; its retry spawns nothing twice', async (t) => {
-  const seen = stubConfigs(t);
-  const h = lane();
-  assert.equal(await shadowWith(t, h, { ok: false, sessionId: 6001, error: 'the worker would not start: quota', costUsd: null }), 'infra');
-  assert.deepEqual(seen.finished, [], 'no result for a build the platform could not run');
-  assert.equal(seen.spawned.length, 1, 'its side builds wait for the retry (spawnSideBuilds is idempotent per run)');
 });
 
 // ── Fail open ───────────────────────────────────────────────────────────
@@ -479,13 +385,13 @@ test('a later side build goes on after a restart from the last step it saved: a 
   assert.deepEqual(fromBuild.session_ids, [7001], 'the session the first attempt opened');
 });
 
-test('a later change\'s side builds take only the live slots live work leaves free', () => {
+test('a later change\'s side builds take only the live slots live work leaves free', async () => {
   const settings = { buildConcurrency: 2, liveAtOnce: 12 };
-  assert.equal(bot.isLiveLaneSaturated(settings, { live: 2, besides: 1 }), false, 'two live builds no longer hold side builds back');
-  assert.equal(bot.isLiveLaneSaturated(settings, { live: 9, besides: 2 }), false);
-  assert.equal(bot.isLiveLaneSaturated(settings, { live: 9, besides: 3 }), true, 'live work and side builds fill the twelve slots');
-  assert.equal(bot.isLiveLaneSaturated(settings, { live: 0, besides: 11 }), false);
-  assert.equal(bot.isLiveLaneSaturated(settings, { live: 12 }), true, 'live work never waits for side builds: they are not counted against it');
+  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 2, besides: 1 }), false, 'two live builds no longer hold side builds back');
+  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 9, besides: 2 }), false);
+  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 9, besides: 3 }), true, 'live work and side builds fill the twelve slots');
+  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 0, besides: 11 }), false);
+  assert.equal(await bot.isLiveLaneSaturated(settings, { live: 12 }), true, 'live work never waits for side builds: they are not counted against it');
   const src = require('node:fs').readFileSync(require.resolve('../src/services/bench/lane'), 'utf8');
   assert.match(src, /if \(run\.kind === LATER_SIDE_RUN_KIND\) \{\n\s+const besides = \[\.\.\.inFlight\.values\(\)\]\.filter\(\(f\) => f\.laterSide\)\.length;/);
   assert.match(src, /laterSide: run\.kind === LATER_SIDE_RUN_KIND,/);

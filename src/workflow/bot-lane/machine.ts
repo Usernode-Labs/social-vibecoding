@@ -36,6 +36,10 @@ export interface Data {
   fault: { until: string; attempts: number } | null;
   // The bot's weekly cap reached: no grant until `until`.
   budget: { until: string } | null;
+  // GitHub's hourly budget nearly used up: no grant and no refresh until it
+  // resets (services/github-budget.js; a look, a build's start or the
+  // refresh found it so).
+  github?: { until: string } | null;
   // The refresh: when the next full one is due, the projects asked for
   // since (null: all), the one under way.
   refresh: { due: string; asked: number[] | null; soon: string | null; n: number; running: number | null };
@@ -44,15 +48,17 @@ export type LState = { name: Name; data: Data } | { name: typeof NONE; data: nul
 type Live = Extract<LState, { data: Data }>;
 
 const optInt = (v: unknown) => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : null);
+const optTime = (v: unknown) => (typeof v === 'string' && Number.isFinite(Date.parse(v)) ? new Date(v).toISOString() : null);
 
 const EVENTS = {
   // Look again: a request owed a look, a hold or a backoff ended.
   Look: () => ({}),
   // A request let its slot go (or took none): `ran` a look that ran (ends a
   // fault pause), `fault` the platform failed under it, `budget` the cap.
-  Released: (p: any) => ({ ran: !!p?.ran, fault: !!p?.fault, budget: !!p?.budget }),
-  // A project to refresh soon (null: every project).
-  RefreshAsked: (p: any) => ({ appId: optInt(p?.appId) }),
+  // `github`: GitHub's hourly budget resets then.
+  Released: (p: any) => ({ ran: !!p?.ran, fault: !!p?.fault, budget: !!p?.budget, github: optTime(p?.github) }),
+  // A project to refresh soon (null: every project); `now`: at once.
+  RefreshAsked: (p: any) => ({ appId: optInt(p?.appId), now: !!p?.now }),
   // Its clock: the refresh due, a pause over, a request now eligible.
   Tick: () => ({}),
 };
@@ -72,12 +78,13 @@ function decide(d0: Data, f: Facts, ctx: TransitionContext): Outcome<LState> {
   const work: WorkRequest[] = [];
   const messages: MessageRequest[] = [];
   if (d.budget && before(d.budget.until, ctx)) d = { ...d, budget: null };
+  if (d.github && before(d.github.until, ctx)) d = { ...d, github: null };
   // The refresh: the full one due, or a project asked for whose burst has
-  // settled, and none under way.
+  // settled, and none under way (nor GitHub's budget held).
   const r = d.refresh;
   const fullDue = before(r.due, ctx);
   const soonDue = r.soon && before(r.soon, ctx);
-  if (f.acting && r.running == null && (fullDue || soonDue)) {
+  if (f.acting && !d.github && r.running == null && (fullDue || soonDue)) {
     const n = r.n + 1;
     const apps = fullDue ? null : r.asked;
     work.push({ kind: WORK.refresh, key: `refresh:${n}`, input: { n, apps: apps as Json } });
@@ -86,7 +93,7 @@ function decide(d0: Data, f: Facts, ctx: TransitionContext): Outcome<LState> {
     d = { ...d, refresh: { due: fullDue ? at(ctx, REFRESH_EVERY_MS) : r.due, asked: [], soon: null, n, running: n } };
   }
   // Grants: none while the bot is off, paused on a fault or on its cap.
-  const paused = (d.fault && !before(d.fault.until, ctx)) || (d.budget && !before(d.budget.until, ctx));
+  const paused = (d.fault && !before(d.fault.until, ctx)) || (d.budget && !before(d.budget.until, ctx)) || !!d.github;
   if (f.acting && !paused) {
     const inUse: Slot[] = f.inUse.slice();
     let room = Math.max(0, f.settings.liveAtOnce - inUse.length);
@@ -111,7 +118,7 @@ function decide(d0: Data, f: Facts, ctx: TransitionContext): Outcome<LState> {
   // The clock: the earliest of the refresh, a project asked for, the end
   // of a pause, and the next request to become eligible.
   const times = [d.refresh.running == null ? d.refresh.due : null, d.refresh.running == null ? d.refresh.soon : null,
-    d.fault?.until ?? null, d.budget?.until ?? null, f.nextEligible]
+    d.fault?.until ?? null, d.budget?.until ?? null, d.github?.until ?? null, f.nextEligible]
     .filter((t): t is string => !!t).map((t) => Date.parse(t)).filter((t) => Number.isFinite(t) && t > ctx.now.getTime());
   const timer = times.length ? { at: new Date(Math.min(...times)), event: { type: 'Tick' } } : null;
   return step(d, { work, messages, timer });
@@ -130,6 +137,7 @@ function released(s: LState, e: Event<any>, f: Facts, ctx: TransitionContext): O
     d = { ...d, fault: null };
   }
   if (p.budget) d = { ...d, budget: { until: at(ctx, BUDGET_PAUSE_MS) } };
+  if (p.github) d = { ...d, github: { until: p.github } };
   return decide(d, f, ctx);
 }
 
@@ -141,8 +149,8 @@ function refreshAsked(s: LState, e: Event<any>, f: Facts, ctx: TransitionContext
   if (appId == null) return decide({ ...d, refresh: { ...r, due: at(ctx, REFRESH_SOON_MS) < r.due ? at(ctx, REFRESH_SOON_MS) : r.due } }, f, ctx);
   const asked = r.asked == null ? null : [...new Set([...r.asked, appId])].slice(0, 500);
   // Soon: once things have been quiet a while (a burst of messages is one
-  // refresh), and never later than the full one.
-  return decide({ ...d, refresh: { ...r, asked, soon: at(ctx, REFRESH_SOON_MS) } }, f, ctx);
+  // refresh), and never later than the full one; at once when asked so.
+  return decide({ ...d, refresh: { ...r, asked, soon: e.payload.now ? ctx.now.toISOString() : at(ctx, REFRESH_SOON_MS) } }, f, ctx);
 }
 
 function workDone(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<LState> {
@@ -151,6 +159,12 @@ function workDone(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Out
   if (p.kind === WORK.refresh && d.refresh.running != null && p.workKey === `refresh:${d.refresh.running}`) {
     // A refresh that failed for good is tried again at the next clock.
     d = { ...d, refresh: { ...d.refresh, running: null } };
+  }
+  // A refresh or sweep GitHub's budget held: nothing was read; a full
+  // refresh runs once the budget resets, and nothing is granted until then.
+  const held = e.type === 'WorkSucceeded' ? optTime((p.result as any)?.github) : null;
+  if (held && (p.kind === WORK.refresh || p.kind === WORK.sweep)) {
+    d = { ...d, github: { until: held }, refresh: { ...d.refresh, due: held } };
   }
   return decide(d, f, ctx);
 }

@@ -299,9 +299,11 @@ export async function botRequestMerged(db: Db, p: { appId: number; issueNumber: 
 }
 
 // The lane, asked to refresh a project soon (null: every project).
-export async function botRefresh(appId: number | null): Promise<void> {
+// `now`: at once, not once a burst of messages has settled (a first version
+// just filed, read as soon as it is: newcomer run nine).
+export async function botRefresh(appId: number | null, { now = false }: { now?: boolean } = {}): Promise<void> {
   if (!runtime) return;
-  await runtime.append(BOT_LANE, LANE_KEY, { type: 'RefreshAsked', payload: { appId } as any },
+  await runtime.append(BOT_LANE, LANE_KEY, { type: 'RefreshAsked', payload: { appId, now } as any },
     { requestKey: `refresh:${randomUUID()}`, source: BOT_SOURCE('refresh'), appId: appId ?? undefined });
 }
 

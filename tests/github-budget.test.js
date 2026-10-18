@@ -368,7 +368,7 @@ test('a worker that cannot start for the budget says so in words a person reads'
 // ─── 5. Who asks, and the admin read ────────────────────────────────────
 
 test('the timer-driven GitHub callers ask before they spend', () => {
-  const asks = /githubBudget\.(budgetAllows\('background'\)|backgroundHold\()|require\('\.\/github-budget'\)\.budgetAllows\('background'\)/;
+  const asks = /githubBudget\)?\.(budgetAllows\('background'\)|backgroundHold\()|require\('\.\/github-budget'\)\.budgetAllows\('background'\)/;
   for (const rel of [
     'src/services/main-drift-poller.js',
     'src/services/homeroom-bot.js',
@@ -388,28 +388,28 @@ test('the timer-driven GitHub callers ask before they spend', () => {
     'the boot\'s merged-by-hand lookup');
 });
 
-test('the Homeroom bot\'s pass waits for the reset, with the wait as its retry', async (t) => {
+// The bot's refresh, a look and a build's start read GitHub, and they are
+// background work: each waits for the reset, says when (its lane pauses its
+// grants and its refresh until then), and reads nothing meanwhile.
+test('the Homeroom bot\'s refresh, looks and builds wait for the reset, and say when', async (t) => {
   withEnv(t, 'GITHUB_BOT_TOKEN', 'test-token');
   const bot = require('../src/services/homeroom-bot');
-  bot._resetForTests();
   const queries = [];
   const pool = {
-    async connect() {
-      return { async query() { return { rows: [{ acquired: true }] }; }, release() {} };
-    },
     async query(sql) {
       queries.push(String(sql));
-      if (/SELECT key, value FROM platform_settings/.test(sql)) return { rows: [{ key: bot.KEY_MODE, value: 'shadow' }] };
+      if (/FROM platform_settings/.test(sql)) return { rows: [{ key: bot.KEY_MODE, value: 'live' }] };
       return { rows: [] };
     },
   };
   budget.record('pat', headers({ remaining: 20 }), { now: NOW });
-  const out = await bot.runOnce(pool, {}, { now: () => NOW, drain: false });
-  assert.equal(out.paused, 'github');
-  assert.equal(out.retryInMs, 30 * 60 * 1000);
-  assert.equal(out.dispatched, undefined, 'nothing was started');
-  assert.ok(!queries.some((q) => /homeroom_bot_queue q/.test(q) && /started_at IS NULL/.test(q)), 'no candidates were read');
-  bot._resetForTests();
+  const deps = { now: () => NOW };
+  const resetAt = new Date(NOW + 30 * 60 * 1000).toISOString();
+  assert.deepEqual(await bot.refresh({}, pool, { n: 1, deps }), { github: resetAt });
+  assert.deepEqual(await bot.sweep({}, pool, { deps }), { github: resetAt });
+  assert.deepEqual(await bot.lookAt({}, pool, { input: { appId: 9, issueNumber: 3, n: 1 }, steps: null, deps }), { outcome: 'github', until: resetAt });
+  assert.deepEqual(await bot.startBuild({}, pool, { appId: 9, issueNumber: 3, runId: 5, replyTo: null, deps }), { outcome: 'github', until: resetAt });
+  assert.ok(!queries.some((q) => /homeroom_bot_queue|homeroom_bot_runs|FROM apps/.test(q)), 'nothing was read past the settings');
 });
 
 test('GET /api/admin/github-budget is an admin-only read of the figures', async (t) => {

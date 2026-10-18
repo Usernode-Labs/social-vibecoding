@@ -74,8 +74,11 @@ test('no code outside the workflow machines writes a proposal\'s status: the sca
 test('the bot\'s build session keeps its slot between turns until the build ends (bug 22)', () => {
   const live = read('src/services/homeroom-bot-live.js');
   const turn = live.slice(live.indexOf("durableSteps.rethrowStop(err, 'build turn');"));
-  const fin = turn.slice(turn.indexOf('} finally {'), turn.indexOf('return { routed: turnRouted, stopped: turnStopped };'));
-  assert.match(fin, /activeWorkers\.delete\(session\.id\)/);
+  const fin = turn.slice(0, turn.indexOf('return { routed: turnRouted, stopped: turnStopped };'));
+  // The build's instance holds the session (workflow_owner, buildHoldSql),
+  // its turns and the time between them included; no process memory does.
+  assert.match(fin, /session-work\.ts buildHoldSql/);
+  assert.doesNotMatch(fin, /activeWorkers/);
   const code = fin.replace(/\/\/.*$/gm, '');
   assert.doesNotMatch(code, /status|pause|restSession/i, 'nothing gives its slot back after a turn');
 });

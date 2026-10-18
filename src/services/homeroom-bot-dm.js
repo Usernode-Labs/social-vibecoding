@@ -4879,7 +4879,7 @@ async function fileFirstVersion(pool, config, appId, deps = {}) {
     (deps.notifications || require('./notifications')).notifyIssueMentions?.(pool, {
       appId: row.app_id, issueNumber, authorId: row.user_id, text: `${title}\n\n${body}`,
     });
-    if (botBuilds) settingsModule().noteIssueActivity({ appId: row.app_id, issueNumber, reason: 'created' });
+    if (botBuilds) settingsModule().noteIssueActivity({ appId: row.app_id, issueNumber, reason: 'first_version' });
     log.info('homeroom-bot-dm', 'Filed a first version', { app: row.slug, issueNumber, userId: row.user_id, botBuilds });
     return { issueNumber };
   } catch (err) {

@@ -417,7 +417,7 @@ test('noteIssueActivity: a message or an edit is heard by the request\'s instanc
   assert.equal(bot.noteIssueActivity({ appId: 0, issueNumber: 12 }), false);
   const note = SRC.slice(SRC.indexOf('const INTERRUPTING_ACTIVITY'), SRC.indexOf('async function noteProposalActivity('));
   assert.match(note, /const INTERRUPTING_ACTIVITY = new Set\(\['thread', 'updated'\]\);/);
-  assert.match(note, /\? platform\(\)\.botActivityNow\(\{ appId: id, issueNumber: n, messageId \}\)\n\s+: platform\(\)\.botRefresh\(id\);/,
+  assert.match(note, /\? platform\(\)\.botActivityNow\(\{ appId: id, issueNumber: n, messageId \}\)\n\s+: platform\(\)\.botRefresh\(id, \{ now: String\(reason\) === 'first_version' \}\);/,
     'a person writing is Activity on the request (a read under way starts over); the rest refreshes its project');
 });
 

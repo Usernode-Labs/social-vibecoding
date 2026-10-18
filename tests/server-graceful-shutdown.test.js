@@ -310,14 +310,14 @@ test('a bot build under way does not hold the shutdown, and nothing is recorded 
   const { server, restore } = loadServer();
   const bot = require('../src/services/homeroom-bot');
   const buildRuns = require('../src/services/build-runs');
-  const realRun = bot.runShadowBuild;
+  const realRun = bot.runLiveBuild;
   let started = false;
   let release;
-  bot.runShadowBuild = () => { started = true; return new Promise((resolve) => { release = resolve; }); };
+  bot.runLiveBuild = () => { started = true; return new Promise((resolve) => { release = resolve; }); };
   // No workflow runtime here: the build runs in this process (started before
   // the shutdown, which an earlier test of this file began: a stopping process
   // starts none).
-  const build = buildRuns.start({ pool: null, config: {}, target: 'shadow', id: 78, deps: { inProcess: true } });
+  const build = buildRuns.start({ pool: null, config: {}, target: 'live', id: 78, deps: { inProcess: true } });
   let ended = false;
   build.then(() => { ended = true; }, () => { ended = true; });
   try {
@@ -339,9 +339,9 @@ test('a bot build under way does not hold the shutdown, and nothing is recorded 
       'nothing is recorded for it: no incident, no run written');
     assert.deepEqual(pool.events, ['end']);
   } finally {
-    release({ acted: 'shadow_built' });
+    release({ acted: 'built' });
     await build;
-    bot.runShadowBuild = realRun;
+    bot.runLiveBuild = realRun;
     restore();
   }
 });
@@ -730,28 +730,18 @@ test('preStop, the drain and the rest of cleanup fit inside the platform Pod\'s 
 
 // Last, though every cleanup() above has already set it: lifecycle's flag
 // cannot be unset. Once shutdown has begun nothing new starts on a process
-// whose pool is about to close, whether or not the bot's loops were stopped
-// (lifecycle is set first thing in cleanup()). A build already under way is
-// its work item's, which the next leader carries on.
-test('the gate: once shutdown has begun the bot dispatches nothing, its build lane starts nothing, and the bench lane starts no trial', async () => {
+// whose pool is about to close (lifecycle is set first thing in cleanup()).
+// The Homeroom bot's looks and builds are workflow work: the runtime stops
+// its loops as shutdown begins (the test above), and a build already under
+// way is its work item's, which the next leader carries on. A build asked
+// for in this process with no runtime starts nothing.
+test('the gate: once shutdown has begun no bot build starts here, and the bench lane starts no trial', async () => {
   const fs = require('node:fs');
   const path = require('node:path');
-  const bot = require('../src/services/homeroom-bot');
-  // Not stopped (cleanup's stop() is undone): the gate is shutdown's own.
-  bot._resetForTests();
+  const buildRuns = require('../src/services/build-runs');
   lifecycleModule.setShuttingDown();
-  const touched = [];
-  const pool = { query: async (sql) => { touched.push(sql); return { rows: [] }; } };
-  try {
-    const started = await bot.dispatch(pool, {}, { settings: { mode: 'live' }, bot: { id: 1 } });
-    assert.deepEqual(started, []);
-    const lane = await bot.drainBuilds(pool, {});
-    assert.equal(lane.paused, 'stopped');
-    assert.equal(lane.started, 0);
-    assert.deepEqual(touched, [], 'nothing is read or claimed');
-  } finally {
-    bot._resetForTests();
-  }
+  await assert.rejects(buildRuns.start({ pool: null, config: {}, target: 'live', id: 79 }), (err) => err.notStarted === true,
+    'a build asked for while the process stops is left for the next leader');
   const bench = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'bench', 'lane.js'), 'utf8');
   assert.match(bench, /function shuttingDown\(\) \{\n\s+try \{ return !!require\('\.\.\/lifecycle'\)\.isShuttingDown\(\); \} catch \{ return false; \}\n\}/);
   assert.match(bench, /if \(shuttingDown\(\)\) \{ out\.paused = 'stopped'; break; \}/, 'checked before each trial the lane would start');

@@ -123,8 +123,12 @@ test('"Reply here (or on the GitHub issue)" is true: a person\'s word on the req
   // A comment on the GitHub issue moves its updated time.
   const there = bot.classifyIssue({ issue: { ...issue, updatedAt: '2026-10-05T10:06:00.000Z' }, lastRun });
   assert.deepEqual([there.eligible, there.reason], [true, 'changed']);
-  // And a person's message there wakes the bot at once (ws.js), not on its next pass.
-  assert.match(read('src/services/ws.js'), /if \(thread && thread\.type === 'issue'\) noteIssueActivityForBot\(client\.appId, thread\.ref, 'thread'\);/);
+  // And a person's message there reaches the bot at once: its request's
+  // instance hears it in the statement that stores it (ws.js insertHeard),
+  // and a connector's post is heard after it, as what they said.
+  const ws = read('src/services/ws.js');
+  assert.match(ws, /require\('\.\.\/workflow\/platform\.ts'\)\.insertHeard\(db, insertSql, insertParams, \{ appId: client\.appId, thread: thread \|\| null \}\)/);
+  assert.match(ws, /if \(thread && thread\.type === 'issue' && !heard\) noteIssueActivityForBot\(client\.appId, thread\.ref, 'thread'\);/);
 });
 
 test('the push and the bell row for the DM say it stopped and how to start it again', async () => {

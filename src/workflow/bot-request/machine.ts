@@ -406,6 +406,9 @@ function lookEnded(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): O
       break;
     }
     case 'budget': back = lk.owed; lane = { budget: true }; break;
+    // GitHub's hourly budget nearly used up: owed as it was, and the lane
+    // grants nothing until it resets.
+    case 'github': back = lk.owed; lane = { github: optTime(r.until) }; break;
     case 'held': {
       back = { ...lk.owed, heldUntil: optTime(r.until) || later(ctx, 7 * 24 * 3600 * 1000).toISOString() };
       lane = {};
@@ -428,8 +431,8 @@ function lookEnded(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): O
   const runId = Number.isInteger(r.build) ? r.build as number : null;
   let next: Data = {
     ...d, look: null, slot: null, carried: null, owed: owedNext,
-    backoff: backoff ?? (outcome === 'budget' || outcome === 'held' ? d.backoff : null),
-    faults: outcome === 'fault' ? (d.faults || 0) + 1 : (outcome === 'budget' || outcome === 'held' ? d.faults || 0 : 0),
+    backoff: backoff ?? (['budget', 'held', 'github'].includes(outcome) ? d.backoff : null),
+    faults: outcome === 'fault' ? (d.faults || 0) + 1 : (['budget', 'held', 'github'].includes(outcome) ? d.faults || 0 : 0),
     lastRead: r.lastRead !== undefined ? (r.lastRead as Json) : d.lastRead,
     spentRetry: Number.isInteger(r.spentRetry) ? r.spentRetry : d.spentRetry,
     build: runId && (!d.build || d.build.phase === 'waiting') ? { runId, phase: 'waiting', since: iso(ctx), key: null } : d.build,
@@ -443,7 +446,7 @@ function lookEnded(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): O
       const fx = answerFix(next, String(r.fix.outcome), { why: r.fix.why ? String(r.fix.why) : null });
       next = fx.data;
       messages = [...messages, ...fx.messages];
-    } else if (!['busy', 'fault', 'budget', 'held'].includes(outcome) && next.owed?.reason !== CHECKS_REASON) {
+    } else if (!['busy', 'fault', 'budget', 'held', 'github'].includes(outcome) && next.owed?.reason !== CHECKS_REASON) {
       const fx = answerFix(next, 'lost');
       next = fx.data;
       messages = [...messages, ...fx.messages];
@@ -492,9 +495,11 @@ function buildStarted(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext)
     return step('building', { ...d, slot: null, build: { ...d.build, phase: 'waiting', heldUntil: until } },
       { timer: { at: new Date(until), event: { type: 'Due' } }, messages: [toLane('Released', {}, d.appId)] });
   }
-  if (r.outcome === 'fault' || r.outcome === 'budget' || r.outcome === 'not_started') {
+  if (r.outcome === 'fault' || r.outcome === 'budget' || r.outcome === 'github' || r.outcome === 'not_started') {
+    const lane: Record<string, Json> = r.outcome === 'budget' ? { budget: true } : r.outcome === 'fault' ? { fault: true }
+      : r.outcome === 'github' ? { github: optTime(r.until) } : {};
     return step('building', { ...d, slot: null, build: { ...d.build, phase: 'waiting' } },
-      { messages: [toLane('Released', r.outcome === 'budget' ? { budget: true } : r.outcome === 'fault' ? { fault: true } : {}, d.appId)] });
+      { messages: [toLane('Released', lane, d.appId)] });
   }
   return rest({ ...d, build: null, slot: null }, ctx, { messages: [toLane('Released', {}, d.appId)] });
 }
