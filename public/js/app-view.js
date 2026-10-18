@@ -8174,6 +8174,54 @@ const AppView = {
     } catch {}
     if (slug) AppView._saveFeedScroll(slug, 0);
   },
+  /**
+   * THE TAB BAND LEAVES A HISTORY RECORD (evan, 2026-10-18). A tab press on
+   * a project page is a reading position, not a route — the address stays
+   * put — so browser/device back used to leave the page entirely. This tags
+   * the entry the page stands on with the tab being left — ONCE: an entry
+   * already carrying one of ours keeps it, and one carrying the dismiss
+   * stack's marker keeps ITS claim, so a dialog's record is never re-tagged —
+   * and pushes a same-address record carrying the tab entered. The popstate
+   * that lands on a record is applied by App._applyWorkshopTabRecord through
+   * _landOnTab above, the same door routine a press runs. A frame never
+   * writes the top window's history (?panel=1) — the rule back-stack.ts
+   * keeps — and a history a sandbox will not let us write just behaves as it
+   * did before.
+   */
+  _pushWorkshopTabRecord(slug, from, to) {
+    if (typeof App !== 'undefined' && App.embeddedPanel) return;
+    try {
+      const cur = window.history.state;
+      const st = cur && typeof cur === 'object' ? cur : null;
+      if (!st || (st.__unWsTab === undefined && st.__unDismissDepth === undefined)) {
+        window.history.replaceState({ ...st, __unWsTab: from, __unWsSlug: slug || '' }, '');
+      }
+      window.history.pushState({ __unWsTab: to, __unWsSlug: slug || '' }, '');
+      // A record is a PUSH: _pinAppReturn tells origin from push count, so
+      // count ours with updateHash's.
+      if (typeof App !== 'undefined') App._historyPushes += 1;
+    } catch { /* private mode — back just keeps leaving the page */ }
+  },
+  /**
+   * THE PAGES' OWN WAY BACK SPENDS THEIR RECORD. All items' back chevron and
+   * the Needs-you closing button ask this first: when the page stands on one
+   * of this page's tab records it answers true and moves through
+   * history.back(), so the traversal lands on the entry beneath — the
+   * landing, tagged with the tab it was left on, or the record before it —
+   * and the listener applies it. With no record (a `?ws=` deep link or the
+   * retired board route landed straight on the page) it answers false and
+   * the caller presses, which records like any tap.
+   */
+  _spendWorkshopTabRecord(slug) {
+    if (typeof App !== 'undefined' && App.embeddedPanel) return false;
+    try {
+      const st = window.history.state;
+      if (!st || typeof st !== 'object') return false;
+      if (st.__unWsSlug !== (slug || '') || typeof st.__unWsTab !== 'string') return false;
+      window.history.back();
+      return true;
+    } catch { return false; }
+  },
   // Rows per lane per theme before "+N more · Open on Board".
   WORKSHOP_LANE_MAX: 8,
   // Cards in the "Needs your vote" strip; the rest are a count.

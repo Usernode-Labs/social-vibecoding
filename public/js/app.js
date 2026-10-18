@@ -3741,6 +3741,9 @@ const App = {
     App._currentRoute = location.hash || '';
     window.addEventListener('popstate', () => App._routeFromHash());
     window.addEventListener('hashchange', () => App._routeFromHash());
+    // The project page's tab records, applied AFTER the router's own listener
+    // has settled currentApp and the sub-tab for the address that landed.
+    window.addEventListener('popstate', () => App._applyWorkshopTabRecord());
   },
 
   // What popstate / hashchange run: the router, then the fragment-scoped
@@ -3760,6 +3763,36 @@ const App = {
     }
     App.restoreFromHash();
     App._applyRouteShots();
+  },
+
+  // ── The project page's tab band, in history ──────────────────────────
+  //
+  // A tab press on a project page (Hub, Discussion, Needs you, Workshop, All
+  // items) is a reading position, not a route — the address stays
+  // `/app/<slug>/workshop` — so browser/device back used to leave the page
+  // entirely (evan, 2026-10-18). AppView._pushWorkshopTabRecord tags the
+  // standing entry with the tab it was left on and pushes a same-address
+  // record carrying the tab entered; this applies the record a traversal
+  // lands on, through _landOnTab — the door routine a press runs. Registered
+  // after the router's own listener, so currentApp and the sub-tab are
+  // already settled, and the router itself short-circuits at an unchanged
+  // address: nothing on the page re-renders, only the strip moves.
+  _applyWorkshopTabRecord() {
+    const state = window.history.state;
+    if (!state || typeof state !== 'object') return;
+    const tab = state.__unWsTab;
+    const slug = state.__unWsSlug;
+    if (typeof tab !== 'string' || typeof slug !== 'string' || !slug) return;
+    // The embedded side panel shares the top window's history, so its page
+    // records nothing to unwind (the same rule back-stack.ts keeps).
+    if (App.embeddedPanel) return;
+    // Only the page the record was written for, on the one view whose band
+    // exists (the project page under its coloured header).
+    if (App.currentApp !== slug) return;
+    if (App.currentTab !== 'dev' || App.currentSubTab !== 'forum') return;
+    if (typeof AppView === 'undefined' || !AppView.WORKSHOP_TABS
+        || AppView.WORKSHOP_TABS.indexOf(tab) === -1 || !AppView._landOnTab) return;
+    AppView._landOnTab(slug, tab);
   },
 
   // Clean app URLs live in the pathname while the rest of the platform keeps

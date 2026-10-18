@@ -4001,9 +4001,10 @@ test('the ⋯ asks to be wired when it mounts, because the module wires it befor
   // door back to the hub mounts it from React state, while the module side
   // of the press only persists the choice — nothing re-runs the wiring.
   assert.match(WORKSHOP, /onMore=\{\(\) => openTab\('workshop'\)\}/);
-  assert.match(WORKSHOP, /onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
+  assert.match(WORKSHOP, /onBack=\{\(\) => backOutOfPage\(pageParent\(tab\)\)\}/);
   // Every tab turns the page, Homeroom's Discussion (#general) included (#3494).
-  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
+  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{[\s\S]*?setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
+  assert.match(WORKSHOP, /if \(next !== tab\) callAppView\('_pushWorkshopTabRecord', v\.slug, tab, next\);/, 'a press records; the lit tab does not');
   const setTab = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _setWorkshopTab(key) {'));
   const setTabBody = setTab.slice(0, setTab.indexOf('\n  },'));
   assert.match(setTabBody, /localStorage\.setItem\(AppView\.WORKSHOP_TAB_KEY, next\)/);
@@ -4745,9 +4746,10 @@ test('the project page opens on the page you last used', () => {
   // The view model publishes the RESOLVED tab, not the raw parameter.
   assert.match(APP_VIEW_SRC, /tab: AppView\._workshopTab\(\),/);
   assert.match(WORKSHOP, /onOpen=\{\(\) => openTab\('needs'\)\}/);
-  assert.match(WORKSHOP, /onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
+  assert.match(WORKSHOP, /onBack=\{\(\) => backOutOfPage\(pageParent\(tab\)\)\}/);
   // Every tab turns the page, Homeroom's Discussion (#general) included (#3494).
-  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
+  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{[\s\S]*?setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
+  assert.match(WORKSHOP, /if \(next !== tab\) callAppView\('_pushWorkshopTabRecord', v\.slug, tab, next\);/, 'a press records; the lit tab does not');
 });
 
 test('a category card is raised off the pane it sits on', () => {

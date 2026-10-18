@@ -3428,10 +3428,28 @@ export function DevWorkshop(): ReactNode {
   // another screen) laid it over the new one: the hub again, scrolled under
   // its own strip. A zero is how that memory is told the page is at its top.
   const openTab = (next: TabKey) => {
+    // A PRESS LEAVES A HISTORY RECORD (evan, 2026-10-18). The tabs are a
+    // reading position, not routes, so back used to leave the page instead of
+    // undoing the switch. AppView._pushWorkshopTabRecord tags the entry the
+    // page stands on with the tab being left and pushes a same-address
+    // record carrying the tab entered; App._applyWorkshopTabRecord applies a
+    // record a traversal lands on through _landOnTab, the door routine. The
+    // lit tab records nothing: it only scrolls to its head, as it always did.
+    if (next !== tab) callAppView('_pushWorkshopTabRecord', v.slug, tab, next);
     setTab(next);
     callAppView('_setWorkshopTab', next);
     callAppView('_saveFeedScroll', v.slug, 0);
     scrollToHead(hostRef.current);
+  };
+  // THE PAGES' OWN WAY BACK SPENDS THEIR RECORD. All items' chevron and the
+  // Needs-you closing button return through the history step their page came
+  // in on when one of its records is under it (AppView answers true and lets
+  // history move), so back never undoes the chevron a second time; with no
+  // record — a `?ws=` deep link or the retired board route landed straight
+  // on the page — they press, which records like any tap.
+  const backOutOfPage = (parent: TabKey) => {
+    if (callAppView('_spendWorkshopTabRecord', v.slug)) return;
+    openTab(parent);
   };
   // ...AND AGAIN WHEN THE PUBLISH LANDS, which is what the seed alone could
   // not do. The seed runs against whatever the store holds AT MOUNT, and that
@@ -3655,7 +3673,7 @@ export function DevWorkshop(): ReactNode {
         <PageBack
           label="Workshop"
           title={pageTitle(tab)}
-          onBack={() => openTab(pageParent(tab))}
+          onBack={() => backOutOfPage(pageParent(tab))}
         />
       </div>
     </div>
@@ -4062,7 +4080,7 @@ export function DevWorkshop(): ReactNode {
           models={v.models}
           slug={slug}
           canPost={canPost}
-          onDone={() => openTab('status')}
+          onDone={() => backOutOfPage('status')}
         />
       ) : null}
       {/* WHENEVER THE TAB IS UP, not only while there is a theme to draw. This
