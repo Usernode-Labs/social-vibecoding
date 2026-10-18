@@ -34,7 +34,7 @@
 # Optional env:
 #   MODE                       build (default) | scout | sync
 #   WORKER_JWT                 required for build/sync; absent for scout
-#   MODEL                      default: claude-sonnet-5
+#   MODEL                      default: claude-sonnet-5-5
 #   COMMIT_MSG                 default: "Changes via Homeroom"
 #   CLAUDE_RESUME_SESSION_ID   if set, passes `--resume <id>` to claude
 #   AGENT_PROVIDER             anthropic (default) | openrouter (#3296). With
@@ -86,7 +86,7 @@ fi
 : "${MODE:=build}"
 : "${BRANCH:=}"
 : "${WORKER_JWT:=}"
-: "${MODEL:=claude-sonnet-5}"
+: "${MODEL:=claude-sonnet-5-5}"
 : "${COMMIT_MSG:=Changes via Homeroom}"
 : "${PAT:=}"
 : "${CLAUDE_RESUME_SESSION_ID:=}"

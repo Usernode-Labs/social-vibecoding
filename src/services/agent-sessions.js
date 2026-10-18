@@ -20,6 +20,7 @@
 
 const log = require('./logger');
 const appAccess = require('./app-access');
+const models = require('./models');
 
 const TITLE_MAX = 256;
 const LIST_LIMIT_MAX = 50;
@@ -145,6 +146,25 @@ function shapeChangeRow(row) {
   };
 }
 
+// The composer's model choice as a saved row names it, with a retired id
+// (#3579) shown and run as its successor: a conversation saved on Sonnet 5
+// reads back as Sonnet 5.5, the model it actually runs on, rather than a
+// name the picker no longer offers. The stored row keeps the id it was
+// written with until the owner picks again. Null when the conversation
+// follows the user's default.
+function choiceFromRow(row) {
+  if (!row || !row.agent_backend) return null;
+  let model = row.agent_model || null;
+  if (row.agent_backend === 'claude_code' && model && models.RETIRED_MODELS[model]) {
+    model = models.RETIRED_MODELS[model];
+  }
+  return {
+    backend: row.agent_backend,
+    model,
+    reasoningEffort: row.agent_reasoning_effort || null,
+  };
+}
+
 function shapeSession(row) {
   return {
     id: row.id,
@@ -165,13 +185,7 @@ function shapeSession(row) {
       : null,
     focusContext: row.focus_context || {},
     // The composer's model choice; null follows the user's default.
-    agent: row.agent_backend
-      ? {
-        backend: row.agent_backend,
-        model: row.agent_model || null,
-        reasoningEffort: row.agent_reasoning_effort || null,
-      }
-      : null,
+    agent: choiceFromRow(row),
     activeChange: shapeChangeRow(row),
     // A lease its turn stopped renewing is not work in progress: the
     // process holding it died, and the next message takes it over.
@@ -331,13 +345,7 @@ async function getAgentChoice(pool, agentSessionId) {
        FROM agent_sessions WHERE id = $1`,
     [sessionId]
   );
-  const row = rows[0];
-  if (!row || !row.agent_backend) return null;
-  return {
-    backend: row.agent_backend,
-    model: row.agent_model || null,
-    reasoningEffort: row.agent_reasoning_effort || null,
-  };
+  return choiceFromRow(rows[0]);
 }
 
 async function renameAgentSession(pool, { userId, id, title }) {
@@ -1046,6 +1054,7 @@ module.exports = {
   parseHint,
   resolveHint,
   shapeSession,
+  choiceFromRow,
   previewDraft,
   createAgentSession,
   setAgentChoice,
