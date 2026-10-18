@@ -36,17 +36,22 @@ function loadVisuals({ githubEnabled = true } = {}) {
     logger: require.resolve('../src/services/logger'),
     github: require.resolve('../src/services/github'),
     resolver: require.resolve('../src/services/conflict-resolver'),
+    bot: require.resolve('../src/services/homeroom-bot'),
     subject: require.resolve('../src/services/visuals'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
   const drainCalls = [];
+  const botCalls = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.github, { isEnabled: () => githubEnabled });
   stub(ids.resolver, {
     checkAndResolveConflicts: async (_config, trigger) => { drainCalls.push(trigger); },
+  });
+  stub(ids.bot, {
+    noteProposalChecks: async (pool, session) => { botCalls.push({ pool, session }); return true; },
   });
 
   delete require.cache[ids.subject];
@@ -56,7 +61,7 @@ function loadVisuals({ githubEnabled = true } = {}) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, drainCalls, restore };
+  return { subject, drainCalls, botCalls, restore };
 }
 
 // A pool that returns the given chat_sessions row for the status/app_id
@@ -157,4 +162,39 @@ test('passing verdict is a no-op when GitHub is disabled (staging / standalone)'
   } finally {
     restore();
   }
+});
+
+// ── Failing checks reach the Homeroom bot (#3624) ────────────────────────
+
+test('a failing verdict is handed to the bot, beside the auto-merge trigger', async () => {
+  const { subject, botCalls, restore } = loadVisuals();
+  const pool = poolReturning(null);
+  try {
+    subject.noteBotChecksAfterChecks(pool, session, 'failing');
+    await flush();
+    assert.equal(botCalls.length, 1, 'the bot gets the verdict');
+    assert.equal(botCalls[0].session, session);
+
+    for (const state of ['passing', 'skipped', 'pending', 'error', 'unknown']) {
+      subject.noteBotChecksAfterChecks(pool, session, state);
+    }
+    await flush();
+    assert.equal(botCalls.length, 1, 'only a failing verdict is acted on: an error means the checks did not run');
+  } finally {
+    restore();
+  }
+});
+
+test('the hook sits beside maybeAutoMergeAfterChecks at all three verdict sites', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  const visuals = read('src/services/visuals.js');
+  assert.match(visuals, /maybeAutoMergeAfterChecks\(config, getPool\(config\), session, completed\.state\);\n\s+noteBotChecksAfterChecks\(getPool\(config\), session, completed\.state\);/,
+    'the lifecycle wrapper');
+  assert.match(visuals, /maybeAutoMergeAfterChecks\(config, pool, session, checksResult\.state\);\n\s+noteBotChecksAfterChecks\(pool, session, checksResult\.state\);/,
+    'the live capture');
+  const harvest = read('src/services/check-harvest.js');
+  assert.match(harvest, /visuals\.maybeAutoMergeAfterChecks\(config, pool, session, settled\.result\.state\);\n\s+visuals\.noteBotChecksAfterChecks\(pool, session, settled\.result\.state\);/,
+    'the adopted run');
 });

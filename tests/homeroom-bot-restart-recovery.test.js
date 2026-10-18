@@ -363,7 +363,11 @@ test('a live spec turn sends the issue back to be triaged, and a BLOCKED one say
   const [requeue] = requeues(pool);
   assert.ok(requeue, 'back in the queue: its row was gone with the pass');
   assert.deepEqual(requeue.params, [5, 12, 'restart']);
-  assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'nothing said: the fresh triage speaks');
+  const lost = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_lost');
+  assert.ok(lost, 'an interrupted spec turn is said as a lost build, not left looking like one still running');
+  assert.match(lost[2], /was lost when the platform restarted/);
+  assert.deepEqual(liveOutcome(pool).slice(0, 3),
+    [950, false, 'the platform restarted while it was writing the spec'], 'and recorded on its run');
 
   stubLive();
   journalTail = async () => ({ lastResultText: 'BLOCKED: the app keeps no scores to rank.', exitCode: 0 });
@@ -385,10 +389,14 @@ test('a live build whose worker did not survive sends the issue back to be triag
   await adopt(pool, session, 'exited');
   assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']]);
   assert.equal(liveCalls.some((c) => c[0] === 'promote'), false);
+  const lost = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_lost');
+  assert.ok(lost, 'the lost build is said');
+  assert.deepEqual(liveOutcome(pool).slice(0, 3),
+    [950, false, 'the platform restarted while it was building'], 'and recorded on its run');
 });
 
 test('an issue a restart sent back is not told "looking" a second time', () => {
   const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot'), 'utf8');
   assert.equal(bot.RESTART_REASON, 'restart');
-  assert.match(src, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON \? null : await live\.post\(\{\n\s+pool, github, ws: liveD\.ws, app, repo, issueNumber,\n\s+kind: 'looking'/);
+  assert.match(src, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON\s+\|\| item\.reason === CHECKS_FAILING_REASON \? null : await live\.post\(\{\n\s+pool, github, ws: liveD\.ws, app, repo, issueNumber,\n\s+kind: 'looking'/);
 });

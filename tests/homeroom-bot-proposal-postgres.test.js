@@ -200,3 +200,114 @@ test('a bot proposal is named by its spec and led by its own description', { tim
     assert.match(votes, /`SELECT content FROM chat_session_messages\n\s+WHERE session_id = \$1 AND role = 'user'\n\s+ORDER BY id DESC LIMIT 1`/);
   });
 });
+
+// #3624: failing checks. The new read runs against the full schema, so the
+// join that keeps it to the bot's own open proposal and the one-look-per-head
+// flag are the database's rule, not a stub's. runTriage's insert is executed
+// too, so the new checks_head_sha column is written (NULL) by the real SQL.
+test('a failing verdict queues exactly one checks fix per head, against the real schema', { timeout: 180000 }, async (t) => {
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check');
+    return;
+  }
+  const name = `hbot_checks_${crypto.randomBytes(6).toString('hex')}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN); url.pathname = `/${name}`;
+  const pool = new Pool({ connectionString: String(url), max: 4 });
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP DATABASE ${name}`);
+    await admin.end();
+  });
+  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+
+  const bot = require('../src/services/homeroom-bot');
+  const { rows: [botUser] } = await pool.query(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE) RETURNING id`,
+  );
+  const { rows: [person] } = await pool.query(
+    `INSERT INTO users (username, password) VALUES ('pat', 'x') RETURNING id`,
+  );
+  const { rows: [app] } = await pool.query(
+    `INSERT INTO apps (name, slug, status, repo_url) VALUES ('Todo', 'todo', 'running', 'https://github.com/usernode-bot/todo') RETURNING id`,
+  );
+  const head = 'a'.repeat(40);
+  const fail = JSON.stringify([{ name: 'Home', path: '/', status: 'fail', failureReason: 'expected Text size' }]);
+  const proposal = async (userId) => (await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, reviewed_head_sha,
+                                check_state, checks_commit_sha, test_results)
+     VALUES ($1, $2, 'dev/x', 'promoted', $3, 'failing', $3, $4::jsonb) RETURNING id`,
+    [app.id, userId, head, fail],
+  )).rows[0].id;
+  const sessionId = await proposal(botUser.id);
+  const personSessionId = await proposal(person.id);
+  const run = async (proposalSessionId) => pool.query(
+    `INSERT INTO homeroom_bot_runs
+       (app_id, issue_number, mode, verdict, build_session_id, proposal_session_id, checks_head_sha)
+     VALUES ($1, 24, 'live', 'ready', $2, $2, $3)`,
+    [app.id, proposalSessionId, null],
+  );
+  await run(sessionId);
+  await run(personSessionId);
+
+  const settings = { mode: 'shadow', liveApps: ['todo'] };
+  assert.equal(await bot.noteProposalChecks(pool, { id: sessionId }, { settings }), true);
+  let { rows: queued } = await pool.query(
+    `SELECT issue_number, priority, reason FROM homeroom_bot_queue WHERE app_id = $1`, [app.id],
+  );
+  assert.deepEqual(queued.map((r) => [r.issue_number, r.priority, r.reason]), [[24, 1, 'checks_failing']]);
+  assert.equal(await bot.noteProposalChecks(pool, { id: personSessionId }, { settings }), false,
+    'a person\'s proposal has no live run of the bot\'s and is never queued');
+
+  // A run that looked at this head closes it: one look per head.
+  await pool.query('DELETE FROM homeroom_bot_queue');
+  await pool.query(
+    `INSERT INTO homeroom_bot_runs
+       (app_id, issue_number, mode, verdict, proposal_session_id, checks_head_sha)
+     VALUES ($1, 24, 'live', 'revise', $2, $3)`,
+    [app.id, sessionId, head],
+  );
+  assert.equal(await bot.noteProposalChecks(pool, { id: sessionId }, { settings }), false);
+  ({ rows: queued } = await pool.query('SELECT reason FROM homeroom_bot_queue'));
+  assert.deepEqual(queued, []);
+
+  // The column the fix writes, through the real insert: a triage run has no head.
+  await pool.query(
+    `UPDATE chat_sessions SET check_state = NULL, checks_commit_sha = NULL WHERE id = $1`, [sessionId],
+  );
+  const deps = {
+    github: {
+      isEnabled: () => true, getBotUsername: async () => 'usernode-bot',
+      async fetchPublicIssue() { return { issue: { number: 3233, title: 't', body: 'b', state: 'open' } }; },
+      async fetchIssueComments() { return { comments: [] }; },
+    },
+    worker: {
+      async ensureWorkerImage() {}, async ensureWorker() { return 'w'; },
+      async execInWorker() { return { lastResultText: '{"verdict":"person","reason":"Taste."}' }; },
+      isInFlight: () => false, async clearActiveTurn() {},
+    },
+    agentTurn: { async resolveCodexRuntimeContext() { return {}; } },
+    limits: { async checkBudget() { return { ok: true }; }, async recordSpend() {} },
+    threadContext: { async loadIssueThread() { return { messages: [] }; } },
+    managedOpenRouter: { async usesIncludedKey() { return false; } },
+    sessions: {
+      buildHeadlessSeed: () => 'seed',
+      async runCodexAttemptLoop({ dispatchOnce }) { return { result: await dispatchOnce({}), estimatedCostUsd: 0 }; },
+    },
+    activeWorkers: new Set(),
+  };
+  const out = await bot.runTriage(pool, {}, {
+    bot: { id: botUser.id, username: 'homeroom_bot' },
+    app: { id: app.id, slug: 'todo', repo_url: 'https://github.com/usernode-bot/todo' },
+    item: { id: 1, issue_number: 3233, priority: 1, reason: 'new' },
+    mode: 'shadow', deps, settings: { mode: 'shadow', liveApps: [], turnSeconds: 60 },
+  });
+  assert.equal(out.verdict, 'person');
+  const { rows: [triaged] } = await pool.query(
+    `SELECT checks_head_sha FROM homeroom_bot_runs WHERE issue_number = 3233`, [],
+  );
+  assert.equal(triaged.checks_head_sha, null, 'a triage run did not look at a checks head');
+});

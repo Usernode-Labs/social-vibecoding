@@ -203,7 +203,7 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
     const twice = await run(notes, 31, { queuedAgo: 5000, buildAgo: 4000, attempts: 2 });
     const fresh = await run(paused, 32, { queuedAgo: 60, buildAgo: 30, attempts: 1 });
     // Past one turn and the margin (660s), but inside the longest a build
-    // can take: a platform build's doubled spec and turn (#3396), 1920s.
+    // can take: a platform build's three-times spec and turn (#3396), 2580s.
     const platformLong = await run(paused, 33, { queuedAgo: 2000, buildAgo: 1500, attempts: 1 });
     // Long past any bound, but its worker outlived a restart and recovery
     // still owns the turn (#3401): the session carries it in flight.
@@ -231,7 +231,7 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
     assert.equal(r2.build_ok, false);
     assert.equal(r2.build_error, 'interrupted: the build never finished');
     assert.notEqual((await row(fresh)).build_at, null, 'one inside its time is left alone');
-    assert.notEqual((await row(platformLong)).build_at, null, 'a platform build on its doubled clocks is left alone');
+    assert.notEqual((await row(platformLong)).build_at, null, 'a platform build on its three-times clocks is left alone');
     assert.notEqual((await row(recovering)).build_at, null, 'a build restart recovery is finishing is left to it');
     await setting(bot.KEY_BUILD_CONCURRENCY, '2');
     await setting('homeroom_bot_turn_seconds', '1200');

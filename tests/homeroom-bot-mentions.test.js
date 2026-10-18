@@ -154,7 +154,7 @@ test('triage records the ask before the verdict is posted, so that very post lea
   const src = read('src/services/homeroom-bot.js');
   const tri = src.slice(src.indexOf('await supersedeQueuedBuilds(pool, { appId: app.id, issueNumber, runId })'), src.indexOf("log.info('homeroom-bot', 'Triaged', {"));
   assert.match(tri, /live\.applyMentionAsks\(/, 'recorded before actOnVerdict runs, in the same run');
-  const fu = src.slice(src.indexOf('const parsed = followup.parseFollowUp(result.lastResultText);'), src.indexOf('const moved = followup.headMoved({'));
+  const fu = src.slice(src.indexOf('const parsed = followup.parseFollowUp(result.lastResultText);'), src.indexOf('if (!parsed && !moved)'));
   assert.match(fu, /live\.applyMentionAsks\(\{\n\s+pool, github, app, repo, issueNumber, stop: parsed\.stopMentioning, resume: parsed\.resumeMentioning,\n\s+proposalSessionId: session\.id,/,
     'a follow-up reads it too, from the proposal\'s thread as well');
   assert.match(src, /mentions: live\.tagsPoster\(kind\) \? targets : \[\], notifications: deps\.notifications \|\| null,/,

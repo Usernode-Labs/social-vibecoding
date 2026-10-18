@@ -141,6 +141,13 @@ function buildFailedText(reason) {
     + 'A person could pick it up from here.';
 }
 
+// A build a platform restart lost (#3471). Without this the request looked
+// like a build still running, and nobody was told.
+function buildLostText() {
+  return 'Homeroom bot\'s build of this request was lost when the platform restarted. '
+    + 'It is looking at the request again and will reply here when it has something to say.';
+}
+
 // #3152: a verdict a live cap held. One line, so the person who filed the
 // issue is not left with silence, and a promise the refresh keeps: a held
 // issue is queued again as soon as the cap that held it has room.
@@ -563,6 +570,46 @@ async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec
   });
 }
 
+/**
+ * One message from the bot in a proposal's own Chat, and nothing on the
+ * issue: for news the proposal's discussion is the place for (its failing
+ * checks were fixed). Recorded in homeroom_bot_posts like any other post.
+ * `issueNumber` is the request the proposal was built from.
+ */
+async function postOnProposal({
+  pool, ws, app, bot, sessionId, issueNumber, kind, text, runId = null, metadata = null,
+}) {
+  if (!sessionId || !text) return null;
+  const { rows } = await pool.query(
+    `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
+     VALUES ($1, $2, $3, $4) RETURNING id`,
+    [app.id, issueNumber, runId, kind],
+  ).catch((err) => {
+    log.warn('homeroom-bot', 'Could not record a proposal-only post', { app: app.slug, kind, err: err.message });
+    return { rows: [] };
+  });
+  const postId = rows[0]?.id || null;
+  let message = null;
+  try {
+    message = await ws.sendBotMessage(pool, app.id, {
+      user: bot, content: text, metadata,
+      thread: { type: 'session', ref: Number(sessionId) },
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Proposal-only post failed', { app: app.slug, kind, err: err.message });
+  }
+  if (postId) {
+    await pool.query(
+      'UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1',
+      [postId, message?.id ?? null],
+    ).catch(() => {});
+  }
+  log.info('homeroom-bot', 'Posted on a proposal', {
+    app: app.slug, sessionId: Number(sessionId), kind, message: !!message,
+  });
+  return { postId, messageId: message?.id ?? null, thread: !!message };
+}
+
 // ── Who filed the issue ──────────────────────────────────────────────────
 //
 // An issue filed from Homeroom is authored on GitHub by the platform's bot
@@ -582,7 +629,7 @@ async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec
 // notice, before anything is known) and not a held note (nothing for them
 // to do; the bot comes back on its own).
 const TAGGING_KINDS = new Set([
-  'question', 'person', 'empty', 'proposal', 'build_failed', 'blocked', 'spec',
+  'question', 'person', 'empty', 'proposal', 'build_failed', 'build_lost', 'blocked', 'spec',
   'followup_answer', 'followup_ask', 'followup_revise', 'followup_person', 'followup_failed',
 ]);
 
@@ -1472,6 +1519,7 @@ module.exports = {
   emptyText,
   proposalText,
   buildFailedText,
+  buildLostText,
   heldText,
   heldKind,
   lastPostKind,
@@ -1507,6 +1555,7 @@ module.exports = {
   blockedText,
   shareSpecVersion,
   postSpecOnProposal,
+  postOnProposal,
   SPEC_TURN_MAX_MS,
   readSpec,
   MAX_SPEC_COMMENT_CHARS,

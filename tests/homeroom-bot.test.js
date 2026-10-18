@@ -424,7 +424,7 @@ test('a budget stop records WHICH limit tripped, in a column of its own', async 
   const harness = triageHarness({ verdictText: 'x', sessionId: 856 });
   await runToWallClock(t, harness);
   const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.match(insert.s, /budget_stop, proposal_session_id\)/, 'the insert names the column');
+  assert.match(insert.s, /budget_stop, proposal_session_id,/, 'the insert names the column');
   assert.ok(insert.params.includes('wall clock'),
     'the limit is stored as data, not left to be grepped out of the error text');
   assert.ok(insert.params.includes('budget: wall clock'), 'and the error line still reads the same');
@@ -1052,7 +1052,7 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
   const out = await bot.refreshApp(pool, { id: 9, slug: 'todo', repo_url: 'https://github.com/usernode-bot/todo' }, { github });
   assert.equal(out.queued, 2);
   assert.deepEqual(inserts.map((p) => [p[1], p[2], p[3]]), [[1, 1, 'new'], [5, 2, 'changed']]);
-  assert.deepEqual(deleted, [9, [1, 5]], 'everything else queued for this app is dropped');
+  assert.deepEqual(deleted, [9, [1, 5], 'checks_failing'], 'everything else queued for this app is dropped, but a checks fix is kept');
   assert.equal(out.removed, 2);
 });
 
@@ -1143,7 +1143,7 @@ test('refreshApp treats a degraded GitHub read as "no answer", not "no issues"',
 // ── What makes shadow mode shadow (source pins) ─────────────────────────
 
 test('the triage turn is a read-only scout: no build mode, no push, no posting, no claims', () => {
-  const dispatch = SRC.slice(SRC.indexOf('async function runTriage'), SRC.indexOf('// ── The work loop'));
+  const dispatch = SRC.slice(SRC.indexOf('async function runTriage'), SRC.indexOf('async function runFollowUp'));
   assert.match(dispatch, /mode: 'scout'/, 'the ledger loop runs in scout mode');
   // The container exec carries the token half of the budget between the
   // mode and the prompt now (#2737), and #2870's note on where that limit
@@ -1464,4 +1464,69 @@ test('runTriage on an app not in the live list stays silent', async () => {
   assert.ok(!calls.queries.some((q) => /homeroom_bot_posts/.test(q.s)));
   const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
   assert.equal(insert.params[3], 'shadow');
+});
+
+// ── Failing checks queue a fix (#3624) ───────────────────────────────────
+
+const CHECKS_HEAD = 'a'.repeat(40);
+
+function checksPool(row) {
+  const queries = [];
+  return {
+    queries,
+    async query(sql, params = []) {
+      const s = String(sql);
+      queries.push({ s, params });
+      if (/FROM chat_sessions cs\s+JOIN users u/.test(s)) return { rows: row ? [row] : [] };
+      return { rows: [] };
+    },
+  };
+}
+
+const checksRow = (extra = {}) => ({
+  id: 5001, app_id: 9, status: 'promoted', branch_name: 'dev/homeroom_bot-5001',
+  reviewed_head_sha: CHECKS_HEAD, check_state: 'failing', checks_commit_sha: CHECKS_HEAD,
+  test_results: [{ name: 'Home', path: '/', status: 'fail', failureReason: 'expected Text size' }],
+  app_slug: APP.slug, issue_number: 12, checks_looked: false, ...extra,
+});
+
+test('noteProposalChecks queues the issue with checks_failing when a fix is due on a live app', async () => {
+  const pool = checksPool(checksRow());
+  const queued = await bot.noteProposalChecks(pool, { id: 5001 }, {
+    settings: { mode: 'shadow', liveApps: [APP.slug] },
+  });
+  assert.equal(queued, true);
+  const insert = pool.queries.find((q) => /INSERT INTO homeroom_bot_queue/.test(q.s));
+  assert.deepEqual(insert.params, [9, 12, 'checks_failing'], 'priority 1, the fix reason');
+  assert.match(insert.s, /priority = LEAST\(homeroom_bot_queue\.priority, 1\)/);
+  const read = pool.queries.find((q) => /FROM chat_sessions cs\s+JOIN users u/.test(q.s));
+  assert.match(read.s, /u\.username = \$2 AND u\.is_synthetic/, 'only the bot\'s own proposal');
+  assert.match(read.s, /cs\.status = 'promoted'/, 'and only while it is open');
+  assert.match(read.s, /x\.checks_head_sha = cs\.checks_commit_sha\s*\) AS checks_looked/, 'the one-look-per-head flag');
+  assert.match(read.s, /build_session_id = cs\.id/, 'the issue from the run that built the proposal');
+});
+
+test('noteProposalChecks does nothing for a person\'s proposal, a shadow app, or a head already looked at', async () => {
+  const settings = { mode: 'shadow', liveApps: [APP.slug] };
+  const none = checksPool(null);
+  assert.equal(await bot.noteProposalChecks(none, { id: 6000 }, { settings }), false,
+    'the read joins the bot\'s own username, so a person\'s proposal comes back empty');
+
+  const shadow = checksPool(checksRow());
+  assert.equal(await bot.noteProposalChecks(shadow, { id: 5001 }, { settings: { mode: 'shadow', liveApps: [] } }), false,
+    'shadow apps never have bot proposals');
+  assert.equal(shadow.queries.some((q) => /INSERT INTO homeroom_bot_queue/.test(q.s)), false);
+
+  for (const extra of [{ check_state: 'passing' }, { check_state: 'error' }, { checks_looked: true },
+    { reviewed_head_sha: 'b'.repeat(40) }, { test_results: [{ name: 'x', status: 'fail', advisory: true }] }]) {
+    const pool = checksPool(checksRow(extra));
+    assert.equal(await bot.noteProposalChecks(pool, { id: 5001 }, { settings }), false,
+      `not queued for ${JSON.stringify(extra)}`);
+  }
+});
+
+test('the schema records the head a checks fix looked at, nullable for rows that did not look', () => {
+  const schema = read('src/db/schema.sql');
+  assert.match(schema, /ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha TEXT;/);
+  assert.match(SRC, /run\.checksHeadSha \|\| null/, 'written by a run that looked, and only that run');
 });

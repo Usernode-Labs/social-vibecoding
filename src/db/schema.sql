@@ -9459,6 +9459,12 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_attempts INTEGER NO
 -- text is the build session's spec doc; kept here for the dashboard and the
 -- export, since a shadow build's session is archived and nobody opens it.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_spec_md TEXT;
+-- #3624 (checks): the proposal head a checks fix looked at. Written only by
+-- a run that actually looked (revise, hand-off, or a turn that failed), so
+-- each failing head gets exactly one look and a fix cannot wake itself in a
+-- loop. Never written by an infra-looking verdict or a platform fault: the
+-- platform's own re-run on the same head must still get a look.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha TEXT;
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_build_queue
   ON homeroom_bot_runs(app_id, build_queued_at)
   WHERE build_queued_at IS NOT NULL AND build_ok IS NULL;
