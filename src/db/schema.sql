@@ -14135,6 +14135,40 @@ CREATE TRIGGER shot_runs_wf_shots_owned
   BEFORE INSERT OR UPDATE ON shot_runs
   FOR EACH ROW EXECUTE FUNCTION wf_guard_shot_runs();
 
+-- bot-request (src/workflow/bot-request/): the Homeroom bot's queue is its
+-- projection. A row of a request it holds is written only by its
+-- transitions; a row no instance holds yet (an older release's insert during
+-- a rollout) is written as before and adopted (platform.adoptBotQueue). A
+-- row going with its project (the cascade) or a deleted account's id
+-- emptied (ON DELETE SET NULL) is not the queue moving.
+CREATE OR REPLACE FUNCTION wf_guard_bot_queue() RETURNS TRIGGER AS $$
+DECLARE
+  r RECORD;
+BEGIN
+  IF current_setting('app.wf_writer', true) = 'transition' THEN
+    RETURN COALESCE(NEW, OLD);
+  END IF;
+  r := COALESCE(NEW, OLD);
+  IF TG_OP = 'DELETE' AND NOT EXISTS (SELECT 1 FROM apps WHERE id = OLD.app_id) THEN
+    RETURN OLD;
+  END IF;
+  IF TG_OP = 'UPDATE'
+     AND (to_jsonb(NEW) - 'requested_by' - 'payer_user_id') = (to_jsonb(OLD) - 'requested_by' - 'payer_user_id')
+     AND (NEW.requested_by IS NULL OR NEW.requested_by IS NOT DISTINCT FROM OLD.requested_by)
+     AND (NEW.payer_user_id IS NULL OR NEW.payer_user_id IS NOT DISTINCT FROM OLD.payer_user_id) THEN
+    RETURN NEW;
+  END IF;
+  IF wf_holds('bot-request', 'request:' || r.app_id || ':' || r.issue_number) THEN
+    RAISE EXCEPTION 'WF_OWNERSHIP_VIOLATION: % on homeroom_bot_queue of a request the bot-request machine holds', TG_OP;
+  END IF;
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS homeroom_bot_queue_wf_owned ON homeroom_bot_queue;
+CREATE TRIGGER homeroom_bot_queue_wf_owned
+  BEFORE INSERT OR UPDATE OR DELETE ON homeroom_bot_queue
+  FOR EACH ROW EXECUTE FUNCTION wf_guard_bot_queue();
+
 -- A checks run's media (screenshots, recordings) while the run is under
 -- way: its handler stores them here under the run's id, and the transition
 -- that settles the run publishes them to session_visuals with its verdict,

@@ -85,7 +85,7 @@ export const TURN_WORK = new Map<string, readonly string[]>([
   ['proposal', Object.freeze(['branch.sync'])],
   ['shots', Object.freeze(['shots.agent'])],
   ['bot-build', Object.freeze(['build.run'])],
-  ['bot-request', Object.freeze(['bot.read', 'bot.followUp', 'bot.act'])],
+  ['bot-request', Object.freeze(['bot.look'])],
 ]);
 
 // True while the turn record `at` (an SQL expression of an active_turn

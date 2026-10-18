@@ -1460,10 +1460,12 @@ async function tick(pool, config, deps = {}) {
         // next leader).
         if (shuttingDown()) { out.paused = 'stopped'; break; }
         if (inFlight.size >= MAX_IN_FLIGHT) { out.paused = out.paused || 'lane_full'; break; }
-        if ((deps.isLiveLaneSaturated || bot.isLiveLaneSaturated)(settings)) { out.paused = 'live_bot_busy'; break; }
+        // eslint-disable-next-line no-await-in-loop
+        if (await (deps.isLiveLaneSaturated || bot.isLiveLaneSaturated)(settings, null, pool)) { out.paused = 'live_bot_busy'; break; }
         if (run.kind === LATER_SIDE_RUN_KIND) {
           const besides = [...inFlight.values()].filter((f) => f.laterSide).length;
-          if ((deps.isLiveLaneSaturated || bot.isLiveLaneSaturated)(settings, { besides })) { out.paused = 'live_bot_busy'; break; }
+          // eslint-disable-next-line no-await-in-loop
+          if (await (deps.isLiveLaneSaturated || bot.isLiveLaneSaturated)(settings, { besides }, pool)) { out.paused = 'live_bot_busy'; break; }
         }
         // eslint-disable-next-line no-await-in-loop
         user = user || deps.user || await runner.ensureBenchUser(pool, config);

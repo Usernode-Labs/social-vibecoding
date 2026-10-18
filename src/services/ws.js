@@ -119,10 +119,8 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       if (!oversize && r.owner && r.repo) require('./github').applyIssuesChange(r.owner, r.repo, payload);
       return;
     case 'homeroom_bot':
-      // Not a socket event at all: the Homeroom bot's loop runs on one Pod
-      // and an issue event can land on any, so the wake rides this bus.
-      // The bot ignores it on every Pod but the one running the loop.
-      require('./homeroom-bot').onBusMessage(payload);
+      // An older release's wake for the bot's loop, which is the workflow's
+      // now (bot-request, bot-lane): nothing to do.
       return;
     // Stops for work another platform process runs (docs/plans/
     // draining-releases.md): the process that holds it does what a stop in
@@ -1524,8 +1522,11 @@ async function handleMessage(pool, client, msg) {
         })
         : null;
       // A person answering on an issue's thread is exactly what the Homeroom
-      // bot waits for; a system row (a claim, a bounty) is not a message.
-      if (thread && thread.type === 'issue') noteIssueActivityForBot(client.appId, thread.ref, 'thread');
+      // bot waits for; a system row (a claim, a bounty) is not a message. Its
+      // request's instance heard it in the statement above (insertHeard);
+      // a post that statement did not hear (a connector's) only asks for a
+      // refresh.
+      if (thread && thread.type === 'issue' && !heard) noteIssueActivityForBot(client.appId, thread.ref, 'posted');
       // #4974: that reply also settles the bot's asks in the requester's DM —
       // the question it is waiting on, a stop still showing its buttons — and
       // says so in the request's thread there. Not awaited. The bot's own post

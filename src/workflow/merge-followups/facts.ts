@@ -6,7 +6,7 @@
 // the merge or a turn committed meanwhile would be missing).
 
 import type { Tx } from '../kernel/index.ts';
-import { SHOTS_LIVE_STATES, operationsLiveSql, previewWorkingSql, shotsRunningSql } from '../session-work.ts';
+import { SHOTS_LIVE_STATES, botLookingSql, operationsLiveSql, previewWorkingSql, shotsRunningSql, syncWorkingSql } from '../session-work.ts';
 import { reviewedHeadForSession } from '../rules/bot-readiness.ts';
 
 export interface Session {
@@ -152,7 +152,7 @@ export async function readFacts(tx: Tx, sessionId: number, { lock }: { lock: boo
             (EXISTS (SELECT 1 FROM check_runs k WHERE k.session_id = cs.id AND k.heartbeat_at > NOW() - INTERVAL '60 seconds')
               OR (cs.check_state = 'pending' AND cs.checks_checked_at > NOW() - INTERVAL '10 minutes')
               OR ${previewWorkingSql('cs.id')}) AS checks_running,
-            (${operationsLiveSql('cs.id')}
+            (${operationsLiveSql('cs.id')} OR ${syncWorkingSql('cs.id')} OR ${botLookingSql('cs.id')}
               OR EXISTS (SELECT 1 FROM local_agent_turns t
                           WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))) AS worked_on,
             cs.staging_image_ref, cs.staging_build_ref, cs.staging_commit_sha,

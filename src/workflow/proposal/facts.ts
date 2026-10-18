@@ -28,7 +28,7 @@ import type { GovernedGate } from '../rules/governance-gate.ts';
 import { appMetaFromRow, governanceFromRow } from '../rules/governance-gate.ts';
 import { electorate } from '../rules/electorate.ts';
 import { parseGithubUrl } from '../rules/github-url.ts';
-import { buildHoldSql, operationsLiveSql, shotsRunningSql } from '../session-work.ts';
+import { botLookingSql, buildHoldSql, operationsLiveSql, shotsRunningSql, syncWorkingSql } from '../session-work.ts';
 
 export interface Row {
   id: number;
@@ -152,8 +152,10 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
             cs.active_turn IS NOT NULL AS active_turn,
             EXISTS (SELECT 1 FROM local_agent_turns t
                      WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running')) AS local_turn,
-            ${operationsLiveSql('cs.id', '$2::text')} AS operations,
-            ${operationsLiveSql('cs.id', '$2::text', ['turn', 'handoff-pipeline'])} AS moving_operations,
+            -- A sync and the Homeroom bot's look are their machines' own work
+            -- (session-work.ts), counted as the operations they once recorded.
+            (${operationsLiveSql('cs.id', '$2::text')} OR ${syncWorkingSql('cs.id')} OR ${botLookingSql('cs.id')}) AS operations,
+            (${operationsLiveSql('cs.id', '$2::text', ['turn', 'handoff-pipeline'])} OR ${syncWorkingSql('cs.id')}) AS moving_operations,
             ${shotsRunningSql('cs.id')} AS shots_running,
             ${buildHoldSql('cs')} AS build_hold,
             EXISTS (SELECT 1 FROM pending_secret_declarations p

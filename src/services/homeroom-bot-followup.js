@@ -860,50 +860,31 @@ function checksPersonText({ why, failingCount = 0, broken = [] }) {
 
 // ── The turn ─────────────────────────────────────────────────────────────
 
-// #4533 (change 7428, request #4524): a follow-up's turn record says it is the
-// bot's, what it was doing, and when its time is up. Its clock was only a
-// timer in the process that started it, so a deploy restart dropped it:
-// restart recovery followed the checks fix on through the person's
-// recovery tail (it is on a PROMOTED proposal, which isRecoveredBotSession
-// leaves to that tail on purpose) for 38 minutes against its 20, and what
-// it did never reached the bot's ledger. With this on the record
-// (turn-lifecycle stampTurn), recovery stops it at the same deadline
-// (homeroom-bot.js recoveryDeadline, given back what each restart cost it)
-// and records its outcome as the bot would have (finishRecoveredFollowUp).
-// A person's turn on the same session has no such mark, so it is never
-// bounded by the bot's clock.
-const TURN_MARK = 'homeroomBotFollowUp';
-const MARK_KINDS = Object.freeze(['checks_fix', 'reply']);
-
-/** The bot's mark on a turn record (TURN_MARK), or null when it is not a follow-up of the bot's. Pure. */
-function turnMarkOf(activeTurn) {
-  const mark = activeTurn && typeof activeTurn === 'object' ? activeTurn[TURN_MARK] : null;
-  if (!mark || typeof mark !== 'object' || !MARK_KINDS.includes(mark.followUp)) return null;
-  if (!toMs(mark.deadlineAt) || !Number.isInteger(Number(mark.appId)) || !Number.isInteger(Number(mark.issueNumber))) return null;
-  return mark;
-}
-
 /**
- * #4533: is a turn running on the proposal's session now? Something in this
- * process holds it (a sync with main, a recovery following a turn, a
- * dispatch), its worker is executing, or its row carries a turn record,
- * which is what any other process's turn leaves (and what
- * startCodexAttempt refuses a new turn on anyway). A read that fails says
- * no: the turn's own start refuses a busy session as before.
+ * Is somebody else working on the proposal's session now, read from the
+ * durable record of each kind of work (src/workflow/session-work.ts): a
+ * turn whose record is not this look's own (`owner`: its work item), a
+ * turn on a local agent, a before & after shots run (which holds the
+ * proposal from its first build, #4575), a sync with main, a durable build.
+ * The same answer in every process and after a restart. A read that fails
+ * says no: the turn's own start refuses a busy session as before.
  */
-async function turnRunningOn({ pool, session, worker, activeWorkers, shotsRunning = null }) {
-  const id = Number(session.id);
-  if (activeWorkers.has(session.id) || activeWorkers.has(id)) return true;
-  if (require('./active-workers').hasSessionOperation(id)) return true;
-  // #4575: a before & after shots run holds the proposal from its first
-  // build to its agent's last word, but writes no turn record until it
-  // dispatches, minutes in. A follow-up that started in that gap took the
-  // session from under it, so it waits for the run as the Mayor's does.
-  if (await Promise.resolve().then(() => (shotsRunning || require('./shots-state').shotsRunning)(id)).catch(() => false)) return true;
-  if (typeof worker.isInFlight === 'function' && (worker.isInFlight(session.id) || worker.isInFlight(id))) return true;
+async function sessionTakenElsewhere(pool, sessionId, owner = null) {
   try {
-    const { rows } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [id]);
-    return !!rows[0]?.active_turn;
+    const sw = require('../workflow/session-work.ts');
+    const { rows: [r] } = await pool.query(
+      `SELECT (cs.active_turn IS NOT NULL
+                 AND NOT (cs.active_turn->'owner'->>'machine' IS NOT DISTINCT FROM $2
+                          AND cs.active_turn->'owner'->>'key' IS NOT DISTINCT FROM $3))
+              OR EXISTS (SELECT 1 FROM local_agent_turns t
+                          WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
+              OR ${sw.shotsRunningSql('cs.id')}
+              OR ${sw.operationsLiveSql('cs.id')}
+              OR ${sw.syncWorkingSql('cs.id')}
+              OR ${sw.buildHoldSql('cs')} AS busy
+         FROM chat_sessions cs WHERE cs.id = $1`,
+      [Number(sessionId), owner?.machine || null, owner?.key || null]);
+    return !!r?.busy;
   } catch {
     return false;
   }
@@ -913,21 +894,30 @@ async function turnRunningOn({ pool, session, worker, activeWorkers, shotsRunnin
  * One follow-up turn on the proposal's own session. `mode` is 'build' while
  * the bot may still revise, 'scout' (no commit, no push) once it may not.
  * The session keeps its status: it is the group's open proposal. Resolves
- * { routed, result, stopped, costUsd, pricing }; never throws.
+ * { routed, result, stopped, stoppedBy, costUsd, pricing }; never throws
+ * but a stop of its work (the steps').
  *
- * #4533: `turnMark` is what the turn's record keeps for restart recovery
- * (TURN_MARK), its deadline added here. A session that is running another
- * turn is answered `session_busy` before any worker is asked for, which the
- * bot reads as a wait for this follow-up alone, never as a platform fault.
+ * The turn is a durable step over the look's checkpoint (`steps`,
+ * services/durable-turn.js), its record naming the look's work item
+ * (`owner`): a restart follows it, on its clock (its saved deadline), and a
+ * build turn whose record was lost is read off its branch. A session that
+ * is running somebody else's turn is answered `session_busy` before any
+ * worker is asked for, which the bot reads as a wait for this follow-up
+ * alone, never as a platform fault.
  */
 async function runFollowUpTurn({
   pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps,
-  commitMsg = null, turnMark = null, onStart = null,
+  commitMsg = null, onStart = null, steps = null, owner = null, key = 'followup',
 }) {
-  const { worker, sessions, agentTurn, activeWorkers } = deps;
-  const busy = { routed: { error: 'session_busy' }, result: {}, stopped: false, costUsd: null, pricing: null };
-  if (await turnRunningOn({ pool, session, worker, activeWorkers, shotsRunning: deps.shotsRunning })) {
-    log.info('homeroom-bot', 'Follow-up waits: a turn is running on its proposal', { sessionId: session.id, issueNumber });
+  const { worker, sessions, agentTurn } = deps;
+  const durableTurn = deps.durableTurn || require('./durable-turn');
+  const durableSteps = require('./durable-steps');
+  const st = steps || durableSteps.none();
+  const busy = { routed: { error: 'session_busy' }, result: {}, stopped: false, stoppedBy: null, costUsd: null, pricing: null };
+  // A turn this look started before a restart is its own, followed below.
+  const resumed = !!(st.active && st.get(`turn:${key}`));
+  if (!resumed && await (deps.sessionTaken || sessionTakenElsewhere)(pool, session.id, owner)) {
+    log.info('homeroom-bot', 'Follow-up waits: somebody is working on its proposal', { sessionId: session.id, issueNumber });
     return busy;
   }
   let containerName;
@@ -947,101 +937,87 @@ async function runFollowUpTurn({
       log.info('homeroom-bot', 'Follow-up waits: its worker is running a turn on other storage', { sessionId: session.id, issueNumber });
       return busy;
     }
-    return { routed: { error: `worker: ${err.message}` }, result: {}, stopped: false, costUsd: null, infra: true };
+    durableSteps.rethrowStop(err, 'follow-up worker');
+    return { routed: { error: `worker: ${err.message}` }, result: {}, stopped: false, stoppedBy: null, costUsd: null, infra: true };
   }
-  // A stop stays pending on the proposal's session after the turn it
-  // stopped has ended, and the worker skips every dispatch until a new turn
-  // clears it (#937). Nothing here cleared it, so the reply queued behind a
-  // follow-up its budget stopped was skipped the moment it started (change
-  // 7490, 9 Oct 2026: a person's second message, three seconds after the
-  // first turn ran out of time). This turn is that new turn, as a read's is
-  // (#4579). Safe here: turnRunningOn just found nothing running on the
-  // session, so a stop pending now was aimed at a turn that is over; and it
-  // is cleared before this turn's clock and its stop are wired up, so a stop
-  // aimed at this turn is never the one erased.
-  if (!worker.isInFlight?.(session.id)) worker.clearPendingStop?.(session.id);
-  // A fresh model conversation (#3035's reason): the saved thread is the
-  // build that made the proposal, and the prompt carries everything since.
-  await pool.query('UPDATE chat_sessions SET agent_thread_id = NULL WHERE id = $1', [session.id]).catch(() => {});
-  session.agent_thread_id = null;
-  // #3654: the proposal's session carries the model it was BUILT with; the
-  // follow-up runs the follow-up stage's own model.
-  await require('./homeroom-bot-live').stampSessionModel(pool, session, model);
-  // #4610: the turn is going ahead now (it did not wait, and its worker is
-  // up), which is when "working on it" is true. Once per turn; never throws.
-  if (typeof onStart === 'function') {
-    await Promise.resolve().then(onStart).catch((err) => log.warn('homeroom-bot', 'Could not say a follow-up started', {
-      sessionId: session.id, issueNumber, err: err.message,
-    }));
+  if (!resumed) {
+    // A fresh model conversation (#3035's reason): the saved thread is the
+    // build that made the proposal, and the prompt carries everything since.
+    await pool.query('UPDATE chat_sessions SET agent_thread_id = NULL WHERE id = $1', [session.id]).catch(() => {});
+    session.agent_thread_id = null;
+    // #3654: the proposal's session carries the model it was BUILT with; the
+    // follow-up runs the follow-up stage's own model.
+    await require('./homeroom-bot-live').stampSessionModel(pool, session, model);
+    // #4610: the turn is going ahead now (it did not wait, and its worker is
+    // up), which is when "working on it" is true. Never throws.
+    if (typeof onStart === 'function') {
+      await Promise.resolve().then(onStart).catch((err) => log.warn('homeroom-bot', 'Could not say a follow-up started', {
+        sessionId: session.id, issueNumber, err: err.message,
+      }));
+    }
   }
-
-  let stopped = false;
-  let stopping = null;
-  const timer = setTimeout(() => {
-    stopped = true;
-    stopping = Promise.resolve(worker.stopTurn(session.id)).catch(() => {});
-  }, turnBudgetMs);
-  if (typeof timer.unref === 'function') timer.unref();
-  // #4533: when this timer ends the turn, kept on the turn's record.
-  const deadlineAt = new Date(Date.now() + turnBudgetMs).toISOString();
-  activeWorkers.add(session.id);
+  // A build turn that pushed and lost its record before it was kept: the
+  // branch tip is its result (the worker pushes only a turn that succeeded).
+  const github = deps.github || null;
+  const head = mode === 'build' && github && repo
+    ? () => github.getBranchSha(repo.owner, repo.repo, session.branch_name) : null;
+  const observe = head
+    ? async ({ tip }) => ({ result: { pushOk: true, sha: tip, ahead: 1, lastResultText: '', observed: true }, estimatedCostUsd: null })
+    : null;
   let pricing = null;
-  let routed;
+  let turn;
   try {
-    routed = await sessions.runCodexAttemptLoop({
-      pool, session, userId: bot.id, config, isCodexSession: true,
-      turnModel: model, resumeThreadId: null, mode,
-      telemetryComponent: 'homeroom_bot_followup',
-      resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
-        pool, session, userId: bot.id, model, resumeThreadId: null, config,
-        // The platform's per-model choice of CLI, as the bot's build makes
-        // it (#3296). The saved thread is cleared above, so a proposal built
-        // in the other CLI is never resumed across the switch.
-        harness: 'auto',
-      }),
-      dispatchOnce: async (ctx) => {
-        pricing = ctx?.pricingSnapshot || pricing;
-        // #4533: the attempt's record exists now (startCodexAttempt wrote
-        // it), and the agent starts below: the mark goes on it first.
-        if (turnMark && ctx?.logicalTurnId) {
-          await require('./turn-lifecycle').stampTurn(pool, {
-            sessionId: session.id, turnId: ctx.logicalTurnId, key: TURN_MARK, value: { ...turnMark, deadlineAt },
-          }).catch((err) => log.warn('homeroom-bot', 'Could not mark a follow-up turn as the bot\'s', {
-            sessionId: session.id, issueNumber, err: err.message,
-          }));
-        }
-        return worker.execInWorker(session.id, {
-        mode,
-        prompt,
-        model,
-        commitMsg: commitMsg || `Homeroom bot: follow-up on #${issueNumber}`,
-        resumeSessionId: null,
-        branchName: session.branch_name,
-        // Its push lands on a proposal already up for a vote: a failed turn's
-        // work is neither committed nor pushed, under either CLI.
-        discardFailedTurn: true,
-        ...(ctx || {}),
+    turn = await durableTurn.runTurn(st, key, {
+      pool, session, mode, budgetMs: turnBudgetMs, owner, head, observe, deps: { worker, agentTurn },
+      // Its own clock ends only its own turn (by its record).
+      stop: () => durableTurn.clockStop(worker, pool, session.id, owner),
+      dispatch: (extra = {}) => sessions.runCodexAttemptLoop({
+        pool, session, userId: bot.id, config, isCodexSession: true,
+        turnModel: model, resumeThreadId: null, mode,
         telemetryComponent: 'homeroom_bot_followup',
-        onProgress: () => {},
-      }); },
-      retryPredicate: () => null,
-      sendStatus: async () => {},
-      waitForStopped: async () => {},
-      prepareRetry: async () => false,
-      classifyAttemptStatus: ({ failed }) => (failed ? 'failed' : 'completed'),
-      containerName,
+        owner: extra.owner || null,
+        resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
+          pool, session, userId: bot.id, model, resumeThreadId: null, config,
+          // The platform's per-model choice of CLI, as the bot's build makes
+          // it (#3296). The saved thread is cleared above, so a proposal built
+          // in the other CLI is never resumed across the switch.
+          harness: 'auto',
+        }),
+        dispatchOnce: async (ctx) => {
+          pricing = ctx?.pricingSnapshot || pricing;
+          return worker.execInWorker(session.id, {
+            mode,
+            prompt,
+            model,
+            commitMsg: commitMsg || `Homeroom bot: follow-up on #${issueNumber}`,
+            resumeSessionId: null,
+            branchName: session.branch_name,
+            // Its push lands on a proposal already up for a vote: a failed turn's
+            // work is neither committed nor pushed, under either CLI.
+            discardFailedTurn: true,
+            ...(ctx || {}),
+            ...extra,
+            telemetryComponent: 'homeroom_bot_followup',
+            onProgress: () => {},
+          });
+        },
+        retryPredicate: () => null,
+        sendStatus: async () => {},
+        waitForStopped: async () => {},
+        prepareRetry: async () => false,
+        classifyAttemptStatus: ({ failed }) => (failed ? 'failed' : 'completed'),
+        containerName,
+      }),
     });
   } catch (err) {
-    routed = { error: `dispatch: ${err.message}` };
-  } finally {
-    clearTimeout(timer);
-    if (stopping) await stopping;
-    activeWorkers.delete(session.id);
+    durableSteps.rethrowStop(err, 'follow-up turn');
+    turn = { routed: { error: `dispatch: ${err.message}` }, stopped: false, stoppedBy: null };
   }
+  const routed = turn.routed;
   const result = (routed && routed.result) || {};
   const costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
-  if (stopped) log.warn('homeroom-bot', 'Follow-up turn stopped on its budget', { sessionId: session.id, issueNumber });
-  return { routed, result, stopped, costUsd, pricing };
+  if (turn.stopped) log.warn('homeroom-bot', 'Follow-up turn stopped on its budget', { sessionId: session.id, issueNumber });
+  return { routed, result, stopped: !!turn.stopped, stoppedBy: turn.stoppedBy || null, costUsd, pricing };
 }
 
 /**
@@ -1086,9 +1062,7 @@ module.exports = {
   checksRetryText,
   failingNowLines,
   runFollowUpTurn,
-  TURN_MARK,
-  turnMarkOf,
-  turnRunningOn,
+  sessionTakenElsewhere,
   headMoved,
   failingChecks,
   brokenClaims,

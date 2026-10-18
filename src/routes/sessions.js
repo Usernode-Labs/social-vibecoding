@@ -5905,14 +5905,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // #4533: what the running turn is and since when, off its record, for
     // get_change: a busy change said nothing of what held it (PR #4533's
     // checks fix waited an hour behind one). Its mode ('build', 'scout',
-    // 'sync', 'shots'), or the Homeroom bot's follow-up its mark names
-    // ('homeroom_bot_checks_fix', 'homeroom_bot_reply').
+    // 'sync', 'shots'), or the Homeroom bot's follow-up (its record names
+    // the bot's look as its owner: 'homeroom_bot_follow_up').
     let turn = null;
     if (durableTurn) {
-      const mark = require('../services/homeroom-bot-followup').turnMarkOf(durableTurn);
+      const own = turnLifecycle.ownerOf(durableTurn);
       turn = {
         startedAt: durableTurn.startedAt || null,
-        kind: mark ? `homeroom_bot_${mark.followUp}` : (durableTurn.mode || null),
+        kind: own?.machine === 'bot-request' ? 'homeroom_bot_follow_up' : (durableTurn.mode || null),
       };
     }
 
