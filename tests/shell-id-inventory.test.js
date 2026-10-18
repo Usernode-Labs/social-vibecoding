@@ -360,6 +360,13 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #5405: search over the loaded notifications ───────────────────
+  'notifications-search': '#5405: the search field\'s block between the notifications sheet\'s title and the Unread | Messages | All tabs.',
+  'notifications-search-input': '#5405: the field itself (type="search"). Filters the tab that is open, over the rows already loaded, by project, kind and subject; Escape with text empties it.',
+  // #notifications-search-empty (the "No notifications match “…”" line) is
+  // NOT here: it renders only while a query is active and nothing matches,
+  // so it is not in the prerendered document — the same treatment the maps
+  // give ids behind an open dialog.
   // ── #5048: private requests ──────────────────────────────────────────────
   'feedback-private-row': '#5048: the Suggest an improvement dialog\'s "Private request" box, which files the request in Homeroom only (POST /api/private-requests) where only platform admins can see it, never as a GitHub issue. Ships hidden; feedback-controller.js shows it to full admins on each open.',
   'feedback-private-checkbox': '#5048: the box itself, unticked on every open.',

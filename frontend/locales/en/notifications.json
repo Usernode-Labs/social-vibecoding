@@ -87,6 +87,14 @@
     "text": "See older notifications",
     "description": "Button at the foot of the notifications sheet's All filter: fetches the next page of older notifications."
   },
+  "sheet.search.placeholder": {
+    "text": "Search notifications…",
+    "description": "Placeholder and accessible name of the search field between the title and the Unread, Messages and All filters in the notifications sheet. It narrows the notifications already loaded to those whose project, kind or subject matches."
+  },
+  "sheet.search.noMatches": {
+    "text": "No notifications match “{{query}}”.",
+    "description": "Shown in the notifications sheet when a search over the loaded notifications finds nothing. {{query}} is the text typed into the search field."
+  },
   "row.clear": {
     "text": "Clear",
     "description": "Action revealed by swiping an unread notification on a phone: marks that notification as read without opening it. A verb."
