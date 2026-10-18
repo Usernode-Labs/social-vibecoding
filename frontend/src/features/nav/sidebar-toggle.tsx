@@ -33,13 +33,14 @@
  * app's rail comes back by pointing at the window's edge instead. The note
  * on the component below says why neither may be a render-time question.
  *
- * ── Collapsed is the app view's state, reached another way ─────────────
+ * ── Collapsed is the page's state, and the way back is here or the edge ─
  *
- * Folding the rail puts the shell in exactly the arrangement an open app
- * already produces: no band reserved, the page full width, and the hot zone
- * at the left edge ready to peek it back (features/nav/tab-bar.tsx). That is
- * why this needs no CSS of its own beyond being hidden on a phone — the
- * layout it asks for is one the stylesheet already draws.
+ * Folding the rail gives the page the full width with no band reserved, and
+ * the hot zone at the window's left edge becomes the other way back to it
+ * (features/nav/tab-bar.tsx) — it renders only in this same folded case, so
+ * neither way in exists where the route has no rail to fold. That is why
+ * this needs no CSS of its own beyond being hidden on a phone — the layout
+ * it asks for is one the stylesheet already draws.
  *
  * ── Pointing at it peeks the folded rail (#2764) ───────────────────────
  *

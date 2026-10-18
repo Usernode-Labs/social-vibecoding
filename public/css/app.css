@@ -19872,8 +19872,7 @@ html.un-kb #platform-parked {
      badge are all items of this row. `order: 1` takes the badge past the
      label, and `margin-left: auto` pushes it to the end. It is back in the
      flow (`position: static`), so the label can never run under it. The
-     peeked rail over an open app is this same element, so it gets the same
-     row. */
+     peeked rail is this same element, so it gets the same row. */
   .platform-tab-mark {
     display: contents;
   }
@@ -20411,17 +20410,21 @@ html.un-kb #platform-parked {
 }
 
 
-/* ── The rail, peeked back over an open app (#2718) ──────────────────
-   frontend/src/features/nav/tab-bar.tsx carries the argument: an app covers
-   the rail, which is what makes it feel like a program rather than a page,
-   and on a laptop the pointer is already at the left edge half the time. The
-   navigation comes back on hover and stops spending width while you work —
-   WeChat's floating capsule, an auto-hiding dock and Slack's own collapsed
-   rail are all this move. */
+/* ── The rail, peeked back over the page (#2718, #3138) ──────────────
+   frontend/src/features/nav/tab-bar.tsx carries the argument: a rail the
+   viewer folded is gone but not unreachable, and the navigation comes back
+   on hover — over the page, not beside it — and stops spending width again
+   when the pointer leaves. WeChat's floating capsule, an auto-hiding dock
+   and Slack's own collapsed rail are all this move. #2718 also summoned it
+   over an open app from the window's edge; #3138 took that out, because the
+   pointer resting near the edge inside an app kept pulling the rail over the
+   page uninvited — inside an app the way back is the header's ✕. */
 
-/* THE HOT ZONE, and the only thing that can start a peek. Narrow enough that
-   it never intercepts a pointer heading for the app's own left edge, wide
-   enough to be findable without aiming. */
+/* THE HOT ZONE, and the only thing that can start a peek from the edge. It
+   renders only where the route has a rail and the viewer folded it
+   (frontend/src/features/nav/tab-bar.tsx). Narrow enough that it never
+   intercepts a pointer heading for the page's own left edge, wide enough to
+   be findable without aiming. */
 .platform-rail-peek {
   position: fixed;
   left: 0;

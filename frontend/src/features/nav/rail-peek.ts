@@ -8,6 +8,10 @@
  * is where the pointer already is when the reader goes looking for the
  * navigation they folded away.
  *
+ * Since #3138 the edge strip itself renders only in that same folded case —
+ * it no longer summons the rail over a running app — so both ways in answer
+ * one question: has the viewer folded a rail the route has?
+ *
  * ── Why the grace timer is module state ───────────────────────────────
  *
  * The pointer has to cross a gap to get from whatever summoned the rail onto
