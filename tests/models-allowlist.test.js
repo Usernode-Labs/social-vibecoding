@@ -54,6 +54,19 @@ test('Opus 5.5 is billed at its own $4/$20 rate, and a recorded Opus 5 turn at $
   assert.equal(models.MODELS['claude-opus-5-5'].outputCostPerMTok, 20);
 });
 
+// #3579: Sonnet 5.5 replaced Sonnet 5 the same way #2818 replaced Opus 5.
+// The retired id is no longer allowed, resolves to its successor BY NAME,
+// and a recorded turn billed under it still prices at Sonnet's $2/$10.
+test('the retired Sonnet 5 id resolves to Sonnet 5.5 (#3579)', () => {
+  const llm = require('../src/services/llm');
+  assert.equal(models.isAllowed('claude-sonnet-5'), false);
+  assert.equal(models.resolve('claude-sonnet-5'), 'claude-sonnet-5-5');
+  assert.equal(models.RETIRED_MODELS['claude-sonnet-5'], 'claude-sonnet-5-5');
+  const usage = { input_tokens: 1_000_000, output_tokens: 1_000_000 };
+  assert.equal(Math.round(llm.estimateCostCents(usage, 'claude-sonnet-5')), 1200,
+    'a recorded Sonnet 5 turn still bills at $2/$10');
+});
+
 // #800: Haiku 4.5 is no longer user-selectable. The platform still calls
 // it directly for titling/estimates, but it must not survive the
 // allowlist gate — a stale stored selection has to coerce to the default.
@@ -67,7 +80,7 @@ test('list() exposes exactly the three model ids', () => {
   assert.deepEqual(ids, [
     'claude-fable-5-1',
     'claude-opus-5-5',
-    'claude-sonnet-5',
+    'claude-sonnet-5-5',
   ]);
 });
 

@@ -322,8 +322,8 @@ test('the composer keeps what was typed per conversation, and the drafts list of
 test('each model says what a typical change costs on it, never as a bare amount', () => {
   const choice = loadTsx('frontend/src/features/agent-session/model-choice.ts');
   const catalog = {
-    anthropic: [{ id: 'claude-sonnet-5', label: 'Sonnet 5' }],
-    anthropicDefault: 'claude-sonnet-5',
+    anthropic: [{ id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' }],
+    anthropicDefault: 'claude-sonnet-5-5',
     defaultBackend: 'claude_code',
     savedOpenRouter: null,
     defaultReasoningEffort: null,
@@ -337,21 +337,21 @@ test('each model says what a typical change costs on it, never as a bare amount'
     notes: {
       typicalChange: { inputTokens: 2_500_000, outputTokens: 120_000 },
       models: {
-        'claude-sonnet-5': { note: 'general coding work', estimateCents: 155 },
+        'claude-sonnet-5-5': { note: 'general coding work', estimateCents: 155 },
         'z-ai/glm-5': { note: null, estimateCents: 42 },
       },
     },
   };
-  assert.deepEqual(choice.modelCost('claude-sonnet-5', catalog),
+  assert.deepEqual(choice.modelCost('claude-sonnet-5-5', catalog),
     { note: 'general coding work', perChange: 'about $1.55 for a typical change', compact: 'general coding work · about $1.55 for a typical change' });
   assert.equal(choice.modelCost('priced/model', catalog, catalog.openrouter[2]).perChange, 'about $2.98 for a typical change',
     'a model the platform does not curate: its catalog prices times the typical change');
   assert.equal(choice.modelCost('cheap/model', catalog, catalog.openrouter[1]).perChange, 'about <$0.01 for a typical change', 'never "$0.00"');
   assert.deepEqual(choice.modelCost('unknown', catalog), { note: '', perChange: '', compact: '' });
-  assert.deepEqual(choice.modelCost('claude-sonnet-5', { ...catalog, notes: null }), { note: '', perChange: '', compact: '' }, 'no notes, no figure');
+  assert.deepEqual(choice.modelCost('claude-sonnet-5-5', { ...catalog, notes: null }), { note: '', perChange: '', compact: '' }, 'no notes, no figure');
 
   const options = choice.pickerOptions(catalog, null);
-  const sonnet = options.find((o) => o.value === 'anthropic:claude-sonnet-5');
+  const sonnet = options.find((o) => o.value === 'anthropic:claude-sonnet-5-5');
   assert.equal(sonnet.detail, 'general coding work · about $1.55 for a typical change');
   assert.equal(options.find((o) => o.value === 'openrouter:z-ai/glm-5').detail, 'about $0.42 for a typical change');
 
@@ -359,10 +359,10 @@ test('each model says what a typical change costs on it, never as a bare amount'
   const sheet = renderToHtml(createElement(parts.ModelSheetBody, {
     options: parts.modelList([{ ...sonnet, isDefault: true }]), value: sonnet.value, onPick() {}, effort: null, credit: null,
   }));
-  assert.match(sheet, />Sonnet 5<span[^>]*>default<\/span><\/span><span[^>]*>general coding work · about \$1\.55 for a typical change<\/span>/,
+  assert.match(sheet, />Sonnet 5\.5<span[^>]*>default<\/span><\/span><span[^>]*>general coding work · about \$1\.55 for a typical change<\/span>/,
     'open: the cost under the name');
   const pill = renderToHtml(createElement(parts.ModelPill, { label: sonnet.label, disabled: false, open: false, onOpen() {}, pillRef: { current: null } }));
-  assert.match(pill, /aria-label="Model: Sonnet 5"/, 'closed: still "Model: X" to a screen reader');
+  assert.match(pill, /aria-label="Model: Sonnet 5\.5"/, 'closed: still "Model: X" to a screen reader');
   // #3008: the estimate is in the open list only. Beside the closed control
   // it read as a standing price under every message.
   assert.doesNotMatch(pill, /about/, 'closed: no estimate');

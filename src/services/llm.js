@@ -1969,7 +1969,7 @@ ${inputJson}`;
 
 // ── Workshop themes (services/workshop-themes.js) ─────────────────────
 //
-// Two calls, on Sonnet 5, for the two stages of the Workshop's grouping.
+// Two calls, on Sonnet 5.5, for the two stages of the Workshop's grouping.
 // DISCOVERY reads the whole board and answers with theme DEFINITIONS only
 // — a name, a description, the "what people are asking for" line and a
 // few anchor cards — never the placement of every card. A single answer
@@ -1981,12 +1981,12 @@ ${inputJson}`;
 // of cards that arrive between discoveries, so a card the model skipped is
 // a batch retried, not a bucket on the page.
 //
-// Sonnet 5 rather than Haiku 4.5: the call no longer fires on page views
+// Sonnet 5.5 rather than Haiku 4.5: the call no longer fires on page views
 // (services/workshop-themes.js runs discovery once a day per app, or when
 // a tenth of the board has changed), so the per-call price is no longer
 // the constraint — and a full-board discovery is a judgment call Haiku
 // made badly. Placement runs at low effort: it is a classification.
-const WORKSHOP_THEME_MODEL = 'claude-sonnet-5';
+const WORKSHOP_THEME_MODEL = 'claude-sonnet-5-5';
 const WORKSHOP_THEME_MAX = 12;
 const WORKSHOP_ANCHOR_MAX = 6;
 

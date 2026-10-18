@@ -15,10 +15,13 @@ const log = require('./logger');
 const models = require('./models');
 const events = require('./events');
 
-// Short human label for a model id ("Fable 5", "Opus 5"). Falls back
-// to the raw id so an unknown slug still reads as something identifiable.
+// Short human label for a model id ("Fable 5", "Opus 5"). A retired id
+// reads as its successor (#3579: Sonnet 5 -> Sonnet 5.5); anything else
+// unknown falls back to the raw id so it still reads as something
+// identifiable.
 function label(modelId) {
-  const entry = modelId && models.MODELS[modelId];
+  const canonical = (modelId && models.RETIRED_MODELS[modelId]) || modelId;
+  const entry = canonical && models.MODELS[canonical];
   return (entry && entry.label) || modelId || 'the selected model';
 }
 
