@@ -111,7 +111,14 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     const unknown = Object.keys(raw).filter((key) => !['backend', 'model', 'reasoningEffort'].includes(key));
     if (unknown.length) throw new agentSessions.AgentSessionError(400, `Unsupported agent field: ${unknown[0]}`);
     if (raw.backend === 'claude_code') {
-      const model = raw.model == null || raw.model === '' ? null : String(raw.model);
+      const rawModel = raw.model == null || raw.model === '' ? null : String(raw.model);
+      // A retired id (a cached shell's pick, a request built before a rename)
+      // is saved as its successor instead of answering 400. A genuinely
+      // unknown id still is refused.
+      const model = rawModel && !models.isAllowed(rawModel)
+        && Object.prototype.hasOwnProperty.call(models.RETIRED_MODELS, rawModel)
+        ? models.RETIRED_MODELS[rawModel]
+        : rawModel;
       if (model !== null && !models.isAllowed(model)) {
         throw new agentSessions.AgentSessionError(400, 'That model is not available.');
       }

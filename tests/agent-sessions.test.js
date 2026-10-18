@@ -436,19 +436,25 @@ test('the model can be changed at any time, mid-turn included, on an open sessio
   const handlers = {
     'UPDATE agent_sessions': () => ({ rows: [{ id: 5 }], rowCount: 1 }),
     'FROM agent_sessions s': () => ({
-      rows: [{ ...SESSION_ROW, active_turn: 'busy-turn', agent_backend: 'claude_code', agent_model: 'claude-sonnet-5' }],
+      rows: [{ ...SESSION_ROW, active_turn: 'busy-turn', agent_backend: 'claude_code', agent_model: 'claude-sonnet-5-5' }],
     }),
   };
   await withRoutes({ id: 7 }, handlers, async (call, pool) => {
-    const changed = await call('PATCH', '/api/agent-sessions/5/agent', { backend: 'claude_code', model: 'claude-sonnet-5' });
+    const changed = await call('PATCH', '/api/agent-sessions/5/agent', { backend: 'claude_code', model: 'claude-sonnet-5-5' });
     assert.equal(changed.status, 200, 'a running turn does not lock the picker');
-    assert.deepEqual(changed.body.session.agent, { backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: null });
+    assert.deepEqual(changed.body.session.agent, { backend: 'claude_code', model: 'claude-sonnet-5-5', reasoningEffort: null });
     const update = pool.calls.find((c) => /UPDATE agent_sessions/.test(c.sql));
-    assert.deepEqual(update.params, [5, 7, 'claude_code', 'claude-sonnet-5', null]);
+    assert.deepEqual(update.params, [5, 7, 'claude_code', 'claude-sonnet-5-5', null]);
     const defaulted = await call('PATCH', '/api/agent-sessions/5/agent', { backend: 'claude_code' });
     assert.equal(defaulted.status, 200);
     assert.equal(pool.calls.filter((c) => /UPDATE agent_sessions/.test(c.sql))[1].params[3], 'claude-opus-5-5',
       'no model names the platform default');
+    const retired = await call('PATCH', '/api/agent-sessions/5/agent', { backend: 'claude_code', model: 'claude-sonnet-5' });
+    assert.equal(retired.status, 200, 'a retired id is accepted, not refused');
+    assert.equal(pool.calls.filter((c) => /UPDATE agent_sessions/.test(c.sql))[2].params[3], 'claude-sonnet-5-5',
+      'and saved as its successor');
+    assert.equal((await call('PATCH', '/api/agent-sessions/5/agent', { backend: 'claude_code', model: 'claude-unknown' })).status, 400,
+      'a genuinely unknown id is still refused');
     assert.equal((await call('PATCH', '/api/agent-sessions/5/agent', { backend: 'nope' })).status, 400);
   });
   await withRoutes({ id: 7 }, { 'FROM agent_sessions s': () => ({ rows: [{ ...SESSION_ROW, status: 'archived', archived_at: new Date() }] }) },

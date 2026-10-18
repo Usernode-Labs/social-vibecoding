@@ -36,6 +36,19 @@ test('the retired Opus 5 id resolves to Opus 5.5 (#2818)', () => {
   }
 });
 
+// A stored pick of Sonnet 5 is no longer allowed, and resolves to Sonnet 5.5
+// by name rather than falling through to the default.
+test('the retired Sonnet 5 id resolves to Sonnet 5.5', () => {
+  assert.equal(models.isAllowed('claude-sonnet-5'), false);
+  assert.equal(models.resolve('claude-sonnet-5'), 'claude-sonnet-5-5');
+  assert.equal(models.RETIRED_MODELS['claude-sonnet-5'], 'claude-sonnet-5-5');
+  assert.equal(models.MODELS['claude-sonnet-5-5'].label, 'Sonnet 5.5');
+  assert.equal(models.MODELS['claude-sonnet-5-5'].tier, 'sonnet');
+  for (const successor of Object.values(models.RETIRED_MODELS)) {
+    assert.equal(models.isAllowed(successor), true, `${successor} must be offered`);
+  }
+});
+
 test('the platform LLM default moved to Opus 5.5 (#2818); the Fable fallback is Anthropic\'s default, not a pinned model', () => {
   const llm = require('../src/services/llm');
   assert.equal(llm.DEFAULT_MODEL, models.DEFAULT_MODEL);
@@ -67,7 +80,7 @@ test('list() exposes exactly the three model ids', () => {
   assert.deepEqual(ids, [
     'claude-fable-5-1',
     'claude-opus-5-5',
-    'claude-sonnet-5',
+    'claude-sonnet-5-5',
   ]);
 });
 
