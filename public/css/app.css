@@ -382,6 +382,29 @@ html.un-kb .platform-safe-sheet {
    keyboard is up so the bar tracks it exactly, eased on the way out so the
    browser's scrollTop clamp rides the ease instead of snapping.
 
+   On iOS the reservation is only half the story: Safari keeps the layout
+   viewport at full height (714pt) and SLIDES the page up inside it by the
+   keyboard's height to reveal the tapped field (visualViewport.offsetTop
+   337; 403 of 409 in the installed app; Android pans 0). Nothing undoes
+   that slide while the keys are up — `strandedPan` defers to it — so
+   content laid out against the layout viewport reads pan pt higher on
+   screen than its coordinates say: with the inset reserved, the column's
+   content ends at 714 − 337 = 377pt while the visible strip is 337–714,
+   and the composer lands at the strip's top edge, its field off screen
+   (#3571). So the column follows the slide, the way `html.un-kb .un-modal`
+   already does: `translate: 0 var(--platform-vv-top, 0px)` — the pan
+   `visual-viewport.ts` publishes, in the same viewport event iOS moves in.
+   The invariant is exact for any pan: the column's content occupies
+   [pan, pan + layout − inset] after the shift, the visible strip is
+   [pan, pan + viewport − inset], and inset = layout − viewport, so the
+   column fills the strip edge to edge with the composer on the keyboard
+   line. The padding still reserves the kit's inset — the transcript loses
+   exactly the keyboard's height, which is the correct Android placement —
+   because the translate is a paint-only shift: no relayout, no scroll
+   clamping, and 0 wherever nothing pans. On blur the translate is not in
+   the base rule's transition list, so it snaps in the frame iOS slides
+   the page back while the padding eases out (the pan never eases).
+
    A column that takes this must NOT also carry `.un-kb-avoid` on its
    scroller — that would reserve the inset twice and leave dead space under
    the transcript. */
@@ -391,6 +414,7 @@ html.un-kb .platform-safe-sheet {
 
 html.un-kb .platform-kb-column {
   padding-bottom: var(--un-kb-inset, 0px);
+  translate: 0 var(--platform-vv-top, 0px);
   transition: none;
 }
 

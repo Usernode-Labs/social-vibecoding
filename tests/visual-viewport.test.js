@@ -130,6 +130,15 @@ const SHELL_SHIFT = SHELL_SHIFTS.length === 1 ? declared(SHELL_SHIFTS[0], 'trans
 /** The vertical half of `translate: 0 <y>`. */
 const SHELL_PAN = SHELL_SHIFT && SHELL_SHIFT.replace(/^0\s+/, '');
 
+// The composer column takes the same pan term (#3571): the four chat screens
+// build as one `platform-kb-column`, so the rule is shared with them all.
+const COLUMN_RULES = rules(APP_CSS, 'html.un-kb .platform-kb-column');
+assert.equal(COLUMN_RULES.length, 1, 'app.css has one html.un-kb .platform-kb-column rule');
+const COLUMN_PAD = declared(COLUMN_RULES[0], 'padding-bottom');
+const COLUMN_SHIFT = declared(COLUMN_RULES[0], 'translate');
+/** The vertical half of the column's `translate: 0 <y>`. */
+const COLUMN_PAN = COLUMN_SHIFT.replace(/^0\s+/, '');
+
 test('the shell moves the kit modal by the pan in exactly one rule, and leaves `top` to the kit', () => {
   assert.equal(SHELL_TOPS.length, 0, 'app.css does not restate the kit\'s top');
   assert.equal(SHELL_SHIFTS.length, 1, 'one app.css rule sets translate, only while the keyboard is up');
@@ -243,6 +252,80 @@ test('pinch zoom is not a keyboard: the offset is ignored and the kit decides', 
   const frame = { layout: 844, vvHeight: 422, offsetTop: 300, scale: 2, content: FEEDBACK };
   assert.equal(visualViewportTop(frame), 0);
   assert.deepEqual(place(frame), place(frame, { pan: false }));
+});
+
+// ── The composer column (#3571) ──────────────────────────────────────────
+//
+// The reply box on Messages (and on a project's Discussion, a topic thread
+// and a dev session — one shared `platform-kb-column`) sat at the TOP of the
+// strip iOS's pan leaves: the column reserved the kit's inset while Safari
+// also slid the page up, so the two compensated for the same thing twice.
+// The column now translates down by the pan, like `.un-modal` does, and the
+// invariant to check is where its content ENDS: the composer rides the
+// keyboard line, the strip's bottom edge.
+
+/** Where the shipped CSS puts the bottom edge of a `platform-kb-column`'s
+ *  content — the composer's keyboard line — for a column that spans the
+ *  layout viewport, as the four chat panes do in the fixed shell. */
+function placeColumn({ layout, vvHeight, offsetTop, scale = 1 }, { pan = true } = {}) {
+  const kb = physics.keyboardInset({ layoutHeight: layout, vvHeight, vvScale: scale });
+  const vars = {
+    '--un-kb-inset': kb,
+    '--platform-vv-top': visualViewportTop({ offsetTop, scale }),
+  };
+  const shift = pan ? evalCss(COLUMN_PAN, { vars }) : 0;
+  return { contentBottom: shift + layout - evalCss(COLUMN_PAD, { vars }), shift, pad: kb, kb };
+}
+
+test('#3571 iOS Safari, measured: the composer rides the keyboard line', () => {
+  const frame = { ...IOS_SAFARI };
+  const col = placeColumn(frame);
+  const band = bandOf(frame);
+  assert.equal(col.kb, frame.layout - frame.vvHeight, 'the kit reserves the covered height');
+  assert.equal(col.contentBottom, band.bottom,
+    'the column fills the strip the keyboard leaves, composer on its bottom edge');
+});
+
+test('#3571 the installed app, measured: the same invariant holds', () => {
+  const frame = { ...IOS_STANDALONE };
+  assert.equal(placeColumn(frame).contentBottom, bandOf(frame).bottom);
+});
+
+test('#3571 the reservation alone put the composer at the strip\'s top — the report', () => {
+  // Without the pan term the column ends at layout − inset, 377pt on the
+  // measured Safari frame, while the visible strip starts at 337: only the
+  // bottom sliver of the reply card survives, its field off screen above.
+  const frame = { ...IOS_SAFARI };
+  const col = placeColumn(frame, { pan: false });
+  const band = bandOf(frame);
+  assert.equal(col.contentBottom, frame.vvHeight);
+  assert.ok(col.contentBottom - band.top <= 40,
+    `only ${col.contentBottom - band.top}pt of the column is in the strip`);
+});
+
+test('#3571 Android, measured: nothing pans and the placement is today\'s', () => {
+  const frame = { ...ANDROID };
+  const col = placeColumn(frame);
+  assert.equal(col.shift, 0);
+  assert.equal(evalCss(COLUMN_PAD, { vars: { '--un-kb-inset': col.kb } }), col.kb,
+    'the padding is still the kit-published inset the transcript loses');
+  assert.equal(col.contentBottom, frame.vvHeight,
+    'the composer sits exactly where the inset alone put it');
+  assert.equal(col.contentBottom, bandOf(frame).bottom);
+});
+
+test('#3571 the column shift is one rule, gated on the keyboard, and never eased', () => {
+  assert.equal(COLUMN_SHIFT, '0 var(--platform-vv-top, 0px)');
+  // With no keyboard there is no pan, so nothing carries a transform: only
+  // the html.un-kb rule may translate the column.
+  assert.equal(rules(APP_CSS, '.platform-kb-column')
+    .filter((body) => /(^|\s)translate:/.test(body)).length, 0,
+    'the base .platform-kb-column rule does not translate');
+  // The pan never eases (the rule the modal fix records): the base rule's
+  // transition list — padding-bottom only — and the keyboard-up rule's own
+  // transition must not carry the translate.
+  assert.doesNotMatch(declared(rules(APP_CSS, '.platform-kb-column')[0], 'transition'), /translate/);
+  assert.doesNotMatch(COLUMN_RULES[0], /transition:\s*[^;]*translate/);
 });
 
 // ── The offset ───────────────────────────────────────────────────────────
@@ -390,6 +473,13 @@ test('the shell entry loads the tracker, and the stylesheet only reads its prope
   assert.equal(VV_TOP_PROP, '--platform-vv-top');
   // The value lives on <html> as an inline style, beside the kit's
   // --un-kb-inset. A stylesheet declaration would sit between them and win.
-  assert.doesNotMatch(APP_CSS, /--platform-vv-top\s*:/, 'no stylesheet rule may set --platform-vv-top');
+  // Every stylesheet in the tree, since the column reads it too (#3571).
+  for (const dir of ['public/css', 'public/usernode-native/v1']) {
+    for (const file of fs.readdirSync(path.join(ROOT, dir))) {
+      if (!file.endsWith('.css')) continue;
+      assert.doesNotMatch(read(`${dir}/${file}`), /--platform-vv-top\s*:/,
+        `${dir}/${file} must not set --platform-vv-top`);
+    }
+  }
   assert.doesNotMatch(NATIVE_CSS, /--platform-vv-top/, 'the centrally hosted kit is not changed');
 });
