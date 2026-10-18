@@ -4500,6 +4500,27 @@ const App = {
         if (boardView && typeof AppView !== 'undefined' && AppView._setViewMode) {
           AppView._setViewMode(boardView);
         }
+        // A STAMPED ENTRY NAMES THE TAB THE PAGE SHOWED THERE (#3620). Back
+        // and Forward walk the steps a band press pushed; the entry's stamp
+        // is applied here, after the normalisation above. A page already on
+        // screen for this project is retold it through the door event, which
+        // carries `fromHistory` so the page does not report the change back;
+        // a page that is not up — another screen, another project, a
+        // sub-view on top — reads it off the transient the mount seed reads,
+        // exactly as a retired /board link's landing does. An absent or
+        // unknown stamp changes nothing: the page opens as it does today, on
+        // the `?ws=` tab, the remembered tab, or the Hub.
+        if (tab === 'dev' && subTab === 'forum') {
+          const wsStamp = App._wsStampOf(history.state);
+          if (wsStamp && typeof AppView !== 'undefined') {
+            if (App.currentApp === slug && App.currentTab === 'dev'
+                && App.currentSubTab === 'forum') {
+              AppView._restoreWorkshopTab(slug, wsStamp);
+            } else {
+              AppView._overrideWorkshopTab(wsStamp);
+            }
+          }
+        }
         // Hash app URLs and older clean aliases are permanent inputs, never
         // permanent outputs. Replace before dispatch so reload/copy exposes
         // the clean canonical path without manufacturing a Back entry.
@@ -5080,6 +5101,73 @@ const App = {
   },
 
   _resumingWorkshop: null,
+
+  // ── The project page's tabs are history steps (#3620) ───────────────
+  //
+  // A band press changed the page's React state only, so the browser's stack
+  // held the single entry opening the page pushed and Back jumped over the
+  // tabs to the screen below. Each entry now carries, in its STATE (never in
+  // the address — tabs are not URLs, no existing link changes), the tab the
+  // page shows while ON that entry: a viewer's press stamps what the current
+  // entry showed and pushes a step at the same address, so Back and Forward
+  // retrace the tabs one at a time and a press on the tab already lit adds
+  // no step.
+  WS_TAB_STATE: '__wsTab',
+  // The keys a stamp may name — AppView.WORKSHOP_TABS, listed here so the
+  // stamp never depends on AppView being up.
+  WS_TAB_KEYS: ['status', 'discussion', 'workshop', 'needs', 'all'],
+  // The stamp on a history entry's state, or null when the entry names none.
+  _wsStampOf(state) {
+    return state && typeof state === 'object'
+      && App.WS_TAB_KEYS.indexOf(state[App.WS_TAB_STATE]) !== -1
+      ? state[App.WS_TAB_STATE]
+      : null;
+  },
+
+  /**
+   * THE PAGE REPORTS EVERY TAB IT SHOWS (workshop.tsx). A change the viewer
+   * made — a band press, the All items back chip — records a step: the
+   * current entry is stamped with the tab it WAS showing (`opts.from`, the
+   * outgoing tab, which the page knows and an unstamped entry does not), then
+   * a new entry is pushed at the SAME address carrying the new tab. A change
+   * the page is being TOLD — a traversal's stamp being applied, a door, the
+   * mount seed — records no step: `opts.fromHistory` only STAMPS the current
+   * entry, which now shows that tab, so Back from a later step unwinds to
+   * here without a dead press of its own. The same while a traversal is
+   * applying at all (`_isRestoring`): the traversal owns that step.
+   */
+  noteWorkshopTabChange(tab, opts) {
+    // The prerender pass has no history to write into; a stamp is a nicety,
+    // never a failure.
+    if (typeof window === 'undefined' || !window.history
+        || typeof window.history.pushState !== 'function') return;
+    const next = App.WS_TAB_KEYS.indexOf(tab) !== -1 ? tab : null;
+    if (!next) return;
+    let state = null;
+    try { state = window.history.state; } catch (_) { return; }
+    const stamped = App._wsStampOf(state);
+    // The entry already names this tab: a same-tab press, a repeated door.
+    if (stamped === next) return;
+    const carry = state && typeof state === 'object' ? state : {};
+    if ((opts && opts.fromHistory) || App._isRestoring) {
+      try {
+        window.history.replaceState({ ...carry, [App.WS_TAB_STATE]: next },
+          '', window.location.href);
+      } catch (_) {}
+      return;
+    }
+    // Stamp what the current entry showed, so Back from the new one returns
+    // to it. An entry that already names a tab keeps it: it is the truth
+    // about what that entry shows, wherever the page's own state has drifted.
+    const from = App.WS_TAB_KEYS.indexOf(opts && opts.from) !== -1 ? opts.from : null;
+    if (!stamped && from) {
+      try {
+        window.history.replaceState({ ...carry, [App.WS_TAB_STATE]: from },
+          '', window.location.href);
+      } catch (_) {}
+    }
+    try { window.history.pushState({ [App.WS_TAB_STATE]: next }, '', window.location.href); } catch (_) {}
+  },
 
   // ── The fifth tab says who you are (#2760) ──────────────────────────
   //

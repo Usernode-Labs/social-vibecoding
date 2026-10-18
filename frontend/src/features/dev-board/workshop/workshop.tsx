@@ -181,6 +181,19 @@ export function freshTab(): TabKey | null {
   return tab === 'status' || tab === 'discussion' || tab === 'workshop' || tab === 'needs' || tab === 'all' ? tab : null;
 }
 
+/**
+ * REPORT THE TAB THE PAGE NOW SHOWS (#3620). The router stamps each history
+ * entry with the tab the page shows on it, so device/browser Back retraces
+ * the band one press at a time instead of jumping over the tabs to the
+ * screen below. A change the viewer made (`from`: the outgoing tab) records
+ * a step at the page's own address; one the page is being told
+ * (`fromHistory`: a traversal's stamp, a door) records none. Where App is
+ * not there to ask, the report is dropped: a stamp is a nicety.
+ */
+export function noteTab(next: TabKey, opts?: { from?: TabKey; fromHistory?: boolean }): void {
+  try { window.App?.noteWorkshopTabChange?.(next, opts); } catch { /* no history to write */ }
+}
+
 /** Where a page's back button goes: All items to the Workshop, the rest to the hub. */
 export function pageParent(tab: TabKey): TabKey {
   return tab === 'all' ? 'workshop' : 'status';
@@ -3430,6 +3443,9 @@ export function DevWorkshop(): ReactNode {
   const openTab = (next: TabKey) => {
     setTab(next);
     callAppView('_setWorkshopTab', next);
+    // A VIEWER'S PRESS IS A HISTORY STEP (#3620): `tab` is what the current
+    // entry showed, so Back from the new one returns to it.
+    noteTab(next, { from: tab });
     callAppView('_saveFeedScroll', v.slug, 0);
     scrollToHead(hostRef.current);
   };
@@ -3451,15 +3467,32 @@ export function DevWorkshop(): ReactNode {
     if (deepTabApplied.current || !v.tab) return;
     deepTabApplied.current = true;
     setTab(v.tab);
+    noteTab(v.tab, { fromHistory: true }); // told, not made: a deep link is where the page opens (#3620)
   }, [v.tab]);
+  // THE PAGE'S FIRST TAB IS WRITTEN INTO THE ENTRY IT OPENS ON (#3620).
+  // Whatever the seed above chose — a `?ws=` link, the remembered tab, the
+  // Hub — the entry this page was opened on now SHOWS it, so it is stamped:
+  // Back from the first band press unwinds to here, and Forward returns to
+  // it. Reported once, on the tab the seed chose, wherever the page
+  // remounts, and as TOLD — a seed is where the page happens to open, not a
+  // step the viewer took, so it pushes nothing.
+  const seedTabRef = useRef<TabKey>(tab);
+  useEffect(() => {
+    noteTab(seedTabRef.current, { fromHistory: true });
+  }, []);
   // A DOOR TO THIS PROJECT'S HUB, pressed while its page is already open —
   // the logo menu's "Go to community hub" changes no address, so no route
   // runs. AppView._landOnHub says so; a door to another project is not ours.
   useEffect(() => {
     const onDoor = (event: Event) => {
-      const door = (event as CustomEvent<{ slug: string | null; tab: TabKey } | null>).detail;
+      const door = (event as CustomEvent<{ slug: string | null; tab: TabKey; fromHistory?: boolean } | null>).detail;
       if (!door || (door.slug && door.slug !== v.slug)) return;
       setTab(door.tab);
+      // A DOOR IS A STEP THE PAGE IS TOLD, NOT ONE IT MADE (#3620): reported
+      // with `fromHistory`, so it records no history step of its own — a
+      // door that routes pushes its own entry, and one that does not leaves
+      // the stack alone.
+      noteTab(door.tab, { fromHistory: true });
       // #3583: the scroller that is really there (see scrollToHead). AppView
       // has forgotten the offset already (_landOnTab), and a door that goes
       // on to route reads this page at its top when it saves it.
@@ -3483,7 +3516,14 @@ export function DevWorkshop(): ReactNode {
     if (!v.slug) return;
     const was = tabSlug.current;
     tabSlug.current = v.slug;
-    if (was && was !== v.slug) setTab(freshTab() || 'status');
+    if (was && was !== v.slug) {
+      const next = freshTab() || 'status';
+      setTab(next);
+      // The page re-seeds for the new project's tab; the entry this page is
+      // being applied on now shows it (#3620). Told, not made: the routing
+      // that brought this project in owns whatever step it pushed.
+      noteTab(next, { fromHistory: true });
+    }
   }, [v.slug]);
   // Which pane is under the tabs. Lives in a module-global store rather than
   // here, because app-view.js has to read it: `_rerenderWorkshop()` publishes

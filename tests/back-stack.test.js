@@ -530,3 +530,22 @@ test('Q16: without the Navigation API, a record with its state replaced is left,
   b.flush();
   assert.equal(b.at, 1);
 });
+
+test('#3620: a sheet record over a stamped page entry consumes back first, and only its own', () => {
+  // The page's tab steps are ordinary history entries, and a record copies
+  // the page's state when it is pushed over one. The press under a sheet
+  // must close the sheet first and spend only the record, so the stamped
+  // step below is still there for the NEXT press to walk.
+  const b = browser();
+  b.win.history.pushState({ __wsTab: 'workshop' }, ''); // the Workshop tab's step
+  b.stack.push(() => {}); // a sheet opens over it
+  assert.equal(b.win.history.state.__wsTab, 'workshop', 'the record carried the page\'s stamp');
+
+  b.press();
+  assert.equal(b.stack.size, 0, 'the press closed the sheet');
+  assert.deepEqual(b.routed, [], 'and the page saw nothing to route');
+  assert.equal(b.win.history.state.__wsTab, 'workshop', 'standing back on the stamped step');
+
+  b.press();
+  assert.deepEqual(b.routed, ['https://x.test/#apps'], 'the next press walks the tab');
+});

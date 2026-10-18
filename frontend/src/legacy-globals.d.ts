@@ -115,6 +115,14 @@ declare global {
       setBackIcon?(mode: 'home' | 'arrow', href?: string): void;
       setHeaderTitle?(title: string): void;
       /**
+       * #3620: the project page reports each tab it shows, so a viewer's
+       * press becomes a history step at the page's own address and Back
+       * retraces the band. `from` is the outgoing tab; `fromHistory` marks
+       * a change the page is being told (a traversal's stamp, a door) rather
+       * than one it made.
+       */
+      noteWorkshopTabChange?(tab: string, opts?: { from?: string; fromHistory?: boolean }): void;
+      /**
        * Paints the platform build into #platform-version-pill-slot, the host
        * Settings → About renders for it. Declared rather than left to the
        * index signature below, which types a lookup as `unknown` and so makes

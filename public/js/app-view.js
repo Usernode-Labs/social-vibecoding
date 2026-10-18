@@ -8174,6 +8174,21 @@ const AppView = {
     } catch {}
     if (slug) AppView._saveFeedScroll(slug, 0);
   },
+  /**
+   * BACK AND FORWARD RETELL A TAB, THEY DO NOT CHOOSE ONE (#3620). A
+   * traversal onto an entry that names a tab (restoreFromHash's stamp read)
+   * dispatches the same door event a door does, with `fromHistory` so the
+   * page reports the change back as one it is being told, not one it made —
+   * and WITHOUT the memory write _landOnTab does: Back is not a door, so the
+   * tab the page reopens on later is untouched. An unknown key says nothing.
+   */
+  _restoreWorkshopTab(slug, tab) {
+    const key = AppView.WORKSHOP_TABS.indexOf(tab) !== -1 ? tab : null;
+    if (!key) return;
+    try {
+      window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: key, fromHistory: true } }));
+    } catch {}
+  },
   // Rows per lane per theme before "+N more · Open on Board".
   WORKSHOP_LANE_MAX: 8,
   // Cards in the "Needs your vote" strip; the rest are a count.
