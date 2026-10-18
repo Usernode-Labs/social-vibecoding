@@ -213,15 +213,17 @@ test('the Claude shots agent runs on its own model in a fresh thread, whatever t
 
 test('the worker runs a shots turn on its pinned model, and every other turn on the author allowlist', () => {
   const worker = require('../src/services/worker');
-  // Without this, resolve() turned the unlisted Sonnet 5.5 back into Opus 5.5.
+  // #3579: the shots pin is the curated Sonnet 5.5 now, so resolve() keeps
+  // it; a claude id outside the allowlist still coerces to the default.
   assert.equal(worker.claudeTurnModel('shots', 'claude-sonnet-5-5'), 'claude-sonnet-5-5');
   assert.equal(worker.claudeTurnModel('shots', 'claude-opus-5-5'), 'claude-opus-5-5');
   for (const odd of ['', null, 'gpt-5', 'claude-sonnet-5-5 --bare', 'claude-Sonnet']) {
     assert.equal(worker.claudeTurnModel('shots', odd), 'claude-opus-5-5', String(odd));
   }
   for (const mode of ['build', 'scout', 'sync']) {
-    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5-5'), 'claude-opus-5-5', mode);
-    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5'), 'claude-sonnet-5', mode);
+    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5-5'), 'claude-sonnet-5-5', mode);
+    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5'), 'claude-sonnet-5-5', mode,
+      'the retired Sonnet 5 id resolves to its successor by name');
   }
 });
 

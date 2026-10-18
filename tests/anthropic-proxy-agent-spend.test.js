@@ -111,11 +111,11 @@ test('a call whose model is known records the breakdown in the SAME statement', 
 test('successive calls on two models accumulate against each separately', async () => {
   const pool = stubPool();
   noteAgentSpend(pool, { sessionId: 7, costCents: 8, isSyncTurn: false, model: 'claude-opus-5' });
-  noteAgentSpend(pool, { sessionId: 7, costCents: 2, isSyncTurn: false, model: 'claude-sonnet-5' });
+  noteAgentSpend(pool, { sessionId: 7, costCents: 2, isSyncTurn: false, model: 'claude-sonnet-5-5' });
   await settle();
   assert.deepEqual(pool.calls.map((c) => c.params), [
     [8, 7, 'claude-opus-5'],
-    [2, 7, 'claude-sonnet-5'],
+    [2, 7, 'claude-sonnet-5-5'],
   ]);
 });
 

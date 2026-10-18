@@ -67,8 +67,27 @@ test('list() exposes exactly the three model ids', () => {
   assert.deepEqual(ids, [
     'claude-fable-5-1',
     'claude-opus-5-5',
-    'claude-sonnet-5',
+    'claude-sonnet-5-5',
   ]);
+});
+
+// #3579: Sonnet 5.5 replaced Sonnet 5, the same succession Opus 5 made in
+// #2818. A stored pick of the retired id is no longer allowed, and resolves
+// to its successor BY NAME, not by falling through to the default.
+test('the retired Sonnet 5 id resolves to Sonnet 5.5 (#3579)', () => {
+  assert.equal(models.isAllowed('claude-sonnet-5'), false);
+  assert.equal(models.resolve('claude-sonnet-5'), 'claude-sonnet-5-5');
+  assert.equal(models.RETIRED_MODELS['claude-sonnet-5'], 'claude-sonnet-5-5');
+  assert.equal(models.DEFAULT_MODEL, 'claude-opus-5-5', 'the default did not move');
+});
+
+test('Sonnet 5.5 is billed at the same $2/$10 rate Sonnet 5 was (#3579)', () => {
+  const llm = require('../src/services/llm');
+  const usage = { input_tokens: 1_000_000, output_tokens: 1_000_000 };
+  assert.equal(Math.round(llm.estimateCostCents(usage, 'claude-sonnet-5-5')), 1200);
+  assert.equal(Math.round(llm.estimateCostCents(usage, 'claude-sonnet-5')), 1200,
+    'a recorded Sonnet 5 turn bills at the rate it was written with');
+  assert.equal(models.MODELS['claude-sonnet-5-5'].outputCostPerMTok, 10);
 });
 
 test('every model carries recommended change-size guidance (#800)', () => {

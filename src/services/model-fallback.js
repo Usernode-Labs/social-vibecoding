@@ -15,11 +15,22 @@ const log = require('./logger');
 const models = require('./models');
 const events = require('./events');
 
-// Short human label for a model id ("Fable 5", "Opus 5"). Falls back
-// to the raw id so an unknown slug still reads as something identifiable.
+// Short human label for a model id ("Fable 5.1", "Opus 5.5"). A retired
+// id is no longer in MODELS, but a notice naming it — a turn served on
+// the old id during a rolling update, a fallback replayed from history —
+// still reads as its release name (claude-sonnet-5 → "Sonnet 5"), the
+// same derivation the transcript's prettyModel uses. Anything else falls
+// back to the raw id so an unknown slug still reads as identifiable.
 function label(modelId) {
   const entry = modelId && models.MODELS[modelId];
-  return (entry && entry.label) || modelId || 'the selected model';
+  if (entry && entry.label) return entry.label;
+  const claude = typeof modelId === 'string'
+    && /^claude-([a-z]+)-(\d+)(?:-(\d+))?$/.exec(modelId);
+  if (claude) {
+    const name = claude[1].charAt(0).toUpperCase() + claude[1].slice(1);
+    return `${name} ${claude[2]}${claude[3] ? `.${claude[3]}` : ''}`;
+  }
+  return modelId || 'the selected model';
 }
 
 // In-chat notice for a turn that was served by the fallback model.

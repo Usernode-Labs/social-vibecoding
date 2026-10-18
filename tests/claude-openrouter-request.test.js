@@ -246,7 +246,7 @@ test('the adapter forwards Messages requests to OpenRouter with the key and stre
 
   // Bearer auth is accepted too; count_tokens is forwarded without a cap.
   const count = await send('/v1/messages/count_tokens', {
-    header: 'authorization', body: { model: 'claude-sonnet-5', messages: [] },
+    header: 'authorization', body: { model: 'claude-sonnet-5-5', messages: [] },
   });
   assert.equal(count.status, 200);
   assert.deepEqual(await count.json(), { input_tokens: 42 });

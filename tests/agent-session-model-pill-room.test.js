@@ -45,7 +45,7 @@ test('#3574: a model\'s short name drops the provider prefix and "Claude", and n
   assert.equal(short('Qwen: Qwen3 Coder 480B A35B (exacto)'), 'Qwen3 Coder 480B A35B (exacto)');
   // The platform's own labels (services/models.js) are short already.
   assert.equal(short('Opus 5.5'), 'Opus 5.5');
-  assert.equal(short('Sonnet 5'), 'Sonnet 5');
+  assert.equal(short('Sonnet 5.5'), 'Sonnet 5.5');
   assert.equal(short('Claude Opus 5.5'), 'Opus 5.5');
   // An option the catalog has no name for carries its id (pickerOptions).
   assert.equal(short('claude-opus-5-5'), 'Opus 5.5', 'an id, the way the transcript names it');

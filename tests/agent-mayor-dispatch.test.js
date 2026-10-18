@@ -728,7 +728,7 @@ test('the conversation\'s model applies from the next build: a Claude pick picks
   assert.equal(dispatch.needsAgentSwitch(codexChange, { backend: 'codex_openrouter', model: 'z-ai/glm-5', reasoningEffort: 'high' }), true);
   assert.equal(dispatch.needsAgentSwitch(codexChange, { backend: 'codex_openrouter', model: 'moonshot/kimi', reasoningEffort: 'low' }), true);
   assert.equal(dispatch.needsAgentSwitch(codexChange, { backend: 'claude_code', model: null }), true);
-  assert.deepEqual(dispatch.agentPrefFor({ backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: 'high' }),
+  assert.deepEqual(dispatch.agentPrefFor({ backend: 'claude_code', model: 'claude-sonnet-5-5', reasoningEffort: 'high' }),
     { backend: 'claude_code', provider: 'anthropic', model: null, reasoningEffort: null },
     'a Claude change stores no model: each run picks it');
 });

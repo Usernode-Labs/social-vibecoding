@@ -617,10 +617,10 @@ test('answerWorkshopQuestion defaults to Haiku and honours a resolved model', as
     assert.equal(a.model, 'claude-haiku-4-5');
     assert.equal(calls[0].model, 'claude-haiku-4-5');
   });
-  await withStubClient(answerResp('Short answer.', 'claude-sonnet-5'), async (calls) => {
-    const b = await llm.answerWorkshopQuestion({ contextJson: '{}', question: 'q', model: 'claude-sonnet-5' });
-    assert.equal(b.model, 'claude-sonnet-5');
-    assert.equal(calls[0].model, 'claude-sonnet-5');
+  await withStubClient(answerResp('Short answer.', 'claude-sonnet-5-5'), async (calls) => {
+    const b = await llm.answerWorkshopQuestion({ contextJson: '{}', question: 'q', model: 'claude-sonnet-5-5' });
+    assert.equal(b.model, 'claude-sonnet-5-5');
+    assert.equal(calls[0].model, 'claude-sonnet-5-5');
   });
 });
 
@@ -631,7 +631,7 @@ test('answerWorkshopQuestion defaults to Haiku and honours a resolved model', as
 test('answerWorkshopQuestion reports the served model, not the requested one', async () => {
   await withStubClient(answerResp('Short answer.', 'claude-haiku-4-5'), async () => {
     const out = await llm.answerWorkshopQuestion({
-      contextJson: '{}', question: 'q', model: 'claude-sonnet-5',
+      contextJson: '{}', question: 'q', model: 'claude-sonnet-5-5',
     });
     assert.equal(out.model, 'claude-haiku-4-5');
   });
