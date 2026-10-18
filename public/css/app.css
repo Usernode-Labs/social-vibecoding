@@ -3489,6 +3489,49 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
   overflow-x: hidden;
 }
 
+/* ── A SHORT PAGE STILL BOUNCES AT ITS FOOT (#3566) ─────────────────────
+   "Should be able to over scroll on home page down, doesn't feel as native
+   because can't." Every screen root is a plain `overflow-y: auto` scroller.
+   iOS and Android only rubber-band a scroller that has a scroll range, and
+   a short page has `scrollHeight === clientHeight`: a drag at its foot has
+   nowhere to move and chains to the document, which the installed shell
+   holds still on purpose (`html, body` above: `overflow: hidden`,
+   `overscroll-behavior-y: none`). Nothing moved.
+
+   So every page scroller is marked `data-page-bounce` and gets the same
+   one-pixel box #3544/#3520 hung below a project's short tabs: absolute, 1px
+   below its bottom edge, which puts one pixel into its scrollable overflow
+   and gives iOS/Android the range they bounce. Past the fold it is a
+   transparent pixel in the middle of the content; it changes no layout and
+   takes no tap.
+
+   PHONES ONLY, AND ONLY WHERE THIS IS THE SCROLLER. A mouse window with a
+   pixel of range would draw a scrollbar for nothing, and in a phone browser
+   where the DOCUMENT pages a screen the root is `overflow: visible`, so a
+   pixel would only lengthen the page: that case belongs to the existing
+   `data-browser-past-top` rule above, which stays exactly as it is.
+
+   `.messages-list-scroll` is the one marked box without an inline
+   `position`, so `position: relative` here makes it the pixel's containing
+   block. Not Needs you in a community (the pane fitted to the screen on
+   purpose, scrolling inside): the exemption is its own rule so an engine
+   without `:has()` drops only that, never the pixel. Chats, a running
+   project and that feed are not pages and carry no attribute. */
+@media (pointer: coarse) {
+  html:not([data-browser-scroller]) [data-page-bounce] {
+    position: relative;
+  }
+  html:not([data-browser-scroller]) [data-page-bounce]::after {
+    content: '';
+    position: absolute; left: 0; bottom: -1px;
+    width: 1px; height: 1px;
+    pointer-events: none;
+  }
+  html:not([data-browser-scroller]) [data-page-bounce]:has([data-workshop-pane="needs"])::after {
+    content: none;
+  }
+}
+
 /* ── `.touch-target-32`: the kit's hit-slop, sized for a dense row ──────
    QA 2026-09-24 Q19. `.un-touch-target` (native.css) grows a control's hit
    box to 44px, which is right for a lone icon in a bar. In a DENSE row it is

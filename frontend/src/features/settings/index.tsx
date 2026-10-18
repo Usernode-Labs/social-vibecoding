@@ -126,6 +126,7 @@ export function SettingsScreen() {
     <main
       id="settings-screen"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll dc-lift dc-lift-strip"
+      data-page-bounce=""
       style={{ position: "relative" }}
     >
       {/*

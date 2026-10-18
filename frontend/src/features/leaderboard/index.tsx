@@ -153,6 +153,7 @@ export function LeaderboardScreen() {
       ref={screenRef}
       id="leaderboard-screen"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll [scrollbar-gutter:stable]"
+      data-page-bounce=""
       style={{ position: "relative" }}
     >
       {/*
