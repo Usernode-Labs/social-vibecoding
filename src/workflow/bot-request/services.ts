@@ -49,7 +49,7 @@ export function botRequestServices({ config, pool }: Deps): Record<string, WorkH
         const key = requestKey(Number(input.appId), Number(input.issueNumber));
         const out = await bot().startBuild(config, pool, {
           appId: Number(input.appId), issueNumber: Number(input.issueNumber), runId: Number(input.runId),
-          replyTo: { machine: MACHINE, key },
+          person: input.person == null ? null : String(input.person), replyTo: { machine: MACHINE, key },
         });
         return JSON.parse(JSON.stringify(out ?? { outcome: 'skipped' })) as Json;
       },

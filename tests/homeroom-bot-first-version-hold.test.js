@@ -142,18 +142,20 @@ test('a queued or filed card asks whether the project\'s first version holds the
   assert.deepEqual([...own.asked, ...started.asked], []);
 });
 
-test('the read lane and the build lane both hold for the first version; the merge wakes the loop', () => {
-  const lane = SRC.slice(SRC.indexOf('async function liveCandidates('), SRC.indexOf('async function liveBuildCandidates('));
-  assert.match(lane, /AND \(fu\.id IS NOT NULL OR q\.reason = 'admin' OR NOT EXISTS \(\s+SELECT 1 FROM homeroom_bot_first_versions fv\s+WHERE fv\.app_id = q\.app_id AND fv\.bot_builds AND fv\.issue_number IS DISTINCT FROM q\.issue_number\s+AND \$\{FIRST_VERSION_PENDING_SQL\}/,
+test('the read lane and the build lane both hold for the first version; the merge wakes the lane', () => {
+  // The lane's candidates (bot-lane reads them, rules/bot-loop.ts).
+  const rules = require('../src/workflow/rules/bot-loop.ts');
+  assert.match(rules.READ_CANDIDATES_SQL, /AND \(fu\.id IS NOT NULL OR q\.reason = 'admin' OR NOT EXISTS \(\s+SELECT 1 FROM homeroom_bot_first_versions fv\s+WHERE fv\.app_id = q\.app_id AND fv\.bot_builds AND fv\.issue_number IS DISTINCT FROM q\.issue_number\s+AND \(\s+\(fv\.status IN/,
     'a follow-up on a change already up and an admin\'s Run now go ahead; the first version\'s own request too');
-  const builds = SRC.slice(SRC.indexOf('async function liveBuildCandidates('), SRC.indexOf('function pickLiveBuilds('));
-  assert.match(builds, /AND NOT EXISTS \(\s+SELECT 1 FROM homeroom_bot_first_versions fv\s+WHERE fv\.app_id = r\.app_id AND fv\.bot_builds AND fv\.issue_number IS DISTINCT FROM r\.issue_number\s+AND \$\{FIRST_VERSION_PENDING_SQL\}/);
+  assert.match(rules.BUILD_CANDIDATES_SQL, /AND NOT EXISTS \(\s+SELECT 1 FROM homeroom_bot_first_versions fv\s+WHERE fv\.app_id = w\.app_id AND fv\.bot_builds AND fv\.issue_number IS DISTINCT FROM \(w\.data->>'issueNumber'\)::int\s+AND \(\s+\(fv\.status IN/);
+  assert.ok(rules.READ_CANDIDATES_SQL.includes(rules.FIRST_VERSION_PENDING_SQL));
+  assert.ok(rules.BUILD_CANDIDATES_SQL.includes(rules.FIRST_VERSION_PENDING_SQL));
+  assert.equal(bot.FIRST_VERSION_PENDING_SQL, rules.FIRST_VERSION_PENDING_SQL, 'the card reads the rule the lane does');
   const holds = SRC.slice(SRC.indexOf('async function firstVersionHolds('), SRC.indexOf('function heldForFirstVersion('));
-  assert.match(holds, /WHERE fv\.app_id = ANY\(\$1::int\[\]\) AND fv\.bot_builds\s+AND \$\{FIRST_VERSION_PENDING_SQL\}/,
-    'the card reads the rule the loop does');
-  const merged = SRC.slice(SRC.indexOf('async function noteRequestMerged('), SRC.indexOf('function requestPass('));
-  assert.match(merged, /noteIssueActivity\(\{ appId, issueNumber: Number\(firstVersion\[0\]\.issue_number\), reason: 'first_version_live' \}\)/,
-    'on every Pod, so whichever runs the loop picks the waiting requests up now');
+  assert.match(holds, /WHERE fv\.app_id = ANY\(\$1::int\[\]\) AND fv\.bot_builds\s+AND \$\{FIRST_VERSION_PENDING_SQL\}/);
+  const merged = SRC.slice(SRC.indexOf('async function noteRequestMerged('), SRC.indexOf('async function pauseOnBudget('));
+  assert.match(merged, /if \(firstVersion\.length\) \{[\s\S]*?await \(deps\.platform \|\| platform\(\)\)\.botRefresh\(appId\)/,
+    'the lane refreshes the project soon, wherever the workflow runs, so the waiting requests are picked up now');
   // The rule asks no parameters of the queries it joins, so neither lane's
   // parameter list moved.
   assert.doesNotMatch(bot.FIRST_VERSION_PENDING_SQL, /\$\d/);

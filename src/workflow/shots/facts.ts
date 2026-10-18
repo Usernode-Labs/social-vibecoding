@@ -52,7 +52,7 @@ export async function readFacts(tx: Tx, sessionId: number): Promise<Facts> {
             (cs.active_turn IS NOT NULL
               OR EXISTS (SELECT 1 FROM local_agent_turns t
                           WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
-              OR ${operationsLiveSql('cs.id')} OR ${syncWorkingSql('cs.id')} OR ${botLookingSql('cs.id')}) AS agent_busy,
+              OR ${operationsLiveSql('cs.id')} OR ${syncWorkingSql('cs.id', { started: true })} OR ${botLookingSql('cs.id')}) AS agent_busy,
             a.slug AS app_slug
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
        LEFT JOIN shot_runs r ON r.id = cs.shots_run_id

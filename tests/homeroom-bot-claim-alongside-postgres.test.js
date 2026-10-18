@@ -9,6 +9,11 @@
 // the request and delivers. A claim made BEFORE the bot started on it still
 // holds the bot off, as it always did (#17's rule, kept for that side).
 //
+// The queue is the bot-request machine's projection: the rows below are
+// written as an older release would have, adopted by their machines (as
+// platform.adoptBotQueue does at boot), and the refresh's Owed and NotOwed
+// are applied by a runtime of the bot's two machines with its work faked.
+//
 // Skips when no PostgreSQL is reachable, like the repository's other
 // postgres tests.
 
@@ -22,6 +27,38 @@ const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
 const bot = require('../src/services/homeroom-bot');
+const { createRuntime } = require('../src/workflow/kernel/index.ts');
+const requestMachine = require('../src/workflow/bot-request/machine.ts');
+const laneMachine = require('../src/workflow/bot-lane/machine.ts');
+const { TURN_STOP } = require('../src/workflow/rules/turn-stop.ts');
+
+// The bot's loop machines on this database, their work faked (the lane
+// grants nothing: the bot is off here).
+function botLoop(pool) {
+  const kinds = [...Object.values(requestMachine.WORK), ...Object.values(laneMachine.WORK), TURN_STOP];
+  const services = Object.fromEntries(kinds.map((k) => [k, {
+    maxAttempts: 1, backoffMs: () => 0, leaseMs: 600, concurrency: 4, async run() { return { outcome: 'done' }; },
+  }]));
+  return createRuntime({
+    pool, pollMs: 50, publish: async () => {}, services,
+    machines: [requestMachine.botRequest({ staging: false }), laneMachine.botLane({ staging: false })],
+  });
+}
+// Each queue row no machine holds yet is adopted by its request's machine.
+async function adoptQueue(pool, rt) {
+  const { rows } = await pool.query(
+    `SELECT q.* FROM homeroom_bot_queue q
+      WHERE NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = 'bot-request' AND w.key = 'request:' || q.app_id || ':' || q.issue_number)`);
+  for (const q of rows) {
+    await rt.append(requestMachine.MACHINE, requestMachine.requestKey(q.app_id, q.issue_number), {
+      type: 'Adopted', payload: {
+        appId: q.app_id, issueNumber: q.issue_number, reason: q.reason, priority: q.priority,
+        enqueuedAt: q.enqueued_at.toISOString(), startedAt: q.started_at ? q.started_at.toISOString() : null,
+      },
+    }, { requestKey: `adopt:${q.id}`, source: { kind: 'system', name: 'adopt' } });
+  }
+  await rt.drain();
+}
 
 async function openDatabase(t) {
   let pg;
@@ -53,6 +90,8 @@ async function openDatabase(t) {
 test('#4190: a claim after the bot started does not hold it off; a claim before still does', { timeout: 120000 }, async (t) => {
   const pool = await openDatabase(t);
   if (!pool) return;
+  const rt = botLoop(pool);
+  t.after(() => rt.stop());
 
   let seq = 0;
   async function user(prefix, { synthetic = false } = {}) {
@@ -125,6 +164,7 @@ test('#4190: a claim after the bot started does not hold it off; a claim before 
   await t.test('the refresh keeps the bot\'s own follow-up on a request claimed beside its build', async () => {
     // A row the bot queued for itself to read #3 again once the build ends.
     await queue(3, { priority: 2, reason: bot.SELF_QUEUED_REASONS[2], enqueued: '1 minute' });
+    await adoptQueue(pool, rt);
     const github = {
       async fetchPublicIssues() {
         const at = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
@@ -132,6 +172,7 @@ test('#4190: a claim after the bot started does not hold it off; a claim before 
       },
     };
     await bot.refreshApp(pool, app, { github });
+    await rt.drain();
     const { rows } = await pool.query(
       'SELECT issue_number FROM homeroom_bot_queue WHERE app_id = $1 ORDER BY issue_number', [app.id],
     );
@@ -144,7 +185,12 @@ test('#4190: a claim after the bot started does not hold it off; a claim before 
 
   await t.test('once the bot\'s run is over, a claim made during it is an ordinary hold again', async () => {
     await pool.query('UPDATE homeroom_bot_runs SET build_ok = TRUE WHERE id = $1', [build3.id]);
-    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 3', [app.id]);
+    // Its follow-up read ends: nothing is owed it any more.
+    await rt.append(requestMachine.MACHINE, requestMachine.requestKey(app.id, 3), {
+      type: 'NotOwed', payload: { appId: app.id, issueNumber: 3, quiet: false },
+    }, { requestKey: 'read-ended:3', source: { kind: 'system', name: 'test' } });
+    await rt.drain();
+    assert.equal((await pool.query('SELECT 1 FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 3', [app.id])).rows.length, 0);
     const holders = await bot.issueHolders(pool, app.id);
     assert.deepEqual(holders.get(3)?.map((h) => h.kind), ['claim']);
   });

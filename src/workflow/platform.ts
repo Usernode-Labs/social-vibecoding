@@ -276,10 +276,19 @@ export async function botActivity(db: Db, p: { appId: number; issueNumber: numbe
 }
 
 // A ready verdict's build is owed (Build it in the DM, a carried plan).
-export async function botBuildOwed(db: Db, p: { appId: number; issueNumber: number; runId: number }): Promise<void> {
+// `key`: the sweep's own (a waiting run told again), else one per run.
+export async function botBuildOwed(db: Db, p: { appId: number; issueNumber: number; runId: number; key?: string | null }): Promise<void> {
   await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
     type: 'BuildOwed', payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber), runId: Number(p.runId) } as any,
-  }, { requestKey: `build:${Number(p.runId)}`, source: BOT_SOURCE('build'), appId: Number(p.appId) });
+  }, { requestKey: p.key || `build:${Number(p.runId)}`, source: BOT_SOURCE('build'), appId: Number(p.appId) });
+}
+
+// The session a look runs on, once the look knows it (a project's first read
+// makes its triage session).
+export async function botLookOn(db: Db, p: { appId: number; issueNumber: number; n: number; sessionId: number }): Promise<void> {
+  await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
+    type: 'LookOn', payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber), n: Number(p.n), sessionId: Number(p.sessionId) } as any,
+  }, { requestKey: `lookon:${Number(p.appId)}:${Number(p.issueNumber)}:${Number(p.n)}`, source: BOT_SOURCE('look'), appId: Number(p.appId) });
 }
 
 // bot-change's merge, told to each request it was for.
@@ -438,13 +447,16 @@ export async function stopWorkflowTurn(p: { sessionId: number; by: string | null
 // transaction around it. Resolves the INSERT's rows. A place the voice has
 // no part in (a governance vote's thread) inserts the message alone.
 export async function insertHeard(db: Queryable, insertSql: string, values: unknown[],
-  p: { appId: number; thread: { type?: unknown; ref?: unknown } | null }): Promise<{ id: number; created_at: string }[]> {
+  p: { appId: number; thread: { type?: unknown; ref?: unknown } | null }): Promise<{ id: number; created_at: string; requestHeard?: boolean }[]> {
   const place = placeOf(p.thread);
   if (!place) return (await db.query(insertSql, values)).rows;
   const n = values.length;
   // On a request's thread the request's own instance (bot-request) hears it
-  // too, in the same statement: a read of it under way starts over, an idle
-  // one's project is refreshed soon.
+  // too, in the same statement, when it has one: a read of it under way
+  // starts over, an idle one's project is refreshed soon. A request the bot
+  // never had anything to do with gets no instance for every comment on it:
+  // the row says it was not heard (`requestHeard`), and the caller asks for
+  // its project's refresh instead.
   const onRequest = place.type === 'issue' && Number.isInteger(Number(place.ref)) && Number(place.ref) > 0;
   const { rows } = await db.query(
     `WITH m AS (${insertSql}),
@@ -461,12 +473,14 @@ export async function insertHeard(db: Queryable, insertSql: string, values: unkn
               jsonb_build_object('appId', $${n + 3}::int, 'issueNumber', $${n + 8}::int, 'at', m.created_at),
               $${n + 5}::jsonb, NULL, 'activity:' || m.id, NULL
          FROM m
+        WHERE EXISTS (SELECT 1 FROM wf_instances wi WHERE wi.machine = $${n + 6} AND wi.key = $${n + 7})
        RETURNING id)` : ''}
      SELECT m.id, m.created_at, (SELECT pg_notify('wf_events', $${n + 1}) FROM e LIMIT 1) AS woke${onRequest ? `,
-            (SELECT pg_notify('wf_events', $${n + 6}) FROM r LIMIT 1) AS woke_request` : ''} FROM m`,
+            (SELECT pg_notify('wf_events', $${n + 6}) FROM r LIMIT 1) AS woke_request,
+            EXISTS (SELECT 1 FROM r) AS request_heard` : ''} FROM m`,
     [...values, BOT_VOICE, voiceKey(p.appId, place), p.appId, JSON.stringify(place), JSON.stringify({ kind: 'route', name: 'chat' }),
       ...(onRequest ? [BOT_REQUEST, botRequestKey(p.appId, Number(place.ref)), Number(place.ref)] : [])]);
-  return rows.map(({ woke: _woke, woke_request: _wr, ...row }: any) => row);
+  return rows.map(({ woke: _woke, woke_request: _wr, request_heard: rh, ...row }: any) => (onRequest ? { ...row, requestHeard: !!rh } : row));
 }
 
 // A person wrote in their DM with the bot (routes/conversations.js, in

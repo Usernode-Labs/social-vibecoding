@@ -52,12 +52,20 @@ async function openDatabase(t) {
   url.pathname = `/${name}`;
   const pool = new pg.Pool({ connectionString: String(url), max: 8 });
   pool.on('error', () => {});
+  // An ask queued for the bot's follow-up is owed a look by its request's
+  // bot-request instance (its queue row the projection): the workflow
+  // runtime runs here, on this database, its pipeline only (no timers, no
+  // work).
+  const platform = require('../src/workflow/platform.ts');
+  require('../src/db/pool').getPool = () => pool;
   t.after(async () => {
+    await platform.stopWorkflow();
     await pool.end().catch(() => {});
     await admin.query(`DROP DATABASE IF EXISTS ${name}`).catch(() => {});
     await admin.end().catch(() => {});
   });
   await pool.query(fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8'));
+  await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
   return pool;
 }
 

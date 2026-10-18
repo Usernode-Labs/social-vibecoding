@@ -47,7 +47,7 @@ function stub(id, exports) {
 // writes its prompt and reads chat_sessions.active_turn, so a test can land
 // another turn's claim at either point of the race.
 function loadWorker({
-  onExec = null, journalLines = null, onPromptWrite = null, onActiveTurnRead = null,
+  onExec = null, journalLines = null, onPromptWrite = null, onActiveTurnRead = null, queryAnswer = null,
 } = {}) {
   const ids = {
     docker: require.resolve('../src/services/docker'),
@@ -108,6 +108,8 @@ function loadWorker({
           activeTurns.set(sessionId, next);
           return { rows: [{ active_turn: next }], rowCount: 1 };
         }
+        const answered = queryAnswer ? queryAnswer(text, params) : null;
+        if (answered) return answered;
         if (/SET active_turn = NULL/i.test(text)) {
           if (!activeTurns.has(sessionId)) return { rows: [], rowCount: 0 };
           activeTurns.delete(sessionId);
@@ -974,6 +976,8 @@ test('a machine stops only its own turn: another machine\'s, a person\'s or anot
     assert.deepEqual(await stop(), { stopped: false, reason: 'not_this_turn' }, 'another instance\'s');
     activeTurns.set(8402, ownedTurn());
     assert.deepEqual(await stop({ kinds: ['shots.agent'] }), { stopped: false, reason: 'not_this_turn' }, 'another kind of work');
+    assert.deepEqual(await stop({ workKey: 'sync:2' }), { stopped: false, reason: 'not_this_turn' },
+      'the instance\'s next sync: a stop retried after its own item ended');
     assert.equal(calls.length, 0, 'nothing killed');
     assert.ok(!dbCalls.some((c) => /stopRequestedAt/.test(c.sql)), 'nothing stamped');
     assert.equal(activeTurns.get(8402).stopRequestedAt, undefined);
@@ -1004,4 +1008,65 @@ test('a turn\'s own clock kills it without recording that anybody stopped it', a
     assert.equal(activeTurns.get(8404).stopRequestedAt, undefined);
     assert.equal(calls.length, 1);
   } finally { restore(); }
+});
+
+// A machine's turn.stop that lands while `docker exec -d` is in flight finds
+// no journal to kill and releases the record it stamped. The exec then
+// starts a turn with no record and no clock; execInWorker reads the record
+// right after the exec, and a held workflow turn whose record is gone (or is
+// another turn's) is killed by its own journal.
+const isJournalStop = (c) => typeof c.args?.[4] === 'string' && c.args[4].includes('ls -t /home/node/.claude/turn-*.log');
+const OWNED = { machine: 'bot-request', key: 'request:7:3', kind: 'bot.look', workKey: 'look:1', workId: '7b0c2f52-1d3e-4c55-9a8e-2f6d1c0e9a11' };
+
+test('a workflow turn whose record a Stop released while its exec was in flight is killed by its journal', async () => {
+  let activeTurns;
+  const { worker, calls, restore, activeTurns: at } = loadWorker({
+    journalLines: ['__USERNODE_EXIT__ 137'],
+    onExec: async ({ args }) => {
+      if (args[0] === 'exec' && args[1] === '-d') activeTurns.delete(8500);
+      if (isJournalStop({ args })) return { stdout: '__USERNODE_STOP_CONFIRMED__', stderr: '' };
+      return null;
+    },
+  });
+  activeTurns = at;
+  try {
+    warmSession(worker, 8500);
+    await worker.execInWorker(8500, { ...DISPATCH_ARGS, owner: OWNED, holdTurnRecord: true, onTurnRecord: async () => {} });
+    const dispatchIdx = calls.findIndex(isDispatch);
+    assert.ok(dispatchIdx >= 0);
+    const kills = calls.slice(dispatchIdx + 1).filter(isJournalStop);
+    assert.equal(kills.length, 1, 'killed once, by its journal');
+    assert.match(kills[0].args[4], /\[ "\$N" = '\/home\/node\/\.claude\/turn-[A-Za-z0-9-]+\.log' \]/);
+  } finally { restore(); }
+});
+
+test('a workflow turn whose record is still its own and unstamped after the exec is left to run', async () => {
+  const { worker, calls, restore } = loadWorker({ journalLines: ['__USERNODE_EXIT__ 0'] });
+  try {
+    warmSession(worker, 8501);
+    await worker.execInWorker(8501, { ...DISPATCH_ARGS, owner: OWNED, holdTurnRecord: true, onTurnRecord: async () => {} });
+    assert.ok(calls.some(isDispatch));
+    assert.ok(!calls.some(isJournalStop), 'nothing kills a healthy turn');
+  } finally { restore(); }
+});
+
+// A Stop that lands before the turn's record exists cancels its work item;
+// the record the dispatch then writes has no next owner (the item is
+// settled), so the refused checkpoint releases it at once. A lost lease
+// leaves it for the next attempt, which follows the turn.
+test('a workflow turn whose item was cancelled before it dispatched releases its record; a lost lease keeps it', async () => {
+  for (const [status, kept] of [['settled', false], ['running', true]]) {
+    const { worker, calls, activeTurns, restore } = loadWorker({
+      queryAnswer: (sql) => (/FROM wf_work WHERE id::text = \$1/.test(sql) ? { rows: [{ status }], rowCount: 1 } : null),
+    });
+    try {
+      warmSession(worker, 8600);
+      await assert.rejects(worker.execInWorker(8600, {
+        ...DISPATCH_ARGS, owner: OWNED, holdTurnRecord: true,
+        onTurnRecord: async () => { throw Object.assign(new Error('stopped'), { code: 'steps_stopped', stopped: true }); },
+      }), /stopped/);
+      assert.ok(!calls.some(isDispatch), 'nothing dispatched');
+      assert.equal(activeTurns.has(8600), kept, status === 'settled' ? 'released' : 'kept for the next attempt');
+    } finally { restore(); }
+  }
 });

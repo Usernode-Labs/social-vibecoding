@@ -13,9 +13,12 @@
 //   - with `release`, releases its record, which the cancelled work would
 //     otherwise have released.
 // A Stop that lands before the turn exists needs no kill: the cancelled
-// item's next checkpoint refuses the dispatch (durable-turn's onTurnRecord),
-// and a stamp landing between the record and the exec is read by
-// execInWorker right after it.
+// item's next checkpoint refuses the dispatch (durable-turn's onTurnRecord)
+// and execInWorker releases the record it wrote. One landing between the
+// record and the exec (no journal to kill yet, the record released here) is
+// read by execInWorker right after the exec: a record stamped, gone or now
+// another turn's, and the turn is killed by its journal. `workKey` fences
+// the stop to the item whose turn it is.
 
 import type { Json, Pool, WorkHandler } from './kernel/index.ts';
 import { legacy } from './legacy.ts';
@@ -34,6 +37,7 @@ export function turnStopServices({ pool }: { pool: Pool }): Record<string, WorkH
         const out = await legacy('services/worker').stopOwnedTurn(pool, {
           sessionId: Number(input.sessionId), machine: String(input.machine), key: String(input.key),
           kinds: Array.isArray(input.kinds) ? input.kinds.map(String) : [],
+          workKey: input.workKey == null ? null : String(input.workKey),
           by: input.by == null ? null : String(input.by), release: input.release !== false,
         });
         return JSON.parse(JSON.stringify(out ?? null)) as Json;

@@ -20,8 +20,9 @@ const { Pool } = require('pg');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
 const request = require('../src/workflow/bot-request/machine.ts');
 const lane = require('../src/workflow/bot-lane/machine.ts');
-const { requestKey, lookCardKey } = require('../src/workflow/rules/bot-loop.ts');
+const { requestKey, lookCardKey, SLOTS_IN_USE_SQL, NEXT_ELIGIBLE_SQL } = require('../src/workflow/rules/bot-loop.ts');
 const { TURN_STOP } = require('../src/workflow/rules/turn-stop.ts');
+const { TURN_OWNER_SQL, syncWorkingSql } = require('../src/workflow/session-work.ts');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
@@ -189,6 +190,97 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     assert.deepEqual(app2Looks, [3, 4, 5]);
   });
 
+  // The refresh: a full one every five minutes, and soon after a project is
+  // asked for, that project alone (never a second full one).
+  await t.test('refresh: a full one covers every project; a project asked for after it is refreshed alone', async () => {
+    reset();
+    const setRefresh = (field, value) => asTransition((cl) => cl.query(
+      `UPDATE wf_instances SET data = jsonb_set(data, $3::text[], to_jsonb($4::text)) WHERE machine = $1 AND key = $2`,
+      [lane.MACHINE, lane.KEY, ['refresh', field], value]));
+    await send(lane.MACHINE, lane.KEY, 'Look', {});
+    await setRefresh('due', new Date(Date.now() - 1000).toISOString());
+    await send(lane.MACHINE, lane.KEY, 'Tick', {});
+    const full = calls(lane.WORK.refresh).at(-1);
+    assert.equal(full.input.apps, null, 'the full one: every project');
+    assert.deepEqual((await inst(lane.MACHINE, lane.KEY)).data.refresh.asked, []);
+    await send(lane.MACHINE, lane.KEY, 'RefreshAsked', { appId: app2.id });
+    await setRefresh('soon', new Date(Date.now() - 1000).toISOString());
+    await send(lane.MACHINE, lane.KEY, 'Tick', {});
+    assert.deepEqual(calls(lane.WORK.refresh).at(-1).input.apps, [app2.id], 'that project alone');
+    assert.equal(calls(lane.WORK.sweep).length, 1, 'the sweeps go with the full one only');
+  });
+
+  // A request an admin must look at (its instance flagged) holds no slot,
+  // and the lane wakes when a follow-up's burst on its change settles.
+  await t.test('lane SQL: a flagged request holds no slot; a burst on a change\'s thread is waited out, then looked at', async () => {
+    reset();
+    const app6 = await mkApp('ponds-sql');
+    await oweOnly(app6.id, 1);
+    await sendOnly(lane.MACHINE, lane.KEY, 'Look', {});
+    const held = async () => (await pool.query(`SELECT key FROM (${SLOTS_IN_USE_SQL}) s WHERE key = $1`, [requestKey(app6.id, 1)])).rows.length;
+    assert.equal(await held(), 1);
+    await asTransition((cl) => cl.query(`UPDATE wf_instances SET flag = 'faulted' WHERE machine = $1 AND key = $2`, [request.MACHINE, requestKey(app6.id, 1)]));
+    assert.equal(await held(), 0, 'flagged: no slot');
+    await asTransition((cl) => cl.query(`UPDATE wf_instances SET flag = NULL WHERE machine = $1 AND key = $2`, [request.MACHINE, requestKey(app6.id, 1)]));
+    // A queued follow-up whose change's thread a person just wrote on.
+    const { rows: [cs] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, linked_issues) VALUES ($1, $2, 'b', 'promoted', ARRAY[2]) RETURNING id`, [app6.id, bot.id]);
+    await pool.query(`INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref) VALUES ($1, $2, 'one more thing', 'message', 'session', $3)`,
+      [app6.id, ada.id, cs.id]);
+    await oweOnly(app6.id, 2);
+    assert.equal((await inst(request.MACHINE, requestKey(app6.id, 2))).state, 'queued', 'not granted while it settles');
+    const { rows: [n] } = await pool.query(NEXT_ELIGIBLE_SQL);
+    assert.ok(n.at && Date.parse(n.at) > Date.now() && Date.parse(n.at) - Date.now() <= 21000, 'when it settles');
+  });
+
+  // A person's message on a request's thread: its instance hears it in the
+  // statement that stores it, when it has one; a request the bot never had
+  // anything to do with gets no instance per comment (its project is
+  // refreshed instead, by the caller).
+  await t.test('heard: a message on a request\'s thread reaches its instance only when it has one', async () => {
+    reset();
+    const platform = require('../src/workflow/platform.ts');
+    const app7 = await mkApp('ponds-heard');
+    const post = async (n) => (await platform.insertHeard(pool,
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref) VALUES ($1, $2, 'hi', 'message', 'issue', $3) RETURNING id, created_at`,
+      [app7.id, ada.id, n], { appId: app7.id, thread: { type: 'issue', ref: n } }))[0];
+    const activity = async (n) => (await events(request.MACHINE, requestKey(app7.id, n), 'Activity')).length;
+    assert.equal((await post(1)).requestHeard, false);
+    assert.equal(await activity(1), 0, 'no instance made for a comment');
+    await oweOnly(app7.id, 2);
+    assert.equal((await post(2)).requestHeard, true);
+    assert.equal(await activity(2), 1);
+  });
+
+  // A platform sync waiting for the session to be idle is not yet working on
+  // it for the shots agent (which would wait for it while it waits for the
+  // agent): only once it has started.
+  await t.test('session work: a sync counts for the shots agent only once it has started', async () => {
+    const { rows: [s] } = await pool.query(`INSERT INTO chat_sessions (app_id, user_id, branch_name, status) VALUES ($1, $2, 'b', 'promoted') RETURNING id`, [app.id, ada.id]);
+    const read = async () => (await pool.query(
+      `SELECT ${syncWorkingSql('$1::int')} AS any, ${syncWorkingSql('$1::int', { started: true })} AS started`, [s.id])).rows[0];
+    await asTransition((cl) => cl.query(
+      `INSERT INTO wf_work (machine, key, kind, work_key, input) VALUES ('proposal', $1, 'branch.sync', 'sync:1', '{}')`, [`session:${s.id}`]));
+    assert.deepEqual(await read(), { any: true, started: false }, 'waiting for idle');
+    await asTransition((cl) => cl.query(`UPDATE wf_work SET checkpoint = '{"started": true}' WHERE key = $1`, [`session:${s.id}`]));
+    assert.deepEqual(await read(), { any: true, started: true });
+    await asTransition((cl) => cl.query(`DELETE FROM wf_work WHERE key = $1`, [`session:${s.id}`]));
+  });
+
+  // Before the bot has an account (a fresh platform switched live), the lane
+  // still refreshes, which makes the account; it grants nothing yet.
+  await t.test('lane facts: with the bot on and no bot account yet, it acts (the refresh makes one) and grants nothing', async () => {
+    const { readFacts } = require('../src/workflow/bot-lane/facts.ts');
+    const tx = { async query(sql) {
+      if (/FROM platform_settings/.test(sql)) return { rows: [{ key: 'homeroom_bot_mode', value: 'live' }] };
+      if (/FROM users/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected: ${sql.slice(0, 40)}`);
+    } };
+    const f = await readFacts(tx, { staging: false });
+    assert.equal(f.acting, true);
+    assert.deepEqual([f.reads, f.builds, f.inUse], [[], [], []]);
+  });
+
   await t.test('busy: a look refused for now waits on its own backoff, its tries untouched; L5: a fault pauses every grant instead', async () => {
     reset();
     work.answer.set(request.WORK.look, { outcome: 'busy', error: 'session_busy' });
@@ -226,6 +318,77 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     assert.equal((await inst(lane.MACHINE, lane.KEY)).data.fault, null);
   });
 
+  // One request the platform always fails on (a provider refusing its
+  // conversation, a turn that always throws) must not keep pausing every
+  // grant: it waits on its own count, and its look is told the count, so
+  // its FAULT_TRIES-th fault is recorded as a failed read (laneFault: its
+  // debt spent, the lane paused all the same).
+  await t.test('faults: a request failing on the platform waits on its own count, its look told it; a recorded failure spends its debt', async () => {
+    reset();
+    const unpause = () => asTransition((cl) => cl.query(`UPDATE wf_instances SET data = jsonb_set(data, '{fault}', 'null')
+                                                           WHERE machine = $1 AND key = $2`, [lane.MACHINE, lane.KEY]));
+    const unwait = (n) => asTransition(async (cl) => {
+      await cl.query(`UPDATE wf_instances SET data = jsonb_set(data, '{backoff,until}', to_jsonb(now() - interval '1 second'))
+                       WHERE machine = $1 AND key = $2`, [request.MACHINE, requestKey(app2.id, n)]);
+      await cl.query('UPDATE homeroom_bot_queue SET wait_until = now() - interval \'1 second\' WHERE app_id = $1 AND issue_number = $2', [app2.id, n]);
+    });
+    await unpause();
+    work.answer.set(request.WORK.look, { outcome: 'fault', error: 'provider down' });
+    await owe(app2.id, 11);
+    await send(lane.MACHINE, lane.KEY, 'Look', {});
+    let i = await inst(request.MACHINE, requestKey(app2.id, 11));
+    assert.equal(i.state, 'queued', 'owed as it was');
+    assert.equal(i.data.faults, 1);
+    assert.equal(i.data.backoff.failures, 1, 'it waits on its own count too');
+    assert.equal((await row(app2.id, 11)).wait_reason, 'provider down');
+    await unpause(); await unwait(11);
+    await send(lane.MACHINE, lane.KEY, 'Look', {});
+    i = await inst(request.MACHINE, requestKey(app2.id, 11));
+    assert.equal(i.data.faults, 2);
+    assert.ok(Date.parse(i.data.backoff.until) - Date.now() > 3 * 60 * 1000, 'its wait doubles');
+    await unpause(); await unwait(11);
+    // The look recorded its failure (homeroom-bot.js recordFailure): spent.
+    work.answer.set(request.WORK.look, (input) => ({ outcome: 'failed', laneFault: true, seen: input.faults }));
+    await send(lane.MACHINE, lane.KEY, 'Look', {});
+    const looks = calls(request.WORK.look).filter((c) => c.input.issueNumber === 11);
+    assert.deepEqual(looks.map((c) => c.input.faults), [0, 1, 2], 'each look told its count');
+    assert.ok(looks.every((c) => /^[ua]\d+$/.test(c.input.person)), 'and who it is for (the budget\'s pause is said to them)');
+    i = await inst(request.MACHINE, requestKey(app2.id, 11));
+    assert.equal(i.state, 'idle');
+    assert.equal(i.data.faults, 0);
+    assert.equal(await row(app2.id, 11), undefined, 'nothing owed after');
+    assert.ok((await inst(lane.MACHINE, lane.KEY)).data.fault, 'the lane still pauses');
+    await unpause();
+  });
+
+  // A look whose work throws (a bug, data it cannot read) is no outage: the
+  // lane goes on granting, the request waits on its own count, and after
+  // THROWN_TRIES in a row it is held a day, which a person's ask lifts.
+  await t.test('thrown: a look whose work throws pauses nothing else, waits on its own count, and is held after five', async () => {
+    reset();
+    const unwait = (n) => asTransition(async (cl) => {
+      await cl.query(`UPDATE wf_instances SET data = jsonb_set(data, '{backoff,until}', to_jsonb(now() - interval '1 second'))
+                       WHERE machine = $1 AND key = $2`, [request.MACHINE, requestKey(app2.id, n)]);
+      await cl.query('UPDATE homeroom_bot_queue SET wait_until = now() - interval \'1 second\' WHERE app_id = $1 AND issue_number = $2', [app2.id, n]);
+    });
+    work.answer.set(request.WORK.look, () => { throw new Error('a bug'); });
+    await owe(app2.id, 112);
+    for (let i = 1; i <= 5; i++) {
+      if (i > 1) await unwait(112);
+      await send(lane.MACHINE, lane.KEY, 'Look', {});
+      const d = (await inst(request.MACHINE, requestKey(app2.id, 112))).data;
+      assert.equal(d.faults, i);
+      assert.equal(d.backoff.reason, 'look_failed');
+      assert.equal((await inst(lane.MACHINE, lane.KEY)).data.fault, null, 'the lane is not paused');
+    }
+    const d = (await inst(request.MACHINE, requestKey(app2.id, 112))).data;
+    assert.ok(Date.parse(d.owed.heldUntil) - Date.now() > 23 * 3600 * 1000, 'held a day');
+    work.answer.set(request.WORK.look, { outcome: 'done' });
+    await oweOnly(app2.id, 112, { reason: 'dm_answer', priority: 0 });
+    assert.equal((await inst(request.MACHINE, requestKey(app2.id, 112))).data.owed.heldUntil, null, 'a person\'s ask lifts it');
+    work.answer.set(request.WORK.look, { outcome: 'done' });
+  });
+
   await t.test('interrupt: a person writing during a read stops its turn and reads it again, once, carrying what it spent', async () => {
     reset();
     await oweOnly(app.id, 8);
@@ -242,9 +405,12 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     assert.deepEqual(again.data.carried, { costUsd: 0.5 });
     const next = (await queuedWork(request.WORK.look)).find((w) => w.key === requestKey(app.id, 8));
     assert.deepEqual(next.input.carried, { costUsd: 0.5 }, 'the next read carries what this one spent');
-    // A read started over is never interrupted again.
+    // A read started over is never interrupted again: what was said is owed
+    // after it, from its project's refresh, asked for now.
+    const asked = (await events(lane.MACHINE, lane.KEY, 'RefreshAsked')).length;
     await sendOnly(request.MACHINE, requestKey(app.id, 8), 'Activity', { appId: app.id, issueNumber: 8, at: new Date().toISOString() });
     assert.equal((await inst(request.MACHINE, requestKey(app.id, 8))).data.look.interrupted, false);
+    assert.equal((await events(lane.MACHINE, lane.KEY, 'RefreshAsked')).length, asked + 1, 'its project refreshed soon');
     work.answer.set(request.WORK.look, { outcome: 'done' });
     await settle();
     assert.equal((await inst(request.MACHINE, requestKey(app.id, 8))).state, 'idle');
@@ -269,6 +435,49 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     // Its look was cancelled: it never runs.
     await settle();
     assert.equal(calls(request.WORK.look).filter((c) => c.input.issueNumber === 9).length, 0);
+  });
+
+  // Which instance a person's Stop goes to: a workflow turn spinning up
+  // (no record yet) is the one that waits on the session; a person's own
+  // turn running there is theirs, and a Stop of it never ends the
+  // platform's look that merely waits beside it.
+  await t.test('stop: a Stop goes to the look spinning up, never to it while a person\'s own turn runs on the session', async () => {
+    reset();
+    const app3 = await mkApp('ponds-stop');
+    const { rows: [s] } = await pool.query(`INSERT INTO chat_sessions (app_id, user_id, branch_name, status) VALUES ($1, $2, 'main', 'paused') RETURNING id`, [app3.id, bot.id]);
+    await oweOnly(app3.id, 1);
+    await sendOnly(lane.MACHINE, lane.KEY, 'Look', {});
+    assert.equal((await inst(request.MACHINE, requestKey(app3.id, 1))).data.look.sessionId, s.id);
+    const ownerOf = async () => (await pool.query(TURN_OWNER_SQL, [s.id])).rows[0] || null;
+    assert.deepEqual(await ownerOf(), { machine: request.MACHINE, key: requestKey(app3.id, 1) }, 'spinning up: the look\'s');
+    await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`,
+      [s.id, JSON.stringify({ turnId: 'person-1', journal: '/home/node/.claude/turn-person-1.log', phase: 'executing', mode: 'build' })]);
+    assert.equal(await ownerOf(), null, 'a person\'s turn: the old path\'s Stop');
+    await pool.query(`UPDATE chat_sessions SET active_turn = NULL WHERE id = $1`, [s.id]);
+  });
+
+  // A project's first read is granted before its triage session exists (its
+  // look makes it): the look tells its instance the session once it knows
+  // it, and from then a Stop finds the look by it.
+  await t.test('stop: a project\'s first read, granted with no session, is stopped once its look names the session it made', async () => {
+    reset();
+    const app4 = await mkApp('ponds-first');
+    await oweOnly(app4.id, 1);
+    await sendOnly(lane.MACHINE, lane.KEY, 'Look', {});
+    let i = await inst(request.MACHINE, requestKey(app4.id, 1));
+    assert.equal(i.state, 'reading');
+    assert.equal(i.data.look.sessionId, null, 'no triage session yet');
+    const { rows: [s] } = await pool.query(`INSERT INTO chat_sessions (app_id, user_id, branch_name, status) VALUES ($1, $2, 'main', 'paused') RETURNING id`, [app4.id, bot.id]);
+    const stale = await sendOnly(request.MACHINE, requestKey(app4.id, 1), 'LookOn', { appId: app4.id, issueNumber: 1, n: i.data.look.n + 1, sessionId: s.id });
+    assert.equal(stale.result, 'accepted');
+    assert.equal((await inst(request.MACHINE, requestKey(app4.id, 1))).data.look.sessionId, null, 'another look\'s session changes nothing');
+    await sendOnly(request.MACHINE, requestKey(app4.id, 1), 'LookOn', { appId: app4.id, issueNumber: 1, n: i.data.look.n, sessionId: s.id });
+    i = await inst(request.MACHINE, requestKey(app4.id, 1));
+    assert.equal(i.data.look.sessionId, s.id);
+    assert.deepEqual((await pool.query(TURN_OWNER_SQL, [s.id])).rows[0], { machine: request.MACHINE, key: requestKey(app4.id, 1) });
+    await sendOnly(request.MACHINE, requestKey(app4.id, 1), 'StopRequested', { sessionId: s.id, by: 'ada' }, { kind: 'route' });
+    assert.equal((await inst(request.MACHINE, requestKey(app4.id, 1))).state, 'idle');
+    assert.ok((await queuedWork(TURN_STOP)).some((w) => w.input.sessionId === s.id && w.input.workKey === `look:${i.data.look.n}`));
   });
 
   await t.test('fix: bot-change\'s ask is refused at once with the bot off, else owed and answered by how the round came out', async () => {
@@ -338,6 +547,31 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     const n = calls(request.WORK.build).length;
     await send(lane.MACHINE, lane.KEY, 'Look', {});
     assert.equal(calls(request.WORK.build).length, n, 'L9: a held build takes no slot');
+  });
+
+  // A live run waiting for its build that no instance holds (an older
+  // release's, an append that never landed, one turned away while another
+  // build ran) is told to its request by the lane's sweep, once a window.
+  await t.test('builds owed: the sweep tells a request its waiting run no instance holds, once a window', async () => {
+    reset();
+    const bot_ = require('../src/services/homeroom-bot');
+    const app5 = await mkApp('ponds-builds');
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, live_build_waiting_at) VALUES ($1, 3, 'live', 'ready', now()) RETURNING id`, [app5.id]);
+    const told = [];
+    const deps = { now: () => 1_000_000_000, platform: { async botBuildOwed(_db, p) {
+      told.push(p);
+      await rt.append(request.MACHINE, requestKey(p.appId, p.issueNumber), { type: 'BuildOwed', payload: p }, { requestKey: p.key, source: { kind: 'system', name: 'test' } });
+      await rt.drain();
+    } } };
+    // The lane is not asked here: the request only takes the run.
+    assert.equal(await bot_.sweepWaitingBuilds(pool, deps), 1);
+    assert.equal(told[0].runId, Number(run.id));
+    const i = await inst(request.MACHINE, requestKey(app5.id, 3));
+    assert.equal(i.state, 'building');
+    assert.equal(i.data.build.runId, Number(run.id));
+    assert.equal(await bot_.sweepWaitingBuilds(pool, deps), 0, 'held now: not told again');
+    await pool.query('UPDATE homeroom_bot_runs SET build_session_id = NULL, live_build_waiting_at = NULL WHERE id = $1', [run.id]);
   });
 
   await t.test('merged: what was owed before the merge is dropped, a look begun before stops', async () => {

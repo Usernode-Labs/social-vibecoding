@@ -4486,7 +4486,7 @@ function registerTools(server, ctx) {
       busy: z.boolean().nullable()
         .describe('Whether the coding agent is running a turn on it right now. Null when the live status could not be read.'),
       runningTurn: z.object({ startedAt: z.string().nullable(), kind: z.string().nullable() }).nullable()
-        .describe('The turn on record as running on it: when it started, and its kind (build, scout, sync for a sync with main, shots for the before & after shots, homeroom_bot_checks_fix or homeroom_bot_reply for a Homeroom bot follow-up). Null when none is on record.'),
+        .describe('The turn on record as running on it: when it started, and its kind (build, scout, sync for a sync with main, shots for the before & after shots, homeroom_bot_follow_up for the Homeroom bot answering on it or fixing its checks). Null when none is on record.'),
       syncing: z.boolean(),
       hasBranch: z.boolean()
         .describe('False until the first turn has built anything.'),

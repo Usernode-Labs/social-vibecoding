@@ -409,12 +409,23 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
+  // A changed plan owes its request a look (bot-request's Owed), which the
+  // workflow runtime applies: it runs here, on this database, its pipeline
+  // only (no timers, no work), so the queue row its instance holds appears.
+  // Its legacy side reads the platform's pool, which is this one.
+  const platform = require('../src/workflow/platform.ts');
+  const dbPool = require('../src/db/pool');
+  const realGetPool = dbPool.getPool;
+  dbPool.getPool = () => pool;
   t.after(async () => {
+    await platform.stopWorkflow();
+    dbPool.getPool = realGetPool;
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
   await pool.query(read('src/db/schema.sql'));
+  await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
   const mayor = require('../src/services/homeroom-bot-mayor');
   const progress = require('../src/services/homeroom-bot-progress');
   const conversations = require('../src/services/conversations');
@@ -794,10 +805,13 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
 test('B6: where the waiting state is read, and where it ends', () => {
   const src = read('src/services/homeroom-bot.js');
   assert.match(src, /\} else if \(firstVersion\) \{\s*acted = PLAN_ACTED\[await awaitGo\(pool, \{ runId, app, issueNumber, parsed, bot, deps \}\)\];/);
-  // #4175: a plan that could not be sent is sent again on the sweep's cadence.
-  assert.match(src, /const resent = await retryUnsentPlans\(pool, bot, \{ dm: deps\.dm, ws: deps\.ws \|\| null \}\);/);
+  // #4175: a plan that could not be sent is sent again on the sweep's
+  // cadence (the bot lane's bot.sweep work), and a week-old one is stopped
+  // there.
+  const sweep = src.slice(src.indexOf('async function sweep('), src.indexOf('\n}\n', src.indexOf('async function sweep(')));
+  assert.match(sweep, /const r = await retryUnsentPlans\(pool, bot, \{ dm: deps\.dm, ws: deps\.ws \|\| null \}\);/);
+  assert.match(sweep, /await each\('plansStopped', \(\) => settleStalePlans\(pool, \{ dm: deps\.dm \}\)\);/);
   assert.match(src, /await retireWaitingPlans\(pool, \{ appId: app\.id, issueNumber, why: 'the request was read again', deps: \{ dm: deps\.dm \} \}\);/);
-  assert.match(src, /const stalePlans = await settleStalePlans\(pool, \{ dm: deps\.dm \}\);/);
   assert.match(src, /out\.skipped \+= \(await retireWaitingPlans\(pool, \{ appId, issues, why: why\.replace/);
   assert.match(src, /\.\.\.\(planChange \? \{ planChange: \{ \.\.\.planChange, requester: requester\.username \} \} : \{\}\),/);
   const progressSrc = read('src/services/homeroom-bot-progress.js');
@@ -853,8 +867,10 @@ test('a first version made from a game starter is specced and built on it; witho
   assert.match(src, /platformRepo, readsImages, firstVersion, starter, guidance: buildGuidance,/);
   assert.match(src, /seed, buildNote, firstVersion, guidance, starter,/);
   const bot = read('src/services/homeroom-bot.js');
-  assert.equal((bot.match(/const starter = firstVersion \? await starterOfApp\(pool, app\.id\)\.catch\(\(\) => null\) : null;/g) || []).length, 2,
-    'the live build and the shadow build');
-  assert.equal((bot.match(/firstVersion, platformRepo: isPlatformRepo\(app, config\), model, specModel, starter,\n\s+\}\)\);/g) || []).length, 2,
-    'and each one\'s snapshot (recordBuildSnapshot), a durable step of its own');
+  // The live build is the one that builds a first version: the shadow build
+  // that read it too is gone with its lane (design D2).
+  assert.equal((bot.match(/const starter = firstVersion \? await starterOfApp\(pool, app\.id\)\.catch\(\(\) => null\) : null;/g) || []).length, 1,
+    'the live build');
+  assert.equal((bot.match(/firstVersion, platformRepo: isPlatformRepo\(app, config\), model, specModel, starter,\n\s+\}\)\);/g) || []).length, 1,
+    'and its snapshot (recordBuildSnapshot), a durable step of its own');
 });

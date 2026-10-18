@@ -147,9 +147,14 @@ test('the DM rings as a stop, in the stop\'s own words', async () => {
 });
 
 test('"Reply here (or on the GitHub issue)" is true: a reply there is read by the next follow-up', () => {
-  // A person's message in the change's discussion or on the request wakes the bot (ws.js) ...
+  // A person's message in the change's discussion or on the request wakes the bot (ws.js):
+  // on the request, its instance (bot-request) hears it in the statement that
+  // inserts it (platform.insertHeard) when it has one, and a post that
+  // statement did not hear asks for a refresh ...
   const ws = read('src/services/ws.js');
-  assert.match(ws, /if \(thread && thread\.type === 'issue'\) noteIssueActivityForBot\(client\.appId, thread\.ref, 'thread'\);/);
+  assert.match(ws, /require\('\.\.\/workflow\/platform\.ts'\)\.insertHeard\(db, insertSql, insertParams, \{ appId: client\.appId, thread: thread \|\| null \}\)/);
+  assert.match(read('src/workflow/platform.ts'), /SELECT \$\$\{n \+ 6\}, \$\$\{n \+ 7\}, \$\$\{n \+ 3\}::int, 'Activity',/);
+  assert.match(ws, /if \(thread && thread\.type === 'issue' && !heard\) noteIssueActivityForBot\(client\.appId, thread\.ref, 'thread'\);\n\s+else if \(thread && thread\.type === 'issue' && !rows\[0\]\?\.requestHeard\) noteIssueActivityForBot\(client\.appId, thread\.ref, 'posted'\);/);
   assert.match(ws, /if \(thread && thread\.type === 'session'\) noteProposalActivityForBot\(pool, client\.appId, thread\.ref\);/);
   // ... and the next look at a request with the bot's change up is a follow-up,
   // which reads what people said since the failed run, wherever they said it.

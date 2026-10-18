@@ -114,11 +114,16 @@ test('a mention on a claimed request is answered, a second one is the go-ahead, 
   // The refresh decides an answer; the request's place (the bot-voice
   // machine, src/workflow/bot-voice/) owes it, writing its post pending, and
   // its work says it (holds.sayHeld), here with GitHub and the room faked.
+  // What the refresh finds owed (or no longer owed) is its request's
+  // bot-request instance's, whose queue row is the projection (the lane
+  // beside it grants nothing here: the bot is not on).
   const { createRuntime } = require('../src/workflow/kernel/index.ts');
   const { botVoice, WORK } = require('../src/workflow/bot-voice/machine.ts');
+  const { botRequest } = require('../src/workflow/bot-request/machine.ts');
+  const { botLane } = require('../src/workflow/bot-lane/machine.ts');
   const voiceMachine = botVoice();
   const rt = createRuntime({
-    pool, machines: [voiceMachine], pollMs: 50, publish: async () => {},
+    pool, machines: [voiceMachine, botRequest({ staging: false }), botLane({ staging: false })], pollMs: 50, publish: async () => {},
     services: {
       [WORK.post]: { maxAttempts: 2, backoffMs: () => 0, async run({ input }) {
         return holds.sayHeld(pool, { ...input, deps: { github, ws, notifications } });

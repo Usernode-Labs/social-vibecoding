@@ -653,17 +653,23 @@ the Homeroom bot's builds, reads and fixes, a bench trial) is its work item's:
   `botLookingSql`).
 - **A Stop is an event to the owner.** A person's Stop of the session (`POST
   /api/sessions/:id/stop`, the agent conversation's Stop) finds the instance whose turn it
-  is (`TURN_OWNER_SQL`: the record's owner, else the sync, shots run, build or bot look
-  spinning one up) and appends `StopRequested` there (`platform.stopWorkflowTurn`). The
-  machine records it as stopped by that person (never a failure or a conflict), ends its
-  work, and queues `turn.stop`.
+  is (`TURN_OWNER_SQL`: the record's owner; else, only while the session has no turn record,
+  the sync, shots run, build or bot look spinning one up) and appends `StopRequested` there
+  (`platform.stopWorkflowTurn`). A record that is not a workflow's held turn (a person's
+  own, an orphan) answers nothing there, so that Stop stays on the old path and never ends
+  a platform job that merely waits beside the person's turn. The machine records it as
+  stopped by that person (never a failure or a conflict), ends its work, and queues
+  `turn.stop`.
 - **`turn.stop`** (`src/workflow/turn-stop.ts`, one handler for every machine): stamps the
   record stopped, kills only that turn, by its journal (`worker.stopTurnByJournal`: a turn
   started after it is never touched), and releases the record when its work was cancelled.
-  A Stop landing before the turn exists needs no kill: the cancelled item's next checkpoint
-  refuses the dispatch, and a stamp landing between the record and the exec is read by
-  `execInWorker` right after it. The proposal machine's merge and close stop a running
-  sync's turn the same way.
+  It names the work item whose turn it is (`workKey`), so a retry after that item ended
+  never touches the instance's next turn of the same kind. A Stop landing before the turn
+  exists needs no kill: the cancelled item's next checkpoint refuses the dispatch and
+  releases the record it wrote (nobody follows a cancelled item's record). One landing
+  between the record and the exec is read by `execInWorker` right after the exec: a record
+  stamped, gone or now another turn's means its turn is killed by its journal. The
+  proposal machine's merge and close stop a running sync's turn the same way.
 - **Its clock ends only its own turn** (`durable-turn.clockStop`: by its record, recorded as
   nobody's Stop), and `durable-turn` reports a Stop asked on the record as `stoppedBy`.
 
@@ -684,19 +690,34 @@ projection, guarded so only its transitions write a row it holds.
   lookAt`), a read on the project's triage session or a reply or fix on its change. Its
   turns are durable steps naming the item, and every effect (the run, the spend, the
   notes, the act, the asks' tag) is a keyed step, so a restart follows the turn and says
-  and spends nothing twice. Its result decides: done (or a build owed), failed (a try
-  spent), busy (its change's session is somebody else's: backed off 2 minutes doubling to
-  an hour), a fault or the budget (owed as it was; the lane pauses), held for its payer's
-  week, requeued (a budget stop), or interrupted.
+  and spends nothing twice. A project's first read is granted before its triage session
+  exists; its look tells the instance the session it made (`LookOn`), so a Stop, a merge or
+  a person writing finds the look by it. Its result decides: done (or a build owed),
+  failed (a try spent), busy (its change's session is somebody else's: backed off 2
+  minutes doubling to an hour), a fault or the budget (owed as it was; the lane pauses),
+  held for its payer's week, requeued (a budget stop), or interrupted. A request the
+  platform keeps failing on waits on its own count as well (the same backoff), and its
+  third fault in a row is recorded as a failed read the refresh counts, as a provider's
+  error is at once, so one request cannot keep the lane pausing for ever. A look whose work
+  threw on every attempt pauses nothing else, waits on its own count, and after five in a
+  row is held a day (a person's ask lifts it).
 - **A person writing during a read** (`Activity`, appended in the statement that stores
-  the message, beside the voice's `Heard`) stops the read's turn (`turn.stop`) and reads
-  the request again from the start, once, carrying what it spent.
+  the message, beside the voice's `Heard`, when the request has an instance; otherwise its
+  project is refreshed) stops the read's turn (`turn.stop`) and reads the request again from
+  the start, once, carrying what it spent. During a look that does not start over for it
+  (a follow-up, a read already read again) or a build, its project is refreshed soon,
+  which owes the request what was said, taken once that ends. The person a look or build
+  is for hears it start and end (their tray).
 - **A build** (`BuildOwed`: a ready verdict, Build it in the DM) waits for a build slot,
   then `bot.build` (`startBuild`: the checks a build starts with) asks bot-build for it
-  with this instance as `replyTo`; bot-build's end (`BuildEnded`) frees the slot.
+  with this instance as `replyTo`; bot-build's end (`BuildEnded`) frees the slot. A live
+  run waiting for its build that no instance holds (an older release's, an append that
+  never landed, one turned away while another build of the request ran) is told to its
+  request again by the lane's sweep (`sweepWaitingBuilds`), once a refresh window.
 - **A fix** bot-change asks for (`FixAsked`, from its `bot.queueFix` work) is owed at
   priority 1 and answered: `FixRoundEnded` with how the round came out (looked, lost,
-  stopped), or `FixRefused` at once when the bot is off or not on the project.
+  stopped), or `FixRefused` at once when the bot is off or not on the project, or when the
+  refresh drops the debt it rode on.
 - **Its request merged** (`RequestMerged`, from bot-change's `bot.stopRequestWork`):
   debts owed before the merge are dropped, a look begun before stops, its build is stopped.
 - **During a rollout** a queue row an older release wrote is adopted (at boot and on the
@@ -713,7 +734,8 @@ project's triage session, three builds per project.
   age), as `Granted` messages; what is in use is read from the requests (their `slot`, and
   grants not applied yet), never kept here.
 - **Pauses**: a fault (a look's platform failure) pauses every grant 2 minutes doubling to
-  an hour, ended by a look that ran; the bot's weekly cap a minute at a time.
+  an hour, ended by a look that ran; the bot's weekly cap a minute at a time. A request an
+  admin must look at (its instance flagged) holds no slot.
 - **The refresh** (`bot.refresh`) every five minutes, and 20 seconds after a project is asked
   for (a person wrote on an idle request, a merge, a settings change), with the five-minute
   sweeps beside each full one (`bot.sweep`). Its one deadline is the earliest of those, a
@@ -1203,8 +1225,9 @@ requires a run of the bot's that proposed the session.
   - **Back to the bot**: its checks fail, or its shots show part of it failing or could
     not reach part of it for want of seed data, and no round looked at that head
     (`bot.queueFix`: its request's instance hears `FixAsked`, bot-request). It waits for
-    that instance's answer: a round that looked at the head decides at once; one lost
-    (its look ended without it, failed for good, or was stopped) is asked once more; lost
+    that instance's answer: a round that looked at the head decides at once; one a person
+    stopped is not asked again for that head (the next verdict, settle or promote asks when
+    it is needed); one lost (its look ended without it, or failed for good) is asked once more; lost
     again, a change whose checks pass is ready to try saying what does not work, and one
     whose checks fail is left as it was (nobody is told). A bot that is off, not
     working on the app, or facing a failure that looks like the platform's (which it tells

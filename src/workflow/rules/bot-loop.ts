@@ -56,7 +56,18 @@ export function backoffMs(attempts: number): number {
 
 // The platform failing under the bot (a provider, the worker quota, its
 // key) pauses every grant this long, doubling to the ceiling; a look that
-// ran ends it. A request's tries are never spent on it.
+// ran ends it. The request it failed on waits too (backoffMs, its own
+// count), so one request that always fails is retried at most hourly
+// rather than pausing every grant each time it comes round; and its
+// FAULT_TRIES-th fault in a row is recorded as a failed read of its thread
+// (services/homeroom-bot.js recordFailure), which the refresh counts, so it
+// is not owed forever.
+export const FAULT_TRIES = 3;
+// A look whose work threw on every attempt (a code bug, data it cannot
+// read) is no outage: it pauses nothing else, waits on its own count, and
+// after THROWN_TRIES in a row is held a day (a person's ask lifts the hold).
+export const THROWN_TRIES = 5;
+export const THROWN_HOLD_MS = 24 * 60 * 60 * 1000;
 export const FAULT_BASE_MS = 2 * 60 * 1000;
 export const FAULT_CEILING_MS = 60 * 60 * 1000;
 export function faultMs(attempts: number): number {
@@ -178,14 +189,19 @@ const GRANT_PENDING = (k: string) => `EXISTS (SELECT 1 FROM wf_events g
                     WHERE g.machine = '${BOT_REQUEST}' AND g.key = ${k}
                       AND g.type = 'Granted' AND g.status = 'pending')`;
 
-// The slots in use: what each request that took one carries (data.slot),
-// and the grants not applied yet. One row each: { key, app_id, slot }.
+// The slots in use: what each request that took one carries (data.slot:
+// only a look or a build under way holds one), and the grants not applied
+// yet. An instance an admin must look at (flagged) holds none: its grant
+// is never applied, and counting it would cost a slot until it is cleared.
+// One row each: { key, app_id, slot }.
 export const SLOTS_IN_USE_SQL = `
   SELECT w.key, w.app_id, w.data->'slot' AS slot FROM wf_instances w
-   WHERE w.machine = '${BOT_REQUEST}' AND jsonb_typeof(w.data->'slot') = 'object'
+   WHERE w.machine = '${BOT_REQUEST}' AND w.state IN ('reading', 'following_up', 'building')
+     AND jsonb_typeof(w.data->'slot') = 'object' AND w.flag IS NULL
   UNION ALL
   SELECT g.key, g.app_id, g.payload AS slot FROM wf_events g
-   WHERE g.machine = '${BOT_REQUEST}' AND g.type = 'Granted' AND g.status = 'pending'`;
+   WHERE g.machine = '${BOT_REQUEST}' AND g.type = 'Granted' AND g.status = 'pending'
+     AND NOT EXISTS (SELECT 1 FROM wf_instances f WHERE f.machine = g.machine AND f.key = g.key AND f.flag IS NOT NULL)`;
 
 // The reads and follow-ups waiting for a slot, in the order they are taken:
 // a person's ask first, then follow-ups on the bot's changes up for a vote
@@ -201,7 +217,7 @@ export const READ_CANDIDATES_SQL = `
     FROM homeroom_bot_queue q
     JOIN apps a ON a.id = q.app_id
     JOIN wf_instances w ON w.machine = '${BOT_REQUEST}' AND w.key = 'request:' || q.app_id || ':' || q.issue_number
-                       AND w.state = 'queued'
+                       AND w.state = 'queued' AND w.flag IS NULL
     LEFT JOIN homeroom_bot_requesters r ON r.app_id = q.app_id AND r.issue_number = q.issue_number
     LEFT JOIN LATERAL (
       SELECT created_by FROM issues
@@ -267,7 +283,7 @@ export const BUILD_CANDIDATES_SQL = `
        WHERE app_id = w.app_id AND github_issue_number = (w.data->>'issueNumber')::int
        ORDER BY id LIMIT 1
     ) i ON TRUE
-   WHERE w.machine = '${BOT_REQUEST}' AND w.state = 'building' AND w.data->'build'->>'phase' = 'waiting'
+   WHERE w.machine = '${BOT_REQUEST}' AND w.state = 'building' AND w.data->'build'->>'phase' = 'waiting' AND w.flag IS NULL
      AND (w.data->'build'->>'heldUntil' IS NULL OR (w.data->'build'->>'heldUntil')::timestamptz <= NOW())
      AND NOT (a.slug = ANY($1::text[]))
      AND NOT ${GRANT_PENDING('w.key')}
@@ -280,17 +296,25 @@ export const BUILD_CANDIDATES_SQL = `
    LIMIT 50`;
 
 // When the next request waiting becomes eligible (its payer's week, its
-// backoff, or its burst settling), so the lane looks again then.
+// backoff, or its burst settling), so the lane looks again then. A burst
+// is read as READ_CANDIDATES_SQL reads it (the request's thread, and its
+// change's for a follow-up); the earliest message still settling is the
+// next time to look, which may be early (the lane then waits again), never
+// late.
 export const NEXT_ELIGIBLE_SQL = `
   SELECT MIN(t) AS at FROM (
     SELECT q.held_until AS t FROM homeroom_bot_queue q WHERE q.started_at IS NULL AND q.held_until > NOW()
     UNION ALL
     SELECT q.wait_until FROM homeroom_bot_queue q WHERE q.started_at IS NULL AND q.wait_until > NOW()
     UNION ALL
-    SELECT MAX(m.created_at) + make_interval(secs => ${SETTLE_MS / 1000})
+    SELECT m.created_at + make_interval(secs => ${SETTLE_MS / 1000})
       FROM homeroom_bot_queue q
-      JOIN chat_messages m ON m.app_id = q.app_id AND m.thread_type = 'issue' AND m.thread_ref = q.issue_number
-                          AND m.msg_type = 'message' AND m.deleted_at IS NULL
+      JOIN chat_messages m ON m.app_id = q.app_id AND m.msg_type = 'message' AND m.deleted_at IS NULL
+                          AND ((m.thread_type = 'issue' AND m.thread_ref = q.issue_number)
+                            OR (m.thread_type = 'session' AND m.thread_ref IN (
+                                  SELECT cs.id FROM chat_sessions cs
+                                   WHERE cs.app_id = q.app_id AND q.issue_number = ANY(cs.linked_issues)
+                                     AND cs.status = 'promoted')))
      WHERE q.started_at IS NULL AND m.created_at > NOW() - make_interval(secs => ${SETTLE_MS / 1000})
   ) n`;
 

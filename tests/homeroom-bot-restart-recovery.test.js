@@ -9,17 +9,20 @@
 // server.js leaves its worker to the build, and the build's next attempt
 // follows the turn the restart caught (services/durable-turn.js).
 //
-// What is left for recovery is a bot turn no build owns: a read (its
-// triage), which the queue reads again, or a build started before builds
-// were durable (requeueLegacyBuilds asks for it again). Its turn is
-// stopped, its record cleared, its ledger attempt closed and its session
-// put back to rest. None of it may reach a person's dev-chat tail: no draft
-// PR, no staging preview, no wrap-up and no notification.
+// The bot's reads and follow-ups are the same now: each is a look of its
+// request's instance (bot-request), whose turn is a durable step its record
+// names (active_turn.owner), and server.js leaves it to that work item while
+// the item is outstanding. What is left for recovery is a bot turn no
+// workflow work holds: one an older release started, which its request
+// reads again. Its turn is stopped, its record cleared, its ledger attempt
+// closed and its session put back to rest. None of it may reach a person's
+// dev-chat tail: no draft PR, no staging preview, no wrap-up and no
+// notification.
 //
 // These pin, without a database: which sessions are the bot's, what
 // server.js does with a bot worker it finds, the stale-turn watchdog's
-// hand-off, the bot's clock across a restart (a follow-up's; the rest of
-// that is tests/homeroom-bot-followup-restart.test.js), a build's turn
+// hand-off, that recovery arms no clock of the bot's (a follow-up's turn is
+// its look's: tests/homeroom-bot-followup-restart.test.js), a build's turn
 // replayed with its own harness, and the pieces that still read runs a
 // restart sent back before builds were durable.
 //
@@ -185,6 +188,17 @@ test('only the bot\'s own active sessions are handed to it; a person\'s, and the
     'a follow-up on the bot\'s proposal: updating its PR and staging is the right end');
 });
 
+// An older release's follow-up on the bot's change up for a vote (its record
+// marked homeroomBotFollowUp, no work item owning it): a person's tail would
+// publish its answer as the change's spec, with no clock (#4533). It is the
+// bot's: stopped, its record released, and its request read again.
+test('an older release\'s follow-up on the bot\'s change up for a vote is the bot\'s; a look\'s own turn is its item\'s', () => {
+  const mark = { followUp: 'reply', appId: 9, issueNumber: 3, deadlineAt: '2026-10-17T12:00:00Z' };
+  assert.equal(bot.isRecoveredBotSession(botSession({ status: 'promoted', active_turn: { turnId: 't', homeroomBotFollowUp: mark } })), true);
+  assert.equal(bot.isRecoveredBotSession(botSession({ status: 'promoted',
+    active_turn: { turnId: 't', homeroomBotFollowUp: mark, owner: { machine: 'bot-request', key: 'request:9:3' } } })), false);
+});
+
 // ── A bot session found paused under a turn (#1006) ──────────────────────
 // Before #1006 the triage pass took a running build's session (the bot's
 // newest) and paused it under the build. The next deploy's recovery read the
@@ -230,13 +244,18 @@ test('a durable build\'s worker is left to its build: kept, never stopped, follo
   }
 });
 
-test('the session read says whether the build that owns it is still under way', async () => {
+test('the session read says whether the build that owns it, or the work its turn names, is still under way', async () => {
   const session = botSession({ workflow_owner: 'bot-build/run:900', workflow_owned: true });
   const pool = makePool({ session });
   await adopt(pool, session);
   const read = pool.calls[0].sql;
-  assert.match(read, /\(cs\.workflow_owner IS NOT NULL AND EXISTS \(\s*SELECT 1 FROM wf_instances w\s+WHERE w\.machine = split_part\(cs\.workflow_owner, '\/', 1\)\s+AND w\.key = substr\(cs\.workflow_owner, length\(split_part\(cs\.workflow_owner, '\/', 1\)\) \+ 2\)\s+AND w\.state = 'building'\s*\)\) AS workflow_owned/,
+  assert.match(read, /\(\(cs\.workflow_owner IS NOT NULL AND EXISTS \(\s*SELECT 1 FROM wf_instances w\s+WHERE w\.machine = split_part\(cs\.workflow_owner, '\/', 1\)\s+AND w\.key = substr\(cs\.workflow_owner, length\(split_part\(cs\.workflow_owner, '\/', 1\)\) \+ 2\)\s+AND w\.state = 'building'\s*\)\) OR /,
     'the owner names its machine and its key; only an instance still building holds the session');
+  // A read's or a follow-up's turn (a look of bot-request) names its work
+  // item on its record: held while that item is outstanding, in any process.
+  const { workflowTurnHeldSql } = require('../src/workflow/session-work.ts');
+  assert.ok(read.includes(`OR ${workflowTurnHeldSql('cs.active_turn')}) AS workflow_owned`),
+    'a turn whose work item is outstanding is that work\'s, like a build\'s');
 });
 
 test('a session whose build has ended is no build\'s: its bot turn is stopped like any other', async () => {
@@ -272,8 +291,8 @@ test('a bot turn this process is following itself is not adopted', async () => {
 // ── A bot turn no build owns ─────────────────────────────────────────────
 
 test('a bot turn no build owns is stopped and its session rested: never followed, recorded or finished as a dev chat', async () => {
-  // A read (its triage, which the queue reads again), and a build that
-  // started before builds were durable (requeueLegacyBuilds asks for it).
+  // A read (its triage, which its request reads again), and a build that
+  // started before builds were durable, both from an older release.
   for (const mode of ['scout', 'build']) {
     workerCalls.length = 0; ledger.length = 0; lifecycleCalls.length = 0;
     const session = botSession({ active_turn: turn({ mode }) });
@@ -352,45 +371,27 @@ test('the stale-turn watchdog leaves a durable build\'s turn alone, and hands a 
 
 // ── The bot's clock across a restart ─────────────────────────────────────
 
-test('each restart that reaches a turn gives its clock back two minutes, up to ten restarts; only a follow-up has a recovery deadline', async () => {
+test('each restart that reaches a turn gives its clock back two minutes, up to ten restarts', async () => {
+  // The rule is durable-turn.js's, read off the turn's `restarts`.
+  const { allowanceMs, RESTART_ALLOWANCE_MS } = require('../src/services/durable-turn');
   assert.equal(bot.RESTART_ALLOWANCE_MS, 2 * 60 * 1000);
-  assert.equal(bot.restartAllowanceMs(turn()), 0, 'a turn no restart reached');
-  assert.equal(bot.restartAllowanceMs(turn({ restarts: 3 })), 3 * bot.RESTART_ALLOWANCE_MS);
-  assert.equal(bot.restartAllowanceMs(turn({ restarts: 50 })), 10 * bot.RESTART_ALLOWANCE_MS, 'a run of restarts is not followed for ever');
-  assert.equal(bot.restartAllowanceMs(turn({ restarts: 'x' })), 0);
-  // A build's turns keep their own clock (durable-turn.js), and a read is
-  // not followed at all: recovery arms neither.
-  const pool = { async query() { throw new Error('no deadline needs a lookup'); } };
-  for (const mode of ['build', 'scout']) {
-    assert.equal(await bot.recoveryDeadline(pool, {}, botSession(), turn({ mode, restarts: 3 })), null, mode);
-  }
+  assert.equal(RESTART_ALLOWANCE_MS, bot.RESTART_ALLOWANCE_MS);
+  assert.equal(allowanceMs(turn().restarts), 0, 'a turn no restart reached');
+  assert.equal(allowanceMs(turn({ restarts: 3 }).restarts), 3 * bot.RESTART_ALLOWANCE_MS);
+  assert.equal(allowanceMs(turn({ restarts: 50 }).restarts), 10 * bot.RESTART_ALLOWANCE_MS, 'a run of restarts is not followed for ever');
+  assert.equal(allowanceMs(turn({ restarts: 'x' }).restarts), 0);
 });
 
-test('server.js counts the restart on a follow-up\'s turn before it reads the bot\'s clock', () => {
+test('server.js arms no clock of the bot\'s: every bot turn\'s clock is its durable step\'s', () => {
+  // A build's turns, a read's and a follow-up's keep their own clock
+  // (durable-turn.js, from the deadline their step saved), and recovery
+  // leaves each to its work item. The follow-up's clock recovery used to
+  // arm through the person's tail (#4533) is gone with it.
   const src = require('node:fs').readFileSync(require.resolve('../server'), 'utf8');
-  const at = src.indexOf('const restarts = await turnLifecycle.noteRestart(pool, { sessionId, turnId: activeTurn.turnId })');
-  assert.ok(at > 0);
-  assert.match(src.slice(at - 120, at), /if \(botFollowUp\) \{\s*$/, 'the bot\'s follow-up is the one bot turn recovery times');
-  const clock = src.slice(at, src.indexOf('const botClockMs = Math.max(0, deadline - Date.now());', at));
-  assert.match(clock, /const clockTurn = Number\.isInteger\(restarts\) \? \{ \.\.\.activeTurn, restarts \} : activeTurn;/);
-  assert.match(clock, /recoveryDeadline\(pool, config, session, clockTurn\)/);
+  assert.doesNotMatch(src, /botClock|botFollowUp|isRecoveredBotFollowUp|recoveryDeadline|finishRecoveredFollowUp/);
   assert.doesNotMatch(src, /clockLeftMs/, 'nothing reads what the clock had left any more');
-});
-
-test('a clock already past its deadline is not unref\'d, so the stop it owes always comes', () => {
-  // A follow-up whose time is up awaits a journal that only the clock's
-  // stopTurn ends. An unref'd 0 ms timer can be skipped when nothing else
-  // holds the event loop open, and node:test then cancels the test that
-  // awaits it and every one after it ("17 cancelled, 0 failed" in the
-  // platform's unit run).
-  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'server.js'), 'utf8');
-  const at = src.indexOf('botClock = setTimeout(');
-  assert.ok(at > 0, 'the bot clock is armed in server.js');
-  const block = src.slice(at - 200, at + 900);
-  assert.match(block, /const botClockMs = Math\.max\(0, deadline - Date\.now\(\)\);/);
-  assert.match(block, /if \(botClockMs > 0 && typeof botClock\.unref === 'function'\) botClock\.unref\(\);/);
-  assert.doesNotMatch(block, /^\s*if \(typeof botClock\.unref === 'function'\) botClock\.unref\(\);/m,
-    'never unref the clock unconditionally');
+  assert.equal(bot.recoveryDeadline, undefined);
+  assert.equal(bot.isRecoveredBotFollowUp, undefined);
 });
 
 // ── #1080 ────────────────────────────────────────────────────────────────
@@ -505,21 +506,14 @@ test('admins read the week\'s incidents newest first, and a line says what happe
 
 // ── Shutdown ─────────────────────────────────────────────────────────────
 
-test('shutdown stops the bot\'s loops and its benchmark lane before the pool closes', async () => {
+test('shutdown stops the benchmark lane before the pool closes; the bot has no loop of its own to stop', async () => {
   const src = require('node:fs').readFileSync(require.resolve('../server'), 'utf8');
   const cleanup = src.slice(src.indexOf('async function cleanup()'), src.indexOf("process.on('SIGTERM', cleanup);"));
-  const botStop = cleanup.indexOf("require('./src/services/homeroom-bot').stop()");
   const laneStop = cleanup.indexOf("require('./src/services/bench/lane').stop()");
   const poolEnd = cleanup.indexOf('shutdownPool.end()');
-  assert.ok(botStop > 0 && laneStop > 0 && poolEnd > laneStop && poolEnd > botStop);
-
-  // And a stopped bot starts nothing: no claim, no read of the pool.
-  bot._resetForTests();
-  bot.stop();
-  const queries = [];
-  const pool = { async query(sql) { queries.push(String(sql)); return { rows: [] }; }, async connect() { throw new Error('closed'); } };
-  const drained = await bot.drainBuilds(pool, {});
-  assert.equal(drained.paused, 'stopped');
-  assert.deepEqual(queries, [], 'the lane reads nothing');
-  bot._resetForTests();
+  assert.ok(laneStop > 0 && poolEnd > laneStop);
+  // The bot's loop is the bot-request and bot-lane machines, whose work
+  // stops with the workflow runtime: nothing in server.js starts or stops it.
+  assert.doesNotMatch(src, /require\('\.\/src\/services\/homeroom-bot'\)\.(start|stop)\(/);
+  for (const gone of ['start', 'stop', 'drainBuilds', 'runOnce']) assert.equal(bot[gone], undefined, gone);
 });

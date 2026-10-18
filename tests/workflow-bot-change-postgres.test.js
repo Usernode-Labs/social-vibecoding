@@ -15,7 +15,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime, defineMachine } = require('../src/workflow/kernel/index.ts');
-const { botChange, sessionKey, MACHINE, WORK, FIX_LOOK_MS } = require('../src/workflow/bot-change/machine.ts');
+const { botChange, sessionKey, MACHINE, WORK, FIX_ROUNDS } = require('../src/workflow/bot-change/machine.ts');
 const { toBotChange, writeBotChange } = require('../src/workflow/rules/bot-notes.ts');
 const { READY_HOLD_MS } = require('../src/workflow/rules/bot-readiness.ts');
 
@@ -55,7 +55,14 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     [asker.id]);
   const asTransition = async (fn) => {
     const cl = await pool.connect();
-    try { await cl.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`); await fn(cl); await cl.query('COMMIT'); } finally { cl.release(); }
+    try {
+      await cl.query(`BEGIN; SET LOCAL app.wf_writer = 'transition'`); await fn(cl); await cl.query('COMMIT');
+    } catch (err) {
+      // A connection is never handed back mid-transaction (the next test's
+      // query on it would fail for this one's mistake).
+      await cl.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally { cl.release(); }
   };
   // One of the bot's changes up for a vote, for request #n, its run, and
   // who asked for it. `owner`: somebody else's change instead.
@@ -124,6 +131,15 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
   };
   const tell = async (s, type, payload = {}) => {
     const id = await rt.append(bc, sessionKey(s.id), { type, payload: { sessionId: s.id, ...payload } }, { requestKey: `t-${++rk}`, source: system });
+    await settle();
+    return (await pool.query('SELECT result, reason FROM wf_events WHERE id = $1', [id])).rows[0];
+  };
+  // The request's instance (bot-request) answering the round it was asked
+  // for, as its transition's message reaches the change machine.
+  const answer = async (s, type, payload) => {
+    const from = { machine: 'bot-request', key: `request:${app.id}:${s.issueNumber}`, eventId: 1 };
+    const id = await rt.append(bc, sessionKey(s.id), { type, payload: { sessionId: s.id, ...payload } },
+      { requestKey: `a-${++rk}`, source: { kind: 'message', from } });
     await settle();
     return (await pool.query('SELECT result, reason FROM wf_events WHERE id = $1', [id])).rows[0];
   };
@@ -252,23 +268,47 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     assert.deepEqual(calls(WORK.fix).map((c) => c.input.head), [s.head]);
     assert.match(calls(WORK.fix)[0].key, new RegExp(`^fix:${s.head.slice(0, 12)}:v\\d+$`));
     assert.equal(calls(WORK.ready).length, 0, 'no card while the bot fixes it');
-    // The round is waiting in the bot's queue: the clock waits on.
-    await pool.query('INSERT INTO homeroom_bot_queue (app_id, issue_number, reason) VALUES ($1, $2, $3)', [app.id, s.issueNumber, 'checks_failing']);
-    await fire(s);
+    // No clock of its own, and no read of the bot's queue: its request's
+    // instance (bot-request) answers how the round it asked for ended.
+    assert.equal(i.deadline_at, null, 'it waits for its request\'s answer');
+    assert.equal(FIX_ROUNDS, 2);
+    // The round was lost (its look ended without it, bug 3; a release took
+    // it, bug 4): asked once more.
+    assert.equal((await answer(s, 'FixRoundEnded', { head: s.head, outcome: 'lost' })).result, 'accepted');
     assert.equal((await inst(s)).state, 'with_the_bot');
-    assert.equal(calls(WORK.fix).length, 1);
-    assert.ok(new Date((await inst(s)).deadline_at).getTime() > Date.now() + FIX_LOOK_MS - 60000);
-    // The row went with nothing recorded (a follow-up deleted it, bug 3;
-    // a release took the round, bug 4): asked once more.
-    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2', [app.id, s.issueNumber]);
-    await fire(s);
     assert.equal(calls(WORK.fix).length, 2);
     assert.notEqual(calls(WORK.fix)[0].key, calls(WORK.fix)[1].key, 'each ask is its own item');
-    // Lost again: the requester is told it is ready, saying what does not work.
-    await fire(s);
+    assert.equal(calls(WORK.ready).length, 0);
+    // An answer about a head the change has left decides nothing new.
+    await answer(s, 'FixRoundEnded', { head: SHA('9'), outcome: 'lost' });
+    assert.equal((await inst(s)).state, 'with_the_bot');
+    assert.equal(calls(WORK.fix).length, 2);
+    // Lost again: the requester is told it is ready, saying what does not
+    // work, and the bot is not asked a third time.
+    await answer(s, 'FixRoundEnded', { head: s.head, outcome: 'lost' });
     i = await inst(s);
     assert.equal(i.state, 'ready');
+    assert.equal(i.data.fix.gaveUp, true);
+    assert.equal(calls(WORK.fix).length, 2);
     assert.deepEqual(calls(WORK.ready).map((c) => c.input.broken), [['The host shows on each meeting']]);
+  });
+
+  // A person's Stop of the bot's round (design-bot-loop Q1): that head is
+  // not asked again; the next verdict, shots or promote asks when needed.
+  await t.test('B-stopped: a round a person stopped is not asked again for that head', async () => {
+    reset();
+    const s = await change();
+    await tell(s, 'Proposed');
+    await verdict(s, 'passing');
+    await shots(s, { state: 'verified', results: broken });
+    work.answer.set(WORK.fix, { queued: true });
+    await tell(s, 'ShotsSettled');
+    assert.equal(calls(WORK.fix).length, 1);
+    await answer(s, 'FixRoundEnded', { head: s.head, outcome: 'stopped' });
+    const i = await inst(s);
+    assert.equal(calls(WORK.fix).length, 1, 'not asked again at once');
+    assert.equal(i.data.fix.refused, 'stopped');
+    assert.equal(i.data.fix.gaveUp, false);
   });
 
   await t.test('B-round: the bot\'s round on the head ends: ready, saying what does not work (bug 4)', async () => {
@@ -282,10 +322,28 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id, checks_head_sha) VALUES ($1, $2, 'live', 'person', $3, $4)`,
       [app.id, s.issueNumber, s.id, s.head]);
-    await tell(s, 'FixRoundEnded', { head: s.head });
+    await answer(s, 'FixRoundEnded', { head: s.head, outcome: 'looked' });
     assert.equal((await inst(s)).state, 'ready');
     assert.equal(calls(WORK.ready).length, 1);
     assert.deepEqual(calls(WORK.ready)[0].input.broken, ['The host shows on each meeting']);
+    assert.equal(calls(WORK.fix).length, 1, 'a round that looked is never asked again');
+  });
+
+  await t.test('B-round-refused: the request will not take the round it was asked (FixRefused): ready with what does not work, until the next verdict', async () => {
+    reset();
+    const s = await change();
+    await tell(s, 'Proposed');
+    await verdict(s, 'passing');
+    await shots(s, { state: 'verified', results: broken });
+    work.answer.set(WORK.fix, { queued: true });
+    await tell(s, 'ShotsSettled');
+    assert.equal((await inst(s)).state, 'with_the_bot');
+    await answer(s, 'FixRefused', { head: s.head, why: 'off' });
+    const i = await inst(s);
+    assert.equal(i.state, 'ready');
+    assert.equal(i.data.fix.refused, 'off');
+    assert.equal(calls(WORK.fix).length, 1);
+    assert.deepEqual(calls(WORK.ready).map((c) => c.input.broken), [['The host shows on each meeting']]);
   });
 
   await t.test('B-refused: the bot does not take the round (off, not on the app): ready with what does not work at once', async () => {
@@ -366,11 +424,13 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     await verdict(s, 'passing');
     await shots(s, { state: 'verified', results: broken });
     work.answer.set(WORK.fix, { queued: true });
-    await pool.query('INSERT INTO homeroom_bot_queue (app_id, issue_number, reason) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [app.id, s.issueNumber, 'checks_failing']);
     await tell(s, 'ShotsSettled');
-    const armed = (await inst(s)).deadline_at;
-    assert.ok(armed);
+    assert.equal((await inst(s)).state, 'with_the_bot');
+    assert.equal((await inst(s)).deadline_at, null, 'with the bot: no clock until something tells it to look');
     await asTransition((cl) => cl.query(`UPDATE chat_sessions SET status = 'merging' WHERE id = $1`, [s.id]));
+    // A look while it is being merged (another verdict) arms its clock.
+    await tell(s, 'Verdict', { head: s.head, state: 'passing' });
+    assert.ok((await inst(s)).deadline_at, 'its clock looks again while it is being merged');
     await fire(s);
     assert.ok((await inst(s)).deadline_at, 'its clock is kept while it is being merged');
     await asTransition((cl) => cl.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW() - INTERVAL '1 minute' WHERE id = $1`, [s.id]));

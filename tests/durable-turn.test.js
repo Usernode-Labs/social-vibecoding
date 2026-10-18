@@ -410,7 +410,7 @@ test('a turn\'s own clock stops only the turn its owner runs, recorded as nobody
   await durableTurn.clockStop(worker, {}, 41, OWNER);
   await durableTurn.clockStop(worker, {}, 41, null);
   assert.deepEqual(calls, [
-    ['owned', { sessionId: 41, machine: 'bot-request', key: 'request:7:3', kinds: ['bot.look'], stamp: false, release: false }],
+    ['owned', { sessionId: 41, machine: 'bot-request', key: 'request:7:3', kinds: ['bot.look'], workKey: 'look:1', stamp: false, release: false }],
     ['any', 41],
   ]);
 });

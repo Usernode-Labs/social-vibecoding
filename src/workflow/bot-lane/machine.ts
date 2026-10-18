@@ -82,7 +82,8 @@ function decide(d0: Data, f: Facts, ctx: TransitionContext): Outcome<LState> {
     const apps = fullDue ? null : r.asked;
     work.push({ kind: WORK.refresh, key: `refresh:${n}`, input: { n, apps: apps as Json } });
     if (fullDue) work.push({ kind: WORK.sweep, key: `sweep:${n}`, input: { n } });
-    d = { ...d, refresh: { due: fullDue ? at(ctx, REFRESH_EVERY_MS) : r.due, asked: fullDue ? null : [], soon: null, n, running: n } };
+    // Whatever starts, nothing is asked for since (a full one covers all).
+    d = { ...d, refresh: { due: fullDue ? at(ctx, REFRESH_EVERY_MS) : r.due, asked: [], soon: null, n, running: n } };
   }
   // Grants: none while the bot is off, paused on a fault or on its cap.
   const paused = (d.fault && !before(d.fault.until, ctx)) || (d.budget && !before(d.budget.until, ctx));

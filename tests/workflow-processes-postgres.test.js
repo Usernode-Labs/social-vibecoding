@@ -650,6 +650,8 @@ test('workflow machines in a process of their own, and through its crash', { tim
     const i = await proposalOf(s);
     assert.equal(i.data.sync, null);
     assert.match(i.data.lastSync.message, /stopped by/);
+    await procs.until(() => heard.some((e) => e.d?.type === 'session_update' && e.d.action === 'sync_status'
+      && e.d.sessionId === s.id && e.d.syncResult === 'stopped'), 'the change page to hear its sync stopped');
     await procs.until(() => settled('proposal', `session:${s.id}`, 'turn.stop'), 'its turn was stopped');
     // What the cancelled sync reported afterwards changed nothing.
     assert.equal((await proposalOf(s)).data.lastSync.outcome, 'stopped');

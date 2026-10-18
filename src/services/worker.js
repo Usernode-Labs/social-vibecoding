@@ -4133,9 +4133,19 @@ async function execInWorker(sessionId, {
       await onTurnRecord({ turnId: durableTurnId, journal, turnUuid: turnUuid || null, mode });
     } catch (err) {
       // Nothing was dispatched: this process's registry goes back as it was,
-      // and the record stays for whoever owns the turn next.
+      // and the record stays for whoever owns the turn next. A workflow
+      // turn's item that was cancelled (a Stop before the record existed)
+      // has no next owner: its record goes now, or the session would read
+      // busy until the orphan sweep.
       releaseRegistryClaim();
       await revokeHomeroomReadGrant(sessionId, homeroomGrant);
+      if (turnOwnerRecord?.workId) {
+        const { rows: [w] } = await _getPoolSafe().query('SELECT status FROM wf_work WHERE id::text = $1', [String(turnOwnerRecord.workId)])
+          .catch(() => ({ rows: [{ status: null }] }));
+        if (w === undefined || w.status === 'settled') {
+          await finishTurn(sessionId, { turnId: durableTurnId, journal }).catch(() => {});
+        }
+      }
       throw err;
     }
   }
@@ -4193,10 +4203,14 @@ async function execInWorker(sessionId, {
     if (turnOwnerRecord) {
       // A workflow turn's Stop is on its record (the machine's turn.stop
       // stamped it, maybe from another process, while this dispatch was in
-      // flight and there was no turn to kill yet).
-      const durable = await turnLifecycle.loadActiveTurn(_getPoolSafe(), sessionId).catch(() => null);
-      if (durable && String(turnLifecycle.turnIdentity(durable)) === String(durableTurnId)
-          && turnLifecycle.stopRequestOf(durable)) {
+      // flight and there was no turn to kill yet). Or the record is gone, or
+      // is another turn's: turn.stop stamped it, found no journal to kill
+      // (the exec had not started) and released it. Nothing else releases a
+      // held workflow turn's record before its exec, and a turn running with
+      // no record would run with no clock beside the next one.
+      const durable = await turnLifecycle.loadActiveTurn(_getPoolSafe(), sessionId).catch(() => undefined);
+      const ours = durable && String(turnLifecycle.turnIdentity(durable)) === String(durableTurnId);
+      if ((durable !== undefined && !ours) || (ours && turnLifecycle.stopRequestOf(durable))) {
         log.info('worker', 'Stop landed during dispatch — killing the turn it was asked of', {
           sessionId, containerName, journal,
         });
@@ -4915,18 +4929,18 @@ async function stopTurnByJournal(sessionId, journal, { timeoutMs = 15000 } = {})
 
 // A machine's turn.stop work (src/workflow/turn-stop.ts): the turn on the
 // session that the instance `machine`/`key` runs, with a work item of one
-// of `kinds`, is stamped stopped (by whom), killed (only that turn), and,
+// of `kinds` (and, given `workKey`, that very item), is stamped stopped (by whom), killed (only that turn), and,
 // with `release`, its record released, because the work that would have
 // released it was cancelled. A record that is not this instance's (a
 // person's turn, another machine's, a newer turn) is left alone. Resolves
 // what it found and did; throws when the kill or the release could not be
 // confirmed, so the work is tried again. A turn's own clock calls it too,
 // with `stamp: false` and no release (its work is still there to finish).
-async function stopOwnedTurn(pool, { sessionId, machine, key, kinds = [], by = null, release = true, stamp = true }) {
+async function stopOwnedTurn(pool, { sessionId, machine, key, kinds = [], workKey = null, by = null, release = true, stamp = true }) {
   const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
   const own = turnLifecycle.ownerOf(current);
   if (!current || !own || own.machine !== machine || own.key !== key
-      || (kinds.length && !kinds.includes(own.kind))) {
+      || (kinds.length && !kinds.includes(own.kind)) || (workKey && own.workKey !== workKey)) {
     return { stopped: false, reason: current ? 'not_this_turn' : 'no_turn' };
   }
   const turnId = turnLifecycle.turnIdentity(current);

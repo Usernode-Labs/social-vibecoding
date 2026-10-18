@@ -742,7 +742,7 @@ function endSlots(d: Data, outcome: string, extra: Record<string, Json> = {}, by
 
 // The turn of the sync `n` stopped, from any process (src/workflow/turn-stop.ts).
 const syncStop = (d: Data, n: number, by: string | null): WorkRequest =>
-  turnStop({ sessionId: d.sessionId, machine: MACHINE, key: sessionKey(d.sessionId), kinds: [WORK.sync], by, release: true }, `sync:${n}`);
+  turnStop({ sessionId: d.sessionId, machine: MACHINE, key: sessionKey(d.sessionId), kinds: [WORK.sync], workKey: `sync:${n}`, by, release: true }, `sync:${n}`);
 
 // A person's Stop of the sync under way (POST /api/sessions/:id/stop, the
 // agent conversation's Stop): it ends as stopped by them, never as a
@@ -764,9 +764,13 @@ const stopRequested: Handler = (s, e, f) => {
   }
   if (sync.reason === 'conflict') writes.push({ type: 'blockReasons', sessionId: d.sessionId, reasons: [] });
   d = { ...d, backoff: null };
+  // The person's change page clears its sync banner at once (as the sync's
+  // own end does, services/sync-main.js broadcastSyncStatus).
+  const status = f.row ? [sessionUpdate({ action: 'sync_status', sessionId: f.row.id, appId: f.row.appId, appSlug: f.row.appSlug,
+    state: 'done', syncResult: 'stopped', message })] : [];
   return step({ name: s.name, data: d } as Live, {
     writes,
-    push: sync.reason === 'conflict' ? [votes(f, { integrating: false })] : [],
+    push: [...(sync.reason === 'conflict' ? [votes(f, { integrating: false })] : []), ...status],
     messages: resolved(d, sync, 'stopped'),
     cancel: [{ kind: WORK.sync, key: `sync:${sync.n}` }],
     work: [syncStop(s.data, sync.n, by)],

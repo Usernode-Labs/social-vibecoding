@@ -1523,10 +1523,12 @@ async function handleMessage(pool, client, msg) {
         : null;
       // A person answering on an issue's thread is exactly what the Homeroom
       // bot waits for; a system row (a claim, a bounty) is not a message. Its
-      // request's instance heard it in the statement above (insertHeard);
-      // a post that statement did not hear (a connector's) only asks for a
-      // refresh.
-      if (thread && thread.type === 'issue' && !heard) noteIssueActivityForBot(client.appId, thread.ref, 'posted');
+      // request's instance heard it in the statement above (insertHeard).
+      // A connector's post (a person's agent writing for them) is heard
+      // after it, as what they said; one on a request the bot has no
+      // instance for yet only asks for its project's refresh.
+      if (thread && thread.type === 'issue' && !heard) noteIssueActivityForBot(client.appId, thread.ref, 'thread');
+      else if (thread && thread.type === 'issue' && !rows[0]?.requestHeard) noteIssueActivityForBot(client.appId, thread.ref, 'posted');
       // #4974: that reply also settles the bot's asks in the requester's DM —
       // the question it is waiting on, a stop still showing its buttons — and
       // says so in the request's thread there. Not awaited. The bot's own post

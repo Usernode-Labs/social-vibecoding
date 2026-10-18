@@ -21,10 +21,11 @@
 // workflow-foundation's design-bot-loop.md is the design.
 
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
-import type { Check, Event, Json, MessageRequest, Outcome, TransitionContext, WorkRequest, WorkResultPayload } from '../kernel/index.ts';
+import type { Check, Event, Json, MessageRequest, Outcome, Push, TransitionContext, WorkRequest, WorkResultPayload } from '../kernel/index.ts';
+import { toUser } from '../pushes.ts';
 import {
   BOT_LANE, BOT_REQUEST, CHECKS_REASON, KEPT_WHILE_QUIET_REASONS, LANE_KEY, READ_AGAIN_REASON, RESTART_REASON,
-  backoffMs, lookCardKey, parseRequestKey, requestKey,
+  THROWN_HOLD_MS, THROWN_TRIES, backoffMs, lookCardKey, parseRequestKey, requestKey,
 } from '../rules/bot-loop.ts';
 import { BOT_CHANGE, botChangeKey } from '../rules/bot-notes.ts';
 import { turnStop } from '../rules/turn-stop.ts';
@@ -81,8 +82,11 @@ export interface Data {
   // Looks so far (their work `look:<n>`), and builds started (`build:<b>`).
   n: number;
   b?: number;
-  // A look refused for now (its change's session busy): waits, doubling.
+  // A look refused for now (its change's session busy) or failed on the
+  // platform: waits, doubling.
   backoff: { failures: number; until: string; reason: string } | null;
+  // Looks in a row that failed on the platform (FAULT_TRIES).
+  faults?: number;
   // A fix of its change's failing checks, asked by bot-change, unanswered.
   fix: { sessionId: number; head: string | null } | null;
   // A failed run whose retry found nothing to answer: not retried again.
@@ -145,6 +149,10 @@ const EVENTS = {
   // bot-change, once its change merged: work it had started stops, and
   // what was owed before the merge is dropped.
   RequestMerged: (p: any) => ({ ...request(p), before: optTime(p?.before) }),
+  // The session look `n` runs on, once its work knows it: a project's first
+  // read is granted before its triage session exists (the look makes it),
+  // and a Stop, a merge or a person writing finds the look by it.
+  LookOn: (p: any) => ({ ...request(p), n: int(p?.n, 'n'), sessionId: int(p?.sessionId, 'sessionId') }),
   // A person's Stop of the bot's turn on a session (the session's routes).
   StopRequested: (p: any) => ({ sessionId: optInt(p?.sessionId), by: optText(p?.by, 100) }),
   // The leader's boot: a queue row no instance holds (an older release's).
@@ -224,7 +232,7 @@ function rest(d: Data, ctx: TransitionContext, more: Omit<Outcome<RState>, 'next
   const base: Data = { ...d, look: null, slot: d.build?.phase === 'waiting' ? null : d.slot };
   if (base.build) return step('building', base, { ...more, timer: null, messages: [...(more.messages || []), look(base)] });
   if (base.owed) return queue(base, ctx, more);
-  return step('idle', { ...base, backoff: null }, { ...more, timer: null });
+  return step('idle', { ...base, backoff: null, faults: 0 }, { ...more, timer: null });
 }
 
 // The fix bot-change asked, answered (once): how the round it asked for
@@ -243,7 +251,7 @@ function answerFix(d: Data, outcome: string, more: { why?: string | null } = {})
 // The turn of the look under way stopped (only that one, by its record).
 const stopLook = (d: Data, by: string | null, release: boolean, tag: string): WorkRequest | null =>
   (d.look?.sessionId
-    ? turnStop({ sessionId: d.look.sessionId, machine: MACHINE, key: keyOf(d), kinds: TURN_KINDS, by, release }, tag)
+    ? turnStop({ sessionId: d.look.sessionId, machine: MACHINE, key: keyOf(d), kinds: TURN_KINDS, workKey: `look:${d.look.n}`, by, release }, tag)
     : null);
 
 // ── Moves ───────────────────────────────────────────────────────────────
@@ -269,7 +277,10 @@ function notOwed(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): Out
   // A debt it keeps (a fix bot-change is waiting on) is never pruned here.
   if (o.reason === CHECKS_REASON && d.fix) return step(s.name, d);
   if (s.name !== 'queued') return step(s.name, { ...d, owed: null });
-  return rest({ ...d, owed: null, backoff: null }, ctx);
+  // A fix asked whose debt went with it (merged into another reason, now
+  // dropped): bot-change hears it was not taken, rather than wait for ever.
+  const fx = answerFix({ ...d, owed: null, backoff: null }, 'refused', { why: 'not_owed' });
+  return rest(fx.data, ctx, { messages: fx.messages });
 }
 
 function activity(s: RState, e: Event<any>): Outcome<RState> {
@@ -287,9 +298,12 @@ function activity(s: RState, e: Event<any>): Outcome<RState> {
     // bot's own words are not a change).
     return step('idle', d, { messages: [toLane('RefreshAsked', { appId: d.appId }, d.appId)] });
   }
-  // Queued: its burst settles on its own (the lane reads the thread);
-  // anything else is a look the refresh brings back after.
-  return step(s.name as Name, d);
+  // Queued: its burst settles on its own (the lane reads the thread).
+  if (s.name === 'queued') return step('queued', d);
+  // A look that does not start over for it (a follow-up, a read already
+  // started over) or a build: its project is refreshed soon, which owes the
+  // request what was just said, taken once this ends.
+  return step(s.name as Name, d, { messages: [toLane('RefreshAsked', { appId: d.appId }, d.appId)] });
 }
 
 function granted(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<RState> {
@@ -301,7 +315,8 @@ function granted(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): Out
     const b = (d.b || 0) + 1;
     const build: Build = { ...d.build, phase: 'starting' };
     return step('building', { ...d, b, slot, build }, {
-      work: [{ kind: WORK.build, key: `build:${b}`, input: { appId: d.appId, issueNumber: d.issueNumber, runId: build.runId, n: b } }],
+      work: [{ kind: WORK.build, key: `build:${b}`, input: { appId: d.appId, issueNumber: d.issueNumber, runId: build.runId, n: b, person: slot.person } }],
+      push: workChanged(slot.person),
     });
   }
   if (s.name !== 'queued' || !d.owed) return step(s.name, d, { messages: [look(d)] });
@@ -310,8 +325,23 @@ function granted(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): Out
   const lk: Look = { n, kind, sessionId: p.sessionId ?? null, owed: d.owed, startedAt: iso(ctx), interrupted: false };
   return step(kind === 'read' ? 'reading' : 'following_up', { ...d, n, slot, look: lk, owed: null }, {
     timer: null,
-    work: [lookWork(d, lk)],
+    work: [lookWork({ ...d, slot }, lk)],
+    push: workChanged(slot.person),
   });
+}
+
+// The person a piece of work is for hears it start and end (their tray,
+// #3692), when they are on Homeroom (`u<id>`; an issue nobody here filed is
+// `a<app>`).
+const workChanged = (person: string | null | undefined): Push[] => {
+  const m = /^u(\d+)$/.exec(String(person || ''));
+  return m ? [toUser(Number(m[1]), { type: 'homeroom_bot_work_changed' })] : [];
+};
+
+function lookOn(s: Live, e: Event<any>): Outcome<RState> {
+  const d = s.data;
+  if (!d.look || d.look.n !== e.payload.n || d.look.sessionId) return step(s.name, d);
+  return step(s.name, { ...d, look: { ...d.look, sessionId: e.payload.sessionId } });
 }
 
 function lookWork(d: Data, lk: Look): WorkRequest {
@@ -321,7 +351,7 @@ function lookWork(d: Data, lk: Look): WorkRequest {
     input: {
       appId: d.appId, issueNumber: d.issueNumber, n: lk.n, kind: lk.kind, sessionId: lk.sessionId,
       owed: lk.owed as unknown as Json, carried: d.carried, lastRead: d.lastRead, spentRetry: d.spentRetry,
-      fix: d.fix as unknown as Json,
+      fix: d.fix as unknown as Json, faults: d.faults || 0, person: d.slot?.person ?? null,
     },
   };
 }
@@ -363,7 +393,18 @@ function lookEnded(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): O
       lane = {};
       break;
     }
-    case 'fault': back = lk.owed; lane = { fault: true }; break;
+    case 'fault': {
+      // The lane pauses every grant; this request waits on its own count
+      // too, so it does not take the first grant after every pause. A look
+      // whose work threw pauses nothing else (THROWN_TRIES).
+      const failures = (d.faults || 0) + 1;
+      back = failed && failures >= THROWN_TRIES
+        ? { ...lk.owed, heldUntil: later(ctx, THROWN_HOLD_MS).toISOString() }
+        : lk.owed;
+      backoff = { failures, until: later(ctx, backoffMs(failures)).toISOString(), reason: String(failed ? 'look_failed' : r.error || 'platform').slice(0, 64) };
+      lane = failed ? {} : { fault: true };
+      break;
+    }
     case 'budget': back = lk.owed; lane = { budget: true }; break;
     case 'held': {
       back = { ...lk.owed, heldUntil: optTime(r.until) || later(ctx, 7 * 24 * 3600 * 1000).toISOString() };
@@ -376,6 +417,10 @@ function lookEnded(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): O
       break;
     default: break;
   }
+  // A failed read the platform caused, recorded as one (its FAULT_TRIES-th
+  // fault in a row, or a provider's error): its debt is spent, the lane
+  // still pauses.
+  if (r.laneFault === true && outcome !== 'fault') lane = { fault: true };
   let owedNext = combine(back, d.owed);
   for (const debt of Array.isArray(r.owe) ? r.owe : []) {
     if (debt && typeof debt.reason === 'string') owedNext = merged(owedNext, { priority: 2, ...debt }, ctx);
@@ -383,7 +428,8 @@ function lookEnded(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): O
   const runId = Number.isInteger(r.build) ? r.build as number : null;
   let next: Data = {
     ...d, look: null, slot: null, carried: null, owed: owedNext,
-    backoff: backoff ?? (outcome === 'fault' || outcome === 'budget' || outcome === 'held' ? d.backoff : null),
+    backoff: backoff ?? (outcome === 'budget' || outcome === 'held' ? d.backoff : null),
+    faults: outcome === 'fault' ? (d.faults || 0) + 1 : (outcome === 'budget' || outcome === 'held' ? d.faults || 0 : 0),
     lastRead: r.lastRead !== undefined ? (r.lastRead as Json) : d.lastRead,
     spentRetry: Number.isInteger(r.spentRetry) ? r.spentRetry : d.spentRetry,
     build: runId && (!d.build || d.build.phase === 'waiting') ? { runId, phase: 'waiting', since: iso(ctx), key: null } : d.build,
@@ -403,7 +449,7 @@ function lookEnded(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): O
       messages = [...messages, ...fx.messages];
     }
   }
-  return rest(next, ctx, { messages });
+  return rest(next, ctx, { messages, push: workChanged(d.slot?.person) });
 }
 
 // A debt put back, with one owed meanwhile: a person's ask goes first; else
@@ -428,7 +474,7 @@ function buildOwed(s: RState, e: Event<any>, _f: Facts, ctx: TransitionContext):
 function buildEnded(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<RState> {
   const d = s.data;
   if (!d.build || d.build.runId !== e.payload.id) return step(s.name, d);
-  return rest({ ...d, build: null, slot: null }, ctx, { messages: [toLane('Released', { ran: true }, d.appId)] });
+  return rest({ ...d, build: null, slot: null }, ctx, { messages: [toLane('Released', { ran: true }, d.appId)], push: workChanged(d.slot?.person) });
 }
 
 // The build's start reported: requested from bot-build (it tells this
@@ -550,7 +596,10 @@ function due(s: Live, _e: Event<any>, f: Facts, ctx: TransitionContext): Outcome
   // Over: the request is read again (quietly: a restart's reason says no
   // "looking" twice). What that older look said, it said; what it did not
   // say (its last write refused by this machine's guard), this read says.
-  return queue({ ...d, older: null, owed: d.owed ? { ...d.owed, reason: RESTART_REASON } : null }, ctx);
+  // A person's ask that came meanwhile keeps its own reason (and its
+  // payer); one the refresh dropped meanwhile leaves nothing to read.
+  const owedNow = d.owed && d.owed.priority !== 0 ? { ...d.owed, reason: RESTART_REASON } : d.owed;
+  return rest({ ...d, older: null, owed: owedNow }, ctx);
 }
 
 function workDone(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<RState> {
@@ -587,7 +636,7 @@ export function botRequest(deps: Deps = { staging: false }) {
   const row = {
     Owed: any(owed), NotOwed: live(notOwed), Activity: any(activity), Granted: live(granted), BuildOwed: any(buildOwed),
     BuildEnded: live(buildEnded), FixAsked: any(fixAsked), RequestMerged: live(requestMerged), StopRequested: live(stopRequested),
-    Adopted: any(adopted), Due: live(due),
+    LookOn: live(lookOn), Adopted: any(adopted), Due: live(due),
     WorkSucceeded: live(workDone), WorkFailed: live(workDone), WorkExhausted: live(workDone),
   };
   const states: Name[] = ['idle', 'queued', 'reading', 'following_up', 'building', 'older_turn'];
@@ -595,7 +644,7 @@ export function botRequest(deps: Deps = { staging: false }) {
   transitions[NONE] = {
     Owed: any(owed), Activity: any(activity), BuildOwed: any(buildOwed), FixAsked: any(fixAsked), Adopted: any(adopted),
     NotOwed: { ignore: 'not_owed' }, Granted: { ignore: 'not_owed' }, BuildEnded: { ignore: 'not_building' },
-    RequestMerged: { ignore: 'nothing_owed' }, StopRequested: { ignore: 'not_looking' }, Due: { ignore: 'gone' },
+    RequestMerged: { ignore: 'nothing_owed' }, StopRequested: { ignore: 'not_looking' }, LookOn: { ignore: 'not_looking' }, Due: { ignore: 'gone' },
     '*': { ignore: 'not_owed' },
   };
   return defineMachine<RState, Facts>({
@@ -613,7 +662,7 @@ export function botRequest(deps: Deps = { staging: false }) {
     },
     authorize: {
       Owed: anyProducer, NotOwed: anyProducer, Activity: anyProducer, Granted: fromLane, BuildOwed: anyProducer,
-      BuildEnded: fromBuild, FixAsked: fromChange, RequestMerged: anyProducer, Adopted: anyProducer,
+      BuildEnded: fromBuild, FixAsked: fromChange, RequestMerged: anyProducer, Adopted: anyProducer, LookOn: anyProducer,
       StopRequested: (e) => (['route', 'system', 'admin'].includes(e.source.kind) ? ok() : reject('not_a_producer')),
       Due: (e) => (e.source.kind === 'timer' ? ok() : reject('not_the_clock')),
     },

@@ -144,7 +144,9 @@ function harness({
       if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(s)) return { rows: [{ n: 0 }] };
       if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
       if (/AS by_bot/.test(s)) return { rows: [{ by_bot: newestByBot, recent: true }] };
-      if (/SELECT active_turn FROM chat_sessions/.test(s)) return { rows: [{ active_turn: busy ? { turnId: 'x' } : null }] };
+      // Whether somebody else works on the change's session, read from the
+      // durable record of each kind of work (followup.sessionTakenElsewhere).
+      if (/AS busy\s+FROM chat_sessions cs WHERE cs\.id = \$1/.test(s)) return { rows: [{ busy }] };
       return { rows: [] };
     },
   };

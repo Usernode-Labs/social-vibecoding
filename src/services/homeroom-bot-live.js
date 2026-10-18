@@ -111,7 +111,7 @@ function isStaging() {
  *   - `{ all: false, slugs: [] }`: nothing at all, with the bot off or on a
  *     staging copy.
  *
- * `slugs` stays for a caller that names its own apps (liveCandidates).
+ * `slugs` stays for a scope that names its own apps, which inScope reads.
  */
 function liveScope(settings) {
   if (!settings || settings.mode === 'off' || isStaging()) return { all: false, slugs: [], except: [] };
@@ -4431,6 +4431,15 @@ async function buildAndPropose({
   }
 
 
+  // A spec stopped on its clock before its turn had a record leaves the
+  // session's stop pending, and the worker skips every dispatch with no
+  // owner until a new turn clears it (#937). Without this, the build after
+  // a spec time-out was skipped at once and recorded as "no change to
+  // propose" (#3396). Cleared before the build's own clock starts, so a stop
+  // aimed at the build is never the one erased (nor, after a restart, once
+  // the build turn has started).
+  if (!steps.has('turn:build')) worker.clearPendingStop?.(session.id);
+
   // Run five, item 8: a first version's build starts from the screens its
   // spec drew, written into the repository and pushed as its first commit
   // (services/spec-screens-start.js), before the build's clock starts. Null
@@ -4537,7 +4546,7 @@ async function buildAndPropose({
   if (!turnFault({ routed, stopped }) && !turnLanded(routed?.result)) {
     const leftMs = turnStartedMs + turnBudgetMs - Date.now();
     const notNudged = whyNotNudge({
-      routed, stopped, leftMs,
+      routed, stopped, leftMs, stopPending: !!worker.getPendingStop?.(session.id),
     });
     const first = {
       ...turnFacts({ routed, stopped }, { turn: 'build', model, seconds: buildTurnMs / 1000 }),
@@ -4624,6 +4633,8 @@ async function buildAndPropose({
     if (kept?.pushed && Number(kept.commits) > 0 && !(startingScreens?.sha && kept.sha === startingScreens.sha)) {
       partial = { reason: faultReason, sha: kept.sha || null, commits: Number(kept.commits) };
       Object.assign(result, { pushOk: true, ahead: Number(kept.commits), sha: kept.sha || null });
+      // A stop aimed at the build would skip the review's fix turns.
+      worker.clearPendingStop?.(session.id);
       log.warn('homeroom-bot', 'A first version\'s build turn did not finish; reviewing the work it pushed', {
         app: app.slug, issueNumber, sessionId: session.id, why: faultReason, commits: partial.commits,
       });
@@ -4935,6 +4946,7 @@ async function reviewLanded({
         durableSteps.rethrowStop(err, 'fix worker');
         return { ok: false, error: `worker: ${err.message}`, ms: Date.now() - t0 };
       }
+      worker.clearPendingStop?.(session.id);
     }
     const fixBudgetMs = Math.max(1000, Math.min(budgetMs, turnBudgetMs));
     const progress = lastActivity();

@@ -2344,7 +2344,7 @@ async function changePlan(pool, { bot, user, target, message, deps = {} }) {
   const requester = await requesterOf(pool, app.id, issueNumber);
   if (queued?.id && requester) {
     await require('./homeroom-bot-activity').startCard(pool, {
-      app, issueNumber, bot, jobKey: Number(queued.id), queued: true, inDm: true, requester,
+      app, issueNumber, bot, jobKey: String(queued.id), queued: true, inDm: true, requester,
     });
   }
   log.info('homeroom-bot-dm', 'A first version\'s plan is planned again with its creator\'s words', {
@@ -3092,7 +3092,7 @@ async function noteChangeStopped(pool, sessionId, { why = 'preview', deps = {}, 
 /**
  * Pure (#4242): what the "needs a look" message says: `checks`, its checks
  * failed in a way that looks like the platform's (the bot leaves those for
- * the platform's own re-run, homeroom-bot.js noteProposalChecks); `built`,
+ * the platform's own re-run, homeroom-bot.js queueChecksFix); `built`,
  * its build finished and no change came of it.
  */
 function needsLookText(line, why) {
@@ -4122,7 +4122,7 @@ async function noteRequestFiled(pool, { app, user, issueNumber, title = null, as
     const bot = await botAccount(pool);
     if (queued?.id && bot) {
       await require('./homeroom-bot-activity').startCard(pool, {
-        app, issueNumber: n, bot, jobKey: Number(queued.id), settings, filed: true,
+        app, issueNumber: n, bot, jobKey: String(queued.id), settings, filed: true,
         requester: {
           userId: user.id, username: user.username, issueTitle: title, firstVersion: false, askedText,
           isSynthetic: !!user.isSynthetic, hasPlatformAccess: !!(user.hasPlatformAccess || user.privateMember), isAdmin: !!user.isAdmin,
@@ -4236,7 +4236,7 @@ async function askBotToBuild(pool, { app, user, issueNumber, deps = {} }) {
   const bot = await botAccount(pool);
   if (bot && requester) {
     await require('./homeroom-bot-activity').startCard(pool, {
-      app, issueNumber: n, bot, jobKey: Number(queued.id), settings, queued: true, requester,
+      app, issueNumber: n, bot, jobKey: String(queued.id), settings, queued: true, requester,
     });
   }
   log.info('homeroom-bot-dm', 'Asked to build a request from its page', { app: app.slug, issueNumber: n, userId: user.id });

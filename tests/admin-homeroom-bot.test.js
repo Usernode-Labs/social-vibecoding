@@ -98,9 +98,12 @@ poolMod.getPool = () => ({
     if (/SELECT id, slug FROM apps WHERE slug/.test(s)) {
       return { rows: params[0] === 'todo' ? [{ id: 9, slug: 'todo' }] : [] };
     }
-    if (/INSERT INTO homeroom_bot_queue/.test(s)) {
-      writes.push(['enqueue', params[0], params[1], params[2]]);
-      return { rows: [{ id: 5, app_id: params[0], issue_number: params[1], priority: 0, reason: 'admin', enqueued_at: 'now' }] };
+    // Run now is owed to the request's instance (bot-request's Owed, at the
+    // head of the queue: priority 0), which writes the queue's row.
+    if (/INSERT INTO wf_events/.test(s)) {
+      const payload = JSON.parse(params[4]);
+      writes.push([params[3], payload.appId, payload.issueNumber, payload.priority, payload.reason]);
+      return { rows: [{ id: 5 }] };
     }
     // limits.getWeeklySpentCents / usesIncludedKey and the like: nothing.
     return { rows: [] };
@@ -255,7 +258,7 @@ test('POST run: validates the target, 404s an unknown app, and queues at the hea
   assert.equal(res.status, 202);
   const data = await res.json();
   assert.equal(data.item.priority, 0);
-  assert.deepEqual(writes[0], ['enqueue', 9, 12, 1]);
+  assert.deepEqual(writes[0], ['Owed', 9, 12, 0, 'admin']);
 });
 
 // ── Surface pins ─────────────────────────────────────────────────────────

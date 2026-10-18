@@ -14,6 +14,10 @@
 //   bot's queue: the ones its trial run found ready first.
 // - The slots page lists every other open request by where the bot is on it.
 //
+// The queue is the bot-request machine's projection: a runtime of the bot's
+// two machines (its work faked, the bot off so the lane grants nothing)
+// applies what the refresh appends, and a look's end is its NotOwed.
+//
 // Skips when no PostgreSQL is reachable, like the repository's other
 // postgres tests.
 
@@ -29,6 +33,21 @@ const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
 const bot = require('../src/services/homeroom-bot');
 const holds = require('../src/services/homeroom-bot-holds');
 const track = require('../src/services/homeroom-bot-track');
+const { createRuntime } = require('../src/workflow/kernel/index.ts');
+const requestMachine = require('../src/workflow/bot-request/machine.ts');
+const laneMachine = require('../src/workflow/bot-lane/machine.ts');
+const { TURN_STOP } = require('../src/workflow/rules/turn-stop.ts');
+
+function botLoop(pool) {
+  const kinds = [...Object.values(requestMachine.WORK), ...Object.values(laneMachine.WORK), TURN_STOP];
+  const services = Object.fromEntries(kinds.map((k) => [k, {
+    maxAttempts: 1, backoffMs: () => 0, leaseMs: 600, concurrency: 4, async run() { return { outcome: 'done' }; },
+  }]));
+  return createRuntime({
+    pool, pollMs: 50, publish: async () => {}, services,
+    machines: [requestMachine.botRequest({ staging: false }), laneMachine.botLane({ staging: false })],
+  });
+}
 
 async function openDatabase(t) {
   let pg;
@@ -65,6 +84,8 @@ const after = (days) => new Date(Date.parse(EVERYONE) + days * day).toISOString(
 test('the bot keeps its promises and reads its older requests, one at a time', { timeout: 180000 }, async (t) => {
   const pool = await openDatabase(t);
   if (!pool) return;
+  const rt = botLoop(pool);
+  t.after(() => rt.stop());
 
   const { rows: [botUser] } = await pool.query(
     `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE) RETURNING id, username`,
@@ -174,12 +195,25 @@ test('the bot keeps its promises and reads its older requests, one at a time', {
   const settings = { mode: 'live', pausedApps: [], everyoneSince: EVERYONE, voiceSession: true, voiceIssue: true };
   const room = { proposals_per_app: 3, proposals_total: 20, question_tripwire: 10 };
   const dm = { async recordRequester() { return null; }, async sendDm() { return null; } };
-  const refresh = (capRoom = room) => bot.refreshApp(pool, app, {
-    github, capRoom, bot: botUser, everyoneSince: EVERYONE, settings, dm,
-  });
+  const refresh = async (capRoom = room) => {
+    const out = await bot.refreshApp(pool, app, { github, capRoom, bot: botUser, everyoneSince: EVERYONE, settings, dm });
+    await rt.drain();
+    return out;
+  };
   const queued = async () => (await pool.query(
     'SELECT issue_number, reason, priority FROM homeroom_bot_queue WHERE app_id = $1 ORDER BY issue_number', [app.id],
   )).rows.map((r) => `${r.issue_number}:${r.reason}:${r.priority}`);
+  // A look at each request still queued ended: nothing is owed it now.
+  let looks = 0;
+  const lookedAt = async () => {
+    const { rows } = await pool.query('SELECT issue_number FROM homeroom_bot_queue WHERE app_id = $1', [app.id]);
+    for (const r of rows) {
+      await rt.append(requestMachine.MACHINE, requestMachine.requestKey(app.id, r.issue_number), {
+        type: 'NotOwed', payload: { appId: app.id, issueNumber: Number(r.issue_number), quiet: false },
+      }, { requestKey: `looked:${++looks}`, source: { kind: 'system', name: 'test' } });
+    }
+    await rt.drain();
+  };
 
   await t.test('older requests: the trial run\'s ready ones first, then the rest, newest first', async () => {
     // What the trial run made of them, before the bot went on for everyone.
@@ -198,7 +232,7 @@ test('the bot keeps its promises and reads its older requests, one at a time', {
     assert.deepEqual(await queued(), ['35:new:1']);
     // Read since, its row gone: nothing new to read, so the first older one.
     await run(35, { verdict: 'question', ago: '1 minute', seen: after(6) });
-    await pool.query('DELETE FROM homeroom_bot_queue');
+    await lookedAt();
     await refresh();
     assert.deepEqual(await queued(), ['30:backlog:4']);
     // Kept while it waits, and no second one beside it.
@@ -206,18 +240,19 @@ test('the bot keeps its promises and reads its older requests, one at a time', {
     assert.deepEqual(await queued(), ['30:backlog:4']);
     // Read (it needs a person after all): the next is the other ready one.
     await run(30, { verdict: 'person', ago: '1 minute', seen: before(9) });
-    await pool.query('DELETE FROM homeroom_bot_queue');
+    await lookedAt();
     await refresh();
     assert.deepEqual(await queued(), ['34:backlog:4']);
     // No free slot: nothing older is read.
-    await pool.query('DELETE FROM homeroom_bot_queue');
+    await lookedAt();
     await refresh({ ...room, proposals_per_app: 0 });
     assert.deepEqual(await queued(), []);
     // A project the bot only tries things on (no capRoom) reads everything
     // in the background, as before: nothing is an older request there.
     await bot.refreshApp(pool, app, { github, capRoom: null, bot: botUser, everyoneSince: EVERYONE, settings, dm });
+    await rt.drain();
     assert.ok(!(await queued()).some((row) => row.includes(':backlog:')));
-    await pool.query('DELETE FROM homeroom_bot_queue');
+    await lookedAt();
   });
 
   await t.test('an older request\'s read is nobody\'s building time and says nothing first', async () => {
@@ -234,9 +269,10 @@ test('the bot keeps its promises and reads its older requests, one at a time', {
     issues.push({ state: 'open', number: 37, title: 'Which page?', body: 'The list page.', createdAt: after(1), updatedAt: after(1) });
     await run(36, { verdict: 'person', ago: '3 hours', seen: after(1) });
     await run(37, { verdict: 'question', ago: '2 hours', seen: after(1) });
-    await pool.query(
-      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason) VALUES ($1, 34, 4, 'backlog')`, [app.id],
-    );
+    await rt.append(requestMachine.MACHINE, requestMachine.requestKey(app.id, 34), {
+      type: 'Owed', payload: { appId: app.id, issueNumber: 34, reason: 'backlog', priority: 4 },
+    }, { requestKey: 'backlog:34', source: { kind: 'system', name: 'refresh' } });
+    await rt.drain();
     const view = await track.slotsView(pool, {
       app, settings, deps: { github, liveSvc: { isLiveFor: () => true } },
     });

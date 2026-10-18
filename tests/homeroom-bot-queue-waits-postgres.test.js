@@ -1,6 +1,6 @@
 // The Homeroom bot's queue snapshot and its move offers' week, against the
 // full PostgreSQL schema: why each waiting row waits, read with the rules
-// liveCandidates applies, and the counts from the same statement as the
+// rules/bot-loop.ts READ_CANDIDATES_SQL applies, and the counts from the same statement as the
 // rows listed. tests/homeroom-bot-queue-waits.test.js pins the same without
 // a database.
 //

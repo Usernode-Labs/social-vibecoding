@@ -5,8 +5,8 @@
 // version's 33-minute GLM build spent 31 of them waiting on the model over
 // 156 calls. These pin what changed in the bot's own prompts and wakes:
 //
-//   - Build it, served by a Pod that is not the leader, wakes the leader
-//     through the bus (goAhead), as an issue event does;
+//   - Build it, served by whichever Pod the tap reached, owes its request
+//     the build in the database (goAhead appends bot-request's BuildOwed);
 //   - the five-round look-and-fix loop is said only to a first version no
 //     reviewer follows (design-skill.js stageGuidance), which its browser
 //     lines already said (homeroom-bot-live.js browserLines);
@@ -32,47 +32,42 @@ const template = require('../src/services/template');
 
 const ROOT = path.join(__dirname, '..');
 
-// ── N16: Build it wakes the leader ───────────────────────────────────────
+// ── N16: Build it owes the build wherever the tap landed ────────────────
 
-test('Build it wakes the loop where it runs, on whichever Pod the tap reached', async () => {
+test('Build it owes its request the build, on whichever Pod the tap reached', async () => {
   bot._resetForTests();
-  const wsBus = require('../src/services/ws-bus');
-  const published = [];
-  const realPublish = wsBus.publish;
-  wsBus.publish = (kind, routing, data) => { published.push({ kind, routing, data }); };
-  const queries = [];
+  const appended = [];
   const pool = {
     async query(sql, params) {
-      queries.push(String(sql));
       if (/^\s*SELECT plan FROM homeroom_bot_runs/.test(String(sql))) return { rows: [{ plan: { bullets: ['Polls people vote in'], questions: [] } }] };
       if (/UPDATE homeroom_bot_runs/.test(String(sql))) return { rows: [{ app_id: 9, issue_number: 3 }] };
+      if (/INSERT INTO wf_events/.test(String(sql))) { appended.push(params); return { rows: [{ id: 1 }] }; }
       throw new Error(`unexpected query: ${sql} ${params}`);
     },
   };
-  try {
-    // Not the leader: its local wake does nothing, and the leader must hear.
-    const went = await bot.goAhead(pool, { runId: 1746 });
-    assert.equal(went.ok, true);
-    assert.deepEqual(published, [{ kind: bot.BUS_KIND, routing: null, data: { appId: 9, buildRunId: 1746 } }]);
-    // The leader, hearing it, runs its pass now (and starts the build at
-    // once: tests/homeroom-bot-run-five.test.js).
-    bot._armForTests({}, { pool: { async query() { return { rows: [] }; } } });
-    assert.equal(bot.onBusMessage(published[0].data), true);
-    assert.deepEqual(bot._pendingForTests().apps, [9]);
-  } finally {
-    wsBus.publish = realPublish;
-    bot._resetForTests();
-  }
-  // A plan already gone wakes nobody.
-  const gone = { async query() { return { rows: [] }; } };
-  published.length = 0;
-  wsBus.publish = (kind, routing, data) => { published.push({ kind, routing, data }); };
-  try {
-    assert.deepEqual(await bot.goAhead(gone, { runId: 1 }), { ok: false, why: 'gone' });
-    assert.deepEqual(published, []);
-  } finally {
-    wsBus.publish = realPublish;
-  }
+  // The tap appends its request's BuildOwed in the database, so the lane
+  // grants the build a slot wherever the workflow runs: no leader to wake.
+  const went = await bot.goAhead(pool, { runId: 1746 });
+  assert.equal(went.ok, true);
+  assert.equal(appended.length, 1);
+  const [machine, key, appId, type, payload, , , requestKey] = appended[0];
+  assert.equal(machine, 'bot-request');
+  assert.equal(key, 'request:9:3');
+  assert.equal(appId, 9);
+  assert.equal(type, 'BuildOwed');
+  assert.deepEqual(JSON.parse(payload), { appId: 9, issueNumber: 3, runId: 1746 });
+  // A second tap on the same run appends once: the run is its request key.
+  assert.equal(requestKey, 'build:1746');
+  // A plan already gone owes nothing.
+  appended.length = 0;
+  const gone = {
+    async query(sql) {
+      if (/INSERT INTO wf_events/.test(String(sql))) { appended.push(sql); return { rows: [{ id: 1 }] }; }
+      return { rows: [] };
+    },
+  };
+  assert.deepEqual(await bot.goAhead(gone, { runId: 1 }), { ok: false, why: 'gone' });
+  assert.deepEqual(appended, []);
 });
 
 // ── L11: the look loop only when no reviewer follows ─────────────────────

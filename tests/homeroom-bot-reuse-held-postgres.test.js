@@ -157,9 +157,17 @@ test('a held ready verdict is reused while its request is unchanged, and read ag
      RETURNING id, issue_number, reason`,
     [app.id, reason],
   )).rows[0];
-  const triage = async (reason) => bot.runTriage(pool, {}, {
-    bot: BOT, app, item: await queue(reason), mode: 'shadow', settings, deps,
-  });
+  // Each read runs as its request's look (bot-request's bot.look), whose end
+  // the machine applies: what it did with the request's debt and the build
+  // it owes are on look.out.
+  const triage = async (reason) => {
+    const item = await queue(reason);
+    const look = bot._newLookForTests({ owner: { machine: 'bot-request', key: `request:${app.id}:24`, kind: 'bot.look' } });
+    const out = await bot._runInLookForTests(look, () => bot.runTriage(pool, {}, {
+      bot: BOT, app, item, mode: 'shadow', settings, deps,
+    }));
+    return { ...out, look };
+  };
   const posts = async () => (await pool.query(
     'SELECT kind FROM homeroom_bot_posts WHERE app_id = $1 AND issue_number = 24 ORDER BY id', [app.id],
   )).rows.map((r) => r.kind);
@@ -202,7 +210,8 @@ test('a held ready verdict is reused while its request is unchanged, and read ag
   assert.equal(Number(heldAgain.cost_usd), 0);
   assert.equal(heldAgain.build_note, verdict.build_note);
   assert.equal(heldAgain.read_fingerprint.hash, heldRun.read_fingerprint.hash);
-  assert.equal((await pool.query('SELECT count(*)::int AS n FROM homeroom_bot_queue')).rows[0].n, 0, 'the queue row is used up');
+  assert.equal(again.look.out.queue, 'consume', 'the request\'s debt is used up when the look ends');
+  assert.equal(again.look.out.build, null, 'and no build is owed while it is held');
 
   // 3. Room at last: reused and built, as a fresh ready verdict is.
   await moveCapped('merged');
@@ -216,6 +225,7 @@ test('a held ready verdict is reused while its request is unchanged, and read ag
   assert.ok(buildRun.live_build_waiting_at, 'its build waits its turn in the lane');
   assert.equal(buildRun.build_note, verdict.build_note, 'built from the held verdict\'s note');
   assert.equal(buildRun.reused_run_id, again.runId);
+  assert.equal(built.look.out.build, built.runId, 'the look\'s end tells its request the build is owed');
 
   // 4. Held again, then the request changes: read again, as before.
   await moveCapped('promoted');

@@ -17,7 +17,7 @@
 //     yet). By issue number, { what, since }.
 //   - and a live build WAITING for the project's build slot, by the bot's own
 //     "live build waiting or under way" rule (homeroom-bot.js classifyIssue,
-//     liveCandidates): building too, since it began to wait. It can wait a
+//     rules/bot-loop.ts READ_CANDIDATES_SQL): building too, since it began to wait. It can wait a
 //     whole other build's length, and a claim in that time would make the
 //     bot step back just the same.
 //   - GET /api/apps/:slug/github-issues and /github-issues/:number carry it

@@ -106,7 +106,13 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 8 });
+  // A request filed for the bot is owed a look by its bot-request instance
+  // (its queue row the projection): the workflow runtime runs here, on this
+  // database, its pipeline only (no timers, no work).
+  const platform = require('../src/workflow/platform.ts');
+  require('../src/db/pool').getPool = () => pool;
   t.after(async () => {
+    await platform.stopWorkflow();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
@@ -114,6 +120,7 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
   const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
   await pool.query(schema);
   await pool.query(schema); // boot-idempotent
+  await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
 
   let seq = 0;
   async function user(prefix, { synthetic = false } = {}) {

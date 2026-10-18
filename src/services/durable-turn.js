@@ -385,7 +385,7 @@ async function runTurn(steps, key, {
 function clockStop(worker, pool, sessionId, owner) {
   const own = owner && typeof owner === 'object' ? owner : null;
   return own
-    ? worker.stopOwnedTurn(pool, { sessionId, machine: own.machine, key: own.key, kinds: [own.kind], stamp: false, release: false })
+    ? worker.stopOwnedTurn(pool, { sessionId, machine: own.machine, key: own.key, kinds: [own.kind], workKey: own.workKey || null, stamp: false, release: false })
     : worker.stopTurn(sessionId);
 }
 

@@ -1776,16 +1776,16 @@
     {
       "source": "src/workflow/platform.ts",
       "kind": "structural-template",
-      "fingerprint": "4cb190fab746c444e38d",
+      "fingerprint": "2cd64c8d65bd2a669777",
       "count": 1,
-      "preview": "`SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = $1 AND pv.vote = 'yes' AND"
+      "preview": "`WITH m AS (${insertSql}), e AS ( INSERT INTO wf_events (machine, key, app_id, type, payload, source, actor, request_key, caused_by) SELECT $${n + 1}, $${n + 2}"
     },
     {
       "source": "src/workflow/platform.ts",
       "kind": "structural-template",
-      "fingerprint": "f4825a169467334fff63",
+      "fingerprint": "4cb190fab746c444e38d",
       "count": 1,
-      "preview": "`WITH m AS (${insertSql}), e AS ( INSERT INTO wf_events (machine, key, app_id, type, payload, source, actor, request_key, caused_by) SELECT $${n + 1}, $${n + 2}"
+      "preview": "`SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = $1 AND pv.vote = 'yes' AND"
     },
     {
       "source": "src/workflow/preview/facts.ts",
@@ -1860,7 +1860,7 @@
     {
       "source": "src/workflow/shots/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "aa978af22cca67aa2024",
+      "fingerprint": "82f09b6e822a16d8913e",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.status, cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha, cs.checks_commit_sha, cs.handoff_head_sha, cs.staging_commit_sha,"
     },

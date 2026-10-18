@@ -46,13 +46,15 @@ export const FIX_LOOK_MS = 10 * 60 * 1000;
 // A change handed back to the bot waits for the bot's answer: its request's
 // instance (bot-request) tells it how the round it asked for ended
 // (FixRoundEnded, with `outcome`), or that it was not taken (FixRefused).
-// A round lost (its look ended without it, failed for good, or was stopped)
-// is asked once more (Q3); lost again, it is given up on: a change whose
-// checks pass is ready to try, saying what does not work; one whose checks
-// fail is left as [main] left it (nobody is told).
+// A round lost (its look ended without it, or failed for good) is asked
+// once more (Q3); lost again, it is given up on: a change whose checks pass
+// is ready to try, saying what does not work; one whose checks fail is left
+// as [main] left it (nobody is told). A round a person stopped is not asked
+// again for that head: it is asked when it is next needed (a new verdict,
+// its shots, a promote), as a refusal is (design-bot-loop Q1).
 export const FIX_ROUNDS = 2;
 // The outcomes of a round that did not look at the head.
-const LOST: ReadonlySet<string> = new Set(['lost', 'stopped', 'requeued']);
+const LOST: ReadonlySet<string> = new Set(['lost', 'requeued']);
 
 // ── State ───────────────────────────────────────────────────────────────
 
@@ -209,6 +211,7 @@ function answered(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Out
   const fix = s.data.fix;
   if (!fix || !fix.asked || (e.payload.head && e.payload.head !== fix.head)) return decide(s, f, ctx, s.data);
   if (e.type === 'FixRefused') return decide(s, f, ctx, { ...s.data, fix: { ...fix, asked: false, refused: e.payload.why || 'refused' } });
+  if (e.payload.outcome === 'stopped') return decide(s, f, ctx, { ...s.data, fix: { ...fix, asked: false, refused: 'stopped' } });
   if (!LOST.has(String(e.payload.outcome || '')) || f.looked || !f.row || f.row.status !== 'promoted') {
     return decide(s, f, ctx, { ...s.data, fix: { ...fix, asked: false } });
   }

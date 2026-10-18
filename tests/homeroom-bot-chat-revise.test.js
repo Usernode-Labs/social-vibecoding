@@ -173,7 +173,13 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
+  // A request handed to the bot is owed a look by its bot-request instance
+  // (its queue row the projection): the workflow runtime runs here, on this
+  // database, its pipeline only (no timers, no work).
+  const platform = require('../src/workflow/platform.ts');
+  require('../src/db/pool').getPool = () => pool;
   t.after(async () => {
+    await platform.stopWorkflow();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
@@ -181,6 +187,32 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
   const schema = read('src/db/schema.sql');
   await pool.query(schema);
   await pool.query(schema); // boot-idempotent
+  await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
+  // Rows a machine owns (a request's queue row, a proposal's move into
+  // merged) are fixtures here, written as the kernel writes them.
+  const asKernel = async (fn) => {
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query("SET LOCAL app.wf_writer = 'transition'");
+      await fn(c);
+      await c.query('COMMIT');
+    } catch (err) {
+      await c.query('ROLLBACK');
+      throw err;
+    } finally {
+      c.release();
+    }
+  };
+  // A look that ended with nothing owed after it, as its machine leaves it:
+  // no instance holding a debt, no row.
+  const lookEnded = (n) => asKernel(async (c) => {
+    const key = `request:${app.id}:${n}`;
+    await c.query("DELETE FROM wf_work WHERE machine = 'bot-request' AND key = $1", [key]);
+    await c.query("DELETE FROM wf_events WHERE machine = 'bot-request' AND key = $1 AND status = 'pending'", [key]);
+    await c.query("DELETE FROM wf_instances WHERE machine = 'bot-request' AND key = $1", [key]);
+    await c.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2', [app.id, n]);
+  });
   const user = async (username, synthetic = false) => (await pool.query(
     `INSERT INTO users (username, password, has_platform_access, is_synthetic) VALUES ($1, 'x', TRUE, $2)
      RETURNING id, username, is_synthetic AS "isSynthetic", has_platform_access AS "hasPlatformAccess", is_admin AS "isAdmin"`,
@@ -319,7 +351,7 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
 
   await t.test('her card follows the fix: updated, then going live without a vote', async () => {
     // The follow-up revised it; its checks run.
-    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 1', [app.id]);
+    await lookEnded(1);
     await pool.query(
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id) VALUES ($1, 1, 'live', 'revise', $2)`,
       [app.id, first.id],
@@ -367,7 +399,7 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
     assert.deepEqual((await metaOf(binsId)).botRequest, { issueNumber: n, status: 'ready', sessionId: built.id });
     assert.deepEqual(frames.at(-1), { type: 'bot_request_status', messageId: binsId, botRequest: { issueNumber: n, status: 'ready', sessionId: built.id } });
     // Approved and merged: going live until the app answers, then Live.
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', live_at = COALESCE(merged_at, NOW()) WHERE id = $1`, [built.id]);
+    await asKernel((c) => c.query(`UPDATE chat_sessions SET status = 'merged', live_at = COALESCE(merged_at, NOW()) WHERE id = $1`, [built.id]));
     assert.equal(cardWords(await binsCard()), 'Approved: Add a night-before reminder for bin day. It’s going live.');
     pushed.length = 0;
     await botChat.noteRequestStatus(pool, { appId: app.id, issueNumber: n, status: 'live', deps: deps(null) });
@@ -385,7 +417,7 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
       `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_ok, build_error) VALUES ($1, $2, 'live', 'ready', FALSE, 'the build did not finish')`,
       [app.id, n],
     );
-    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2', [app.id, n]);
+    await lookEnded(n);
     const mine = await botChat.myRequests(pool, { app, user: { id: sam.id, username: 'sam' }, deps: deps(null) });
     assert.equal(cardWords(mine.cards.find((c) => c.messageId === id)), 'I couldn’t finish this. Our chat says why.');
     assert.equal((await metaOf(id)).botRequest, undefined);

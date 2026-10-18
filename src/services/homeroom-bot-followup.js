@@ -30,7 +30,7 @@
 // of 43 failing) and recipebot #82 (1 of 85, its own new check expecting
 // "Text size" where the button says "Aa") waited ten hours. Now a failing
 // verdict on the proposal's current head is a reason to look again on its
-// own (homeroom-bot.js noteProposalChecks): ONE turn with the failing
+// own (bot-change's queueChecksFix): ONE turn with the failing
 // checks and what they reported, which may only `revise` (fix the code, or
 // the proposal's own check) or hand to a `person`. Once per failing head,
 // within the same MAX_REVISIONS every revision counts against, and never

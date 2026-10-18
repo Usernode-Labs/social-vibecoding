@@ -139,7 +139,7 @@ export function botBuild() {
             const d: Data = { ...s.data, stoppedBy: by || 'the platform', endedAt: ctx.now.toISOString(),
               error: { message: by ? `Stopped by ${by}` : 'Stopped', code: 'stopped' } };
             const work: WorkRequest[] = [{ kind: WORK.lost, key: 'lost', input: { target: d.target, id: d.id, nonce: d.nonce ?? null, error: d.error } as Json }];
-            if (f.sessionId) work.push(turnStop({ sessionId: f.sessionId, machine: MACHINE, key: ctx.key, kinds: [WORK.run], by, release: true }, 'stop'));
+            if (f.sessionId) work.push(turnStop({ sessionId: f.sessionId, machine: MACHINE, key: ctx.key, kinds: [WORK.run], workKey: 'run', by, release: true }, 'stop'));
             return { next: { name: 'failed', data: d }, cancel: [{ kind: WORK.run, key: 'run' }], work, messages: told(d, 'stopped') };
           },
         },

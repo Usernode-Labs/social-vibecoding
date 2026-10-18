@@ -81,7 +81,13 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 8 });
+  // An answer in the DM owes its request a look, by its bot-request
+  // instance (its queue row the projection): the workflow runtime runs
+  // here, on this database, its pipeline only (no timers, no work).
+  const platform = require('../src/workflow/platform.ts');
+  require('../src/db/pool').getPool = () => pool;
   t.after(async () => {
+    await platform.stopWorkflow();
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
@@ -89,6 +95,28 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
   const schema = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
   await pool.query(schema);
   await pool.query(schema); // boot-idempotent
+  await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
+  // The bot's queue is bot-request's projection: a test clears it as the
+  // machines would have none (each request's instance, its pending events
+  // and work, its row), written as the kernel writes.
+  const forgetRequests = async (appId = null) => {
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query("SET LOCAL app.wf_writer = 'transition'");
+      const keys = appId == null ? 'request:%' : `request:${Number(appId)}:%`;
+      await c.query("DELETE FROM wf_work WHERE machine = 'bot-request' AND key LIKE $1", [keys]);
+      await c.query("DELETE FROM wf_events WHERE machine = 'bot-request' AND key LIKE $1 AND status = 'pending'", [keys]);
+      await c.query("DELETE FROM wf_instances WHERE machine = 'bot-request' AND key LIKE $1", [keys]);
+      await c.query('DELETE FROM homeroom_bot_queue WHERE $1::int IS NULL OR app_id = $1', [appId]);
+      await c.query('COMMIT');
+    } catch (err) {
+      await c.query('ROLLBACK');
+      throw err;
+    } finally {
+      c.release();
+    }
+  };
 
   // The bot works for anybody Homeroom has let in (homeroom-bot-dm.js
   // hasBot): each person carries it as req.user does.
@@ -372,7 +400,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       'SELECT priority, reason FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 7', [app.id],
     );
     assert.deepEqual(queued, { priority: 0, reason: 'dm_answer' }, 'an answer puts its request at the front of the queue');
-    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1', [app.id]);
+    await forgetRequests(app.id);
   });
 
   await t.test('an answer the request cannot take (not a member) is said, and the question stays open', async () => {

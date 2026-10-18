@@ -377,11 +377,12 @@ test('a kept plan\'s screens ride along an ordinary resumed build, unreviewed an
   assert.equal(built.review, undefined, 'no check round: the change is not complicated');
   assert.equal(built.checkedFirst, undefined, 'and not checked first');
 
-  // Where the kept HTML comes from: the build lane's candidates read the
-  // run's column, and buildOne falls back to it when the plan is not
+  // Where the kept HTML comes from: startBuild reads the whole run, its
+  // column with it, and buildOne falls back to it when the plan is not
   // complicated and its approved screens cannot be read.
   const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /r\.build_spec_md, r\.build_spec_html, r\.build_cost_usd/, 'liveBuildCandidates reads it');
+  const start = src.slice(src.indexOf('async function startBuild('), src.indexOf('const r = await buildOne(pool, config, { bot, app, run, settings'));
+  assert.match(start, /'SELECT \* FROM homeroom_bot_runs WHERE id = \$1', \[Number\(runId\)\]/, 'startBuild reads it');
   assert.match(src, /run\.complicated === true \? await approvedSpecHtml\(pool, run\.plan\) : null\) \|\| run\.build_spec_html \|\| null/,
     'buildOne falls back to the run\'s kept HTML');
 });
@@ -410,12 +411,23 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
+  // A changed plan owes its request a look (bot-request's Owed), which the
+  // workflow runtime applies: it runs here, on this database, its pipeline
+  // only (no timers, no work), so the queue row its instance holds appears.
+  // Its legacy side reads the platform's pool, which is this one.
+  const platform = require('../src/workflow/platform.ts');
+  const dbPool = require('../src/db/pool');
+  const realGetPool = dbPool.getPool;
+  dbPool.getPool = () => pool;
   t.after(async () => {
+    await platform.stopWorkflow();
+    dbPool.getPool = realGetPool;
     await pool.end();
     await admin.query(`DROP DATABASE ${name}`);
     await admin.end();
   });
   await pool.query(read('src/db/schema.sql'));
+  await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
   const mayor = require('../src/services/homeroom-bot-mayor');
   const conversations = require('../src/services/conversations');
   const user = async (username, synthetic = false) => (await pool.query(

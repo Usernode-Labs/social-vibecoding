@@ -38,7 +38,9 @@ export async function readFacts(tx: Tx, deps: { staging: boolean }): Promise<Fac
   const acting = botOn(settings, deps.staging);
   if (!acting) return { ...NO_FACTS, settings };
   const { rows: [bot] } = await tx.query('SELECT id FROM users WHERE username = $1 AND is_synthetic = TRUE', [BOT_USERNAME]);
-  if (!bot) return { ...NO_FACTS, settings };
+  // No bot account yet: nothing to grant, but the refresh runs (it makes the
+  // account, homeroom-bot.js ensureBotUser), or the bot would never start.
+  if (!bot) return { ...NO_FACTS, settings, acting };
   const { rows: slotRows } = await tx.query(SLOTS_IN_USE_SQL);
   const inUse: Slot[] = slotRows
     .map((r: any) => ({ kind: String(r.slot?.kind || ''), appId: Number(r.slot?.appId ?? r.app_id), person: String(r.slot?.person || `a${r.app_id}`) }))

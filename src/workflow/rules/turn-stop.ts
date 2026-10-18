@@ -12,6 +12,9 @@ export interface TurnStopInput {
   machine: string;
   key: string;
   kinds: string[];
+  // The work item whose turn it is (its key): a stop retried after that
+  // item ended never touches the instance's next turn of the same kind.
+  workKey?: string | null;
   by: string | null;
   release: boolean;
 }
@@ -22,7 +25,7 @@ export function turnStop(i: TurnStopInput, tag: string): WorkRequest {
   return {
     kind: TURN_STOP,
     key: `stop:${i.sessionId}:${tag}`,
-    input: { sessionId: i.sessionId, machine: i.machine, key: i.key, kinds: i.kinds, by: i.by, release: i.release } as Json,
+    input: { sessionId: i.sessionId, machine: i.machine, key: i.key, kinds: i.kinds, workKey: i.workKey ?? null, by: i.by, release: i.release } as Json,
   };
 }
 

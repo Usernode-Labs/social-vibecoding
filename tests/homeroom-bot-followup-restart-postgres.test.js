@@ -1,20 +1,26 @@
 'use strict';
 
-// #4533: a checks fix a deploy caught keeps its time limit, and what it did
-// reaches the bot's ledger, against the FULL PostgreSQL schema and through
-// server.js's own restart recovery.
+// #4533: a checks fix a deploy caught is its look's to carry on, against the
+// FULL PostgreSQL schema and through server.js's own restart recovery.
 //
 // PR #4533 (change 7428, request #4524), 9 Oct 2026: the bot's checks fix
 // on its own PROMOTED proposal ran 38 minutes against its 20. Its clock was
 // a timer in the process the deploy replaced, and recovery followed the turn
-// through the person's tail (a promoted proposal is not
-// isRecoveredBotSession's, on purpose), which re-arms no clock. Its push
+// through the person's tail (a promoted proposal was not
+// isRecoveredBotSession's), which re-arms no clock. Its push
 // landed, and the ledger had no run for it: no checks_revise post, no cost,
 // and nothing for MAX_REVISIONS or "already looked at this head" to count.
 //
-// The worker is stubbed (the journal runs until a clock stops it, or ends on
-// its own); the session, its turn record and restart count, the ledger rows,
-// the queue and the turn_effects receipt are real.
+// A follow-up's turn is now a durable step of its look (bot-request's
+// bot.look work, services/durable-turn.js), its record naming that work
+// item. Restart recovery leaves such a turn to its item, which the next
+// claim carries on from its saved step, on its saved deadline, and records
+// as a live turn. So these pin that recovery neither follows nor stops it,
+// that a person's turn on the bot's proposal is still the person's tail's,
+// and the wait shown on the console's queue and the connector.
+//
+// The worker is stubbed; the session, its turn record, the work item, the
+// ledger rows and the queue are real.
 //
 // Like the repository's other postgres tests it skips when no database is
 // reachable, unless TEST_DATABASE_URL insists on one.
@@ -36,16 +42,17 @@ require('./platform-keys').setPlatformKeys();
 
 // ── worker stub: the fix's agent, still running in its worker ───────────
 let journalTail = async () => ({});
-let onStop = null;
+const followed = [];
 const stops = [];
-const stopTimes = [];
 const workerPath = require.resolve('../src/services/worker');
 const realWorker = require(workerPath);
 require.cache[workerPath].exports = {
   ...realWorker,
   usesKubernetesWorkers: () => false,
-  resumeTurnFromJournal: async (sessionId, opts) => journalTail(sessionId, opts),
-  stopTurn: async (sessionId) => { stops.push(sessionId); stopTimes.push(Date.now()); onStop?.(); return true; },
+  resumeTurnFromJournal: async (sessionId, opts) => { followed.push(sessionId); return journalTail(sessionId, opts); },
+  stopTurn: async (sessionId) => { stops.push(sessionId); return true; },
+  stopTurnByJournal: async (sessionId) => { stops.push(sessionId); return 'stopped'; },
+  stopOwnedTurn: async (_pool, { sessionId }) => { stops.push(sessionId); return { stopped: true }; },
   finishTurn: async () => true,
   markTurnTail: async () => true,
   noteTailMilestone: async () => true,
@@ -92,21 +99,9 @@ const wrapUps = [];
 sessionsRoutes.runRecoveredWrapUp = async (args) => { wrapUps.push(args.sessionId); };
 managedKeys.usesIncludedKey = async () => false;
 
-const ALLOWANCE_MS = bot.RESTART_ALLOWANCE_MS;
 const HEAD = 'a'.repeat(40);
-const NEW_HEAD = 'b'.repeat(40);
-// What the fix's clock has left when the deploy's server takes it. The
-// adoption reads the clock only after its own queries; a few seconds keep a
-// loaded suite from reading nothing left (see the build's own restart test).
-const CLOCK_LEFT_MS = 5000;
-// Still working when a clock stops it, or done on its own after `endMs`
-// (before #4533 nothing stopped it: there, it ran on to its own end).
-const untilStopped = (endMs = 15_000) => new Promise((resolve) => {
-  onStop = () => resolve({ exitCode: 143, pushOk: false, ahead: 0 });
-  setTimeout(() => resolve({ exitCode: 0, pushOk: false, ahead: 0, lastResultText: 'ran on' }), endMs);
-});
 
-test('a checks fix a restart caught keeps its deadline, and its outcome reaches the ledger', { timeout: 180000 }, async (t) => {
+test('a checks fix a restart caught is its look\'s, and a person\'s turn the person\'s tail\'s', { timeout: 180000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
@@ -156,23 +151,26 @@ test('a checks fix a restart caught keeps its deadline, and its outcome reaches 
   const failing = [{ name: 'Proposal page shows the vote card', path: '/#p', status: 'fail', failureReason: 'expected "Vote"' }]
     .concat(Array.from({ length: 40 }, (_, i) => ({ name: `check ${i}`, path: '/', status: 'pass' })));
 
-  // The bot's promoted proposal, its checks failing on HEAD, its queue row
-  // (released by the stale-claim sweep and waiting behind the busy session),
-  // and a turn in flight whose deadline is `deadlineMs`. `mark: false` is a
-  // turn without the bot's mark: a person's, as far as recovery can tell.
-  const proposal = async (issueNumber, deadlineMs, { mark = true, startedAt = new Date(Date.now() - 19 * 60_000) } = {}) => {
+  // The bot's promoted proposal, its checks failing on HEAD, its queue row,
+  // and a turn in flight. `look: true` is a fix turn its request's look runs:
+  // its record names that work item (turn-lifecycle.turnOwner), still
+  // outstanding. Without it the turn names nobody: a person's, as far as
+  // recovery can tell.
+  const proposal = async (issueNumber, { look = false, startedAt = new Date(Date.now() - 19 * 60_000) } = {}) => {
     const turnId = crypto.randomUUID();
-    // What runFollowUpTurn keeps on the record (homeroom-bot.js followUpMark),
-    // written out so the record's shape is pinned here too.
-    const markValue = {
-      followUp: 'checks_fix', appId: app.id, issueNumber, reason: bot.CHECKS_REASON, payerUserId: null, changedBy: null,
-      runMode: 'live', model: 'z-ai/glm-5.3', startedAt: startedAt.toISOString(), seedReadAt: startedAt.toISOString(),
-      threadSeenAt: '2026-10-09T10:00:00Z', reviewedHeadSha: HEAD,
-      checks: { head: HEAD, total: failing.length, failing: 1, broken: [] },
-    };
+    const key = `request:${app.id}:${issueNumber}`;
+    let owner = null;
+    if (look) {
+      const { rows: [w] } = await pool.query(
+        `INSERT INTO wf_work (machine, key, kind, work_key, input) VALUES ('bot-request', $1, 'bot.look', 'look:1', $2) RETURNING id`,
+        [key, JSON.stringify({ appId: app.id, issueNumber, n: 1, kind: 'followUp' })],
+      );
+      owner = { machine: 'bot-request', key, kind: 'bot.look', workKey: 'look:1', workId: w.id };
+    }
     const activeTurn = {
       turnId, logicalTurnId: turnId, turnUuid: crypto.randomUUID(), journal: `/journals/${turnId}.log`, phase: 'executing',
       mode: 'build', backend: 'codex_openrouter', model: 'z-ai/glm-5.3', startedAt: startedAt.toISOString(), attemptNumber: 1,
+      ...(owner ? { owner } : {}),
     };
     const { rows: [s] } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, linked_issues, pr_number,
@@ -181,27 +179,12 @@ test('a checks fix a restart caught keeps its deadline, and its outcome reaches 
       [app.id, botUser.id, `dev/homeroom_bot-${issueNumber}`, [issueNumber], 4500 + issueNumber, HEAD,
         JSON.stringify(failing), JSON.stringify(activeTurn)],
     );
-    const { rows: [q] } = await pool.query(
-      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, wait_reason, wait_until)
-       VALUES ($1, $2, 1, $3, 'session_busy', NOW() + INTERVAL '1 hour') RETURNING id`,
+    await pool.query(
+      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, started_at)
+       VALUES ($1, $2, 1, $3, NOW())`,
       [app.id, issueNumber, bot.CHECKS_REASON],
     );
-    if (mark) {
-      // As runFollowUpTurn stamps it (turn-lifecycle stampTurn), the queue
-      // row its pass claimed included.
-      await pool.query(
-        `UPDATE chat_sessions SET active_turn = jsonb_set(active_turn, '{homeroomBotFollowUp}', $2::jsonb, true) WHERE id = $1`,
-        [s.id, JSON.stringify({ ...markValue, queueId: q.id, deadlineAt: new Date(deadlineMs).toISOString() })],
-      );
-    }
-    // What its attempt cost, as the ledger settled it.
-    await pool.query(
-      `INSERT INTO agent_turns (id, session_id, user_id, backend, status, logical_turn_id, estimated_cost_usd, input_tokens, output_tokens)
-       VALUES ($1, $2, $3, 'codex_openrouter', 'completed', $4, 0.31, 41000, 2100)`,
-      [activeTurn.turnUuid, s.id, botUser.id, turnId],
-    );
-    const { rows: [withTurn] } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [s.id]);
-    return { sessionId: s.id, turnId, queueId: q.id, activeTurn: withTurn.active_turn };
+    return { sessionId: s.id, turnId, owner };
   };
   const recover = (sessionId) => adoptOrphanWorker(
     { name: `usernode-worker-${sessionId}`, sessionId, state: 'running' },
@@ -212,80 +195,32 @@ test('a checks fix a restart caught keeps its deadline, and its outcome reaches 
        FROM homeroom_bot_runs WHERE proposal_session_id = $1 ORDER BY id`,
     [sessionId],
   )).rows;
-  const effectOf = async (turnId) => (await pool.query(
-    'SELECT state, result FROM turn_effects WHERE turn_id = $1 AND effect_key = $2', [turnId, bot.RECOVERED_FOLLOWUP_EFFECT],
-  )).rows[0] || null;
 
-  await t.test('PR #4533: the fix is stopped at its own deadline, with the restart\'s time given back, and recorded as the bot records one', async () => {
-    // Its deadline less the time this restart gives back is CLOCK_LEFT_MS
-    // away: stopped then, not at once and not 38 minutes later.
-    const { sessionId, turnId, queueId } = await proposal(4524, Date.now() - ALLOWANCE_MS + CLOCK_LEFT_MS);
-    assert.ok(await bot.checksToFix(pool, sessionId), 'its failing head is still due before');
-    let followedAt = 0;
-    journalTail = async () => { followedAt = Date.now(); return untilStopped(); };
-    stops.length = 0; stopTimes.length = 0; posts.length = 0; wrapUps.length = 0;
-    const t0 = Date.now();
+  await t.test('PR #4533: a fix turn its look still holds is left to its look: not followed, not stopped, nothing recorded', async () => {
+    const { sessionId, turnId, owner } = await proposal(4524, { look: true });
+    followed.length = 0; stops.length = 0; posts.length = 0; onProposal.length = 0; wrapUps.length = 0;
     await recover(sessionId);
-    assert.deepEqual(stops, [sessionId], 'the bot\'s clock ended the turn');
-    assert.ok(stopTimes[0] - followedAt >= 2000, `followed until its deadline, not stopped at once (${stopTimes[0] - followedAt} ms)`);
-    assert.ok(Date.now() - t0 < 60_000, 'at its own deadline: no fresh budget');
-
-    // #4572: the first time out on a head is tried once more: no head
-    // marked, nobody asked to take it over yet.
-    assert.deepEqual(await runsOf(sessionId), [{
-      verdict: 'failed', error: `checks: ran out of time on ${HEAD}, trying once more`, budget_stop: 'wall clock',
-      checks_head_sha: null, cost_usd: 0.31, input_tokens: '41000', session_id: sessionId, proposal_session_id: sessionId,
-    }], 'one run, with what it cost, that leaves the head due');
-    assert.ok(await bot.checksToFix(pool, sessionId), 'so that head is still due');
-    assert.equal(posts.length, 0);
-    assert.deepEqual(onProposal.map((p) => p.kind), ['checks_retry']);
-    assert.equal(onProposal[0].sessionId, sessionId);
-    assert.equal((await pool.query('SELECT 1 FROM homeroom_bot_queue WHERE id = $1', [queueId])).rows.length, 0, 'its queue row is spent');
-    assert.equal((await effectOf(turnId))?.state, 'completed');
-    assert.deepEqual(wrapUps, [sessionId], 'the person\'s tail still ran, as before');
+    assert.deepEqual(followed, [], 'its journal is its look\'s to follow (durable-turn), on its own saved deadline');
+    assert.deepEqual(stops, [], 'and no clock of recovery\'s stops it');
+    assert.deepEqual(wrapUps, [], 'the person\'s tail does not run for it');
+    assert.deepEqual(await runsOf(sessionId), [], 'what it did is recorded by its look, as a live turn\'s is');
+    assert.equal(posts.length + onProposal.length, 0);
+    const { rows: [after] } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [sessionId]);
+    assert.equal(after.active_turn?.turnId, turnId, 'its record stays for its look');
+    assert.deepEqual(after.active_turn.owner, owner);
+    assert.ok(await bot.checksToFix(pool, sessionId), 'and its failing head is still due until the look says otherwise');
   });
 
-  await t.test('a turn without the bot\'s mark on the same kind of proposal is never stopped on the bot\'s clock', async () => {
+  await t.test('a turn naming no work item on the same kind of proposal is the person\'s tail\'s, never stopped on a bot clock', async () => {
     // Started two hours ago: any bot clock would have ended it long since.
-    const { sessionId } = await proposal(4600, Date.now() - 60 * 60_000, { mark: false, startedAt: new Date(Date.now() - 2 * 3600_000) });
+    const { sessionId } = await proposal(4600, { startedAt: new Date(Date.now() - 2 * 3600_000) });
     journalTail = () => new Promise((resolve) => setTimeout(() => resolve({ exitCode: 0, pushOk: false, ahead: 0 }), 1500));
-    stops.length = 0; posts.length = 0;
+    followed.length = 0; stops.length = 0; posts.length = 0;
     await recover(sessionId);
-    assert.deepEqual(stops, [], 'followed to its own end');
+    assert.deepEqual(followed, [sessionId], 'recovery follows it');
+    assert.deepEqual(stops, [], 'to its own end');
     assert.deepEqual(await runsOf(sessionId), [], 'and nothing of the bot\'s recorded for it');
     assert.equal(posts.length, 0);
-  });
-
-  await t.test('a fix that pushed is a revise run counted toward the cap, once however often recovery replays', async () => {
-    const { sessionId, turnId, activeTurn } = await proposal(4601, Date.now() + 60_000);
-    // The person's tail has made the push the reviewed head (vote-revision).
-    await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [sessionId, NEW_HEAD]);
-    const { rows: [session] } = await pool.query(
-      `SELECT cs.*, u.username, u.is_synthetic AS user_is_synthetic FROM chat_sessions cs JOIN users u ON u.id = cs.user_id WHERE cs.id = $1`,
-      [sessionId],
-    );
-    assert.equal(bot.isRecoveredBotFollowUp(session), true);
-    onProposal.length = 0;
-    const result = {
-      lastResultText: '```json\n{"action":"revise","reply":"Fixed the label.","summary":"The vote card says Vote again."}\n```',
-      pushOk: true, sha: NEW_HEAD, ahead: 1,
-    };
-    assert.equal(await bot.finishRecoveredFollowUp({ pool, session, activeTurn, result }), 'checks_revise');
-    const runs = await runsOf(sessionId);
-    assert.equal(runs.length, 1);
-    assert.deepEqual([runs[0].verdict, runs[0].checks_head_sha, runs[0].cost_usd], ['revise', HEAD, 0.31]);
-    const { rows: [{ n }] } = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs WHERE proposal_session_id = $1 AND verdict = 'revise'`, [sessionId],
-    );
-    assert.equal(n, 1, 'MAX_REVISIONS sees it');
-    assert.equal(onProposal.length, 1);
-    assert.equal(onProposal[0].kind, 'checks_revise');
-    assert.equal(await bot.finishRecoveredFollowUp({ pool, session, activeTurn, result }), 'already_recorded');
-    assert.equal((await runsOf(sessionId)).length, 1, 'never twice');
-    assert.equal(onProposal.length, 1);
-    assert.deepEqual((await effectOf(turnId)).result, { outcome: 'checks_revise', runId: (await pool.query(
-      'SELECT id FROM homeroom_bot_runs WHERE proposal_session_id = $1', [sessionId],
-    )).rows[0].id });
   });
 
   await t.test('the console and the connector show a queued row waiting on its busy session, and until when', async (t) => {

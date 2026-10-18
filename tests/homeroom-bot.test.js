@@ -1,10 +1,11 @@
 // #2684: the Homeroom bot, slice 1 — shadow-mode triage.
 //
-// Pins the pure pieces (verdict parsing, eligibility, settings), the loop's
-// lock and mode gates against a mocked pool, the queue refresh against an
-// injected GitHub, and — as source text — the properties that make shadow
-// mode SHADOW: the triage turn is a scout (no push token), the service
-// posts, claims and builds nothing, the loop is leader-only and ships off.
+// Pins the pure pieces (verdict parsing, eligibility, settings), the queue
+// refresh against an injected GitHub, a read (runTriage) inside the look its
+// request's instance runs it in (what the look decided is on its `out`), and,
+// as source text, the properties that make shadow mode SHADOW: the triage
+// turn is a scout (no push token), the service posts, claims and builds
+// nothing, and the loop runs on the workflow's machines and ships off.
 //
 // Run with: node --test tests/homeroom-bot.test.js
 
@@ -14,7 +15,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const bot = require('../src/services/homeroom-bot');
+const durableSteps = require('../src/services/durable-steps');
 const live = require('../src/services/homeroom-bot-live');
+const rules = require('../src/workflow/rules/bot-loop.ts');
 
 const root = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(root, ...p), 'utf8');
@@ -262,8 +265,11 @@ test('the last run says whether a live build is waiting or under way, as the rea
   const q = SRC.slice(SRC.indexOf('async function lastRunsByIssue'), SRC.indexOf('async function refreshApp'));
   assert.match(q, /\(mode = 'live' AND verdict = 'ready' AND build_ok IS NULL AND proposal_session_id IS NULL\s+AND \(live_build_waiting_at IS NOT NULL OR build_session_id IS NOT NULL\)\s+AND created_at > NOW\(\) - make_interval\(days => \$2\)\) AS live_building/);
   assert.match(q, /\[appId, ABANDONED_LIVE_WINDOW_DAYS\]/, 'past the abandoned-build sweep\'s window, a run holds nothing');
-  const lane = SRC.slice(SRC.indexOf('async function liveCandidates('), SRC.indexOf('async function liveBuildCandidates('));
-  assert.match(lane, /AND b\.mode = 'live' AND b\.verdict = 'ready' AND b\.build_ok IS NULL AND b\.proposal_session_id IS NULL\s+AND \(b\.live_build_waiting_at IS NOT NULL OR b\.build_session_id IS NOT NULL\)\s+AND b\.created_at > NOW\(\) - make_interval\(days => \$8\)/,
+  // The lane reads its candidates with rules/bot-loop.ts READ_CANDIDATES_SQL,
+  // whose window is the same constant's value written into the statement.
+  const lane = rules.READ_CANDIDATES_SQL;
+  assert.equal(rules.ABANDONED_LIVE_WINDOW_DAYS, bot.ABANDONED_LIVE_WINDOW_DAYS, 'one window on both sides');
+  assert.match(lane, new RegExp(`AND b\\.mode = 'live' AND b\\.verdict = 'ready' AND b\\.build_ok IS NULL AND b\\.proposal_session_id IS NULL\\s+AND \\(b\\.live_build_waiting_at IS NOT NULL OR b\\.build_session_id IS NOT NULL\\)\\s+AND b\\.created_at > NOW\\(\\) - make_interval\\(days => ${rules.ABANDONED_LIVE_WINDOW_DAYS}\\)`),
     'the same condition, word for word');
   const refresh = SRC.slice(SRC.indexOf('async function refreshApp('), SRC.indexOf('async function refreshQueue('));
   assert.match(refresh, /verdict\.reason === 'unchanged' \|\| verdict\.reason === 'held' \|\| verdict\.reason === 'building'\) quiet\.push\(n\)/,
@@ -354,7 +360,7 @@ test('the proposal ceiling: an admin\'s number, else a fixed one, since every ap
   assert.equal(bot.botProposalCeiling({ proposalCeiling: 0 }), 100, 'unset is automatic');
 });
 
-test('a settings save never writes the everyone moment, and more room wakes the loop', async () => {
+test('a settings save never writes the everyone moment, and more room asks the lane to grant again', async () => {
   const writes = [];
   const pool = {
     async query(sql, params) {
@@ -372,7 +378,10 @@ test('a settings save never writes the everyone moment, and more room wakes the 
   assert.ok(!writes.some(([k]) => k === bot.KEY_EVERYONE_SINCE));
   const write = SRC.slice(SRC.indexOf('async function writeSettings('), SRC.indexOf('// ── Identity'));
   assert.doesNotMatch(write, /KEY_EVERYONE_SINCE/, 'the moment is schema.sql\'s, written once');
-  assert.match(write, /\[KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_CONCURRENCY\]\.includes\(key\)\)\) \{\s+wakeAll\(\);/);
+  // The lane (bot-lane) grants and refreshes; a save tells it, and wakes no
+  // loop of this process's.
+  assert.match(write, /\[KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_PAUSED_APPS\]\.includes\(key\)\)[\s\S]{0,120}?\{\s+await platform\(\)\.botRefresh\(null\)/);
+  assert.doesNotMatch(write, /wakeAll/);
 });
 
 test('validateSettingsPatch refuses live mode and bad values, accepts a real patch', () => {
@@ -397,233 +406,90 @@ test('parseRepo reads owner and repo off a GitHub URL', () => {
   assert.equal(bot.parseRepo('https://example.com/x/y'), null);
 });
 
-// ── runOnce against a mocked pool ────────────────────────────────────────
+// ── Activity on a request reaches its instance ───────────────────────────
 
-function mockPool({ lockAcquired = true, settings = [] } = {}) {
-  const log = [];
-  const client = {
-    async query(sql, params) {
-      log.push({ sql: String(sql), params });
-      if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: lockAcquired }] };
-      return { rows: [] };
-    },
-    release() { log.push({ released: true }); },
-  };
-  const pool = {
-    async connect() { return client; },
-    async query(sql, params) {
-      log.push({ sql: String(sql), params });
-      if (/SELECT key, value FROM platform_settings/.test(sql)) return { rows: settings };
-      // ensureBotUser runs on every pass that is not `off`, and throws when
-      // it cannot find or make the row — so a pass-level test needs it.
-      if (/FROM users WHERE username = \$1/.test(sql)) {
-        return { rows: [{ id: 77, username: 'homeroom_bot', weekly_limit_cents: 15000 }] };
-      }
-      if (/SELECT is_synthetic FROM users/.test(sql)) return { rows: [{ is_synthetic: true }] };
-      return { rows: [] };
-    },
-  };
-  return { pool, log };
-}
-
-test('runOnce: mode off does nothing past reading the settings, and releases the lock', async () => {
-  bot._resetForTests();
-  const { pool, log } = mockPool({ settings: [{ key: bot.KEY_MODE, value: 'off' }] });
-  const out = await bot.runOnce(pool, {});
-  assert.equal(out.mode, 'off');
-  assert.equal(out.processed, 0);
-  assert.equal(out.refreshed, false, 'off means no GitHub reads either');
-  assert.ok(log.some((l) => /pg_advisory_unlock/.test(l.sql || '')), 'the lock is released');
-  assert.ok(log.some((l) => l.released), 'the client is released');
-  assert.ok(!log.some((l) => /FROM apps/.test(l.sql || '')), 'no app scan while off');
+test('noteIssueActivity: a message or an edit is heard by the request\'s instance; anything else asks for a refresh', () => {
+  // Without the workflow runtime in this process both appends are no-ops,
+  // so this only pins what is accepted and where each kind goes.
+  assert.equal(bot.noteIssueActivity({ appId: 9, issueNumber: 12, reason: 'created' }), true);
+  assert.equal(bot.noteIssueActivity({ appId: 9, issueNumber: 12, reason: 'thread' }), true);
+  assert.equal(bot.noteIssueActivity({ appId: 9, issueNumber: 'x' }), false, 'a bad number is dropped');
+  assert.equal(bot.noteIssueActivity({ appId: 0, issueNumber: 12 }), false);
+  const note = SRC.slice(SRC.indexOf('const INTERRUPTING_ACTIVITY'), SRC.indexOf('async function noteProposalActivity('));
+  assert.match(note, /const INTERRUPTING_ACTIVITY = new Set\(\['thread', 'updated'\]\);/);
+  assert.match(note, /\? platform\(\)\.botActivityNow\(\{ appId: id, issueNumber: n, messageId \}\)\n\s+: platform\(\)\.botRefresh\(id\);/,
+    'a person writing is Activity on the request (a read under way starts over); the rest refreshes its project');
 });
 
-test('runOnce: another Pod holding the lock means this one skips the pass', async () => {
-  bot._resetForTests();
-  const { pool, log } = mockPool({ lockAcquired: false, settings: [{ key: bot.KEY_MODE, value: 'shadow' }] });
-  const out = await bot.runOnce(pool, {});
-  assert.equal(out.busy, true);
-  assert.ok(!log.some((l) => /pg_advisory_unlock/.test(l.sql || '')), 'never unlocks a lock it did not take');
-  assert.ok(!log.some((l) => /FROM apps/.test(l.sql || '')));
-});
-
-// ── The loop is event-driven: wakes ──────────────────────────────────────
-
-test('a wake on the Pod running the loop records the app and pulls the next pass forward', () => {
-  bot._resetForTests();
-  // Not running the loop here (no timer, no pass): a wake is a no-op, so the
-  // pending set cannot grow on the Pods that never drain it.
-  assert.equal(bot.wake({ appId: 9 }), false);
-  assert.deepEqual(bot._pendingForTests().apps, []);
-
-  bot._armForTests({});
-  assert.equal(bot.wake({ appId: 9 }), true);
-  assert.equal(bot.wake({ appId: '9' }), true, 'ids arrive as strings off the bus');
-  assert.equal(bot.wake({ appId: 0 }), false);
-  assert.equal(bot.wake({}), false);
-  const p = bot._pendingForTests();
-  assert.deepEqual(p.apps, [9]);
-  assert.equal(p.wake, true);
-  assert.equal(p.armed, true, 'the idle timer was replaced by an immediate one');
-
-  bot.wake({ all: true });
-  assert.equal(bot._pendingForTests().all, true);
-  bot._resetForTests();
-});
-
-test('noteIssueActivity wakes locally and publishes the same wake for the other Pods', () => {
-  bot._resetForTests();
-  const wsBus = require('../src/services/ws-bus');
-  const published = [];
-  const realPublish = wsBus.publish;
-  wsBus.publish = (kind, routing, data) => { published.push({ kind, routing, data }); };
-  try {
-    bot._armForTests({});
-    assert.equal(bot.noteIssueActivity({ appId: 9, issueNumber: 12, reason: 'created' }), true);
-    assert.equal(bot.noteIssueActivity({ appId: 9, issueNumber: 'x' }), false, 'a bad number is dropped, not published');
-    assert.deepEqual(published, [{ kind: bot.BUS_KIND, routing: null, data: { appId: 9, issueNumber: 12, reason: 'created' } }]);
-    assert.deepEqual(bot._pendingForTests().apps, [9]);
-    // The receiving side: ws._onBusMessage hands the envelope to onBusMessage.
-    bot._resetForTests();
-    bot._armForTests({});
-    assert.equal(bot.onBusMessage({ appId: 4, issueNumber: 1, reason: 'thread' }), true);
-    assert.equal(bot.onBusMessage(null), false);
-    assert.deepEqual(bot._pendingForTests().apps, [4]);
-  } finally {
-    wsBus.publish = realPublish;
-    bot._resetForTests();
-  }
-});
-
-test('runOnce: a wake refreshes only the app that changed; the reconcile sweep still covers everything', async () => {
-  bot._resetForTests();
-  const fetched = [];
-  const github = { async fetchPublicIssues(owner, repo) { fetched.push(`${owner}/${repo}`); return { issues: [] }; } };
-  const apps = [
-    { id: 1, slug: 'a', repo_url: 'https://github.com/o/a' },
-    { id: 2, slug: 'b', repo_url: 'https://github.com/o/b' },
-  ];
-  const { pool } = mockPool({ settings: [{ key: bot.KEY_MODE, value: 'shadow' }] });
-  const realQuery = pool.query.bind(pool);
-  pool.query = async (sql, params) => {
-    if (/FROM apps\s+WHERE status = 'running'/.test(String(sql))) return { rows: apps };
-    return realQuery(sql, params);
-  };
-  let now = 1_000_000;
-  const deps = { github, now: () => now };
-
-  // First pass: the reconcile sweep is due (never run), so every app.
-  let out = await bot.runOnce(pool, {}, deps);
-  assert.equal(out.refreshed, true);
-  assert.deepEqual(fetched, ['o/a', 'o/b']);
-
-  // A wake for app 2, inside the sweep interval: only app 2 is read.
-  fetched.length = 0;
-  now += 1000;
-  bot._armForTests({});
-  bot.wake({ appId: 2 });
-  out = await bot.runOnce(pool, {}, deps);
-  assert.equal(out.refreshed, true);
-  assert.equal(out.woken, 1);
-  assert.deepEqual(fetched, ['o/b']);
-  assert.deepEqual(bot._pendingForTests().apps, [], 'the wake was consumed');
-
-  // No wake, inside the interval: nothing is read.
-  fetched.length = 0;
-  now += 1000;
-  out = await bot.runOnce(pool, {}, deps);
-  assert.equal(out.refreshed, false);
-  assert.deepEqual(fetched, []);
-
-  // The interval elapses: the sweep again.
-  fetched.length = 0;
-  now += bot.REFRESH_INTERVAL_MS;
-  out = await bot.runOnce(pool, {}, deps);
-  assert.deepEqual(fetched, ['o/a', 'o/b']);
-  bot._resetForTests();
-});
-
-test('the wake reaches the bot from every place an issue changes on the platform', () => {
+test('activity reaches the bot from every place an issue changes on the platform', () => {
   const ws = read('src/services/ws.js');
-  const busCase = ws.slice(ws.indexOf("case 'homeroom_bot':"), ws.indexOf("case 'homeroom_bot':") + 500);
-  assert.match(busCase, /require\('\.\/homeroom-bot'\)\.onBusMessage\(payload\)/, 'the bus hands the bot its envelopes');
+  const busCase = ws.slice(ws.indexOf("case 'homeroom_bot':"), ws.indexOf("case 'homeroom_bot':") + 300);
+  assert.match(busCase, /case 'homeroom_bot':[\s\S]*?return;/, 'an older release\'s bus wake is heard and dropped');
+  assert.doesNotMatch(busCase, /onBusMessage/);
   const push = ws.slice(ws.indexOf('function pushIssueUpdate(data)'));
   assert.match(push.slice(0, 700), /noteIssueActivityForBot\(data\.appId, data\.issueNumber, data\.action\)/,
-    'an edit or an unclaim wakes the bot');
+    'an edit or an unclaim reaches the bot');
   const handle = ws.slice(ws.indexOf('async function handleMessage(pool, client, msg)'));
-  assert.match(handle, /if \(thread && thread\.type === 'issue'\) noteIssueActivityForBot\(client\.appId, thread\.ref, 'thread'\)/,
-    'a post on an issue thread wakes the bot');
+  assert.match(handle, /if \(thread && thread\.type === 'issue' && !heard\) noteIssueActivityForBot\(client\.appId, thread\.ref, 'thread'\);\n\s+else if \(thread && thread\.type === 'issue' && !rows\[0\]\?\.requestHeard\) noteIssueActivityForBot\(client\.appId, thread\.ref, 'posted'\)/,
+    'a connector\'s post on an issue thread is Activity as a person\'s is; one on a request with no instance asks for a refresh');
   const issues = read('src/routes/issues.js');
   assert.match(issues, /noteIssueActivity\(\{ appId: app\.id, issueNumber: githubIssueNumber, reason: 'created' \}\)/,
-    'a new request wakes the bot once its GitHub twin exists');
-  assert.match(SRC, /const IDLE_PASS_DELAY_MS = 30 \* 1000;/, 'the idle poll is a fallback, not the cadence');
-  assert.match(read('src/services/homeroom-bot.js'), /wakeAll\(\);/, 'switching the mode on rebuilds the queue at once');
+    'a new request reaches the bot once its GitHub twin exists');
+  assert.match(SRC, /await platform\(\)\.botRefresh\(null\)/, 'switching the mode on rebuilds the queue at once');
 });
 
 
 // ── The budget on a turn (#2737) ─────────────────────────────────────────
 
-test('runTriage: the wall clock stops a turn that never finishes, and the row says so', async () => {
-  const stopped = [];
-  const { pool, deps, calls } = triageHarness({ verdictText: 'never gets here' });
-  deps.worker.stopTurn = async (id) => { stopped.push(id); };
-  // A dispatch that only settles once the turn is stopped, which is what a
-  // hung turn looks like from here.
-  deps.sessions.runCodexAttemptLoop = async ({ dispatchOnce }) => {
-    await dispatchOnce({ openrouterApiKey: 'k' });
-    await new Promise((resolve) => {
-      const wait = setInterval(() => { if (stopped.length) { clearInterval(wait); resolve(); } }, 2);
-    });
-    return { result: { lastResultText: '', inputTokens: 5000, outputTokens: 10 }, error: null, estimatedCostUsd: 0.4 };
-  };
-  const out = await bot.runTriage(pool, {}, {
-    bot: BOT, app: APP, item: ITEM, mode: 'shadow',
-    // 30s is the floor the settings clamp to; the timer is what is under
-    // test, so it is driven from the setting rather than by waiting.
-    settings: { turnSeconds: 30, turnInputTokens: 10_000_000 }, deps,
+test('runTriage: the wall clock stops a turn that never finishes, and the look says so', async (t) => {
+  const harness = triageHarness({ verdictText: 'never gets here' });
+  const { out, stopped, look } = await runToWallClock(t, harness, {}, {
+    result: { lastResultText: '', inputTokens: 5000, outputTokens: 10 },
   });
   assert.deepEqual(stopped, [501], 'the turn is ended through the supported stop path');
   assert.equal(out.budget, 'wall clock');
   assert.equal(out.verdict, 'failed');
-  const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
   assert.ok(insert.params.includes('budget: wall clock'), 'the ledger says which limit it hit');
-  const requeue = calls.queries.find((q) => /SET started_at = NULL, reason = 'budget_retry'/.test(q.s));
-  assert.ok(requeue, 'and it goes back once, at the bottom of the queue');
-  assert.ok(!calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)), 'not dropped on the first stop');
-}, { timeout: 20000 });
+  assert.deepEqual([look.out.queue, look.out.reason, look.out.priority], ['requeue', 'budget_retry', 9],
+    'and its request is owed one more look, at the bottom of the queue');
+  assert.ok(!harness.calls.queries.some((q) => /homeroom_bot_queue/.test(q.s)), 'the queue row is its instance\'s to change');
+});
 
 // ── Only the clock stops a turn; a fresh thread per issue (#3035) ───────
 
 const QUESTION_REPLY = 'Read the map code.\n```json\n{"verdict":"question","determined":false,"missing_fact":"which screen","question":"Which screen?","default":"Route map"}\n```';
 
 // Drive the wall clock without waiting twenty minutes for it: the dispatch
-// hangs until the bot stops it, and mocked timers fire the budget at once.
-// `kill` is what stopTurn returns, so a test can hold the kill in flight.
+// hangs until the bot stops it, and mocked timers fire the budget at once
+// (the clock is durable-turn's). The read runs inside a look of its own, so
+// the test can read what the look decided for its request.
 async function runToWallClock(t, harness, opts = {}, {
-  kill = null, onStopped = null, ctx = {}, result = { lastResultText: '' },
+  ctx = {}, result = { lastResultText: '' }, estimatedCostUsd = undefined,
 } = {}) {
   const stopped = [];
   let release;
   const hung = new Promise((resolve) => { release = resolve; });
-  harness.deps.worker.stopTurn = (id) => { stopped.push(id); release(); return kill || Promise.resolve(); };
+  harness.deps.worker.stopTurn = (id) => { stopped.push(id); release(); return Promise.resolve(); };
   harness.deps.sessions.runCodexAttemptLoop = async ({ dispatchOnce }) => {
     await dispatchOnce({ openrouterApiKey: 'k', ...ctx });
     await hung;
     // A stopped attempt never reaches turn.completed, so the ledger has no
-    // cost for it: `estimatedCostUsd` is absent, as it is in production.
-    return { result, error: null };
+    // cost for it: `estimatedCostUsd` is absent, as it is in production,
+    // unless a test says otherwise.
+    return { result, error: null, ...(estimatedCostUsd !== undefined ? { estimatedCostUsd } : {}) };
   };
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  const running = bot.runTriage(harness.pool, {}, {
+  const look = newLook();
+  const running = bot._runInLookForTests(look, () => bot.runTriage(harness.pool, {}, {
     bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: harness.deps,
     settings: { turnSeconds: 1200, turnInputTokens: 10_000_000 }, ...opts,
-  });
+  }));
   for (let i = 0; i < 500 && !stopped.length; i += 1) {
     await new Promise((resolve) => setImmediate(resolve));
     t.mock.timers.tick(1200 * 1000);
   }
-  if (onStopped) await onStopped(running);
-  return { out: await running, stopped };
+  return { out: await running, stopped, look };
 }
 
 test('runTriage: a turn over its token limit keeps its verdict, and nothing is stopped', async () => {
@@ -653,11 +519,10 @@ test('runTriage: a turn over its token limit keeps its verdict, and nothing is s
 
 test('runTriage: a second budget stop on the same issue drops it instead of looping', async (t) => {
   const harness = triageHarness({ verdictText: 'x', sessionId: 845 });
-  const { out } = await runToWallClock(t, harness, { item: { ...ITEM, reason: 'budget_retry' } });
+  const { out, look } = await runToWallClock(t, harness, { item: { ...ITEM, reason: 'budget_retry' } });
   assert.equal(out.budget, 'wall clock');
-  assert.ok(harness.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)),
+  assert.equal(look.out.queue, 'consume',
     'the one retry is spent, so the issue is let go rather than retried forever');
-  assert.ok(!harness.calls.queries.some((q) => /reason = 'budget_retry'/.test(q.s)));
 });
 
 test('a budget stop records WHICH limit tripped, in a column of its own', async (t) => {
@@ -668,28 +533,6 @@ test('a budget stop records WHICH limit tripped, in a column of its own', async 
   assert.ok(insert.params.includes('wall clock'),
     'the limit is stored as data, not left to be grepped out of the error text');
   assert.ok(insert.params.includes('budget: wall clock'), 'and the error line still reads the same');
-});
-
-test('the next issue never starts while a kill is still landing', async (t) => {
-  // The stop used to be fire-and-forget. The attempt loop resolves as soon
-  // as the turn ends, the next issue starts in the same container, and the
-  // kill — still landing — took it down one to three seconds in: all 12
-  // "collateral" rows in the export sit directly after a stop.
-  const harness = triageHarness({ verdictText: '', sessionId: 867 });
-  let landKill;
-  const kill = new Promise((resolve) => { landKill = resolve; });
-  let settled = false;
-  const { out } = await runToWallClock(t, harness, {}, {
-    kill,
-    onStopped: async (running) => {
-      running.then(() => { settled = true; });
-      for (let i = 0; i < 25; i += 1) await new Promise((resolve) => setImmediate(resolve));
-      assert.equal(settled, false, 'the turn is over, but runTriage waits for the kill to land');
-      landKill();
-    },
-  });
-  assert.equal(settled, true);
-  assert.equal(out.budget, 'wall clock');
 });
 
 test('every issue starts a fresh model thread, through the platform\'s own reading of null', async () => {
@@ -853,24 +696,15 @@ test('the runs query filters to budget stops on one static statement', () => {
 
 // ── What the first day of budget data exposed (#2870) ────────────────────
 
-test('a turn stopped on its budget is still debited against the weekly cap', async () => {
+test('a turn stopped on its budget is still debited against the weekly cap', async (t) => {
   // The three stops in the first day's ledger all recorded $0.0000, because
   // the branch that writes the stop returned above the debit. That is the
   // wrong way round: a twenty-minute turn nobody was ever going to use is
   // exactly the spend a weekly cap exists to notice.
-  const stopped = [];
-  const { pool, deps, calls } = triageHarness({ verdictText: 'never gets here', sessionId: 611 });
-  deps.worker.stopTurn = async (id) => { stopped.push(id); };
-  deps.sessions.runCodexAttemptLoop = async ({ dispatchOnce }) => {
-    await dispatchOnce({ openrouterApiKey: 'k' });
-    await new Promise((resolve) => {
-      const wait = setInterval(() => { if (stopped.length) { clearInterval(wait); resolve(); } }, 2);
-    });
-    return { result: { lastResultText: '', inputTokens: 5000, outputTokens: 10 }, error: null, estimatedCostUsd: 0.4 };
-  };
-  const out = await bot.runTriage(pool, {}, {
-    bot: BOT, app: APP, item: ITEM, mode: 'shadow',
-    settings: { turnSeconds: 30, turnInputTokens: 10_000_000 }, deps,
+  const harness = triageHarness({ verdictText: 'never gets here', sessionId: 611 });
+  const { calls } = harness;
+  const { out } = await runToWallClock(t, harness, {}, {
+    result: { lastResultText: '', inputTokens: 5000, outputTokens: 10 }, estimatedCostUsd: 0.4,
   });
   assert.equal(out.budget, 'wall clock');
   assert.deepEqual(calls.spend, [{ userId: 77, cents: 40, opts: { byok: false } }],
@@ -879,28 +713,21 @@ test('a turn stopped on its budget is still debited against the weekly cap', asy
   assert.ok(insert.params.includes(0.4), 'and the ledger row carries the cost instead of a zero');
   assert.ok(insert.params.includes(5000) && insert.params.includes(10),
     'along with whatever usage the dispatch managed to report');
-}, { timeout: 20000 });
+});
 
-test('an empty reply moments after a stop on the same session is the stop, not the issue', async () => {
+test('an empty reply from a turn somebody stopped is the stop, not the request\'s failure', () => {
   // Two of the first three budget stops wrote an `(empty reply)` row in the
-  // SAME SECOND, on a different issue: stopTurn kills the session's
-  // container and an issue dispatched into it concurrently dies with it.
-  // That issue had done nothing wrong and lost its triage anyway.
-  bot.noteStopped(733);
-  const { pool, deps, calls } = triageHarness({ verdictText: '', sessionId: 733 });
-  const out = await bot.runTriage(pool, {}, {
-    bot: BOT, app: APP, item: ITEM, mode: 'shadow',
-    settings: { turnSeconds: 3600, turnInputTokens: 10_000_000 }, deps,
-  });
-  assert.deepEqual({ ran: out.ran, reason: out.reason }, { ran: false, reason: 'collateral' },
-    'not \'infra\': one session\'s fallout is no platform fault (see the runOnce test below)');
-  const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.match(insert.params[18], /collateral: the session was stopped mid-dispatch/,
-    'the row says what happened rather than blaming the issue');
-  assert.ok(calls.queries.some((q) => /SET started_at = NULL WHERE id = \$1/.test(q.s)),
-    'and the issue goes back on the queue');
-  assert.ok(!calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)),
-    'never dropped for a timeout that was not its own');
+  // SAME SECOND, on a different issue: the stop killed the session's
+  // container and an issue dispatched into it died with it. A turn's record
+  // now says who stopped it (durable-turn's stoppedBy), and the clock stops
+  // only its own turn, by its journal; an empty reply under a stop ends the
+  // look with nothing recorded and no pause of the lane: the request is read
+  // again when it is next owed (design-bot-loop Q1).
+  const body = SRC.slice(SRC.indexOf('async function runTriage('), SRC.indexOf('// ── Builds ──'));
+  assert.match(body, /if \(stoppedBy\) \{\n\s+look\.consume\(\);\n[^\n]*\n\s+return \{ ran: false, reason: 'stopped', detail: stoppedBy\.by \|\| null \};/);
+  assert.match(body, /stop: \(\) => durableTurn\.clockStop\(worker, pool, session\.id, look\.owner\),/);
+  assert.match(read('src/services/durable-turn.js'),
+    /worker\.stopOwnedTurn\(pool, \{ sessionId, machine: own\.machine, key: own\.key, kinds: \[own\.kind\], workKey: own\.workKey \|\| null, stamp: false, release: false \}\)/);
 });
 
 test('an empty reply with no stop behind it records WHY it was empty', async () => {
@@ -946,14 +773,6 @@ test('describeStop reports what is known and admits when nothing is', () => {
   assert.ok(!/ccExit/.test(line), 'a clean exit code is not a reason and is left out');
 });
 
-test('the stop window forgets, so a later failure is still the turn own doing', () => {
-  bot.noteStopped(9001, 1_000_000);
-  assert.equal(bot.wasStoppedRecently(9001, 1_000_000 + bot.STOP_SETTLE_MS - 1), true);
-  assert.equal(bot.wasStoppedRecently(9001, 1_000_000 + bot.STOP_SETTLE_MS + 1), false,
-    'past the window it is an ordinary empty reply again');
-  assert.equal(bot.wasStoppedRecently(9002, 1_000_000), false, 'and it is per session');
-});
-
 test('the usage hook reaches BOTH of the worker usage paths', () => {
   // The bug this fixes: the hook was called from applyClaudeResultUsage
   // only — the Claude `result` event — while the bot runs on the
@@ -996,52 +815,19 @@ test('the dashboard says where the token limit actually binds', () => {
   assert.match(ui, /keeps its verdict and the overrun is\s+logged/);
   assert.ok(!/stops an issue after/.test(ui), 'the save message stopped promising a stop too');
 });
-// ── Refusals and backoff (#2737) ─────────────────────────────────────────
+// ── Refusals (#2737) ─────────────────────────────────────────────────────
 
-test('runTriage: a busy session is a refusal — no ledger row, no lost queue row, an app that backs off', async () => {
-  bot._resetForTests();
+test('runTriage: a busy session is a refusal: no ledger row, the queue untouched, the look waits', async () => {
   const { pool, deps, calls } = triageHarness({ routed: { error: 'session_busy' } });
-  const out = await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
+  const { out, look } = await triageInLook(pool, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
   assert.equal(out.reason, 'refused');
   assert.equal(out.detail, 'session_busy');
   assert.ok(!calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)),
     'a refusal is not a verdict: 121 of these filled the first day of the ledger');
-  assert.ok(!calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)),
-    'and the issue stays queued, because nothing was read');
-  const backoff = bot.backoffFor(APP.id);
-  assert.ok(backoff, 'the app is backed off');
-  assert.equal(backoff.attempts, 1);
-  assert.ok(backoff.remainingMs > 60_000 && backoff.remainingMs <= bot.BACKOFF_BASE_MS);
-  bot._resetForTests();
-});
-
-test('the backoff doubles to an hour and a good turn resets it', () => {
-  bot._resetForTests();
-  const minutes = [];
-  for (let i = 0; i < 8; i += 1) minutes.push(Math.round(bot.noteRefusal(4, 'session_busy', 0).delayMs / 60_000));
-  assert.deepEqual(minutes, [2, 4, 8, 16, 32, 60, 60, 60], 'doubling from 2 minutes, capped at an hour');
-  assert.ok(bot.backoffFor(4, 0), 'inside the window the app is skipped');
-  assert.equal(bot.backoffFor(4, 61 * 60 * 1000), null, 'outside it the app is eligible again');
-  bot.clearRefusals(4);
-  assert.equal(bot.backoffFor(4, 0), null, 'a turn that got through clears it');
-  bot._resetForTests();
-});
-
-test('runOnce: an app inside its backoff window is skipped like a paused one', async () => {
-  bot._resetForTests();
-  const asked = [];
-  const { pool } = mockPool({ settings: [{ key: bot.KEY_MODE, value: 'shadow' }] });
-  const realQuery = pool.query.bind(pool);
-  pool.query = async (sql, params) => {
-    if (/FROM homeroom_bot_queue q JOIN apps/.test(String(sql))) { asked.push(params); return { rows: [] }; }
-    return realQuery(sql, params);
-  };
-  bot.noteRefusal(9, 'session_busy');
-  const out = await bot.runOnce(pool, {}, { github: { async fetchPublicIssues() { return { issues: [] }; } }, forceRefresh: false });
-  assert.equal(out.backedOffApps, 1);
-  assert.ok(asked.length, 'the batch query still ran');
-  assert.ok(asked[0][0].includes(9), 'with the backed-off app excluded by id');
-  bot._resetForTests();
+  assert.ok(!calls.queries.some((q) => /homeroom_bot_queue/.test(q.s)), 'nothing here touches the queue');
+  // Its instance backs the request off (bot-request's `busy`), its tries
+  // untouched, because nothing was read.
+  assert.deepEqual([look.out.queue, look.out.error], ['busy', 'session_busy']);
 });
 
 // ── Storage and platform faults (#3122) ──────────────────────────────────
@@ -1056,187 +842,19 @@ test('the bot starts its worker on temporary storage, never a volume', async () 
   assert.equal(calls.ensured[0].opts.temporary, true);
 });
 
-test('summarizeFault says which quota is full instead of printing the Kubernetes body', () => {
-  assert.equal(bot.summarizeFault(QUOTA_ERROR), 'the worker storage quota is full');
-  assert.equal(bot.summarizeFault('worker: pods "x" is forbidden: exceeded quota: ns, requested: pods=1'), 'a worker quota is full');
-  assert.equal(bot.summarizeFault('credential_required'), 'credential_required');
-  assert.equal(bot.summarizeFault('a\n  b'), 'a b', 'whitespace collapses');
-  assert.ok(bot.summarizeFault('x'.repeat(500)).length <= 161, 'and anything else is clipped');
-});
-
-test('a platform fault backs off the whole bot, doubling to an hour, until a turn runs', () => {
-  bot._resetForTests();
-  const t0 = 1_000_000;
-  assert.equal(bot.faultBackoff(t0), null);
-  const delays = [];
-  for (let i = 0; i < 7; i += 1) delays.push(bot.noteFault(QUOTA_ERROR, t0).delayMs);
-  assert.deepEqual(delays, [2, 4, 8, 16, 32, 60, 60].map((m) => m * 60 * 1000));
-  const live = bot.faultBackoff(t0 + 1000);
-  assert.equal(live.error, 'the worker storage quota is full');
-  assert.equal(live.remainingMs, 60 * 60 * 1000 - 1000);
-  bot.clearFault();
-  assert.equal(bot.faultBackoff(t0 + 1000), null);
-  bot._resetForTests();
-});
-
-test('a retry that hits the same fault is logged but writes no second row', async () => {
-  // 60 rows in 70 minutes while the quota was full: one per retry, every 30s.
-  bot._resetForTests();
-  bot.noteFault(QUOTA_ERROR);
+test('a platform fault writes no run, and its request keeps its debt for the lane to retry', async () => {
+  // 60 rows in 70 minutes while the quota was full, one per retry. A fault
+  // is the platform's: the look says so (bot-request's `fault`, which pauses
+  // the lane), and no run is written that a refresh would read as a failed
+  // read of the request.
   const { pool, deps, calls } = triageHarness({ verdictText: 'x', sessionId: 911 });
   deps.worker.ensureWorker = async () => { throw new Error(QUOTA_ERROR.replace(/^worker: /, '')); };
-  const out = await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
+  const { out, look } = await triageInLook(pool, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
   assert.equal(out.reason, 'infra');
-  assert.ok(!calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)), 'no second row for the same fault');
-  assert.ok(calls.queries.some((q) => /SET started_at = NULL WHERE id = \$1/.test(q.s)), 'the issue is still handed back');
-
-  // A DIFFERENT fault in the same streak is news, and gets its row.
-  const other = triageHarness({ verdictText: 'x', sessionId: 912 });
-  other.deps.worker.ensureWorker = async () => { throw new Error('image pull failed'); };
-  await bot.runTriage(other.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: other.deps });
-  assert.ok(other.calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)));
-  bot._resetForTests();
-});
-
-test('runOnce: inside a fault backoff it refreshes but dispatches nothing, and says when it retries', async () => {
-  // A wake pulls the next pass forward to zero; without this gate it would
-  // restart the storm the backoff exists to stop.
-  bot._resetForTests();
-  bot.noteFault(QUOTA_ERROR);
-  const { pool } = mockPool({ settings: [{ key: bot.KEY_MODE, value: 'shadow' }] });
-  let batched = false;
-  const realQuery = pool.query.bind(pool);
-  pool.query = async (sql, params) => {
-    if (/FROM homeroom_bot_queue q JOIN apps/.test(String(sql))) batched = true;
-    return realQuery(sql, params);
-  };
-  const out = await bot.runOnce(pool, {}, {
-    github: { async fetchPublicIssues() { return { issues: [] }; } }, forceRefresh: true,
-    worker: { async listWorkerVolumes() { return []; } },
-  });
-  assert.equal(out.refreshed, true, 'the queue still refreshes');
-  assert.equal(batched, false, 'no batch is taken');
-  assert.equal(out.paused, 'infra');
-  assert.equal(out.detail, 'the worker storage quota is full');
-  assert.ok(out.retryInMs > 0 && out.retryInMs <= 2 * 60 * 1000);
-  bot._resetForTests();
-});
-
-test('runOnce: a turn lost to a stop on its session goes back on the queue without pausing every project', async () => {
-  // One pass of the background lane over one request, its turn as `h` runs it.
-  const pass = async (h) => {
-    bot._resetForTests();
-    const { pool } = mockPool({ settings: [{ key: bot.KEY_MODE, value: 'shadow' }] });
-    let heads = 0;
-    let items = 0;
-    const realQuery = pool.query.bind(pool);
-    pool.query = async (sql, params) => {
-      const s = String(sql);
-      if (/FROM homeroom_bot_queue q JOIN apps/.test(s)) return { rows: heads++ === 0 ? [{ app_id: 9 }] : [] };
-      if (/SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = \$1/.test(s)) return { rows: [APP] };
-      if (/FROM homeroom_bot_queue\s+WHERE app_id = \$1 AND started_at IS NULL/.test(s)) return { rows: items++ === 0 ? [ITEM] : [] };
-      if (/SELECT \* FROM chat_sessions|INSERT INTO homeroom_bot_runs|UPDATE homeroom_bot_queue SET started_at = NULL WHERE id/.test(s)) {
-        return h.pool.query(sql, params);
-      }
-      return realQuery(sql, params);
-    };
-    return bot.runOnce(pool, {}, {
-      ...h.deps,
-      github: { ...h.deps.github, async fetchPublicIssues() { return { issues: [] }; } },
-      worker: { ...h.deps.worker, async listWorkerVolumes() { return []; } },
-      forceRefresh: true,
-    });
-  };
-
-  // A read started over mid-thread (homeroom-maps #30, run 1250) paused the
-  // bot on every project for two minutes, doubling while it recurred.
-  const lost = triageHarness({ verdictText: '', sessionId: 735 });
-  bot.noteStopped(735);
-  const out = await pass(lost);
-  const row = lost.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.match(row.params[18], /^collateral: /);
-  assert.ok(lost.calls.queries.some((q) => /SET started_at = NULL WHERE id = \$1/.test(q.s) && q.params[0] === ITEM.id),
-    'the request goes back on the queue');
-  assert.equal(bot.faultBackoff(), null, 'and the bot does not back off');
-  assert.ok(out.paused == null, 'nor does the pass pause');
-
-  // A real platform fault still backs off the whole bot, as before.
-  const fault = triageHarness({ verdictText: 'x', sessionId: 736 });
-  fault.deps.worker.ensureWorker = async () => { throw new Error('image pull failed'); };
-  const faulted = await pass(fault);
-  assert.equal(faulted.paused, 'infra');
-  assert.equal(bot.faultBackoff()?.error, 'worker: image pull failed');
-  bot._resetForTests();
-});
-
-test('runOnce: a triage that throws is recorded as failed and its claimed row is dropped', async () => {
-  // runTriage claims its row before its first GitHub read. A throw used to
-  // leave the row claimed with nothing recorded, so the issue was never tried
-  // again (rss-reader #24: a "looking" post, then silence).
-  bot._resetForTests();
-  const { pool } = mockPool({ settings: [{ key: bot.KEY_MODE, value: 'shadow' }] });
-  const writes = [];
-  let heads = 0;
-  let items = 0;
-  const realQuery = pool.query.bind(pool);
-  pool.query = async (sql, params) => {
-    const s = String(sql);
-    if (/FROM homeroom_bot_queue q JOIN apps/.test(s)) return { rows: heads++ === 0 ? [{ app_id: 9 }] : [] };
-    if (/SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = \$1/.test(s)) return { rows: [APP] };
-    if (/FROM homeroom_bot_queue\s+WHERE app_id = \$1 AND started_at IS NULL/.test(s)) return { rows: items++ === 0 ? [ITEM] : [] };
-    if (/INSERT INTO homeroom_bot_runs|DELETE FROM homeroom_bot_queue|UPDATE homeroom_bot_queue/.test(s)) writes.push({ s, params });
-    if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
-    return realQuery(sql, params);
-  };
-  const before = Date.now();
-  const out = await bot.runOnce(pool, {}, {
-    github: {
-      isEnabled: () => true,
-      async fetchPublicIssues() { return { issues: [] }; },
-      async fetchPublicIssue() { throw new TypeError('botUsername.toLowerCase is not a function'); },
-    },
-    limits: { async checkBudget() { return { ok: true }; } },
-    worker: { async listWorkerVolumes() { return []; } },
-    forceRefresh: true,
-  });
-  assert.equal(out.processed, 0);
-  assert.ok(writes.some((w) => /UPDATE homeroom_bot_queue SET started_at = NOW\(\) WHERE id = \$1/.test(w.s) && w.params[0] === ITEM.id),
-    'the triage claimed its row before it threw');
-  const run = writes.find((w) => /INSERT INTO homeroom_bot_runs/.test(w.s));
-  assert.ok(run, 'the failure is recorded, so the dashboard shows it');
-  assert.equal(run.params[0], APP.id);
-  assert.equal(run.params[1], ITEM.issue_number);
-  assert.equal(run.params[4], 'failed');
-  assert.equal(run.params[18], 'threw: botUsername.toLowerCase is not a function');
-  assert.ok(Date.parse(run.params[12]) >= before,
-    'what it has seen is now, so its own post just before the throw is not read as a change');
-  assert.ok(writes.some((w) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(w.s) && w.params[0] === ITEM.id),
-    'the claimed row is dropped, not left claimed forever');
-  bot._resetForTests();
-});
-
-test('runOnce: each pass frees rows an unfinished pass claimed, past one turn\'s budget', async () => {
-  bot._resetForTests();
-  const { pool, log } = mockPool({ settings: [
-    { key: bot.KEY_MODE, value: 'shadow' }, { key: bot.KEY_TURN_SECONDS, value: '900' },
-  ] });
-  const out = await bot.runOnce(pool, {}, {
-    github: { async fetchPublicIssues() { return { issues: [] }; } },
-    worker: { async listWorkerVolumes() { return []; } },
-  });
-  const release = log.find((l) => /UPDATE homeroom_bot_queue SET started_at = NULL\s+WHERE started_at IS NOT NULL AND started_at < NOW\(\) - make_interval\(secs => \$1\)/.test(l.sql || ''));
-  assert.ok(release, 'claims left by a pass that died (a restart mid-turn) are released');
-  assert.deepEqual(release.params, [900 + 600], 'one turn\'s budget plus a ten-minute margin: nothing live is that old');
-  assert.equal(out.releasedClaims, 0);
-  const off = mockPool({ settings: [{ key: bot.KEY_MODE, value: 'off' }] });
-  await bot.runOnce(off.pool, {});
-  assert.ok(!off.log.some((l) => /SET started_at = NULL/.test(l.sql || '')), 'off touches nothing');
-  bot._resetForTests();
-});
-
-test('the loop waits out a fault backoff instead of the 30-second idle', () => {
-  assert.match(SRC, /if \(out\.paused === 'infra' && out\.retryInMs > 0\) delay = Math\.max\(IDLE_PASS_DELAY_MS, out\.retryInMs\);/);
-  assert.match(SRC, /if \(r\.ran\) \{ o\.processed = 1; clearFault\(\); \}/, 'a turn that ran ends the streak');
+  assert.match(out.detail, /^worker: HTTP-Code: 403/);
+  assert.equal(look.out.queue, 'fault');
+  assert.ok(!calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)), 'no row for a fault');
+  assert.ok(!calls.queries.some((q) => /homeroom_bot_queue/.test(q.s)));
 });
 
 test('releaseBotVolumes frees only the bot\'s own volumes whose worker is gone', async () => {
@@ -1322,12 +940,30 @@ test('parseVerdict accepts empty, and it shares the question tripwire', () => {
 
 // ── refreshApp against an injected GitHub ────────────────────────────────
 
-test('refreshApp queues eligible issues, skips busy and unchanged ones, and drops stale rows', async () => {
-  const inserts = [];
-  let deleted = null;
+// What a refresh tells each request's instance (platform.botOwed and
+// botNotOwed append to wf_events through the refresh's own pool): the
+// events, read back off the insert. Answers the insert, else null.
+function botEvents(events, s, params) {
+  if (!/INSERT INTO wf_events/.test(s)) return null;
+  events.push({ machine: params[0], key: params[1], type: params[3], payload: JSON.parse(params[4]), requestKey: params[7] });
+  return { rows: [{ id: events.length }] };
+}
+const owedOf = (events) => events.filter((e) => e.type === 'Owed');
+const notOwedOf = (events) => events.filter((e) => e.type === 'NotOwed');
+// The requests a project has in the queue before the refresh (it reads
+// them first, to know which it no longer wants and which are new).
+const QUEUED_BEFORE_RE = /SELECT issue_number FROM homeroom_bot_queue WHERE app_id = \$1/;
+
+test('refreshApp owes eligible issues a look, skips busy and unchanged ones, and lets go of the rest', async () => {
+  const events = [];
   const pool = {
     async query(sql, params) {
       const s = String(sql);
+      const appended = botEvents(events, s, params);
+      if (appended) return appended;
+      // #7 is no longer on GitHub's list (closed).
+      if (QUEUED_BEFORE_RE.test(s)) return { rows: [1, 2, 3, 6, 7].map((n) => ({ issue_number: n })) };
+      if (/FROM wf_instances/.test(s)) return { rows: [] };
       if (/FROM issue_claims/.test(s)) return { rows: [{ n: 3 }] };            // #3 has a live human claim
       if (/UNNEST\(cs\.linked_issues\)/.test(s)) return { rows: [{ n: 4 }] }; // #4 has a human session
       if (/headless_issue_number AS n/.test(s)) return { rows: [] };
@@ -1341,8 +977,6 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
           { issue_number: 6, thread_seen_at: '2026-09-01T00:00:00Z', live_building: true },
         ] };
       }
-      if (/INSERT INTO homeroom_bot_queue/.test(s)) { inserts.push(params); return { rows: [] }; }
-      if (/DELETE FROM homeroom_bot_queue/.test(s)) { deleted = params; return { rowCount: 2, rows: [] }; }
       throw new Error(`unexpected query: ${s.slice(0, 60)}`);
     },
   };
@@ -1360,25 +994,32 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
       };
     },
   };
-  const out = await bot.refreshApp(pool, { id: 9, slug: 'todo', repo_url: 'https://github.com/usernode-bot/todo' }, { github });
+  const out = await bot.refreshApp(pool, { id: 9, slug: 'todo', repo_url: 'https://github.com/usernode-bot/todo' }, { github, refreshN: 4 });
   assert.equal(out.queued, 2);
-  assert.deepEqual(inserts.map((p) => [p[1], p[2], p[3]]), [[1, 1, 'new'], [5, 2, 'changed']]);
-  assert.deepEqual(deleted.slice(0, 2), [9, [1, 5]], 'everything else queued for this app is dropped');
-  // ...except a row the bot queued for itself (a restart's, a failing
-  // check's) on an issue that is open, unchanged and nobody else's (#2), or
-  // that the bot is building (#6).
-  // The rows a refresh keeps while their request is unchanged: the bot's own,
-  // and an older request's read (16 Oct 2026).
-  assert.deepEqual(deleted.slice(2), [bot.KEPT_WHILE_QUIET_REASONS, [2, 6]]);
-  assert.equal(out.removed, 2);
+  assert.ok(events.every((e) => e.machine === 'bot-request'));
+  assert.deepEqual(owedOf(events).map((e) => [e.key, e.payload.issueNumber, e.payload.priority, e.payload.reason]),
+    [['request:9:1', 1, 1, 'new'], ['request:9:5', 5, 2, 'changed']]);
+  assert.deepEqual(owedOf(events).map((e) => e.requestKey), ['refresh:4:9:1', 'refresh:4:9:5'],
+    'keyed by the refresh, so a retried refresh appends nothing twice');
+  // Everything else queued for this app is no longer owed a look. Its
+  // instance keeps a debt the bot owes itself (a restart's, a failing
+  // check's, an older request's read) while the request is `quiet`: open,
+  // unchanged and nobody else's (#2), or being built by the bot (#6).
+  assert.deepEqual(notOwedOf(events).map((e) => [e.payload.issueNumber, e.payload.quiet]),
+    [[2, true], [3, false], [6, true], [7, false]]);
+  assert.equal(notOwedOf(events)[0].requestKey, 'refresh:4:9:not:2');
+  assert.equal(out.removed, 4);
 });
 
 test('the everyone moment: what the bot never read live before it went on for everyone waits for something new', async () => {
-  const inserts = [];
+  const events = [];
   const since = '2026-10-05T00:00:00.000Z';
   const pool = {
     async query(sql, params) {
       const s = String(sql);
+      const appended = botEvents(events, s, params);
+      if (appended) return appended;
+      if (QUEUED_BEFORE_RE.test(s) || /FROM wf_instances/.test(s)) return { rows: [] };
       if (/FROM issue_claims|UNNEST\(cs\.linked_issues\)|headless_issue_number AS n|created_from_issue_number AS n|FROM chat_messages/.test(s)) return { rows: [] };
       if (/FROM homeroom_bot_dm_projects/.test(s)) return { rows: [] };
       if (/FROM homeroom_bot_runs/.test(s)) {
@@ -1389,8 +1030,6 @@ test('the everyone moment: what the bot never read live before it went on for ev
           { issue_number: 3, thread_seen_at: '2026-09-28T00:00:00Z', mode: 'live' },
         ] };
       }
-      if (/INSERT INTO homeroom_bot_queue/.test(s)) { inserts.push(params); return { rows: [] }; }
-      if (/DELETE FROM homeroom_bot_queue/.test(s)) return { rowCount: 0, rows: [] };
       if (/SELECT COUNT\(\*\)/.test(s)) return { rows: [{ cnt: 0 }] };
       throw new Error(`unexpected query: ${s.slice(0, 60)}`);
     },
@@ -1416,28 +1055,31 @@ test('the everyone moment: what the bot never read live before it went on for ev
   const app = { id: 9, slug: 'todo', repo_url: 'https://github.com/usernode-bot/todo' };
   const capRoom = { proposals_per_app: 5, proposals_total: 50, question_tripwire: 10 };
   await bot.refreshApp(pool, app, { github, capRoom, everyoneSince: since });
-  assert.deepEqual(inserts.map((p) => p[1]), [3, 4, 5]);
+  assert.deepEqual(owedOf(events).map((e) => e.payload.issueNumber), [3, 4, 5]);
 
   // Without a moment (refreshApp handed none), the same board reads as before.
-  inserts.length = 0;
+  events.length = 0;
   await bot.refreshApp(pool, app, { github, capRoom });
-  assert.deepEqual(inserts.map((p) => p[1]), [1, 2, 3, 4, 5]);
+  assert.deepEqual(owedOf(events).map((e) => e.payload.issueNumber), [1, 2, 3, 4, 5]);
   // The moment always applies now: it is the stored one, whatever else is set.
-  const passes = SRC.slice(SRC.indexOf('async function refreshQueue'), SRC.indexOf('async function nextBatch'));
+  const passes = SRC.slice(SRC.indexOf('async function refreshQueue'), SRC.indexOf('// ── The triage turn'));
   assert.equal((passes.match(/everyoneSince: everyoneSinceOf\(settings\)/g) || []).length, 2,
-    'both the timed refresh and a wake pass it');
+    'both the full refresh and a refresh of named projects pass it');
   assert.match(SRC, /function everyoneSinceOf\(settings\) \{\n  return settings\?\.everyoneSince \|\| null;\n\}/);
 });
 
 test('a new request on a live app gets its card when it is queued, under the key its read starts from, whatever it is', async () => {
   const started = [];
+  const events = [];
   const pool = {
     async query(sql, params) {
       const s = String(sql);
+      const appended = botEvents(events, s, params);
+      if (appended) return appended;
+      if (QUEUED_BEFORE_RE.test(s)) return { rows: [{ issue_number: 2 }] };
+      if (/FROM wf_instances/.test(s)) return { rows: [] };
       if (/FROM issue_claims|UNNEST\(cs\.linked_issues\)|headless_issue_number AS n|created_from_issue_number AS n|FROM chat_messages/.test(s)) return { rows: [] };
       if (/FROM homeroom_bot_dm_projects|FROM homeroom_bot_runs|FROM homeroom_bot_dm_messages/.test(s)) return { rows: [] };
-      if (/INSERT INTO homeroom_bot_queue/.test(s)) return { rows: [{ id: 400 + params[1], inserted: params[1] !== 2 }] };
-      if (/DELETE FROM homeroom_bot_queue/.test(s)) return { rowCount: 0, rows: [] };
       throw new Error(`unexpected query: ${s.slice(0, 60)}`);
     },
   };
@@ -1465,13 +1107,13 @@ test('a new request on a live app gets its card when it is queued, under the key
   let firstVersion = null;
   await bot.refreshApp(pool, app, { github, capRoom, bot: { id: 77 }, settings: { mode: 'shadow' }, dm });
   assert.equal(started.length, 1);
-  assert.equal(started[0].idempotencyKey, 'hrbot-activity-401');
+  assert.equal(started[0].idempotencyKey, 'hrbot-activity-r9-1', 'the request\'s own card (bot-loop lookCardKey)');
   started.length = 0;
   // So does a project's first version.
   firstVersion = 1;
   await bot.refreshApp(pool, app, { github, capRoom, bot: { id: 77 }, settings: { mode: 'shadow' }, dm });
   assert.equal(started.length, 1);
-  assert.equal(started[0].idempotencyKey, 'hrbot-activity-401', 'the key runTriage starts the card under');
+  assert.equal(started[0].idempotencyKey, 'hrbot-activity-r9-1', 'the key runTriage starts the card under');
   assert.match(started[0].content, /Waiting for a free builder/);
   // On a shadow app (no capRoom) nobody gets a card.
   started.length = 0;
@@ -1479,12 +1121,15 @@ test('a new request on a live app gets its card when it is queued, under the key
   assert.equal(started.length, 0);
 });
 
-function heldPool({ inserts }) {
+function heldPool({ events }) {
   // #10 and #11 were held by the proposals cap (#10 first), #12 by the
   // question tripwire, #13 is unchanged and was never held.
   return {
     async query(sql, params) {
       const s = String(sql);
+      const appended = botEvents(events, s, params);
+      if (appended) return appended;
+      if (QUEUED_BEFORE_RE.test(s) || /FROM wf_instances/.test(s)) return { rows: [] };
       if (/FROM issue_claims|UNNEST\(cs\.linked_issues\)|headless_issue_number AS n|created_from_issue_number AS n|FROM chat_messages/.test(s)) return { rows: [] };
       if (/FROM homeroom_bot_runs/.test(s)) {
         return { rows: [
@@ -1494,8 +1139,6 @@ function heldPool({ inserts }) {
           { issue_number: 13, thread_seen_at: '2026-09-02T00:00:00Z', cap_suppressed: null, created_at: '2026-09-03T00:00:00Z' },
         ] };
       }
-      if (/INSERT INTO homeroom_bot_queue/.test(s)) { inserts.push(params); return { rows: [] }; }
-      if (/DELETE FROM homeroom_bot_queue/.test(s)) return { rowCount: 0, rows: [] };
       throw new Error(`unexpected query: ${s.slice(0, 60)}`);
     },
   };
@@ -1510,41 +1153,42 @@ const HELD_GITHUB = {
 const HELD_APP = { id: 9, slug: 'rss-reader-4113da', repo_url: 'https://github.com/usernode-bot/rss-reader' };
 
 test('refreshApp brings back held issues once their cap has room, oldest first, no more than fit (#3152)', async () => {
-  const inserts = [];
-  await bot.refreshApp(heldPool({ inserts }), HELD_APP, {
+  const events = [];
+  await bot.refreshApp(heldPool({ events }), HELD_APP, {
     github: HELD_GITHUB, capRoom: { proposals_per_app: 1, question_tripwire: 0 },
   });
-  assert.deepEqual(inserts.map((p) => [p[1], p[2], p[3]]), [[10, 2, 'cap_freed']],
+  assert.deepEqual(owedOf(events).map((e) => [e.payload.issueNumber, e.payload.priority, e.payload.reason]), [[10, 2, 'cap_freed']],
     'one merged proposal frees one slot: the oldest held build comes back, the question tripwire is still full');
 
-  inserts.length = 0;
-  await bot.refreshApp(heldPool({ inserts }), HELD_APP, {
+  events.length = 0;
+  await bot.refreshApp(heldPool({ events }), HELD_APP, {
     github: HELD_GITHUB, capRoom: { proposals_per_app: 2, question_tripwire: 3 },
   });
-  assert.deepEqual(inserts.map((p) => p[1]).sort(), [10, 11, 12], 'an unchanged issue nothing held stays out');
+  assert.deepEqual(owedOf(events).map((e) => e.payload.issueNumber).sort(), [10, 11, 12], 'an unchanged issue nothing held stays out');
 });
 
 test('refreshApp leaves held issues alone on a shadow app', async () => {
-  const inserts = [];
-  const out = await bot.refreshApp(heldPool({ inserts }), HELD_APP, { github: HELD_GITHUB });
+  const events = [];
+  const out = await bot.refreshApp(heldPool({ events }), HELD_APP, { github: HELD_GITHUB });
   assert.equal(out.queued, 0, 'no capRoom, no retries: in shadow a hold is only a number on the dashboard');
 });
 
 test('#3624: on a live import, the issues it came with wait until something happens on them', async () => {
   const IMPORTED = '2026-09-05T00:00:00Z';
-  const inserts = [];
+  const events = [];
   const reads = [];
   const pool = {
     async query(sql, params) {
       const s = String(sql);
+      const appended = botEvents(events, s, params);
+      if (appended) return appended;
+      if (QUEUED_BEFORE_RE.test(s) || /FROM wf_instances/.test(s)) return { rows: [] };
       if (/FROM issue_claims|UNNEST\(cs\.linked_issues\)|headless_issue_number AS n|created_from_issue_number AS n|FROM homeroom_bot_runs/.test(s)) return { rows: [] };
       if (/FROM chat_messages/.test(s)) return { rows: [{ n: 4, last_at: '2026-09-07T00:00:00Z' }] };
       if (/FROM homeroom_bot_dm_projects WHERE app_id = \$1 AND origin = 'import'/.test(s)) {
         reads.push(params[0]);
         return { rows: [{ created_at: IMPORTED }] };
       }
-      if (/INSERT INTO homeroom_bot_queue/.test(s)) { inserts.push(params); return { rows: [] }; }
-      if (/DELETE FROM homeroom_bot_queue/.test(s)) return { rowCount: 0, rows: [] };
       throw new Error(`unexpected query: ${s.slice(0, 60)}`);
     },
   };
@@ -1563,15 +1207,16 @@ test('#3624: on a live import, the issues it came with wait until something happ
   const app = { id: 9, slug: 'imported', repo_url: 'https://github.com/usernode-bot/imported' };
   await bot.refreshApp(pool, app, { github, capRoom: { proposals_per_app: 5, proposals_total: 5, question_tripwire: 3 } });
   assert.deepEqual(reads, [9]);
-  assert.deepEqual(inserts.map((p) => [p[1], p[2], p[3]]), [[2, 2, 'changed'], [3, 1, 'new'], [4, 2, 'changed']],
+  assert.deepEqual(owedOf(events).map((e) => [e.payload.issueNumber, e.payload.priority, e.payload.reason]),
+    [[2, 2, 'changed'], [3, 1, 'new'], [4, 2, 'changed']],
     'the backlog is judged as if seen at the import; what is filed after it is new');
 
   // In shadow nothing is held back, and the import is not even read.
-  inserts.length = 0;
+  events.length = 0;
   reads.length = 0;
   await bot.refreshApp(pool, app, { github });
   assert.deepEqual(reads, []);
-  assert.deepEqual(inserts.map((p) => p[1]), [1, 2, 3, 4]);
+  assert.deepEqual(owedOf(events).map((e) => e.payload.issueNumber), [1, 2, 3, 4]);
 });
 
 test('capRoomFor counts the same two things the live check does', async () => {
@@ -1593,13 +1238,13 @@ test('capRoomFor counts the same two things the live check does', async () => {
   const tripwire = SRC.slice(SRC.indexOf('async function tripwireCount'), SRC.indexOf('async function capRoomFor'));
   assert.match(tripwire, /AND cap_suppressed IS NULL/,
     'a held question is not a posted one; counting it would let every retry keep the window full');
-  const refresh = SRC.slice(SRC.indexOf('async function refreshQueue'), SRC.indexOf('async function nextBatch'));
+  const refresh = SRC.slice(SRC.indexOf('async function refreshQueue'), SRC.indexOf('// ── The triage turn'));
   assert.equal((refresh.match(/deps\.bot && live\.isLiveFor\(settings, app\)/g) || []).length, 2,
-    'both the timed refresh and a wake ask for room, and only on a live app');
-  assert.match(SRC, /refreshQueue\(pool, settings, \{ \.\.\.deps, bot \}\)/);
-  // A wake's refresh, the woken first versions' ahead of the rest (15 Oct 2026).
-  assert.match(SRC, /refreshApps\(pool, settings, firstReads, \{ \.\.\.deps, bot \}\)/);
-  assert.match(SRC, /refreshApps\(pool, settings, rest, \{ \.\.\.deps, bot \}\)/);
+    'both the full refresh and a refresh of named projects ask for room, and only on a live app');
+  // The lane's refresh (bot-lane's bot.refresh) hands both the bot, and its
+  // number, which keys what each refresh appends.
+  assert.match(SRC, /const refreshDeps = \{ \.\.\.deps, bot, refreshN: n \};/);
+  assert.match(SRC, /apps \? await refreshApps\(pool, settings, apps, refreshDeps\) : await refreshQueue\(pool, settings, refreshDeps\)/);
 });
 
 test('refreshApp treats a degraded GitHub read as "no answer", not "no issues"', async () => {
@@ -1664,12 +1309,18 @@ test('the bot session is not work on any issue: is_headless FALSE, empty linked_
   assert.match(read('src/routes/proposal-handoff.js'), /sessionLifecycle\.claimGlobalSlot\(/);
 });
 
-test('the loop is leader-only, locked, ships off, and its spend joins the shared weekly pool', () => {
+test('the loop runs on the workflow\'s machines, ships off, and its spend joins the shared weekly pool', () => {
+  // No timer loop of its own: server.js starts nothing for the bot, and the
+  // lane's clock starts with the workflow's loops, on the leader.
   const server = read('server.js');
-  const leader = server.slice(server.indexOf('async function becomeLeader()'));
-  assert.match(leader, /require\('\.\/src\/services\/homeroom-bot'\)\.start\(config\)/);
-  assert.match(SRC, /pg_try_advisory_lock\(\$1, \$2\)/);
-  assert.match(read('src/services/advisory-locks.js'), /HOMEROOM_BOT_LOCK = 991012/);
+  assert.doesNotMatch(server, /homeroom-bot'\)\.start\(/);
+  assert.doesNotMatch(server, /homeroom-bot'\)\.stop\(/);
+  assert.equal(bot.start, undefined);
+  assert.equal(bot.runOnce, undefined);
+  const loops = read('src/workflow/platform.ts');
+  const start = loops.slice(loops.indexOf('export async function startWorkflowLoops()'), loops.indexOf('// ── The Homeroom bot\'s loop'));
+  assert.match(start, /await adoptBotQueue\(\);/, 'the rows an older release queued are adopted');
+  assert.match(start, /await runtime\.append\(BOT_LANE, LANE_KEY, \{ type: 'Tick', payload: \{\} \}/, 'and the lane\'s clock starts');
   const schema = read('src/db/schema.sql');
   assert.match(schema, /CREATE TABLE IF NOT EXISTS homeroom_bot_queue/);
   assert.match(schema, /CREATE TABLE IF NOT EXISTS homeroom_bot_runs/);
@@ -1678,8 +1329,6 @@ test('the loop is leader-only, locked, ships off, and its spend joins the shared
   assert.match(SRC, /usesIncludedKey\(pool, bot\.id\)/);
   assert.match(SRC, /limits\.recordSpend\(pool, bot\.id/, 'debited into llm_usage like any included-key turn');
   assert.match(read('src/services/llm-telemetry.js'), /'homeroom_bot_triage'/);
-  assert.equal(typeof bot.start, 'function');
-  assert.equal(typeof bot.stop, 'function');
 });
 
 test('the triage prompt ends with the JSON contract parseVerdict reads', () => {
@@ -1782,20 +1431,34 @@ function triageHarness({ verdictText, routed = null, budgetError = null, session
         return { result, error: null, logicalTurnId: 'l1', estimatedCostUsd: 0.0123 };
       },
     },
-    activeWorkers: new Set(),
   };
   return { pool, deps, calls };
+}
+
+// A read runs inside its look (bot-request's `bot.look`, homeroom-bot.js
+// lookAt): runTriage claims, updates and deletes no queue row, and records
+// instead on the look what its end does with its request's debt
+// (`out.queue`: consume, fault, held, requeue or busy) and the conversation
+// its next read may continue (`out.lastRead`). The look here has no durable
+// steps, as a look outside a machine's work has none.
+function newLook(opts = {}) {
+  return bot._newLookForTests({ steps: durableSteps.none(), ...opts });
+}
+async function triageInLook(pool, args, lookOpts = {}) {
+  const look = newLook(lookOpts);
+  const out = await bot._runInLookForTests(look, () => bot.runTriage(pool, {}, args));
+  return { out, look };
 }
 
 const APP = { id: 9, slug: 'todo', name: 'Todo', repo_url: 'https://github.com/usernode-bot/todo', self_hosted: false };
 const ITEM = { id: 31, app_id: 9, issue_number: 12, priority: 1, reason: 'new', thread_seen_at: '2026-09-20T00:00:00Z' };
 const BOT = { id: 77, username: 'homeroom_bot' };
 
-test('runTriage: one scout turn, a fresh thread, a recorded verdict, a debited cost, a consumed queue row', async () => {
+test('runTriage: one scout turn, a fresh thread, a recorded verdict, a debited cost, a consumed debt', async () => {
   const { pool, deps, calls } = triageHarness({
     verdictText: 'Read the map code.\n```json\n{"verdict":"question","determined":false,"missing_fact":"which screen","question":"Which screen?","default":"Route map"}\n```',
   });
-  const out = await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
+  const { out, look } = await triageInLook(pool, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
   assert.deepEqual({ ran: out.ran, verdict: out.verdict, runId: out.runId }, { ran: true, verdict: 'question', runId: 900 });
   assert.equal(calls.loop.mode, 'scout');
   assert.equal(calls.loop.resumeThreadId, null,
@@ -1813,11 +1476,12 @@ test('runTriage: one scout turn, a fresh thread, a recorded verdict, a debited c
   assert.equal(insert.params[7], 'Which screen?');
   assert.equal(insert.params[8], 'Route map');
   assert.equal(insert.params[14], 0.0123);
-  assert.ok(calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31));
+  assert.equal(look.out.queue, 'consume', 'the verdict consumes its request\'s debt');
+  assert.ok(!calls.queries.some((q) => /homeroom_bot_queue/.test(q.s)),
+    'the lane granted the look, so nothing here claims, updates or deletes a queue row');
   // Through the proposal machine: the slot taken before the turn, given
   // back after it.
   assert.deepEqual(calls.moves, [['takeSlot', 501, 0], ['restSession', 501, 1]], 'active only while the turn runs');
-  assert.equal(deps.activeWorkers.size, 0, 'released after the turn');
 });
 
 test('runTriage: an issue carrying the bot\'s own GitHub comment triages instead of throwing', async () => {
@@ -1898,39 +1562,22 @@ test('the bot\'s GitHub login resolves to a string, or to null when it cannot be
   assert.doesNotMatch(read('src/services/homeroom-bot-live.js'), /String\(github\.getBotUsername/);
 });
 
-test('runTriage: an unusable reply is a failed run that consumes the row; the weekly cap stops the pass', async () => {
+test('runTriage: an unusable reply is a failed run that consumes the debt; the weekly cap leaves it alone', async () => {
   const bad = triageHarness({ verdictText: 'I could not decide.' });
-  const out = await bot.runTriage(bad.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: bad.deps });
+  const { out, look } = await triageInLook(bad.pool, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: bad.deps });
   assert.equal(out.verdict, 'failed');
   const insert = bad.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
   assert.equal(insert.params[4], 'failed');
   assert.match(insert.params[18], /unparseable/);
-  assert.ok(bad.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)), 'not retried until the thread changes');
+  assert.equal(look.out.queue, 'consume', 'not retried until the thread changes');
   assert.equal(bad.calls.exec.length, 1, 'with no thread to resume, nothing is asked again');
 
   const capped = triageHarness({ verdictText: 'x', budgetError: 'Weekly limit reached' });
-  const paused = await bot.runTriage(capped.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: capped.deps });
+  const { out: paused, look: cappedLook } = await triageInLook(capped.pool, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: capped.deps });
   assert.deepEqual({ ran: paused.ran, reason: paused.reason }, { ran: false, reason: 'budget' });
   assert.equal(capped.calls.exec.length, 0, 'no turn is dispatched over the cap');
+  assert.equal(cappedLook.out.queue, null, 'the debt is left as it was (the lane pauses on the budget)');
   assert.ok(!capped.calls.queries.some((q) => /homeroom_bot_queue/.test(q.s)), 'the queue is left alone');
-});
-
-test('runTriage: a row the refresh removed since its batch was loaded is not read', async () => {
-  const { pool, deps, calls } = triageHarness({ verdictText: 'never read', sessionId: 961 });
-  const query = pool.query;
-  pool.query = async (sql, params) => {
-    if (/^UPDATE homeroom_bot_queue SET started_at = NOW\(\) WHERE id = \$1 AND \(started_at IS NULL OR \$2::boolean\)/.test(String(sql))) {
-      calls.queries.push({ s: String(sql), params });
-      return { rows: [], rowCount: 0 };
-    }
-    return query(sql, params);
-  };
-  const out = await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
-  assert.deepEqual(out, { ran: false, reason: 'gone' });
-  assert.equal(calls.exec.length, 0, 'no turn');
-  assert.ok(!calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)), 'and no run row');
-  const claim = calls.queries.find((q) => /SET started_at = NOW\(\)/.test(q.s));
-  assert.deepEqual(claim.params, [ITEM.id, false], 'a background row is claimed only while nobody holds it');
 });
 
 test('runTriage: the run records the newest thing it read, not the batch\'s figure', async () => {
@@ -1939,11 +1586,6 @@ test('runTriage: the run records the newest thing it read, not the batch\'s figu
   const query = pool.query;
   pool.query = async (sql, params) => {
     const s = String(sql);
-    if (/^UPDATE homeroom_bot_queue SET started_at = NOW\(\)/.test(s)) {
-      calls.queries.push({ s, params });
-      // The refresh moved the row on after the batch read it.
-      return { rows: [{ thread_seen_at: new Date('2026-09-21T00:00:00Z') }], rowCount: 1 };
-    }
     if (/SELECT MAX\(m\.created_at\) AS last_at/.test(s)) {
       order.push('person');
       return { rows: [{ last_at: new Date('2026-09-22T10:00:00Z') }] };
@@ -1956,22 +1598,11 @@ test('runTriage: the run records the newest thing it read, not the batch\'s figu
   assert.deepEqual(order, ['person', 'thread'], 'the last word is read before the thread, so the thread holds it');
   const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
   assert.equal(new Date(insert.params[12]).toISOString(), '2026-09-22T10:00:00.000Z',
-    'newer than the batch (09-20), the claimed row (09-21) and the issue (09-22 09:00)');
-});
-
-test('runTriage on the live lane does not claim a row its lane already claimed', async () => {
-  const { pool, deps, calls } = triageHarness({ verdictText: '```json\n{"verdict":"empty","determined":true,"reason":"Nothing."}\n```', sessionId: 963 });
-  await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: { ...ITEM, claimed: true }, mode: 'shadow', deps });
-  const claim = calls.queries.find((q) => /SET started_at = NOW\(\)/.test(q.s));
-  assert.deepEqual(claim.params, [ITEM.id, true]);
-  assert.match(SRC, /payer_user_id: pick\.payer_user_id \|\| null, followUp: !!pick\.followUp,\n\s+\/\/ Claimed just above, so runTriage does not claim it again\.\n\s+claimed: true,/,
-    'the live lane marks the row it claimed');
+    'newer than what its debt was owed with (09-20) and the issue (09-22 09:00)');
 });
 
 // The triage reply, then the reply to the one turn that asks for its block.
 function repairHarness(sessionId, replies, costs = [0.02, 0.005]) {
-  // No conversation left over from an earlier test to continue.
-  bot._resetForTests();
   const h = triageHarness({ verdictText: 'unused', sessionId });
   h.loops = [];
   h.deps.worker.execInWorker = async (id, opts) => {
@@ -1993,7 +1624,7 @@ test('runTriage: a reply that decided in words is asked once, on its own thread,
     lastResultText: '```json\n{"verdict":"person","determined":true,"reason":"Changes the login flow."}\n```',
     agentThreadId: 'thr-1', inputTokens: 1200, outputTokens: 30,
   }]);
-  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  const { out, look } = await triageInLook(h.pool, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
   assert.deepEqual({ ran: out.ran, verdict: out.verdict }, { ran: true, verdict: 'person' });
   assert.deepEqual(h.loops, [{ resumeThreadId: null }, { resumeThreadId: 'thr-1' }],
     'a fresh thread for the triage, then that same thread resumed');
@@ -2008,20 +1639,19 @@ test('runTriage: a reply that decided in words is asked once, on its own thread,
   assert.deepEqual(h.calls.spend.map((s) => s.cents), [2, 0.5], 'each turn joins the weekly pool');
   assert.deepEqual(h.calls.moves, [['takeSlot', 951, 0], ['restSession', 951, 1], ['takeSlot', 951, 1], ['restSession', 951, 2]],
     'active only while each turn runs');
-  assert.equal(h.deps.activeWorkers.size, 0, 'released after the second turn');
-  assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s)), 'the row is consumed by the verdict');
+  assert.equal(look.out.queue, 'consume', 'the debt is consumed by the verdict');
 });
 
 test('runTriage: a reply still without its block after the one ask fails as it always did', async () => {
   const h = repairHarness(952, [WORDS_ONLY, { lastResultText: 'It is fine to build.', agentThreadId: 'thr-1', inputTokens: 900, outputTokens: 10 }]);
-  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  const { out, look } = await triageInLook(h.pool, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
   assert.equal(out.verdict, 'failed');
   assert.equal(h.calls.exec.length, 2, 'asked once, never twice');
   const insert = h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
   assert.match(insert.params[18], /^unparseable: Small and bounded/, 'the triage reply, not the ask\'s, is what the row shows');
   assert.ok(Math.abs(insert.params[14] - 0.025) < 1e-9, 'and it costs both turns');
   assert.ok(h.calls.queries.some((q) => /homeroom_bot_run_snapshots/.test(q.s)), 'still a benchmark case: a better model writes its block');
-  assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)), 'a model failure consumes the row');
+  assert.equal(look.out.queue, 'consume', 'a model failure consumes the debt');
 });
 
 test('runTriage: an unreadable reply is kept on its run, with the reply to the ask, while its error stays one short line', async () => {
@@ -2108,103 +1738,62 @@ test('runTriage: a thread the runtime will not resume is never asked on a fresh 
 
 const PERSON_REPLY = '```json\n{"verdict":"person","determined":true,"reason":"Changes the login flow."}\n```';
 
-// The worker's stop as it really behaves (#937), the way
-// homeroom-bot-spec.test.js models it: a stop stays pending on the session
-// after its turn ends, and every dispatch is skipped (exit 143, no reply)
-// until a new turn clears it. A message in the request's discussion lands
-// while each turn runs. Returns the sessions whose dispatch was skipped.
-function interruptEachTurn(h, stopped) {
-  let pendingStop = null;
-  const skipped = [];
-  h.deps.worker.stopTurn = async (id) => { stopped.push(id); pendingStop = Date.now(); };
-  h.deps.worker.getPendingStop = () => pendingStop;
-  h.deps.worker.clearPendingStop = () => { pendingStop = null; };
-  const exec = h.deps.worker.execInWorker;
-  h.deps.worker.execInWorker = async (id, opts) => {
-    if (pendingStop) { skipped.push(id); return { exitCode: 143 }; }
-    return exec(id, opts);
-  };
-  const loop = h.deps.sessions.runCodexAttemptLoop;
-  h.deps.sessions.runCodexAttemptLoop = async (args) => {
-    const routed = await loop(args);
-    assert.equal(bot.interruptRead({ appId: APP.id, issueNumber: ITEM.issue_number, reason: 'thread' }), h.loops.length === 1,
-      'the first read is stopped; the read started over is left to finish');
-    return routed;
-  };
-  return skipped;
-}
+test('runTriage: a person writing mid-read ends the read with what it spent, for its instance to read again', async () => {
+  // The request's instance heard the message while the turn ran (bot-request
+  // Activity, kept on the look): what this read found answers the request as
+  // it was, so it writes no run and hands back what it spent.
+  const h = repairHarness(971, [{ lastResultText: PERSON_REPLY, agentThreadId: 'thr-1', inputTokens: 4000, outputTokens: 20 }], [0.03]);
+  const { out, look } = await triageInLook(h.pool, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps },
+    { readInterrupted: async () => true });
+  assert.deepEqual(out, { ran: false, reason: 'interrupted', carried: { costUsd: 0.03, inputTokens: 4000, outputTokens: 20 } });
+  assert.ok(!h.calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)), 'no row for the read that is started over');
+  assert.deepEqual(h.calls.spend.map((x) => x.cents), [3], 'what it spent is debited once, now');
+  assert.equal(look.out.queue, null, 'its instance reads it again; the look decides nothing of its debt');
+  assert.equal(look.out.lastRead, undefined, 'and its conversation is not kept: it answered nothing');
+  // The instance starts that read at once, as `read_again` (not announced
+  // twice, and never started over again), carrying what this one spent.
+  const machine = read('src/workflow/bot-request/machine.ts');
+  assert.match(machine, /if \(outcome === 'interrupted'\) \{[\s\S]*?owed: \{ \.\.\.lk\.owed, reason: READ_AGAIN_REASON \}[\s\S]*?carried: \(r\.carried as Json\) \?\? null/);
+});
 
-test('runTriage: a person writing mid-read stops the turn and reads again once, as one row', async () => {
-  const h = repairHarness(971, [
-    { lastResultText: '', inputTokens: 4000, outputTokens: 0 },
-    { lastResultText: PERSON_REPLY, agentThreadId: 'thr-2', inputTokens: 1000, outputTokens: 40 },
-  ], [0.03, 0.01]);
-  const stopped = [];
-  const skipped = interruptEachTurn(h, stopped);
-  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
-  assert.deepEqual({ ran: out.ran, verdict: out.verdict }, { ran: true, verdict: 'person' });
-  assert.deepEqual(stopped, [971], 'the out-of-date turn is stopped, once');
-  assert.equal(h.loops.length, 2);
-  // homeroom-maps #30 (run 1250): the stop stayed pending, the read started
-  // over was skipped at once, and its empty reply was recorded as collateral.
-  assert.deepEqual(skipped, [], 'the read started over is dispatched, not skipped on the stop the first one left');
-  assert.equal(h.deps.worker.getPendingStop(971), null, 'that stop was cleared once its turn was over');
+test('runTriage: the read started over is one row that carries what the first read spent, and is never started over again', async () => {
+  const h = repairHarness(972, [{ lastResultText: PERSON_REPLY, agentThreadId: 'thr-2', inputTokens: 1000, outputTokens: 40 }], [0.01]);
+  const { out, look } = await triageInLook(h.pool, {
+    bot: BOT, app: APP, item: { ...ITEM, reason: bot.READ_AGAIN_REASON }, mode: 'shadow', deps: h.deps,
+    carried: { costUsd: 0.03, inputTokens: 4000, outputTokens: 0 },
+  }, { readInterrupted: async () => true });
+  assert.deepEqual({ ran: out.ran, verdict: out.verdict }, { ran: true, verdict: 'person' }, 'a second message does not send it back');
   const inserts = h.calls.queries.filter((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.equal(inserts.length, 1, 'no row for the turn that was stopped');
-  assert.ok(Math.abs(inserts[0].params[14] - 0.04) < 1e-9, 'the one row carries what the stopped turn spent');
+  assert.equal(inserts.length, 1);
+  assert.ok(Math.abs(inserts[0].params[14] - 0.04) < 1e-9, 'the one row carries what the stopped read spent');
   assert.deepEqual([inserts[0].params[15], inserts[0].params[16]], [5000, 40]);
-  assert.deepEqual(h.calls.spend.map((x) => x.cents), [3, 1], 'each turn is debited once');
-  const reason = h.calls.queries.find((q) => /SET reason = \$2 WHERE id = \$1/.test(q.s));
-  assert.deepEqual(reason.params, [ITEM.id, bot.READ_AGAIN_REASON]);
-  const claims = h.calls.queries.filter((q) => /SET started_at = NOW\(\)/.test(q.s)).map((q) => q.params);
-  assert.deepEqual(claims, [[ITEM.id, false], [ITEM.id, true]], 'the read started over keeps the row it already holds');
-  assert.equal(bot.interruptRead({ appId: APP.id, issueNumber: ITEM.issue_number, reason: 'thread' }), false, 'nothing is left in flight');
-  assert.equal(h.deps.activeWorkers.size, 0);
+  assert.deepEqual(h.calls.spend.map((x) => x.cents), [1], 'the carried spend was debited by the read that spent it');
+  assert.equal(look.out.queue, 'consume');
 });
 
 test('runTriage: a read started over that comes back empty is recorded as empty, not as collateral', async () => {
   const h = repairHarness(976, [
-    { lastResultText: '', inputTokens: 4000, outputTokens: 0 },
     { lastResultText: '', resultSubtype: 'error_during_execution', agentError: 'provider hung up', inputTokens: 900, outputTokens: 0 },
-  ], [0.03, 0.01]);
-  const stopped = [];
-  const skipped = interruptEachTurn(h, stopped);
-  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
-  assert.deepEqual(skipped, []);
+  ], [0.01]);
+  const { out, look } = await triageInLook(h.pool, {
+    bot: BOT, app: APP, item: { ...ITEM, reason: bot.READ_AGAIN_REASON }, mode: 'shadow', deps: h.deps,
+    carried: { costUsd: 0.03, inputTokens: 4000, outputTokens: 0 },
+  });
   assert.equal(out.verdict, 'failed');
   const insert = h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
   assert.match(insert.params[18], /^unparseable: \(empty reply\) .*provider hung up/,
-    'the stop was the first read\'s own, so it does not explain this reply');
-  assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s)), 'a model failure consumes the row');
+    'the first read\'s stop does not explain this reply');
+  assert.equal(look.out.queue, 'consume', 'a model failure consumes the debt');
 });
 
-test('runTriage: a request changed before its turn starts is read again without a turn', async () => {
-  const h = repairHarness(972, [{ lastResultText: PERSON_REPLY, agentThreadId: 'thr-3' }], [0.01]);
-  h.deps.threadContext.loadIssueThread = async () => {
-    // The person writes while the bot is still loading the request.
-    if (!h.loops.length) bot.interruptRead({ appId: APP.id, issueNumber: ITEM.issue_number, reason: 'updated' });
-    return { messages: [] };
-  };
-  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
-  assert.equal(out.verdict, 'person');
-  assert.equal(h.loops.length, 1, 'the read that was already out of date never ran a turn');
-});
-
-test('interruptRead: only a message or an edit sends a read back', () => {
-  bot._resetForTests();
-  for (const reason of ['created', 'unclaimed', 'proposal_thread', 'activity']) {
-    assert.equal(bot.interruptRead({ appId: 9, issueNumber: 12, reason }), false, reason);
-  }
-  assert.equal(bot.interruptRead({ appId: 9, issueNumber: 12, reason: 'thread' }), false, 'and only a read in flight');
-  const noteIssueActivity = SRC.slice(SRC.indexOf('function noteIssueActivity('), SRC.indexOf('async function noteProposalActivity('));
-  assert.match(noteIssueActivity, /interruptRead\(\{ appId: id, issueNumber: n, reason \}\);/, 'heard on the Pod the activity landed on');
-  const onBus = SRC.slice(SRC.indexOf('function onBusMessage('), SRC.indexOf('// ── The dashboard'));
-  assert.match(onBus, /if \(data\.issueNumber != null\) interruptRead\(/, 'and on the Pod running the loop');
+test('a read is sent back only by a message or an edit, and is not announced twice', () => {
+  const note = SRC.slice(SRC.indexOf('const INTERRUPTING_ACTIVITY'), SRC.indexOf('async function noteProposalActivity('));
+  assert.match(note, /new Set\(\['thread', 'updated'\]\)/, 'only these are Activity on the request');
   assert.match(SRC, /\|\| item\.reason === RETRY_FAILED_REASON \|\| item\.reason === READ_AGAIN_REASON \? null : await live\.post\(\{/,
     'a read started over is not announced twice');
   assert.match(SRC, /item\.reason !== APP_AGAIN_REASON && item\.reason !== READ_AGAIN_REASON\n\s+&& item\.reason !== BACKLOG_REASON\) \{\n\s+await activity\(\)\.startCard/,
     'and its card is not started twice');
-  assert.ok(bot.SELF_QUEUED_REASONS.includes(bot.READ_AGAIN_REASON), 'a refresh keeps its row and its reason');
+  assert.ok(bot.SELF_QUEUED_REASONS.includes(bot.READ_AGAIN_REASON), 'a refresh keeps its debt and its reason');
 });
 
 test('runTriage: reading a request again continues the conversation it was read in', async () => {
@@ -2212,34 +1801,41 @@ test('runTriage: reading a request again continues the conversation it was read 
     { lastResultText: PERSON_REPLY, agentThreadId: 'thr-A', inputTokens: 900000, outputTokens: 900 },
     { lastResultText: PERSON_REPLY, agentThreadId: 'thr-A', inputTokens: 30000, outputTokens: 200 },
   ], [0.2, 0.01]);
-  await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
-  await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: { ...ITEM, reason: 'changed' }, mode: 'shadow', deps: h.deps });
+  const first = await triageInLook(h.pool, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  assert.equal(first.look.out.lastRead.threadId, 'thr-A', 'the instance keeps the conversation the verdict was reached in');
+  assert.equal(first.look.out.lastRead.continued, 0);
+  // The instance hands its next look what it kept (bot-request `lastRead`).
+  const again = await triageInLook(h.pool, { bot: BOT, app: APP, item: { ...ITEM, reason: 'changed' }, mode: 'shadow', deps: h.deps },
+    { lastRead: first.look.out.lastRead });
   assert.deepEqual(h.loops, [{ resumeThreadId: null }, { resumeThreadId: 'thr-A' }]);
   assert.match(h.calls.exec[0].opts.prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format/, 'the first read gets the whole prompt');
-  const again = h.calls.exec[1].opts.prompt;
-  assert.match(again, /==== REQUEST #12 HAS CHANGED SINCE YOU READ IT ====/);
-  assert.match(again, /Please work on GitHub issue #12/, 'with the request as it stands now, in full');
-  assert.match(again, /do not repeat reads you made before/);
-  assert.match(again, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #12/);
-  assert.ok(!/YOUR ONLY JOB is to decide/.test(again), 'not the instructions again: they are earlier in the conversation');
+  const prompt = h.calls.exec[1].opts.prompt;
+  assert.match(prompt, /==== REQUEST #12 HAS CHANGED SINCE YOU READ IT ====/);
+  assert.match(prompt, /Please work on GitHub issue #12/, 'with the request as it stands now, in full');
+  assert.match(prompt, /do not repeat reads you made before/);
+  assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #12/);
+  assert.ok(!/YOUR ONLY JOB is to decide/.test(prompt), 'not the instructions again: they are earlier in the conversation');
   assert.equal(h.calls.exec[1].opts.resumeSessionId, 'thr-A');
+  assert.equal(again.look.out.lastRead.continued, 1, 'one more continued read of the same conversation');
 });
 
 test('runTriage: a conversation the worker no longer has is read afresh, in the same read', async () => {
   const h = repairHarness(974, [
-    { lastResultText: PERSON_REPLY, agentThreadId: 'thr-B' },
     { lastResultText: '', agentRetryFresh: true },
     { lastResultText: PERSON_REPLY, agentThreadId: 'thr-C', inputTokens: 800000, outputTokens: 700 },
-  ], [0.2, 0.001, 0.2]);
-  await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
-  const insertsBefore = h.calls.queries.filter((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)).length;
-  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: { ...ITEM, reason: 'changed' }, mode: 'shadow', deps: h.deps });
+  ], [0.001, 0.2]);
+  // What the request's instance kept from its last read, under the model
+  // this read resolves (the triage stage's).
+  const lastRead = { threadId: 'thr-B', model: bot.stageModel(null, {}, 'triage'), continued: 0, at: new Date().toISOString() };
+  const { out, look } = await triageInLook(h.pool, { bot: BOT, app: APP, item: { ...ITEM, reason: 'changed' }, mode: 'shadow', deps: h.deps },
+    { lastRead });
   assert.equal(out.verdict, 'person');
-  assert.deepEqual(h.loops, [{ resumeThreadId: null }, { resumeThreadId: 'thr-B' }, { resumeThreadId: null }]);
-  assert.match(h.calls.exec[2].opts.prompt, /YOUR ONLY JOB is to decide/, 'the fresh read gets the whole prompt');
+  assert.deepEqual(h.loops, [{ resumeThreadId: 'thr-B' }, { resumeThreadId: null }]);
+  assert.match(h.calls.exec[1].opts.prompt, /YOUR ONLY JOB is to decide/, 'the fresh read gets the whole prompt');
   const inserts = h.calls.queries.filter((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.equal(inserts.length - insertsBefore, 1, 'one row for the read');
-  assert.ok(Math.abs(inserts[inserts.length - 1].params[14] - 0.201) < 1e-9, 'which costs both of its turns');
+  assert.equal(inserts.length, 1, 'one row for the read');
+  assert.ok(Math.abs(inserts[0].params[14] - 0.201) < 1e-9, 'which costs both of its turns');
+  assert.deepEqual([look.out.lastRead.threadId, look.out.lastRead.continued], ['thr-C', 0], 'the fresh conversation is kept, uncontinued');
 });
 
 test('runTriage: with continuing switched off, every read is fresh', async () => {
@@ -2248,25 +1844,24 @@ test('runTriage: with continuing switched off, every read is fresh', async () =>
     { lastResultText: PERSON_REPLY, agentThreadId: 'thr-E' },
   ]);
   const settings = { continueReads: false };
-  await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings, deps: h.deps });
-  await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings, deps: h.deps });
+  const first = await triageInLook(h.pool, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings, deps: h.deps });
+  await triageInLook(h.pool, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings, deps: h.deps },
+    { lastRead: first.look.out.lastRead });
+  assert.ok(first.look.out.lastRead, 'a conversation was there to continue');
   assert.deepEqual(h.loops, [{ resumeThreadId: null }, { resumeThreadId: null }]);
 });
 
-test('previousRead: a conversation is continued once per read, never past a day, a third time or another model', () => {
-  bot._resetForTests();
+test('previousReadOf: a conversation is continued once per read, never past a day, a third time or another model', () => {
   const t0 = Date.parse('2026-10-06T00:00:00Z');
-  bot.rememberRead(9, 12, { threadId: 'thr-1', model: 'm', continued: 0, now: t0 });
-  assert.equal(bot.previousRead(9, 12, { model: 'other', now: t0 }), null, 'another model reads afresh');
-  assert.equal(bot.previousRead(9, 12, { model: 'm', now: t0 }), null, 'and the entry is gone once read');
-  bot.rememberRead(9, 12, { threadId: 'thr-1', model: 'm', continued: 1, now: t0 });
-  assert.equal(bot.previousRead(9, 12, { model: 'm', now: t0 + 60_000 })?.threadId, 'thr-1');
-  bot.rememberRead(9, 12, { threadId: 'thr-1', model: 'm', continued: bot.MAX_CONTINUED_READS, now: t0 });
-  assert.equal(bot.previousRead(9, 12, { model: 'm', now: t0 }), null, 'a fresh read after the third continued one');
-  bot.rememberRead(9, 12, { threadId: 'thr-1', model: 'm', continued: 0, now: t0 });
-  assert.equal(bot.previousRead(9, 12, { model: 'm', now: t0 + bot.CONTINUE_READ_MAX_AGE_MS + 1 }), null, 'or a day on');
-  bot.rememberRead(9, 12, { threadId: null, model: 'm', now: t0 });
-  assert.equal(bot.previousRead(9, 12, { model: 'm', now: t0 }), null, 'a read with no conversation leaves none');
+  const kept = bot.rememberedRead({ threadId: 'thr-1', model: 'm', continued: 1, now: t0 });
+  assert.deepEqual(kept, { threadId: 'thr-1', model: 'm', continued: 1, at: '2026-10-06T00:00:00.000Z' });
+  assert.equal(bot.previousReadOf(kept, { model: 'other', now: t0 }), null, 'another model reads afresh');
+  assert.equal(bot.previousReadOf(kept, { model: 'm', now: t0 + 60_000 })?.threadId, 'thr-1');
+  const third = bot.rememberedRead({ threadId: 'thr-1', model: 'm', continued: bot.MAX_CONTINUED_READS, now: t0 });
+  assert.equal(bot.previousReadOf(third, { model: 'm', now: t0 }), null, 'a fresh read after the third continued one');
+  assert.equal(bot.previousReadOf(kept, { model: 'm', now: t0 + bot.CONTINUE_READ_MAX_AGE_MS + 1 }), null, 'or a day on');
+  assert.equal(bot.rememberedRead({ threadId: null, model: 'm', now: t0 }), null, 'a read with no conversation leaves none');
+  assert.equal(bot.previousReadOf(null, { model: 'm', now: t0 }), null);
 });
 
 test('the continueReads setting is on by default, stored as on or off, and validated', () => {
@@ -2279,6 +1874,9 @@ test('the continueReads setting is on by default, stored as on or off, and valid
   assert.match(ui, /key === 'continueReads'/, 'and the console saves it');
 });
 
+// One the request will always get must not keep the lane pausing for ever:
+// it is recorded as a failed read (which the refresh counts toward
+// FAILED_TRIAGE_TRIES), its debt spent, and the lane pauses all the same.
 test('runTriage: a reply that is the provider\'s API error is a platform fault, not the model\'s', async () => {
   const { pool, deps, calls } = triageHarness({
     sessionId: 953,
@@ -2287,24 +1885,43 @@ test('runTriage: a reply that is the provider\'s API error is a platform fault, 
       agentThreadId: 'thr-1', inputTokens: 3000, outputTokens: 20,
     },
   });
-  const out = await bot.runTriage(pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
-  assert.deepEqual({ ran: out.ran, reason: out.reason }, { ran: false, reason: 'infra' }, 'the pass backs off');
+  const { out, look } = await triageInLook(pool, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps });
+  assert.deepEqual({ ran: out.ran, verdict: out.verdict }, { ran: true, verdict: 'failed' });
   assert.equal(calls.exec.length, 1, 'a thread that died on the wire is not asked for a block');
+  assert.equal(look.out.queue, 'consume', 'its debt is spent');
+  assert.equal(look.out.laneFault, true, 'the lane pauses');
   const insert = calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.equal(insert.params[4], 'failed');
-  assert.match(insert.params[18], /^provider: API Error: 400 messages\[6\]/);
-  assert.equal(insert.params[14], 0.0123, 'what it cost is still recorded');
-  assert.ok(calls.queries.some((q) => /SET started_at = NULL WHERE id = \$1/.test(q.s)), 'the issue keeps its turn');
-  assert.ok(!calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)));
+  assert.ok(insert.params.some((v) => /^provider: API Error: 400 messages\[6\]/.test(String(v))), 'a failed read the refresh counts');
+  assert.deepEqual(calls.spend.map((x) => x.cents), [1.23], 'what it cost is still debited');
   assert.ok(!calls.queries.some((q) => /homeroom_bot_run_snapshots/.test(q.s)), 'and it is no benchmark case');
 });
 
-test('runTriage: a platform fault is recorded, hands the row back, and stops the pass', async () => {
+// A read whose reply was unusable is no conversation to continue: the next
+// read of the request starts a fresh one (as previousRead's take did).
+test('runTriage: a failed read leaves no conversation for the next read to continue', async () => {
+  const h = triageHarness({ sessionId: 960, result: { lastResultText: 'no block here', agentThreadId: 'thr-9' } });
+  h.deps.askForVerdictBlock = async () => ({ text: null });
+  const { out, look } = await triageInLook(h.pool, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  assert.equal(out.verdict, 'failed');
+  assert.equal(look.out.lastRead, null);
+});
+
+test('runTriage: a platform fault keeps its request\'s debt and writes no run', async () => {
   const h = triageHarness({ routed: { error: 'credential_required', logicalTurnId: 'l1' } });
-  const out = await bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
+  const { out, look } = await triageInLook(h.pool, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps: h.deps });
   assert.deepEqual({ ran: out.ran, reason: out.reason, detail: out.detail }, { ran: false, reason: 'infra', detail: 'credential_required' });
-  assert.ok(h.calls.queries.some((q) => /UPDATE homeroom_bot_queue SET started_at = NULL/.test(q.s)), 'the row goes back to the queue');
-  assert.ok(!h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)));
+  assert.equal(look.out.queue, 'fault');
+  assert.ok(!h.calls.queries.some((q) => /INSERT INTO homeroom_bot_runs|homeroom_bot_queue/.test(q.s)));
+});
+
+test('runTriage: a request\'s third platform fault in a row is recorded as a failed read, so it is not owed for ever', async () => {
+  const h = triageHarness({ routed: { error: 'credential_required', logicalTurnId: 'l1' } });
+  const { out, look } = await triageInLook(h.pool, { bot: BOT, app: APP, item: { ...ITEM, faults: 2 }, mode: 'shadow', deps: h.deps });
+  assert.deepEqual({ ran: out.ran, verdict: out.verdict }, { ran: true, verdict: 'failed' });
+  assert.equal(look.out.queue, 'consume');
+  assert.equal(look.out.laneFault, true);
+  assert.ok(h.calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)));
+  assert.ok(!h.calls.queries.some((q) => /homeroom_bot_run_snapshots/.test(q.s)), 'no benchmark case');
 });
 
 // ── Live on one app (#3146) ──────────────────────────────────────────────

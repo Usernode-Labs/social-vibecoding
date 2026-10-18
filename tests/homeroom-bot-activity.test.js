@@ -304,7 +304,7 @@ test('the same piece of work sent again is not recorded twice, and a card that c
 
 test('the live loop starts a card where it tells the request it is looking: never for a follow-up, a restart or a backlog pass', () => {
   const source = read('src/services/homeroom-bot.js');
-  const body = source.slice(source.indexOf('async function runTriage('), source.indexOf('function shadowBuildSkipReason('));
+  const body = source.slice(source.indexOf('async function runTriage('), source.indexOf('function isPlatformRepo('));
   const followUp = body.indexOf('return runFollowUp(pool, config, {');
   const looking = body.indexOf("kind: 'looking', text: live.lookingText(), sender: bot,");
   const start = body.indexOf('await activity().startCard(pool, {');
@@ -312,8 +312,10 @@ test('the live loop starts a card where it tells the request it is looking: neve
   assert.ok(followUp > -1 && looking > -1 && start > -1 && reading > -1);
   assert.ok(followUp < looking && looking < start && start < reading,
     'after a follow-up has returned and the looking post is made, before the request is read');
+  // Its card key: a new request's goes on with the card its refresh started;
+  // any other look has its own, by the look's number, the same across retries.
   assert.match(body.slice(looking, reading),
-    /if \(item\.reason !== RESTART_REASON && item\.reason !== APP_AGAIN_REASON && item\.reason !== READ_AGAIN_REASON\s+&& item\.reason !== BACKLOG_REASON\) \{\s*await activity\(\)\.startCard\(pool, \{\s*app, issueNumber, requester, bot, jobKey: item\.id, settings, inDm: DM_REASONS\.has\(item\.reason\), reason: item\.reason,\s*deps: \{ dm: deps\.dm \},\s*\}\);/);
+    /if \(item\.reason !== RESTART_REASON && item\.reason !== APP_AGAIN_REASON && item\.reason !== READ_AGAIN_REASON\s+&& item\.reason !== BACKLOG_REASON\) \{\s*await activity\(\)\.startCard\(pool, \{[\s\S]*?app, issueNumber, requester, bot, settings, inDm: DM_REASONS\.has\(item\.reason\), reason: item\.reason,\s*jobKey: item\.reason === 'new' \? cardKeyOf\(app\.id, issueNumber\)\s*: \(look\.n \? loopRules\.lookCardKey\(app\.id, issueNumber, look\.n\) : item\.id\),\s*deps: \{ dm: deps\.dm \},\s*\}\);/);
   // Work asked for in the DM says so in its thread ("Filed from our chat.").
   assert.match(source, /const DM_REASONS = new Set\(\['dm_request', 'dm_start', 'dm_answer', 'dm_comment', 'dm_revise', 'plan_change'\]\);/);
   // Inside the live branch: shadow triage has no card.

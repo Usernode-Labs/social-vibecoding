@@ -335,17 +335,9 @@ async function runSyncWork(config, pool, {
       },
     });
     const routed = turn.routed || {};
-    // Somebody stopped it (its record says so): the branch is as it was,
-    // and nothing reads that as a conflict it could not resolve.
-    if (turn.stoppedBy) {
-      return await steps.once('after', async () => {
-        const by = turn.stoppedBy.by || null;
-        const message = by ? `Sync with main stopped by ${by}. The branch is unchanged.` : 'Sync with main stopped. The branch is unchanged.';
-        if (emitActivity) await steps.once('after:said', async () => { await sendStatus(message, { syncMain: { syncResult: 'stopped', behind, sha: null, pushOk: false } }); return true; });
-        broadcastSyncStatus(session, 'done', { syncResult: 'stopped', message });
-        return { outcome: 'stopped', sha: null, behind, pushOk: false, conflictFiles: [], message, headBefore, mainSha };
-      });
-    }
+    // A person's Stop never gets here: the proposal machine ends the sync
+    // as stopped by them and cancels this work (its next checkpoint throws),
+    // so what the stopped turn left is never read as a conflict.
     if (typeof routed.error === 'string') throw new Error(routed.error.replace(/^dispatch: /, ''));
     const result = routed.result || {};
 
