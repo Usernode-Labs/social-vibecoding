@@ -29,22 +29,23 @@
  * are app.css's to decide, not this component's. The breakpoint, because a
  * phone's bar is at the foot and folding it would leave a reader with no
  * navigation and no hover to bring it back; and `#platform-tabs.hidden`,
- * because a toggle for a thing that is not there is a dead control and an
- * app's rail comes back by pointing at the window's edge instead. The note
+ * because a toggle for a thing that is not there is a dead control. The note
  * on the component below says why neither may be a render-time question.
  *
- * ── Collapsed is the app view's state, reached another way ─────────────
+ * ── Collapsed is the open app's arrangement, reached by hand ───────────
  *
- * Folding the rail puts the shell in exactly the arrangement an open app
- * already produces: no band reserved, the page full width, and the hot zone
- * at the left edge ready to peek it back (features/nav/tab-bar.tsx). That is
- * why this needs no CSS of its own beyond being hidden on a phone — the
- * layout it asks for is one the stylesheet already draws.
+ * Folding the rail puts the shell in the arrangement a running app produces:
+ * no band reserved, the page full width. The difference is the way back —
+ * from a folded rail the hot zone at the window's edge peeks it back
+ * (features/nav/tab-bar.tsx); inside a running app nothing peeks, and the ✕
+ * in the header is the way out (#3138). That is why folding needs no CSS of
+ * its own beyond being hidden on a phone — the layout it asks for is one the
+ * stylesheet already draws.
  *
  * ── Pointing at it peeks the folded rail (#2764) ───────────────────────
  *
  * With the rail folded, hovering this button fades the rail in OVER the page,
- * the same overlay the window's left edge summons — nothing reflows, and
+ * the same overlay the window's edge hot zone summons — nothing reflows, and
  * pressing the button is still what docks it back. The button sits directly
  * above where the rail appears, so it is where the pointer already is when a
  * reader goes looking for the navigation they put away; before this, pointing
