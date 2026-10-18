@@ -141,6 +141,18 @@ function buildFailedText(reason) {
     + 'A person could pick it up from here.';
 }
 
+// #3742: a live build whose worker did not survive a platform restart used
+// to go quiet. It says what was lost and that the request is back in line.
+function buildLostText(reason) {
+  const why = clipText(reason, 400);
+  return [
+    "Homeroom bot's build of this request was lost when the platform restarted.",
+    // The platform restart is already said; a different reason is worth it.
+    why && !/platform restarted/i.test(why) ? why : null,
+    'The request has gone back in line to be looked at again.',
+  ].filter(Boolean).join(' ');
+}
+
 // #3152: a verdict a live cap held. One line, so the person who filed the
 // issue is not left with silence, and a promise the refresh keeps: a held
 // issue is queued again as soon as the cap that held it has room.
@@ -582,7 +594,7 @@ async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec
 // notice, before anything is known) and not a held note (nothing for them
 // to do; the bot comes back on its own).
 const TAGGING_KINDS = new Set([
-  'question', 'person', 'empty', 'proposal', 'build_failed', 'blocked', 'spec',
+  'question', 'person', 'empty', 'proposal', 'build_failed', 'build_lost', 'blocked', 'spec',
   'followup_answer', 'followup_ask', 'followup_revise', 'followup_person', 'followup_failed',
 ]);
 
@@ -925,6 +937,45 @@ async function post({
     }
   }
   return { postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!message };
+}
+
+/**
+ * #3742: post one message in a proposal's own discussion, and nowhere else.
+ * A checks fix is news for the group voting on the proposal, not a GitHub
+ * comment or a DM. Recorded in homeroom_bot_posts like every post, with the
+ * thread message it landed as. Never throws.
+ */
+async function postOnProposal({
+  pool, ws, app, bot, sessionId, issueNumber, kind, runId = null, text,
+}) {
+  let postId = null;
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [app.id, issueNumber, runId, kind],
+    );
+    postId = rows[0]?.id || null;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not record a proposal post', { app: app.slug, issueNumber, kind, err: err.message });
+  }
+  let message = null;
+  try {
+    message = await ws.sendBotMessage(pool, app.id, {
+      user: bot,
+      content: text,
+      thread: { type: 'session', ref: Number(sessionId) },
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+  }
+  if (postId) {
+    await pool.query(
+      'UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1',
+      [postId, message?.id ?? null],
+    ).catch(() => {});
+  }
+  return { postId, threadMessageId: message?.id ?? null };
 }
 
 /**
@@ -1472,6 +1523,7 @@ module.exports = {
   emptyText,
   proposalText,
   buildFailedText,
+  buildLostText,
   heldText,
   heldKind,
   lastPostKind,
@@ -1485,6 +1537,7 @@ module.exports = {
   parseStopMentioning,
   MAX_MENTIONS,
   post,
+  postOnProposal,
   advanceSeen,
   botUsernameOf,
   openBotProposal,

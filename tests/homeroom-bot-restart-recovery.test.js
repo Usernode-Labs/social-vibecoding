@@ -297,12 +297,15 @@ const live = require('../src/services/homeroom-bot-live');
 const github = require('../src/services/github');
 const LIVE_RUN = { id: 950, app_id: 5, issue_number: 12 };
 const liveCalls = [];
-function stubLive({ promote = { status: 200, body: { ok: true, prNumber: 77 } }, issueState = 'open' } = {}) {
+function stubLive({
+  promote = { status: 200, body: { ok: true, prNumber: 77 } }, issueState = 'open', githubEnabled = false,
+} = {}) {
   liveCalls.length = 0;
+  github.isEnabled = () => githubEnabled;
   live.promoteAsBot = async ({ sessionId }) => { liveCalls.push(['promote', sessionId, workerCalls.map((c) => c[0]).join(',')]); return promote; };
   // #3518: named and described before the route runs, as the live path does.
   live.prepareProposal = async ({ sessionId, spec, buildText }) => { liveCalls.push(['prepare', sessionId, spec, buildText || null]); return {}; };
-  live.post = async ({ kind, text, metadata }) => { liveCalls.push(['post', kind, text, metadata || null]); return {}; };
+  live.post = async ({ kind, text, metadata, dm }) => { liveCalls.push(['post', kind, text, metadata || null, dm || null]); return {}; };
   live.postSpecOnProposal = async ({ sessionId, version, spec }) => { liveCalls.push(['specOnProposal', sessionId, version, spec]); };
   live.mentionTargets = async () => [];
   live.botUsernameOf = async () => 'usernode-bot';
@@ -385,6 +388,46 @@ test('a live build whose worker did not survive sends the issue back to be triag
   await adopt(pool, session, 'exited');
   assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']]);
   assert.equal(liveCalls.some((c) => c[0] === 'promote'), false);
+});
+
+test('a lost live build records the loss, says so once, and still requeues', async () => {
+  stubLive({ githubEnabled: true });
+  const session = botSession();
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
+  await adopt(pool, session, 'exited');
+
+  const outcome = liveOutcome(pool);
+  assert.equal(outcome[1], false, 'the run no longer stays blank');
+  assert.match(outcome[2], /^lost: the platform restarted before the build finished/);
+  const said = liveCalls.filter((c) => c[0] === 'post' && c[1] === 'build_lost');
+  assert.equal(said.length, 1, 'one note, not one per path');
+  assert.match(said[0][2], /build of this request was lost when the platform restarted/);
+  assert.match(said[0][2], /gone back in line to be looked at again/);
+  assert.deepEqual(said[0][4], { reason: outcome[2] }, 'and it reaches the requester\'s DM');
+  assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']], 'the request still goes back in line');
+  assert.equal(liveCalls.some((c) => c[0] === 'promote'), false);
+});
+
+test('a lost spec turn has no build outcome to record', async () => {
+  stubLive({ githubEnabled: true });
+  const session = botSession({ active_turn: turn({ mode: 'scout' }) });
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
+  await adopt(pool, session, 'exited');
+  assert.equal(liveOutcome(pool), undefined, 'no build ran, so nothing is recorded');
+  assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'and nothing is said');
+  assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']]);
+});
+
+test('a lost live build still records the loss with GitHub off, and says nothing', async () => {
+  stubLive({ githubEnabled: false });
+  const session = botSession();
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
+  await adopt(pool, session, 'exited');
+  const outcome = liveOutcome(pool);
+  assert.equal(outcome[1], false);
+  assert.match(outcome[2], /^lost:/);
+  assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'nowhere to say it');
+  assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']]);
 });
 
 test('an issue a restart sent back is not told "looking" a second time', () => {

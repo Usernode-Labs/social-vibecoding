@@ -36,17 +36,22 @@ function loadVisuals({ githubEnabled = true } = {}) {
     logger: require.resolve('../src/services/logger'),
     github: require.resolve('../src/services/github'),
     resolver: require.resolve('../src/services/conflict-resolver'),
+    bot: require.resolve('../src/services/homeroom-bot'),
     subject: require.resolve('../src/services/visuals'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
   const drainCalls = [];
+  const botChecks = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.github, { isEnabled: () => githubEnabled });
   stub(ids.resolver, {
     checkAndResolveConflicts: async (_config, trigger) => { drainCalls.push(trigger); },
+  });
+  stub(ids.bot, {
+    async noteProposalChecks(pool, sessionId) { botChecks.push({ pool, sessionId }); return true; },
   });
 
   delete require.cache[ids.subject];
@@ -56,7 +61,7 @@ function loadVisuals({ githubEnabled = true } = {}) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, drainCalls, restore };
+  return { subject, drainCalls, botChecks, restore };
 }
 
 // A pool that returns the given chat_sessions row for the status/app_id
@@ -144,6 +149,73 @@ test('a vanished session row (archived/deleted mid-capture) is a no-op', async (
   } finally {
     restore();
   }
+});
+
+test('a failing verdict asks the bot to look at its proposal, once, with its session id', async () => {
+  const { subject, botChecks, restore } = loadVisuals();
+  const pool = poolReturning({ status: 'promoted', app_id: 42 });
+  try {
+    subject.noteBotChecksAfterChecks(pool, session, 'failing');
+    await flush();
+    assert.equal(botChecks.length, 1, 'the bot is asked exactly once');
+    assert.equal(botChecks[0].pool, pool);
+    assert.equal(botChecks[0].sessionId, 7);
+  } finally {
+    restore();
+  }
+});
+
+test('only a failing verdict asks the bot; passing, pending, skipped and error do nothing', async () => {
+  const { subject, botChecks, restore } = loadVisuals();
+  const pool = poolReturning(null);
+  try {
+    for (const state of ['passing', 'pending', 'skipped', 'error', 'unknown', undefined, null]) {
+      subject.noteBotChecksAfterChecks(pool, session, state);
+    }
+    await flush();
+    assert.equal(botChecks.length, 0);
+    assert.equal(pool.queries.length, 0, 'short-circuits before any DB work');
+  } finally {
+    restore();
+  }
+});
+
+test('a bot call that rejects is swallowed, never thrown into the capture', async () => {
+  const ids = {
+    logger: require.resolve('../src/services/logger'),
+    github: require.resolve('../src/services/github'),
+    resolver: require.resolve('../src/services/conflict-resolver'),
+    bot: require.resolve('../src/services/homeroom-bot'),
+    subject: require.resolve('../src/services/visuals'),
+  };
+  const orig = {};
+  for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
+  stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
+  stub(ids.github, { isEnabled: () => true });
+  stub(ids.bot, { noteProposalChecks: async () => { throw new Error('no bot today'); } });
+  delete require.cache[ids.subject];
+  const subject = require(ids.subject);
+  try {
+    assert.doesNotThrow(() => subject.noteBotChecksAfterChecks(poolReturning(null), session, 'failing'));
+    await flush();
+  } finally {
+    for (const [k, id] of Object.entries(ids)) {
+      if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
+    }
+  }
+});
+
+test('the hook is wired beside the auto-merge trigger at all three settle sites', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  const visuals = read('src/services/visuals.js');
+  const harvest = read('src/services/check-harvest.js');
+  assert.equal((visuals.match(/noteBotChecksAfterChecks\(/g) || []).length, 3,
+    'the definition plus the live capture and lifecycle wrapper sites');
+  assert.match(visuals, /if \(completed\?\.state\) \{\n\s+maybeAutoMergeAfterChecks\(config, getPool\(config\), session, completed\.state\);\n\s+noteBotChecksAfterChecks\(getPool\(config\), session, completed\.state\);/);
+  assert.match(visuals, /if \(!operation\) \{\n\s+maybeAutoMergeAfterChecks\(config, pool, session, checksResult\.state\);\n\s+noteBotChecksAfterChecks\(pool, session, checksResult\.state\);/);
+  assert.match(harvest, /visuals\.maybeAutoMergeAfterChecks\(config, pool, session, settled\.result\.state\);\n\s+visuals\.noteBotChecksAfterChecks\(pool, session, settled\.result\.state\);/);
 });
 
 test('passing verdict is a no-op when GitHub is disabled (staging / standalone)', async () => {

@@ -2662,6 +2662,7 @@ async function adoptBotOrphan({
   await worker.destroyWorker(containerName).catch(() => {});
   await bot.abandonRecoveredTurn({
     pool, session, why: containerState === 'running' ? 'no turn was in flight' : 'the worker is gone',
+    activeTurn,
   });
   await bot.completeRecoveredLive({ pool, config, sessionId });
 }
@@ -4197,7 +4198,7 @@ async function resumeDetachedTurnInner({
         botCleanup,
       );
       await homeroomBotRecovery().abandonRecoveredTurn({
-        pool, session, why: `the journal replay failed: ${err.message}`,
+        pool, session, why: `the journal replay failed: ${err.message}`, activeTurn,
       });
       return;
     }

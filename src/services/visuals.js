@@ -1760,6 +1760,24 @@ function resolveCaptureScale(row) {
   return row && row.screenshot_device_scale === 1 ? 1 : 2;
 }
 
+// #3742: a failing verdict on a proposal the Homeroom bot opened itself
+// sends the bot to look at it: fix the checks in a new revision, or hand
+// the proposal to a person. Fire-and-forget and best-effort, like the
+// auto-merge trigger below: the capture pipeline's contract is unchanged.
+// Lazy require, because homeroom-bot loads half the platform.
+function noteBotChecksAfterChecks(pool, session, state) {
+  if (state !== 'failing') return;
+  try {
+    require('./homeroom-bot').noteProposalChecks(pool, session.id).catch((err) => {
+      log.warn('visuals', 'Bot checks follow-up failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      });
+    });
+  } catch (err) {
+    log.warn('visuals', 'Bot checks follow-up failed (non-fatal)', { sessionId: session.id, err: err.message });
+  }
+}
+
 // #451: re-drive the app-level auto-merge drain after a proposal's checks
 // reach a terminal verdict, so a PR that already had a winning vote merges
 // the moment its checks turn green (the "checks were the last thing to pass"
@@ -1939,7 +1957,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           { ...opts, force: opts.force || !!stagingResult });
       }, { force: opts.force, onError: (err, pool, operation) =>
         publishCaptureError(pool, session.id, operation.revision, err, opts.send) });
-      if (completed?.state) maybeAutoMergeAfterChecks(config, getPool(config), session, completed.state);
+      if (completed?.state) {
+        maybeAutoMergeAfterChecks(config, getPool(config), session, completed.state);
+        noteBotChecksAfterChecks(getPool(config), session, completed.state);
+      }
       return completed;
     } catch (err) {
       if (lifecycle.isCancelled(err)) return;
@@ -3202,7 +3223,10 @@ async function settleCaptureRun(config, pool, run) {
   // app-level merge drain so "checks finished after the votes were in"
   // auto-merges just like "votes landed after checks were green".
   // Fire-and-forget; never blocks or fails the capture pipeline.
-  if (!operation) maybeAutoMergeAfterChecks(config, pool, session, checksResult.state);
+  if (!operation) {
+    maybeAutoMergeAfterChecks(config, pool, session, checksResult.state);
+    noteBotChecksAfterChecks(pool, session, checksResult.state);
+  }
 
   const dropped = [];
   const stored = await storeArtifacts(pool, session.id, commitHash, targets, shots, dropped);
@@ -3754,6 +3778,7 @@ module.exports = {
   // (services/check-harvest.js) settling a run whose launcher died.
   settleCaptureRun,
   holdCapture,
+  noteBotChecksAfterChecks,
   notifyChecks,
   RUN_TIMEOUT_MS,
   RUN_MAX_BUFFER,

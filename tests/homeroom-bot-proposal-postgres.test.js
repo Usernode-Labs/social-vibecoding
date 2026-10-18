@@ -192,6 +192,69 @@ test('a bot proposal is named by its spec and led by its own description', { tim
     assert.equal(row.pr_title, 'A name a person gave it');
   });
 
+  await t.test('a checks fix records the proposal head it looked at (#3742)', async () => {
+    const head = 'e'.repeat(40);
+    const { rows: [inserted] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, checks_head_sha)
+       VALUES ($1, 1, 'live', 'revise', $2) RETURNING checks_head_sha`,
+      [app.id, head],
+    );
+    assert.equal(inserted.checks_head_sha, head, 'the new column takes a head');
+    const { rows: indexes } = await pool.query(
+      `SELECT indexname FROM pg_indexes WHERE tablename = 'homeroom_bot_runs'
+        AND indexname = 'idx_homeroom_bot_runs_checks_head'`,
+    );
+    assert.equal(indexes.length, 1, 'and the look-up has its partial index');
+  });
+
+  await t.test('a failing verdict queues a checks fix, and that head is looked at once (#3742)', async () => {
+    const homeroomBot = require('../src/services/homeroom-bot');
+    homeroomBot._resetForTests();
+    const id = await buildSession({ spec: null });
+    const head = 'f'.repeat(40);
+    const ISSUE = 4242;
+    await pool.query(
+      `UPDATE chat_sessions
+          SET status = 'promoted', reviewed_head_sha = $2, checks_commit_sha = $2,
+              check_state = 'failing', test_results = $3::jsonb
+        WHERE id = $1`,
+      [id, head, JSON.stringify([
+        { name: 'Text size', status: 'fail', failureReason: 'Expected text "Text size" was not found' },
+        { name: 'Home loads', status: 'pass' },
+      ])],
+    );
+    // The run that made it the bot's proposal, and the live list.
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id)
+       VALUES ($1, $2, 'live', 'ready', $3)`,
+      [app.id, ISSUE, id],
+    );
+    for (const [key, value] of [['homeroom_bot_mode', 'live'], ['homeroom_bot_live_apps', JSON.stringify([app.slug])]]) {
+      await pool.query(
+        `INSERT INTO platform_settings (key, value) VALUES ($1, $2)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [key, value],
+      );
+    }
+
+    assert.equal(await homeroomBot.noteProposalChecks(pool, id), true, 'the verdict is queued');
+    const queued = await pool.query(
+      'SELECT priority, reason FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2',
+      [app.id, ISSUE],
+    );
+    assert.deepEqual(queued.rows[0], { priority: 1, reason: 'checks_failing' });
+
+    // A run that reached an outcome on this head means the look is spent.
+    await pool.query(
+      'UPDATE homeroom_bot_runs SET checks_head_sha = $2 WHERE proposal_session_id = $1',
+      [id, head],
+    );
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1', [app.id]);
+    assert.equal(await homeroomBot.noteProposalChecks(pool, id), false, 'one look per failing head');
+    const after = await pool.query('SELECT id FROM homeroom_bot_queue WHERE app_id = $1', [app.id]);
+    assert.equal(after.rows.length, 0);
+  });
+
   await t.test('the reproduction above is the call the promote route makes', () => {
     const votes = fs.readFileSync(path.join(__dirname, '..', 'src/routes/votes.js'), 'utf8');
     const call = votes.slice(votes.indexOf('prResult = await prMetadata.applyPrMetadata({'));

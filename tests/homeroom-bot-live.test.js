@@ -712,7 +712,8 @@ test('a "Triage this app again" item is triaged without the "looking" post, and 
   assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON,/);
   // The refresh keeps a priority-0 row's reason, so a comment before the
   // row runs does not turn it back into a "looking" one mid-pass.
-  assert.match(BOT_SRC, /reason = CASE WHEN homeroom_bot_queue\.priority = 0\s+THEN homeroom_bot_queue\.reason ELSE EXCLUDED\.reason END/);
+  // #3742: and a waiting checks fix keeps its reason too.
+  assert.match(BOT_SRC, /reason = CASE WHEN homeroom_bot_queue\.priority = 0\s+OR homeroom_bot_queue\.reason = 'checks_failing'\s+THEN homeroom_bot_queue\.reason ELSE EXCLUDED\.reason END/);
 });
 
 test('a live build\'s outcome is recorded on its run, in the shadow build\'s columns (#3509)', async (t) => {

@@ -96,6 +96,7 @@ test('what it says has no em dashes', () => {
 
 function harness({
   proposalStatus = 'promoted', revisions = 0, comments = [], issueThread = [], proposalThread = [],
+  session = {},
   result = { lastResultText: '```json\n{"action":"answer","reply":"Because the platform uses it."}\n```', pushOk: true, sha: OLD_HEAD },
 } = {}) {
   const calls = { queries: [], exec: [], loop: null, posts: [], reconciled: [], seen: [] };
@@ -108,7 +109,13 @@ function harness({
       }
       if (/SELECT id, thread_seen_at FROM homeroom_bot_runs/.test(s)) return { rows: [{ id: 800, thread_seen_at: SEEN }] };
       if (/SELECT cs\.\*, a\.slug AS app_slug/.test(s)) {
-        return { rows: [{ id: 5001, user_id: 77, app_id: 9, status: 'promoted', branch_name: 'dev/homeroom_bot-5001', pr_number: 25, reviewed_head_sha: OLD_HEAD, app_slug: APP.slug, repo_url: APP.repo_url }] };
+        return {
+          rows: [{
+            id: 5001, user_id: 77, app_id: 9, status: 'promoted', branch_name: 'dev/homeroom_bot-5001',
+            pr_number: 25, reviewed_head_sha: OLD_HEAD, app_slug: APP.slug, repo_url: APP.repo_url,
+            ...session,
+          }],
+        };
       }
       if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(s)) return { rows: [{ n: revisions }] };
       if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
@@ -192,7 +199,7 @@ test('a question in the proposal\'s discussion is answered there and on the issu
   assert.match(h.calls.posts[0].text, /Because the platform uses it/);
   const insert = insertOf(h);
   assert.equal(insert.params[4], 'answer');
-  assert.equal(insert.params.at(-1), 5001, 'tied to the proposal');
+  assert.equal(insert.params.at(-2), 5001, 'tied to the proposal');
   assert.equal(h.calls.seen[0].proposalSessionId, 5001, 'a reply there during the turn means it looks again');
   assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31));
 });
@@ -252,6 +259,24 @@ test('after MAX_REVISIONS the turn runs read-only, and can only hand over', asyn
   assert.equal(out.verdict, 'person');
   assert.equal(h.calls.posts[0].kind, 'followup_person');
   assert.equal(followup.MAX_REVISIONS, 3);
+});
+
+test('#3742: a reply comes first, and a fix still due after it is queued again', async (t) => {
+  const h = harness({
+    comments: [{ author: 'evan', body: 'Any progress?', createdAt: '2026-09-26T11:30:00Z' }],
+    session: {
+      check_state: 'failing', checks_commit_sha: OLD_HEAD,
+      test_results: [{ name: 'Text size', status: 'fail', failureReason: 'Expected text "Text size" was not found' }],
+    },
+  });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'answer', 'the person is answered first');
+  assert.match(h.calls.exec[0].opts.prompt, /Any progress\?/);
+  const requeued = h.calls.queries.find((q) => /INSERT INTO homeroom_bot_queue/.test(q.s));
+  assert.ok(requeued, 'the checks fix still waits');
+  assert.deepEqual(requeued.params, [9, 24, 'checks_failing']);
+  assert.ok(!h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)),
+    'not dropped as "nothing new"');
 });
 
 test('a proposal that is merging is left alone', async (t) => {

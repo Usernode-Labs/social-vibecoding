@@ -9436,6 +9436,16 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_created
 ALTER TABLE homeroom_bot_runs
   ADD COLUMN IF NOT EXISTS proposal_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
 
+-- #3742: the proposal head a checks fix looked at. A failing verdict on the
+-- proposal's current head buys ONE look: revise it, or hand it to a person.
+-- Written only when that look reached an outcome, never on a platform fault
+-- or an infra-looking failure, so a later verdict on the same head is still
+-- seen.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha TEXT;
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_checks_head
+  ON homeroom_bot_runs(proposal_session_id, checks_head_sha)
+  WHERE checks_head_sha IS NOT NULL;
+
 -- Shadow builds: a ready verdict on an app outside the live list, built on a
 -- branch nobody is shown, so what the bot would have proposed can be
 -- spot-checked (see "The build lane" in services/homeroom-bot.js).
