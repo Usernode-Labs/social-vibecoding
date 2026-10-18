@@ -363,7 +363,15 @@ test('a live spec turn sends the issue back to be triaged, and a BLOCKED one say
   const [requeue] = requeues(pool);
   assert.ok(requeue, 'back in the queue: its row was gone with the pass');
   assert.deepEqual(requeue.params, [5, 12, 'restart']);
-  assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'nothing said: the fresh triage speaks');
+  // #3646: a lost build is said, not swallowed. The run records its outcome
+  // and the request gets one note; the fresh triage still says nothing more.
+  const lost = runUpdates(pool).find((c) => /SET build_ok = FALSE, build_error = \$2/.test(c.sql));
+  assert.ok(lost, 'the lost build is recorded on its run');
+  assert.deepEqual(lost.params, [950, 'restart: its spec turn was interrupted']);
+  const said = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_lost');
+  assert.ok(said, 'the request is told the work was lost');
+  assert.match(said[2], /lost its work on this when the platform restarted/);
+  assert.match(said[2], /It will look at the request again\./);
 
   stubLive();
   journalTail = async () => ({ lastResultText: 'BLOCKED: the app keeps no scores to rank.', exitCode: 0 });
@@ -385,6 +393,13 @@ test('a live build whose worker did not survive sends the issue back to be triag
   await adopt(pool, session, 'exited');
   assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']]);
   assert.equal(liveCalls.some((c) => c[0] === 'promote'), false);
+  // #3646: the lost build records its outcome and says so once on the request.
+  const lost = runUpdates(pool).find((c) => /SET build_ok = FALSE, build_error = \$2/.test(c.sql));
+  assert.ok(lost, 'the lost build is recorded on its run');
+  assert.deepEqual(lost.params, [950, 'restart: its worker was gone when the platform came back']);
+  const said = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_lost');
+  assert.ok(said, 'the request is told the work was lost');
+  assert.match(said[2], /its worker was gone when the platform came back/);
 });
 
 test('an issue a restart sent back is not told "looking" a second time', () => {

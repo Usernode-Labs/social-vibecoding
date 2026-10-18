@@ -92,6 +92,103 @@ test('what it says has no em dashes', () => {
   assert.match(texts[3], /earlier votes were cleared/);
 });
 
+// ── The failing checks (#3646) ───────────────────────────────────────────
+
+test('a fix is due only on a failing verdict on the current head, with failures, never looked at', () => {
+  const due = {
+    checkState: 'failing', checksCommitSha: OLD_HEAD, reviewedHeadSha: OLD_HEAD, failingChecks: 1, headLooked: false,
+  };
+  assert.equal(followup.checksDue(due), true);
+  assert.equal(followup.checksDue({ ...due, checkState: 'error' }), false, 'an error is never acted on');
+  assert.equal(followup.checksDue({ ...due, checksCommitSha: NEW_HEAD }), false, 'a stale verdict');
+  assert.equal(followup.checksDue({ ...due, reviewedHeadSha: null }), false);
+  assert.equal(followup.checksDue({ ...due, failingChecks: 0 }), false, 'nothing failing to fix');
+  assert.equal(followup.checksDue({ ...due, headLooked: true }), false, 'this head was already looked at');
+});
+
+test('infra-looking failures: 2 of 43 and 1 of 85 are not infra; all-failing and every-never-reached are', () => {
+  const selectorTimeout = (name) => ({ name, reason: `TimeoutError: locator.waitFor: Timeout 30000ms exceeded waiting for selector "${name}"` });
+  // The two real cases the request came from: a handful of real failures on
+  // a big suite is the code's, not the platform's.
+  const twoOf43 = [
+    selectorTimeout('todo-list renders'),
+    { name: 'todo-list saves', reason: 'expected "inherit" but got "line-through"' },
+  ];
+  assert.equal(followup.checksLookLikeInfra(twoOf43, 43), false);
+  assert.equal(followup.checksLookLikeInfra([{ name: 'x', reason: selectorTimeout('x').reason }], 85), false,
+    'recipebot #82: 1 of 85');
+  // A preview that never worked: at least 3 failures and at least half of all.
+  assert.equal(followup.checksLookLikeInfra([{ name: 'a', reason: 'r' }, { name: 'b', reason: 'r' }, { name: 'c', reason: 'r' }], 6), true);
+  assert.equal(followup.checksLookLikeInfra([{ name: 'a', reason: 'r' }, { name: 'b', reason: 'r' }], 6), false,
+    '2 of 6 is not half');
+  // Every reason says the page was never reached.
+  assert.equal(followup.checksLookLikeInfra([
+    { name: 'a', reason: 'net::ERR_CONNECTION_REFUSED at http://127.0.0.1:8080' },
+    { name: 'b', reason: 'navigation timeout of 30000 ms exceeded' },
+  ], 85), true);
+  assert.equal(followup.checksLookLikeInfra([
+    { name: 'a', reason: 'net::ERR_NAME_NOT_RESOLVED' },
+    { name: 'b', reason: 'the page crashed' },
+    { name: 'c', reason: 'HTTP 503 while loading /' },
+  ], 3), true);
+  // A selector timeout is deliberately NOT infra: that is how a real failure reads.
+  assert.equal(followup.checksLookLikeInfra([selectorTimeout('the button')], 1), false);
+  assert.equal(followup.checksLookLikeInfra([], 0), false);
+});
+
+test('the checks-fix prompt shows the failures as data and names the never-loosen rule', () => {
+  const prompt = followup.checksFixPrompt({
+    seed: 'SEED', proposalBlock: 'BLOCK', prNumber: 214,
+    failing: [{ name: 'snooze label', reason: 'expected "Text size" but found "Aa"' }, { name: 'other', reason: 'r' }],
+  });
+  assert.match(prompt, /opened PR #214/);
+  assert.match(prompt, /snooze label: expected "Text size" but found "Aa"/);
+  assert.match(prompt, /Never loosen, weaken, skip or change a check that existed before your proposal/);
+  assert.match(prompt, /this proposal itself added/);
+  assert.match(prompt, /"action": "revise" \| "person"/);
+  assert.doesNotMatch(prompt, /"answer"/, 'only fix or hand over');
+});
+
+test('the checks hand-off says a person should take it, and says why', () => {
+  const text = followup.checksHandOffText({ why: 'its fix could not be pushed', reply: 'The worker refused the push.', prNumber: 214 });
+  assert.match(text, /Homeroom bot looked at the failing checks on its proposal \(PR #214\)/);
+  assert.match(text, /a person should take this one: its fix could not be pushed/);
+  assert.match(text, /The worker refused the push\./);
+  assert.ok(!/—/.test(text));
+});
+
+test('a checks fix turn commits with its own message', async () => {
+  const execs = [];
+  let loop;
+  const deps = {
+    worker: {
+      async ensureWorkerImage() {}, async ensureWorker() { return 'w'; },
+      async execInWorker(id, opts) { execs.push(opts); return { lastResultText: 'x' }; },
+      async stopTurn() {},
+    },
+    agentTurn: { async resolveCodexRuntimeContext() { return {}; } },
+    sessions: { async runCodexAttemptLoop({ dispatchOnce, mode }) { loop = mode; return { result: await dispatchOnce({}), error: null }; } },
+    activeWorkers: new Set(),
+  };
+  const pool = { async query() { return { rows: [] }; } };
+  await followup.runFollowUpTurn({
+    pool, config: {}, bot: BOT, repo: { owner: 'o', repo: 'r' }, session: { id: 5001, branch_name: 'b' },
+    prompt: 'p', mode: 'build', issueNumber: 24, turnBudgetMs: 1000, model: 'm', deps,
+    commitMsg: 'Homeroom bot: fix its proposal\'s failing checks (#24)',
+  });
+  assert.equal(execs[0].commitMsg, 'Homeroom bot: fix its proposal\'s failing checks (#24)');
+  const plain = [];
+  const deps2 = {
+    ...deps,
+    worker: { ...deps.worker, async execInWorker(id, opts) { plain.push(opts); return { lastResultText: 'x' }; } },
+  };
+  await followup.runFollowUpTurn({
+    pool, config: {}, bot: BOT, repo: { owner: 'o', repo: 'r' }, session: { id: 5001, branch_name: 'b' },
+    prompt: 'p', mode: 'build', issueNumber: 24, turnBudgetMs: 1000, model: 'm', deps: deps2,
+  });
+  assert.equal(plain[0].commitMsg, 'Homeroom bot: follow-up on #24', 'a reply turn keeps today\'s wording');
+});
+
 // ── runTriage, down the follow-up path ───────────────────────────────────
 
 function harness({
@@ -192,7 +289,8 @@ test('a question in the proposal\'s discussion is answered there and on the issu
   assert.match(h.calls.posts[0].text, /Because the platform uses it/);
   const insert = insertOf(h);
   assert.equal(insert.params[4], 'answer');
-  assert.equal(insert.params.at(-1), 5001, 'tied to the proposal');
+  assert.equal(insert.params[20], 5001, 'tied to the proposal');
+  assert.equal(insert.params[21], null, 'a reply run stamps no checks head');
   assert.equal(h.calls.seen[0].proposalSessionId, 5001, 'a reply there during the turn means it looks again');
   assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31));
 });

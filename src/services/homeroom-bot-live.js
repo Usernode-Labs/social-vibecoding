@@ -141,6 +141,14 @@ function buildFailedText(reason) {
     + 'A person could pick it up from here.';
 }
 
+// #3646: a build its work lost to a platform restart. One line, said once
+// on the request; the fresh triage says nothing more (RESTART_REASON keeps
+// the second "looking" post off).
+function buildLostText(why) {
+  return `Homeroom bot lost its work on this when the platform restarted: ${clipText(why, 300)}. `
+    + 'It will look at the request again.';
+}
+
 // #3152: a verdict a live cap held. One line, so the person who filed the
 // issue is not left with silence, and a promise the refresh keeps: a held
 // issue is queued again as soon as the cap that held it has room.
@@ -563,6 +571,36 @@ async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec
   });
 }
 
+/**
+ * A note in the proposal's own discussion ONLY (no GitHub comment, no issue
+ * thread, no DM): the bot's message in the session's thread, recorded in
+ * homeroom_bot_posts so the dashboard sees it. Used by the checks fix, whose
+ * one note about the revision it pushed belongs where the group is voting.
+ * Best-effort: a failed post never changes the fix's outcome.
+ */
+async function postOnProposal({ pool, ws, app, issueNumber, bot, sessionId, kind, runId = null, text }) {
+  const { rows } = await pool.query(
+    `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id`,
+    [app.id, issueNumber, runId, kind],
+  );
+  const postId = rows[0]?.id || null;
+  let message = null;
+  try {
+    message = await ws.sendBotMessage(pool, app.id, {
+      user: bot, content: text, thread: { type: 'session', ref: Number(sessionId) },
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Proposal note failed (continuing)', { app: app.slug, sessionId, kind, err: err.message });
+  }
+  if (postId) {
+    await pool.query('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', [postId, message?.id ?? null]).catch(() => {});
+  }
+  log.info('homeroom-bot', 'Posted on proposal', { app: app.slug, issueNumber, kind, sessionId, thread: !!message });
+  return { postId, thread: !!message };
+}
+
 // ── Who filed the issue ──────────────────────────────────────────────────
 //
 // An issue filed from Homeroom is authored on GitHub by the platform's bot
@@ -584,6 +622,7 @@ async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec
 const TAGGING_KINDS = new Set([
   'question', 'person', 'empty', 'proposal', 'build_failed', 'blocked', 'spec',
   'followup_answer', 'followup_ask', 'followup_revise', 'followup_person', 'followup_failed',
+  'build_lost',
 ]);
 
 function tagsPoster(kind) {
@@ -1472,6 +1511,7 @@ module.exports = {
   emptyText,
   proposalText,
   buildFailedText,
+  buildLostText,
   heldText,
   heldKind,
   lastPostKind,
@@ -1485,6 +1525,7 @@ module.exports = {
   parseStopMentioning,
   MAX_MENTIONS,
   post,
+  postOnProposal,
   advanceSeen,
   botUsernameOf,
   openBotProposal,

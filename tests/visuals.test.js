@@ -615,3 +615,41 @@ test('Kubernetes captures use the deployed HTTPS ingress for Secure browser sess
   assert.equal(visuals.kubernetesCaptureOrigin(config, { slug: 'demo' }), 'https://demo.apps.example.test');
   assert.throws(() => visuals.kubernetesCaptureOrigin({ kubernetes: { appDomain: 'bad/path' } }, app, 1), /hostname/);
 });
+
+// ── The bot's checks-fix hook (#3646) ────────────────────────────────────
+
+test('the checks hook fires only on a failing verdict, and hands the session through', async () => {
+  const bot = require('../src/services/homeroom-bot');
+  const seen = [];
+  const real = bot.noteProposalChecks;
+  bot.noteProposalChecks = async (pool, session, state) => { seen.push([pool, session, state]); return true; };
+  try {
+    const pool = { async query() { return { rows: [] }; } };
+    const session = { id: 5001 };
+    visuals.noteBotChecksAfterChecks(pool, session, 'passing');
+    visuals.noteBotChecksAfterChecks(pool, session, 'error');
+    visuals.noteBotChecksAfterChecks(pool, null, 'failing');
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(seen, [], 'passing and error are never acted on, and a sessionless call neither');
+    visuals.noteBotChecksAfterChecks(pool, session, 'failing');
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(seen, [[pool, session, 'failing']]);
+  } finally {
+    bot.noteProposalChecks = real;
+  }
+});
+
+test('the hook sits beside the merge drain at every verdict-settle site', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  const vis = read('src/services/visuals.js');
+  const liveSite = vis.slice(vis.indexOf('if (completed?.state) {'));
+  assert.match(liveSite, /maybeAutoMergeAfterChecks\(config, getPool\(config\), session, completed\.state\);\s*\n\s*noteBotChecksAfterChecks\(getPool\(config\), session, completed\.state\);/);
+  const wrapperSite = vis.slice(vis.indexOf('if (!operation) {'));
+  assert.match(wrapperSite, /maybeAutoMergeAfterChecks\(config, pool, session, checksResult\.state\);\s*\n\s*noteBotChecksAfterChecks\(pool, session, checksResult\.state\);/);
+  const harvest = read('src/services/check-harvest.js');
+  assert.match(harvest, /visuals\.maybeAutoMergeAfterChecks\(config, pool, session, settled\.result\.state\);\s*\n\s*visuals\.noteBotChecksAfterChecks\(pool, session, settled\.result\.state\);/);
+});

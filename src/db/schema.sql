@@ -9455,6 +9455,11 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_at TIMESTAMPTZ;
 -- is retried once and then recorded failed.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_queued_at TIMESTAMPTZ;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_attempts INTEGER NOT NULL DEFAULT 0;
+-- #3646: the proposal head a run looked at for failing checks, stamped on
+-- the fix run whatever its outcome (revise, hand-off, a turn that failed)
+-- and never on reply-answer runs or runs that read as the platform's fault,
+-- so each failing head gets exactly one bounded look.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha VARCHAR(40);
 -- The spec the bot wrote just before building (live or shadow): the same
 -- text is the build session's spec doc; kept here for the dashboard and the
 -- export, since a shadow build's session is archived and nobody opens it.

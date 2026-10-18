@@ -424,7 +424,7 @@ test('a budget stop records WHICH limit tripped, in a column of its own', async 
   const harness = triageHarness({ verdictText: 'x', sessionId: 856 });
   await runToWallClock(t, harness);
   const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.match(insert.s, /budget_stop, proposal_session_id\)/, 'the insert names the column');
+  assert.match(insert.s, /budget_stop, proposal_session_id,/, 'the insert names the column');
   assert.ok(insert.params.includes('wall clock'),
     'the limit is stored as data, not left to be grepped out of the error text');
   assert.ok(insert.params.includes('budget: wall clock'), 'and the error line still reads the same');
@@ -1149,7 +1149,13 @@ test('the triage turn is a read-only scout: no build mode, no push, no posting, 
   // mode and the prompt now (#2737), and #2870's note on where that limit
   // actually binds sits with it, so the pin allows what sits between.
   assert.match(dispatch, /mode: 'scout',[\s\S]{0,1200}?\n\s*prompt,/, 'so does the container exec');
-  assert.ok(!/mode: 'build'/.test(dispatch), 'never a build turn');
+  // #3646: the checks fix, a follow-up on the bot's own proposal, is its
+  // own build turn; the triage turn itself is never one.
+  const triageOnly = dispatch.replace(
+    dispatch.slice(dispatch.indexOf('async function runChecksFix'), dispatch.indexOf('async function runFollowUp')),
+    '',
+  );
+  assert.ok(!/mode: 'build'/.test(triageOnly), 'never a build turn');
   assert.ok(!/telemetryComponent: 'coding_agent_build'/.test(dispatch));
   for (const forbidden of ['createIssueComment', 'claimIssueForUser', 'sendSystemMessage', 'createNotification', '/promote', 'clone-headless', 'linked_issues = ']) {
     assert.ok(!SRC.includes(forbidden), `shadow mode never reaches ${forbidden}`);

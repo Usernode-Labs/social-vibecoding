@@ -203,7 +203,7 @@ const STALE_CLAIM_MARGIN_SECONDS = 10 * 60;
 // of time on its 92nd model request, in the middle of the test run the
 // repository's own instructions ask for, having spent $0.29. Time, not
 // money, is what those builds run out of.
-const PLATFORM_BUILD_TIME_FACTOR = 2;
+const PLATFORM_BUILD_TIME_FACTOR = 3;
 // The queue reason of an issue a restart sent back to be looked at again.
 const RESTART_REASON = 'restart';
 // The queue reason of an issue an admin's "Triage this app again" queued
@@ -1162,8 +1162,9 @@ async function insertRun(pool, run) {
     `INSERT INTO homeroom_bot_runs
        (app_id, issue_number, session_id, mode, verdict, determined, missing_fact, question,
         question_default, build_note, reason, cap_suppressed, thread_seen_at, model, cost_usd,
-        input_tokens, output_tokens, duration_ms, error, budget_stop, proposal_session_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+        input_tokens, output_tokens, duration_ms, error, budget_stop, proposal_session_id,
+        checks_head_sha)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
      RETURNING id`,
     [run.appId, run.issueNumber, run.sessionId || null, run.mode, run.verdict,
       run.determined ?? null, run.missingFact || null, run.question || null,
@@ -1171,7 +1172,7 @@ async function insertRun(pool, run) {
       run.capSuppressed || null, run.threadSeenAt || null, run.model || null,
       run.costUsd ?? null, run.inputTokens ?? null, run.outputTokens ?? null,
       run.durationMs ?? null, run.error ? clip(run.error, MAX_ERROR_CHARS) : null,
-      run.budgetStop || null, run.proposalSessionId || null],
+      run.budgetStop || null, run.proposalSessionId || null, run.checksHeadSha || null],
   );
   const id = rows[0]?.id || null;
   // #3624: a question's suggested answers, beside the row rather than in
@@ -2654,8 +2655,45 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     const specRead = plan.mode === 'scout' && !plan.lost && !plan.timedOut
       ? live.readSpec(plan.result?.lastResultText) : null;
     if (plan.lost || (plan.mode === 'scout' && !specRead?.blocked)) {
+      // A lost build records its outcome (run 613): before this the run kept
+      // build_ok NULL forever, showing neither built nor failed, and the
+      // request sat in silence. `why` names the restart, per what the plan
+      // found: a worker that did not survive, or a spec turn interrupted.
+      const lostWhy = plan.lost
+        ? 'its worker was gone when the platform came back'
+        : 'its spec turn was interrupted';
+      await pool.query(
+        `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2
+          WHERE id = $1 AND build_ok IS NULL`,
+        [plan.runId, `restart: ${lostWhy}`],
+      ).catch((err) => log.warn('homeroom-bot', 'Could not record a lost live build', {
+        runId: plan.runId, err: err.message,
+      }));
       await archive();
       await requeueForRestart(pool, plan.appId, plan.issueNumber);
+      // Said once on the request. The fresh triage it re-queues into posts
+      // nothing (RESTART_REASON keeps the second "looking" off).
+      try {
+        const lostGithub = deps.github || require('./github');
+        const lostRepo = parseRepo(app.repo_url);
+        if (lostRepo) {
+          const lostD = liveDeps(deps);
+          const lostBot = { id: session.user_id, username: live.BOT_USERNAME };
+          const targets = await live.mentionTargets({
+            pool, github: lostGithub, app, repo: lostRepo, issueNumber: plan.issueNumber, issue: null, bot: lostBot,
+          }).catch(() => []);
+          await live.post({
+            pool, github: lostGithub, ws: lostD.ws, app, repo: lostRepo, issueNumber: plan.issueNumber,
+            kind: 'build_lost', runId: plan.runId, text: live.buildLostText(lostWhy),
+            sender: lostBot, senderId: lostBot.id, mentions: targets,
+            notifications: deps.notifications || null,
+          });
+        }
+      } catch (err) {
+        log.warn('homeroom-bot', 'Lost-build note failed (continuing)', {
+          app: app.slug, issueNumber: plan.issueNumber, err: err.message,
+        });
+      }
       log.info('homeroom-bot', 'Sent a live issue back to be triaged after a restart', {
         app: app.slug, issueNumber: plan.issueNumber, sessionId, why: plan.why || plan.mode,
       });
@@ -2844,6 +2882,328 @@ async function buildLaneSummary(pool) {
  * something since the bot last looked; otherwise that activity is recorded
  * as seen and nothing is posted or spent.
  */
+// ── The bot fixes its own failing checks (#3646) ─────────────────────────
+//
+// The same reconcile a person's revision reaches: the new head becomes the
+// reviewed one, earlier votes stop counting, checks and the staging preview
+// re-run on it, and the thread says so. Shared by the reply follow-up and
+// the checks fix, so neither path drifts from the other.
+
+async function reconcileRevision(pool, config, deps, session) {
+  const votes = deps.votes || require('../routes/votes');
+  const { rows: fresh } = await pool.query(
+    `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted AS app_self_hosted
+       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
+    [session.id],
+  );
+  await votes.reconcileNativeReviewedHead({
+    config, pool, session: fresh[0] || session, fresh: true, notify: true,
+  });
+}
+//
+// A proposal the bot opened for a vote used to sit red until somebody wrote
+// to it: only a reply re-queued the issue, and the follow-up answered that
+// reply instead. Now a settled failing verdict on the head the group is
+// voting on queues one bounded fix look, which runs even with no replies.
+// `checks_failing` is the queue reason; a run that looked stamps the head it
+// looked at, so each failing head gets exactly one look.
+
+const CHECKS_FIX_REASON = 'checks_failing';
+
+/** The failing set, the merge gate's own rule: non-pass, non-advisory rows. */
+function failingChecksOf(results) {
+  return (Array.isArray(results) ? results : [])
+    .filter((r) => r && r.status !== 'pass' && !r.advisory)
+    .map((r) => ({ name: r.name || r.path || 'a check', reason: r.failureReason || r.reason || '' }));
+}
+
+/** Queue the issue for a checks fix and wake the loop, as a restart does. */
+async function queueChecksFix(pool, appId, issueNumber) {
+  await pool.query(
+    `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason)
+     VALUES ($1, $2, 1, $3)
+     ON CONFLICT (app_id, issue_number) DO UPDATE
+       SET priority = LEAST(homeroom_bot_queue.priority, 1), reason = EXCLUDED.reason,
+           started_at = NULL, enqueued_at = NOW()`,
+    [appId, issueNumber, CHECKS_FIX_REASON],
+  );
+  wake({ appId });
+}
+
+/**
+ * After a reply turn that moved nothing, a fix still due on the head the
+ * group is voting on re-queues, so the next pass looks at it. The reply run
+ * itself stamps nothing.
+ */
+async function requeueChecksFixIfDue(pool, { bot, app, issueNumber, session }) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT cs.* FROM chat_sessions cs
+        WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status = 'promoted'`,
+      [session.id, bot.id],
+    );
+    if (rows[0] && await checksFixDue(pool, rows[0])) {
+      await queueChecksFix(pool, app.id, issueNumber);
+      log.info('homeroom-bot', 'Re-queued a checks fix still due after a reply', {
+        app: app.slug, issueNumber, sessionId: session.id,
+      });
+    }
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not re-queue a checks fix', { err: err.message });
+  }
+}
+
+/**
+ * Is a bounded fix due on this proposal, on the row in front of the caller?
+ * `session` is a bot-owned promoted proposal read fresh (cs.*), so it
+ * carries the check state, the heads and the results.
+ */
+async function checksFixDue(pool, session) {
+  if (!session || !session.id || !session.branch_name) return false;
+  const failing = failingChecksOf(session.test_results);
+  const { rows: looked } = await pool.query(
+    `SELECT 1 FROM homeroom_bot_runs
+      WHERE proposal_session_id = $1 AND checks_head_sha = $2
+      LIMIT 1`,
+    [session.id, session.checks_commit_sha],
+  );
+  return followup.checksDue({
+    checkState: session.check_state,
+    checksCommitSha: session.checks_commit_sha,
+    reviewedHeadSha: session.reviewed_head_sha,
+    failingChecks: failing.length,
+    headLooked: looked.length > 0,
+  });
+}
+
+/**
+ * A check verdict settled failing on a session the bot may own. Called
+ * fire-and-forget beside maybeAutoMergeAfterChecks, for every app's
+ * sessions, so it re-reads the row rather than trusting the caller's
+ * snapshot and gates hard: the bot's own proposal, still up for a vote,
+ * on a live app, with a failure verdict on the current head, a non-empty
+ * failing set, and no run having looked at this head yet. Shadow apps have
+ * no bot proposals to fix. Never throws.
+ */
+async function noteProposalChecks(pool, session, state) {
+  try {
+    if (state !== 'failing' || !session || !session.id) return false;
+    const { rows } = await pool.query(
+      `SELECT cs.id, cs.app_id, cs.branch_name, cs.check_state, cs.checks_commit_sha,
+              cs.reviewed_head_sha, cs.test_results, cs.linked_issues, a.slug
+         FROM chat_sessions cs
+         JOIN apps a ON a.id = cs.app_id
+         JOIN users u ON u.id = cs.user_id
+        WHERE cs.id = $1 AND cs.status = 'promoted' AND u.username = $2`,
+      [Number(session.id), BOT_USERNAME],
+    );
+    const fresh = rows[0];
+    if (!fresh || !fresh.app_id || !Array.isArray(fresh.linked_issues) || !fresh.linked_issues.length) {
+      return false;
+    }
+    const settings = await readSettings(pool).catch(() => null);
+    if (!settings || !live.isLiveFor(settings, fresh)) return false;
+    if (!await checksFixDue(pool, fresh)) return false;
+    await queueChecksFix(pool, fresh.app_id, fresh.linked_issues[0]);
+    log.info('homeroom-bot', 'A proposal\'s checks failed; the bot will try one bounded fix', {
+      app: fresh.slug, issueNumber: fresh.linked_issues[0], sessionId: fresh.id,
+    });
+    return true;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Checks-fix pickup failed (non-fatal)', {
+      sessionId: session && session.id, err: err.message,
+    });
+    return false;
+  }
+}
+
+/**
+ * One bounded attempt to fix a proposal's failing checks, on the proposal's
+ * own session and branch, with no new replies needed. The turn ends in one
+ * of three ways: a moved head, reconciled and said once in the proposal's
+ * own thread; a hand-off to a person, said once in the three places; or a
+ * platform fault, which keeps the queue row and stamps nothing, exactly as
+ * a triage's fault does. Failures that look like the preview never worked
+ * (checksLookLikeInfra) spend nothing and say nothing: the platform's own
+ * re-run decides. Never throws.
+ */
+async function runChecksFix(pool, config, {
+  bot, app, repo, item, issue, comments = [], proposal, session, issueThread = null,
+  proposalThread = null, botLogin, runMode, model, turnBudgetMs, startedMs, recordFailure, deps,
+}) {
+  const { agentTurn, limits, managedOpenRouter, github } = deps;
+  const issueNumber = Number(item.issue_number);
+  const head = String(session.checks_commit_sha || '');
+  const fail = (error, extra = {}, opts = {}) => recordFailure(error, { proposalSessionId: session.id, ...extra }, opts);
+  const release = () => pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+
+  try {
+    const failing = failingChecksOf(session.test_results);
+    const totalChecks = Array.isArray(session.test_results) ? session.test_results.length : 0;
+
+    // Failures that read as the preview never working are not the code's:
+    // no revision is spent and nothing is said, so a later verdict on the
+    // same head (the platform's own re-run) is still looked at.
+    if (followup.checksLookLikeInfra(failing, totalChecks)) {
+      await release();
+      log.info('homeroom-bot', 'A proposal\'s failing checks look like the preview never worked; no fix spent', {
+        app: app.slug, issueNumber, sessionId: session.id, failing: failing.length, checks: totalChecks,
+      });
+      return { ran: false, reason: 'checks_look_like_infra' };
+    }
+
+    const { rows: revisionRows } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs
+        WHERE proposal_session_id = $1 AND verdict = 'revise'`,
+      [session.id],
+    );
+    const revisionsLeft = followup.MAX_REVISIONS - (revisionRows[0]?.n || 0);
+
+    const spentOf = (turn, result) => {
+      const relay = relaySpend(result.relayUsage, turn.pricing, agentTurn);
+      const costUsd = turn.costUsd ?? relay?.costUsd ?? null;
+      const usage = {
+        inputTokens: Number.isFinite(result.inputTokens) ? result.inputTokens : (relay?.inputTokens ?? null),
+        outputTokens: Number.isFinite(result.outputTokens) ? result.outputTokens : (relay?.outputTokens ?? null),
+      };
+      return { relay, costUsd, usage };
+    };
+    const debit = async (costUsd) => {
+      if (costUsd > 0) {
+        try {
+          if (await managedOpenRouter.usesIncludedKey(pool, bot.id)) {
+            await limits.recordSpend(pool, bot.id, Math.round(costUsd * 1e6) / 1e4, { byok: false });
+          }
+        } catch (err) {
+          log.warn('homeroom-bot', 'Spend debit failed', { err: err.message });
+        }
+      }
+    };
+
+    // The hand-off: the head is stamped, the queue row is released, and ONE
+    // note goes to the request, the proposal's thread and the requester's DM.
+    const handOff = async ({ why, reply = null, verdict = 'person', budgetStop = null, spent = {} }) => {
+      const runId = await insertRun(pool, {
+        appId: app.id, issueNumber, mode: runMode, verdict,
+        error: verdict === 'failed' ? why : null, budgetStop,
+        reason: reply, threadSeenAt: item.thread_seen_at || null, model,
+        durationMs: Date.now() - startedMs, proposalSessionId: session.id,
+        checksHeadSha: head, ...spent,
+      });
+      await release();
+      const targets = await live.mentionTargets({
+        pool, github, app, repo, issueNumber, issue, botLogin, bot, proposalSessionId: session.id,
+      }).catch(() => []);
+      const text = followup.checksHandOffText({ why, reply, prNumber: session.pr_number });
+      await live.post({
+        pool, github, ws: deps.ws, app, repo, issueNumber, kind: 'followup_person',
+        runId, text, sender: bot, senderId: bot.id, mentions: targets,
+        notifications: deps.notifications || null, proposalSessionId: session.id,
+        dm: { reason: reply || why },
+      }).catch((err) => log.warn('homeroom-bot', 'Checks hand-off post failed', { err: err.message }));
+      log.info('homeroom-bot', 'Handed a red proposal to a person', {
+        app: app.slug, issueNumber, sessionId: session.id, why, runId,
+      });
+      return { ran: true, verdict, runId };
+    };
+
+    // Out of revisions: no turn at all. The fix competes for the same three
+    // revisions a person's request would use, on purpose.
+    if (revisionsLeft <= 0) {
+      return await handOff({
+        why: `it has already revised this proposal ${followup.MAX_REVISIONS} times`,
+      });
+    }
+
+    const seed = deps.sessions.buildHeadlessSeed(
+      issueNumber, issue, comments, botLogin, issueThread?.messages || [],
+    );
+    const proposalBlock = require('./thread-context').buildProposalDiscussionBlock({
+      sessionId: session.id, prNumber: session.pr_number,
+      threadMessages: proposalThread?.messages || [], truncated: !!proposalThread?.truncated,
+    });
+    const prompt = followup.checksFixPrompt({
+      seed, proposalBlock, prNumber: session.pr_number, failing: failing.slice(0, 12),
+    });
+
+    const turn = await followup.runFollowUpTurn({
+      pool, config, bot, repo, session, prompt, mode: 'build', issueNumber, turnBudgetMs, model, deps,
+      commitMsg: `Homeroom bot: fix its proposal's failing checks (#${issueNumber})`,
+    });
+    const result = turn.result || {};
+    const { relay, costUsd, usage } = spentOf(turn, result);
+    await debit(costUsd);
+    const spent = { sessionId: session.id, costUsd, ...usage };
+
+    // A platform fault keeps the queue row and stamps nothing, as a triage's does.
+    if (turn.routed?.error) {
+      const code = String(turn.routed.error);
+      return fail(code, spent, {
+        infra: !!turn.infra || INFRA_ERRORS.has(code) || code.startsWith('dispatch:'),
+      });
+    }
+    if (turn.stopped) {
+      return await handOff({
+        why: 'the turn ran out of time before it could fix the checks', verdict: 'failed',
+        budgetStop: 'wall clock', spent,
+      });
+    }
+
+    const parsed = followup.parseFollowUp(result.lastResultText);
+    if (parsed?.stopMentioning?.length || parsed?.resumeMentioning?.length) {
+      await live.applyMentionAsks({
+        pool, github, app, repo, issueNumber, stop: parsed.stopMentioning, resume: parsed.resumeMentioning,
+        proposalSessionId: session.id,
+      }).catch((err) => log.warn('homeroom-bot', 'Could not record a mention opt-out', { app: app.slug, issueNumber, err: err.message }));
+    }
+    const moved = followup.headMoved({
+      mode: 'build', result, reviewedHeadSha: session.reviewed_head_sha, action: parsed?.action,
+    });
+    if (!parsed) {
+      return await handOff({ why: 'its reply could not be read', verdict: 'failed', spent });
+    }
+    if (!moved) {
+      const why = result.pushOk === false
+        ? 'its fix could not be pushed' : 'the turn produced no change';
+      return await handOff({ why, reply: parsed.reply, spent });
+    }
+
+    // A moved head goes through the same reconcile a person's revision does:
+    // earlier votes stop counting, checks and the preview re-run on it.
+    try {
+      await reconcileRevision(pool, config, deps, session);
+    } catch (err) {
+      log.error('homeroom-bot', 'Checks fix pushed, but reconciling the proposal failed', {
+        app: app.slug, issueNumber, sessionId: session.id, err: err.message,
+      });
+    }
+    const runId = await insertRun(pool, {
+      appId: app.id, issueNumber, mode: runMode, verdict: 'revise',
+      reason: parsed.reply, buildNote: parsed.summary || null,
+      threadSeenAt: item.thread_seen_at || null, model,
+      durationMs: Date.now() - startedMs, proposalSessionId: session.id,
+      checksHeadSha: head, ...spent,
+    });
+    await release();
+    clearRefusals(app.id);
+    log.info('homeroom-bot', 'Fixed its proposal\'s failing checks', {
+      app: app.slug, issueNumber, sessionId: session.id, costUsd, runId,
+    });
+    // Said once, in the proposal's own discussion only.
+    const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id) : null;
+    await live.postOnProposal({
+      pool, ws: deps.ws, app, issueNumber, bot, sessionId: session.id, runId,
+      kind: 'checks_revise',
+      text: followup.revisedText({
+        summary: parsed.summary, reply: parsed.reply, prNumber: session.pr_number, link: proposalUrl,
+      }),
+    }).catch((err) => log.warn('homeroom-bot', 'Checks-fix note failed', { err: err.message }));
+    return { ran: true, verdict: 'revise', runId, acted: 'checks_revise' };
+  } catch (err) {
+    return fail(`checks fix: ${err.message}`, {}, { infra: true });
+  }
+}
+
 async function runFollowUp(pool, config, {
   bot, app, repo, item, issue, proposal, runMode, model, turnBudgetMs, startedMs,
   recordFailure, deps,
@@ -2878,6 +3238,21 @@ async function runFollowUp(pool, config, {
     sinceMs: toMs(lastRun?.thread_seen_at),
   });
   if (!replies.length) {
+    // With nobody having spoken, a failing verdict on the head the group is
+    // voting on is still worth one bounded fix (#3646). A person's reply
+    // comes first by construction: this branch only runs without one.
+    const { rows: fixRows } = await pool.query(
+      `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted AS app_self_hosted
+         FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+        WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status = 'promoted'`,
+      [proposal.id, bot.id],
+    );
+    if (fixRows[0] && await checksFixDue(pool, fixRows[0])) {
+      return runChecksFix(pool, config, {
+        bot, app, repo, item, issue, comments, proposal, session: fixRows[0], issueThread,
+        proposalThread, botLogin, runMode, model, turnBudgetMs, startedMs, recordFailure, deps,
+      });
+    }
     if (lastRun && item.thread_seen_at) {
       await pool.query(
         `UPDATE homeroom_bot_runs
@@ -3008,6 +3383,9 @@ async function runFollowUp(pool, config, {
       pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt, postedAt,
       proposalSessionId: session.id,
     }).catch(() => {});
+    // A revise that moved nothing leaves the failing checks untouched on the
+    // same head: a fix still due there re-queues.
+    await requeueChecksFixIfDue(pool, { bot, app, issueNumber, session });
     return { ran: true, verdict: 'failed', runId };
   }
 
@@ -3018,15 +3396,7 @@ async function runFollowUp(pool, config, {
     // the reviewed one, earlier votes stop counting, checks and the staging
     // preview re-run on it, and the thread says so.
     try {
-      const votes = deps.votes || require('../routes/votes');
-      const { rows: fresh } = await pool.query(
-        `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted AS app_self_hosted
-           FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
-        [session.id],
-      );
-      await votes.reconcileNativeReviewedHead({
-        config, pool, session: fresh[0] || session, fresh: true, notify: true,
-      });
+      await reconcileRevision(pool, config, deps, session);
     } catch (err) {
       log.error('homeroom-bot', 'Follow-up revision pushed, but reconciling the proposal failed', {
         app: app.slug, issueNumber, sessionId: session.id, err: err.message,
@@ -3072,6 +3442,11 @@ async function runFollowUp(pool, config, {
     pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt, postedAt,
     proposalSessionId: session.id,
   }).catch((err) => log.warn('homeroom-bot', 'Could not record what the bot has seen', { err: err.message }));
+  // A reply turn that did not move the head leaves a fix still due on it:
+  // re-queue so the next pass looks (the reply run itself stamps nothing).
+  if (!moved) {
+    await requeueChecksFixIfDue(pool, { bot, app, issueNumber, session });
+  }
   return { ran: true, verdict: followup.VERDICT_FOR[action], runId, acted: `followup_${action}` };
 }
 
@@ -4070,6 +4445,10 @@ module.exports = {
   DEFAULTS,
   noteIssueActivity,
   noteProposalActivity,
+  noteProposalChecks,
+  runChecksFix,
+  queueChecksFix,
+  CHECKS_FIX_REASON,
   shadowBuild,
   runQueuedBuild,
   drainBuilds,
