@@ -86,6 +86,12 @@ const count = async (pool, table) => (await pool.query(`SELECT count(*)::int AS 
 
 async function database(t) {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  // Idle connections the server drops (this teardown's own forced DROP, or
+  // a parallel file's administrative command on the shared server) surface
+  // as a pool 'error'; without a listener that is an uncaughtException
+  // attributed to whichever test is running. See the note on pool below and
+  // tests/username-invite-join-postgres.test.js.
+  admin.on('error', () => {});
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
     if (process.env.TEST_DATABASE_URL) throw err;
@@ -95,6 +101,13 @@ async function database(t) {
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 4 });
+  // pool.end() hands its idle connections their end without waiting for
+  // their sockets to close, so the teardown's DROP DATABASE WITH (FORCE)
+  // can terminate one still closing (57P01). The pool re-emits that as
+  // 'error', which without a listener fails the file on its teardown
+  // (tests/username-invite-join-postgres.test.js failed 5 of 6 runs that
+  // way). Expected here; a failing query still fails its test.
+  pool.on('error', () => {});
   t.after(async () => {
     await pool.end();
     await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
