@@ -1,5 +1,5 @@
 /**
- * The four steps of the welcome tour, as data.
+ * The five steps of the welcome tour, as data.
  *
  * Kept as a plain table with no React in it so the order, the wording, the
  * anchoring and the interaction rules can be asserted without rendering
@@ -97,20 +97,36 @@ export interface TourStep {
 }
 
 /*
- * ── #3240: four stops, and only when asked ─────────────────────────────
+ * ── #3240: only when asked, and only what nothing else says ────────────
  *
  * The tour used to start by itself right after "What communities do you want
  * to join?" (../../auth/communities-first-run.js), and the two said the same
  * things back to back: a welcome, then Discover, then where communities live.
  * It starts only when asked now, from the first row of Home's Getting started
- * card (../getting-started.tsx) or from Settings, and it keeps the four stops
- * nothing else on the first run covers: the shortcuts on Home, the mark that
- * opens the menu inside every app, the two actions in that menu, and where to
- * find the tour again. Welcome, Workshop, Discover and Getting started left:
- * the join screen and the card already say each of them, and the card is the
- * thing the viewer has just pressed.
+ * card (../getting-started.tsx) or from Settings, and it keeps the five stops
+ * nothing else on the first run covers: what a community is, the shortcuts on
+ * Home, the mark that opens the menu inside every app, the two actions in that
+ * menu, and where to find the tour again. Welcome, Workshop, Discover and
+ * Getting started left: the join screen and the card already say each of them,
+ * and the card is the thing the viewer has just pressed.
+ *
+ * The first stop came back later, because "communities" turned out to be
+ * vocabulary the join screen assumes and nothing defines: it says what the
+ * platform is made of and points at the tab that holds yours.
  */
 export const TOUR_STEPS: readonly TourStep[] = [
+  {
+    // THE FIRST STOP, and the only one that is not about a control's job:
+    // it says what the whole thing is made of before the tour shows where
+    // things live. Described, not driven, like every tab stop — the press
+    // would navigate off Home. `#platform-tabs` is the fallback for a
+    // revision without the Communities tab, so the card stays anchored to
+    // the bar.
+    id: 'communities',
+    title: 'Communities',
+    body: 'Homeroom is made of communities that build projects together. Anyone in one can propose a change, and the group votes it in. A community is Just you, a Private community or a Public community. Yours are here.',
+    targets: ['#platform-tab-workshop', '#platform-tabs'],
+  },
   {
     // The Shortcuts section, heading and grid together, so the card never
     // sits on the heading the step is about. `#app-list` is the fallback

@@ -545,7 +545,7 @@ export function Shell() {
       */}
       <Island name="Dialogs"><Dialogs /></Island>
       {/*
-          #2255 — the welcome tour (four steps, and opened only when asked,
+          #2255 — the welcome tour (five steps, and opened only when asked,
           since #3240), replacing the one-line #home-welcome banner (#1561). A fixed overlay rather than a dialog:
           it dims the page and cuts a hole around the thing each step is
           about, so it has to sit OVER the header (which is `relative z-10`

@@ -1,5 +1,5 @@
 /**
- * `#home-tour` — the four-step welcome tour, which replaced the
+ * `#home-tour` — the five-step welcome tour, which replaced the
  * `#home-welcome` banner (#1561).
  *
  * The banner said the two things the launcher never says, in three lines, and
@@ -14,25 +14,30 @@
  * Nothing here is a drawing of the product. The Improve arc works because the
  * Improve row is reachable on Home: the app's own menu, behind the Homeroom
  * mark, targeting the platform's own self-hosted row for as long as Home is up
- * (`Home.publishImproveTarget`, #1367). So steps 2 to 4 are one interaction
+ * (`Home.publishImproveTarget`, #1367). So steps 3 to 5 are one interaction
  * rather than three descriptions:
  *
- *   * step 2 spotlights the MARK that opens that menu, asking the viewer to
+ *   * step 3 spotlights the MARK that opens that menu, asking the viewer to
  *     press it. The click is NOT intercepted: the tour subscribes to
  *     `appContextStore` and advances when `open` goes true, so what opens the
  *     panel is the product's own handler and the tour is only watching. Its
  *     Next opens the menu through `AppContext.open()` — the same path — and
- *     the same watcher advances it, so Next never lands on step 3 with the
+ *     the same watcher advances it, so Next never lands on step 4 with the
  *     menu shut;
- *   * step 3 spotlights `#improve-quick-actions`, the well holding Give
+ *   * step 4 spotlights `#improve-quick-actions`, the well holding Give
  *     feedback and New change INSIDE the menu the viewer just opened. It is
  *     DESCRIBED, not driven: the cut-out blocks the press the way the dim
  *     around it does, because each of them leaves the tour (a dialog, a new
  *     session) and a spotlight is not an instruction to press.
  *     ./tour-steps.ts carries the whole argument;
- *   * step 4 shuts the menu through `Improve.close()`, the controller's own
+ *   * step 5 shuts the menu through `Improve.close()`, the controller's own
  *     close path and never a write into its DOM, then points at the Me tab,
  *     whose screen holds Settings, where the tour can be replayed.
+ *
+ * Step 1 is the one that is not about a control's job: it says what the
+ * platform is made of (communities, which build projects and vote on changes)
+ * and points at the tab that holds yours, so the tour explains the vocabulary
+ * the rest of the product assumes before it starts showing where things are.
  *
  * ── The island rules, and how each is kept ────────────────────────────
  *
@@ -132,7 +137,8 @@
  * tour was finished before and waits only for Home to be on screen, which is
  * where every step points. Nothing opens it on the `?shot=`, `?demo=` and
  * `?token=` routes except a press, so the platform's declared checks never
- * meet the overlay.
+ * meet the overlay — except `?shot=welcome-tour`, the tour's own address,
+ * which opens its FIRST stop and writes nothing (below).
  *
  * Once it is up it PAUSES rather than fights. Whenever Home leaves the screen,
  * or any kit surface that is not the Improve panel is presented (a dialog, a
@@ -268,6 +274,22 @@ function isDeterministicRoute(): boolean {
   try {
     const params = new URLSearchParams(location.search);
     return !!(params.get('shot') || params.get('demo') || params.get('token'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The tour's own capture address, `?shot=welcome-tour`. Not linked anywhere
+ * in the product: it exists so a declared check can see the first card, which
+ * otherwise opens only on a press. It is a `?shot=` route like any other, so
+ * the resume and backfill effects stay away from it and no write lands.
+ */
+const SHOT = 'welcome-tour';
+
+function shotTour(): boolean {
+  try {
+    return new URLSearchParams(location.search).get('shot') === SHOT;
   } catch {
     return false;
   }
@@ -549,6 +571,25 @@ export function OnboardingTour() {
     return () => { cancelled = true; };
   }, [userId, start]);
 
+  // ── The capture route opens the first stop ───────────────────────────
+  //
+  // The tour ships hidden and opens only when asked, so a declared check
+  // could not see its first card without an address that asks. Marking
+  // `started` claims the document, or the resume below would open a second
+  // tour. It opens at index 0 and writes no step, so the page it leaves the
+  // shot in carries no account or browser state.
+  useEffect(() => {
+    if (!shotTour()) return;
+    started.current = true;
+    let cancelled = false;
+    void (async () => {
+      const home = await whenHomeVisible();
+      if (cancelled || !home) return;
+      start(0);
+    })();
+    return () => { cancelled = true; };
+  }, [start]);
+
   // ── A join screen shown here forgets this browser's "done" ───────────
   //
   // It shows for a new account, or for one an admin reset (Admin → Users →
@@ -600,8 +641,10 @@ export function OnboardingTour() {
   // Written on every step while the tour is up, so a reload -- whichever of
   // the shell's own reasons caused it -- comes back here rather than at step
   // 1. Cleared by finish(), because a finished tour has nowhere to resume.
+  // Never on the capture route: a check that opened the tour must leave no
+  // step behind.
   useEffect(() => {
-    if (!open || userId == null) return;
+    if (!open || userId == null || shotTour()) return;
     writeStep(userId, index);
   }, [open, index, userId]);
 
@@ -694,7 +737,7 @@ export function OnboardingTour() {
     if (panelOpenNow()) void Improve.close();
   }, [live, index]);
 
-  // Step 4 ends the arc by shutting the panel itself — and the app's menu with
+  // Step 5 ends the arc by shutting the panel itself — and the app's menu with
   // it, because the step that carries `closesPanel` spotlights a tab, and on a
   // phone the menu's sheet is drawn over the tab bar, hiding the thing the
   // cut-out is drawn around.

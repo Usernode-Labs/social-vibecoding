@@ -1398,9 +1398,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // in services/app-manifest.js. 831 leaves 29 slots against the new
   // MAX_DECLARED_TESTS (860), clear of the 20-slot floor.
   //
+  // 831 → 832: +1 (#3567): the welcome tour's new first stop, "Communities",
+  // is reached only by a press, so ?shot=welcome-tour opens it for the check.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 831);
+  checkCap.assertPinned(DAPP.tests.length, 832);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
