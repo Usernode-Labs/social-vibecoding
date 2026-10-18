@@ -235,11 +235,11 @@ test('the Welcome is a page in the make screen\'s frame: picture, eyebrow, headi
     /<p class="mt-4 text-\[13px\] font-semibold uppercase tracking-\[0\.8px\] text-zinc-500 dark:text-zinc-400">You(?:&#x27;|')re in<\/p>/,
     /<h1 id="welcome-page-title" class="mt-2\.5 text-balance text-\[30px\] font-extrabold leading-\[34px\]">Welcome to Homeroom<\/h1>/,
     // What Homeroom is: the line, then one grouped card of three rows.
-    /<p class="mt-2\.5 text-pretty text-\[16px\] leading-\[22px\] text-zinc-500 dark:text-zinc-400 text-center">Where groups make their own apps\.<\/p>/,
+    /<p class="mt-2\.5 text-pretty text-\[16px\] leading-\[22px\] text-zinc-500 dark:text-zinc-400 text-center">Homeroom is made up of communities\.<\/p>/,
     /<div class="[^"]*" role="list" data-welcome-page-points="">/,
-    /data-welcome-page-point="make">.*?>Make an app for your group<\/div><div [^>]*>Pick an idea or describe your own\.<\/div>/,
+    /data-welcome-page-point="make">.*?>Make an app for your community<\/div><div [^>]*>Pick an idea or describe your own\.<\/div>/,
     /data-welcome-page-point="ask">.*?>Change it by asking<\/div><div [^>]*>Homeroom bot builds what anyone suggests\.<\/div>/,
-    /data-welcome-page-point="decide">.*?>Decide together<\/div><div [^>]*>Your group votes on what changes\.<\/div>/,
+    /data-welcome-page-point="decide">.*?>Decide together<\/div><div [^>]*>Your community votes on what changes\.<\/div>/,
     /<p data-welcome-page-email="" class="mt-2 max-w-full text-\[15px\] leading-5 font-semibold text-zinc-700 dark:text-zinc-300 \[overflow-wrap:anywhere\]">ada@example\.com<\/p>/,
     /<p class="mt-6 pb-2 text-\[13px\] text-zinc-500 dark:text-zinc-400">Pick a username\. It is public on Homeroom\.<\/p>/,
     /<div class="overflow-hidden rounded-2xl bg-white shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] dark:bg-zinc-900">/,
@@ -291,7 +291,7 @@ test('with the keys up the page moves once: the picture and what Homeroom is fol
   // First drawn as it always was: the picture shown, the spacer in place.
   assert.match(html, /<div data-welcome-page-picture="shown" class="max-h-\[120px\] overflow-hidden opacity-100 transition-\[max-height,opacity\] duration-300 ease-out motion-reduce:transition-none \[@media\(max-height:699px\)\]:max-h-0 \[@media\(max-height:699px\)\]:opacity-0"><img src="\/brand\/people\.png"/);
   // What Homeroom is, shown, in a grid row that folds to nothing.
-  assert.match(html, /<div data-welcome-page-about="shown" class="grid grid-rows-\[1fr\] opacity-100 transition-\[grid-template-rows,opacity\] duration-300 ease-out motion-reduce:transition-none"><div class="min-h-0 overflow-hidden"><p [^>]*>Where groups make their own apps\.<\/p><div [^>]*data-welcome-page-points="">/);
+  assert.match(html, /<div data-welcome-page-about="shown" class="grid grid-rows-\[1fr\] opacity-100 transition-\[grid-template-rows,opacity\] duration-300 ease-out motion-reduce:transition-none"><div class="min-h-0 overflow-hidden"><p [^>]*>Homeroom is made up of communities\.<\/p><div [^>]*data-welcome-page-points="">/);
   const src = read(WELCOME);
   // The fold takes the card with the picture, by the same `typing`, over the
   // same 300ms, and hides it from a screen reader while it is folded.
@@ -348,7 +348,7 @@ test('in Safari\'s visible area Continue is on screen: under 800px a 96px pictur
   assert.match(src, /subtitleClassName=\{SHORTER_LINE\}/);
   assert.match(src, /const POINT_ROW = 'gap-3 py-2 \[&:not\(:last-child\)\]:after:left-\[3\.75rem\] \[@media\(max-height:799px\)\]:py-1\.5';/);
   assert.equal((html.match(/\[@media\(max-height:799px\)\]:hidden">/g) || []).length, 3, 'the three second lines, and nothing else');
-  for (const title of ['Make an app for your group', 'Change it by asking', 'Decide together']) {
+  for (const title of ['Make an app for your community', 'Change it by asking', 'Decide together']) {
     assert.match(html, new RegExp(`whitespace-normal">${title}</div>`), title);
   }
   // Under 700px (about 390x664 on a smaller iPhone): the picture folded as
@@ -407,13 +407,13 @@ test('Continue saves the username with the sheet\'s request, then hands off to t
 test('the copy: the page\'s own lines, the rest the sheet\'s and the story\'s own', () => {
   assert.equal(message('auth:welcomePage.eyebrow'), 'You\'re in');
   // What Homeroom is (Evan, 15 Oct 2026).
-  assert.equal(message('auth:welcomePage.lead'), 'Where groups make their own apps.');
-  assert.equal(message('auth:welcomePage.make.title'), 'Make an app for your group');
+  assert.equal(message('auth:welcomePage.lead'), 'Homeroom is made up of communities.');
+  assert.equal(message('auth:welcomePage.make.title'), 'Make an app for your community');
   assert.equal(message('auth:welcomePage.make.line'), 'Pick an idea or describe your own.');
   assert.equal(message('auth:welcomePage.ask.title'), 'Change it by asking');
   assert.equal(message('auth:welcomePage.ask.line'), 'Homeroom bot builds what anyone suggests.');
   assert.equal(message('auth:welcomePage.decide.title'), 'Decide together');
-  assert.equal(message('auth:welcomePage.decide.line'), 'Your group votes on what changes.');
+  assert.equal(message('auth:welcomePage.decide.line'), 'Your community votes on what changes.');
   assert.equal(message('auth:story.welcome'), 'Welcome to Homeroom');
   assert.equal(message('auth:signInSheet.account.leadWithUsername'), 'Pick a username. It is public on Homeroom.');
   assert.equal(message('auth:signInSheet.account.codeNote'), 'You sign in with a code we email you. You can add a password later in Settings.');
