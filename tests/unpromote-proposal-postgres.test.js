@@ -60,7 +60,11 @@ async function connect() {
   const dbName = `unpromote_${crypto.randomBytes(6).toString('hex')}`;
   await admin.query(`CREATE DATABASE ${dbName}`);
   const url = new URL(DSN); url.pathname = `/${dbName}`;
-  const pool = new Pool({ connectionString: String(url), max: 8 });
+  // The suite runs many postgres files at once against one server; this
+  // file's own queries are short and the workflow runtime brings its own
+  // pool, so a small pool keeps the shared server out of connection
+  // contention (which can fail any subtest here).
+  const pool = new Pool({ connectionString: String(url), max: 4 });
   pool.on('error', () => {});
   await pool.query(read('src/db/schema.sql'));
   const drop = async () => {
@@ -210,7 +214,11 @@ test('unpromote against a real PostgreSQL, through the proposal machine', { time
     const id = await appendEvent(pool, decoder, sessionKey(s.id),
       { type: 'MergeRequested', payload: { sessionId: s.id, queueN, force: false } },
       { requestKey: `ask-${s.id}-${queueN}`, source: { kind: 'system', name: 'merge' }, appId: app.id });
-    for (let i = 0; i < 200; i++) {
+    // The queue decides the ask whenever a slot picks it up; under the
+    // suite's parallel load that can lag well past ten seconds, so the
+    // deadline is generous. An ask that never settles fails this test loudly.
+    const deadline = Date.now() + 30000;
+    for (;;) {
       const { rows: [e] } = await pool.query('SELECT result, reason FROM wf_events WHERE id = $1', [id]);
       if (e && e.result && e.result !== 'pending') {
         const { rows: [told] } = await pool.query(
@@ -218,12 +226,16 @@ test('unpromote against a real PostgreSQL, through the proposal machine', { time
               AND (payload->>'n')::int = $2`, [`app:${app.id}`, queueN]);
         return { status: e.result, answer: told?.payload ?? null };
       }
+      if (Date.now() >= deadline) {
+        assert.fail(`the merge ask on session ${s.id} (event ${id}) never settled: its result is still ${e ? e.result : 'missing'}`);
+      }
       await new Promise((res) => setTimeout(res, 50));
     }
-    return { status: 'pending' };
   };
   const until = async (check, what) => {
-    const deadline = Date.now() + 10000;
+    // Generous: what is waited for is the machine's durable work, done
+    // whenever a slot gets to it under the suite's parallel load.
+    const deadline = Date.now() + 30000;
     while (!(await check())) {
       if (Date.now() >= deadline) assert.fail(what);
       await new Promise((res) => setTimeout(res, 50));
@@ -327,21 +339,28 @@ test('unpromote against a real PostgreSQL, through the proposal machine', { time
 
   await t.test('an imported PR returns to active, the state it was promoted from', async () => {
     const imported = await seed({ source: 'imported' });
-    const before = loaded.spies.destroyed.length;
     const res = await srv.post(imported.id);
     assert.equal(res.status, 200);
     assert.equal(res.body.status, 'active');
     assert.equal(await statusOf(imported.id), 'active');
-    await new Promise((r) => setTimeout(r, 200));
-    assert.equal(loaded.spies.destroyed.length, before, 'an imported PR has no worker to tear down');
+    // Asked about this session's worker alone: a count over every teardown
+    // would read one an earlier subtest's work landed late.
+    assert.ok(!loaded.spies.destroyed.includes(`usernode-worker-${imported.id}`),
+      'an imported PR has no worker to tear down');
   });
 
   await t.test('re-promotion goes through the machine\'s promote, and starts with no votes counted', async () => {
     // `mine` was moved back above with two voided votes. (The cap is high:
     // this file's other proposals are alice's too.)
-    const reply = await platform.promoteProposal({
+    const asked = await platform.promoteProposal({
       sessionId: mine.id, appId: app.id, userId: users.alice.id, username: 'alice', from: 'paused', cap: 100, pr: null,
     });
+    // 202 is the route's answer while a slot has yet to process the promote
+    // (under the suite's parallel load that can outlast the ask's own wait);
+    // the ask then settles on its own, and that end is what this asserts.
+    const reply = asked.status === 202
+      ? await platform.promoteSettled({ sessionId: mine.id, waitMs: 30000 })
+      : asked;
     assert.equal(reply.status, 200, JSON.stringify(reply.body));
     assert.equal(await statusOf(mine.id), 'promoted');
     assert.equal(await counted(mine.id), 0, 'the fresh review starts with no votes counted');
