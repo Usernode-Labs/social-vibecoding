@@ -2958,6 +2958,14 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS directory_reviewed_sha VARCHAR(40);
 -- public home feed and must survive into staging clones.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS forked_from JSONB;
 
+-- The starter template the project was created from (services/template.js):
+-- 'starter' — the scaffold new projects always got — or one of the create
+-- screen's other picks. Written on the row rather than re-derived so a Retry
+-- re-scaffolds the template the creator picked, the same way the approval
+-- rule and description travel on the row through a rebuild. The default
+-- covers every existing row; no backfill.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS starter_template VARCHAR(32) NOT NULL DEFAULT 'starter';
+
 -- Icon image bytes, one row per app, keyed by an unguessable random id
 -- (same access stance as session_visuals: /app-icons/:id is served
 -- unauthenticated so home tiles load it with a plain <img>, and the

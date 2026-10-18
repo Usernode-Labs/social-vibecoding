@@ -12291,17 +12291,17 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
    A literal, with no dark step, for the reason the button carries none:
    white on #0a6ee0 is 4.9:1 in both themes, where the dark theme's lighter
    accent would not carry white text. */
-#create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-approver-pill, .create-approvals-pill) {
+#create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-template-pill, .create-approver-pill, .create-approvals-pill) {
   color: var(--text-primary);
   cursor: pointer;
 }
 #create-card .create-approvals-pill { color: var(--text-muted); }
 #create-card .create-approvals-pill:hover { color: var(--text-primary); }
-#create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-approver-pill) .create-choice-caption {
+#create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-template-pill, .create-approver-pill) .create-choice-caption {
   color: var(--text-muted);
 }
-/* A row that is there but cannot be pressed yet (Document, Video, a
-   template): it takes no fill and no pointer. */
+/* A row that is there but cannot be pressed yet (Document, Video): it
+   takes no fill and no pointer. */
 #create-card .create-soon-row { cursor: default; }
 /* NOTHING IS CHOSEN FOR THE PERSON, AND A ROW IS A SELECTION. Every answer
    starts empty (the attributes are ""), so no row is filled on arrival.
@@ -12313,10 +12313,15 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 #create-card[data-kind="app"]           .create-kind-row[data-kind-pill="app"],
 #create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"],
 #create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"],
+#create-card[data-mode="template"]      .create-mode-pill[data-mode-pill="template"],
 #create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"],
 #create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"],
 #create-card[data-approvals="majority"] .create-approvals-pill[data-approvals-pill="majority"],
-#create-card[data-approvals="atLeast"]  .create-approvals-pill[data-approvals-pill="atLeast"] {
+#create-card[data-approvals="atLeast"]  .create-approvals-pill[data-approvals-pill="atLeast"],
+/* A template pill is selected by its own aria-pressed, not by the card's
+   data attributes: the list holds five rows sharing one question. It keeps
+   the #create-card prefix so it outranks the base rules above it. */
+#create-card .create-template-pill[aria-pressed="true"] {
   background: #0a6ee0; /* violet-600, as tailwind.config.js compiles it */
   color: #ffffff;
 }
@@ -12328,8 +12333,10 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 #create-card[data-kind="app"]           .create-kind-row[data-kind-pill="app"] .create-choice-caption,
 #create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"] .create-choice-caption,
 #create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"] .create-choice-caption,
+#create-card[data-mode="template"]      .create-mode-pill[data-mode-pill="template"] .create-choice-caption,
 #create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"] .create-choice-caption,
-#create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"] .create-choice-caption {
+#create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"] .create-choice-caption,
+#create-card .create-template-pill[aria-pressed="true"] .create-choice-caption {
   color: inherit;
   opacity: 0.9;
 }

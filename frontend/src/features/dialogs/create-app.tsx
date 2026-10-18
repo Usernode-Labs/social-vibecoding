@@ -22,8 +22,9 @@
  *   approve  who approves changes: members vote, or people you pick (starting
  *            with you), with "at least N yes votes" as a follow-up under the
  *            second. A private or a public community only.
- *   start    how to begin: from scratch, from a template (Soon), or from a
- *            GitHub repo, whose check opens under its row. The check also
+ *   start    how to begin: from scratch, from one of five starter templates
+ *            whose list opens under its row, or from a GitHub repo, whose
+ *            check opens under its row. The check also
  *            reads the repo's dapp.json, and a notice names each earlier
  *            answer it will replace (name, what it is, who it is for, who
  *            approves); those answers are dimmed.
@@ -126,7 +127,7 @@ import {
 import { normalizeRepositoryUrl } from './repository-url';
 import { useDialog } from './use-dialog';
 
-type Mode = 'new' | 'import';
+type Mode = 'new' | 'template' | 'import';
 type ImportState = 'idle' | 'checking' | 'ok' | 'error';
 /** Who it is for: services/communities.js's audiences, by their internal names. */
 type Audience = 'solo' | 'invited' | 'open';
@@ -262,6 +263,8 @@ export function createBody(answers: {
   description?: string;
   mode: Mode;
   repoUrl?: string;
+  /** The template pick, in template mode. Sent for a new project only. */
+  template?: string | null;
   audience: Audience;
   invitees?: readonly Invitee[];
   approvers: Approvers | null;
@@ -273,6 +276,10 @@ export function createBody(answers: {
   const body: Record<string, unknown> = { name: answers.name, audience: answers.audience };
   const importing = answers.mode === 'import';
   if (importing && answers.repoUrl) body.repoUrl = answers.repoUrl;
+  // A template is a new project's pick: never sent with a repoUrl (the
+  // server refuses that pair), and 'starter' needs no naming — absent is
+  // the starter.
+  if (answers.mode === 'template' && answers.template) body.template = answers.template;
   const description = (answers.description || '').replace(/\s+/g, ' ').trim();
   if (description && !(importing && answers.repo?.description)) body.description = description;
   if (answers.audience === 'invited') {
@@ -324,6 +331,21 @@ export async function postCreateApp(
   return { ok: false, error: `Homeroom couldn’t create the project (${res.status}). Try again in a moment.` };
 }
 
+/**
+ * The five starter templates the last step offers under "Start from a
+ * template" (services/template.js renders them; create-options.TEMPLATES
+ * is the server's own list). Empty is the starter screen new projects
+ * have today; the other four are placeholder demos the project's first
+ * real feature replaces, exactly like the starter's Press! example.
+ */
+const START_TEMPLATES: ReadonlyArray<{ key: string; title: string; caption: string }> = [
+  { key: 'starter', title: 'Empty', caption: 'The starter screen new projects have today.' },
+  { key: 'social', title: 'Social productivity', caption: 'A shared to-do list: add tasks, check them off, see who did what.' },
+  { key: 'multimedia', title: 'Multimedia social', caption: 'A shared queue of links: add to it and like what is there.' },
+  { key: 'game-2d', title: '2D game', caption: 'A little arcade game with a shared high-score board.' },
+  { key: 'game-3d', title: '3D game', caption: 'A 3D scene you spin and tap, with a shared high-score board.' },
+];
+
 /** The inline row under the repo URL: spinner, green tick, or red error. */
 interface ImportStatus {
   tone: 'none' | 'ok' | 'err';
@@ -353,6 +375,7 @@ interface ShotState {
  *   create-approve  A public community, on the approval step
  *   create-start    A public community, on the last step, nothing picked yet
  *   create-import   the last step, importing
+ *   create-template the last step, template mode, nothing picked yet
  *
  * `create-access`, an older link, lands on `create-approve`.
  */
@@ -366,6 +389,7 @@ function shotState(): ShotState {
     if (shot === 'create-approve' || shot === 'create-access') return { ...named, step: 'approve', audience: 'open' };
     if (shot === 'create-start') return { ...named, step: 'start', audience: 'open', approvers: 'anyone' };
     if (shot === 'create-import') return { ...named, step: 'start', audience: 'solo', mode: 'import' };
+    if (shot === 'create-template') return { ...named, step: 'start', audience: 'solo', mode: 'template' };
     return open;
   } catch {
     return open;
@@ -743,6 +767,9 @@ export function CreateAppDialog() {
   const [approvals, setApprovals] = useState<Approvals | null>(null);
   const [approvalsN, setApprovalsN] = useState(1);
   const [mode, setMode] = useState<Mode | null>(null);
+  // Which starter template, in template mode. Null until one is picked —
+  // nothing is chosen for the person, and Create stays dimmed until it is.
+  const [template, setTemplate] = useState<string | null>(null);
   const [step, setStep] = useState<Step>('who');
   const [importState, setImportState] = useState<ImportState>('idle');
   const [repo, setRepo] = useState<RepoManifest | null>(null);
@@ -777,7 +804,7 @@ export function CreateAppDialog() {
       case 'kind': return kind != null;
       case 'details': return name.trim().length > 0;
       case 'approve': return approvers != null && (approvers !== 'invited' || approvals != null);
-      case 'start': return mode != null && (mode !== 'import' || importState === 'ok');
+      case 'start': return mode != null && (mode !== 'import' || importState === 'ok') && (mode !== 'template' || template != null);
       default: return false;
     }
   }
@@ -907,6 +934,9 @@ export function CreateAppDialog() {
     setImportState('idle');
     setStatus(IDLE_STATUS);
     setRepo(null);
+    // And nothing stays picked in the template list: a fresh choice of
+    // "how to start" opens it with nothing selected.
+    setTemplate(null);
   }
 
   // The import check.
@@ -996,6 +1026,7 @@ export function CreateAppDialog() {
       description: describeRef.current?.value || '',
       mode,
       repoUrl,
+      template,
       audience: audience ?? 'solo',
       invitees: people,
       approvers,
@@ -1077,7 +1108,7 @@ export function CreateAppDialog() {
         {created ? (
           <CreateProgress
             appName={created.name}
-            mode={mode ?? 'new'}
+            mode={mode === 'import' ? 'import' : 'new'}
             surface="pane"
             progress={progress}
             openLabel="Open project"
@@ -1382,13 +1413,20 @@ export function CreateAppDialog() {
                 <span className={CHOICE_CAPTION}>An empty app. Describe what you want and build it with the group.</span>
               </span>
             </button>
-            <div className={SOON} data-mode-pill="template" aria-disabled="true">
+            <button
+              type="button"
+              data-mode-pill="template"
+              aria-pressed={mode === 'template'}
+              className={CHOICE}
+              onClick={() => chooseStart('template')}
+            >
               <span className="min-w-0 flex-1">
                 <span className={CHOICE_TITLE}>Start from a template</span>
-                <span className={CHOICE_CAPTION}>A ready-made app to make your own.</span>
+                <span className={CHOICE_CAPTION}>
+                  {mode === 'template' ? 'Pick one below.' : 'A ready-made app to make your own.'}
+                </span>
               </span>
-              <span className={SOON_TAG}>Soon</span>
-            </div>
+            </button>
             <button
               type="button"
               data-mode-pill="import"
@@ -1483,6 +1521,33 @@ export function CreateAppDialog() {
                 )}
               </div>
             </div>
+            {/*
+                The five templates, under the template row the way the repo
+                check opens under the import row. Gated on the person having
+                pressed "Start from a template", so the prerendered shell —
+                and the markup baseline with it — never sees this list.
+                Pressing one selects it; Create (dimmed until then) builds
+                the project from it.
+            */}
+            {mode === 'template' ? (
+              <div className="create-template-block space-y-2">
+                {START_TEMPLATES.map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    data-template-pill={t.key}
+                    aria-pressed={template === t.key}
+                    className={'create-template-pill ' + CHOICE_BASE}
+                    onClick={() => setTemplate(t.key)}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className={CHOICE_TITLE}>{t.title}</span>
+                      <span className={CHOICE_CAPTION}>{t.caption}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
           <div id="create-error" ref={errorRef} className="px-1 text-red-700 dark:text-red-400 text-sm hidden">
             {error}

@@ -75,7 +75,7 @@ test('a row selects, and Next beside Cancel moves on once the step is answered',
   assert.match(answered, /case 'kind': return kind != null;/);
   assert.match(answered, /case 'details': return name\.trim\(\)\.length > 0;/);
   assert.match(answered, /case 'approve': return approvers != null && \(approvers !== 'invited' \|\| approvals != null\);/);
-  assert.match(answered, /case 'start': return mode != null && \(mode !== 'import' \|\| importState === 'ok'\);/);
+  assert.match(answered, /case 'start': return mode != null && \(mode !== 'import' \|\| importState === 'ok'\) && \(mode !== 'template' \|\| template != null\);/);
   // On its own step a row only selects; a collapsed row reopens its step.
   assert.match(SRC, /function chooseAudience\(next: Audience\) \{\s*setError\(''\);\s*if \(step !== 'who'\) \{ setStep\('who'\); return; \}\s*setAudience\(next\);\s*\}/);
   assert.match(SRC, /function chooseKind\(next: Kind\) \{\s*setError\(''\);\s*if \(step !== 'kind'\) \{ setStep\('kind'\); return; \}\s*setKind\(next\);\s*\}/);
@@ -117,6 +117,14 @@ test('the wire body: who it is for, the people and addresses, and what an import
     { name: 'Book club', audience: 'open', repoUrl: 'https://github.com/o/r', description: 'Ours', governance: { approvers: 'invited', approvals: 'default' } });
   assert.deepEqual(createBody({ ...imp, repo: { description: 'Theirs', governance: { approvers: 'anyone', approvals: null } } }),
     { name: 'Book club', audience: 'open', repoUrl: 'https://github.com/o/r' });
+  // A template is a new project's pick: named only in template mode, and
+  // never sent alongside a repo the server would refuse it with.
+  assert.equal(createBody({ ...base, audience: 'solo' }).template, undefined, 'scratch sends no template');
+  assert.deepEqual(createBody({ ...base, audience: 'solo', mode: 'template', template: 'social' }),
+    { name: 'Book club', audience: 'solo', template: 'social' });
+  const templateBody = createBody({ ...base, audience: 'solo', mode: 'template', template: 'game-2d', repoUrl: 'https://github.com/o/r' });
+  assert.equal(templateBody.template, 'game-2d');
+  assert.equal(templateBody.repoUrl, undefined, 'a template never travels with a repoUrl');
   const submit = SRC.slice(SRC.indexOf('async function submit(event: FormEvent) {'), SRC.indexOf('  const stepIndex'));
   assert.match(submit, /const body = createBody\(\{/);
   assert.match(submit, /invitees: people,/);
@@ -197,6 +205,20 @@ test('the kind step and the last step: rows, with what is not ready yet dimmed a
   assert.match(start, /Start from scratch/);
   assert.match(start, /Start from a template/);
   assert.match(start, /Import a GitHub repo/);
+  // The template row is a choice now: pressed like the others, no Soon tag,
+  // and its list opens after the import block, once the row is pressed.
+  assert.doesNotMatch(start, /data-mode-pill="template" aria-disabled="true"/, 'the template row is pressable');
+  assert.doesNotMatch(start, /data-mode-pill="template"[\s\S]{0,400}SOON_TAG|SOON_TAG[\s\S]{0,400}data-mode-pill="template"/, 'no Soon tag on it');
+  assert.match(start, /data-mode-pill="template"\s+aria-pressed=\{mode === 'template'\}/);
+  assert.match(start, /Pick one below\./);
+  assert.ok(start.indexOf('id="create-import-block"') > 0
+    && start.indexOf('create-template-block') > start.indexOf('id="create-import-block"'),
+    'the template list opens under the import block');
+  assert.match(start, /data-template-pill=\{t\.key\}/, 'one pill per template in START_TEMPLATES');
+  for (const key of ['starter', 'social', 'multimedia', 'game-2d', 'game-3d']) {
+    assert.match(SRC, new RegExp(`key: '${key}'`), key);
+  }
+  assert.match(SRC, /The starter screen new projects have today\./, 'Empty is the scaffold today\'s screen');
   assert.match(SRC, /\{`\$\{numberOf\('start'\)\}\. How do you want to start\?`\}/);
   assert.match(SRC, />\s*A majority\s*</, '"Most of them" reads "A majority"');
   assert.doesNotMatch(SRC, /Most of them/);
@@ -242,6 +264,7 @@ test('the shot links land on the state they name, and each has a check', () => {
   assert.match(SRC, /if \(shot === 'create-details'\) return \{ \.\.\.open, step: 'details', audience: 'solo', kind: 'app' \};/);
   assert.match(SRC, /if \(shot === 'create-approve' \|\| shot === 'create-access'\) return \{ \.\.\.named, step: 'approve', audience: 'open' \};/);
   assert.match(SRC, /if \(shot === 'create-import'\) return \{ \.\.\.named, step: 'start', audience: 'solo', mode: 'import' \};/);
+  assert.match(SRC, /if \(shot === 'create-template'\) return \{ \.\.\.named, step: 'start', audience: 'solo', mode: 'template' \};/);
   const byPath = new Map(DAPP.tests.map((t) => [t.path, t]));
   const first = DAPP.tests.find((t) => t.path === '/#create' && /Step 1 of 4/.test(t.expectText || ''));
   assert.ok(first, 'a check reads the step count on a cold open');
@@ -257,6 +280,10 @@ test('the shot links land on the state they name, and each has a check', () => {
   assert.equal(group.expectText, 'Who do you want to invite?');
   const imp = byPath.get('/?shot=create-import#create');
   assert.match(imp.expectSelector, /\[data-mode-pill="new"\] \+ \[data-mode-pill="template"\] \+ \[data-mode-pill="import"\] \+ #create-import-block/);
+  const tpl = byPath.get('/?shot=create-template#create');
+  assert.ok(tpl, 'the template list has its own check');
+  assert.match(tpl.expectSelector, /\[data-mode="template"\] #create-import-block \+ \.create-template-block \[data-template-pill="starter"\] \+ \[data-template-pill="social"\] \+ \[data-template-pill="multimedia"\] \+ \[data-template-pill="game-2d"\] \+ \[data-template-pill="game-3d"\]/);
+  assert.equal(tpl.expectText, 'Social productivity');
   assert.equal(byPath.get('/?shot=create-access#create'), undefined, 'the retired step has no check left');
 });
 

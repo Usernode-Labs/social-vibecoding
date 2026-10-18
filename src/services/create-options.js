@@ -80,6 +80,14 @@
 
 const AUDIENCES = new Set(['solo', 'invited', 'open']);
 const VISIBILITIES = new Set(['public', 'private']);
+/**
+ * The create screen's "Start from a template" picks (services/template.js
+ * renders them). Absent or null is `starter` — the scaffold new projects
+ * always got — and anything else is a 400: a creator who sent a value meant
+ * it, and a silently ignored pick would build a different app than the one
+ * chosen on the screen.
+ */
+const TEMPLATES = new Set(['starter', 'social', 'multimedia', 'game-2d', 'game-3d']);
 const MAX_INVITEES = 20;
 const MAX_APPROVALS_REQUIRED = 50;
 const USERNAME_MAX = 64;
@@ -183,6 +191,14 @@ function parseDescription(raw) {
  * governance, description }`.
  */
 function parseCreateOptions(body = {}) {
+  let template = 'starter';
+  if (body.template != null) {
+    if (typeof body.template !== 'string' || !TEMPLATES.has(body.template)) {
+      return { error: 'template must be one of: ' + [...TEMPLATES].join(', ') };
+    }
+    template = body.template;
+  }
+
   let audience = null;
   let collabVisibility;
   let viewVisibility;
@@ -215,6 +231,7 @@ function parseCreateOptions(body = {}) {
   if (desc.error) return { error: desc.error };
 
   return {
+    template,
     audience,
     collabVisibility,
     viewVisibility,
@@ -243,6 +260,7 @@ function governanceBlock(governance) {
 
 module.exports = {
   AUDIENCES,
+  TEMPLATES,
   MAX_INVITEES,
   DESCRIPTION_MAX,
   parseCreateOptions,

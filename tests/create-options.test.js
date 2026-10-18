@@ -13,6 +13,16 @@ const path = require('node:path');
 const options = require('../src/services/create-options');
 const { getTemplateFiles } = require('../src/services/template');
 
+test('the template pick: absent is the starter, the five keys pass, anything else is refused', () => {
+  assert.deepEqual([...options.TEMPLATES], ['starter', 'social', 'multimedia', 'game-2d', 'game-3d']);
+  const t = (template) => options.parseCreateOptions({ audience: 'open', template });
+  assert.equal(options.parseCreateOptions({ audience: 'open' }).template, 'starter', 'absent is the starter scaffold');
+  assert.equal(t(null).template, 'starter', 'null is the starter scaffold');
+  for (const key of options.TEMPLATES) assert.equal(t(key).template, key, key);
+  assert.match(t('junk').error, /^template must be one of: /);
+  assert.match(t(42).error, /^template must be one of: /, 'a non-string is refused, not stringified');
+});
+
 test('an audience resolves to the two visibility columns it implies', () => {
   const parse = (audience) => options.parseCreateOptions({ audience });
   assert.deepEqual(
@@ -97,8 +107,8 @@ test('the new repository\'s dapp.json carries a non-default rule, and only then'
   assert.deepEqual(readGovernance(dapp({ approverPolicy: 'invited', approvalsRequired: 3 })),
     { approvers: 'invited', approvals: 3 });
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
-  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\) \}/g) || []).length, 2,
-    'both template paths (GitHub and local) pass the row\'s rule and its line');
+  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\), template: appRow\.starter_template \|\| 'starter' \}/g) || []).length, 2,
+    'both template paths (GitHub and local) pass the row\'s rule, its line and its template');
 });
 
 test('"What is it?" is one optional line, tidied and bounded', () => {

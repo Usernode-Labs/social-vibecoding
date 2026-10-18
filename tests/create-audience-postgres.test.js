@@ -46,10 +46,10 @@ test('creating a project for someone, against the full schema', { timeout: 18000
   const { rows: people } = await pool.query(
     `INSERT INTO users (username, password, has_platform_access, app_quota) VALUES
        ('maker', 'x', TRUE, 10), ('Ada', 'x', TRUE, 2), ('grace', 'x', TRUE, 2), ('other', 'x', TRUE, 10),
-       ('writer', 'x', TRUE, 10), ('mailer', 'x', TRUE, 10)
+       ('writer', 'x', TRUE, 10), ('mailer', 'x', TRUE, 10), ('templater', 'x', TRUE, 10)
      RETURNING id, username`
   );
-  const [maker, ada, grace, other, writer, mailer] = people;
+  const [maker, ada, grace, other, writer, mailer, templater] = people;
   // Ada has an address confirmed on her account; nobody has sam@.
   await pool.query(`UPDATE users SET email = 'ada@example.com', email_confirmed = TRUE WHERE id = $1`, [ada.id]);
   // Mutable: the create limiter allows five an hour per user, so the last
@@ -192,5 +192,31 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     assert.equal(bad.status, 400);
     const badRule = await create({ name: 'Bad rule', audience: 'open', governance: { approvers: 'everyone' } });
     assert.equal(badRule.status, 400);
+  });
+
+  await t.test('the template pick lands on the row, for the retry path', async () => {
+    // A fresh account: every earlier subtest's creates, refused ones
+    // included, count against the five-an-hour limiter.
+    viewer = { id: templater.id, username: templater.username, isAdmin: false, canAdminWrite: false };
+    const picked = await create({ name: 'Task list', audience: 'solo', template: 'social' });
+    assert.equal(picked.status, 201, JSON.stringify(picked.data));
+    const { rows } = await pool.query(`SELECT starter_template FROM apps WHERE id = $1`, [picked.data.app.id]);
+    assert.equal(rows[0].starter_template, 'social', 'the chosen template is persisted');
+    const handed = built.find((r) => r.id === picked.data.app.id);
+    assert.equal(handed.starter_template, 'social', 'the build receives the picked template');
+
+    const plain = await create({ name: 'Plain scaffold', audience: 'solo' });
+    assert.equal(plain.status, 201, JSON.stringify(plain.data));
+    const bare = await pool.query(`SELECT starter_template FROM apps WHERE id = $1`, [plain.data.app.id]);
+    assert.equal(bare.rows[0].starter_template, 'starter', 'no pick, the starter default');
+
+    const junk = await create({ name: 'Junk template', audience: 'solo', template: 'nonsense' });
+    assert.equal(junk.status, 400, 'a value outside the set is refused');
+    const notString = await create({ name: 'Not a string', audience: 'solo', template: 42 });
+    assert.equal(notString.status, 400);
+    const both = await create({ name: 'Template and repo', audience: 'solo', template: 'social', repoUrl: 'https://github.com/octocat/Hello-World' });
+    assert.equal(both.status, 400, 'a template together with a repo is refused before any repo verification');
+    const after = await pool.query(`SELECT COUNT(*)::int AS n FROM apps WHERE name = 'Template and repo'`);
+    assert.equal(after.rows[0].n, 0, 'the refused pair created nothing');
   });
 });

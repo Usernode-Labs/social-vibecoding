@@ -1468,6 +1468,12 @@
       "expectText": "GitHub repo URL"
     },
     {
+      "name": "Create-app dialog's Start from a template row is a pressable choice, and the five starter templates open under it after the import block",
+      "path": "/?shot=create-template#create",
+      "expectSelector": "#create-card[data-mode=\"template\"] #create-import-block + .create-template-block [data-template-pill=\"starter\"] + [data-template-pill=\"social\"] + [data-template-pill=\"multimedia\"] + [data-template-pill=\"game-2d\"] + [data-template-pill=\"game-3d\"]",
+      "expectText": "Social productivity"
+    },
+    {
       "name": "Create-project dialog opens on who it is for, nothing chosen yet and Next dimmed beside Cancel: Just me, A private community and A public community, with a step count (communities, stage 3; the rework)",
       "path": "/#create",
       "expectSelector": ".un-modal #create-card[data-step=\"who\"][data-audience=\"\"]:has(#create-cancel + #create-next:disabled) .create-who-pill[data-audience-pill=\"solo\"] + .create-who-pill[data-audience-pill=\"invited\"] + .create-who-pill[data-audience-pill=\"open\"]",

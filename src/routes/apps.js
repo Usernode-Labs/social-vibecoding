@@ -945,7 +945,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     if (options.error) {
       return res.status(400).json({ error: options.error });
     }
-    const { collabVisibility, viewVisibility, invitees, inviteEmails, governance: rule, description } = options;
+    const { template, collabVisibility, viewVisibility, invitees, inviteEmails, governance: rule, description } = options;
+
+    // A template only applies to a new project: an import scaffolds nothing,
+    // so a pick sent together with a repo would be silently ignored. Refused
+    // here, before any repo verification runs.
+    if (template !== 'starter' && repoUrl) {
+      return res.status(400).json({ error: 'A template only applies to a new project; import the repo or pick a template.' });
+    }
 
     // Import-existing pre-flight: parse URL, accept any pending invite
     // for this exact repo, then verify Write access. Anything other
@@ -1040,8 +1047,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const { rows } = await pool.query(
         `WITH new_app AS (
            INSERT INTO apps (name, slug, repo_url, created_by, status,
-                             collab_visibility, view_visibility)
-           VALUES ($1, $2, $3, $4, 'creating', $5, $6)
+                             collab_visibility, view_visibility, starter_template)
+           VALUES ($1, $2, $3, $4, 'creating', $5, $6, $7)
            RETURNING *
          ), membership AS (
            INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
@@ -1049,7 +1056,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
            ON CONFLICT (app_id, user_id) DO NOTHING
          )
          SELECT * FROM new_app`,
-        [name.trim(), slug, repoUrlNormalized, req.user.id, collabVisibility, viewVisibility]
+        [name.trim(), slug, repoUrlNormalized, req.user.id, collabVisibility, viewVisibility, template]
       );
 
       let appRow = rows[0];
@@ -1133,6 +1140,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           ...(invited ? { invited } : {}),
           ...(rule ? { approverPolicy: rule.approverPolicy, approvalsRequired: rule.approvalsRequired } : {}),
           ...(description ? { described: true } : {}),
+          // The template the creator picked, when it is not the scaffold
+          // new projects always got: the event is how the row's pick is
+          // visible without reading the column.
+          ...(template !== 'starter' ? { template } : {}),
         },
       });
 

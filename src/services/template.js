@@ -315,7 +315,621 @@ connector registered under some other name.
 // Discover and the project's page show) and the first sentence of
 // CLAUDE.md's About section, so the coding agent starts from the same
 // intent. Absent, both stay as they were.
-function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null } = {}) {
+//
+// `template` is the create screen's "Start from a template" pick (one of
+// create-options.TEMPLATES's keys). Every template is the same scaffold —
+// the same auth, the same plumbing, the same starter-notice messaging —
+// with a different example card, demo routes and demo table: placeholder
+// content the project's first real feature replaces, exactly like the
+// starter's Press! example. An unknown or missing key resolves to
+// `starter`, so a bad value already sitting on an apps row can never fail
+// a Retry inside here; the route refuses junk at parse time instead.
+//
+// `starter` is byte for byte what this function always rendered, and a
+// call without `template` renders it too — the pre-template scaffolds are
+// unchanged.
+const GAME_SERVER_ROUTES = `// Shared high-score board (both game templates serve this)
+app.get('/api/leaderboard', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(\`
+      SELECT username, score
+      FROM scores
+      ORDER BY score DESC
+      LIMIT 50
+    \`);
+    res.json({ leaderboard: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Upsert keeps each person's best score.
+app.post('/api/score', async (req, res) => {
+  const score = Math.max(0, Math.min(1000000, Math.round(Number(req.body && req.body.score) || 0)));
+  try {
+    await pool.query(\`
+      INSERT INTO scores (user_id, username, score, updated_at)
+      VALUES ($1, $2, $3, NOW())
+      ON CONFLICT (user_id) DO UPDATE
+        SET score = GREATEST(scores.score, EXCLUDED.score),
+            username = EXCLUDED.username,
+            updated_at = NOW()
+    \`, [req.user.id, req.user.username, score]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+`;
+
+const GAME_SCORES_TABLE = `    CREATE TABLE IF NOT EXISTS scores (
+      user_id INTEGER PRIMARY KEY,
+      username VARCHAR(255) NOT NULL,
+      score INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`;
+
+const GAME_LEADERBOARD_JS = `    async function loadLeaderboard() {
+      const res = await fetch('/api/leaderboard', { headers });
+      if (!res.ok) return;
+      const { leaderboard } = await res.json();
+      const el = document.getElementById('leaderboard');
+      if (!leaderboard.length) {
+        el.innerHTML = '<p class="text-center text-zinc-600 text-sm">No scores yet</p>';
+        return;
+      }
+      el.innerHTML = leaderboard.map((r, i) =>
+        '<div class="flex justify-between px-3 py-1 rounded ' + (i === 0 ? 'bg-violet-600/20 text-violet-300' : 'text-zinc-400') + '">' +
+        '<span>' + (i + 1) + '. ' + r.username + '</span>' +
+        '<span class="font-mono">' + r.score + '</span></div>'
+      ).join('');
+    }`;
+
+const TEMPLATES = {
+  starter: {
+    label: 'Empty',
+    badge: 'Starter template',
+    readmeLine: null,
+    claudeLine: null,
+    serverRoutes: `// Button press
+app.post('/api/press', async (req, res) => {
+  try {
+    await pool.query(\`
+      INSERT INTO presses (user_id, username) VALUES ($1, $2)
+    \`, [req.user.id, req.user.username]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Leaderboard
+app.get('/api/leaderboard', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(\`
+      SELECT username, COUNT(*) as presses
+      FROM presses
+      GROUP BY username
+      ORDER BY presses DESC
+      LIMIT 50
+    \`);
+    res.json({ leaderboard: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+`,
+    tableSql: `    CREATE TABLE IF NOT EXISTS presses (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    exampleSection: `    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col items-center gap-5">
+      <div class="w-full flex items-baseline justify-between gap-2">
+        <h2 class="text-sm font-medium text-zinc-500">Try the example</h2>
+        <span class="text-xs text-zinc-600">This example will be replaced</span>
+      </div>
+
+      <button id="press-btn" class="w-32 h-32 rounded-full bg-violet-600 hover:bg-violet-500 active:scale-95 transition-all text-white text-xl font-bold shadow-lg shadow-violet-600/30">
+        Press!
+      </button>
+
+      <div id="count" class="text-lg text-zinc-400">0 total presses</div>
+
+      <div class="w-full max-w-sm">
+        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">Leaderboard</h3>
+        <div id="leaderboard" class="space-y-1"></div>
+      </div>
+    </section>
+`,
+    exampleScript: `    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || '';
+    const headers = token ? { 'x-usernode-token': token } : {};
+
+    async function loadLeaderboard() {
+      const res = await fetch('/api/leaderboard', { headers });
+      if (!res.ok) return;
+      const { leaderboard } = await res.json();
+      const el = document.getElementById('leaderboard');
+      if (!leaderboard.length) {
+        el.innerHTML = '<p class="text-center text-zinc-600 text-sm">No presses yet</p>';
+        return;
+      }
+      el.innerHTML = leaderboard.map((r, i) =>
+        '<div class="flex justify-between px-3 py-1 rounded ' + (i === 0 ? 'bg-violet-600/20 text-violet-300' : 'text-zinc-400') + '">' +
+        '<span>' + (i + 1) + '. ' + r.username + '</span>' +
+        '<span class="font-mono">' + r.presses + '</span></div>'
+      ).join('');
+      const total = leaderboard.reduce((s, r) => s + parseInt(r.presses), 0);
+      document.getElementById('count').textContent = total + ' total presses';
+    }
+
+    document.getElementById('press-btn').addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/press', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...headers },
+        });
+        if (res.ok) loadLeaderboard();
+        else if (res.status === 401) document.getElementById('count').textContent = 'Sign in to press!';
+      } catch {}
+    });
+
+    loadLeaderboard();`,
+  },
+
+  social: {
+    label: 'Social productivity',
+    badge: 'Social productivity template',
+    readmeLine: '> It came from the "Social productivity" template: a shared to-do list demo.',
+    claudeLine: 'This repo came from the **Social productivity** template, so the demo screen, its routes and its table are that template\'s (see `server.js`), not the Press! example.',
+    serverRoutes: `// Shared to-do list
+app.get('/api/tasks', async (_req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM tasks ORDER BY done ASC, created_at ASC LIMIT 200');
+    res.json({ tasks: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/tasks', async (req, res) => {
+  const text = String((req.body && req.body.text) || '').trim().slice(0, 280);
+  if (!text) return res.status(400).json({ error: 'A task needs some text' });
+  try {
+    const { rows } = await pool.query(
+      'INSERT INTO tasks (user_id, username, text) VALUES ($1, $2, $3) RETURNING *',
+      [req.user.id, req.user.username, text]
+    );
+    res.json({ task: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/tasks/:id/toggle', async (req, res) => {
+  try {
+    const { rows } = await pool.query(\`
+      UPDATE tasks
+         SET done = NOT done,
+             done_by = CASE WHEN done THEN NULL ELSE $2 END
+       WHERE id = $1
+       RETURNING *
+    \`, [req.params.id, req.user.username]);
+    if (!rows.length) return res.status(404).json({ error: 'No such task' });
+    res.json({ task: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+`,
+    tableSql: `    CREATE TABLE IF NOT EXISTS tasks (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      text VARCHAR(280) NOT NULL,
+      done BOOLEAN NOT NULL DEFAULT FALSE,
+      done_by VARCHAR(255),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    exampleSection: `    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col gap-4">
+      <div class="w-full flex items-baseline justify-between gap-2">
+        <h2 class="text-sm font-medium text-zinc-500">Shared to-do list</h2>
+        <span class="text-xs text-zinc-600">This example will be replaced</span>
+      </div>
+
+      <form id="task-form" class="flex gap-2">
+        <input id="task-text" type="text" maxlength="280" placeholder="Add a task…" aria-label="Add a task" class="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-violet-500" />
+        <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-semibold text-white">Add</button>
+      </form>
+
+      <div id="tasks" class="divide-y divide-zinc-800"></div>
+    </section>
+`,
+    exampleScript: `    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || '';
+    const headers = token ? { 'x-usernode-token': token } : {};
+
+    function escapeHtml(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    async function loadTasks() {
+      const res = await fetch('/api/tasks', { headers });
+      if (!res.ok) return;
+      const { tasks } = await res.json();
+      const el = document.getElementById('tasks');
+      if (!tasks.length) {
+        el.innerHTML = '<p class="text-center text-zinc-600 text-sm py-2">Nothing on the list yet</p>';
+        return;
+      }
+      el.innerHTML = tasks.map(function (t) {
+        var sub = 'added by @' + escapeHtml(t.username);
+        if (t.done && t.done_by) sub += ' · done by @' + escapeHtml(t.done_by);
+        return '<div class="flex items-center gap-3 py-2">' +
+          '<button type="button" data-task="' + t.id + '" aria-pressed="' + (t.done ? 'true' : 'false') + '" aria-label="Toggle the task" class="task-toggle shrink-0 w-5 h-5 rounded border ' + (t.done ? 'bg-violet-600 border-violet-600 text-white text-xs leading-4' : 'border-zinc-600') + '">' + (t.done ? '✓' : '') + '</button>' +
+          '<span class="min-w-0 flex-1">' +
+          '<span class="block text-sm ' + (t.done ? 'text-zinc-500 line-through' : 'text-zinc-100') + '">' + escapeHtml(t.text) + '</span>' +
+          '<span class="block text-xs text-zinc-500">' + sub + '</span>' +
+          '</span></div>';
+      }).join('');
+      Array.prototype.forEach.call(el.querySelectorAll('.task-toggle'), function (btn) {
+        btn.addEventListener('click', function () {
+          fetch('/api/tasks/' + btn.getAttribute('data-task') + '/toggle', { method: 'POST', headers: headers }).then(loadTasks);
+        });
+      });
+    }
+
+    document.getElementById('task-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var input = document.getElementById('task-text');
+      var text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ text: text })
+      });
+      loadTasks();
+    });
+
+    loadTasks();`,
+  },
+
+  multimedia: {
+    label: 'Multimedia social',
+    badge: 'Multimedia social template',
+    readmeLine: '> It came from the "Multimedia social" template: a shared queue of links demo.',
+    claudeLine: 'This repo came from the **Multimedia social** template, so the demo screen, its routes and its tables are that template\'s (see `server.js`), not the Press! example.',
+    serverRoutes: `// Shared queue of links
+app.get('/api/media', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(\`
+      SELECT m.id, m.url, m.title, m.username, m.created_at,
+             COUNT(l.user_id)::int AS likes
+      FROM media m
+      LEFT JOIN media_likes l ON l.media_id = m.id
+      GROUP BY m.id
+      ORDER BY m.created_at DESC
+      LIMIT 100
+    \`);
+    res.json({ media: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/media', async (req, res) => {
+  const url = String((req.body && req.body.url) || '').trim();
+  const title = String((req.body && req.body.title) || '').trim().slice(0, 280);
+  if (!/^https?:\\/\\//.test(url) || url.length > 2048) {
+    return res.status(400).json({ error: 'Add a link that starts with http:// or https://' });
+  }
+  if (!title) return res.status(400).json({ error: 'Give the link a title' });
+  try {
+    const { rows } = await pool.query(
+      'INSERT INTO media (user_id, username, url, title) VALUES ($1, $2, $3, $4) RETURNING *',
+      [req.user.id, req.user.username, url, title]
+    );
+    res.json({ item: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/media/:id/like', async (req, res) => {
+  try {
+    const added = await pool.query(
+      'INSERT INTO media_likes (media_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [req.params.id, req.user.id]
+    );
+    let liked = true;
+    if (!added.rowCount) {
+      await pool.query('DELETE FROM media_likes WHERE media_id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+      liked = false;
+    }
+    const { rows } = await pool.query('SELECT COUNT(*)::int AS likes FROM media_likes WHERE media_id = $1', [req.params.id]);
+    res.json({ liked: liked, likes: rows[0].likes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+`,
+    tableSql: `    CREATE TABLE IF NOT EXISTS media (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      url VARCHAR(2048) NOT NULL,
+      title VARCHAR(280) NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS media_likes (
+      media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL,
+      UNIQUE (media_id, user_id)
+    )`,
+    exampleSection: `    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col gap-4">
+      <div class="w-full flex items-baseline justify-between gap-2">
+        <h2 class="text-sm font-medium text-zinc-500">Shared queue</h2>
+        <span class="text-xs text-zinc-600">This example will be replaced</span>
+      </div>
+
+      <form id="media-form" class="flex flex-col gap-2">
+        <input id="media-url" type="url" maxlength="2048" placeholder="https://…" aria-label="Link to add" class="rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-violet-500" />
+        <div class="flex gap-2">
+          <input id="media-title" type="text" maxlength="280" placeholder="Title" aria-label="Title for the link" class="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-violet-500" />
+          <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-semibold text-white">Add</button>
+        </div>
+      </form>
+
+      <div id="media" class="flex flex-col gap-2"></div>
+    </section>
+`,
+    exampleScript: `    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || '';
+    const headers = token ? { 'x-usernode-token': token } : {};
+
+    function escapeHtml(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    async function loadMedia() {
+      const res = await fetch('/api/media', { headers });
+      if (!res.ok) return;
+      const { media } = await res.json();
+      const el = document.getElementById('media');
+      if (!media.length) {
+        el.innerHTML = '<p class="text-center text-zinc-600 text-sm py-2">The queue is empty</p>';
+        return;
+      }
+      el.innerHTML = media.map(function (m) {
+        return '<div class="rounded-lg border border-zinc-800 bg-zinc-900 p-3 flex items-start gap-3">' +
+          '<div class="min-w-0 flex-1">' +
+          '<a href="' + escapeHtml(m.url) + '" target="_blank" rel="noopener noreferrer" class="block text-sm font-semibold text-violet-300 hover:underline break-words">' + escapeHtml(m.title) + '</a>' +
+          '<span class="block text-xs text-zinc-500">added by @' + escapeHtml(m.username) + '</span>' +
+          '</div>' +
+          '<button type="button" data-media="' + m.id + '" aria-label="Like this link" class="media-like shrink-0 text-xs rounded-full px-3 py-1 border ' + (m.likes > 0 ? 'border-violet-500 text-violet-300' : 'border-zinc-700 text-zinc-400') + '">♥ ' + m.likes + '</button>' +
+          '</div>';
+      }).join('');
+      Array.prototype.forEach.call(el.querySelectorAll('.media-like'), function (btn) {
+        btn.addEventListener('click', function () {
+          fetch('/api/media/' + btn.getAttribute('data-media') + '/like', { method: 'POST', headers: headers }).then(loadMedia);
+        });
+      });
+    }
+
+    document.getElementById('media-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var url = document.getElementById('media-url').value.trim();
+      var title = document.getElementById('media-title').value.trim();
+      if (!url || !title) return;
+      document.getElementById('media-url').value = '';
+      document.getElementById('media-title').value = '';
+      var res = await fetch('/api/media', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ url: url, title: title })
+      });
+      if (!res.ok) {
+        var data = await res.json().catch(function () { return {}; });
+        window.alert(data.error || 'Could not add that link');
+      }
+      loadMedia();
+    });
+
+    loadMedia();`,
+  },
+
+  'game-2d': {
+    label: '2D game',
+    badge: '2D game template',
+    readmeLine: '> It came from the "2D game" template: a little arcade demo with a shared high-score board.',
+    claudeLine: 'This repo came from the **2D game** template, so the demo screen, its routes and its table are that template\'s (see `server.js`), not the Press! example.',
+    serverRoutes: GAME_SERVER_ROUTES,
+    tableSql: GAME_SCORES_TABLE,
+    exampleSection: `    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col items-center gap-4">
+      <div class="w-full flex items-baseline justify-between gap-2">
+        <h2 class="text-sm font-medium text-zinc-500">Star catch</h2>
+        <span class="text-xs text-zinc-600">This example will be replaced</span>
+      </div>
+
+      <canvas id="game" width="320" height="240" class="rounded-lg bg-zinc-950 border border-zinc-800 touch-none max-w-full"></canvas>
+      <div id="score" class="text-lg text-zinc-400">0 points</div>
+
+      <div class="w-full max-w-sm">
+        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">High scores</h3>
+        <div id="leaderboard" class="space-y-1"></div>
+      </div>
+    </section>
+`,
+    exampleScript: `    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || '';
+    const headers = token ? { 'x-usernode-token': token } : {};
+
+    var canvas = document.getElementById('game');
+    var ctx = canvas.getContext('2d');
+    var score = 0;
+    var paddle = { x: 160, w: 64, h: 10 };
+    var stars = [];
+    var dragging = false;
+
+    function spawnStar() {
+      stars.push({ x: 20 + Math.random() * 280, y: -10, v: 1.2 + Math.random() * 1.8 });
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, 320, 240);
+      ctx.fillStyle = '#facc15';
+      for (var i = 0; i < stars.length; i++) {
+        ctx.beginPath();
+        ctx.arc(stars[i].x, stars[i].y, 6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = '#7c3aed';
+      ctx.fillRect(paddle.x - paddle.w / 2, 224, paddle.w, paddle.h);
+    }
+
+    function step() {
+      for (var i = stars.length - 1; i >= 0; i--) {
+        var s = stars[i];
+        s.y += s.v;
+        if (s.y >= 218 && s.y <= 232 && Math.abs(s.x - paddle.x) < paddle.w / 2 + 6) {
+          stars.splice(i, 1);
+          score += 1;
+          document.getElementById('score').textContent = score + ' points';
+          fetch('/api/score', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...headers },
+            body: JSON.stringify({ score: score })
+          }).then(loadLeaderboard).catch(function () {});
+        } else if (s.y > 250) {
+          stars.splice(i, 1);
+        }
+      }
+      draw();
+    }
+
+    setInterval(function () { if (stars.length < 5) spawnStar(); }, 900);
+    setInterval(step, 33);
+
+    function movePointer(clientX) {
+      var rect = canvas.getBoundingClientRect();
+      paddle.x = Math.max(paddle.w / 2, Math.min(320 - paddle.w / 2, (clientX - rect.left) * (320 / rect.width)));
+    }
+    canvas.addEventListener('pointerdown', function (e) { dragging = true; movePointer(e.clientX); });
+    canvas.addEventListener('pointermove', function (e) { if (dragging) movePointer(e.clientX); });
+    window.addEventListener('pointerup', function () { dragging = false; });
+    window.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowLeft') { paddle.x = Math.max(paddle.w / 2, paddle.x - 16); e.preventDefault(); }
+      if (e.key === 'ArrowRight') { paddle.x = Math.min(320 - paddle.w / 2, paddle.x + 16); e.preventDefault(); }
+    });
+
+    ${GAME_LEADERBOARD_JS}
+
+    loadLeaderboard();`,
+  },
+
+  'game-3d': {
+    label: '3D game',
+    badge: '3D game template',
+    readmeLine: '> It came from the "3D game" template: a 3D scene demo with a shared high-score board.',
+    claudeLine: 'This repo came from the **3D game** template, so the demo screen, its routes and its table are that template\'s (see `server.js`), not the Press! example.',
+    serverRoutes: GAME_SERVER_ROUTES,
+    tableSql: GAME_SCORES_TABLE,
+    exampleSection: `    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col items-center gap-4">
+      <div class="w-full flex items-baseline justify-between gap-2">
+        <h2 class="text-sm font-medium text-zinc-500">Tile orbit</h2>
+        <span class="text-xs text-zinc-600">This example will be replaced</span>
+      </div>
+
+      <div id="scene" class="w-full h-64 rounded-lg bg-zinc-950 border border-zinc-800 overflow-hidden" style="perspective:600px">
+        <div id="orbit" class="relative h-full w-full" style="transform-style:preserve-3d"></div>
+      </div>
+      <div id="score" class="text-lg text-zinc-400">0 collected</div>
+
+      <div class="w-full max-w-sm">
+        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">High scores</h3>
+        <div id="leaderboard" class="space-y-1"></div>
+      </div>
+    </section>
+`,
+    exampleScript: `    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || '';
+    const headers = token ? { 'x-usernode-token': token } : {};
+
+    var scene = document.getElementById('scene');
+    var orbit = document.getElementById('orbit');
+    var score = 0;
+    var yaw = -20;
+    var pitch = -15;
+    var dragging = false;
+    var dragged = false;
+    var lastX = 0;
+    var lastY = 0;
+
+    function render() {
+      orbit.style.transform = 'rotateX(' + pitch + 'deg) rotateY(' + yaw + 'deg)';
+    }
+
+    // Tiles sit on an invisible sphere: drag the scene to orbit it, tap a
+    // glowing tile to collect it.
+    function buildTiles() {
+      orbit.innerHTML = '';
+      for (var i = 0; i < 16; i++) {
+        var phi = Math.acos(-1 + (2 * i + 1) / 16);
+        var theta = Math.sqrt(16 * Math.PI) * phi;
+        var tile = document.createElement('button');
+        tile.type = 'button';
+        tile.className = 'tile absolute left-1/2 top-1/2 w-10 h-10 -ml-5 -mt-5 rounded-lg border ' +
+          (Math.random() < 0.3 ? 'border-violet-400 bg-violet-600/60' : 'border-zinc-700 bg-zinc-800/80');
+        tile.style.transform = 'translate3d(' + Math.round(110 * Math.sin(phi) * Math.cos(theta)) + 'px,' +
+          Math.round(110 * Math.sin(phi) * Math.sin(theta)) + 'px,' +
+          Math.round(110 * Math.cos(phi)) + 'px)';
+        tile.addEventListener('click', function (e) {
+          if (dragged) return;
+          e.currentTarget.className = 'tile absolute left-1/2 top-1/2 w-10 h-10 -ml-5 -mt-5 rounded-lg border border-zinc-800 bg-zinc-900 opacity-30';
+          score += 1;
+          document.getElementById('score').textContent = score + ' collected';
+          fetch('/api/score', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...headers },
+            body: JSON.stringify({ score: score })
+          }).then(loadLeaderboard).catch(function () {});
+        });
+        orbit.appendChild(tile);
+      }
+      render();
+    }
+
+    scene.addEventListener('pointerdown', function (e) { dragging = true; dragged = false; lastX = e.clientX; lastY = e.clientY; });
+    scene.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      var dx = e.clientX - lastX;
+      var dy = e.clientY - lastY;
+      if (Math.abs(dx) + Math.abs(dy) > 2) dragged = true;
+      yaw += dx * 0.4;
+      pitch = Math.max(-80, Math.min(80, pitch + dy * 0.4));
+      lastX = e.clientX;
+      lastY = e.clientY;
+      render();
+    });
+    window.addEventListener('pointerup', function () { dragging = false; });
+
+    ${GAME_LEADERBOARD_JS}
+
+    buildTiles();
+    loadLeaderboard();`,
+  },
+};
+
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = 'starter' } = {}) {
+  const tpl = TEMPLATES[template] || TEMPLATES.starter;
   const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
   const governanceBlock = require('./create-options').governanceBlock(governance);
   const about = typeof description === 'string' && description.trim() ? description.trim() : null;
@@ -389,7 +1003,7 @@ working" card, and the Press! example (the demo markup in
 \`public/index.html\`, the \`/api/press\` and \`/api/leaderboard\` routes, and
 the \`presses\` table bootstrap in \`server.js\`) — is placeholder content
 from the Homeroom starter template, not product intent.
-
+${tpl.claudeLine ? '\n' + tpl.claudeLine + '\n' : ''}
 When the user asks for their first real feature, REPLACE the template
 screen rather than building alongside it:
 
@@ -439,7 +1053,7 @@ dependencies"; etc.)_
 > **Starter template** — this repo was scaffolded by Homeroom Social
 > Vibecoding. Everything in it is placeholder example code until the
 > app's first real feature is built.
-
+${tpl.readmeLine ? tpl.readmeLine + '\n' : ''}
 The scaffold is a small working demo that proves the plumbing works:
 
 - **Sign-in** — the server verifies the platform-issued user token
@@ -767,35 +1381,7 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 // fresh load.
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
-// Button press
-app.post('/api/press', async (req, res) => {
-  try {
-    await pool.query(\`
-      INSERT INTO presses (user_id, username) VALUES ($1, $2)
-    \`, [req.user.id, req.user.username]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Leaderboard
-app.get('/api/leaderboard', async (_req, res) => {
-  try {
-    const { rows } = await pool.query(\`
-      SELECT username, COUNT(*) as presses
-      FROM presses
-      GROUP BY username
-      ORDER BY presses DESC
-      LIMIT 50
-    \`);
-    res.json({ leaderboard: rows });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.use(express.static(path.join(__dirname, 'public')));
+${tpl.serverRoutes}app.use(express.static(path.join(__dirname, 'public')));
 
 // HTML shell: serve the app if authenticated. Unauthenticated top-level
 // visits (share links pasted into a browser — Sec-Fetch-Dest: document)
@@ -834,12 +1420,7 @@ app.get('*', (req, res) => {
 
 async function start() {
   await pool.query(\`
-    CREATE TABLE IF NOT EXISTS presses (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL,
-      username VARCHAR(255) NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
+${tpl.tableSql}
   \`);
   const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
@@ -893,7 +1474,7 @@ start().catch(err => { console.error(err); process.exit(1); });
          the user's real app, replace this whole screen and delete this block,
          both sentinel comments included. -->
     <section class="rounded-2xl border border-violet-500/30 bg-gradient-to-b from-violet-600/20 to-transparent p-6 text-center flex flex-col items-center gap-3">
-      <span class="inline-block rounded-full bg-violet-600/20 text-violet-300 text-xs font-semibold uppercase tracking-wide px-3 py-1">Starter template</span>
+      <span class="inline-block rounded-full bg-violet-600/20 text-violet-300 text-xs font-semibold uppercase tracking-wide px-3 py-1">${escapeHtml(tpl.badge)}</span>
       <h1 class="text-2xl font-bold">${escapeHtml(appName)}</h1>
       <p class="text-sm text-zinc-300 leading-relaxed">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
       <p class="text-sm text-zinc-300 leading-relaxed">Tap the <strong class="text-violet-300 font-semibold">Homeroom icon</strong> in the header and choose <strong class="text-violet-300 font-semibold">Start a new change</strong> to start building your app. Describe what you'd like in plain English, and it will be turned into your real app.</p>
@@ -927,62 +1508,12 @@ start().catch(err => { console.error(err); process.exit(1); });
     </section>
     <!-- /usernode-starter-notice@1 -->
 
-    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col items-center gap-5">
-      <div class="w-full flex items-baseline justify-between gap-2">
-        <h2 class="text-sm font-medium text-zinc-500">Try the example</h2>
-        <span class="text-xs text-zinc-600">This example will be replaced</span>
-      </div>
-
-      <button id="press-btn" class="w-32 h-32 rounded-full bg-violet-600 hover:bg-violet-500 active:scale-95 transition-all text-white text-xl font-bold shadow-lg shadow-violet-600/30">
-        Press!
-      </button>
-
-      <div id="count" class="text-lg text-zinc-400">0 total presses</div>
-
-      <div class="w-full max-w-sm">
-        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">Leaderboard</h3>
-        <div id="leaderboard" class="space-y-1"></div>
-      </div>
-    </section>
-
+${tpl.exampleSection}
     <p class="text-center text-xs text-zinc-600">Built on Homeroom — this template screen disappears once you build your real app.</p>
   </main>
 
   <script>
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get('token') || '';
-    const headers = token ? { 'x-usernode-token': token } : {};
-
-    async function loadLeaderboard() {
-      const res = await fetch('/api/leaderboard', { headers });
-      if (!res.ok) return;
-      const { leaderboard } = await res.json();
-      const el = document.getElementById('leaderboard');
-      if (!leaderboard.length) {
-        el.innerHTML = '<p class="text-center text-zinc-600 text-sm">No presses yet</p>';
-        return;
-      }
-      el.innerHTML = leaderboard.map((r, i) =>
-        '<div class="flex justify-between px-3 py-1 rounded ' + (i === 0 ? 'bg-violet-600/20 text-violet-300' : 'text-zinc-400') + '">' +
-        '<span>' + (i + 1) + '. ' + r.username + '</span>' +
-        '<span class="font-mono">' + r.presses + '</span></div>'
-      ).join('');
-      const total = leaderboard.reduce((s, r) => s + parseInt(r.presses), 0);
-      document.getElementById('count').textContent = total + ' total presses';
-    }
-
-    document.getElementById('press-btn').addEventListener('click', async () => {
-      try {
-        const res = await fetch('/api/press', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...headers },
-        });
-        if (res.ok) loadLeaderboard();
-        else if (res.status === 401) document.getElementById('count').textContent = 'Sign in to press!';
-      } catch {}
-    });
-
-    loadLeaderboard();
+${tpl.exampleScript}
   </script>
 </body>
 </html>
