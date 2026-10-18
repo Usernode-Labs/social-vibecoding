@@ -9436,6 +9436,15 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_created
 ALTER TABLE homeroom_bot_runs
   ADD COLUMN IF NOT EXISTS proposal_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
 
+-- The failing commit a checks fix actually looked at, so each failing head
+-- gets exactly one look. Written on the run that revised for it, on every
+-- hand-off to a person (out of revisions, the model chose a person, a
+-- revise that pushed nothing, a turn that ran out of time or produced no
+-- usable answer), and on a turn that failed. Never written on an
+-- infra-shaped result or a platform fault, so the platform's own re-run on
+-- the same head is still looked at.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha VARCHAR(40);
+
 -- Shadow builds: a ready verdict on an app outside the live list, built on a
 -- branch nobody is shown, so what the bot would have proposed can be
 -- spot-checked (see "The build lane" in services/homeroom-bot.js).

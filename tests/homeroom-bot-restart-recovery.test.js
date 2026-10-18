@@ -363,6 +363,11 @@ test('a live spec turn sends the issue back to be triaged, and a BLOCKED one say
   const [requeue] = requeues(pool);
   assert.ok(requeue, 'back in the queue: its row was gone with the pass');
   assert.deepEqual(requeue.params, [5, 12, 'restart']);
+  // A build that cannot be followed to its end still records an outcome, so
+  // the dashboard does not show it as still building.
+  const restarted = liveOutcome(pool);
+  assert.deepEqual([restarted[0], restarted[1], restarted[6], restarted[7]], [950, false, 0.42, 6001]);
+  assert.match(restarted[2], /^restarted: the live pass ended before it proposed, so the request went back to be looked at again$/);
   assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'nothing said: the fresh triage speaks');
 
   stubLive();
@@ -384,6 +389,9 @@ test('a live build whose worker did not survive sends the issue back to be triag
   const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
   await adopt(pool, session, 'exited');
   assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']]);
+  const lost = liveOutcome(pool);
+  assert.deepEqual([lost[0], lost[1], lost[6], lost[7]], [950, false, 0.42, 6001], 'the lost build records its outcome and cost');
+  assert.match(lost[2], /^lost: the server restarted while this build ran, so the request went back to be looked at again$/);
   assert.equal(liveCalls.some((c) => c[0] === 'promote'), false);
 });
 

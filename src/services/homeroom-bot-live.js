@@ -563,6 +563,42 @@ async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec
   });
 }
 
+/**
+ * One message in a proposal's own discussion, drawn as the bot's bubble and
+ * recorded in homeroom_bot_posts. Used by the checks fix, whose news belongs
+ * to the proposal's watchers and nowhere else.
+ */
+async function postOnProposal({ pool, ws, app, bot, sessionId, issueNumber, runId = null, kind, text }) {
+  if (!sessionId || !text) return null;
+  const { rows } = await pool.query(
+    `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id`,
+    [app.id, issueNumber, runId, kind],
+  ).catch((err) => {
+    log.warn('homeroom-bot', 'Could not record a proposal post', { app: app.slug, issueNumber, kind, err: err.message });
+    return { rows: [] };
+  });
+  const postId = rows[0]?.id || null;
+  let message = null;
+  try {
+    message = await ws.sendBotMessage(pool, app.id, {
+      user: bot, content: text, thread: { type: 'session', ref: Number(sessionId) },
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', {
+      app: app.slug, issueNumber, kind, err: err.message,
+    });
+  }
+  if (postId) {
+    await pool.query(
+      'UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1',
+      [postId, message?.id ?? null],
+    ).catch(() => {});
+  }
+  return { postId, thread: !!message };
+}
+
 // ── Who filed the issue ──────────────────────────────────────────────────
 //
 // An issue filed from Homeroom is authored on GitHub by the platform's bot
@@ -1507,6 +1543,7 @@ module.exports = {
   blockedText,
   shareSpecVersion,
   postSpecOnProposal,
+  postOnProposal,
   SPEC_TURN_MAX_MS,
   readSpec,
   MAX_SPEC_COMMENT_CHARS,

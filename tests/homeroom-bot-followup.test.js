@@ -96,9 +96,13 @@ test('what it says has no em dashes', () => {
 
 function harness({
   proposalStatus = 'promoted', revisions = 0, comments = [], issueThread = [], proposalThread = [],
+  checks = null,
   result = { lastResultText: '```json\n{"action":"answer","reply":"Because the platform uses it."}\n```', pushOk: true, sha: OLD_HEAD },
 } = {}) {
-  const calls = { queries: [], exec: [], loop: null, posts: [], reconciled: [], seen: [] };
+  const calls = { queries: [], exec: [], loop: null, posts: [], proposals: [], reconciled: [], seen: [], queued: [] };
+  const checkRow = checks
+    ? { check_state: 'failing', checks_commit_sha: OLD_HEAD, test_results: [], checks_head_looked: false, ...checks }
+    : {};
   const pool = {
     async query(sql, params) {
       const s = String(sql);
@@ -107,11 +111,15 @@ function harness({
         return { rows: [{ id: 5001, status: proposalStatus, pr_number: 25 }] };
       }
       if (/SELECT id, thread_seen_at FROM homeroom_bot_runs/.test(s)) return { rows: [{ id: 800, thread_seen_at: SEEN }] };
+      if (/SELECT cs\.id, cs\.status, cs\.user_id, cs\.linked_issues/.test(s)) {
+        return { rows: [{ id: 5001, status: 'promoted', user_id: 77, linked_issues: [24], app_id: 9, slug: APP.slug, reviewed_head_sha: OLD_HEAD, ...checkRow }] };
+      }
       if (/SELECT cs\.\*, a\.slug AS app_slug/.test(s)) {
-        return { rows: [{ id: 5001, user_id: 77, app_id: 9, status: 'promoted', branch_name: 'dev/homeroom_bot-5001', pr_number: 25, reviewed_head_sha: OLD_HEAD, app_slug: APP.slug, repo_url: APP.repo_url }] };
+        return { rows: [{ id: 5001, user_id: 77, app_id: 9, status: 'promoted', branch_name: 'dev/homeroom_bot-5001', pr_number: 25, reviewed_head_sha: OLD_HEAD, test_results: [], check_state: null, checks_commit_sha: null, checks_head_looked: false, app_slug: APP.slug, repo_url: APP.repo_url, ...checkRow }] };
       }
       if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(s)) return { rows: [{ n: revisions }] };
       if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
+      if (/INSERT INTO homeroom_bot_queue/.test(s)) { calls.queued.push(params); return { rows: [] }; }
       return { rows: [] };
     },
   };
@@ -157,9 +165,16 @@ function harness({
 async function run(t, h) {
   const realPost = live.post;
   const realSeen = live.advanceSeen;
-  t.after(() => { live.post = realPost; live.advanceSeen = realSeen; });
+  const realOnProposal = live.postOnProposal;
+  const realTargets = live.mentionTargets;
+  t.after(() => {
+    live.post = realPost; live.advanceSeen = realSeen;
+    live.postOnProposal = realOnProposal; live.mentionTargets = realTargets;
+  });
   live.post = async (args) => { h.calls.posts.push(args); return { githubCreatedAt: '2026-09-26T12:05:00Z' }; };
   live.advanceSeen = async (args) => { h.calls.seen.push(args); return { advanced: true }; };
+  live.postOnProposal = async (args) => { h.calls.proposals.push(args); return { postId: 1 }; };
+  live.mentionTargets = async () => [];
   return bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings: SETTINGS, deps: h.deps });
 }
 
@@ -261,7 +276,82 @@ test('a proposal that is merging is left alone', async (t) => {
   assert.equal(h.calls.exec.length, 0);
 });
 
-// ── Getting it queued ────────────────────────────────────────────────────
+// ── Failing checks, beside the replies ───────────────────────────────────
+// A failing verdict on the current head with no run that has looked at it
+// is a checks fix, whether or not a person also replied.
+
+const FAILING = {
+  check_state: 'failing',
+  checks_commit_sha: OLD_HEAD,
+  test_results: [
+    { name: 'Dark mode', path: '/', status: 'fail', failureReason: 'expected #000, saw #09090b' },
+    { name: 'Loads', path: '/', status: 'pass' },
+  ],
+};
+
+test('nobody replied, but the checks are failing on the current head: the bot fixes them itself', async (t) => {
+  const h = harness({
+    checks: FAILING,
+    result: {
+      lastResultText: '```json\n{"action":"revise","reply":"Darker now.","summary":"The dark background is now #000."}\n```',
+      pushOk: true, sha: NEW_HEAD,
+    },
+  });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'revise');
+  assert.equal(h.calls.exec.length, 1);
+  assert.equal(h.calls.exec[0].id, 5001, 'on the proposal\'s own session');
+  assert.equal(h.calls.exec[0].opts.commitMsg, 'Homeroom bot: fix failing checks on #24');
+  assert.match(h.calls.exec[0].opts.prompt, /Dark mode/);
+  assert.match(h.calls.exec[0].opts.prompt, /expected #000, saw #09090b/);
+  assert.equal(h.calls.reconciled.length, 1, 'the same reconcile a person\'s revision reaches');
+  const insert = insertOf(h);
+  assert.equal(insert.params[4], 'revise');
+  assert.equal(insert.params[20], OLD_HEAD, 'the failing head it looked at is recorded');
+  assert.equal(h.calls.proposals.length, 1, 'one note, in the proposal\'s discussion only');
+  assert.equal(h.calls.proposals[0].kind, 'checks_revise');
+  assert.match(h.calls.proposals[0].text, /earlier votes were cleared/);
+  assert.equal(h.calls.posts.length, 0, 'nothing on the issue');
+});
+
+test('a person\'s reply still comes first, even with failing checks', async (t) => {
+  const h = harness({
+    checks: FAILING,
+    comments: [{ author: 'evan', body: 'Make it #000 instead', createdAt: '2026-09-26T11:30:00Z' }],
+  });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'answer');
+  assert.match(h.calls.exec[0].opts.prompt, /Make it #000 instead/, 'the reply turn, not the checks fix');
+  assert.doesNotMatch(h.calls.exec[0].opts.prompt, /Dark mode/);
+  assert.equal(h.calls.posts[0].kind, 'followup_answer');
+});
+
+test('a reply turn that left the head in place puts the checks fix back on the queue', async (t) => {
+  const h = harness({
+    checks: FAILING,
+    comments: [{ author: 'evan', body: 'thoughts?', createdAt: '2026-09-26T11:30:00Z' }],
+  });
+  await run(t, h);
+  assert.deepEqual(h.calls.queued.at(-1), [9, 24, 'checks_failing'], 'still due on the same head');
+  assert.equal(
+    h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31),
+    false,
+    'the row is put back rather than dropped',
+  );
+});
+
+test('a reply turn that moved the head makes the old failing checks stale: nothing is put back', async (t) => {
+  const h = harness({
+    checks: FAILING,
+    comments: [{ author: 'evan', body: 'Make it #000 instead', createdAt: '2026-09-26T11:30:00Z' }],
+    result: { lastResultText: '```json\n{"action":"revise","reply":"Done.","summary":"Darker."}\n```', pushOk: true, sha: NEW_HEAD },
+  });
+  await run(t, h);
+  assert.equal(h.calls.queued.length, 0);
+  assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31));
+});
+
+
 
 test('on a live app, a person\'s message in the bot proposal\'s thread is activity on its issue', async () => {
   const inserts = [];
