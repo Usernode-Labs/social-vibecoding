@@ -141,6 +141,13 @@ function buildFailedText(reason) {
     + 'A person could pick it up from here.';
 }
 
+// A restart lost the bot's build in flight: said once on the issue, so the
+// silence a lost build used to leave (run 613) has a name.
+function restartLostText() {
+  return 'Homeroom bot\'s work on this request was lost in a platform restart. '
+    + 'It is starting over and will report back here.';
+}
+
 // #3152: a verdict a live cap held. One line, so the person who filed the
 // issue is not left with silence, and a promise the refresh keeps: a held
 // issue is queued again as soon as the cap that held it has room.
@@ -928,6 +935,46 @@ async function post({
 }
 
 /**
+ * One message in a proposal's own discussion, and nothing else: recorded in
+ * homeroom_bot_posts like any post (so the ledger and the dashboard see
+ * it), but no GitHub comment and no issue-thread post, which `post` always
+ * writes. The bot's fix of its own red checks is said here and only here:
+ * the group is already looking at the proposal, and the issue and GitHub
+ * stay quiet. Best-effort like `post`: a failed post never changes what the
+ * bot did. Returns what landed, or null.
+ */
+async function postOnProposal({ pool, ws, app, issueNumber, sessionId, kind, runId = null, text, sender = null }) {
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id`,
+      [app.id, issueNumber, runId, kind],
+    );
+    const postId = rows[0]?.id || null;
+    let message = null;
+    try {
+      message = sender
+        ? await ws.sendBotMessage(pool, app.id, { user: sender, content: text, thread: { type: 'session', ref: Number(sessionId) } })
+        : await ws.sendSystemMessage(pool, app.id, text, kind, null, { type: 'session', ref: Number(sessionId) });
+    } catch (err) {
+      log.warn('homeroom-bot', 'Proposal-thread post failed (continuing)', { app: app.slug, sessionId, kind, err: err.message });
+    }
+    if (postId) {
+      await pool.query(
+        'UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1',
+        [postId, message?.id ?? null],
+      ).catch(() => {});
+    }
+    log.info('homeroom-bot', 'Posted on its proposal', { app: app.slug, sessionId, issueNumber, kind, thread: !!message });
+    return { postId, thread: !!message };
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not post on its proposal', { app: app.slug, sessionId, kind, err: err.message });
+    return null;
+  }
+}
+
+/**
  * The GitHub account the bot comments as, or null when it cannot be read.
  * `github.getBotUsername()` is async. Used unawaited, the Promise reached
  * the triage seed, where tagging a GitHub comment called .toLowerCase() on
@@ -1472,6 +1519,7 @@ module.exports = {
   emptyText,
   proposalText,
   buildFailedText,
+  restartLostText,
   heldText,
   heldKind,
   lastPostKind,
@@ -1485,6 +1533,7 @@ module.exports = {
   parseStopMentioning,
   MAX_MENTIONS,
   post,
+  postOnProposal,
   advanceSeen,
   botUsernameOf,
   openBotProposal,

@@ -36,17 +36,24 @@ function loadVisuals({ githubEnabled = true } = {}) {
     logger: require.resolve('../src/services/logger'),
     github: require.resolve('../src/services/github'),
     resolver: require.resolve('../src/services/conflict-resolver'),
+    bot: require.resolve('../src/services/homeroom-bot'),
     subject: require.resolve('../src/services/visuals'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
   const drainCalls = [];
+  const botCalls = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.github, { isEnabled: () => githubEnabled });
   stub(ids.resolver, {
     checkAndResolveConflicts: async (_config, trigger) => { drainCalls.push(trigger); },
+  });
+  // The bot's own reading of its red checks, stubbed at the module seam:
+  // what it does with the verdict is pinned in the homeroom-bot tests.
+  stub(ids.bot, {
+    noteProposalChecks: async (pool, session, state) => { botCalls.push({ pool, session, state }); },
   });
 
   delete require.cache[ids.subject];
@@ -56,7 +63,7 @@ function loadVisuals({ githubEnabled = true } = {}) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, drainCalls, restore };
+  return { subject, drainCalls, botCalls, restore };
 }
 
 // A pool that returns the given chat_sessions row for the status/app_id
@@ -157,4 +164,73 @@ test('passing verdict is a no-op when GitHub is disabled (staging / standalone)'
   } finally {
     restore();
   }
+});
+
+// ── The bot's own reading of its red checks, beside the drain ────────────
+
+test('a failing verdict reaches the bot with the pool and session it is given', async () => {
+  const { subject, botCalls, restore } = loadVisuals();
+  const pool = poolReturning({ status: 'promoted', app_id: 42 });
+  try {
+    subject.noteBotChecksAfterChecks(pool, session, 'failing');
+    await flush();
+    assert.equal(botCalls.length, 1, 'the bot is told exactly once');
+    assert.equal(botCalls[0].state, 'failing');
+    assert.equal(botCalls[0].session, session);
+  } finally {
+    restore();
+  }
+});
+
+test('a passing, skipped, pending or error verdict never reaches the bot', async () => {
+  const { subject, botCalls, restore } = loadVisuals();
+  const pool = poolReturning({ status: 'promoted', app_id: 42 });
+  try {
+    for (const state of ['passing', 'skipped', 'pending', 'error']) {
+      subject.noteBotChecksAfterChecks(pool, session, state);
+    }
+    await flush();
+    assert.equal(botCalls.length, 0, 'only a failing verdict is the bot\'s to read');
+  } finally {
+    restore();
+  }
+});
+
+test('a bot note that fails is swallowed, never thrown into the capture pipeline', async () => {
+  const ids = {
+    logger: require.resolve('../src/services/logger'),
+    github: require.resolve('../src/services/github'),
+    bot: require.resolve('../src/services/homeroom-bot'),
+    subject: require.resolve('../src/services/visuals'),
+  };
+  const orig = {};
+  for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
+  stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
+  stub(ids.github, { isEnabled: () => true });
+  stub(ids.bot, { noteProposalChecks: async () => { throw new Error('boom'); } });
+  delete require.cache[ids.subject];
+  try {
+    const subject = require(ids.subject);
+    subject.noteBotChecksAfterChecks({ async query() { return { rows: [] }; } }, session, 'failing');
+    await flush();
+  } finally {
+    for (const [k, id] of Object.entries(ids)) {
+      if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
+    }
+  }
+});
+
+// The hook stands beside the drain at every place a verdict settles.
+test('the hook is wired beside the drain in the capture path and the harvest', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  const visuals = read('src/services/visuals.js');
+  assert.ok((visuals.match(/noteBotChecksAfterChecks\(/g) || []).length >= 3,
+    'defined, and fired at both capture settle sites');
+  const harvest = read('src/services/check-harvest.js');
+  assert.ok(
+    /maybeAutoMergeAfterChecks\(config, pool, session, settled\.result\.state\);/.test(harvest)
+      && /visuals\.noteBotChecksAfterChecks\(pool, session, settled\.result\.state\);/.test(harvest),
+    'an adopted run settles the bot\'s reading too');
 });

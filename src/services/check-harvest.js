@@ -350,6 +350,9 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
       // The lifecycle wrapper fires this for a live run once its operation
       // completes (captureForSession skips it while one is in scope).
       visuals.maybeAutoMergeAfterChecks(config, pool, session, settled.result.state);
+      // And the bot reads its own red checks the same way an adopted run
+      // settles, so an interrupted run's verdict still reaches it.
+      visuals.noteBotChecksAfterChecks(pool, session, settled.result.state);
     }
     await checkRuns.finish(pool, runId);
     log.info('check-harvest', 'Orphaned run settled from its Jobs', {

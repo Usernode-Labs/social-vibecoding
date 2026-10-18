@@ -9463,6 +9463,13 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_build_queue
   ON homeroom_bot_runs(app_id, build_queued_at)
   WHERE build_queued_at IS NOT NULL AND build_ok IS NULL;
 
+-- The failing commit a checks-fix run looked at: the fix turn, the
+-- hand-off, or the run that failed. Each failing head of the bot's own
+-- proposal gets exactly one look; a run without this column looked at
+-- nothing. A platform fault and an infra-shaped verdict write nothing, so
+-- the platform's own re-run on the same head is still read.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha VARCHAR(40);
+
 -- Everything the bot posted on an issue: one row per post, both surfaces
 -- (the GitHub comment and the Homeroom thread message) on the same row.
 -- The partial unique index is what makes "looking at this" a once-per-issue

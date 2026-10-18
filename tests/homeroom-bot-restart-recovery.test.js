@@ -363,7 +363,15 @@ test('a live spec turn sends the issue back to be triaged, and a BLOCKED one say
   const [requeue] = requeues(pool);
   assert.ok(requeue, 'back in the queue: its row was gone with the pass');
   assert.deepEqual(requeue.params, [5, 12, 'restart']);
-  assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'nothing said: the fresh triage speaks');
+  // A lost build is never a silence again: the requeue itself says so now,
+  // once, and the fresh triage says nothing further.
+  const lost = liveCalls.filter((c) => c[0] === 'post');
+  assert.deepEqual(lost.map((c) => c[1]), ['restart_lost'], 'one note: the work was lost, the bot starts over');
+  assert.match(lost[0][2], /lost in a platform restart/);
+  // The run's ledger row is marked failed, guarded so an already-marked run
+  // is left alone, before the issue goes back in the queue.
+  const marked = pool.calls.filter((c) => /SET build_ok = FALSE/.test(c.sql)).at(-1)?.params;
+  assert.deepEqual(marked, [950, 'the spec turn was interrupted (the work was lost in a restart)']);
 
   stubLive();
   journalTail = async () => ({ lastResultText: 'BLOCKED: the app keeps no scores to rank.', exitCode: 0 });
