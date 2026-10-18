@@ -1,6 +1,6 @@
 'use strict';
 
-// D (18 Oct 2026) — from 1024px the desktop's rail is one sidebar of
+// D (18 Oct 2026) — on a desktop, from 768px, the rail is one sidebar of
 // rows: Home, Discover and Messages, then your communities under a
 // Communities heading (five, then the Communities tab as their "All 13
 // communities" row), then Pinned and Recent apps, and you at the foot. The
@@ -16,8 +16,8 @@
 //      heading and search in the prerender and no rows; the All row's face.
 //   3. THE PRESSES: a row switches in place; the lit one climbs its page and
 //      stops at its Hub; the search asks the screen to focus its box.
-//   4. THE WIDTH: one 1024px block in app.css, the strip and the phone's bar
-//      untouched below it, the header's switcher there too.
+//   4. THE WIDTH: one 768px block in app.css, after the rail's own; the
+//      phone's bar untouched below it, the header's switcher there too.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -119,14 +119,18 @@ test('the search: All communities, with its box focused and lit once it shows', 
   assert.match(screen, /if \(state\.tab !== 'status'\) workshopController\.setTab\('status'\);/, 'the search is at the list\'s head');
 });
 
-test('the width: one block from 1024px; the strip, the phone\'s bar and the header\'s switcher below it', () => {
+test('the width: one block on every desktop window, from 768px; the phone\'s bar and the header\'s switcher below it', () => {
   const { SIDEBAR_ROWS_QUERY } = loadTsx('frontend/src/features/nav/sidebar-rows.ts');
-  assert.equal(SIDEBAR_ROWS_QUERY, '(min-width: 1024px)');
+  // It began at 1024px, but the strip and its column below that were 340px
+  // where the sidebar holding the same things is 212px.
+  assert.equal(SIDEBAR_ROWS_QUERY, '(min-width: 768px)');
   const css = read('public/css/app.css');
   assert.match(css, /\.platform-rail-communities,\n\.platform-rail-conversations,\n\.platform-tab-all-glyph,\n\.platform-tab-all-label,\n\.platform-tab-all-votes,\n\.platform-strip-head,\n\.workshop-search \{\n  display: none;\n\}/,
     'nothing of it is drawn outside the block');
-  const at = css.indexOf('@media (min-width: 1024px) {\n  /* THE ONE NUMBER THE REST FOLLOWS.');
+  const at = css.indexOf('@media (min-width: 768px) {\n  /* THE ONE NUMBER THE REST FOLLOWS.');
   assert.ok(at > 0, 'the block');
+  // After the rail's own 768px block, so at the same width it wins.
+  assert.ok(at > css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY ENTIRELY.'), 'after the rail\'s block');
   const block = css.slice(at, css.indexOf('\n}\n', at));
   assert.match(block, /body \{\n    --platform-rail-full: 212px;\n  \}/, 'the token everything placed by the strip reads');
   assert.match(block, /\.platform-rail-communities:hover \.platform-rail-search,\n  \.platform-rail-communities:has\(\+ #platform-tab-workshop:hover\) \.platform-rail-search,\n  \.platform-rail-search:focus-visible \{\n    opacity: 1;/,
@@ -134,7 +138,7 @@ test('the width: one block from 1024px; the strip, the phone\'s bar and the head
   assert.match(block, /@media \(hover: none\) \{\n    \.platform-rail-search \{ opacity: 1; \}/, 'and stays where there is no hover');
   assert.match(block, /\.platform-tabs:has\(\.platform-rail-community\[aria-current="page"\]\) #platform-tab-workshop\[aria-current="page"\] \{/,
     'a community\'s own row is lit on its page, not All');
-  // The header's name: the switcher up to 1024px, a name from there.
+  // The header's name: the switcher on a phone, a name beside the sidebar.
   const header = read('frontend/src/features/header/header-title.tsx');
   assert.match(header, /const appSwitch = communityPage && !sidebarRows;/);
   assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen' && !sidebarRows;/);

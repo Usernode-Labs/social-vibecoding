@@ -14,14 +14,14 @@
  * gives its fill to the row lit under it (app.css).
  *
  * It is the column the conversations had beside the strip, moved into the
- * sidebar: from 1024px the inbox draws one pane at a time
+ * sidebar: on a desktop the inbox draws one pane at a time
  * (../messages/index.tsx `messages-list-in-rail`, `messages-list-page`).
  *
  * ── Where it is, and when ─────────────────────────────────────────────
  *
  * Right after the Messages tab. The element is there at every width and on
  * every screen, empty while shut, so the bar's sibling order is one order;
- * app.css draws nothing of it under 1024px. It opens and shuts on the clock
+ * app.css draws nothing of it under 768px. It opens and shuts on the clock
  * ./rail-nest.tsx keeps, so moving to a community folds it up as that
  * community's places fold down.
  *

@@ -3783,11 +3783,10 @@ const WIDE_QUERY = '(min-width: 700px)';
 /**
  * #4457: where a Workshop row opens its page in a panel beside the list
  * rather than as the page: room for the list and a 560px panel beside it.
- * #4417: the chrome beside the page is the strip and the 264px places column
- * under 1024px, so there the column steps aside while the panel is open
- * (`placeStore.side`, ../../nav/section-column.tsx) and the list keeps its
- * room. From 1024px the sidebar of rows nests the places and has no column
- * (v3).
+ * #4417: the chrome beside the page was the strip and the 264px places
+ * column, which stepped aside while the panel is open (`placeStore.side`,
+ * ../../nav/section-column.tsx) so the list kept its room. On every desktop
+ * window now the sidebar of rows nests the places and has no column (v3).
  */
 const SIDE_QUERY = '(min-width: 1180px)';
 
@@ -3800,9 +3799,8 @@ const SIDE_QUERY = '(min-width: 1180px)';
 export const HUB_REFRESH_MS = 30_000;
 /**
  * #4417: from here the project's places are the section column beside the
- * strip (../../nav/section-column.tsx), and from 1024px nested in the
- * sidebar of rows (v3, ../../nav/rail-communities.tsx); under it, the tray
- * behind the bar.
+ * strip (../../nav/section-column.tsx), nested in the sidebar of rows now
+ * (v3, ../../nav/rail-communities.tsx); under it, the tray behind the bar.
  */
 export const PLACES_COLUMN_QUERY = '(min-width: 768px)';
 

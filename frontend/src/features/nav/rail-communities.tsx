@@ -18,8 +18,8 @@
  * The community whose page is up opens under its row: Hub, Needs you and
  * Workshop, then #general under Channels and the topics under Topics, the
  * first two and "Show N more" (../dev-board/workshop/project-places.tsx, the
- * list the section column drew beside the strip, which steps aside from
- * 1024px). A press moves the page in place, as a press in that column did.
+ * list the section column drew beside the strip). A press moves the page in
+ * place, as a press in that column did.
  * The row itself keeps `aria-current` but gives its fill to the place lit
  * under it, and its count to Needs you, which says the same votes. A
  * community you are only visiting, which is not one of the five, has a row
@@ -42,9 +42,8 @@
  * ── Where it is, and when ─────────────────────────────────────────────
  *
  * Between the Messages tab and the Communities tab, in the reading order the
- * sidebar shows. On the 76px strip (768px to 1024px) and on the phone's bar
- * app.css does not draw it: the bar's five cells and the strip's tabs are as
- * they were.
+ * sidebar shows. On the phone's bar app.css does not draw it: the bar's five
+ * cells are as they were.
  *
  * ── The initial render is the prerender ──────────────────────────────
  *

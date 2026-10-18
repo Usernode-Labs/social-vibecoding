@@ -769,7 +769,7 @@ export function PlatformTabs() {
   // switcher.
   const scope = useStoreState(communityScopeStore);
   useEffect(() => { hydrateCommunityScope(); }, []);
-  // From 1024px the sidebar's own rows are your communities (D), so they are
+  // On a desktop the sidebar's own rows are your communities (D), so they are
   // read at once rather than a moment after sign-in.
   const sidebarRows = useSidebarRows();
   useEffect(() => (viewer ? warmCommunities(sidebarRows ? 0 : undefined) : undefined), [viewer, sidebarRows]);
@@ -777,7 +777,7 @@ export function PlatformTabs() {
   // Less an unchosen community's votes: the one every account is put in,
   // until you have taken part there (tabVotes says why).
   const votes = tabVotes(scope);
-  // THE SIDEBAR OF ROWS (./sidebar-rows.ts, from 1024px): the five
+  // THE SIDEBAR OF ROWS (./sidebar-rows.ts, from 768px): the five
   // communities it lists (./rail-communities.tsx), and on its All row the
   // votes in the ones it does not, so no vote is counted twice.
   const railShown = useRailCommunities();
@@ -942,7 +942,7 @@ export function PlatformTabs() {
         key === 'me' ? <StripApps key="apps" /> : null,
         // D (18 Oct 2026): YOUR COMMUNITIES, under their heading, just above
         // the Communities tab, which the sidebar of rows draws as their
-        // "All 13 communities" row. From 1024px only; app.css keeps it off
+        // "All 13 communities" row. From 768px only; app.css keeps it off
         // the strip and the phone's bar.
         key === 'workshop' ? <RailCommunities key="communities" shown={railShown} /> : null,
         <a

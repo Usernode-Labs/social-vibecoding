@@ -373,7 +373,7 @@ export function StripApps() {
   //
   // D (18 Oct 2026): EACH PART UNDER ITS HEADING in the sidebar of rows
   // (./sidebar-rows.ts): Pinned, only while something is pinned or the slot
-  // is up, and Recent apps. app.css draws the headings from 1024px only; the
+  // is up, and Recent apps. app.css draws the headings from 768px only; the
   // strip keeps its hairline between the two parts instead.
   const rows: ReactNode[] = [];
   let dropPlaced = false;

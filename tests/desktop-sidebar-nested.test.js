@@ -30,7 +30,7 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 
 const block1024 = () => {
   const css = read('public/css/app.css');
-  const at = css.indexOf('@media (min-width: 1024px) {\n  /* THE ONE NUMBER THE REST FOLLOWS.');
+  const at = css.indexOf('@media (min-width: 768px) {\n  /* THE ONE NUMBER THE REST FOLLOWS.');
   assert.ok(at > 0, 'the sidebar\'s block');
   return css.slice(at, css.indexOf('\n}\n', at));
 };
@@ -136,9 +136,9 @@ test('the pages: one pane at a time in the inbox, All communities one page, and 
   assert.match(css, /\.messages-layout\.messages-list-in-rail > \.messages-list-pane \{\n    display: none;\n  \}/);
   assert.match(css, /\.messages-layout\.messages-list-page > \.messages-thread-pane \{\n    display: none;\n  \}/);
   assert.match(css, /\.messages-layout\.messages-list-page > \.messages-list-pane \{\n    flex: 1 1 auto;\n    width: auto;\n    max-width: 720px;/);
-  // Beside the strip the list is still its column, with its compact rows.
+  // No width has the strip's column of conversations any more (from 768px).
   const all = read('public/css/app.css');
-  assert.match(all, /  @media \(max-width: 1023px\) \{\n    \/\* ── MESSAGES' COLUMN IS ITS OWN LIST \(#4417\)/);
+  assert.doesNotMatch(all, /MESSAGES' COLUMN IS ITS OWN LIST/);
   assert.doesNotMatch(css, /data-workshop-panes/, 'no column and page on All communities');
   assert.match(css, /> :is\(#workshop-list, \[data-workshop-needs-door\], div:has\(> \[data-workshop-start\]\)\) \{\n    display: none;/, 'a search\'s answer is the whole list');
   const bar = read('frontend/src/features/nav/tab-bar.tsx');

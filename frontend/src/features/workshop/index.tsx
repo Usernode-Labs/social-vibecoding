@@ -489,7 +489,7 @@ export function WorkshopScreen() {
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
   useNeedsSeen();
-  // D (18 Oct 2026): FROM 1024px THE LIST HAS A SEARCH at its head, which
+  // D (18 Oct 2026): ON A DESKTOP THE LIST HAS A SEARCH at its head, which
   // filters it by name into one list, as the phone's drawer does, and which
   // the sidebar's Communities heading opens (../nav/sidebar-rows.ts). It was
   // a column there with Needs you beside it; with v3's nested sidebar there
@@ -613,7 +613,7 @@ export function WorkshopScreen() {
             is all client data, so it renders only while it is showing, which
             keeps the cold document as small as it was. */}
         <div data-workshop-pane="status" className={state.tab === 'status' ? '' : 'hidden'}>
-          {/* D: THE SEARCH, at the head of the list from 1024px (app.css
+          {/* D: THE SEARCH, at the head of the list from 768px (app.css
               draws it there only): your communities by name, as one list,
               in the drawer's words. Lit while the sidebar's search put the
               caret in it. */}
@@ -648,7 +648,7 @@ export function WorkshopScreen() {
           {/* NEEDS YOU, when something waits: how many votes are owed across
               your projects, which projects, and the way to them. A zero says
               nothing, so the row is not drawn over a quiet day. While a
-              search is up (from 1024px) app.css puts it away with the
+              search is up (from 768px) app.css puts it away with the
               sections: the answer is the whole list. */}
           {totals && totals.owed > 0 ? (
             <section data-workshop-needs-door="" aria-labelledby="workshop-needs-heading">

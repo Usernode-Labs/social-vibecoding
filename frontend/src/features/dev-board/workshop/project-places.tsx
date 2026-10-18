@@ -27,13 +27,14 @@
  * labelled by its heading. A count says what it counts to a screen reader
  * (an `sr-only` phrase, "29 to vote", "3 unread"), and a zero says nothing.
  *
- * Drawn in three places, never two at once: nested under the community's
- * row in the desktop's sidebar of rows from 1024px (../../nav/rail-communities.tsx,
- * v3), the section column beside the strip below that
- * (../../nav/section-column.tsx), and the tray behind the place bar on a
- * phone (./places-tray.tsx), which adds "Switch community" at its foot. The
- * sidebar keeps its list short: topics after the first `fold` wait behind
- * "Show N more", less the one you are on, which is always drawn.
+ * Drawn nested under the community's row in the desktop's sidebar of rows
+ * (../../nav/rail-communities.tsx, v3), and in the tray behind the place bar
+ * (./places-tray.tsx) on a phone or with the sidebar folded, which adds
+ * "Switch community" at its foot. (The section column beside the 76px strip,
+ * ../../nav/section-column.tsx, drew it too; no width has the strip since
+ * the sidebar starts at 768px.) The sidebar keeps its list short: topics
+ * after the first `fold` wait behind "Show N more", less the one you are on,
+ * which is always drawn.
  */
 
 import { useId, useState, type MouseEvent, type ReactNode } from 'react';

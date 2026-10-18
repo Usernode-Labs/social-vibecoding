@@ -2978,7 +2978,7 @@ export function MessagesScreen() {
   const agentWords = useAgentThreadWords(snap.route.agent);
   const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, snap.messages, threadWords, agentWords);
   const drawerClass = drawer.on ? ` messages-drawer${drawer.level === 0 && !drawer.peek ? ' messages-drawer-alone' : ''}` : '';
-  // v3 (18 Oct 2026): FROM 1024px THE LIST IS IN THE SIDEBAR, nested under
+  // v3 (18 Oct 2026): ON A DESKTOP THE LIST IS IN THE SIDEBAR, nested under
   // Messages (./rail-inbox.ts), so one pane is drawn at a time: the open
   // conversation alone, or with nothing open the whole list as the page
   // (All messages), with its search and previews. No back arrow between
