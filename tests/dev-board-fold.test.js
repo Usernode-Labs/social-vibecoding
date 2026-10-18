@@ -1398,9 +1398,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // in services/app-manifest.js. 831 leaves 29 slots against the new
   // MAX_DECLARED_TESTS (860), clear of the 20-slot floor.
   //
+  // 831 → 832: +1 (#3521): "Start from a template is a real answer now" —
+  // the create dialog's starter picker, read with the dialog opened in
+  // template mode on the ?shot=create-template state. The old import-mode
+  // check was widened in place rather than added (its selector chain now
+  // reads the picker between the template and import rows).
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 831);
+  checkCap.assertPinned(DAPP.tests.length, 832);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

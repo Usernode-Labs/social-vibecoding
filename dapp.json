@@ -1462,10 +1462,16 @@
       "expectText": "Project name"
     },
     {
-      "name": "Create-app dialog's last step offers from scratch, a template (soon) or a GitHub repo, and the repo URL field and Check pill open under it in one white card (#1910)",
+      "name": "Create-app dialog's last step offers from scratch, a template (a picker of four starters now, #3521) or a GitHub repo, and the repo URL field and Check pill open under it in one white card (#1910)",
       "path": "/?shot=create-import#create",
-      "expectSelector": "#create-card[data-step=\"start\"][data-mode=\"import\"][data-import-state=\"idle\"] [data-mode-pill=\"new\"] + [data-mode-pill=\"template\"] + [data-mode-pill=\"import\"] + #create-import-block .rounded-2xl.bg-white #import-check.rounded-full",
+      "expectSelector": "#create-card[data-step=\"start\"][data-mode=\"import\"][data-import-state=\"idle\"] [data-mode-pill=\"new\"] + [data-mode-pill=\"template\"] + #create-template-block + [data-mode-pill=\"import\"] + #create-import-block .rounded-2xl.bg-white #import-check.rounded-full",
       "expectText": "GitHub repo URL"
+    },
+    {
+      "name": "Start from a template is a real answer now: its picker unfolds the four starters beneath the row, nothing preselected, and the picked one wears the fill (#3521)",
+      "path": "/?shot=create-template#create",
+      "expectSelector": "#create-card[data-step=\"start\"][data-mode=\"template\"][data-template=\"social-productivity\"] #create-template-block [data-template-pill=\"social-productivity\"][aria-pressed=\"true\"] + [data-template-pill=\"multimedia-social\"][aria-pressed=\"false\"]",
+      "expectText": "Social productivity"
     },
     {
       "name": "Create-project dialog opens on who it is for, nothing chosen yet and Next dimmed beside Cancel: Just me, A private community and A public community, with a step count (communities, stage 3; the rework)",

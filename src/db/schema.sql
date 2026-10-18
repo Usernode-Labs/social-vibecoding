@@ -592,6 +592,14 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
 -- the app's creator / collaborators / admins — see routes/apps.js.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_failure JSONB;
 
+-- The create screen's last question, "How do you want to start?": the
+-- starter a project was seeded from (services/create-options.js
+-- STARTER_TEMPLATE_IDS, seeded by services/template.js through
+-- services/app-creator.js). NULL is the default — "Start from scratch" —
+-- and never set for an import or a fork. Kept on the row only so a Retry
+-- replays the same starter; no route serves it and no screen shows it.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS starter_template VARCHAR(32);
+
 -- Admin-gated change lock. When TRUE, applying any group-voted change to
 -- this app (PR merge in routes/votes.js, rename proposal + secret-change
 -- proposal in routes/issues.js) additionally requires at least one admin

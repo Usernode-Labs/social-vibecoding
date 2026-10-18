@@ -183,7 +183,9 @@ async function provisionMissingRepo(config, pool, app) {
     repoUrl = repo.html_url;
 
     const dbUrl = dbManager.connectionUrl(dbManager.appDbName(app.slug), app.db_password);
-    const files = getTemplateFiles(app.name, app.slug, dbUrl);
+    // The row's own starter, so a healed app re-seeds what it was created
+    // with; a pre-feature app has NULL and keeps the generic starter.
+    const files = getTemplateFiles(app.name, app.slug, dbUrl, null, { template: app.starter_template || null });
     await github.pushFiles(botUsername, app.slug, files, {
       message: `Initialize ${app.name} from Homeroom template (repo heal)`,
     });

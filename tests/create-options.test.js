@@ -97,8 +97,8 @@ test('the new repository\'s dapp.json carries a non-default rule, and only then'
   assert.deepEqual(readGovernance(dapp({ approverPolicy: 'invited', approvalsRequired: 3 })),
     { approvers: 'invited', approvals: 3 });
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
-  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\) \}/g) || []).length, 2,
-    'both template paths (GitHub and local) pass the row\'s rule and its line');
+  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\), template: appRow\.starter_template \|\| null \}/g) || []).length, 2,
+    'both template paths (GitHub and local) pass the row\'s rule, its line and its starter (#3521)');
 });
 
 test('"What is it?" is one optional line, tidied and bounded', () => {
@@ -134,4 +134,25 @@ test('the new repository\'s dapp.json and CLAUDE.md carry the line, and only whe
   const route = fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8');
   assert.match(route, /UPDATE apps SET manifest_snapshot = \$1 WHERE id = \$2 RETURNING \*`,\s*\[JSON\.stringify\(\{ description, secrets: \[\] \}\), appRow\.id\]/,
     'the route seeds the line where app-creator (and a Retry) reads it');
+});
+
+test('a starter template is one of the registry\'s ids, or nothing (#3521)', () => {
+  // Absent is the default starter, spelled out or not.
+  assert.equal(options.parseCreateOptions({}).template, null);
+  assert.equal(options.parseCreateOptions({ template: null }).template, null);
+  for (const id of options.STARTER_TEMPLATE_IDS) {
+    assert.equal(options.parseCreateOptions({ template: id }).template, id, `${id} parses`);
+  }
+  assert.match(options.parseCreateOptions({ template: 'blog' }).error, /^template must be one of: /);
+  assert.match(options.parseCreateOptions({ template: 7 }).error, /^template must be one of: /);
+  // An import brings its own repository, so there is nothing to seed.
+  assert.match(
+    options.parseCreateOptions({ template: 'social-productivity' }, { imported: true }).error,
+    /An import brings its own repository/,
+  );
+  // A template rides alongside the other choices, not instead of them.
+  const both = options.parseCreateOptions({
+    audience: 'open', template: 'game-2d', description: 'Star catch for the class',
+  });
+  assert.deepEqual([both.template, both.audience, both.description], ['game-2d', 'open', 'Star catch for the class']);
 });

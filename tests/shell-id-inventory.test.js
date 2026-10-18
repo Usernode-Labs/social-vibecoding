@@ -966,6 +966,8 @@ const ADDED_IDS = {
   // Channels filter (#2783, added above as messages-filter-channels) is gone
   // with the section it narrowed to; it was never in the baseline.
   'platform-tabs-badge-communities': 'The Communities tab\'s quiet count: how many of your communities\' channels (#general, Homeroom\'s, among them) have unread messages. The channels live on each community\'s hub now rather than in Messages, so the count moved with them. Rendered always, hidden at zero, for the same reason as #platform-tabs-badge.',
+  // ── #3521: "Start from a template" becomes a real answer ────────────
+  'create-template-block': 'The create dialog\'s starter picker, which unfolds under the template row when the dialog is in template mode (data-mode="template"): four seeded starters (social productivity, multimedia, a 2D game, a 3D game), one pill each. Hidden by app.css unless the dialog is in template mode, so "Start from scratch" and an import still render the dialog exactly as before.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

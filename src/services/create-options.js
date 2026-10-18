@@ -50,6 +50,15 @@
  *
  * ── What it is ─────────────────────────────────────────────────────────
  *
+ * ── How it starts ──────────────────────────────────────────────────────
+ *
+ * `template` is the create screen's last question, "How do you want to
+ * start?", answered "Start from a template": one of the four starter ids
+ * (STARTER_TEMPLATE_IDS, src/templates/starters/). Absent or null is the
+ * default — "Start from scratch", the generic starter every project gets
+ * today. An import brings its own repository and cannot be seeded with a
+ * starter, so a template sent with an import is refused, not ignored.
+ *
  * `description` is dapp.json's top-level one line about what the project
  * is, optional, and written where the approval rule is: the new
  * repository's dapp.json, so a community changes it later with a vote like
@@ -164,6 +173,36 @@ function parseGovernance(raw) {
   return { governance: { approverPolicy: approvers, approvalsRequired } };
 }
 
+/**
+ * The create screen's four starters, in the order the request lists them and
+ * the create dialog's picker shows them (src/templates/starters/). Exported
+ * so the registry can assert parity with it at load.
+ */
+const STARTER_TEMPLATE_IDS = Object.freeze([
+  'social-productivity',
+  'multimedia-social',
+  'game-2d',
+  'game-3d',
+]);
+
+/**
+ * The last question's template answer. Absent or null is the default
+ * ("Start from scratch"). An unknown id is a refusal, not a silent default:
+ * a stale client that sends a renamed id meant it. A template sent with an
+ * import is refused for the same reason — an import brings its own
+ * repository, and there is nothing to seed.
+ */
+function parseTemplate(raw, { imported = false } = {}) {
+  if (raw == null) return { template: null };
+  if (typeof raw !== 'string' || !STARTER_TEMPLATE_IDS.includes(raw)) {
+    return { error: `template must be one of: ${STARTER_TEMPLATE_IDS.join(', ')}` };
+  }
+  if (imported) {
+    return { error: 'A template starts a new project. An import brings its own repository.' };
+  }
+  return { template: raw };
+}
+
 /** The one line, tidied, or null when blank. */
 function parseDescription(raw) {
   if (raw == null) return { description: null };
@@ -180,9 +219,9 @@ function parseDescription(raw) {
  * Everything POST /api/apps needs to know about who a new project is for.
  * Returns `{ error }` for a 400, otherwise
  * `{ audience, collabVisibility, viewVisibility, invitees, inviteEmails,
- * governance, description }`.
+ * governance, description, template }`.
  */
-function parseCreateOptions(body = {}) {
+function parseCreateOptions(body = {}, { imported = false } = {}) {
   let audience = null;
   let collabVisibility;
   let viewVisibility;
@@ -214,6 +253,9 @@ function parseCreateOptions(body = {}) {
   const desc = parseDescription(body.description);
   if (desc.error) return { error: desc.error };
 
+  const tpl = parseTemplate(body.template, { imported });
+  if (tpl.error) return { error: tpl.error };
+
   return {
     audience,
     collabVisibility,
@@ -222,6 +264,7 @@ function parseCreateOptions(body = {}) {
     inviteEmails: mail.emails,
     governance: gov.governance,
     description: desc.description,
+    template: tpl.template,
   };
 }
 
@@ -245,7 +288,9 @@ module.exports = {
   AUDIENCES,
   MAX_INVITEES,
   DESCRIPTION_MAX,
+  STARTER_TEMPLATE_IDS,
   parseCreateOptions,
+  parseTemplate,
   governanceBlock,
   visibilityForAudience,
   visibilityComboError,
