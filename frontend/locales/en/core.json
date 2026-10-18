@@ -63,6 +63,26 @@
     "text": "Settings",
     "description": "Accessible name and tooltip of the cog at the foot of the desktop rail: opens Settings."
   },
+  "rail.communities": {
+    "text": "Communities",
+    "description": "Heading over the person's communities in the desktop sidebar (a window 1024px or wider), above the five they opened last. A community is a group that owns projects."
+  },
+  "rail.search": {
+    "text": "Search your communities",
+    "description": "Accessible name and tooltip of the small search button beside the Communities heading in the desktop sidebar: opens the list of all the person's communities with its search box ready to type in."
+  },
+  "rail.all_one": {
+    "text": "All {{count}} community",
+    "description": "Row under the person's communities in the desktop sidebar, opening the list of every community they are in. {{count}} is how many there are (here 1)."
+  },
+  "rail.all_other": {
+    "text": "All {{count}} communities",
+    "description": "Row under the person's communities in the desktop sidebar, opening the list of every community they are in. {{count}} is how many there are."
+  },
+  "rail.allPlain": {
+    "text": "All communities",
+    "description": "Row under the person's communities in the desktop sidebar, before their communities have loaded: opens the list of every community they are in."
+  },
   "rail.hideSidebar": {
     "text": "Hide sidebar",
     "description": "Accessible name of the header button that folds the desktop navigation rail away, while the rail is showing."
@@ -358,6 +378,14 @@
   "stripApps.label": {
     "text": "Pinned apps and recent apps",
     "description": "Accessible name of the desktop side strip: the apps the viewer pinned there first, then the recently used apps."
+  },
+  "stripApps.head.pinned": {
+    "text": "Pinned",
+    "description": "Heading in the desktop sidebar over the apps the person pinned there."
+  },
+  "stripApps.head.recent": {
+    "text": "Recent apps",
+    "description": "Heading in the desktop sidebar over the apps the person used most recently."
   },
   "stripApps.drop.pin": {
     "text": "Pin here",

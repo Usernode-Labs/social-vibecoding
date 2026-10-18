@@ -3746,8 +3746,9 @@ const WIDE_QUERY = '(min-width: 700px)';
 /**
  * #4457: where a Workshop row opens its page in a panel beside the list
  * rather than as the page: room for the list and a 560px panel beside it.
- * #4417: the chrome beside the page is the 76px strip and the 264px places
- * column now, 116px more than the 224px rail. So under 1296px the column
+ * #4417: the chrome beside the page is the rail and the 264px places column
+ * now: from 1024px the 184px sidebar (D), 224px more than the old 224px rail
+ * alone. So under 1404px the column
  * steps aside while the panel is open (`placeStore.side`,
  * ../../nav/section-column.tsx) and the list keeps its room.
  */

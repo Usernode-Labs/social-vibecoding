@@ -29,7 +29,7 @@ export interface PlaceState {
   owed: number;
   /**
    * An item's page is open in the panel beside the list (./side-panel.tsx).
-   * Under 1296px the places column steps aside for it
+   * Under 1404px the places column steps aside for it
    * (../../nav/section-column.tsx).
    */
   side: boolean;

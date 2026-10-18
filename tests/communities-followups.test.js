@@ -129,9 +129,10 @@ test('#3516: on a phone the Communities feed ends where the screen\'s clearance 
   const screen = read('frontend/src/features/workshop/index.tsx');
   assert.match(screen, /id="workshop-screen"\s+className="hidden flex-1 overflow-y-auto platform-safe-scroll"/,
     'the screen scrolls itself and carries the clearance');
-  assert.match(screen, /style=\{\{ position: 'relative' \}\}\s*>\s*\{\/\*[\s\S]*?\*\/\}\s*<div className="max-w-2xl mx-auto pb-8">/,
+  assert.match(screen, /style=\{\{ position: 'relative' \}\}\s*>\s*\{\/\*[\s\S]*?\*\/\}\s*<div className="max-w-2xl mx-auto pb-8" data-workshop-panes="">/,
     'its first element is the column');
-  assert.match(screen, /\{state\.tab === 'needs' \? \(\n\s*<div data-workshop-pane="needs">/);
+  // D: from 1024px the feed is drawn beside the list as well (sidebar-rows.ts).
+  assert.match(screen, /\{state\.tab === 'needs' \|\| wide \? \(\n\s*<div data-workshop-pane="needs">/);
   const reel = read('frontend/src/features/workshop/needs-reel.tsx');
   assert.match(reel, /<>\n\s*<div className="workshop-needs-feed" data-needs-reel="">/, 'the feed is a child of the pane');
   // And the clearance counts the strip: one token for the bar and the strip,
@@ -172,7 +173,9 @@ test('#3270: the feed reads the owed populations for member projects only, newes
 
 test('#3271, #852: the Communities screen\'s header is its switcher, at every width', () => {
   const header = read('frontend/src/features/header/header-title.tsx');
-  assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen';/);
+  // Up to the sidebar of rows (D, 18 Oct 2026), which lists the
+  // communities itself: there the title is the screen's name.
+  assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen' && !sidebarRows;/);
   assert.match(header, /id="header-scope-switch"[\s\S]{0,400}aria-controls="community-switcher"[\s\S]{0,200}onClick=\{\(e\) => toggleSwitcher\('header', e\.currentTarget\)\}/,
     'it opens Your communities (#852)');
   assert.doesNotMatch(header, /usePhone|PHONE_QUERY/, 'no width in it any more');

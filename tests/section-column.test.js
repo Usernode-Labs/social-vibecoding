@@ -61,14 +61,14 @@ test('which column: a project\'s places under Communities, none anywhere else', 
   // An item's page open beside the list: the column steps aside for it
   // where the window has no room for both, and stays where it has.
   const page = { screen: 'app-view', tab: 'workshop', placeSlug: 'notes' };
-  assert.equal(columnFor({ ...page, side: true, roomBesideSide: false }), null, 'under 1296px');
-  assert.equal(columnFor({ ...page, side: true, roomBesideSide: true }), 'places', 'from 1296px');
+  assert.equal(columnFor({ ...page, side: true, roomBesideSide: false }), null, 'under 1404px');
+  assert.equal(columnFor({ ...page, side: true, roomBesideSide: true }), 'places', 'from 1404px');
   assert.equal(columnFor({ ...page, side: false, roomBesideSide: false }), 'places', 'no panel open');
 });
 
-test('the column steps aside for the side panel under 1296px, told by the page', () => {
+test('the column steps aside for the side panel under 1404px, told by the page', () => {
   const src = read(COLUMN);
-  assert.match(src, /export const COLUMN_BESIDE_SIDE_QUERY = '\(min-width: 1296px\)';/);
+  assert.match(src, /export const COLUMN_BESIDE_SIDE_QUERY = '\(min-width: 1404px\)';/);
   assert.match(src, /const roomBesideSide = useMatches\(COLUMN_BESIDE_SIDE_QUERY\);\s*const column = columnFor\(\{ screen, tab, placeSlug: place\.slug, side: place\.side, roomBesideSide \}\);/);
   const { placeStore, publishPlace, publishSide, clearPlace } = loadTsx('frontend/src/features/dev-board/workshop/place-store.ts');
   publishPlace('notes', 'all', 0);

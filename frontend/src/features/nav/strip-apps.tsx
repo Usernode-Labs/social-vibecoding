@@ -370,12 +370,29 @@ export function StripApps() {
 
   // Pinned rows first, the slot after them (it leads when nothing is pinned
   // and is the whole strip when the list is empty), then the rest.
+  //
+  // D (18 Oct 2026): EACH PART UNDER ITS HEADING in the sidebar of rows
+  // (./sidebar-rows.ts): Pinned, only while something is pinned or the slot
+  // is up, and Recent apps. app.css draws the headings from 1024px only; the
+  // strip keeps its hairline between the two parts instead.
   const rows: ReactNode[] = [];
   let dropPlaced = false;
+  let recentHeaded = false;
+  if (dropRow || items.some((app) => app.pinned)) {
+    rows.push(
+      <div key="head-pinned" className="platform-strip-head" data-strip-head="pinned">{t('core:stripApps.head.pinned')}</div>,
+    );
+  }
   for (const app of items) {
     if (dropRow && !app.pinned && !dropPlaced) {
       rows.push(dropRow);
       dropPlaced = true;
+    }
+    if (!app.pinned && !recentHeaded) {
+      rows.push(
+        <div key="head-recent" className="platform-strip-head" data-strip-head="recent">{t('core:stripApps.head.recent')}</div>,
+      );
+      recentHeaded = true;
     }
     rows.push(renderRow(app));
   }

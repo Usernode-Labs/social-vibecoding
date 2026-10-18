@@ -231,10 +231,15 @@ is no replay plan to write and nothing to verify locally.
   ring, its short name, the votes it waits on you for) or All communities,
   whose page lists every community you are in (Public communities, Private
   communities, Just you) at `#communities` (`#workshop` still routes there;
-  the tab's key and ids keep `workshop`). Pressing it while it is lit, the
-  header's name and ⌄, or the list's All chip opens **Your communities**
+  the tab's key and ids keep `workshop`). Up to 1024px the header's name
+  and ⌄ open **Your communities**
   (`features/workshop/community-switcher.tsx`, scope in
-  `community-scope.ts`). A project's page wears its community's colour
+  `community-scope.ts`); pressing the lit tab goes up a level. From 1024px
+  the rail is a 184px sidebar of rows (`features/nav/sidebar-rows.ts`):
+  your five most recent communities sit under a Communities heading with a
+  hover search (`rail-communities.tsx`), the tab is their "All 13
+  communities" row, the header's name is only a name, and All communities
+  is a column beside Needs you. A project's page wears its community's colour
   (`lib/community-color.ts`: dapp.json's `icon.color`, else read off the
   icon) and is navigated by one list of **places**
   (`features/dev-board/workshop/project-places.tsx`): **Hub** (who it is
@@ -246,7 +251,7 @@ is no replay plan to write and nothing to verify locally.
   (`places.ts`); a channel has its own address, `#app/<slug>/dev/c/<handle>`.
   On a phone the list is a tray behind the place bar that names where you
   are (`place-bar.tsx`, `places-tray.tsx`); on a wide window it is the
-  section column beside the 76px strip (`features/nav/section-column.tsx`),
+  section column beside the rail (`features/nav/section-column.tsx`),
   and the page publishes where it is for it (`place-store.ts`). **All
   items** is a page under the Workshop (its "See all"), with a way back, and
   the Workshop stays lit in the list while it is up. A **topic** is a

@@ -82,7 +82,7 @@
  * class has exactly one owner.
  */
 
-import { useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
@@ -100,6 +100,8 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { landKeepingPlace } from '../dev-board/workshop/place-store';
 import { channelUnread, useMessagesSnapshot } from '../messages/store';
+import { useSidebarRows } from '../nav/sidebar-rows';
+import { communitiesSearchStore } from './communities-search';
 import { NeedsReel, type NeedsFeedItem } from './needs-reel';
 import { unseenNeeds, useNeedsSeen } from './needs-seen';
 import {
@@ -487,10 +489,53 @@ export function WorkshopScreen() {
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
   useNeedsSeen();
+  // D (18 Oct 2026): FROM 1024px THE LIST IS A COLUMN AND NEEDS YOU IS THE
+  // PAGE BESIDE IT (../nav/sidebar-rows.ts; app.css lays them out). Both
+  // panes are drawn there, under a search that filters the list by name into
+  // one list, as the phone's drawer does. False on the first render, so the
+  // prerender is the one page it always was.
+  const wide = useSidebarRows();
+  const [query, setQuery] = useState('');
+  const [lit, setLit] = useState(false);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const q = wide ? query.trim() : '';
+  // The sidebar's search (./communities-search.ts): each new request is
+  // answered once, after the screen is showing, by focusing the box and
+  // lighting it until focus leaves.
+  const { asked } = useStoreState(communitiesSearchStore) as { asked: number };
+  const answered = useRef(0);
+  useEffect(() => {
+    if (!state.open || !wide || asked <= answered.current) return undefined;
+    answered.current = asked;
+    let frames = 0;
+    let raf = 0;
+    const tryFocus = () => {
+      const input = searchRef.current;
+      // The router reveals the screen after `open()`: wait for it to show.
+      if (input && input.offsetParent !== null) {
+        setLit(true);
+        input.focus({ preventScroll: true });
+        input.select();
+        return;
+      }
+      if (frames++ < 30) raf = window.requestAnimationFrame(tryFocus);
+    };
+    tryFocus();
+    return () => window.cancelAnimationFrame(raf);
+  }, [asked, state.open, wide]);
+  // Leaving the screen ends a search.
+  useEffect(() => {
+    if (state.open) return;
+    setQuery('');
+    setLit(false);
+  }, [state.open]);
   // ONE PAGE: the list of your projects, with Needs you as a row at its top
   // that opens the feed of votes owed across all of them (`tab: 'needs'`,
   // also reached by `?ws=needs`), and a way back. See the markup below.
   const rows = state.rows ? orderRows(state.rows.map(unseenRow)) : null;
+  const found = rows && q
+    ? rows.filter((row) => String(row.name || row.slug).toLocaleLowerCase().includes(q.toLocaleLowerCase()))
+    : null;
   const sections = rows ? groupRows(rows) : null;
   const all = rows;
   // `#workshop-empty` keeps its ONE meaning — you have no apps at all — and
@@ -529,7 +574,7 @@ export function WorkshopScreen() {
           ground (see the `:is(...)` list in app.css) that the white card
           floats on. `max-w-2xl mx-auto` is the only thing here that is this
           screen's own — GroupedList owns its own `mx-4` gutter and radius. */}
-      <div className="max-w-2xl mx-auto pb-8">
+      <div className="max-w-2xl mx-auto pb-8" data-workshop-panes="">
         {/* NO TITLE HERE (#2718 review). This screen and Messages both drew
             their own name under a bar that was already saying it — the same
             word twice, an inch apart, on the two screens that had been made
@@ -561,10 +606,44 @@ export function WorkshopScreen() {
             feed must not throw the list's rows away to redraw them. The feed
             is all client data, so it renders only while it is showing, which
             keeps the cold document as small as it was. */}
-        <div data-workshop-pane="status" className={state.tab === 'status' ? '' : 'hidden'}>
+        <div data-workshop-pane="status" className={state.tab === 'status' || wide ? '' : 'hidden'}>
+          {/* D: THE SEARCH, at the head of the column from 1024px (app.css
+              draws it there only): your communities by name, as one list,
+              in the drawer's words. Lit while the sidebar's search put the
+              caret in it. */}
+          <div className="workshop-search" {...(lit ? { 'data-lit': '' } : {})}>
+            <div className="messages-search">
+              <SearchIcon className="messages-search-glyph w-5 h-5" aria-hidden="true" />
+              <input
+                ref={searchRef}
+                id="workshop-search"
+                type="search"
+                className="messages-search-input"
+                placeholder={t('communities:drawer.search.placeholder')}
+                aria-label={t('communities:drawer.search.label')}
+                autoComplete="off"
+                value={query}
+                onChange={(e) => setQuery(e.currentTarget.value)}
+                onBlur={() => setLit(false)}
+              />
+            </div>
+          </div>
+          {/* The search's answer, in the list's place: app.css puts the
+              sections and Join and Start away while it is up. */}
+          {found ? (
+            found.length ? (
+              <GroupedList tone="plane" data-workshop-results="">
+                {found.map((row) => <AppRow key={row.slug} row={row} />)}
+              </GroupedList>
+            ) : (
+              <p className="workshop-search-none" data-workshop-none="">{t('communities:drawer.search.none', { query: q })}</p>
+            )
+          ) : null}
           {/* NEEDS YOU, when something waits: how many votes are owed across
               your projects, which projects, and the way to them. A zero says
-              nothing, so the row is not drawn over a quiet day. */}
+              nothing, so the row is not drawn over a quiet day. Beside the
+              feed (from 1024px, where alone a search runs) app.css leaves it
+              out: the feed is the page. */}
           {totals && totals.owed > 0 ? (
             <section data-workshop-needs-door="" aria-labelledby="workshop-needs-heading">
               <SectionHeader id="workshop-needs-heading">{t('communities:needsYou.heading')}</SectionHeader>
@@ -677,7 +756,7 @@ export function WorkshopScreen() {
             </GroupedList>
           ) : null}
         </div>
-        {state.tab === 'needs' ? (
+        {state.tab === 'needs' || wide ? (
           <div data-workshop-pane="needs">
             {/* The way back to the list, and the page's name: the project
                 page's own page head (app.css .dev-ws-pagehead). */}

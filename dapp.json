@@ -2592,9 +2592,9 @@
       "expectText": "general"
     },
     {
-      "name": "The Communities tab wears the community you are in: its tile (in a ring on a phone's bar), but keeps the word (#3709)",
+      "name": "On a wide window the sidebar lists your communities with the one you are on lit, above the Communities tab, which is their All row there and named by its own words; on a phone's bar the tab still wears the community's tile (#3709, D)",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#platform-tabs #platform-tab-workshop[aria-current=\"page\"][aria-label^=\"Communities, on \"] .platform-tab-ring:not(.platform-tab-ring-all) > .platform-tab-tile",
+      "expectSelector": "#platform-tabs > #platform-rail-communities:has(> a.platform-rail-community[data-rail-community=\"usernode-2d5619\"][aria-current=\"page\"]) + #platform-tab-workshop[aria-current=\"page\"]:not([aria-label]) > .platform-tab-all-label",
       "expectText": "Homeroom"
     },
     {
@@ -2971,9 +2971,9 @@
       "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn) #notifications-btn"
     },
     {
-      "name": "The bar's destination order: Home, Discover, Messages in the middle, Communities, then you (#1443)",
+      "name": "The bar's destination order: Home, Discover, Messages in the middle, Communities, then you (#1443); on a wide window your communities sit just above the Communities tab (D)",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-tab-workshop[href=\"#communities\"] + #platform-strip-apps + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-rail-communities + #platform-tab-workshop[href=\"#communities\"] + #platform-strip-apps + #platform-tab-me"
     },
     {
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
@@ -3224,9 +3224,10 @@
       "expectText": "Public communities"
     },
     {
-      "name": "The Communities screen draws no empty-state line while it has rows, and the header's Communities opens Your communities, no chip on the page, and the page bounces (#3051, #852, #3566)",
+      "name": "The Communities screen draws no empty-state line while it has rows; beside the sidebar, whose Communities heading holds its search, it is a column of your communities under a search with Needs you beside it; no chip on the page, and the page bounces (#3051, #852, #3566, D)",
       "path": "/?demo=1#workshop",
-      "expectSelector": "body:has(#header-scope-switch[aria-controls=\"community-switcher\"]) #workshop-screen[data-page-bounce]:not(.hidden):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden"
+      "expectSelector": "body:has(#platform-rail-search) #workshop-screen[data-page-bounce]:not(.hidden):has(#workshop-search):has([data-workshop-pane=\"needs\"]):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden",
+      "expectText": "Needs you"
     },
     {
       "name": "Communities: Needs you is a project’s own feed, every project mixed, each item naming its project, with the rail from Vote to More (#3270, #3488); a Just-you change's vote sheet asks for your approval (#4313)",
@@ -4788,9 +4789,9 @@
       "expectSelector": "a#back-btn:not(.hidden)[aria-label=\"Back\"][href=\"#messages\"]"
     },
     {
-      "name": "On a desktop a running app keeps the sidebar beside it, its Communities tab names the app's community, and the header's corner is the sidebar toggle rather than a ✕; no left-edge hover strip over the app (#3138)",
+      "name": "On a desktop a running app keeps the sidebar beside it, and the header's corner is the sidebar toggle rather than a ✕; no left-edge hover strip over the app (#3138; the sidebar's All row names no community, D)",
       "path": "/#app/staging-demo-forkable",
-      "expectSelector": "body.rail-pinned:has(#app-view:not(.hidden)):has(#platform-tab-workshop[aria-label$=\"forkable app\"]):not(:has(#platform-rail-peek)) #platform-header .platform-header-left:has(> a#back-btn.hidden) > #sidebar-toggle[aria-pressed=\"true\"]"
+      "expectSelector": "body.rail-pinned:has(#app-view:not(.hidden)):has(#platform-tabs:not(.hidden) #platform-tab-workshop:not([aria-label])):not(:has(#platform-rail-peek)) #platform-header .platform-header-left:has(> a#back-btn.hidden) > #sidebar-toggle[aria-pressed=\"true\"]"
     },
     {
       "id": "agent-session.card",

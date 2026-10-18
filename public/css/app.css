@@ -22752,11 +22752,13 @@ html.un-kb #platform-parked {
      pinned one, so it appears only when both groups are present: a strip
      that is all pins or all recents draws no line. */
   .platform-strip-app[data-strip-pinned] + .platform-strip-app:not([data-strip-pinned]),
+  .platform-strip-app[data-strip-pinned] + .platform-strip-head + .platform-strip-app:not([data-strip-pinned]),
   .platform-strip-app[data-strip-pinned] + .platform-strip-drop {
     margin-top: 9px;
     position: relative;
   }
   .platform-strip-app[data-strip-pinned] + .platform-strip-app:not([data-strip-pinned])::before,
+  .platform-strip-app[data-strip-pinned] + .platform-strip-head + .platform-strip-app:not([data-strip-pinned])::before,
   .platform-strip-app[data-strip-pinned] + .platform-strip-drop::before {
     content: '';
     position: absolute;
@@ -23052,6 +23054,477 @@ html.un-kb #platform-parked {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: .04em;
+  }
+}
+
+/* ── D: THE SIDEBAR OF ROWS, FROM 1024px (18 Oct 2026) ──────────────────
+   features/nav/sidebar-rows.ts carries the argument. From 1024px the rail
+   is one 184px sidebar for the whole platform: Home, Discover and Messages
+   as rows, then COMMUNITIES (features/nav/rail-communities.tsx: the five you
+   opened last, then the Communities tab drawn as "All 13 communities"),
+   then PINNED (only while you have pins) and RECENT APPS (./strip-apps.tsx),
+   and you at the foot with Settings beside you. Each heading is the places
+   column's small capitals, so the two sidebars read as one. From 768px to
+   1024px the strip above is untouched, and the phone's bar never sees any
+   of this.
+
+   The parts only the sidebar draws are in the markup at every width and
+   drawn only here. */
+.platform-rail-communities,
+.platform-tab-all-glyph,
+.platform-tab-all-label,
+.platform-tab-all-votes,
+.platform-strip-head,
+.workshop-search {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  /* THE ONE NUMBER THE REST FOLLOWS. Everything the strip's width placed
+     (the section column's left edge, the peeked column, the screens'
+     padding) reads this token, so the sidebar moves them all at once. */
+  body {
+    --platform-rail-full: 184px;
+  }
+  .platform-tabs {
+    gap: 1px;
+    padding: 10px 6px calc(10px + var(--platform-safe-bottom, 0px));
+  }
+
+  /* A ROW: the glyph, then the words, then the count at the far end. The
+     glyph's wrapper dissolves so its counts can sit at the row's end, as the
+     places column's counts do. */
+  .platform-tab {
+    flex: none;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 9px;
+    height: 36px;
+    padding: 0 8px;
+    border-radius: 10px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0;
+    line-height: 18px;
+  }
+  .platform-tab[aria-current="page"] {
+    background: var(--lit-tint);
+    color: var(--lit-ink);
+    font-weight: 600;
+  }
+  .platform-tab-mark {
+    display: contents;
+  }
+  .platform-tab-glyph {
+    width: 20px;
+    height: 20px;
+    color: var(--text-muted);
+  }
+  .platform-tab[aria-current="page"] .platform-tab-glyph {
+    color: inherit;
+  }
+  .platform-tab-label {
+    flex: 1 1 auto;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .platform-tab-badge,
+  .platform-tab-votes,
+  .platform-tab-all-votes {
+    position: static;
+    order: 2;
+    flex: none;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    font-size: 11px;
+  }
+
+  /* THE COMMUNITIES TAB IS THE SECTION'S ALL ROW: the grid and "All 13
+     communities" in place of the ring and the word, and on it only the
+     votes in the communities the section does not list
+     (`.platform-tab-all-votes`), so no vote is counted twice. The grey count
+     of unread channels stays until a vote takes its seat, as on the strip. */
+  #platform-tab-workshop .platform-tab-ring,
+  #platform-tab-workshop .platform-tab-label,
+  #platform-tab-workshop .platform-tab-votes {
+    display: none;
+  }
+  #platform-tab-workshop .platform-tab-all-glyph {
+    display: block;
+  }
+  #platform-tab-workshop .platform-tab-all-label {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #platform-tab-workshop .platform-tab-all-votes {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    line-height: 1;
+  }
+  #platform-tab-workshop .platform-tab-mark:has(.platform-tab-votes) > #platform-tabs-badge-communities:not(.hidden) {
+    display: inline-flex;
+  }
+  #platform-tab-workshop:has(.platform-tab-all-votes) #platform-tabs-badge-communities {
+    display: none;
+  }
+  /* ON A COMMUNITY'S PAGE ITS OWN ROW IS LIT, NOT ALL. The tab keeps
+     `aria-current` (the router lights Communities there, and the declared
+     checks read it); only its fill gives way to the row that says which. */
+  .platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"] {
+    background: transparent;
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+  .platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"] .platform-tab-glyph {
+    color: var(--text-muted);
+  }
+
+  /* ── THE HEADINGS: the places column's small capitals ── */
+  .platform-rail-head,
+  .platform-strip-head {
+    position: relative;
+    flex: none;
+    display: flex;
+    align-items: center;
+    height: 28px;
+    margin-top: 12px;
+    padding: 0 8px;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 16px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .platform-rail-head-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding-right: 28px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* THE SEARCH BESIDE "COMMUNITIES", while the pointer is over the section
+     (its heading, its rows or All under them) or the search has focus. A
+     touch screen has no hover to find it with, so there it stays. */
+  .platform-rail-search {
+    position: absolute;
+    top: 50%;
+    right: 2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    color: var(--text-muted);
+    opacity: 0;
+    transform: translateY(-50%);
+    text-decoration: none;
+    transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .platform-rail-search-glyph {
+    width: 16px;
+    height: 16px;
+    stroke-width: 2;
+  }
+  .platform-rail-communities:hover .platform-rail-search,
+  .platform-rail-communities:has(+ #platform-tab-workshop:hover) .platform-rail-search,
+  .platform-rail-search:focus-visible {
+    opacity: 1;
+  }
+  .platform-rail-search:hover,
+  .platform-rail-search:focus-visible {
+    background: color-mix(in srgb, var(--lit-tint) 70%, transparent);
+    color: var(--lit-ink);
+  }
+  .platform-rail-search:focus-visible {
+    outline: 2px solid var(--lit-ink);
+    outline-offset: 1px;
+  }
+  @media (hover: none) {
+    .platform-rail-search { opacity: 1; }
+  }
+
+  /* ── YOUR COMMUNITIES (features/nav/rail-communities.tsx) ── */
+  .platform-rail-communities {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .platform-rail-community {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    height: 36px;
+    padding: 0 8px;
+    border-radius: 10px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 18px;
+    text-decoration: none;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  .platform-rail-community[aria-current="page"] {
+    background: var(--lit-tint);
+    color: var(--lit-ink);
+    font-weight: 600;
+  }
+  .platform-rail-tile {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .platform-rail-tile > span { font-size: 13px; }
+  .platform-rail-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .platform-rail-votes {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  @media (hover: hover) {
+    .platform-rail-community:not([aria-current="page"]):hover,
+    .platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop:hover {
+      background: color-mix(in srgb, var(--lit-tint) 55%, transparent);
+      color: var(--lit-ink);
+    }
+  }
+
+  /* ── PINNED, THEN RECENT APPS (features/nav/strip-apps.tsx) ── */
+  .platform-strip-apps:not(.hidden) {
+    flex: 0 1 auto;
+    gap: 1px;
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+  }
+  .platform-strip-head {
+    display: flex;
+  }
+  .platform-strip-app,
+  .platform-strip-drop {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 9px;
+    min-height: 36px;
+    height: 36px;
+    padding: 0 8px;
+    border-radius: 10px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .platform-strip-app[aria-current="page"] {
+    font-weight: 600;
+  }
+  .platform-strip-tile,
+  .platform-strip-drop-tile {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+  }
+  .platform-strip-tile > span { font-size: 13px; }
+  .platform-strip-label,
+  .platform-strip-drop-label {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+    -webkit-line-clamp: unset;
+    line-clamp: unset;
+  }
+  /* The headings say where pins end, so the hairline the strip draws there
+     (#4935) gives way to them. */
+  .platform-strip-app[data-strip-pinned] + .platform-strip-head + .platform-strip-app:not([data-strip-pinned]),
+  .platform-strip-app[data-strip-pinned] + .platform-strip-drop {
+    margin-top: 0;
+  }
+  .platform-strip-app[data-strip-pinned] + .platform-strip-head + .platform-strip-app:not([data-strip-pinned])::before,
+  .platform-strip-app[data-strip-pinned] + .platform-strip-drop::before {
+    display: none;
+  }
+
+  /* ── YOU AT THE FOOT, SETTINGS AT THE END OF YOUR ROW ── */
+  .platform-tabs::after {
+    margin: auto 6px 6px;
+  }
+  #platform-tab-me {
+    padding-right: 46px;
+  }
+  .platform-rail-settings {
+    position: absolute;
+    right: 6px;
+    bottom: calc(10px + var(--platform-safe-bottom, 0px));
+    width: 36px;
+    height: 36px;
+    margin: 0;
+    border-radius: 10px;
+  }
+  .platform-rail-settings-glyph {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* ── ALL COMMUNITIES: A COLUMN BESIDE WHAT WAITS ON YOU ──────────────
+     features/workshop/index.tsx. The list (the phone's order: Public, then
+     Private, then Just you, three of each with Show more, then Join and
+     Start, under a search) is the column the places and the conversations
+     take on their screens, and Needs you is the page beside it: no door
+     row to it, and no way back from it, since both are on screen. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden)) #workshop-screen {
+    padding-left: var(--platform-rail-w, 0px);
+    padding-right: 0;
+  }
+  /* By id: the pane's own `max-w-2xl mx-auto pb-8` are utilities, and
+     tailwind.css loads after this file (#938). */
+  #workshop-screen [data-workshop-panes] {
+    display: flex;
+    align-items: flex-start;
+    max-width: none;
+    margin: 0;
+    padding-bottom: 0;
+  }
+  #workshop-screen [data-workshop-panes] > div[aria-hidden="true"]:first-child {
+    display: none;
+  }
+  #workshop-screen [data-workshop-panes] > [data-workshop-pane="status"] {
+    position: sticky;
+    top: 0;
+    flex: 0 0 var(--platform-column-full);
+    width: var(--platform-column-full);
+    box-sizing: border-box;
+    height: calc(100dvh - var(--browser-banner-h, 0px) - var(--platform-header-h) - var(--platform-safe-top, 0px) + 8px);
+    padding: 20px 0 calc(16px + var(--platform-safe-bottom, 0px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--dc-sheet-fill);
+    box-shadow: inset -1px 0 0 var(--app-sheet-line);
+    scrollbar-width: thin;
+  }
+  #workshop-screen [data-workshop-panes] > [data-workshop-pane="needs"] {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 20px var(--platform-gutter, 1.5rem) 32px;
+  }
+  #workshop-screen [data-workshop-panes] [data-workshop-needs-door],
+  #workshop-screen [data-workshop-panes] [data-workshop-needs-back] {
+    display: none;
+  }
+  /* The page is the feed's own stage here, so it takes no width from the
+     column beside it (the 1180px rule's margins are for the one page). */
+  #workshop-screen [data-workshop-panes] .workshop-needs-feed {
+    margin-left: 0;
+    margin-right: 0;
+  }
+  /* THE COLUMN'S ROWS: the same rows, for 264px. A 36px tile, 12px gutters,
+     no chevron (the whole row is the target), and the hairline moved in to
+     where the smaller tile ends. Keyed off the rows' own data attributes;
+     the ids outrank the primitives' utilities, which load later (#938). */
+  #workshop-screen [data-workshop-pane="status"] :is([data-workshop-section] > div, [data-workshop-results], div:has(> [data-workshop-start])) {
+    margin-left: 12px;
+    margin-right: 12px;
+    border-radius: 16px;
+  }
+  #workshop-screen [data-workshop-pane="status"] :is(a[data-workshop-app], [data-workshop-join], [data-workshop-start]) {
+    gap: 12px;
+    padding: 9px 12px;
+  }
+  #workshop-screen [data-workshop-pane="status"] :is(a[data-workshop-app], [data-workshop-join], [data-workshop-start]):not(:last-child)::after {
+    left: 60px;
+  }
+  #workshop-screen [data-workshop-pane="status"] :is(a[data-workshop-app], [data-workshop-join], [data-workshop-start]) > :first-child {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+  #workshop-screen [data-workshop-pane="status"] :is(a[data-workshop-app], [data-workshop-join], [data-workshop-start]) > svg:last-child {
+    display: none;
+  }
+  #workshop-screen [data-workshop-pane="status"] [data-workshop-more] {
+    padding-top: 9px;
+    padding-bottom: 9px;
+  }
+  #workshop-screen [data-workshop-pane="status"] [data-workshop-section] > h2 {
+    padding-left: 22px;
+    padding-right: 22px;
+  }
+  /* A search's answer is the whole list: the sections and Join and Start
+     step aside while it is up, as the phone's drawer does. */
+  #workshop-screen [data-workshop-pane="status"]:has(> :is([data-workshop-results], [data-workshop-none])) > :is(#workshop-list, div:has(> [data-workshop-start])) {
+    display: none;
+  }
+  .workshop-search {
+    display: block;
+    margin: 0 12px 6px;
+  }
+  .workshop-search .messages-search {
+    margin: 0;
+  }
+  .workshop-search .messages-search-input {
+    height: 36px;
+    font-size: 14px;
+  }
+  /* LIT, from the sidebar's search (features/workshop/communities-search.ts),
+     until focus leaves it: the place's own tint, so the eye lands on it. */
+  .workshop-search[data-lit] .messages-search-input {
+    border-color: var(--lit-ink);
+    background: var(--lit-tint);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--lit-ink) 22%, transparent);
+  }
+  .workshop-search-none {
+    margin: 0;
+    padding: 12px 22px;
+    color: var(--text-muted);
+    font-size: 14px;
   }
 }
 
