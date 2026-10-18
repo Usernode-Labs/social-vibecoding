@@ -538,5 +538,21 @@
   "dictation.error.failed": {
     "text": "Your recording could not be transcribed. Your existing text is safe. Try again.",
     "description": "Dictation error for an unsuccessful transcription request."
+  },
+  "header.drawer.toCommunities": {
+    "text": "Back to your communities",
+    "description": "On a phone, the header's back arrow while a community's places are on screen: slides back to the list of all the person's communities."
+  },
+  "header.drawer.toPlaces": {
+    "text": "Back to {{community}}'s places",
+    "description": "On a phone, the header's back arrow on a community's page: slides back to that community's places (Hub, Needs you, Workshop, its channels). {{community}} is the community's name."
+  },
+  "header.drawer.messages": {
+    "text": "Messages",
+    "description": "On a phone, the header's title over the list of the person's conversations, when the conversations are drawn as the navigation drawer's outer level."
+  },
+  "header.drawer.toMessages": {
+    "text": "Back to your messages",
+    "description": "On a phone, the header's back arrow in a conversation: slides back to the list of the person's conversations."
   }
 }

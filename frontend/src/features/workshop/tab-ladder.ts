@@ -27,6 +27,11 @@
  *   4. ON ALL COMMUNITIES: to the top, and nothing else. 'top', or 'none'
  *      when it is already there.
  *
+ * ON A PHONE, A COMMUNITY'S PAGE IS THE DRAWER'S (../nav-drawer/, Evan's
+ * design, 18 Oct 2026): a press goes back one level of it at a time, the
+ * page to the community's places, the places to your communities, after
+ * whatever is below a place (a reply thread, All items) has gone up to it.
+ *
  * A STEP THAT CHANGES PAGE PUSHES AN ENTRY, as a tab press does (#3620), so
  * Back from where it landed is where it was pressed: a card goes up by the
  * hub's own address (`upToCommunity`), All items by the page's own tab entry
@@ -54,7 +59,11 @@
  * Nothing here renders.
  */
 
+import { drawerStore, pressTab as pressDrawerTab } from '../nav-drawer/drawer-store';
 import { goToCommunity, openSwitcher } from './community-scope';
+
+/** The pages under a place (../dev-board/workshop/places.ts): a step above them is the place. */
+const PAGES_UNDER_A_PLACE = ['all', 'bot', 'plan'];
 
 /** What one press of the lit tab does. */
 export type Rung = 'up' | 'top' | 'root' | 'none';
@@ -210,6 +219,25 @@ export function pressLitTab(screen: string | null): Rung {
       .filter((level) => { try { return !!level.below?.(); } catch { return false; } })
       .sort((a, b) => (b.depth || 0) - (a.depth || 0))[0]
     : undefined;
+  // THE PHONE'S DRAWER: one level of it at a time, rather than up to All
+  // communities. What is below a place still goes to it first: a reply
+  // thread beside a channel, and a page under a place (All items, the bot's
+  // slots, the plan).
+  if (drawerStore.get().on) {
+    const isBelow = (level: Level) => { try { return !!level.below?.(); } catch { return false; } };
+    const thread = onPage ? mine.find((level) => (level.depth || 0) >= 2 && isBelow(level)) : undefined;
+    if (thread?.up) {
+      thread.up();
+      return 'up';
+    }
+    const under = PAGES_UNDER_A_PLACE.includes(drawerStore.get().shown.place);
+    const page = under && onPage ? mine.find((level) => (level.depth || 0) === 1 && level.up) : undefined;
+    if (page?.up) {
+      page.up();
+      return 'up';
+    }
+    return pressDrawerTab();
+  }
   const host = mine.map((level) => level.host?.() || null).find(Boolean) || null;
   const el = scrollerOf(host?.closest<HTMLElement>('#dev-forum-scroll') || null);
   // Off the project page's own address is a page below it: a card, a

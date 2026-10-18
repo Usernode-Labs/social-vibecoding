@@ -205,7 +205,7 @@ test('the left group is not empty while it holds the places button', () => {
   // is — so the merged button needs its own exception, or it would inherit
   // the group's display: none.
   assert.match(CSS,
-    /#platform-header \.platform-header-left:has\(> #back-btn\.hidden\):not\(:has\(> \.header-places-btn\)\) \{/,
+    /#platform-header \.platform-header-left:has\(> #back-btn\.hidden\):not\(:has\(> \.header-places-btn\)\):not\(:has\(> \.nav-drawer-back\)\) \{/,
     'the group stays while the button is in it');
 });
 

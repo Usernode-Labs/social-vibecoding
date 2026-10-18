@@ -42,6 +42,8 @@ import { useTrackOf } from './bot-track';
 import { BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledRun, type SettledRunItem } from './bot-news-line';
 import { requestKey } from './bot-request';
 import { MessageComposer } from './composer';
+import { useMessagesDrawer, type Peek } from './phone-drawer';
+import { messagesDrawerStore } from '../nav-drawer/messages-drawer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
 import { fullTime, UserAvatar, senderName } from './format';
@@ -124,7 +126,7 @@ import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
 import { INBOX_SECTIONS, buildInbox, shownInSection, type AgentChat, type AppDiscussion, type InboxSection } from './inbox';
-import type { ConversationMessage, ConversationSummary, DiscussionMessage, MessagesAgentThread } from './types';
+import type { ConversationDetail, ConversationMessage, ConversationSummary, DiscussionMessage, MessagesAgentThread } from './types';
 
 /*
  * ── The screen, in the widget language ─────────────────────────────────
@@ -833,7 +835,12 @@ function ConversationRowSkeleton() {
   );
 }
 
-function ConversationList() {
+function ConversationList({ drawer = false, litId = null }: {
+  /** The phone's drawer holds the screen (./phone-drawer.tsx): the list stays drawn beside a conversation. */
+  drawer?: boolean;
+  /** The conversation peeking beside the list, lit as the one you were in. */
+  litId?: number | null;
+} = {}) {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   // Agent chats come from the chat's OWN store (#2718): that list is already
@@ -1047,7 +1054,7 @@ function ConversationList() {
   ) : null;
 
   return (
-    <section className={`messages-list-pane ${specBeside ? 'hidden' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label={t('messages:inbox.listName')}>
+    <section className={`messages-list-pane ${specBeside ? 'hidden' : drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label={t('messages:inbox.listName')}>
       {/* THE SCREEN NAMES ITSELF ONCE (#2718 review). An <h2> reading
           "Messages" sat here, under a bar already reading Messages — two
           titles, one word, an inch apart. The bar is the title now, which is
@@ -1181,7 +1188,7 @@ function ConversationList() {
           <ConversationRow
             key={entry.key}
             conversation={conversation}
-            active={snap.route.conversationId === conversation.id}
+            active={snap.route.conversationId === conversation.id || (!!litId && litId === conversation.id)}
             preview={conversation.homeroomBot ? botLine : null}
           />
         )
@@ -1304,10 +1311,46 @@ function FullWidthToggle() {
  * #general is the exception: a channel goes back up to its hub, not to this
  * list, and like the hub's own pages it says so in the page (#3407).
  */
+/**
+ * What a conversation is called and who it is with, as the sheet's title row
+ * (ThreadHeader) says them, for the phone's header to say instead
+ * (./phone-drawer.tsx), where the sheet leaves its own name out. The same
+ * words, built the same way; tests/nav-drawer.test.js holds the two to each
+ * other. Read in the language on show by whoever renders it.
+ */
+export function threadWords(active: ConversationDetail): { title: string; sub: string } {
+  const channel = active.kind === 'channel';
+  const invited = active.membershipStatus === 'invited';
+  // #3692: the Homeroom bot's DM says what the bot is doing where a DM says
+  // "Direct message", and its Activity disc, before the full-width toggle,
+  // opens the activity panel (./bot-work.tsx), working or not. #3770: the
+  // disc, not the name block, which nobody read as a control.
+  const botDm = active.kind === 'direct' && !!active.homeroomBot && active.membershipStatus === 'member';
+  // QA 2026-09-24 Q33a: an unanswered request names its requester.
+  const person = directPerson(active);
+  // QA 2026-09-24 Q14: "1 member", not "1 members". An invitee is not shown
+  // the roster until they accept, so the count the server gives them is 0 —
+  // they read the invitation's state instead of "0 members".
+  const subtitle = channel
+    ? translate('messages:header.subtitle.channel', { count: active.memberCount })
+    : invited
+      ? translate('messages:header.subtitle.invited')
+      : active.kind === 'group'
+        ? (active.myRole === 'owner'
+          ? translate('messages:header.subtitle.groupOwner', { count: active.memberCount })
+          : translate('messages:header.subtitle.group', { count: active.memberCount }))
+        : active.awaitingAcceptance ? translate('messages:header.subtitle.requestPending') : translate('messages:header.subtitle.direct');
+  return {
+    title: active.kind === 'direct' && person ? senderName(person, { bare: true }) : channel ? `#${active.channelKey || active.title}` : active.title,
+    sub: botDm ? translate('messages:header.subtitle.homeroomBot') : subtitle,
+  };
+}
+
 function ThreadHeader() {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   const active = snap.active;
+  const { on: inDrawer } = useStoreState(messagesDrawerStore);
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
   // QA 2026-09-24 Q18: the ⋯ menu is a real menu now. It closes on a press
@@ -1381,6 +1424,7 @@ function ThreadHeader() {
   // QA 2026-09-24 Q14: "1 member", not "1 members". An invitee is not shown
   // the roster until they accept, so the count the server gives them is 0 —
   // they read the invitation's state instead of "0 members".
+  // (threadWords above says the same to the phone's header.)
   const subtitle = channel
     ? t('messages:header.subtitle.channel', { count: active.memberCount })
     : invited
@@ -1393,9 +1437,13 @@ function ThreadHeader() {
   return (
     <header className="messages-thread-header">
       {channel ? <PageBackButton label={hubBack.label} onBack={hubBack.onBack} data-channel-back="" /> : null}
-      {channel
+      {/* THE PHONE'S DRAWER NAMES THE CONVERSATION IN THE HEADER (Evan's
+          design, ./phone-drawer.tsx): its name over who it is with, so the
+          page leaves its own name out and keeps only its discs. */}
+      {inDrawer ? null : channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
         : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}
+      {inDrawer ? <span className="flex-1" aria-hidden="true" /> : (
       <button
         type="button"
         className="min-w-0 text-left flex-1"
@@ -1407,6 +1455,7 @@ function ThreadHeader() {
             it is for. */}
         <div className="messages-thread-sub">{botDm ? t('messages:header.subtitle.homeroomBot') : subtitle}</div>
       </button>
+      )}
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label={t('messages:header.groupMembers')} title={t('messages:header.groupMembers')}><UserGroupIcon aria-hidden="true" /></button> : null}
       <FullWidthToggle />
       <div className="relative" ref={menuWrapRef}>
@@ -1850,6 +1899,57 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
  * Exactly one copy draws the thread at a time — the store's route says
  * which — so the ids its rows carry are never on the page twice.
  */
+/**
+ * THE LAST CONVERSATION, PEEKING BESIDE THE LIST on a phone (Evan's design,
+ * ./phone-drawer.tsx): what it showed when you left it, its newest at the
+ * foot, and nothing in it can be pressed but the whole of it, which opens
+ * it. Only a picture: it marks nothing read, sends nothing and follows no
+ * live news, so leaving a conversation never keeps it open behind the list.
+ */
+function ConversationPeek({ peek }: { peek: Peek }) {
+  const t = useMessages('messages');
+  const channels = useChannelHandles();
+  const scroller = useRef<HTMLDivElement>(null);
+  useIsomorphicLayoutEffect(() => {
+    const el = scroller.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [peek]);
+  const { conversation, messages } = peek;
+  const kind = conversation.kind || 'direct';
+  const rows: ReactNode[] = [];
+  let previous: ConversationMessage | null = null;
+  let previousDay: string | null = null;
+  for (const message of messages) {
+    if (message.deleted || message.threadRootId) continue;
+    const day = dayKey(message);
+    if (day && day !== previousDay) {
+      rows.push(<div key={`day-${day}`} className="messages-day" aria-hidden="true">{dayLabel(message)}</div>);
+      previousDay = day;
+      previous = null;
+    }
+    const grouped = !!previous && !previous.system && !message.system
+      && groupsWithPrevious(
+        { author: previous.sender.id, at: previous.createdAt },
+        { author: message.sender.id, at: message.createdAt, reply: !!message.reply },
+      );
+    rows.push(<MessageRow key={message.clientKey || message.id} message={message} conversationId={conversation.id} grouped={grouped} channels={channels} kind={kind} />);
+    previous = message;
+  }
+  return (
+    <section className={`flex messages-thread-pane messages-thread-peek dc-lift dc-lift-session messages-thread-${kind}`} data-messages-peek={conversation.id}>
+      <div className="messages-peek-body" inert aria-hidden="true">
+        <div ref={scroller} className="messages-thread-scroll">{rows}</div>
+      </div>
+      <button
+        type="button"
+        className="messages-peek-open"
+        aria-label={t('messages:drawer.peek.open', { name: threadWords(conversation).title })}
+        onClick={() => openConversation(conversation.id)}
+      />
+    </section>
+  );
+}
+
 function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
@@ -2768,16 +2868,20 @@ export function MessagesScreen() {
   // #4229: on a strip too narrow for a readable conversation beside the
   // list, an open discussion takes the strip and the bar's back arrow returns
   // to the list, as on a phone (store.ts measureLayout).
-  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}${discussionOpen && snap.listCrowded ? ' messages-list-crowded' : ''}`;
+  // THE PHONE'S DRAWER (./phone-drawer.tsx): the list and a conversation
+  // with people side by side, panned between, the last conversation peeking.
+  const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, snap.messages, threadWords);
+  const drawerClass = drawer.on ? ` messages-drawer${drawer.level === 0 && !drawer.peek ? ' messages-drawer-alone' : ''}` : '';
+  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}${discussionOpen && snap.listCrowded ? ' messages-list-crowded' : ''}${drawerClass}`;
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes
   // need a transparent ancestor chain to have anything to blur.
   return (
     <>
       <main ref={screenRef} id="messages-screen" className="hidden flex-1 min-h-0 overflow-hidden" style={{ position: 'relative' }}>
-        <div ref={layoutRef} className={layout}>
-          <ConversationList />
-          <ConversationThread />
+        <div ref={layoutRef} className={layout} data-messages-drawer={drawer.on ? drawer.level : undefined} {...(drawer.handlers || {})}>
+          <ConversationList drawer={drawer.on} litId={drawer.peek ? drawer.peek.conversation.id : null} />
+          {drawer.peek ? <ConversationPeek peek={drawer.peek} /> : <ConversationThread />}
           {snap.route.conversationId && snap.route.threadRootId && !snap.route.embedded ? <ReplyThreadPanel /> : null}
           {snap.route.appSlug && snap.route.threadRootId ? <AppReplyThreadPanel slug={snap.route.appSlug} rootId={snap.route.threadRootId} /> : null}
         </div>

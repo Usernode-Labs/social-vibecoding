@@ -149,7 +149,8 @@ test('a narrow strip: the list steps aside, the toggle is not drawn, and the bar
   assert.match(STORE, /export function measureLayout\(width: number\): void \{\s*if \(!\(width > 0\)\) return;\s*const crowded = !isMobile\(\) && width < LIST_BESIDE_MIN_WIDTH;/,
     'a hidden screen measures 0 and changes nothing');
   assert.match(SCREEN, /new ResizeObserver\(\(\) => measureLayout\(el\.clientWidth\)\)/);
-  assert.match(SCREEN, /<div ref=\{layoutRef\} className=\{layout\}>/);
+  // The phone's drawer adds its level and its pan's handlers after them.
+  assert.match(SCREEN, /<div ref=\{layoutRef\} className=\{layout\}[ >]/);
   assert.match(SCREEN, /\$\{discussionOpen && snap\.listCrowded \? ' messages-list-crowded' : ''\}/);
   // The toggle stays in the DOM (dapp.json selects it); CSS stands it down.
   assert.match(CSS, /@media \(min-width: 768px\) \{\s*\.messages-layout\.messages-list-crowded > \.messages-list-pane \{ display: none; \}\s*\.messages-layout\.messages-list-crowded \.messages-list-toggle \{ display: none; \}/);

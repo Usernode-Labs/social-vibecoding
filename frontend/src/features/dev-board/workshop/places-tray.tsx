@@ -72,6 +72,12 @@ function readEnv() {
   };
 }
 
+/** Whether the page may take the left edge here (`edgeSwipeAllowed`, of this browser). */
+export function pageTakesEdge(): boolean {
+  if (typeof window === 'undefined') return false;
+  return edgeSwipeAllowed(readEnv());
+}
+
 /**
  * Open the tray on a swipe right from the left edge, while `enabled` (a
  * phone's width, the page up, the tray shut). Listens on the document,
