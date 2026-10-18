@@ -172,6 +172,16 @@ test('every composer column reserves the keyboard inset, exactly once', () => {
     'the column must reserve the kit-published keyboard inset');
   assert.match(col[1], /transition:\s*none/,
     'no transition while the keyboard is up — the bar tracks it exactly');
+  // …and it must cancel iOS's reveal-pan (#3571): Safari pans the page up by
+  // the keyboard's height to reveal the focused field and holds the pan, so
+  // the inset alone lifted the box a whole keyboard's height above the strip
+  // the keyboard leaves. Translating the column down by the live pan
+  // (--platform-vv-top, lib/visual-viewport.ts) seats the composer on the
+  // keyboard's edge — the same compensation the dialogs already take
+  // (html.un-kb .un-modal, #2765). 0px on Android and desktop, so nothing
+  // moves there.
+  assert.match(col[1], /translate:\s*0\s+var\(--platform-vv-top, 0px\)/,
+    'the column must translate by the platform-vv pan while the keyboard is up');
 
   const COLUMNS = [
     ['frontend/src/features/group-chat/thread-shell.tsx', /className="dev-thread dev-thread-fill platform-kb-column/],

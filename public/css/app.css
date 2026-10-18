@@ -389,8 +389,35 @@ html.un-kb .platform-safe-sheet {
   transition: padding-bottom 150ms ease-out;
 }
 
+/* The column must ALSO cancel iOS's reveal-pan, or the two compensations
+   add up to a box off the top of the screen (#3571). The inset below lifts
+   the composer by the keyboard's height — the right half — but on iOS
+   Safari also pans the whole page up by about the keyboard's height to
+   reveal the focused field, and HOLDS the pan: the visible strip is the
+   layout viewport's bottom band, from the pan to its bottom edge. The
+   column's content, lifted a keyboard's height on top of that, ends up
+   above the strip entirely — the composer pressed off the top, the header
+   and the transcript gone with it, a blank band between the top of the
+   screen and the keys. Measured on an iPhone 17 Pro simulator with the
+   keyboard up (#2299): Safari, layout viewport 714px, visible strip 377px,
+   pan 337px; the installed app, 812 / 409 / 403. Android Chrome pans
+   nothing (pan 0, though the inset is real), and desktop has no keyboard,
+   so there the term below reads 0px and the column is untouched.
+
+   `--platform-vv-top` (lib/visual-viewport.ts) is that pan, published on
+   <html> beside the kit's inset, written in the same viewport resize event
+   the kit reads the keyboard in, and cleared the moment `un-kb` drops. It
+   is the live pan, not an assumed equality with the inset. Translating the
+   column down by it seats the composer on the keyboard's top edge and
+   fills the strip: header at the top, transcript between, box above the
+   keys. The `transition: none` below already covers the translate, so the
+   column holds still in screen space while the page pans and snaps back on
+   blur, exactly as the dialogs do — this is the same shape app.css already
+   gives `html.un-kb .un-modal` (#2765), which never got a composer-column
+   counterpart until now. */
 html.un-kb .platform-kb-column {
   padding-bottom: var(--un-kb-inset, 0px);
+  translate: 0 var(--platform-vv-top, 0px);
   transition: none;
 }
 
