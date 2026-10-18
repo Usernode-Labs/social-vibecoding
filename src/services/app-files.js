@@ -30,6 +30,34 @@ const PER_USER_PER_APP_CAP = 200 * 1024 * 1024; // 200 MB
 const STAGING_PER_APP_CAP = 100 * 1024 * 1024; // 100 MB
 const STAGING_GC_DAYS = 7;
 
+// Per-app overrides of the two durable caps, keyed by app slug (ids
+// differ between environments; a slug is unique and stable). Every app
+// not listed keeps the defaults above. The per-file size and image-only
+// rules are not overridable. An app-wide cap below the per-user cap would
+// make the per-user one unreachable, so raise both together.
+const GB = 1024 * 1024 * 1024;
+const APP_QUOTA_OVERRIDES = Object.freeze({
+  // #5416: HomeVault, a family photo vault. 10 GB per user; the app-wide
+  // cap leaves room for ten people at the full allowance.
+  'homevault-9012d2': Object.freeze({ appCapBytes: 100 * GB, userCapBytes: 10 * GB }),
+});
+
+// Pure: the caps that apply to the app with this slug.
+function quotaCapsForSlug(slug) {
+  const o = slug ? APP_QUOTA_OVERRIDES[String(slug).toLowerCase()] : null;
+  return {
+    appCapBytes: o ? o.appCapBytes : PER_APP_CAP,
+    userCapBytes: o ? o.userCapBytes : PER_USER_PER_APP_CAP,
+  };
+}
+
+// "2 GB", "200 MB", "10 GB": whole GB when the cap is a whole number of them.
+function formatCap(bytes) {
+  return bytes >= GB && bytes % GB === 0
+    ? `${bytes / GB} GB`
+    : `${Math.round(bytes / 1024 / 1024)} MB`;
+}
+
 // Mirrors attachments.js's image map (not exported there; images-only
 // v1 keeps this a 4-line duplication rather than a cross-module export).
 const IMAGE_EXT_TYPES = {
@@ -204,7 +232,8 @@ async function usageSums(pool, appId, userId) {
     `SELECT
        COALESCE(SUM(size_bytes), 0)::bigint AS app_bytes,
        COALESCE(SUM(size_bytes) FILTER (WHERE user_id = $2), 0)::bigint AS user_bytes,
-       COALESCE(SUM(size_bytes) FILTER (WHERE staging), 0)::bigint AS staging_bytes
+       COALESCE(SUM(size_bytes) FILTER (WHERE staging), 0)::bigint AS staging_bytes,
+       (SELECT slug FROM apps WHERE id = $1) AS slug
      FROM app_files WHERE app_id = $1`,
     [appId, userId]
   );
@@ -212,28 +241,33 @@ async function usageSums(pool, appId, userId) {
     appBytes: Number(rows[0].app_bytes),
     userBytes: Number(rows[0].user_bytes),
     stagingBytes: Number(rows[0].staging_bytes),
+    ...quotaCapsForSlug(rows[0].slug),
   };
 }
 
 // Pure: quota verdict for an upload of `size` bytes given current sums.
-// Returns null when the upload fits, else { code, error }.
-function quotaVerdict({ size, appBytes, userBytes, stagingBytes, staging }) {
+// Returns null when the upload fits, else { code, error }. The two caps
+// default to the platform-wide ones; usageSums supplies an app's override.
+function quotaVerdict({
+  size, appBytes, userBytes, stagingBytes, staging,
+  appCapBytes = PER_APP_CAP, userCapBytes = PER_USER_PER_APP_CAP,
+}) {
   if (staging && stagingBytes + size > STAGING_PER_APP_CAP) {
     return {
       code: 'staging_quota_exceeded',
       error: `Staging upload storage for this app is full (${Math.round(STAGING_PER_APP_CAP / 1024 / 1024)} MB max)`,
     };
   }
-  if (appBytes + size > PER_APP_CAP) {
+  if (appBytes + size > appCapBytes) {
     return {
       code: 'app_quota_exceeded',
-      error: `This app's file storage is full (${Math.round(PER_APP_CAP / 1024 / 1024 / 1024)} GB max)`,
+      error: `This app's file storage is full (${formatCap(appCapBytes)} max)`,
     };
   }
-  if (userBytes + size > PER_USER_PER_APP_CAP) {
+  if (userBytes + size > userCapBytes) {
     return {
       code: 'user_quota_exceeded',
-      error: `Your file storage in this app is full (${Math.round(PER_USER_PER_APP_CAP / 1024 / 1024)} MB max)`,
+      error: `Your file storage in this app is full (${formatCap(userCapBytes)} max)`,
     };
   }
   return null;
@@ -320,9 +354,9 @@ async function usageReport(pool, appId, userId) {
   const sums = await usageSums(pool, appId, userId);
   return {
     appBytes: sums.appBytes,
-    appCapBytes: PER_APP_CAP,
+    appCapBytes: sums.appCapBytes,
     userBytes: sums.userBytes,
-    userCapBytes: PER_USER_PER_APP_CAP,
+    userCapBytes: sums.userCapBytes,
   };
 }
 
@@ -358,10 +392,12 @@ module.exports = {
   PER_USER_PER_APP_CAP,
   STAGING_PER_APP_CAP,
   STAGING_GC_DAYS,
+  APP_QUOTA_OVERRIDES,
   IMAGE_EXT_TYPES,
   validateImageUpload,
   normalizeVisibility,
   quotaVerdict,
+  quotaCapsForSlug,
   objectKey,
   fileUrl,
   createObjectStore,

@@ -102,6 +102,50 @@ test('quota verdict: staging cap only applies to staging uploads', () => {
   assert.equal(appFiles.quotaVerdict({ ...base, staging: true }).code, 'staging_quota_exceeded');
 });
 
+// ── Per-app quota overrides (#5416) ─────────────────────────────────
+
+const GB = 1024 * 1024 * 1024;
+const MB = 1024 * 1024;
+
+test('quota caps: an app without an override keeps the defaults', () => {
+  assert.equal(appFiles.PER_APP_CAP, 2 * GB);
+  assert.equal(appFiles.PER_USER_PER_APP_CAP, 200 * MB);
+  for (const slug of ['plant-pal', null, undefined, '']) {
+    assert.deepEqual(appFiles.quotaCapsForSlug(slug), { appCapBytes: 2 * GB, userCapBytes: 200 * MB });
+  }
+});
+
+test('quota caps: HomeVault gets 10 GB per user under an app cap that leaves room for it', () => {
+  const caps = appFiles.quotaCapsForSlug('homevault-9012d2');
+  assert.equal(caps.userCapBytes, 10 * GB);
+  assert.ok(caps.appCapBytes > caps.userCapBytes);
+  assert.deepEqual(appFiles.quotaCapsForSlug('HomeVault-9012d2'), caps);
+  for (const o of Object.values(appFiles.APP_QUOTA_OVERRIDES)) {
+    assert.ok(o.appCapBytes >= o.userCapBytes, 'an app cap below the user cap makes the user cap unreachable');
+  }
+});
+
+test('quota verdict: an override replaces both durable caps but not the staging cap', () => {
+  const caps = appFiles.quotaCapsForSlug('homevault-9012d2');
+  const base = { size: 1000, stagingBytes: 0, staging: false, ...caps };
+  // 1 GB stored by this user: over the default 200 MB, well under 10 GB.
+  assert.equal(appFiles.quotaVerdict({ ...base, appBytes: 3 * GB, userBytes: GB }), null);
+  const user = appFiles.quotaVerdict({ ...base, appBytes: 10 * GB, userBytes: 10 * GB - 10 });
+  assert.equal(user.code, 'user_quota_exceeded');
+  assert.match(user.error, /\(10 GB max\)/);
+  const app = appFiles.quotaVerdict({ ...base, appBytes: caps.appCapBytes - 10, userBytes: 0 });
+  assert.equal(app.code, 'app_quota_exceeded');
+  // The default app at the same usage is refused, with the default wording.
+  const dflt = appFiles.quotaVerdict({ size: 1000, appBytes: 3 * GB, userBytes: GB, stagingBytes: 0, staging: false });
+  assert.equal(dflt.code, 'app_quota_exceeded');
+  assert.match(dflt.error, /\(2 GB max\)/);
+  assert.match(appFiles.quotaVerdict({ size: 1000, appBytes: 0, userBytes: 200 * MB, stagingBytes: 0, staging: false }).error,
+    /\(200 MB max\)/);
+  assert.equal(appFiles.quotaVerdict({
+    ...base, appBytes: 0, userBytes: 0, staging: true, stagingBytes: appFiles.STAGING_PER_APP_CAP,
+  }).code, 'staging_quota_exceeded');
+});
+
 // ── helpers ─────────────────────────────────────────────────────────
 
 test('objectKey embeds the app id for prefix deletes', () => {
@@ -122,14 +166,14 @@ test('fileUrl is an absolute platform URL keyed by id', () => {
 
 // ── storeAppFile / deleteAppFile ordering ───────────────────────────
 
-function fakePool({ failInsert = false } = {}) {
+function fakePool({ failInsert = false, slug, userBytes = 0 } = {}) {
   const calls = [];
   return {
     calls,
     async query(sql, params) {
       calls.push({ sql, params });
       if (/SELECT[\s\S]*FROM app_files WHERE app_id/.test(sql)) {
-        return { rows: [{ app_bytes: '0', user_bytes: '0', staging_bytes: '0' }] };
+        return { rows: [{ app_bytes: String(userBytes), user_bytes: String(userBytes), staging_bytes: '0', slug }] };
       }
       if (/INSERT INTO app_files/.test(sql)) {
         if (failInsert) throw new Error('insert boom');
@@ -171,6 +215,22 @@ test('storeAppFile: object then row, returns the file shape', async () => {
   assert.match(r.file.url, /\/app-files\//);
   assert.deepEqual(store.ops[0].slice(0, 2), ['put', 7]);
   assert.ok(pool.calls.some((c) => /INSERT INTO app_files/.test(c.sql)));
+});
+
+test('storeAppFile and usageReport: the overridden app takes 1 GB per user, a default app does not', async () => {
+  const data = { appId: 7, userId: 5, filename: 'dish.png', visibility: 'public', staging: false, data: PNG };
+  const vault = await appFiles.storeAppFile(fakePool({ slug: 'homevault-9012d2', userBytes: GB }), fakeStore(), data);
+  assert.equal(vault.ok, true);
+  const other = await appFiles.storeAppFile(fakePool({ slug: 'plant-pal', userBytes: GB }), fakeStore(), data);
+  assert.equal(other.ok, false);
+  assert.equal(other.code, 'user_quota_exceeded');
+
+  const vaultUsage = await appFiles.usageReport(fakePool({ slug: 'homevault-9012d2' }), 7, 5);
+  assert.equal(vaultUsage.userCapBytes, 10 * GB);
+  assert.ok(vaultUsage.appCapBytes > 10 * GB);
+  const otherUsage = await appFiles.usageReport(fakePool({ slug: 'plant-pal' }), 7, 5);
+  assert.equal(otherUsage.userCapBytes, 200 * MB);
+  assert.equal(otherUsage.appCapBytes, 2 * GB);
 });
 
 test('storeAppFile: failed INSERT rolls the object back', async () => {
