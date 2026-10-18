@@ -4628,26 +4628,42 @@ async function runFollowUp(pool, config, {
     threadContext.loadProposalThread(pool, app.id, proposal.id),
     live.botUsernameOf(github),
   ]);
-  let replies = followup.newReplies({
-    comments,
-    issueThread: issueThread?.messages || [],
-    proposalThread: proposalThread?.messages || [],
-    botLogin,
-    botUsername: BOT_USERNAME,
-    sinceMs: toMs(since.sinceAt),
+  // What this look answers, decided once across its attempts: the replies
+  // (each with where it was said, where its answer goes), the asks it took
+  // (by its tag) and, with nobody to answer, the failing checks it fixes.
+  // An attempt that carries the look on after a restart answers exactly
+  // these: a message written since is the next look's, never marked read
+  // by an answer that never saw it, and a fix whose reconcile already moved
+  // the reviewed head is finished rather than read as no longer due.
+  const decided = await look.once('replies', async () => {
+    let found = followup.newReplies({
+      comments,
+      issueThread: issueThread?.messages || [],
+      proposalThread: proposalThread?.messages || [],
+      botLogin,
+      botUsername: BOT_USERNAME,
+      sinceMs: toMs(since.sinceAt),
+    });
+    // What people wrote where the voice answers is the voice's; what they
+    // asked it to change comes here as asks.
+    found = found.filter((r) => r.via !== 'homeroom' || (r.where === 'proposal' ? !voiceOnChange : !voiceOnRequest));
+    let taken = [];
+    if (voiceOnChange) {
+      taken = await voice.takeAsks(pool, { sessionId: proposal.id, runTag }).catch((err) => {
+        log.warn('homeroom-bot', 'Could not take the asks waiting on a change', { app: app.slug, err: err.message });
+        return [];
+      });
+      found = [...found, ...taken.map(followup.askAsReply)].sort((a, b) => toMs(a.createdAt) - toMs(b.createdAt));
+    }
+    // Its own red checks: a failing verdict on the proposal's current head
+    // that no follow-up has looked at yet is a reason to look again even
+    // when nobody said anything. A person's reply comes first; a fix still
+    // due after it is queued again below (requeueChecks).
+    const due = found.length ? null : await checksToFix(pool, proposal.id);
+    return JSON.parse(JSON.stringify({ replies: found, asks: taken, checks: due || null }));
   });
-  // What people wrote where the voice answers is the voice's; what they
-  // asked it to change comes here as asks.
-  replies = replies.filter((r) => r.via !== 'homeroom' || (r.where === 'proposal' ? !voiceOnChange : !voiceOnRequest));
-  if (voiceOnChange) {
-    // Once across the look's attempts: the asks the first attempt took are
-    // this look's (taken, by its tag), never left behind by a resumed one.
-    asks = await look.once('asks', async () => JSON.parse(JSON.stringify(await voice.takeAsks(pool, { sessionId: proposal.id, runTag }).catch((err) => {
-      log.warn('homeroom-bot', 'Could not take the asks waiting on a change', { app: app.slug, err: err.message });
-      return [];
-    }))));
-    replies = [...replies, ...asks.map(followup.askAsReply)].sort((a, b) => toMs(a.createdAt) - toMs(b.createdAt));
-  }
+  const replies = decided.replies;
+  asks = decided.asks;
   others = replies.filter((r) => r.via !== 'ask');
   noteSessionId = others.some((r) => r.where === 'proposal') ? proposal.id : null;
   // #4613: every run this turn records carries a mark past what it read, so
@@ -4655,11 +4671,7 @@ async function runFollowUp(pool, config, {
   // advanceSeen still raises it further when it can (the GitHub comment's
   // own stamp), and a person writing while the turn runs stays after it.
   seenThrough = followup.readThrough(replies, item.thread_seen_at || null);
-  // Its own red checks: a failing verdict on the proposal's current head
-  // that no follow-up has looked at yet is a reason to look again even when
-  // nobody said anything. A person's reply comes first; a fix still due
-  // after it is queued again below (requeueChecks).
-  const checks = replies.length ? null : await checksToFix(pool, proposal.id);
+  const checks = decided.checks;
   if (!replies.length && !checks) {
     if (lastRun && item.thread_seen_at) {
       await pool.query(

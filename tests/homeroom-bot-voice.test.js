@@ -290,7 +290,7 @@ test('the change follow-up takes the asks and lets the voice tell the people who
   const src = read('src/services/homeroom-bot.js');
   const run = src.slice(src.indexOf('async function runFollowUp'), src.indexOf('async function renameRevised'));
   assert.match(run, /voice\.takeAsks\(pool, \{ sessionId: proposal\.id, runTag \}\)/);
-  assert.match(run, /replies = replies\.filter\(\(r\) => r\.via !== 'homeroom' \|\| \(r\.where === 'proposal' \? !voiceOnChange : !voiceOnRequest\)\);/);
+  assert.match(run, /found = found\.filter\(\(r\) => r\.via !== 'homeroom' \|\| \(r\.where === 'proposal' \? !voiceOnChange : !voiceOnRequest\)\);/);
   assert.match(run, /onStart: deps\.ws && !asks\.length \?/);
   assert.match(run, /turn\.routed\?\.error === 'session_busy' && deps\.ws && !asks\.length/);
   // The asks end and their report is owed in one transaction.

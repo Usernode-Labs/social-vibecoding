@@ -276,7 +276,7 @@ const insertOf = (h) => h.calls.queries.find((q) => /INSERT INTO homeroom_bot_ru
 // saved, then the work is lost, as a release does to a running process)
 // right after `crashAfter` is kept, and the next attempt resumes from what
 // was saved, against the database as the first attempt left it.
-async function attempts(t, h, crashAfter) {
+async function attempts(t, h, crashAfter, between = null) {
   const durableSteps = require('../src/services/durable-steps');
   const { StepsStopped } = require('../src/workflow/kernel/steps.ts');
   const realPost = live.post;
@@ -307,6 +307,7 @@ async function attempts(t, h, crashAfter) {
   };
   await assert.rejects(attempt(null), (err) => err.stopped === true, `the first attempt is lost after ${crashAfter}`);
   assert.ok(crashed, `it got as far as ${crashAfter}`);
+  if (between) between();
   return attempt(saved);
 }
 
@@ -332,6 +333,30 @@ test('a follow-up resumed after its run was recorded still posts its answer: it 
   assert.equal(h.calls.queries.filter((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)).length, 1, 'one run');
   assert.equal(h.calls.posts.length, 1, 'and its answer is posted, once');
   assert.match(h.calls.posts[0].text, /Because the platform uses it\./);
+});
+
+// A question written while the look was lost is the next look's: the
+// resumed attempt answers the replies it read, where they were said, and
+// marks read only through them, never past what its turn never saw.
+test('a follow-up resumed after its decision answers what it read; a question written since waits for the next look', async (t) => {
+  const proposalThread = [];
+  const h = harness({ issueThread: [{ author: 'pat', body: 'Why zinc-950?', createdAt: '2026-09-26T11:10:00Z' }], proposalThread });
+  // Written while the first attempt was lost, on the change's discussion.
+  const crashCheck = h.pool.query;
+  let lost = false;
+  h.pool.query = async (sql, params) => {
+    if (lost && proposalThread.length === 0) proposalThread.push({ author: 'sam', body: 'And the header?', createdAt: '2026-09-26T12:30:00Z' });
+    return crashCheck(sql, params);
+  };
+  const realPost = live.post;
+  t.after(() => { live.post = realPost; });
+  const out = await attempts(t, h, 'moved:1', () => { lost = true; });
+  assert.notEqual(out?.reason, 'no_new_replies');
+  assert.equal(h.calls.exec.length, 1, 'its turn ran once, on what it read');
+  const insert = h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.ok(!insert.params.some((v) => typeof v === 'string' && /^2026-09-26T12:3/.test(v)), 'nothing marked read past the question it never saw');
+  assert.ok(h.calls.posts.length >= 1);
+  assert.ok(h.calls.posts.every((p) => !p.proposalSessionId), 'answered where the reply it answers was said, not on the change');
 });
 
 test('a revision resumed after its reconcile is still the revision it was: never "no change"', async (t) => {

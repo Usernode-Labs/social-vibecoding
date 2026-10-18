@@ -272,8 +272,10 @@ async function run(t, h, item = ITEM) {
 const insertOf = (h) => h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
 
 // PR #5424 review: a fix round resumed after a restart that came right
-// after its reconcile (which made the turn's push the reviewed head) is the
-// revision it was, decided before the reconcile, never "no change".
+// after its reconcile (which made the turn's push the reviewed head, so the
+// old head's red verdict is no longer due) is the revision it was: its fix
+// target and its decision were kept, so it is finished, not dropped as
+// nothing to do, and never recorded as "no change".
 test('a fix round resumed after its reconcile is still the revision it was', async (t) => {
   const durableSteps = require('../src/services/durable-steps');
   const { StepsStopped } = require('../src/workflow/kernel/steps.ts');
@@ -285,6 +287,8 @@ test('a fix round resumed after its reconcile is still the revision it was', asy
     if (h.calls.reconciled.length && /SELECT cs\.\*, a\.slug AS app_slug/.test(String(sql))) {
       return { rows: out.rows.map((r) => ({ ...r, reviewed_head_sha: NEW_HEAD })) };
     }
+    // The new head has no verdict yet: no fix is due now.
+    if (h.calls.reconciled.length && /AS looked/.test(String(sql))) return { rows: [] };
     return out;
   };
   const realPost = live.post;
