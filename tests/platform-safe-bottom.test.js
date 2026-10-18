@@ -168,8 +168,13 @@ test('every composer column reserves the keyboard inset, exactly once', () => {
   // or pan it), and it leaves the pin inert.
   const col = /html\.un-kb \.platform-kb-column\s*\{([^}]*)\}/.exec(APP_CSS);
   assert.ok(col, 'html.un-kb .platform-kb-column rule is missing');
-  assert.match(col[1], /padding-bottom:\s*var\(--un-kb-inset, 0px\)/,
-    'the column must reserve the kit-published keyboard inset');
+  // #3571: on iOS Safari the visible band is the layout viewport panned down
+  // by --platform-vv-top, so the keys cover only `inset - pan`. Reserving the
+  // whole inset on top of the pan pushed the composer off the top of the
+  // screen. max() clamps a rounding overshoot at zero.
+  assert.match(col[1],
+    /padding-bottom:\s*max\(0px,\s*calc\(var\(--un-kb-inset, 0px\) - var\(--platform-vv-top, 0px\)\)\)/,
+    'the column must reserve the part of the keyboard below the visible band');
   assert.match(col[1], /transition:\s*none/,
     'no transition while the keyboard is up — the bar tracks it exactly');
 

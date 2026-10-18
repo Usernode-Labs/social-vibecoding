@@ -384,13 +384,24 @@ html.un-kb .platform-safe-sheet {
 
    A column that takes this must NOT also carry `.un-kb-avoid` on its
    scroller — that would reserve the inset twice and leave dead space under
-   the transcript. */
+   the transcript.
+
+   Reserving the WHOLE inset assumes the layout viewport's bottom edge is the
+   last visible thing. On iOS Safari it is not: to reveal the focused field
+   the browser pans the visual viewport down by `--platform-vv-top`
+   (frontend/src/lib/visual-viewport.ts), so the band on screen ends at
+   `layout - inset + pan`. Reserving `inset` on top of that pan left the
+   composer `pan` px above the keyboard line and, with a full pan, clipped by
+   the top of the screen (#3571). What the keys still cover below the band is
+   `inset - pan`, so reserve exactly that; `max(0px, …)` keeps a rounding
+   overshoot from producing a negative padding. Where nothing pans — Android,
+   desktop, an iPhone with no pan — this equals the inset, unchanged. */
 .platform-kb-column {
   transition: padding-bottom 150ms ease-out;
 }
 
 html.un-kb .platform-kb-column {
-  padding-bottom: var(--un-kb-inset, 0px);
+  padding-bottom: max(0px, calc(var(--un-kb-inset, 0px) - var(--platform-vv-top, 0px)));
   transition: none;
 }
 

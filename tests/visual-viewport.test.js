@@ -52,6 +52,18 @@ function evalCss(src, { vars = {}, env = {}, percent = 0, vh = 0 } = {}) {
   function factor() {
     ws();
     if (peek('calc(')) { i += 5; const v = sum(); expect(')'); return v; }
+    if (peek('max(')) {
+      i += 4;
+      const values = [sum()];
+      for (;;) {
+        ws();
+        if (!peek(',')) break;
+        i += 1;
+        values.push(sum());
+      }
+      expect(')');
+      return Math.max(...values);
+    }
     if (peek('(')) { i += 1; const v = sum(); expect(')'); return v; }
     if (peek('var(') || peek('env(')) {
       const table = peek('var(') ? vars : env;
@@ -98,6 +110,11 @@ test('the evaluator reads the grammar the modal rules are written in', () => {
     { vars: { '--a': 10, '--b': 40 }, percent: 800 }), 390);
   assert.equal(evalCss('var(--missing, env(safe-area-inset-top, 7px))'), 7);
   assert.equal(evalCss('var(--x, calc(100dvh - 32px))', { vh: 812 }), 780);
+  assert.equal(evalCss('max(0px, calc(var(--a, 0px) - var(--b, 0px)))',
+    { vars: { '--a': 337, '--b': 337 } }), 0);
+  assert.equal(evalCss('max(0px, calc(var(--a, 0px) - var(--b, 0px)))',
+    { vars: { '--a': 337, '--b': 100 } }), 237);
+  assert.equal(evalCss('max(10px, 4px, 7px)'), 10);
   assert.throws(() => evalCss('var(--x)'), /no value and no fallback/);
 });
 
@@ -129,6 +146,10 @@ const SHELL_SHIFTS = rules(APP_CSS, 'html.un-kb .un-modal').filter((body) => /(^
 const SHELL_SHIFT = SHELL_SHIFTS.length === 1 ? declared(SHELL_SHIFTS[0], 'translate') : null;
 /** The vertical half of `translate: 0 <y>`. */
 const SHELL_PAN = SHELL_SHIFT && SHELL_SHIFT.replace(/^0\s+/, '');
+// #3571: the composer column's reservation. On iOS Safari the visible band
+// is panned down by --platform-vv-top, so only the keys BELOW it count.
+const KB_COLUMN = rules(APP_CSS, 'html.un-kb .platform-kb-column');
+const KB_COLUMN_PB = KB_COLUMN.length === 1 ? declared(KB_COLUMN[0], 'padding-bottom') : null;
 
 test('the shell moves the kit modal by the pan in exactly one rule, and leaves `top` to the kit', () => {
   assert.equal(SHELL_TOPS.length, 0, 'app.css does not restate the kit\'s top');
@@ -243,6 +264,62 @@ test('pinch zoom is not a keyboard: the offset is ignored and the kit decides', 
   const frame = { layout: 844, vvHeight: 422, offsetTop: 300, scale: 2, content: FEEDBACK };
   assert.equal(visualViewportTop(frame), 0);
   assert.deepEqual(place(frame), place(frame, { pan: false }));
+});
+
+// ── The composer column against the screen (#3571) ───────────────────────
+//
+// Messages (and the other three chat columns) pin the composer to the foot
+// of a column that reserves the keyboard. Reserving the WHOLE inset ignored
+// the pan iOS Safari makes to reveal the field, so the composer rose `pan`
+// px above the keyboard line and, at a full pan, left the top of the screen.
+// The shipped declaration is evaluated here against the same measured
+// frames the modal geometry uses.
+
+/** The bottom edge the shipped CSS gives a composer pinned to the column. */
+function composerBottom({ layout, vvHeight, offsetTop, scale = 1 }) {
+  const kb = physics.keyboardInset({ layoutHeight: layout, vvHeight, vvScale: scale });
+  const vars = {
+    '--un-kb-inset': kb,
+    '--platform-vv-top': visualViewportTop({ offsetTop, scale }),
+  };
+  return layout - evalCss(KB_COLUMN_PB, { vars, percent: layout, vh: layout });
+}
+
+test('the composer column reserves the keyboard inset less the pan', () => {
+  assert.equal(KB_COLUMN.length, 1, 'one app.css rule reserves the keyboard on the column');
+  assert.equal(KB_COLUMN_PB,
+    'max(0px, calc(var(--un-kb-inset, 0px) - var(--platform-vv-top, 0px)))',
+    'the keys still below the visible band are the inset less the pan');
+});
+
+test('on iOS the composer rests on the keyboard line at every pan', () => {
+  for (const frame of [IOS_SAFARI, IOS_STANDALONE, ANDROID]) {
+    const kb = physics.keyboardInset({ layoutHeight: frame.layout, vvHeight: frame.vvHeight, vvScale: 1 });
+    for (let offsetTop = 0; offsetTop <= kb; offsetTop += 1) {
+      const f = { ...frame, offsetTop };
+      const bottom = composerBottom(f);
+      assert.equal(bottom, bandOf(f).bottom,
+        `${frame.layout}px layout at pan ${offsetTop}/${kb}: composer bottom ${bottom}`);
+    }
+  }
+});
+
+test('the reservation this replaced put the composer the pan above the keyboard', () => {
+  // The old declaration, evaluated the same way: at iOS Safari's measured
+  // full pan it sat 337px above the band — off the top of the screen.
+  for (const offsetTop of [0, 100, IOS_SAFARI.offsetTop]) {
+    const f = { ...IOS_SAFARI, offsetTop };
+    const kb = physics.keyboardInset({ layoutHeight: f.layout, vvHeight: f.vvHeight, vvScale: 1 });
+    const old = f.layout - evalCss('var(--un-kb-inset, 0px)', { vars: { '--un-kb-inset': kb } });
+    assert.equal(old, bandOf(f).bottom - offsetTop, 'the whole inset overshoots by the pan');
+  }
+});
+
+test('where nothing pans the composer column is unchanged by this fix', () => {
+  for (const f of [{ ...ANDROID }, { layout: 844, vvHeight: 844, offsetTop: 0 }]) {
+    const kb = physics.keyboardInset({ layoutHeight: f.layout, vvHeight: f.vvHeight, vvScale: 1 });
+    assert.equal(composerBottom(f), f.layout - kb);
+  }
 });
 
 // ── The offset ───────────────────────────────────────────────────────────
