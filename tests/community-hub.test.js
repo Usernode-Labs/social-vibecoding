@@ -81,7 +81,9 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   assert.deepEqual(['needs', 'workshop', 'all', 'discussion'].map(pageTitle), ['Needs you', 'Workshop', 'All items', 'Discussion']);
   // The band on every page; All items adds its way back under it.
   assert.match(LANDER, /const pageBar = tab === 'all' \? \(/);
-  assert.match(LANDER, /<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
+  // Its way back is a Back step when the Workshop's entry is below it, and a
+  // replacement of this page otherwise (see tab-history.ts).
+  assert.match(LANDER, /<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => \{\s*if \(backWithinTabs\('project', v\.slug, pageParent\(tab\)\)\) return;\s*openTab\(pageParent\(tab\), \{ replace: true \}\);\s*\}\}/);
   assert.match(LANDER, /\{band\}\s*\{pageBar\}/);
   // The hub's order, as agreed: the hero (who is here, what it is, what you
   // can do, the fortnight), what landed since your last visit, Needs you (a

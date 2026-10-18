@@ -206,7 +206,9 @@ test('#3494: exactly one copy of the thread is drawn, and the page\'s has no hea
 test('#3494: the Discussion tab turns for Homeroom too, and mounts #general while the page is on screen', () => {
   // No door: the tab, the hub card's Open and a cold `?ws=discussion` all turn the page.
   assert.doesNotMatch(LANDER, /discussionElsewhere|openDiscussionElsewhere/);
-  assert.match(LANDER, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
+  // The tab turns the page in place — and, since Back was taught the tabs,
+  // records the change as a same-address history step before doing so.
+  assert.match(LANDER, /const openTab = \(next: TabKey, options\?: \{ replace\?: boolean \}\) => \{\s*if \(next !== tab\) \{\s*const record = \{ scope: 'project' as const, slug: v\.slug, tab: next, from: tab \};\s*if \(options\?\.replace\) replacePageTab\(record\);\s*else pushPageTab\(record\);\s*\}\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
   assert.doesNotMatch(PD, /location\.hash|location\.replace|_setWorkshopTab/, 'the tab never navigates away');
 
   const seen = [];

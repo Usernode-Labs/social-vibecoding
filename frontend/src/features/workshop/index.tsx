@@ -82,7 +82,7 @@
  * class has exactly one owner.
  */
 
-import { useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
@@ -92,6 +92,9 @@ import {
 } from '@/components/ui/icons';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { AppsLoadError } from '../apps/load-error';
+import {
+  backWithinTabs, currentPageTab, pageTabMatches, pushPageTab, replacePageTab, stampPageTab,
+} from '../../lib/tab-history';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -439,6 +442,22 @@ export function WorkshopScreen() {
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
   useNeedsSeen();
+  // A TRAVERSAL WITHIN THE SCREEN: Back from the Needs you feed returns to
+  // the list, which the entry it lands on records (see setTab). It acts only
+  // while Communities is the screen on show, so Back out of the screen is the
+  // router's, and an entry with no marker leaves the tab where it is.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onPop = () => {
+      const app = (window as any).App;
+      if (!app || !app._inWorkshop) return;
+      const mark = currentPageTab();
+      if (!pageTabMatches(mark, 'communities', null)) return;
+      workshopStore.set({ tab: mark?.tab === 'needs' ? 'needs' : 'status' });
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   // ONE PAGE: the list of your projects, with Needs you as a row at its top
   // that opens the feed of votes owed across all of them (`tab: 'needs'`,
   // also reached by `?ws=needs`), and a way back. See the markup below.
@@ -613,7 +632,13 @@ export function WorkshopScreen() {
                   data-workshop-needs-back=""
                   aria-label="Back to Communities"
                   title="Back to Communities"
-                  onClick={() => workshopController.setTab('status')}
+                  // Up one level: a Back step when the list's entry is below,
+                  // otherwise the list replaces this page rather than
+                  // stacking another record over it.
+                  onClick={() => {
+                    if (backWithinTabs('communities', null, 'status')) return;
+                    workshopController.setTab('status', { replace: true });
+                  }}
                 >
                   <ChevronLeftIcon className="dev-ws-page-back-glyph" aria-hidden="true" />
                 </button>
@@ -627,7 +652,14 @@ export function WorkshopScreen() {
                 across your projects, one per screen, newest first, drawn by
                 a project's own Needs you feed (#3488). See ./needs-reel.tsx. */}
             {state.error ? null : (
-              <NeedsReel items={state.feed} error={state.feedError} capped={state.feedCapped} onDone={() => workshopController.setTab('status')} />
+              <NeedsReel
+                items={state.feed}
+                error={state.feedError}
+                capped={state.feedCapped}
+                // Finishing the queue goes to the list without leaving a
+                // Needs you entry behind to come back to.
+                onDone={() => workshopController.setTab('status', { replace: true })}
+              />
             )}
           </div>
         ) : null}
@@ -656,7 +688,17 @@ export const workshopController = {
   open() {
     let asked: TabKey | null = null;
     try { asked = tabFromQuery(location.search); } catch { asked = null; }
-    workshopStore.set(asked ? { open: true, tab: asked } : { open: true });
+    // THE ENTRY COMES FIRST: Back or Forward lands on one that says which
+    // tab it was (see setTab), above the deep link the screen was opened at.
+    // An entry with neither keeps the viewer where they left it.
+    const mark = currentPageTab();
+    const entryTab = pageTabMatches(mark, 'communities', null)
+      && (mark?.tab === 'needs' || mark?.tab === 'status') ? mark.tab : null;
+    if (entryTab) workshopStore.set({ open: true, tab: entryTab });
+    else workshopStore.set(asked ? { open: true, tab: asked } : { open: true });
+    // The entry the screen opened on is a tab Back can return to, and one
+    // that already holds this screen's marker keeps its own position.
+    stampPageTab({ scope: 'communities', slug: null, tab: workshopStore.get().tab, from: null });
     return workshopController.reload();
   },
   close() {
@@ -665,9 +707,25 @@ export const workshopController = {
   isOpen() {
     return workshopStore.get().open;
   },
-  /** Show one of the two tabs. */
-  setTab(tab: TabKey) {
-    workshopStore.set({ tab: tab === 'needs' ? 'needs' : 'status' });
+  /**
+   * Show one of the two tabs, as a step Back can take.
+   *
+   * `?ws=needs` deep-links the feed, but the tab itself had no record in the
+   * history: Back skipped it and left Communities. A real change writes a
+   * same-address record carrying the tab it came from
+   * (frontend/src/lib/tab-history.ts), and the screen's popstate listener
+   * puts it back. A press on the tab already showing adds nothing, and
+   * finishing the feed passes `replace` so it leaves no entry to come back to.
+   */
+  setTab(tab: TabKey, options?: { replace?: boolean }) {
+    const next = tab === 'needs' ? 'needs' : 'status';
+    const from = workshopStore.get().tab;
+    if (next !== from) {
+      const record = { scope: 'communities' as const, slug: null, tab: next, from };
+      if (options?.replace) replacePageTab(record);
+      else pushPageTab(record);
+    }
+    workshopStore.set({ tab: next });
   },
   async reload() {
     const demo = demoQuery();

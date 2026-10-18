@@ -243,7 +243,9 @@ is no replay plan to write and nothing to verify locally.
   door to a project's hub (a link that says so) calls
   `AppView._landOnHub(slug)` first, so it opens on the hub rather than the
   tab the page was last left on. Back and Forward are not doors: the page
-  reopens on the tab last shown, read fresh when it mounts.
+  reopens on the tab their history entry holds (the `__unPageTab` record
+  `frontend/src/lib/tab-history.ts` writes, pushed by a tab change and read
+  by `AppView._workshopTab`), read fresh when it mounts.
 - **Audience is derived, never stored.** `communities.audienceSql` reads it
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember. So a

@@ -64,7 +64,7 @@ test('scrollToHead moves the element that scrolls the page, not only the window'
 });
 
 test('a tab press and a door both go through it, and a press forgets the old tab\'s offset', () => {
-  const openTab = /const openTab = \(next: TabKey\) => \{([\s\S]*?)\n  \};/.exec(WORKSHOP);
+  const openTab = /const openTab = \(next: TabKey, options\?: \{ replace\?: boolean \}\) => \{([\s\S]*?)\n  \};/.exec(WORKSHOP);
   assert.ok(openTab, 'openTab exists');
   assert.match(openTab[1], /callAppView\('_saveFeedScroll', v\.slug, 0\);/);
   assert.match(openTab[1], /scrollToHead\(hostRef\.current\);/);

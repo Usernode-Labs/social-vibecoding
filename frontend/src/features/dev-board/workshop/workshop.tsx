@@ -63,6 +63,9 @@ import {
 } from '@/components/ui/icons';
 
 import { Html } from '../../../lib/html';
+import {
+  backWithinTabs, currentPageTab, pageTabMatches, pushPageTab, replacePageTab, stampPageTab,
+} from '../../../lib/tab-history';
 import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
 import { Improve } from '../../improve/improve-controller.js';
@@ -179,6 +182,22 @@ const EMPTY_SINCE: NonNullable<DevWorkshopView['since']> = {
 export function freshTab(): TabKey | null {
   const tab = callAppView('_workshopTab');
   return tab === 'status' || tab === 'discussion' || tab === 'workshop' || tab === 'needs' || tab === 'all' ? tab : null;
+}
+
+/** One of the page's tabs, read off a history entry's marker. */
+export function isTabKey(value: unknown): value is TabKey {
+  return value === 'status' || value === 'discussion' || value === 'workshop' || value === 'needs' || value === 'all';
+}
+
+/**
+ * Is this project's page the route on show right now? The lander stays
+ * mounted while another screen is drawn over it, so a door and a traversal
+ * both have to ask before writing a record: a hidden page must not.
+ */
+export function pageOnShow(slug: string | null | undefined): boolean {
+  if (!slug || typeof window === 'undefined') return false;
+  const app = (window as any).App;
+  return !!app && app.currentApp === slug && app.currentTab === 'dev' && app.currentSubTab === 'forum';
 }
 
 /** Where a page's back button goes: All items to the Workshop, the rest to the hub. */
@@ -3427,12 +3446,51 @@ export function DevWorkshop(): ReactNode {
   // offset was the OLD tab's, and coming back to the page later (Back from
   // another screen) laid it over the new one: the hub again, scrolled under
   // its own strip. A zero is how that memory is told the page is at its top.
-  const openTab = (next: TabKey) => {
+  //
+  // AND A TAB CHANGE IS A STEP BACK CAN TAKE. The tabs have no address of
+  // their own, so a press used to skip them and leave the project; each real
+  // change now writes a same-address record carrying the tab it came from
+  // (frontend/src/lib/tab-history.ts), which the popstate effect below reads
+  // on the way back. A press on the tab already showing adds no step, and a
+  // page's own back disc passes `replace` where it is a way UP rather than a
+  // new place (All items' Workshop disc, the Needs you queue's finish).
+  const openTab = (next: TabKey, options?: { replace?: boolean }) => {
+    if (next !== tab) {
+      const record = { scope: 'project' as const, slug: v.slug, tab: next, from: tab };
+      if (options?.replace) replacePageTab(record);
+      else pushPageTab(record);
+    }
     setTab(next);
     callAppView('_setWorkshopTab', next);
     callAppView('_saveFeedScroll', v.slug, 0);
     scrollToHead(hostRef.current);
   };
+  // THE PAGE REMEMBERS ITS TAB IN THE ENTRY IT IS STANDING ON, so the entry
+  // it opened at is also a tab Back can return to. An entry that already
+  // carries this page's marker keeps it: a traversal just landed on it.
+  useEffect(() => {
+    if (!v.slug) return;
+    stampPageTab({ scope: 'project', slug: v.slug, tab, from: null });
+  }, [v.slug, tab]);
+  // ...AND A TRAVERSAL PUTS IT BACK. Back and Forward land on an entry that
+  // says which tab it was; the popstate must act only when the landed route
+  // is this project's page (leaving it, or landing on an item or a topic, is
+  // the router's). An entry with no marker — one written before this change —
+  // is the hub, which is where the page opened before tabs were steps.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onPop = () => {
+      if (!pageOnShow(v.slug)) return;
+      const mark = currentPageTab();
+      if (pageTabMatches(mark, 'project', v.slug)) {
+        if (isTabKey(mark?.tab)) setTab(mark!.tab);
+        return;
+      }
+      setTab('status');
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [v.slug]);
   // ...AND AGAIN WHEN THE PUBLISH LANDS, which is what the seed alone could
   // not do. The seed runs against whatever the store holds AT MOUNT, and that
   // is EMPTY_WORKSHOP_VIEW: the module publishes `_workshopView()` after its
@@ -3459,6 +3517,11 @@ export function DevWorkshop(): ReactNode {
     const onDoor = (event: Event) => {
       const door = (event as CustomEvent<{ slug: string | null; tab: TabKey } | null>).detail;
       if (!door || (door.slug && door.slug !== v.slug)) return;
+      // A DOOR PRESSED ON THE PAGE IS A STEP (see openTab); pressed from
+      // another screen the route navigation that follows is the step.
+      if (pageOnShow(v.slug) && door.tab !== tab) {
+        pushPageTab({ scope: 'project', slug: v.slug, tab: door.tab, from: tab });
+      }
       setTab(door.tab);
       // #3583: the scroller that is really there (see scrollToHead). AppView
       // has forgotten the offset already (_landOnTab), and a door that goes
@@ -3467,7 +3530,7 @@ export function DevWorkshop(): ReactNode {
     };
     window.addEventListener('usernode:workshop-tab', onDoor);
     return () => window.removeEventListener('usernode:workshop-tab', onDoor);
-  }, [v.slug]);
+  }, [v.slug, tab]);
   // ANOTHER PROJECT IN THE SAME PAGE (#3555). Going straight from one
   // project's page to another's keeps the host (#app-view keeps
   // #dev-workshop and republishes into it), so this is not mounted again,
@@ -3652,10 +3715,16 @@ export function DevWorkshop(): ReactNode {
   const pageBar = tab === 'all' ? (
     <div ref={setBar} className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">
       <div className="dev-ws-tabtrack">
+        {/* Up one level: a Back step when the Workshop entry is below (the
+            usual case), otherwise the Workshop replaces this page rather than
+            stacking another record over it. */}
         <PageBack
           label="Workshop"
           title={pageTitle(tab)}
-          onBack={() => openTab(pageParent(tab))}
+          onBack={() => {
+            if (backWithinTabs('project', v.slug, pageParent(tab))) return;
+            openTab(pageParent(tab), { replace: true });
+          }}
         />
       </div>
     </div>
@@ -4062,7 +4131,9 @@ export function DevWorkshop(): ReactNode {
           models={v.models}
           slug={slug}
           canPost={canPost}
-          onDone={() => openTab('status')}
+          // Finishing the queue goes to the hub without leaving a Needs you
+          // entry behind to come back to.
+          onDone={() => openTab('status', { replace: true })}
         />
       ) : null}
       {/* WHENEVER THE TAB IS UP, not only while there is a theme to draw. This

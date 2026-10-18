@@ -7966,16 +7966,43 @@ const AppView = {
     AppView._workshopTabUrlOverride = tab;
   },
   /**
-   * Which tab the lander opens on: the deep link, then what you last chose,
-   * then Current status.
+   * The tab THIS HISTORY ENTRY was left on, when it has one for this project
+   * (frontend/src/lib/tab-history.ts writes `__unPageTab` into the entry's
+   * state). A tab change is a record at the same address, so a traversal —
+   * Back or Forward — lands on the entry that says which tab it was, and the
+   * page reopens there rather than on whatever was chosen last anywhere.
+   * Null for an entry with none, another project's, or a project's page that
+   * is not the one on screen.
+   */
+  _workshopTabMark() {
+    try {
+      if (typeof App === 'undefined' || !App.currentApp) return null;
+      const state = window.history && window.history.state;
+      const mark = state && typeof state === 'object' ? state.__unPageTab : null;
+      if (!mark || typeof mark !== 'object') return null;
+      if (mark.scope !== 'project') return null;
+      if (mark.slug !== App.currentApp) return null;
+      if (AppView.WORKSHOP_TABS.indexOf(mark.tab) === -1) return null;
+      return mark.tab;
+    } catch { return null; }
+  },
+  /**
+   * Which tab the lander opens on: this entry's own tab, the deep link, then
+   * what you last chose, then Current status.
    *
    * REMEMBERED, because the three tabs are three different jobs and the one
    * you want is usually the one you wanted last time — somebody working
    * through the vote queue lands on the digest every time otherwise. Stored
    * per browser rather than per account: it is a reading position, not a
    * setting, and the same mechanism the grouping already uses.
+   *
+   * THE ENTRY WINS over the stored tab (see _workshopTabMark): Back and
+   * Forward reopen on the tab their own entry holds, and a reload keeps that
+   * entry's state, so it reopens where it was even with an empty store.
    */
   _workshopTab() {
+    const mark = AppView._workshopTabMark();
+    if (mark) return mark;
     const url = AppView._workshopTabParam();
     if (url) return url;
     try {
@@ -8144,7 +8171,8 @@ const AppView = {
    * row, pressed on the page itself, changes no address) is told to switch.
    * It writes the remembered tab rather than a one-off, so the hub it shows
    * is also what the page reopens on next. Back and Forward are not doors:
-   * they reopen on the tab last shown, which the page reads when it mounts.
+   * they reopen on the tab their history entry holds (the `__unPageTab`
+   * record, see _workshopTabMark), which the page reads when it mounts.
    */
   _landOnHub(slug) {
     AppView._landOnTab(slug, 'status');

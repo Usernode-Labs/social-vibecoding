@@ -131,7 +131,7 @@ test('a door to a project\'s hub opens the hub; a page opened again reads the ta
   assert.match(view, /_landOnHub\(slug\) \{\n\s*AppView\._landOnTab\(slug, 'status'\);\n\s*\},/);
   assert.match(view, /_landOnTab\(slug, tab\) \{\n\s*const key = AppView\.WORKSHOP_TABS\.indexOf\(tab\) !== -1 \? tab : 'status';\n\s*AppView\._setWorkshopTab\(key\);\n\s*try \{\n\s*window\.dispatchEvent\(new CustomEvent\('usernode:workshop-tab', \{ detail: \{ slug: slug \|\| null, tab: key \} \}\)\);/);
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(lander, /if \(!door \|\| \(door\.slug && door\.slug !== v\.slug\)\) return;\n\s*setTab\(door\.tab\);/, 'a page already open switches; another project\'s door is not its');
+  assert.match(lander, /if \(!door \|\| \(door\.slug && door\.slug !== v\.slug\)\) return;\n\s*\/\/ A DOOR PRESSED ON THE PAGE IS A STEP \(see openTab\); pressed from\n\s*\/\/ another screen the route navigation that follows is the step\.\n\s*if \(pageOnShow\(v\.slug\) && door\.tab !== tab\) \{\n\s*pushPageTab\(\{ scope: 'project', slug: v\.slug, tab: door\.tab, from: tab \}\);\n\s*\}\n\s*setTab\(door\.tab\);/, 'a page already open switches as a step; another project\'s door is not its');
   assert.match(lander, /window\.addEventListener\('usernode:workshop-tab', onDoor\);/);
   // #3555: ...and is read when the page turns to that project. Going
   // straight from one project's page to another's keeps the host, so the

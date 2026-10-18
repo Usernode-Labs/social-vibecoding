@@ -390,3 +390,50 @@ test('#3497: on Homeroom\'s own pages the switcher names it with the logotype, n
   assert.match(namesake, /<span id="header-title-name" class="min-w-0 truncate">Homeroom<\/span>/);
   assert.doesNotMatch(namesake, /viewBox="0 0 1236\.9 319\.2"/);
 });
+
+// #3620: Back remembers which page of Communities you were on. The list and
+// the Needs you feed had no history entry, so Back skipped the feed and left
+// the screen; each real tab change is a same-address record now
+// (frontend/src/lib/tab-history.ts), read back on a traversal.
+test('#3620: a tab change here is a history step, and the entry wins when the screen is entered', async () => {
+  const entries = [null];
+  let at = 0;
+  const priorWindow = global.window;
+  const priorFetch = global.fetch;
+  global.window = {
+    history: {
+      get state() { return entries[at]; },
+      pushState(state) { entries.push(state); at = entries.length - 1; },
+      replaceState(state) { entries[at] = state; },
+    },
+  };
+  global.fetch = async () => ({ ok: false, json: async () => ({}) });
+  try {
+    screen.workshopStore.set({ open: true, tab: 'status', error: false });
+    screen.workshopController.setTab('needs');
+    assert.equal(entries.length, 2, 'opening the feed is a step');
+    assert.deepEqual(entries[1].__unPageTab,
+      { scope: 'communities', slug: null, tab: 'needs', from: 'status' });
+    screen.workshopController.setTab('needs');
+    assert.equal(entries.length, 2, 'pressing the page already showing adds nothing');
+    screen.workshopController.setTab('status', { replace: true });
+    assert.equal(entries.length, 2, 'finishing the feed is not a step of its own');
+    assert.equal(entries[1].__unPageTab.tab, 'status');
+
+    // Entering on an entry that holds a tab reopens there, above the stored
+    // one; and that entry is stamped, not duplicated.
+    screen.workshopStore.set({ tab: 'status' });
+    entries[at] = { __unPageTab: { scope: 'communities', slug: null, tab: 'needs', from: 'status' } };
+    await screen.workshopController.open();
+    assert.equal(screen.workshopStore.get().tab, 'needs');
+    assert.equal(entries.length, 2, 'the entry the screen opened on is stamped, not pushed');
+    assert.deepEqual(entries[1].__unPageTab,
+      { scope: 'communities', slug: null, tab: 'needs', from: 'status' }, 'and keeps its own position');
+  } finally {
+    if (priorWindow === undefined) delete global.window;
+    else global.window = priorWindow;
+    if (priorFetch === undefined) delete global.fetch;
+    else global.fetch = priorFetch;
+    screen.workshopStore.set({ tab: 'status', error: false, rows: null, open: false });
+  }
+});

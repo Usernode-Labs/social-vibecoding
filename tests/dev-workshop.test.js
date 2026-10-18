@@ -4001,9 +4001,9 @@ test('the ⋯ asks to be wired when it mounts, because the module wires it befor
   // door back to the hub mounts it from React state, while the module side
   // of the press only persists the choice — nothing re-runs the wiring.
   assert.match(WORKSHOP, /onMore=\{\(\) => openTab\('workshop'\)\}/);
-  assert.match(WORKSHOP, /onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
+  assert.match(WORKSHOP, /onBack=\{\(\) => \{\s*if \(backWithinTabs\('project', v\.slug, pageParent\(tab\)\)\) return;\s*openTab\(pageParent\(tab\), \{ replace: true \}\);\s*\}\}/);
   // Every tab turns the page, Homeroom's Discussion (#general) included (#3494).
-  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
+  assert.match(WORKSHOP, /const openTab = \(next: TabKey, options\?: \{ replace\?: boolean \}\) => \{\s*if \(next !== tab\) \{[\s\S]*?\}\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
   const setTab = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _setWorkshopTab(key) {'));
   const setTabBody = setTab.slice(0, setTab.indexOf('\n  },'));
   assert.match(setTabBody, /localStorage\.setItem\(AppView\.WORKSHOP_TAB_KEY, next\)/);
@@ -4745,9 +4745,9 @@ test('the project page opens on the page you last used', () => {
   // The view model publishes the RESOLVED tab, not the raw parameter.
   assert.match(APP_VIEW_SRC, /tab: AppView\._workshopTab\(\),/);
   assert.match(WORKSHOP, /onOpen=\{\(\) => openTab\('needs'\)\}/);
-  assert.match(WORKSHOP, /onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
+  assert.match(WORKSHOP, /onBack=\{\(\) => \{\s*if \(backWithinTabs\('project', v\.slug, pageParent\(tab\)\)\) return;\s*openTab\(pageParent\(tab\), \{ replace: true \}\);\s*\}\}/);
   // Every tab turns the page, Homeroom's Discussion (#general) included (#3494).
-  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
+  assert.match(WORKSHOP, /const openTab = \(next: TabKey, options\?: \{ replace\?: boolean \}\) => \{\s*if \(next !== tab\) \{[\s\S]*?\}\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
 });
 
 test('a category card is raised off the pane it sits on', () => {
@@ -5377,4 +5377,85 @@ test('a refetch keeps every theme where it was; only a chip press re-sorts', () 
   assert.deepEqual(orderThemesStable(held, [theme('a', 9)], 'people').map((t) => t.id), ['a']);
   assert.deepEqual(orderThemesStable({ key: 'activity', ids: ['b', 'a'] },
     [theme('a', 9), theme('b', 3)], 'people').map((t) => t.id), ['a', 'b']);
+});
+
+// ── Back remembers the tab you were on (#3620) ─────────────────────────
+//
+// The page's tabs had no history entry of their own, so Back skipped them and
+// left the project. Each change now writes a same-address record carrying the
+// tab (frontend/src/lib/tab-history.ts, tests/tab-history.test.js), and the
+// page reads the entry it lands on.
+
+test('#3620: the page opens on the tab its history entry holds, above every other source', () => {
+  const mark = { scope: 'project', slug: 'demo-app', tab: 'workshop', from: 'status' };
+  const onEntry = makeAppView({ globals: { history: { state: { __unPageTab: mark } } }, localStorage: { devWorkshopTab: 'needs' } });
+  assert.equal(onEntry._workshopTab(), 'workshop', 'the entry outranks the remembered tab');
+
+  const deepLinked = makeAppView({
+    globals: { history: { state: { __unPageTab: mark } } },
+    location: { search: '?ws=all', hash: '', href: 'http://localhost/?ws=all' },
+  });
+  assert.equal(deepLinked._workshopTab(), 'workshop', 'and the ?ws= deep link');
+
+  // Another project's marker, and the Communities screen's, are not ours.
+  const other = makeAppView({
+    globals: { history: { state: { __unPageTab: { scope: 'project', slug: 'other-app', tab: 'needs' } } } },
+  });
+  assert.equal(other._workshopTab(), 'status', 'another project\'s marker is ignored');
+  const communities = makeAppView({
+    globals: { history: { state: { __unPageTab: { scope: 'communities', tab: 'needs' } } } },
+  });
+  assert.equal(communities._workshopTab(), 'status', 'a wrong scope is ignored');
+  const unknown = makeAppView({
+    globals: { history: { state: { __unPageTab: { scope: 'project', slug: 'demo-app', tab: 'bogus' } } } },
+  });
+  assert.equal(unknown._workshopTab(), 'status', 'an unknown tab is ignored');
+  // No history at all (the prerender, a sandbox): the old answer.
+  const bare = makeAppView({ localStorage: { devWorkshopTab: 'needs' } });
+  assert.equal(bare._workshopTab(), 'needs');
+});
+
+test('#3620: a tab change is a step, a press on the lit tab is not, and the page stamps its entry', () => {
+  const openTab = /const openTab = \(next: TabKey, options\?: \{ replace\?: boolean \}\) => \{([\s\S]*?)\n  \};/.exec(WORKSHOP);
+  assert.ok(openTab, 'openTab exists');
+  assert.match(openTab[1], /if \(next !== tab\) \{[\s\S]*?pushPageTab\(record\)/,
+    'only a real change is recorded, so the lit tab adds no entry');
+  assert.match(openTab[1], /scope: 'project' as const, slug: v\.slug, tab: next, from: tab/,
+    'the entry carries the tab and the one it came from');
+  assert.match(openTab[1], /if \(options\?\.replace\) replacePageTab\(record\);/,
+    'a way up replaces rather than stacks');
+  // The entry the page opened on is stamped, and a traversal puts its tab back.
+  assert.match(WORKSHOP, /stampPageTab\(\{ scope: 'project', slug: v\.slug, tab, from: null \}\);/);
+  const pop = WORKSHOP.slice(WORKSHOP.indexOf('const onPop = () => {'));
+  assert.match(pop.slice(0, pop.indexOf('\n    };')), /if \(!pageOnShow\(v\.slug\)\) return;[\s\S]*?if \(pageTabMatches\(mark, 'project', v\.slug\)\) \{[\s\S]*?setTab\(mark!\.tab\);[\s\S]*?return;[\s\S]*?\}\s*setTab\('status'\);/,
+    'the landed entry\'s tab, and the hub for an entry with none; never a new record');
+  // All items' own back disc is a Back step when the Workshop is below it.
+  assert.match(WORKSHOP, /if \(backWithinTabs\('project', v\.slug, pageParent\(tab\)\)\) return;\s*openTab\(pageParent\(tab\), \{ replace: true \}\);/);
+  // The Needs you queue's finish replaces the page rather than stacking.
+  assert.match(WORKSHOP, /onDone=\{\(\) => openTab\('status', \{ replace: true \}\)\}/);
+});
+
+test('#3620: a door pressed on the page is a step, and a hidden page writes none', () => {
+  const door = WORKSHOP.slice(WORKSHOP.indexOf('const onDoor = (event: Event) => {'));
+  const body = door.slice(0, door.indexOf('\n    };'));
+  assert.match(body, /if \(pageOnShow\(v\.slug\) && door\.tab !== tab\) \{[\s\S]*?pushPageTab\(\{ scope: 'project', slug: v\.slug, tab: door\.tab, from: tab \}\)/,
+    'pressed from the page itself it records the change; from another screen the route navigation is the step');
+  const { pageOnShow, isTabKey } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const saved = global.window;
+  try {
+    global.window = { App: { currentApp: 'garden', currentTab: 'dev', currentSubTab: 'forum' } };
+    assert.equal(pageOnShow('garden'), true);
+    assert.equal(pageOnShow('other'), false, 'another project\'s page');
+    global.window = { App: { currentApp: 'garden', currentTab: 'dev', currentSubTab: 'topic' } };
+    assert.equal(pageOnShow('garden'), false, 'an item or a topic is not the page');
+    global.window = { App: { currentApp: 'garden', currentTab: 'app', currentSubTab: null } };
+    assert.equal(pageOnShow('garden'), false, 'the running app is not the page');
+    global.window = {};
+    assert.equal(pageOnShow('garden'), false, 'and there may be no App at all');
+  } finally {
+    if (saved === undefined) delete global.window;
+    else global.window = saved;
+  }
+  for (const key of ['status', 'discussion', 'workshop', 'needs', 'all']) assert.equal(isTabKey(key), true);
+  for (const value of ['bogus', '', null, 3]) assert.equal(isTabKey(value), false);
 });
