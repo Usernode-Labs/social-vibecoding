@@ -1,6 +1,12 @@
 /**
  * The apps YOU pinned to the desktop strip, by dragging them there (#5323).
  *
+ * THEY ARE COMMUNITIES' PINS NOW (18 Oct 2026). Each community's app is the
+ * first row under it in the desktop sidebar, so a pin keeps the community
+ * there, in a Pinned section of its own (./rail-pinned.tsx). A community and
+ * its app share a slug, so the list below and its key carry over as they
+ * are: nothing a viewer pinned is lost.
+ *
  * ./recent-apps-store.js answers "what was I just using"; this one answers
  * "what did I choose to keep here". The list starts empty for everyone, and
  * the only writers are the strip itself (a drag back out unpins) and the

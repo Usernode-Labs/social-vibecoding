@@ -89,11 +89,12 @@ import {
 import { CommunitySwitcher } from '../workshop/community-switcher';
 import { pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
+import { pinnedAppsStore } from './pinned-apps-store.js';
 import { RailCommunities, useRailCommunities, votesElsewhere } from './rail-communities';
 import { RailConversations } from './rail-conversations';
+import { RailPinned } from './rail-pinned';
 import { useSidebarRows } from './sidebar-rows';
 import { clearPeekTimer, clearPeekTimerByMouse, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
-import { StripApps } from './strip-apps';
 import { schedulePress, type PendingPress } from './tab-press';
 
 /**
@@ -780,8 +781,10 @@ export function PlatformTabs() {
   // THE SIDEBAR OF ROWS (./sidebar-rows.ts, from 768px): the five
   // communities it lists (./rail-communities.tsx), and on its All row the
   // votes in the ones it does not, so no vote is counted twice.
+  // The pinned ones have their own rows above them, with their own counts.
   const railShown = useRailCommunities();
-  const elsewhere = votesElsewhere(railShown, scope.list, scope.info);
+  const { apps: pins } = useStoreState(pinnedAppsStore);
+  const elsewhere = votesElsewhere([...pins.map((app: { slug: string }) => app.slug), ...railShown], scope.list, scope.info);
   const allCount = scope.list ? scope.list.length : 0;
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
@@ -934,12 +937,12 @@ export function PlatformTabs() {
         } : undefined}
       />
       {TABS.flatMap(({ key, label, href, Icon }) => [
-        // #4417: THE FIVE RECENT APPS SIT BETWEEN THE SECTIONS AND YOU, on
-        // the desktop strip: after the last section (Communities), before Me
-        // at its foot, where Recents (#2802) sat. The conversations it listed
-        // are Messages' own list. Desktop only; app.css keeps it off the
-        // phone's bar.
-        key === 'me' ? <StripApps key="apps" /> : null,
+        // 18 Oct 2026: THE COMMUNITIES YOU PINNED, under their heading,
+        // above your communities (./rail-pinned.tsx). Each community's app
+        // is the first row under it now, so the apps the strip listed apart
+        // from them (#4417, Pinned and Recent apps) have no section of their
+        // own. From 768px only; app.css keeps it off the phone's bar.
+        key === 'workshop' ? <RailPinned key="pinned" /> : null,
         // D (18 Oct 2026): YOUR COMMUNITIES, under their heading, just above
         // the Communities tab, which the sidebar of rows draws as their
         // "All 13 communities" row. From 768px only; app.css keeps it off

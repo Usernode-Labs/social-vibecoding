@@ -1326,9 +1326,9 @@
     },
     {
       "id": "kept-apps.home-dot",
-      "name": "An app still loaded in the background carries a green dot on its Home tile, and says so to a screen reader (#2902); on the desktop strip it is one of the recent apps, with the same dot, the tile a closed app collapses into (#3618, #4417)",
+      "name": "An app still loaded in the background carries a green dot on its Home tile, and says so to a screen reader (#2902); in the desktop sidebar it is its community's App row, with the same dot, the row a closed app collapses into (#3618)",
       "path": "/?demo=1&shot=apps-kept",
-      "expectSelector": "body:has(#platform-strip-apps > a.platform-strip-app[data-live]:not([aria-current]) .platform-strip-live) #app-list .app-card[data-live=\"true\"][aria-label$=\", still open\"] .app-card-live-dot.app-live-dot",
+      "expectSelector": "body:has(#platform-rail-communities a.platform-rail-app[data-live]:not([aria-current]) .platform-rail-live) #app-list .app-card[data-live=\"true\"][aria-label$=\", still open\"] .app-card-live-dot.app-live-dot",
       "visual": true,
       "impact": [
         "public/css/app.css",
@@ -2971,9 +2971,9 @@
       "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn) #notifications-btn"
     },
     {
-      "name": "The bar's destination order: Home, Discover, Messages in the middle, Communities, then you (#1443); on a wide window Messages' nested conversations follow it and your communities sit just above the Communities tab (D, v3)",
+      "name": "The bar's destination order: Home, Discover, Messages in the middle, Communities, then you (#1443); on a wide window Messages' nested conversations follow it, and the communities you pinned, then your others, sit just above the Communities tab (D, v3)",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-rail-conversations + #platform-rail-communities + #platform-tab-workshop[href=\"#communities\"] + #platform-strip-apps + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-rail-conversations + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop[href=\"#communities\"] + #platform-tab-me"
     },
     {
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
@@ -4758,14 +4758,14 @@
       "expectSelector": "html:not(.in-side-panel) body:has(#platform-side-panel.hidden):has(#platform-header:not(.hidden)):has(#platform-tabs:not(.hidden)) #messages-screen:not(.hidden)"
     },
     {
-      "name": "#4417, #5323: the desktop strip's apps sit between the last section, Communities, and you, named for a screen reader (pins you chose first, then recents; they replace the rail's Recents, #2802)",
+      "name": "#5323: the communities you pin have a section of their own in the desktop sidebar, above your others and named by its heading, which shows only once something is pinned; each community's app is a row under it, so the sidebar lists no apps apart (#4417)",
       "path": "/?demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-workshop + #platform-strip-apps[role=\"group\"][aria-label=\"Pinned apps and recent apps\"] + #platform-tab-me"
+      "expectSelector": "#platform-tabs > #platform-rail-pinned.hidden[role=\"group\"][aria-labelledby=\"platform-rail-pinned-label\"] + #platform-rail-communities"
     },
     {
-      "name": "#2800, #4417: you are the strip's foot, straight after its recent apps, with your Settings beside you",
+      "name": "#2800: you are the sidebar's foot, straight after the Communities tab (its All row), with your Settings beside you",
       "path": "/?demo=1",
-      "expectSelector": "#platform-tabs > #platform-strip-apps + a#platform-tab-me + a#platform-rail-settings:last-child"
+      "expectSelector": "#platform-tabs > #platform-tab-workshop + a#platform-tab-me + a#platform-rail-settings:last-child"
     },
     {
       "name": "#4417, v3: on a desktop a project's places are nested under its row in the sidebar, the place on show lit there (Needs you), and the column beside the strip steps aside",

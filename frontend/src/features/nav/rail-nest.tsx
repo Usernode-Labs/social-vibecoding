@@ -27,6 +27,16 @@
  *
  * With reduced motion it opens and shuts at once.
  *
+ * ── A part inside a part ─────────────────────────────────────────────
+ *
+ * A community whose app has a row keeps that row in an outer part, and its
+ * places in a part inside it (./rail-communities.tsx), so leaving a community
+ * whose app is still running can shut the places and keep the App row. When
+ * both appear in one move, the outer one is the one that opens: the inner one
+ * is simply there, its rows fading in with the outer's. Two parts each
+ * opening on their own curve would multiply, and the rows below would no
+ * longer move one way.
+ *
  * ── The initial render is the prerender ──────────────────────────────
  *
  * A part is drawn only while it is open or shutting. Both parents open
@@ -35,7 +45,7 @@
  * document has none.
  */
 
-import { useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
+import { createContext, useContext, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
@@ -47,6 +57,9 @@ export const NEST_EASE = 'cubic-bezier(.3,.7,.2,1)';
 function reducedMotion(): boolean {
   try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
 }
+
+/** Whether the part around this one is appearing in this same move. */
+const Appearing = createContext(false);
 
 /** The part that began to move last, and when (wall clock). */
 let leader: { motion: Animation; at: number } | null = null;
@@ -82,13 +95,16 @@ export function NestSlot({ open, rows, children, ...rest }: {
   const ref = useRef<HTMLDivElement | null>(null);
   // Whether the element was on screen before this commit: a fresh one opens from 0.
   const present = useRef(false);
+  // A fresh part inside one that is appearing too opens with it, not after it.
+  const withParent = useContext(Appearing);
+  const appearing = open && !present.current;
 
   useIsomorphicLayoutEffect(() => {
     const el = ref.current;
     const fresh = !present.current;
     present.current = !!el;
     if (!el) return;
-    const still = reducedMotion() || typeof el.animate !== 'function';
+    const still = reducedMotion() || typeof el.animate !== 'function' || (fresh && withParent);
     if (still) {
       if (!open) {
         present.current = false;
@@ -135,7 +151,9 @@ export function NestSlot({ open, rows, children, ...rest }: {
   // The grid row is what moves; the inner box holds the rows and the line.
   return (
     <div ref={ref} {...rest} data-nest={open ? 'open' : 'closing'}>
-      <div className="platform-rail-nest-in">{open ? children : kept.current}</div>
+      <div className="platform-rail-nest-in">
+        <Appearing.Provider value={appearing}>{open ? children : kept.current}</Appearing.Provider>
+      </div>
     </div>
   );
 }

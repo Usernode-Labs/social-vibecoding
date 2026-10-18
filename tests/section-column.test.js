@@ -30,7 +30,7 @@ test('264px beside the 76px strip, reserved only while it is drawn', () => {
   const { SECTION_COLUMN_W } = loadTsx(COLUMN);
   assert.equal(SECTION_COLUMN_W, 264);
   // On a phone it is never drawn, whatever its class says.
-  assert.match(css, /\.platform-strip-apps,\n\.platform-section-column \{\n  display: none;\n\}/);
+  assert.match(css, /\n\.platform-section-column \{\n  display: none;\n\}/);
   // On a desktop: fixed beside the strip, under the header to the floor, and
   // only while the strip is docked (not folded, not peeking).
   const rule = desktop.match(/body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\):not\(\.platform-tabs-folded\)\) \.platform-section-column:not\(\.hidden\) \{[^}]*\}/);

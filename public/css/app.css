@@ -6113,16 +6113,6 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   top: -2px;
   right: -2px;
 }
-/* On the desktop strip's app tile (#4417): on the tile's corner, ringed
-   in the strip's own ground. */
-.platform-strip-live {
-  position: absolute;
-  top: -3px;
-  right: -3px;
-  width: 10px;
-  height: 10px;
-  box-shadow: 0 0 0 2px var(--dc-sheet-solid, var(--bg-primary));
-}
 
 /* ── APPS KEPT ALIVE BEHIND THE ONE ON SCREEN (#2902) ──────────────────
    The last few apps you opened stay loaded, each in its own frame beside
@@ -22023,12 +22013,10 @@ html.un-ios {
 }
 
 
-/* THE STRIP'S RECENT APPS AND THE SECTION COLUMN ARE THE DESKTOP'S
-   (#4417). The phone's bar is five tabs across the foot of the screen with
-   no room for either, and a project's places are the tray behind its place
-   bar there, so both elements are in the markup at every width and drawn
-   only from 768px up, below. */
-.platform-strip-apps,
+/* THE SECTION COLUMN IS THE DESKTOP'S (#4417). The phone's bar is five tabs
+   across the foot of the screen with no room for it, and a project's places
+   are the tray behind its place bar there, so the element is in the markup
+   at every width and drawn only from 768px up, below. */
 .platform-section-column {
   display: none;
 }
@@ -22692,187 +22680,14 @@ html.un-kb #platform-parked {
      are on stays the strongest thing in the rail and the one under the
      pointer reads as "this one, if you press". Only where there IS a pointer:
      a touch screen's sticky hover would leave a tapped tab half lit. */
-  .platform-tab,
-  .platform-strip-app {
+  .platform-tab {
     transition: background-color 120ms ease, color 120ms ease;
   }
   @media (hover: hover) {
-    .platform-tab:not([aria-current="page"]):hover,
-    .platform-strip-app:not([aria-current="page"]):hover {
+    .platform-tab:not([aria-current="page"]):hover {
       background: color-mix(in srgb, var(--lit-tint) 55%, transparent);
       color: var(--lit-ink);
     }
-  }
-
-  /* ── THE FIVE RECENT APPS (#4417, features/nav/strip-apps.tsx) ────────
-     Under the sections, after a line: each app's own tile over its name,
-     newest first, the green dot on the ones still open, the one on screen
-     lit as a tab is. They replace Recents (#2802), whose conversations are
-     Messages' own list. Rows are at least 58px and never squeezed; when the
-     window is too short for them all the list scrolls under the rule above
-     Me, and the fade below is the cue — the scrollbar stays hidden. */
-  .platform-strip-apps:not(.hidden) {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    flex: 0 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    margin-top: 8px;
-    padding-top: 8px;
-    border-top: 1px solid var(--app-sheet-line);
-    scrollbar-width: none;
-  }
-  /* The scroll cue (#4738): while apps sit below the fold the list's bottom
-     edge fades out instead of ending in a hard cut against the settings
-     cog. Bottom edge only, so the border-top line above stays solid; gone
-     once the list is scrolled to its end (strip-apps.tsx clears
-     `data-more`). */
-  .platform-strip-apps[data-more] {
-    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
-    mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
-  }
-  .platform-strip-app {
-    display: flex;
-    flex: none;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 3px;
-    min-width: 0;
-    min-height: 58px;
-    padding: 6px 2px;
-    border-radius: 12px;
-    color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 500;
-    text-decoration: none;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .platform-strip-app[aria-current="page"] {
-    background: var(--lit-tint);
-    color: var(--lit-ink);
-  }
-  /* THE PINNED PART'S EDGE (#4935): a hairline between the apps pinned from
-     My apps' top row and the recents after them, in the same colour as the
-     line above the strip. Drawn on the first non-pinned row FOLLOWING a
-     pinned one, so it appears only when both groups are present: a strip
-     that is all pins or all recents draws no line. */
-  .platform-strip-app[data-strip-pinned] + .platform-strip-app:not([data-strip-pinned]),
-  .platform-strip-app[data-strip-pinned] + .platform-strip-head + .platform-strip-app:not([data-strip-pinned]),
-  .platform-strip-app[data-strip-pinned] + .platform-strip-drop {
-    margin-top: 9px;
-    position: relative;
-  }
-  .platform-strip-app[data-strip-pinned] + .platform-strip-app:not([data-strip-pinned])::before,
-  .platform-strip-app[data-strip-pinned] + .platform-strip-head + .platform-strip-app:not([data-strip-pinned])::before,
-  .platform-strip-app[data-strip-pinned] + .platform-strip-drop::before {
-    content: '';
-    position: absolute;
-    top: -5px;
-    left: 10px;
-    right: 10px;
-    height: 1px;
-    background: var(--app-sheet-line);
-  }
-  /* THE "PIN HERE" SLOT (#5323, features/nav/strip-apps.tsx): the one row the
-     strip draws while a My apps tile is in the air, after the pinned rows and
-     before the recents. A dashed tile in the lit colour says "here"; a drop
-     that would be refused says so in words instead (the muted states). */
-  .platform-strip-drop {
-    display: flex;
-    flex: none;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 3px;
-    min-width: 0;
-    min-height: 58px;
-    padding: 6px 2px;
-    border-radius: 12px;
-    color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 600;
-  }
-  .platform-strip-drop[data-drop-state='ok'] {
-    background: color-mix(in srgb, var(--lit-tint) 70%, transparent);
-    color: var(--lit-ink);
-  }
-  .platform-strip-drop-tile {
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
-    border: 1.5px dashed currentColor;
-    box-sizing: border-box;
-  }
-  /* THE DRAGGED PINNED TILE (#5323): the ghost that follows the pointer while
-     a pinned app is dragged back out of the rail. Portaled to the body (the
-     rail clips), pointer-events:none so it never becomes the hit-test, and it
-     carries the "Unpin" caption only while it is outside the rail — the state
-     whose release takes the app off. */
-  .platform-strip-ghost {
-    position: fixed;
-    left: 0;
-    top: 0;
-    z-index: 80;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 3px;
-    pointer-events: none;
-    transform: translate(-50%, -50%) scale(1.05);
-    color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 500;
-  }
-  .platform-strip-ghost .platform-strip-tile {
-    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
-  }
-  .platform-strip-ghost-caption {
-    padding: 2px 8px;
-    border-radius: 8px;
-    background: var(--lit-ink);
-    color: var(--bg-primary);
-    font-size: 10px;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .platform-strip-ghost { transform: translate(-50%, -50%); }
-  }
-  .platform-strip-mark {
-    position: relative;
-    display: inline-flex;
-    flex: none;
-  }
-  /* THE LAUNCHER'S TILE, at a strip's size (`.app-icon-tile` draws the face
-     and its hairline). The emoji inside carries the launcher's text size,
-     which is sized for a 56px tile. */
-  .platform-strip-tile {
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .platform-strip-tile > img { border-radius: 0; }
-  .platform-strip-tile > span { font-size: 16px; }
-  /* THE NAME (#4738): two lines before it truncates, so "Game Corner" reads
-     in full in the 68px strip. A longer name still ends in "..." — the
-     clamp — and the row's `title` carries the whole name on hover. */
-  .platform-strip-label {
-    max-width: 100%;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    overflow: hidden;
-    overflow-wrap: anywhere;
-    text-align: center;
-    white-space: normal;
-    line-height: 1.2;
   }
 
   /* ── THE SECTION COLUMN (#4417, features/nav/section-column.tsx) ──────
@@ -22995,7 +22810,7 @@ html.un-kb #platform-parked {
 .platform-tab-all-glyph,
 .platform-tab-all-label,
 .platform-tab-all-votes,
-.platform-strip-head,
+.platform-rail-pinned,
 .workshop-search {
   display: none;
 }
@@ -23114,8 +22929,7 @@ html.un-kb #platform-parked {
   }
 
   /* ── THE HEADINGS: the places column's small capitals ── */
-  .platform-rail-head,
-  .platform-strip-head {
+  .platform-rail-head {
     position: relative;
     flex: none;
     display: flex;
@@ -23255,61 +23069,83 @@ html.un-kb #platform-parked {
     }
   }
 
-  /* ── PINNED, THEN RECENT APPS (features/nav/strip-apps.tsx) ── */
-  .platform-strip-apps:not(.hidden) {
-    flex: 0 1 auto;
-    gap: 1px;
-    margin-top: 0;
-    padding-top: 0;
-    border-top: 0;
-  }
-  .platform-strip-head {
+  /* ── THE COMMUNITIES YOU PINNED (features/nav/rail-pinned.tsx) ──
+     Above your communities, under their own heading, drawn as they are. */
+  .platform-rail-pinned:not(.hidden) {
     display: flex;
+    flex: none;
+    flex-direction: column;
+    gap: 1px;
   }
-  .platform-strip-app,
-  .platform-strip-drop {
-    flex-direction: row;
-    justify-content: flex-start;
+  .platform-rail-pinned > .platform-rail-nest {
+    margin-top: -1px;
+  }
+  /* THE "PIN HERE" SLOT (#5323): the one row the section draws while a My
+     apps tile is in the air, after the pins. A dashed tile in the lit colour
+     says "here"; a drop that would be refused says so in words instead (the
+     muted states). */
+  .platform-rail-pin-drop {
+    display: flex;
+    flex: none;
+    align-items: center;
     gap: 9px;
-    min-height: 36px;
     height: 36px;
     padding: 0 8px;
     border-radius: 10px;
-    color: var(--text-primary);
+    color: var(--text-muted);
     font-size: 14px;
-    font-weight: 500;
-  }
-  .platform-strip-app[aria-current="page"] {
     font-weight: 600;
   }
-  .platform-strip-tile,
-  .platform-strip-drop-tile {
+  .platform-rail-pin-drop[data-drop-state='ok'] {
+    background: color-mix(in srgb, var(--lit-tint) 70%, transparent);
+    color: var(--lit-ink);
+  }
+  .platform-rail-pin-drop-tile {
+    flex: none;
     width: 22px;
     height: 22px;
     border-radius: 6px;
+    border: 1.5px dashed currentColor;
+    box-sizing: border-box;
   }
-  .platform-strip-tile > span { font-size: 13px; }
-  .platform-strip-label,
-  .platform-strip-drop-label {
-    display: block;
+  .platform-rail-pin-drop-label {
     flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    text-align: left;
-    -webkit-line-clamp: unset;
-    line-clamp: unset;
   }
-  /* The headings say where pins end, so the hairline the strip draws there
-     (#4935) gives way to them. */
-  .platform-strip-app[data-strip-pinned] + .platform-strip-head + .platform-strip-app:not([data-strip-pinned]),
-  .platform-strip-app[data-strip-pinned] + .platform-strip-drop {
-    margin-top: 0;
+  /* THE DRAGGED PINNED ROW'S TILE (#5323): the ghost that follows the pointer
+     while a pinned community is dragged back out of the sidebar. Portaled to
+     the body (the sidebar clips), pointer-events:none so it never becomes the
+     hit-test, and it carries the "Unpin" caption only while it is outside the
+     sidebar: the state whose release takes the pin off. */
+  .platform-rail-pin-ghost {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 80;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    pointer-events: none;
+    transform: translate(-50%, -50%) scale(1.05);
   }
-  .platform-strip-app[data-strip-pinned] + .platform-strip-head + .platform-strip-app:not([data-strip-pinned])::before,
-  .platform-strip-app[data-strip-pinned] + .platform-strip-drop::before {
-    display: none;
+  .platform-rail-pin-ghost .platform-rail-tile {
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+  }
+  .platform-rail-pin-ghost-caption {
+    padding: 2px 8px;
+    border-radius: 8px;
+    background: var(--lit-ink);
+    color: var(--bg-primary);
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .platform-rail-pin-ghost { transform: translate(-50%, -50%); }
   }
 
   /* ── YOU AT THE FOOT, SETTINGS AT THE END OF YOUR ROW ── */
@@ -23547,6 +23383,27 @@ html.un-kb #platform-parked {
   }
   .platform-rail-nest .platform-rail-group:not([data-rail-headed]) {
     padding-top: 4px;
+  }
+  /* A COMMUNITY'S APP, ITS FIRST ROW (features/nav/rail-communities.tsx),
+     with the green "still open" dot at its end while the app runs: the dot
+     the launcher's tile wears, without the ring a tile needs. Its places sit
+     in a part inside the one that holds it, so leaving a community whose app
+     is still running folds them away and keeps App. The outer part draws the
+     one line and the padding round both. */
+  .platform-rail-nest .platform-rail-live {
+    width: 8px;
+    height: 8px;
+    margin-right: 3px;
+    box-shadow: none;
+  }
+  .platform-rail-nest .platform-rail-places > .platform-rail-nest-in {
+    padding: 0;
+  }
+  .platform-rail-nest .platform-rail-app + .platform-rail-places > .platform-rail-nest-in {
+    padding-top: 1px;
+  }
+  .platform-rail-nest .platform-rail-places > .platform-rail-nest-in::before {
+    display: none;
   }
   /* The parent: lit by its page, filled by none, its count said under it. */
   .platform-rail-community[data-rail-open][aria-current="page"],

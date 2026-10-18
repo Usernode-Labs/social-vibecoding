@@ -1,10 +1,11 @@
 'use strict';
 
-// The desktop strip's pinned part (#5323): the store behind
-// frontend/src/features/nav/strip-apps.tsx that holds the apps the viewer
-// pinned there, written only by a drop on the "Pin here" slot (Home's drag
-// recognizer, through pinApp) and by the strip itself (a drag back out, or
-// its Unpin menu, through unpinApp).
+// The desktop sidebar's pins (#5323): the store behind
+// frontend/src/features/nav/rail-pinned.tsx that holds what the viewer
+// pinned there (the strip's apps until 18 Oct 2026, their communities since:
+// the same slugs), written only by a drop on the "Pin here" slot (Home's
+// drag recognizer, through pinApp) and by the section itself (a drag back
+// out, or its Unpin menu, through unpinApp).
 //
 // The contract mirrors the recents store (tests/nav-tab-bar.test.js holds
 // that one): entries carry the display data the strip draws, the stored

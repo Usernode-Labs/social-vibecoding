@@ -1010,216 +1010,132 @@ test('a plain press on another tab lights it and slides first; the router answer
   assert.match(src, /if \(!pending\.current \|\| pending\.current\.key !== tab\) return;\s*pending\.current\.cancel\(\);\s*pending\.current = null;\s*setPressed\(null\);/);
 });
 
-// ── #4417: the desktop strip ────────────────────────────────────────────
+// ── #4417: the desktop strip, and where its apps went ───────────────────
 //
-// The 224px rail of rows and Recents (#2802) is a 76px strip: the four
+// The 224px rail of rows and Recents (#2802) became a 76px strip: the four
 // sections as an icon over a label, a line, the five apps used most
 // recently, then you at the foot. The conversations Recents listed are
-// Messages' own list, which is the section column on Messages. These are
-// the strip's, and the app-ordering cases that moved here from the retired
-// tests/nav-recents.test.js.
+// Messages' own list. From 768px the strip is the sidebar of rows now, and
+// since 18 Oct 2026 each community's app is the first row under it, so the
+// strip's Pinned and Recent apps went: a pin is a community's
+// (frontend/src/features/nav/rail-pinned.tsx) and a running app keeps its
+// App row under its community (rail-communities.tsx,
+// tests/desktop-sidebar-apps.test.js).
 
-const STRIP = 'frontend/src/features/nav/strip-apps.tsx';
-const stripApp = (slug, at, extra = {}) => ({
-  slug, name: slug[0].toUpperCase() + slug.slice(1), iconUrl: null, iconEmoji: null, at, ...extra,
-});
+const PINNED = 'frontend/src/features/nav/rail-pinned.tsx';
+const RAIL = 'frontend/src/features/nav/rail-communities.tsx';
 
-test('the strip: the sections as an icon over a label, the five recent apps, then you at the foot', () => {
+test('the strip: the sections as an icon over a label, the pinned communities above yours, then you at the foot', () => {
   const at = css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY');
   const block = css.slice(at, css.indexOf('\n}\n', css.indexOf('.platform-parked-pill {', at)));
   const tab = block.match(/\n {2}\.platform-tab \{[^}]*\}/)[0];
   assert.match(tab, /flex-direction: column;/, 'an icon over a label, not a row');
   assert.match(tab, /height: 58px;/);
   assert.match(tab, /font-size: 10\.5px;/, 'a label, as on the phone\'s bar');
-  // Recents are gone; the apps sit between the sections and you.
+  // Recents are gone, and so are the strip's apps: the pins sit above your
+  // communities, and nothing lists apps apart from them.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
-  assert.doesNotMatch(bar, /RecentsList|recents-list/);
-  assert.match(bar, /key === 'me' \? <StripApps key="apps" \/> : null,/);
-  for (const gone of ['frontend/src/features/nav/recents.ts', 'frontend/src/features/nav/recents-list.tsx', 'tests/nav-recents.test.js']) {
-    assert.ok(!fs.existsSync(path.join(ROOT, gone)), `${gone} is retired with Recents`);
+  assert.doesNotMatch(bar, /RecentsList|recents-list|StripApps/);
+  assert.match(bar, /key === 'workshop' \? <RailPinned key="pinned" \/> : null,\n[\s\S]*?key === 'workshop' \? <RailCommunities key="communities" shown=\{railShown\} \/> : null,/);
+  for (const gone of [
+    'frontend/src/features/nav/recents.ts', 'frontend/src/features/nav/recents-list.tsx', 'tests/nav-recents.test.js',
+    'frontend/src/features/nav/strip-apps.tsx',
+  ]) {
+    assert.ok(!fs.existsSync(path.join(ROOT, gone)), `${gone} is retired`);
   }
   assert.doesNotMatch(css, /\.platform-recents?\b/, 'and its styles with it');
-  assert.match(block, /\.platform-strip-apps:not\(\.hidden\) \{\s*display: flex;[^}]*border-top: 1px solid var\(--app-sheet-line\);/,
-    'a line between the sections and the apps');
-  // The phone's bar is unchanged: five equal cells, no apps.
-  assert.match(css, /\.platform-strip-apps,\n\.platform-section-column \{\n  display: none;\n\}/);
+  assert.doesNotMatch(css, /\.platform-strip-/, 'and the strip apps\' with theirs');
+  // The phone's bar is unchanged: five equal cells, no pins.
+  assert.match(css, /\.platform-tab-all-votes,\n\.platform-rail-pinned,\n\.workshop-search \{\n {2}display: none;\n\}/);
 });
 
-// #4738: the names read in full (two lines before the clamp) and the list's
-// scroll is cued by a bottom fade, not a hidden scrollbar's hard cut.
-test('the strip names wrap to two lines and the list fades while more sits below (#4738)', () => {
-  const stripBlock = css.slice(css.indexOf('.platform-strip-apps:not(.hidden) {'),
-    css.indexOf('/* ── THE SECTION COLUMN'));
-  // The fade is drawn only while data-more is set: bottom edge only, so the
-  // border-top line above the apps stays solid.
-  const more = stripBlock.match(/\.platform-strip-apps\[data-more\] \{[^}]*\}/);
-  assert.ok(more, 'the fade rule exists in the desktop block');
-  assert.match(more[0], /mask-image: linear-gradient\(to bottom, #000 calc\(100% - 24px\), transparent\);/);
-  // Rows grow with a second line instead of squeezing or clipping.
-  const row = stripBlock.match(/\.platform-strip-app \{[^}]*\}/)[0];
-  assert.match(row, /min-height: 58px;/, 'a row is at least 58px');
-  assert.doesNotMatch(row, /(?<!min-)height: 58px;/, 'a row is not a fixed height any more');
-  assert.match(row, /padding: 6px 2px;/);
-  // The label: two clamped lines, centred, wrapping.
-  const label = stripBlock.match(/\.platform-strip-label \{[^}]*\}/)[0];
-  assert.match(label, /-webkit-line-clamp: 2;/);
-  assert.match(label, /white-space: normal;/);
-  assert.doesNotMatch(label, /white-space: nowrap;/);
-  // The cue is driven post-mount and the full name stays on hover.
-  const src = read(STRIP);
-  assert.match(src, /data-more=\{more \? 'true' : undefined\}/);
-  assert.match(src, /title=\{app\.name\}/);
-});
-
-test('five recent apps, newest first, once each; the app on screen leads before it was ever left', () => {
-  const { stripApps, STRIP_APPS } = loadTsx(STRIP);
-  assert.equal(STRIP_APPS, 5);
-  const apps = [
-    stripApp('notes', '2026-09-20T10:00:00Z'), stripApp('chess', '2026-09-20T12:00:00Z'),
-    stripApp('run', '2026-09-20T11:00:00Z'), stripApp('plant', '2026-09-19T10:00:00Z'),
-    stripApp('trade', '2026-09-18T10:00:00Z'), stripApp('old', '2026-09-01T10:00:00Z'),
-  ];
-  assert.deepEqual(stripApps(apps).map((a) => a.slug), ['chess', 'run', 'notes', 'plant', 'trade'],
-    'newest first, cut at five');
-  assert.deepEqual(stripApps(apps, stripApp('fresh', null)).map((a) => a.slug), ['fresh', 'chess', 'run', 'notes', 'plant']);
-  assert.deepEqual(stripApps(apps, apps[3]).map((a) => a.slug), ['plant', 'chess', 'run', 'notes', 'trade'], 'listed once');
-  // The apps still running behind the one on screen come next, whatever
-  // their clock, named by the stored list or else by their slug.
-  assert.deepEqual(stripApps(apps, null, ['old', 'gone']).map((a) => [a.slug, a.name]),
-    [['old', 'Old'], ['gone', 'gone'], ['chess', 'Chess'], ['run', 'Run'], ['notes', 'Notes']]);
-  assert.deepEqual(stripApps([]), []);
-});
-
-// #5323: the strip leads with the apps the viewer pinned there, and the
-// recents fill what is left. A pinned app is never listed a second time;
-// the recents keep at least one slot.
-test('#4935: the pinned part leads, once each, and leaves the recents a slot', () => {
-  const { stripApps } = loadTsx(STRIP);
-  const src = read(STRIP);
-  assert.match(src, /data-strip-pinned/,
-    'the pinned part marks its edge for the hairline in app.css');
-  assert.match(css,
-    /\.platform-strip-app\[data-strip-pinned\] \+ \.platform-strip-app:not\(\[data-strip-pinned\]\)::before/,
-    'the hairline between the two groups is drawn on that edge');
-
-  const recents = [
-    stripApp('notes', '2026-09-20T10:00:00Z'), stripApp('chess', '2026-09-20T12:00:00Z'),
-    stripApp('run', '2026-09-20T11:00:00Z'), stripApp('plant', '2026-09-19T10:00:00Z'),
-    stripApp('trade', '2026-09-18T10:00:00Z'),
-  ];
-  const pins = [stripApp('pin-a', null), stripApp('pin-b', null)];
-
-  // Pinned first, in Home's order, flagged, and the current app follows
-  // when it is not itself pinned.
-  const withPins = stripApps(recents, stripApp('fresh', null), [], 5, pins);
-  assert.deepEqual(withPins.map((a) => a.slug), ['pin-a', 'pin-b', 'fresh', 'chess', 'run']);
-  assert.deepEqual(withPins.filter((a) => a.pinned === true).map((a) => a.slug), ['pin-a', 'pin-b']);
-
-  // Never more than limit - 1 pins: the recents keep a slot.
-  const crowded = stripApps(recents, null, [], 5, [
-    stripApp('p1', null), stripApp('p2', null), stripApp('p3', null),
-    stripApp('p4', null), stripApp('p5', null),
-  ]);
-  assert.deepEqual(crowded.map((a) => a.slug), ['p1', 'p2', 'p3', 'p4', 'chess'],
-    'four pins and the newest recent');
-  assert.deepEqual(crowded.filter((a) => a.pinned === true).map((a) => a.slug),
-    ['p1', 'p2', 'p3', 'p4']);
-
-  // A pinned slug is never repeated by the current app, a live frame or
-  // the recents: the one on screen stays in its pinned slot.
-  const pinnedChess = stripApps(recents, stripApp('chess', null), ['chess', 'run'], 5,
-    [stripApp('chess', null), stripApp('pin-a', null)]);
-  assert.deepEqual(pinnedChess.map((a) => a.slug), ['chess', 'pin-a', 'run', 'notes', 'plant']);
-  assert.equal(pinnedChess[0].pinned === true, true, 'the on-screen app keeps its pinned slot');
-  assert.equal(pinnedChess.filter((a) => a.slug === 'chess').length, 1);
-
-  // No pins: exactly the recent-apps behaviour pinned above.
-  assert.deepEqual(stripApps(recents).map((a) => a.slug), ['chess', 'run', 'notes', 'plant', 'trade']);
-});
-
-// #5323: the "Pin here" slot is the one row the strip draws while a My apps
-// tile is in the air, after the pinned rows and before the rest; a refused
-// drop says so in words. It un-hides an empty strip so there is somewhere to
-// drop, and it is gone again when the gesture is over.
-test('#5323: the drop row renders only while a drag is up, and the hairline takes it as the pinned edge', () => {
-  const { StripApps } = loadTsx(STRIP);
-  const src = read(STRIP);
+// #5323: the "Pin here" slot is the one row the Pinned section draws while a
+// My apps tile is in the air, after the pins; a refused drop says so in
+// words. It un-hides an empty section so there is somewhere to drop, and it
+// is gone again when the gesture is over.
+test('#5323: the drop row renders only while a drag is up', () => {
+  const src = read(PINNED);
   assert.match(src, /const \{ drop \} = useStoreState\(pinDropStore\);/,
     'the slot answers the drag state, never its own guess');
-  assert.match(src, /data-strip-drop=""/);
+  assert.match(src, /data-rail-pin-drop=""/);
   assert.match(src, /data-drop-state=\{drop\}/);
-  assert.match(src, /core:stripApps\.drop\.pin/);
-  assert.match(src, /core:stripApps\.drop\.already/);
-  assert.match(src, /core:stripApps\.drop\.full/);
-  // The slot holds an empty strip open: hidden only when there are no items
+  assert.match(src, /core:rail\.pin\.here/);
+  assert.match(src, /core:rail\.pin\.already/);
+  assert.match(src, /core:rail\.pin\.full/);
+  // The slot holds an empty section open: hidden only when there are no pins
   // AND no drop.
   assert.match(src, /useHiddenClass\(ref, items\.length === 0 && !drop\);/);
-  // The hairline between the groups is drawn on the slot when it follows a
-  // pinned row, as it is on the first non-pinned app.
-  assert.match(css, /\.platform-strip-app\[data-strip-pinned\] \+ \.platform-strip-drop::before/,
-    'the slot is the pinned part\'s edge in app.css');
-  assert.match(css, /\.platform-strip-drop\[data-drop-state='ok'\]/,
+  assert.match(css, /\.platform-rail-pin-drop\[data-drop-state='ok'\]/,
     'the lit fill is the drop-accepted state');
   // The refused words are drawn muted, so the slot never looks like an
   // accepted drop.
-  const dropRule = css.match(/\n  \.platform-strip-drop \{[^}]*\}/)[0];
+  const dropRule = css.match(/\n {2}\.platform-rail-pin-drop \{[^}]*\}/)[0];
   assert.match(dropRule, /color: var\(--text-muted\);/);
+  // Home's drag recognizer drops on this section and lands on its slot.
+  const home = read('frontend/src/features/home/home.js');
+  assert.match(home, /const strip = document\.getElementById\('platform-rail-pinned'\);\n\s*if \(!strip \|\| typeof strip\.getBoundingClientRect !== 'function'\) return false;/);
+  assert.match(home, /const drop = strip\.querySelector\('\[data-rail-pin-drop\]'\);/);
 });
 
 // #5323: unpin two ways — the same small menu a My apps tile opens, and a
-// mouse drag back out of the rail. The ghost is React state only, portaled
-// to the body, so the prerender ships nothing of it; the click a release
-// leaves behind must not open the app.
+// mouse drag back out of the sidebar. The ghost is React state only,
+// portaled to the body, so the prerender ships nothing of it; the click a
+// release leaves behind must not open the community.
 test('#5323: a pinned row carries the Unpin menu and the drag-out path', () => {
-  const src = read(STRIP);
+  const src = read(PINNED);
   assert.match(src, /onContextMenu: \(event: MouseEvent<HTMLAnchorElement>\) => \{/,
     'the menu opens on the pinned row itself');
-  assert.match(src, /PlatformUI;[\s\S]*?\.menu\?\.\(\{/,
+  assert.match(src, /\}\)\.PlatformUI;[\s\S]*?\.menu\?\.\(\{/,
     'the kit presents it, as a My apps tile\'s menu is presented');
-  assert.match(src, /label: t\('core:stripApps\.menu\.unpin'\)/);
+  assert.match(src, /label: t\('core:rail\.pin\.unpin'\)/);
   assert.match(src, /unpinApp\(app\.slug, navStore\.get\(\)\.viewer\)/);
   // The drag-out is mouse-only, past a small threshold, with capture.
   assert.match(src, /event\.pointerType !== 'mouse'/);
   assert.match(src, /Math\.hypot\(event\.clientX - drag\.startX, event\.clientY - drag\.startY\) <= 6/);
   assert.match(src, /setPointerCapture\(event\.pointerId\)/);
-  // The ghost follows the pointer, portaled out of the rail, and carries the
-  // caption only while it is outside #platform-tabs.
+  // The ghost follows the pointer, portaled out of the sidebar, and carries
+  // the caption only while it is outside #platform-tabs.
   assert.match(src, /createPortal\(/);
   assert.match(src, /data-unpin=\{ghost\.unpin \? 'true' : undefined\}/);
-  assert.match(src, /platform-strip-ghost-caption/);
+  assert.match(src, /platform-rail-pin-ghost-caption/);
   assert.match(src, /document\.body,/);
-  // Escape aborts; the release outside unpins and swallows the click.
+  // Escape aborts; the release outside unpins and swallows the click, which
+  // the row asks about before it navigates.
   assert.match(src, /event\.key !== 'Escape'/);
   assert.match(src, /swallowClickRef\.current = true/);
+  assert.match(read(RAIL), /if \(pin\?\.swallowClick\(\)\) \{\s*event\.preventDefault\(\);\s*return;\s*\}/);
   // Ghost and slot are React state and store state with empty initials, so
-  // the prerendered strip ships none of it — and the strip still reads no
-  // storage during a render (the stored list is read in effects and by
-  // mount.ts when the viewer is named).
-  assert.doesNotMatch(src.slice(src.indexOf('export function StripApps')), /localStorage/);
-  assert.match(css, /\.platform-strip-ghost \{[^}]*pointer-events: none;/,
+  // the prerendered section ships none of it, and it reads no storage during
+  // a render (the stored pins are read in effects and by mount.ts when the
+  // viewer is named).
+  assert.doesNotMatch(src.slice(src.indexOf('export function RailPinned')), /localStorage/);
+  assert.match(css, /\.platform-rail-pin-ghost \{[^}]*pointer-events: none;/,
     'the ghost never becomes the hit-test');
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.platform-strip-ghost \{ transform: translate\(-50%, -50%\); \}\s*\}/,
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.platform-rail-pin-ghost \{ transform: translate\(-50%, -50%\); \}\s*\}/,
     'no scale on the ghost when motion is reduced');
 });
 
 test('the still-open dot only on the apps kept alive, said aloud; the app on screen lit', () => {
-  const src = read(STRIP);
+  const src = read(RAIL);
   assert.match(src, /const live = useLiveAppSlugs\(\);/, 'read off the frame store\'s kept frames');
-  assert.match(src, /\{running \? <LiveAppDot className="platform-strip-live" \/> : null\}/);
-  assert.match(src, /aria-label=\{running \? listText\(\[app\.name, liveAppLabel\(\)\]\) : undefined\}/);
+  assert.match(src, /\{running \? <LiveAppDot className="platform-rail-live" \/> : null\}/);
+  assert.match(src, /aria-label=\{running \? listText\(\[appName, liveAppLabel\(\)\]\) : appName\}/);
   assert.equal(message('core:liveApp.stillOpen'), 'still open');
-  assert.equal(message('core:stripApps.label'), 'Pinned apps and recent apps');
-  assert.match(src, /aria-current=\{lit \? 'page' : undefined\}/);
-  // Nothing before mount: the prerender ships the root empty and hidden.
-  const html = renderComponent(STRIP, 'StripApps', {});
-  assert.equal(html, '<div id="platform-strip-apps" class="platform-strip-apps hidden" role="group" aria-label="Pinned apps and recent apps"></div>');
-  // A closed app shrinks into its tile, and a resumed one grows out of it.
+  assert.equal(message('core:rail.app'), 'App');
+  assert.equal(message('core:rail.appOf', { name: 'Chess' }), 'Chess app');
+  assert.match(src, /aria-current=\{onApp === slug \? 'page' : undefined\}/);
+  // Nothing before mount: the prerender ships the pinned section with its
+  // heading, no rows, and hidden.
+  const html = renderComponent(PINNED, 'RailPinned', {});
+  assert.equal(html, '<div id="platform-rail-pinned" class="platform-rail-pinned hidden" role="group" aria-labelledby="platform-rail-pinned-label">'
+    + '<div class="platform-rail-head"><span id="platform-rail-pinned-label" class="platform-rail-head-label">Pinned</span></div></div>');
+  // A closed app shrinks into its App row, and a resumed one grows out of it.
   const motion = read('frontend/src/features/nav/resume-motion.ts');
-  assert.match(motion, /doc\.querySelectorAll\('#platform-strip-apps a\.platform-strip-app\[data-strip-app\]'\)/);
+  assert.match(motion, /doc\.querySelectorAll\('#platform-tabs a\.platform-rail-app\[data-rail-app\]'\)/);
 });
 
 test('#3096: an app is lit only while it is the screen on show', () => {
-  const { currentAppOnScreen } = loadTsx(STRIP);
+  const { currentAppOnScreen } = loadTsx('frontend/src/features/app-frame/live-apps.tsx');
   const lit = (screen, tab, frameSlug = 'notes') => currentAppOnScreen({ frameSlug, screen, tab });
   assert.equal(lit('app-view', null), 'notes', 'in the app');
   for (const [screen, tab] of [
@@ -1280,11 +1196,11 @@ test('recent apps are remembered per account, and an app appears once, at the fr
   assert.match(mount, /if \(app && app\.slug\) rememberRecentApp\(app, navStore\.get\(\)\.viewer\);/);
 });
 
-test('#2795, #2798: the peeked strip is the frosted one and fades; a blue hover on the tabs and the apps', () => {
+test('#2795, #2798: the peeked strip is the frosted one and fades; a blue hover on the tabs', () => {
   const peek = css.slice(css.indexOf('  .platform-tabs.platform-tabs-peek {'));
   const rule = peek.slice(0, peek.indexOf('}'));
   assert.match(rule, /background-color: var\(--dc-sheet-solid\);/);
   assert.match(rule, /transition: opacity 200ms ease-in;/);
   assert.match(css,
-    /@media \(hover: hover\) \{\s*\.platform-tab:not\(\[aria-current="page"\]\):hover,\s*\.platform-strip-app:not\(\[aria-current="page"\]\):hover \{\s*background: color-mix\(in srgb, var\(--lit-tint\) 55%, transparent\);/);
+    /@media \(hover: hover\) \{\s*\.platform-tab:not\(\[aria-current="page"\]\):hover \{\s*background: color-mix\(in srgb, var\(--lit-tint\) 55%, transparent\);/);
 });

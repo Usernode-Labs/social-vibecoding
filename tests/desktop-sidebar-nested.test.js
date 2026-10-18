@@ -41,6 +41,8 @@ test('which rows: a community you are visiting has one for as long as you are on
   assert.deepEqual(railRows(['a', 'b'], null), ['a', 'b']);
   assert.deepEqual(railRows(['a', 'b'], 'b'), ['a', 'b'], 'one of the five keeps its row');
   assert.deepEqual(railRows(['a', 'b'], 'x'), ['x', 'a', 'b'], 'a visited one comes first');
+  // Then any other whose app is still running and is not among the five.
+  assert.deepEqual(railRows(['a', 'b'], 'x', ['x', 'b', 'y']), ['x', 'y', 'a', 'b'], 'once each, the five last');
 });
 
 test('which conversations: the bot, then the four most recent of either section, the open one kept', () => {
@@ -95,14 +97,14 @@ test('the places: the column\'s own list, topics after two behind "Show N more",
   // The sidebar's part is that list, under the community's own row.
   const rail = read('frontend/src/features/nav/rail-communities.tsx');
   assert.match(rail, /<ProjectPlaces[\s\S]*?fold=\{RAIL_TOPICS\}\s*onPlace=\{\(key\) => \{ openPlace\(slug, key\); \}\}/);
-  assert.match(rail, /const nested = sidebarRows && onPage \? onPage : null;/, 'it opens with the page');
-  assert.match(rail, /<NestSlot open=\{open\} className="platform-rail-nest" rows="\.dev-ws-place, \.dev-ws-places-head">\s*<RailPlaces slug=\{slug\} \/>/);
+  assert.match(rail, /const inside = onPage === slug \|\| onApp === slug;\n\s*const open = sidebarRows && inside;/, 'it opens with the page, or the app');
+  assert.match(rail, /<NestSlot open=\{open\} className="platform-rail-nest platform-rail-places" rows="\.dev-ws-place, \.dev-ws-places-head">\s*<RailPlaces slug=\{slug\} onPage=\{onPage === slug\} \/>/);
   assert.match(rail, /const votes = c && !c\.unchosen && !open \? Number\(c\.needs\) \|\| 0 : 0;/, 'open, its votes are Needs you\'s count');
 });
 
 test('the markup: the conversations follow Messages, empty in the prerender, and nothing is nested there', () => {
   const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
-  assert.match(html, /<span class="platform-tab-label">Messages<\/span><\/a><div id="platform-rail-conversations" class="platform-rail-conversations"><\/div><div id="platform-rail-communities"/);
+  assert.match(html, /<span class="platform-tab-label">Messages<\/span><\/a><div id="platform-rail-conversations" class="platform-rail-conversations"><\/div><div id="platform-rail-pinned"/);
   assert.doesNotMatch(html, /platform-rail-nest/);
   const src = read('frontend/src/features/nav/rail-conversations.tsx');
   assert.match(src, /const open = sidebarRows && screen === 'messages-screen' && tab === 'messages';/);

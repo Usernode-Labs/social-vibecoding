@@ -459,8 +459,9 @@ const ADDED_IDS = {
   // #4417: the rail's Recents (#platform-recents, #platform-recents-head,
   // both ADDED here by #2802 and never in the frozen baseline) is retired:
   // the desktop strip's five recent apps and the section column beside it
-  // take its place, and the conversations it listed are Messages' own list.
-  'platform-strip-apps': '#4417: the desktop strip\'s five recent apps, between the last section (Communities) and you: each app\'s tile over its name, the still-open dot on the apps kept alive (features/nav/strip-apps.tsx). Ships `hidden` and EMPTY; the apps arrive from localStorage one commit after mount, so the prerender and the first client render agree. Never drawn on the phone\'s bar. Its rows carry no ids, only data-strip-app.',
+  // took its place, and the conversations it listed are Messages' own list.
+  // The strip's apps (#platform-strip-apps) went in turn on 18 Oct 2026, for
+  // an App row under each community: see #platform-rail-pinned below.
   'platform-section-column': '#4417: the column beside the desktop strip that belongs to the section on screen: a project\'s places (Hub, Needs you, Workshop, #general and its topics) while its page is up under Communities (features/nav/section-column.tsx). Ships `hidden` and EMPTY; never drawn on a phone, where the places are the tray behind the page\'s place bar.',
   // #app-menu-row-discussion ("Go to app discussion", #2718) left the menu in
   // the UI overhaul: the project's channel is on its hub, one row above it.
@@ -1084,6 +1085,13 @@ const ADDED_IDS = {
   'platform-rail-communities': 'D: the sidebar\'s Communities section (role=group), between #platform-tab-messages and #platform-tab-workshop. dapp.json pins the bar order through it.',
   'platform-rail-communities-label': 'D: the section\'s "Communities" heading, which names the group.',
   'platform-rail-conversations': 'v3: the conversations nested under Messages in the sidebar of rows, right after #platform-tab-messages; an empty element while shut, so the bar\'s order is one order. dapp.json pins it there.',
+  // 18 Oct 2026: the communities you pinned, under their own heading above
+  // yours (features/nav/rail-pinned.tsx). Each community's app is a row
+  // under it now, so #platform-strip-apps, the strip's Pinned and Recent
+  // apps (#4417), went: a pin is a community's. It ships hidden with its
+  // heading and no rows; the pins arrive from localStorage after mount.
+  'platform-rail-pinned': 'The sidebar\'s Pinned section (role=group), between #platform-rail-conversations and #platform-rail-communities, hidden while nothing is pinned. Home\'s drag recognizer drops a My apps tile on it; dapp.json pins the bar order through it.',
+  'platform-rail-pinned-label': 'The section\'s "Pinned" heading, which names the group.',
   'platform-rail-search': 'D: the search beside that heading, shown on hover or focus: All communities with its search box focused and lit (features/workshop/communities-search.ts). dapp.json selects on it.',
   'workshop-search': 'D: the search at the head of All communities\' column (features/workshop/index.tsx), drawn by app.css from 1024px only: your communities by name, as one list. Prerendered empty.',
 };
