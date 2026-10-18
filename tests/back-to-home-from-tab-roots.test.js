@@ -53,26 +53,32 @@ function fakeElement() {
 
 function router() {
   const location = new URL('/', ORIGIN);
-  const entries = [location.href];
+  // Entries remember their state, because a project page's tab presses are
+  // same-address history records carrying __unPageTab
+  // (frontend/src/lib/page-tab-history.ts), and the app route reads the
+  // landing entry's state.
+  const entries = [{ href: location.href, state: null }];
   let at = 0;
   let App = null;
+  const overrideCalls = [];
   const history = {
-    state: null,
+    get state() { return entries[at].state; },
     get length() { return entries.length; },
-    pushState(_s, _t, url) {
+    pushState(s, _t, url) {
       entries.splice(at + 1);
-      entries.push(new URL(url, location.href).href);
+      // No url argument keeps the address the entry was at, as a browser does.
+      entries.push({ href: url ? new URL(url, location.href).href : location.href, state: s ?? null });
       at = entries.length - 1;
-      location.href = entries[at];
+      location.href = entries[at].href;
     },
-    replaceState(_s, _t, url) {
-      entries[at] = new URL(url, location.href).href;
-      location.href = entries[at];
+    replaceState(s, _t, url) {
+      entries[at] = { href: url ? new URL(url, location.href).href : entries[at].href, state: s ?? null };
+      location.href = entries[at].href;
     },
     back() {
       if (at === 0) return;
       at -= 1;
-      location.href = entries[at];
+      location.href = entries[at].href;
       App._routeFromHash();
     },
   };
@@ -111,16 +117,37 @@ function router() {
     },
     workshop: { open() { workshopOpen = true; }, close() { workshopOpen = false; } },
   };
-  context.AppView = new Proxy({ close() {} }, { get: (t, k) => (k in t ? t[k] : noop) });
+  context.AppView = new Proxy({ close() {} }, {
+    get: (t, k) => {
+      // The app route publishes a landing entry's page tab here
+      // (frontend/src/lib/page-tab-history.ts); record what it was told.
+      if (k === '_overrideWorkshopTab') return (tab) => overrideCalls.push(tab);
+      return k in t ? t[k] : noop;
+    },
+  });
   context.Home = new Proxy({}, { get: () => noop });
   const visible = (id) => App._isScreenVisible(id);
   return {
     App,
     tabs,
+    AppView: context.AppView,
+    overrideCalls,
     // A tab press: the address moves, then the router follows it.
     go(address) {
       history.pushState(null, '', address);
       App._routeFromHash();
+    },
+    // A project page's tab press, as page-tab-history records it: the entry
+    // being left is marked with the tab it showed, and a record carrying the
+    // new one is pushed at the SAME address — no event, no router run.
+    tabStep(from, to) {
+      history.replaceState({ ...(history.state || {}), __unPageTab: from });
+      history.pushState({ __unPageTab: to }, '');
+    },
+    // A shell tab-bar press: the address is rewritten over the standing
+    // entry, taking any record it held with it.
+    rewrite(address) {
+      history.replaceState(null, '', address);
     },
     back: () => history.back(),
     route: () => `${location.pathname}${location.search}${location.hash}`,
@@ -185,4 +212,43 @@ test('QA Q1: every screen that sets an _inX flag is sent home by both "/" branch
       `the bare root sends ${flag} home`);
     assert.ok(create.includes(flag), `#create sends ${flag} home`);
   }
+});
+
+test('#3620: a landing on a page entry from another screen reopens the recorded tab', () => {
+  const r = router();
+  r.App.restoreFromHash();
+  r.go('/app/homeroom/dev');
+  assert.equal(r.overrideCalls.at(-1), null,
+    'a doorless arrival clears any override a previous route left');
+
+  // The Workshop tab pressed on the page, then the shell's Home tab: the
+  // bar's rewrite takes the record's entry with it, and the arrival keeps
+  // the marker the tab press wrote on it.
+  r.tabStep('status', 'workshop');
+  r.rewrite('/');
+
+  r.back();
+  assert.equal(r.route(), '/app/homeroom/workshop');
+  assert.equal(r.overrideCalls.at(-1), 'status',
+    'the app route publishes the landing entry\'s tab before the dispatch');
+
+  // And back again at the Hub leaves the project.
+  r.back();
+  assert.equal(r.route(), '/');
+  assert.deepEqual(r.onScreen(), ['home-screen']);
+});
+
+test('#3620: a landing on an entry without the marker reads the chooser afresh', () => {
+  const r = router();
+  r.App.restoreFromHash();
+  r.go('/app/homeroom/dev');
+  // The retired board link's landing, as the board route publishes it.
+  r.AppView._overrideWorkshopTab('all');
+  assert.equal(r.overrideCalls.at(-1), 'all');
+
+  // A door to the page routes with no marker in the entry's state, so the
+  // board landing must not survive it: the page opens on the tab the door
+  // named, not on the one a previous route left behind.
+  r.go('/app/homeroom/dev');
+  assert.equal(r.overrideCalls.at(-1), null);
 });

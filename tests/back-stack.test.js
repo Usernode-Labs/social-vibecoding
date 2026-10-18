@@ -332,11 +332,14 @@ test('#2811: a host with no address never swallows a popstate', () => {
 
 test('#2811: the shell listener runs first and stops an in-place traversal', () => {
   // Capture phase, so it precedes App's bubble-phase popstate listener on
-  // window regardless of which script registered first.
+  // window regardless of which script registered first. #3620 adds a second
+  // consult AFTER the dismissible check — a project page's tab step
+  // (page-tab-history.ts) stops here too, and a dialog still eats the press
+  // first, by construction.
   const src = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '..', 'frontend/src/lib/back-stack.ts'), 'utf8');
   assert.match(src,
-    /addEventListener\('popstate', \(event\) => \{\s*if \(shared\?\.handlePopstate\(\)\) event\.stopImmediatePropagation\(\);\s*\}, true\);/);
+    /addEventListener\('popstate', \(event\) => \{\s*if \(shared\?\.handlePopstate\(\)\) return event\.stopImmediatePropagation\(\);\s*if \(consumePageTab\(event\)\) event\.stopImmediatePropagation\(\);\s*\}, true\);/);
 });
 
 // ── QA 2026-09-24 Q16: closing on the way somewhere ──────────────────────

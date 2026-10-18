@@ -7962,7 +7962,16 @@ const AppView = {
   // transient exactly as `?ws=` is, and a tap on another tab clears it through
   // _setWorkshopTab.
   _overrideWorkshopTab(tab) {
-    if (AppView.WORKSHOP_TABS.indexOf(tab) === -1) return;
+    // `null` — or a marker this build does not know — is an explicit clear:
+    // the cache goes back to "not read yet", so the next chooser reads the
+    // URL (?ws=, the retired board link) and the remembered tab afresh. A
+    // traversal landing on a page entry without the page-tab marker
+    // (frontend/src/lib/page-tab-history.ts) means exactly that — an
+    // arrival or a door, not a recorded tab.
+    if (tab === null || AppView.WORKSHOP_TABS.indexOf(tab) === -1) {
+      AppView._workshopTabUrlOverride = undefined;
+      return;
+    }
     AppView._workshopTabUrlOverride = tab;
   },
   /**

@@ -87,6 +87,7 @@ import { ProjectDiscussion } from './project-discussion';
 import { ProjectBand, type ProjectTabKey } from './project-band';
 import { SinceSummaryCard } from './since-summary-card';
 import { PageBack } from './page-back';
+import { pushPageTab } from '../../../lib/page-tab-history';
 import { readAskStream } from './ask-stream';
 import {
   commitDistance,
@@ -3431,6 +3432,15 @@ export function DevWorkshop(): ReactNode {
     setTab(next);
     callAppView('_setWorkshopTab', next);
     callAppView('_saveFeedScroll', v.slug, 0);
+    // A TAB PRESS LEAVES A STEP THE BACK BUTTON CAN WALK (#3620). Every page
+    // change on this surface funnels through here — the band's four tabs and
+    // their arrow keys, All items' back disc (pageParent), the hub's cards —
+    // so this is the one place a step is recorded: back from the tab you
+    // pressed lands on the tab you came from, and back at the tab the page
+    // was opened on leaves the project as it always did. Doors (the
+    // usernode:workshop-tab listener below) change no address and record
+    // nothing.
+    if (next !== tab) pushPageTab(tab, next);
     scrollToHead(hostRef.current);
   };
   // ...AND AGAIN WHEN THE PUBLISH LANDS, which is what the seed alone could

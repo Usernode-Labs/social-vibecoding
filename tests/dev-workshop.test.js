@@ -5378,3 +5378,23 @@ test('a refetch keeps every theme where it was; only a chip press re-sorts', () 
   assert.deepEqual(orderThemesStable({ key: 'activity', ids: ['b', 'a'] },
     [theme('a', 9), theme('b', 3)], 'people').map((t) => t.id), ['a', 'b']);
 });
+
+test('#3620: a tab press records a back step; a door records nothing', () => {
+  // Every page change on the surface funnels through openTab — the band's
+  // four tabs and their arrow keys, All items' back disc (pageParent), the
+  // hub's cards — so the step is recorded at that one choke point: back from
+  // the tab you pressed lands on the tab you came from, and back at the tab
+  // the page was opened on leaves the project as it always did.
+  assert.match(WORKSHOP, /import \{ pushPageTab \} from '\.\.\/\.\.\/\.\.\/lib\/page-tab-history';/);
+  assert.match(WORKSHOP, /if \(next !== tab\) pushPageTab\(tab, next\);/,
+    'openTab records one step per changed tab, the disc press included');
+  // The door listener (usernode:workshop-tab) changes no address, so it must
+  // not write history: a door to the hub opens the hub and back still leaves
+  // the project from there.
+  const door = WORKSHOP.slice(
+    WORKSHOP.indexOf('const onDoor = (event: Event) => {'),
+    WORKSHOP.indexOf("window.addEventListener('usernode:workshop-tab', onDoor);"),
+  );
+  assert.ok(door.includes('setTab(door.tab);'), 'the door still turns the page');
+  assert.ok(!door.includes('pushPageTab'), 'and records nothing');
+});

@@ -82,6 +82,9 @@
  */
 
 import { isEmbeddedPanel } from './side-panel-mode';
+// A page tab step is consulted after the dismissible check below, so a
+// dialog over the page eats the press first (see page-tab-history.ts).
+import { consumePopstate as consumePageTab } from './page-tab-history';
 
 /** What a dismissible surface answers when back reaches it. */
 export type DismissResult = boolean | void;
@@ -419,8 +422,12 @@ if (typeof window !== 'undefined' && !isEmbeddedPanel()) {
   (window as unknown as { UsernodeBackStack?: BackStack }).UsernodeBackStack = shared;
   // Capture phase, so this runs before the shell router's own (bubble-phase)
   // popstate listener on the same target, whichever registered first; a
-  // traversal that only closed a surface stops here (#2811).
+  // traversal that only closed a surface stops here (#2811). So does one
+  // that only walked a project page's tab step
+  // (frontend/src/lib/page-tab-history.ts) — consulted after the dismissible
+  // check, so a dialog still eats the press first.
   window.addEventListener('popstate', (event) => {
-    if (shared?.handlePopstate()) event.stopImmediatePropagation();
+    if (shared?.handlePopstate()) return event.stopImmediatePropagation();
+    if (consumePageTab(event)) event.stopImmediatePropagation();
   }, true);
 }

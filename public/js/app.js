@@ -4365,6 +4365,22 @@ const App = {
       }
       if (parts[0] === 'app' && parts[1]) {
         const slug = parts[1];
+        // Back or Forward landing on a project page entry from another
+        // screen reopens the tab that entry shows. A page's tab presses are
+        // same-address history records carrying __unPageTab
+        // (frontend/src/lib/page-tab-history.ts); the in-place steps are
+        // consumed by the page itself (the back stack's listener), so only a
+        // landing from another screen reaches this route. An entry without
+        // the marker is an arrival or a door: clear any override a previous
+        // route left, so the chooser reads the remembered tab afresh
+        // (?ws= and the retired board link included).
+        if (typeof AppView !== 'undefined' && AppView._overrideWorkshopTab) {
+          const pageTabState = history.state;
+          const pageTab = pageTabState && typeof pageTabState === 'object'
+            ? pageTabState.__unPageTab
+            : null;
+          AppView._overrideWorkshopTab(typeof pageTab === 'string' ? pageTab : null);
+        }
         // Card-list hashes (#194 revision): app/{slug}/app,
         // app/{slug}/dev (the card list), app/{slug}/dev/chat (general
         // chat), app/{slug}/dev/issues/{n} / dev/proposals/{id} /
