@@ -105,11 +105,13 @@ export const TAB_FOR_SCREEN = Object.freeze({
 
 /**
  * @typedef {object} PeekState
- * @property {boolean} peek  The rail is showing OVER an open app because the
- *   pointer is at the window's left edge (#2718, desktop only). It is not the
- *   same fact as `platform-tabs` visibility and must not be folded into it:
- *   the bar is HIDDEN here — the router says so, and the screens reserve no
- *   band for it — and this is a temporary overlay on top of that answer.
+ * @property {boolean} peek  The rail is showing OVER the page because the
+ *   VIEWER folded it and the pointer is on the window's left edge or on the
+ *   header's sidebar toggle (#2718, desktop only). It is not the same fact as
+ *   `platform-tabs` visibility and must not be folded into it: the route says
+ *   the rail exists, the viewer's fold is what took it away, and this is a
+ *   temporary overlay on top of that. A running app has no rail at all, so
+ *   nothing peeks one over it (#3138).
  * @property {boolean} peekOut  The peeked rail is FADING AWAY (#2795): the
  *   pointer left and the grace period ran out, and `peek` stays true for
  *   the ~200ms of the fade so the element is still there to fade. Only ever
