@@ -1,14 +1,14 @@
 'use strict';
 
-// #3702: the RUNNING APP's header carries "N to vote" and Suggest.
+// #3702 gave the RUNNING APP's header Suggest; #5419 removed the "N to vote"
+// pill that stood beside it — the bar mostly belongs to the app, and the
+// vote count stays on the mark's menu row and the Communities tab's Needs
+// you feed, which load their own counts.
 //
-// Both were reachable only through the Homeroom mark's menu — the vote count
-// as a trailing figure on the "Go to community hub" row, Suggest as its blue
-// button. Now the header itself shows them, and the menu is unchanged. What
-// this file pins: the gates (nothing on other screens, nothing at zero,
-// nothing the menu row would hide either), the count's source and its shape,
-// the two click paths, the hydration contract of a component that ships
-// nothing in the prerendered document, and the words it draws.
+// What this file pins: the gates (nothing on other screens, nothing the
+// menu would hide either), Suggest's click path, the hydration contract of a
+// component that ships nothing in the prerendered document, the pill's
+// absence even with owed votes, and the words Suggest draws.
 //
 // Run with: node --test tests/in-app-actions.test.js
 
@@ -54,11 +54,10 @@ const APP_INFO = {
 };
 
 /** Render the controls after the stores say what the state is. */
-const render = (improve, scope = {}, nav = {}) => withState(
+const render = (improve, scope = {}) => withState(
   [
     [ui.improveStore, { ...SHOWN, ...improve }],
     [ui.communityScopeStore, { info: { 'recipe-box': { ...APP_INFO, ...scope } } }],
-    [ui.navStore, nav],
   ],
   () => renderToHtml(createElement(ui.InAppControls)),
 );
@@ -86,90 +85,29 @@ test('outside a running app the controls are nowhere', () => {
   }
 });
 
-test('inside a running app both controls show, in this order', () => {
+test('Suggest shows on its own, and the vote pill is gone (#5419)', () => {
+  // Even with owed votes in the store, the header carries no pill: the count
+  // lives on the mark's menu row and the Communities tab's Needs you feed.
   const html = render({});
-  // Suggest first: the two doors that are ABOUT this app lead the group.
-  assert.ok(
-    html.indexOf('id="header-in-app-suggest"') < html.indexOf('id="header-in-app-to-vote"'),
-    'Suggest, then the vote count, then the bell and the mark the header adds',
-  );
   assert.match(html, /id="header-in-app-suggest"/);
-  assert.match(html, /id="header-in-app-to-vote"/);
+  assert.doesNotMatch(html, /header-in-app-to-vote/);
+  assert.doesNotMatch(html, /to vote/);
 });
 
-test('both controls are hidden on a phone and return below sm (#5367)', () => {
-  // The bar was too crowded on mobile, so neither control displays at a
-  // phone width; they keep their place in the header on wider windows and
-  // stay in the mark's menu on every size. The elements remain in the DOM
-  // (display only), so the ids and the gates above are unaffected.
+test('Suggest is hidden on a phone and returns below sm (#5367)', () => {
+  // The bar was too crowded on mobile, so the control does not display at a
+  // phone width; it keeps its place in the header on wider windows and
+  // stays in the mark's menu on every size. The element remains in the DOM
+  // (display only), so the id and the gates above are unaffected.
   const html = render({});
-  for (const id of ['header-in-app-suggest', 'header-in-app-to-vote']) {
-    // React renders the element's id before its class, so the first class
-    // attribute after the id belongs to that element.
-    const classes = html.slice(html.indexOf(`id="${id}"`))
-      .match(/class="([^"]+)"/)?.[1] ?? '';
-    assert.match(classes, /(^| )hidden( |$)/, `${id} is not displayed on a phone`);
-    assert.match(classes, /(^| )sm:inline-flex( |$)/, `${id} comes back on wider windows`);
-    assert.doesNotMatch(classes, /(?<!sm:)inline-flex/,
-      `${id} has no bare inline-flex outside the sm: prefix`);
-  }
-});
-
-test('the pill says "N to vote" — the menu row\'s words, at zero nothing', () => {
-  const two = render();
-  assert.match(two, />2 to vote</);
-  assert.match(two, /title="2 to vote"/);
-  assert.match(two, /aria-label="2 to vote"/);
-  // Zero owed, or every owed vote already swiped past (#3526): no pill and
-  // no "0" — and Suggest stays.
-  const none = render({}, { needs: 0, owedCount: 0 });
-  assert.doesNotMatch(none, /header-in-app-to-vote/);
-  assert.doesNotMatch(none, /to vote/);
-  assert.match(none, /header-in-app-suggest/);
-});
-
-test('the pill\'s count is the Communities tab\'s: unseen owed votes', () => {
-  // The store's `needs` is the number the tab's badge draws, and it is
-  // already the passed-over ones less (needs-seen.ts). The controls re-read
-  // it, they do not count anything of their own.
-  assert.match(COMPONENT, /communityScopeStore/);
-  assert.match(COMPONENT, /Number\(info\.needs\) \|\| 0/,
-    'the same read `tabVotes` makes');
-  // An UNCHOSEN community's votes summon nobody (5 Oct 2026) — the
-  // platform's own community, which every account is in and may not have
-  // taken part in yet.
-  assert.doesNotMatch(render({}, { unchosen: true }), /header-in-app-to-vote/);
-  // A community the store has no entry for (the viewer is not a member, or
-  // the load has not landed): no pill, not NaN.
-  withState([[ui.improveStore, SHOWN], [ui.communityScopeStore, { info: {} }]], () => {
-    const html = renderToHtml(createElement(ui.InAppControls));
-    assert.doesNotMatch(html, /header-in-app-to-vote/);
-    assert.match(html, /header-in-app-suggest/, 'Suggest needs no membership');
-  });
-});
-
-test('the pill is hidden wherever the menu\'s community hub row is', () => {
-  // A viewer the platform hides the workshop from.
-  assert.doesNotMatch(render({ restricted: true }), /header-in-app-to-vote/);
-  assert.match(render({ restricted: true }), /header-in-app-suggest/,
-    'Suggest is the viewer\'s on every app the pill is not');
-  // A newcomer still being offered "Go to Homeroom": one way onward
-  // (#4216). In this sandbox App is absent, so the offer reads as standing.
-  assert.doesNotMatch(render({}, {}, { privateMember: true }), /header-in-app-to-vote/);
-});
-
-test('the pill\'s address is the Needs you feed\'s, and a plain click moves the page', () => {
-  const html = render();
-  assert.match(html, /href="\/app\/recipe-box\/workshop\?ws=needs"/,
-    'a modified click and a new tab open the feed at its own address');
-  // The click path, as the source spells it: the new-tab guard first, then
-  // the nudge mark, then the move.
-  assert.match(COMPONENT, /isNativeClick\?\.\(event\)/,
-    'a modified click is left alone to open the tab (tests/nav-new-tab.test.js)');
-  assert.match(COMPONENT, /preventDefault\(\);\s*\n\s*try \{ \(window as unknown as \{ UITelemetry[\s\S]{0,120}markNextVia\?\.\('nudged'\)/,
-    'the tap is recorded as reaching the project page by a nudge, as a notification tap is');
-  assert.match(COMPONENT, /openPlace\(slug, 'needs'\)/,
-    'openPlace moves the page in place where it is mounted, else opens the address');
+  // React renders the element's id before its class, so the first class
+  // attribute after the id belongs to that element.
+  const classes = html.slice(html.indexOf('id="header-in-app-suggest"'))
+    .match(/class="([^"]+)"/)?.[1] ?? '';
+  assert.match(classes, /(^| )hidden( |$)/, 'Suggest is not displayed on a phone');
+  assert.match(classes, /(^| )sm:inline-flex( |$)/, 'Suggest comes back on wider windows');
+  assert.doesNotMatch(classes, /(?<!sm:)inline-flex/,
+    'Suggest has no bare inline-flex outside the sm: prefix');
 });
 
 test('Suggest opens the existing dialog with "This app" already chosen', () => {
@@ -223,14 +161,11 @@ test('the controller routes a named target to the dialog\'s own choice', async (
 });
 
 test('the words resolve in the core catalog', () => {
-  assert.equal(message('core:header.inApp.toVote', { count: 1 }), '1 to vote');
-  assert.equal(message('core:header.inApp.toVote', { count: 2 }), '2 to vote');
   assert.equal(message('core:header.inApp.suggest'), 'Suggest');
   assert.equal(message('core:header.inApp.suggestLabel'), 'Suggest an improvement');
 });
 
 test('no English is written into the component; the words come from the catalog', () => {
-  assert.match(COMPONENT, /t\('core:header\.inApp\.toVote'/);
   assert.match(COMPONENT, /t\('core:header\.inApp\.suggest'\)/);
   assert.match(COMPONENT, /t\('core:header\.inApp\.suggestLabel'\)/);
   assert.doesNotMatch(COMPONENT, /\{\s*'[^']*(?:to vote|Suggest)[^']*'\s*\}/,
@@ -246,13 +181,6 @@ test('the header renders the controls as the right group\'s first children', () 
     'inside the measured group, so the title\'s clearance still counts them');
   assert.ok(
     group.indexOf('<InAppActions />') < group.indexOf('id="notifications-btn"'),
-    'Suggest and the pill, then the bell, then the mark',
+    'Suggest, then the bell, then the mark',
   );
-});
-
-test('loading happens on screen, never during render', () => {
-  // The count comes from a load keyed to the app coming on screen, not from
-  // a fetch in a render path — the hydration rule every island follows.
-  assert.match(COMPONENT, /useEffect\(\(\) => \{\s*if \(!shown\) return;\s*hydrateNeedsSeen\(\);\s*void loadCommunities\(true\);/);
-  assert.doesNotMatch(COMPONENT, /fetch\(/);
 });
