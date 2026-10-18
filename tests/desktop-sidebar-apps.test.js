@@ -126,8 +126,10 @@ test('the pinned section: its own heading, the pins drawn as rows, the slot whil
   const src = read(PINNED);
   assert.match(src, /<RailCommunityRow key=\{app\.slug\} slug=\{app\.slug\} here=\{here\} record=\{app\} pin=\{handlers\(app\)\} \/>/);
   assert.match(src, /readPinnedApps\(who\)/, 'the stored pins, read after mount');
-  assert.match(read('frontend/src/features/nav/pinned-apps-store.js'), /const KEY = 'usernode_pinned_apps_v2';/,
-    'the same key: an app pinned before is its community\'s pin now');
+  const store = read('frontend/src/features/nav/pinned-apps-store.js');
+  assert.match(store, /const KEY = 'usernode_community_pins_v1';/, 'the account\'s list as this device last read it');
+  assert.match(store, /const DEVICE_KEY = 'usernode_pinned_apps_v2';/,
+    'the key an app was pinned under before: sent up once, so it is its community\'s pin now');
   assert.equal(message('core:rail.pin.here'), 'Pin here');
   assert.equal(message('core:rail.pin.unpin'), 'Unpin');
 });

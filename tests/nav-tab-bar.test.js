@@ -301,16 +301,17 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   // the same bar into a left rail, and so does this.
   const at = css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY');
   assert.ok(at > 0, 'the desktop block must exist, at the shell\'s own md breakpoint');
-  const block = css.slice(at, css.indexOf('\n}\n', css.indexOf('.platform-parked-pill {', at)));
+  const block = css.slice(at, css.indexOf('\n}\n', at));
 
   // TWO TOKENS, NOT ONE (#2718 review). `--platform-rail-full` is how wide
   // the rail IS and never changes; `--platform-rail-w` is how much width it
   // RESERVES, and goes to 0 while it is folded or peeking. One number for
   // both drew a 17px sliver — padding and a border around a zero-width
   // column — the first time the rail was peeked over a folded desktop.
-  // #4417: 76px, the strip: the sections as an icon over a label, the five
-  // recent apps, you at the foot; the section's column beside it.
-  assert.match(css, /--platform-rail-full: 76px;/, 'the strip has a width');
+  // #4417: 76px, the strip's; from 768px, every width the rail is drawn at,
+  // the sidebar of rows sets it again (212px, tests/desktop-sidebar-rows).
+  assert.match(css, /--platform-rail-full: 76px;/, 'the rail has a width');
+  assert.match(css, /body \{\n    --platform-rail-full: 212px;\n  \}/, 'which the sidebar sets');
   assert.match(block, /--platform-rail-w: var\(--platform-rail-full\);/,
     'and reserves it while it is up');
   assert.match(block, /--platform-tabs-h: var\(--platform-safe-bottom\);/,
@@ -357,10 +358,10 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   // the answer to that question.
   assert.match(block,
     /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\):not\(\.platform-tabs-folded\)\) #app-view \{\s*padding-left: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter\)\);/);
-  // The parked strip is the rail's footer (hidden on the desktop, where the
-  // strip's apps are the way back), and its pill becomes a caption.
-  assert.match(block, /\.platform-parked \{[\s\S]{0,300}width: var\(--platform-rail-full\);/);
-  assert.match(block, /\.platform-parked-pill \{[\s\S]{0,200}order: -1;/);
+  // The parked strip is not drawn on the desktop: a running app keeps its
+  // App row, with its dot, under its community in the sidebar.
+  assert.match(block, /#platform-parked \{\s*display: none;\s*\}/);
+  assert.doesNotMatch(block, /\.platform-parked(?:-open|-pill)? \{/, 'so nothing styles it there');
 });
 
 test('the folded rail peeks back on hover, and reserves nothing while it does', () => {
@@ -617,8 +618,8 @@ test('the reservation is keyed off the bar\'s own hidden class', () => {
   // to `--platform-bar-h`.
   assert.match(css, /\nbody \{\n(?:  \/\*[^]*?\*\/\n)?  --platform-bar-h: 0px;/);
   assert.match(css, /--platform-tabs-h: 0px;/);
-  assert.match(css, /--platform-rail-w: 0px;\n(?:  \/\*[^]*?\*\/\n)?  --platform-column-w: 0px;\n  --platform-gutter: 0px;\n\}/,
-    'and the strip costs a phone no width at all, nor its column, nor the gutter beside it');
+  assert.match(css, /--platform-rail-w: 0px;\n  --platform-gutter: 0px;\n\}/,
+    'and the rail costs a phone no width at all, nor the gutter beside it');
   assert.match(css,
     /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\):has\(#platform-parked:not\(\.hidden\)\) \{\s*--platform-tabs-h: calc\(52px \+ 56px \+ var\(--platform-tabs-inset, 0px\)\);/,
     'the strip adds its own band, and only while the bar is there to sit on '
@@ -669,10 +670,9 @@ test('the desktop band tokens are not outranked by the phone\'s', () => {
   // right selector on its own terms: a PEEKING rail reserves nothing.
   assert.match(block, /html:not\(\.un-kb\) body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\) \{\s*\n\s*--platform-bar-h: 0px;\s*\n\s*--platform-tabs-h: var\(--platform-safe-bottom\);/);
   assert.match(block, /:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\):has\(#platform-parked:not\(\.hidden\)\)/);
-  // And the parked strip rests ON the Me row rather than over it, through
-  // one token so the two cannot drift.
-  assert.match(css, /--platform-rail-foot-h: 52px;/);
-  assert.match(css, /\.platform-parked \{\s*\n\s*bottom: calc\(var\(--platform-rail-foot-h\) \+ var\(--platform-safe-bottom, 0px\)\);/);
+  // On the desktop the parked strip is not drawn at all (the sidebar's App
+  // rows are the way back), so nothing rests it on the rail's foot.
+  assert.doesNotMatch(css, /--platform-rail-foot-h/);
 });
 
 test('a tab label has room for its descenders', () => {
@@ -685,7 +685,7 @@ test('a tab label has room for its descenders', () => {
     'a unitless multiplier is the one value correct at both sizes');
 });
 
-test('the Messages count is the quiet one: grey, on the glyph\'s corner on the phone and the strip (#2912, #4417)', () => {
+test('the Messages count is the quiet one: grey, on the glyph\'s corner on the phone, at the row\'s end beside it (#2912, #4417)', () => {
   // Unread messages are counted in the bell as well, so a second RED count on
   // the Messages tab said the same thing twice in the loudest colour on the
   // screen. The bell keeps the red (#notifications-badge is not touched);
@@ -698,18 +698,16 @@ test('the Messages count is the quiet one: grey, on the glyph\'s corner on the p
   assert.match(phone[0], /position: absolute;\s*top: -3px;\s*left: calc\(100% - 7px\);/,
     'and it keeps its place on the glyph\'s corner');
 
-  // #4417: the desktop strip is an icon over a label, as the phone's bar is,
-  // so the count stays on the glyph's corner there too: the wrapper is its
-  // anchor at every width now (it dissolved into a row on the 224px rail),
-  // nudged a pixel for the strip's tighter cell.
-  const at = css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY');
-  const block = css.slice(at, css.indexOf('\n}\n', css.indexOf('.platform-parked-pill {', at)));
-  assert.doesNotMatch(block, /\n {2}\.platform-tab-mark \{\s*display: contents;\s*\}/,
-    'the wrapper stays the badge\'s anchor on the strip');
-  const strip = block.match(/\n {2}\.platform-tab-badge \{[^}]*\}/);
-  assert.ok(strip, 'the strip places the badge inside the desktop block');
-  assert.match(strip[0], /top: -4px;\s*left: calc\(100% - 9px\);/);
-  assert.doesNotMatch(strip[0], /position: static|margin-left: auto/, 'never a row\'s-end pill');
+  // From 768px the sidebar of rows draws a row, and the count sits at its
+  // far end, the size of a row's other counts (the strip that kept it on
+  // the glyph's corner is gone, and its offsets with it).
+  const at = css.indexOf('@media (min-width: 768px) {\n  /* THE ONE NUMBER THE REST FOLLOWS.');
+  const block = css.slice(at, css.indexOf('\n}\n', at));
+  const row = block.match(/\n {2}\.platform-tab-badge,\n {2}\.platform-tab-votes,\n {2}\.platform-tab-all-votes \{[^}]*\}/);
+  assert.ok(row, 'the sidebar places the badge inside its block');
+  assert.match(row[0], /position: static;\s*order: 2;/);
+  const rail = css.slice(css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY'));
+  assert.doesNotMatch(rail.slice(0, rail.indexOf('\n}\n')), /\n {2}\.platform-tab-badge \{/, 'no corner offsets left over');
 
   // THE MARKUP DOES NOT MOVE, which is what lets the phone keep its anchor
   // and the declared checks keep finding the badge inside the Messages tab.
@@ -871,8 +869,8 @@ test('the marker is the Workshop\'s blue, on the Workshop\'s curve, phone only',
   assert.match(css, /\.platform-tab \{\s*position: relative;\s*z-index: 1;\s*\}/,
     'the tabs sit over the marker');
   // The rail keeps its row fill; the marker is not drawn there.
-  const desktop = css.slice(css.indexOf('.platform-tab[aria-current="page"] {\n    background: var(--lit-tint);'));
-  assert.match(desktop.slice(0, 400), /\.platform-tabs-marker \{\s*display: none;\s*\}/);
+  const desktop = css.slice(css.indexOf('The rail keeps its own fill on the lit row'));
+  assert.match(desktop.slice(0, 200), /\.platform-tabs-marker \{\s*display: none;\s*\}/);
   // The Workshop strip's duration and curve, as an animation now (#3259).
   const { MARKER_SLIDE } = loadTsx('frontend/src/features/nav/tab-bar.tsx');
   assert.deepEqual({ ...MARKER_SLIDE }, { duration: 260, easing: 'cubic-bezier(.32, .72, 0, 1)' });
@@ -1025,13 +1023,18 @@ test('a plain press on another tab lights it and slides first; the router answer
 const PINNED = 'frontend/src/features/nav/rail-pinned.tsx';
 const RAIL = 'frontend/src/features/nav/rail-communities.tsx';
 
-test('the strip: the sections as an icon over a label, the pinned communities above yours, then you at the foot', () => {
-  const at = css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY');
-  const block = css.slice(at, css.indexOf('\n}\n', css.indexOf('.platform-parked-pill {', at)));
+test('the sidebar: the sections as rows, the pinned communities above yours, then you at the foot', () => {
+  // The strip's icon over a label went with the strip: from 768px a section
+  // is a row, its glyph then its name.
+  const rail = css.slice(css.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY'));
+  assert.doesNotMatch(rail.slice(0, rail.indexOf('\n}\n')), /\n {2}\.platform-tab \{[^}]*flex-direction: column;/,
+    'no icon over a label left over');
+  const at = css.indexOf('@media (min-width: 768px) {\n  /* THE ONE NUMBER THE REST FOLLOWS.');
+  const block = css.slice(at, css.indexOf('\n}\n', at));
   const tab = block.match(/\n {2}\.platform-tab \{[^}]*\}/)[0];
-  assert.match(tab, /flex-direction: column;/, 'an icon over a label, not a row');
-  assert.match(tab, /height: 58px;/);
-  assert.match(tab, /font-size: 10\.5px;/, 'a label, as on the phone\'s bar');
+  assert.match(tab, /flex-direction: row;/, 'a row');
+  assert.match(tab, /height: 36px;/);
+  assert.match(tab, /font-size: 14px;/);
   // Recents are gone, and so are the strip's apps: the pins sit above your
   // communities, and nothing lists apps apart from them.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
@@ -1077,18 +1080,20 @@ test('#5323: the drop row renders only while a drag is up', () => {
   assert.match(home, /const drop = strip\.querySelector\('\[data-rail-pin-drop\]'\);/);
 });
 
-// #5323: unpin two ways — the same small menu a My apps tile opens, and a
-// mouse drag back out of the sidebar. The ghost is React state only,
+// #5323: unpin two ways — the row's right-click menu (any community of
+// yours has it, ./pin-actions.ts), and a mouse drag back out of the sidebar. The ghost is React state only,
 // portaled to the body, so the prerender ships nothing of it; the click a
 // release leaves behind must not open the community.
 test('#5323: a pinned row carries the Unpin menu and the drag-out path', () => {
   const src = read(PINNED);
-  assert.match(src, /onContextMenu: \(event: MouseEvent<HTMLAnchorElement>\) => \{/,
-    'the menu opens on the pinned row itself');
-  assert.match(src, /\}\)\.PlatformUI;[\s\S]*?\.menu\?\.\(\{/,
-    'the kit presents it, as a My apps tile\'s menu is presented');
-  assert.match(src, /label: t\('core:rail\.pin\.unpin'\)/);
-  assert.match(src, /unpinApp\(app\.slug, navStore\.get\(\)\.viewer\)/);
+  const row = read(RAIL);
+  assert.match(row, /\{\.\.\.\(yours \? \{\s*onContextMenu: \(event: MouseEvent<HTMLAnchorElement>\) => \{\s*openPinMenu\(event, \{ slug, name, iconUrl: icon\.icon_url, iconEmoji: icon\.icon_emoji \}, href\);/,
+    'the menu opens on the row itself, a pinned one among them');
+  const actions = read('frontend/src/features/nav/pin-actions.ts');
+  assert.match(actions, /kit\.menu\(\{/, 'the kit presents it, as a My apps tile\'s menu is presented');
+  assert.match(actions, /label: isPinned\(target\.slug\) \? t\('core:rail\.pin\.unpin'\) : t\('core:rail\.pin\.add'\)/);
+  assert.match(actions, /label: t\('core:rail\.pin\.newTab'\)/, 'and the link\'s own Open in new tab');
+  assert.match(src, /if \(!insideTabs\(event\.clientX, event\.clientY\)\) unpinApp\(drag\.app\.slug, navStore\.get\(\)\.viewer\);/, 'the drag out unpins');
   // The drag-out is mouse-only, past a small threshold, with capture.
   assert.match(src, /event\.pointerType !== 'mouse'/);
   assert.match(src, /Math\.hypot\(event\.clientX - drag\.startX, event\.clientY - drag\.startY\) <= 6/);

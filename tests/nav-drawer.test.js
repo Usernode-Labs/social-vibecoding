@@ -235,7 +235,7 @@ test('the lit tab and the left edge are the drawer\'s on a phone; the tray keeps
   assert.match(island, /if \(!swipeBackMayStart\(\{ x: touch\.clientX, takesEdge, sideways \}\)\) return;/,
     'a swipe right from anywhere on the page that is not sideways UI (tests/nav-drawer-swipe.test.js)');
   const shell = read('frontend/src/Shell.tsx');
-  assert.match(shell, /<Island name="SectionColumn"><SectionColumn \/><\/Island>\s*\{\/\*[\s\S]*?\*\/\}\s*<Island name="NavDrawer"><NavDrawer \/><\/Island>/);
+  assert.match(shell, /<Island name="PlatformTabs"><PlatformTabs \/><\/Island>\s*\{\/\*[\s\S]*?\*\/\}\s*<Island name="NavDrawer"><NavDrawer \/><\/Island>/);
 });
 
 test('it moves by transform only, and leaves #app-view untransformed at rest', () => {

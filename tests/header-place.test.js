@@ -37,16 +37,16 @@ const ui = loadTsx('tests/fixtures/header-place-api.ts');
 test('the page publishes unread and tray with the place, and the store resets both', () => {
   ui.publishPlace('notes-ab12', 'workshop', 4, 3, true);
   assert.deepEqual(ui.placeStore.get(), {
-    slug: 'notes-ab12', place: 'workshop', owed: 4, unread: 3, tray: true, side: false,
+    slug: 'notes-ab12', place: 'workshop', owed: 4, unread: 3, tray: true,
   });
-  // The side flag survives a republish for the same project, as before.
-  ui.publishSide('notes-ab12', true);
   ui.publishPlace('notes-ab12', 'c:onboarding', 0, 0, false);
-  assert.equal(ui.placeStore.get().side, true, 'the item panel stays open across a place move');
+  assert.equal(ui.placeStore.get().place, 'c:onboarding');
   assert.equal(ui.placeStore.get().unread, 0);
+  // The item panel's flag went with the section column it told (18 Oct 2026).
+  assert.doesNotMatch(read(`${DIR}/place-store.ts`), /publishSide|side: boolean/);
   ui.clearPlace('notes-ab12');
   assert.deepEqual(ui.placeStore.get(), {
-    slug: null, place: 'status', owed: 0, unread: 0, tray: false, side: false,
+    slug: null, place: 'status', owed: 0, unread: 0, tray: false,
   });
 });
 

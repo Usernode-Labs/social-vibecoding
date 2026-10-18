@@ -461,8 +461,10 @@ const ADDED_IDS = {
   // the desktop strip's five recent apps and the section column beside it
   // took its place, and the conversations it listed are Messages' own list.
   // The strip's apps (#platform-strip-apps) went in turn on 18 Oct 2026, for
-  // an App row under each community: see #platform-rail-pinned below.
-  'platform-section-column': '#4417: the column beside the desktop strip that belongs to the section on screen: a project\'s places (Hub, Needs you, Workshop, #general and its topics) while its page is up under Communities (features/nav/section-column.tsx). Ships `hidden` and EMPTY; never drawn on a phone, where the places are the tray behind the page\'s place bar.',
+  // an App row under each community: see #platform-rail-pinned below. So did
+  // #platform-section-column (also ADDED here, by #4417): the sidebar of rows
+  // nests a project's places under its row from 768px, the drawer holds
+  // them on a phone, and with the strip gone no width drew the column.
   // #app-menu-row-discussion ("Go to app discussion", #2718) left the menu in
   // the UI overhaul: the project's channel is on its hub, one row above it.
   // ── Three ids from #2718's second pass that are NOT in this map ──

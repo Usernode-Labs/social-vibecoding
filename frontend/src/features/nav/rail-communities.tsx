@@ -18,8 +18,8 @@
  * The community whose page is up opens under its row: Hub, Needs you and
  * Workshop, then #general under Channels and the topics under Topics, the
  * first two and "Show N more" (../dev-board/workshop/project-places.tsx, the
- * list the section column drew beside the strip). A press moves the page in
- * place, as a press in that column did.
+ * list the phone's drawer and tray draw too). A press moves the page in
+ * place.
  * The row itself keeps `aria-current` but gives its fill to the place lit
  * under it, and its count to Needs you, which says the same votes. A
  * community you are only visiting, which is not one of the five, has a row
@@ -231,7 +231,7 @@ export function votesElsewhere(shown: readonly string[], list: readonly string[]
   return list.reduce((n, s) => (shown.includes(s) || info[s]?.unchosen ? n : n + (Number(info[s]?.needs) || 0)), 0);
 }
 
-/** A community's places, nested under its row: the section column's list, kept short. */
+/** A community's places, nested under its row: the project's own list, kept short. */
 function RailPlaces({ slug, onPage }: { slug: string; onPage: boolean }) {
   const place = useStoreState(placeStore);
   const v = useStoreState(devWorkshopStore);

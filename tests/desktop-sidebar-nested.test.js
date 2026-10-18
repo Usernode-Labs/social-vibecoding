@@ -133,7 +133,10 @@ test('the pages: one pane at a time in the inbox, All communities one page, and 
   const inbox = read('frontend/src/features/messages/index.tsx');
   assert.match(inbox, /const railClass = sidebarRows && !drawer\.on \? \(discussionOpen \? ' messages-list-in-rail' : ' messages-list-page'\) : '';/);
   const store = read('frontend/src/features/messages/store.ts');
-  assert.match(store, /const crowded = !isMobile\(\) && !sidebarRowsUp\(\) && width < LIST_BESIDE_MIN_WIDTH;/);
+  // One pane at a time is a phone's alone: from 768px the list is in the
+  // sidebar, so no desktop width is too narrow for both (#4229's crowding).
+  assert.match(store, /function listAside\(\): boolean \{\n  return isMobile\(\);\n\}/);
+  assert.doesNotMatch(store, /LIST_BESIDE_MIN_WIDTH|sidebarRowsUp|listCrowded/);
   const css = block1024();
   assert.match(css, /\.messages-layout\.messages-list-in-rail > \.messages-list-pane \{\n    display: none;\n  \}/);
   assert.match(css, /\.messages-layout\.messages-list-page > \.messages-thread-pane \{\n    display: none;\n  \}/);

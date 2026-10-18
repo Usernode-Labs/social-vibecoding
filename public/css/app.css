@@ -19049,8 +19049,8 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
 /* ON A WIDE WINDOW THE BAR IS THE PANEL'S FIRST ROW (#852 review: the tabs
    sat in the coloured header's row for a round). Not a band: the header
    above already says whose page this is, so the row is the page's own ink,
-   and since #4417 it is the page's title, naming the place (the list is the
-   section column beside the strip). It pins under the header's edge as the
+   and since #4417 it is the page's title, naming the place (the list is
+   nested under the community's row in the sidebar). It pins under the header's edge as the
    old strip did, on the sheet band that strip drew while pinned
    (`data-ws-pinned`, usePinnedStrip). */
 @media (min-width: 768px) {
@@ -21360,11 +21360,6 @@ body {
      768px the sidebar of rows sets it again (212px, its own block below),
      and what the strip's column beside it held is nested in the sidebar. */
   --platform-rail-full: 76px;
-  /* HOW MUCH ROOM THE RAIL'S FOOT TAKES — the Me row, plus the rail's own
-     8px of bottom padding. Read by the parked strip, which is fixed to the
-     same corner and has to rest ON that row rather than over it. One number,
-     because two would drift the first time the row's height changes. */
-  --platform-rail-foot-h: 52px;
   /* WHAT IT RESERVES. 0 on a phone, where the five tabs are a bar at the foot
      and cost width nothing; 0 again on a desktop while the rail is folded or
      peeking, where the content takes the width back. */
@@ -22604,14 +22599,6 @@ html.un-kb #platform-parked {
   .platform-tabs-marker {
     display: none;
   }
-  /* The counts sit on the glyph's corner where a tab draws one (the base
-     rules anchor them to the glyph's wrapper); the sidebar of rows moves the
-     quiet unread count to the row's far end (its block below). */
-  .platform-tab-badge {
-    top: -4px;
-    left: calc(100% - 9px);
-  }
-
   /* A TAB ANSWERS THE POINTER (#2798). The rail's rows had no hover at all,
      so nothing said a row was a target until it was pressed. The hover is the
      same periwinkle as the lit tab at about half the strength, so the tab you
@@ -22667,8 +22654,8 @@ html.un-kb #platform-parked {
 
 @media (min-width: 768px) {
   /* THE ONE NUMBER THE REST FOLLOWS. Everything the strip's width placed
-     (the section column's left edge, the peeked column, the screens'
-     padding) reads this token, so the sidebar moves them all at once. */
+     (the screens' padding among it) reads this token, so the sidebar
+     moves them all at once. */
   body {
     --platform-rail-full: 212px;
   }
@@ -23057,9 +23044,8 @@ html.un-kb #platform-parked {
      places under its row (features/nav/rail-communities.tsx: the section
      column's own list, ../dev-board/workshop/project-places.tsx), and the
      inbox opens its five latest conversations and All messages under
-     Messages (features/nav/rail-conversations.tsx). So the section column
-     and Messages' list column step aside from here, and the page has their
-     264px back.
+     Messages (features/nav/rail-conversations.tsx). So there is no second
+     column from here: the page has the 264px it took.
 
      ONE INDENT A LEVEL, ONE LINE. A nested row's glyph starts 30px in; a
      group under a sub-header (Channels, Topics, Agents, People) is tabbed in

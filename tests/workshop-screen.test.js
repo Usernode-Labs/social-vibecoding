@@ -489,9 +489,12 @@ test('a row goes to that app\'s own Workshop page, as an anchor', () => {
   assert.deepEqual(rows, [{ slug: 'notes-9206f8', name: 'Notes', working: 0, needs: 0 }],
     'a slug the counts endpoint said nothing about is two zeroes, not absent');
   const src = read('frontend/src/features/workshop/index.tsx');
-  assert.match(src, /href=\{`\/app\/\$\{encodeURIComponent\(row\.slug\)\}\/workshop`\}/,
+  assert.match(src, /const href = `\/app\/\$\{encodeURIComponent\(row\.slug\)\}\/workshop`;[\s\S]{0,80}href=\{href\}/,
     'App._appUrl spells the lander /app/<slug>/workshop, so a copied address '
     + 'restores the same page cold');
+  // Beside the sidebar a row pins or unpins its community from its
+  // right-click menu, which keeps the link's Open in new tab (18 Oct 2026).
+  assert.match(src, /onContextMenu=\{pinnable \? \(event: MouseEvent<HTMLElement>\) => \{\s*openPinMenu\(event, \{ slug: row\.slug,[^}]*\}, href\);/);
   assert.match(src, /NavLink\?\.isNativeClick\?\.\(event\)/,
     'a modified click is the browser\'s — that is what makes this an anchor');
   assert.match(src, /App\?\.navigateToApp\?\.\(row\.slug, 'dev'\)/);

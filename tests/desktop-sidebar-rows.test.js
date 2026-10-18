@@ -79,7 +79,7 @@ test('the presses: a row switches in place, the lit one climbs to its Hub and st
   const src = read(RAIL);
   // From its app, the row goes to its page; on its page, up the page.
   assert.match(src, /if \(onPage === slug\) pressLitTab\(screen, \{ stopAtCommunity: true \}\);\s*else goToCommunity\(slug\);/);
-  assert.match(src, /href=\{`#app\/\$\{encodeURIComponent\(slug\)\}\/workshop`\}/, 'a modified click opens its page');
+  assert.match(src, /const href = `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop`;[\s\S]*?href=\{href\}/, 'a modified click opens its page');
   assert.match(src, /onPage: screen === 'app-view' && tab === 'workshop' \? scoped : null,/);
   // The ladder's root step is All communities; the row stops short of it.
   const calls = [];
@@ -151,8 +151,10 @@ test('the width: one block on every desktop window, from 768px; the phone\'s bar
   // The tab's own name follows what it shows.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /\? \(sidebarRows \? undefined : communitiesAriaLabel\(scoped\)\)/);
-  // v3: there is no section column beside the sidebar, which nests the places.
-  assert.match(read('frontend/src/features/nav/section-column.tsx'), /if \(input\.sidebarRows \|\| input\.side\) return null;/);
+  // v3: there is no section column beside the sidebar, which nests the
+  // places; since the strip went, there is none at all.
+  assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/nav/section-column.tsx')), 'the column is gone');
+  assert.doesNotMatch(read('frontend/src/Shell.tsx'), /SectionColumn|platform-section-column/);
 });
 
 test('the apps: none apart from their communities; Pinned, above them, only while something is pinned', () => {

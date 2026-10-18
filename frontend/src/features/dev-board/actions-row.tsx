@@ -255,6 +255,8 @@ export function DevPlusMenu({
   useEffect(() => {
     callAppView('_rewirePlusMenu');
   }, []);
+  // The pin row's glyph: filled while it is pinned.
+  const PinIcon = pin?.pinned ? BookmarkSolidIcon : BookmarkIcon;
   // "Suggest this back": on a remix, for its owner, the copy's changes sent
   // to the app it came from as a proposal (./suggest-back-dialog.tsx). The
   // open app's payload is `illustrationApp` (AppView.appData), which carries
@@ -376,9 +378,7 @@ export function DevPlusMenu({
             {pin ? (
               <PlusRow
                 data-plus="pin"
-                icon={pin.pinned
-                  ? <BookmarkSolidIcon className={PLUS_ICON_CLS} aria-hidden="true" />
-                  : <BookmarkIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                icon={<PinIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
                 title={pin.pinned ? t('project:menu.pin.remove') : t('project:menu.pin.add')}
                 sub={pin.pinned ? undefined : t('project:menu.pin.sub')}
                 dividerCls={PLUS_ROW_DIVIDER_CLS}

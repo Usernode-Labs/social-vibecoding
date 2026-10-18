@@ -18,8 +18,9 @@
  * Safari on an iPhone, where that edge is the browser's own Back
  * (./sideways.ts). Let go past a quarter of the way into a level and it
  * lands there. It
- * replaced the places tray on the phone; a wide window keeps the section
- * column beside the strip, and nothing here draws there.
+ * replaced the places tray on the phone; a wide window nests the places
+ * under the community's row in the sidebar (../nav/rail-communities.tsx),
+ * and nothing here draws there.
  *
  * A GESTURE SURFACE, NOT A PAGE SLIDE. The phone swaps pages in place
  * (tests/phone-no-page-slides.test.js, PlatformUI.transition); this moves

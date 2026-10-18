@@ -141,21 +141,16 @@ test('app.css: a desktop control that keeps its ink, and stays under the pointer
 });
 
 // #4229: a strip too narrow for a readable conversation beside the list.
-test('a narrow strip: the list steps aside, the toggle is not drawn, and the bar\'s arrow goes back to it', () => {
+// Since the sidebar of rows starts at 768px (18 Oct 2026) the list is in the
+// sidebar on every desktop window, never beside the conversation, so no
+// desktop width is crowded: one pane at a time is a phone's alone.
+test('one pane at a time on a phone; no desktop width is too narrow for the list beside the conversation', () => {
   const STORE = read('frontend/src/features/messages/store.ts');
-  // The strip's own width (so a folded rail counts), measured by the screen.
-  assert.match(STORE, /export const LIST_BESIDE_MIN_WIDTH = 860;/,
-    'the list column (22rem + 8px), the sheet\'s margins (8px + 12px) and a 480px sheet');
-  assert.match(STORE, /export function measureLayout\(width: number\): void \{\s*if \(!\(width > 0\)\) return;\s*(?:\/\/[^\n]*\s*)*const crowded = !isMobile\(\) && !sidebarRowsUp\(\) && width < LIST_BESIDE_MIN_WIDTH;/,
-    'a hidden screen measures 0 and changes nothing; beside the sidebar of rows (v3) the list is never beside the conversation, so never crowded');
-  assert.match(SCREEN, /new ResizeObserver\(\(\) => measureLayout\(el\.clientWidth\)\)/);
-  // The phone's drawer adds its level and its pan's handlers after them.
-  assert.match(SCREEN, /<div ref=\{layoutRef\} className=\{layout\}[ >]/);
-  assert.match(SCREEN, /\$\{discussionOpen && snap\.listCrowded \? ' messages-list-crowded' : ''\}/);
-  // The toggle stays in the DOM (dapp.json selects it); CSS stands it down.
-  assert.match(CSS, /@media \(min-width: 768px\) \{\s*\.messages-layout\.messages-list-crowded > \.messages-list-pane \{ display: none; \}\s*\.messages-layout\.messages-list-crowded \.messages-list-toggle \{ display: none; \}/);
-  // The way back to the list, as on a phone.
-  assert.match(STORE, /function listAside\(\): boolean \{\s*return isMobile\(\) \|\| state\.listCrowded;\s*\}/);
+  assert.doesNotMatch(STORE, /LIST_BESIDE_MIN_WIDTH|measureLayout|listCrowded|sidebarRowsUp/);
+  assert.doesNotMatch(SCREEN, /measureLayout|messages-list-crowded/);
+  assert.doesNotMatch(CSS, /messages-list-crowded/);
+  // The way back to the list, on a phone.
+  assert.match(STORE, /function listAside\(\): boolean \{\s*return isMobile\(\);\s*\}/);
   assert.match(STORE, /const thread = listAside\(\) && !!\(state\.route\.conversationId \|\| state\.route\.appSlug \|\| state\.route\.agent\);/);
   assert.match(STORE, /if \(!state\.route\.open \|\| !onThread \|\| !listAside\(\)\) return false;/);
 });
