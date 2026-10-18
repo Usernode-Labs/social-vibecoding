@@ -613,7 +613,7 @@ export function WorkshopScreen() {
                   data-workshop-needs-back=""
                   aria-label="Back to Communities"
                   title="Back to Communities"
-                  onClick={() => workshopController.setTab('status')}
+                  onClick={() => workshopController.backTab('status')}
                 >
                   <ChevronLeftIcon className="dev-ws-page-back-glyph" aria-hidden="true" />
                 </button>
@@ -627,7 +627,7 @@ export function WorkshopScreen() {
                 across your projects, one per screen, newest first, drawn by
                 a project's own Needs you feed (#3488). See ./needs-reel.tsx. */}
             {state.error ? null : (
-              <NeedsReel items={state.feed} error={state.feedError} capped={state.feedCapped} onDone={() => workshopController.setTab('status')} />
+              <NeedsReel items={state.feed} error={state.feedError} capped={state.feedCapped} onDone={() => workshopController.backTab('status')} />
             )}
           </div>
         ) : null}
@@ -657,6 +657,11 @@ export const workshopController = {
     let asked: TabKey | null = null;
     try { asked = tabFromQuery(location.search); } catch { asked = null; }
     workshopStore.set(asked ? { open: true, tab: asked } : { open: true });
+    // #3620: the router has just written this screen's entry; mark it with
+    // the tab it shows, so Back and Forward can restore that tab.
+    if (typeof window !== 'undefined') {
+      (window as any).AppView?._markPaneTab?.({ screen: 'communities' }, workshopStore.get().tab);
+    }
     return workshopController.reload();
   },
   close() {
@@ -665,9 +670,35 @@ export const workshopController = {
   isOpen() {
     return workshopStore.get().open;
   },
-  /** Show one of the two tabs. */
+  /**
+   * Show one of the two tabs. A step in the browser's history at the same
+   * address (#3620), so Back returns to the list instead of leaving the
+   * screen; a press on the tab already showing pushes nothing.
+   */
   setTab(tab: TabKey) {
-    workshopStore.set({ tab: tab === 'needs' ? 'needs' : 'status' });
+    const next = tab === 'needs' ? 'needs' : 'status';
+    const prev = workshopStore.get().tab;
+    workshopStore.set({ tab: next });
+    if (typeof window !== 'undefined') {
+      (window as any).AppView?._pushPaneTab?.({ screen: 'communities' }, next, prev);
+    }
+  },
+  /** Back/Forward landed on a record naming a tab: show it, adding no step. */
+  restore(tab: TabKey) {
+    const next = tab === 'needs' ? 'needs' : 'status';
+    if (workshopStore.get().tab === next) return;
+    workshopStore.set({ tab: next });
+  },
+  /**
+   * The page's back arrow: walk the step a tab press made, or, on a cold
+   * deep link, rewrite the record and switch without adding one.
+   */
+  backTab(tab: TabKey) {
+    const next = tab === 'needs' ? 'needs' : 'status';
+    const how = typeof window === 'undefined'
+      ? undefined
+      : (window as any).AppView?._backPaneTab?.({ screen: 'communities' }, next);
+    if (how === undefined) workshopController.restore(next);
   },
   async reload() {
     const demo = demoQuery();

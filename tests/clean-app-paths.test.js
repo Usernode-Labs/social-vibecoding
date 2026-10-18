@@ -185,7 +185,9 @@ test('clean pathname parsing is narrow and legacy hashes remain router inputs', 
   assert.equal(App._appRouteFromPath('/api/apps/notes-9206f8'), '');
   assert.match(appSource, /let hash = rawHash[\s\S]{0,100}: pathRoute;/,
     'restoreFromHash falls back to a clean pathname when there is no fragment');
-  assert.match(appSource, /history\.replaceState\(null, '', canonicalAppUrl\)/,
+  // #3620: the state is kept, so a tab record (`__unPaneTab`) survives the
+  // canonicalising rewrite that Back into an app route runs.
+  assert.match(appSource, /history\.replaceState\(history\.state, '', canonicalAppUrl\)/,
     'legacy app hashes normalize without a new history entry');
 });
 

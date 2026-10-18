@@ -4001,9 +4001,10 @@ test('the ⋯ asks to be wired when it mounts, because the module wires it befor
   // door back to the hub mounts it from React state, while the module side
   // of the press only persists the choice — nothing re-runs the wiring.
   assert.match(WORKSHOP, /onMore=\{\(\) => openTab\('workshop'\)\}/);
-  assert.match(WORKSHOP, /onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
+  // #3620: the page's own back arrow walks the step the tab presses made.
+  assert.match(WORKSHOP, /onBack=\{\(\) => \{\s*const parent = pageParent\(tab\);\s*if \(callAppView\('_backPaneTab', \{ screen: 'project', slug: v\.slug \}, parent\) === undefined\) openTab\(parent\);\s*\}\}/);
   // Every tab turns the page, Homeroom's Discussion (#general) included (#3494).
-  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
+  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);[\s\S]{0,400}?callAppView\('_pushPaneTab', \{ screen: 'project', slug: v\.slug \}, next, tab\);/);
   const setTab = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _setWorkshopTab(key) {'));
   const setTabBody = setTab.slice(0, setTab.indexOf('\n  },'));
   assert.match(setTabBody, /localStorage\.setItem\(AppView\.WORKSHOP_TAB_KEY, next\)/);
@@ -4745,9 +4746,10 @@ test('the project page opens on the page you last used', () => {
   // The view model publishes the RESOLVED tab, not the raw parameter.
   assert.match(APP_VIEW_SRC, /tab: AppView\._workshopTab\(\),/);
   assert.match(WORKSHOP, /onOpen=\{\(\) => openTab\('needs'\)\}/);
-  assert.match(WORKSHOP, /onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
+  // #3620: a tab press is a history step, and the back arrow walks it.
+  assert.match(WORKSHOP, /onBack=\{\(\) => \{\s*const parent = pageParent\(tab\);\s*if \(callAppView\('_backPaneTab', \{ screen: 'project', slug: v\.slug \}, parent\) === undefined\) openTab\(parent\);\s*\}\}/);
   // Every tab turns the page, Homeroom's Discussion (#general) included (#3494).
-  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
+  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);[\s\S]{0,400}?callAppView\('_pushPaneTab', \{ screen: 'project', slug: v\.slug \}, next, tab\);/);
 });
 
 test('a category card is raised off the pane it sits on', () => {

@@ -4508,7 +4508,8 @@ const App = {
         });
         const currentAppUrl = `${location.pathname}${location.search}${location.hash}`;
         if (currentAppUrl !== canonicalAppUrl) {
-          try { history.replaceState(null, '', canonicalAppUrl); } catch (_) {}
+          // #3620: keep the state, so a tab record survives this rewrite.
+          try { history.replaceState(history.state, '', canonicalAppUrl); } catch (_) {}
         }
         if (App.currentApp !== slug) {
           App.navigateToApp(slug, tab, ref, subTab);
@@ -6559,7 +6560,9 @@ const App = {
     const sameScreen = screenIdOf(currentFull) === screenIdOf(newUrl);
 
     if (opts.replace || sameScreen) {
-      history.replaceState(null, '', newUrl);
+      // #3620: an in-place rewrite keeps the entry's state, so a tab record
+      // (__unPaneTab) is not wiped by the router's own same-screen pass.
+      history.replaceState(history.state, '', newUrl);
     } else {
       history.pushState(null, '', newUrl);
       App._historyPushes += 1;

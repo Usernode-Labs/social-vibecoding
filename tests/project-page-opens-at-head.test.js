@@ -68,6 +68,8 @@ test('a tab press and a door both go through it, and a press forgets the old tab
   assert.ok(openTab, 'openTab exists');
   assert.match(openTab[1], /callAppView\('_saveFeedScroll', v\.slug, 0\);/);
   assert.match(openTab[1], /scrollToHead\(hostRef\.current\);/);
+  // #3620: and it is a step in the browser's history, at the same address.
+  assert.match(openTab[1], /callAppView\('_pushPaneTab', \{ screen: 'project', slug: v\.slug \}, next, tab\);/);
   const door = WORKSHOP.slice(WORKSHOP.indexOf('const onDoor = (event: Event) => {'));
   const doorBody = door.slice(0, door.indexOf('\n    };'));
   assert.match(doorBody, /setTab\(door\.tab\);[\s\S]*scrollToHead\(hostRef\.current\);/);

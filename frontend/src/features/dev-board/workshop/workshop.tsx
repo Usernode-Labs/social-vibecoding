@@ -3430,6 +3430,10 @@ export function DevWorkshop(): ReactNode {
   const openTab = (next: TabKey) => {
     setTab(next);
     callAppView('_setWorkshopTab', next);
+    // #3620: a tab press is a step in the browser's history, at the same
+    // address, so Back returns to the tab you were on instead of leaving the
+    // community. The tab this render shows is the one you are leaving.
+    callAppView('_pushPaneTab', { screen: 'project', slug: v.slug }, next, tab);
     callAppView('_saveFeedScroll', v.slug, 0);
     scrollToHead(hostRef.current);
   };
@@ -3485,6 +3489,16 @@ export function DevWorkshop(): ReactNode {
     tabSlug.current = v.slug;
     if (was && was !== v.slug) setTab(freshTab() || 'status');
   }, [v.slug]);
+  // THE RECORD THIS PAGE STANDS ON NAMES ITS TAB (#3620). The router writes
+  // an entry when the project opens; a tab press adds one above it. Marking
+  // the entry the page has arrived on lets Back and Forward read the tab
+  // from the record itself, before the router runs. An existing marker for
+  // this project keeps its `pushed` flag, so re-rendering on a pushed record
+  // does not turn it back into a base entry.
+  useEffect(() => {
+    if (!v.slug) return;
+    callAppView('_markPaneTab', { screen: 'project', slug: v.slug }, tab);
+  }, [v.slug, tab]);
   // Which pane is under the tabs. Lives in a module-global store rather than
   // here, because app-view.js has to read it: `_rerenderWorkshop()` publishes
   // the kanban view model only when the stage pane is up. See
@@ -3655,7 +3669,13 @@ export function DevWorkshop(): ReactNode {
         <PageBack
           label="Workshop"
           title={pageTitle(tab)}
-          onBack={() => openTab(pageParent(tab))}
+          // #3620: the arrow walks the step a tab press made rather than
+          // adding a second one. On a cold deep link there is no step below,
+          // so AppView rewrites the record and switches in place.
+          onBack={() => {
+            const parent = pageParent(tab);
+            if (callAppView('_backPaneTab', { screen: 'project', slug: v.slug }, parent) === undefined) openTab(parent);
+          }}
         />
       </div>
     </div>

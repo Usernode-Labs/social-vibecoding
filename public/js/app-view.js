@@ -8168,11 +8168,135 @@ const AppView = {
    */
   _landOnTab(slug, tab) {
     const key = AppView.WORKSHOP_TABS.indexOf(tab) !== -1 ? tab : 'status';
+    // #3620: a door pressed while the community's page is ALREADY open is a
+    // step of its own, like a tab press — the menu's "Go to community hub"
+    // changes no address, so no route entry would carry Back to the tab you
+    // were on. A door from another screen needs nothing here: the route it
+    // goes on to makes an entry, which the page marks when it mounts.
+    const open = !!(slug && typeof App !== 'undefined'
+      && App.currentApp === slug && App.currentTab === 'dev');
+    // The tab the page is showing: the record it stands on says so, and the
+    // remembered tab answers for an entry the router has not marked yet.
+    let prev = null;
+    try {
+      const state = window.history.state && window.history.state[AppView.PANE_TAB_KEY];
+      if (state && state.screen === 'project' && state.slug === slug) prev = state.tab;
+    } catch {}
+    if (prev == null) prev = AppView._workshopTab();
     AppView._setWorkshopTab(key);
+    if (open) AppView._pushPaneTab({ screen: 'project', slug: slug }, key, prev);
     try {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: key } }));
     } catch {}
     if (slug) AppView._saveFeedScroll(slug, 0);
+  },
+  // ── Back through a page's own tabs (#3620) ────────────────────────────
+  //
+  // The community page's four tabs and All items, and the Communities
+  // screen's Needs you page, are React state with no address of their own,
+  // so changing tab left no history entry: Back skipped the tab you were on
+  // and left the page. A tab press now writes a record at the SAME address
+  // naming the tab, and the capture-phase listener at the bottom of this
+  // file reads that record on the way back. The record is not a route — the
+  // address, the `?ws=` deep links and the remembered tab are untouched.
+  PANE_TAB_KEY: '__unPaneTab',
+  // One tab of one screen, as a history state. A FRESH object: it must never
+  // carry `__unDismissId`/`__unDismissDepth`, or the dialog back stack
+  // (frontend/src/lib/back-stack.ts) would read a tab step as its own
+  // record.
+  _paneTabState(scope, tab, pushed) {
+    const screen = scope && scope.screen === 'communities' ? 'communities' : 'project';
+    const state = screen === 'communities'
+      ? { screen: screen, tab: tab === 'needs' ? 'needs' : 'status' }
+      : {
+        screen: screen,
+        slug: (scope && scope.slug) || null,
+        tab: AppView.WORKSHOP_TABS.indexOf(tab) !== -1 ? tab : 'status',
+      };
+    state.pushed = !!pushed;
+    return { [AppView.PANE_TAB_KEY]: state };
+  },
+  // Mark the record the router made for a screen that has just arrived on
+  // it, so a tab shown there can be restored from the record itself. An
+  // existing marker for the same screen KEEPS ITS `pushed` FLAG: re-rendering
+  // on a record a tab press pushed must not turn it back into a base entry.
+  _markPaneTab(scope, tab) {
+    const next = AppView._paneTabState(scope, tab, false)[AppView.PANE_TAB_KEY];
+    try {
+      const prev = window.history.state && window.history.state[AppView.PANE_TAB_KEY];
+      const same = !!prev && prev.screen === next.screen
+        && (next.screen !== 'project' || prev.slug === next.slug);
+      if (same) next.pushed = !!prev.pushed;
+      window.history.replaceState({ [AppView.PANE_TAB_KEY]: next }, '');
+    } catch { /* a history a sandbox will not let us write is not worth a throw */ }
+  },
+  // A tab press is a step at the same address: the tab you were on stays on
+  // the current record (when the router did not mark it), and the one you
+  // pressed gets a new record above it. A press on the tab already showing
+  // pushes nothing.
+  _pushPaneTab(scope, next, prev) {
+    if (next === prev) return;
+    try {
+      const current = window.history.state;
+      if (!current || !current[AppView.PANE_TAB_KEY]) {
+        window.history.replaceState(AppView._paneTabState(scope, prev, false), '');
+      }
+      window.history.pushState(AppView._paneTabState(scope, next, true), '');
+    } catch { /* the tab still switches: a sandbox, the side panel's shim */ }
+  },
+  // The in-page back arrow: walk the step a tab press made, or, on a record
+  // the screen did not push (a cold deep link), rewrite the record in place
+  // and switch without adding a step — the pattern Settings.handleBack and
+  // AdminConsole.handleBack already use. Answers true when it traversed.
+  _backPaneTab(scope, tab) {
+    let pushed = false;
+    try {
+      const state = window.history.state && window.history.state[AppView.PANE_TAB_KEY];
+      pushed = !!(state && state.pushed);
+    } catch {}
+    if (pushed) {
+      try { window.history.back(); return true; } catch {}
+    }
+    try { window.history.replaceState(AppView._paneTabState(scope, tab, false), ''); } catch {}
+    AppView._applyPaneTab(scope, tab);
+    return false;
+  },
+  // Switch the screen that owns the tab, without touching history.
+  _applyPaneTab(scope, tab) {
+    if (scope && scope.screen === 'communities') {
+      try { window.UsernodeReact?.workshop?.restore?.(tab === 'needs' ? 'needs' : 'status'); } catch {}
+      return;
+    }
+    const key = AppView.WORKSHOP_TABS.indexOf(tab) !== -1 ? tab : 'status';
+    AppView._setWorkshopTab(key);
+    try {
+      window.dispatchEvent(new CustomEvent('usernode:workshop-tab', {
+        detail: { slug: (scope && scope.slug) || null, tab: key },
+      }));
+    } catch {}
+  },
+  // Back (or Forward) onto a tab record. Runs in the CAPTURE phase, before
+  // the router's bubble listener, so the screen switches from the record
+  // while the router rebuilds whatever address the traversal landed on. A
+  // record whose tab is already showing does nothing: no event, no scroll,
+  // no repaint — which is what keeps a dialog closing over the page quiet
+  // (its record copies this marker).
+  _onPaneTabPop(event) {
+    let recorded = null;
+    try { recorded = (event && event.state) || window.history.state; } catch {}
+    const state = recorded && recorded[AppView.PANE_TAB_KEY];
+    if (!state || !state.screen) return;
+    if (state.screen === 'communities') {
+      // `restore` is idempotent, so a traversal that names the tab already
+      // showing stays quiet.
+      AppView._applyPaneTab({ screen: 'communities' }, state.tab);
+      return;
+    }
+    let current = null;
+    try { current = AppView._workshopTab(); } catch {}
+    const key = AppView.WORKSHOP_TABS.indexOf(state.tab) !== -1 ? state.tab : 'status';
+    if (current === key) return;
+    AppView._applyPaneTab({ screen: 'project', slug: state.slug || null }, key);
   },
   // Rows per lane per theme before "+N more · Open on Board".
   WORKSHOP_LANE_MAX: 8,
@@ -23395,6 +23519,13 @@ function relTime(iso) { return relStamp(iso).text; }
 // see the module.exports block above) doesn't crash on a missing `window`.
 if (typeof window !== 'undefined') {
   window.AppView = AppView;
+  // #3620: Back through a page's own tabs. Capture phase, so this reads the
+  // record BEFORE the shell router's bubble-phase popstate listener runs; it
+  // never stops the event, because a traversal that also changed the address
+  // still has a route to restore.
+  window.addEventListener('popstate', (event) => {
+    try { AppView._onPaneTabPop(event); } catch { /* a tab that cannot restore is the old behaviour */ }
+  }, true);
   // #1038: wire the Dev board's card surfaces to live session state. Both
   // subscriptions are registered ONCE here rather than per mount, so no
   // repaint or navigation can leave the board stranded on a stale spinner;

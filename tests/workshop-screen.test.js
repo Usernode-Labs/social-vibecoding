@@ -1017,3 +1017,45 @@ test('#3270: the controller reads the Needs you feed alongside, and survives los
     global.fetch = priorFetch;
   }
 });
+
+test('#3620: the Communities screen\'s Needs you page is a history step', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const { workshopController, workshopStore } = mod;
+  const calls = [];
+  const priorWindow = global.window;
+  global.window = {
+    AppView: {
+      _pushPaneTab: (...args) => calls.push(['push', ...args]),
+      _backPaneTab: (...args) => { calls.push(['back', ...args]); return false; },
+      _markPaneTab: (...args) => calls.push(['mark', ...args]),
+    },
+  };
+  try {
+    workshopStore.set({ open: true, tab: 'status' });
+    calls.length = 0;
+    workshopController.setTab('needs');
+    assert.deepEqual(calls, [['push', { screen: 'communities' }, 'needs', 'status']],
+      'opening the feed pushes the step AppView records');
+    assert.equal(workshopStore.get().tab, 'needs');
+
+    calls.length = 0;
+    workshopController.restore('status');
+    assert.equal(workshopStore.get().tab, 'status', 'a traversal restores the tab');
+    assert.equal(calls.length, 0, 'and adds no step of its own');
+
+    workshopController.setTab('needs');
+    calls.length = 0;
+    workshopController.backTab('status');
+    assert.deepEqual(calls, [['back', { screen: 'communities' }, 'status']],
+      'the in-page arrow walks the record rather than pushing one');
+
+    // No AppView to walk history (a test, a sandbox): the arrow still switches.
+    global.window = { AppView: {} };
+    workshopController.restore('needs');
+    workshopController.backTab('status');
+    assert.equal(workshopStore.get().tab, 'status');
+  } finally {
+    if (priorWindow === undefined) delete global.window; else global.window = priorWindow;
+    workshopStore.set({ open: false, tab: 'status', rows: null, feed: null, feedError: false });
+  }
+});
