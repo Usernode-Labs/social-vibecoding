@@ -98,6 +98,7 @@ import { listText, t as translate } from '../../lib/i18n/runtime';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { landKeepingPlace } from '../dev-board/workshop/place-store';
 import { channelUnread, useMessagesSnapshot } from '../messages/store';
 import { NeedsReel, type NeedsFeedItem } from './needs-reel';
 import { unseenNeeds, useNeedsSeen } from './needs-seen';
@@ -346,8 +347,9 @@ export function AppRow({ row, onOpen, current = false }: {
           onOpen(row);
           return;
         }
-        // A row opens the project's hub, whatever tab it was last left on.
-        win.AppView?._landOnHub?.(row.slug);
+        // A row opens the project on the place you were on, when it has it,
+        // else its hub: a switch keeps your page (landKeepingPlace).
+        landKeepingPlace(row.slug);
         win.App?.navigateToApp?.(row.slug, 'dev');
       }}
       leading={(

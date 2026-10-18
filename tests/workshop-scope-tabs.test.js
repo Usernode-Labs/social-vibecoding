@@ -68,14 +68,16 @@ const screen = loadTsx('frontend/src/features/workshop/index.tsx');
 
 const app = (slug, working, needs) => ({ slug, name: slug, working, needs });
 
-test('picking a community goes to its hub, and All communities to the list', () => {
+test('picking a community keeps the page you were on, and All communities goes to the list', () => {
   const at = SCOPE.indexOf('export function goToCommunity(');
   const fn = SCOPE.slice(at, SCOPE.indexOf('\n}\n', at));
   assert.match(fn, /closeSwitcher\(\);/, 'the switcher closes either way');
   assert.match(fn, /setScope\(null\);[\s\S]*?_forgetWorkshopView[\s\S]*?window\.location\.hash = '#communities';/,
     'All communities is the list, by the same address the tab carries');
-  assert.match(fn, /setScope\(slug\);\s*try \{ \(window as any\)\.AppView\?\._landOnHub\?\.\(slug\); \}/,
-    'a community opens on its hub');
+  assert.match(fn, /setScope\(slug\);[\s\S]*?if \(onPage\) return;\s*landKeepingPlace\(slug\);/,
+    'a community opens on the place you were on, else its hub');
+  assert.match(SCREEN, /landKeepingPlace\(row\.slug\);\s*win\.App\?\.navigateToApp\?\.\(row\.slug, 'dev'\);/,
+    'a row of All communities is a switch too');
   assert.match(fn, /void app\?\.navigateToApp\?\.\(slug, 'dev'\);/);
   assert.ok(!fn.includes('startSession') && !fn.includes('giveFeedback'), 'nothing is started from the switcher');
   // Join a community is Discover; #3543: Start a community is the new-project dialog.

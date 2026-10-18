@@ -17,7 +17,8 @@
 
 import { createStore } from '../../../lib/plain-store.js';
 import { cachedCommunity, communityInflight, reloadCommunity } from './community-card';
-import { channelPlace, channelsOf, topicHandleMap, type PlaceKey } from './places';
+import { keepPlace } from '../../nav-drawer/drawer-math';
+import { channelPlace, channelsOf, liveTopics, topicHandleMap, type PlaceKey } from './places';
 
 export interface PlaceState {
   /** The project whose page is mounted, or null. */
@@ -219,4 +220,32 @@ if (typeof window !== 'undefined') {
   const w = window as unknown as { UsernodeReact?: Record<string, unknown> };
   w.UsernodeReact = w.UsernodeReact || {};
   w.UsernodeReact.places = { topicHandles, openPlace, openTopicRef, channelRead };
+}
+
+/** The live topics' handles in `slug`'s record, or null when it has not been read. */
+export function cachedTopics(slug: string): string[] | null {
+  const record = cachedCommunity(slug);
+  return record ? liveTopics(record.places).map((c) => String(c.handle || '')) : null;
+}
+
+/**
+ * A SWITCH KEEPS YOUR PAGE, on a desktop as in the phone's drawer. Picking
+ * another community from the header's ⌄ menu or from All communities opens
+ * it on the place you were on when it has that place, else on its hub: the
+ * drawer's own rule (keepPlace). Hub, Needs you, the Workshop and #general
+ * are in every community; a topic only where it is live, as far as its
+ * record has been read. The place you were on is the one the project page
+ * remembers (AppView._workshopTab), which is the one it last showed. Like
+ * AppView._landOnHub it only says where the page opens; the caller
+ * navigates. Returns the place it chose.
+ */
+export function landKeepingPlace(slug: string): string {
+  const view = (window as unknown as {
+    AppView?: { _workshopTab?: () => unknown; _landOnTab?: (slug: string, tab: string) => void };
+  }).AppView;
+  let was: unknown = null;
+  try { was = view?._workshopTab?.(); } catch { /* nothing remembered: its hub */ }
+  const keep = keepPlace(typeof was === 'string' ? was : null, cachedTopics(slug));
+  try { view?._landOnTab?.(slug, keep); } catch { /* the page opens where it opens */ }
+  return keep;
 }

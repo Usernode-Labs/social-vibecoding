@@ -276,8 +276,12 @@ is no replay plan to write and nothing to verify locally.
   `migrate.clearAutomatedChannelLines` clears the lines written before. A
   door to a project's hub (a link that says so) calls
   `AppView._landOnHub(slug)` first, so it opens on the hub rather than the
-  place the page was last left on. Back and Forward are not doors: the page
-  reopens on the place last shown, read fresh when it mounts.
+  place the page was last left on. A switch is not a door: the header's ⌄
+  menu, a row of All communities and the phone drawer's list open the other
+  community on the place you were on when it has it, else its hub
+  (`landKeepingPlace` in `place-store.ts`, `keepPlace` in the drawer). Back
+  and Forward are not doors either: the page reopens on the place last
+  shown, read fresh when it mounts.
 - **Audience is derived, never stored.** `communities.audienceSql` reads it
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember. So a

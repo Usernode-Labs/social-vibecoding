@@ -51,6 +51,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import { landKeepingPlace } from '../dev-board/workshop/place-store';
 import { hydrateNeedsSeen, needsSeenStore, unseenNeeds } from './needs-seen';
 import { orderRows } from './sections';
 
@@ -346,7 +347,8 @@ export function warmCommunities(delayMs = 1500): () => void {
 
 /**
  * Go to a community from the switcher: All communities is the list (and
- * forgets the page the tab reopened), a community is its hub.
+ * forgets the page the tab reopened); a community opens on the place you
+ * were on when it has it, else its hub (landKeepingPlace).
  */
 export function goToCommunity(slug: string | null): void {
   closeSwitcher();
@@ -358,12 +360,12 @@ export function goToCommunity(slug: string | null): void {
     return;
   }
   setScope(slug);
-  try { (window as any).AppView?._landOnHub?.(slug); } catch { /* the page opens where it opens */ }
-  // Already on its page (the lander, not a card or a session under it):
-  // _landOnHub has turned it to the hub, and there is nowhere to go.
+  // Already on its page (the lander, not a card or a session under it): it
+  // stays on the place it shows, and there is nowhere to go.
   const onPage = app?.currentApp === slug
     && !!document.querySelector('#app-view:not(.hidden) #dev-workshop > .dev-ws');
   if (onPage) return;
+  landKeepingPlace(slug);
   void app?.navigateToApp?.(slug, 'dev');
 }
 
