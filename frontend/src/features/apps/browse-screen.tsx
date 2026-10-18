@@ -133,6 +133,7 @@ export function BrowseScreen() {
       ref={screenRef}
       id="browse-screen"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll"
+      data-page-bounce=""
       style={{ position: "relative" }}
     >
       {/*

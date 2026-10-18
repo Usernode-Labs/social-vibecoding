@@ -34,6 +34,7 @@ export function ProfileScreen() {
       ref={screenRef}
       id="profile-screen"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll"
+      data-page-bounce=""
       style={{ position: "relative" }}
     >
       {/*
