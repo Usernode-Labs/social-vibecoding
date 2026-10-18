@@ -78,6 +78,8 @@
  * as it was written.
  */
 
+const { isTemplateKey, templateKeys, DEFAULT_TEMPLATE } = require('../templates/app-starters');
+
 const AUDIENCES = new Set(['solo', 'invited', 'open']);
 const VISIBILITIES = new Set(['public', 'private']);
 const MAX_INVITEES = 20;
@@ -177,12 +179,27 @@ function parseDescription(raw) {
 }
 
 /**
+ * Which starter the new repository begins from (src/templates/app-starters).
+ * Absent means `empty`, which is what older clients send. An import always
+ * resolves to `empty`: the imported repository's own files decide what the
+ * app is, and a template choice does not apply to it.
+ */
+function parseTemplate(raw, { imported = false } = {}) {
+  if (imported) return { template: DEFAULT_TEMPLATE };
+  if (raw == null || raw === '') return { template: DEFAULT_TEMPLATE };
+  if (!isTemplateKey(raw)) {
+    return { error: `template must be one of: ${templateKeys().join(', ')}` };
+  }
+  return { template: raw };
+}
+
+/**
  * Everything POST /api/apps needs to know about who a new project is for.
  * Returns `{ error }` for a 400, otherwise
  * `{ audience, collabVisibility, viewVisibility, invitees, inviteEmails,
- * governance, description }`.
+ * governance, description, template }`.
  */
-function parseCreateOptions(body = {}) {
+function parseCreateOptions(body = {}, { imported = false } = {}) {
   let audience = null;
   let collabVisibility;
   let viewVisibility;
@@ -214,6 +231,11 @@ function parseCreateOptions(body = {}) {
   const desc = parseDescription(body.description);
   if (desc.error) return { error: desc.error };
 
+  // An import's repository decides what the app is, so its template is empty
+  // whatever the body says.
+  const starter = parseTemplate(body.template, { imported });
+  if (starter.error) return { error: starter.error };
+
   return {
     audience,
     collabVisibility,
@@ -222,6 +244,7 @@ function parseCreateOptions(body = {}) {
     inviteEmails: mail.emails,
     governance: gov.governance,
     description: desc.description,
+    template: starter.template,
   };
 }
 

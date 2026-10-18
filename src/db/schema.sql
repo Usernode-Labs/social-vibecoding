@@ -2865,6 +2865,14 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS anon_shell_checked_at TIMESTAMPTZ;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS approver_policy VARCHAR(10) NOT NULL DEFAULT 'anyone';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS approvals_required SMALLINT;
 
+-- Which starter the new repository was scaffolded from (src/templates/
+-- app-starters): 'empty' is today's Press! demo, and 'social', 'media',
+-- 'game-2d' and 'game-3d' are the templates the create dialog offers. The
+-- default keeps every pre-template app exactly as it was. Read by
+-- services/app-creator.js and services/app-heal.js, so a Retry or a
+-- repo-less repair writes the same starter the project was created with.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS app_template VARCHAR(32) NOT NULL DEFAULT 'empty';
+
 -- Per-app admins (#788), display side. The last reconciled *declared*
 -- username list from dapp.json's top-level `admins` block — INCLUDING
 -- names that resolved to no registered user, which is exactly why this

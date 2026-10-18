@@ -97,8 +97,8 @@ test('the new repository\'s dapp.json carries a non-default rule, and only then'
   assert.deepEqual(readGovernance(dapp({ approverPolicy: 'invited', approvalsRequired: 3 })),
     { approvers: 'invited', approvals: 3 });
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
-  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\) \}/g) || []).length, 2,
-    'both template paths (GitHub and local) pass the row\'s rule and its line');
+  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\), template: templateOf\(appRow\) \}/g) || []).length, 2,
+    'both template paths (GitHub and local) pass the row\'s rule, its line and its starter');
 });
 
 test('"What is it?" is one optional line, tidied and bounded', () => {
@@ -134,4 +134,19 @@ test('the new repository\'s dapp.json and CLAUDE.md carry the line, and only whe
   const route = fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8');
   assert.match(route, /UPDATE apps SET manifest_snapshot = \$1 WHERE id = \$2 RETURNING \*`,\s*\[JSON\.stringify\(\{ description, secrets: \[\] \}\), appRow\.id\]/,
     'the route seeds the line where app-creator (and a Retry) reads it');
+});
+
+test('the starter a project begins from: absent is empty, each key passes, an unknown one names the keys, an import ignores it', () => {
+  const templates = require('../src/templates/app-starters');
+  assert.equal(options.parseCreateOptions({}).template, 'empty');
+  assert.equal(options.parseCreateOptions({ template: '' }).template, 'empty');
+  for (const key of templates.templateKeys()) {
+    assert.equal(options.parseCreateOptions({ template: key }).template, key);
+  }
+  const bad = options.parseCreateOptions({ template: 'game-1d' });
+  assert.match(bad.error, /template must be one of: empty, social, media, game-2d, game-3d/);
+  assert.equal(options.parseCreateOptions({ template: 42 }).error,
+    'template must be one of: empty, social, media, game-2d, game-3d');
+  // An import's own repository decides what the app is.
+  assert.equal(options.parseCreateOptions({ template: 'social' }, { imported: true }).template, 'empty');
 });
