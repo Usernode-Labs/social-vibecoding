@@ -5401,6 +5401,11 @@
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",
       "path": "/#agent/990801/changes",
       "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-active-change]:has([data-agent-session-checks-reason]) a[href$=\"/dev/proposals/990802\"]"
+    },
+    {
+      "name": "An open app keeps the whole window: no left-edge hover strip is drawn over it, so pointing near the window's edge cannot bring the navigation back over the app (#3138)",
+      "path": "/#app/staging-demo-forkable",
+      "expectSelector": "body:has(#app-view:not(.hidden)):has(#platform-tabs.hidden):not(:has(#platform-rail-peek))"
     }
   ],
   "governance": {

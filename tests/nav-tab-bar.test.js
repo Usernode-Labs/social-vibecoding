@@ -338,28 +338,25 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   assert.match(block, /\.platform-parked-pill \{[\s\S]{0,200}order: -1;/);
 });
 
-test('the rail peeks back over an open app, and reserves nothing while it does', () => {
-  // An app covers the rail, which is what makes it feel like a program
-  // rather than a page, and on a laptop the pointer is already at the left
-  // edge half the time. The navigation comes back on hover and stops
-  // spending width while you work.
+test('a folded rail peeks back on hover, and reserves nothing while it does', () => {
+  // Folding the rail leaves no band reserved, and pointing at the window's
+  // left edge (or at the sidebar toggle) brings the navigation back as an
+  // overlay that stops spending width while you work.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /id="platform-rail-peek"/, 'a hot zone starts it');
-  // TWO WAYS TO HAVE NO RAIL, and the zone answers both (#2718 review): the
-  // ROUTE can say there is none (an app) and the VIEWER can fold the one
-  // there is (#sidebar-toggle). `!railOpen` rather than the `collapsed` the
+  // A RAIL THE ROUTE HAS THAT THE VIEWER FOLDED, and nothing else. `visible`
+  // is false inside a running app, on the chromeless shell and signed out, so
+  // the strip is not drawn there; `!railOpen` rather than the `collapsed` the
   // class toggle below uses, deliberately — `collapsed` is also true on the
   // chromeless and signed-out shells, where a strip that peeked a rail in
   // would be conjuring navigation out of nothing.
-  assert.match(bar, /\(screen === 'app-view' && !visible\) \|\| !railOpen \? \(/,
-    'and it exists where the rail is out of the way, by either route');
-  // NOT a bare `screen === 'app-view'`: the app view is two screens, and on
-  // its Workshop the rail is UP. This strip is `z-index: 39` against the
-  // rail's 30, so rendering it there lays an invisible 18px column down the
-  // left edge of the tabs and swallows the press meant for the one under the
-  // pointer.
-  assert.ok(!bar.includes("{screen === 'app-view' ? ("),
-    'the app view alone is not the question — whether its rail is down is');
+  assert.match(bar, /\{visible && !railOpen \? \(/,
+    'the hot zone belongs to a folded rail on a screen that has one');
+  // AN OPEN APP KEEPS THE WHOLE WINDOW (#3138). The app-view term used to
+  // render the strip there, so pointing near the app's left edge slid the
+  // navigation over it. The way out of an app is the header's Close app.
+  assert.ok(!bar.includes("screen === 'app-view' && !visible"),
+    'a running app never gets the edge strip');
   // THE PEEK IS NOT THE BAR'S VISIBILITY. The router still says hidden, the
   // screens reserve no band, and the app is full width; this is an overlay
   // on top of that answer.
@@ -379,7 +376,7 @@ test('the rail peeks back over an open app, and reserves nothing while it does',
 });
 
 test('every screen change clears the peek, and nothing else does', () => {
-  // That is what a peek is FOR: you reveal the rail over an app to leave it,
+  // That is what a peek is FOR: you reveal the folded rail to go somewhere,
   // and the thing you tapped has now happened. Leaving it set would hand the
   // next screen an overlay rail on top of its own.
   const mount = read('frontend/src/features/nav/mount.ts');

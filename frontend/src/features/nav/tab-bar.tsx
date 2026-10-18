@@ -811,28 +811,24 @@ export function PlatformTabs() {
     <>
       {/*
           THE HOT ZONE. A strip at the window's left edge, and the only thing
-          that can start a peek. It renders wherever there is no rail to point
-          at — inside an app, or with the rail folded by hand — and app.css
-          hides it below the desktop breakpoint, because a phone has no
-          pointer to hover with and a hidden touch target at the screen edge
-          would eat swipes.
+          that can start a peek. It renders for a rail the route HAS that the
+          viewer folded by hand, and for nothing else. app.css hides it below
+          the desktop breakpoint, because a phone has no pointer to hover with
+          and a hidden touch target at the screen edge would eat swipes.
 
-          NOT `collapsed`, and not a bare `screen === 'app-view'` either.
-          `collapsed` is also true on the chromeless and signed-out shells,
-          where there is no rail behind the edge to bring back and a strip
-          that peeked one in would be conjuring navigation out of nothing.
-          And the app view is TWO screens now (#2718 review): on its Workshop
-          the rail is UP, and this strip is `z-index: 39` against the rail's
-          30 — an invisible 18px column down the left edge of the tabs,
-          swallowing the press meant for the one under the pointer.
+          NOT `collapsed`, and NOT the running app. `collapsed` is also true
+          on the chromeless and signed-out shells, where there is no rail
+          behind the edge to bring back and a strip that peeked one in would
+          be conjuring navigation out of nothing. And an app is the whole
+          window: pointing near its left edge must not put the navigation over
+          it (#3138). The way out of an app is the header's Close app control.
 
-          So: the app view WITH ITS RAIL DOWN, which is the running app, or a
-          rail the viewer folded anywhere. A folded rail is the running app's
-          arrangement reached another way and the way back has to be the same
-          one, or the toggle is a door that only opens; `!railOpen` implies a
-          rail existed, because the toggle renders only where one does.
+          So: `visible && !railOpen`, a rail the route draws that the viewer
+          folded. That fold was the viewer's own action and the way back has
+          to be the same one, or the toggle is a door that only opens; the
+          sidebar toggle peeks it too.
       */}
-      {(screen === 'app-view' && !visible) || !railOpen ? (
+      {visible && !railOpen ? (
         <div
           id="platform-rail-peek"
           className="platform-rail-peek"

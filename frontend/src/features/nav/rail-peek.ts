@@ -8,6 +8,11 @@
  * is where the pointer already is when the reader goes looking for the
  * navigation they folded away.
  *
+ * THE PEEK IS A FOLDED RAIL'S, and only a folded rail's (#3138): an open app
+ * has no peek, because an app keeps the whole window. The toggle that starts
+ * one is hidden wherever the route draws no rail, so nothing over an app can
+ * reach these functions.
+ *
  * ── Why the grace timer is module state ───────────────────────────────
  *
  * The pointer has to cross a gap to get from whatever summoned the rail onto
