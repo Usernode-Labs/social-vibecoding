@@ -277,15 +277,12 @@ async function recordClosed(pool, { appId, numbers }) {
   await pool.query(RECORD_CLOSED_SQL, [Number(appId), list]);
 }
 
-// The bot's loop, wherever it runs, hears a slot came free (the bus: this
-// runs in the workflow's work, which need not be the loop's process). A
-// hint: a lost one waits for the loop's next refresh.
+// The bot's lane hears a slot came free: the project is refreshed soon (a
+// held request may take it). A hint: a lost one waits for the next refresh.
 function wakeFor(appId, deps) {
-  try {
-    (deps.wake || require('./homeroom-bot').wakeApp)({ appId: Number(appId) });
-  } catch (err) {
-    log.warn('homeroom-bot-closed-requests', 'Could not wake the bot after a withdrawal', { appId, err: err.message });
-  }
+  Promise.resolve()
+    .then(() => (deps.wake || ((a) => require('../workflow/platform.ts').botRefresh(a.appId)))({ appId: Number(appId) }))
+    .catch((err) => log.warn('homeroom-bot-closed-requests', 'Could not wake the bot after a withdrawal', { appId, err: err.message }));
 }
 
 /**

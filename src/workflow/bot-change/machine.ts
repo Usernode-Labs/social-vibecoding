@@ -40,15 +40,21 @@ export const WORK = Object.freeze({
   liveDm: 'bot.tellLive',
   livePost: 'bot.commentLive',
 });
-// How often a change handed back to the bot is looked at while the bot has
-// not said its round looked at the head (FixRoundEnded, a speed-up): its
-// queue row still there means the round is waiting or under way; gone with
-// nothing recorded, the round was lost (a follow-up that ended without it,
-// a release), and it is asked once more (Q3); lost again, it is given up on:
-// a change whose checks pass is ready to try, saying what does not work; one
-// whose checks fail is left as [main] left it (nobody is told).
+// How often a change being merged is looked at again (a merge GitHub does
+// not confirm puts it back up for its vote).
 export const FIX_LOOK_MS = 10 * 60 * 1000;
+// A change handed back to the bot waits for the bot's answer: its request's
+// instance (bot-request) tells it how the round it asked for ended
+// (FixRoundEnded, with `outcome`), or that it was not taken (FixRefused).
+// A round lost (its look ended without it, or failed for good) is asked
+// once more (Q3); lost again, it is given up on: a change whose checks pass
+// is ready to try, saying what does not work; one whose checks fail is left
+// as [main] left it (nobody is told). A round a person stopped is not asked
+// again for that head: it is asked when it is next needed (a new verdict,
+// its shots, a promote), as a refusal is (design-bot-loop Q1).
 export const FIX_ROUNDS = 2;
+// The outcomes of a round that did not look at the head.
+const LOST: ReadonlySet<string> = new Set(['lost', 'requeued']);
 
 // ── State ───────────────────────────────────────────────────────────────
 
@@ -93,7 +99,8 @@ const EVENTS = {
   Verdict: (p: any) => ({ ...session(p), head: optSha(p?.head), state: text(p?.state, 32) }),
   ShotsSettled: session,
   PreviewStopped: (p: any) => ({ ...session(p), head: optSha(p?.head) }),
-  FixRoundEnded: (p: any) => ({ ...session(p), head: optSha(p?.head) }),
+  FixRoundEnded: (p: any) => ({ ...session(p), head: optSha(p?.head), outcome: text(p?.outcome, 20) }),
+  FixRefused: (p: any) => ({ ...session(p), head: optSha(p?.head), why: text(p?.why, 64) }),
   Merged: (p: any) => ({ ...session(p), before: text(p?.before, 40) }),
   Live: session,
   Closed: (p: any) => ({ ...session(p), reason: text(p?.reason, 64) }),
@@ -168,7 +175,7 @@ function decide(s: Live | null, f: Facts, ctx: TransitionContext, base: Data, ex
   // looked), unless the bot would not take it or gave up waiting. (With its
   // checks passed, what is due is what its shots show.)
   if (due && !(fixHere && (fixHere.refused || fixHere.gaveUp))) {
-    if (fixHere?.asked) return at('with_the_bot', { timer: lookIn(ctx) });
+    if (fixHere?.asked) return at('with_the_bot', { timer: null });
     return askFix(d, due.head, fixHere?.lost || 0, ctx, extra);
   }
   // Failing checks the bot does not fix (it is off, not on this app, or the
@@ -192,18 +199,24 @@ function decide(s: Live | null, f: Facts, ctx: TransitionContext, base: Data, ex
 function askFix(base: Data, head: string, lost: number, ctx: TransitionContext, extra: { push?: Push[] } = {}): Outcome<BState> {
   const work: WorkRequest[] = [{ kind: WORK.fix, key: `fix:${shortSha(head)}:v${ctx.version + 1}`, input: { sessionId: base.sessionId, head } }];
   const d = asked({ ...base, fix: { head, asked: true, lost, refused: null, gaveUp: false } }, work);
-  return step('with_the_bot', d, { work, push: extra.push, timer: lookIn(ctx) });
+  return step('with_the_bot', d, { work, push: extra.push, timer: null });
 }
 
-// The clock while the bot has its change: its round looked (decide), is
-// waiting or under way (its queue row is there), or was lost: asked once
-// more, then given up on.
-function looked(s: Live, f: Facts, ctx: TransitionContext): Outcome<BState> {
+// The bot's answer about the round it was asked for: looked at the head
+// (decided now: the round recorded it), lost (asked once more, then given
+// up on), or not taken (decided without a round, until the next verdict
+// asks again). An answer about a head the change has left decides nothing
+// new.
+function answered(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<BState> {
   const fix = s.data.fix;
-  if (!fix || !fix.asked || f.looked || !f.row || f.row.status !== 'promoted') return decide(s, f, ctx, s.data);
+  if (!fix || !fix.asked || (e.payload.head && e.payload.head !== fix.head)) return decide(s, f, ctx, s.data);
+  if (e.type === 'FixRefused') return decide(s, f, ctx, { ...s.data, fix: { ...fix, asked: false, refused: e.payload.why || 'refused' } });
+  if (e.payload.outcome === 'stopped') return decide(s, f, ctx, { ...s.data, fix: { ...fix, asked: false, refused: 'stopped' } });
+  if (!LOST.has(String(e.payload.outcome || '')) || f.looked || !f.row || f.row.status !== 'promoted') {
+    return decide(s, f, ctx, { ...s.data, fix: { ...fix, asked: false } });
+  }
   const due = checksDue({ ...f.row, looked: f.looked, fix_revised: f.fixRevised });
-  if (!due || due.head !== fix.head) return decide(s, f, ctx, s.data);
-  if (f.queued) return step('with_the_bot', s.data, { timer: lookIn(ctx) });
+  if (!due || due.head !== fix.head) return decide(s, f, ctx, { ...s.data, fix: { ...fix, asked: false } });
   const lost = fix.lost + 1;
   if (lost < FIX_ROUNDS) return askFix(s.data, fix.head, lost, ctx);
   return decide(s, f, ctx, { ...s.data, fix: { ...fix, asked: false, lost, gaveUp: true } });
@@ -221,7 +234,7 @@ function look(s: BState, e: Event<any>, f: Facts, ctx: TransitionContext): Outco
   let d = live ? live.data : created(e, f);
   if (NEWS.has(e.type) && d.fix?.refused) d = { ...d, fix: { ...d.fix, refused: null } };
   const push = e.type === 'Proposed' && fromProposal(e) ? tray(f) : undefined;
-  if (live && live.name === 'with_the_bot' && (e.type === 'Look' || e.type === 'FixRoundEnded')) return looked(live, f, ctx);
+  if (live && live.name === 'with_the_bot' && (e.type === 'FixRoundEnded' || e.type === 'FixRefused')) return answered(live, e, f, ctx);
   return decide(live && live.name !== 'closed' ? live : null, f, ctx, d, { push });
 }
 
@@ -336,7 +349,7 @@ const admin = (e: Event<any>): Check => (e.source.kind === 'admin' || e.source.k
 export function botChange(): Machine<BState, Facts> {
   const works = { WorkSucceeded: workResult('done'), WorkFailed: workResult('failed'), WorkExhausted: workResult('exhausted') };
   const looks = {
-    Proposed: { to: look }, Verdict: { to: look }, ShotsSettled: { to: look }, FixRoundEnded: { to: look }, Look: { to: look },
+    Proposed: { to: look }, Verdict: { to: look }, ShotsSettled: { to: look }, FixRoundEnded: { to: look }, FixRefused: { to: look }, Look: { to: look },
     PreviewStopped: { to: stopped },
     Merged: { to: merged },
     Live: { to: wentLive },
@@ -345,7 +358,7 @@ export function botChange(): Machine<BState, Facts> {
     ...works,
   };
   const ended = {
-    Proposed: { ignore: 'ended' }, Verdict: { ignore: 'ended' }, ShotsSettled: { ignore: 'ended' }, FixRoundEnded: { ignore: 'ended' },
+    Proposed: { ignore: 'ended' }, Verdict: { ignore: 'ended' }, ShotsSettled: { ignore: 'ended' }, FixRoundEnded: { ignore: 'ended' }, FixRefused: { ignore: 'ended' },
     Look: { ignore: 'ended' }, PreviewStopped: { ignore: 'ended' }, Merged: { ignore: 'ended' }, Live: { ignore: 'ended' },
     Closed: { ignore: 'ended' }, RetryFollowup: retryFollowup, ...works,
   };
@@ -354,7 +367,7 @@ export function botChange(): Machine<BState, Facts> {
   const mergedState = {
     ...looks,
     Proposed: { ignore: 'merged' }, Verdict: { ignore: 'merged' }, ShotsSettled: { ignore: 'merged' },
-    FixRoundEnded: { ignore: 'merged' }, Look: { ignore: 'merged' }, PreviewStopped: { ignore: 'merged' },
+    FixRoundEnded: { ignore: 'merged' }, FixRefused: { ignore: 'merged' }, Look: { ignore: 'merged' }, PreviewStopped: { ignore: 'merged' },
   };
   // Closed: put up for a vote again (reopened), it is followed again.
   const closedState = { ...ended, Proposed: { to: look } };
@@ -385,9 +398,10 @@ export function botChange(): Machine<BState, Facts> {
       Verdict: fromMachine('preview'),
       ShotsSettled: fromMachine('shots'),
       PreviewStopped: fromMachine('preview'),
-      // The bot's loop, when its round on the change's head ends
-      // (homeroom-bot.js runChecksFix), or a shim's.
+      // The request's instance (bot-request), answering the round it was
+      // asked for.
       FixRoundEnded: anyProducer,
+      FixRefused: anyProducer,
       Merged: fromMachine('merge-followups'),
       Live: fromMachine('merge-followups'),
       Closed: fromMachine('proposal'),

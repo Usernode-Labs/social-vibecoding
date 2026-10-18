@@ -3,6 +3,27 @@
   "description": "Runtime-built .query() calls reviewed outside the static PostgreSQL validator.",
   "queries": [
     {
+      "source": "server.js",
+      "kind": "structural-template",
+      "fingerprint": "856f867d06e5b2aabdcc",
+      "count": 1,
+      "preview": "`SELECT cs.id FROM chat_sessions cs WHERE cs.active_turn IS NOT NULL AND cs.active_turn->>'phase' = ANY($1::text[]) AND COALESCE(cs.active_turn->>'lifecycleUpda"
+    },
+    {
+      "source": "server.js",
+      "kind": "structural-template",
+      "fingerprint": "a93a5c8f9dbfecec396a",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.user_id, cs.app_id, cs.status, cs.pr_number, cs.active_turn, cs.workflow_owner, u.username, u.is_synthetic AS user_is_synthetic FROM chat_sess"
+    },
+    {
+      "source": "server.js",
+      "kind": "structural-template",
+      "fingerprint": "f61373012d6b3e42df26",
+      "count": 1,
+      "preview": "`SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.self_hosted AS app_self_hosted, u.username, u.is_synthetic AS user_is_synthetic, ((cs.workfl"
+    },
+    {
       "source": "src/db/migrate.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",
@@ -1067,6 +1088,13 @@
       "preview": "`SELECT pv.user_id FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = $1 AND pv.vote = 'yes' AND ${countedVotePredicateSql('p"
     },
     {
+      "source": "src/services/homeroom-bot-followup.js",
+      "kind": "structural-template",
+      "fingerprint": "9adf25865a09dcace29e",
+      "count": 1,
+      "preview": "`SELECT (cs.active_turn IS NOT NULL AND NOT (cs.active_turn->'owner'->>'machine' IS NOT DISTINCT FROM $2 AND cs.active_turn->'owner'->>'key' IS NOT DISTINCT FRO"
+    },
+    {
       "source": "src/services/homeroom-bot-mayor.js",
       "kind": "structural-template",
       "fingerprint": "7c68d039fac8e1650efb",
@@ -1100,13 +1128,6 @@
       "fingerprint": "f5edec0605c15fed7729",
       "count": 1,
       "preview": "`SELECT ${workedOnSql()} AS busy FROM chat_sessions cs WHERE cs.id = $1`"
-    },
-    {
-      "source": "src/services/homeroom-bot.js",
-      "kind": "structural-template",
-      "fingerprint": "9a829c6ca7be69f2bf21",
-      "count": 1,
-      "preview": "`UPDATE homeroom_bot_queue SET started_at = NULL WHERE started_at IS NOT NULL AND started_at < NOW() - make_interval(secs => $1)${ keep.length ? '\\n AND NOT (id"
     },
     {
       "source": "src/services/issue-announce.js",
@@ -1405,7 +1426,7 @@
     {
       "source": "src/services/sync-main.js",
       "kind": "structural-template",
-      "fingerprint": "ffc12ef2b720fa34fbf2",
+      "fingerprint": "95e0e13f01f38d328407",
       "count": 1,
       "preview": "`SELECT cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'ru"
     },
@@ -1669,6 +1690,34 @@
       "preview": "`SELECT s.user_id, s.expires_at, u.username, u.is_admin FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = $1 AND ${nativeWebSessionIsLive('s')}`"
     },
     {
+      "source": "src/workflow/bot-lane/facts.ts",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "49b91267efa786ab4198",
+      "count": 1,
+      "preview": "READ_CANDIDATES_SQL"
+    },
+    {
+      "source": "src/workflow/bot-lane/facts.ts",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "4d0ea99c81f31abafd71",
+      "count": 1,
+      "preview": "SLOTS_IN_USE_SQL"
+    },
+    {
+      "source": "src/workflow/bot-lane/facts.ts",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "e35ad9567dd9e157afab",
+      "count": 1,
+      "preview": "NEXT_ELIGIBLE_SQL"
+    },
+    {
+      "source": "src/workflow/bot-lane/facts.ts",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "f175185e41143a7d782b",
+      "count": 1,
+      "preview": "BUILD_CANDIDATES_SQL"
+    },
+    {
       "source": "src/workflow/kernel/pipeline.ts",
       "kind": "query-config-expression",
       "fingerprint": "569cab0c3954f88a12fa",
@@ -1699,7 +1748,7 @@
     {
       "source": "src/workflow/merge-followups/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "47283bf2682e5af97edf",
+      "fingerprint": "48e2b24d263d197f6dbb",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.status, cs.user_id, cs.pr_number, cs.pr_title, cs.linked_issues, cs.agent_session_id, cs.active_turn IS NOT NULL AS active_turn, cs"
     },
@@ -1713,6 +1762,13 @@
     {
       "source": "src/workflow/platform.ts",
       "kind": "runtime-built-identifier",
+      "fingerprint": "9e1cc39ff30320cb83c2",
+      "count": 1,
+      "preview": "TURN_OWNER_SQL"
+    },
+    {
+      "source": "src/workflow/platform.ts",
+      "kind": "runtime-built-identifier",
       "fingerprint": "ceba6e953f4de0b148dd",
       "count": 1,
       "preview": "insertSql"
@@ -1720,16 +1776,16 @@
     {
       "source": "src/workflow/platform.ts",
       "kind": "structural-template",
-      "fingerprint": "4cb190fab746c444e38d",
+      "fingerprint": "2cd64c8d65bd2a669777",
       "count": 1,
-      "preview": "`SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = $1 AND pv.vote = 'yes' AND"
+      "preview": "`WITH m AS (${insertSql}), e AS ( INSERT INTO wf_events (machine, key, app_id, type, payload, source, actor, request_key, caused_by) SELECT $${n + 1}, $${n + 2}"
     },
     {
       "source": "src/workflow/platform.ts",
       "kind": "structural-template",
-      "fingerprint": "bcf7fbb54cdbe89f1bec",
+      "fingerprint": "4cb190fab746c444e38d",
       "count": 1,
-      "preview": "`WITH m AS (${insertSql}), e AS ( INSERT INTO wf_events (machine, key, app_id, type, payload, source, actor, request_key, caused_by) SELECT $${n + 1}, $${n + 2}"
+      "preview": "`SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = $1 AND pv.vote = 'yes' AND"
     },
     {
       "source": "src/workflow/preview/facts.ts",
@@ -1748,7 +1804,7 @@
     {
       "source": "src/workflow/proposal/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "76b1e5af1f8bd1f69d61",
+      "fingerprint": "b149a8372cf1247d2020",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.pr_number, cs.pr_title, cs.branch_name, cs.reviewed_head_sha, cs.imported_pr_head"
     },
@@ -1804,7 +1860,7 @@
     {
       "source": "src/workflow/shots/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "44620d5c7a65a211cef8",
+      "fingerprint": "82f09b6e822a16d8913e",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.status, cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha, cs.checks_commit_sha, cs.handoff_head_sha, cs.staging_commit_sha,"
     },

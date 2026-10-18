@@ -27,7 +27,6 @@ const log = require('./logger');
 const worker = require('./worker');
 const limits = require('./limits');
 const events = require('./events');
-const { activeWorkers, beginSessionOperation } = require('./active-workers');
 
 // The worker's "[sync_*]" phase markers, as the timeline's progress lines
 // and as the banner's coarse phases (merging → resolving → pushing).
@@ -97,12 +96,15 @@ async function persistConflictState(pool, session, { state, files }) {
 const IDLE_POLL_MS = 3000;
 const IDLE_WAIT_MS = 10 * 60 * 1000;
 async function sessionBusy(pool, sessionId) {
-  const { operationsLiveSql } = require('../workflow/session-work.ts');
+  const { botLookingSql, buildHoldSql, operationsLiveSql, shotsRunningSql } = require('../workflow/session-work.ts');
   const { rows: [r] } = await pool.query(
     `SELECT cs.active_turn IS NOT NULL
             OR EXISTS (SELECT 1 FROM local_agent_turns t
                         WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
-            OR ${operationsLiveSql('cs.id')} AS busy
+            OR ${operationsLiveSql('cs.id')}
+            OR ${shotsRunningSql('cs.id')}
+            OR ${buildHoldSql('cs')}
+            OR ${botLookingSql('cs.id')} AS busy
        FROM chat_sessions cs WHERE cs.id = $1`, [sessionId]);
   return !!r?.busy;
 }
@@ -171,6 +173,10 @@ const TRIGGERS = new Map([
  */
 async function runSyncWork(config, pool, {
   sessionId, reason, measureFirst = false, waitForIdle = false, githubConflict = false, last = true, steps,
+  // The proposal machine's branch.sync item that runs this (turn-lifecycle
+  // turnOwner): on the turn's record, so the turn is that item's in every
+  // process, and a Stop is an event to the proposal machine.
+  owner = null,
 }, injected = {}) {
   const deps = {
     worker, limits, events, integration: require('./integration'), durableTurn: require('./durable-turn'),
@@ -292,11 +298,10 @@ async function runSyncWork(config, pool, {
     broadcastSyncStatus(session, phase);
   };
 
-  // A sync is somebody working on the session, for every machine that asks
-  // (src/workflow/session-work.ts): recorded while it runs, by this process.
-  const releaseOperation = beginSessionOperation(id, 'sync');
+  // A sync is somebody working on the session for every machine that asks
+  // (src/workflow/session-work.ts syncWorkingSql): its own work item, while
+  // outstanding, and its turn's record names it.
   try {
-    await releaseOperation.recorded;
     if (!steps.has('started')) {
       broadcastSyncStatus(session, 'starting');
       if (emitActivity) await sendStatus('Syncing with main…');
@@ -304,37 +309,35 @@ async function runSyncWork(config, pool, {
     }
 
     const turn = await deps.durableTurn.runTurn(steps, 'sync', {
-      pool, session, mode: 'sync', budgetMs: SYNC_BUDGET_MS, onProgress,
-      stop: () => deps.worker.stopTurn(id),
+      pool, session, mode: 'sync', budgetMs: SYNC_BUDGET_MS, onProgress, owner,
+      // Its own clock ends only its own turn (by its record), and says
+      // nobody stopped it.
+      stop: () => deps.durableTurn.clockStop(deps.worker, pool, id, owner),
       dispatch: async (extra, { budgetMs } = {}) => {
         // Always on the platform key.
         await deps.worker.ensureWorkerImage();
         await deps.worker.ensureWorker(id, { repoOwner, repoName, branchName: session.branch_name, onProgress });
-        await activeWorkers.enter(id);
-        // #937: a sync turn is a new turn; a stop asked of an earlier chat
-        // turn does not refuse it.
-        deps.worker.clearPendingStop(id);
-        try {
-          const result = await deps.worker.execInWorker(id, {
-            mode: 'sync',
-            prompt: '(sync turn — see MODE=sync block in run-cc.sh)',
-            model: 'claude-sonnet-5-5',
-            commitMsg: '',
-            resumeSessionId: null,
-            branchName: session.branch_name,
-            anthropicApiKey: null,
-            onProgress,
-            ...(budgetMs ? { timeoutMs: budgetMs } : {}),
-            ...(extra.holdTurnRecord ? { holdTurnRecord: true } : {}),
-            ...(typeof extra.onTurnRecord === 'function' ? { onTurnRecord: extra.onTurnRecord } : {}),
-          });
-          return { result };
-        } finally {
-          activeWorkers.delete(id);
-        }
+        const result = await deps.worker.execInWorker(id, {
+          mode: 'sync',
+          prompt: '(sync turn — see MODE=sync block in run-cc.sh)',
+          model: 'claude-sonnet-5-5',
+          commitMsg: '',
+          resumeSessionId: null,
+          branchName: session.branch_name,
+          anthropicApiKey: null,
+          onProgress,
+          ...(budgetMs ? { timeoutMs: budgetMs } : {}),
+          ...(extra.owner ? { owner: extra.owner } : {}),
+          ...(extra.holdTurnRecord ? { holdTurnRecord: true } : {}),
+          ...(typeof extra.onTurnRecord === 'function' ? { onTurnRecord: extra.onTurnRecord } : {}),
+        });
+        return { result };
       },
     });
     const routed = turn.routed || {};
+    // A person's Stop never gets here: the proposal machine ends the sync
+    // as stopped by them and cancels this work (its next checkpoint throws),
+    // so what the stopped turn left is never read as a conflict.
     if (typeof routed.error === 'string') throw new Error(routed.error.replace(/^dispatch: /, ''));
     const result = routed.result || {};
 
@@ -419,8 +422,6 @@ async function runSyncWork(config, pool, {
     if (last) broadcastSyncStatus(session, 'failed', { message: err.message });
     log.warn('sync-main', 'Sync with main failed', { sessionId: id, reason, err: err.message });
     throw err;
-  } finally {
-    releaseOperation();
   }
 }
 

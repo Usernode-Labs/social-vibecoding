@@ -16,9 +16,11 @@
 //   holdsSession() whether a build under way owns a session, wherever it
 //                runs: its worker is kept for it (worker.js ensureWorker)
 //
-// A build is a target (live, shadow, trial) and an id (the run, or the
-// trial). What each target runs is its own module's: homeroom-bot.js for a
-// run, bench/lane.js for a trial. Without the workflow runtime (it failed to
+// A build is a target (live, trial) and an id (the run, or the trial). What
+// each target runs is its own module's: homeroom-bot.js for a run,
+// bench/lane.js for a trial. (The shadow target, a staging lane that ran
+// nowhere, is gone: an older release's shadow build fails for good.)
+// Without the workflow runtime (it failed to
 // start), a build runs here, in this process, on the inert context, as
 // builds always ran before: nothing is kept, and a restart loses it.
 
@@ -62,10 +64,6 @@ const TARGETS = {
   live: {
     run: (args) => require('./homeroom-bot').runLiveBuild(args),
     lost: (args) => require('./homeroom-bot').recordLostLiveBuild(args),
-  },
-  shadow: {
-    run: (args) => require('./homeroom-bot').runShadowBuild(args),
-    lost: (args) => require('./homeroom-bot').recordLostShadowBuild(args),
   },
   trial: {
     run: (args) => require('./bench/lane').runTrial(args),
@@ -188,6 +186,10 @@ async function run(ctx, { config, pool, maxAttempts = null }) {
     attempt: ctx.attempt, lostAttempts: ctx.lostAttempts || 0, owner: `bot-build/${key}`,
     triesLeft: triesLeftOf(ctx, maxAttempts),
   });
+  // The build's turns are this work item's (durable-turn reads it off the
+  // steps and the turn's record names it): its lease is their presence, and
+  // a Stop is an event to the bot-build instance.
+  steps.turnOwner = { machine: 'bot-build', key, kind: ctx.kind || 'build.run', workKey: ctx.key || 'run', workId: ctx.workId || null };
   if (ctx.resumeFrom) {
     log.info('build-runs', 'Carrying a build on from its last saved step', {
       key, attempt: ctx.attempt, lost: ctx.lostAttempts || 0, steps: Object.keys(ctx.resumeFrom).length,

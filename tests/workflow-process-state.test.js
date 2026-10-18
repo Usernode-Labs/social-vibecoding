@@ -13,8 +13,9 @@
 // - `io`: a work handler's I/O core, a function outside src/workflow/ shown
 //   to keep no process memory, each with a reason saying what it does and
 //   why it keeps none (the two-process and restart tests show it);
-// - `handOff`: a work handler's call into a flow a later step migrates,
-//   each naming that step: it leaves the list when the step lands.
+// The last hand-offs (calls into a flow a later step would migrate) left
+// with step 9, the agent turns' presence in Postgres: there are none, and
+// none may come back.
 // Everything else (a new call, another writer of an owned column, module
 // state, a timer) fails here: the list of what the machines still depend on
 // is empty, and stays so (plan-ratchet-cleanup, 2026-10-17). An entry that
@@ -26,7 +27,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { boundary, readBaseline, BASELINE } = require('./lib/workflow-boundary');
 
-const SECTIONS = ['io', 'handOff'];
+const SECTIONS = ['io'];
 
 test('every place a workflow machine reaches outside src/workflow/ is reviewed, and nothing else is there', () => {
   const baseline = readBaseline();
@@ -50,16 +51,13 @@ test('every place a workflow machine reaches outside src/workflow/ is reviewed, 
   assert.deepEqual(problems, [], `${problems.length} difference(s) from ${BASELINE}:\n${problems.join('\n')}`);
 });
 
-test('each I/O core says what it does and why it keeps no process memory, each hand-off which step removes it', () => {
+test('each I/O core says what it does and why it keeps no process memory; nothing is handed off', () => {
   const baseline = readBaseline();
-  assert.deepEqual(Object.keys(baseline).sort(), ['allowed', 'handOff', 'io'], 'nothing but what was reviewed');
-  for (const [section, says] of [['io', 'what it does, and why it keeps no process memory'], ['handOff', 'which step migrates the flow it calls']]) {
-    for (const [name, entries] of Object.entries(baseline[section] || {})) {
-      for (const [entry, reason] of Object.entries(entries)) {
-        assert.ok(entry.startsWith('services | uses '), `${name}: ${section}: ${entry}: only a work handler's call can be one`);
-        assert.ok(typeof reason === 'string' && reason.length > 40, `${name}: ${section}: ${entry}: say ${says}`);
-        if (section === 'handOff') assert.match(reason, /\bstep\b/, `${name}: ${entry}: name the step that removes it`);
-      }
+  assert.deepEqual(Object.keys(baseline).sort(), ['allowed', 'io'], 'nothing but what was reviewed, and no hand-off');
+  for (const [name, entries] of Object.entries(baseline.io || {})) {
+    for (const [entry, reason] of Object.entries(entries)) {
+      assert.ok(entry.startsWith('services | uses '), `${name}: io: ${entry}: only a work handler's call can be one`);
+      assert.ok(typeof reason === 'string' && reason.length > 40, `${name}: io: ${entry}: say what it does, and why it keeps no process memory`);
     }
   }
 });

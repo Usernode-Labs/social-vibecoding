@@ -51,6 +51,7 @@ import { createConnectorSubmittedNotification, createPrProposedNotifications, cr
 import { invalidateHeadMoveSql } from '../rules/summary-freshness.ts';
 import { claimRefusal } from '../rules/merge-claim.ts';
 import { toBotChange, withdrawnNote, writeBotChange } from '../rules/bot-notes.ts';
+import { turnStop } from '../rules/turn-stop.ts';
 import { readFacts, NO_FACTS } from './facts.ts';
 import type { Facts, Row } from './facts.ts';
 
@@ -230,7 +231,7 @@ export const MERGED_RESEND_MS = 5 * 60 * 1000;
 export const MERGED_RESEND_MAX_MS = 30 * 60 * 1000;
 // The outcomes of a sync that did nothing to the branch: a platform sync's
 // once-record is put back, so it may be asked again for that head.
-const NOTHING_RAN: ReadonlySet<string> = new Set(['unmeasured', 'over_budget', 'gone', 'error', 'busy', 'not_pushed']);
+const NOTHING_RAN: ReadonlySet<string> = new Set(['unmeasured', 'over_budget', 'gone', 'error', 'busy', 'not_pushed', 'stopped']);
 export const SYNC_BACKOFF_MAX_MS = 30 * 60 * 1000;
 // Why a sync with main is asked for.
 export const SYNC_REASONS: ReadonlySet<string> = new Set([
@@ -366,6 +367,9 @@ const EVENTS = {
     return { ...session(p), reason, head: optSha(p?.head, 'head'), keys, queueN: optInt(p?.queueN, 'queueN'),
       approved: !!p?.approved, userId: optInt(p?.userId, 'userId'), githubConflict: !!p?.githubConflict };
   },
+  // A person's Stop of the turn the proposal's sync runs (the session's
+  // Stop routes, through platform.stopWorkflowTurn).
+  StopRequested: (p: any) => ({ ...session(p), by: text(p?.by, 100) }),
   // The timer: ask GitHub again whether an unanswered merge happened.
   ObserveDue: () => ({}),
   // The boot's look at an instance waiting with no deadline (one an older
@@ -641,10 +645,10 @@ function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner
       ? { n: s.data.promoting.n, ok: false, code: 'session_state_changed' } : s.data.answer };
   // A gate or a sync under way is ended with it (the worker's removal below
   // stops a sync's turn); the queue that asked for it hears.
-  const { told, cancel } = endSlots(s.data, 'declined', { reason: 'closed' });
+  const { told, cancel, work: stops } = endSlots(s.data, 'declined', { reason: 'closed' });
   const destroy = destroyWorker(d, n);
   d = doom(d, destroy);
-  const work: WorkRequest[] = [destroy];
+  const work: WorkRequest[] = [...stops, destroy];
   // Its pull request is closed; one GitHub is still opening for it (a
   // promote under way) is closed once it has, by the number it then has.
   const pr = repoInput(f) || (s.name === 'proposing' && row.repo ? { owner: row.repo.owner, repo: row.repo.repo, number: null } : null);
@@ -702,10 +706,10 @@ const reopen: Handler = (s, e, f, ctx, deps) => {
 const abandoned: Handler = (s, e, f, ctx, deps) => {
   // Its force, its gate or attempt and its sync end with it (a force never
   // outlives the proposal it was given to).
-  const { told, cancel } = endSlots(s.data, 'declined', { reason: 'closed' });
+  const { told, cancel, work } = endSlots(s.data, 'declined', { reason: 'closed' });
   const next: Live = { name: 'underway', data: { ...s.data, claim: null, slot: slotFor(s.data), force: null, attempt: null, sync: null } };
   return step(next, {
-    messages: told, cancel,
+    messages: told, cancel, work,
     writes: [
       { type: 'abandoned', sessionId: s.data.sessionId },
       line(e, s.data, `${prLabel(f.row!)} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel. Re-propose it from the session's dev-chat.`),
@@ -718,9 +722,10 @@ const abandoned: Handler = (s, e, f, ctx, deps) => {
 // The merge queue's slots this proposal holds, ended: its gate or attempt
 // and its sync are cancelled, and the queue that asked for them hears (a
 // stage already reported, unconfirmed or merged, has told it).
-function endSlots(d: Data, outcome: string, extra: Record<string, Json> = {}): { told: MessageRequest[]; cancel: { kind: string; key: string }[] } {
+function endSlots(d: Data, outcome: string, extra: Record<string, Json> = {}, by: string | null = null): { told: MessageRequest[]; cancel: { kind: string; key: string }[]; work: WorkRequest[] } {
   const told: MessageRequest[] = [];
   const cancel: { kind: string; key: string }[] = [];
+  const work: WorkRequest[] = [];
   const a = d.attempt;
   if (a?.stage === 'gate') cancel.push({ kind: WORK.gate, key: `gate:${a.n}` });
   if (a?.stage === 'merge') cancel.push({ kind: WORK.attempt, key: `attempt:${a.n}` });
@@ -728,17 +733,57 @@ function endSlots(d: Data, outcome: string, extra: Record<string, Json> = {}): {
   if (d.sync) {
     cancel.push({ kind: WORK.sync, key: `sync:${d.sync.n}` });
     told.push(...resolved(d, d.sync, outcome));
+    // The cancel ends the sync's handler, not its turn: the turn is stopped
+    // (only that one, by its record) and its record released.
+    work.push(syncStop(d, d.sync.n, by));
   }
-  return { told, cancel };
+  return { told, cancel, work };
 }
+
+// The turn of the sync `n` stopped, from any process (src/workflow/turn-stop.ts).
+const syncStop = (d: Data, n: number, by: string | null): WorkRequest =>
+  turnStop({ sessionId: d.sessionId, machine: MACHINE, key: sessionKey(d.sessionId), kinds: [WORK.sync], workKey: `sync:${n}`, by, release: true }, `sync:${n}`);
+
+// A person's Stop of the sync under way (POST /api/sessions/:id/stop, the
+// agent conversation's Stop): it ends as stopped by them, never as a
+// conflict it could not resolve, and gives its once-record back, so the
+// platform asks again when it next needs it.
+const stopRequested: Handler = (s, e, f) => {
+  const sync = s.data.sync;
+  if (!sync) return step(s);
+  const by = e.payload.by ?? e.actor ?? null;
+  const message = by ? `Sync with main stopped by ${by}. The branch is unchanged.` : 'Sync with main stopped. The branch is unchanged.';
+  let d: Data = { ...s.data, sync: null,
+    lastSync: { n: sync.n, reason: sync.reason, outcome: 'stopped', sha: null, message, behind: 0, pushOk: false, conflictFiles: [] } };
+  const writes: DomainWrite[] = [];
+  if (sync.claimHead && sync.prev) {
+    if (sync.reason === 'boot_failure') writes.push({ type: 'bootFailureRelease', sessionId: d.sessionId, head: sync.claimHead, prev: sync.prev.bootHead ?? null });
+    else if (CHECK_SYNCS.has(sync.reason)) {
+      writes.push({ type: 'fixedCheckRelease', sessionId: d.sessionId, head: sync.claimHead, prevHead: sync.prev.fixedHead ?? null, prevKeys: sync.prev.fixedKeys || [] });
+    }
+  }
+  if (sync.reason === 'conflict') writes.push({ type: 'blockReasons', sessionId: d.sessionId, reasons: [] });
+  d = { ...d, backoff: null };
+  // The person's change page clears its sync banner at once (as the sync's
+  // own end does, services/sync-main.js broadcastSyncStatus).
+  const status = f.row ? [sessionUpdate({ action: 'sync_status', sessionId: f.row.id, appId: f.row.appId, appSlug: f.row.appSlug,
+    state: 'done', syncResult: 'stopped', message })] : [];
+  return step({ name: s.name, data: d } as Live, {
+    writes,
+    push: [...(sync.reason === 'conflict' ? [votes(f, { integrating: false })] : []), ...status],
+    messages: resolved(d, sync, 'stopped'),
+    cancel: [{ kind: WORK.sync, key: `sync:${sync.n}` }],
+    work: [syncStop(s.data, sync.n, by)],
+  });
+};
 
 // merge-followups moved it into merged (its own merge, a merge by hand, a
 // change carried by another's): whatever the queue asked of it ends.
 const merged: Handler = (s) => {
-  const { told, cancel } = endSlots(s.data, 'merged');
+  const { told, cancel, work } = endSlots(s.data, 'merged');
   const out: Live = { name: 'merged', data: { ...s.data, claim: null, promoting: null, force: null, sync: null,
     attempt: s.data.attempt ? { ...s.data.attempt, stage: 'merged' } : null } };
-  return step(out, { timer: null, messages: told, cancel });
+  return step(out, { timer: null, messages: told, cancel, work });
 };
 
 // ── The merge (step 6) ──────────────────────────────────────────────────
@@ -1262,6 +1307,7 @@ const HANDLERS = new Map<string, Handler>([
   ['Merged', merged],
   ['ReviewHeadMoved', headMoved], ['ApprovalsCleared', approvalsCleared],
   ['MergeRequested', mergeRequested], ['ForceMerge', forceMerge], ['SyncRequested', syncRequested], ['ObserveDue', observeDue],
+  ['StopRequested', stopRequested],
   ['Rearm', (s, e, f, ctx, deps) => step(s, { timer: timerFor(s, f, ctx, deps) })],
   ['WorkSucceeded', workDone], ['WorkFailed', workDone], ['WorkExhausted', workDone],
 ]);
@@ -1394,6 +1440,7 @@ export function proposal(deps: Deps): Machine<PState, Facts> {
         || (e.source.kind === 'message' && (e.source.from.machine === QUEUE || e.source.from.machine === 'preview')) ? ok() : reject('not_a_producer')),
       ObserveDue: timer,
       Rearm: system,
+      StopRequested: routeOrSystem,
     },
     transitions: transitions(deps) as any,
     writes: WRITES,

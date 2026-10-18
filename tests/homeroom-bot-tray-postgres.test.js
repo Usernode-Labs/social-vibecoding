@@ -54,6 +54,7 @@ const poolMod = require('../src/db/pool');
 poolMod.getPool = () => routePool;
 
 const tray = require('../src/services/homeroom-bot-tray');
+const platform = require('../src/workflow/platform.ts');
 const homeroomBot = require('../src/services/homeroom-bot');
 const { conversationRoutes } = require('../src/routes/conversations');
 
@@ -75,13 +76,45 @@ async function openDatabase(t) {
   url.pathname = `/${name}`;
   const pool = new pg.Pool({ connectionString: String(url), max: 8 });
   pool.on('error', () => {});
+  // A follow-up asked for is owed a look by its request's bot-request
+  // instance (its queue row the projection), and the lane (bot-lane)
+  // grants it: the workflow runtime runs here, on this database, its
+  // pipeline only (no timers, no work).
   t.after(async () => {
+    await platform.stopWorkflow();
     await pool.end().catch(() => {});
     await admin.query(`DROP DATABASE IF EXISTS ${name}`).catch(() => {});
     await admin.end().catch(() => {});
   });
   await pool.query(fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8'));
+  routePool = pool;
+  await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
   return pool;
+}
+
+// Rows a machine owns (a request's queue row, a proposal's move into
+// merged) are fixtures here, written as the kernel writes them.
+async function asKernel(pool, fn) {
+  const c = await pool.connect();
+  try {
+    await c.query('BEGIN');
+    await c.query("SET LOCAL app.wf_writer = 'transition'");
+    await fn(c);
+    await c.query('COMMIT');
+  } catch (err) {
+    await c.query('ROLLBACK');
+    throw err;
+  } finally {
+    c.release();
+  }
+}
+
+async function until(check, what) {
+  for (let i = 0; i < 200; i += 1) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.fail(`timed out waiting: ${what}`);
 }
 
 test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the real route', { timeout: 120000 }, async (t) => {
@@ -226,9 +259,20 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     assert.equal(building.href, '#app/seed-swap/dev/issues/3');
 
     // A change asked for on its proposal, waiting its turn: in flight in both,
-    // and it opens the proposal. Then it runs.
+    // and it opens the proposal. She just wrote in its discussion, so the
+    // lane lets her burst settle before it grants the follow-up.
     await pool.query('UPDATE chat_sessions SET linked_issues = ARRAY[5] WHERE id = $1', [proposal.id]);
-    await homeroomBot.enqueueFront(pool, { appId: notes.id, issueNumber: 5, userId: ada.id, reason: 'dm_revise' });
+    const { rows: [wrote] } = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref)
+       VALUES ($1, $2, 'Pin them to the top, please', 'message', 'session', $3) RETURNING id`,
+      [notes.id, ada.id, proposal.id],
+    );
+    const asked = await homeroomBot.enqueueFront(pool, { appId: notes.id, issueNumber: 5, userId: ada.id, reason: 'dm_revise' });
+    assert.equal(asked.owed, true);
+    const startedAt = async () => (await pool.query(
+      'SELECT started_at FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 5', [notes.id],
+    )).rows[0]?.started_at ?? null;
+    assert.equal(await startedAt(), null, 'waiting for her burst to settle');
     const queued = await both();
     const followUp = queued.job('note-board#5');
     assert.equal(followUp.phase, 'follow_up_queued');
@@ -236,9 +280,18 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     assert.match(queued.progress.rightNow.find((item) => item.project === 'note-board' && item.number === 5).doing,
       /^waiting for a free builder to follow up on the newest replies on the change$/);
     assert.equal(queued.work.now[0].phase !== 'follow_up_queued', true, 'what it is doing this minute comes first');
-    await pool.query('UPDATE homeroom_bot_queue SET started_at = NOW() WHERE app_id = $1 AND issue_number = 5', [notes.id]);
+    // Settled: the lane, looking again, grants it (its row started). Then it runs.
+    await pool.query(`UPDATE chat_messages SET created_at = NOW() - INTERVAL '1 minute' WHERE id = $1`, [wrote.id]);
+    await platform.botRefresh(null);
+    await until(async () => (await startedAt()) != null, 'the follow-up granted');
     assert.equal((await both()).job('note-board#5').phase, 'following_up');
-    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 5', [notes.id]);
+    // Its look ended with nothing owed, as its machine leaves it: no row.
+    await asKernel(pool, async (c) => {
+      const k = `request:${notes.id}:5`;
+      await c.query("DELETE FROM wf_work WHERE machine = 'bot-request' AND key = $1", [k]);
+      await c.query("DELETE FROM wf_instances WHERE machine = 'bot-request' AND key = $1", [k]);
+      await c.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 5', [notes.id]);
+    });
     assert.equal((await both()).job('note-board#5'), undefined, 'done: up for the vote again, which is the group\'s');
 
     // A request of theirs waiting in the queue is in flight too, in both.
@@ -294,17 +347,17 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     // Merged since: that is the news, not the answer before it.
     // Merged and live, as the merge-followups machine leaves a change
     // production runs (nothing else moves a row into merged now).
-    await pool.query(`UPDATE chat_sessions SET status = 'merged', live_at = NOW() WHERE id = $1`, [proposal.id]);
+    await asKernel(pool, (c) => c.query(`UPDATE chat_sessions SET status = 'merged', live_at = NOW() WHERE id = $1`, [proposal.id]));
     const merged = await tray.workFor(pool, { user: asAda });
     assert.equal(merged.history[0].outcome, 'live');
     assert.deepEqual(merged.history[0].earlier.map((r) => r.outcome), ['answer']);
-    await pool.query(`UPDATE chat_sessions SET status = 'closed' WHERE id = $1`, [proposal.id]);
+    await asKernel(pool, (c) => c.query(`UPDATE chat_sessions SET status = 'closed' WHERE id = $1`, [proposal.id]));
     const closed = await tray.workFor(pool, { user: asAda });
     assert.equal(closed.history[0].outcome, 'closed');
     assert.equal(closed.history[0].href, '#app/note-board/dev/issues/5', 'a closed proposal opens its request instead');
     assert.equal(closed.history[0].proposalId, undefined);
     assert.equal(closed.history[0].links.proposal, null);
-    await pool.query(`UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`, [proposal.id]);
+    await asKernel(pool, (c) => c.query(`UPDATE chat_sessions SET status = 'promoted' WHERE id = $1`, [proposal.id]));
     await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [answer.id]);
   });
 

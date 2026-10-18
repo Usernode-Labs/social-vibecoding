@@ -207,7 +207,6 @@ function harness({
       }
       if (/COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(s)) return { rows: [{ n: revisions }] };
       if (/INSERT INTO homeroom_bot_runs/.test(s)) return { rows: [{ id: 901 }] };
-      if (/INSERT INTO homeroom_bot_queue/.test(s)) return { rows: [{ id: 401 }] };
       // voice.asksWaiting's: only that one (takeAsks's second UPDATE has
       // ORDER BY id LIMIT 10, not LIMIT 1).
       if (/FROM homeroom_bot_change_asks WHERE session_id = \$1 AND status = 'queued' LIMIT 1/.test(s)) {
@@ -261,10 +260,168 @@ async function run(t, h) {
   t.after(() => { live.post = realPost; live.advanceSeen = realSeen; });
   live.post = async (args) => { h.calls.posts.push(args); return { githubCreatedAt: '2026-09-26T12:05:00Z' }; };
   live.advanceSeen = async (args) => { h.calls.seen.push(args); return { advanced: true }; };
-  return bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings: SETTINGS, deps: h.deps });
+  // As its request's look (bot-request's bot.look) runs it: what the look
+  // decided for its request's debt is on h.look.out.
+  h.look = bot._newLookForTests({ owner: { machine: 'bot-request', key: `request:${APP.id}:${ITEM.issue_number}`, kind: 'bot.look' } });
+  return bot._runInLookForTests(h.look, () => bot.runTriage(h.pool, {}, {
+    bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings: SETTINGS, deps: h.deps,
+  }));
 }
 
 const insertOf = (h) => h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+
+// ── A restart in the middle of a follow-up (PR #5424 review) ────────────
+// A look is a work item a restart carries on from its last saved step. Each
+// attempt here is one process: a checkpoint that "crashes" (the step is
+// saved, then the work is lost, as a release does to a running process)
+// right after `crashAfter` is kept, and the next attempt resumes from what
+// was saved, against the database as the first attempt left it.
+async function attempts(t, h, crashAfter, between = null, { lastStep = false } = {}) {
+  const durableSteps = require('../src/services/durable-steps');
+  const { StepsStopped } = require('../src/workflow/kernel/steps.ts');
+  const realPost = live.post;
+  const realSeen = live.advanceSeen;
+  t.after(() => { live.post = realPost; live.advanceSeen = realSeen; });
+  live.post = async (args) => { h.calls.posts.push(args); return { githubCreatedAt: '2026-09-26T12:05:00Z' }; };
+  live.advanceSeen = async (args) => { h.calls.seen.push(args); return { advanced: true }; };
+  // A durable turn reads the branch's head before it starts (its observe).
+  h.deps.github.getBranchSha = async () => OLD_HEAD;
+  let saved = null;
+  let crashed = false;
+  const attempt = (from) => {
+    const steps = durableSteps.durable({
+      resumeFrom: from,
+      checkpoint: async (v) => {
+        saved = v;
+        const hit = typeof crashAfter === 'function' ? crashAfter(v) : Object.prototype.hasOwnProperty.call(v, crashAfter);
+        if (!crashed && hit) {
+          crashed = true;
+          throw new StepsStopped('the process was replaced');
+        }
+      },
+    });
+    h.look = bot._newLookForTests({ steps, n: 1, key: `request:${APP.id}:${ITEM.issue_number}`,
+      owner: { machine: 'bot-request', key: `request:${APP.id}:${ITEM.issue_number}`, kind: 'bot.look' } });
+    return bot._runInLookForTests(h.look, () => bot.runTriage(h.pool, {}, {
+      bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings: SETTINGS, deps: h.deps,
+    }));
+  };
+  // A crash in the look's last step is swallowed by that step's own catch
+  // (a post that fails is logged): the process would be gone; the attempt
+  // here just ends, and the next resumes from what was saved.
+  if (lastStep) await attempt(null).catch((err) => { if (!err.stopped) throw err; });
+  else await assert.rejects(attempt(null), (err) => err.stopped === true, `the first attempt is lost after ${crashAfter}`);
+  assert.ok(crashed, `it got as far as ${String(crashAfter)}`);
+  if (between) between();
+  return attempt(saved);
+}
+
+test('a follow-up resumed after its run was recorded still posts its answer: it reads the replies it was answering', async (t) => {
+  const h = harness({ proposalThread: [{ author: 'sam', body: 'Why zinc-950?', createdAt: '2026-09-26T11:20:00Z' }] });
+  // The run the first attempt recorded is the newest one the second reads,
+  // its mark past the reply it answers.
+  let recorded = null;
+  const query = h.pool.query;
+  h.pool.query = async (sql, params) => {
+    const s = String(sql);
+    if (/INSERT INTO homeroom_bot_runs/.test(s)) recorded = { id: 901, thread_seen_at: '2026-09-26T12:00:00Z' };
+    if (recorded && /SELECT id, thread_seen_at FROM homeroom_bot_runs/.test(s)) { h.calls.queries.push({ s, params }); return { rows: [recorded] }; }
+    if (recorded && /SELECT verdict, error, thread_seen_at, proposal_session_id, checks_head_sha/.test(s)) {
+      h.calls.queries.push({ s, params });
+      return { rows: [{ verdict: 'answer', error: null, thread_seen_at: recorded.thread_seen_at, proposal_session_id: 5001, checks_head_sha: null }] };
+    }
+    return query(sql, params);
+  };
+  const out = await attempts(t, h, 'run:1');
+  assert.notEqual(out?.reason, 'no_new_replies', 'the replies it was answering are still its own');
+  assert.equal(h.calls.exec.length, 1, 'its turn ran once');
+  assert.equal(h.calls.queries.filter((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)).length, 1, 'one run');
+  assert.equal(h.calls.posts.length, 1, 'and its answer is posted, once');
+  assert.match(h.calls.posts[0].text, /Because the platform uses it\./);
+});
+
+// A question written while the look was lost is the next look's: the
+// resumed attempt answers the replies it read, where they were said, and
+// marks read only through them, never past what its turn never saw.
+test('a follow-up resumed after its decision answers what it read; a question written since waits for the next look', async (t) => {
+  const proposalThread = [];
+  const h = harness({ issueThread: [{ author: 'pat', body: 'Why zinc-950?', createdAt: '2026-09-26T11:10:00Z' }], proposalThread });
+  // Written while the first attempt was lost, on the change's discussion.
+  const crashCheck = h.pool.query;
+  let lost = false;
+  h.pool.query = async (sql, params) => {
+    if (lost && proposalThread.length === 0) proposalThread.push({ author: 'sam', body: 'And the header?', createdAt: '2026-09-26T12:30:00Z' });
+    return crashCheck(sql, params);
+  };
+  const realPost = live.post;
+  t.after(() => { live.post = realPost; });
+  const out = await attempts(t, h, 'moved:1', () => { lost = true; });
+  assert.notEqual(out?.reason, 'no_new_replies');
+  assert.equal(h.calls.exec.length, 1, 'its turn ran once, on what it read');
+  const insert = h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.ok(!insert.params.some((v) => typeof v === 'string' && /^2026-09-26T12:3/.test(v)), 'nothing marked read past the question it never saw');
+  assert.ok(h.calls.posts.length >= 1);
+  assert.ok(h.calls.posts.every((p) => !p.proposalSessionId), 'answered where the reply it answers was said, not on the change');
+});
+
+// What the look itself did, or what happened during the restart, decides
+// nothing again: the bot's week crossed by its own debit, a post it made, the
+// change merging meanwhile. The resumed attempt finishes what the first one
+// decided, and says each thing once.
+test('a follow-up resumed after its own debit crossed the bot\'s cap still posts its answer', async (t) => {
+  const h = harness({ proposalThread: [{ author: 'sam', body: 'Why zinc-950?', createdAt: '2026-09-26T11:20:00Z' }] });
+  const out = await attempts(t, h, 'spend:1', () => {
+    h.deps.limits.checkBudget = async () => ({ error: 'Weekly limit reached', reason: 'weekly_limit' });
+  });
+  assert.notEqual(out?.reason, 'budget');
+  assert.equal(h.calls.exec.length, 1);
+  assert.equal(h.calls.posts.length, 1, 'its answer is posted');
+});
+
+test('a follow-up resumed after it posted does not post again', async (t) => {
+  const h = harness({ proposalThread: [{ author: 'sam', body: 'Why zinc-950?', createdAt: '2026-09-26T11:20:00Z' }] });
+  await attempts(t, h, (v) => Object.keys(v).some((k) => k.startsWith('post:')), null, { lastStep: true });
+  assert.equal(h.calls.posts.length, 1, 'posted once, across both attempts');
+});
+
+test('a follow-up resumed after its change merged during the restart still says the answer its turn wrote', async (t) => {
+  const h = harness({ proposalThread: [{ author: 'sam', body: 'Why zinc-950?', createdAt: '2026-09-26T11:20:00Z' }] });
+  let merged = false;
+  const query = h.pool.query;
+  h.pool.query = async (sql, params) => {
+    const out = await query(sql, params);
+    if (merged && /SELECT cs\.\*, a\.slug AS app_slug/.test(String(sql))) {
+      // As the database answers: a query that asks for it promoted finds none.
+      return { rows: /cs\.status = 'promoted'/.test(String(sql)) ? [] : out.rows.map((r) => ({ ...r, status: 'merged' })) };
+    }
+    return out;
+  };
+  const out = await attempts(t, h, 'run:1', () => { merged = true; });
+  assert.notEqual(out?.reason, 'has_proposal', 'not dropped as gone');
+  assert.equal(h.calls.posts.length, 1, 'its answer is posted');
+});
+
+test('a revision resumed after its reconcile is still the revision it was: never "no change"', async (t) => {
+  const h = harness({
+    proposalThread: [{ author: 'sam', body: 'Make it darker.', createdAt: '2026-09-26T11:20:00Z' }],
+    result: { lastResultText: '```json\n{"action":"revise","reply":"Darker now.","summary":"Background is #09090b."}\n```', pushOk: true, sha: NEW_HEAD },
+  });
+  // The reconcile made the turn's push the reviewed head.
+  const query = h.pool.query;
+  h.pool.query = async (sql, params) => {
+    const out = await query(sql, params);
+    if (h.calls.reconciled.length && /SELECT cs\.\*, a\.slug AS app_slug/.test(String(sql))) {
+      return { rows: out.rows.map((r) => ({ ...r, reviewed_head_sha: NEW_HEAD })) };
+    }
+    return out;
+  };
+  await attempts(t, h, 'reconcile:1');
+  const inserts = h.calls.queries.filter((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.equal(inserts.length, 1);
+  assert.ok(inserts[0].params.includes('revise'), 'recorded as the revision it was');
+  assert.ok(!inserts[0].params.some((v) => /produced no change|did not move/.test(String(v))), 'never as a failed one');
+  assert.equal(h.calls.reconciled.length, 1, 'reconciled once');
+});
 
 test('activity with nothing a person said is recorded as seen, and costs nothing', async (t) => {
   const h = harness({ comments: [{ author: 'usernode-bot', body: 'Homeroom bot built this', createdAt: '2026-09-26T11:00:00Z' }] });
@@ -276,24 +433,24 @@ test('activity with nothing a person said is recorded as seen, and costs nothing
   assert.deepEqual(seen.params, [800, ITEM.thread_seen_at], 'so the same activity does not bring it back');
 });
 
-// #5217: a follow-up that ends at no_new_replies deletes the queue row. An
-// ask recorded after it took its asks (or while the row was claimed, whose
-// enqueueFront answered null) is stranded by that very return otherwise:
-// the row is gone and nothing re-queues it. With the voice on, the asks
-// waiting go back in the queue; with it off, asks are never taken and
-// nothing is re-queued.
-test('#5217: a quiet pass re-queues the asks waiting on its change, and only with the voice on', async (t) => {
+// #5217: a follow-up that ends at no_new_replies uses up its request's
+// debt. An ask recorded after it took its asks (or while the look ran,
+// whose enqueueFront answered null) is stranded by that very return
+// otherwise: nothing owes it a look again. With the voice on, the asks
+// waiting are owed again once the look ends (its instance takes the debt);
+// with it off, asks are never taken and nothing is owed.
+test('#5217: a quiet pass owes the asks waiting on its change a look again, and only with the voice on', async (t) => {
   const on = harness({ voiceSettingsRows: [{ key: 'homeroom_bot_mode', value: 'live' }], asksWaiting: true });
   const outOn = await run(t, on);
   assert.deepEqual(outOn, { ran: false, reason: 'no_new_replies' });
-  const insert = on.calls.queries.find((q) => /INSERT INTO homeroom_bot_queue/.test(q.s));
-  assert.ok(insert, 'the asks waiting go back in the queue');
-  assert.deepEqual(insert.params, [APP.id, ITEM.issue_number, 'voice_update', null, null]);
+  assert.equal(on.look.out.queue, 'consume');
+  assert.deepEqual(on.look.out.owe, [{ reason: 'voice_update', priority: 0 }], 'the asks waiting are owed a look again');
+  assert.ok(!on.calls.queries.some((q) => /homeroom_bot_queue/.test(q.s)), 'nothing writes the queue itself');
 
   const off = harness({});
   const outOff = await run(t, off);
   assert.deepEqual(outOff, { ran: false, reason: 'no_new_replies' });
-  assert.equal(off.calls.queries.find((q) => /INSERT INTO homeroom_bot_queue/.test(q.s)), undefined,
+  assert.deepEqual(off.look.out.owe, [],
     'the voice off: asks are never taken, and the quiet pass brings nothing back');
 });
 
@@ -317,7 +474,7 @@ test('a question in the proposal\'s discussion is answered there and on the issu
   assert.equal(insert.params[20], 5001, 'tied to the proposal');
   assert.equal(insert.params[21], null, 'not a checks follow-up');
   assert.equal(h.calls.seen[0].proposalSessionId, 5001, 'a reply there during the turn means it looks again');
-  assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31));
+  assert.equal(h.look.out.queue, 'consume', 'the look\'s end uses up its request\'s debt');
 });
 
 test('#3703: a question under the spec card is answered with that spec in front of the bot', async (t) => {
@@ -736,11 +893,22 @@ test('H1: a commit the turn could not push is a failed update, whatever the turn
 
 // ── Getting it queued ────────────────────────────────────────────────────
 
+// What a refresh tells each request's instance (platform.botOwed appends to
+// wf_events through the refresh's own pool): the Owed events, read back off
+// the insert. Answers the insert, else null.
+function owedEvents(events, s, params) {
+  if (!/INSERT INTO wf_events/.test(s)) return null;
+  if (params[3] === 'Owed') events.push({ key: params[1], payload: JSON.parse(params[4]) });
+  return { rows: [{ id: events.length + 1 }] };
+}
+
 test('on a live app, a person\'s message in the bot proposal\'s thread is activity on its issue', async () => {
   const inserts = [];
   const pool = {
     async query(sql, params) {
       const s = String(sql);
+      const appended = owedEvents(inserts, s, params);
+      if (appended) return appended;
       if (/FROM issue_claims|UNNEST\(cs\.linked_issues\) AS n\s+FROM chat_sessions cs JOIN users|headless_issue_number AS n|created_from_issue_number AS n/.test(s)) return { rows: [] };
       if (/CROSS JOIN LATERAL UNNEST\(cs\.linked_issues\)/.test(s)) {
         assert.deepEqual(params, [9, 77], 'the bot\'s own proposals on this app');
@@ -748,14 +916,12 @@ test('on a live app, a person\'s message in the bot proposal\'s thread is activi
       }
       if (/FROM chat_messages/.test(s)) return { rows: [] };
       if (/FROM homeroom_bot_runs/.test(s)) return { rows: [{ issue_number: 24, thread_seen_at: SEEN, created_at: SEEN }] };
-      if (/INSERT INTO homeroom_bot_queue/.test(s)) { inserts.push(params); return { rows: [] }; }
-      if (/DELETE FROM homeroom_bot_queue/.test(s)) return { rowCount: 0, rows: [] };
       return { rows: [] };
     },
   };
   const github = { async fetchPublicIssues() { return { issues: [{ number: 24, state: 'open', updatedAt: SEEN }] }; } };
   await bot.refreshApp(pool, APP, { github, bot: BOT, capRoom: { proposals_per_app: 1, question_tripwire: 5 } });
-  assert.deepEqual(inserts.map((p) => [p[1], p[3]]), [[24, 'changed']]);
+  assert.deepEqual(inserts.map((e) => [e.key, e.payload.issueNumber, e.payload.reason]), [['request:9:24', 24, 'changed']]);
 
   inserts.length = 0;
   await bot.refreshApp(pool, APP, { github, bot: BOT });
@@ -812,7 +978,8 @@ test('#3767: a revision that changed what the proposal does names it again, and 
   assert.match(design, /that visual check is EXPECTED, not optional/);
   assert.match(design, /take screenshots \(`browser_take_screenshot`\)/);
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
-  assert.match(src, /if \(moved && parsed\?\.title\) await renameRevised\(/, 'renamed only when the revision landed');
+  assert.match(src, /if \(moved && parsed\?\.title\) await look\.once\('rename', async \(\) => \{ await renameRevised\(/,
+    'renamed only when the revision landed, once across the look\'s attempts');
   assert.match(src, /require\('\.\/proposal-update'\)\.applyProposedTitle\(\{/, 'through the seam a person\'s revision uses');
 });
 
@@ -827,16 +994,20 @@ test('a failed run\'s retry that finds nothing new on its proposal is spent: the
   t.after(() => bot._resetForTests());
   const failedRun = (id) => ({ id, issue_number: 24, thread_seen_at: SEEN, created_at: '2026-09-26T09:00:00Z', verdict: 'failed', failed_tries: 1 });
   let lastRun = failedRun(800);
+  // What its request's instance keeps of a spent retry (bot-request
+  // data.spentRetry), which the refresh reads back.
+  let spent = null;
   const inserts = [];
   const pool = {
     async query(sql, params) {
       const s = String(sql);
+      const appended = owedEvents(inserts, s, params);
+      if (appended) return appended;
+      if (/FROM wf_instances/.test(s)) return { rows: spent == null ? [] : [{ key: `request:${APP.id}:24`, run: spent }] };
       if (/FROM issue_claims|UNNEST\(cs\.linked_issues\) AS n\s+FROM chat_sessions cs JOIN users|headless_issue_number AS n|created_from_issue_number AS n/.test(s)) return { rows: [] };
       if (/CROSS JOIN LATERAL UNNEST\(cs\.linked_issues\)/.test(s)) return { rows: [] };
       if (/FROM chat_messages/.test(s)) return { rows: [] };
       if (/FROM homeroom_bot_runs/.test(s)) return { rows: [lastRun] };
-      if (/INSERT INTO homeroom_bot_queue/.test(s)) { inserts.push(params); return { rows: [] }; }
-      if (/DELETE FROM homeroom_bot_queue/.test(s)) return { rowCount: 0, rows: [] };
       return { rows: [] };
     },
   };
@@ -844,7 +1015,7 @@ test('a failed run\'s retry that finds nothing new on its proposal is spent: the
   const refresh = () => bot.refreshApp(pool, APP, { github, bot: BOT, capRoom: { proposals_per_app: 1, question_tripwire: 5 } });
 
   await refresh();
-  assert.deepEqual(inserts.map((p) => [p[1], p[3]]), [[24, bot.RETRY_FAILED_REASON]], 'the failed run is offered its retry');
+  assert.deepEqual(inserts.map((e) => [e.payload.issueNumber, e.payload.reason]), [[24, bot.RETRY_FAILED_REASON]], 'the failed run is offered its retry');
 
   // The retry reaches the follow-up, and nobody said anything new.
   const h = harness({ comments: [{ author: 'usernode-bot', body: 'Homeroom bot built this', createdAt: '2026-09-26T11:00:00Z' }] });
@@ -853,10 +1024,13 @@ test('a failed run\'s retry that finds nothing new on its proposal is spent: the
   t.after(() => { live.post = realPost; live.advanceSeen = realSeen; });
   live.post = async () => ({});
   live.advanceSeen = async () => ({ advanced: true });
-  const out = await bot.runTriage(h.pool, {}, {
+  const look = bot._newLookForTests({ owner: { machine: 'bot-request', key: `request:${APP.id}:24`, kind: 'bot.look' } });
+  const out = await bot._runInLookForTests(look, () => bot.runTriage(h.pool, {}, {
     bot: BOT, app: APP, item: { ...ITEM, reason: bot.RETRY_FAILED_REASON }, mode: 'shadow', settings: SETTINGS, deps: h.deps,
-  });
+  }));
   assert.deepEqual(out, { ran: false, reason: 'no_new_replies' });
+  assert.equal(look.out.spentRetry, 800, 'the look says which failed run\'s retry it spent, for its instance to keep');
+  spent = look.out.spentRetry;
 
   inserts.length = 0;
   await refresh();
@@ -865,5 +1039,5 @@ test('a failed run\'s retry that finds nothing new on its proposal is spent: the
   // A later failed run is a new one, and gets its own retry.
   lastRun = failedRun(801);
   await refresh();
-  assert.deepEqual(inserts.map((p) => [p[1], p[3]]), [[24, bot.RETRY_FAILED_REASON]]);
+  assert.deepEqual(inserts.map((e) => [e.payload.issueNumber, e.payload.reason]), [[24, bot.RETRY_FAILED_REASON]]);
 });

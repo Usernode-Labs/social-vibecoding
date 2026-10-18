@@ -285,6 +285,21 @@ module.exports = function install(fakes) {
       return { outcome: 'clean', sha: 'd'.repeat(40), message: 'Merged main cleanly.' };
     },
   });
+  // The Homeroom bot's look at a request (bot-request's bot.look, services/
+  // homeroom-bot.js lookAt) is a worker turn: faked at its core, stopping at
+  // `bot.look` while it runs; and its lane's refresh and sweeps, which read
+  // GitHub and the fleet, record only.
+  const homeroomBot = require(path.join(SRC, 'services/homeroom-bot'));
+  fakes.stub(path.join(SRC, 'services/homeroom-bot'), {
+    ...homeroomBot,
+    async lookAt(_config, _db, o) {
+      await fakes.record('bot.look', { appId: o.input.appId, issueNumber: o.input.issueNumber, n: o.input.n, pid: process.pid });
+      await fakes.pause('bot.look');
+      return { outcome: 'done' };
+    },
+    async refresh() { await fakes.record('bot.refresh', {}); return {}; },
+    async sweep() { await fakes.record('bot.sweep', {}); return {}; },
+  });
   // The Homeroom bot's chat model (its voice in projects, its DM): one
   // scripted answer, a reply that names the message it answers, stopping at
   // `bot.model` while it is asked. Its key is the bot's own, read from the

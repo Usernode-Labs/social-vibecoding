@@ -12,8 +12,8 @@
 //     made (app-creator.js), and again once it runs (a no-op by then);
 //   - an issue one process files reaches every other process's open-issues
 //     copy over the bus (github.js noteIssueCreated, applyIssuesChange);
-//   - a pass reads a woken first version before its full refresh and sweeps
-//     (homeroom-bot.js runOnce);
+//   - a first version just filed has its project refreshed at once, not
+//     after the settle (the bot's lane, RefreshAsked `now`);
 //   - a first version filed while its project is set up waits for the
 //     project to run before it is proposed, and stops, in words it always
 //     had, when the project's setup failed (projectSetUpStop, buildAndPropose
@@ -26,6 +26,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 
 const settle = (ms = 10) => new Promise((r) => setTimeout(r, ms));
 
@@ -228,127 +229,21 @@ test('one too big for the bus carries its number, and the other process reads it
   assert.equal(list.issues[0].body, body);
 });
 
-// ── A pass reads a woken first version first ────────────────────────────
+// ── A first version filed is read at once ───────────────────────────────
 
 const bot = require('../src/services/homeroom-bot');
 
-// The moment the bot went on for everyone is fixed before the issue below:
-// left unset, readSettings counts it from now, and an issue made before now
-// reads as one the bot has seen, so the test passed before 10:00 UTC on
-// 15 Oct 2026 and failed after it.
-const SETTINGS = [
-  { key: bot.KEY_MODE, value: 'live' },
-  { key: bot.KEY_PER_PERSON, value: '3' },
-  { key: bot.KEY_LIVE_AT_ONCE, value: '8' },
-  { key: bot.KEY_EVERYONE_SINCE, value: '2026-10-01T00:00:00.000Z' },
-];
-const APP = { id: 101, slug: 'club-votes', name: 'Club Votes', repo_url: 'https://github.com/o/club-votes', self_hosted: false };
-
-function loopPool(log) {
-  const client = {
-    async query(sql) {
-      if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
-      return { rows: [] };
-    },
-    release() {},
-  };
-  return {
-    async connect() { return client; },
-    async query(sql, params) {
-      const s = String(sql);
-      if (/SELECT key, value FROM platform_settings/.test(s)) return { rows: SETTINGS };
-      if (/FROM users WHERE username = \$1/.test(s)) return { rows: [{ id: 77, username: 'homeroom_bot', weekly_limit_cents: 15000 }] };
-      if (/SELECT is_synthetic FROM users/.test(s)) return { rows: [{ is_synthetic: true }] };
-      if (/WHERE fv\.app_id = ANY\(\$1::int\[\]\) AND fv\.bot_builds AND fv\.status = 'filed'/.test(s)) {
-        log.push('first_versions_to_read');
-        return { rows: params[0].includes(APP.id) ? [{ app_id: APP.id }] : [] };
-      }
-      if (/FROM apps\s+WHERE status = 'running'/.test(s)) { log.push('list_apps'); return { rows: [APP] }; }
-      if (/INSERT INTO homeroom_bot_queue/.test(s)) { log.push('queued'); return { rows: [{ id: 500, inserted: true }] }; }
-      if (/FROM homeroom_bot_queue q\s+JOIN apps a/.test(s)) {
-        log.push(`candidates:${params[11] ? 'first_versions' : 'all'}`);
-        return { rows: [{ id: 500, app_id: APP.id, issue_number: 1, priority: 1, reason: 'new', person_id: 7 }] };
-      }
-      if (/FROM apps WHERE id = ANY\(\$1::int\[\]\)/.test(s)) return { rows: [APP] };
-      if (/UPDATE homeroom_bot_queue SET started_at = NOW\(\) WHERE id = \$1 AND started_at IS NULL RETURNING id/.test(s)) {
-        log.push('claimed');
-        return { rows: [{ id: params[0] }] };
-      }
-      if (/UPDATE homeroom_bot_queue SET started_at = NOW\(\) WHERE id = \$1 AND \(started_at IS NULL OR/.test(s)) {
-        return { rows: [{ thread_seen_at: null, changed_by: null }], rowCount: 1 };
-      }
-      return { rows: [], rowCount: 0 };
-    },
-  };
-}
-
-test('a woken first version is refreshed and its read started before the pass\'s full refresh and sweeps', async (t) => {
-  bot._resetForTests(); // the full refresh is due: it has never run
-  t.after(() => bot._resetForTests());
-  // Woken for the project whose first version was just filed (onBusMessage).
-  bot._setPassInFlightForTests(true);
-  assert.equal(bot.wake({ appId: APP.id }), true);
-  bot._setPassInFlightForTests(false);
-
-  const log = [];
-  let release;
-  const gate = new Promise((r) => { release = r; });
-  const reads = [];
-  const deps = {
-    drain: false,
-    github: {
-      isEnabled: () => true,
-      async fetchPublicIssues() {
-        log.push('github_list');
-        return { issues: [{ number: 1, title: 'First version of Club Votes', state: 'open', createdAt: '2026-10-15T10:00:00Z', updatedAt: '2026-10-15T10:00:00Z' }] };
-      },
-      // Where the read is once it has its slot: reading its request.
-      async fetchPublicIssue(_o, _r, n) { reads.push(n); await gate; return { issue: { state: 'closed' } }; },
-    },
-    limits: { async checkBudget() { return { ok: true }; } },
-    worker: { async listWorkerVolumes() { return []; } },
-    dm: {
-      async recordRequester() { return null; },
-      async overWeeklyAllowance() { return false; },
-      async requesterOf() { return null; },
-      // The full sweep every REFRESH_INTERVAL_MS starts here; it never ends,
-      // as a slow refresh of every app might not for a long time.
-      sweepFirstVersions: () => { log.push('sweep'); return new Promise(() => {}); },
-    },
-  };
-  void bot.runOnce(loopPool(log), {}, deps);
-  await settle(30);
-
-  assert.ok(log.includes('sweep'), 'the pass is in its sweep');
-  const at = (what) => log.indexOf(what);
-  assert.ok(at('queued') >= 0 && at('queued') < at('sweep'), `its request queued first: ${log}`);
-  assert.ok(at('candidates:first_versions') >= 0 && at('candidates:first_versions') < at('sweep'), `read first: ${log}`);
-  assert.ok(at('claimed') < at('sweep'), 'and claimed, before the sweep');
-  assert.equal(log.filter((x) => x === 'list_apps').length, 1, 'the full refresh has not read every app yet');
-  assert.ok(!log.includes('candidates:all'), 'nothing else of the pass has been dispatched');
-  assert.deepEqual(bot._inFlightForTests().map((e) => [e.appId, e.issueNumber, e.lane, e.itemId]), [[APP.id, 1, 'live', 500]],
-    'the first version\'s read already has its slot');
-  await settle();
-  assert.deepEqual(reads, [1], 'and has started');
-  release();
-  await settle(20);
-});
-
-test('a pass with nothing of a first version woken goes as it always did', async (t) => {
-  bot._resetForTests();
-  t.after(() => bot._resetForTests());
-  const log = [];
-  const deps = {
-    drain: false,
-    github: { isEnabled: () => true, async fetchPublicIssues() { return { issues: [] }; }, async fetchPublicIssue() { return { issue: null }; } },
-    limits: { async checkBudget() { return { ok: true }; } },
-    worker: { async listWorkerVolumes() { return []; } },
-    dm: { sweepFirstVersions: async () => { log.push('sweep'); return 0; } },
-  };
-  const out = await bot.runOnce(loopPool(log), {}, deps);
-  assert.equal(out.firstVersionReads, undefined);
-  assert.ok(!log.includes('first_versions_to_read'), 'nothing woken: nothing asked');
-  assert.equal(log[0], 'sweep', `the sweep and the full refresh first, as before: ${log}`);
+// Newcomer run nine (15 Oct 2026): a first version filed while its project
+// is set up is read as soon as it is filed (about 4 s), not after the
+// settle every other project's refresh waits for. Filing it asks the bot's
+// lane to refresh its project at once (bot-lane RefreshAsked `now`), which
+// owes its request; the lane grants it then (tests/workflow-bot-loop-postgres
+// pins the lane's side).
+test('a first version just filed has its project refreshed at once, not after the settle', () => {
+  const dmSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
+  assert.match(dmSrc, /if \(botBuilds\) settingsModule\(\)\.noteIssueActivity\(\{ appId: row\.app_id, issueNumber, reason: 'first_version' \}\);/);
+  const botSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
+  assert.match(botSrc, /: platform\(\)\.botRefresh\(id, \{ now: String\(reason\) === 'first_version' \}\);/);
 });
 
 // ── Waiting for the project, and its setup failing ───────────────────────

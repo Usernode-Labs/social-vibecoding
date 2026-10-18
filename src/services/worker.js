@@ -3598,6 +3598,14 @@ async function execInWorker(sessionId, {
   // longer this process's) dispatches nothing and leaves the record for the
   // next owner, who finds it never dispatched.
   onTurnRecord = null,
+  // The work item that runs this turn, when workflow work started it
+  // ({ machine, key, kind, workKey, workId }: turn-lifecycle.turnOwner).
+  // Written into the record with the claim. For such a turn every decision
+  // is the durable record's and the item's: a Stop is an event to its
+  // machine, which cancels the item (onTurnRecord's checkpoint then refuses
+  // the dispatch) and stamps the record (read once right after the exec,
+  // below); this process's pending-stop flag never decides for it.
+  owner = null,
   // Kept as a compatibility option for older call sites. Persistence is now
   // required for every dispatch, not only recovered retries.
   requireActiveTurnPersistence = false,
@@ -3638,6 +3646,7 @@ async function execInWorker(sessionId, {
   // stop gate, so its freshly generated fallback id must not be returned as
   // though it had been registered when the gate prevents that write.
   const preRegisteredTurnId = logicalTurnId || turnUuid || null;
+  const turnOwnerRecord = turnLifecycle.turnOwner(owner);
 
   // #937: honour a stop that was requested while this turn was still
   // spinning up. Historically the dispatch upsert below cleared
@@ -3654,7 +3663,7 @@ async function execInWorker(sessionId, {
   // shape a genuinely killed turn produces, so every downstream consumer
   // (the caller's stopped branch, the tail, the watchdog) behaves exactly
   // as it does for a real in-flight kill.
-  if (getPendingStop(sessionId)) {
+  if (!turnOwnerRecord && getPendingStop(sessionId)) {
     log.info('worker', 'Dispatch skipped — stop requested during spin-up', {
       sessionId, containerName, mode,
     });
@@ -4092,6 +4101,7 @@ async function execInWorker(sessionId, {
     // the recovered costUsd into the bucket the turn actually billed,
     // even if the user adds/removes their key while the turn is detached.
     byok: !!anthropicApiKey,
+    owner: turnOwnerRecord || undefined,
   });
   if (!activeTurnPersist.ok) {
     // Put back what this call replaced: this dispatch never ran, so the
@@ -4123,9 +4133,19 @@ async function execInWorker(sessionId, {
       await onTurnRecord({ turnId: durableTurnId, journal, turnUuid: turnUuid || null, mode });
     } catch (err) {
       // Nothing was dispatched: this process's registry goes back as it was,
-      // and the record stays for whoever owns the turn next.
+      // and the record stays for whoever owns the turn next. A workflow
+      // turn's item that was cancelled (a Stop before the record existed)
+      // has no next owner: its record goes now, or the session would read
+      // busy until the orphan sweep.
       releaseRegistryClaim();
       await revokeHomeroomReadGrant(sessionId, homeroomGrant);
+      if (turnOwnerRecord?.workId) {
+        const { rows: [w] } = await _getPoolSafe().query('SELECT status FROM wf_work WHERE id::text = $1', [String(turnOwnerRecord.workId)])
+          .catch(() => ({ rows: [{ status: null }] }));
+        if (w === undefined || w.status === 'settled') {
+          await finishTurn(sessionId, { turnId: durableTurnId, journal }).catch(() => {});
+        }
+      }
       throw err;
     }
   }
@@ -4180,7 +4200,23 @@ async function execInWorker(sessionId, {
     // journal path, re-issuing the kill lands the TERM/KILL plus the
     // `__USERNODE_EXIT__ 143` marker, so the consumer below resolves on
     // its next journal read (~1s) instead of on the 10s watchdog.
-    if (getPendingStop(sessionId)) {
+    if (turnOwnerRecord) {
+      // A workflow turn's Stop is on its record (the machine's turn.stop
+      // stamped it, maybe from another process, while this dispatch was in
+      // flight and there was no turn to kill yet). Or the record is gone, or
+      // is another turn's: turn.stop stamped it, found no journal to kill
+      // (the exec had not started) and released it. Nothing else releases a
+      // held workflow turn's record before its exec, and a turn running with
+      // no record would run with no clock beside the next one.
+      const durable = await turnLifecycle.loadActiveTurn(_getPoolSafe(), sessionId).catch(() => undefined);
+      const ours = durable && String(turnLifecycle.turnIdentity(durable)) === String(durableTurnId);
+      if ((durable !== undefined && !ours) || (ours && turnLifecycle.stopRequestOf(durable))) {
+        log.info('worker', 'Stop landed during dispatch — killing the turn it was asked of', {
+          sessionId, containerName, journal,
+        });
+        await stopTurnByJournal(sessionId, journal).catch(() => {});
+      }
+    } else if (getPendingStop(sessionId)) {
       log.info('worker', 'Stop landed during dispatch — re-issuing kill', {
         sessionId, containerName, journal,
       });
@@ -4858,6 +4894,65 @@ function clearPendingStop(sessionId) {
 // pending. Synchronous by design — the dispatch gate reads it inline.
 function getPendingStop(sessionId) {
   return _warmRegistry.get(Number(sessionId))?.stopRequestedAt || null;
+}
+
+// Kill the turn whose journal is `journal`, and only while it is the
+// newest turn on the worker: a turn started after it (its own journal,
+// newer) is never touched, so a Stop meant for one turn cannot end the
+// next. Forced: the turn's processes are frozen, killed and confirmed, and
+// the journal gets its exit marker. Resolves 'stopped', 'not_current' (a
+// newer turn, or no such journal) or throws when the kill could not be
+// confirmed. Touches no registry flag: nothing here is this process's to
+// remember.
+async function stopTurnByJournal(sessionId, journal, { timeoutMs = 15000 } = {}) {
+  if (!journal || !/^\/home\/node\/\.claude\/turn-[A-Za-z0-9-]+\.log$/.test(String(journal))) {
+    throw Object.assign(new Error('stopTurnByJournal: a turn journal path is required'), { code: 'journal_required' });
+  }
+  const meta = _registryGet(sessionId);
+  const containerName = meta?.containerName || workerRuntimeName(sessionId);
+  const fence = `N=$(ls -t /home/node/.claude/turn-*.log 2>/dev/null | head -1); `
+    + `[ "$N" = '${journal}' ] || { echo __USERNODE_STOP_NOT_CURRENT__; exit 0; }`;
+  const script = `${fence}; ${buildImmediateTurnStopScript(`J='${journal}'`)}`;
+  let result;
+  try {
+    result = await execWorkerCommand(containerName, ['sh', '-c', script], null, { timeoutMs });
+  } catch (err) {
+    // No worker at all: no turn to stop.
+    if (err?.code === 'WORKER_NOT_FOUND' || /No such container|not found/i.test(String(err?.message || ''))) return 'not_current';
+    throw err;
+  }
+  const out = String(result?.stdout || '');
+  if (/__USERNODE_STOP_NOT_CURRENT__/.test(out)) return 'not_current';
+  if (/__USERNODE_STOP_CONFIRMED__/.test(out)) return 'stopped';
+  throw Object.assign(new Error('stopTurnByJournal: the stop was not confirmed'), { code: 'stop_unconfirmed' });
+}
+
+// A machine's turn.stop work (src/workflow/turn-stop.ts): the turn on the
+// session that the instance `machine`/`key` runs, with a work item of one
+// of `kinds` (and, given `workKey`, that very item), is stamped stopped (by whom), killed (only that turn), and,
+// with `release`, its record released, because the work that would have
+// released it was cancelled. A record that is not this instance's (a
+// person's turn, another machine's, a newer turn) is left alone. Resolves
+// what it found and did; throws when the kill or the release could not be
+// confirmed, so the work is tried again. A turn's own clock calls it too,
+// with `stamp: false` and no release (its work is still there to finish).
+async function stopOwnedTurn(pool, { sessionId, machine, key, kinds = [], workKey = null, by = null, release = true, stamp = true }) {
+  const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
+  const own = turnLifecycle.ownerOf(current);
+  if (!current || !own || own.machine !== machine || own.key !== key
+      || (kinds.length && !kinds.includes(own.kind)) || (workKey && own.workKey !== workKey)) {
+    return { stopped: false, reason: current ? 'not_this_turn' : 'no_turn' };
+  }
+  const turnId = turnLifecycle.turnIdentity(current);
+  // A turn's own clock (stamp: false) is not somebody stopping it: only a
+  // Stop is recorded on the record, where durable-turn reads it as stopped.
+  if (stamp) await turnLifecycle.markStopRequested(pool, { sessionId, turnId, journal: current.journal || null, by });
+  const killed = current.journal ? await stopTurnByJournal(sessionId, current.journal) : 'not_current';
+  if (release) {
+    const done = await finishTurn(sessionId, { turnId, journal: current.journal || null });
+    if (done === false) throw Object.assign(new Error('stopOwnedTurn: the record could not be released'), { code: 'release_failed' });
+  }
+  return { stopped: killed === 'stopped', reason: killed, turnId, released: !!release };
 }
 
 // #460: materialize the dispatching user's personal agent files into the
@@ -6050,6 +6145,8 @@ module.exports = {
   isRetryableBootstrapError,
   execInWorker,
   stopTurn,
+  stopTurnByJournal,
+  stopOwnedTurn,
   // #937: pending-stop record (survives the dispatch it guards)
   clearPendingStop,
   getPendingStop,

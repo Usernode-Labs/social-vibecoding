@@ -4,8 +4,8 @@
 //
 // type-racer-battle-1c07b0's requests #2, #5 and #6 waited from 10 October
 // with `waiting: null`, next in line by every account, while the project's
-// first version was still up for a vote: liveCandidates passed over them in
-// silence. The queue's count (every row not running) and its list (the first
+// first version was still up for a vote: the bot's read lane passed over
+// them in silence. The queue's count (every row not running) and its list (the first
 // 12 rows, running first) came from two queries and described two sets.
 //
 // These pin, without a database: queueWait's reasons and their order; the
@@ -59,7 +59,7 @@ test('queueWait: every reason the loop passes a row over for, in the order it me
   assert.deepEqual(w({ person_id: 7 }, { personCounts, perPerson: 3 }), { reason: 'per_person', until: null });
   assert.equal(w({ person_id: 7 }, { personCounts, perPerson: 4 }), null);
   assert.deepEqual(w({ person_id: null }, { personCounts: new Map([['a9', 1]]), perPerson: 1 }),
-    { reason: 'per_person', until: null }, 'nobody known: the app is its person, as pickLive counts');
+    { reason: 'per_person', until: null }, 'nobody known: the app is its person, as rules pickLive counts');
   // A person still writing: read 20 seconds after their last word.
   assert.deepEqual(w({ settle_from: new Date(NOW - 5000).toISOString() }),
     { reason: 'settling', until: new Date(NOW + 15000).toISOString() });
@@ -68,8 +68,10 @@ test('queueWait: every reason the loop passes a row over for, in the order it me
 });
 
 test('queueSnapshot: the counts and the rows listed come from one statement, and what it derives from them', async () => {
-  bot._resetForTests();
   const calls = [];
+  // What the lane holds (loopMemory, read from its instance and the slots
+  // its requests hold), handed in: the adminPayload reads it once.
+  const memory = { inFlight: [], backoff: [], fault: null, budgetUntil: 0 };
   const rows = [
     { id: 1, app_id: 9, issue_number: 3, started_at: '2026-10-12T11:59:00Z', person_id: 7, follow_up_session_id: null, waiting_total: 4, running_total: 1 },
     { id: 2, app_id: 9, issue_number: 4, started_at: null, person_id: 8, waiting_total: 4, running_total: 1 },
@@ -77,7 +79,7 @@ test('queueSnapshot: the counts and the rows listed come from one statement, and
     { id: 4, app_id: 11, issue_number: 6, started_at: null, person_id: 7, waiting_total: 4, running_total: 1 },
   ];
   const pool = { async query(sql, params) { calls.push({ sql, params }); return { rows }; } };
-  const q = await bot.queueSnapshot(pool, { mode: 'shadow', pausedApps: ['quiet-app'], perPerson: 1 }, { botId: 77, now: NOW });
+  const q = await bot.queueSnapshot(pool, { mode: 'shadow', pausedApps: ['quiet-app'], perPerson: 1 }, { botId: 77, now: NOW, memory });
   assert.equal(calls.length, 1, 'one statement, so one snapshot');
   assert.match(calls[0].sql, /COUNT\(\*\) FILTER \(WHERE q\.started_at IS NULL\) OVER \(\)::int AS waiting_total/);
   assert.match(calls[0].sql, /COUNT\(\*\) FILTER \(WHERE q\.started_at IS NOT NULL\) OVER \(\)::int AS running_total/);
@@ -92,12 +94,12 @@ test('queueSnapshot: the counts and the rows listed come from one statement, and
     undefined, 'session_busy', 'first_version_pending', 'per_person',
   ].map((r) => r || null));
   // The bot off: everything waiting says so.
-  const off = await bot.queueSnapshot(pool, { mode: 'off' }, { now: NOW });
+  const off = await bot.queueSnapshot(pool, { mode: 'off' }, { now: NOW, memory });
   assert.deepEqual(off.items.slice(1).map((i) => i.waiting.reason), ['bot_paused', 'bot_paused', 'bot_paused']);
-  const empty = await bot.queueSnapshot({ query: async () => ({ rows: [] }) }, {}, { now: NOW });
+  const empty = await bot.queueSnapshot({ query: async () => ({ rows: [] }) }, {}, { now: NOW, memory });
   assert.deepEqual(empty, { depth: 0, running: 0, items: [], listedWaiting: 0, listedRunning: 0 });
 
-  // The snapshot reads the rules liveCandidates applies, from the same constants.
+  // The snapshot reads the rules the lane's candidates apply, from the same constants.
   const src = read('src/services/homeroom-bot.js');
   assert.match(src, /const queue = await queueSnapshot\(pool, settings, \{ botId: botRow\?\.id \?\? null, memory \}\);/);
   assert.match(src, /queue: \{ \.\.\.queue, buildsWaiting: builds\.waiting \},/);

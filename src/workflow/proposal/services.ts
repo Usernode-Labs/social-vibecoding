@@ -6,7 +6,8 @@ import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { parseGithubUrl } from '../rules/github-url.ts';
 import { permanent } from '../work-errors.ts';
-import { WORK } from './machine.ts';
+import { MACHINE, WORK, sessionKey } from './machine.ts';
+import { turnOwner } from '../rules/turn-stop.ts';
 
 interface Deps { config: any; pool: Pool }
 
@@ -319,6 +320,7 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
         const out = await legacy('services/sync-main').runSyncWork(config, pool, {
           sessionId: Number(input.sessionId), reason: String(input.reason), measureFirst: !!input.measureFirst,
           waitForIdle: !!input.waitForIdle, githubConflict: !!input.githubConflict, last: ctx.attempt >= SYNC_ATTEMPTS, steps,
+          owner: turnOwner(ctx, MACHINE, sessionKey(Number(input.sessionId))),
         });
         await steps.flush();
         steps.fence();

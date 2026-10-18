@@ -123,7 +123,7 @@ test('the pipeline writes each stage where it happens', () => {
   assert.match(bot, /void timeline\.record\(pool, \{ runId, stage: 'go_ahead', detail: \{ answers: chosen\.length \} \}\);/);
   // The plan, written by the triage (a plan from Make it was recorded when it was written).
   assert.match(bot, /if \(!parsed\?\.fromMakeIt\) \{\s+void timeline\.record\(pool, \{ runId, stage: 'plan_written', detail: \{ source: 'triage'/);
-  assert.match(bot, /fromMakeIt: true,\s+\};\s+const capSuppressed = await simulateCaps/);
+  assert.match(bot, /fromMakeIt: true,\s+\};\s+const caps = await simulateCaps/);
   // Its build takes its slot: how long it waited, logged and a stage.
   assert.match(bot, /const claim = await claimLiveBuild\(pool, \{ runId, sessionId: session\.id \}\);\s+if \(!claim\.claimed\) return LOST_CLAIM;/);
   assert.match(bot, /log\.info\('homeroom-bot', 'A live build took its slot', \{\s+app: app\.slug, issueNumber, runId, sessionId: session\.id, waitedMs, attempt: claims,/);

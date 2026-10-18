@@ -355,7 +355,7 @@ async function runTurn({
   pool, config, user, session, repo, prompt, mode, model, budgetMs, deps, commitMsg = '', onActivity = null,
   key = 'turn', steps = durableSteps.none(),
 }) {
-  const { worker, sessions, agentTurn, activeWorkers } = deps;
+  const { worker, sessions, agentTurn } = deps;
   let containerName;
   try {
     containerName = await require('../homeroom-bot-live').ensureBuildWorker({
@@ -371,7 +371,6 @@ async function runTurn({
   await pool.query('UPDATE chat_sessions SET agent_thread_id = NULL, agent_model = $2 WHERE id = $1', [session.id, model]);
   session.agent_thread_id = null;
   session.agent_model = model;
-  activeWorkers.add(session.id);
   let pricing = null;
   // A prompt rendered for the runtime is kept as it was sent, so a turn a
   // restart caught is read against the prompt it had.
@@ -385,6 +384,8 @@ async function runTurn({
     pool, session, userId: user.id, config, isCodexSession: true,
     turnModel: model, resumeThreadId: null, mode,
     telemetryComponent: TELEMETRY,
+    // The trial's build item (its steps', durable-turn hands it on).
+    owner: extra.owner || null,
     resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
       pool, session, userId: user.id, model, resumeThreadId: null, config,
       // As the bot's own turns ask for it (#3296).
@@ -420,11 +421,11 @@ async function runTurn({
   let ran;
   try {
     ran = await durableTurn.runTurn(steps, key, {
-      pool, session, mode, budgetMs, dispatch, stop: () => worker.stopTurn(session.id), head, observe, onProgress,
+      pool, session, mode, budgetMs, dispatch, head, observe, onProgress,
+      stop: () => durableTurn.clockStop(worker, pool, session.id, steps.turnOwner),
       deps: { worker, agentTurn },
     });
   } finally {
-    activeWorkers.delete(session.id);
     // A stop leaves the session as it is: its turn is the trial's next owner's.
     if (!steps.stopped) {
       await require('../session-lifecycle').restSession({ pool, sessionId: session.id }).catch(() => {});

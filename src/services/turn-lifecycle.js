@@ -403,7 +403,7 @@ async function noteRestart(db, { sessionId, turnId }) {
 const RESERVED_TURN_KEYS = new Set([
   'turnId', 'phase', 'journal', 'turnUuid', 'logicalTurnId', 'attemptNumber', 'backend', 'harness',
   'mode', 'model', 'startedAt', 'tail', 'restarts', 'byok', 'byokCents', 'stopRequestedAt',
-  'stopRequestedBy', 'lifecycleUpdatedAt', 'executionStartedAt', 'cleanupPendingAt', 'quarantineCode',
+  'stopRequestedBy', 'lifecycleUpdatedAt', 'executionStartedAt', 'cleanupPendingAt', 'quarantineCode', 'owner',
 ]);
 
 // #4533: the turn's owner keeps a note of its own on the record, under one
@@ -579,6 +579,29 @@ async function markStopRequested(db, { sessionId, turnId = null, journal = null,
 // Read the durable stop intent back off a parsed active_turn record.
 // Returns null when the turn carries no stamp, so callers can treat
 // "no durable stop" and "no turn at all" the same way.
+// The work item that runs a turn workflow work started (sync, the shots
+// agent, the Homeroom bot's builds, reads and fixes, a bench trial): written
+// into the record in the statement that claims it (execInWorker,
+// agent-turn.startCodexAttempt), so "a turn runs" and "whose it is" commit
+// together. The work item's lease is the turn's presence: while the item is
+// outstanding the turn is its machine's (src/workflow/session-work.ts
+// workflowTurnHeldSql), and a Stop is an event to that machine. Null for a
+// person's own turn. Pure.
+const OWNER_PART = /^[A-Za-z0-9:._@-]{1,200}$/;
+function turnOwner(o) {
+  if (!o || typeof o !== 'object') return null;
+  const { machine, key, kind, workKey, workId } = o;
+  if (![machine, key, kind, workKey].every((v) => typeof v === 'string' && OWNER_PART.test(v))) return null;
+  return {
+    machine, key, kind, workKey,
+    workId: typeof workId === 'string' && /^[0-9a-f-]{36}$/i.test(workId) ? workId : null,
+  };
+}
+
+function ownerOf(activeTurn) {
+  return activeTurn && typeof activeTurn === 'object' ? turnOwner(activeTurn.owner) : null;
+}
+
 function stopRequestOf(activeTurn) {
   if (!activeTurn || typeof activeTurn !== 'object') return null;
   const at = activeTurn.stopRequestedAt;
@@ -621,5 +644,7 @@ module.exports = {
   markHeadlessTerminal,
   markStopRequested,
   stopRequestOf,
+  turnOwner,
+  ownerOf,
   RECOVERABLE_PHASES,
 };

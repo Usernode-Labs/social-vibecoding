@@ -22,7 +22,7 @@
 //
 // tests/workflow-process-state.test.js gates on it against
 // tests/baselines/workflow-process-state.json, which holds only what was
-// reviewed (allowed, io, handOff).
+// reviewed (allowed, io).
 //   node tests/lib/workflow-boundary.js            what is not reviewed, per machine
 //   node tests/lib/workflow-boundary.js --all      everything, per machine
 //   node tests/lib/workflow-boundary.js --shrink   drop reviewed entries that
@@ -645,7 +645,7 @@ if (require.main === module) {
   const now = boundary(REPO, new Set(Object.keys(baseline.allowed)));
   if (process.argv.includes('--shrink')) {
     let removed = 0;
-    for (const section of ['io', 'handOff']) {
+    for (const section of ['io']) {
       for (const [name, entries] of Object.entries(baseline[section] || {})) {
         for (const entry of Object.keys(entries)) {
           if (now.get(name)?.has(entry)) continue;
@@ -658,8 +658,8 @@ if (require.main === module) {
     fs.writeFileSync(BASELINE, `${JSON.stringify(baseline, null, 2)}\n`);
     console.log(`removed ${removed} entr${removed === 1 ? 'y' : 'ies'} no longer there`);
   } else {
-    // What is not reviewed yet: the entries neither io nor handOff names.
-    const reviewed = (name, e) => ['io', 'handOff'].some((k) => Object.prototype.hasOwnProperty.call(baseline[k]?.[name] || {}, e));
+    // What is not reviewed yet: the entries io does not name.
+    const reviewed = (name, e) => Object.prototype.hasOwnProperty.call(baseline.io?.[name] || {}, e);
     for (const [name, entries] of now) {
       const open = [...entries].filter(([e]) => process.argv.includes('--all') || !reviewed(name, e));
       if (!open.length) continue;

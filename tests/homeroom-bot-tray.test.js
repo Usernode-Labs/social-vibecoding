@@ -10,9 +10,10 @@
 //     the activity cards' words, where an entry opens, and how the entries
 //     are arranged: one per request, in Now, Needs you or History, with the
 //     request's other runs folded in;
-//   - the live loop announcing, to the person it is for, when it starts and
-//     finishes their work (the tray's realtime), and app.js turning that
-//     announcement into the window event the tray listens for;
+//   - the bot announcing, to the person it is for, when it starts and
+//     finishes their work (the tray's realtime: its request's machine,
+//     bot-request), and app.js turning that announcement into the window
+//     event the tray listens for;
 //   - the tray's render: the status line under the bot's name in each state,
 //     the Activity disc and its badge, the panel's groups and tiles, History
 //     folded away, its loading and failed states, and links that only ever
@@ -38,7 +39,6 @@ const TRAY = 'frontend/src/features/messages/bot-work.tsx';
 const API = 'frontend/src/features/messages/api.ts';
 
 const tray = require('../src/services/homeroom-bot-tray');
-const bot = require('../src/services/homeroom-bot');
 const activity = require('../src/services/homeroom-bot-activity');
 
 // ── The service's rules ───────────────────────────────────────────────
@@ -486,62 +486,45 @@ test('the route reads the signed-in person and nothing the request names', () =>
   assert.match(read('src/services/homeroom-bot-tray.js'), /WHERE q\.user_id = \$1 AND r\.mode = 'live'/);
 });
 
-// ── The realtime: the live loop says when it starts and ends ──────────
+// ── The realtime: the bot says when it starts and ends their work ────
 
-/** A pool that answers the loop's queries, with live candidates to start (as homeroom-bot-at-once.test.js). */
-function loopPool({ settings, candidates = [], apps = [] }) {
-  const client = {
-    async query(sql) {
-      if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
-      return { rows: [] };
-    },
-    release() {},
+// A look is its request's (bot-request): the lane grants its slot, naming
+// who it is for (`person`, u<id>, or a<app> when nobody on Homeroom filed
+// it), and its work reports its end. Each is a transition, driven here
+// without a database.
+test('the bot tells the person a piece of work is for when it starts and when it ends', () => {
+  const request = require('../src/workflow/bot-request/machine.ts');
+  const rules = require('../src/workflow/rules/bot-loop.ts');
+  const machine = request.botRequest({ staging: false });
+  const now = new Date('2026-10-17T12:00:00Z');
+  const owed = { reason: 'new', priority: 1, payer: null, requestedBy: null, changedBy: null, threadSeenAt: null, enqueuedAt: now.toISOString(), heldUntil: null };
+  const data = (appId, issueNumber) => ({
+    appId, issueNumber, owed, look: null, build: null, slot: null, n: 0, backoff: null, fix: null,
+    spentRetry: null, lastRead: null, carried: null, older: null,
+  });
+  const ctxOf = (appId, n) => ({ machine: request.MACHINE, key: rules.requestKey(appId, n), appId, version: 1, now });
+  const fromLane = { kind: 'message', from: { machine: rules.BOT_LANE, key: rules.LANE_KEY, eventId: 1 } };
+  const told = (outcome) => (outcome.push || [])
+    .filter((p) => p.kind === 'user' && p.data?.type === 'homeroom_bot_work_changed')
+    .map((p) => Number(p.routing.userId));
+  const grant = (appId, n, person) => {
+    const payload = machine.events.get('Granted')({ appId, issueNumber: n, grant: 1, kind: 'read', sessionId: 9, person });
+    return machine.entryFor('queued', 'Granted').to({ name: 'queued', data: data(appId, n) },
+      { id: 1, type: 'Granted', payload, source: fromLane, actor: null, requestKey: 'g', appId, causedBy: null }, {}, ctxOf(appId, n));
   };
-  return {
-    async connect() { return client; },
-    async query(sql, params) {
-      const s = String(sql);
-      if (/SELECT key, value FROM platform_settings/.test(s)) return { rows: settings };
-      if (/FROM users WHERE username = \$1/.test(s)) return { rows: [{ id: 77, username: 'homeroom_bot', weekly_limit_cents: 15000 }] };
-      if (/SELECT is_synthetic FROM users/.test(s)) return { rows: [{ is_synthetic: true }] };
-      if (/COALESCE\(r\.user_id, i\.created_by\) AS person_id/.test(s) && /WHERE q\.started_at IS NULL/.test(s)) {
-        return { rows: candidates.filter((c) => !params[1].includes(c.app_id)) };
-      }
-      if (/FROM apps WHERE id = ANY\(\$1::int\[\]\)/.test(s)) return { rows: apps.filter((a) => params[0].includes(a.id)) };
-      if (/SET started_at = NOW\(\) WHERE id = \$1 AND started_at IS NULL RETURNING id/.test(s)) return { rows: [{ id: params[0] }] };
-      return { rows: [] };
-    },
+  const ended = (started, appId, n) => {
+    const payload = { workId: 1, kind: request.WORK.look, workKey: `look:${started.next.data.look.n}`, result: { outcome: 'done' } };
+    return machine.entryFor('reading', 'WorkSucceeded').to(started.next,
+      { id: 2, type: 'WorkSucceeded', payload, source: { kind: 'service', workId: 1 }, actor: null, requestKey: 'w', appId, causedBy: null }, {}, ctxOf(appId, n));
   };
-}
 
-test('the live loop tells the person a piece of work is for when it starts and when it ends', async () => {
-  bot._resetForTests();
-  const settings = [
-    { key: bot.KEY_MODE, value: 'shadow' },
-    { key: bot.KEY_PER_PERSON, value: '2' },
-    { key: bot.KEY_LIVE_AT_ONCE, value: '6' },
-  ];
-  const row = (id, appId, personId) => ({ id, app_id: appId, issue_number: id, priority: 1, reason: 'new', person_id: personId });
-  const apps = [101, 102].map((id, i) => ({ id, slug: `a${i + 1}`, name: `a${i + 1}`, repo_url: `https://github.com/o/a${i + 1}`, self_hosted: false }));
-  const pool = loopPool({ settings, candidates: [row(1, 101, 7), row(2, 102, null)], apps });
-  const pushes = [];
-  let release;
-  const gate = new Promise((r) => { release = r; });
-  const deps = {
-    drain: false,
-    ws: { pushToUser(userId, payload) { pushes.push([userId, payload.type]); return 1; } },
-    github: { isEnabled: () => true, async fetchPublicIssues() { return { issues: [] }; } },
-    limits: { async checkBudget() { await gate; return { error: true, reason: 'weekly_cap' }; } },
-    worker: { async listWorkerVolumes() { return []; } },
-  };
-  const out = await bot.runOnce(pool, {}, deps);
-  assert.equal(out.dispatched, 2);
-  assert.deepEqual(pushes, [[7, 'homeroom_bot_work_changed']],
-    'started: person 7 hears it; an issue nobody on Homeroom filed tells nobody');
-  release();
-  await new Promise((r) => setTimeout(r, 20));
-  assert.deepEqual(pushes, [[7, 'homeroom_bot_work_changed'], [7, 'homeroom_bot_work_changed']], 'and ended');
-  bot._resetForTests();
+  const started = grant(101, 1, 'u7');
+  assert.equal(started.next.name, 'reading');
+  assert.deepEqual(told(started), [7], 'started: person 7 hears it');
+  assert.deepEqual(told(ended(started, 101, 1)), [7], 'and ended');
+  const nobody = grant(102, 2, 'a102');
+  assert.deepEqual(told(nobody), [], 'an issue nobody on Homeroom filed tells nobody');
+  assert.deepEqual(told(ended(nobody, 102, 2)), []);
 });
 
 test('a failed announcement never costs the work', () => {

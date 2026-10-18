@@ -1406,6 +1406,9 @@ function verdictOf(summary) {
  */
 async function dispatchAgent(config, pool, {
   runId, sessionId, budgetMs, steps = null, key = 'agent', onProgress = null, signal = null, current = null,
+  // The shots machine's agent item (turn-lifecycle turnOwner): on the turn's
+  // record, so the turn is that item's in every process.
+  owner = null,
 }, injected = {}) {
   const deps = {
     shotsAgent: injected.shotsAgent || shotsAgent,
@@ -1438,9 +1441,6 @@ async function dispatchAgent(config, pool, {
       ? await deps.identities.mintInvitedTokens(app.id) : {}),
   };
   await shotsControl.extend(pool, runId, Date.now() + budgetMs + CONTROL_SLACK_MS);
-  // A turn stopped on its clock leaves the worker's stop marker; this is a
-  // new turn.
-  deps.worker.clearPendingStop?.(sessionId);
   let progressAt = 0;
   const onShotsDiagnostic = (event) => {
     recordAgentDiagnostic(metrics, event);
@@ -1478,6 +1478,7 @@ async function dispatchAgent(config, pool, {
         onShotsDiagnostic,
         resumeThreadId: null,
         timeoutMs: left,
+        ...(extra.owner ? { owner: extra.owner } : {}),
         ...(extra.holdTurnRecord ? { holdTurnRecord: true } : {}),
         ...(typeof extra.onTurnRecord === 'function' ? { onTurnRecord: extra.onTurnRecord } : {}),
       }, injected.agentDependencies || {});
@@ -1493,8 +1494,9 @@ async function dispatchAgent(config, pool, {
     }
   };
   const turn = await deps.durableTurn.runTurn(steps || deps.durableSteps.none(), key, {
-    pool, session, mode: 'shots', budgetMs, dispatch,
-    stop: () => deps.worker.stopTurn(sessionId),
+    pool, session, mode: 'shots', budgetMs, dispatch, owner,
+    // Its own clock ends only its own turn (by its record).
+    stop: () => require('./durable-turn').clockStop(deps.worker, pool, sessionId, owner),
     onProgress,
   });
   const routed = turn.routed || {};
@@ -1584,7 +1586,8 @@ async function cleanupRun(config, pool, {
     // is when the record cannot be read.
     const activeTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
     if (activeTurn && activeTurn.mode === 'shots' && activeTurn.telemetryCorrelationId === runId) {
-      await workerApi.stopTurn(sessionId).catch((error) => {
+      // By its journal: a turn started after it is never the one killed.
+      await (activeTurn.journal ? workerApi.stopTurnByJournal(sessionId, activeTurn.journal) : Promise.resolve()).catch((error) => {
         log.warn('shots', 'Could not stop the shots agent of a run that ended', { sessionId, runId, error: error.message });
       });
       const released = await workerApi.finishTurn(sessionId, {

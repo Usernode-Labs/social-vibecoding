@@ -200,7 +200,7 @@ test('it is live on every app but a paused one, the platform\'s own included', (
     { all: true, slugs: [], except: [] });
   assert.equal(live.scopeIsEmpty(live.liveScope(settings)), false);
   assert.equal(live.scopeIsEmpty(live.liveScope({ mode: 'off' })), true);
-  // A scope that names its own apps (liveCandidates) still reads as those apps.
+  // A scope that names its own apps still reads as those apps.
   assert.equal(live.inScope({ all: false, slugs: ['a'], except: [] }, 'a'), true);
   assert.equal(live.inScope({ all: false, slugs: ['a'], except: [] }, 'b'), false);
   assert.equal(live.scopeIsEmpty({ all: false, slugs: [], except: [] }), true);
@@ -615,12 +615,16 @@ test('an issue with an open bot proposal is left alone', () => {
 const sessionLifecycle = require('../src/services/session-lifecycle');
 
 function buildHarness({ result = { pushOk: true, ahead: 1, sha: 'a'.repeat(40) }, promote = { status: 200, body: { ok: true, prNumber: 42 } }, hang = false, spec = '' } = {}) {
-  const calls = { queries: [], ensured: [], loop: null, exec: null, stopped: [], promoted: [], modes: [], closed: [] };
+  const calls = { queries: [], ensured: [], loop: null, exec: null, stopped: [], stoppedJournals: [], promoted: [], modes: [], closed: [] };
   sessionLifecycle.closeOwnSession = async ({ sessionId, reason }) => { calls.closed.push({ sessionId, reason }); return true; };
+  // The turn on the session, as execInWorker records it: the build's, once
+  // it is dispatched.
+  let activeTurn = null;
   const pool = {
     async query(sql, params) {
       calls.queries.push({ sql: String(sql), params });
       if (/INSERT INTO chat_sessions/.test(sql)) return { rows: [{ id: 5001, app_id: APP.id, user_id: BOT.id }] };
+      if (/SELECT active_turn FROM chat_sessions/.test(sql)) return { rows: [{ active_turn: activeTurn }] };
       return { rows: [] };
     },
   };
@@ -639,6 +643,7 @@ function buildHarness({ result = { pushOk: true, ahead: 1, sha: 'a'.repeat(40) }
         calls.modes.push(opts.mode);
         if (opts.mode === 'scout') return { lastResultText: spec };
         calls.exec = { id, opts };
+        activeTurn = { turnId: 'turn-build', journal: '/home/node/.claude/turn-build.log', mode: 'build' };
         if (hang && opts.onProgress) {
           for (const line of ['Reading public/app.js', 'Running: npm test', 'Running: npm test',
             'Waiting on a command for 540s: npm start', 'Waiting on a command for 600s: npm start']) opts.onProgress(line);
@@ -646,6 +651,7 @@ function buildHarness({ result = { pushOk: true, ahead: 1, sha: 'a'.repeat(40) }
         return result;
       },
       stopTurn(id) { calls.stopped.push(id); release(); return Promise.resolve(); },
+      async stopTurnByJournal(id, journal) { calls.stopped.push(id); calls.stoppedJournals.push(journal); release(); return 'stopped'; },
     },
     sessions: {
       async runCodexAttemptLoop(args) {
@@ -659,7 +665,6 @@ function buildHarness({ result = { pushOk: true, ahead: 1, sha: 'a'.repeat(40) }
     },
     agentTurn: { async resolveCodexRuntimeContext() { return {}; } },
     sessionLifecycle: { async ensureSessionBranch({ sessionId }) { return { branchName: `homeroom_bot/s${sessionId}` }; } },
-    activeWorkers: new Set(),
     votesRouter: router,
   };
   return { pool, deps, calls };
@@ -730,6 +735,9 @@ test('a build is held to the same wall clock as a triage turn', async (t) => {
   }
   const out = await running;
   assert.deepEqual(h.calls.stopped, [5001]);
+  // Only the build's own turn, by its journal: one started after it is
+  // never the one ended.
+  assert.deepEqual(h.calls.stoppedJournals, ['/home/node/.claude/turn-build.log']);
   assert.match(out.error, /ran past its time limit/);
   // #3385: what it was waiting on, the last three distinct progress lines.
   assert.equal(out.error, 'the build ran past its time limit; last activity: Running: npm test | '
@@ -1067,13 +1075,15 @@ test('a backlog pass holds silently, and still speaks when it has something to s
 
 test('a "Triage this app again" item is triaged without the "looking" post, and held quietly', () => {
   assert.equal(bot.APP_AGAIN_REASON, 'app_again');
-  assert.match(BOT_SRC, /SELECT \$1, q\.n, 0, 'app_again', \$4/, 'retriageApp queues with that reason');
+  assert.match(BOT_SRC, /appId: app\.id, issueNumber: p\.n, reason: APP_AGAIN_REASON, priority: 0,/, 'retriageApp owes each its look with that reason');
   assert.match(BOT_SRC, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON \|\| item\.reason === BACKLOG_REASON\n\s+\|\| item\.reason === RETRY_FAILED_REASON \|\| item\.reason === READ_AGAIN_REASON \? null : await live\.post\(/);
   // 16 Oct 2026: an older request's read is as quiet (BACKLOG_REASON).
   assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON \|\| item\.reason === BACKLOG_REASON,/);
-  // The refresh keeps a priority-0 row's reason, so a comment before the
-  // row runs does not turn it back into a "looking" one mid-pass.
-  assert.match(BOT_SRC, /reason = CASE WHEN homeroom_bot_queue\.priority = 0\s+THEN homeroom_bot_queue\.reason ELSE EXCLUDED\.reason END/);
+  // The refresh keeps a priority-0 debt's reason (bot-request's merge of a
+  // debt into the one owed already), so a comment before its look runs does
+  // not turn it back into a "looking" one.
+  const machine = read('src/workflow/bot-request/machine.ts');
+  assert.match(machine, /const keep = old\.priority === 0 \|\| KEPT_WHILE_QUIET_REASONS\.has\(old\.reason\);\n[\s\S]{0,120}reason: keep \? old\.reason : p\.reason,/);
 });
 
 test('a live build\'s outcome is recorded on its run, in the shadow build\'s columns (#3509)', async (t) => {
@@ -1110,8 +1120,8 @@ test('a live build\'s outcome is recorded on its run, in the shadow build\'s col
   // Recorded before anything is said: a post that throws cannot lose it.
   const src = BOT_SRC.slice(BOT_SRC.indexOf('async function announceBuilt'));
   assert.match(src.slice(0, 200), /\{\n  await recordLiveBuild\(pool, runId, built, built\.model \|\| null\);/);
-  // Never the lane's markers: build_at is how the lane tells a build of its
-  // own under way.
+  // Never the shadow lane's markers: build_at and build_queued_at are its
+  // history, which the dashboard counts apart (buildLaneSummary).
   const rec = BOT_SRC.slice(BOT_SRC.indexOf('async function recordLiveBuild'));
   assert.doesNotMatch(rec.slice(0, rec.indexOf('\n}\n')), /build_at|build_queued_at/);
 });
@@ -1174,7 +1184,7 @@ test('a ready verdict is held before it is built when the bot is at its ceiling 
   }), 'proposed');
   assert.deepEqual(built, [20]);
   assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON \|\| item\.reason === BACKLOG_REASON,\n\s+proposalCeiling: botProposalCeiling\(settings\),/);
-  assert.match(BOT_SRC, /simulateCaps\(pool, bot, app\.id, parsed\.verdict, settings\)/);
+  assert.match(BOT_SRC, /simulateCaps\(pool, bot, app\.id, v\.verdict, settings\)/);
   assert.match(LIVE_SRC, /router: deps\.votesRouter \|\| null, ceiling: proposalCeiling,/);
 });
 
@@ -1192,26 +1202,20 @@ test('runTriage acts only through the live module, and only when the app is live
   for (const forbidden of ['createIssueComment', 'sendSystemMessage', '/promote']) {
     assert.ok(!BOT_SRC.includes(forbidden), `homeroom-bot.js never reaches ${forbidden} itself`);
   }
-  // Three build calls: buildLive's (a live ready verdict, in its own slot),
-  // the plan a complicated change drafts in that same slot before it asks
-  // its requester (#4488, planBeforeBuilding: the spec only, never
-  // proposed), and the shadow build's, which never proposes and never posts
-  // (shadow builds leave a branch and nothing else).
-  assert.equal((BOT_SRC.match(/buildAndPropose\(/g) || []).length, 3, 'buildLive, a complicated change\'s plan, and the shadow build');
+  // Two build calls: buildLive's (a live ready verdict, in its own slot),
+  // and the plan a complicated change drafts in that same slot before it
+  // asks its requester (#4488, planBeforeBuilding: the spec only, never
+  // proposed). The shadow build's third is gone with its lane (design D2):
+  // where nothing is live, a ready verdict is recorded and nothing is built.
+  assert.equal((BOT_SRC.match(/buildAndPropose\(/g) || []).length, 2, 'buildLive, and a complicated change\'s plan');
   const planning = BOT_SRC.slice(BOT_SRC.indexOf('async function planBeforeBuilding('), BOT_SRC.indexOf('function isGoWord('));
   assert.match(planning, /platformRepo: isPlatformRepo\(app, config\), planOnly: true,/, 'the plan\'s call drafts the spec and nothing else');
-  const shadow = BOT_SRC.slice(BOT_SRC.indexOf('async function shadowBuild('), BOT_SRC.indexOf('/**', BOT_SRC.indexOf('async function shadowBuild(')));
-  assert.match(shadow, /propose: false,?\s*\}\)\);/, 'its one build call, a durable step, never proposes');
-  assert.doesNotMatch(shadow, /live\.post\(|promoteAsBot|advanceSeen/, 'a shadow build says nothing anywhere');
-  assert.match(BOT_SRC, /\} else if \(parsed\.verdict === 'ready'\) \{\n\s+const skip = shadowBuildSkipReason\(settings, app, config\);/,
-    'and it is queued only where the live branch does not run');
-  assert.match(BOT_SRC, /if \(!skip\) \{\n(?:\s+\/\/.*\n)+\s+if \(await queueShadowBuild\(pool, runId\)\) acted = 'shadow_queued';/,
-    'only when nothing rules it out; otherwise the run says why (build_error "skipped: …")');
-  assert.equal(bot.shadowBuildSkipReason({ mode: 'shadow', shadowBuilds: true }, { slug: 'todo' }),
-    'the app is live now', 'a live app is never also shadow built');
+  for (const gone of ['async function shadowBuild(', 'queueShadowBuild(', "acted = 'shadow_queued'"]) {
+    assert.ok(!BOT_SRC.includes(gone), `no ${gone}`);
+  }
   assert.match(BOT_SRC, /const liveMode = live\.isLiveFor\(settings, app\);/);
-  assert.match(BOT_SRC, /if \(liveMode\) \{\n\s+const open = await live\.openBotProposal/);
-  assert.match(BOT_SRC, /if \(liveMode\) \{\n\s+try \{\n\s+acted = await actOnVerdict\(/);
+  assert.match(BOT_SRC, /if \(liveMode\) \{\n\s+const open = await look\.once\('gate:proposal', \(\) => live\.openBotProposal/);
+  assert.match(BOT_SRC, /if \(liveMode\) \{\n\s+try \{\n(?:\s+\/\/.*\n)+\s+const done = await look\.once\('act', async \(\) => \(\{ acted: await actOnVerdict\(\{/);
 });
 
 test('the dashboard says what a live build came to, and never calls it a shadow build (#3509)', () => {

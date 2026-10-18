@@ -147,5 +147,5 @@ test('a change nothing will offer without a person rings its requester, once, an
   const bot = read('src/services/homeroom-bot.js');
   const checks = bot.slice(bot.indexOf('async function queueChecksFix('), bot.indexOf('async function runChecksFix('));
   assert.match(checks, /if \(followup\.checksLookLikeInfra\(due\)\) \{[\s\S]*if \(due\.failing\.length\) await require\('\.\/homeroom-bot-dm'\)\.noteNeedsLook\(pool, \{ sessionId: row\.id, why: 'checks', strict: true \}\);\n\s+return \{ queued: false, why: 'infra' \};/);
-  assert.match(bot, /\.sweepUnproposedBuilds\?\.\(pool, \{ ws: deps\.ws \|\| null \}\);/);
+  assert.match(bot, /\.sweepUnproposedBuilds\?\.\(pool, \{ ws: deps\.ws \|\| null \}\)\);/);
 });

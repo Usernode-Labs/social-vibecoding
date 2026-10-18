@@ -45,7 +45,7 @@ function captureOf(n, { booted = true } = {}) {
 // every later turn (a review fix) lands. `kept` is what worker.keepPartialWork
 // answers (null: the worker has no such step).
 function harness({ buildTurn, kept = null, booted = true } = {}) {
-  const calls = { turns: [], kept: [], captures: 0, promotions: [], stops: 0, cleared: 0 };
+  const calls = { turns: [], kept: [], captures: 0, promotions: [], stops: 0 };
   let n = 0;
   const pool = {
     async query(sql) {
@@ -63,7 +63,6 @@ function harness({ buildTurn, kept = null, booted = true } = {}) {
       return { pushOk: true, ahead: 2, sha: 'fix1', lastResultText: 'Fixed.' };
     },
     stopTurn() { calls.stops += 1; return Promise.resolve(); },
-    clearPendingStop() { calls.cleared += 1; },
   };
   if (kept) {
     worker.keepPartialWork = async (sessionId, opts) => { calls.kept.push({ sessionId, ...opts }); return kept; };
@@ -79,7 +78,6 @@ function harness({ buildTurn, kept = null, booted = true } = {}) {
     },
     agentTurn: { async resolveCodexRuntimeContext() { return {}; } },
     sessionLifecycle: { async ensureSessionBranch({ sessionId }) { return { branchName: `b${sessionId}` }; } },
-    activeWorkers: new Set(),
     seesImages: true,
     github: { async forceBranchToSha() { return { updated: true }; } },
     captureRound: async () => {
@@ -115,7 +113,6 @@ test('a live first version whose build turn failed proposes the work it pushed o
   assert.equal(out.ok, true, out.error);
   assert.deepEqual(h.calls.kept, [{ sessionId: 5001, branchName: 'b5001', commitMsg: 'Homeroom bot: #1 Plant log' }],
     'the session\'s own branch, committed as the build would have been');
-  assert.ok(h.calls.cleared >= 1, 'no stop left pending for the review\'s turns');
   assert.ok(h.calls.captures >= 1, 'the kept work was captured');
   assert.equal(out.review.round0.sha, 'part1', 'the review starts from the kept commit');
   assert.deepEqual(h.calls.promotions, ['/api/sessions/5001/promote'], 'and it is proposed');

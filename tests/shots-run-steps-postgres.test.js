@@ -252,7 +252,9 @@ test('the steps of a shots run against the full PostgreSQL schema', { timeout: 1
     assert.deepEqual(options.authTokens, { ...TOKENS, guest: 'guest.jwt' }, 'the sign-in tokens reach the dispatch only');
     assert.equal(options.resumeThreadId, null, 'never the proposal\'s coding thread');
     assert.deepEqual(options.origins, ORIGINS);
-    assert.equal(calls.clears, 1, 'a stop marker an earlier turn left is cleared');
+    // A shots turn is its run's work item's: a person's Stop is an event to
+    // the shots machine, never a marker left on the session to clear.
+    assert.equal(calls.clears, 0, 'no stop marker is read or cleared');
   });
 
   await t.test('a skipped change, a broken one, and nothing saved: each says why, for the machine to fail on', async () => {
@@ -362,16 +364,18 @@ test('the steps of a shots run against the full PostgreSQL schema', { timeout: 1
     const id = await prepared(s);
     const stops = [];
     const released = [];
-    const worker = { stopTurn: async (sid) => { stops.push(sid); }, finishTurn: async (sid, o) => { released.push([sid, o.turnId]); },
+    // By its journal: a turn started after it is never the one killed.
+    const worker = { stopTurnByJournal: async (sid, journal) => { stops.push(sid); assert.match(journal, /turn-t-1\.log$/); return 'stopped'; },
+      finishTurn: async (sid, o) => { released.push([sid, o.turnId]); },
       destroyCcVolume: async (sid) => { stops.push(['volume', sid]); } };
     await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`,
-      [s.id, JSON.stringify({ mode: 'shots', telemetryCorrelationId: 'someone-else', turnId: 't-0' })]);
+      [s.id, JSON.stringify({ mode: 'shots', telemetryCorrelationId: 'someone-else', turnId: 't-0', journal: '/home/node/.claude/turn-t-0.log' })]);
     await assert.rejects(orchestrator.cleanupRun({}, pool, { runId: id, sessionId: s.id, appSlug: s.app.slug, stopTurn: true },
       { worker, removeCopies: async () => [new Error('db busy')] }), { code: 'shots_cleanup_incomplete' });
     assert.deepEqual(stops, [], 'another run\'s turn is left alone');
     assert.equal((await pool.query('SELECT 1 FROM shot_run_control WHERE run_id = $1', [id])).rowCount, 1, 'kept until the copies go');
     await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`,
-      [s.id, JSON.stringify({ mode: 'shots', telemetryCorrelationId: id, turnId: 't-1' })]);
+      [s.id, JSON.stringify({ mode: 'shots', telemetryCorrelationId: id, turnId: 't-1', journal: '/home/node/.claude/turn-t-1.log' })]);
     const done = await orchestrator.cleanupRun({}, pool, { runId: id, sessionId: s.id, appSlug: s.app.slug, stopTurn: true, worker: true },
       { worker, removeCopies: async () => [] });
     assert.equal(done.cleaned, true);
@@ -404,14 +408,14 @@ test('the steps of a shots run against the full PostgreSQL schema', { timeout: 1
     const s = await proposal();
     const id = await prepared(s);
     await pool.query(`UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1`,
-      [s.id, JSON.stringify({ mode: 'shots', telemetryCorrelationId: id, turnId: 't-3' })]);
+      [s.id, JSON.stringify({ mode: 'shots', telemetryCorrelationId: id, turnId: 't-3', journal: '/home/node/.claude/turn-t-3.log' })]);
     let fail = true;
     const flaky = { query: (sql, values) => {
       if (fail && /SELECT active_turn FROM chat_sessions/.test(sql)) { fail = false; return Promise.reject(new Error('connection reset')); }
       return pool.query(sql, values);
     } };
     const stops = [];
-    const worker = { stopTurn: async (sid) => { stops.push(sid); }, destroyCcVolume: async () => {}, finishTurn: async () => true };
+    const worker = { stopTurnByJournal: async (sid) => { stops.push(sid); return 'stopped'; }, destroyCcVolume: async () => {}, finishTurn: async () => true };
     await assert.rejects(orchestrator.cleanupRun({}, flaky, { runId: id, sessionId: s.id, appSlug: s.app.slug, stopTurn: true },
       { worker, removeCopies: async () => [] }), /connection reset/);
     assert.equal((await pool.query('SELECT 1 FROM shot_run_control WHERE run_id = $1', [id])).rowCount, 1, 'nothing reported cleaned');

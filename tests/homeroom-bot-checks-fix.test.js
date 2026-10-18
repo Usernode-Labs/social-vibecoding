@@ -159,7 +159,7 @@ test('the fix round\'s note says what was fixed from what failed, with no code a
   assert.ok(old.split('. ').length <= 2, 'one or two sentences');
   // The caller hands over what failed, and no link.
   const bot = read('src/services/homeroom-bot.js');
-  assert.match(bot, /text: followup\.checksRevisedText\(\{ failing, broken, skipped \}\),/);
+  assert.match(bot, /await note\('checks_revise', \{ runId, text: followup\.checksRevisedText\(\{ failing, broken, skipped \}\) \}\);/);
   assert.doesNotMatch(bot, /checksRevisedText\(\{[^}]*link/);
 });
 
@@ -260,11 +260,118 @@ async function run(t, h, item = ITEM) {
   live.postOnProposal = async (args) => { h.calls.onProposal.push(args); return { postId: 1, thread: true }; };
   live.advanceSeen = async (args) => { h.calls.seen.push(args); return { advanced: true }; };
   live.mentionTargets = async () => ['ada'];
-  return bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item, mode: 'shadow', settings: SETTINGS, deps: h.deps });
+  // As its request's look (bot-request's bot.look) runs it: what the look
+  // decided for its request's debt, and how the round its change asked for
+  // ended (bot-change hears that from the request), are on h.look.out.
+  h.look = bot._newLookForTests({ owner: { machine: 'bot-request', key: `request:${APP.id}:${item.issue_number}`, kind: 'bot.look' } });
+  return bot._runInLookForTests(h.look, () => bot.runTriage(h.pool, {}, {
+    bot: BOT, app: APP, item, mode: 'shadow', settings: SETTINGS, deps: h.deps,
+  }));
 }
 
 const insertOf = (h) => h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-const queued = (h) => h.calls.queries.filter((q) => /INSERT INTO homeroom_bot_queue/.test(q.s));
+
+// PR #5424 review: a fix round resumed after a restart that came right
+// after its reconcile (which made the turn's push the reviewed head, so the
+// old head's red verdict is no longer due) is the revision it was: its fix
+// target and its decision were kept, so it is finished, not dropped as
+// nothing to do, and never recorded as "no change".
+// A fix that is the change's last revision allowed: resumed after its own
+// revise run, it would count that run and hand the change to a person. The
+// revisions it started from are kept with the look.
+test('a fix round resumed after its run, as the last revision allowed, is still that revision, not a hand-off', async (t) => {
+  const durableSteps = require('../src/services/durable-steps');
+  const { StepsStopped } = require('../src/workflow/kernel/steps.ts');
+  const h = harness({ revisions: followup.MAX_REVISIONS - 1 });
+  h.deps.github.getBranchSha = async () => HEAD;
+  let recorded = false;
+  const query = h.pool.query;
+  h.pool.query = async (sql, params) => {
+    if (/INSERT INTO homeroom_bot_runs/.test(String(sql))) recorded = true;
+    if (recorded && /COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(String(sql))) return { rows: [{ n: followup.MAX_REVISIONS }] };
+    return query(sql, params);
+  };
+  const realPost = live.post;
+  const realSeen = live.advanceSeen;
+  const realOnProposal = live.postOnProposal;
+  const realTargets = live.mentionTargets;
+  t.after(() => {
+    live.post = realPost; live.advanceSeen = realSeen; live.postOnProposal = realOnProposal; live.mentionTargets = realTargets;
+  });
+  live.post = async (args) => { h.calls.posts.push(args); return { githubCreatedAt: '2026-10-01T12:05:00Z' }; };
+  live.postOnProposal = async (args) => { h.calls.onProposal.push(args); return { postId: 1, thread: true }; };
+  live.advanceSeen = async () => ({ advanced: true });
+  live.mentionTargets = async () => ['ada'];
+  let saved = null;
+  let crashed = false;
+  const attempt = (from) => {
+    const steps = durableSteps.durable({
+      resumeFrom: from,
+      checkpoint: async (v) => {
+        saved = v;
+        if (!crashed && Object.prototype.hasOwnProperty.call(v, 'run:1')) { crashed = true; throw new StepsStopped('the process was replaced'); }
+      },
+    });
+    h.look = bot._newLookForTests({ steps, n: 1, key: `request:${APP.id}:${ITEM.issue_number}`,
+      owner: { machine: 'bot-request', key: `request:${APP.id}:${ITEM.issue_number}`, kind: 'bot.look' } });
+    return bot._runInLookForTests(h.look, () => bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings: SETTINGS, deps: h.deps }));
+  };
+  await assert.rejects(attempt(null), (err) => err.stopped === true);
+  assert.ok(crashed);
+  const out = await attempt(saved);
+  assert.equal(out.verdict, 'revise');
+  assert.ok(!h.calls.posts.some((p) => p.kind === 'followup_person'), 'no hand-off to a person');
+  assert.equal(h.calls.queries.filter((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)).length, 1);
+});
+
+test('a fix round resumed after its reconcile is still the revision it was', async (t) => {
+  const durableSteps = require('../src/services/durable-steps');
+  const { StepsStopped } = require('../src/workflow/kernel/steps.ts');
+  const h = harness();
+  h.deps.github.getBranchSha = async () => HEAD;
+  const query = h.pool.query;
+  h.pool.query = async (sql, params) => {
+    const out = await query(sql, params);
+    if (h.calls.reconciled.length && /SELECT cs\.\*, a\.slug AS app_slug/.test(String(sql))) {
+      return { rows: out.rows.map((r) => ({ ...r, reviewed_head_sha: NEW_HEAD })) };
+    }
+    // The new head has no verdict yet: no fix is due now.
+    if (h.calls.reconciled.length && /AS looked/.test(String(sql))) return { rows: [] };
+    return out;
+  };
+  const realPost = live.post;
+  const realSeen = live.advanceSeen;
+  const realOnProposal = live.postOnProposal;
+  const realTargets = live.mentionTargets;
+  t.after(() => {
+    live.post = realPost; live.advanceSeen = realSeen; live.postOnProposal = realOnProposal; live.mentionTargets = realTargets;
+  });
+  live.post = async (args) => { h.calls.posts.push(args); return { githubCreatedAt: '2026-10-01T12:05:00Z' }; };
+  live.postOnProposal = async (args) => { h.calls.onProposal.push(args); return { postId: 1, thread: true }; };
+  live.advanceSeen = async () => ({ advanced: true });
+  live.mentionTargets = async () => ['ada'];
+  let saved = null;
+  let crashed = false;
+  const attempt = (from) => {
+    const steps = durableSteps.durable({
+      resumeFrom: from,
+      checkpoint: async (v) => {
+        saved = v;
+        if (!crashed && Object.prototype.hasOwnProperty.call(v, 'reconcile:1')) { crashed = true; throw new StepsStopped('the process was replaced'); }
+      },
+    });
+    h.look = bot._newLookForTests({ steps, n: 1, key: `request:${APP.id}:${ITEM.issue_number}`,
+      owner: { machine: 'bot-request', key: `request:${APP.id}:${ITEM.issue_number}`, kind: 'bot.look' } });
+    return bot._runInLookForTests(h.look, () => bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings: SETTINGS, deps: h.deps }));
+  };
+  await assert.rejects(attempt(null), (err) => err.stopped === true);
+  assert.ok(crashed, 'the first attempt got as far as its reconcile');
+  const out = await attempt(saved);
+  assert.equal(out.verdict, 'revise');
+  assert.equal(h.calls.exec.length, 1, 'one turn');
+  assert.equal(h.calls.reconciled.length, 1, 'reconciled once');
+  assert.equal(insertOf(h).params[4], 'revise');
+});
 
 test('red checks on its own proposal: one build turn fixes them, the proposal is reconciled, and the head is marked looked at', async (t) => {
   const h = harness();
@@ -290,7 +397,8 @@ test('red checks on its own proposal: one build turn fixes them, the proposal is
   // Run four (13 Oct): what was fixed, by the failing check's own name.
   assert.equal(h.calls.onProposal[0].text,
     'Homeroom bot fixed the check that was failing: "Cooking mode text-size control offers all steps". Its checks run again on the new version.');
-  assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31));
+  assert.equal(h.look.out.queue, 'consume', 'the look\'s end uses up its request\'s debt');
+  assert.deepEqual(h.look.out.fix, { outcome: 'looked' }, 'and the change machine hears the round looked at the head');
 });
 
 test('out of revisions: no turn, and one note hands it to a person', async (t) => {
@@ -447,8 +555,8 @@ test('a failure that looks like main\'s is synced before the fix turn: no turn s
   assert.equal(insert.params[21], HEAD, 'the failing head is marked looked at; the synced one gets its own round');
   assert.equal(insert.params[9], 'Brought up to date with main before fixing its checks; its checks run again.',
     'the ledger says what happened instead of a fix');
-  assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31),
-    'the round is done: the queue row goes');
+  assert.equal(h.look.out.queue, 'consume', 'the round is done: its request\'s debt is used up');
+  assert.deepEqual(h.look.out.fix, { outcome: 'looked' });
 });
 
 test('when the pre-turn sync declines, the fix turn runs as before', async (t) => {
@@ -467,14 +575,14 @@ test('no pre-turn sync when only the shots showed something not working', async 
   assert.deepEqual(h.calls.fixSync, [], 'a sync cannot fix what its shots show');
 });
 
-test('the pre-turn sync is not asked for a recovered turn, and the infra early return stands before it', () => {
+test('the pre-turn sync is asked for a failing check, not for what the shots showed, and the infra early return stands before it', () => {
   const src = read('src/services/homeroom-bot.js');
   const pre = src.slice(src.indexOf('// #5220: before its own fix turn'), src.indexOf('const handOff = async ('));
-  assert.match(pre, /if \(!recovered && failing\.length && !broken\.length\) \{/);
+  assert.match(pre, /if \(failing\.length && !broken\.length\) \{/);
   assert.match(pre, /\.syncBeforeFix\(\{ config, pool, sessionId: session\.id, head \}\)\)/);
   assert.ok(src.indexOf('.syncBeforeFix({ config, pool, sessionId: session.id, head }))') < src.indexOf('const handOff = async ('),
     'the sync comes before the hand-off path');
-  const infra = src.slice(src.indexOf('if (!recovered && followup.checksLookLikeInfra(checks))'), src.indexOf('// #5220: before its own fix turn'));
+  const infra = src.slice(src.indexOf('if (followup.checksLookLikeInfra(checks))'), src.indexOf('// #5220: before its own fix turn'));
   assert.match(infra, /return \{ ran: false, reason: 'checks_infra' \};/, 'a platform fault returns before the sync is asked');
 });
 
@@ -508,17 +616,18 @@ test('a GLM fix whose agent failed is no revision, whatever it pushed, and hands
   assert.equal(h.calls.exec[0].opts.discardFailedTurn, true);
 });
 
-test('a platform fault spends nothing on the head: the row is kept for a retry', async (t) => {
+test('a platform fault spends nothing on the head: the debt is kept for a retry', async (t) => {
   const h = harness({ routed: { error: 'session_busy' } });
   const out = await run(t, h);
   assert.equal(out.reason, 'refused', 'a busy session is a refusal, as for any turn');
+  assert.equal(h.look.out.queue, 'busy', 'its request waits');
   const h2 = harness({ routed: { error: 'dispatch: worker went away' } });
   const out2 = await run(t, h2);
   assert.equal(out2.reason, 'infra');
   assert.equal(h2.calls.posts.length, 0);
-  assert.ok(h2.calls.queries.some((q) => /UPDATE homeroom_bot_queue SET started_at = NULL/.test(q.s)), 'retried later');
-  const insert = insertOf(h2);
-  assert.equal(insert.params[21], null, 'the head is not marked, so the retry can still fix it');
+  assert.equal(h2.look.out.queue, 'fault', 'retried later: its request keeps its debt, and the lane pauses');
+  assert.equal(insertOf(h2), undefined, 'no run, so the head is not marked and the retry can still fix it');
+  assert.equal(h2.look.out.fix, null, 'and no round on the head has ended');
 });
 
 test('checks that look like the platform\'s fault cost no revision and say nothing', async (t) => {
@@ -528,6 +637,7 @@ test('checks that look like the platform\'s fault cost no revision and say nothi
   assert.equal(h.calls.exec.length, 0);
   assert.equal(h.calls.posts.length + h.calls.onProposal.length, 0);
   assert.equal(insertOf(h), undefined, 'no run, so a later verdict on the same head is still looked at');
+  assert.deepEqual(h.look.out.fix, { outcome: 'refused', why: 'infra' }, 'the change machine hears the fix was not taken, and why');
 });
 
 test('a head already looked at, or a verdict on an older commit, is left alone', async (t) => {
@@ -550,10 +660,8 @@ test('a person\'s reply comes first; a fix still due after it is queued again', 
   assert.match(h.calls.exec[0].opts.prompt, /The change's automated checks are failing on its current commit: 1 of 86\./);
   assert.match(h.calls.exec[0].opts.prompt, /Cooking mode text-size control offers all steps/);
   assert.doesNotMatch(h.calls.exec[0].opts.prompt, /"action": "revise" \| "person"/, 'and answers as a reply turn does');
-  const again = queued(h);
-  assert.equal(again.length, 1, 'the checks are looked at on the next pass');
-  assert.deepEqual(again[0].params.slice(0, 3), [9, 50, bot.CHECKS_REASON]);
-  assert.match(again[0].s, /pg_notify/, 'the loop is woken in the same statement, wherever it runs');
+  assert.deepEqual(h.look.out.owe, [{ reason: bot.CHECKS_REASON, priority: 1 }],
+    'the checks are owed a look once this one ends (its request\'s instance takes the debt)');
 });
 
 // ── Getting it queued ────────────────────────────────────────────────────
@@ -569,33 +677,41 @@ function notePool(row, { pausedApps = [], mode = 'shadow' } = {}) {
       if (/FROM platform_settings/.test(s)) {
         return { rows: [{ key: 'homeroom_bot_mode', value: mode }, { key: bot.KEY_PAUSED_APPS, value: JSON.stringify(pausedApps) }] };
       }
+      if (/INSERT INTO wf_events/.test(s)) return { rows: [{ id: 1 }] };
       return { rows: [] };
     },
   };
 }
 
-test('a failing verdict on the bot\'s proposal queues its issue; anything else does not', async () => {
+// A fix asked of the bot's request is an event to its instance (bot-request
+// FixAsked), keyed by the change and its head, never a queue row of its own.
+const fixAsked = (pool) => pool.asked.filter((q) => /INSERT INTO wf_events/.test(q.s));
+
+test('a failing verdict on the bot\'s proposal asks its request to fix it; anything else does not', async () => {
   const yes = notePool(checksRow());
-  assert.equal(await bot.noteProposalChecks(yes, { sessionId: 5001 }), true);
+  assert.deepEqual(await bot.queueChecksFix(yes, { sessionId: 5001 }), { queued: true });
   assert.deepEqual(yes.asked[0].params, [5001, 'homeroom_bot'], 'the bot\'s own proposals only');
   assert.match(yes.asked[0].s, /cs\.status = 'promoted'/);
-  const insert = yes.asked.find((q) => /INSERT INTO homeroom_bot_queue/.test(q.s));
-  assert.deepEqual(insert.params.slice(0, 3), [9, 50, bot.CHECKS_REASON]);
-  assert.match(insert.s, /SELECT pg_notify\(\$4, \$5\)/, 'and its wake, in the same statement (a NOTIFY commits with the row)');
-  assert.match(insert.params[4], /"k":"homeroom_bot"/);
+  const [asked] = fixAsked(yes);
+  assert.deepEqual([asked.params[0], asked.params[1], asked.params[2], asked.params[3]], ['bot-request', 'request:9:50', 9, 'FixAsked']);
+  assert.deepEqual(JSON.parse(asked.params[4]), { appId: 9, issueNumber: 50, sessionId: 5001, head: HEAD });
+  assert.equal(asked.params[7], `fix:5001:${HEAD}`, 'once per change and head, however often it is asked');
+  assert.match(asked.s, /pg_notify\('wf_events', \$1\)/, 'and its wake, in the same statement (a NOTIFY commits with the event)');
+  assert.ok(!yes.asked.some((q) => /homeroom_bot_queue/.test(q.s)), 'the queue is its instance\'s projection');
 
-  for (const [pool, why] of [
-    [notePool(null), 'somebody else\'s proposal'],
-    [notePool(checksRow({ check_state: 'passing' })), 'checks passing'],
-    [notePool(checksRow({ looked: true })), 'already looked at'],
-    [notePool(checksRow(), { pausedApps: [APP.slug] }), 'the app is paused, so not live'],
-    [notePool(checksRow(), { mode: 'off' }), 'the bot is off'],
-    [notePool(checksRow({ test_results: results({ failing: 40, total: 43 }) })), 'looks like the platform'],
+  for (const [pool, code, why] of [
+    [notePool(null), 'not_due', 'somebody else\'s proposal'],
+    [notePool(checksRow({ check_state: 'passing' })), 'not_due', 'checks passing'],
+    [notePool(checksRow({ looked: true })), 'not_due', 'already looked at'],
+    [notePool(checksRow(), { pausedApps: [APP.slug] }), 'not_live', 'the app is paused, so not live'],
+    [notePool(checksRow(), { mode: 'off' }), 'off', 'the bot is off'],
+    [notePool(checksRow({ test_results: results({ failing: 40, total: 43 }) })), 'infra', 'looks like the platform'],
   ]) {
-    assert.equal(await bot.noteProposalChecks(pool, { sessionId: 5001 }), false, why);
-    assert.ok(!pool.asked.some((q) => /INSERT INTO homeroom_bot_queue/.test(q.s)), why);
+    assert.deepEqual(await bot.queueChecksFix(pool, { sessionId: 5001 }), { queued: false, why: code }, why);
+    assert.deepEqual(fixAsked(pool), [], why);
   }
-  assert.equal(await bot.noteProposalChecks({ async query() { throw new Error('down'); } }, { sessionId: 1 }), false, 'never throws');
+  // What it could not read it throws, so the change machine's work runs again.
+  await assert.rejects(bot.queueChecksFix({ async query() { throw new Error('down'); } }, { sessionId: 1 }), /down/);
 });
 
 test('every settled verdict reaches the bot\'s change machine, by the preview machine\'s own write', () => {
@@ -658,23 +774,20 @@ test('a change its shots show failing: one build turn fixes it, said as what did
 });
 
 test('a change its shots show failing, with no revisions left: handed to a person, and its card goes out saying what is wrong', async (t) => {
-  const told = [];
   const h = harness({ row: brokenRow(), revisions: followup.MAX_REVISIONS });
-  h.deps.botNote = async (id, type) => { told.push([type, id]); return 1; };
   const out = await run(t, h);
   assert.equal(out.verdict, 'person');
   assert.equal(h.calls.exec.length, 0);
   assert.match(h.calls.posts[0].text, /can't get this change working on its own: "Tapping "mark as done" ticks a chore off\." didn't work when Homeroom tried it/);
   assert.match(h.calls.posts[0].dm.reason, /^part of it does not work yet/);
-  assert.deepEqual(told, [['FixRoundEnded', 5001]], 'the bot\'s change machine hears the round ended: the ready card that waited on it goes out now');
+  assert.deepEqual(h.look.out.fix, { outcome: 'looked' },
+    'the bot\'s change machine hears the round ended (bot-request FixRoundEnded): the ready card that waited on it goes out now');
 });
 
 test('a red-checks hand-off tells the change machine its round ended; with its checks failing, no ready card follows (bot-change decides)', async (t) => {
-  const told = [];
   const h = harness({ revisions: followup.MAX_REVISIONS });
-  h.deps.botNote = async (id, type) => { told.push([type, id]); return 1; };
   await run(t, h);
-  assert.deepEqual(told, [['FixRoundEnded', 5001]]);
+  assert.deepEqual(h.look.out.fix, { outcome: 'looked' });
 });
 
 // ── A declared change its shots skipped for want of data it can seed ────
@@ -731,15 +844,13 @@ test('a skip it adds no data for says nothing, marks the head, and sends the car
     { result: { lastResultText: '```json\n{"action":"person","reply":"It needs a reply from a model, which no seed gives."}\n```', pushOk: true, sha: HEAD } },
     { revisions: followup.MAX_REVISIONS },
   ]) {
-    const told = [];
     const h = harness({ row: skippedRow(), ...opts });
-    h.deps.botNote = async (id, type) => { told.push([type, id]); return 1; };
     const out = await run(t, h);
     assert.equal(out.acted, 'checks_shots_left');
     assert.equal(h.calls.posts.length + h.calls.onProposal.length, 0, 'the shots card already gives the reason');
     assert.equal(h.calls.reconciled.length, 0);
     assert.equal(insertOf(h).params[21], HEAD, 'never asked again for the same head');
-    assert.deepEqual(told, [['FixRoundEnded', 5001]]);
+    assert.deepEqual(h.look.out.fix, { outcome: 'looked' });
   }
 });
 

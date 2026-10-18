@@ -3010,7 +3010,7 @@ async function fileRequest(pool, config, {
         log.warn('homeroom-bot-mayor', 'Could not queue a filed request', { err: err.message });
         return null;
       });
-    queueId = queued?.id ? Number(queued.id) : null;
+    queueId = queued?.id ? String(queued.id) : null;
   } else {
     botModule(deps).noteIssueActivity({ appId: app.id, issueNumber, reason: 'created' });
   }

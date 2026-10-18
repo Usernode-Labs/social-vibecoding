@@ -422,20 +422,21 @@ test('a request whose requester spent the week\'s allowance is held, said once, 
       async noteOverAllowance(_pool, args) { held.push(args); },
     },
   };
-  const out = await bot.runTriage(pool, {}, {
+  // The look decides what its end does with the debt (bot-request applies it).
+  const look = bot._newLookForTests({});
+  const out = await bot._runInLookForTests(look, () => bot.runTriage(pool, {}, {
     bot: { id: 2 }, app: { id: 1, slug: 'seed-swap', repo_url: 'https://github.com/o/r' },
     item: { id: 31, issue_number: 7 }, mode: 'shadow',
     settings: { mode: 'shadow', userWeeklyCents: 100 }, deps,
-  });
+  }));
   assert.deepEqual(out, { ran: false, reason: 'user_allowance' });
   assert.equal(held.length, 1);
-  // Held, not dropped: the row keeps its place and waits for Monday.
-  const hold = queries.find((q) => /SET started_at = NULL, held_until = \$2 WHERE id = \$1/.test(q.s));
-  assert.ok(hold && hold.p[0] === 31, 'the row is held');
-  const reset = new Date(hold.p[1]);
+  // Held, not dropped: the debt keeps its place and waits for Monday.
+  assert.equal(look.out.queue, 'held', 'the debt is held');
+  const reset = new Date(look.out.until);
   assert.equal(reset.getUTCDay(), 1, 'until the week resets on Monday');
   assert.equal(reset.getUTCHours(), 0);
-  assert.ok(!queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s)), 'never dropped');
+  assert.ok(!queries.some((q) => /homeroom_bot_queue/.test(q.s)), 'the queue row is never written here');
   assert.ok(!queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)), 'no run, nothing spent');
 
   // A look the bot queued for itself (a restart's) is free: nobody's week holds it.

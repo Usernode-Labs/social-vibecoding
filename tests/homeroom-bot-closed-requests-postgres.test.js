@@ -320,8 +320,11 @@ test('the bot\'s proposals for closed requests are withdrawn, against the full P
       const out = await bot.refreshApp(pool, app, { github: openList(), bot: botUser, capRoom });
       assert.deepEqual(archived, [stale], 'withdrawn, by the system archive');
       for (const id of live) assert.equal(await statusOf(id), 'promoted');
-      const { rows: queue } = await pool.query('SELECT issue_number, reason FROM homeroom_bot_queue WHERE app_id = $1', [app.id]);
-      assert.deepEqual(queue.map((q) => [q.issue_number, q.reason]), [[40, bot.CAP_FREED_REASON]],
+      // Its request's machine (bot-request) is told it is owed a look, in
+      // the refresh itself.
+      const { rows: owed } = await pool.query(
+        `SELECT payload FROM wf_events WHERE machine = 'bot-request' AND type = 'Owed' AND app_id = $1 ORDER BY id`, [app.id]);
+      assert.deepEqual(owed.map((e) => [e.payload.issueNumber, e.payload.reason]), [[40, bot.CAP_FREED_REASON]],
         'the held request takes the freed slot in the same refresh');
       assert.equal(out.queued, 1);
       // Withdrawn as request-closed: the proposal machine's close says so in

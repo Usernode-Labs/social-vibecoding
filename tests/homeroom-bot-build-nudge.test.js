@@ -54,7 +54,7 @@ const BUILT = Object.freeze({
  * worker results, in order (the spec turn writes nothing, so the build goes
  * ahead from the plan). `ctx` is what the runtime hands each attempt.
  */
-function harness({ turns = [QUIT, BUILT], ctx = null, pendingStop = false, promote = { status: 200, body: { ok: true, prNumber: 42 } } } = {}) {
+function harness({ turns = [QUIT, BUILT], ctx = null, promote = { status: 200, body: { ok: true, prNumber: 42 } } } = {}) {
   const calls = { queries: [], builds: [], loops: [], promoted: [], events: [], order: [], closed: [] };
   sessionLifecycle.closeOwnSession = async ({ sessionId, reason }) => { calls.closed.push({ sessionId, reason }); return true; };
   const script = [...turns];
@@ -88,7 +88,6 @@ function harness({ turns = [QUIT, BUILT], ctx = null, pendingStop = false, promo
         return typeof next === 'function' ? next(opts) : { ...next };
       },
       stopTurn() { return Promise.resolve(); },
-      getPendingStop() { return pendingStop ? new Date() : null; },
     },
     sessions: {
       async runCodexAttemptLoop(args) {
@@ -102,7 +101,6 @@ function harness({ turns = [QUIT, BUILT], ctx = null, pendingStop = false, promo
     },
     agentTurn: { async resolveCodexRuntimeContext() { return {}; } },
     sessionLifecycle: { async ensureSessionBranch({ sessionId }) { return { branchName: `homeroom_bot/s${sessionId}` }; } },
-    activeWorkers: new Set(),
     votesRouter: router,
     seesImages: false,
   };
@@ -302,16 +300,12 @@ test('no nudge for a turn stopped on its clock', async (t) => {
   assert.deepEqual(h.calls.events, []);
 });
 
-test('no nudge when a stop is waiting on the session, or when its push did not go through', async () => {
-  let h = harness({ turns: [QUIT], pendingStop: true });
+test('no nudge when its push did not go through', async () => {
+  // A Stop is no longer a flag waiting on the session in this process: it
+  // is an event to the machine that owns the turn, which ends it, and a
+  // stopped turn is never nudged (above).
+  let h = harness({ turns: [{ ...QUIT, pushOk: false }] });
   let out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS });
-  assert.equal(h.calls.builds.length, 1);
-  assert.equal(out.error, 'the build produced no change to propose');
-  assert.equal(out.noChange.nudged, false);
-  assert.equal(out.noChange.notNudged, 'a stop was requested');
-
-  h = harness({ turns: [{ ...QUIT, pushOk: false }] });
-  out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...ARGS });
   assert.equal(h.calls.builds.length, 1);
   assert.equal(out.error, 'the build produced no change to propose', 'reported as before');
   assert.equal(out.noChange.notNudged, 'its push did not go through', '"you changed nothing" would not be true');
@@ -443,16 +437,14 @@ test('the worker keeps every provider a turn\'s requests went to, not only the l
 
 // ── Every lane that builds ─────────────────────────────────────────────────
 
-test('the live lane, the shadow lane and the bench all build through buildAndPropose, so all are nudged', () => {
+test('the live lane and the bench both build through buildAndPropose, so both are nudged', () => {
   const src = read('src/services/homeroom-bot.js');
   // A live build hands its arguments to each try, each a durable step.
   const liveBuild = src.slice(src.indexOf('async function buildLive({'), src.indexOf('function liveDeps('));
   assert.match(liveBuild, /origin: \{ lane: 'live', runId \},\n\s+onNoChange: \(noChange\) => keepNoChange\(pool, runId, noChange\),/);
   assert.match(liveBuild, /built = await steps\.once\(tryKey, \(\) => live\.buildAndPropose\(\{\n\s+\.\.\.tryArgs, deps: \{ \.\.\.tryArgs\.deps, durable: steps\.scope\(tryKey\) \},/);
-  const shadow = src.slice(src.indexOf('async function shadowBuild('), src.indexOf('async function runQueuedBuild('));
-  assert.match(shadow, /origin: \{ lane: 'shadow', runId \},\n\s+onNoChange: \(noChange\) => keepNoChange\(pool, runId, noChange\),/);
-  assert.match(shadow, /const built = await steps\.once\('try', \(\) => live\.buildAndPropose\(\{/);
-  assert.match(shadow, /build_no_change = \$11::jsonb/);
+  // The shadow lane is gone (design D2).
+  assert.equal(src.indexOf('async function shadowBuild('), -1);
   const bench = read('src/services/bench/runner.js');
   const stage = bench.slice(bench.indexOf('async function buildStage('), bench.indexOf('function reviewerCost('));
   assert.match(stage, /origin: \{ lane: 'bench', trialId: trial\.id \},/);

@@ -97,7 +97,6 @@ test('a status is read from memory where its work runs, and from the leader\'s c
 test('the leader publishes the admin statuses it keeps in memory, and stops as it hands over', () => {
   const body = serverJs.slice(serverJs.indexOf('async function becomeLeader()'), serverJs.indexOf('async function start()'));
   for (const key of [
-    "require('./src/services/homeroom-bot').MEMORY_STATUS_KEY",
     "'bench-lane'",
     "'staging-reap.automatic'",
     "'app-domains.sweep'",
@@ -106,6 +105,9 @@ test('the leader publishes the admin statuses it keeps in memory, and stops as i
     assert.ok(body.includes(`leaderStatus.provide(${key}`), `becomeLeader publishes ${key}`);
   }
   assert.match(body, /leaderStatus\.start\(\{ pool: getPool\(config\) \}\)/);
+  // The Homeroom bot's loop keeps nothing in memory to publish: its lane is
+  // a workflow instance every process reads (homeroom-bot.js loopMemory).
+  assert.ok(!body.includes("require('./src/services/homeroom-bot').MEMORY_STATUS_KEY"));
   const cleanupBody = serverJs.slice(serverJs.indexOf('async function cleanup()'));
   assert.match(cleanupBody, /require\('\.\/src\/services\/leader-status'\)\.stop\(\)/);
   // And the routes read them wherever they are served.
@@ -116,28 +118,27 @@ test('the leader publishes the admin statuses it keeps in memory, and stops as i
   assert.equal(bench.match(/lane: await leaderStatus\.readOr\('bench-lane', pool, lane\.laneStatus\)/g).length, 2);
 });
 
-test('the Homeroom bot\'s queue shows why a row waits from the loop\'s memory, wherever the loop runs', async (t) => {
+test('the Homeroom bot\'s queue shows why a row waits from its lane, the same in every process', async () => {
   const bot = require('../src/services/homeroom-bot');
-  leaderStatus._reset();
-  t.after(() => leaderStatus._reset());
   const now = Date.now();
   const waiting = {
     id: 1, app_id: 5, issue_number: 9, priority: 1, reason: 'new', started_at: null, waiting_total: 1, running_total: 0,
   };
   const pool = { query: async () => ({ rows: [waiting] }) };
-  // The loop's memory, as the leader publishes it: a platform fault.
-  const memory = { ...bot.memoryStatus(now), fault: { attempts: 1, until: now + 60_000, error: 'worker quota', at: now } };
-  assert.deepEqual(JSON.parse(JSON.stringify(memory)), memory, 'plain JSON, as it crosses the table');
+  // What the lane says (loopMemory's shape): a platform fault pausing grants.
+  const memory = { loop: null, inFlight: [], backoff: [], fault: { attempts: 1, until: now + 60_000, error: null, at: null }, budgetUntil: 0 };
   const snap = await bot.queueSnapshot(pool, {}, { now, memory });
   assert.equal(snap.items[0].waiting.reason, 'platform_fault');
-  // An app backed off after a refusal, as busy.
-  const backedOff = await bot.queueSnapshot(pool, {}, { now, memory: { ...bot.memoryStatus(now), backoff: [[5, now + 30_000]] } });
-  assert.equal(backedOff.items[0].waiting.reason, 'session_busy');
-  // A process not running the loop reads the copy, else its own (empty) memory.
-  const copyPool = {
-    query: async (sql) => (sql.includes('FROM leader_status') ? { rows: [{ value: memory }] } : { rows: [] }),
+  // Read from the lane's instance and the slots its requests hold, in any
+  // process: nothing is copied from a leader's memory.
+  const lanePool = {
+    query: async (sql) => (/FROM wf_instances WHERE machine = \$1 AND key = \$2/.test(sql)
+      ? { rows: [{ data: { fault: { until: new Date(now + 60_000).toISOString(), attempts: 2 }, refresh: { n: 3, due: null }, grants: 7 }, updated_at: new Date(now).toISOString() }] }
+      : { rows: [] }),
   };
-  assert.equal((await bot.loopMemory(copyPool, now)).fault.error, 'worker quota');
+  const fromLane = await bot.loopMemory(lanePool, now);
+  assert.equal(fromLane.fault.attempts, 2);
+  assert.equal(fromLane.loop.grants, 7);
   assert.deepEqual((await bot.loopMemory({ query: async () => ({ rows: [] }) }, now)).inFlight, []);
 });
 

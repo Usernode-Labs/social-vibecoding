@@ -111,7 +111,7 @@ function isStaging() {
  *   - `{ all: false, slugs: [] }`: nothing at all, with the bot off or on a
  *     staging copy.
  *
- * `slugs` stays for a caller that names its own apps (liveCandidates).
+ * `slugs` stays for a scope that names its own apps, which inScope reads.
  */
 function liveScope(settings) {
   if (!settings || settings.mode === 'off' || isStaging()) return { all: false, slugs: [], except: [] };
@@ -3273,9 +3273,10 @@ function readSpecText(text) {
 const BOT_STOP_KEY = 'botStop';
 
 async function stopOnClock(pool, worker, sessionId, why = 'time_limit') {
+  let turn = null;
   try {
     const turnLifecycle = require('./turn-lifecycle');
-    const turn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    turn = await turnLifecycle.loadActiveTurn(pool, sessionId);
     if (turn && turn.turnId) {
       await turnLifecycle.stampTurn(pool, {
         sessionId, turnId: turn.turnId, key: BOT_STOP_KEY, value: { why, at: new Date().toISOString() },
@@ -3283,6 +3284,13 @@ async function stopOnClock(pool, worker, sessionId, why = 'time_limit') {
     }
   } catch (err) {
     log.warn('homeroom-bot', 'Could not save why the bot stopped its turn', { sessionId, err: err.message });
+  }
+  // Only the turn the clock was for, by its journal: one that started after
+  // it is never the one ended.
+  if (turn && turn.journal && typeof worker.stopTurnByJournal === 'function') {
+    return worker.stopTurnByJournal(sessionId, turn.journal).catch((err) => {
+      log.warn('homeroom-bot', 'Could not stop the bot\'s turn on its clock', { sessionId, err: err.message });
+    });
   }
   return worker.stopTurn(sessionId);
 }
@@ -3381,7 +3389,7 @@ async function draftSpec({
   // screen from (specPrompt `earlyLook`), or null.
   earlyLook = null,
 }) {
-  const { worker, sessions, agentTurn, activeWorkers } = deps;
+  const { worker, sessions, agentTurn } = deps;
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
   const progress = lastActivity();
   // A first version's saved screens, read off the worker as the stream
@@ -3395,7 +3403,6 @@ async function draftSpec({
     ? (line) => { savedScreens(line); if (typeof onProgress === 'function') onProgress(line); }
     : onProgress;
   let stopped = false;
-  activeWorkers.add(session.id);
   const startedAt = Date.now();
   const prompt = specPrompt({
     seed, buildNote, firstVersion, guidance, starter, locale, tweaks, earlyLook: firstVersion ? earlyLook : null,
@@ -3410,6 +3417,8 @@ async function draftSpec({
       pool, session, userId: bot.id, config, isCodexSession: true,
       turnModel: model, resumeThreadId: null, mode: 'scout',
       telemetryComponent,
+      // The build's own work item (durable-turn hands it on): on the record.
+      owner: extra.owner || null,
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
         // The platform's per-model choice of CLI, as the dev chat's scout
@@ -3445,12 +3454,10 @@ async function draftSpec({
       dispatch,
     });
     routed = turn.routed;
-    stopped = turn.stopped;
+    stopped = turn.stopped || !!turn.stoppedBy;
   } catch (err) {
     durableSteps.rethrowStop(err, 'spec turn');
     routed = { error: `dispatch: ${err.message}` };
-  } finally {
-    activeWorkers.delete(session.id);
   }
   // Only an HTML spec is asked to save its screens (specHtmlPrompt).
   await noteSavedScreens(pool, {
@@ -3726,7 +3733,7 @@ function buildTurnRunner({
   // Its configuration's build-speed tweaks (bot-configs.js TWEAKS).
   tweaks = [],
 }) {
-  const { worker, sessions, agentTurn, activeWorkers } = deps;
+  const { worker, sessions, agentTurn } = deps;
   const runnerTelemetry = telemetry;
   // A durable build's turns are durable steps (services/durable-turn.js):
   // each call names its step (`key`: 'build', 'nudge', 'fix:<round>'), and a
@@ -3764,7 +3771,6 @@ function buildTurnRunner({
     // the wait is not charged to the turn's own clock, which runTurn arms
     // (and a durable step saves as its deadline) before it dispatches.
     await waitOutShotsRun(session.id, deps);
-    activeWorkers.add(session.id);
     let turnRouted;
     let turnStopped = false;
     try {
@@ -3775,18 +3781,15 @@ function buildTurnRunner({
         dispatch: (extra, clock) => dispatchTurn(extra, clock),
       });
       turnRouted = turn.routed;
-      turnStopped = turn.stopped;
+      turnStopped = turn.stopped || !!turn.stoppedBy;
     } catch (err) {
       durableSteps.rethrowStop(err, 'build turn');
       turnRouted = { error: `dispatch: ${err.message}` };
-    } finally {
-      // The build's session keeps its slot between its turns until the
-      // build ends (bug 22: paused after every turn, it read idle in the
-      // middle of the build and nothing took it back). The build's own end
-      // closes it or puts it up for a vote; one left open goes to rest on
-      // the proposal machine's idle check once nothing holds it.
-      activeWorkers.delete(session.id);
     }
+    // The build's session keeps its slot between its turns until the build
+    // ends (bug 22): the build's instance holds it (chat_sessions.
+    // workflow_owner, session-work.ts buildHoldSql), its turns and the time
+    // between them included.
     return { routed: turnRouted, stopped: turnStopped };
 
     async function dispatchTurn(extra = {}, clock = null) {
@@ -3814,6 +3817,7 @@ function buildTurnRunner({
         pool, session, userId: bot.id, config, isCodexSession: true,
         turnModel: model, resumeThreadId, mode: 'build',
         telemetryComponent: telemetry || 'homeroom_bot_build',
+        owner: extra.owner || null,
         resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
           pool, session, userId: bot.id, model, resumeThreadId, config,
           // The dev chat's build makes the same choice (#3296). The bot's
@@ -4082,7 +4086,7 @@ async function buildAndPropose({
   // run. Every other build passes none.
   setupCheck = null,
 }) {
-  const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
+  const { worker, sessions, agentTurn, sessionLifecycle } = deps;
   // Each step below is a durable step of the build's work item when the
   // workflow runs it (services/durable-steps.js, docs/plans/bot-build-workflow.md):
   // run again after a restart, the build skips what it finished and follows
@@ -4426,12 +4430,14 @@ async function buildAndPropose({
     }
   }
 
-  // A spec stopped on its clock leaves the session's stop pending, and the
-  // worker skips every dispatch until a new turn clears it (#937). Without
-  // this, the build after a spec time-out was skipped at once and recorded
-  // as "no change to propose" (#3396). Cleared before the build's own clock
-  // starts, so a stop aimed at the build is never the one erased (nor, after
-  // a restart, once the build turn has started).
+
+  // A spec stopped on its clock before its turn had a record leaves the
+  // session's stop pending, and the worker skips every dispatch with no
+  // owner until a new turn clears it (#937). Without this, the build after
+  // a spec time-out was skipped at once and recorded as "no change to
+  // propose" (#3396). Cleared before the build's own clock starts, so a stop
+  // aimed at the build is never the one erased (nor, after a restart, once
+  // the build turn has started).
   if (!steps.has('turn:build')) worker.clearPendingStop?.(session.id);
 
   // Run five, item 8: a first version's build starts from the screens its

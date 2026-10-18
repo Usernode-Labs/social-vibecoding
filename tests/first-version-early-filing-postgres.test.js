@@ -177,7 +177,7 @@ test('a first version filed while its project is set up', { timeout: 180000 }, a
     const requester = await dm.requesterOf(pool, app.id, 1);
     assert.equal(requester.userId, evan.id);
     assert.equal(requester.firstVersion, true);
-    assert.deepEqual(woken, [{ appId: app.id, issueNumber: 1, reason: 'created' }], 'the bot is woken for it');
+    assert.deepEqual(woken, [{ appId: app.id, issueNumber: 1, reason: 'first_version' }], 'the bot is woken for it, its project refreshed at once');
     assert.equal(await dm.fileFirstVersion(pool, {}, app.id, { github }), null, 'filed once');
     await setApp(app, `status = 'running'`);
     assert.equal(await dm.fileFirstVersion(pool, {}, app.id, { github }), null, 'and the call once it runs files nothing more');
@@ -196,7 +196,7 @@ test('a first version filed while its project is set up', { timeout: 180000 }, a
     assert.equal((await fvOf(app)).status, 'filed');
   });
 
-  await t.test('the bot\'s refresh takes in a project being set up once its first version is filed, and reads it first', async () => {
+  await t.test('the bot\'s refresh takes in a project being set up once its first version is filed', async () => {
     const waiting = await project('cv-waiting');
     const filed = await project('cv-filed');
     const theirs = await project('cv-theirs', { botBuilds: false });
@@ -210,15 +210,6 @@ test('a first version filed while its project is set up', { timeout: 180000 }, a
     assert.ok(!listed.includes('cv-theirs'), 'a first version left to the group');
     assert.ok(!listed.includes('cv-failed'), 'a creation that failed');
     assert.ok(listed.includes('cv-card'), 'a project that runs, as always');
-
-    const ids = [waiting.id, filed.id, theirs.id, failed.id];
-    // Filed and not read yet. A project whose creation failed is named too,
-    // and refreshes nothing: listApps leaves it out.
-    assert.deepEqual((await bot.firstVersionsToRead(pool, ids)).sort((a, b) => a - b), [filed.id, failed.id].sort((a, b) => a - b));
-    await pool.query(
-      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 1, 'live', 'ready')`, [filed.id],
-    );
-    assert.deepEqual(await bot.firstVersionsToRead(pool, [filed.id]), [], 'read already: the pass goes as it always did');
   });
 
   // The made screen and the bot's read, as first-version-early-plan-postgres

@@ -904,8 +904,8 @@ async function projectsBusy(pool, rows) {
  * Read twice over. First the same two reads as projectsBusy, which takes
  * the projects of the rows it is handed that wait: one waiting row names
  * this project. Then the bot's own "live build waiting its turn or under
- * way" (homeroom-bot.js, the run classifyIssue and liveCandidates hold a
- * request for): a build waiting for the project's build slot can wait a
+ * way" (the run homeroom-bot.js classifyIssue and rules/bot-loop.ts
+ * READ_CANDIDATES_SQL hold a request for): a build waiting for the project's build slot can wait a
  * whole other build's length, and projectsBusy does not count it, since it
  * is not yet holding the project up. To the request it is the bot's work
  * all the same, so it reads as building, since it began to wait. A request
@@ -1072,7 +1072,7 @@ function buildWait(row, {
   busy = new Map(), working = 0, perPerson = 2, now = new Date(), holds = null, perProject = buildsPerProject(),
 } = {}) {
   // 2026-10-05: no build on a project starts while its first version is
-  // not live (homeroom-bot.js liveBuildCandidates).
+  // not live (rules/bot-loop.ts BUILD_CANDIDATES_SQL).
   const firstVersion = firstVersionWait(row, holds);
   if (firstVersion) return { doing: FIRST_VERSION_BUILD_WAIT, waitingFor: firstVersion };
   const building = (busy.get(Number(row.app_id)) || [])

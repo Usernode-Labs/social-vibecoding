@@ -14,14 +14,14 @@
 //   - nothing is re-queued when the ask is young, or has a queue row
 //     (claimed or waiting), or its change merged, or it is older than
 //     7 days, or the voice on changes is off;
-//   - one re-queue per half hour per change, so an ask a busy change
-//     refunds is not re-queued on every pass;
-//   - and the pass itself runs the sweep: a pass with forceRefresh leaves
-//     the voice_update row behind it.
+//   - and the lane's five-minute sweep (bot-lane's bot.sweep) runs it: the
+//     voice_update row is there after it.
 //
-// The sweep is against the full schema, like the other bot postgres tests;
-// the pass is a pool that answers the loop's queries, like run five's.
-// Skips when no PostgreSQL is reachable.
+// The re-queue is a bot-request Owed (enqueueFront), so the workflow
+// runtime runs here on this database, its pipeline only (no timers, no
+// work): the queue row is that machine's projection. Against the full
+// schema, like the other bot postgres tests. Skips when no PostgreSQL is
+// reachable.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -52,24 +52,28 @@ async function openDatabase(t) {
   url.pathname = `/${name}`;
   const pool = new pg.Pool({ connectionString: String(url), max: 8 });
   pool.on('error', () => {});
+  const platform = require('../src/workflow/platform.ts');
+  require('../src/db/pool').getPool = () => pool;
   t.after(async () => {
+    await platform.stopWorkflow().catch(() => {});
     await pool.end().catch(() => {});
     await admin.query(`DROP DATABASE IF EXISTS ${name}`).catch(() => {});
     await admin.end().catch(() => {});
   });
   await pool.query(fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8'));
+  await platform.startWorkflow({ databaseUrl: String(url), dataEncryptionKey: 'synthetic-key', wfPoolMax: 4, wfSlots: 2 }, { loops: false });
   return pool;
 }
 
 const LIVE = { mode: 'live' };
 const VOICE_OFF = { mode: 'live', voiceSession: false };
 
-async function seedScene(pool, { status = 'promoted', issueNumber = 12 } = {}) {
+async function seedScene(pool, { status = 'promoted', issueNumber = 12, botName = null } = {}) {
   let seq = 0;
   const { rows: [botUser] } = await pool.query(
     `INSERT INTO users (username, password, is_synthetic, has_platform_access)
      VALUES ($1, 'x', TRUE, TRUE) RETURNING id, username`,
-    [`homeroom_bot_${crypto.randomBytes(4).toString('hex')}_${++seq}`],
+    [botName || `homeroom_bot_${crypto.randomBytes(4).toString('hex')}_${++seq}`],
   );
   const { rows: [evan] } = await pool.query(
     `INSERT INTO users (username, password, has_platform_access)
@@ -110,7 +114,6 @@ test('the stranded-ask sweep', { timeout: 180000 }, async (t) => {
   if (!pool) return;
 
   await t.test('an ask nobody ran is re-queued, first in the queue, at the asker\'s cost', async () => {
-    bot._resetForTests();
     const scene = await seedScene(pool);
     await scene.askOf(40);
     const n = await bot.sweepStrandedAsks(pool, { id: scene.botUser.id }, LIVE, {});
@@ -124,9 +127,7 @@ test('the stranded-ask sweep', { timeout: 180000 }, async (t) => {
   });
 
   await t.test('nothing is re-queued while the ask is not stranded', async () => {
-    bot._resetForTests();
-    await pool.query('DELETE FROM homeroom_bot_queue');
-
+    // Each scene is a project of its own: its queue is its own.
     const young = await seedScene(pool);
     await young.askOf(5);
     assert.equal(await bot.sweepStrandedAsks(pool, { id: young.botUser.id }, LIVE, {}), 0, 'five minutes old: the normal path is still its own');
@@ -165,67 +166,23 @@ test('the stranded-ask sweep', { timeout: 180000 }, async (t) => {
     assert.deepEqual(await queueRows(pool, off.app.id), []);
   });
 
-  await t.test('one re-queue per half hour, not one per pass', async () => {
-    bot._resetForTests();
-    await pool.query('DELETE FROM homeroom_bot_queue');
-    const scene = await seedScene(pool, { issueNumber: 18 });
+  await t.test('#5217: the lane\'s sweep runs it, and the row it queues is there after', async () => {
+    // The sweep acts for the bot itself (ensureBotUser), and only while it
+    // is on.
+    await pool.query(
+      `INSERT INTO platform_settings (key, value) VALUES ($1, 'live')
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [bot.KEY_MODE]);
+    const scene = await seedScene(pool, { issueNumber: 24, botName: bot.BOT_USERNAME });
     await scene.askOf(40);
-    const t0 = Date.now();
-    const deps = { now: () => t0 };
-    assert.equal(await bot.sweepStrandedAsks(pool, { id: scene.botUser.id }, LIVE, deps), 1);
-    await pool.query('DELETE FROM homeroom_bot_queue');
-    assert.equal(await bot.sweepStrandedAsks(pool, { id: scene.botUser.id }, LIVE, deps), 0, 'right after a re-queue: nothing, whoever took the row away');
-    deps.now = () => t0 + 31 * 60 * 1000;
-    assert.equal(await bot.sweepStrandedAsks(pool, { id: scene.botUser.id }, LIVE, deps), 1, 'half an hour on: it comes back while the ask still waits');
+    const out = await bot.sweep({}, pool, {
+      deps: {
+        worker: { async listWorkerVolumes() { return []; } },
+        dm: { async sweepUnproposedBuilds() { return null; } },
+      },
+    });
+    assert.equal(out.strandedAsks, 1, 'the sweep reports what it re-queued');
+    const rows = await queueRows(pool, scene.app.id);
+    assert.deepEqual(rows.map((r) => [r.issue_number, r.priority, r.reason, r.requested_by]),
+      [[24, 0, 'voice_update', scene.evan.id]], 'the app, issue, reason and asker of the ask, as recordAsk queued it first');
   });
-});
-
-test('#5217: a pass with forceRefresh runs the sweep, and the row it queues is there after', async () => {
-  bot._resetForTests();
-  const inserts = [];
-  const log = [];
-  const pool = {
-    async connect() {
-      return {
-        async query(sql) {
-          if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
-          return { rows: [] };
-        },
-        release() {},
-      };
-    },
-    async query(sql, params) {
-      const s = String(sql);
-      log.push({ s, params });
-      if (/SELECT key, value FROM platform_settings/.test(s)) return { rows: [{ key: bot.KEY_MODE, value: 'live' }] };
-      if (/FROM users WHERE username = \$1/.test(s)) return { rows: [{ id: 77, username: 'homeroom_bot', weekly_limit_cents: 15000 }] };
-      if (/SELECT is_synthetic FROM users/.test(s)) return { rows: [{ is_synthetic: true }] };
-      if (/ARRAY_AGG\(k\.asker_id/.test(s)) return { rows: [{ app_id: 9, issue_number: 24, session_id: 5001, asker_id: 3 }] };
-      if (/INSERT INTO homeroom_bot_queue/.test(s)) {
-        inserts.push({ s, params });
-        return { rows: [{ id: 51 }] };
-      }
-      return { rows: [] };
-    },
-  };
-  const deps = {
-    forceRefresh: true,
-    drain: false,
-    now: () => bot.STRANDED_ASK_MS,
-    worker: { async listWorkerVolumes() { return []; } },
-    dm: {
-      async sweepFirstVersions() { return null; },
-      async sweepUnproposedBuilds() { return null; },
-    },
-    github: { isEnabled: () => false },
-  };
-  try {
-    const out = await bot.runOnce(pool, {}, deps);
-    assert.equal(out.strandedAsks, 1, 'the pass reports what the sweep re-queued');
-    assert.equal(inserts.length, 1, 'one queue row, made by the pass itself');
-    assert.deepEqual(inserts[0].params, [9, 24, 'voice_update', 3, null],
-      'the app, issue, reason and asker of the ask, as recordAsk queued it first');
-  } finally {
-    bot._resetForTests();
-  }
 });

@@ -39,6 +39,11 @@ import { botDm } from './bot-dm/machine.ts';
 import { botDmServices } from './bot-dm/services.ts';
 import { MACHINE as MAIN_CHECK, appKey as mainCheckKey, depsFromEnv as mainCheckDeps, mainCheck } from './main-check/machine.ts';
 import { mainCheckServices } from './main-check/services.ts';
+import { MACHINE as BOT_REQUEST, botRequest } from './bot-request/machine.ts';
+import { botRequestServices } from './bot-request/services.ts';
+import { MACHINE as BOT_LANE, KEY as LANE_KEY, botLane } from './bot-lane/machine.ts';
+import { botLaneServices } from './bot-lane/services.ts';
+import { requestKey as botRequestKey } from './rules/bot-loop.ts';
 import { DM as BOT_DM, VOICE as BOT_VOICE, dmKey, placeOf, voiceKey } from './rules/bot-replies.ts';
 import type { Place } from './rules/bot-replies.ts';
 import { BOT_USERNAME } from './rules/bot-notes.ts';
@@ -47,6 +52,7 @@ import { appMetaFromRow } from './rules/governance-gate.ts';
 import { countedVotePredicateSql } from './rules/vote-predicate.ts';
 import { VOTE_REASON_MAX, VOTE_REASON_REQUIRED } from './rules/vote-reason.ts';
 import { BUS_CHANNEL, workflowBody } from './pushes.ts';
+import { TURN_OWNER_SQL } from './session-work.ts';
 
 const pg = createRequire(import.meta.url)('pg');
 
@@ -58,7 +64,7 @@ let log: Logger | null = null;
 // for every machine (wf_holds reads it). Every machine is the only path for
 // what it decides, so its guard is always on and always refuses a write
 // from outside it.
-const MACHINES = [MACHINE, MERGE, DELIVERY, PREVIEW, SHOTS, PROPOSAL, QUEUE, CAMPAIGN, MAIN_CHECK];
+const MACHINES = [MACHINE, MERGE, DELIVERY, PREVIEW, SHOTS, PROPOSAL, QUEUE, CAMPAIGN, MAIN_CHECK, BOT_REQUEST];
 
 export async function syncSettings(pool: Pool): Promise<void> {
   for (const name of MACHINES) {
@@ -151,12 +157,17 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const builds = botBuild();
   // The suite on each new main, with its switches from the environment.
   const checks = mainCheck(mainCheckDeps(process.env));
-  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks];
+  // The bot's loop: a staging copy runs no worker turns, so the bot acts on
+  // nothing there (rules/bot-loop.ts botOn).
+  const staging = process.env.USERNODE_ENV === 'staging';
+  const requests = botRequest({ staging });
+  const lane = botLane({ staging });
+  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane];
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
     ...appDeliveryServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
     ...campaignServices(deps), ...botChangeServices(deps), ...botVoiceServices(deps), ...botDmServices(deps),
-    ...mainCheckServices(deps),
+    ...mainCheckServices(deps), ...botRequestServices(deps), ...botLaneServices(deps),
   };
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!,
@@ -209,7 +220,124 @@ export async function startWorkflowLoops(): Promise<void> {
   await adoptMergeQueues();
   await adoptDeferredDms();
   await adoptMainChecks();
+  await adoptBotQueue();
   await retryPlatformFaults();
+  // The bot's lane starts its clock (its refresh, its grants): idempotent,
+  // the same tick at every boot.
+  await runtime.append(BOT_LANE, LANE_KEY, { type: 'Tick', payload: {} },
+    { requestKey: `boot:${randomUUID()}`, source: { kind: 'system', name: 'boot' } });
+}
+
+// ── The Homeroom bot's loop (bot-request, bot-lane) ────────────────────
+
+type Db = Queryable;
+const BOT_SOURCE = (name: string) => ({ kind: 'system' as const, name });
+
+// Something owes request `issueNumber` of `appId` a look: appended in the
+// caller's transaction when it has one (`db`), so the debt commits with
+// what made it (an ask's row, a message, a filed request). `key` makes a
+// retried caller append once.
+export async function botOwed(db: Db, p: {
+  appId: number; issueNumber: number; reason: string; priority: number; payer?: number | null; requestedBy?: number | null;
+  changedBy?: string | null; threadSeenAt?: string | null; key?: string | null; source?: string;
+}): Promise<void> {
+  await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
+    type: 'Owed',
+    payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber), reason: p.reason, priority: p.priority,
+      payer: p.payer ?? null, requestedBy: p.requestedBy ?? null, changedBy: p.changedBy ?? null, threadSeenAt: p.threadSeenAt ?? null } as any,
+  }, { requestKey: p.key || `owed:${randomUUID()}`, source: BOT_SOURCE(p.source || 'owed'), appId: Number(p.appId) });
+}
+
+// The same, waiting briefly for its instance's answer (bot-request's reply:
+// queued with its look's card key, or a look already runs). Null when the
+// answer is not in yet.
+export async function botOwedAndWait(p: Parameters<typeof botOwed>[1]): Promise<{ queued: boolean; looking: boolean; jobKey: string | null } | null> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  const out = await runtime.appendAndWait(BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
+    type: 'Owed',
+    payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber), reason: p.reason, priority: p.priority,
+      payer: p.payer ?? null, requestedBy: p.requestedBy ?? null, changedBy: p.changedBy ?? null, threadSeenAt: p.threadSeenAt ?? null } as any,
+  }, { requestKey: p.key || `owed:${randomUUID()}`, source: BOT_SOURCE(p.source || 'owed'), appId: Number(p.appId), waitMs: 3000 });
+  return (out.reply as any) || null;
+}
+
+// The refresh: request `issueNumber` is no longer owed a look.
+export async function botNotOwed(db: Db, p: { appId: number; issueNumber: number; quiet: boolean; key: string }): Promise<void> {
+  await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
+    type: 'NotOwed', payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber), quiet: !!p.quiet } as any,
+  }, { requestKey: p.key, source: BOT_SOURCE('refresh'), appId: Number(p.appId) });
+}
+
+// A person wrote on a request's thread (in the statement's transaction).
+export async function botActivity(db: Db, p: { appId: number; issueNumber: number; messageId?: number | null }): Promise<void> {
+  await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
+    type: 'Activity', payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber), at: new Date().toISOString() } as any,
+  }, { requestKey: p.messageId ? `activity:${p.messageId}` : `activity:${randomUUID()}`, source: BOT_SOURCE('activity'), appId: Number(p.appId) });
+}
+
+// A ready verdict's build is owed (Build it in the DM, a carried plan).
+// `key`: the sweep's own (a waiting run told again), else one per run.
+export async function botBuildOwed(db: Db, p: { appId: number; issueNumber: number; runId: number; key?: string | null }): Promise<void> {
+  await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
+    type: 'BuildOwed', payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber), runId: Number(p.runId) } as any,
+  }, { requestKey: p.key || `build:${Number(p.runId)}`, source: BOT_SOURCE('build'), appId: Number(p.appId) });
+}
+
+// The session a look runs on, once the look knows it (a project's first read
+// makes its triage session).
+export async function botLookOn(db: Db, p: { appId: number; issueNumber: number; n: number; sessionId: number }): Promise<void> {
+  await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
+    type: 'LookOn', payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber), n: Number(p.n), sessionId: Number(p.sessionId) } as any,
+  }, { requestKey: `lookon:${Number(p.appId)}:${Number(p.issueNumber)}:${Number(p.n)}`, source: BOT_SOURCE('look'), appId: Number(p.appId) });
+}
+
+// bot-change's merge, told to each request it was for.
+export async function botRequestMerged(db: Db, p: { appId: number; issueNumber: number; before: string | null; key: string }): Promise<void> {
+  await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
+    type: 'RequestMerged', payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber), before: p.before } as any,
+  }, { requestKey: p.key, source: BOT_SOURCE('merged'), appId: Number(p.appId) });
+}
+
+// The lane, asked to refresh a project soon (null: every project).
+// `now`: at once, not once a burst of messages has settled (a first version
+// just filed, read as soon as it is: newcomer run nine).
+export async function botRefresh(appId: number | null, { now = false }: { now?: boolean } = {}): Promise<void> {
+  if (!runtime) return;
+  await runtime.append(BOT_LANE, LANE_KEY, { type: 'RefreshAsked', payload: { appId, now } as any },
+    { requestKey: `refresh:${randomUUID()}`, source: BOT_SOURCE('refresh'), appId: appId ?? undefined });
+}
+
+// What the bot's queue would answer about a request now: its instance's
+// state (an admin's view, a DM's "already on it").
+export async function botRequestState(appId: number, issueNumber: number): Promise<{ state: string; data: any } | null> {
+  if (!runtime) return null;
+  const { rows: [r] } = await kernelPool!.query('SELECT state, data FROM wf_instances WHERE machine = $1 AND key = $2',
+    [BOT_REQUEST, botRequestKey(appId, issueNumber)]);
+  return r ? { state: r.state, data: r.data } : null;
+}
+
+// The boot (and a minute's sweep while any is left): every queue row no
+// instance holds (an older release wrote it) is adopted: an unclaimed one
+// is owed, a claimed one waits for the older release's look to end.
+export async function adoptBotQueue(): Promise<number> {
+  if (!runtime) return 0;
+  const { rows } = await kernelPool!.query(
+    `SELECT q.* FROM homeroom_bot_queue q
+      WHERE NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'request:' || q.app_id || ':' || q.issue_number)
+      ORDER BY q.id LIMIT 500`, [BOT_REQUEST]);
+  const iso = (v: unknown) => (v ? new Date(v as string).toISOString() : null);
+  for (const q of rows) {
+    await runtime.append(BOT_REQUEST, botRequestKey(q.app_id, q.issue_number), {
+      type: 'Adopted', payload: {
+        appId: q.app_id, issueNumber: q.issue_number, reason: q.reason, priority: q.priority, payer: q.payer_user_id,
+        requestedBy: q.requested_by, changedBy: q.changed_by, threadSeenAt: iso(q.thread_seen_at), enqueuedAt: iso(q.enqueued_at),
+        heldUntil: iso(q.held_until), startedAt: iso(q.started_at),
+      } as any,
+    }, { requestKey: `adopt:${q.id}:${q.enqueued_at ? new Date(q.enqueued_at).getTime() : 0}`, source: BOT_SOURCE('adopt'), appId: q.app_id })
+      .catch((err: Error) => log!.warn('workflow', 'Could not adopt a queue row of the bot', { id: q.id, message: err.message }));
+  }
+  if (rows.length) log!.info('workflow', 'Adopted the bot\'s queue rows', { count: rows.length });
+  return rows.length;
 }
 
 // ── The suite on each new main ──────────────────────────────────────────
@@ -279,6 +407,36 @@ export async function botNote(sessionId: number, type: string, payload: Record<s
       appId: o.appId ?? own.app_id });
 }
 
+// ── A Stop of a turn workflow work runs ────────────────────────────────
+
+// A person's Stop of the session's turn, when the turn is one a machine's
+// work runs (src/workflow/session-work.ts TURN_OWNER_SQL: its record's
+// owner, or the sync, shots run, build or bot look spinning one up): the
+// owning instance hears StopRequested and decides. Resolves the route's
+// answer, or null when no machine runs a turn there (a person's own turn:
+// the route's own path stops it). A job that changed since the person read
+// it is refused as the route refuses it.
+export async function stopWorkflowTurn(p: { sessionId: number; by: string | null; expectedTurnId?: string | null }): Promise<Reply | null> {
+  if (!runtime) return null;
+  const { rows: [owner] } = await kernelPool!.query(TURN_OWNER_SQL, [p.sessionId]);
+  if (!owner?.machine || !owner?.key) return null;
+  if (p.expectedTurnId) {
+    const { rows: [t] } = await kernelPool!.query(
+      `SELECT COALESCE(active_turn->>'turnId', active_turn->>'logicalTurnId', active_turn->>'turnUuid') AS id
+         FROM chat_sessions WHERE id = $1`, [p.sessionId]);
+    if (t?.id && t.id !== p.expectedTurnId) {
+      return { status: 409, body: { error: 'The running job changed. Refresh its status before stopping it.', code: 'turn_changed' } };
+    }
+  }
+  const outcome = await runtime.appendAndWait(owner.machine, owner.key,
+    { type: 'StopRequested', payload: { sessionId: p.sessionId, by: p.by ?? null } as any },
+    { requestKey: `stop:${p.sessionId}:${randomUUID()}`, source: { kind: 'route', name: 'stop' }, actor: p.by ?? undefined, waitMs: 5000 });
+  if (outcome.status === 'rejected') {
+    return { status: 200, body: { ok: true, stopped: false, reason: 'no active turn', code: outcome.reason || null } };
+  }
+  return { status: outcome.status === 'pending' ? 202 : 200, body: { ok: true, stopped: true, stopping: true, phase: null, machine: owner.machine } };
+}
+
 // ── The Homeroom bot's replies (bot-voice, bot-dm) ─────────────────────
 
 // A person wrote in a project (services/ws.js handleMessage): the place's
@@ -291,10 +449,17 @@ export async function botNote(sessionId: number, type: string, payload: Record<s
 // transaction around it. Resolves the INSERT's rows. A place the voice has
 // no part in (a governance vote's thread) inserts the message alone.
 export async function insertHeard(db: Queryable, insertSql: string, values: unknown[],
-  p: { appId: number; thread: { type?: unknown; ref?: unknown } | null }): Promise<{ id: number; created_at: string }[]> {
+  p: { appId: number; thread: { type?: unknown; ref?: unknown } | null }): Promise<{ id: number; created_at: string; requestHeard?: boolean }[]> {
   const place = placeOf(p.thread);
   if (!place) return (await db.query(insertSql, values)).rows;
   const n = values.length;
+  // On a request's thread the request's own instance (bot-request) hears it
+  // too, in the same statement, when it has one: a read of it under way
+  // starts over, an idle one's project is refreshed soon. A request the bot
+  // never had anything to do with gets no instance for every comment on it:
+  // the row says it was not heard (`requestHeard`), and the caller asks for
+  // its project's refresh instead.
+  const onRequest = place.type === 'issue' && Number.isInteger(Number(place.ref)) && Number(place.ref) > 0;
   const { rows } = await db.query(
     `WITH m AS (${insertSql}),
      e AS (
@@ -303,10 +468,21 @@ export async function insertHeard(db: Queryable, insertSql: string, values: unkn
               jsonb_build_object('appId', $${n + 3}::int, 'place', $${n + 4}::jsonb, 'messageId', m.id),
               $${n + 5}::jsonb, NULL, 'heard:' || m.id, NULL
          FROM m
-       RETURNING id)
-     SELECT m.id, m.created_at, (SELECT pg_notify('wf_events', $${n + 1}) FROM e LIMIT 1) AS woke FROM m`,
-    [...values, BOT_VOICE, voiceKey(p.appId, place), p.appId, JSON.stringify(place), JSON.stringify({ kind: 'route', name: 'chat' })]);
-  return rows.map(({ woke: _woke, ...row }: any) => row);
+       RETURNING id)${onRequest ? `,
+     r AS (
+       INSERT INTO wf_events (machine, key, app_id, type, payload, source, actor, request_key, caused_by)
+       SELECT $${n + 6}, $${n + 7}, $${n + 3}::int, 'Activity',
+              jsonb_build_object('appId', $${n + 3}::int, 'issueNumber', $${n + 8}::int, 'at', m.created_at),
+              $${n + 5}::jsonb, NULL, 'activity:' || m.id, NULL
+         FROM m
+        WHERE EXISTS (SELECT 1 FROM wf_instances wi WHERE wi.machine = $${n + 6} AND wi.key = $${n + 7})
+       RETURNING id)` : ''}
+     SELECT m.id, m.created_at, (SELECT pg_notify('wf_events', $${n + 1}) FROM e LIMIT 1) AS woke${onRequest ? `,
+            (SELECT pg_notify('wf_events', $${n + 6}) FROM r LIMIT 1) AS woke_request,
+            EXISTS (SELECT 1 FROM r) AS request_heard` : ''} FROM m`,
+    [...values, BOT_VOICE, voiceKey(p.appId, place), p.appId, JSON.stringify(place), JSON.stringify({ kind: 'route', name: 'chat' }),
+      ...(onRequest ? [BOT_REQUEST, botRequestKey(p.appId, Number(place.ref)), Number(place.ref)] : [])]);
+  return rows.map(({ woke: _woke, woke_request: _wr, request_heard: rh, ...row }: any) => (onRequest ? { ...row, requestHeard: !!rh } : row));
 }
 
 // A person wrote in their DM with the bot (routes/conversations.js, in
@@ -686,14 +862,38 @@ export function botBuildsRunning(): boolean {
   return runtime !== null;
 }
 
+// Stop the builds of `target` under way for `ids` (the bench's cancel of a
+// run or a trial): each instance hears StopRequested, which ends its work
+// and stops its turn from whichever process runs it. Resolves how many.
+export async function stopBuilds(target: BuildTarget, ids: number[], by: string | null = null): Promise<number> {
+  if (!runtime || !ids.length) return 0;
+  const { rows } = await kernelPool!.query(
+    `SELECT key FROM wf_instances WHERE machine = $1 AND state = 'building'
+        AND data->>'target' = $2 AND (data->>'id')::int = ANY($3::int[])`, [BUILD, target, ids.map(Number)]);
+  for (const r of rows) {
+    await runtime.append(BUILD, r.key, { type: 'StopRequested', payload: { by } as any },
+      { requestKey: `stop:${r.key}`, source: { kind: 'admin', name: 'bench' }, actor: by ?? undefined });
+  }
+  return rows.length;
+}
+
 // Start a build: one instance per build, so asking twice starts it once.
+// `replyTo`: who hears its end (BuildEnded): a live build's request instance.
 export async function requestBuild(b: {
   target: BuildTarget; id: number; nonce?: string | null; appId: number | null; input: Record<string, unknown>;
+  replyTo?: { machine: string; key: string } | null;
 }): Promise<string> {
   const key = buildKey(b.target, b.id, b.nonce ?? null);
-  await runtime!.append(BUILD, key, { type: 'Requested', payload: { target: b.target, id: b.id, nonce: b.nonce ?? null, input: b.input } },
+  await runtime!.append(BUILD, key, { type: 'Requested', payload: { target: b.target, id: b.id, nonce: b.nonce ?? null, input: b.input, replyTo: b.replyTo ?? null } as any },
     { requestKey: `request:${key}`, source: { kind: 'system', name: 'bot-build' }, appId: b.appId ?? null });
   return key;
+}
+
+// A person wrote on a request's thread (no transaction of the caller's: the
+// message is stored). The request's instance hears it.
+export async function botActivityNow(p: { appId: number; issueNumber: number; messageId?: number | null }): Promise<void> {
+  if (!runtime) return;
+  await botActivity(kernelPool!, p);
 }
 
 // Where a build is: 'building', 'done', 'failed', or null when there is none.

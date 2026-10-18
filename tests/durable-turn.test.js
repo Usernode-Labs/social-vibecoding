@@ -318,3 +318,99 @@ test('a kept result is JSON with its long texts clipped', () => {
   assert.equal(kept.error, 'boom');
   assert.equal(kept.estimatedCostUsd, 0.1);
 });
+
+// ── A turn workflow work runs: its owner, and a person's Stop ───────────
+// The work item that runs a turn is written on the turn's record (execInWorker
+// takes `owner` from the dispatch), so a Stop finds the machine that owns it
+// and a sweep leaves it alone. The Stop is stamped on the record by the
+// machine's turn.stop (worker.stopOwnedTurn); the step reads it back before
+// the record goes and says who stopped the turn.
+
+const OWNER = { machine: 'bot-request', key: 'request:7:3', kind: 'bot.look', workKey: 'look:1', workId: 9 };
+
+test('the turn\'s owner reaches the dispatch, given or from the durable context it runs on', async () => {
+  let asked = null;
+  await durableTurn.runTurn(durableSteps.none(), 'triage', {
+    pool: pool(), session: SESSION, mode: 'scout', budgetMs: 1000, owner: OWNER,
+    dispatch: async (extra) => { asked = extra; return { result: {} }; },
+    deps: { worker: fakeWorker() },
+  });
+  assert.deepEqual(asked, { owner: OWNER }, 'on the inert context too');
+
+  const w = item();
+  w.steps.turnOwner = { ...OWNER, machine: 'bot-build' };
+  await durableTurn.runTurn(w.steps, 'build', {
+    pool: pool(), session: SESSION, mode: 'build', budgetMs: 60000,
+    dispatch: async (extra) => { asked = extra; await extra.onTurnRecord({ turnId: 't-o', journal: '/j/o' }); return { result: {} }; },
+    deps: { worker: fakeWorker() },
+  });
+  assert.equal(asked.owner.machine, 'bot-build');
+  assert.equal(asked.holdTurnRecord, true);
+});
+
+test('a Stop stamped on the turn\'s record is read back as stopped by that person, and kept for the next attempt', async () => {
+  const w = item();
+  const p = pool();
+  const out = await durableTurn.runTurn(w.steps, 'triage', {
+    pool: p, session: SESSION, mode: 'scout', budgetMs: 60000, owner: OWNER,
+    dispatch: async (extra) => {
+      await extra.onTurnRecord({ turnId: 't-s', journal: '/j/s' });
+      // The machine's turn.stop stamps the record, then kills the turn.
+      p.turn = { turnId: 't-s', journal: '/j/s', mode: 'scout', phase: 'executing', owner: OWNER,
+        stopRequestedAt: new Date().toISOString(), stopRequestedBy: 'ana' };
+      return { result: { exitCode: 137 } };
+    },
+    deps: { worker: fakeWorker() },
+  });
+  assert.equal(out.stoppedBy.by, 'ana');
+  assert.equal(w.last()['turn:triage'].out.stoppedBy.by, 'ana');
+  const again = await durableTurn.runTurn(w.again(), 'triage', {
+    pool: pool(), session: SESSION, mode: 'scout', budgetMs: 60000, owner: OWNER,
+    dispatch: async () => { throw new Error('not dispatched'); },
+    deps: { worker: fakeWorker() },
+  });
+  assert.equal(again.kept, true);
+  assert.equal(again.stoppedBy.by, 'ana', 'the next attempt reads who stopped it from what was kept');
+});
+
+test('a Stop stamped on another turn\'s record is not this turn\'s', async () => {
+  const w = item();
+  const p = pool();
+  const out = await durableTurn.runTurn(w.steps, 'triage', {
+    pool: p, session: SESSION, mode: 'scout', budgetMs: 60000, owner: OWNER,
+    dispatch: async (extra) => {
+      await extra.onTurnRecord({ turnId: 't-a', journal: '/j/a' });
+      p.turn = { turnId: 't-b', journal: '/j/b', mode: 'scout', phase: 'executing', stopRequestedAt: new Date().toISOString(), stopRequestedBy: 'ana' };
+      return { result: {} };
+    },
+    deps: { worker: fakeWorker() },
+  });
+  assert.equal(out.stoppedBy, null);
+});
+
+test('a turn started again with its record lost gets its full budget when asked, not what was left of the first clock', async () => {
+  const deadlineAt = Date.now() + 60 * 1000;
+  const w = item({ 'turn:triage': { phase: 'started', mode: 'scout', deadlineAt, headBefore: null, record: null } });
+  let clock = null;
+  await durableTurn.runTurn(w.steps, 'triage', {
+    pool: pool(null), session: SESSION, mode: 'scout', budgetMs: 20 * 60 * 1000, fullBudgetAgain: true,
+    dispatch: async (_extra, c) => { clock = c; return { result: {} }; },
+    deps: { worker: fakeWorker() },
+  });
+  assert.equal(clock.budgetMs, 20 * 60 * 1000);
+  assert.ok(w.saves[0]['turn:triage'].deadlineAt > deadlineAt, 'a fresh deadline');
+});
+
+test('a turn\'s own clock stops only the turn its owner runs, recorded as nobody\'s Stop', async () => {
+  const calls = [];
+  const worker = {
+    stopOwnedTurn: async (_pool, o) => { calls.push(['owned', o]); return {}; },
+    stopTurn: async (id) => { calls.push(['any', id]); },
+  };
+  await durableTurn.clockStop(worker, {}, 41, OWNER);
+  await durableTurn.clockStop(worker, {}, 41, null);
+  assert.deepEqual(calls, [
+    ['owned', { sessionId: 41, machine: 'bot-request', key: 'request:7:3', kinds: ['bot.look'], workKey: 'look:1', stamp: false, release: false }],
+    ['any', 41],
+  ]);
+});

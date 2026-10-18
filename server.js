@@ -127,6 +127,9 @@ const activeWorkersSvc = require('./src/services/active-workers');
 const turnWatchdog = require('./src/services/turn-watchdog');
 const recoveryRetry = require('./src/services/recovery-retry');
 const turnLifecycle = require('./src/services/turn-lifecycle');
+// A turn workflow work runs is its work item's while the item is
+// outstanding: the one test every sweep below applies before taking a turn.
+const { workflowTurnHeldSql } = require('./src/workflow/session-work.ts');
 const stopRegistry = require('./src/services/stop-registry');
 const sessionBus = require('./src/services/session-bus');
 const turnEffects = require('./src/services/turn-effects');
@@ -1169,8 +1172,6 @@ async function becomeLeader() {
   // never does (docs/plans/web-and-conductor.md), and a follower of a rollout
   // reads the same copy.
   const leaderStatus = require('./src/services/leader-status');
-  leaderStatus.provide(require('./src/services/homeroom-bot').MEMORY_STATUS_KEY,
-    () => require('./src/services/homeroom-bot').memoryStatus());
   leaderStatus.provide('bench-lane', () => require('./src/services/bench/lane').laneStatus());
   leaderStatus.provide('staging-reap.automatic', () => stagingReap.readAutomatic());
   leaderStatus.provide('app-domains.sweep', () => require('./src/services/app-domains').getStatus());
@@ -1373,10 +1374,9 @@ async function becomeLeader() {
   // advisory-locked so only one instance sends, and the counterweight to
   // new-proposal notifications now defaulting off.
   require('./src/services/vote-digest').start(config);
-  // #2684: the Homeroom bot's shadow-mode triage loop. Leader-only for the
-  // same reason the digests are — a pass runs container turns that cost
-  // money — and inert until an admin switches homeroom_bot_mode on.
-  require('./src/services/homeroom-bot').start(config);
+  // (The Homeroom bot's loop is no leader work: it is the bot-request and
+  // bot-lane machines, src/workflow/, whose work runs wherever workflow work
+  // runs.)
   // #3654: its benchmark lane. Leader-only like the bot (a trial runs a
   // container turn that costs money) and inert until an admin launches a run.
   require('./src/services/bench/lane').start(config);
@@ -2448,6 +2448,9 @@ async function sweepOrphanTurns(config, { adopt = adoptOrphanWorker } = {}) {
            WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
              AND w.key = substr(cs.workflow_owner, length(split_part(cs.workflow_owner, '/', 1)) + 2)
              AND w.state = 'building'))
+        -- A turn workflow work runs is its work item's while the item is
+        -- outstanding (session-work.ts workflowTurnHeldSql), in any process.
+        AND NOT ${workflowTurnHeldSql('cs.active_turn')}
       ORDER BY cs.id
       LIMIT 20`,
     [[...turnLifecycle.RECOVERABLE_PHASES], new Date(Date.now() - ORPHAN_MIN_AGE_MS).toISOString(),
@@ -2827,12 +2830,12 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
             a.self_hosted AS app_self_hosted, u.username,
             u.is_synthetic AS user_is_synthetic,
-            (cs.workflow_owner IS NOT NULL AND EXISTS (
+            ((cs.workflow_owner IS NOT NULL AND EXISTS (
               SELECT 1 FROM wf_instances w
                WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
                  AND w.key = substr(cs.workflow_owner, length(split_part(cs.workflow_owner, '/', 1)) + 2)
                  AND w.state = 'building'
-            )) AS workflow_owned
+            )) OR ${workflowTurnHeldSql('cs.active_turn')}) AS workflow_owned
      FROM chat_sessions cs
      JOIN apps a ON cs.app_id = a.id
      JOIN users u ON cs.user_id = u.id
@@ -2873,13 +2876,14 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     return;
   }
 
-  // A durable build's session: its worker and its turns are that build's,
-  // whose work item the next leader claims and carries on from its last
-  // saved step (services/build-runs.js). The worker is kept and registered;
-  // nothing else is done to it here.
+  // A durable build's session, or a turn workflow work runs (its record
+  // names its work item, still outstanding): its worker and its turn are
+  // that work's, which the next leader claims and carries on from its last
+  // saved step. The worker is kept and registered; nothing else is done to
+  // it here.
   if (session.workflow_owned) {
     if (containerState === 'running') worker.adoptWarmWorker(sessionId, containerName);
-    log.info('server', 'Leaving a durable build\'s worker to its build', {
+    log.info('server', 'Leaving a workflow turn\'s worker to its work', {
       containerName, sessionId, owner: session.workflow_owner, state: containerState,
     });
     return;
@@ -4199,38 +4203,11 @@ async function resumeDetachedTurnInner({
     emit('done', {});
   };
 
-  // The bot's builds and the bench's trials never reach this: a durable
-  // build's turns are its build's to follow (services/durable-turn.js), and
-  // adoptOrphanWorker leaves them alone.
-  //
-  // #4533: a follow-up of the bot's on its own PROMOTED proposal goes on
-  // through the person's tail below (isRecoveredBotSession leaves it there on
-  // purpose) but keeps the bot's clock, from the deadline its turn record
-  // carries. Each restart that reaches the turn is counted on its record
-  // first, and the clock gives that time back (durable-turn.js
-  // RESTART_ALLOWANCE_MS). Only a turn with the bot's mark: a person's turn
-  // on the same session is never stopped on it.
-  const botFollowUp = homeroomBotRecovery().isRecoveredBotFollowUp(session, activeTurn);
-  let botTimedOut = false;
-  let botClock = null;
-  if (botFollowUp) {
-    const restarts = await turnLifecycle.noteRestart(pool, { sessionId, turnId: activeTurn.turnId }).catch(() => null);
-    const clockTurn = Number.isInteger(restarts) ? { ...activeTurn, restarts } : activeTurn;
-    const deadline = await homeroomBotRecovery().recoveryDeadline(pool, config, session, clockTurn).catch(() => null);
-    if (deadline != null) {
-      const botClockMs = Math.max(0, deadline - Date.now());
-      botClock = setTimeout(() => {
-        botTimedOut = true;
-        Promise.resolve(worker.stopTurn(sessionId)).catch(() => {});
-      }, botClockMs);
-      // Unref only a clock that has time left to wait: it must not hold a
-      // shutting-down process open for a turn's whole budget. A turn already
-      // past its deadline is stopped on the next tick, and an unref'd 0 ms
-      // timer can be skipped entirely when nothing else keeps the loop alive,
-      // leaving the adoption waiting on a stop that never comes.
-      if (botClockMs > 0 && typeof botClock.unref === 'function') botClock.unref();
-    }
-  }
+  // The Homeroom bot's turns never reach this: a turn workflow work runs
+  // (its builds, reads and fixes, the bench's trials) is its work item's to
+  // follow (services/durable-turn.js), and adoptOrphanWorker leaves it
+  // alone; an older release's bot turn is abandoned there
+  // (isRecoveredBotSession), its request read again.
 
   let result;
   try {
@@ -4269,7 +4246,6 @@ async function resumeDetachedTurnInner({
       stopRequestedAt: turnLifecycle.stopRequestOf(activeTurn)?.atMs || null,
     });
   } catch (err) {
-    if (botClock) clearTimeout(botClock);
     // #1378: the stop machinery kills the agent process and appends an exit
     // marker, so a stopped turn usually resolves rather than throwing — but
     // when it does throw, the user still asked for this to end. Close it as
@@ -4362,7 +4338,6 @@ async function resumeDetachedTurnInner({
     );
     return;
   }
-  if (botClock) clearTimeout(botClock);
   flushProgress();
 
   // #1378: the tail is done and the user had asked for this turn to stop.
@@ -4484,12 +4459,7 @@ async function resumeDetachedTurnInner({
   let recoveredStalled = false;
   let durableTailComplete = false;
   try {
-    if (botFollowUp && recoveryActiveTurn.mode === 'scout') {
-      // #4533: a follow-up the bot may no longer revise with runs read-only
-      // (scout). Its answer is the bot's to post (below), never a spec: the
-      // branch after this one would have made it the proposal's.
-      terminalLine = '[done]';
-    } else if (recoveryActiveTurn.mode === 'scout') {
+    if (recoveryActiveTurn.mode === 'scout') {
       // Scout turns push nothing — their product is the spec text.
       // Persist it the same way runScoutTool does (spec_md + frozen
       // version) so the draft isn't lost with the dead SSE.
@@ -4603,16 +4573,6 @@ async function resumeDetachedTurnInner({
       recoveredStalled = finalizeOutcome === 'push_failed';
     }
 
-    // #4533: what a follow-up of the bot's did goes in the bot's ledger and
-    // is said where the bot says it, as after a live turn, once the tail
-    // above has moved the proposal on (homeroom-bot.js
-    // finishRecoveredFollowUp: at most once, whatever replays this). Read
-    // off the record recovery began with, which carries the bot's mark.
-    if (botFollowUp) {
-      await homeroomBotRecovery().finishRecoveredFollowUp({
-        pool, config, session, activeTurn, result, timedOut: botTimedOut,
-      });
-    }
 
     // #896: re-issue the Mayor's phase-2 wrap-up. It used to be skipped
     // outright — the turn ended on a bare recovery breadcrumb and no
@@ -4921,6 +4881,11 @@ const adoptProposals = async () => {
   const platform = require('./src/workflow/platform.ts');
   await platform.adoptProposals()
     .catch((err) => log.warn('server', 'Adopting sessions for the proposal machine failed', { err: err.message }));
+  // And the bot's queue rows an older release wrote during a rollout (its
+  // insert is let through while no instance holds the row): adopted by
+  // bot-request on the same sweep.
+  await platform.adoptBotQueue()
+    .catch((err) => log.warn('server', 'Adopting the bot\'s queue rows failed', { err: err.message }));
 };
 
 function startSessionAutoPauseSweeper(config) {
@@ -5024,6 +4989,7 @@ function startSessionAutoPauseSweeper(config) {
               WHERE w.machine = split_part(cs.workflow_owner, '/', 1)
                 AND w.key = substr(cs.workflow_owner, length(split_part(cs.workflow_owner, '/', 1)) + 2)
                 AND w.state = 'building'))
+           AND NOT ${workflowTurnHeldSql('cs.active_turn')}
          ORDER BY (cs.active_turn->>'startedAt') ASC NULLS FIRST
          LIMIT 20`
       );
@@ -5925,9 +5891,6 @@ async function cleanup() {
   // already running are restart recovery's to finish.
   // The leader's statuses stop being written: the new leader's replace them.
   require('./src/services/leader-status').stop();
-  try { require('./src/services/homeroom-bot').stop(); } catch (err) {
-    log.warn('server', 'Stopping the Homeroom bot failed', { err: err.message });
-  }
   try { require('./src/services/bench/lane').stop(); } catch (err) {
     log.warn('server', 'Stopping the benchmark lane failed', { err: err.message });
   }

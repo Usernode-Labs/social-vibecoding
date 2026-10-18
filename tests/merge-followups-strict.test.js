@@ -29,13 +29,19 @@ test('homeroom-bot noteRequestMerged run again stops a build an earlier run mark
       return { rows: [], rowCount: 0 };
     },
   };
+  // Each build under way is stopped by its machine (bot-build's
+  // StopRequested), which stops its turn by its record: asked again here.
   const out = await bot.noteRequestMerged(pool, { id: 5 }, {
     strict: true,
-    worker: { async stopTurn(id) { stopped.push(id); } },
+    platform: {
+      async stopBuilds(target, ids) { stopped.push([target, ...ids]); },
+      async botRequestMerged() {},
+      async botRefresh() {},
+    },
     sessionLifecycle: { async archiveSession() { return { archived: false }; } },
     dm: { async closePlanCards() {} },
   });
-  assert.deepEqual(stopped, [44]);
+  assert.deepEqual(stopped, [['live', 30]]);
   assert.equal(out.stopped, 0, 'counted once, by the run that marked it');
 });
 

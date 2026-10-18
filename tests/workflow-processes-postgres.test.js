@@ -631,6 +631,89 @@ test('workflow machines in a process of their own, and through its crash', { tim
     assert.deepEqual(await syncThrough({ crash: true }), { sync: null, outcome: 'clean', processes: 2 });
   });
 
+  // A person's Stop pressed on the web side while the workflow process is
+  // spinning the sync's turn up (before any turn record exists): it reaches
+  // the proposal machine, which ends the sync as stopped by them (never a
+  // conflict) and stops its turn by its record (trace L24, L25, L28).
+  await t.test('sync with main: a Stop pressed on the web side while the workflow process spins its turn up ends it as stopped', async () => {
+    const a = await app();
+    const s = await inReview(a);
+    await procs.arm(pool, 'sync.turn');
+    const out = await platform.requestSync({ sessionId: s.id, appId: a.id, reason: 'person', userId: author.id });
+    assert.equal(out.status, 'accepted', JSON.stringify(out));
+    await procs.reached(pool, 'sync.turn');
+    const stop = await platform.stopWorkflowTurn({ sessionId: s.id, by: author.username });
+    assert.equal(stop?.body?.stopped, true, JSON.stringify(stop));
+    assert.equal(stop.body.machine, 'proposal');
+    await procs.release(pool, 'sync.turn');
+    await procs.until(async () => (await proposalOf(s))?.data?.lastSync?.outcome === 'stopped', 'the sync ended stopped');
+    const i = await proposalOf(s);
+    assert.equal(i.data.sync, null);
+    assert.match(i.data.lastSync.message, /stopped by/);
+    await procs.until(() => heard.some((e) => e.d?.type === 'session_update' && e.d.action === 'sync_status'
+      && e.d.sessionId === s.id && e.d.syncResult === 'stopped'), 'the change page to hear its sync stopped');
+    await procs.until(() => settled('proposal', `session:${s.id}`, 'turn.stop'), 'its turn was stopped');
+    // What the cancelled sync reported afterwards changed nothing.
+    assert.equal((await proposalOf(s)).data.lastSync.outcome, 'stopped');
+  });
+
+  // ── The Homeroom bot's loop (bot-request, bot-lane) ─────────────────
+  const botUser = async () => {
+    const { rows: [b] } = await pool.query(
+      `INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE)
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE RETURNING id`);
+    return b;
+  };
+  await pool.query(`INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_mode', 'live')
+                     ON CONFLICT (key) DO UPDATE SET value = 'live'`);
+  const bot = await botUser();
+  async function lookThrough({ crash = false } = {}) {
+    const a = await app();
+    const n = 1;
+    await procs.arm(pool, 'bot.look');
+    // A person asks on the web side (enqueueFront's append): the request's
+    // instance takes it, and the lane, in the workflow process, grants it.
+    await platform.botOwed(pool, { appId: a.id, issueNumber: n, reason: 'dm_answer', priority: 0, requestedBy: author.id, key: `ask-${a.id}` });
+    await procs.reached(pool, 'bot.look');
+    if (crash) {
+      await workflow.kill();
+      await procs.expireLeases(pool);
+      await startWorkflow();
+      await procs.reached(pool, 'bot.look');
+    }
+    await procs.release(pool, 'bot.look');
+    await procs.until(async () => (await instance('bot-request', `request:${a.id}:${n}`))?.state === 'idle', 'the look ended');
+    return {
+      state: (await instance('bot-request', `request:${a.id}:${n}`)).state,
+      row: (await pool.query('SELECT 1 FROM homeroom_bot_queue WHERE app_id = $1', [a.id])).rows.length,
+      looks: (await procs.effects(pool, 'bot.look')).filter((e) => e.data.appId === a.id).length,
+      processes: await ranIn('bot-request', `request:${a.id}:${n}`, 'bot.look'),
+    };
+  }
+
+  await t.test('bot loop: an ask from the web side is granted and looked at in the workflow process', async () => {
+    assert.deepEqual(await lookThrough(), { state: 'idle', row: 0, looks: 1, processes: 1 });
+  });
+
+  await t.test('bot loop, restarted: killed mid-look; the next process carries the look on, granted once (trace L1, L3, L15)', async () => {
+    assert.deepEqual(await lookThrough({ crash: true }), { state: 'idle', row: 0, looks: 2, processes: 2 });
+  });
+
+  await t.test('bot loop: a Stop pressed on the web side ends a look running in the workflow process', async () => {
+    const a = await app();
+    const { rows: [s] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status) VALUES ($1, $2, 'main', 'paused') RETURNING id`, [a.id, bot.id]);
+    await procs.arm(pool, 'bot.look');
+    await platform.botOwed(pool, { appId: a.id, issueNumber: 2, reason: 'dm_answer', priority: 0, key: `ask-stop-${a.id}` });
+    await procs.reached(pool, 'bot.look');
+    const stop = await platform.stopWorkflowTurn({ sessionId: s.id, by: author.username });
+    assert.equal(stop?.body?.machine, 'bot-request', JSON.stringify(stop));
+    await procs.until(async () => (await instance('bot-request', `request:${a.id}:2`))?.state === 'idle', 'the look stopped');
+    await procs.release(pool, 'bot.look');
+    await procs.until(() => settled('bot-request', `request:${a.id}:2`, 'turn.stop'), 'its turn was stopped');
+    assert.equal((await pool.query('SELECT 1 FROM homeroom_bot_queue WHERE app_id = $1', [a.id])).rows.length, 0, 'nothing owed after');
+  });
+
   // ── What the workflow process's boot gives it (src/workflow/setup.ts) ─
 
   await t.test('a merge decided in the workflow process owes a badge to everyone it told, in its own transaction, which the sender drains', async () => {

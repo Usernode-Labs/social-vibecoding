@@ -221,11 +221,11 @@ test('the bot builds from the plan at Make it with no triage turn, and goes ahea
   // A plan someone asked to change, a restart's read, or a request already planned is the triage's.
   assert.match(src, /if \(item\.reason === 'plan_change' \|\| item\.reason === RESTART_REASON \|\| item\.reason === READ_AGAIN_REASON\) return null;/);
   // The run: a ready verdict with the plan's lines and choices and its build note.
-  assert.match(src, /plan: \{ bullets: plan\.bullets, questions: plan\.questions \}, complicated: false, platform: false,/);
+  assert.match(src, /plan: \{ bullets: p\.bullets, questions: p\.questions \}, complicated: false, platform: false,/);
   // Decided: a quiet card, and Build it done for them.
   assert.match(src, /\.\.\.\(decidedNow \? \{ quietPlan: true \} : \{\}\),/);
   assert.match(src, /return sendRunPlan\(pool, \{ runId, app, issueNumber, plan, bot, deps, quiet: parsed\?\.quietPlan === true \}\);/);
-  assert.match(src, /if \(acted === PLAN_ACTED\.waiting \|\| acted === PLAN_ACTED\.unsent\) \{\s+const went = await goAheadIfDecided/);
+  assert.match(src, /if \(acted === PLAN_ACTED\.waiting \|\| acted === PLAN_ACTED\.unsent\) \{\s+const went = await look\.once\('goAhead', \(\) => goAheadIfDecided/);
   const dm = read('src/services/homeroom-bot-dm.js');
   assert.match(dm, /\.\.\.\(quiet \? \{ moment: null \} : \{\}\),/);
   // Through its card when it has one: the same decision Build it makes,

@@ -13,6 +13,10 @@
 //                              alive (rules/presence.ts)
 //   a durable build          the bot-build machine's instance, while it
 //                              builds (buildHoldSql)
+//   a sync with main         the proposal machine's sync item, while
+//                              outstanding (syncWorkingSql)
+//   the Homeroom bot's look  its request instance, reading or following
+//                              up on the session (botLookingSql)
 
 import { holderAliveSql } from './rules/presence.ts';
 
@@ -70,6 +74,82 @@ export function buildHoldSql(alias: string): string {
                 AND b.state = 'building'))`;
 }
 
+// ── Turns workflow work runs ────────────────────────────────────────────
+// A coding turn that workflow work started carries its work item on its
+// record (`active_turn.owner`, written with the claim: services/worker.js
+// execInWorker, agent-turn.startCodexAttempt). The item's lease is the
+// turn's presence: no process hold or registry says whose it is.
+
+// The work kinds that run such turns, by machine.
+export const TURN_WORK = new Map<string, readonly string[]>([
+  ['proposal', Object.freeze(['branch.sync'])],
+  ['shots', Object.freeze(['shots.agent'])],
+  ['bot-build', Object.freeze(['build.run'])],
+  ['bot-request', Object.freeze(['bot.look'])],
+]);
+
+// True while the turn record `at` (an SQL expression of an active_turn
+// value) belongs to a work item still outstanding: its machine's, in every
+// process and across a restart. A record whose item settled (cancelled,
+// ended) is an orphan.
+export function workflowTurnHeldSql(at: string): string {
+  return `EXISTS (SELECT 1 FROM wf_work tw
+                   WHERE tw.id::text = (${at})->'owner'->>'workId'
+                     AND tw.status <> 'settled')`;
+}
+
+// True while the proposal machine's sync of the session `sessionId` is
+// outstanding, its spin-up before the turn's record included. `started`:
+// only once it has begun (services/sync-main.js's `started` step), not
+// while a platform sync waits for the session to be idle, for whoever it
+// waits on (the shots agent): two that wait on each other would both wait
+// out the sync's ten minutes.
+export function syncWorkingSql(sessionId: string, { started = false }: { started?: boolean } = {}): string {
+  return `EXISTS (SELECT 1 FROM wf_work sw
+                   WHERE sw.machine = 'proposal' AND sw.key = 'session:' || ${sessionId}
+                     AND sw.kind = 'branch.sync' AND sw.status <> 'settled'${started ? `
+                     AND sw.checkpoint ? 'started'` : ''})`;
+}
+
+// The Homeroom bot's request instances' states in which it reads or works
+// on a session (its data names the session).
+export const BOT_LOOKING_STATES: readonly string[] = Object.freeze(['reading', 'following_up']);
+
+// True while a request of the Homeroom bot's reads or works on the session
+// `sessionId` (its triage session, or its proposal's), spin-up included.
+export function botLookingSql(sessionId: string): string {
+  return `EXISTS (SELECT 1 FROM wf_instances bl
+                   WHERE bl.machine = 'bot-request'
+                     AND bl.state IN (${BOT_LOOKING_STATES.map((st) => `'${st}'`).join(', ')})
+                     AND (bl.data->'look'->>'sessionId')::int = ${sessionId})`;
+}
+
+// The instance whose workflow turn is on the session `$1`, starting or
+// running, for a Stop (one row: machine, key), most specific first: the
+// record's owner, then, only while no turn record is on the session (a
+// workflow turn spinning up), a sync, a shots run, a durable build, the bot.
+// A record that is not a workflow's held turn (a person's own, an orphan)
+// answers nothing here: that Stop is the person's turn's, on the old path,
+// and never ends a platform job that merely waits beside it.
+const NO_RECORD = `NOT EXISTS (SELECT 1 FROM chat_sessions nr WHERE nr.id = $1 AND nr.active_turn IS NOT NULL)`;
+export const TURN_OWNER_SQL = `
+  SELECT owner_machine AS machine, owner_key AS key FROM (
+    SELECT 1 AS rank, cs.active_turn->'owner'->>'machine' AS owner_machine, cs.active_turn->'owner'->>'key' AS owner_key
+      FROM chat_sessions cs
+     WHERE cs.id = $1 AND cs.active_turn->'owner' IS NOT NULL AND ${workflowTurnHeldSql('cs.active_turn')}
+    UNION ALL
+    SELECT 2, 'proposal', 'session:' || $1 WHERE ${syncWorkingSql('$1')}
+    UNION ALL
+    SELECT 3, 'shots', 'session:' || $1 WHERE ${shotsRunningSql('$1')}
+    UNION ALL
+    SELECT 4, split_part(cs.workflow_owner, '/', 1), substr(cs.workflow_owner, length(split_part(cs.workflow_owner, '/', 1)) + 2)
+      FROM chat_sessions cs WHERE cs.id = $1 AND ${buildHoldSql('cs')}
+    UNION ALL
+    SELECT 5, 'bot-request', bl.key FROM wf_instances bl
+     WHERE bl.machine = 'bot-request' AND bl.state IN (${BOT_LOOKING_STATES.map((st) => `'${st}'`).join(', ')})
+       AND (bl.data->'look'->>'sessionId')::int = $1
+  ) o WHERE rank = 1 OR ${NO_RECORD} ORDER BY rank LIMIT 1`;
+
 // True while anything above works on the session `sessionId` (an SQL
 // expression over chat_sessions as `cs`): a coding turn, a turn on a local
 // agent, a shots run, a durable build, or an old flow's recorded operation.
@@ -81,5 +161,7 @@ export function workedOnSql(): string {
                        WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
            OR ${shotsRunningSql('cs.id')}
            OR ${operationsLiveSql('cs.id')}
-           OR ${buildHoldSql('cs')})`;
+           OR ${buildHoldSql('cs')}
+           OR ${syncWorkingSql('cs.id')}
+           OR ${botLookingSql('cs.id')})`;
 }
