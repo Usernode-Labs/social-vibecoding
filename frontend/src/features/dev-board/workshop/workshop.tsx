@@ -849,13 +849,21 @@ function pace(d: Dash): string {
  * "Live this week" wears a `+` when the merged history is paged, because the
  * number is then a floor and not a total.
  *
- * ── AND THE VOTES FIGURE OPENS THE VOTE (#4745) ──
+ * ── AND A FIGURE WITH SOMETHING TO SHOW OPENS IT (#4745, #5369) ──
  * With a change or a group decision up for a vote, "waiting on a vote" is a
  * button: one waiting opens that item's page, several open All items, where
- * every one of them is listed. The other three figures stay spans, and a
- * zero stays a plain number — there is nothing to open.
+ * every one of them is listed. #5369: the other three figures open All
+ * items narrowed to exactly what they count (open items, open requests
+ * nobody has taken, changes live this week), through
+ * AppView.openWorkshopStage — revised in the change's discussion: they stay
+ * the spans they always were, as unstyled clickable wrappers (the pointer
+ * cursor and a keyboard focus ring are the whole affordance), not buttons
+ * and not link text. A zero stays a plain number — there is nothing to
+ * open.
  */
-function DashTiles({ d, owed, onVotes }: { d: Dash; owed: number; onVotes?: () => void }): ReactNode {
+type DashStage = 'open' | 'unclaimed' | 'shipped';
+
+function DashTiles({ d, owed, onVotes, onStage }: { d: Dash; owed: number; onVotes?: () => void; onStage?: (stage: DashStage) => void }): ReactNode {
   const t = useMessages('project');
   const rate = !d.partial && d.shippedPrevWeek > 0 ? (d.shippedWeek > d.shippedPrevWeek ? 'up' : d.shippedWeek < d.shippedPrevWeek ? 'down' : 'same') : null;
   const cells: { key: string; n: number; label: string; tone?: string; title?: string; sub?: ReactNode }[] = [
@@ -889,10 +897,17 @@ function DashTiles({ d, owed, onVotes }: { d: Dash; owed: number; onVotes?: () =
   return (
     <div className="dev-ws-dash" data-ws-dash="">
       {cells.map((c) => {
-        // #4745: only the votes figure, only while something actually waits,
-        // and only when the caller can route the tap. The markup is otherwise
-        // like-for-like with the span — the same class, the same attribute.
-        const tappable = c.key === 'votes' && c.n > 0 && !!onVotes;
+        // #4745, #5369: a figure with something to show and a handler to
+        // route the tap opens it. Votes routes to its own handler (one
+        // waiting item's page, or All items) and keeps the button #4745
+        // made it. #5369, revised in the change's discussion: the other
+        // three stay the spans they always were — unstyled clickable
+        // wrappers (`role="button"`, focusable, Enter and Space) whose only
+        // affordances are the pointer cursor and a keyboard focus ring, so
+        // nothing on the strip looks like a button or a link. The markup is
+        // otherwise like-for-like: the same class, the same attribute.
+        const tappable = c.n > 0 && (c.key === 'votes' ? !!onVotes : !!onStage);
+        const onTap = c.key === 'votes' ? onVotes : () => onStage && onStage(c.key as DashStage);
         const cls = c.tone ? `dev-ws-dash-cell dev-ws-dash-cell-${c.tone}` : 'dev-ws-dash-cell';
         const content = (
           <>
@@ -907,20 +922,42 @@ function DashTiles({ d, owed, onVotes }: { d: Dash; owed: number; onVotes?: () =
             {c.sub}
           </>
         );
-        return tappable ? (
-          <button
+        if (tappable && c.key === 'votes') {
+          return (
+            <button
+              key={c.key}
+              type="button"
+              className={cls}
+              data-ws-dash-cell={c.key}
+              data-ws-dash-open=""
+              onClick={onTap}
+              title={c.title}
+            >
+              {content}
+            </button>
+          );
+        }
+        return (
+          <span
             key={c.key}
-            type="button"
             className={cls}
             data-ws-dash-cell={c.key}
-            data-ws-dash-open=""
-            onClick={onVotes}
+            data-ws-dash-open={tappable ? '' : undefined}
+            role={tappable ? 'button' : undefined}
+            tabIndex={tappable ? 0 : undefined}
+            onClick={tappable ? onTap : undefined}
+            onKeyDown={
+              tappable
+                ? (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onTap();
+                    }
+                  }
+                : undefined
+            }
             title={c.title}
           >
-            {content}
-          </button>
-        ) : (
-          <span key={c.key} className={cls} data-ws-dash-cell={c.key} title={c.title}>
             {content}
           </span>
         );
@@ -4972,8 +5009,10 @@ export function DevWorkshop(): ReactNode {
           </div>
           {/* #4745: the votes figure routes its tap — the one waiting item's
               page when exactly one waits, All items otherwise, where every
-              waiting change is listed. With nothing waiting the figure is
-              not a button and the handler is never called. */}
+              waiting change is listed. #5369: the other three figures set
+              All items' stage filter to what they count, as unstyled
+              clickable wrappers. With nothing to show a figure is not
+              clickable and the handlers are never called. */}
           <DashTiles
             d={v.dashboard}
             owed={owed}
@@ -4982,6 +5021,7 @@ export function DevWorkshop(): ReactNode {
               if (refs.length === 1) callAppView('openTopic', refs[0].kind, refs[0].id);
               else openTab('all');
             }}
+            onStage={(s) => { callAppView('openWorkshopStage', s); openTab('all'); }}
           />
           {/* 16 Oct 2026 (V2): Homeroom bot's slots on this project, and the
               requests waiting for one, a page under the Workshop
