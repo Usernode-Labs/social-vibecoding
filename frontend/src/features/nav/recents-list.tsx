@@ -62,6 +62,18 @@
  * unchanged, and like every row it arrives one commit after mount. There is
  * no close button: a frame goes the way it always has.
  *
+ * ── Resume, back into a closed app (#3618) ───────────────────────────
+ *
+ * Active is the collapsed form of a running app: closing one leaves its row
+ * here, still loaded, and a Resume pill at the row's end is the visible way
+ * back in. The pill is a LABEL inside the row's one link, never a second
+ * button, so the row keeps one tap target and a modified click still opens
+ * the app in a new tab. The app you are in shows none — its row is lit — and
+ * the green dot is hidden in this section by app.css, where Resume already
+ * says "still open". A press passes `fromActive` so the app grows out of
+ * this row (app.js _appZoomSourceFor) rather than a Home tile that is not on
+ * screen.
+ *
  * ── A channel opens its project's Discussion tab (#3555) ─────────────
  *
  * A channel is a tab of its project's page (#3494), so its row lands there,
@@ -114,7 +126,7 @@ const KIND_NAMES: Record<RecentKind, string> = {
   agent: 'Agent chat',
 };
 
-function onAppClick(event: MouseEvent<HTMLAnchorElement>, slug: string): void {
+function onAppClick(event: MouseEvent<HTMLAnchorElement>, slug: string, fromActive: boolean): void {
   const nav = (window as unknown as {
     NavLink?: { isNativeClick?: (e: unknown) => boolean };
   }).NavLink;
@@ -122,8 +134,10 @@ function onAppClick(event: MouseEvent<HTMLAnchorElement>, slug: string): void {
   event.preventDefault();
   // The router's "this app, this tab" entry point, which is what the Resume
   // strip used (./parked-strip.tsx): it switches tabs for an app that is
-  // still open and navigates for any other.
-  window.App?.openAppTab?.(slug, 'app');
+  // still open and navigates for any other. An ACTIVE row (#3618) says where
+  // the press came from, so the app grows out of that row rather than out of
+  // a Home tile that is not on screen.
+  window.App?.openAppTab?.(slug, 'app', fromActive ? { fromActive: true } : undefined);
 }
 
 /**
@@ -167,11 +181,20 @@ function AppTile({ app }: { app: NonNullable<RecentItem['app']> }) {
   );
 }
 
-function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
+function RecentRow({ item, live, fromActive = false }: {
+  item: RecentItem;
+  live: boolean;
+  /** #3618: the row is in Active, so a press resumes from THIS row. */
+  fromActive?: boolean;
+}) {
   const Glyph = GLYPHS[item.kind];
   const app = item.app && (item.app.iconUrl || item.app.iconEmoji) ? item.app : null;
   const unread = item.unread ? ', unread' : '';
   const loaded = live ? `, ${LIVE_APP_LABEL}` : '';
+  // #3618: the pill is a label inside the link, so the row's accessible name
+  // says "resume" too — it is not a second button.
+  const resumable = live && !item.current;
+  const resume = resumable ? ', resume' : '';
   const doing = item.activity ? `, ${ACTIVITY_LABEL[item.activity].toLowerCase()}` : '';
   return (
     <a
@@ -179,11 +202,11 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
       href={item.href}
       data-recent-kind={item.kind}
       data-recent-key={item.key}
-      aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${doing}${unread}`}
+      aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${resume}${doing}${unread}`}
       {...(live ? { 'data-live': 'true' } : null)}
       {...(item.current ? { 'aria-current': 'true' as const, 'data-current': 'true' } : null)}
       onClick={item.app
-        ? (event) => onAppClick(event, item.app!.slug)
+        ? (event) => onAppClick(event, item.app!.slug, fromActive)
         : item.discussion ? (event) => onDiscussionClick(event, item.discussion!.slug) : undefined}
     >
       {/* #2779: an agent session working (a spinner) or finished unseen (a
@@ -194,6 +217,11 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
         ? <AgentActivityIcon activity={item.activity} className="platform-recent-glyph" />
         : app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
       <span className="platform-recent-label">{item.label}</span>
+      {/* #3618: a running app you are NOT in says so with a Resume pill: the
+          way back into a closed app, visible instead of hidden behind the
+          dot. Drawn in Active only — app.css hides the dot there, since the
+          pill says the same thing more clearly. */}
+      {resumable ? <span className="platform-recent-resume" aria-hidden="true">Resume</span> : null}
       {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
       {live ? <LiveAppDot className="platform-recent-live" /> : null}
       {item.unread ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
@@ -268,7 +296,7 @@ export function ActiveApps({ items }: { items: RecentItem[] }) {
   return (
     <div className="platform-active" role="group" aria-labelledby="platform-active-head">
       <h2 id="platform-active-head" className="platform-recents-head">Active</h2>
-      {items.map((item) => <RecentRow key={item.key} item={item} live />)}
+      {items.map((item) => <RecentRow key={item.key} item={item} live fromActive />)}
     </div>
   );
 }

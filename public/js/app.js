@@ -6623,6 +6623,31 @@ const App = {
     } catch { return null; }
   },
 
+  // The desktop rail's ACTIVE row for `slug` (#3618), or null: the collapsed
+  // form of an app that is closed but still loaded, which Resume grows the
+  // app back out of. Scoped to `.platform-active` on purpose — a Recents row
+  // for the same app is not a live frame and must not be the source. A row
+  // that is not on screen (folded rail, phone) yields null, and the kit falls
+  // back exactly as it did before.
+  _activeRowFor(slug) {
+    try {
+      const sel = CSS.escape(slug);
+      return document.querySelector(
+        `#platform-recents .platform-active .platform-recent[data-recent-key="app:${sel}"]`
+      );
+    } catch { return null; }
+  },
+
+  // What an incoming app grows out of (#3618): its Active row when the press
+  // came from there, else the Home tile it has always used.
+  _appZoomSourceFor(slug, fromActive) {
+    if (fromActive) {
+      const row = App._activeRowFor(slug);
+      if (row) return row;
+    }
+    return App._tileFor(slug);
+  },
+
   // The screen the app view is expanding OUT of — home normally, the
   // browse screen when the tap came from there. The kit needs it twice:
   // as `outEl` (hidden for the synchronous pre-paint measurement so the
@@ -6695,7 +6720,10 @@ const App = {
   _appNavigationGeneration: 0,
   _appLoad: null,
 
-  async navigateToApp(slug, tab, ref, subTab) {
+  // `opts` rides along from openAppTab (#3618): `fromActive` says the press
+  // came from the rail's Active row, which is then what the view grows out
+  // of rather than a Home tile that is not on screen.
+  async navigateToApp(slug, tab, ref, subTab, opts) {
     // The side panel never runs an app — not even to warm its frame. An App
     // tab asked for in there is the running app's job, beside it.
     if (App.embeddedPanel && App._forwardAppTab(slug, tab, ref, subTab)) return false;
@@ -6817,7 +6845,7 @@ const App = {
     }, {
       type: App._entryTransition('zoom-in', appViewEl, viaTab),
       el: document.getElementById('app-view'),
-      fromEl: () => App._tileFor(slug),
+      fromEl: () => App._appZoomSourceFor(slug, !!(opts && opts.fromActive)),
       // The outgoing screen: the kit hides it while measuring the
       // destination so the flex-sibling split doesn't skew the target
       // rect (see the comment block above).
@@ -7533,7 +7561,7 @@ const App = {
       : (opts && opts.ref != null ? opts.ref : null);
     const subTab = (opts && opts.subTab) || null;
     if (App.currentApp !== slug) {
-      return App.navigateToApp(slug, tab, ref, subTab);
+      return App.navigateToApp(slug, tab, ref, subTab, opts);
     } else {
       // Same app: switchTab normalizes legacy names, re-renders, and
       // syncs the clean route — idempotent when nothing changed, a forced

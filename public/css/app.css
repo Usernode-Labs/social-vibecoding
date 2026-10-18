@@ -20031,6 +20031,34 @@ html.un-kb #platform-parked {
     background: var(--lit-tint);
     color: var(--lit-ink);
   }
+  /* RESUME (#3618). An Active row is a closed app still loaded, and the way
+     back in was the green dot alone — a mark you have to already know. The
+     pill names the action in the platform's action blue. It is a LABEL inside
+     the row's link, not a button: the whole row stays one target. */
+  .platform-recent-resume {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 9px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: .01em;
+  }
+  @media (hover: hover) {
+    .platform-recent:hover .platform-recent-resume {
+      background: var(--accent-light);
+    }
+  }
+  /* Resume says "still open" more clearly than the dot, so the dot is not
+     drawn in this section. It stays in the markup — Home's tiles and a
+     Recents row keep it — and this is scoped so nothing else loses it. */
+  .platform-active .platform-recent-live {
+    display: none;
+  }
   /* Only apps are running and none has been left yet: no RECENTS heading
      over nothing. The heading is the list's last child only then. */
   .platform-recents-head:last-child {

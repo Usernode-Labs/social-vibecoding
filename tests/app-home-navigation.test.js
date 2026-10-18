@@ -40,21 +40,33 @@ function harness() {
   let frameMounted = false;
   let closes = 0;
   let tabRenders = 0;
+  let unmounts = 0;
+  let retires = 0;
+  // #3618: every screen transition's options, so a test can ask what the
+  // incoming app grows out of.
+  const transitions = [];
+  let querySelector = () => null;
   const AppView = {
     appData: null,
     beginLaunch() { frameMounted = true; },
     open() { return new Promise(resolve => { releaseOpen = resolve; }); },
     close() { closes++; AppView.appData = null; },
     _teardownDevRoots() {},
-    _unmountAppFrame() { frameMounted = false; },
+    _unmountAppFrame() { frameMounted = false; unmounts += 1; },
     // #2902: Home retires the frame (kept loaded, hidden) — off screen either way.
-    _retireAppFrame() { frameMounted = false; },
+    _retireAppFrame() { frameMounted = false; retires += 1; },
   };
   const context = vm.createContext({
     location, history, URL, URLSearchParams, console,
-    document: { title: '', getElementById: element, querySelector: () => null, addEventListener() {} },
+    CSS: { escape: value => String(value) },
+    document: {
+      title: '', getElementById: element,
+      querySelector: (sel) => querySelector(sel), addEventListener() {},
+    },
     addEventListener() {}, localStorage: { getItem: () => null },
-    PlatformUI: { transition(fn, opts) { fn(); opts?.after?.(); } },
+    PlatformUI: {
+      transition(fn, opts) { transitions.push(opts); fn(); opts?.after?.(); },
+    },
     Home: { load() {}, publishImproveTarget() {}, _apps: [] },
     AppView,
   });
@@ -76,11 +88,20 @@ function harness() {
   Browse._load = () => {};
   App.bindEvents();
   return {
-    App, Browse, location, context,
+    App, Browse, location, context, transitions,
+    /** #3618: what document.querySelector finds (by predicate), and the
+     *  selectors it was asked for, in order. */
+    query(find = () => null) {
+      const calls = [];
+      querySelector = (sel) => { calls.push(sel); return find(sel); };
+      return calls;
+    },
     visible: id => !element(id).classList.contains('hidden'),
     get frameMounted() { return frameMounted; },
     get closes() { return closes; },
     get tabRenders() { return tabRenders; },
+    get unmounts() { return unmounts; },
+    get retires() { return retires; },
     clickBack() {
       const el = element('back-btn');
       el.listeners.get('click')({ currentTarget: el, preventDefault() {} });
@@ -162,6 +183,57 @@ test('the ✕ during a pending app load cannot be intercepted or undone by its c
   assert.equal(h.visible('app-view'), false);
   assert.equal(h.App.currentApp, null);
   assert.equal(h.tabRenders, 0, 'the old async router tail must not reopen the app');
+});
+
+// #3618: a press in the rail's Active row resumes from THAT row, so a closed
+// app grows back out of where it collapsed rather than out of a Home tile
+// that is not on screen. Every other press keeps the tile it always used.
+test('#3618: Resume on an Active row grows the app out of that row', async () => {
+  const h = harness();
+  const row = { id: 'active-row' };
+  const calls = h.query(sel => (sel.includes('.platform-active') ? row : null));
+  const opening = h.App.openAppTab('notes', 'app', { fromActive: true });
+  h.finishOpen({ slug: 'notes', name: 'Notes' });
+  await opening;
+  assert.equal(h.transitions.at(-1).fromEl(), row, 'grown out of the row Resume was pressed in');
+  assert.ok(calls.some(sel => sel.startsWith('#platform-recents .platform-active ')
+    && sel.includes('[data-recent-key="app:notes"]')), 'the Active row, asked for by its key');
+});
+
+test('#3618: a press anywhere else still grows the app out of its Home tile', async () => {
+  const h = harness();
+  const tile = { id: 'home-tile' };
+  h.query(sel => (sel.includes('.platform-active') ? { id: 'active-row' } : tile));
+  const opening = h.App.openAppTab('notes', 'app');
+  h.finishOpen({ slug: 'notes', name: 'Notes' });
+  await opening;
+  assert.equal(h.transitions.at(-1).fromEl(), tile, 'a Recents or launcher press keeps the tile');
+});
+
+test('#3618: a missing Active row falls back to the tile, then to the kit\'s push', async () => {
+  const h = harness();
+  const tile = { id: 'home-tile' };
+  h.query(sel => (sel.includes('.platform-active') ? null : tile));
+  assert.equal(h.App._appZoomSourceFor('notes', true), tile,
+    'the folded rail has no row: the tile is still a better source than nothing');
+  // No row and no tile: null, which the kit treats as "push".
+  h.query(() => null);
+  assert.equal(h.App._appZoomSourceFor('notes', true), null);
+  assert.equal(h.App._appZoomSourceFor('notes', false), null);
+});
+
+test('#3618: closing an app leaves it loaded, so Active has a row to resume', async () => {
+  const h = harness();
+  const opening = h.App.navigateToApp('coffee');
+  h.finishOpen();
+  await opening;
+  h.clickBack();
+  assert.equal(h.retires, 1, 'the frame is retired into the kept ones');
+  assert.equal(h.unmounts, 0, 'not dropped: reopening it resumes instead of reloading');
+  // Kept frames are exactly what buildActive draws, so that row is there.
+  const { buildActive } = require('./lib/render-tsx').loadTsx('frontend/src/features/nav/recents.ts');
+  const rows = buildActive({ live: ['coffee'], current: null, apps: [] });
+  assert.deepEqual(rows.map(row => [row.label, row.current, !!row.app]), [['coffee', false, true]]);
 });
 
 test('app navigation retires the previous report target before loading, including when loading fails', async t => {
