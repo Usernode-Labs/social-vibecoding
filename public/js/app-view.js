@@ -7943,10 +7943,28 @@ const AppView = {
   // same reason: a declared check runs against an empty localStorage and
   // would otherwise always land on the default tab and assert nothing.
   _workshopTabUrlOverride: undefined,
+  // The query string the cached answer was read for. Back and Forward move
+  // the address without telling anyone, so the cache has to notice that the
+  // address changed before it answers again (#3620).
+  _workshopTabQuery: undefined,
+  // A history traversal is the address's turn to speak (#3620). Back can
+  // land on the very query an explicit tab press was made under — the page
+  // it came FROM — and that address must be re-read, or the router would
+  // rewrite the entry to the tab the press chose and Back would do nothing.
+  // Called by App.restoreFromHash, which every popstate and hashchange runs.
+  _reloadWorkshopTabParam() {
+    AppView._workshopTabQuery = undefined;
+  },
   _workshopTabParam() {
-    if (AppView._workshopTabUrlOverride !== undefined) return AppView._workshopTabUrlOverride;
+    let query = '';
+    try { query = String(window.location.search || ''); } catch (_) { query = ''; }
+    if (AppView._workshopTabQuery === query) return AppView._workshopTabUrlOverride;
     try {
-      const v = new URLSearchParams(window.location.search).get('ws');
+      const params = new URLSearchParams(query);
+      // `ptab` is the project page's own spelling (#3620). `ws` is still
+      // read so links made before it open the page they name; the router
+      // rewrites such a link to `ptab` on its first pass.
+      const v = params.get('ptab') || params.get('ws');
       // A retired `?view=kanban` asked for the board's columns, which live in
       // the All items tab — the other half of the answer is the grouping, in
       // _readWorkshopGroupOverride above. An explicit `?ws=` wins, because that
@@ -7955,6 +7973,7 @@ const AppView = {
         ? v
         : (AppView._retiredBoardLink() ? 'all' : null);
     } catch { AppView._workshopTabUrlOverride = null; }
+    AppView._workshopTabQuery = query;
     return AppView._workshopTabUrlOverride;
   },
   // The retired Board ROUTE's landing, the tab half. `#app/<slug>/board` calls
@@ -7964,6 +7983,7 @@ const AppView = {
   _overrideWorkshopTab(tab) {
     if (AppView.WORKSHOP_TABS.indexOf(tab) === -1) return;
     AppView._workshopTabUrlOverride = tab;
+    try { AppView._workshopTabQuery = String(window.location.search || ''); } catch { AppView._workshopTabQuery = undefined; }
   },
   /**
    * Which tab the lander opens on: the deep link, then what you last chose,
@@ -8131,8 +8151,43 @@ const AppView = {
     const next = AppView.WORKSHOP_TABS.indexOf(key) !== -1 ? key : 'status';
     // An explicit tap retires the URL override, exactly as `_setWorkshopGroup`
     // does — otherwise `?ws=` would keep winning over every later press.
+    // The cache is pinned to the address it was retired for, so the tab
+    // pushed there next is read from the address rather than from memory.
     AppView._workshopTabUrlOverride = null;
+    try { AppView._workshopTabQuery = String(window.location.search || ''); } catch { AppView._workshopTabQuery = undefined; }
     try { window.localStorage.setItem(AppView.WORKSHOP_TAB_KEY, next); } catch {}
+  },
+  /**
+   * A PAGE CHANGE INSIDE A PROJECT PAGE (#3620). The band's tabs, a page's
+   * back row and a door to another page of a page already open are all
+   * somewhere to go BACK from, so each gets its own history entry whose
+   * address names the page. No screen transition happens here: the page is
+   * already mounted, and its own popstate listener reads the address when
+   * Back or Forward moves it. That is why this pushes where updateHash
+   * would replace (same screen) — the entry IS the page.
+   *
+   * The route is built as the Workshop's canonical project path, so the
+   * entry says where the page is whichever pane of the band it was reached
+   * from. Pressing the page already on screen changes no address and adds
+   * no entry.
+   */
+  navigateWorkshopTab(tab) {
+    if (AppView.WORKSHOP_TABS.indexOf(tab) === -1) return;
+    // The press is the answer for this address, whatever it named.
+    AppView._workshopTabUrlOverride = null;
+    try { AppView._workshopTabQuery = String(window.location.search || ''); } catch { AppView._workshopTabQuery = undefined; }
+    const App = typeof window !== 'undefined' ? window.App : null;
+    if (!App || App._isRestoring || !App.currentApp) return;
+    if (App.currentTab !== 'dev' || App.currentSubTab !== 'forum') return;
+    let url;
+    try {
+      url = App._appUrl(App.currentApp, 'dev', null, 'forum', {
+        boardView: 'workshop', workshopTab: tab,
+      });
+    } catch (_) { return; }
+    const currentFull = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (currentFull === url) return;
+    try { window.history.pushState(null, '', url); } catch (_) { /* opaque origin */ }
   },
   /**
    * A DOOR TO A PROJECT'S HUB OPENS THE HUB. The page reopens on the tab you

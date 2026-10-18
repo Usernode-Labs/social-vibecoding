@@ -3790,8 +3790,51 @@ const App = {
     return kept.length ? `?${kept.join('&')}` : '';
   },
 
+  // The two query parameters that name a PAGE inside a screen rather than a
+  // screen: `ptab` is a project page's tab (past `ws`), `ws` is the
+  // Communities screen's. Every other parameter is kept byte for byte.
+  // A route that does not read them drops them, so a tab left behind on a
+  // project page never reopens the Communities screen on its Needs you page
+  // (see restoreFromHash).
+  _withoutWorkshopTab(search) {
+    const raw = String(search || '').replace(/^\?/, '');
+    const kept = raw ? raw.split('&').filter((part) => {
+      const key = part.split('=', 1)[0].replace(/\+/g, ' ');
+      try {
+        const name = decodeURIComponent(key);
+        return name !== 'ws' && name !== 'ptab';
+      } catch (_) { return true; }
+    }) : [];
+    return kept.length ? `?${kept.join('&')}` : '';
+  },
+
   _rootUrl(hash) {
-    return `/${App._routeSearch(null)}${hash || ''}`;
+    return `/${App._withoutWorkshopTab(App._routeSearch(null))}${hash || ''}`;
+  },
+
+  // A page parameter belongs to the pages that read it: `ptab` to a project
+  // page, `ws` to a project page (legacy) and to the Communities screen.
+  // Everywhere else it is stale state from the screen just left, and is
+  // dropped in place — never as a new history entry — by restoreFromHash.
+  _dropWorkshopTabParams(route) {
+    const isProject = route === 'app';
+    const readsWs = route === 'communities' || route === 'workshop';
+    const raw = String(location.search || '').replace(/^\?/, '');
+    if (!raw) return;
+    const kept = raw.split('&').filter((part) => {
+      const key = part.split('=', 1)[0].replace(/\+/g, ' ');
+      let name;
+      try { name = decodeURIComponent(key); } catch (_) { return true; }
+      if (name === 'ptab') return isProject;
+      if (name === 'ws') return isProject || readsWs;
+      return true;
+    });
+    const next = kept.length ? `?${kept.join('&')}` : '';
+    if (next === location.search) return;
+    try {
+      history.replaceState(history.state, '',
+        `${location.pathname}${next}${location.hash}`);
+    } catch (_) { /* an address we cannot rewrite still routes */ }
   },
 
   // One serializer for cold links, ordinary navigation, Back/Forward, and
@@ -3824,9 +3867,35 @@ const App = {
         suffix = `/${kanban ? 'board' : 'workshop'}`;
       }
     }
-    return `/app/${safeSlug}${suffix}${App._routeSearch(
+    // A project page's tab is a PAGE of that screen, so it is named in the
+    // address and Back steps between pages (#3620). Only the card list has
+    // tabs: a topic, the chat, a session and the chromeless route do not,
+    // and a value this project page does not know is not written at all.
+    //
+    // NOT `ws`: that parameter is the Communities screen's, and one shared
+    // spelling would let a project tab reopen the Communities screen on its
+    // Needs you page. `ws` is still READ on a project link (a legacy one)
+    // and rewritten to `ptab` by the first routing pass.
+    const query = App._withoutWorkshopTab(App._routeSearch(
       opts.chromeless ? opts.innerPath : null
-    )}`;
+    ));
+    const knownTab = typeof AppView !== 'undefined' && Array.isArray(AppView.WORKSHOP_TABS)
+      && AppView.WORKSHOP_TABS.indexOf(opts.workshopTab) !== -1;
+    const tabQuery = norm.tab === 'dev' && norm.subTab === 'forum'
+      && !opts.chromeless && knownTab
+      ? `${query ? `${query}&` : '?'}ptab=${encodeURIComponent(opts.workshopTab)}`
+      : query;
+    return `/app/${safeSlug}${suffix}${tabQuery}`;
+  },
+
+  // The page of a project's card list, for an address being written there.
+  // "The page" is AppView's answer: an explicit press first, then the
+  // address, then the one last used. Every route that is not the card list
+  // names no page — the tab belongs to that screen alone (#3620).
+  _pageTab(tab, subTab) {
+    if (tab !== 'dev' || subTab !== 'forum') return null;
+    if (typeof AppView === 'undefined' || typeof AppView._workshopTab !== 'function') return null;
+    return AppView._workshopTab();
   },
 
   // The token of an invite link's path, or null. Same shape the server's
@@ -3898,6 +3967,12 @@ const App = {
 
   restoreFromHash() {
     App._isRestoring = true;
+    // A routing pass rereads the address, even when it is the address an
+    // explicit tab press was made under: Back lands on the page you came
+    // from, and that page's own parameter is the answer (#3620).
+    if (typeof AppView !== 'undefined' && AppView._reloadWorkshopTabParam) {
+      AppView._reloadWorkshopTabParam();
+    }
     try {
       const rawHash = location.hash.replace('#', '');
       const pathRoute = App._appRouteFromPath(location.pathname);
@@ -4035,6 +4110,11 @@ const App = {
           && window.UsernodeReact?.sidePanelEmbed?.forward?.(hash)) {
         return;
       }
+
+      // The route is now known. A page parameter only means something to the
+      // screen that reads it; anywhere else it is left over from the screen
+      // just left, and is removed without a new history entry (#3620).
+      App._dropWorkshopTabParams(hash.split('/')[0]);
 
       if (!hash) {
         App.setChromeless(false);
@@ -4503,9 +4583,8 @@ const App = {
         // Hash app URLs and older clean aliases are permanent inputs, never
         // permanent outputs. Replace before dispatch so reload/copy exposes
         // the clean canonical path without manufacturing a Back entry.
-        const canonicalAppUrl = App._appUrl(slug, tab, ref, subTab, {
-          chromeless, innerPath, boardView,
-        });
+        const canonicalAppUrl = App._appUrl(slug, tab, ref, subTab,
+          { chromeless, innerPath, boardView, workshopTab: App._pageTab(tab, subTab) });
         const currentAppUrl = `${location.pathname}${location.search}${location.hash}`;
         if (currentAppUrl !== canonicalAppUrl) {
           try { history.replaceState(null, '', canonicalAppUrl); } catch (_) {}
@@ -6510,7 +6589,11 @@ const App = {
         && AppView.pendingInnerPath) || null;
       newUrl = App._appUrl(
         App.currentApp, App.currentTab, ref, App.currentSubTab,
-        { chromeless: App.chromeless, innerPath, boardView }
+        {
+          chromeless: App.chromeless, innerPath, boardView,
+          // Which page of the project is on screen (#3620).
+          workshopTab: App._pageTab(App.currentTab, App.currentSubTab),
+        }
       );
     } else {
       // Home: drop the fragment entirely — but keep the query string. In

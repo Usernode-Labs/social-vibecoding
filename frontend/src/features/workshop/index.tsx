@@ -82,7 +82,7 @@
  * class has exactly one owner.
  */
 
-import { useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
@@ -222,6 +222,26 @@ export function tabFromQuery(search: string): TabKey | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The address of one of this screen's pages (#3620): the other parameters
+ * kept byte for byte, `ws` and `ptab` replaced by this page's own `ws`.
+ * `ptab` is a project page's parameter and has no meaning here; dropping it
+ * is what keeps a tab left on a project page from reopening this screen on
+ * its Needs you page.
+ */
+export function tabSearch(search: string, tab: TabKey): string {
+  const raw = String(search || '').replace(/^\?/, '');
+  const kept = raw ? raw.split('&').filter((part) => {
+    const key = part.split('=', 1)[0].replace(/\+/g, ' ');
+    try {
+      const name = decodeURIComponent(key);
+      return name !== 'ws' && name !== 'ptab';
+    } catch { return true; }
+  }) : [];
+  kept.push(`ws=${tab === 'needs' ? 'needs' : 'status'}`);
+  return `?${kept.join('&')}`;
 }
 
 /**
@@ -439,6 +459,21 @@ export function WorkshopScreen() {
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
   useNeedsSeen();
+  // BACK AND FORWARD ACROSS THIS SCREEN'S PAGES (#3620). Needs you is a page
+  // of Communities with its own history entry; the router treats both as the
+  // same screen and does not re-dispatch, so the mounted screen reads the
+  // address itself. The router's listener runs first, so `open` already says
+  // whether this screen is the one the address names.
+  useEffect(() => {
+    const onPop = () => {
+      if (!workshopStore.get().open) return;
+      const route = String(location.hash || '').replace(/^#/, '').split('/')[0];
+      if (route !== 'communities' && route !== 'workshop') return;
+      workshopController.restoreTab(tabFromQuery(location.search) || 'status');
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   // ONE PAGE: the list of your projects, with Needs you as a row at its top
   // that opens the feed of votes owed across all of them (`tab: 'needs'`,
   // also reached by `?ws=needs`), and a way back. See the markup below.
@@ -656,7 +691,9 @@ export const workshopController = {
   open() {
     let asked: TabKey | null = null;
     try { asked = tabFromQuery(location.search); } catch { asked = null; }
-    workshopStore.set(asked ? { open: true, tab: asked } : { open: true });
+    // The address is the answer. A link that names no page opens the list,
+    // which is the page that address stands for.
+    workshopStore.set({ open: true, tab: asked === 'needs' ? 'needs' : 'status' });
     return workshopController.reload();
   },
   close() {
@@ -665,8 +702,22 @@ export const workshopController = {
   isOpen() {
     return workshopStore.get().open;
   },
-  /** Show one of the two tabs. */
+  /**
+   * Show one of the two pages, as a page change (#3620): the store moves,
+   * and so does the address, with its own history entry, so Back returns
+   * to the page you came from instead of leaving the screen.
+   */
   setTab(tab: TabKey) {
+    const next = tab === 'needs' ? 'needs' : 'status';
+    workshopStore.set({ tab: next });
+    try {
+      const current = `${location.pathname}${location.search}${location.hash}`;
+      const url = `${location.pathname}${tabSearch(location.search, next)}${location.hash || '#communities'}`;
+      if (url !== current) history.pushState(null, '', url);
+    } catch { /* an address that cannot change still changes the page */ }
+  },
+  /** Back and Forward: apply the page the address names, writing nothing. */
+  restoreTab(tab: TabKey) {
     workshopStore.set({ tab: tab === 'needs' ? 'needs' : 'status' });
   },
   async reload() {

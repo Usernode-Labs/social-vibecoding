@@ -181,6 +181,20 @@ export function freshTab(): TabKey | null {
   return tab === 'status' || tab === 'discussion' || tab === 'workshop' || tab === 'needs' || tab === 'all' ? tab : null;
 }
 
+/**
+ * The page an address names, for Back and Forward (#3620). `ptab` is the
+ * project page's own spelling; `ws` is read too, so a link made before this
+ * change still opens the page it names. Absent or unknown means the hub.
+ */
+export function tabFromAddress(search: string): TabKey {
+  try {
+    const params = new URLSearchParams(search);
+    const v = params.get('ptab') || params.get('ws');
+    return v === 'discussion' || v === 'workshop' || v === 'needs' || v === 'all'
+      ? v : 'status';
+  } catch { return 'status'; }
+}
+
 /** Where a page's back button goes: All items to the Workshop, the rest to the hub. */
 export function pageParent(tab: TabKey): TabKey {
   return tab === 'all' ? 'workshop' : 'status';
@@ -3431,6 +3445,9 @@ export function DevWorkshop(): ReactNode {
     setTab(next);
     callAppView('_setWorkshopTab', next);
     callAppView('_saveFeedScroll', v.slug, 0);
+    // A page change, so it gets its own history entry (#3620): Back returns
+    // to the page you were on, not out of the project.
+    callAppView('navigateWorkshopTab', next);
     scrollToHead(hostRef.current);
   };
   // ...AND AGAIN WHEN THE PUBLISH LANDS, which is what the seed alone could
@@ -3460,6 +3477,9 @@ export function DevWorkshop(): ReactNode {
       const door = (event as CustomEvent<{ slug: string | null; tab: TabKey } | null>).detail;
       if (!door || (door.slug && door.slug !== v.slug)) return;
       setTab(door.tab);
+      // A door to another page of the page already on screen is a page
+      // change too, so the address names where it went (#3620).
+      callAppView('navigateWorkshopTab', door.tab);
       // #3583: the scroller that is really there (see scrollToHead). AppView
       // has forgotten the offset already (_landOnTab), and a door that goes
       // on to route reads this page at its top when it saves it.
@@ -3468,6 +3488,27 @@ export function DevWorkshop(): ReactNode {
     window.addEventListener('usernode:workshop-tab', onDoor);
     return () => window.removeEventListener('usernode:workshop-tab', onDoor);
   }, [v.slug]);
+  // BACK AND FORWARD BETWEEN THIS PAGE'S TABS (#3620). A tab is a page
+  // change with its own history entry, but the router treats every tab of a
+  // project as ONE screen and does not re-dispatch, so the page that is
+  // already mounted reads the address itself. The router's listener runs
+  // first (it is registered at boot), so `currentApp` already says whether
+  // the address still names the project this page draws.
+  useEffect(() => {
+    const onPop = () => {
+      const App = (window as any).App;
+      if (!App || App.currentApp !== v.slug) return;
+      const next = tabFromAddress(window.location.search);
+      if (next === tab) return;
+      setTab(next);
+      // A page change, remembered and scrolled exactly like a tab press.
+      callAppView('_setWorkshopTab', next);
+      callAppView('_saveFeedScroll', v.slug, 0);
+      scrollToHead(hostRef.current);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [v.slug, tab]);
   // ANOTHER PROJECT IN THE SAME PAGE (#3555). Going straight from one
   // project's page to another's keeps the host (#app-view keeps
   // #dev-workshop and republishes into it), so this is not mounted again,
