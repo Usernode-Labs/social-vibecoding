@@ -225,12 +225,14 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'POST', pattern: '/api/bot-bench/tasks/:token/label' },
   // #3654: running the benchmark from the same admin's session. The same
   // gate, first on every handler (requireAdminWrite); the read is a run's
-  // aggregates only, never a trial; the two writes launch a run within a
-  // cap the caller must name, or cancel one, and touch no app.
+  // aggregates only, never a trial; the three writes launch a run within a
+  // cap the caller must name, cancel one, or grade a finished one again
+  // (no model runs), and touch no app.
   { method: 'GET', pattern: '/api/bot-bench/runs' },
   { method: 'GET', pattern: '/api/bot-bench/runs/:id' },
   { method: 'POST', pattern: '/api/bot-bench/runs' },
   { method: 'POST', pattern: '/api/bot-bench/runs/:id/cancel' },
+  { method: 'POST', pattern: '/api/bot-bench/runs/:id/regrade' },
   // The App bench studio, and the rest of the benchmark and the bot's own
   // data for the same admin's session (routes/bench-studio.js). The same gate
   // first on every handler (requireAdminWrite), reads included: they read

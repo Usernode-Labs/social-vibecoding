@@ -7,10 +7,11 @@
 //
 //   triage     the verdict against the reference's (per class), a question
 //              present when one is expected, suggested answers with it
-//   build      commits produced; the diff-scope rule (no pre-existing check
-//              or test edited or removed unless the task allows it); the
-//              hidden checks, when they could run (they cannot yet, see
-//              services/bench/runner.js hiddenChecksUnavailable)
+//   build      commits produced; the hidden checks, when they could run (they
+//              cannot yet, see services/bench/runner.js
+//              hiddenChecksUnavailable); the diff-scope rule (a pre-existing
+//              check or test edited or removed) is a criterion and a signal
+//              for the judge, never a fail by itself
 //   follow-up  the action against the reference's, when it names one
 //   dm         the final verdict after the simulated conversation, within
 //              its turn limit (services/bench/dm-sim.js)
@@ -54,23 +55,40 @@ function checksChanged(baseText, headText) {
 }
 
 /**
- * The diff-scope rule: no pre-existing test file edited, renamed or removed,
- * and no pre-existing declared check altered, unless the task allows it
- * (reference.allowed_test_edits: paths or check names). Pure.
+ * The diff-scope rule: which pre-existing test files a change edited, renamed
+ * or removed, and which pre-existing declared checks it altered, less what
+ * the task allows (reference.allowed_test_edits: paths or check names).
+ * Lines only added to an existing test file are a new test, not an edit
+ * (GitHub calls that file `modified`), so they are no violation; the file is
+ * still in `files`, because an added line can skip what follows it. `files`
+ * and `checks` are what the judge is shown the hunks of (grading.js
+ * testEditsOf). Pure.
  */
 function diffScope({ files = [], checksAltered = [], allowed = [] }) {
   const allow = new Set((allowed || []).map(String));
   const violations = [];
+  const touched = [];
+  const checks = [];
   for (const f of files || []) {
     if (!['modified', 'removed', 'renamed', 'changed'].includes(f.status)) continue;
     const name = f.filename;
-    if (isTestPath(name) && !allow.has(name)) violations.push(`${f.status} ${name}`);
-    if (f.previous && isTestPath(f.previous) && !allow.has(f.previous)) violations.push(`renamed ${f.previous}`);
+    const added = f.status === 'modified' && f.deletions === 0 && f.additions > 0;
+    if (isTestPath(name) && !allow.has(name)) {
+      if (!added) violations.push(`${f.status} ${name}`);
+      touched.push(name);
+    }
+    if (f.previous && isTestPath(f.previous) && !allow.has(f.previous)) {
+      violations.push(`renamed ${f.previous}`);
+      if (!touched.includes(name)) touched.push(name);
+    }
   }
   for (const name of checksAltered || []) {
-    if (!allow.has(name)) violations.push(`altered the check "${name}"`);
+    if (!allow.has(name)) {
+      violations.push(`altered the check "${name}"`);
+      checks.push(name);
+    }
   }
-  return { ok: violations.length === 0, violations };
+  return { ok: violations.length === 0, violations, files: touched, checks };
 }
 
 function triageGrade({ parsed, reference }) {
@@ -109,8 +127,13 @@ function buildGrade({ trial, reference, scope }) {
     return { pass: right ? true : false, needsJudge: false, criteria: { ...criteria, blocked: true }, notes: [`blocked: ${trial.parsed.blocked}`] };
   }
   if (!criteria.produced_commits) return { pass: false, needsJudge: false, criteria, notes: [...notes, 'no commits'] };
-  if (criteria.diff_scope === false) return { pass: false, needsJudge: false, criteria, notes };
   if (criteria.hidden_checks === false) return { pass: false, needsJudge: false, criteria, notes };
+  // An edited test or check is not a fail by itself: here a test pins the
+  // source it reads, and a check is extended rather than added beside it,
+  // so a right change edits them as a matter of course. Run 206 failed 19 of
+  // its 26 builds on this rule with no judge reading them, and the rule fails
+  // 8 of the 9 merged pull requests Core's platform builds came from. The
+  // judge decides, from the hunks (rubric keeps_checks).
   return { pass: null, needsJudge: true, criteria, notes };
 }
 
@@ -262,6 +285,35 @@ async function regradeTask(pool, taskId, opts = {}) {
   return rows.length;
 }
 
+/**
+ * Grade again every finished trial of a run under the rules as they stand
+ * (an admin's regrade_bench_run, routes/homeroom-bench.js): for a run graded
+ * before a rule changed, such as the diff-scope rule's fail. Nothing runs a
+ * model. A trial the rules now leave to the judge waits in the queue; a
+ * judge's grade already given and a person's stand (finalVerdict). Returns
+ * how many trials it graded, how many changed (pass or needsJudge), and how
+ * many of the run's trials now wait for the judge.
+ */
+async function regradeRun(pool, runId, opts = {}) {
+  const { rows } = await pool.query(
+    "SELECT id, deterministic FROM bench_trials WHERE run_id = $1 AND status = 'ok' ORDER BY id", [Number(runId)],
+  );
+  let changed = 0;
+  for (const r of rows) {
+    // eslint-disable-next-line no-await-in-loop
+    const after = await gradeTrial(pool, r.id, opts);
+    const before = r.deterministic || {};
+    if (after && (after.pass !== before.pass || !!after.needsJudge !== !!before.needsJudge)) changed += 1;
+  }
+  const { rows: [waiting] } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM bench_trials tr
+      WHERE tr.run_id = $1 AND tr.status = 'ok' AND (tr.deterministic->>'needsJudge')::boolean IS TRUE
+        AND NOT EXISTS (SELECT 1 FROM bench_grades g WHERE g.trial_id = tr.id AND g.grader = 'opus')`,
+    [Number(runId)],
+  );
+  return { trials: rows.length, changed, waitingForJudge: waiting?.n || 0 };
+}
+
 module.exports = {
   isTestPath,
   checksChanged,
@@ -275,4 +327,5 @@ module.exports = {
   finalVerdict,
   gradeTrial,
   regradeTask,
+  regradeRun,
 };

@@ -232,17 +232,17 @@ test('label_bench_task carries a DM task\'s written answer as dmAnswer; an over-
   assert.match(JSON.stringify(refused.structuredContent), /dmAnswer/);
 });
 
-// ── Running the benchmark (#3654): list, read, launch, cancel ────────────
+// ── Running the benchmark (#3654): list, read, launch, cancel, regrade ───
 //
 // The same gate as the judge's four. Two rules of their own: a launch must
 // name its cap and a cap over $100 needs the person's confirmation, and a
 // run's results are aggregates only, because the same session grades blind
 // items.
 
-const RUN_TOOLS = ['list_bench_runs', 'get_bench_run', 'launch_bench_run', 'cancel_bench_run'];
+const RUN_TOOLS = ['list_bench_runs', 'get_bench_run', 'launch_bench_run', 'cancel_bench_run', 'regrade_bench_run'];
 const LAUNCH = { suiteId: 3, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 2, capUsd: 20 };
 
-test('the run tools are a full admin\'s only; launch and cancel are writes; the cap has no default', () => {
+test('the run tools are a full admin\'s only; launch, cancel and regrade are writes; the cap has no default', () => {
   for (const user of [{ id: 2, username: 'ann' }, { id: 3, username: 'viewer', isAdmin: true, canAdminWrite: false }]) {
     const { specs } = register({ user });
     for (const name of RUN_TOOLS) assert.ok(!specs.has(name), `${name} is not offered to ${user.username}`);
@@ -253,7 +253,8 @@ test('the run tools are a full admin\'s only; launch and cancel are writes; the 
   assert.ok(specs.get('get_bench_run').annotations.readOnlyHint);
   assert.equal(specs.get('launch_bench_run').annotations.readOnlyHint, false);
   assert.equal(specs.get('cancel_bench_run').annotations.readOnlyHint, false);
-  for (const name of ['launch_bench_run', 'cancel_bench_run']) assert.ok(tools.ACTING_TOOLS.includes(name), `${name} acts`);
+  assert.equal(specs.get('regrade_bench_run').annotations.readOnlyHint, false);
+  for (const name of ['launch_bench_run', 'cancel_bench_run', 'regrade_bench_run']) assert.ok(tools.ACTING_TOOLS.includes(name), `${name} acts`);
 
   const input = specs.get('launch_bench_run').inputSchema;
   assert.equal(input.capUsd.isOptional(), false, 'capUsd is required');
@@ -295,7 +296,7 @@ test('the run tools refuse before any call: a user no longer a full admin, or a 
     assert.equal(out.structuredContent.code, 'admin_only', name);
   }
   const readOnly = register({ user: { ...ADMIN }, scopes: [READ_SCOPE] });
-  for (const name of ['launch_bench_run', 'cancel_bench_run']) {
+  for (const name of ['launch_bench_run', 'cancel_bench_run', 'regrade_bench_run']) {
     // eslint-disable-next-line no-await-in-loop
     const out = await readOnly.handlers.get(name)({ runId: 4, ...LAUNCH });
     assert.equal(out.structuredContent.code, 'insufficient_scope', name);
@@ -454,4 +455,24 @@ test('cancel_bench_run: the console\'s cancel, and a run that is not running say
   assert.match(done.structuredContent.message, /not running/);
   assert.equal((await handlers.get('cancel_bench_run')({ runId: -1 })).structuredContent.code, 'invalid_request');
   assert.equal(calls.length, 2);
+});
+
+test('regrade_bench_run: the run graded again, and what waits for the judge says to grade it before reading the run', async (t) => {
+  const calls = stubFetch(t, (url) => {
+    if (url.endsWith('/runs/206/regrade')) return { body: { ok: true, runId: 206, trials: 308, changed: 19, waitingForJudge: 19 } };
+    if (url.endsWith('/runs/205/regrade')) return { body: { ok: true, runId: 205, trials: 408, changed: 0, waitingForJudge: 0 } };
+    return { status: 404, body: { error: 'No such run' } };
+  });
+  const { handlers } = register({ user: { ...ADMIN } });
+  const regrade = handlers.get('regrade_bench_run');
+  const out = (await regrade({ runId: 206 })).structuredContent;
+  assert.deepEqual([out.runId, out.trials, out.changed, out.waitingForJudge], [206, 308, 19, 19]);
+  assert.match(out.nextStep, /19 of its trials wait for the judge/);
+  assert.match(out.nextStep, /list_bench_grading_queue with this runId\) before reading get_bench_run/);
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(calls[0].url, 'http://platform.internal/api/bot-bench/runs/206/regrade');
+  assert.match((await regrade({ runId: 205 })).structuredContent.nextStep, /nothing waits for the judge/);
+  assert.equal((await regrade({ runId: 9 })).structuredContent.code, 'no_access');
+  assert.equal((await regrade({ runId: 0 })).structuredContent.code, 'invalid_request');
+  assert.equal(calls.length, 3, 'an invalid id never reaches the platform');
 });

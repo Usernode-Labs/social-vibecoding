@@ -558,12 +558,12 @@ test('the demo routes are on the list only because every one of them is gated on
   assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/recipe-box/demo/reset'), true);
 });
 
-// #3654: the Homeroom bot benchmark's judge, and its runs. Eight routes
+// #3654: the Homeroom bot benchmark's judge, and its runs. Nine routes
 // outside /api/admin (which a connector can never reach), allowed because
 // every handler refuses anybody who is not a full platform admin before it
 // reads a thing: the judge's hand out tasks from every app, private ones
 // included, and a launch spends the platform's money.
-test('the benchmark\'s eight connector routes are allowed, and every one is full-admin gated', () => {
+test('the benchmark\'s nine connector routes are allowed, and every one is full-admin gated', () => {
   for (const [method, target] of [
     ['GET', '/api/bot-bench/queue'],
     ['GET', '/api/bot-bench/items/abcdefgh12345678'],
@@ -573,6 +573,7 @@ test('the benchmark\'s eight connector routes are allowed, and every one is full
     ['GET', '/api/bot-bench/runs/12'],
     ['POST', '/api/bot-bench/runs'],
     ['POST', '/api/bot-bench/runs/12/cancel'],
+    ['POST', '/api/bot-bench/runs/12/regrade'],
   ]) {
     assert.equal(policy.isConnectorApiRequest(method, target), true, `${method} ${target}`);
   }
@@ -584,6 +585,7 @@ test('the benchmark\'s eight connector routes are allowed, and every one is full
     ['POST', '/api/bot-bench/runs/12'],
     ['GET', '/api/bot-bench/runs/12/trials.csv'],
     ['GET', '/api/bot-bench/runs/12/review'],
+    ['GET', '/api/bot-bench/runs/12/regrade'],
     ['GET', '/api/admin/homeroom-bot/bench/runs'],
     ['POST', '/api/admin/homeroom-bot/bench/trials/1/grade'],
   ]) {
@@ -591,14 +593,14 @@ test('the benchmark\'s eight connector routes are allowed, and every one is full
   }
   const src = fs.readFileSync(path.join(__dirname, '../src/routes/homeroom-bench.js'), 'utf8');
   const routes = [...src.matchAll(/router\.(get|post)\('(\/api\/bot-bench\/[^']+)', ([a-zA-Z]+)/g)];
-  assert.equal(routes.length, 8);
+  assert.equal(routes.length, 9);
   for (const [, method, route, gate] of routes) {
     assert.equal(gate, 'requireAdminWrite', `${method.toUpperCase()} ${route} is full-admin gated first`);
   }
   // Every write is rate-limited per user (admins are not exempt: only
   // admins can call them at all), and guarded after the limiter.
   const writes = [...src.matchAll(/router\.post\('(\/api\/bot-bench\/[^']+)', ([^(]+)handler\(/g)];
-  assert.equal(writes.length, 4);
+  assert.equal(writes.length, 5);
   for (const [, route, chain] of writes) {
     const limiter = route.startsWith('/api/bot-bench/runs') ? 'benchRunLimiter' : 'benchGradingLimiter';
     assert.match(chain, new RegExp(`requireAdminWrite, ${limiter}, sameOriginBrowserOnly,`), `${route} is limited, then guarded`);

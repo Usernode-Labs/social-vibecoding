@@ -20,7 +20,8 @@
 //          about which model wrote what. It carries the task (the request as
 //          the bot read it, the stage's own inputs), the reference, the
 //          candidate's answer, the deterministic signals (commits, the
-//          diff-scope rule, hidden checks), and a binary rubric per stage.
+//          diff-scope rule with the hunks of the tests and checks it names,
+//          hidden checks), and a binary rubric per stage.
 //          The grade is pass or fail with a critique, written first, and
 //          optional per-criterion booleans.
 //   label  one task with no reference yet: the judge records the reference
@@ -49,6 +50,9 @@ const MAX_CRITIQUE_CHARS = 8000;
 const MAX_REQUEST_CHARS = 24000;
 const MAX_CANDIDATE_CHARS = 16000;
 const MAX_DIFF_CHARS = 40000;
+// The hunks of the pre-existing tests and checks a diff touched (testEditsOf),
+// apart from the diff so its clip cannot hide them.
+const MAX_TEST_EDIT_CHARS = 16000;
 const MAX_DM_ANSWER_CHARS = 2000;
 
 // What a label item adds for a DM task whose requester never answered.
@@ -125,7 +129,7 @@ const RUBRICS = Object.freeze({
     criteria: [
       { id: 'implements_request', text: 'The diff does what the request asks. The reference, when there is one, is one accepted way to do it, not a template to match.' },
       { id: 'no_unrelated_changes', text: 'It changes nothing unrelated.' },
-      { id: 'keeps_checks', text: 'It does not loosen, skip or delete pre-existing checks or tests.' },
+      { id: 'keeps_checks', text: 'It does not loosen, skip or delete a pre-existing check or test to make it pass. Updating or extending one the requested change makes out of date is fine: the signals list each one it touched, with its hunks.' },
       { id: 'would_pass_hidden_checks', text: 'It would plausibly satisfy the hidden checks listed (they were not run).' },
       { id: 'sound_code', text: 'The code is correct and in keeping with the app.' },
     ],
@@ -348,6 +352,29 @@ async function tasteItem(pool, trial, vocab, { images = false } = {}) {
   return item;
 }
 
+/**
+ * The diff's hunks of the pre-existing test files and declared checks the
+ * diff-scope rule saw it touch (graders.diffScope's `files`, lines only added
+ * included, and dapp.json when it altered a check), for the judge's
+ * keeps_checks. `missing` names a
+ * file whose hunk the stored diff does not hold (it was cut, or had no text).
+ * Null when it touched none. Pure.
+ */
+function testEditsOf(diff, scope) {
+  const names = [...(Array.isArray(scope?.files) ? scope.files : []),
+    ...(Array.isArray(scope?.checks) && scope.checks.length ? ['dapp.json'] : [])];
+  if (!names.length) return null;
+  const blocks = String(diff || '').split(/^(?=diff --git a\/)/m);
+  const hunks = [];
+  const missing = [];
+  for (const name of names) {
+    const block = blocks.find((b) => b.startsWith(`diff --git a/${name} b/${name}\n`));
+    if (block) hunks.push(block.trimEnd());
+    else missing.push(name);
+  }
+  return { hunks: clipText(hunks.join('\n'), MAX_TEST_EDIT_CHARS) || null, missing };
+}
+
 /** One grade item, blind. Null when the token names no trial. */
 async function gradeItem(pool, trial, vocab, { images = false } = {}) {
   if (require('./taste').isTasteStage(trial.stage)) return tasteItem(pool, trial, vocab, { images });
@@ -365,6 +392,8 @@ async function gradeItem(pool, trial, vocab, { images = false } = {}) {
     signals: {
       producedCommits: trial.build_commits == null ? null : Number(trial.build_commits) > 0,
       diffScope: det.scope ? { ok: det.scope.ok, violations: det.scope.violations || [] } : null,
+      ...(det.scope?.files?.length || det.scope?.checks?.length
+        ? { testEdits: blinding.blindValue(testEditsOf(trial.diff, det.scope), vocab) } : {}),
       hiddenChecks: trial.checks || (trial.reference?.hidden_checks?.length ? { ran: false } : null),
       hiddenChecksDeclared: trial.reference?.hidden_checks || [],
       deterministicCriteria: det.criteria || null,
@@ -661,6 +690,7 @@ module.exports = {
   agreement,
   spotCheck,
   candidateView,
+  testEditsOf,
   taskView,
   modelVocabulary,
 };
