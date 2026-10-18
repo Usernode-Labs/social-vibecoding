@@ -3047,6 +3047,22 @@
     return zoomRectUsable(rect, window.innerHeight) ? rect : null;
   }
 
+  // How long a zoom takes. `opts.duration` may be a number or a function,
+  // asked AFTER the source rect is resolved: a caller that parks its
+  // outgoing screen inside `fn` (app.js navigateHome) can only answer then.
+  // Anything that is not a positive finite number keeps the old timing, so
+  // every existing zoom is byte-for-byte unchanged (#3618).
+  function zoomDuration(opts, fallbackMs) {
+    var value = opts.duration;
+    try {
+      if (typeof value === 'function') value = value();
+    } catch (e) {
+      value = null;
+    }
+    var ms = Number(value);
+    return Number.isFinite(ms) && ms > 0 ? Math.round(ms) : fallbackMs;
+  }
+
   function zoomTransition(fn, type, opts) {
     var el = opts.el;
     var after = typeof opts.after === 'function' ? opts.after : null;
@@ -3082,6 +3098,7 @@
       // Tile resolved BEFORE fn (it lives on the outgoing screen).
       var fromRect = resolveZoomSource(opts);
       if (!fromRect) return fallback();
+      var inMs = zoomDuration(opts, 380);
       fn();
       // Measured synchronously after fn, pre-paint: no full-screen flash.
       // When the caller names the outgoing screen (opts.outEl), hide it
@@ -3127,14 +3144,14 @@
       el.style.opacity = '0.3';
       el.style.borderRadius = ZOOM_RADIUS;
       void el.offsetHeight; // flush the start pose before enabling the transition
-      el.style.transition = 'transform 380ms ' + ZOOM_EASE
-        + ', opacity 220ms ease, border-radius 380ms ease';
+      el.style.transition = 'transform ' + inMs + 'ms ' + ZOOM_EASE
+        + ', opacity ' + Math.min(220, inMs) + 'ms ease, border-radius ' + inMs + 'ms ease';
       el.style.transform = 'none';
       el.style.opacity = '1';
       el.style.borderRadius = '0px';
       zoomCleanup = finish;
       el.addEventListener('transitionend', onEnd);
-      setTimeout(finish, 500); // safety if transitionend never fires
+      setTimeout(finish, inMs + 120); // safety if transitionend never fires
       return promise;
     }
 
@@ -3151,16 +3168,18 @@
       finish();
       return promise;
     }
+    var outMs = zoomDuration(opts, 340);
     void el.offsetHeight;
-    el.style.transition = 'transform 340ms ' + ZOOM_EASE
-      + ', opacity 200ms ease 60ms, border-radius 340ms ease';
+    el.style.transition = 'transform ' + outMs + 'ms ' + ZOOM_EASE
+      + ', opacity ' + Math.round(outMs * 200 / 340) + 'ms ease '
+      + Math.round(outMs * 60 / 340) + 'ms, border-radius ' + outMs + 'ms ease';
     el.style.transform = 'translate(' + outPose.tx + 'px, ' + outPose.ty + 'px) '
       + 'scale(' + outPose.sx + ', ' + outPose.sy + ')';
     el.style.opacity = '0';
     el.style.borderRadius = ZOOM_RADIUS;
     zoomCleanup = finish;
     el.addEventListener('transitionend', onEnd);
-    setTimeout(finish, 480); // safety if transitionend never fires
+    setTimeout(finish, outMs + 140); // safety if transitionend never fires
     return promise;
   }
 

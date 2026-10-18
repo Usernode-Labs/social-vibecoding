@@ -19359,9 +19359,11 @@ html.un-ios {
   height: 28px;
   padding: 0 12px;
   border-radius: 999px;
-  border: 1px solid var(--brand-line);
-  background: var(--brand-tint);
-  color: var(--brand-ink);
+  /* #3618: the same filled action button the desktop rail's row carries, so
+     Resume reads as the thing you press rather than a label about the app. */
+  border: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
   font-size: 13px;
   font-weight: 600;
 }
@@ -19381,6 +19383,45 @@ html.un-ios {
   color: var(--text-muted);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* #3618: THE APP SHRINKING INTO ITS RESUME CONTROL. The real app view is
+   already hidden by the time the router can animate it, so this stand-in
+   card takes its place, starting exactly where the app was, and moves to the
+   control the app just became. Its geometry is written inline (the measured
+   rect); only the material is here. It is decorative: aria-hidden and
+   pointer-events: none, and the JS removes it when the move lands. */
+.resume-ghost {
+  position: fixed;
+  z-index: 9960;
+  pointer-events: none;
+  transform-origin: 0 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--dc-sheet-solid);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 12px 40px rgba(0, 0, 0, .18);
+  will-change: transform, opacity;
+}
+.resume-ghost-tile {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  font-size: 36px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.resume-ghost-tile > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* Reduced motion is the instant cut it always was: nothing is drawn. */
+@media (prefers-reduced-motion: reduce) {
+  .resume-ghost { display: none; }
 }
 /* KEYBOARD UP, STRIP GONE (#2762), for the reason `html.un-kb #platform-tabs`
    gives for the bar under it: with the bar gone the strip's floor
@@ -20011,6 +20052,25 @@ html.un-kb #platform-parked {
     border-radius: 999px;
     /* The unread count's own fill in Messages (`.messages-unread`). */
     background: var(--accent);
+  }
+  /* A RUNNING APP YOU ARE NOT IN ends with the action that gets back to it
+     (#3618). The dot steps aside: a filled pill and a green dot would both
+     be saying "still open". */
+  .platform-recent-resume {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 9px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    flex: none;
+  }
+  .platform-recent-resume ~ .platform-recent-live {
+    display: none;
   }
 
   /* ── ACTIVE (#3074) ──────────────────────────────────────────────────

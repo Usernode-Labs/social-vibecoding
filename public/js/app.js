@@ -4781,6 +4781,13 @@ const App = {
   _showOnlyScreen(revealId, keepAlso) {
     window.UsernodeBrowserScroll?.capture();
     const keep = keepAlso || [];
+    // #3618: measure the app card BEFORE any root goes hidden. Only a real
+    // leave: the app view is not the screen being revealed, and it is not a
+    // zoom-out that keeps it alive (navigateHome's shrinking card IS the
+    // element, so it needs no stand-in). _syncParkedApp consumes the rect.
+    if (App._runningApp && revealId !== 'app-view' && !keep.includes('app-view')) {
+      App._leavingAppRect = App._appViewRect();
+    }
     for (const id of App.SCREEN_IDS) {
       if (id === revealId || keep.includes(id)) continue;
       App._setScreenVisible(id, false);
@@ -4894,6 +4901,9 @@ const App = {
   // be instant, and a handle that has to fetch a name and an icon before it
   // can draw is a handle that appears after you have stopped looking for it.
   _runningApp: null,
+  // #3618: the app view's rect, measured by _showOnlyScreen just before it
+  // hides the view and consumed by _syncParkedApp once the app is parked.
+  _leavingAppRect: null,
 
   _syncParkedApp(inApp) {
     // The side panel's document never parks or unparks anything: it never runs
@@ -4914,6 +4924,10 @@ const App = {
     }
     const left = App._runningApp;
     App._runningApp = null;
+    // Taken here rather than after parking so no early return below can
+    // leave a rect behind for a later, unrelated leave.
+    const from = App._leavingAppRect;
+    App._leavingAppRect = null;
     if (!left) return;
     // The platform's own row is never parked. Its App tab is Home, and a cold
     // link to it holds `app` for as long as its record takes to say
@@ -4924,6 +4938,13 @@ const App = {
           && AppView.appData.self_hosted) return;
     } catch (_) { /* no record to ask */ }
     bridge.park(left);
+    // #3618: parking first, so the rail's Active row exists to be measured.
+    // When the app view is already hidden (every leave but Home, whose
+    // zoom-out keeps it on screen) draw the app as a card shrinking into
+    // that row. Decoration only: a false answer is the instant cut.
+    if (from && !App._isScreenVisible('app-view')) {
+      try { bridge.collapse?.(left, from); } catch (_) { /* no motion, plain cut */ }
+    }
   },
 
   // The handle's display data for `slug`, or null for no app (or the platform
@@ -6613,6 +6634,34 @@ const App = {
   //
   // Whichever grid the tap came from is the one whose tile is on screen,
   // so a single query across both lands on the right rect.
+  // #3618: the app view's rect, or null when it is not painted. Read before
+  // the router hides it, so the stand-in can start where the app was.
+  _appViewRect() {
+    try {
+      const el = document.getElementById('app-view');
+      return el ? el.getBoundingClientRect() : null;
+    } catch (_) { return null; }
+  },
+
+  // #3618: the Resume control for `slug` (the rail's pill or row, then the
+  // phone's strip), or null when there is none on screen. The motion module
+  // owns the order and the on-screen test.
+  _resumeHandleFor(slug) {
+    try { return window.UsernodeReact?.nav?.resumeHandle?.(slug) || null; } catch (_) { return null; }
+  },
+
+  // #3618: the control Resume was pressed on, consumed once.
+  _takeResumeOrigin(slug) {
+    try { return window.UsernodeReact?.nav?.takeResumeOrigin?.(slug) || null; } catch (_) { return null; }
+  },
+
+  // #3618: the close/grow length, or 0 when the motion module is absent (a
+  // boot before hydration, a reduced-motion path the kit has already cut).
+  _resumeMotionMs() {
+    const n = Number(window.UsernodeReact?.nav?.resumeMotionMs);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  },
+
   _tileFor(slug) {
     try {
       const sel = CSS.escape(slug);
@@ -6799,6 +6848,10 @@ const App = {
     // already have mounted this visit's board — which the callback would then
     // tear down. The view is still hidden here, so nothing painted changes.
     const staleDev = initialRoute.tab === 'dev' && !App._isScreenVisible('app-view');
+    // #3618: read the pressed Resume control ONCE, before the transition, so
+    // the app grows out of it rather than a Home tile that may not be there.
+    // Consuming it here is also what makes one press one motion.
+    const resumeFrom = App._takeResumeOrigin(slug);
     const enter = () => PlatformUI.transition(() => {
       App._setScreenVisible('app-view', true);
       // The bar leaves WITH the app arriving, not after it. `after` below
@@ -6817,7 +6870,12 @@ const App = {
     }, {
       type: App._entryTransition('zoom-in', appViewEl, viaTab),
       el: document.getElementById('app-view'),
-      fromEl: () => App._tileFor(slug),
+      // The control that was pressed when there was one; otherwise the Home
+      // tile, as before. The kit resolves this before `fn`, while a pressed
+      // rail row or strip is still on screen to be measured.
+      fromEl: () => resumeFrom || App._tileFor(slug),
+      // #3618: only a Resume press gets the shorter, matched duration.
+      ...(resumeFrom ? { duration: App._resumeMotionMs() } : null),
       // The outgoing screen: the kit hides it while measuring the
       // destination so the flex-sibling split doesn't skew the target
       // rect (see the comment block above).
@@ -6978,6 +7036,10 @@ const App = {
     // ignores `outEl`, so the kit can't correct for that). #app-view is
     // the one root kept alive into `after` — that IS the shrinking card.
     const av = document.getElementById('app-view');
+    // #3618: resolved AFTER `fn` has parked the app (the kit asks fromEl at
+    // that point for a zoom-out), when the rail's Active row exists. Kept in
+    // a closure so `duration` can answer the same question.
+    let usedResume = false;
     PlatformUI.transition(() => {
       AppView.close();
       App._showOnlyScreen('home-screen', ['app-view']);
@@ -6997,7 +7059,16 @@ const App = {
     }, {
       type: App._entryTransition('zoom-out', av, viaTab),
       el: av,
-      fromEl: () => (leavingSlug ? App._tileFor(leavingSlug) : null),
+      // #3618: shrink into the Resume control the app just became (the
+      // rail's pill or row, or the phone's strip); the Home tile is the
+      // fallback for a control that is not on screen.
+      fromEl: () => {
+        const handle = leavingSlug ? App._resumeHandleFor(leavingSlug) : null;
+        usedResume = !!handle;
+        return handle || (leavingSlug ? App._tileFor(leavingSlug) : null);
+      },
+      // …and take the matched short duration only when it is that control.
+      duration: () => (usedResume ? App._resumeMotionMs() : null),
       fallback: fallbackType,
       after: () => {
         av.classList.add('hidden');

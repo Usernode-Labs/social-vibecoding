@@ -15,6 +15,9 @@ import { flushSync } from 'react-dom';
 import { navStore, tabForScreen } from './nav-store.js';
 import { parkedStore, setParked } from './parked-store.js';
 import { forgetRecentApp, readRecentApps, recentAppsStore, rememberRecentApp } from './recent-apps-store.js';
+import {
+  collapseIntoResume, resumeHandleFor, takeResumeOrigin, RESUME_MOTION_MS,
+} from './resume-motion';
 
 navStore.setFlush(flushSync);
 // Same reason as the tab's: App.navigateToApp clears the strip inside
@@ -141,5 +144,30 @@ if (typeof window !== 'undefined') {
       if (parkedStore.get().app?.slug === slug) setParked(null);
       forgetRecentApp(slug, navStore.get().viewer);
     },
+    /**
+     * #3618: the app view is already hidden, so draw it as a card shrinking
+     * into the Resume control it just became. Answers false (drawing
+     * nothing) whenever the motion must not run: reduced motion, no control
+     * on screen, no `Element.animate`, a View Transition in flight.
+     *
+     * @param app The app that was left, as `_syncParkedApp` captured it.
+     * @param from Its rect, measured before the router hid the view.
+     */
+    collapse(app: {
+      slug?: string; name?: string; iconUrl?: string | null; iconEmoji?: string | null;
+    } | null, from: DOMRect | null) {
+      if (typeof document === 'undefined') return false;
+      return collapseIntoResume(app, from, document);
+    },
+    /** #3618: the control Resume lives on for `slug`, or null. */
+    resumeHandle(slug: string) {
+      return typeof document === 'undefined' ? null : resumeHandleFor(slug, document);
+    },
+    /** #3618: the control that was pressed for `slug`, consumed once. */
+    takeResumeOrigin(slug: string) {
+      return typeof document === 'undefined' ? null : takeResumeOrigin(slug, document);
+    },
+    /** #3618: how long the close/grow takes, so the router can match it. */
+    resumeMotionMs: RESUME_MOTION_MS,
   };
 }

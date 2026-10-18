@@ -96,6 +96,7 @@ import { readRecentApps, recentAppsStore } from './recent-apps-store.js';
 import {
   buildActive, buildRecents, currentAppOnScreen, groupRecents, type RecentItem, type RecentKind,
 } from './recents';
+import { noteResumeOrigin } from './resume-motion';
 
 const GLYPHS: Record<RecentKind, typeof UserIcon> = {
   app: AppWindowIcon,
@@ -114,12 +115,20 @@ const KIND_NAMES: Record<RecentKind, string> = {
   agent: 'Agent chat',
 };
 
-function onAppClick(event: MouseEvent<HTMLAnchorElement>, slug: string): void {
+function onAppClick(event: MouseEvent<HTMLAnchorElement>, slug: string, resume: boolean): void {
   const nav = (window as unknown as {
     NavLink?: { isNativeClick?: (e: unknown) => boolean };
   }).NavLink;
   if (nav?.isNativeClick?.(event)) return;
   event.preventDefault();
+  // #3618: where the pressed control is, so the app grows back out of THIS
+  // row rather than a Home tile that may not be on screen.
+  if (resume) {
+    noteResumeOrigin(
+      slug,
+      event.currentTarget.querySelector('.platform-recent-resume') || event.currentTarget,
+    );
+  }
   // The router's "this app, this tab" entry point, which is what the Resume
   // strip used (./parked-strip.tsx): it switches tabs for an app that is
   // still open and navigates for any other.
@@ -167,7 +176,9 @@ function AppTile({ app }: { app: NonNullable<RecentItem['app']> }) {
   );
 }
 
-function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
+function RecentRow({ item, live, resume = false }: {
+  item: RecentItem; live: boolean; resume?: boolean;
+}) {
   const Glyph = GLYPHS[item.kind];
   const app = item.app && (item.app.iconUrl || item.app.iconEmoji) ? item.app : null;
   const unread = item.unread ? ', unread' : '';
@@ -183,7 +194,7 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
       {...(live ? { 'data-live': 'true' } : null)}
       {...(item.current ? { 'aria-current': 'true' as const, 'data-current': 'true' } : null)}
       onClick={item.app
-        ? (event) => onAppClick(event, item.app!.slug)
+        ? (event) => onAppClick(event, item.app!.slug, resume)
         : item.discussion ? (event) => onDiscussionClick(event, item.discussion!.slug) : undefined}
     >
       {/* #2779: an agent session working (a spinner) or finished unseen (a
@@ -194,6 +205,10 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
         ? <AgentActivityIcon activity={item.activity} className="platform-recent-glyph" />
         : app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
       <span className="platform-recent-label">{item.label}</span>
+      {/* #3618: an app still running, but not the one on screen, ends with
+          the action that gets back to it. The pill replaces the dot below
+          (app.css hides it), because both say the same thing. */}
+      {resume ? <span className="platform-recent-resume" aria-hidden="true">Resume</span> : null}
       {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
       {live ? <LiveAppDot className="platform-recent-live" /> : null}
       {item.unread ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
@@ -268,7 +283,7 @@ export function ActiveApps({ items }: { items: RecentItem[] }) {
   return (
     <div className="platform-active" role="group" aria-labelledby="platform-active-head">
       <h2 id="platform-active-head" className="platform-recents-head">Active</h2>
-      {items.map((item) => <RecentRow key={item.key} item={item} live />)}
+      {items.map((item) => <RecentRow key={item.key} item={item} live resume={!item.current} />)}
     </div>
   );
 }
