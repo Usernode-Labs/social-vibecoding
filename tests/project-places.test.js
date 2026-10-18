@@ -360,3 +360,39 @@ test('a topic\'s line: what it is for and its requests, nothing for none, and wh
   assert.equal(message('chat:group.topicChannel.empty'), 'Nothing said here yet.');
   assert.equal(message('chat:group.thread.empty'), 'No messages yet. Start the thread.');
 });
+
+// A SWITCH KEEPS YOUR PAGE (the header's ⌄ menu, a row of All communities):
+// another community opens on the place you were on when it has it, else its
+// hub. keepPlace is the phone drawer's rule; the place is the one the project
+// page remembers (AppView._workshopTab).
+test('a switch opens another community on the place you were on, else its hub', () => {
+  const records = { homeroom: { places: PLACES_PAYLOAD } };
+  const store = loadTsx(`${DIR}/place-store.ts`, {
+    stubs: {
+      './community-card': {
+        cachedCommunity: (slug) => records[slug] || null,
+        communityInflight: () => false,
+        reloadCommunity: async () => {},
+      },
+    },
+  });
+  const had = Object.prototype.hasOwnProperty.call(globalThis, 'window');
+  const was = globalThis.window;
+  let remembered = 'workshop';
+  const landed = [];
+  globalThis.window = { AppView: { _workshopTab: () => remembered, _landOnTab: (slug, key) => landed.push([slug, key]) } };
+  try {
+    assert.equal(store.landKeepingPlace('homeroom'), 'workshop', 'the Workshop is in every community');
+    remembered = 'c:infra';
+    assert.equal(store.landKeepingPlace('homeroom'), 'c:infra', 'a topic it has');
+    assert.equal(store.landKeepingPlace('garden'), 'status', 'a topic it is not known to have: its hub');
+    remembered = 'all';
+    assert.equal(store.landKeepingPlace('garden'), 'workshop', 'All items is under the Workshop');
+    assert.deepEqual(landed, [['homeroom', 'workshop'], ['homeroom', 'c:infra'], ['garden', 'status'], ['garden', 'workshop']],
+      'each is where the page then opens');
+    globalThis.window = {};
+    assert.equal(store.landKeepingPlace('garden'), 'status', 'nothing remembered: its hub');
+  } finally {
+    if (had) globalThis.window = was; else delete globalThis.window;
+  }
+});

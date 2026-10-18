@@ -1039,9 +1039,11 @@ test('the app\'s own Workshop switches communities through Your communities, the
   // this are one route, and the page the tab reopened is forgotten.
   assert.match(scope, /if \(!slug\) \{\s*setScope\(null\);\s*try \{ app\?\._forgetWorkshopView\?\.\(\); \}[\s\S]{0,160}window\.location\.hash = '#communities';/);
   // The community you are already on goes nowhere: re-navigating to the
-  // current route would throw the page's scroll away. It turns to the hub.
-  assert.match(scope, /try \{ \(window as any\)\.AppView\?\._landOnHub\?\.\(slug\); \}/);
-  assert.match(scope, /if \(onPage\) return;\s*void app\?\.navigateToApp\?\.\(slug, 'dev'\);/);
+  // current route would throw the page's scroll away, and it stays on the
+  // place it shows. Another one opens on the place you were on, when it has
+  // it: a switch keeps your page, as the phone's drawer does.
+  assert.match(scope, /if \(onPage\) return;\s*landKeepingPlace\(slug\);\s*void app\?\.navigateToApp\?\.\(slug, 'dev'\);/);
+  assert.doesNotMatch(scope, /_landOnHub/, 'a switch is not a door to the hub');
   // Its open flag is its own store's, not workshopStore's: the header and
   // the tab bar are other React roots.
   assert.match(scope, /switcher: SwitcherFrom \| null;/);

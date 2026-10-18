@@ -11321,13 +11321,15 @@ const AppView = {
    * A DOOR TO A PROJECT'S HUB OPENS THE HUB. The page reopens on the tab you
    * last chose (_workshopTab), which is right when you come BACK to it and
    * wrong when you follow a link that says "community hub": the logo menu's
-   * row, a Discover row, a Communities row, a Needs you card's project name.
-   * Each of those calls this before it navigates, so the page it lands on
-   * opens on its hub, and a page already open for that project (the menu
-   * row, pressed on the page itself, changes no address) is told to switch.
-   * It writes the remembered tab rather than a one-off, so the hub it shows
-   * is also what the page reopens on next. Back and Forward are not doors:
-   * they reopen on the tab last shown, which the page reads when it mounts.
+   * row, a Discover row, a Needs you card's project name. Each of those
+   * calls this before it navigates, so the page it lands on opens on its
+   * hub, and a page already open for that project (the menu row, pressed on
+   * the page itself, changes no address) is told to switch. It writes the
+   * remembered tab rather than a one-off, so the hub it shows is also what
+   * the page reopens on next. Back and Forward are not doors: they reopen on
+   * the tab last shown, which the page reads when it mounts. Nor is a switch
+   * (the header's ⌄ menu, a row of All communities): it keeps the place you
+   * were on (landKeepingPlace, features/dev-board/workshop/place-store.ts).
    */
   _landOnHub(slug) {
     AppView._landOnTab(slug, 'status');

@@ -47,9 +47,9 @@ import { pushDismissible } from '../../lib/back-stack';
 import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
-import { audienceLine, cachedCommunity, useCachedCommunity } from '../dev-board/workshop/community-card';
-import { isPlaceKey, liveTopics, type PlaceKey } from '../dev-board/workshop/places';
-import { openPlace, placeStore } from '../dev-board/workshop/place-store';
+import { audienceLine, useCachedCommunity } from '../dev-board/workshop/community-card';
+import { isPlaceKey, type PlaceKey } from '../dev-board/workshop/places';
+import { cachedTopics, openPlace, placeStore } from '../dev-board/workshop/place-store';
 import { pageTakesEdge } from '../dev-board/workshop/places-tray';
 import { ProjectPlaces } from '../dev-board/workshop/project-places';
 import { useDevViewMode } from '../dev-board/view-mode-store';
@@ -500,8 +500,3 @@ function DrawerSurface({ slug, name, place, owed }: { slug: string; name: string
   );
 }
 
-/** The live topics' handles in a community's record, or null when it has not been read. */
-function cachedTopics(slug: string): string[] | null {
-  const record = cachedCommunity(slug);
-  return record ? liveTopics(record.places).map((c) => String(c.handle || '')) : null;
-}
