@@ -4789,9 +4789,9 @@
       "expectSelector": "a#back-btn:not(.hidden)[aria-label=\"Back\"][href=\"#messages\"]"
     },
     {
-      "name": "On a desktop a running app keeps the sidebar beside it, its row among the sidebar's apps is lit, and the header's corner is the sidebar toggle rather than a ✕; no left-edge hover strip over the app (#3138, D)",
+      "name": "On a desktop a running app keeps the sidebar beside it, and the header's corner is the sidebar toggle rather than a ✕; no left-edge hover strip over the app (#3138; the sidebar's All row names no community, D)",
       "path": "/#app/staging-demo-forkable",
-      "expectSelector": "body.rail-pinned:has(#app-view:not(.hidden)):has([data-strip-app=\"staging-demo-forkable\"][aria-current]):not(:has(#platform-rail-peek)) #platform-header .platform-header-left:has(> a#back-btn.hidden) > #sidebar-toggle[aria-pressed=\"true\"]"
+      "expectSelector": "body.rail-pinned:has(#app-view:not(.hidden)):has(#platform-tabs:not(.hidden) #platform-tab-workshop:not([aria-label])):not(:has(#platform-rail-peek)) #platform-header .platform-header-left:has(> a#back-btn.hidden) > #sidebar-toggle[aria-pressed=\"true\"]"
     },
     {
       "id": "agent-session.card",
