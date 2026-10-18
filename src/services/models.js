@@ -7,8 +7,9 @@
 // client dropdown and server validation.
 //
 // Adding a model: add an entry here, restart the platform container.
-// Removing one: remove here; in-flight chats with that model fall back
-// to DEFAULT_MODEL on the very next turn.
+// Removing one: remove here and add it to RETIRED_MODELS below, so a stored
+// pick or a request built before the change resolves to its successor rather
+// than falling through to DEFAULT_MODEL.
 //
 // #800: Haiku 4.5 was removed from this allowlist — it is the weakest
 // tier for multi-step coding work. The platform still uses
@@ -39,10 +40,10 @@
 // routes/anthropic-proxy.js) and has no reader yet.
 
 const MODELS = {
-  'claude-sonnet-5': {
-    label: 'Sonnet 5',
+  'claude-sonnet-5-5': {
+    label: 'Sonnet 5.5',
     tier: 'sonnet',
-    // Sonnet 5 is $2 in / $10 out per MTok; 15 was the 4.6 generation's
+    // Sonnet 5.5 is $2 in / $10 out per MTok; 15 was the 4.6 generation's
     // rate, carried over when the id moved. services/llm.js's per-1k table
     // reads the same figures.
     outputCostPerMTok: 10,
@@ -89,6 +90,14 @@ const DEFAULT_MODEL = 'claude-opus-5-5';
 // only where a model is about to be RUN.
 const RETIRED_MODELS = Object.freeze({
   'claude-opus-5': 'claude-opus-5-5',
+  'claude-sonnet-5': 'claude-sonnet-5-5',
+});
+
+// Display labels for retired ids, so a recorded row or a completed
+// fallback that names one still reads as the model it was. Populated
+// only where the raw id would otherwise show; MODELS wins first.
+const RETIRED_LABELS = Object.freeze({
+  'claude-sonnet-5': 'Sonnet 5',
 });
 
 function isAllowed(m) {
@@ -107,4 +116,6 @@ function list() {
   return Object.entries(MODELS).map(([id, meta]) => ({ id, ...meta }));
 }
 
-module.exports = { MODELS, DEFAULT_MODEL, RETIRED_MODELS, isAllowed, resolve, list };
+module.exports = {
+  MODELS, DEFAULT_MODEL, RETIRED_MODELS, RETIRED_LABELS, isAllowed, resolve, list,
+};

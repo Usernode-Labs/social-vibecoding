@@ -19,7 +19,10 @@ const events = require('./events');
 // to the raw id so an unknown slug still reads as something identifiable.
 function label(modelId) {
   const entry = modelId && models.MODELS[modelId];
-  return (entry && entry.label) || modelId || 'the selected model';
+  return (entry && entry.label)
+    || (modelId && models.RETIRED_LABELS[modelId])
+    || modelId
+    || 'the selected model';
 }
 
 // In-chat notice for a turn that was served by the fallback model.

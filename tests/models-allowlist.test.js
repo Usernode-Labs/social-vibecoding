@@ -67,8 +67,26 @@ test('list() exposes exactly the three model ids', () => {
   assert.deepEqual(ids, [
     'claude-fable-5-1',
     'claude-opus-5-5',
-    'claude-sonnet-5',
+    'claude-sonnet-5-5',
   ]);
+});
+
+test('the retired Sonnet 5 id resolves to Sonnet 5.5 (#3579)', () => {
+  assert.equal(models.isAllowed('claude-sonnet-5'), false);
+  assert.equal(models.resolve('claude-sonnet-5'), 'claude-sonnet-5-5');
+  assert.equal(models.RETIRED_MODELS['claude-sonnet-5'], 'claude-sonnet-5-5');
+  assert.equal(models.RETIRED_LABELS['claude-sonnet-5'], 'Sonnet 5');
+
+  const sonnet = models.MODELS['claude-sonnet-5-5'];
+  assert.equal(sonnet.label, 'Sonnet 5.5');
+  assert.equal(sonnet.tier, 'sonnet');
+  assert.equal(sonnet.outputCostPerMTok, 10);
+});
+
+test('a fallback notice names a retired model with its recorded label (#3579)', () => {
+  const fallback = require('../src/services/model-fallback');
+  assert.equal(fallback.label('claude-sonnet-5'), 'Sonnet 5');
+  assert.equal(fallback.label('claude-sonnet-5-5'), 'Sonnet 5.5');
 });
 
 test('every model carries recommended change-size guidance (#800)', () => {
