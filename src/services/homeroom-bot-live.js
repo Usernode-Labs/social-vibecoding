@@ -553,6 +553,31 @@ async function shareSpecVersion(pool, sessionId, version) {
 }
 
 /** The spec card in the proposal's own discussion, once it is up. */
+/**
+ * A note of the bot's, in one of its own proposal's discussions and nowhere
+ * else (#…): the "fixed the failing checks" line lives there, where the
+ * group votes, and not on the issue, whose people asked for the change, not
+ * for its checks. Recorded in homeroom_bot_posts like any post. Never throws.
+ */
+async function postOnProposal({
+  pool, ws, app, bot, sessionId, issueNumber = null, kind = 'checks_revise', text, runId = null,
+}) {
+  const ref = Number(sessionId);
+  if (!ref || !app?.id || !text) return null;
+  await pool.query(
+    'INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind) VALUES ($1, $2, $3, $4)',
+    [app.id, issueNumber, runId, kind],
+  ).catch((err) => log.warn('homeroom-bot', 'Could not record a proposal post', { err: err.message }));
+  try {
+    return await ws.sendBotMessage(pool, app.id, {
+      user: bot, content: text, thread: { type: 'session', ref }, msgType: 'system',
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { sessionId: ref, err: err.message });
+    return null;
+  }
+}
+
 async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec }) {
   if (!spec || !version || !sessionId) return null;
   await shareSpecVersion(pool, sessionId, version);
@@ -1079,7 +1104,21 @@ const BUILD_DESCRIPTION_LINES = Object.freeze([
   'test results: those belong in the summary above it. Skip the block only if you changed nothing.',
 ]);
 
-function buildPrompt({ seed, buildNote, spec = null }) {
+// A build of the platform's own repository gets the longer clock, and one
+// instruction beside it: the repository's own agent guidance asks for the
+// suites that cover what changed, and the platform runs the whole suite on
+// the proposal itself, so a build that runs everything only wastes its
+// clock. First versions of a project keep the older doubling instead: their
+// repository is the small starter template.
+const PLATFORM_TEST_NOTE = [
+  '',
+  'This is a build of the platform\'s own repository, which is large. Run ONLY the test suites that cover the',
+  'files you changed (`npm run test:changed -- --base <the 40-character base commit>`), never the whole suite:',
+  'the platform runs every suite against the proposal by itself, and a whole-suite run here is how a build',
+  'runs out of its time limit.',
+].join('\n');
+
+function buildPrompt({ seed, buildNote, spec = null, platformRepo = false }) {
   const specBlock = spec
     ? [
       '',
@@ -1109,6 +1148,7 @@ function buildPrompt({ seed, buildNote, spec = null }) {
       heading: 'Make exactly that change, and nothing else:',
       commits: 'harness',
     }),
+    ...(platformRepo ? [PLATFORM_TEST_NOTE] : []),
     ...BUILD_DESCRIPTION_LINES,
   ].join('\n');
 }
@@ -1216,7 +1256,7 @@ async function draftSpec({
 async function buildAndPropose({
   pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
   turnBudgetMs, model, deps, propose = true, onSpec = null, specBudgetMs = SPEC_TURN_MAX_MS,
-  onSession = null, presetSpec = null, proposalCeiling = null,
+  onSession = null, presetSpec = null, proposalCeiling = null, platformRepo = false,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
@@ -1365,7 +1405,7 @@ async function buildAndPropose({
   }, turnBudgetMs);
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
-  const prompt = buildPrompt({ seed, buildNote, spec: spec.ok ? spec.specMd : null });
+  const prompt = buildPrompt({ seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
   // time-outs, most of them cheap, with nothing recorded about why.
@@ -1507,6 +1547,8 @@ module.exports = {
   blockedText,
   shareSpecVersion,
   postSpecOnProposal,
+  postOnProposal,
+  PLATFORM_TEST_NOTE,
   SPEC_TURN_MAX_MS,
   readSpec,
   MAX_SPEC_COMMENT_CHARS,

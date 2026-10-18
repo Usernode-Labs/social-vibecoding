@@ -1794,6 +1794,30 @@ function maybeAutoMergeAfterChecks(config, pool, session, state) {
   });
 }
 
+// A failing checks verdict on the bot's own proposal used to sit until a
+// person replied. This hands it to the bot's queue beside the merge drain,
+// at the same three places a verdict settles (the lifecycle wrapper below,
+// the live capture further down, and check-harvest's adopt). Fire-and-forget
+// and best-effort, exactly like the drain: the bot's queueing must never
+// break the capture pipeline, and it is skipped whole when the bot's module
+// is not loaded (its tests stub parts of it).
+function noteBotChecksAfterChecks(pool, session, state) {
+  if (state !== 'failing' || !session?.id) return;
+  try {
+    const bot = require('./homeroom-bot');
+    if (typeof bot.noteProposalChecks !== 'function') return;
+    Promise.resolve(bot.noteProposalChecks(pool, session, state)).catch((err) => {
+      log.warn('visuals', 'Checks-failed note to the bot failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      });
+    });
+  } catch (err) {
+    log.warn('visuals', 'Checks-failed note to the bot failed (non-fatal)', {
+      sessionId: session.id, err: err.message,
+    });
+  }
+}
+
 // #866: which git ref identifies this session's code in the app's OWN repo.
 // Ordinary native rows push their work to a platform-owned branch, so the
 // branch name resolves. Two sources require an immutable commit instead:
@@ -1939,7 +1963,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           { ...opts, force: opts.force || !!stagingResult });
       }, { force: opts.force, onError: (err, pool, operation) =>
         publishCaptureError(pool, session.id, operation.revision, err, opts.send) });
-      if (completed?.state) maybeAutoMergeAfterChecks(config, getPool(config), session, completed.state);
+      if (completed?.state) {
+        maybeAutoMergeAfterChecks(config, getPool(config), session, completed.state);
+        noteBotChecksAfterChecks(getPool(config), session, completed.state);
+      }
       return completed;
     } catch (err) {
       if (lifecycle.isCancelled(err)) return;
@@ -3202,7 +3229,10 @@ async function settleCaptureRun(config, pool, run) {
   // app-level merge drain so "checks finished after the votes were in"
   // auto-merges just like "votes landed after checks were green".
   // Fire-and-forget; never blocks or fails the capture pipeline.
-  if (!operation) maybeAutoMergeAfterChecks(config, pool, session, checksResult.state);
+  if (!operation) {
+    maybeAutoMergeAfterChecks(config, pool, session, checksResult.state);
+    noteBotChecksAfterChecks(pool, session, checksResult.state);
+  }
 
   const dropped = [];
   const stored = await storeArtifacts(pool, session.id, commitHash, targets, shots, dropped);

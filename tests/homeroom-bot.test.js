@@ -424,7 +424,7 @@ test('a budget stop records WHICH limit tripped, in a column of its own', async 
   const harness = triageHarness({ verdictText: 'x', sessionId: 856 });
   await runToWallClock(t, harness);
   const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.match(insert.s, /budget_stop, proposal_session_id\)/, 'the insert names the column');
+  assert.match(insert.s, /budget_stop, proposal_session_id,\s*checks_head_sha\)/, 'the insert names the column');
   assert.ok(insert.params.includes('wall clock'),
     'the limit is stored as data, not left to be grepped out of the error text');
   assert.ok(insert.params.includes('budget: wall clock'), 'and the error line still reads the same');
@@ -1052,7 +1052,11 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
   const out = await bot.refreshApp(pool, { id: 9, slug: 'todo', repo_url: 'https://github.com/usernode-bot/todo' }, { github });
   assert.equal(out.queued, 2);
   assert.deepEqual(inserts.map((p) => [p[1], p[2], p[3]]), [[1, 1, 'new'], [5, 2, 'changed']]);
-  assert.deepEqual(deleted, [9, [1, 5]], 'everything else queued for this app is dropped');
+  // #3636: a drop now spares the bot's own self-queued rows (a restart's and
+  // a failing checks') for the issues it already decided to keep, which here
+  // is #2, the one nothing changed on since its last run.
+  assert.deepEqual(deleted, [9, [1, 5], ['restart', 'checks_failing'], [2]],
+    'everything else queued for this app is dropped, but a self-queued row on an unchanged issue stays');
   assert.equal(out.removed, 2);
 });
 
@@ -1143,7 +1147,10 @@ test('refreshApp treats a degraded GitHub read as "no answer", not "no issues"',
 // ── What makes shadow mode shadow (source pins) ─────────────────────────
 
 test('the triage turn is a read-only scout: no build mode, no push, no posting, no claims', () => {
-  const dispatch = SRC.slice(SRC.indexOf('async function runTriage'), SRC.indexOf('// ── The work loop'));
+  // #3636: the checks-fix turn lives in its own section after the triage
+  // path, and runs a build turn there by design; the pin below is about the
+  // triage dispatch itself, so it ends where that section begins.
+  const dispatch = SRC.slice(SRC.indexOf('async function runTriage'), SRC.indexOf('// ── Its own failing checks'));
   assert.match(dispatch, /mode: 'scout'/, 'the ledger loop runs in scout mode');
   // The container exec carries the token half of the budget between the
   // mode and the prompt now (#2737), and #2870's note on where that limit
