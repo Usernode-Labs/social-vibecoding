@@ -47,6 +47,29 @@ test('#3016: the session bar wraps on every surface, and the panel cannot outgro
   assert.match(panel, /className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat/);
 });
 
+// #3577: the pills themselves stopped wrapping. The bar keeps #3016's wrap
+// (the embedded title block needs a row of its own) but the pills now live in
+// a row that never wraps, the bar is that row's size container, and a bar
+// under 23rem drops the change pill's "· PR #N" suffix and tightens the
+// paddings — the composer's container-query room test (#3574). What gives way
+// is the focus pill, which truncates; #3016's other half (the panel's
+// min-w-0, pinned above) is what keeps a no-wrap bar from widening the
+// conversation again.
+test('#3577: the pills hold one line, and a narrow bar buys room before the name truncates', () => {
+  const bar = panel.slice(panel.indexOf('function SessionBar('), panel.indexOf('function SessionMenu('));
+  assert.match(bar, /<div className="flex flex-wrap items-center gap-x-2 gap-y-2 [^"]*\[container-type:inline-size\][^"]*" data-agent-session-bar>/,
+    'the bar measures the room its pills have');
+  assert.match(bar, /<div className="flex min-w-0 flex-1 flex-nowrap items-center gap-x-1.5 sm:gap-x-2" data-agent-session-pills>/,
+    'the pills are one row that never wraps');
+  // The suffix is the first thing to go, before the app name truncates.
+  assert.match(bar, /active\.prNumber \? <span className="\[@container\(max-width:23rem\)\]:hidden">\{` · PR #\$\{active\.prNumber\}`\}<\/span>/,
+    'a narrow bar drops the "· PR #N" suffix');
+  assert.match(bar, /data-agent-session-change-pill\s+className=\{`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold \[@container\(max-width:23rem\)\]:px-2 /,
+    'the change pill keeps its own line and only tightens padding on a narrow bar');
+  assert.match(bar, /data-agent-session-focus[^]*?\[@container\(max-width:23rem\)\]:px-2/, 'the focus pill tightens on a narrow bar');
+  assert.match(bar, /data-agent-session-changes-button[^]*?\[@container\(max-width:23rem\)\]:px-2/, 'the Changes pill tightens on a narrow bar');
+});
+
 test('#3016: an empty message box is sized to its hint, measured without an input event', () => {
   const composer = panel.slice(panel.indexOf('// The field grows with what it holds'), panel.indexOf('function submit('));
   assert.match(composer, /if \(!field\.value && field\.placeholder\) \{\s*field\.value = field\.placeholder;\s*height = field\.scrollHeight;\s*field\.value = '';\s*\}/);
