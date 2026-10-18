@@ -1114,7 +1114,7 @@ export const LIST_BESIDE_MIN_WIDTH = 860;
  */
 export function measureLayout(width: number): void {
   if (!(width > 0)) return;
-  // v3: from 1024px the list is in the sidebar, never beside the
+  // v3: on a desktop the list is in the sidebar, never beside the
   // conversation (./index.tsx `messages-list-in-rail`), so nothing crowds it.
   const crowded = !isMobile() && !sidebarRowsUp() && width < LIST_BESIDE_MIN_WIDTH;
   if (crowded === state.listCrowded) return;

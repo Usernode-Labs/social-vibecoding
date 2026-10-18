@@ -2,7 +2,7 @@
  * THE CONVERSATIONS UNDER MESSAGES, in the desktop's sidebar of rows (v3,
  * 18 Oct 2026; ../nav/rail-conversations.tsx draws them).
  *
- * From 1024px the conversation list does not stand beside the conversation:
+ * On a desktop the conversation list does not stand beside the conversation:
  * the sidebar nests the five most recent under the Messages row, under the
  * inbox's own two headings (Agents, People), then All messages, which is the
  * full list with its search and previews (the list pane, drawn as the page).

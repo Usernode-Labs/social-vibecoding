@@ -22,19 +22,18 @@
  * place bar there. Folding the rail from the header's sidebar button folds
  * the column with it.
  *
- * FROM 1024px THERE IS NO COLUMN (v3, 18 Oct 2026). The sidebar of rows
- * (./sidebar-rows.ts) nests the places under the community's own row
- * (./rail-communities.tsx), and the conversations under Messages
- * (./rail-conversations.tsx), so the page has the 264px back. The column is
- * the strip's, from 768px to 1024px.
+ * NO WIDTH DRAWS IT NOW (v3, 18 Oct 2026). The sidebar of rows
+ * (./sidebar-rows.ts), on every desktop window from 768px, nests the places
+ * under the community's own row (./rail-communities.tsx) and the
+ * conversations under Messages (./rail-conversations.tsx), so the page has
+ * the 264px back; the column was the 76px strip's, and no width has the
+ * strip. `columnFor` answers null whenever the sidebar is up.
  *
  * It also steps aside while an item's page is open in the panel beside the
  * Workshop's list (`placeStore.side`): the strip, the column, the list and
- * the 560px panel do not all fit under 1024px, and the panel is what was
- * asked for. The place bar's button is the way to the places meanwhile, as
- * it is with the strip folded, and the column is back when the panel closes.
- * (It stayed beside the panel from 1404px while the sidebar of rows had a
- * column too; from 1024px it has none now.)
+ * the 560px panel did not all fit, and the panel is what was asked for. The
+ * place bar's button is the way to the places meanwhile, as it is with the
+ * strip folded, and the column is back when the panel closes.
  *
  * ── The peeked column (#5308) ─────────────────────────────────────────
  *
@@ -88,7 +87,7 @@ export function columnFor(input: {
   placeSlug: string | null;
   /** An item's page is open in the panel beside the list. */
   side?: boolean;
-  /** The sidebar of rows is up (from 1024px), which nests the places itself. */
+  /** The sidebar of rows is up (from 768px), which nests the places itself. */
   sidebarRows?: boolean;
 }): 'places' | null {
   if (input.sidebarRows || input.side) return null;

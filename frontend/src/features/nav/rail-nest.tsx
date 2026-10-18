@@ -1,7 +1,7 @@
 /**
  * A ROW'S NESTED PART, in the desktop's sidebar of rows (v3, 18 Oct 2026).
  *
- * From 1024px the sidebar holds what the second column held: a community's
+ * On a desktop the sidebar holds what the second column held: a community's
  * places open under its row while its page is up (./rail-communities.tsx),
  * and the conversations under Messages while the inbox is
  * (./rail-conversations.tsx). Only the part you are in is open, so moving

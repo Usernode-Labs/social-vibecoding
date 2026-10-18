@@ -145,10 +145,10 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   // A card opened from it (#3602): an item's page is still the community's,
   // so its name switches community there too.
   const onCard = inApp && tab === 'dev' && subTab === 'topic';
-  // D (18 Oct 2026): FROM 1024px THE SIDEBAR LISTS YOUR COMMUNITIES
-  // (../nav/sidebar-rows.ts), so the bar's name is a name again there: the
-  // community's tile and name, no chevron, and on All communities its title.
-  // From 768px to 1024px, as on the strip before, the name is the switcher.
+  // D (18 Oct 2026): ON A DESKTOP THE SIDEBAR LISTS YOUR COMMUNITIES
+  // (../nav/sidebar-rows.ts, from 768px), so the bar's name is a name again
+  // there: the community's tile and name, no chevron, and on All communities
+  // its title. Under 768px the name is the switcher, as it was.
   const sidebarRows = useSidebarRows();
   const communityPage = onWorkshop || onCard;
   // At every width (#3295): the Workshop draws no chip of its own any more.

@@ -101,17 +101,12 @@ test('the places column is the page\'s list, and a press there moves the page in
   assert.match(store, /export function openPlace\(slug: string, key: PlaceKey, opts: \{ replace\?: boolean \} = \{\}\): boolean \{\s*if \(opener && opener\.slug === slug && placeStore\.get\(\)\.slug === slug\) \{\s*opener\.open\(key\);/);
 });
 
-test('Messages\' column is its conversation list, flush with the strip; the conversation fills the page', () => {
-  assert.match(desktop, /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\):not\(\.platform-tabs-folded\)\) #messages-screen \{\s*padding-left: var\(--platform-rail-w, 0px\);\s*\}/,
-    'no gutter between the strip and the list');
-  const list = desktop.match(/#messages-screen > \.messages-layout > \.messages-list-pane \{[^}]*\}/);
-  assert.ok(list, 'the inbox\'s own list pane is the column');
-  assert.match(list[0], /flex: 0 0 var\(--platform-column-full\);/);
-  assert.match(list[0], /width: var\(--platform-column-full\);/);
-  assert.match(list[0], /background: var\(--dc-sheet-fill\);/, 'the same glass as the section column (#4624)');
-  assert.match(list[0], /box-shadow: inset -1px 0 0 var\(--app-sheet-line\);/);
+test('Messages has no column: on a desktop the sidebar nests the conversations and the list is a page (v3)', () => {
+  assert.doesNotMatch(desktop, /#messages-screen > \.messages-layout > \.messages-list-pane \{[^}]*--platform-column-full/,
+    'the list no longer takes the column\'s width beside the strip');
   // It stays where its checks find it.
   assert.match(read('frontend/src/features/messages/index.tsx'), /<section className=\{`messages-list-pane /);
+  assert.match(read('frontend/src/features/messages/index.tsx'), /const railClass = sidebarRows && !drawer\.on \? \(discussionOpen \? ' messages-list-in-rail' : ' messages-list-page'\) : '';/);
 });
 
 test('Home and Discover have no column; the strip is all the navigation there', () => {

@@ -22910,101 +22910,6 @@ html.un-kb #platform-parked {
     display: none;
   }
 
-  /* v3 (18 Oct 2026): BESIDE THE STRIP ONLY. From 1024px the list is nested in
-     the sidebar of rows and the inbox draws one pane at a time (below, in the
-     sidebar's block), so the column and its compact rows stop at 1023px. */
-  @media (max-width: 1023px) {
-    /* ── MESSAGES' COLUMN IS ITS OWN LIST (#4417) ─────────────────────────
-       The conversation list moves into the section column's place: flush
-       with the strip, the column's width and glass, from under the header to
-       the floor, and the conversation fills the rest of the page. It is the
-       inbox's own list pane rather than a copy in #platform-section-column,
-       so its search, its rows and the declared checks that select them stay
-       in #messages-screen. A channel opened full width, a reply thread and a
-       strip too narrow for both still put the list away, as they did. */
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen {
-      padding-left: var(--platform-rail-w, 0px);
-    }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane {
-      flex: 0 0 var(--platform-column-full);
-      width: var(--platform-column-full);
-      padding-right: 0;
-      background: var(--dc-sheet-fill);
-      box-shadow: inset -1px 0 0 var(--app-sheet-line);
-    }
-
-    /* THE COLUMN'S ROWS ARE THE COMMUNITIES COLUMN'S (16 Oct 2026): the
-       places list's 40px rows (.dev-ws-place: a small glyph, 15px words, the
-       place you are on lit with --lit-tint and --lit-ink), its small-caps
-       headings and its 12px gutters, so the two sidebars read as one. One
-       line a row, since the conversation opens beside it: no time and no
-       preview, the unread count at the trailing edge. The Homeroom bot keeps
-       its second line, what waits on you. The phone keeps the cards. */
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-toolbar { margin: 20px 16px 8px; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-list-scroll { padding: 0 12px 12px; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-section-head { padding: 12px 10px 4px; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-section-card {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      margin: 0;
-      overflow: visible;
-      border-radius: 0;
-      background: none;
-      box-shadow: none;
-    }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row {
-      min-height: 40px;
-      gap: 10px;
-      padding: 0 10px;
-      border-radius: 10px;
-    }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row::after { display: none; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row > :first-child {
-      flex: 0 0 22px;
-      width: 22px;
-      height: 22px;
-      border-radius: 6px;
-      font-size: 10px;
-    }
-    /* #5393: the compact list has room for one face, not a stack — the first
-       face at the row's own 22px, the second out. The outer box is the row's
-       first child, so the rule above already sizes it. */
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-group-faces > :first-child {
-      position: static;
-      width: 22px;
-      height: 22px;
-      border-radius: 6px;
-      font-size: 10px;
-    }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-group-faces > :last-child { display: none; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-agent-tile { background: none; border: 0; color: var(--text-muted); }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-agent-tile svg { width: 20px; height: 20px; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row > .min-w-0 { display: flex; align-items: center; gap: 8px; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-row-line:first-child { flex: 1 1 auto; min-width: 0; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-row-line + .messages-row-line { flex: 0 0 auto; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-row-time,
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-row-preview,
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-kind-pill,
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-bot-badge,
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-group-tag { display: none; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-row .messages-row-name { font-size: 15px; font-weight: 400; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-bot-row { padding-block: 7px; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-bot-row > .min-w-0 { display: block; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-bot-row .messages-row-preview { display: block; font-size: 12px; line-height: 16px; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-active { background: var(--lit-tint); color: var(--lit-ink); }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-conversation-active .messages-row-name { color: inherit; font-weight: 600; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-older { min-height: 32px; padding: 6px 10px 6px 42px; border-radius: 10px; font-size: 13px; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-change-tile svg { width: 15px; height: 15px; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-session > a { min-height: 40px; gap: 10px; padding: 0 10px; border-radius: 10px; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-session > a > :first-child { width: 22px; height: 22px; border-radius: 6px; }
-    /* A change in flight is one line too: its title and the pill that says
-       where it stands (Working, Needs you, Ready); its app and time line goes. */
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-session > a > .min-w-0 > :first-child { font-size: 15px; font-weight: 400; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-session > a > .min-w-0 > :first-child ~ * { display: none; }
-    html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane .messages-inbox-session-active > a { background: var(--lit-tint); color: var(--lit-ink); }
-  }
-
   /* THE RESUME STRIP GIVES WAY TO THE STRIP'S APPS ON THE DESKTOP (#2802,
      #4417). The apps on the strip are the same offer, several at once, the
      ones still open with their dot, so a second copy at its foot would say
@@ -23069,16 +22974,19 @@ html.un-kb #platform-parked {
   }
 }
 
-/* ── D: THE SIDEBAR OF ROWS, FROM 1024px (18 Oct 2026) ──────────────────
-   features/nav/sidebar-rows.ts carries the argument. From 1024px the rail
+/* ── D: THE SIDEBAR OF ROWS, ON EVERY DESKTOP WINDOW (18 Oct 2026) ───────
+   features/nav/sidebar-rows.ts carries the argument. From 768px the rail
    is one 212px sidebar for the whole platform: Home, Discover and Messages
    as rows, then COMMUNITIES (features/nav/rail-communities.tsx: the five you
    opened last, then the Communities tab drawn as "All 13 communities"),
    then PINNED (only while you have pins) and RECENT APPS (./strip-apps.tsx),
-   and you at the foot with Settings beside you. Each heading is the places
-   column's small capitals, so the two sidebars read as one. From 768px to
-   1024px the strip above is untouched, and the phone's bar never sees any
-   of this.
+   and you at the foot with Settings beside you, a community's places and
+   the inbox's latest conversations nested under their rows (v3). It began
+   at 1024px with the 76px strip and its 264px column below that, 340px
+   where this is 212px; from 768px it is the one desktop rail, and the
+   phone's bar never sees any of this. The block comes after the rail's own
+   768px block, so at the same width it wins, and what that block still
+   says about the strip is what this one does not override.
 
    The parts only the sidebar draws are in the markup at every width and
    drawn only here. */
@@ -23092,7 +23000,7 @@ html.un-kb #platform-parked {
   display: none;
 }
 
-@media (min-width: 1024px) {
+@media (min-width: 768px) {
   /* THE ONE NUMBER THE REST FOLLOWS. Everything the strip's width placed
      (the section column's left edge, the peeked column, the screens'
      padding) reads this token, so the sidebar moves them all at once. */
