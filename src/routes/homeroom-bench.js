@@ -464,6 +464,20 @@ function homeroomBenchRoutes(config) {
     return out;
   }));
 
+  // Grade a finished run's trials again under the rules as they stand
+  // (graders.regradeRun): no model runs and nothing is spent. Trials it
+  // leaves to the judge join the grading queue.
+  router.post('/api/bot-bench/runs/:id/regrade', requireAdminWrite, benchRunLimiter, sameOriginBrowserOnly, handler('Regrade bench run (connector)', async (req) => {
+    const id = idParam(req.params.id);
+    if (!id) return { ok: false, status: 400, error: 'Invalid run id' };
+    const { rows: [run] } = await pool.query('SELECT id FROM bench_runs WHERE id = $1', [id]);
+    if (!run) return { ok: false, status: 404, error: 'No such run' };
+    const graders = require('../services/bench/graders');
+    const out = await graders.regradeRun(pool, id, { github: runner.guardedGithub(require('../services/github')) });
+    log.info('bench', 'Run regraded', { by: req.user.username, via: 'connector', runId: id, ...out });
+    return { ok: true, runId: id, ...out };
+  }));
+
   return router;
 }
 

@@ -215,9 +215,11 @@ const ACTING_TOOLS = Object.freeze([
   'submit_bench_grade',
   'label_bench_task',
   // #3654: running the benchmark. Admin-only and they change no app, but a
-  // launch spends the platform's money up to its cap, and a cancel stops one.
+  // launch spends the platform's money up to its cap, a cancel stops one, and
+  // a regrade can change a finished run's numbers.
   'launch_bench_run',
   'cancel_bench_run',
+  'regrade_bench_run',
   // The App bench studio and the benchmark's management (routes/bench-studio.js):
   // admin-only, and none changes an app, but a launch or a re-run spends the
   // platform's money, a preview puts a container up for a day, and the rest
@@ -7091,6 +7093,39 @@ function registerTools(server, ctx) {
         runId,
         cancelled: true,
         nextStep: 'Cancelled. Its results so far stay readable with get_bench_run.',
+      });
+    });
+
+    server.registerTool('regrade_bench_run', {
+      title: 'Benchmark: grade a run again',
+      description: 'Admin only. Grade every finished trial of a Homeroom bot benchmark run again under the rules as they stand now, for a run graded before a rule changed. No model runs and nothing is spent. A trial the rules now leave to the judge joins the grading queue; a judge\'s or a person\'s grade already given stands. The run\'s numbers can change, so ask the person first. It changes nothing in any app.',
+      inputSchema: {
+        runId: z.number().int().positive().describe('A run id from list_bench_runs.'),
+      },
+      outputSchema: {
+        runId: z.number(),
+        trials: z.number(),
+        changed: z.number(),
+        waitingForJudge: z.number(),
+        nextStep: z.string(),
+      },
+      annotations: writeAnnotations,
+    }, async ({ runId }) => {
+      const guard = scopeGuard(WRITE_SCOPE) || benchAdminOnly();
+      if (guard) return guard;
+      if (!Number.isInteger(runId) || runId <= 0) return toolError('invalid_request', 'runId must be a run id from list_bench_runs.');
+      const r = await callPlatform(baseUrl, accessToken, 'POST', `/api/bot-bench/runs/${runId}/regrade`);
+      if (!r.ok) return benchRunRefusal(r, 'run');
+      const b = r.body || {};
+      const waiting = num(b.waitingForJudge);
+      return toolResult({
+        runId,
+        trials: num(b.trials),
+        changed: num(b.changed),
+        waitingForJudge: waiting,
+        nextStep: waiting > 0
+          ? `Graded again: ${waiting} of its trials wait for the judge. Grade them (list_bench_grading_queue with this runId) before reading get_bench_run.`
+          : 'Graded again, and nothing waits for the judge: get_bench_run has its numbers.',
       });
     });
   }

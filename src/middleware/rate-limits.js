@@ -664,8 +664,8 @@ const benchGradingLimiter = makeLimiter({
   message: (s) => `Too many benchmark grades at once. Try again ${retryPhrase(s)}.`,
 });
 
-// #3654: launching and cancelling benchmark runs through the connector
-// (routes/homeroom-bench.js /api/bot-bench/runs). A launch spends the
+// #3654: launching, cancelling and regrading benchmark runs through the
+// connector (routes/homeroom-bench.js /api/bot-bench/runs). A launch spends the
 // platform's money up to its cap, so a session that loops on it is stopped
 // well before many runs are queued. A refused launch spends nothing, so only
 // the ones that went through count. Admins are NOT exempt, for the reason
@@ -676,7 +676,7 @@ const benchRunLimiter = makeLimiter({
   name: 'bench-runs',
   keyByUser: true,
   skipFailedRequests: true,
-  message: (s) => `Too many benchmark launches or cancels at once. Try again ${retryPhrase(s)}.`,
+  message: (s) => `Too many benchmark launches, cancels or regrades at once. Try again ${retryPhrase(s)}.`,
 });
 
 // The App bench studio's writes through the connector (routes/bench-studio.js):

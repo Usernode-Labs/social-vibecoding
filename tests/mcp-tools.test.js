@@ -2912,6 +2912,8 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'propose_close_request',
     'rate_homeroom_bot_run',
     'recheck_change',
+    // #3654. Grading a finished benchmark run again: full platform admins only.
+    'regrade_bench_run',
     'release_request',
     'remove_challenge', 'reorder_challenges',
     'rerun_bench_trial',
@@ -3144,7 +3146,7 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     'label_bench_task', 'launch_bench_run', 'launch_bench_studio', 'launch_shots_eval',
     'move_challenge',
     'post_message', 'post_spec', 'prepare_work', 'promote_change', 'propose_close_request',
-    'rate_homeroom_bot_run', 'recheck_change', 'remove_challenge', 'reorder_challenges', 'rerun_bench_trial',
+    'rate_homeroom_bot_run', 'recheck_change', 'regrade_bench_run', 'remove_challenge', 'reorder_challenges', 'rerun_bench_trial',
     'retire_test_account', 'run_challenge_scoring',
     // The Homeroom bot's configurations: full admins only.
     // Before & after shots evals: full admins only.
