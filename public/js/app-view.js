@@ -8132,6 +8132,11 @@ const AppView = {
     // An explicit tap retires the URL override, exactly as `_setWorkshopGroup`
     // does — otherwise `?ws=` would keep winning over every later press.
     AppView._workshopTabUrlOverride = null;
+    // The choice is still remembered here, for a reload and for a page that
+    // opens again with nothing else to ask. A tab press on the open page also
+    // leaves a history record naming the tab (frontend/src/features/
+    // dev-board/workshop/tab-history.ts), so Back returns to the tab it came
+    // from; this function writes no history of its own.
     try { window.localStorage.setItem(AppView.WORKSHOP_TAB_KEY, next); } catch {}
   },
   /**
@@ -8144,7 +8149,9 @@ const AppView = {
    * row, pressed on the page itself, changes no address) is told to switch.
    * It writes the remembered tab rather than a one-off, so the hub it shows
    * is also what the page reopens on next. Back and Forward are not doors:
-   * they reopen on the tab last shown, which the page reads when it mounts.
+   * they reopen on the tab last shown, which the page reads when it mounts,
+   * and a history record names that tab so stepping through it restores it
+   * (frontend/src/features/dev-board/workshop/tab-history.ts).
    */
   _landOnHub(slug) {
     AppView._landOnTab(slug, 'status');

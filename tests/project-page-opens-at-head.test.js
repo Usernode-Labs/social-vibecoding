@@ -146,3 +146,20 @@ test('the strip pins at the header\'s foot, whichever element scrolls the page',
   assert.ok(phone, 'the phone block is where it was');
   assert.doesNotMatch(phone[0], /--ws-pin-top/);
 });
+
+test('#3620: a tab restored by Back opens at its head, and forgets the old tab\'s offset', () => {
+  // Restoring a tab on a traversal is a tab move too: it goes back to the top
+  // of the page and drops the saved offset, exactly as a tab press and a door
+  // do. Without this, Back from the Workshop would put the Hub back at the
+  // Workshop's offset — the #3583 bug, one route later.
+  const popSrc = WORKSHOP.slice(WORKSHOP.indexOf('const onPop = () => {'));
+  const popBody = popSrc.slice(0, popSrc.indexOf('\n    };'));
+  assert.match(popBody, /callAppView\('_setWorkshopTab', next\);/);
+  assert.match(popBody, /callAppView\('_saveFeedScroll', arriving, 0\);/);
+  assert.match(popBody, /scrollToHead\(hostRef\.current\);/);
+  // The door still scrolls its own page to the head, and the tab it opens is
+  // still the tab it names.
+  const doorSrc = WORKSHOP.slice(WORKSHOP.indexOf('const onDoor = (event: Event) => {'));
+  const doorBody = doorSrc.slice(0, doorSrc.indexOf('\n    };'));
+  assert.match(doorBody, /setTab\(door\.tab\);[\s\S]*scrollToHead\(hostRef\.current\);/);
+});

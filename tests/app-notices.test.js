@@ -140,7 +140,7 @@ test('a door to a project\'s hub opens the hub; a page opened again reads the ta
   assert.match(lander, /useLayoutEffect\(\(\) => \{\n\s*if \(!v\.slug\) return;\n\s*const was = tabSlug\.current;\n\s*tabSlug\.current = v\.slug;\n\s*if \(was && was !== v\.slug\) setTab\(freshTab\(\) \|\| 'status'\);\n\s*\}, \[v\.slug\]\);/);
   // Seeded from a fresh read, not the store's last publish: that one can be
   // a tab the viewer has since left, which is what Back used to reopen on.
-  assert.match(lander, /useState<TabKey>\(\(\) => freshTab\(\) \|\| v\.tab \|\| 'status'\)/);
+  assert.match(lander, /useState<TabKey>\(\(\) => readTabEntry\(tabWindow\(\)\) \|\| freshTab\(\) \|\| v\.tab \|\| 'status'\)/);
   assert.match(lander, /export function freshTab\(\): TabKey \| null \{\n\s*const tab = callAppView\('_workshopTab'\);/);
   // The doors: the logo menu row, Discover's rows, the Communities rows and a
   // Needs you card's project name. Back and Forward are not doors.

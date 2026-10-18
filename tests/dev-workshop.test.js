@@ -3849,7 +3849,7 @@ test('the ?ws= deep link survives arriving AFTER the first paint', () => {
   // just set the tab — opened on a tab the viewer had since left. The
   // publish stays the fallback, and the late-arrival effect stays for a
   // mount where AppView is not there to ask.
-  assert.match(WORKSHOP, /const \[tab, setTab\] = useState<TabKey>\(\(\) => freshTab\(\) \|\| v\.tab \|\| 'status'\);/,
+  assert.match(WORKSHOP, /const \[tab, setTab\] = useState<TabKey>\(\(\) => readTabEntry\(tabWindow\(\)\) \|\| freshTab\(\) \|\| v\.tab \|\| 'status'\);/,
     'the seed still paints the right tab on the first frame when the view is already there');
   assert.match(
     WORKSHOP,
@@ -4013,7 +4013,7 @@ test('the ⋯ asks to be wired when it mounts, because the module wires it befor
   // the late-arrival effect on `v.tab`: a state update raised inside a
   // passive effect is scheduled at default priority, so the pane lands a task
   // AFTER the synchronous publish the module's call follows.
-  assert.match(WORKSHOP, /useState<TabKey>\(\(\) => freshTab\(\) \|\| v\.tab \|\| 'status'\)/);
+  assert.match(WORKSHOP, /useState<TabKey>\(\(\) => readTabEntry\(tabWindow\(\)\) \|\| freshTab\(\) \|\| v\.tab \|\| 'status'\)/);
   assert.match(WORKSHOP, /useEffect\(\(\) => \{\s*if \(deepTabApplied\.current \|\| !v\.tab\) return;\s*deepTabApplied\.current = true;\s*setTab\(v\.tab\);\s*\}, \[v\.tab\]\);/);
   // So the ⋯ asks for itself, from its OWN mount effect. It rode on the
   // filter row's effect while it lived at the end of that row; it is its own
@@ -5377,4 +5377,54 @@ test('a refetch keeps every theme where it was; only a chip press re-sorts', () 
   assert.deepEqual(orderThemesStable(held, [theme('a', 9)], 'people').map((t) => t.id), ['a']);
   assert.deepEqual(orderThemesStable({ key: 'activity', ids: ['b', 'a'] },
     [theme('a', 9), theme('b', 3)], 'people').map((t) => t.id), ['a', 'b']);
+});
+
+test('#3620: a project tab press leaves a step, and Back restores the tab it left', () => {
+  // A project's tabs are places now. A tab press (or a door pressed on the
+  // open page) pushes a record at the SAME address naming the tab, so the
+  // device Back button returns to the tab it came from instead of leaving
+  // the project. Asserted as source text because these tests render
+  // statically and never run effects or history.
+  assert.match(WORKSHOP,
+    /import \{ isProjectPageUrl, projectPageSlug, pushTabEntry, readTabEntry, tagTabEntry, tabWindow \} from '\.\/tab-history';/);
+  // Read on the first frame, before the remembered choice: a remount on a
+  // Back or Forward record paints the tab that record names.
+  assert.match(WORKSHOP,
+    /const \[tab, setTab\] = useState<TabKey>\(\(\) => readTabEntry\(tabWindow\(\)\) \|\| freshTab\(\) \|\| v\.tab \|\| 'status'\);/);
+  // A real change pushes only when the tab changed and this project's page
+  // is the one on screen. Pressing the lit tab adds no step.
+  assert.match(WORKSHOP,
+    /if \(next !== tabRef\.current && isProjectPageUrl\(tabWindow\(\), v\.slug\)\) \{\s*pushTabEntry\(tabWindow\(\), next\);\s*\}/);
+  // The door a tab move is made through does the same, and still lets AppView
+  // remember the choice and the page scroll itself to its head.
+  const doorSrc = WORKSHOP.slice(WORKSHOP.indexOf('const onDoor = (event: Event) => {'));
+  const doorBody = doorSrc.slice(0, doorSrc.indexOf('\n    };'));
+  assert.match(doorBody, /setTab\(door\.tab\);/);
+  assert.match(doorBody,
+    /if \(door\.tab !== tabRef\.current && isProjectPageUrl\(tabWindow\(\), v\.slug\)\) \{\s*pushTabEntry\(tabWindow\(\), door\.tab\);\s*\}/);
+  assert.match(doorBody, /scrollToHead\(hostRef\.current\);/);
+  // Back and Forward restore the landed record's tab, and never push — so
+  // Back from the first tab still leaves the project.
+  const popSrc = WORKSHOP.slice(WORKSHOP.indexOf('const onPop = () => {'));
+  const popBody = popSrc.slice(0, popSrc.indexOf('\n    };'));
+  assert.match(popBody, /const arriving = projectPageSlug\(win\);/,
+    'the arriving address, before this page has read the new project');
+  assert.match(popBody, /const next = readTabEntry\(win\);/);
+  assert.match(popBody, /if \(!next \|\| next === tabRef\.current\) return;/);
+  assert.match(popBody, /setTab\(next\);/);
+  assert.match(popBody, /callAppView\('_saveFeedScroll', arriving, 0\);/);
+  assert.match(popBody, /scrollToHead\(hostRef\.current\);/);
+  assert.doesNotMatch(popBody, /pushTabEntry/, 'a traversal is not a step of its own');
+  assert.match(WORKSHOP, /window\.addEventListener\('popstate', onPop\);/);
+  assert.match(WORKSHOP, /window\.removeEventListener\('popstate', onPop\);/);
+  // Arriving somewhere tags the entry it arrived on, with the tab in hand,
+  // and does not add a step; it runs on every render so a return from
+  // another screen (where neither the slug nor the tab changed) is tagged too.
+  assert.match(WORKSHOP,
+    /useLayoutEffect\(\(\) => \{\s*const win = tabWindow\(\);\s*if \(!isProjectPageUrl\(win, v\.slug\) \|\| readTabEntry\(win\) === tab\) return;\s*tagTabEntry\(win, tab\);\s*\}\);/,
+    'replace the current entry, never push, and skip a write that would change nothing');
+  // The door and popstate listeners compare against the last COMMITTED tab:
+  // their effects hold a closure, so the render's `tab` there is stale.
+  assert.match(WORKSHOP, /const tabRef = useRef<TabKey>\(tab\);/);
+  assert.match(WORKSHOP, /useLayoutEffect\(\(\) => \{ tabRef\.current = tab; \}, \[tab\]\);/);
 });

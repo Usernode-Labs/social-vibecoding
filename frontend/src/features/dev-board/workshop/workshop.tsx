@@ -85,6 +85,7 @@ import { WorkshopNotices } from './notices';
 import { ChannelCard, NeedsCard, NothingToVote, owesVote, YourWorkCard } from './hub-cards';
 import { ProjectDiscussion } from './project-discussion';
 import { ProjectBand, type ProjectTabKey } from './project-band';
+import { isProjectPageUrl, projectPageSlug, pushTabEntry, readTabEntry, tagTabEntry, tabWindow } from './tab-history';
 import { SinceSummaryCard } from './since-summary-card';
 import { PageBack } from './page-back';
 import { readAskStream } from './ask-stream';
@@ -3416,7 +3417,16 @@ export function DevWorkshop(): ReactNode {
   // has since left. The first render is the loading skeleton either way, so
   // the prerendered page is unchanged; the publish is the fallback where
   // AppView is not there to ask.
-  const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
+  //
+  // A HISTORY ENTRY NAMES ITS TAB NOW, and it is read first: Back and Forward
+  // land on records that each say which tab they showed, and a remount on one
+  // paints that tab on its first frame (./tab-history.ts).
+  const [tab, setTab] = useState<TabKey>(() => readTabEntry(tabWindow()) || freshTab() || v.tab || 'status');
+  // The tab as of the last committed render, for the door and popstate
+  // listeners: their effects hold a closure from when they were installed, so
+  // `tab` there is a stale render's value.
+  const tabRef = useRef<TabKey>(tab);
+  useLayoutEffect(() => { tabRef.current = tab; }, [tab]);
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
   // from a door lower down should start at its own head — in the element
@@ -3430,6 +3440,13 @@ export function DevWorkshop(): ReactNode {
   const openTab = (next: TabKey) => {
     setTab(next);
     callAppView('_setWorkshopTab', next);
+    // A REAL TAB CHANGE IS A STEP BACK CAN UNDO: a record at the same
+    // address naming the tab, so Back returns to the one it was pressed from.
+    // Pressing the lit tab, a page that is not this project's (a door
+    // delivered while another screen is up), or no history at all, adds none.
+    if (next !== tabRef.current && isProjectPageUrl(tabWindow(), v.slug)) {
+      pushTabEntry(tabWindow(), next);
+    }
     callAppView('_saveFeedScroll', v.slug, 0);
     scrollToHead(hostRef.current);
   };
@@ -3460,6 +3477,13 @@ export function DevWorkshop(): ReactNode {
       const door = (event as CustomEvent<{ slug: string | null; tab: TabKey } | null>).detail;
       if (!door || (door.slug && door.slug !== v.slug)) return;
       setTab(door.tab);
+      // A door pressed on this page is a step, exactly as a tab press is;
+      // one that goes on to route pushes its own entry when the address moves.
+      // `tabRef` still holds the tab that was on screen: `setTab` above only
+      // schedules the next render.
+      if (door.tab !== tabRef.current && isProjectPageUrl(tabWindow(), v.slug)) {
+        pushTabEntry(tabWindow(), door.tab);
+      }
       // #3583: the scroller that is really there (see scrollToHead). AppView
       // has forgotten the offset already (_landOnTab), and a door that goes
       // on to route reads this page at its top when it saves it.
@@ -3467,6 +3491,28 @@ export function DevWorkshop(): ReactNode {
     };
     window.addEventListener('usernode:workshop-tab', onDoor);
     return () => window.removeEventListener('usernode:workshop-tab', onDoor);
+  }, [v.slug]);
+  // BACK AND FORWARD WALK THE TABS. A traversal that lands on a record naming
+  // a tab restores it; one that names none (a real screen navigation) falls
+  // through to the shell's router untouched. It never pushes, so Back from
+  // the first tab still leaves the project.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onPop = () => {
+      const win = tabWindow();
+      // The arriving address, not `v.slug`: a traversal between two projects
+      // lands on the record before this page has read the new project.
+      const arriving = projectPageSlug(win);
+      if (!arriving) return;
+      const next = readTabEntry(win);
+      if (!next || next === tabRef.current) return;
+      setTab(next);
+      callAppView('_setWorkshopTab', next);
+      callAppView('_saveFeedScroll', arriving, 0);
+      scrollToHead(hostRef.current);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
   }, [v.slug]);
   // ANOTHER PROJECT IN THE SAME PAGE (#3555). Going straight from one
   // project's page to another's keeps the host (#app-view keeps
@@ -3485,6 +3531,19 @@ export function DevWorkshop(): ReactNode {
     tabSlug.current = v.slug;
     if (was && was !== v.slug) setTab(freshTab() || 'status');
   }, [v.slug]);
+  // THE PAGE ON SCREEN NAMES ITS TAB ON THE ENTRY IT ARRIVED ON — a door, a
+  // deep link, a reload, a switch from another project, and a return from
+  // another screen, which changes neither `v.slug` nor `tab`. Replace, never
+  // push: arriving somewhere is not a step. Declared after the `v.slug`
+  // effect above, so a switch between projects has already chosen the fresh
+  // tab; it runs again once that choice has rendered, so the new project's
+  // entry ends up naming the tab it actually shows. The stray write is
+  // skipped when the entry already says so.
+  useLayoutEffect(() => {
+    const win = tabWindow();
+    if (!isProjectPageUrl(win, v.slug) || readTabEntry(win) === tab) return;
+    tagTabEntry(win, tab);
+  });
   // Which pane is under the tabs. Lives in a module-global store rather than
   // here, because app-view.js has to read it: `_rerenderWorkshop()` publishes
   // the kanban view model only when the stage pane is up. See
