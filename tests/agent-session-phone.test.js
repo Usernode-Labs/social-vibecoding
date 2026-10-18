@@ -1,7 +1,7 @@
 'use strict';
 
-// Agent sessions on a phone (#3016), and what the green dot on the Homeroom
-// mark means (#3015).
+// Agent sessions on a phone (#3016, #3577), and what the green dot on the
+// Homeroom mark means (#3015).
 //
 // #3016: at 390px the session bar's five controls (focus, change, Build,
 // Changes, ⋯) came to 537px, and a bar that could not wrap made the whole
@@ -31,8 +31,10 @@ const panel = read('frontend/src/features/agent-session/index.tsx');
 
 test('#3016: the session bar wraps on every surface, and the panel cannot outgrow the screen', () => {
   const bar = panel.slice(panel.indexOf('function SessionBar('), panel.indexOf('function SessionMenu('));
-  assert.match(bar, /<div className="flex flex-wrap items-center gap-x-2 gap-y-2 [^"]*" data-agent-session-bar>/,
-    'wrapping is not the embedded variant\'s alone any more');
+  // #3577 tightened the gap under `sm` (gap-x-1.5) to fit the four pills on
+  // one phone line; the wrap itself stays, on every surface.
+  assert.match(bar, /<div className="flex flex-wrap items-center gap-x-1\.5 gap-y-2 sm:gap-x-2 [^"]*" data-agent-session-bar>/,
+    'wrapping is not the embedded variant\'s alone any more, and the phone gap is the tighter one');
   assert.doesNotMatch(bar, /embedded \? 'flex-wrap' : ''/);
   assert.match(bar, /data-agent-session-change-pill\s+className=\{`inline-flex shrink-0 items-center whitespace-nowrap /,
     'the change pill stays one line');
@@ -53,6 +55,23 @@ test('#3016: an empty message box is sized to its hint, measured without an inpu
   assert.match(composer, /useEffect\(\(\) => \{ fitField\(\); \}, \[value, placeholder, fitField\]\);/,
     're-measured when the hint changes (working, archived), and on a width change (tests/agent-session-attachments.test.js)');
   assert.match(panel, /placeholder=\{placeholder\}/);
+});
+
+// #3577: "Fit agent chat top pills to one line". On a phone the four controls
+// (focus pill, change pill, Changes, ⋯) came to more than the ~343px a 375px
+// screen offers inside its padding, so the row broke after the change pill
+// and Changes with the ⋯ fell to a second row. Under `sm` the gap and the
+// pills' padding tighten, the focus pill's name cap moves in, and the change
+// pill's " · PR #N" hides — the staging card in the same conversation and the
+// Changes list both name the number. From `sm` up nothing changes.
+test('#3577: the four top pills fit one line on a phone', () => {
+  const bar = panel.slice(panel.indexOf('function SessionBar('), panel.indexOf('function SessionMenu('));
+  assert.match(bar, /data-agent-session-focus\s+className="inline-flex min-w-0 max-w-\[7rem\] sm:max-w-\[10rem\][^"]*px-2 sm:px-2\.5/,
+    'the app name shortens sooner under `sm`, and the pill is a touch tighter');
+  assert.match(bar, /data-agent-session-change-pill\s+className=\{`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 sm:px-2\.5 py-1/);
+  assert.match(bar, /<span className="hidden sm:inline"> · PR #\{active\.prNumber\}<\/span>/,
+    'the PR number stays off the phone pill; the status word alone is shown there');
+  assert.match(bar, /data-agent-session-changes-button\s+className="ml-auto [^"]*px-2\.5 sm:px-3/);
 });
 
 test('#3015: the mark says what its green dot means on hover, and keeps its name', () => {

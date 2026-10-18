@@ -292,14 +292,17 @@ function SessionBar({ session, about, embedded, action }: {
   const active = session?.activeChange || null;
   const count = session?.changes?.length || 0;
   const target = openAppTarget(active, about);
-  // It wraps on both surfaces (#3016). On a phone its five controls are wider
-  // than the screen, and a bar that cannot wrap made the whole conversation
-  // that wide: the right edge of every message and the Send button were off
-  // screen. Changes and the ⋯ sit at the end of whichever row they land on;
-  // from `sm` up everything fits on one, as before. (The Build picker that
-  // started the second row is the composer's "Build with" now, #3078.)
+  // It fits one line on a phone now (#3577): a tighter gap and paddings under
+  // `sm`, the focus pill's name cap moved in, and the change pill's
+  // " · PR #N" hidden under `sm` — the staging card in the conversation and
+  // the Changes list both name the number. It still wraps when it must
+  // (#3016): a bar that could not wrap once made the whole conversation that
+  // wide on a phone, the right edge of every message and the Send button off
+  // screen, and on the narrowest phones, or a state that still does not fit,
+  // the row wraps rather than clipping. (The Build picker that started the
+  // second row is the composer's "Build with" now, #3078.)
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
+    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-2 sm:gap-x-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
       {embedded ? (
         <div className="mr-auto min-w-0 basis-full sm:basis-auto">
           <h2 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-100">{session?.title || 'New session'}</h2>
@@ -310,7 +313,7 @@ function SessionBar({ session, about, embedded, action }: {
       ) : null}
       <span
         data-agent-session-focus
-        className="inline-flex min-w-0 max-w-[10rem] items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-800 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200"
+        className="inline-flex min-w-0 max-w-[7rem] sm:max-w-[10rem] items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-2 sm:px-2.5 py-1 text-xs font-semibold text-violet-800 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200"
         title="The app this conversation is about when a request does not name one. The Mayor moves it when you ask."
       >
         {about?.focusApp ? (
@@ -325,9 +328,10 @@ function SessionBar({ session, about, embedded, action }: {
       </span>
       <span
         data-agent-session-change-pill
-        className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(active?.status)}`}
+        className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 sm:px-2.5 py-1 text-xs font-semibold ${statusTone(active?.status)}`}
       >
-        {active ? `${changeStatusLabel(active.status, building)}${active.prNumber ? ` · PR #${active.prNumber}` : ''}` : 'No change yet'}
+        {active ? changeStatusLabel(active.status, building) : 'No change yet'}
+        {active?.prNumber ? <span className="hidden sm:inline"> · PR #{active.prNumber}</span> : null}
       </span>
       {/* Siblings of the pills, not a group of their own: a declared check
           reads the bar as focus ~ change pill ~ Changes. Where the work is
@@ -335,7 +339,7 @@ function SessionBar({ session, about, embedded, action }: {
       <button
         type="button"
         data-agent-session-changes-button
-        className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+        className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-2.5 sm:px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
         onClick={() => setDrawerOpen(true)}
         disabled={!session}
         aria-haspopup="dialog"
