@@ -93,7 +93,7 @@ test('GLM\'s coding turns go to its fast hosts, fastest first, and never to no h
   const codex = require('../worker/codex-openrouter-request');
   assert.deepEqual(mod.PROVIDER_ROUTING_BY_MODEL, {
     [GLM]: { only: ['relace', 'fireworks', 'parasail', 'together', 'baseten'], sort: 'throughput' },
-    [DEEPSEEK_1017]: { only: ['deepseek'], sort: 'throughput' },
+    [DEEPSEEK_1017]: { only: ['parasail', 'inference-net'], sort: 'throughput' },
   });
   assert.deepEqual(codex.PROVIDER_ROUTING_BY_MODEL, mod.PROVIDER_ROUTING_BY_MODEL, 'the Codex listener routes the same');
   assert.equal(Object.isFrozen(mod.PROVIDER_ROUTING_BY_MODEL[GLM].only), true);
@@ -126,12 +126,13 @@ test('GLM\'s coding turns go to its fast hosts, fastest first, and never to no h
   assert.deepEqual([...mod.SHORTLIST_FALLBACK_STATUSES].sort(), [404, 429, 502, 503]);
 });
 
-test('DeepSeek V4.1 Flash 1017\'s coding turns go to DeepSeek\'s own host, and 0910\'s are routed as before', () => {
-  // The one host whose weights are certainly 1017 and whose cache reads
-  // ($0.003/M) hold while a turn stays on it; a refusal still reaches every
-  // host through the same safety net as GLM's.
+test('DeepSeek V4.1 Flash 1017\'s coding turns go to Parasail and InferenceNet, and 0910\'s are routed as before', () => {
+  // DeepSeek's own host is one the platform's account refuses (it may train
+  // on prompts), so a pin to it sent every request to every host (run 206).
+  // These two kept 1017's thinking across a tool call; a refusal still
+  // reaches every host through the same safety net as GLM's.
   const codex = require('../worker/codex-openrouter-request');
-  const routed = { ...PROVIDER_PREFERENCES, only: ['deepseek'], sort: 'throughput', allow_fallbacks: true };
+  const routed = { ...PROVIDER_PREFERENCES, only: ['parasail', 'inference-net'], sort: 'throughput', allow_fallbacks: true };
   assert.deepEqual(applyTurnPolicy({ max_tokens: 10, messages: [] }, { model: DEEPSEEK_1017, maxOutputTokens: 64_000 }).provider, routed);
   assert.deepEqual(codex.providerRoutingFor(DEEPSEEK_1017), routed, 'and the Codex listener the same');
   assert.deepEqual(require('../worker/claude-openrouter-request').withoutShortlist(routed, {}), PROVIDER_PREFERENCES);

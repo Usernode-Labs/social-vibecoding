@@ -90,25 +90,46 @@ score in Claude Code. Core bench run 205, launched the same day, is the
 "before": 1017 and the 0910 snapshot both in Codex, routed by OpenRouter's
 defaults. Its other settings follow DeepSeek's own documentation:
 
-- **Host:** DeepSeek's own OpenRouter host alone (`PROVIDER_ROUTING_BY_MODEL`
-  in both worker listeners), with the shortlist's usual fallback to every
-  host. Of 1017's five hosts it is the one whose weights are certainly 1017,
-  whose thinking levels mean what DeepSeek documents, and whose $0.003/M
-  cache reads hold only while a turn's requests stay on one host. Its price
-  doubles on weekdays from about 01:00 to 04:00 and 06:00 to 10:00 UTC
-  (OpenRouter's override table).
+- **Host:** Parasail, then InferenceNet, fastest first
+  (`PROVIDER_ROUTING_BY_MODEL` in both worker listeners), with the
+  shortlist's usual fallback to every host. It first named DeepSeek's own
+  host alone, but the platform's OpenRouter account excludes endpoints that
+  may train on prompts, and DeepSeek's is one: every request was refused
+  (404, "Paid model training violation") and sent again to every host, so
+  bench run 206's 1017 builds ran on InferenceNet and Parasail with a round
+  trip lost per call. Allowing it would open every such endpoint, for every
+  model and all of the platform's traffic. Of the hosts left, both kept
+  1017's thinking across a tool call and gave the same three effort levels
+  (17 Oct probes, below), and Parasail ran 130 to 150 tokens/s and 3.1 s a
+  call in a build. InferenceNet's window is 262k tokens, so a longer prompt
+  goes to Parasail alone (measured). Left out: Cloudflare (rate-limited in
+  bursts, and recalled its thinking 2 times of 3), DeepInfra (its base slug
+  includes the slow flex tier, 40 to 80 tokens/s) and Baseten (untested).
+  Parasail costs $0.30/$1.20 per million tokens in and out, InferenceNet
+  $0.08/$0.50, against GLM's usual hosts at $0.15/$0.50. A turn's ledger row
+  keeps every host its requests used and how many left the shortlist
+  (`routed_providers`, `shortlist_fallbacks`), and the bench's build and
+  plan speed show both, so a shortlist that never holds is visible at once.
 - **Compaction in Claude Code:** at 786,432 tokens, DeepSeek's own
   `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (`worker/claude-openrouter-request.js`
   `autoCompactLimit`), for every `deepseek/` model. A first version's
   `roomy_context` tweak never lowers it. Codex keeps its 200k limit.
 - **Thinking level:** unchanged. The platform default `xhigh` is what
-  DeepSeek's API runs as `high`, the level its Codex guide sets.
+  DeepSeek's API runs as `high`, the level its Codex guide sets, and on
+  OpenRouter it is the same: over 15 calls a level across four hosts, the
+  same prompt took 3.0k output tokens at `low`, 3.9k at `high`, 3.8k at
+  `xhigh` and 4.6k at `max`. DeepSeek's Claude Code guide sets `max`.
 - **Sampling:** nothing to send. DeepSeek ignores temperature in thinking
   mode and clamps top_p to 0.95 to 1.0.
 - **Reasoning across tool calls:** with tools, DeepSeek's API refuses (400) a
-  request that does not send back the earlier reasoning. The listeners pass
-  through whatever the CLI sends; a 400 on DeepSeek's host is the first thing
-  to look for in a 1017 turn's ledger.
+  request that does not send back the earlier reasoning; Parasail and
+  InferenceNet accept it, and the model then has silently lost its own
+  reasoning. Claude Code sends the thinking back, unsigned, with its text,
+  and the listeners pass it through: asked for a number it had chosen only in
+  its thinking, before a tool call, 1017 recalled it 4 times of 4 with the
+  thinking sent back and 0 of 6 without, and 2 of 2 through Claude Code
+  itself (17 Oct). Claude Code asks for at most 32,000 output tokens a
+  request.
 
 Users do not choose it. The model picker marks the Claude Code models, and the
 OpenRouter settings description says what that mark means. The transcript

@@ -7218,6 +7218,7 @@ function registerTools(server, ctx) {
       'wallMs', 'modelCalls', 'inputTokens', 'outputTokens', 'inputTokensPerCall', 'firstFileChangeMs', 'firstAppBootMs',
       'browserShare', 'modelRequestMs', 'browserToolMs', 'shellToolMs', 'editToolMs', 'readToolMs', 'otherToolMs',
       'fileChanges', 'distinctFileChanges', 'compactions', 'toolOutputPruned', 'toolOutputPrunedChars', 'toolBytes',
+      'shortlistFallbacks',
     ];
     const BUILD_SPEED_NUMBERS = ['turns', 'attempts', ...ARM_BUILD_NUMBERS, 'cachedInputTokens', 'browserSpanMs'];
     const REVIEW_OUTCOME_NUMBERS = ['round1Blockers', 'round1Majors', 'rounds', 'reviewMs', 'doneMs'];
@@ -7228,7 +7229,10 @@ function registerTools(server, ctx) {
     const buildSpeedOut = (s) => (s && typeof s === 'object' ? {
       startedAt: typeof s.startedAt === 'string' ? s.startedAt.slice(0, 40) : null,
       ...numbersOut(s, BUILD_SPEED_NUMBERS),
-      routedProvider: nameOut(s.routedProvider, PROVIDER_OUT_RE), routedModel: nameOut(s.routedModel, MODEL_ID_OUT_RE),
+      routedProvider: nameOut(s.routedProvider, PROVIDER_OUT_RE),
+      routedProviders: Array.isArray(s.routedProviders)
+        ? s.routedProviders.map((v) => nameOut(v, PROVIDER_OUT_RE)).filter(Boolean).slice(0, 8) : null,
+      routedModel: nameOut(s.routedModel, MODEL_ID_OUT_RE),
       requestedModel: nameOut(s.requestedModel, MODEL_ID_OUT_RE), harness: nameOut(s.harness, WORD_OUT_RE),
     } : null);
     const reviewOutcomeOut = (r) => (r && typeof r === 'object' ? {
