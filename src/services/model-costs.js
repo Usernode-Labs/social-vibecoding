@@ -44,7 +44,7 @@ const OVERRIDES_KEY = 'model_cost_estimate_overrides';
 // point.
 //
 // At the prices in this file that profile puts a change at about $0.30 on
-// GLM 5.3 Flash, $0.21 on DeepSeek v4.1 Flash, $6.20 on Sonnet 5, $12.40 on
+// GLM 5.3 Flash, $0.21 on DeepSeek v4.1 Flash, $6.20 on Sonnet 5.5, $12.40 on
 // Opus 5.5 and $31.00 on Fable 5.1.
 const TYPICAL_CHANGE = Object.freeze({
   inputTokens: 2_500_000,
@@ -75,7 +75,7 @@ const OPENROUTER_NOTES = Object.freeze({
 // Anthropic's come from services/models.js and services/llm.js, which agree:
 // Sonnet $2/$10, Opus 5.5 $4/$20, Fable $10/$50 per MTok in/out.
 const ANTHROPIC_PRICING = Object.freeze({
-  'claude-sonnet-5': { inputPricePerMillion: 2, outputPricePerMillion: 10 },
+  'claude-sonnet-5-5': { inputPricePerMillion: 2, outputPricePerMillion: 10 },
   'claude-opus-5-5': { inputPricePerMillion: 4, outputPricePerMillion: 20 },
   'claude-fable-5-1': { inputPricePerMillion: 10, outputPricePerMillion: 50 },
 });
@@ -85,6 +85,7 @@ const ANTHROPIC_PRICING = Object.freeze({
 // it was estimated at. Not curated: nothing here is offered or noted.
 const RETIRED_PRICING = Object.freeze({
   'claude-opus-5': { inputPricePerMillion: 5, outputPricePerMillion: 25 },
+  'claude-sonnet-5': { inputPricePerMillion: 2, outputPricePerMillion: 10 },
 });
 
 const OPENROUTER_PRICING = Object.freeze({

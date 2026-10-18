@@ -97,7 +97,7 @@ test('#3078: the Homeroom tab says who builds it and lists the models once, unde
   const body = renderToHtml(createElement(parts.ModelSheetBody, {
     options: parts.modelList([
       { value: 'openrouter:z-ai/glm-5', label: 'GLM 5', detail: 'about $0.42 for a typical change' },
-      { value: 'anthropic:claude-sonnet-5', label: 'Sonnet 5' },
+      { value: 'anthropic:claude-sonnet-5-5', label: 'Sonnet 5.5' },
     ]),
     value: 'openrouter:z-ai/glm-5', onPick() {}, credit: null,
     effort: { value: '', options: [{ value: '', label: 'High', isDefault: true }], onPick() {} },
@@ -105,7 +105,7 @@ test('#3078: the Homeroom tab says who builds it and lists the models once, unde
   assert.match(body, /^<div[^>]*><p[^>]*>The Mayor builds it here, on your Homeroom credits\.<\/p>/);
   assert.equal((body.match(/>Model<\/p>/g) || []).length, 1, 'one list');
   assert.doesNotMatch(body, />Claude Code<|>Codex</, 'no agent headings: those are the other tabs');
-  assert.ok(body.indexOf('Sonnet 5') < body.indexOf('GLM 5'), 'Claude first, as before');
+  assert.ok(body.indexOf('Sonnet 5.5') < body.indexOf('GLM 5'), 'Claude first, as before');
   assert.match(body, /about \$0\.42 for a typical change/, 'each model\'s cost line');
   assert.match(body, /data-agent-session-effort[^>]*>[\s\S]*?Thinking level[\s\S]*?High</, 'the thinking level row, as before');
 });

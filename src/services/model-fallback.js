@@ -19,7 +19,17 @@ const events = require('./events');
 // to the raw id so an unknown slug still reads as something identifiable.
 function label(modelId) {
   const entry = modelId && models.MODELS[modelId];
-  return (entry && entry.label) || modelId || 'the selected model';
+  if (entry) return entry.label;
+  // A recorded id from a model the picker has retired keeps the name it
+  // ran under ("Sonnet 5"), rather than reading as a raw slug in history.
+  if (modelId && models.RETIRED_MODELS[modelId]) {
+    const retired = /^claude-([a-z]+)-(\d+)(?:-(\d+))?$/.exec(String(modelId));
+    if (retired) {
+      const name = retired[1].charAt(0).toUpperCase() + retired[1].slice(1);
+      return `${name} ${retired[2]}${retired[3] ? `.${retired[3]}` : ''}`;
+    }
+  }
+  return modelId || 'the selected model';
 }
 
 // In-chat notice for a turn that was served by the fallback model.
