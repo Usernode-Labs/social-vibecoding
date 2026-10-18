@@ -53,7 +53,6 @@ import { countedVotePredicateSql } from './rules/vote-predicate.ts';
 import { VOTE_REASON_MAX, VOTE_REASON_REQUIRED } from './rules/vote-reason.ts';
 import { BUS_CHANNEL, workflowBody } from './pushes.ts';
 import { TURN_OWNER_SQL } from './session-work.ts';
-import { turnStopServices } from './turn-stop.ts';
 
 const pg = createRequire(import.meta.url)('pg');
 
@@ -168,7 +167,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
     ...appDeliveryServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
     ...campaignServices(deps), ...botChangeServices(deps), ...botVoiceServices(deps), ...botDmServices(deps),
-    ...mainCheckServices(deps), ...turnStopServices(deps), ...botRequestServices(deps), ...botLaneServices(deps),
+    ...mainCheckServices(deps), ...botRequestServices(deps), ...botLaneServices(deps),
   };
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!,
@@ -315,12 +314,13 @@ export async function adoptBotQueue(): Promise<number> {
     `SELECT q.* FROM homeroom_bot_queue q
       WHERE NOT EXISTS (SELECT 1 FROM wf_instances w WHERE w.machine = $1 AND w.key = 'request:' || q.app_id || ':' || q.issue_number)
       ORDER BY q.id LIMIT 500`, [BOT_REQUEST]);
+  const iso = (v: unknown) => (v ? new Date(v as string).toISOString() : null);
   for (const q of rows) {
     await runtime.append(BOT_REQUEST, botRequestKey(q.app_id, q.issue_number), {
       type: 'Adopted', payload: {
         appId: q.app_id, issueNumber: q.issue_number, reason: q.reason, priority: q.priority, payer: q.payer_user_id,
-        requestedBy: q.requested_by, changedBy: q.changed_by, threadSeenAt: q.thread_seen_at, enqueuedAt: q.enqueued_at,
-        heldUntil: q.held_until, startedAt: q.started_at,
+        requestedBy: q.requested_by, changedBy: q.changed_by, threadSeenAt: iso(q.thread_seen_at), enqueuedAt: iso(q.enqueued_at),
+        heldUntil: iso(q.held_until), startedAt: iso(q.started_at),
       } as any,
     }, { requestKey: `adopt:${q.id}:${q.enqueued_at ? new Date(q.enqueued_at).getTime() : 0}`, source: BOT_SOURCE('adopt'), appId: q.app_id })
       .catch((err: Error) => log!.warn('workflow', 'Could not adopt a queue row of the bot', { id: q.id, message: err.message }));

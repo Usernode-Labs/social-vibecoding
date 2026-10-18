@@ -268,6 +268,7 @@ export const BUILD_CANDIDATES_SQL = `
        ORDER BY id LIMIT 1
     ) i ON TRUE
    WHERE w.machine = '${BOT_REQUEST}' AND w.state = 'building' AND w.data->'build'->>'phase' = 'waiting'
+     AND (w.data->'build'->>'heldUntil' IS NULL OR (w.data->'build'->>'heldUntil')::timestamptz <= NOW())
      AND NOT (a.slug = ANY($1::text[]))
      AND NOT ${GRANT_PENDING('w.key')}
      AND NOT EXISTS (

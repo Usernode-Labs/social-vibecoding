@@ -68,7 +68,8 @@ export interface Look {
   // again, once (a read started over is never started over again).
   interrupted: boolean;
 }
-export interface Build { runId: number; phase: 'waiting' | 'starting' | 'running'; since: string; key: string | null }
+// `heldUntil`: its payer's week is spent; it waits for its slot from then.
+export interface Build { runId: number; phase: 'waiting' | 'starting' | 'running'; since: string; key: string | null; heldUntil?: string | null }
 export interface Slot { grant: number; kind: string; person: string; appId: number }
 export interface Data {
   appId: number;
@@ -440,6 +441,11 @@ function buildStarted(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext)
   if (r.outcome === 'requested' && typeof r.key === 'string') {
     return step('building', { ...d, build: { ...d.build, phase: 'running', key: r.key } });
   }
+  if (r.outcome === 'held') {
+    const until = optTime(r.until) || later(ctx, 7 * 24 * 3600 * 1000).toISOString();
+    return step('building', { ...d, slot: null, build: { ...d.build, phase: 'waiting', heldUntil: until } },
+      { timer: { at: new Date(until), event: { type: 'Due' } }, messages: [toLane('Released', {}, d.appId)] });
+  }
   if (r.outcome === 'fault' || r.outcome === 'budget' || r.outcome === 'not_started') {
     return step('building', { ...d, slot: null, build: { ...d.build, phase: 'waiting' } },
       { messages: [toLane('Released', r.outcome === 'budget' ? { budget: true } : r.outcome === 'fault' ? { fault: true } : {}, d.appId)] });
@@ -537,6 +543,8 @@ function adopted(s: RState, e: Event<any>, _f: Facts, ctx: TransitionContext): O
 function due(s: Live, _e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<RState> {
   const d = s.data;
   if (s.name === 'queued') return queue(d, ctx);
+  // A build's hold ended: the lane looks again.
+  if (s.name === 'building') return step('building', d, { timer: null, messages: [look(d)] });
   if (s.name !== 'older_turn' || !d.older) return step(s.name, d, { timer: null });
   if (f.olderBusy) return step('older_turn', d, { timer: { at: later(ctx, OLDER_LOOK_MS), event: { type: 'Due' } } });
   // Over: the request is read again (quietly: a restart's reason says no

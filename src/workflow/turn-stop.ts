@@ -17,18 +17,12 @@
 // and a stamp landing between the record and the exec is read by
 // execInWorker right after it.
 
-import type { Json, Pool, WorkContext, WorkHandler } from './kernel/index.ts';
+import type { Json, Pool, WorkHandler } from './kernel/index.ts';
 import { legacy } from './legacy.ts';
 import { TURN_STOP } from './rules/turn-stop.ts';
 
-export { TURN_STOP, turnStop, isTurnStop } from './rules/turn-stop.ts';
+export { TURN_STOP, turnStop, isTurnStop, turnOwner } from './rules/turn-stop.ts';
 export type { TurnStopInput } from './rules/turn-stop.ts';
-
-// The owner a work handler hands its turn's dispatch (execInWorker's
-// `owner`): its instance and its own item, so the record names both.
-export function turnOwner(ctx: Pick<WorkContext, 'workId' | 'kind' | 'key'>, machine: string, key: string): Json {
-  return { machine, key, kind: ctx.kind, workKey: ctx.key, workId: ctx.workId };
-}
 
 export function turnStopServices({ pool }: { pool: Pool }): Record<string, WorkHandler> {
   return {

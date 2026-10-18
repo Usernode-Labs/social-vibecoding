@@ -9,7 +9,8 @@
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import { turnOwner } from '../turn-stop.ts';
+import { turnOwner } from '../rules/turn-stop.ts';
+import { turnStopServices } from '../turn-stop.ts';
 import { MACHINE, WORK, requestKey } from './machine.ts';
 
 interface Deps { config: any; pool: Pool }
@@ -17,6 +18,9 @@ interface Deps { config: any; pool: Pool }
 export function botRequestServices({ config, pool }: Deps): Record<string, WorkHandler> {
   const bot = () => legacy('services/homeroom-bot');
   return {
+    // The one turn.stop handler every machine that starts turns queues
+    // (src/workflow/turn-stop.ts), registered here once.
+    ...turnStopServices({ pool }),
     [WORK.look]: {
       resumable: true,
       maxAttempts: 2,

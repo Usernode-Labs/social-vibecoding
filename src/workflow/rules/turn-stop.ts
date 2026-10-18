@@ -26,6 +26,12 @@ export function turnStop(i: TurnStopInput, tag: string): WorkRequest {
   };
 }
 
+// The owner a work handler hands its turn's dispatch (execInWorker's
+// `owner`): its instance and its own item, so the record names both.
+export function turnOwner(ctx: { workId: string; kind: string; key: string }, machine: string, key: string): Json {
+  return { machine, key, kind: ctx.kind, workKey: ctx.key, workId: ctx.workId };
+}
+
 // True for a result of this work, which every machine that queues it
 // settles and otherwise ignores.
 export const isTurnStop = (kind: unknown): boolean => kind === TURN_STOP;

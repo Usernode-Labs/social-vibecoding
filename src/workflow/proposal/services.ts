@@ -7,7 +7,7 @@ import { legacy } from '../legacy.ts';
 import { parseGithubUrl } from '../rules/github-url.ts';
 import { permanent } from '../work-errors.ts';
 import { MACHINE, WORK, sessionKey } from './machine.ts';
-import { turnOwner } from '../turn-stop.ts';
+import { turnOwner } from '../rules/turn-stop.ts';
 
 interface Deps { config: any; pool: Pool }
 

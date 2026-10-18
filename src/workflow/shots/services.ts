@@ -7,7 +7,7 @@
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
 import { MACHINE, WORK, sessionKey } from './machine.ts';
-import { turnOwner } from '../turn-stop.ts';
+import { turnOwner } from '../rules/turn-stop.ts';
 
 interface Deps { config: any; pool: Pool }
 

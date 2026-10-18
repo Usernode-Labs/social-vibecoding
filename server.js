@@ -4881,6 +4881,11 @@ const adoptProposals = async () => {
   const platform = require('./src/workflow/platform.ts');
   await platform.adoptProposals()
     .catch((err) => log.warn('server', 'Adopting sessions for the proposal machine failed', { err: err.message }));
+  // And the bot's queue rows an older release wrote during a rollout (its
+  // insert is let through while no instance holds the row): adopted by
+  // bot-request on the same sweep.
+  await platform.adoptBotQueue()
+    .catch((err) => log.warn('server', 'Adopting the bot\'s queue rows failed', { err: err.message }));
 };
 
 function startSessionAutoPauseSweeper(config) {

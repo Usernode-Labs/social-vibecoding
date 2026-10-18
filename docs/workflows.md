@@ -517,12 +517,10 @@ anything else (a new call, another writer of an owned column, module state, a ti
   ran it through (the build without `_stagingBuilds`, the checks run without its seat, the
   close watcher without its polls), reading governance, a teardown or who works on a
   session from Postgres rather than from a cache, a registry or a hold of this process;
-- `handOff`: a call into a flow a later step migrates, naming the step. Two are left, both
-  for roadmap step 9 (agent turns' presence in Postgres): the sync with main's turn and
-  the shots agent's turn are dispatched through `worker.execInWorker`, whose "a turn is
-  in flight" and pending-stop gates read this process's worker registry. Two turns on one
-  session are refused across processes by the durable `active_turn` claim; a Stop pressed
-  on another process while such a turn starts is what is missed.
+- nothing is handed off: the last two hand-offs (the sync with main's turn and the shots
+  agent's turn) left with step 9, which put every turn workflow work starts on durable
+  presence ([Turns workflow work runs](#turns-workflow-work-runs)). The test refuses a
+  `handOff` section.
 
 An entry that is gone fails until it leaves the list (`node tests/lib/workflow-boundary.js
 --shrink`, which never adds anything; with no flag the script prints what is not
@@ -638,6 +636,88 @@ A new machine brings the same two layers:
 | `bot-voice` | `place:<appId>:<type>:<ref>`, for each place in a project people speak to the Homeroom bot in | `quiet` ⇄ `settling` → `answering` | On everywhere; its old paths are deleted |
 | `bot-dm` | `person:<userId>`, for each person's DM with the Homeroom bot | `idle` ⇄ `answering` ⇄ `trying_later` | On everywhere; its old paths are deleted |
 | `main-check` | `app:<id>`, for each app whose main was checked after a merge or a new commit | `idle` → `running` (→ `confirming`) → `idle`; `idle` ⇄ `rechecking` while paused | On everywhere; its old paths are deleted |
+| `bot-request` | `request:<appId>:<issue>`, for each request the Homeroom bot is owed a look at | `idle` → `queued` → `reading` / `following_up` → `idle`; `building`; `older_turn` | On everywhere; its old paths are deleted |
+| `bot-lane` | `bot`, one for the Homeroom bot | `open` | On everywhere; its old paths are deleted |
+
+### Turns workflow work runs
+
+A coding turn that a machine's work starts (the proposal's sync with main, the shots agent,
+the Homeroom bot's builds, reads and fixes, a bench trial) is its work item's:
+- **Its record names its owner.** `execInWorker` (and `agent-turn.startCodexAttempt`)
+  writes `active_turn.owner` (`{ machine, key, kind, workKey, workId }`) in the statement
+  that claims the record, so "a turn runs" and "whose it is" commit together. The item's
+  lease is the turn's presence: no process hold, registry entry or stop handle says whose
+  it is. Every sweep (orphans, the stale-turn watchdog) leaves a record whose owner's item
+  is outstanding alone (`session-work.ts workflowTurnHeldSql`), and the machines read a
+  sync or a bot look spinning a turn up from the work itself (`syncWorkingSql`,
+  `botLookingSql`).
+- **A Stop is an event to the owner.** A person's Stop of the session (`POST
+  /api/sessions/:id/stop`, the agent conversation's Stop) finds the instance whose turn it
+  is (`TURN_OWNER_SQL`: the record's owner, else the sync, shots run, build or bot look
+  spinning one up) and appends `StopRequested` there (`platform.stopWorkflowTurn`). The
+  machine records it as stopped by that person (never a failure or a conflict), ends its
+  work, and queues `turn.stop`.
+- **`turn.stop`** (`src/workflow/turn-stop.ts`, one handler for every machine): stamps the
+  record stopped, kills only that turn, by its journal (`worker.stopTurnByJournal`: a turn
+  started after it is never touched), and releases the record when its work was cancelled.
+  A Stop landing before the turn exists needs no kill: the cancelled item's next checkpoint
+  refuses the dispatch, and a stamp landing between the record and the exec is read by
+  `execInWorker` right after it. The proposal machine's merge and close stop a running
+  sync's turn the same way.
+- **Its clock ends only its own turn** (`durable-turn.clockStop`: by its record, recorded as
+  nobody's Stop), and `durable-turn` reports a Stop asked on the record as `stoppedBy`.
+
+### bot-request
+
+One request the Homeroom bot may look at (`src/workflow/bot-request/`), from the moment
+something owes it a look to the look's end and the build a ready look asks for. One
+instance per request (`request:<appId>:<issue>`); the queue (`homeroom_bot_queue`) is its
+projection, guarded so only its transitions write a row it holds.
+- **Owed.** The refresh (`bot.refresh` on the lane), a person's ask (`enqueueFront`'s
+  callers: the DM, the Mayor, the voice's asks, a filed or asked request, main-red-fix),
+  admin Run now and triage again append `Owed`; the queue's merge rules apply (a person's
+  ask first, a debt the bot owes itself kept while its request is quiet). While a look
+  runs, a person's ask, a voice ask or a fix waits for after it; the refresh's own finds
+  are read again by the next refresh. `NotOwed` from the refresh prunes what it no longer
+  wants.
+- **A look** starts when the lane grants a slot (`Granted`): `bot.look` (`homeroom-bot.js
+  lookAt`), a read on the project's triage session or a reply or fix on its change. Its
+  turns are durable steps naming the item, and every effect (the run, the spend, the
+  notes, the act, the asks' tag) is a keyed step, so a restart follows the turn and says
+  and spends nothing twice. Its result decides: done (or a build owed), failed (a try
+  spent), busy (its change's session is somebody else's: backed off 2 minutes doubling to
+  an hour), a fault or the budget (owed as it was; the lane pauses), held for its payer's
+  week, requeued (a budget stop), or interrupted.
+- **A person writing during a read** (`Activity`, appended in the statement that stores
+  the message, beside the voice's `Heard`) stops the read's turn (`turn.stop`) and reads
+  the request again from the start, once, carrying what it spent.
+- **A build** (`BuildOwed`: a ready verdict, Build it in the DM) waits for a build slot,
+  then `bot.build` (`startBuild`: the checks a build starts with) asks bot-build for it
+  with this instance as `replyTo`; bot-build's end (`BuildEnded`) frees the slot.
+- **A fix** bot-change asks for (`FixAsked`, from its `bot.queueFix` work) is owed at
+  priority 1 and answered: `FixRoundEnded` with how the round came out (looked, lost,
+  stopped), or `FixRefused` at once when the bot is off or not on the project.
+- **Its request merged** (`RequestMerged`, from bot-change's `bot.stopRequestWork`):
+  debts owed before the merge are dropped, a look begun before stops, its build is stopped.
+- **During a rollout** a queue row an older release wrote is adopted (at boot and on the
+  minute's adoption sweep): unclaimed it is owed; claimed it waits (`older_turn`, a minute's
+  clock) until that release's turn is over, then is read again.
+
+### bot-lane
+
+How much the Homeroom bot runs at once, and when it looks at GitHub
+(`src/workflow/bot-lane/`). One instance (`bot`), so the caps hold however many processes
+run the workflow: `liveAtOnce` looks and builds, `perPerson`, one read at a time on a
+project's triage session, three builds per project.
+- **Grants** under its lock, in the queue's order (a person's ask, follow-ups, priority,
+  age), as `Granted` messages; what is in use is read from the requests (their `slot`, and
+  grants not applied yet), never kept here.
+- **Pauses**: a fault (a look's platform failure) pauses every grant 2 minutes doubling to
+  an hour, ended by a look that ran; the bot's weekly cap a minute at a time.
+- **The refresh** (`bot.refresh`) every five minutes, and 20 seconds after a project is asked
+  for (a person wrote on an idle request, a merge, a settings change), with the five-minute
+  sweeps beside each full one (`bot.sweep`). Its one deadline is the earliest of those, a
+  pause's end and the next waiting request becoming eligible.
 
 ### governance-proposal
 
@@ -1107,7 +1187,8 @@ verdict (`Verdict`), the shots settling (`ShotsSettled`), the preview that will 
 (`PreviewStopped`), the merge (`Merged`, `Live`). Each sender tells it with a domain write
 in its own transition (`rules/bot-notes.ts writeBotChange`), which sends the message only
 for a session of the bot's: it commits with its cause and cannot be lost. The bot's loop
-says when its fix round on a head ended (`FixRoundEnded`, a hint). Its creating guard
+answers how its fix round on a head ended (bot-request's `FixRoundEnded`, `FixRefused`).
+Its creating guard
 requires a run of the bot's that proposed the session.
 
 - **One rule decides, from the row, with the transaction's clock**
@@ -1121,11 +1202,11 @@ requires a run of the bot's that proposed the session.
     20-minute window are gone).
   - **Back to the bot**: its checks fail, or its shots show part of it failing or could
     not reach part of it for want of seed data, and no round looked at that head
-    (`bot.queueFix`: the queue row and the loop's wake, a NOTIFY on the bus, in one
-    statement). Its clock looks every 10 minutes: the queue row still there is a round
-    waiting or under way; gone with nothing recorded, the round was lost and is asked once
-    more; lost again, a change whose checks pass is ready to try saying what does not work,
-    and one whose checks fail is left as it was (nobody is told). A bot that is off, not
+    (`bot.queueFix`: its request's instance hears `FixAsked`, bot-request). It waits for
+    that instance's answer: a round that looked at the head decides at once; one lost
+    (its look ended without it, failed for good, or was stopped) is asked once more; lost
+    again, a change whose checks pass is ready to try saying what does not work, and one
+    whose checks fail is left as it was (nobody is told). A bot that is off, not
     working on the app, or facing a failure that looks like the platform's (which it tells
     the requester itself) does not take it, and says why in the result; the next verdict
     or settle asks again. A fix result about a head the change has left settles nothing.
