@@ -1128,8 +1128,11 @@ function resolveTests(env, readStdin) {
       expectSelector: t.expectSelector ? String(t.expectSelector).slice(0, 256) : '',
       expectText: t.expectText ? String(t.expectText).slice(0, 256) : '',
       allowConsoleErrors: !!t.allowConsoleErrors,
-      // Only when set, so a list that uses none reads exactly as before.
+      // How groupTests loads the check's page. The platform sets these
+      // from the app's dapp.json rules (app-manifest.js checkLoadFlags);
+      // only when set, so a list that uses none reads exactly as before.
       ...(t.coldLoad === true ? { coldLoad: true } : {}),
+      ...(t.endsGroup === true ? { endsGroup: true } : {}),
     });
   }
   return out;
@@ -1384,10 +1387,60 @@ function groupTestsByDocument(tests, opts) {
     const cohorts = hoistBareCohort(
       Array.from(byHash.entries()).map(([hash, members]) => ({ hash, tests: members }))
     );
-    for (let i = 0; i < cohorts.length; i += cap) {
+    // A cohort at one of the app's routing boundaries ends its group (see
+    // groupTests): it is still reached by a switch, but last, so nothing is
+    // switched to after it. That is ordering only, and it must never change
+    // WHICH checks are loaded rather than switched to. A cohort that leads a
+    // group is never reached by a switch, so a new leader, boundary or not,
+    // would be judged without its incoming switch: the exemption a plain
+    // address must not get, and a truthful boundary must not hand to another
+    // screen's navigation bug (Codex, review of 8764).
+    //
+    // So the chunks are plain grouping's own, with the same leaders, and only
+    // what follows a leader moves:
+    //   * a boundary that leads its chunk keeps it, alone: the cohorts after
+    //     it join the other chunks (the smallest first), switched to there as
+    //     they were here. With no chunk led by an ordinary cohort to take
+    //     them, they stay;
+    //   * each chunk's first boundary that is not its leader goes to that
+    //     chunk's end, and a further one to the end of a chunk that has none
+    //     yet (past the cap if it must).
+    // A boundary that finds no such place stays where it is, an ordinary
+    // cohort: a check switched to after it may fall back, which costs time
+    // and never a verdict. Same number of groups, the same leaders, so every
+    // check plain grouping reaches by a switch is still reached by one. A bare
+    // cohort cannot be a boundary (a boundary is a fragment route).
+    const ends = (c) => !!c.hash && c.tests.some((t) => t && t.endsGroup);
+    const chunks = [];
+    for (let i = 0; i < cohorts.length; i += cap) chunks.push({ cohorts: cohorts.slice(i, i + cap), ended: false });
+    const takers = chunks.filter((ch) => !ends(ch.cohorts[0]));
+    for (const ch of chunks) {
+      if (!ends(ch.cohorts[0]) || ch.cohorts.length < 2 || !takers.length) continue;
+      for (const c of ch.cohorts.splice(1)) {
+        const host = takers.reduce((a, b) => (b.cohorts.length < a.cohorts.length ? b : a));
+        host.cohorts.push(c);
+      }
+    }
+    const spare = [];
+    for (const ch of chunks) {
+      const movable = ch.cohorts.slice(1).filter(ends);
+      if (!movable.length) continue;
+      ch.cohorts.splice(ch.cohorts.indexOf(movable[0]), 1);
+      ch.cohorts.push(movable[0]);
+      ch.ended = true;
+      for (const c of movable.slice(1)) spare.push({ c, from: ch });
+    }
+    for (const { c, from } of spare) {
+      const host = chunks.find((ch) => !ch.ended);
+      if (!host) break;
+      from.cohorts.splice(from.cohorts.indexOf(c), 1);
+      host.cohorts.push(c);
+      host.ended = true;
+    }
+    for (const ch of chunks) {
       // Flatten the chunk: a group stays a plain array of tests, which is what
       // the pool's budget/timeout/emit paths already iterate.
-      groups.push([].concat(...cohorts.slice(i, i + cap).map((c) => c.tests)));
+      groups.push([].concat(...ch.cohorts.map((c) => c.tests)));
     }
   }
   return groups;
@@ -1408,26 +1461,29 @@ function groupTestsByDocument(tests, opts) {
 // exactly as it did.
 //
 // A `coldLoad` check is exempt from DOCUMENT grouping, never from sharing a
-// load with the checks of its own URL. Its page cannot be shared by hash
-// switches, in either direction:
+// load with the checks of its own URL. Its address carries one of the app's
+// boot parameters (dapp.json `bootParams`): a one-time deep link scripted at
+// boot (Homeroom's `?shot=`, `?details=1`), which an address change on a
+// loaded page rightly does not replay. Reached by a hash switch it could only
+// fail and be re-run cold by runTestGroup's fallback (#1146), after waiting
+// out the whole assertion window on a screen that was not coming (5-17s a
+// cohort in Homeroom's runs). Given its own load from the start, it is judged
+// exactly as the ungrouped runner judged it, which is what that fallback
+// re-runs anyway: same navigation, same window, same console errors. Only
+// the wait before it goes.
 //
-//   * its screen is drawn only by a load of its address: a one-time deep
-//     link scripted at boot (`?shot=`, `?details=1`), which an address
-//     change on a loaded page rightly does not replay; or
-//   * the page it leaves sends the next address change somewhere else: an
-//     app running on a desktop opens the pages about it in a side panel
-//     beside it (Homeroom's features/side-panel), so a check switched to
-//     after it is drawn in that panel's frame, not in the page it asserts on.
+// An `endsGroup` check stays in its document's group and is reached by a
+// switch like any other; nothing is switched to after it
+// (groupTestsByDocument). Its route is one of the app's routing boundaries
+// (dapp.json `routingBoundaries`): a screen that sends the next address
+// change somewhere else, as a running app on a desktop opens the pages about
+// it in a side panel beside it (Homeroom's). A check switched to after it
+// would be judged on a screen its address does not draw.
 //
-// Either way, a switch onto or off it could only fail and be re-run cold by
-// runTestGroup's fallback (#1146), after waiting out the whole assertion
-// window on a screen that was not coming (5-19s a cohort in Homeroom's
-// runs). Given its own load from the start, it is judged exactly as the
-// ungrouped runner judged it, which is what that fallback re-runs anyway:
-// same navigation, same window, same console errors. Only the wait before
-// it goes. The app declares it (dapp.json `"coldLoad": true` on the check);
-// nothing here guesses which links are boot-only, and nothing shortens the
-// window a switch gets: a shorter one changed verdicts both ways (see
+// The platform sets both bits from the app's rules (app-manifest.js
+// checkLoadFlags); a check cannot ask for either, and this file knows no
+// app's parameters or routes. Nothing shortens the window a switch gets: a
+// shorter one changed verdicts both ways (see
 // tests/capture-switch-window.test.js).
 function groupTests(tests, env) {
   const all = Array.isArray(tests) ? tests : [];
@@ -2388,8 +2444,9 @@ async function runTests(browser, tests, opts) {
   // (visuals.js parseDiagnostics). Wall clock, not CPU: it is what a check
   // run waits on. No verdict reads it. Nothing in it names a URL.
   // `fallbacks` counts the hash cohorts that had to be loaded cold (#1146)
-  // and the lane time they took: the cost grouping did not save. A check
-  // that is always one of them can say so (`coldLoad`, see groupTests).
+  // and the lane time they took: the cost grouping did not save. One on a
+  // plain address is a navigation bug in the app; an app's boot parameters
+  // and routing boundaries are what it declares instead (see groupTests).
   emitDiag('checks-timing', {
     shard: shard ? `${shard.index}/${shard.count}` : null,
     lanes: Math.min(concurrency, groups.length),
