@@ -128,9 +128,17 @@ test('while searching the headings, pinned sections and pager step aside', () =>
     SHEET_SRC.includes("{searching ? null : tab === 'messages' ? ("),
     'the All-messages link and pinned sections are skipped while searching'
   );
+  // The merged Unread grouping (#5406) folds the flat list's Today/Earlier
+  // headings and the per-app groups under one `!searching &&` gate, so the
+  // pin is the gate plus the headings sitting inside it.
+  const gate = SHEET_SRC.indexOf(
+    '{!searching && (groupedUnread ? appGroups.map(renderAppGroup) : ('
+  );
+  assert.ok(gate > 0, 'the headings block is skipped while searching');
+  const todayHead = SHEET_SRC.indexOf('{today.length ? (');
+  const earlierHead = SHEET_SRC.indexOf('{earlier.length ? (');
   assert.ok(
-    SHEET_SRC.includes('{!searching && today.length ? (')
-      && SHEET_SRC.includes('{!searching && earlier.length ? ('),
+    todayHead > gate && earlierHead > gate,
     'the Today/Earlier headings are skipped while searching'
   );
   assert.ok(
