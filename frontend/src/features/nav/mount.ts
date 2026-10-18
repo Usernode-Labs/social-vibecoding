@@ -54,7 +54,7 @@ if (typeof window !== 'undefined') {
     setScreen(screenId: string | null, tabOverride?: string | null) {
       const screen = screenId || null;
       // `peek: false` on every screen CHANGE, because that is what a peek is
-      // FOR: you reveal the rail over an app to leave it, and the thing you
+      // FOR: you reveal the rail you folded to go somewhere, and the thing you
       // tapped has now happened. Leaving it set would hand the next screen an
       // overlay rail on top of its own.
       //

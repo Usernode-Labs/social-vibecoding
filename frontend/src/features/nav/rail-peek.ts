@@ -3,10 +3,12 @@
  *
  * Moved out of ./tab-bar.tsx when #sidebar-toggle became a second way in
  * (#2764): with the rail folded, pointing at the toggle fades the rail in over
- * the page exactly as pointing at the window's left edge does. The toggle sits
- * in the header's left corner, directly above where the rail appears, so it
- * is where the pointer already is when the reader goes looking for the
- * navigation they folded away.
+ * the page exactly as pointing at the window's left edge does. The peek is the
+ * folded rail's overlay on the platform's own screens; an open app is not one
+ * of them, so nothing peeks the rail over an app. The toggle sits in the
+ * header's left corner, directly above where the rail appears, so it is where
+ * the pointer already is when the reader goes looking for the navigation they
+ * folded away.
  *
  * ── Why the grace timer is module state ───────────────────────────────
  *

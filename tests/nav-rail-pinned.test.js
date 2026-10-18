@@ -144,6 +144,11 @@ test('the Settings switch renders unchecked, desktop only, and writes through Ap
   const input = html.slice(html.lastIndexOf('<input', at), html.indexOf('>', at) + 1);
   assert.doesNotMatch(input, /checked/, 'the prerender is unchecked; the stored value arrives in an effect');
   assert.match(html, /Keep sidebar open in apps/);
+  // The note says where the sidebar WENT, not that pointing at the left edge
+  // brings it back over the app: that hover is gone on the app view.
+  assert.match(html, /the sidebar is waiting when you close it/);
+  assert.doesNotMatch(html, /comes back when you point at the left edge/,
+    'nothing left promises a peek over an open app');
   assert.match(html, /class="hidden md:block[^"]*"[^>]*>\s*<label/, 'hidden below 768px');
 
   const src = read('frontend/src/features/settings/sections/theme.tsx');

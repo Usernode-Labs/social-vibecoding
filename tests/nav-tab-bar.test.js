@@ -338,36 +338,36 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   assert.match(block, /\.platform-parked-pill \{[\s\S]{0,200}order: -1;/);
 });
 
-test('the rail peeks back over an open app, and reserves nothing while it does', () => {
-  // An app covers the rail, which is what makes it feel like a program
-  // rather than a page, and on a laptop the pointer is already at the left
-  // edge half the time. The navigation comes back on hover and stops
-  // spending width while you work.
+test('the edge strip belongs to a folded rail only, never to an open app', () => {
+  // The strip at the window's edge brings a rail the VIEWER folded back on
+  // hover (#sidebar-toggle is the other way in). An open app is not that:
+  // it owns the window, and the strip's 18px sat over the app's own left
+  // edge and faded the rail in over it by accident. Both are now gone.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
-  assert.match(bar, /id="platform-rail-peek"/, 'a hot zone starts it');
-  // TWO WAYS TO HAVE NO RAIL, and the zone answers both (#2718 review): the
-  // ROUTE can say there is none (an app) and the VIEWER can fold the one
-  // there is (#sidebar-toggle). `!railOpen` rather than the `collapsed` the
-  // class toggle below uses, deliberately — `collapsed` is also true on the
-  // chromeless and signed-out shells, where a strip that peeked a rail in
-  // would be conjuring navigation out of nothing.
-  assert.match(bar, /\(screen === 'app-view' && !visible\) \|\| !railOpen \? \(/,
-    'and it exists where the rail is out of the way, by either route');
-  // NOT a bare `screen === 'app-view'`: the app view is two screens, and on
-  // its Workshop the rail is UP. This strip is `z-index: 39` against the
-  // rail's 30, so rendering it there lays an invisible 18px column down the
-  // left edge of the tabs and swallows the press meant for the one under the
-  // pointer.
+  assert.match(bar, /id="platform-rail-peek"/, 'a hot zone starts a folded rail\'s peek');
+  // TWO THINGS HAVE TO HOLD, and the strip answers both: the VIEWER folded
+  // the rail (`!railOpen`) and the ROUTE is not an app. `!railOpen` rather
+  // than the `collapsed` the class toggle below uses, deliberately —
+  // `collapsed` is also true on the chromeless and signed-out shells, where a
+  // strip that peeked a rail in would be conjuring navigation out of nothing.
+  assert.match(bar, /!railOpen && screen !== 'app-view' \? \(/,
+    'and it exists only where the viewer folded a rail on a non-app screen');
+  // NOT `screen === 'app-view'` in any form: the app view is two screens, and
+  // an app — its Workshop included — keeps its left edge. `visible` must not
+  // be part of the question either; it was, and it put the strip over every
+  // running app.
+  assert.ok(!bar.includes("screen === 'app-view' && !visible"),
+    'an open app no longer gets a strip at the window\'s edge');
   assert.ok(!bar.includes("{screen === 'app-view' ? ("),
-    'the app view alone is not the question — whether its rail is down is');
+    'the app view alone is not the question');
   // THE PEEK IS NOT THE BAR'S VISIBILITY. The router still says hidden, the
-  // screens reserve no band, and the app is full width; this is an overlay
+  // screens reserve no band, and the page is full width; this is an overlay
   // on top of that answer.
   assert.match(bar, /useHiddenClass\(barRef, !visible && !peek\);/);
   assert.match(bar, /const collapsed = !visible \|\| !railOpen;/);
   assert.match(bar, /useClassToggle\(barRef, 'platform-tabs-peek', collapsed && peek\);/);
   assert.match(css, /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\)\)/,
-    'a peeking bar reserves nothing — reflowing the app under the pointer '
+    'a peeking bar reserves nothing — reflowing the page under the pointer '
     + 'that revealed it is the bug this excludes');
   // A phone has no pointer to hover with, and an invisible strip down the
   // left edge of a touch screen eats the swipe that goes back.

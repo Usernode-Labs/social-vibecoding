@@ -5234,6 +5234,11 @@
       "expectSelector": "body:not(:has(#header-app-switch)) #platform-header #header-app-tile + span > #header-title-name, #platform-header #header-app-switch > #header-app-tile + #header-title-name"
     },
     {
+      "name": "An open app keeps the window's left edge: the edge hot zone that peeks a folded rail is not there over it",
+      "path": "/?demo=1#app/usernode-2d5619/app",
+      "expectSelector": "body:has(#app-view:not(.hidden)):not(:has(#platform-rail-peek))"
+    },
+    {
       "name": "An app's Workshop keeps the rail, which only a running app covers (#2718 review)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "body:has(#app-view:not(.hidden)):has(#platform-tabs:not(.hidden)) #platform-header"

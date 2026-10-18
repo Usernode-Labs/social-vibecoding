@@ -20411,17 +20411,16 @@ html.un-kb #platform-parked {
 }
 
 
-/* ── The rail, peeked back over an open app (#2718) ──────────────────
-   frontend/src/features/nav/tab-bar.tsx carries the argument: an app covers
-   the rail, which is what makes it feel like a program rather than a page,
-   and on a laptop the pointer is already at the left edge half the time. The
-   navigation comes back on hover and stops spending width while you work —
-   WeChat's floating capsule, an auto-hiding dock and Slack's own collapsed
-   rail are all this move. */
+/* ── The rail, peeked back over the page (#2718) ─────────────────────
+   frontend/src/features/nav/tab-bar.tsx carries the argument: a rail the
+   viewer folded by hand comes back on hover and stops spending width while
+   they read — WeChat's floating capsule, an auto-hiding dock and Slack's own
+   collapsed rail are all this move. An open app is not a page here: it keeps
+   its left edge, and the strip that would summon the rail is not rendered. */
 
-/* THE HOT ZONE, and the only thing that can start a peek. Narrow enough that
-   it never intercepts a pointer heading for the app's own left edge, wide
-   enough to be findable without aiming. */
+/* THE HOT ZONE, and the only thing that can start a peek for a folded rail.
+   Narrow enough that it vanishes into the edge, wide enough to be findable
+   without aiming. */
 .platform-rail-peek {
   position: fixed;
   left: 0;
@@ -20446,7 +20445,8 @@ html.un-kb #platform-parked {
      the ROUTER's answer about whether this route has a rail, and the two have
      to stay tellable apart (frontend/src/features/nav/tab-bar.tsx). A peeking
      bar keeps both classes and this rule stands aside for it, which is what
-     makes the hot zone at the window's edge the way back. */
+     makes the hot zone at the window's edge the way back on the platform's
+     own screens. */
   .platform-tabs.platform-tabs-folded:not(.platform-tabs-peek) {
     display: none;
   }

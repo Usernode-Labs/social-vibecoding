@@ -105,8 +105,9 @@ export const TAB_FOR_SCREEN = Object.freeze({
 
 /**
  * @typedef {object} PeekState
- * @property {boolean} peek  The rail is showing OVER an open app because the
- *   pointer is at the window's left edge (#2718, desktop only). It is not the
+ * @property {boolean} peek  The rail the viewer folded is showing again
+ *   because the pointer reached the window's left edge or the header's
+ *   sidebar toggle (#2718, desktop only; the app view has no strip). It is not the
  *   same fact as `platform-tabs` visibility and must not be folded into it:
  *   the bar is HIDDEN here — the router says so, and the screens reserve no
  *   band for it — and this is a temporary overlay on top of that answer.
