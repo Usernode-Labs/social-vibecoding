@@ -6,9 +6,15 @@
 // #3016: at 390px the session bar's five controls (focus, change, Build,
 // Changes, ⋯) came to 537px, and a bar that could not wrap made the whole
 // conversation that wide. The screen clips its overflow, so the right edge of
-// every message and the Send button were simply gone. The bar wraps now, the
-// panel may shrink below its content, and an empty message box is as tall as
-// its hint, which wraps on a phone and was cut off mid-line.
+// every message and the Send button were simply gone. The panel may shrink
+// below its content, and an empty message box is as tall as its hint, which
+// wraps on a phone and was cut off mid-line.
+//
+// #3577: the bar wrapped too much, dropping Changes and the ⋯ to a second row
+// on a phone. The last two now stay on the pills' row: the outer bar still
+// wraps so the Messages pane's title can take its own row, but the controls
+// sit in one non-wrapping cluster where only the app pill gives way. The state
+// pill leaves off its "· PR #n" below `sm` to make the room.
 //
 // #3559: the same failure from inside the transcript. A row holding one
 // unbroken run of text (a pasted link, a path) made the conversation wider
@@ -29,17 +35,32 @@ const { loadTsx, createElement, renderToHtml } = require('./lib/render-tsx');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const panel = read('frontend/src/features/agent-session/index.tsx');
 
-test('#3016: the session bar wraps on every surface, and the panel cannot outgrow the screen', () => {
+test('#3577: the bar wraps only for the Messages title; the pills and controls stay on one line', () => {
   const bar = panel.slice(panel.indexOf('function SessionBar('), panel.indexOf('function SessionMenu('));
+  // The outer bar may still wrap: the embedded title is basis-full on a
+  // phone, so it takes a row of its own and the cluster follows.
   assert.match(bar, /<div className="flex flex-wrap items-center gap-x-2 gap-y-2 [^"]*" data-agent-session-bar>/,
-    'wrapping is not the embedded variant\'s alone any more');
-  assert.doesNotMatch(bar, /embedded \? 'flex-wrap' : ''/);
+    'the outer bar still wraps for the embedded title');
+  assert.match(bar, /<div className="mr-auto min-w-0 basis-full sm:basis-auto">/);
+  // The controls cluster fills the bar's width. On a phone it never wraps;
+  // from `sm` up it may, as the whole bar did before: the Messages pane beside
+  // the inbox is only ~256px wide in a 900px window, where four fixed controls
+  // cannot fit, and wrapping keeps Changes and the ⋯ on screen.
+  assert.match(bar, /<div className="flex min-w-0 flex-1 flex-nowrap items-center gap-x-1\.5 sm:flex-wrap sm:gap-x-2">/,
+    'the cluster takes the row, stays on one line on a phone, and only wraps where a narrow pane leaves no room');
+  // The app pill is the only flexible item, so it shortens instead of
+  // pushing a control off the row.
+  assert.match(bar, /data-agent-session-focus\s+className="inline-flex min-w-0 max-w-\[10rem\][^"]*"/);
+  assert.match(bar, /<span className="truncate">\{about\?\.focusApp\?\.name \|\| 'Any app'\}<\/span>/);
   assert.match(bar, /data-agent-session-change-pill\s+className=\{`inline-flex shrink-0 items-center whitespace-nowrap /,
     'the change pill stays one line');
-  // Changes and the ⋯ end whichever row they land on. Build left the bar
-  // for the composer's "Build with" (#3078).
+  // The PR number is the room the phone row does not have: hidden there, and
+  // back from `sm` up. It is still on the staging card and in the drawer.
+  assert.match(bar, /active\.prNumber \? <span className="hidden sm:inline"> · PR #\{active\.prNumber\}<\/span> : null/);
+  // Changes and the ⋯ end the row. Build left the bar for the composer's
+  // "Build with" (#3078).
   assert.doesNotMatch(bar, /VenuePicker/);
-  assert.match(bar, /data-agent-session-changes-button\s+className="ml-auto [^"]*whitespace-nowrap[^"]*"/);
+  assert.match(bar, /data-agent-session-changes-button\s+className="ml-auto [^"]*shrink-0[^"]*whitespace-nowrap[^"]*"/);
   assert.doesNotMatch(bar, /data-agent-session-changes-button\s+className="[^"]*sm:ml-0/, 'nothing before it to push it right any more');
 
   assert.match(panel, /<div ref=\{root\} className=\{`relative flex min-h-0 min-w-0 flex-1 /,
