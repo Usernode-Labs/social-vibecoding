@@ -101,7 +101,20 @@ async function hit(pathname, headers, times, body = {}) {
 
 // ── 1. The heavy mobile reads ──────────────────────────────────────────
 
-test('a mobile read is allowed up to the cap and refused after it', async () => {
+// Hold Date.now at the test's first instant for its whole run (#5426).
+// express-rate-limit's MemoryStore zeroes a bucket once Date.now() reaches
+// first-hit + windowMs, so a wall-clock step of a minute or more mid-test
+// (a VM resumed, an NTP correction) served the request past the cap. Nothing
+// here needs time to pass: the window must simply never end mid-test.
+function holdClock(t) {
+  const real = Date.now;
+  const at = real();
+  Date.now = () => at;
+  t.after(() => { Date.now = real; });
+}
+
+test('a mobile read is allowed up to the cap and refused after it', async (t) => {
+  holdClock(t);
   const headers = { 'x-user-id': 'mobile-cap-user', 'x-client-ip': '203.0.113.10' };
   const atCap = await hit('/mobile-read', headers, MOBILE_MAX);
   assert.equal(atCap.status, 200, `the ${MOBILE_MAX}th read must still be served`);
@@ -115,7 +128,8 @@ test('a mobile read is allowed up to the cap and refused after it', async () => 
 
 // The negative control. Without it this file would pass just as happily
 // against a limiter that refused everyone once anyone hit the cap.
-test('one phone hitting the cap does not throttle another user', async () => {
+test('one phone hitting the cap does not throttle another user', async (t) => {
+  holdClock(t);
   const shared = '198.51.100.7';
   const noisy = { 'x-user-id': 'noisy-phone', 'x-client-ip': shared };
   await hit('/mobile-read', noisy, MOBILE_MAX + 1);
@@ -137,7 +151,8 @@ const participant = (n) => ({
   identifier_type: 'email', participant_identifier: `p${n}@example.test`,
 });
 
-test('awards to one participant are refused past the participant cap', async () => {
+test('awards to one participant are refused past the participant cap', async (t) => {
+  holdClock(t);
   const headers = { 'x-client-ip': '203.0.113.40' };
   const who = participant('cap');
   const atCap = await hit('/user-activities', headers, PARTNER_PARTICIPANT_MAX, who);
@@ -153,7 +168,8 @@ test('awards to one participant are refused past the participant cap', async () 
 // true`, so a caller can supply its own single X-Forwarded-For and choose
 // its address bucket — services/client-ip.js says so in its own TODO. If the
 // only bound were per-address, rotating that header would defeat it outright.
-test('rotating the apparent address does NOT buy more awards for a participant', async () => {
+test('rotating the apparent address does NOT buy more awards for a participant', async (t) => {
+  holdClock(t);
   const who = participant('rotate');
   await hit('/user-activities', { 'x-client-ip': '203.0.113.50' }, PARTNER_PARTICIPANT_MAX, who);
 
@@ -175,7 +191,8 @@ test('rotating the apparent address does NOT buy more awards for a participant',
 // whitespace survived: " p@x" and "p@x" hashed to two buckets while the
 // route's own `participant_identifier.trim()` resolved both to one user.
 // Respelling the identifier therefore multiplied the cap at will.
-test('respelling the identifier does not buy a fresh bucket', async () => {
+test('respelling the identifier does not buy a fresh bucket', async (t) => {
+  holdClock(t);
   const headers = { 'x-client-ip': '203.0.113.80' };
   const id = 'respell@example.test';
   await hit('/user-activities', headers, PARTNER_PARTICIPANT_MAX,
@@ -290,7 +307,8 @@ test('the address bound still counts failed requests', () => {
 // The ceiling this design does NOT close, recorded so it is not mistaken for
 // a tighter bound than it is. One human reachable on three channels holds
 // three buckets.
-test('the per-participant bound is per spelling, and says so', async () => {
+test('the per-participant bound is per spelling, and says so', async (t) => {
+  holdClock(t);
   const headers = { 'x-client-ip': '203.0.113.120' };
   const id = 'multi@example.test';
   await hit('/user-activities', headers, PARTNER_PARTICIPANT_MAX,
@@ -347,7 +365,8 @@ test('a partner awarding many different participants is never throttled', async 
   }
 });
 
-test('the address bound still caps total volume, whatever the participants', async () => {
+test('the address bound still caps total volume, whatever the participants', async (t) => {
+  holdClock(t);
   // Limiter (2)'s job: a caller rotating the participant on every request
   // would otherwise mint unbounded in-memory buckets. Already 80 deep from
   // the fan-out test above? No — that used a different address.
@@ -412,7 +431,8 @@ test('neither partner limiter keys off the shared API key', () => {
 // Found by comparing against an abandoned earlier attempt at the same
 // issue (proposal 4557 / PR #2614), which had spotted it.
 
-test('a v4 throttle answers in the v4 envelope', async () => {
+test('a v4 throttle answers in the v4 envelope', async (t) => {
+  holdClock(t);
   const headers = { 'x-user-id': 'envelope-user', 'x-client-ip': '203.0.113.200' };
   await hit('/mobile-read', headers, MOBILE_MAX);
   const refused = await hit('/mobile-read', headers, 1);
@@ -444,7 +464,8 @@ test('the throttle stays CODE-FREE, envelope or not', () => {
     'the envelope adds success and nothing else');
 });
 
-test('a limiter SHARED with non-v4 routes answers correctly on both', async () => {
+test('a limiter SHARED with non-v4 routes answers correctly on both', async (t) => {
+  holdClock(t);
   // Review's finding, and the reason the envelope is decided per REQUEST
   // rather than per limiter. `attachmentUploadLimiter` gates POST
   // /api/v4/admin/challenge-illustrations AND conversations, chat,
