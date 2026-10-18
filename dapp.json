@@ -1462,10 +1462,16 @@
       "expectText": "Project name"
     },
     {
-      "name": "Create-app dialog's last step offers from scratch, a template (soon) or a GitHub repo, and the repo URL field and Check pill open under it in one white card (#1910)",
+      "name": "Create-app dialog's last step offers from scratch, a template or a GitHub repo, and the repo URL field and Check pill open under it in one white card (#1910, #3521)",
       "path": "/?shot=create-import#create",
-      "expectSelector": "#create-card[data-step=\"start\"][data-mode=\"import\"][data-import-state=\"idle\"] [data-mode-pill=\"new\"] + [data-mode-pill=\"template\"] + [data-mode-pill=\"import\"] + #create-import-block .rounded-2xl.bg-white #import-check.rounded-full",
+      "expectSelector": "#create-card[data-step=\"start\"][data-mode=\"import\"][data-import-state=\"idle\"] [data-mode-pill=\"new\"] + [data-mode-pill=\"template\"] + #create-template-block + [data-mode-pill=\"import\"] + #create-import-block .rounded-2xl.bg-white #import-check.rounded-full",
       "expectText": "GitHub repo URL"
+    },
+    {
+      "name": "Create-app dialog's template picker unfolds five starter rows under the template row, with the picked one filled (#3521)",
+      "path": "/?shot=create-template#create",
+      "expectSelector": ".un-modal #create-card[data-step=\"start\"][data-mode=\"template\"][data-template=\"social\"] #create-template-block .create-template-pill[data-template-pill=\"social\"]",
+      "expectText": "Social productivity"
     },
     {
       "name": "Create-project dialog opens on who it is for, nothing chosen yet and Next dimmed beside Cancel: Just me, A private community and A public community, with a step count (communities, stage 3; the rework)",

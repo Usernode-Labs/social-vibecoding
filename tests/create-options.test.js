@@ -97,8 +97,25 @@ test('the new repository\'s dapp.json carries a non-default rule, and only then'
   assert.deepEqual(readGovernance(dapp({ approverPolicy: 'invited', approvalsRequired: 3 })),
     { approvers: 'invited', approvals: 3 });
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
-  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\) \}/g) || []).length, 2,
-    'both template paths (GitHub and local) pass the row\'s rule and its line');
+  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\), template: templateOf\(appRow\) \}/g) || []).length, 2,
+    'both template paths (GitHub and local) pass the row\'s rule, its line and the template it starts from (#3521)');
+});
+
+test('a template choice is a known id, or absent, blank or whitespace for the empty starter', () => {
+  const parse = (template) => options.parseCreateOptions({ audience: 'open', template });
+  assert.equal(parse(undefined).template, 'empty', 'absent is the empty starter, as before');
+  assert.equal(parse('').template, 'empty');
+  assert.equal(parse('   ').template, 'empty');
+  assert.equal(parse('social').template, 'social');
+  assert.equal(parse('  Social ').template, 'social', 'trimmed and case-insensitive');
+  assert.equal(parse('GAME3D').template, 'game3d');
+  assert.equal(parse('social').error, undefined);
+  assert.equal(parse('no-such-template').error, 'Unknown template');
+  assert.equal(parse(42).error, 'Unknown template', 'only a string is ever a choice');
+  // Every id the dialog offers resolves; the dialog's own list is kept in
+  // step by tests/app-templates.test.js.
+  assert.equal(parse('media').template, 'media');
+  assert.equal(parse('game2d').template, 'game2d');
 });
 
 test('"What is it?" is one optional line, tidied and bounded', () => {

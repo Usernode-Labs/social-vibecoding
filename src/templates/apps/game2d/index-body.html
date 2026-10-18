@@ -1,0 +1,68 @@
+<main class="max-w-md mx-auto px-4 py-10 flex flex-col gap-6">
+
+    <!-- usernode-starter-notice@1 — starter-template messaging. When building
+         the user's real app, replace this whole screen and delete this block,
+         both sentinel comments included. -->
+    <section class="rounded-2xl border border-violet-500/30 bg-gradient-to-b from-violet-600/20 to-transparent p-6 text-center flex flex-col items-center gap-3">
+      <span class="inline-block rounded-full bg-violet-600/20 text-violet-300 text-xs font-semibold uppercase tracking-wide px-3 py-1">Starter template</span>
+      <h1 class="text-2xl font-bold">{{APP_NAME}}</h1>
+      <p class="text-sm text-zinc-300 leading-relaxed">Welcome to your new app! It started from the 2D game template, so a small working game is already here.</p>
+      <p class="text-sm text-zinc-300 leading-relaxed">Tap the <strong class="text-violet-300 font-semibold">Homeroom icon</strong> in the header and choose <strong class="text-violet-300 font-semibold">Start a new change</strong> to start building your app. Describe what you'd like in plain English, and it will be turned into your real app.</p>
+    </section>
+
+    <section>
+      <h2 class="text-sm font-medium text-zinc-500 mb-2 px-1">What's already working</h2>
+      <div class="rounded-xl border border-zinc-800 bg-zinc-900/60 divide-y divide-zinc-800">
+        <div class="flex items-start gap-3 p-4">
+          <svg class="w-5 h-5 text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
+          <div>
+            <p class="text-sm font-semibold text-zinc-100">Sign-in</p>
+            <p class="text-sm text-zinc-400">You're signed in through Homeroom automatically — no accounts to build.</p>
+          </div>
+        </div>
+        <div class="flex items-start gap-3 p-4">
+          <svg class="w-5 h-5 text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
+          <div>
+            <p class="text-sm font-semibold text-zinc-100">Database</p>
+            <p class="text-sm text-zinc-400">Your app has its own private database, ready to store things.</p>
+          </div>
+        </div>
+        <div class="flex items-start gap-3 p-4">
+          <svg class="w-5 h-5 text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
+          <div>
+            <p class="text-sm font-semibold text-zinc-100">Live API</p>
+            <p class="text-sm text-zinc-400">The example below talks to a real server — try it.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+    <!-- /usernode-starter-notice@1 -->
+
+    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col items-center gap-4">
+      <div class="w-full flex items-baseline justify-between gap-2">
+        <h2 class="text-sm font-medium text-zinc-500">Try the example</h2>
+        <span class="text-xs text-zinc-600">This example will be replaced</span>
+      </div>
+
+      <div class="w-full flex items-baseline justify-between gap-2">
+        <h3 class="text-sm font-medium text-zinc-500">Star catch</h3>
+        <span id="game-status" class="text-xs text-zinc-600">Catch the falling stars · 3 misses end the run</span>
+      </div>
+
+      <canvas id="game-canvas" width="360" height="300" class="w-full rounded-lg bg-zinc-950 touch-none" aria-label="Star catch: move the paddle to catch falling stars"></canvas>
+
+      <div class="w-full flex items-center gap-3">
+        <button id="game-restart" class="rounded-lg bg-violet-600 hover:bg-violet-500 active:scale-95 transition-all text-white text-sm font-semibold px-4 py-2">Play again</button>
+        <span id="game-over" class="text-sm text-zinc-400"></span>
+      </div>
+
+      <div class="w-full">
+        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">Best runs</h3>
+        <div id="scoreboard" class="space-y-1"></div>
+      </div>
+    </section>
+
+    <p class="text-center text-xs text-zinc-600">Built on Homeroom — this template screen disappears once you build your real app.</p>
+  </main>
+
+  <script src="/game.js"></script>

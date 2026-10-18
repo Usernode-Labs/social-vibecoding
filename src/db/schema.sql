@@ -2865,6 +2865,15 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS anon_shell_checked_at TIMESTAMPTZ;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS approver_policy VARCHAR(10) NOT NULL DEFAULT 'anyone';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS approvals_required SMALLINT;
 
+-- What the app's scaffold began from (#3521): one of the template ids in
+-- services/app-templates.js. 'empty' is the starter the platform always
+-- shipped, so every pre-migration app (and every import, which ships an
+-- existing repository and no scaffold) defaults to it. Recorded so the row
+-- says what the first scaffold generated; the example it names is placeholder
+-- content the app's first real change replaces, so nothing reads the column
+-- to change behaviour — app-creator passes it into the scaffold on Retry.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS template VARCHAR(24) NOT NULL DEFAULT 'empty';
+
 -- Per-app admins (#788), display side. The last reconciled *declared*
 -- username list from dapp.json's top-level `admins` block — INCLUDING
 -- names that resolved to no registered user, which is exactly why this

@@ -2,6 +2,59 @@ const fs = require('fs');
 const path = require('path');
 const nodeAppPackage = require('../templates/node-app/package.json');
 const nodeAppLock = require('../templates/node-app/package-lock.json');
+const { getTemplate: getTemplateEntry } = require('./app-templates');
+
+// The per-template example fragments (#3521). Each template directory under
+// ../templates/apps/<id>/ carries server-app.js — NOT a runnable module, but
+// two fragments split on the marker lines below — and index-body.html, the
+// <body> content of the scaffolded index.html with an {{APP_NAME}} placeholder
+// where the escaped app name goes. The registry entry (services/
+// app-templates.js) supplies the CLAUDE.md/README copy that names the
+// template's own tables and routes. Splicing the fragments into the shared
+// plumbing below is what keeps the empty template BYTE-IDENTICAL to the
+// pre-template scaffold: its fragments are the extracted press demo, so the
+// composed server.js and index.html come out exactly as they always were.
+const ROUTES_MARKER = '// @@HOMEROOM-ROUTES@@\n';
+const BOOT_MARKER = '// @@HOMEROOM-BOOTSTRAP@@\n';
+
+function readTemplateFragments(tplDir) {
+  const src = fs.readFileSync(path.join(tplDir, 'server-app.js'), 'utf8');
+  const routesAt = src.indexOf(ROUTES_MARKER);
+  const bootAt = src.indexOf(BOOT_MARKER);
+  if (routesAt < 0 || bootAt <= routesAt) {
+    throw new Error(`Template fragment ${tplDir}/server-app.js is missing its `
+      + '@@HOMEROOM-ROUTES@@ / @@HOMEROOM-BOOTSTRAP@@ markers');
+  }
+  // The doc header before the first marker is commentary for this file and is
+  // discarded; what follows the markers is pasted verbatim.
+  return {
+    routes: src.slice(routesAt + ROUTES_MARKER.length, bootAt),
+    bootstrap: src.slice(bootAt + BOOT_MARKER.length),
+  };
+}
+
+// Everything under the template's public/ directory becomes repo files under
+// public/ in the scaffold (the games' game.js and vendored three.js). Sorted
+// so the file list is stable.
+function templatePublicFiles(tplDir) {
+  const pubDir = path.join(tplDir, 'public');
+  if (!fs.existsSync(pubDir)) return [];
+  const files = [];
+  const walk = (dir, rel) => {
+    const entries = fs.readdirSync(dir, { withFileTypes: true })
+      .sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(path.join(dir, entry.name), relPath);
+      else files.push({
+        path: `public/${relPath}`,
+        content: fs.readFileSync(path.join(dir, entry.name), 'utf8'),
+      });
+    }
+  };
+  walk(pubDir, '');
+  return files;
+}
 
 // Forwarder snippet injected into every scaffolded app's public/index.html.
 // Captures console.log/info/warn/error/debug + uncaught errors +
@@ -315,10 +368,23 @@ connector registered under some other name.
 // Discover and the project's page show) and the first sentence of
 // CLAUDE.md's About section, so the coding agent starts from the same
 // intent. Absent, both stay as they were.
-function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null } = {}) {
+//
+// `template` is the create dialog's "Start from a template" choice, one of
+// the ids in services/app-templates.js ('empty' by default). It decides the
+// example the scaffold ships: server.js splices the template's routes and
+// table bootstrap in at the marked points, public/index.html's body is the
+// template's screen, and any files under the template's public/ directory
+// are copied into the repo. 'empty' is the platform's original starter,
+// byte for byte.
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = 'empty' } = {}) {
   const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
   const governanceBlock = require('./create-options').governanceBlock(governance);
   const about = typeof description === 'string' && description.trim() ? description.trim() : null;
+  const tpl = getTemplateEntry(template);
+  const tplDir = path.join(__dirname, '..', 'templates', 'apps', tpl.id);
+  const { routes: appRoutes, bootstrap: appBoot } = readTemplateFragments(tplDir);
+  const bodyHtml = fs.readFileSync(path.join(tplDir, 'index-body.html'), 'utf8')
+    .replace(/\{\{APP_NAME\}\}/g, escapeHtml(appName));
   return [
     {
       path: 'CLAUDE.md',
@@ -384,10 +450,7 @@ the platform fixes the base commit, and none of this applies.
 
 ## Starter template
 
-The screen this app currently ships — the hero, the "What's already
-working" card, and the Press! example (the demo markup in
-\`public/index.html\`, the \`/api/press\` and \`/api/leaderboard\` routes, and
-the \`presses\` table bootstrap in \`server.js\`) — is placeholder content
+The screen this app currently ships — ${tpl.claudeShips} — is placeholder content
 from the Homeroom starter template, not product intent.
 
 When the user asks for their first real feature, REPLACE the template
@@ -396,7 +459,7 @@ screen rather than building alongside it:
 - remove the \`usernode-starter-notice@1\` block in \`public/index.html\`
   (both sentinel comments and everything between them),
 - remove or repurpose the "Try the example" card, its demo endpoints and
-  the \`presses\` table as appropriate,
+  ${tpl.claudeDemo} as appropriate,
 - rewrite \`README.md\` to describe the actual app.
 
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` when rewriting the
@@ -446,9 +509,8 @@ The scaffold is a small working demo that proves the plumbing works:
   (an RS256 JWT) on every request, so the app already knows who is
   using it. No accounts to build.
 - **Database** — the app has its own private Postgres database; the
-  demo stores button presses in a \`presses\` table.
-- **Live API** — two example routes (\`/api/press\`,
-  \`/api/leaderboard\`) read and write through a real Express server.
+  demo ${tpl.readmeDb}.
+- **Live API** — ${tpl.readmeApi} read and write through a real Express server.
 - **Styling** — Tailwind CSS, precompiled by \`npm run build\` during
   image creation with either Kubernetes/Paketo or standalone Docker.
 
@@ -833,15 +895,7 @@ app.get('*', (req, res) => {
 });
 
 async function start() {
-  await pool.query(\`
-    CREATE TABLE IF NOT EXISTS presses (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL,
-      username VARCHAR(255) NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  \`);
-  const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
+${appBoot}  const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;
 }
@@ -887,107 +941,13 @@ start().catch(err => { console.error(err); process.exit(1); });
   <script src="/usernode-bridge/v1/bridge.js"></script>
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen">
-  <main class="max-w-md mx-auto px-4 py-10 flex flex-col gap-6">
-
-    <!-- usernode-starter-notice@1 — starter-template messaging. When building
-         the user's real app, replace this whole screen and delete this block,
-         both sentinel comments included. -->
-    <section class="rounded-2xl border border-violet-500/30 bg-gradient-to-b from-violet-600/20 to-transparent p-6 text-center flex flex-col items-center gap-3">
-      <span class="inline-block rounded-full bg-violet-600/20 text-violet-300 text-xs font-semibold uppercase tracking-wide px-3 py-1">Starter template</span>
-      <h1 class="text-2xl font-bold">${escapeHtml(appName)}</h1>
-      <p class="text-sm text-zinc-300 leading-relaxed">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
-      <p class="text-sm text-zinc-300 leading-relaxed">Tap the <strong class="text-violet-300 font-semibold">Homeroom icon</strong> in the header and choose <strong class="text-violet-300 font-semibold">Start a new change</strong> to start building your app. Describe what you'd like in plain English, and it will be turned into your real app.</p>
-    </section>
-
-    <section>
-      <h2 class="text-sm font-medium text-zinc-500 mb-2 px-1">What's already working</h2>
-      <div class="rounded-xl border border-zinc-800 bg-zinc-900/60 divide-y divide-zinc-800">
-        <div class="flex items-start gap-3 p-4">
-          <svg class="w-5 h-5 text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
-          <div>
-            <p class="text-sm font-semibold text-zinc-100">Sign-in</p>
-            <p class="text-sm text-zinc-400">You're signed in through Homeroom automatically — no accounts to build.</p>
-          </div>
-        </div>
-        <div class="flex items-start gap-3 p-4">
-          <svg class="w-5 h-5 text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
-          <div>
-            <p class="text-sm font-semibold text-zinc-100">Database</p>
-            <p class="text-sm text-zinc-400">Your app has its own private database, ready to store things.</p>
-          </div>
-        </div>
-        <div class="flex items-start gap-3 p-4">
-          <svg class="w-5 h-5 text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
-          <div>
-            <p class="text-sm font-semibold text-zinc-100">Live API</p>
-            <p class="text-sm text-zinc-400">The example below talks to a real server — try it.</p>
-          </div>
-        </div>
-      </div>
-    </section>
-    <!-- /usernode-starter-notice@1 -->
-
-    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col items-center gap-5">
-      <div class="w-full flex items-baseline justify-between gap-2">
-        <h2 class="text-sm font-medium text-zinc-500">Try the example</h2>
-        <span class="text-xs text-zinc-600">This example will be replaced</span>
-      </div>
-
-      <button id="press-btn" class="w-32 h-32 rounded-full bg-violet-600 hover:bg-violet-500 active:scale-95 transition-all text-white text-xl font-bold shadow-lg shadow-violet-600/30">
-        Press!
-      </button>
-
-      <div id="count" class="text-lg text-zinc-400">0 total presses</div>
-
-      <div class="w-full max-w-sm">
-        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">Leaderboard</h3>
-        <div id="leaderboard" class="space-y-1"></div>
-      </div>
-    </section>
-
-    <p class="text-center text-xs text-zinc-600">Built on Homeroom — this template screen disappears once you build your real app.</p>
-  </main>
-
-  <script>
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get('token') || '';
-    const headers = token ? { 'x-usernode-token': token } : {};
-
-    async function loadLeaderboard() {
-      const res = await fetch('/api/leaderboard', { headers });
-      if (!res.ok) return;
-      const { leaderboard } = await res.json();
-      const el = document.getElementById('leaderboard');
-      if (!leaderboard.length) {
-        el.innerHTML = '<p class="text-center text-zinc-600 text-sm">No presses yet</p>';
-        return;
-      }
-      el.innerHTML = leaderboard.map((r, i) =>
-        '<div class="flex justify-between px-3 py-1 rounded ' + (i === 0 ? 'bg-violet-600/20 text-violet-300' : 'text-zinc-400') + '">' +
-        '<span>' + (i + 1) + '. ' + r.username + '</span>' +
-        '<span class="font-mono">' + r.presses + '</span></div>'
-      ).join('');
-      const total = leaderboard.reduce((s, r) => s + parseInt(r.presses), 0);
-      document.getElementById('count').textContent = total + ' total presses';
-    }
-
-    document.getElementById('press-btn').addEventListener('click', async () => {
-      try {
-        const res = await fetch('/api/press', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...headers },
-        });
-        if (res.ok) loadLeaderboard();
-        else if (res.status === 401) document.getElementById('count').textContent = 'Sign in to press!';
-      } catch {}
-    });
-
-    loadLeaderboard();
-  </script>
-</body>
+${bodyHtml}</body>
 </html>
 `,
     },
+    // The template's own public/ files (the games' game.js and the
+    // vendored three.js) ride along verbatim.
+    ...templatePublicFiles(tplDir),
   ];
 }
 

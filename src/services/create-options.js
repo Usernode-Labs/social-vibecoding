@@ -76,7 +76,20 @@
  * it shows (two lines in the hub hero, on Discover and on the join screen,
  * three beside the icon in the About pane), and the line in dapp.json stays
  * as it was written.
+ *
+ * ── What it starts from ────────────────────────────────────────────────
+ *
+ * `template` is the create dialog's last question's "Start from a template"
+ * choice (#3521): one of the ids in services/app-templates.js, or absent,
+ * blank or whitespace, which is the empty starter the platform always
+ * shipped. It is a scaffold choice only, so it is not a vote or a manifest
+ * line; the apps row records which template a project began from (the
+ * `template` column) and the scaffold names it in CLAUDE.md and README. An
+ * import may send it; an import ships no scaffold, so the route stores the
+ * column and moves on.
  */
+
+const { resolveTemplateId } = require('./app-templates');
 
 const AUDIENCES = new Set(['solo', 'invited', 'open']);
 const VISIBILITIES = new Set(['public', 'private']);
@@ -180,7 +193,7 @@ function parseDescription(raw) {
  * Everything POST /api/apps needs to know about who a new project is for.
  * Returns `{ error }` for a 400, otherwise
  * `{ audience, collabVisibility, viewVisibility, invitees, inviteEmails,
- * governance, description }`.
+ * governance, description, template }`.
  */
 function parseCreateOptions(body = {}) {
   let audience = null;
@@ -214,6 +227,11 @@ function parseCreateOptions(body = {}) {
   const desc = parseDescription(body.description);
   if (desc.error) return { error: desc.error };
 
+  // The "Start from a template" choice (#3521). Absent means the empty
+  // starter, as before; anything unrecognised is a 400.
+  const tpl = resolveTemplateId(body.template);
+  if (tpl.error) return { error: tpl.error };
+
   return {
     audience,
     collabVisibility,
@@ -222,6 +240,7 @@ function parseCreateOptions(body = {}) {
     inviteEmails: mail.emails,
     governance: gov.governance,
     description: desc.description,
+    template: tpl.template,
   };
 }
 

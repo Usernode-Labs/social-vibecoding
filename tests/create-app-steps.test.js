@@ -7,8 +7,9 @@
 //   kind     App; Document and Video there, dimmed, saying Soon
 //   details  the name and the optional "What is it?"
 //   approve  who approves changes — a private or a public community only
-//   start    LAST: from scratch, from a template (Soon), or from a GitHub
-//            repo, whose check also reads its dapp.json
+//   start    LAST: from scratch, from a template (whose picker of five
+//            starter examples unfolds under its row, #3521), or from a
+//            GitHub repo, whose check also reads its dapp.json
 //
 // Nothing is chosen for the person: every answer starts empty, pressing a
 // row selects it, and Next — beside Cancel on every step — stays dimmed until
@@ -58,7 +59,7 @@ test('the steps a set of answers walks: four for Just me, five for a public comm
   // of the root while presented. Each is "" until answered.
   assert.match(SRC, /id="create-modal"\s+ref=\{dialog\.rootRef\}\s+\{\.\.\.answers\}/);
   assert.match(SRC, /id="create-card"\s+\{\.\.\.answers\}/);
-  for (const attr of ['data-mode', 'data-import-state', 'data-step', 'data-audience', 'data-kind', 'data-approvers',
+  for (const attr of ['data-mode', 'data-template', 'data-import-state', 'data-step', 'data-audience', 'data-kind', 'data-approvers',
     'data-approvals', 'data-final', 'data-repo-sets']) {
     assert.match(SRC, new RegExp(`'${attr}': `), attr);
   }
@@ -75,7 +76,7 @@ test('a row selects, and Next beside Cancel moves on once the step is answered',
   assert.match(answered, /case 'kind': return kind != null;/);
   assert.match(answered, /case 'details': return name\.trim\(\)\.length > 0;/);
   assert.match(answered, /case 'approve': return approvers != null && \(approvers !== 'invited' \|\| approvals != null\);/);
-  assert.match(answered, /case 'start': return mode != null && \(mode !== 'import' \|\| importState === 'ok'\);/);
+  assert.match(answered, /case 'start': return mode != null && \(mode === 'template' \? template != null : \(mode !== 'import' \|\| importState === 'ok'\)\);/, 'a template start is answered only once an example is picked (#3521)');
   // On its own step a row only selects; a collapsed row reopens its step.
   assert.match(SRC, /function chooseAudience\(next: Audience\) \{\s*setError\(''\);\s*if \(step !== 'who'\) \{ setStep\('who'\); return; \}\s*setAudience\(next\);\s*\}/);
   assert.match(SRC, /function chooseKind\(next: Kind\) \{\s*setError\(''\);\s*if \(step !== 'kind'\) \{ setStep\('kind'\); return; \}\s*setKind\(next\);\s*\}/);
@@ -256,8 +257,41 @@ test('the shot links land on the state they name, and each has a check', () => {
   assert.match(group.expectSelector, /\[data-step="invite"\] \[data-create-step="invite"\] #create-invite-block #create-invitees/);
   assert.equal(group.expectText, 'Who do you want to invite?');
   const imp = byPath.get('/?shot=create-import#create');
-  assert.match(imp.expectSelector, /\[data-mode-pill="new"\] \+ \[data-mode-pill="template"\] \+ \[data-mode-pill="import"\] \+ #create-import-block/);
+  assert.match(imp.expectSelector, /\[data-mode-pill="new"\] \+ \[data-mode-pill="template"\] \+ #create-template-block \+ \[data-mode-pill="import"\] \+ #create-import-block/);
   assert.equal(byPath.get('/?shot=create-access#create'), undefined, 'the retired step has no check left');
+});
+
+test('a template start: a live row, five examples unfolding under it, and only a pick answers the step (#3521)', () => {
+  const { TEMPLATES, createBody } = mod();
+  // The row is a real choice now, not a Soon div.
+  assert.match(SRC, /data-mode-pill="template"\s+aria-pressed=\{mode === 'template'\}\s+className=\{CHOICE\}/);
+  assert.doesNotMatch(SRC.slice(SRC.indexOf('data-mode-pill="template"'), SRC.indexOf('data-mode-pill="import"')), /SOON_TAG/,
+    'no Soon tag between the template row and the import row any more');
+  // Five examples unfold under the row, in the picker's order, and fold
+  // whenever the start answer is anything else.
+  assert.match(SRC, /id="create-template-block" className="create-template-block space-y-2"/);
+  assert.match(SRC, /TEMPLATES\.map\(\(t\) => \(/);
+  assert.deepEqual(TEMPLATES.map((t) => t.key), ['empty', 'social', 'media', 'game2d', 'game3d']);
+  assert.match(CSS, /#create-card:not\(\[data-mode="template"\]\) \.create-template-block \{ display: none; \}/);
+  for (const key of ['empty', 'social', 'media', 'game2d', 'game3d']) {
+    assert.match(CSS, new RegExp(`\\[data-mode="template"\\]\\[data-template="${key}"\\]\\s+\\.create-template-pill\\[data-template-pill="${key}"\\]`), key);
+  }
+  // The wire body carries the pick on a template start, and on nothing else.
+  const base = { name: 'Book club', audience: 'solo', approvers: 'anyone', approvals: null };
+  assert.equal(createBody({ ...base, mode: 'template', template: 'social' }).template, 'social');
+  assert.equal(createBody({ ...base, mode: 'template' }).template, undefined, 'no pick, no field');
+  assert.equal(createBody({ ...base, mode: 'new' }).template, undefined);
+  assert.equal(createBody({ ...base, mode: 'new', template: 'social' }).template, undefined,
+    'a scratch start ignores a stale pick');
+  assert.equal(createBody({ ...base, mode: 'import' }).template, undefined);
+  // The shot link, and its declared check.
+  assert.match(SRC, /if \(shot === 'create-template'\) return \{ \.\.\.named, step: 'start', audience: 'solo', mode: 'template', template: 'social' \};/);
+  const tpl = DAPP.tests.find((t) => t.path === '/?shot=create-template#create');
+  assert.ok(tpl, 'the template picker has a check');
+  assert.match(tpl.expectSelector, /\[data-mode="template"\]\[data-template="social"\] #create-template-block \.create-template-pill\[data-template-pill="social"\]/);
+  assert.equal(tpl.expectText, 'Social productivity');
+  // The picked answer rides on the card and the root like every other.
+  assert.match(SRC, /'data-template': template \?\? ''/);
 });
 
 test('the prerendered document starts on the first step, nothing chosen, with every id in place', () => {
@@ -266,13 +300,14 @@ test('the prerendered document starts on the first step, nothing chosen, with ev
   assert.match(card, /data-step="who"/);
   assert.match(card, /data-audience=""/);
   assert.match(card, /data-mode=""/);
+  assert.match(card, /data-template=""/);
   assert.match(card, /data-final="false"/);
   for (const step of ['who', 'invite', 'kind', 'details', 'approve', 'start']) {
     assert.match(card, new RegExp(`data-create-step="${step}"`), step);
   }
   assert.match(card, /Step 1 of 4/);
   for (const id of ['create-step-indicator', 'create-invite-block', 'create-invitees', 'create-import-block',
-    'create-name-block', 'create-approve-block', 'create-approvals-n', 'create-cancel', 'create-next',
+    'create-template-block', 'create-name-block', 'create-approve-block', 'create-approvals-n', 'create-cancel', 'create-next',
     'create-submit', 'import-url', 'app-name', 'app-description']) {
     assert.match(card, new RegExp(`id="${id}"`), id);
   }
