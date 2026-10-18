@@ -424,7 +424,7 @@ test('a budget stop records WHICH limit tripped, in a column of its own', async 
   const harness = triageHarness({ verdictText: 'x', sessionId: 856 });
   await runToWallClock(t, harness);
   const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.match(insert.s, /budget_stop, proposal_session_id\)/, 'the insert names the column');
+  assert.match(insert.s, /budget_stop, checks_head_sha,\s*\n\s*proposal_session_id\)/, 'the insert names the column');
   assert.ok(insert.params.includes('wall clock'),
     'the limit is stored as data, not left to be grepped out of the error text');
   assert.ok(insert.params.includes('budget: wall clock'), 'and the error line still reads the same');
@@ -1143,7 +1143,10 @@ test('refreshApp treats a degraded GitHub read as "no answer", not "no issues"',
 // ── What makes shadow mode shadow (source pins) ─────────────────────────
 
 test('the triage turn is a read-only scout: no build mode, no push, no posting, no claims', () => {
-  const dispatch = SRC.slice(SRC.indexOf('async function runTriage'), SRC.indexOf('// ── The work loop'));
+  // The slice stops at the checks-fix section (#3638): the fix turn runs on
+  // the bot's OWN promoted proposal, in build mode, by design — the pin is
+  // about the triage turn, which is a request's first read.
+  const dispatch = SRC.slice(SRC.indexOf('async function runTriage'), SRC.indexOf("#3638: the bot fixes its own proposal's failing checks"));
   assert.match(dispatch, /mode: 'scout'/, 'the ledger loop runs in scout mode');
   // The container exec carries the token half of the budget between the
   // mode and the prompt now (#2737), and #2870's note on where that limit

@@ -1794,6 +1794,25 @@ function maybeAutoMergeAfterChecks(config, pool, session, state) {
   });
 }
 
+/**
+ * #3638: beside the auto-merge drain, tell the Homeroom bot when its own
+ * proposal's checks have settled as failing. Fire-and-forget and
+ * best-effort, exactly like the drain: lazy-required (the bot sits in the
+ * same part of the module graph), never throws, and 'failing' is the only
+ * state it acts on — an 'error' is never queued for a fix.
+ */
+function noteBotChecksAfterChecks(config, pool, session, state) {
+  if (state !== 'failing' || !session || session.id == null) return;
+  Promise.resolve().then(async () => {
+    const { noteProposalChecks } = require('./homeroom-bot');
+    await noteProposalChecks(pool, session, state);
+  }).catch((err) => {
+    log.warn('visuals', 'Could not queue the bot\'s checks fix (non-fatal)', {
+      sessionId: session.id, err: err.message,
+    });
+  });
+}
+
 // #866: which git ref identifies this session's code in the app's OWN repo.
 // Ordinary native rows push their work to a platform-owned branch, so the
 // branch name resolves. Two sources require an immutable commit instead:
@@ -1940,6 +1959,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       }, { force: opts.force, onError: (err, pool, operation) =>
         publishCaptureError(pool, session.id, operation.revision, err, opts.send) });
       if (completed?.state) maybeAutoMergeAfterChecks(config, getPool(config), session, completed.state);
+      noteBotChecksAfterChecks(config, getPool(config), session, completed?.state || null);
       return completed;
     } catch (err) {
       if (lifecycle.isCancelled(err)) return;
@@ -3203,6 +3223,7 @@ async function settleCaptureRun(config, pool, run) {
   // auto-merges just like "votes landed after checks were green".
   // Fire-and-forget; never blocks or fails the capture pipeline.
   if (!operation) maybeAutoMergeAfterChecks(config, pool, session, checksResult.state);
+  noteBotChecksAfterChecks(config, pool, session, checksResult.state);
 
   const dropped = [];
   const stored = await storeArtifacts(pool, session.id, commitHash, targets, shots, dropped);
@@ -3800,6 +3821,7 @@ module.exports = {
   CHECK_PHASES,
   summarizeBootFailure,
   maybeAutoMergeAfterChecks,
+  noteBotChecksAfterChecks,
   consoleSnapshotFromTests,
   resolveDeclaredTests,
   sessionGitRef,

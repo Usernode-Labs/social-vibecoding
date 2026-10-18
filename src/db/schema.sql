@@ -9348,8 +9348,10 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS release_stall JSONB;
 -- refreshed from the GitHub issue cache, drained per app in batches so one
 -- worker container per app stays warm across issues. `priority` 0 is an
 -- admin's "run now", 1 an issue the bot has never triaged, 2 one whose
--- thread changed since its last run. `thread_seen_at` is the newest thread
--- activity known when the row was queued.
+-- thread changed since its last run (or, in reason 'checks_failing' #3638,
+-- the bot's own proposal whose checks settled as failing on its reviewed
+-- head). `thread_seen_at` is the newest thread activity known when the row
+-- was queued.
 CREATE TABLE IF NOT EXISTS homeroom_bot_queue (
   id             SERIAL PRIMARY KEY,
   app_id         INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -9459,6 +9461,11 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_attempts INTEGER NO
 -- text is the build session's spec doc; kept here for the dashboard and the
 -- export, since a shadow build's session is archived and nobody opens it.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_spec_md TEXT;
+-- #3638: the head of the bot's own proposal that a failing checks verdict
+-- was looked at on — the fix turn, the hand-off, or a turn that failed.
+-- NULL on every other run. Each failing head is looked at exactly once:
+-- a verdict on a head with a row here queues no second look.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha VARCHAR(40);
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_build_queue
   ON homeroom_bot_runs(app_id, build_queued_at)
   WHERE build_queued_at IS NOT NULL AND build_ok IS NULL;

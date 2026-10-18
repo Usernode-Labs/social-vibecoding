@@ -126,7 +126,9 @@ function makePool({ session, run = RUN, cost = 0.42, liveRun = null }) {
       const s = String(sql);
       calls.push({ sql: s, params });
       if (/SELECT cs\.\*/.test(s) && /FROM chat_sessions cs/.test(s)) return { rows: session ? [session] : [] };
-      if (/WHERE build_session_id = \$1 AND mode = 'live'/.test(s)) return { rows: liveRun ? [liveRun] : [] };
+      if (/WHERE build_session_id = \$1 AND mode = 'live'/.test(s)) {
+        return { rows: liveRun && liveRun.build_ok == null && liveRun.proposal_session_id == null ? [liveRun] : [] };
+      }
       if (/FROM homeroom_bot_runs\s+WHERE build_session_id = \$1/.test(s)) return { rows: run ? [run] : [] };
       // What completeRecoveredLive reads once the session is free.
       if (/spec_version/.test(s) && /FROM chat_sessions cs WHERE cs\.id = \$1/.test(s)) {
@@ -363,7 +365,15 @@ test('a live spec turn sends the issue back to be triaged, and a BLOCKED one say
   const [requeue] = requeues(pool);
   assert.ok(requeue, 'back in the queue: its row was gone with the pass');
   assert.deepEqual(requeue.params, [5, 12, 'restart']);
-  assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'nothing said: the fresh triage speaks');
+  // #3638: the lost build is now SAID on the issue (build_lost) — the one
+  // change this request makes to what was before "nothing said". The fresh
+  // triage still does not speak here; the lost-build note is the bot's
+  // only word.
+  const lost = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_lost');
+  assert.ok(lost, 'the lost-build note is posted');
+  assert.match(lost[2], /lost its work on this request to a platform restart/);
+  assert.match(lost[2], /its spec turn was interrupted/);
+  assert.equal(liveCalls.filter((c) => c[0] === 'post').length, 1, 'the lost-build note is the bot\'s only word');
 
   stubLive();
   journalTail = async () => ({ lastResultText: 'BLOCKED: the app keeps no scores to rank.', exitCode: 0 });
@@ -385,6 +395,52 @@ test('a live build whose worker did not survive sends the issue back to be triag
   await adopt(pool, session, 'exited');
   assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']]);
   assert.equal(liveCalls.some((c) => c[0] === 'promote'), false);
+});
+
+// ── A lost live build always records an outcome (#3638, run 613) ─────────
+// Before, the requeue branch archived and requeued but recorded nothing on
+// the run and said nothing: the ledger kept the run looking unfinished
+// forever, and the requester heard nothing after "looking at this request".
+
+const lostRecord = (pool) => pool.calls.filter((c) => /SET build_ok = FALSE, build_error = \$2/.test(c.sql)).at(-1)?.params;
+
+test('a lost live build records build_ok FALSE with the lost error, says so on the issue, and requeues', async () => {
+  stubLive();
+  const session = botSession();
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
+  await adopt(pool, session, 'exited');
+  assert.deepEqual(lostRecord(pool), [950, 'lost: the worker is gone (finished after a restart)'],
+    'the run is recorded as lost, under the same guard the live path records with');
+  const lost = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_lost');
+  assert.ok(lost, 'the lost-build note is posted');
+  assert.match(lost[2], /lost its work on this request to a platform restart: the worker is gone/);
+  assert.match(lost[2], /It will look at the request again on its own; nothing needs doing\./);
+  assert.deepEqual(requeues(pool).map((c) => c.params), [[5, 12, 'restart']], 'and still goes back to be looked at');
+  assert.ok(sessionUpdates(pool).some((c) => /'archived'/.test(c.sql)), 'the session is put away');
+});
+
+test('an issue that closed before the build finished is recorded as lost, and says nothing', async () => {
+  stubLive({ issueState: 'closed' });
+  journalTail = async () => ({ pushOk: true, ahead: 1, sha: 'd'.repeat(40), exitCode: 0, lastResultText: 'Built it.' });
+  const session = botSession();
+  const pool = makePool({ session, run: null, liveRun: LIVE_RUN });
+  await adopt(pool, session);
+  assert.deepEqual(lostRecord(pool), [950, 'lost: the issue closed before the build finished']);
+  assert.deepEqual(liveCalls.filter((c) => c[0] === 'post'), [], 'nobody to tell');
+  assert.deepEqual(requeues(pool), [], 'and it does not come back: the issue is closed');
+});
+
+test('a live run already recorded as lost is not re-recorded', async () => {
+  stubLive();
+  const session = botSession();
+  // The real query reads only runs with build_ok IS NULL, so an outcome
+  // already recorded makes liveRunOfSession find nothing: recovery cannot
+  // act on the session twice.
+  const pool = makePool({ session, run: null, liveRun: { ...LIVE_RUN, build_ok: false } });
+  await adopt(pool, session, 'exited');
+  assert.deepEqual(lostRecord(pool), undefined, 'no second record');
+  assert.deepEqual(requeues(pool), []);
+  assert.equal(liveCalls.some((c) => c[0] === 'post'), false);
 });
 
 test('an issue a restart sent back is not told "looking" a second time', () => {

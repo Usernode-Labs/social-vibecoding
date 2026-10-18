@@ -141,6 +141,14 @@ function buildFailedText(reason) {
     + 'A person could pick it up from here.';
 }
 
+// #3638: a live build a restart lost. Said beside the build-failed note,
+// where before the requester heard nothing after "looking at this request".
+function buildLostText(why) {
+  return 'Homeroom bot lost its work on this request to a platform restart: '
+    + (clipText(why, 300) || 'unknown reason')
+    + '. It will look at the request again on its own; nothing needs doing.';
+}
+
 // #3152: a verdict a live cap held. One line, so the person who filed the
 // issue is not left with silence, and a promise the refresh keeps: a held
 // issue is queued again as soon as the cap that held it has room.
@@ -584,6 +592,9 @@ async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec
 const TAGGING_KINDS = new Set([
   'question', 'person', 'empty', 'proposal', 'build_failed', 'blocked', 'spec',
   'followup_answer', 'followup_ask', 'followup_revise', 'followup_person', 'followup_failed',
+  // #3638: a live build a restart lost. The requester is tagged, or not when
+  // the DM carries the news to them.
+  'build_lost',
 ]);
 
 function tagsPoster(kind) {
@@ -925,6 +936,38 @@ async function post({
     }
   }
   return { postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!message };
+}
+
+/**
+ * #3638: a note in the proposal's own discussion only: a bot message in the
+ * session's thread plus the homeroom_bot_posts row that records it. No
+ * GitHub comment and no post on the issue — the revision itself is the news
+ * there (votes cleared, checks re-run), and the discussion is where the
+ * group is watching the proposal. Best-effort on the send, like post.
+ */
+async function postOnProposal({
+  pool, ws, app, bot, sessionId, issueNumber, kind = 'checks_revise', runId = null, text,
+}) {
+  const { rows } = await pool.query(
+    `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id`,
+    [app.id, issueNumber, runId, kind],
+  );
+  const postId = rows[0]?.id || null;
+  let message = null;
+  try {
+    message = await ws.sendBotMessage(pool, app.id, {
+      user: bot, content: text, metadata: null, thread: { type: 'session', ref: Number(sessionId) },
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Proposal-thread post failed (continuing)', { app: app.slug, sessionId, kind, err: err.message });
+  }
+  if (postId) {
+    await pool.query('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', [postId, message?.id ?? null]).catch(() => {});
+  }
+  log.info('homeroom-bot', 'Posted on its proposal', { app: app.slug, sessionId, issueNumber, kind, thread: !!message });
+  return { postId, thread: !!message, threadCreatedAt: message?.created_at || null };
 }
 
 /**
@@ -1472,6 +1515,8 @@ module.exports = {
   emptyText,
   proposalText,
   buildFailedText,
+  buildLostText,
+  postOnProposal,
   heldText,
   heldKind,
   lastPostKind,

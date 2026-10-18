@@ -117,6 +117,18 @@ test('a first version gets the longer build clocks', () => {
   const first = bot.buildBudgets(app, {}, 60_000, { firstVersion: true });
   assert.equal(first.turnBudgetMs, plain.turnBudgetMs * bot.PLATFORM_BUILD_TIME_FACTOR);
   assert.equal(first.specBudgetMs, plain.specBudgetMs * bot.PLATFORM_BUILD_TIME_FACTOR);
+  // #3637: the factor is three now — twice was still short.
+  assert.equal(bot.PLATFORM_BUILD_TIME_FACTOR, 3);
+});
+
+test('a build a restart lost is DM news', () => {
+  const text = dm.dmText('build_lost', { reason: 'the worker was lost (finished after a restart)' },
+    { appName: 'Seed swap', issueNumber: 7, issueTitle: 'Sort by date', firstVersion: false });
+  assert.match(text, /^\*\*Seed swap\*\* · request #7: Sort by date/);
+  assert.match(text, /I lost my work on this to a platform restart/);
+  assert.match(text, /the worker was lost \(finished after a restart\)/);
+  assert.match(text, /I will look at the request again on my own; nothing needs doing\./);
+  assert.doesNotMatch(text, /--/);
 });
 
 // ── What the DM says ─────────────────────────────────────────────────────
