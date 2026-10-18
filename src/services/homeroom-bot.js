@@ -4585,33 +4585,43 @@ async function runFollowUp(pool, config, {
     return out;
   };
 
-  const { rows: lastRows } = await pool.query(
-    `SELECT id, thread_seen_at FROM homeroom_bot_runs
-      WHERE app_id = $1 AND issue_number = $2
-        AND budget_stop IS DISTINCT FROM 'input tokens'
-        AND (error IS NULL OR error NOT LIKE 'collateral:%')
-      ORDER BY created_at DESC LIMIT 1`,
-    [app.id, issueNumber],
-  );
-  const lastRun = lastRows[0] || null;
-  // #4610: the runs since the last one that answered, so a reply turn that
-  // failed does not count the message it failed on as answered
-  // (followup.repliesSince). Without any, the last run's mark stands.
-  const { rows: recentRuns } = await pool.query(
-    `SELECT verdict, error, thread_seen_at, proposal_session_id, checks_head_sha
-       FROM homeroom_bot_runs
-      WHERE app_id = $1 AND issue_number = $2
-        AND budget_stop IS DISTINCT FROM 'input tokens'
-        AND (error IS NULL OR error NOT LIKE 'collateral:%')
-      ORDER BY created_at DESC LIMIT 8`,
-    [app.id, issueNumber],
-  ).catch(() => ({ rows: [] }));
-  const since = recentRuns?.length
-    ? followup.repliesSince(recentRuns, proposal.id)
-    : { sinceAt: lastRun?.thread_seen_at || null, failures: 0, gaveUp: false };
+  // What this look reads from: the last run, and the replies since the last
+  // one that answered. Once across the look's attempts: an attempt that
+  // carries the look on after a restart must not read past the run the
+  // first attempt recorded, or the replies it was answering read as
+  // answered already and its saved answer is never posted.
+  const readWindow = await look.once('window', async () => {
+    const { rows: lastRows } = await pool.query(
+      `SELECT id, thread_seen_at FROM homeroom_bot_runs
+        WHERE app_id = $1 AND issue_number = $2
+          AND budget_stop IS DISTINCT FROM 'input tokens'
+          AND (error IS NULL OR error NOT LIKE 'collateral:%')
+        ORDER BY created_at DESC LIMIT 1`,
+      [app.id, issueNumber],
+    );
+    const last = lastRows[0] || null;
+    // #4610: the runs since the last one that answered, so a reply turn that
+    // failed does not count the message it failed on as answered
+    // (followup.repliesSince). Without any, the last run's mark stands.
+    const { rows: recentRuns } = await pool.query(
+      `SELECT verdict, error, thread_seen_at, proposal_session_id, checks_head_sha
+         FROM homeroom_bot_runs
+        WHERE app_id = $1 AND issue_number = $2
+          AND budget_stop IS DISTINCT FROM 'input tokens'
+          AND (error IS NULL OR error NOT LIKE 'collateral:%')
+        ORDER BY created_at DESC LIMIT 8`,
+      [app.id, issueNumber],
+    ).catch(() => ({ rows: [] }));
+    const sinceNow = recentRuns?.length
+      ? followup.repliesSince(recentRuns, proposal.id)
+      : { sinceAt: last?.thread_seen_at || null, failures: 0, gaveUp: false };
+    return JSON.parse(JSON.stringify({ lastRun: last, since: sinceNow, seedReadAt: new Date().toISOString() }));
+  });
+  const lastRun = readWindow.lastRun;
+  const since = readWindow.since;
   priorFailures = since.gaveUp ? 0 : since.failures;
 
-  const seedReadAt = new Date().toISOString();
+  const seedReadAt = readWindow.seedReadAt;
   const [{ comments = [] } = {}, issueThread, proposalThread, botLogin] = await Promise.all([
     github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
     threadContext.loadIssueThread(pool, app.id, issueNumber),
@@ -4630,10 +4640,12 @@ async function runFollowUp(pool, config, {
   // asked it to change comes here as asks.
   replies = replies.filter((r) => r.via !== 'homeroom' || (r.where === 'proposal' ? !voiceOnChange : !voiceOnRequest));
   if (voiceOnChange) {
-    asks = await voice.takeAsks(pool, { sessionId: proposal.id, runTag }).catch((err) => {
+    // Once across the look's attempts: the asks the first attempt took are
+    // this look's (taken, by its tag), never left behind by a resumed one.
+    asks = await look.once('asks', async () => JSON.parse(JSON.stringify(await voice.takeAsks(pool, { sessionId: proposal.id, runTag }).catch((err) => {
       log.warn('homeroom-bot', 'Could not take the asks waiting on a change', { app: app.slug, err: err.message });
       return [];
-    });
+    }))));
     replies = [...replies, ...asks.map(followup.askAsReply)].sort((a, b) => toMs(a.createdAt) - toMs(b.createdAt));
   }
   others = replies.filter((r) => r.via !== 'ask');
@@ -4819,9 +4831,12 @@ async function runFollowUp(pool, config, {
       proposalSessionId: session.id,
     }).catch((err) => log.warn('homeroom-bot', 'Could not record a mention opt-out', { app: app.slug, issueNumber, err: err.message }));
   }
-  const moved = followup.headMoved({
+  // Decided once across the look's attempts, before the reconcile moves the
+  // reviewed head to the turn's push: a resumed attempt compared against the
+  // moved head would read a revision that landed as no change.
+  const moved = await look.once('moved', () => followup.headMoved({
     mode, result, reviewedHeadSha: session.reviewed_head_sha, action: parsed?.action,
-  });
+  }));
   // A failed turn is never a revision (followup.headMoved); this says why.
   const turnFailed = live.failedClaudeTurn(result);
   if (!parsed && !moved) {
@@ -5469,9 +5484,11 @@ async function runChecksFix(pool, config, {
   }
 
   const parsed = turn.stopped || code ? null : followup.parseFollowUp(result.lastResultText);
-  const moved = !turn.stopped && !code && followup.headMoved({
+  // Decided once across the look's attempts, before the reconcile moves the
+  // reviewed head (as runFollowUp's).
+  const moved = await look.once('moved', () => !turn.stopped && !code && followup.headMoved({
     mode, result, reviewedHeadSha: session.reviewed_head_sha, action: parsed?.action,
-  });
+  }));
   if (moved) {
     // #4533: after a restart, the person's recovery tail has already done
     // this for the new head (server.js finalizeRecoveredTurn).

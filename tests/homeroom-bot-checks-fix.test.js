@@ -271,6 +271,56 @@ async function run(t, h, item = ITEM) {
 
 const insertOf = (h) => h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
 
+// PR #5424 review: a fix round resumed after a restart that came right
+// after its reconcile (which made the turn's push the reviewed head) is the
+// revision it was, decided before the reconcile, never "no change".
+test('a fix round resumed after its reconcile is still the revision it was', async (t) => {
+  const durableSteps = require('../src/services/durable-steps');
+  const { StepsStopped } = require('../src/workflow/kernel/steps.ts');
+  const h = harness();
+  h.deps.github.getBranchSha = async () => HEAD;
+  const query = h.pool.query;
+  h.pool.query = async (sql, params) => {
+    const out = await query(sql, params);
+    if (h.calls.reconciled.length && /SELECT cs\.\*, a\.slug AS app_slug/.test(String(sql))) {
+      return { rows: out.rows.map((r) => ({ ...r, reviewed_head_sha: NEW_HEAD })) };
+    }
+    return out;
+  };
+  const realPost = live.post;
+  const realSeen = live.advanceSeen;
+  const realOnProposal = live.postOnProposal;
+  const realTargets = live.mentionTargets;
+  t.after(() => {
+    live.post = realPost; live.advanceSeen = realSeen; live.postOnProposal = realOnProposal; live.mentionTargets = realTargets;
+  });
+  live.post = async (args) => { h.calls.posts.push(args); return { githubCreatedAt: '2026-10-01T12:05:00Z' }; };
+  live.postOnProposal = async (args) => { h.calls.onProposal.push(args); return { postId: 1, thread: true }; };
+  live.advanceSeen = async () => ({ advanced: true });
+  live.mentionTargets = async () => ['ada'];
+  let saved = null;
+  let crashed = false;
+  const attempt = (from) => {
+    const steps = durableSteps.durable({
+      resumeFrom: from,
+      checkpoint: async (v) => {
+        saved = v;
+        if (!crashed && Object.prototype.hasOwnProperty.call(v, 'reconcile:1')) { crashed = true; throw new StepsStopped('the process was replaced'); }
+      },
+    });
+    h.look = bot._newLookForTests({ steps, n: 1, key: `request:${APP.id}:${ITEM.issue_number}`,
+      owner: { machine: 'bot-request', key: `request:${APP.id}:${ITEM.issue_number}`, kind: 'bot.look' } });
+    return bot._runInLookForTests(h.look, () => bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings: SETTINGS, deps: h.deps }));
+  };
+  await assert.rejects(attempt(null), (err) => err.stopped === true);
+  assert.ok(crashed, 'the first attempt got as far as its reconcile');
+  const out = await attempt(saved);
+  assert.equal(out.verdict, 'revise');
+  assert.equal(h.calls.exec.length, 1, 'one turn');
+  assert.equal(h.calls.reconciled.length, 1, 'reconciled once');
+  assert.equal(insertOf(h).params[4], 'revise');
+});
+
 test('red checks on its own proposal: one build turn fixes them, the proposal is reconciled, and the head is marked looked at', async (t) => {
   const h = harness();
   const out = await run(t, h);

@@ -270,6 +270,92 @@ async function run(t, h) {
 
 const insertOf = (h) => h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
 
+// ── A restart in the middle of a follow-up (PR #5424 review) ────────────
+// A look is a work item a restart carries on from its last saved step. Each
+// attempt here is one process: a checkpoint that "crashes" (the step is
+// saved, then the work is lost, as a release does to a running process)
+// right after `crashAfter` is kept, and the next attempt resumes from what
+// was saved, against the database as the first attempt left it.
+async function attempts(t, h, crashAfter) {
+  const durableSteps = require('../src/services/durable-steps');
+  const { StepsStopped } = require('../src/workflow/kernel/steps.ts');
+  const realPost = live.post;
+  const realSeen = live.advanceSeen;
+  t.after(() => { live.post = realPost; live.advanceSeen = realSeen; });
+  live.post = async (args) => { h.calls.posts.push(args); return { githubCreatedAt: '2026-09-26T12:05:00Z' }; };
+  live.advanceSeen = async (args) => { h.calls.seen.push(args); return { advanced: true }; };
+  // A durable turn reads the branch's head before it starts (its observe).
+  h.deps.github.getBranchSha = async () => OLD_HEAD;
+  let saved = null;
+  let crashed = false;
+  const attempt = (from) => {
+    const steps = durableSteps.durable({
+      resumeFrom: from,
+      checkpoint: async (v) => {
+        saved = v;
+        if (!crashed && Object.prototype.hasOwnProperty.call(v, crashAfter)) {
+          crashed = true;
+          throw new StepsStopped('the process was replaced');
+        }
+      },
+    });
+    h.look = bot._newLookForTests({ steps, n: 1, key: `request:${APP.id}:${ITEM.issue_number}`,
+      owner: { machine: 'bot-request', key: `request:${APP.id}:${ITEM.issue_number}`, kind: 'bot.look' } });
+    return bot._runInLookForTests(h.look, () => bot.runTriage(h.pool, {}, {
+      bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings: SETTINGS, deps: h.deps,
+    }));
+  };
+  await assert.rejects(attempt(null), (err) => err.stopped === true, `the first attempt is lost after ${crashAfter}`);
+  assert.ok(crashed, `it got as far as ${crashAfter}`);
+  return attempt(saved);
+}
+
+test('a follow-up resumed after its run was recorded still posts its answer: it reads the replies it was answering', async (t) => {
+  const h = harness({ proposalThread: [{ author: 'sam', body: 'Why zinc-950?', createdAt: '2026-09-26T11:20:00Z' }] });
+  // The run the first attempt recorded is the newest one the second reads,
+  // its mark past the reply it answers.
+  let recorded = null;
+  const query = h.pool.query;
+  h.pool.query = async (sql, params) => {
+    const s = String(sql);
+    if (/INSERT INTO homeroom_bot_runs/.test(s)) recorded = { id: 901, thread_seen_at: '2026-09-26T12:00:00Z' };
+    if (recorded && /SELECT id, thread_seen_at FROM homeroom_bot_runs/.test(s)) { h.calls.queries.push({ s, params }); return { rows: [recorded] }; }
+    if (recorded && /SELECT verdict, error, thread_seen_at, proposal_session_id, checks_head_sha/.test(s)) {
+      h.calls.queries.push({ s, params });
+      return { rows: [{ verdict: 'answer', error: null, thread_seen_at: recorded.thread_seen_at, proposal_session_id: 5001, checks_head_sha: null }] };
+    }
+    return query(sql, params);
+  };
+  const out = await attempts(t, h, 'run:1');
+  assert.notEqual(out?.reason, 'no_new_replies', 'the replies it was answering are still its own');
+  assert.equal(h.calls.exec.length, 1, 'its turn ran once');
+  assert.equal(h.calls.queries.filter((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)).length, 1, 'one run');
+  assert.equal(h.calls.posts.length, 1, 'and its answer is posted, once');
+  assert.match(h.calls.posts[0].text, /Because the platform uses it\./);
+});
+
+test('a revision resumed after its reconcile is still the revision it was: never "no change"', async (t) => {
+  const h = harness({
+    proposalThread: [{ author: 'sam', body: 'Make it darker.', createdAt: '2026-09-26T11:20:00Z' }],
+    result: { lastResultText: '```json\n{"action":"revise","reply":"Darker now.","summary":"Background is #09090b."}\n```', pushOk: true, sha: NEW_HEAD },
+  });
+  // The reconcile made the turn's push the reviewed head.
+  const query = h.pool.query;
+  h.pool.query = async (sql, params) => {
+    const out = await query(sql, params);
+    if (h.calls.reconciled.length && /SELECT cs\.\*, a\.slug AS app_slug/.test(String(sql))) {
+      return { rows: out.rows.map((r) => ({ ...r, reviewed_head_sha: NEW_HEAD })) };
+    }
+    return out;
+  };
+  await attempts(t, h, 'reconcile:1');
+  const inserts = h.calls.queries.filter((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
+  assert.equal(inserts.length, 1);
+  assert.ok(inserts[0].params.includes('revise'), 'recorded as the revision it was');
+  assert.ok(!inserts[0].params.some((v) => /produced no change|did not move/.test(String(v))), 'never as a failed one');
+  assert.equal(h.calls.reconciled.length, 1, 'reconciled once');
+});
+
 test('activity with nothing a person said is recorded as seen, and costs nothing', async (t) => {
   const h = harness({ comments: [{ author: 'usernode-bot', body: 'Homeroom bot built this', createdAt: '2026-09-26T11:00:00Z' }] });
   const out = await run(t, h);
