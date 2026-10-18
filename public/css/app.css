@@ -20031,6 +20031,31 @@ html.un-kb #platform-parked {
     background: var(--lit-tint);
     color: var(--lit-ink);
   }
+  /* THE RESUME HANDLE (#3618). In the Active section the row's one job is a
+     press back into the app, and the filled pill at its end says so where
+     the green dot only repeated the heading. It is the accent pill recipe
+     the votes count uses (`.platform-tab-votes`), and the ROW stays the
+     target — a button inside the anchor would be invalid markup and two
+     targets where the design has one, the arrangement the parked strip's
+     pill already makes. Belt for the row you are in (React draws none there,
+     being aria-current): that app is already open on screen. */
+  .platform-active-resume {
+    flex: none;
+    height: 18px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .platform-recent[aria-current="true"] .platform-active-resume {
+    display: none;
+  }
   /* Only apps are running and none has been left yet: no RECENTS heading
      over nothing. The heading is the list's last child only then. */
   .platform-recents-head:last-child {

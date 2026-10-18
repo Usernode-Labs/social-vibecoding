@@ -139,21 +139,29 @@ const APPS = [
 function router(start, opts = {}) {
   const elements = new Map();
   const transitions = [];
+  const zooms = [];
   const parks = [];
   const slots = [];
   const presence = [];
+  let retired = 0;
   let App = null;
   const h = makeHistory(start, { ...opts, onTopTraversal: () => App._routeFromHash() });
   const noop = () => undefined;
   const context = vm.createContext({
     location: h.location, history: h.history, URL, URLSearchParams, console, setTimeout, clearTimeout,
+    CSS: { escape: (v) => String(v).replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`) },
     document: {
       title: '',
       getElementById: (id) => {
         if (!elements.has(id)) elements.set(id, fakeElement());
         return elements.get(id);
       },
-      querySelector: () => null, querySelectorAll: () => [],
+      // #3618: the collapse looks its row up in the rail. A test names a
+      // handle to stand in for the React island's Active row.
+      querySelector: (sel) => (opts.resumeRow
+        && typeof sel === 'string' && sel.includes('platform-recents')
+        ? opts.resumeRow : null),
+      querySelectorAll: () => [],
       addEventListener() {}, dispatchEvent() {},
     },
     addEventListener() {},
@@ -161,6 +169,7 @@ function router(start, opts = {}) {
     PlatformUI: new Proxy({
       transition(fn, o) {
         transitions.push(o?.type || 'none');
+        if (o && String(o.type || '').startsWith('zoom')) zooms.push(o);
         fn();
         o?.after?.();
       },
@@ -186,13 +195,19 @@ function router(start, opts = {}) {
       return Promise.resolve(!!rec);
     },
     renderDevView: () => Promise.resolve(),
+    // Counted, so a test can tell a close that kept the app running from
+    // Home's — the one exit that has always dropped the frame.
+    _retireAppFrame() { retired += 1; },
+    _teardownDevRoots() {},
   };
   context.AppView = new Proxy(appView, { get: (t, k) => (k in t ? t[k] : noop) });
   context.Home = new Proxy({}, { get: () => noop });
   App.bindEvents();
   const back = context.document.getElementById('back-btn');
   return {
-    App, h, transitions, parks, slots, presence,
+    App, h, transitions, zooms, parks, slots, presence,
+    retired: () => retired,
+    element: (id) => elements.get(id),
     // A plain click on the header's back slot, as the anchor's own handler sees it.
     clickClose() {
       back.setAttribute('href', slots.length ? slots[slots.length - 1][1] : '/');
@@ -250,6 +265,69 @@ test('from Home it zooms back into its tile — the one screen that has one', as
   assert.equal(r.h.route(), '/');
   assert.equal(r.App._revealedScreen, 'home-screen');
   assert.deepEqual(r.transitions, ['zoom-out'], 'navigateHome shrinks the app into its tile');
+});
+
+// ── #3618: the close collapses into the row that resumes it ───────────
+//
+// A close that can be routed (no Navigation API, or the frame has written
+// history since the origin was noted) wraps its own navigation in the kit's
+// zoom-out, with the app's Active row in the rail as the source the kit
+// resolves after the destination has been revealed beneath it. The frame is
+// never retired: the app keeps running, and its row stays in Active.
+
+test('#3618: a close that routes to the page underneath collapses into its rail row', async () => {
+  const row = fakeElement();
+  const r = router('/#messages/4243', { navigationApi: false, resumeRow: row });
+  await boot(r);
+  await r.App.openAppTab('garden-ab12', 'app');
+  // The frame has written history since the origin was noted, so Back could
+  // only rewind it: the ✕ goes to the origin by pushing it — the one
+  // synchronous path the collapse wraps.
+  r.h.frameNavigates();
+  r.transitions.length = 0;
+  r.zooms.length = 0;
+  r.clickClose();
+  assert.equal(r.h.route(), '/#messages/4243', 'the same destination as ever');
+  assert.equal(r.App._revealedScreen, 'messages-screen');
+  assert.deepEqual(r.transitions, ['zoom-out', 'none'],
+    'the collapse zooms, and the destination reveals beneath it as a cut');
+  const zoom = r.zooms[0];
+  assert.equal(zoom.el, r.element('app-view'), 'the live card is what moves');
+  assert.equal(zoom.fromEl, row, 'shrinking into the row that resumes it');
+  assert.equal(zoom.fallback, 'none', 'no usable handle, no motion');
+  assert.equal(r.element('app-view').classList.contains('hidden'), true,
+    'the view is concealed in after, once the zoom has landed');
+  assert.equal(r.App._zoomKeepAppView, false, 'the one-shot keep did not outlive the zoom');
+  assert.equal(r.retired(), 0, 'the frame is never retired: the app keeps running');
+});
+
+test('#3618: with no handle on screen the close is the plain cut it always was', async () => {
+  const r = router('/#messages/4243', { navigationApi: false });
+  await boot(r);
+  await r.App.openAppTab('garden-ab12', 'app');
+  r.h.frameNavigates();
+  r.transitions.length = 0;
+  r.zooms.length = 0;
+  r.clickClose();
+  assert.equal(r.h.route(), '/#messages/4243');
+  assert.equal(r.zooms.length, 0, 'nothing to shrink into, nothing wrapped');
+  assert.deepEqual(r.transitions, ['none']);
+});
+
+test('#3618: the close that lands on Home still belongs to navigateHome — one zoom, into the tile', async () => {
+  const row = fakeElement();
+  const r = router('/', { navigationApi: false, resumeRow: row });
+  await boot(r);
+  await r.App.openAppTab('garden-ab12', 'app');
+  r.h.frameNavigates();
+  r.transitions.length = 0;
+  r.zooms.length = 0;
+  r.clickClose();
+  assert.equal(r.h.route(), '/');
+  assert.equal(r.App._revealedScreen, 'home-screen');
+  assert.deepEqual(r.transitions, ['zoom-out'], 'the one zoom is navigateHome\'s');
+  assert.equal(typeof r.zooms[0].fromEl, 'function', 'navigateHome resolves the tile itself');
+  assert.ok(r.retired() > 0, 'Home retires the frame, as it always has');
 });
 
 test('an app resumed from a card in its own Workshop closes back onto that card', async () => {

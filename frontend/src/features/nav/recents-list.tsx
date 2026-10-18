@@ -167,19 +167,28 @@ function AppTile({ app }: { app: NonNullable<RecentItem['app']> }) {
   );
 }
 
-function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
+function RecentRow({ item, live, resume }: { item: RecentItem; live: boolean; resume?: boolean }) {
   const Glyph = GLYPHS[item.kind];
   const app = item.app && (item.app.iconUrl || item.app.iconEmoji) ? item.app : null;
   const unread = item.unread ? ', unread' : '';
   const loaded = live ? `, ${LIVE_APP_LABEL}` : '';
   const doing = item.activity ? `, ${ACTIVITY_LABEL[item.activity].toLowerCase()}` : '';
+  // #3618: in the Active section the row's one job is a press back into the
+  // app, and the pill at its end says so ("Resume") where the green dot only
+  // repeated the heading. The ROW stays the target — a button inside the
+  // anchor would be invalid markup and two targets where the design has one,
+  // the same arrangement the parked strip records (../parked-strip.tsx) — so
+  // the pill is a span and the name carries it. The row you are in is already
+  // open on screen and draws none. Every other caller of this row keeps the
+  // dot: on Home tiles and in Recents it is the only "still loaded" mark.
+  const resumable = resume && !item.current ? ', Resume' : '';
   return (
     <a
       className="platform-recent"
       href={item.href}
       data-recent-kind={item.kind}
       data-recent-key={item.key}
-      aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${doing}${unread}`}
+      aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${doing}${unread}${resumable}`}
       {...(live ? { 'data-live': 'true' } : null)}
       {...(item.current ? { 'aria-current': 'true' as const, 'data-current': 'true' } : null)}
       onClick={item.app
@@ -194,8 +203,12 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
         ? <AgentActivityIcon activity={item.activity} className="platform-recent-glyph" />
         : app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
       <span className="platform-recent-label">{item.label}</span>
-      {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
-      {live ? <LiveAppDot className="platform-recent-live" /> : null}
+      {/* #2902: still loaded — resuming it shows it exactly as it was left.
+          #3618: in Active the row you are in draws no mark at all — it is
+          already open on screen, and its lit fill says so. */}
+      {resume
+        ? (item.current ? null : <span className="platform-active-resume">Resume</span>)
+        : live ? <LiveAppDot className="platform-recent-live" /> : null}
       {item.unread ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
     </a>
   );
@@ -268,7 +281,7 @@ export function ActiveApps({ items }: { items: RecentItem[] }) {
   return (
     <div className="platform-active" role="group" aria-labelledby="platform-active-head">
       <h2 id="platform-active-head" className="platform-recents-head">Active</h2>
-      {items.map((item) => <RecentRow key={item.key} item={item} live />)}
+      {items.map((item) => <RecentRow key={item.key} item={item} live resume />)}
     </div>
   );
 }

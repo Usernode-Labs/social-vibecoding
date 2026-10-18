@@ -559,16 +559,25 @@ test('#3074: the Active rows are Recents\' rows, the current one lit, and nothin
   });
   const html = renderToHtml(createElement(ActiveApps, { items }));
   assert.match(html, /^<div class="platform-active" role="group" aria-labelledby="platform-active-head"><h2 id="platform-active-head" class="platform-recents-head">Active<\/h2>/);
-  const rows = html.match(/<a class="platform-recent"[^>]*>/g);
+  const rows = html.match(/<a class="platform-recent"[\s\S]*?<\/a>/g);
   assert.equal(rows.length, 2);
   assert.match(rows[0], /data-recent-key="app:notes"/);
-  assert.match(rows[0], /aria-label="App: Notes, still open"/);
   assert.match(rows[0], /data-live="true"/);
   assert.match(rows[0], /aria-current="true"/);
   assert.match(rows[0], /data-current="true"/);
   assert.doesNotMatch(rows[1], /aria-current/);
-  assert.match(html, /class="app-live-dot platform-recent-live"/, 'the green dot it carries everywhere');
   assert.match(html, /platform-recent-tile/, 'the app\'s own icon');
+
+  // #3618: the row ends in the filled Resume pill where the green dot sat,
+  // because the row's one job here is the press back in. The row you are in
+  // is already open on screen: no pill, and its name keeps just "still
+  // open". The pill is a span inside the anchor — the row is the target —
+  // and the name says so, after "still open".
+  assert.doesNotMatch(html, /app-live-dot/, 'the green dot stays out of Active');
+  assert.doesNotMatch(rows[0], /platform-active-resume/, 'no pill on the row you are in');
+  assert.match(rows[0], /aria-label="App: Notes, still open"/);
+  assert.match(rows[1], /aria-label="App: Chess, still open, Resume"/);
+  assert.match(rows[1], /class="platform-active-resume">Resume<\/span>/);
 
   const list = read('frontend/src/features/nav/recents-list.tsx');
   // Hydration: rows only after mount, the section inside the root and first.
@@ -630,6 +639,18 @@ test('#3074: Active is drawn in the desktop block only, the app you are in lit l
   assert.match(css.slice(at), /^\.platform-active \{[^}]*display: flex;[^}]*flex: none;/);
   assert.match(css, /\.platform-recent\[aria-current="true"\] \{\s*background: var\(--lit-tint\);\s*color: var\(--lit-ink\);\s*\}/);
   assert.match(css, /\.platform-recents-head:last-child \{\s*display: none;\s*\}/, 'no Recents heading over nothing');
+
+  // #3618: the Resume pill lives in the same desktop block, carries the
+  // votes pill's accent recipe, and is drawn none on the row you are in.
+  const pill = css.indexOf('.platform-active-resume {');
+  assert.ok(pill > desktop, 'the pill is the rail\'s, in the desktop block');
+  assert.equal((css.match(/\n  \.platform-active-resume \{/g) || []).length, 1, 'one rule');
+  assert.match(css.slice(pill),
+    /^\.platform-active-resume \{[^}]*flex: none;[^}]*height: 18px;[^}]*border-radius: 999px;[^}]*background: var\(--accent\);[^}]*color: #fff;/);
+  assert.match(css.slice(pill), /font-size: 11px;\s*font-weight: 600;/);
+  assert.match(css.slice(pill),
+    /\}\s*\.platform-recent\[aria-current="true"\] \.platform-active-resume \{\s*display: none;\s*\}/,
+    'the row already open on screen draws none');
 });
 
 // ── #3555: a channel opens its project's Discussion tab ───────────────

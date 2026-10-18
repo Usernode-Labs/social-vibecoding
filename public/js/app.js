@@ -4780,7 +4780,18 @@ const App = {
   // outgoing one" — usernode-native/v1/native.js).
   _showOnlyScreen(revealId, keepAlso) {
     window.UsernodeBrowserScroll?.capture();
-    const keep = keepAlso || [];
+    // #3618: the ONE-SHOT keep. App.closeApp's zoom-out collapse routes
+    // through restoreFromHash, so it cannot pass `keepAlso` the way
+    // navigateHome does — and #app-view IS the shrinking card, which must
+    // stay painted for the zoom's length or the destination reveal would
+    // cut it away mid-motion. Set just before the zoom; consumed here, by
+    // the first reveal (the close's own destination); cleared again in the
+    // zoom's `after`.
+    let keep = keepAlso || [];
+    if (App._zoomKeepAppView) {
+      App._zoomKeepAppView = false;
+      if (!keep.includes('app-view')) keep = keep.concat('app-view');
+    }
     for (const id of App.SCREEN_IDS) {
       if (id === revealId || keep.includes(id)) continue;
       App._setScreenVisible(id, false);
@@ -5276,6 +5287,11 @@ const App = {
   // route's answer, so it is correct from the first frame of a transition
   // rather than from the frame the outgoing screen is finally hidden on.
   _revealedScreen: null,
+
+  // One-shot: set by closeApp just before its zoom-out collapse (#3618, see
+  // _showOnlyScreen), consumed by the first reveal, cleared in the zoom's
+  // `after`. Never left set across a navigation that did not ask for it.
+  _zoomKeepAppView: false,
 
   // ── The React seam (#1078) ─────────────────────────────────────────
   // Screen roots whose markup React owns. For these, visibility is
@@ -6022,6 +6038,44 @@ const App = {
     return window.NavLink ? NavLink.homeHref() : App._rootUrl();
   },
 
+  // Whether the ✕'s close may collapse the app into its rail row (#3618).
+  // Out: the close that lands on Home (navigateHome owns that motion — its
+  // zoom-out shrinks the app into the app's Home tile; a second around it
+  // would nest), and everything whose reveal is not synchronous: a history
+  // traversal or history.back() reveals the destination itself, with its own
+  // entry transition and the rail not yet on screen for the kit to measure.
+  // The phone too (its park already reads as the close — the parked strip
+  // slides up out of the bar the moment the app is left — and the bar enters
+  // the DOM only after React commits that park, which happens after the
+  // zoom's fn and would make the source rect unusable). What is left is
+  // 'route' and 'push': the reveal runs inside the zoom's fn as a
+  // synchronous 'none' cut, because every destination out of the app's
+  // iframe asks for 'none' (App._entryTransition's fromIframe rule), so
+  // nothing snapshots and nothing collides.
+  _closeCollapses(target) {
+    if (App._isPhoneLayout()) return false;
+    if (target.how !== 'route' && target.how !== 'push') return false;
+    if (App._closeLandsHome(target)) return false;
+    return App._isScreenVisible('app-view');
+  },
+
+  // Whether this close's destination IS Home. navigateHome owns the close
+  // that lands there — its zoom-out shrinks the app into the app's Home
+  // tile — so wrapping it would nest two zooms.
+  _closeLandsHome(target) {
+    if (target.how === 'home') return true;
+    if (!target.url) return false;
+    try {
+      const parsed = new URL(target.url, location.origin);
+      // The root address, hash and all: '/#messages/4243' is a thread, not
+      // Home, and closes onto it collapse like any other destination.
+      return parsed.origin === location.origin
+        && (parsed.pathname === '/' || parsed.pathname === '')
+        && (parsed.hash === '' || parsed.hash === '#')
+        && !App._isRunningAppUrl(parsed.href);
+    } catch (_) { return false; }
+  },
+
   // The ✕ in a running app's strip (#back-btn's click handler).
   closeApp() {
     if (App.embeddedPanel || !App.currentApp) return false;
@@ -6038,9 +6092,45 @@ const App = {
     } else if (target.how === 'back') {
       history.back();
       return true;
-    } else if (target.how === 'route') {
-      App._routeFromHash();
-      return true;
+    } else if (App._closeCollapses(target)) {
+      // #3618: collapse the app, live, into its Active row in the rail —
+      // the zoom navigateHome plays into the app's Home tile, turned to the
+      // row that resumes it. fn below is the very navigation the tail runs;
+      // the zoom only wraps it. The app keeps running: the frame is never
+      // retired here, so its row stays in Active and resuming it shows it
+      // exactly as it was left.
+      const slug = App.currentApp;
+      const handle = App._resumeHandleFor(slug);
+      const appView = handle ? document.getElementById('app-view') : null;
+      if (appView) {
+        App._zoomKeepAppView = true;
+        PlatformUI.transition(() => {
+          if (target.how === 'route') {
+            App._routeFromHash();
+            return;
+          }
+          try {
+            if (target.url) history.pushState(null, '', target.url);
+            else history.replaceState(null, '', App._rootUrl());
+          } catch (_) { /* the router still routes whatever the address says */ }
+          App._routeFromHash();
+        }, {
+          type: App._entryTransition('zoom-out', appView),
+          el: appView,
+          fromEl: handle,
+          fallback: 'none',
+          after: () => {
+            // Belt: only a close whose destination arrived hides the view —
+            // a destination that never landed leaves the app painted, and
+            // it is hidden the way the tail's plain navigation does it.
+            if (App._revealedScreen !== 'app-view') {
+              appView.classList.add('hidden');
+            }
+            App._zoomKeepAppView = false;
+          },
+        });
+        return true;
+      }
     }
     try {
       if (target.url) history.pushState(null, '', target.url);
@@ -6623,6 +6713,33 @@ const App = {
     } catch { return null; }
   },
 
+  // The handle an app's zoom grows out of / shrinks into when its Home tile
+  // is not the source (#3618): the app's own Active row in the desktop rail
+  // (#platform-recents, the pill row), else the parked bar's Resume anchor
+  // when the bar is up and shows this app (the phone). Null when neither is
+  // showing — the kit's own usability check and the caller's fallback cover
+  // everything else, so a hidden rail (a running app covers it) or a hidden
+  // strip still ends in the plain transition. The row's rect is read by the
+  // KIT, not here: for the close's zoom-out the row only becomes measurable
+  // once the zoom's fn has revealed the destination screen beside the rail.
+  _resumeHandleFor(slug) {
+    try {
+      if (!slug) return null;
+      const sel = CSS.escape(slug);
+      const row = document.querySelector(
+        `#platform-recents .platform-recent[data-recent-key="app:${sel}"]`
+      );
+      if (row) return row;
+      const bar = document.getElementById('platform-parked');
+      if (bar && !bar.classList.contains('hidden')) {
+        return bar.querySelector(
+          `.platform-parked-open[href="/app/${encodeURIComponent(slug)}"]`
+        ) || null;
+      }
+      return null;
+    } catch { return null; }
+  },
+
   // The screen the app view is expanding OUT of — home normally, the
   // browse screen when the tap came from there. The kit needs it twice:
   // as `outEl` (hidden for the synchronous pre-paint measurement so the
@@ -6817,7 +6934,7 @@ const App = {
     }, {
       type: App._entryTransition('zoom-in', appViewEl, viaTab),
       el: document.getElementById('app-view'),
-      fromEl: () => App._tileFor(slug),
+      fromEl: () => App._tileFor(slug) || App._resumeHandleFor(slug),
       // The outgoing screen: the kit hides it while measuring the
       // destination so the flex-sibling split doesn't skew the target
       // rect (see the comment block above).
