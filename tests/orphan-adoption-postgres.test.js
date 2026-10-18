@@ -27,6 +27,13 @@ process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'test-session';
 process.env.ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 process.env.ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt';
+// The runner reads this file's results from its stdout, framed, and Node's
+// parser (internal/test_runner/runner.js parseMessage) can put a held-back
+// 0xFF after the next read when a read ends partway through a frame's
+// header: "Unable to deserialize cloned data" (#5445). A read only ends there
+// when the pipe is full, and what fills it is the INFO lines the server and
+// its sweeps log to stdout. WARN and ERROR go to stderr and still show.
+process.env.LOG_LEVEL = process.env.ORPHAN_ADOPTION_DEBUG ? 'INFO' : 'WARN';
 require('./platform-keys').setPlatformKeys();
 
 // pool.end() resolves once its idle connections are handed their end, not
