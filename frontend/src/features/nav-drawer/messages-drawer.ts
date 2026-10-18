@@ -11,10 +11,13 @@
  * `open()` (../messages/store.ts), and the strip slides to wherever the
  * route lands.
  *
- * Only a conversation with people: an agent's chat or session opens on a
- * screen of its own on a phone, a channel belongs to its community, and a
- * reply thread is a level over its conversation with its own header. Those
- * keep the screen as it was.
+ * A conversation with people, and an agent chat or an agent session (Evan,
+ * 18 Oct 2026: on a phone they used to open on screens of their own, with no
+ * list to swipe back to; now they open here, and their old addresses land
+ * here too, app.js). Not a dev session, which opens on its project's page; a
+ * channel, which belongs to its community; or a reply thread, which is a
+ * level over its conversation with its own header. Those keep the screen as
+ * it was.
  *
  * The header (./header-drawer.tsx) draws from this store and its depth: on
  * the list "Messages", in a conversation its name with who it is with under
@@ -27,7 +30,7 @@ import { createStore } from '../../lib/plain-store.js';
 import { createDepthChannel } from './drawer-store';
 
 export interface MessagesDrawerState {
-  /** The drawer holds the route: a phone, the list, or a conversation with people. */
+  /** The drawer holds the route: a phone, and the list, a conversation, an agent chat or an agent session. */
   on: boolean;
   /** 0, the list; 1, a conversation. */
   level: 0 | 1;
@@ -55,9 +58,16 @@ export function messagesDrawerApplies(at: {
   activeKind?: string | null;
 }): boolean {
   if (!at.phone || !at.open || at.embedded) return false;
-  if (at.appSlug || at.agent || at.threadRootId) return false;
+  if (at.appSlug || at.threadRootId) return false;
+  if (at.agent && !onTheDrawer(at.agent)) return false;
   if (at.conversationId && at.activeKind === 'channel') return false;
   return true;
+}
+
+/** Whether an agent thread is the drawer's: an agent chat or an agent session, not a dev session. Pure. */
+export function onTheDrawer(agent: unknown): boolean {
+  const kind = agent && typeof agent === 'object' ? (agent as { kind?: unknown }).kind : null;
+  return kind === 'chat' || kind === 'agent';
 }
 
 let goBack: (() => void) | null = null;

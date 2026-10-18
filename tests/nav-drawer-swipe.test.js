@@ -90,5 +90,13 @@ test('the lists and the page hand the sideways drag on while the drawer holds th
   assert.match(css, /\.nav-drawer-outer-list \{[^}]*touch-action: pan-y;/);
   const island = read('frontend/src/features/nav-drawer/nav-drawer.tsx');
   assert.match(island, /const sideways = touch\.clientX > EDGE_PX && startsOnSideways\(target, page, window\);/);
-  assert.match(island, /if \(!e\.cancelable\) \{\s*stop\(\);\s*return;\s*\}/, 'a scroll the browser has begun keeps the touch');
+  // In the iPhone app a swipe's moves come uncancelable (WebKit decided at
+  // touchstart, before the drawer's listener was there), so standing down on
+  // them left the swipe dead on most of a page and every plain message. The
+  // pan follows them, and holds the browser off only when it can.
+  const conversation = read('frontend/src/features/messages/phone-drawer.tsx');
+  for (const [name, source] of [['the page', island], ['a conversation', conversation]]) {
+    assert.doesNotMatch(source, /if \(!e\.cancelable\)/, `${name}: an uncancelable move does not end the pan`);
+    assert.match(source, /if \(e\.cancelable\) e\.preventDefault\(\);/, `${name}: a cancelable one is still held`);
+  }
 });

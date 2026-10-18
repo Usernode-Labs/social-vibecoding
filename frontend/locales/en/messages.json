@@ -3738,5 +3738,9 @@
   "drawer.peek.open": {
     "text": "Open {{name}}",
     "description": "On a phone, what a screen reader says for the last conversation, peeking in beside the list of conversations; pressing it opens that conversation. {{name}} is the conversation's name: a person's name or a group's title."
+  },
+  "drawer.chat.line": {
+    "text": "Agent chat",
+    "description": "On a phone, the small line under an agent chat's name in the top bar while the chat is open: says what kind of conversation it is."
   }
 }

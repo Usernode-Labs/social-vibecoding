@@ -5208,27 +5208,25 @@ const App = {
         }
         // #2813: AN AGENT THREAD OPENS BESIDE THE LIST TOO, on a desktop —
         // a global agent chat at `#messages/agent/<id>`, an app's dev
-        // session at `#messages/session/<slug>/<id>`. A PHONE has one pane,
-        // and there these have always been screens of their own, so the
-        // address is swapped in place for that screen's (`#chat/<id>`,
-        // `#app/<slug>/dev/sessions/<id>`): no history entry of its own, so
-        // Back from the chat still lands on the inbox it was opened from.
+        // session at `#messages/session/<slug>/<id>`. On a PHONE an agent
+        // chat and an agent session open here as well, as the second level
+        // of the inbox's drawer (features/nav-drawer/messages-drawer.ts;
+        // Evan, 18 Oct 2026), so a swipe goes back to the list. A dev session
+        // is still a screen of its own there, so its address is swapped in
+        // place for that screen's (`#app/<slug>/dev/sessions/<id>`): no
+        // history entry of its own, so Back from it still lands on the inbox
+        // it was opened from.
         const agent = App._messagesAgentThread(parts);
         if (agent && agent.kind === 'agent') App._takeAgentFlow(hash, fragQuery);
         if (agent) {
-          if (!window.matchMedia('(min-width: 768px)').matches) {
-            if (agent.kind === 'session' && typeof Improve !== 'undefined') {
-              Improve.enterSessionFrom?.('#messages');
-            }
+          if (agent.kind === 'session' && !window.matchMedia('(min-width: 768px)').matches) {
+            if (typeof Improve !== 'undefined') Improve.enterSessionFrom?.('#messages');
             // replaceState and route the new address in this same pass, the
             // way the #topochain aliases heal: a `location.replace` from
             // inside the router lost the app route to the pass it raced.
             try {
-              history.replaceState(null, '', App._rootUrl(agent.kind === 'chat'
-                ? `#chat/${encodeURIComponent(agent.id)}`
-                : agent.kind === 'agent'
-                  ? `#agent/${agent.id}`
-                  : `#app/${encodeURIComponent(agent.slug)}/dev/sessions/${agent.id}`));
+              history.replaceState(null, '', App._rootUrl(
+                `#app/${encodeURIComponent(agent.slug)}/dev/sessions/${agent.id}`));
             } catch (_) { return; }
             App.restoreFromHash();
             return;
@@ -5274,6 +5272,14 @@ const App = {
         );
         return;
       }
+      // On a phone an agent chat and an agent session open in Messages, as
+      // the second level of its drawer, and their screens' addresses come
+      // with them (_agentToInbox): a chat with its id, an agent session or a
+      // new one, a ?flow= kept for that route to hand over. A bare #chat and
+      // #agent/<id>/changes keep their screens.
+      if (parts.length === 2 && ((parts[0] === 'chat' && parts[1])
+        || (parts[0] === 'agent' && (parts[1] === 'new' || App._numericSegment(parts[1]) != null)))
+        && App._agentToInbox(`#messages/agent/${parts[1]}`, fragQuery)) return;
       if (parts[0] === 'chat') {
         // #2543: Global Chat is an ordinary, resumable platform screen. Its
         // UUID names the exact session selected from Improve; a bare #chat
@@ -5284,8 +5290,9 @@ const App = {
       }
       if (parts[0] === 'agent') {
         // #2779: an agent session, one conversation with the Mayor that works
-        // on any app. Its own screen at #agent/<id> (a phone's surface; a
-        // desktop can also draw it beside the inbox at #messages/agent/<id>).
+        // on any app. Its own screen at #agent/<id> on a wide window (a
+        // desktop can also draw it beside the inbox at #messages/agent/<id>,
+        // and a phone opens it there, _agentToInbox).
         // A serial id, so the same signed-int32 bound as a conversation's;
         // `#agent/new` is one not sent yet, created by its first message.
         App.setChromeless(false);
@@ -7706,6 +7713,25 @@ const App = {
   // The value is taken out of the address once handed over, so a reload,
   // Back, or the first message giving an unsent conversation its own address
   // does not open the sheet again. Any other value is ignored.
+  // ON A PHONE AN AGENT CHAT AND AN AGENT SESSION ARE MESSAGES' (the inbox's
+  // drawer, features/nav-drawer/messages-drawer.ts; Evan, 18 Oct 2026): the
+  // list sits beside them and a swipe goes back to it. So their own screens'
+  // addresses, `#chat/<id>`, `#agent/<id>` and `#agent/new`, are swapped in
+  // place for the inbox's (`#messages/agent/…`), the fragment's query (a
+  // `?flow=`) kept, and routed in this same pass, as the inbox's own
+  // addresses were swapped the other way before. A bare `#chat` (resume the
+  // latest), `#agent/<id>/changes` (the changes drawer, which the inbox does
+  // not carry), a wide window and the side panel's own document keep the
+  // screens. Returns whether it took the address.
+  _agentToInbox(address, fragQuery) {
+    if (App.embeddedPanel || window.matchMedia('(min-width: 768px)').matches) return false;
+    try {
+      history.replaceState(null, '', App._rootUrl(`${address}${fragQuery ? `?${fragQuery}` : ''}`));
+    } catch (_) { return false; }
+    App.restoreFromHash();
+    return true;
+  },
+
   _takeAgentFlow(hash, fragQuery) {
     const read = (query) => {
       try { return new URLSearchParams(query || '').get('flow'); } catch (_) { return null; }

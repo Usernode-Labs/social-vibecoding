@@ -19417,6 +19417,10 @@ html[data-nav-drawer] #app-view { touch-action: pan-y; }
      pan-y themselves, so a sideways drag on them is the drawer's. */
   .messages-layout.messages-drawer .messages-list-scroll,
   .messages-layout.messages-drawer .messages-thread-scroll { touch-action: pan-y; }
+  /* An agent session's bar names it in the pane, over its pills; on the
+     drawer the header does (messages/index.tsx agentThreadWords), so the
+     pane leaves its own copy out, as a conversation's sheet does. */
+  .messages-layout.messages-drawer [data-agent-session-bar] > div:first-child:not([data-agent-session-pills]) { display: none; }
   .messages-layout.messages-drawer > .messages-list-pane {
     position: absolute; top: 0; bottom: 0; left: 0; width: 85%;
     will-change: transform;
