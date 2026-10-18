@@ -97,8 +97,8 @@ test('the new repository\'s dapp.json carries a non-default rule, and only then'
   assert.deepEqual(readGovernance(dapp({ approverPolicy: 'invited', approvalsRequired: 3 })),
     { approvers: 'invited', approvals: 3 });
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
-  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\) \}/g) || []).length, 2,
-    'both template paths (GitHub and local) pass the row\'s rule and its line');
+  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\), template: templateOf\(appRow\) \}/g) || []).length, 2,
+    'both template paths (GitHub and local) pass the row\'s rule, its line and its starter');
 });
 
 test('"What is it?" is one optional line, tidied and bounded', () => {
@@ -114,6 +114,25 @@ test('"What is it?" is one optional line, tidied and bounded', () => {
   assert.match(desc(42).error, /line of text/);
   // An import sends it only when its repo's dapp.json has no description.
   assert.equal(desc('A fork of ours', { imported: true }).description, 'A fork of ours');
+});
+
+test('the starter: absent is Empty, every catalog key is accepted, and a template is for a new project only', () => {
+  const { TEMPLATE_KEYS } = require('../src/services/app-templates');
+  assert.equal(options.parseCreateOptions({}).template, 'empty', 'an older client keeps the Empty starter');
+  assert.equal(options.parseCreateOptions({ template: '' }).template, 'empty');
+  for (const key of TEMPLATE_KEYS) {
+    assert.equal(options.parseCreateOptions({ template: key }).template, key);
+  }
+  const unknown = options.parseCreateOptions({ template: 'racing' });
+  assert.match(unknown.error, /template must be one of "empty", "social", "media", "game2d", "game3d"/);
+  assert.match(options.parseCreateOptions({ template: 7 }).error, /template must be/);
+  assert.match(options.parseCreateOptions({ template: 'game2d', repoUrl: 'https://github.com/o/r' }).error,
+    /A template applies to a new project, not an imported repository\./);
+  // The route writes the parsed key on the row, and refuses a bad one before
+  // anything exists (the error returns from the parser, as above).
+  const route = fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8');
+  assert.match(route, /collab_visibility, view_visibility, template_key\)/);
+  assert.match(route, /\[name\.trim\(\), slug, repoUrlNormalized, req\.user\.id, collabVisibility, viewVisibility, template\]/);
 });
 
 test('the new repository\'s dapp.json and CLAUDE.md carry the line, and only when there is one', () => {

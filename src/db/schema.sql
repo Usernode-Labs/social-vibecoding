@@ -2824,6 +2824,13 @@ COMMENT ON TABLE events IS 'staging:private';
 -- Defaults make every pre-migration app public/public (no behavior change).
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS collab_visibility VARCHAR(10) NOT NULL DEFAULT 'public';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS view_visibility   VARCHAR(10) NOT NULL DEFAULT 'public';
+-- The starter a project was created from (services/app-templates.js): one of
+-- 'empty', 'social', 'media', 'game2d' or 'game3d'. Server-only — no client
+-- reads it. It exists so a Retry after a failed create, or a repository
+-- repaired by app-heal, builds the same starter instead of the empty one.
+-- Imports, forks and every project created before templates existed keep the
+-- default 'empty'.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS template_key VARCHAR(32) NOT NULL DEFAULT 'empty';
 DO $$
 BEGIN
   IF NOT EXISTS (

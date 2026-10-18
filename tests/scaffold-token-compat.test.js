@@ -87,6 +87,13 @@ function loadScaffoldMiddleware(source, env) {
     if (id === 'path') return require('path');
     if (id === 'jsonwebtoken') return jwt;
     if (id === 'pg') return { Pool: class { async query() { return { rows: [] }; } } };
+    // Every starter's routes and schema; the auth middleware under test does
+    // not depend on any of them.
+    if (id === './starter') {
+      const attachStarter = () => {};
+      attachStarter.ensureSchema = async () => {};
+      return attachStarter;
+    }
     throw new Error(`scaffold sandbox: unexpected require(${id})`);
   };
   const fakeProcess = { env, exit: () => {}, cwd: () => process.cwd() };

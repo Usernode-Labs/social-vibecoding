@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {{DEV_CONSOLE}}
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <link rel="stylesheet" href="/tailwind.css">
+  <script src="/usernode-bridge/v1/bridge.js"></script>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen">
+  <main class="max-w-md mx-auto px-4 py-6 flex flex-col gap-4">
+
+    <!-- usernode-starter-notice@1 — starter-template messaging. When building
+         the user's real app, replace this whole screen and delete this block,
+         both sentinel comments included. -->
+    <section class="rounded-2xl border border-violet-500/30 bg-violet-600/10 p-4 flex flex-col gap-2">
+      <span class="self-start rounded-full bg-violet-600/20 text-violet-300 text-xs font-semibold px-3 py-1">Starter template · Social productivity</span>
+      <h1 class="text-2xl font-bold">{{APP_NAME}}</h1>
+      <p class="text-sm text-zinc-300">A shared goals board is a working starter. Tap the <strong class="text-violet-300 font-semibold">Homeroom icon</strong> in the header and choose <strong class="text-violet-300 font-semibold">Start a new change</strong> to make it yours.</p>
+    </section>
+    <!-- /usernode-starter-notice@1 -->
+
+    <section class="rounded-2xl bg-zinc-900/60 p-4 flex flex-col gap-3">
+      <h2 class="text-base font-semibold">Add a goal</h2>
+      <label class="text-sm text-zinc-400" for="goal-title">Goal</label>
+      <input id="goal-title" maxlength="120" placeholder="What do you want to get done?" class="w-full rounded-xl bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500">
+      <label class="text-sm text-zinc-400" for="goal-note">A short note (optional)</label>
+      <input id="goal-note" maxlength="140" placeholder="Any detail worth adding" class="w-full rounded-xl bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500">
+      <button id="goal-add" type="button" class="self-start rounded-full bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-semibold text-white">Add goal</button>
+      <p id="goal-status" class="text-sm text-zinc-400"></p>
+    </section>
+
+    <section class="rounded-2xl bg-zinc-900/60 p-4">
+      <h2 class="text-sm font-medium text-zinc-500 mb-2">In progress</h2>
+      <div id="goals-doing" class="flex flex-col gap-2">
+        <p class="text-sm text-zinc-600">No goals in progress yet.</p>
+      </div>
+    </section>
+
+    <section class="rounded-2xl bg-zinc-900/60 p-4">
+      <h2 class="text-sm font-medium text-zinc-500 mb-2">Done</h2>
+      <div id="goals-done" class="flex flex-col gap-2">
+        <p class="text-sm text-zinc-600">Nothing finished yet.</p>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || '';
+    const headers = token ? { 'x-usernode-token': token } : {};
+    var meId = null;
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text != null) node.textContent = text;
+      return node;
+    }
+
+    function setStatus(text) {
+      document.getElementById('goal-status').textContent = text || '';
+    }
+
+    function goalRow(goal) {
+      const row = el('div', 'rounded-xl bg-zinc-800 p-3 flex flex-col gap-2');
+      row.appendChild(el('p', 'text-sm font-semibold', goal.title));
+      if (goal.note) row.appendChild(el('p', 'text-sm text-zinc-400', goal.note));
+      row.appendChild(el('p', 'text-xs text-zinc-500', 'Added by ' + goal.username));
+
+      const actions = el('div', 'flex flex-wrap items-center gap-2');
+      const cheer = el('button', 'rounded-full bg-zinc-700 hover:bg-zinc-600 px-3 py-1 text-xs font-semibold text-zinc-100', 'Cheer · ' + goal.cheers);
+      cheer.type = 'button';
+      cheer.addEventListener('click', function () { cheerGoal(goal.id); });
+      actions.appendChild(cheer);
+
+      if (goal.user_id === meId) {
+        const mine = el('button', 'rounded-full bg-zinc-700 hover:bg-zinc-600 px-3 py-1 text-xs font-semibold text-zinc-100', goal.status === 'done' ? 'Reopen' : 'Mark done');
+        mine.type = 'button';
+        mine.addEventListener('click', function () {
+          setGoalStatus(goal.id, goal.status === 'done' ? 'doing' : 'done');
+        });
+        actions.appendChild(mine);
+      }
+
+      const report = el('button', 'rounded-full px-3 py-1 text-xs font-semibold text-zinc-400 hover:text-zinc-200', 'Report');
+      report.type = 'button';
+      report.addEventListener('click', function () { reportGoal(goal.id); });
+      actions.appendChild(report);
+      row.appendChild(actions);
+      return row;
+    }
+
+    function render(goals) {
+      const doing = document.getElementById('goals-doing');
+      const done = document.getElementById('goals-done');
+      doing.replaceChildren();
+      done.replaceChildren();
+      const open = goals.filter(function (g) { return g.status === 'doing'; });
+      const finished = goals.filter(function (g) { return g.status === 'done'; });
+      if (!open.length) doing.appendChild(el('p', 'text-sm text-zinc-600', 'No goals in progress yet.'));
+      if (!finished.length) done.appendChild(el('p', 'text-sm text-zinc-600', 'Nothing finished yet.'));
+      open.forEach(function (g) { doing.appendChild(goalRow(g)); });
+      finished.forEach(function (g) { done.appendChild(goalRow(g)); });
+    }
+
+    async function load() {
+      try {
+        const res = await fetch('/api/goals', { headers: headers });
+        if (!res.ok) return;
+        const data = await res.json();
+        render(data.goals || []);
+      } catch (err) {
+        setStatus('Could not load the goals. Try again.');
+      }
+    }
+
+    async function addGoal() {
+      const title = document.getElementById('goal-title').value.trim();
+      const note = document.getElementById('goal-note').value.trim();
+      if (!title) { setStatus('Give the goal a title.'); return; }
+      setStatus('');
+      try {
+        const res = await fetch('/api/goals', {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' }, headers),
+          body: JSON.stringify({ title: title, note: note }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(function () { return {}; });
+          setStatus(data.error || 'Could not add the goal.');
+          return;
+        }
+        document.getElementById('goal-title').value = '';
+        document.getElementById('goal-note').value = '';
+        load();
+      } catch (err) {
+        setStatus('Could not add the goal. Try again.');
+      }
+    }
+
+    async function cheerGoal(id) {
+      try {
+        const res = await fetch('/api/goals/' + id + '/cheer', { method: 'POST', headers: headers });
+        if (res.ok) load();
+      } catch (err) {}
+    }
+
+    async function setGoalStatus(id, status) {
+      try {
+        const res = await fetch('/api/goals/' + id + '/status', {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' }, headers),
+          body: JSON.stringify({ status: status }),
+        });
+        if (res.ok) load();
+        else setStatus('Only the person who added a goal can move it.');
+      } catch (err) {}
+    }
+
+    async function reportGoal(id) {
+      try {
+        const res = await fetch('/api/goals/' + id + '/report', { method: 'POST', headers: headers });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.hiddenForEveryone) {
+          setStatus('A goal was hidden after three different people reported it.');
+        } else {
+          setStatus('Goal hidden for you. Three different reports hide it for everyone.');
+        }
+        load();
+      } catch (err) {}
+    }
+
+    document.getElementById('goal-add').addEventListener('click', addGoal);
+
+    // Who the viewer is comes from the token the platform minted; the page
+    // only uses it to decide whether to offer Mark done / Reopen.
+    try {
+      let payload = token.split('.')[1] || '';
+      payload = payload.replace(/-/g, '+').replace(/_/g, '/');
+      while (payload.length % 4) payload += '=';
+      if (payload) {
+        const claims = JSON.parse(atob(payload));
+        meId = claims.id;
+      }
+    } catch (err) {}
+
+    load();
+  </script>
+</body>
+</html>

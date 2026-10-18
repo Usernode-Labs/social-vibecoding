@@ -76,7 +76,18 @@
  * it shows (two lines in the hub hero, on Discover and on the join screen,
  * three beside the icon in the About pane), and the line in dapp.json stays
  * as it was written.
+ *
+ * ── Where it starts ────────────────────────────────────────────────────
+ *
+ * `template` is the starter chosen on the create screen's last step
+ * (services/app-templates.js). Absent or empty means `empty`, the Press!
+ * example an older client still gets. A key outside the catalog is a 400
+ * naming the allowed keys, and a template sent with a repository URL is a
+ * 400: an import keeps the repository it imported, so it never gets a
+ * starter of its own.
  */
+
+const { parseTemplate } = require('./app-templates');
 
 const AUDIENCES = new Set(['solo', 'invited', 'open']);
 const VISIBILITIES = new Set(['public', 'private']);
@@ -214,6 +225,11 @@ function parseCreateOptions(body = {}) {
   const desc = parseDescription(body.description);
   if (desc.error) return { error: desc.error };
 
+  // An import keeps its own repository, so a template along with a repo URL
+  // is refused rather than silently ignored.
+  const tpl = parseTemplate(body.template, { imported: !!body.repoUrl });
+  if (tpl.error) return { error: tpl.error };
+
   return {
     audience,
     collabVisibility,
@@ -222,6 +238,7 @@ function parseCreateOptions(body = {}) {
     inviteEmails: mail.emails,
     governance: gov.governance,
     description: desc.description,
+    template: tpl.template,
   };
 }
 

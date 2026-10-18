@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {{DEV_CONSOLE}}
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <link rel="stylesheet" href="/tailwind.css">
+  <script src="/usernode-bridge/v1/bridge.js"></script>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen">
+  <main class="max-w-2xl mx-auto px-4 py-6 flex flex-col gap-4">
+
+    <!-- usernode-starter-notice@1 — starter-template messaging. When building
+         the user's real app, replace this whole screen and delete this block,
+         both sentinel comments included. -->
+    <section class="rounded-2xl border border-violet-500/30 bg-violet-600/10 p-4 flex flex-col gap-2">
+      <span class="self-start rounded-full bg-violet-600/20 text-violet-300 text-xs font-semibold px-3 py-1">Starter template · Multimedia social</span>
+      <h1 class="text-2xl font-bold">{{APP_NAME}}</h1>
+      <p class="text-sm text-zinc-300">A photo wall is a working starter. Tap the <strong class="text-violet-300 font-semibold">Homeroom icon</strong> in the header and choose <strong class="text-violet-300 font-semibold">Start a new change</strong> to make it yours.</p>
+    </section>
+    <!-- /usernode-starter-notice@1 -->
+
+    <section class="rounded-2xl bg-zinc-900/60 p-4 flex flex-col gap-3">
+      <h2 class="text-base font-semibold">Add a photo</h2>
+      <label class="text-sm text-zinc-400" for="photo-caption">Caption (optional)</label>
+      <input id="photo-caption" maxlength="140" placeholder="Say something about the photo" class="w-full rounded-xl bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500">
+      <input id="photo-file" type="file" accept="image/*" class="hidden">
+      <button id="photo-add" type="button" class="self-start rounded-full bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-semibold text-white">Add a photo</button>
+      <p id="photo-status" class="text-sm text-zinc-400"></p>
+    </section>
+
+    <section class="rounded-2xl bg-zinc-900/60 p-4">
+      <h2 class="text-sm font-medium text-zinc-500 mb-3">The wall</h2>
+      <div id="photo-wall" class="grid grid-cols-2 gap-3">
+        <p class="text-sm text-zinc-600 col-span-2">No photos yet.</p>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || '';
+    const headers = token ? { 'x-usernode-token': token } : {};
+    var uploadsAvailable = !!(window.usernode && typeof window.usernode.uploadFile === 'function');
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text != null) node.textContent = text;
+      return node;
+    }
+
+    function setStatus(text) {
+      document.getElementById('photo-status').textContent = text || '';
+    }
+
+    function photoCard(photo) {
+      const card = el('div', 'rounded-xl bg-zinc-800 overflow-hidden flex flex-col');
+      const img = document.createElement('img');
+      // The URL is data the server validated as a Homeroom file; it is
+      // assigned as an attribute, never parsed as markup, and the browser
+      // sends no referrer with the request.
+      img.src = photo.url;
+      img.alt = photo.caption || ('A photo shared by ' + photo.username);
+      img.referrerPolicy = 'no-referrer';
+      img.loading = 'lazy';
+      img.className = 'w-full aspect-square object-cover bg-zinc-900';
+      card.appendChild(img);
+      const body = el('div', 'p-2 flex flex-col gap-1');
+      if (photo.caption) body.appendChild(el('p', 'text-sm text-zinc-100', photo.caption));
+      body.appendChild(el('p', 'text-xs text-zinc-500', 'Shared by ' + photo.username));
+      const report = el('button', 'self-start rounded-full px-2 py-1 text-xs font-semibold text-zinc-400 hover:text-zinc-200', 'Report');
+      report.type = 'button';
+      report.addEventListener('click', function () { reportPhoto(photo.id); });
+      body.appendChild(report);
+      card.appendChild(body);
+      return card;
+    }
+
+    function render(photos) {
+      const wall = document.getElementById('photo-wall');
+      wall.replaceChildren();
+      if (!photos.length) {
+        wall.appendChild(el('p', 'text-sm text-zinc-600 col-span-2', 'No photos yet.'));
+        return;
+      }
+      photos.forEach(function (photo) { wall.appendChild(photoCard(photo)); });
+    }
+
+    async function load() {
+      try {
+        const res = await fetch('/api/photos', { headers: headers });
+        if (!res.ok) return;
+        const data = await res.json();
+        render(data.photos || []);
+      } catch (err) {
+        setStatus('Could not load the wall. Try again.');
+      }
+    }
+
+    async function postPhoto(url, fileId, caption) {
+      try {
+        const res = await fetch('/api/photos', {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' }, headers),
+          body: JSON.stringify({ url: url, fileId: fileId, caption: caption }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(function () { return {}; });
+          setStatus(data.error || 'Could not add the photo.');
+          return;
+        }
+        document.getElementById('photo-caption').value = '';
+        setStatus('');
+        load();
+      } catch (err) {
+        setStatus('Could not add the photo. Try again.');
+      }
+    }
+
+    async function onFilePicked(event) {
+      const file = event.target.files && event.target.files[0];
+      event.target.value = '';
+      if (!file) return;
+      if (!uploadsAvailable) {
+        setStatus('Uploads need Homeroom. You can still look at the wall.');
+        return;
+      }
+      setStatus('Uploading…');
+      try {
+        const stored = await window.usernode.uploadFile(file, { visibility: 'public' });
+        if (!stored || !stored.url) {
+          setStatus('The photo was not uploaded. Try again.');
+          return;
+        }
+        const caption = document.getElementById('photo-caption').value.trim();
+        await postPhoto(stored.url, stored.id, caption);
+      } catch (err) {
+        setStatus('Uploads need Homeroom. You can still look at the wall.');
+      }
+    }
+
+    async function reportPhoto(id) {
+      try {
+        const res = await fetch('/api/photos/' + id + '/report', { method: 'POST', headers: headers });
+        if (!res.ok) return;
+        const data = await res.json();
+        setStatus(data.hiddenForEveryone
+          ? 'A photo was hidden after three different people reported it.'
+          : 'Photo hidden for you. Three different reports hide it for everyone.');
+        load();
+      } catch (err) {}
+    }
+
+    document.getElementById('photo-add').addEventListener('click', function () {
+      if (!uploadsAvailable) {
+        setStatus('Uploads need Homeroom. You can still look at the wall.');
+        return;
+      }
+      document.getElementById('photo-file').click();
+    });
+    document.getElementById('photo-file').addEventListener('change', onFilePicked);
+
+    // Say at once that a standalone page cannot upload, so nobody presses
+    // Add a photo and waits for a picker that only answers with an error.
+    if (!uploadsAvailable) setStatus('Uploads need Homeroom. You can still look at the wall.');
+
+    load();
+  </script>
+</body>
+</html>

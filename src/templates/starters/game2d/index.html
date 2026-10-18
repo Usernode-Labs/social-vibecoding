@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {{DEV_CONSOLE}}
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <link rel="stylesheet" href="/tailwind.css">
+  <script src="/usernode-bridge/v1/bridge.js"></script>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen">
+  <main class="max-w-md mx-auto px-4 py-6 flex flex-col gap-4">
+
+    <!-- usernode-starter-notice@1 — starter-template messaging. When building
+         the user's real app, replace this whole screen and delete this block,
+         both sentinel comments included. -->
+    <section class="rounded-2xl border border-violet-500/30 bg-violet-600/10 p-4 flex flex-col gap-2">
+      <span class="self-start rounded-full bg-violet-600/20 text-violet-300 text-xs font-semibold px-3 py-1">Starter template · 2D game</span>
+      <h1 class="text-2xl font-bold">{{APP_NAME}}</h1>
+      <p class="text-sm text-zinc-300">Star catch is a working starter. Tap the <strong class="text-violet-300 font-semibold">Homeroom icon</strong> in the header and choose <strong class="text-violet-300 font-semibold">Start a new change</strong> to make it yours.</p>
+    </section>
+    <!-- /usernode-starter-notice@1 -->
+
+    <section class="rounded-2xl bg-zinc-900/60 p-4">
+      <div class="flex items-baseline justify-between gap-2">
+        <h2 class="text-base font-semibold">Star catch</h2>
+        <span id="game-time" class="text-sm text-zinc-400">0:45</span>
+      </div>
+      <canvas id="game-canvas" width="360" height="420" class="mt-3 w-full rounded-2xl bg-zinc-950 touch-none"></canvas>
+      <div class="mt-3 flex items-center justify-between gap-2 text-sm">
+        <span id="game-score" class="text-zinc-300">0 stars</span>
+        <span id="game-best" class="text-zinc-500">Best: –</span>
+      </div>
+      <button id="game-play" type="button" class="mt-3 w-full rounded-full bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-semibold text-white">Play</button>
+      <p class="mt-2 text-xs text-zinc-500">Catch falling stars for 45 seconds. Move with the arrow keys, or drag across the game.</p>
+      <p id="game-status" class="mt-2 text-sm text-zinc-400"></p>
+    </section>
+
+    <section class="rounded-2xl bg-zinc-900/60 p-4">
+      <h2 class="text-sm font-medium text-zinc-500 mb-2">Top scores</h2>
+      <div id="game-top" class="space-y-1 text-sm">
+        <p class="text-zinc-600">No scores yet.</p>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || '';
+    const headers = token ? { 'x-usernode-token': token } : {};
+
+    const DURATION_MS = 45000;
+    const canvas = document.getElementById('game-canvas');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = canvas.height;
+    const basket = { x: W / 2, width: 68, height: 24 };
+    const stars = [];
+    let playing = false;
+    let score = 0;
+    let endsAt = 0;
+    let lastFrame = 0;
+    let lastStarAt = 0;
+    let raf = 0;
+
+    function setText(id, text) { document.getElementById(id).textContent = text; }
+    function setStatus(text) { setText('game-status', text || ''); }
+
+    function spawnStar() {
+      stars.push({ x: 30 + Math.random() * (W - 60), y: -20, speed: 120 + Math.random() * 120 });
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+      // A few faint twinkles give the fall something to move against.
+      ctx.fillStyle = '#27272a';
+      for (let i = 0; i < 18; i += 1) {
+        ctx.fillRect((i * 97) % W, (i * 53) % H, 2, 2);
+      }
+      ctx.fillStyle = '#fcd34d';
+      ctx.font = '24px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      stars.forEach(function (star) {
+        ctx.fillText('★', star.x, star.y);
+      });
+      ctx.fillStyle = '#a78bfa';
+      ctx.beginPath();
+      ctx.roundRect(basket.x - basket.width / 2, H - basket.height - 14, basket.width, basket.height, [0, 0, 18, 18]);
+      ctx.fill();
+      ctx.strokeStyle = '#c4b5fd';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    function frame(now) {
+      if (!playing) return;
+      const dt = Math.min(64, now - lastFrame) / 1000;
+      lastFrame = now;
+      const left = Math.max(0, endsAt - now);
+      setText('game-time', '0:' + String(Math.ceil(left / 1000)).padStart(2, '0'));
+
+      if (now - lastStarAt > 460) {
+        lastStarAt = now;
+        spawnStar();
+      }
+      for (let i = stars.length - 1; i >= 0; i -= 1) {
+        const star = stars[i];
+        star.y += star.speed * dt;
+        if (star.y > H - basket.height - 26 && star.y < H - 4
+            && Math.abs(star.x - basket.x) < basket.width / 2 + 10) {
+          stars.splice(i, 1);
+          score += 1;
+          setText('game-score', score + (score === 1 ? ' star' : ' stars'));
+        } else if (star.y > H + 24) {
+          stars.splice(i, 1);
+        }
+      }
+      draw();
+      if (left <= 0) { finish(); return; }
+      raf = requestAnimationFrame(frame);
+    }
+
+    function start() {
+      playing = true;
+      score = 0;
+      stars.length = 0;
+      setText('game-score', '0 stars');
+      setText('game-time', '0:45');
+      setStatus('');
+      basket.x = W / 2;
+      document.getElementById('game-play').disabled = true;
+      lastFrame = performance.now();
+      endsAt = lastFrame + DURATION_MS;
+      lastStarAt = 0;
+      raf = requestAnimationFrame(frame);
+    }
+
+    async function finish() {
+      playing = false;
+      cancelAnimationFrame(raf);
+      setText('game-time', '0:00');
+      document.getElementById('game-play').disabled = false;
+      document.getElementById('game-play').textContent = 'Play again';
+      setStatus('Saving your score…');
+      try {
+        const res = await fetch('/api/scores', {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' }, headers),
+          body: JSON.stringify({ score: score }),
+        });
+        if (!res.ok) {
+          setStatus('Your score could not be saved.');
+          return;
+        }
+        const data = await res.json();
+        setStatus('');
+        if (data.best != null) setText('game-best', 'Best: ' + data.best);
+        loadScores();
+      } catch (err) {
+        setStatus('Your score could not be saved.');
+      }
+    }
+
+    async function loadScores() {
+      try {
+        const res = await fetch('/api/scores', { headers: headers });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.best != null) setText('game-best', 'Best: ' + data.best);
+        const top = document.getElementById('game-top');
+        top.replaceChildren();
+        if (!data.top || !data.top.length) {
+          const empty = document.createElement('p');
+          empty.className = 'text-zinc-600';
+          empty.textContent = 'No scores yet.';
+          top.appendChild(empty);
+          return;
+        }
+        data.top.forEach(function (row, i) {
+          const line = document.createElement('div');
+          line.className = 'flex justify-between';
+          const name = document.createElement('span');
+          name.textContent = (i + 1) + '. ' + row.username;
+          const points = document.createElement('span');
+          points.className = 'font-mono';
+          points.textContent = String(row.score);
+          line.appendChild(name);
+          line.appendChild(points);
+          top.appendChild(line);
+        });
+      } catch (err) {}
+    }
+
+    function moveTo(clientX) {
+      const rect = canvas.getBoundingClientRect();
+      const x = ((clientX - rect.left) / rect.width) * W;
+      basket.x = Math.max(basket.width / 2, Math.min(W - basket.width / 2, x));
+    }
+
+    document.addEventListener('keydown', function (e) {
+      if (!playing) return;
+      if (e.key === 'ArrowLeft') { basket.x = Math.max(basket.width / 2, basket.x - 28); e.preventDefault(); }
+      if (e.key === 'ArrowRight') { basket.x = Math.min(W - basket.width / 2, basket.x + 28); e.preventDefault(); }
+    });
+    let dragging = false;
+    canvas.addEventListener('pointerdown', function (e) { dragging = true; moveTo(e.clientX); });
+    canvas.addEventListener('pointermove', function (e) { if (dragging) moveTo(e.clientX); });
+    canvas.addEventListener('pointerup', function () { dragging = false; });
+    canvas.addEventListener('pointercancel', function () { dragging = false; });
+
+    document.getElementById('game-play').addEventListener('click', start);
+    draw();
+    loadScores();
+  </script>
+</body>
+</html>

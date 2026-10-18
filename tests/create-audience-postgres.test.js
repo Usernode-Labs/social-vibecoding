@@ -165,6 +165,34 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     assert.match(long.data.error, /90 characters or fewer/);
   });
 
+  await t.test('the chosen template is written on the row and reaches the build; absent is Empty', async () => {
+    // A fresh creator: the create limiter allows five an hour per user.
+    const { rows: fresh } = await pool.query(
+      `INSERT INTO users (username, password, has_platform_access, app_quota)
+       VALUES ('templer', 'x', TRUE, 10) RETURNING id, username`);
+    viewer = { id: fresh[0].id, username: fresh[0].username, isAdmin: false, canAdminWrite: false };
+    const res = await create({ name: 'Star catch', audience: 'solo', template: 'game2d' });
+    assert.equal(res.status, 201, JSON.stringify(res.data));
+    assert.equal(res.data.app.template_key, 'game2d');
+    const { rows } = await pool.query(`SELECT template_key FROM apps WHERE id = $1`, [res.data.app.id]);
+    assert.equal(rows[0].template_key, 'game2d');
+    const handed = built.find((row) => row.id === res.data.app.id);
+    assert.equal(handed.template_key, 'game2d', 'the build receives the row with its starter');
+
+    const plain = await create({ name: 'Plain', audience: 'solo' });
+    assert.equal(plain.status, 201, JSON.stringify(plain.data));
+    assert.equal(plain.data.app.template_key, 'empty', 'absent means the Empty starter');
+    const builtPlain = built.find((row) => row.id === plain.data.app.id);
+    assert.equal(builtPlain.template_key, 'empty');
+
+    const before = Number((await pool.query('SELECT COUNT(*) AS n FROM apps')).rows[0].n);
+    const bad = await create({ name: 'Racing', audience: 'solo', template: 'racing' });
+    assert.equal(bad.status, 400);
+    assert.match(bad.data.error, /template must be one of/);
+    const after = Number((await pool.query('SELECT COUNT(*) AS n FROM apps')).rows[0].n);
+    assert.equal(after, before, 'an unknown template creates nothing');
+  });
+
   await t.test('a group invited by address: an account is invited as itself, anyone else is stored and mailed', async () => {
     viewer = { id: mailer.id, username: mailer.username, isAdmin: false, canAdminWrite: false };
     const res = await create({
