@@ -101,6 +101,7 @@ import { useDevViewMode } from '../dev-board/view-mode-store';
 import { communityScopeStore, toggleSwitcher } from '../workshop/community-scope';
 import { HeaderPlaceName } from '../dev-board/workshop/place-bar';
 import { DrawerTitles, useDrawerMode } from '../nav-drawer/header-drawer';
+import { useSidebarRows } from '../nav/sidebar-rows';
 
 // The one string that means "this is naming the platform, not an app". It is
 // header-title-store.js's INITIAL, which is why the prerendered document and
@@ -144,10 +145,19 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   // A card opened from it (#3602): an item's page is still the community's,
   // so its name switches community there too.
   const onCard = inApp && tab === 'dev' && subTab === 'topic';
+  // D (18 Oct 2026): FROM 1024px THE SIDEBAR LISTS YOUR COMMUNITIES
+  // (../nav/sidebar-rows.ts), so the bar's name is a name again there: the
+  // community's tile and name, no chevron, and on All communities its title.
+  // From 768px to 1024px, as on the strip before, the name is the switcher.
+  const sidebarRows = useSidebarRows();
+  const communityPage = onWorkshop || onCard;
   // At every width (#3295): the Workshop draws no chip of its own any more.
-  const appSwitch = onWorkshop || onCard;
-  // The Communities screen, at every width: the title is its switcher.
-  const allAppsSwitcher = screen === 'workshop-screen';
+  const appSwitch = communityPage && !sidebarRows;
+  // The Communities screen: the title is its switcher, but beside the
+  // sidebar's own list.
+  const allAppsSwitcher = screen === 'workshop-screen' && !sidebarRows;
+  // Beside the sidebar, the community's name where the switcher would be.
+  const communityName = communityPage && sidebarRows;
   const showTile = inApp;
 
   /* `.app-icon-tile` + `data-icon` draw the box, and this call site adds no
@@ -252,12 +262,21 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
                   from its contents, and the drawing IS the word "Homeroom" — a
                   title element or an sr-only span here would have it read
                   twice. The heading is still named, because `text` is what the
-                  screens beside it publish. */}
-              {showsWordmark
-                ? <Wordmark className="h-5 w-[77.5px]" aria-hidden="true" />
-                : text}
+                  screens beside it publish.
+
+                  BESIDE THE SIDEBAR, ON A COMMUNITY'S PAGE, the community's
+                  own name (the switcher's words, without the switch), and
+                  Homeroom's is the logotype there as well (#3497). An sr-only
+                  copy names the heading under the drawing. */}
+              {communityName
+                ? (selfHosted
+                  ? <><Wordmark className="h-5 w-[77.5px]" aria-hidden="true" /><span className="sr-only">{name || text}</span></>
+                  : name || text)
+                : showsWordmark
+                  ? <Wordmark className="h-5 w-[77.5px]" aria-hidden="true" />
+                  : text}
             </span>
-            {showSubtitle ? (
+            {showSubtitle && !communityName ? (
               <span
                 id="header-subtitle"
                 className="shrink-0 text-[0.6875rem] leading-none font-medium

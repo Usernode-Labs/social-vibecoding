@@ -43,10 +43,11 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
   // five tabs are adjacent siblings, with only the desktop strip's recent
   // apps (#4417; the rail's Recents, #2802, before them) between the last
   // section and Me — never drawn on the phone's bar. Messages sits in the middle; Communities (key `workshop`)
-  // comes after it, beside you.
+  // comes after it, beside you. D (18 Oct 2026): your communities sit
+  // between Messages and the Communities tab, drawn only from 1024px.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
     === '#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages'
-      + ' + #platform-tab-workshop[href="#communities"] + #platform-strip-apps + #platform-tab-me'),
+      + ' + #platform-rail-communities + #platform-tab-workshop[href="#communities"] + #platform-strip-apps + #platform-tab-me'),
   'a declared check pins the bar order');
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
   // Membership INSIDE the array literal. The previous form,

@@ -70,6 +70,7 @@ import {
   CogIcon,
   HomeIcon,
   SearchIcon,
+  Squares2X2Icon,
   UserGroupIcon,
   UserIcon,
 } from '@/components/ui/icons';
@@ -88,6 +89,8 @@ import {
 import { CommunitySwitcher } from '../workshop/community-switcher';
 import { createSwitcherHold, pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
+import { RailCommunities, useRailCommunities, votesElsewhere } from './rail-communities';
+import { useSidebarRows } from './sidebar-rows';
 import { clearPeekTimer, clearPeekTimerByMouse, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
 import { StripApps } from './strip-apps';
 import { schedulePress, type PendingPress } from './tab-press';
@@ -762,11 +765,20 @@ export function PlatformTabs() {
   // switcher.
   const scope = useStoreState(communityScopeStore);
   useEffect(() => { hydrateCommunityScope(); }, []);
-  useEffect(() => (viewer ? warmCommunities() : undefined), [viewer]);
+  // From 1024px the sidebar's own rows are your communities (D), so they are
+  // read at once rather than a moment after sign-in.
+  const sidebarRows = useSidebarRows();
+  useEffect(() => (viewer ? warmCommunities(sidebarRows ? 0 : undefined) : undefined), [viewer, sidebarRows]);
   const scoped = scope.slug ? scope.info[scope.slug] || null : null;
   // Less an unchosen community's votes: the one every account is put in,
   // until you have taken part there (tabVotes says why).
   const votes = tabVotes(scope);
+  // THE SIDEBAR OF ROWS (./sidebar-rows.ts, from 1024px): the five
+  // communities it lists (./rail-communities.tsx), and on its All row the
+  // votes in the ones it does not, so no vote is counted twice.
+  const railShown = useRailCommunities();
+  const elsewhere = votesElsewhere(railShown, scope.list, scope.info);
+  const allCount = scope.list ? scope.list.length : 0;
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
   // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
@@ -925,6 +937,11 @@ export function PlatformTabs() {
         // are Messages' own list. Desktop only; app.css keeps it off the
         // phone's bar.
         key === 'me' ? <StripApps key="apps" /> : null,
+        // D (18 Oct 2026): YOUR COMMUNITIES, under their heading, just above
+        // the Communities tab, which the sidebar of rows draws as their
+        // "All 13 communities" row. From 1024px only; app.css keeps it off
+        // the strip and the phone's bar.
+        key === 'workshop' ? <RailCommunities key="communities" shown={railShown} /> : null,
         <a
           key={key}
           id={`platform-tab-${key}`}
@@ -938,7 +955,11 @@ export function PlatformTabs() {
           // router's tab, except for the moment between a press and its route
           // landing, when it is the tab pressed (useTabMarker, #3259).
           aria-current={lit === key ? 'page' : undefined}
-          aria-label={key === 'workshop' ? communitiesAriaLabel(scoped) : tabLabel(key, t(label), viewer).ariaLabel}
+          // Beside the sidebar's list the tab is its All row, and named by
+          // the words it shows ("All 13 communities"), not the community.
+          aria-label={key === 'workshop'
+            ? (sidebarRows ? undefined : communitiesAriaLabel(scoped))
+            : tabLabel(key, t(label), viewer).ariaLabel}
           onClick={(event) => onTabClick(event, key, href)}
           {...(key === 'workshop' ? holdProps : {})}
         >
@@ -946,6 +967,12 @@ export function PlatformTabs() {
             {key === 'workshop'
               ? <CommunityTabFace info={scoped} />
               : <Icon className="platform-tab-glyph" aria-hidden="true" />}
+            {/*
+                THE ALL ROW'S GLYPH, in the sidebar of rows (D): the grid,
+                drawn in the ring's place there, as the screen it opens is
+                every community at once. app.css shows one of the two.
+            */}
+            {key === 'workshop' ? <Squares2X2Icon className="platform-tab-glyph platform-tab-all-glyph" aria-hidden="true" /> : null}
             {/*
                 THE SECOND BADGE IN THE SHELL, and the first one that is not
                 the bell's. #1443 argued the platform should carry exactly
@@ -985,6 +1012,24 @@ export function PlatformTabs() {
             {key === 'workshop' ? <VotesBadge count={votes} /> : null}
           </span>
           <span className="platform-tab-label">{tabLabel(key, t(label), viewer).text}</span>
+          {/*
+              THE ALL ROW'S WORDS AND COUNT, in the sidebar of rows (D): how
+              many communities you are in, so the row says there are more than
+              the five above it, and the votes in the ones it does not list.
+              app.css shows these instead of the label and the tab's own
+              badge there; a hidden element is not in the accessible name, so
+              each width's name is what it shows.
+          */}
+          {key === 'workshop' ? (
+            <span className="platform-tab-all-label">
+              {allCount > 0 ? t('core:rail.all', { count: allCount }) : t('core:rail.allPlain')}
+            </span>
+          ) : null}
+          {key === 'workshop' && elsewhere > 0 ? (
+            <span className="platform-tab-all-votes" aria-label={t('core:tabs.votesWaiting', { count: elsewhere })}>
+              {elsewhere > 99 ? '99+' : String(elsewhere)}
+            </span>
+          ) : null}
         </a>,
       ])}
       {/*

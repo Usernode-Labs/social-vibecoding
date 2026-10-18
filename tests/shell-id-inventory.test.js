@@ -1068,6 +1068,16 @@ const ADDED_IDS = {
   'cp-title-add': '#4891: its "Add a password" title, shown instead to an account that has none and signs in with an emailed code.',
   'cp-save-change': '#4891: #cp-save\'s "Change password" label, beside its "Add password" one.',
   'cp-save-add': '#4891: #cp-save\'s "Add password" label, for an account with no password yet.',
+  // ── D (18 Oct 2026): the desktop's sidebar of rows ──────────────────
+  // From 1024px the rail lists your communities itself (features/nav/
+  // rail-communities.tsx), between Messages and the Communities tab, which is
+  // their All row there; app.css draws none of it on the strip or the
+  // phone's bar. The heading and its search ship in the document; the five
+  // rows arrive with the community list, so they carry no ids.
+  'platform-rail-communities': 'D: the sidebar\'s Communities section (role=group), between #platform-tab-messages and #platform-tab-workshop. dapp.json pins the bar order through it.',
+  'platform-rail-communities-label': 'D: the section\'s "Communities" heading, which names the group.',
+  'platform-rail-search': 'D: the search beside that heading, shown on hover or focus: All communities with its search box focused and lit (features/workshop/communities-search.ts). dapp.json selects on it.',
+  'workshop-search': 'D: the search at the head of All communities\' column (features/workshop/index.tsx), drawn by app.css from 1024px only: your communities by name, as one list. Prerendered empty.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

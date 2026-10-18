@@ -342,7 +342,11 @@ test('#2768, #3295, #852: on the app\'s Workshop the header\'s name opens Your c
   // kept the name alone in the bar beside a chip in the page.
   // #3602: a card opened from it switches community too.
   assert.match(header, /const onCard = inApp && tab === 'dev' && subTab === 'topic';/);
-  assert.match(header, /const appSwitch = onWorkshop \|\| onCard;/);
+  // D (18 Oct 2026): from 1024px the sidebar lists the communities, so the
+  // name is a name there (`communityName`); below it, the switcher.
+  assert.match(header, /const communityPage = onWorkshop \|\| onCard;/);
+  assert.match(header, /const appSwitch = communityPage && !sidebarRows;/);
+  assert.match(header, /const communityName = communityPage && sidebarRows;/);
   assert.match(header, /const showTile = inApp;/);
 
   // A static render runs no effects, so the phone flag is still false: this
@@ -369,9 +373,10 @@ test('#2768, #3295, #852: on the app\'s Workshop the header\'s name opens Your c
     assert.doesNotMatch(renderHeader({ subTab }), /header-app-switch/);
   }
 
-  // No width anywhere in it now: the Communities screen's "All" is the
-  // bar's at every width too (#852).
-  assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen';/);
+  // The Communities screen's title is the bar's switcher too (#852), up to
+  // the sidebar of rows (D), which is the one width in it.
+  assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen' && !sidebarRows;/);
+  assert.match(header, /const sidebarRows = useSidebarRows\(\);/);
   assert.doesNotMatch(header, /PHONE_QUERY|usePhone/);
 });
 

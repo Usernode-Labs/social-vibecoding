@@ -22,7 +22,7 @@
  * place bar there. Folding the rail from the header's sidebar button folds
  * the column with it.
  *
- * Under 1296px it also steps aside while an item's page is open in the panel
+ * Under 1404px it also steps aside while an item's page is open in the panel
  * beside the Workshop's list (`placeStore.side`): the strip, the column, the
  * list and the 560px panel do not all fit, and the panel is what was asked
  * for. The place bar's button is the way to the places meanwhile, as it is
@@ -75,9 +75,11 @@ export const SECTION_COLUMN_W = 264;
 /**
  * From here the column stays beside an item's page open in the Workshop's
  * side panel: the side panel's own 1180px (../dev-board/workshop/workshop.tsx
- * SIDE_QUERY) plus the 116px the strip and the column take over the old rail.
+ * SIDE_QUERY) plus the 224px the sidebar and the column take over the old
+ * rail. It was 1296px beside the 76px strip (#4417); the sidebar of rows is
+ * 184px from 1024px (D, ./sidebar-rows.ts), so 1404px.
  */
-export const COLUMN_BESIDE_SIDE_QUERY = '(min-width: 1296px)';
+export const COLUMN_BESIDE_SIDE_QUERY = '(min-width: 1404px)';
 
 /** Which section's column is up: the places of a project page in Communities, or none. Pure. */
 export function columnFor(input: {

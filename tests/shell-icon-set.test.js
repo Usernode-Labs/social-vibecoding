@@ -307,13 +307,11 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // mark is drawn only by a project page's Workshop tab, behind state.
     'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z',
     'M4 5v6c0 4 16 4 16 0V5M4 11v6c0 4 16 4 16 0v-6',
-    // THE GRID is back on this list with #852. #2759 put it behind state when
-    // the all-apps Workshop's scope chip went, and #3051 brought the chip back
-    // as "All apps", drawing it unconditionally. #852 moves it into the
-    // header at every width, as "Communities ⌄" (#header-scope-switch, drawn
-    // once the router says the Communities screen is up), so nothing
-    // prerenders the grid again.
-    'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z',
+    // THE GRID left this list again with D (18 Oct 2026). #852 had put it
+    // behind state, in the header's "Communities ⌄"; the Communities tab now
+    // draws it unconditionally as the desktop sidebar's All row glyph
+    // (features/nav/tab-bar.tsx, shown by app.css from 1024px only), so it
+    // prerenders.
     // DescriptionIcon LEFT this list with comment mode (#4289 follow-up):
     // the Suggest an improvement form's Detailed / Comment switch draws it,
     // and the form prerenders (the switch hidden until the device turns it

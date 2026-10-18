@@ -196,8 +196,13 @@ export function upToCommunity(slug: string): void {
 /**
  * A press of the lit Communities tab. `screen` is the nav store's: the
  * screen root the router last revealed. Returns the rung it took.
+ *
+ * `stopAtCommunity`: the press of the community's own row in the desktop's
+ * sidebar (../nav/rail-communities.tsx, D, 18 Oct 2026), which goes up the
+ * community's page the same way and stops at its Hub's top rather than
+ * taking the root step to All communities: the sidebar's All row is that.
  */
-export function pressLitTab(screen: string | null): Rung {
+export function pressLitTab(screen: string | null, { stopAtCommunity = false }: { stopAtCommunity?: boolean } = {}): Rung {
   if (screen === 'workshop-screen') {
     const el = scrollerOf(document.getElementById('workshop-screen'));
     const rung = rungFor('root', isScrolled(el));
@@ -250,6 +255,7 @@ export function pressLitTab(screen: string | null): Rung {
   } else if (rung === 'top') {
     toTop(el);
   } else if (rung === 'root') {
+    if (stopAtCommunity) return 'none';
     goToCommunity(null);
   }
   return rung;
