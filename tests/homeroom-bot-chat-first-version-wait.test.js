@@ -130,7 +130,7 @@ test('the merge wakes the loop for what waited, and its pick-up moves the chat r
   const src = read('src/services/homeroom-bot.js');
   // noteRequestMerged: the first version merged, the lane is asked to
   // refresh the project soon (bot-lane RefreshAsked), and looks again.
-  assert.match(src, /log\.info\('homeroom-bot', 'A project\\'s first version is live; what waited for it is picked up now', \{\s*sessionId: Number\(merged\.id\), appId, issueNumber: Number\(firstVersion\[0\]\.issue_number\),\s*\}\);\s*await \(deps\.platform \|\| platform\(\)\)\.botRefresh\(appId\)/);
+  assert.match(src, /log\.info\('homeroom-bot', 'A project\\'s first version is live; what waited for it is picked up now', \{\s*sessionId: Number\(merged\.id\), appId, issueNumber: Number\(firstVersion\[0\]\.issue_number\),\s*\}\);\s*refresh = true;\s*\}\s*if \(refresh\) await \(deps\.platform \|\| platform\(\)\)\.botRefresh\(appId\)/);
   // The look, picking the request up: its chat message reads Reading, and
   // noteRequestStatus pushes the requester's cards (followCards).
   assert.match(src, /await activity\(\)\.startCard\(pool, \{[\s\S]*?deps: \{ dm: deps\.dm \},\s*\}\);\s*\/\/ B9: [^\n]*\n\s*await require\('\.\/homeroom-bot-chat'\)\.noteRequestStatus\(pool, \{ appId: app\.id, issueNumber, status: 'reading' \}\);/);

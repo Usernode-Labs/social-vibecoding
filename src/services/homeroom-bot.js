@@ -7979,12 +7979,14 @@ async function noteRequestMerged(pool, session, deps = {}) {
       });
       out.dequeued += 1;
     }
+    // What waited on it is looked at again soon: its project refreshed,
+    // once, for this and for a first version gone live below.
+    let refresh = false;
     if (out.skipped || out.stopped || out.withdrawn || out.dequeued) {
       log.info('homeroom-bot', 'A request\'s proposal merged; the rest of the bot\'s work on it stopped', {
         sessionId: Number(merged.id), appId, issues, ...out,
       });
-      // What waited on it is looked at again soon.
-      await (deps.platform || platform()).botRefresh(appId).catch(() => {});
+      refresh = true;
     }
     // The project's first version is live: what waited for it
     // (FIRST_VERSION_PENDING_SQL) is picked up now, from the new main, by
@@ -7999,8 +8001,9 @@ async function noteRequestMerged(pool, session, deps = {}) {
       log.info('homeroom-bot', 'A project\'s first version is live; what waited for it is picked up now', {
         sessionId: Number(merged.id), appId, issueNumber: Number(firstVersion[0].issue_number),
       });
-      await (deps.platform || platform()).botRefresh(appId).catch(() => {});
+      refresh = true;
     }
+    if (refresh) await (deps.platform || platform()).botRefresh(appId).catch(() => {});
     return out;
   } catch (err) {
     if (deps.strict) throw err;
