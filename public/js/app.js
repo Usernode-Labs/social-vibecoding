@@ -5193,8 +5193,8 @@ const App = {
     );
     // …AND THE SIDE PANEL BESIDE THE APP (desktop, features/side-panel/),
     // from the same answer. It stands beside the running app and goes when
-    // the app goes, by any route: the header's close, a tab, the peeked rail,
-    // Back, Expand — and chromeless, which has no layout to stand beside.
+    // the app goes, by any route: the header's close, a tab, Back, Expand —
+    // and chromeless, which has no layout to stand beside.
     // Switching straight to another app keeps `inApp` true, and the panel.
     if (!App.embeddedPanel) {
       window.UsernodeReact?.sidePanel?.appPresence?.(inApp && !App.chromeless);

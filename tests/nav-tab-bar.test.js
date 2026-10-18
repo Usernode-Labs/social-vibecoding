@@ -338,26 +338,31 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   assert.match(block, /\.platform-parked-pill \{[\s\S]{0,200}order: -1;/);
 });
 
-test('the rail peeks back over an open app, and reserves nothing while it does', () => {
-  // An app covers the rail, which is what makes it feel like a program
-  // rather than a page, and on a laptop the pointer is already at the left
-  // edge half the time. The navigation comes back on hover and stops
-  // spending width while you work.
+test('the rail peeks back only where the viewer folded it, and reserves nothing while it does', () => {
+  // A hand-folded rail is the one state with no rail to point at, and on a
+  // laptop the pointer is already at the left edge half the time. The fold
+  // was deliberate, so the edge strip and the toggle are its announced way
+  // back. An open app is NOT that state (#3138): a strip that slid the rail
+  // over the app whenever the pointer crossed the window's edge interrupted
+  // the thing the app screen exists to hold, full width. The exit is the
+  // header's ✕ (Close app), as on a phone.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /id="platform-rail-peek"/, 'a hot zone starts it');
-  // TWO WAYS TO HAVE NO RAIL, and the zone answers both (#2718 review): the
-  // ROUTE can say there is none (an app) and the VIEWER can fold the one
-  // there is (#sidebar-toggle). `!railOpen` rather than the `collapsed` the
-  // class toggle below uses, deliberately — `collapsed` is also true on the
-  // chromeless and signed-out shells, where a strip that peeked a rail in
-  // would be conjuring navigation out of nothing.
-  assert.match(bar, /\(screen === 'app-view' && !visible\) \|\| !railOpen \? \(/,
-    'and it exists where the rail is out of the way, by either route');
-  // NOT a bare `screen === 'app-view'`: the app view is two screens, and on
-  // its Workshop the rail is UP. This strip is `z-index: 39` against the
-  // rail's 30, so rendering it there lays an invisible 18px column down the
-  // left edge of the tabs and swallows the press meant for the one under the
-  // pointer.
+  // ONLY THE FOLD, never the route: `screen !== 'app-view' && !railOpen`.
+  // The first clause keeps the strip off the whole app view, uniformly —
+  // including a rail folded by hand before the app was opened, so hover
+  // behaviour inside an app does not depend on when the fold happened.
+  assert.match(bar, /screen !== 'app-view' && !railOpen \? \(/,
+    'and it exists only on a hand-folded rail, never inside an app');
+  // THE IN-APP TRIGGER IS GONE, not narrowed: no clause anywhere can render
+  // the zone because the ROUTE hid the rail.
+  assert.ok(!bar.includes("screen === 'app-view' && !visible"),
+    'the app view no longer summons the rail on hover');
+  // THE WHOLE APP VIEW IS OUT, not just its rail-down half: the view is two
+  // screens, and on its Workshop the rail is UP. Rendering the strip there
+  // lays an invisible 18px column (`z-index: 39` against the rail's 30) down
+  // the left edge of the tabs and swallows the press meant for the one under
+  // the pointer.
   assert.ok(!bar.includes("{screen === 'app-view' ? ("),
     'the app view alone is not the question — whether its rail is down is');
   // THE PEEK IS NOT THE BAR'S VISIBILITY. The router still says hidden, the

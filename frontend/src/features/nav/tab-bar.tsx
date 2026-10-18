@@ -288,7 +288,9 @@ function TabBadge({ count, id = 'platform-tabs-badge', label = 'Unread conversat
 }
 
 /**
- * The rail, peeked back over an open app (#2718, desktop only).
+ * The rail, peeked back over the page where the viewer folded it (#2718,
+ * desktop only). Never inside an app (#3138): the app view has no hover
+ * route to the rail at all.
  *
  * ── The problem, on a laptop ──────────────────────────────────────────
  *
@@ -811,28 +813,34 @@ export function PlatformTabs() {
     <>
       {/*
           THE HOT ZONE. A strip at the window's left edge, and the only thing
-          that can start a peek. It renders wherever there is no rail to point
-          at — inside an app, or with the rail folded by hand — and app.css
-          hides it below the desktop breakpoint, because a phone has no
-          pointer to hover with and a hidden touch target at the screen edge
-          would eat swipes.
+          that can start a peek. It renders only where the rail is missing
+          because the VIEWER folded it, and app.css hides it below the
+          desktop breakpoint, because a phone has no pointer to hover with
+          and a hidden touch target at the screen edge would eat swipes.
 
-          NOT `collapsed`, and not a bare `screen === 'app-view'` either.
-          `collapsed` is also true on the chromeless and signed-out shells,
-          where there is no rail behind the edge to bring back and a strip
-          that peeked one in would be conjuring navigation out of nothing.
-          And the app view is TWO screens now (#2718 review): on its Workshop
-          the rail is UP, and this strip is `z-index: 39` against the rail's
-          30 — an invisible 18px column down the left edge of the tabs,
-          swallowing the press meant for the one under the pointer.
+          NEVER inside an app (#3138): a strip that slid the rail over a
+          running app whenever the pointer crossed the window's edge was
+          interrupting the thing the app screen exists to hold, full width.
+          Leaving an app is the header's ✕ (Close app), as on a phone. That
+          also covers the rail folded before the app was opened — inside an
+          app there is no hover route to the rail at all, whenever the fold
+          happened. On Homeroom's own screens the peek is the announced way
+          back from a deliberate fold, so it keeps both ways in: this strip
+          and the toggle's enter pair.
 
-          So: the app view WITH ITS RAIL DOWN, which is the running app, or a
-          rail the viewer folded anywhere. A folded rail is the running app's
-          arrangement reached another way and the way back has to be the same
-          one, or the toggle is a door that only opens; `!railOpen` implies a
-          rail existed, because the toggle renders only where one does.
+          NOT `collapsed`: it is also true on the chromeless and signed-out
+          shells, where there is no rail behind the edge to bring back and a
+          strip that peeked one in would be conjuring navigation out of
+          nothing — they answer `railOpen: true`. And NOT the whole app view
+          either: it is TWO screens (#2718 review), on its Workshop the rail
+          is UP, and this strip is `z-index: 39` against the rail's 30 — an
+          invisible 18px column down the left edge of the tabs, swallowing
+          the press meant for the one under the pointer.
+
+          `!railOpen` implies a rail existed, because the toggle renders only
+          where one does.
       */}
-      {(screen === 'app-view' && !visible) || !railOpen ? (
+      {screen !== 'app-view' && !railOpen ? (
         <div
           id="platform-rail-peek"
           className="platform-rail-peek"
