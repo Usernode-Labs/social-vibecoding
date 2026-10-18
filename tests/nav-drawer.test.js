@@ -341,7 +341,7 @@ test('the Messages screen: the panes are the levels, the page drops its name, th
     'the pane the route swaps in slides on from where the old one was');
   assert.match(drawer, /el\.animate\(\[\{ transform: start \}, \{ transform: end \}\], \{ duration: SLIDE_MS, easing: SLIDE_EASE \}\)/);
   assert.doesNotMatch(drawer, /\.style\.transition/, 'the conversation\'s pane is the kit\'s keyboard column, whose transition the kit owns');
-  assert.match(drawer, /if \(!on \|\| level !== 1\) return undefined;\s*const takesEdge = pageTakesEdge\(\);/);
+  assert.match(drawer, /if \(!on \|\| \(level === 0 && !peekId\)\) return undefined;\s*const from = level;\s*const takesEdge = pageTakesEdge\(\);/);
   assert.match(drawer, /const sideways = touch\.clientX > EDGE_PX && startsOnSideways\(target, layout, window\);\s*if \(!swipeBackMayStart\(\{ x: touch\.clientX, takesEdge, sideways \}\)\) return;/,
     'a conversation pans back from anywhere but sideways UI, as a page does (tests/nav-drawer-swipe.test.js)');
   const header = read(`${DIR}/header-drawer.tsx`);

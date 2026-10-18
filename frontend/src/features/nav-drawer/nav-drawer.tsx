@@ -289,7 +289,10 @@ function DrawerSurface({ slug, name, place, owed }: { slug: string; name: string
     };
   }, []);
 
-  // ── A finger on levels 0 and 1 ──
+  // ── A mouse on levels 0 and 1 ──
+  // A finger is the touch handlers' (below): a pointer is cancelled the
+  // moment the browser starts scrolling a list under it, so on the lists a
+  // drag had to be exactly sideways to pan at all.
   const pan = useRef<null | { id: number; x0: number; y0: number; from: Level; w: number; on: boolean; dx: number }>(null);
   const swallowClick = useRef(false);
   const follow = (offset: number) => {
@@ -298,7 +301,7 @@ function DrawerSurface({ slug, name, place, owed }: { slug: string; name: string
   };
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     const s = drawerStore.get();
-    if (!e.isPrimary || e.button !== 0 || s.searching || s.level === 2) return;
+    if (e.pointerType !== 'mouse' || !e.isPrimary || e.button !== 0 || s.searching || s.level === 2) return;
     pan.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, from: s.level, w: screenWidth(), on: false, dx: 0 };
   };
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -331,19 +334,25 @@ function DrawerSurface({ slug, name, place, owed }: { slug: string; name: string
     go(landing(p.from, offset, p.dx));
   };
 
-  // ── A finger on the page ──
-  // A swipe right, from anywhere on it but sideways UI or from the left edge
+  // ── A finger ──
+  // From touch events, which keep coming while the browser scrolls the list
+  // or the page under the same finger, so a swipe a little off level still
+  // pans (Evan, 18 Oct 2026: the lists caught the vertical unless a swipe was
+  // very precise, where a page and a conversation did not). On your
+  // communities and the places a sideways drag anywhere, either way; on the
+  // page a swipe right, from anywhere but sideways UI or from the left edge
   // where that is the page's (./sideways.ts).
   useEffect(() => {
     const takesEdge = pageTakesEdge();
-    let p: null | { x0: number; y0: number; w: number; on: boolean; dx: number } = null;
+    let p: null | { x0: number; y0: number; w: number; from: Level; on: boolean; dx: number } = null;
+    const offsetOf = (from: Level, dx: number, w: number) => Math.max(0, Math.min(LEVEL_AT[2], LEVEL_AT[from] - dx / w));
     const move = (e: TouchEvent) => {
       const touch = e.touches[0];
       if (!p || !touch) return;
       const dx = touch.clientX - p.x0;
       const dy = touch.clientY - p.y0;
       if (!p.on) {
-        if (isPan(dx, dy) && dx > 0) {
+        if (isPan(dx, dy) && (p.from !== 2 || dx > 0)) {
           // Its moves may not be cancelable, and the pan follows them all the
           // same. WebKit and Chromium decide at touchstart, from the listeners
           // there then, whether a touch's moves wait for the page; this one
@@ -354,7 +363,7 @@ function DrawerSurface({ slug, name, place, owed }: { slug: string; name: string
           // sideways part; a cancelable move is still held below.
           p.on = true;
           setMoving(true);
-        } else if (Math.abs(dy) > PAN_SLOP_PX || dx < -PAN_SLOP_PX) {
+        } else if (Math.abs(dy) > PAN_SLOP_PX || (p.from === 2 && dx < -PAN_SLOP_PX)) {
           stop();
           return;
         } else {
@@ -363,7 +372,7 @@ function DrawerSurface({ slug, name, place, owed }: { slug: string; name: string
       }
       if (e.cancelable) e.preventDefault();
       p.dx = dx;
-      follow(Math.max(0, Math.min(LEVEL_AT[2], LEVEL_AT[2] - dx / p.w)));
+      follow(offsetOf(p.from, dx, p.w));
     };
     const stop = () => {
       p = null;
@@ -373,21 +382,30 @@ function DrawerSurface({ slug, name, place, owed }: { slug: string; name: string
       const touch = e.touches[0];
       const s = drawerStore.get();
       stop();
-      if (!s.on || s.level !== 2 || s.moving || e.touches.length !== 1 || !touch) return;
+      if (!s.on || s.moving || e.touches.length !== 1 || !touch) return;
       const target = e.target as Element | null;
-      const page = target?.closest?.('#app-view') || null;
-      if (!target || !page) return;
-      const sideways = touch.clientX > EDGE_PX && startsOnSideways(target, page, window);
-      if (!swipeBackMayStart({ x: touch.clientX, takesEdge, sideways })) return;
-      p = { x0: touch.clientX, y0: touch.clientY, w: screenWidth(), on: false, dx: 0 };
+      if (!target) return;
+      if (s.level === 2) {
+        const page = target.closest?.('#app-view') || null;
+        if (!page) return;
+        const sideways = touch.clientX > EDGE_PX && startsOnSideways(target, page, window);
+        if (!swipeBackMayStart({ x: touch.clientX, takesEdge, sideways })) return;
+      } else {
+        // The drawer's own levels: anywhere on them but a field (the search).
+        const surface = rootRef.current;
+        if (s.searching || !surface || !surface.contains(target) || startsOnSideways(target, surface, window)) return;
+      }
+      p = { x0: touch.clientX, y0: touch.clientY, w: screenWidth(), from: s.level, on: false, dx: 0 };
       document.addEventListener('touchmove', move, { passive: false });
     };
     const up = () => {
       const was = p;
       stop();
       if (!was || !was.on) return;
-      const offset = Math.max(0, Math.min(LEVEL_AT[2], LEVEL_AT[2] - was.dx / was.w));
-      go(landing(2, offset, was.dx));
+      // A row the finger started on is not pressed by the pan.
+      swallowClick.current = true;
+      window.setTimeout(() => { swallowClick.current = false; }, 0);
+      go(landing(was.from, offsetOf(was.from, was.dx, was.w), was.dx));
     };
     document.addEventListener('touchstart', down, { passive: true });
     document.addEventListener('touchend', up, { passive: true });
