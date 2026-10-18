@@ -19,7 +19,7 @@ const { Pool } = require('pg');
 
 // main-watch's run and filings, and main-red-fix's request, faked before
 // services.ts reaches them through the shared require cache (legacy.ts).
-const suite = { calls: [], scripts: new Map() };
+const suite = { calls: [], scripts: new Map(), reuse: [] };
 const filings = [];
 const fixes = [];
 const stub = (rel, exports) => {
@@ -32,6 +32,7 @@ stub('../src/services/main-watch', {
   // a function of the call (which may checkpoint the run id and wait).
   async runMainSuite(config, pool, args) {
     suite.calls.push({ appId: args.app.id, slug: args.app.slug, sha: args.sha, resumeRunId: args.resumeRunId });
+    suite.reuse.push([args.sha, args.reuse]);
     const next = (suite.scripts.get(args.app.id) || []).shift();
     if (next === undefined) throw new Error(`no run scripted for app ${args.app.id}`);
     const answer = typeof next === 'function' ? await next(args) : next;
@@ -216,9 +217,11 @@ test('the main check against the full PostgreSQL schema', { timeout: 240000 }, a
     let r = await row(a);
     assert.deepEqual([r.state, r.sha, r.detail, r.paused], ['running', S1, { prNumber: 41, sessionId: 3 }, null],
       'the board reads "checking the last merge" from the row at once');
-    assert.deepEqual((await suiteWork(a)).map((w) => w.input), [{ appId: a.id, sha: S1, phase: 'first' }]);
+    assert.deepEqual((await suiteWork(a)).map((w) => w.input), [{ appId: a.id, sha: S1, phase: 'first', reuse: true }],
+      'a first run on an unpaused main may copy a pass of its tree');
     await settle();
     assert.deepEqual(ran(a), [{ appId: a.id, slug: a.slug, sha: S1, resumeRunId: null }], 'green needs no second opinion');
+    assert.deepEqual(suite.reuse.at(-1), [S1, true], 'and the work passes that on to the run');
     r = await row(a);
     assert.deepEqual([r.state, r.paused, r.detail.prNumber, r.detail.summary.pass], ['passing', null, 41, 40]);
     assert.deepEqual(await verdicts(a), [[S1, 'passing', false, null, false]]);
@@ -274,7 +277,8 @@ test('the main check against the full PostgreSQL schema', { timeout: 240000 }, a
       ['confirming', S1, true, 41, redOn([REAL]).detail.failureReason], 'held: the banner says "re-running to confirm"');
     assert.equal((await inst(a)).state, 'confirming');
     assert.deepEqual(await pauses(a), [['main_paused', { sha: S1, confirming: true }]]);
-    assert.deepEqual((await suiteWork(a)).map((w) => [w.work_key, w.input.phase]), [['suite:1', 'first'], ['suite:2', 'confirm']]);
+    assert.deepEqual((await suiteWork(a)).map((w) => [w.work_key, w.input.phase, w.input.reuse]), [['suite:1', 'first', true], ['suite:2', 'confirm', false]],
+      'a confirmation asks whether the red is real: it runs the suite');
     assert.deepEqual(await verdicts(a), [], 'a provisional red is no verdict');
     await settle();
     assert.deepEqual(ran(a).map((c) => c.sha), [S1, S1], 'on the same commit');
@@ -407,9 +411,12 @@ test('the main check against the full PostgreSQL schema', { timeout: 240000 }, a
     await settle();
     assert.equal((await row(a)).paused, S1);
     await ask(rt, a, S2, { prNumber: 42 });
+    assert.deepEqual((await suiteWork(a)).filter((w) => w.input.sha === S2).map((w) => [w.input.phase, w.input.reuse]), [['first', false]],
+      'a merge on a paused main is the one that re-tests it: it runs the suite');
     await settle();
     let r = await row(a);
     assert.equal(ran(a).filter((c) => c.sha === S2).length, 2, 'tried twice, then given up');
+    assert.deepEqual(suite.reuse.filter(([sha]) => sha === S2).map(([, reuse]) => reuse), [false, false]);
     assert.deepEqual([r.state, r.sha, r.paused], ['error', S2, S1], 'a run that says nothing about main cannot lift a pause');
     assert.match(r.detail.failureReason, /docker daemon unreachable/);
     assert.equal((await inst(a)).deadline_at, null, 'and its commit is no paused red to ask again');
@@ -578,6 +585,7 @@ test('the main check against the full PostgreSQL schema', { timeout: 240000 }, a
     assert.ok(r.detail.recheckingAt, 'in flight, on the row');
     assert.equal((await send(r2, a, 'RecheckDue', {}, { kind: 'timer' })).reason, 'under_way');
     assert.equal((await suiteWork(a)).at(-1).input.phase, 'recheck');
+    assert.equal((await suiteWork(a)).at(-1).input.reuse, false, 'a recheck of a paused red runs the suite');
     await settle(r2);
     r = await row(a);
     assert.deepEqual([r.state, r.paused, r.detail.rechecks, r.detail.prNumber, r.detail.recheckingAt],
@@ -680,7 +688,7 @@ test('the main check against the full PostgreSQL schema', { timeout: 240000 }, a
     await seed(c, { state: 'running', detail: { prNumber: 41, sessionId: 3 } });
     script(c, green);
     await send(rt, c, 'Adopted');
-    assert.deepEqual((await suiteWork(c)).map((w) => w.input), [{ appId: c.id, sha: S1, phase: 'first' }]);
+    assert.deepEqual((await suiteWork(c)).map((w) => w.input), [{ appId: c.id, sha: S1, phase: 'first', reuse: true }]);
     await settle();
     assert.deepEqual([(await row(c)).state, await kicks(c)], ['passing', []]);
 

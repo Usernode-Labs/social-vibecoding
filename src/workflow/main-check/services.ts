@@ -38,6 +38,9 @@ export function mainCheckServices({ config, pool }: Deps): Record<string, WorkHa
         const resumeRunId = (ctx.resumeFrom as { runId?: string } | null)?.runId ?? ctx.input.resumeRunId ?? null;
         const out = await watch().runMainSuite(config, pool, {
           app: row, sha: String(ctx.input.sha), resumeRunId, signal: ctx.signal,
+          // A first run on an unpaused main may copy a pass of its tree
+          // (the machine's suiteWork); an item from before the flag runs it.
+          reuse: ctx.input.reuse === true,
           // A save that fails for another reason than a lost claim costs
           // only the adoption after a crash: the run goes on.
           onRunId: (runId: string) => ctx.checkpoint({ runId }).catch((err: any) => {

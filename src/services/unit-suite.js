@@ -1542,7 +1542,12 @@ async function recordPassForReuse({
     });
     return false;
   }
-  return reuse.recordPass(pool, key, { sessionId, runId, summary });
+  // The commit's tree, so main-watch can copy this pass for a merge that
+  // lands the same tree (unit-suite-reuse.js findTreePass). Read after the
+  // suite, so nothing waits on it; unreadable, the pass is still recorded
+  // for its commit.
+  const treeSha = await reuse.treeOf({ github, owner: repoOwner, repo: repoName, commitSha: key.commitSha });
+  return reuse.recordPass(pool, { ...key, treeSha }, { sessionId, runId, summary });
 }
 
 /**
@@ -1561,6 +1566,33 @@ async function reusablePass({ config, pool, appId, sessionId = null, repoOwner, 
     return { ...reuse.reusedOutcome(shapeOutcome, pass), snapshot: reuse.reusedSnapshot(pass) };
   } catch (err) {
     log.warn('unit-suite', 'Unit-suite reuse lookup failed — running the suite', { commitSha, err: err.message });
+    return null;
+  }
+}
+
+/**
+ * main-watch: a pass of the same TREE as `commitSha` (any commit, typically
+ * the proposal head a squash merge just landed) the run may copy instead of
+ * starting the suite, as the outcome it would have produced, or null. The
+ * row's `reused` also names the commit and tree it was copied from. Asked
+ * only for the first run of a merge while main is not paused (the main-check
+ * machine decides). Never throws: anything unreadable runs the suite.
+ */
+async function reusableTreePass({ config, pool, appId, repoOwner, repoName, commitSha }) {
+  try {
+    if (!isEnabled() || !github.isEnabled()) return null;
+    const reuse = require('./unit-suite-reuse');
+    const base = reuse.keyFor(config, { appId, repoOwner, repoName, commitSha, jobHash: jobHash() });
+    if (!base) return null;
+    const treeSha = await reuse.treeOf({ github, owner: repoOwner, repo: repoName, commitSha: base.commitSha });
+    if (!treeSha) return null;
+    const pass = await reuse.findTreePass(pool, { ...base, treeSha });
+    if (!pass) return null;
+    const outcome = reuse.reusedOutcome(shapeOutcome, pass);
+    const reused = { ...outcome.reused, commitSha: pass.commitSha, treeSha };
+    return { ...outcome, row: { ...outcome.row, reused }, reused };
+  } catch (err) {
+    log.warn('unit-suite', 'Unit-suite tree reuse lookup failed — running the suite', { commitSha, err: err.message });
     return null;
   }
 }
@@ -1838,6 +1870,7 @@ module.exports = {
   jobDefinition,
   jobHash,
   recordPassForReuse,
+  reusableTreePass,
   reusablePass,
   suiteApplies,
 };

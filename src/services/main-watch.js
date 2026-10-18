@@ -67,6 +67,13 @@
 // main, which is production itself; a red production is caught by the
 // deploy's own health check and the rollback that follows it.
 //
+// A merge that lands a tree the suite already passed copies that pass. A
+// squash merge of a proposal level with main is the proposal's own tree
+// under a new commit, tested minutes earlier: 15 of 73 main runs from 16 to
+// 18 Oct 2026 (unit-suite-reuse.js findTreePass). Only a first run, only
+// while main is not paused (the main-check machine's `reuse`), and the
+// verdict's detail says so (`reused`: the run, proposal, commit and tree).
+//
 // The flow is the main-check workflow machine's (src/workflow/main-check/,
 // which applies these rules): this module keeps the suite's run
 // (runMainSuite) and the flake and fix filings, as its work's I/O, and the
@@ -276,12 +283,31 @@ async function takeSlot(config, pool, app, mergeSha, { onRunId = null, signal = 
 // runner that could not be reached is an 'error' verdict. 'superseded' is a
 // run that never started because a newer merge took the row while it
 // waited for its slot; the machine stores nothing for it.
-async function runSuite(config, pool, app, parsed, mergeSha, { adopt = null, onRunId = null, signal = null } = {}) {
+async function runSuite(config, pool, app, parsed, mergeSha, { adopt = null, onRunId = null, signal = null, reuse = false } = {}) {
   let slot = null;
   try {
     if (adopt) {
       const adopted = await adoptRun(config, pool, app, mergeSha, adopt);
       if (adopted) return adopted;
+    }
+    // A merge that landed a tree whose suite already passed (the proposal
+    // head it squashed, minutes ago) copies that pass: no slot, no Jobs, and
+    // a verdict at once (services/unit-suite-reuse.js findTreePass). Only
+    // when the machine allows it (`reuse`: a first run while main is not
+    // paused); the verdict's detail names the pass it copied (`reused`).
+    if (reuse) {
+      // A lookup that fails in any way runs the suite (it never throws; this
+      // keeps a throw from becoming an 'error' verdict all the same).
+      const copied = await unitSuite.reusableTreePass({
+        config, pool, appId: app.id, repoOwner: parsed.owner, repoName: parsed.repo, commitSha: mergeSha,
+      }).catch(() => null);
+      if (copied) {
+        log.info('main-watch', 'Unit suite reused from an earlier pass of the same tree', {
+          appId: app.id, sha: mergeSha, from: copied.reused,
+        });
+        const verdict = classify(copied);
+        return { ...verdict, detail: { ...verdict.detail, reused: copied.reused } };
+      }
     }
     slot = await takeSlot(config, pool, app, mergeSha, { onRunId, signal });
     if (slot.superseded) return { state: 'superseded', detail: {} };
@@ -592,7 +618,10 @@ async function fileFlakeRequest(config, pool, app, t, { mergeSha = null, excerpt
 // (`resumeRunId`) to read the dead run's Jobs rather than run the suite
 // again, once the dead process's row is still there. Resolves a verdict
 // (classify); never throws.
-async function runMainSuite(config, pool, { app, sha, resumeRunId = null, onRunId = null, signal = null } = {}) {
+//
+// `reuse`: the machine allows this run to copy a pass of the merge's tree
+// (runSuite). Anything but `true` runs the suite.
+async function runMainSuite(config, pool, { app, sha, resumeRunId = null, onRunId = null, signal = null, reuse = false } = {}) {
   const parsed = parseRepo(app && app.repo_url);
   if (!parsed) return { state: 'skipped', detail: { reason: 'no repository' } };
   let adopt = null;
@@ -603,7 +632,7 @@ async function runMainSuite(config, pool, { app, sha, resumeRunId = null, onRunI
       if (r) adopt = { runId: resumeRunId, owner: r.owner };
     } catch { /* nothing to adopt: the suite runs again */ }
   }
-  return runSuite(config, pool, app, parsed, sha, { adopt, onRunId, signal });
+  return runSuite(config, pool, app, parsed, sha, { adopt, onRunId, signal, reuse: reuse === true });
 }
 
 module.exports = {

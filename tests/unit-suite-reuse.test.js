@@ -47,6 +47,10 @@ const read_ = read;
 
 const SHA = 'a'.repeat(40);
 const OTHER = 'b'.repeat(40);
+// A tree, and a merge commit that lands it under another id.
+const TREE = 'e'.repeat(40);
+const OTHER_TREE = 'f'.repeat(40);
+const MERGE = '9'.repeat(40);
 const DIGEST = `registry.example/usernode-worker@sha256:${'c'.repeat(64)}`;
 const NEW_DIGEST = `registry.example/usernode-worker@sha256:${'d'.repeat(64)}`;
 const config = { workerRuntime: 'kubernetes', kubernetes: { workerImage: DIGEST, workerNamespace: 'w' } };
@@ -72,8 +76,10 @@ test('the image is known only by digest, and only on Kubernetes', () => {
 test('a key needs every part: reuse on, a digest, the repository and a full commit', () => {
   const key = reuse.keyFor(config, keyArgs);
   assert.deepEqual(key, {
-    appId: 10, repo: 'usernode-labs/social-vibecoding', commitSha: SHA, image: DIGEST, jobHash: keyArgs.jobHash,
+    appId: 10, repo: 'usernode-labs/social-vibecoding', commitSha: SHA, treeSha: null, image: DIGEST, jobHash: keyArgs.jobHash,
   });
+  assert.equal(reuse.keyFor(config, { ...keyArgs, treeSha: TREE.toUpperCase() }).treeSha, TREE, 'a tree, when known');
+  assert.equal(reuse.keyFor(config, { ...keyArgs, treeSha: 'HEAD^{tree}' }).treeSha, null, 'never anything but a full tree id');
   assert.equal(reuse.keyFor(config, { ...keyArgs, commitSha: 'main' }), null, 'a branch name is not a commit');
   assert.equal(reuse.keyFor(config, { ...keyArgs, commitSha: SHA.slice(0, 12) }), null, 'a short SHA is not enough');
   assert.equal(reuse.keyFor(config, { ...keyArgs, repoName: null }), null);
@@ -235,8 +241,13 @@ const shardOut = (root, head, { ok = 2 } = {}) => [
   `# tests ${ok}`, `# pass ${ok}`, '# fail 0', '# cancelled 0', '# skipped 0', '# todo 0', '# duration_ms 900',
 ].join('\n');
 
-function mockRun(t, { heads = [SHA, SHA, SHA], fail = false } = {}) {
+function mockRun(t, { heads = [SHA, SHA, SHA], fail = false, tree = TREE } = {}) {
+  reuse._clearTreeCache();
   t.mock.method(github, 'isEnabled', () => true);
+  t.mock.method(github, 'getCommitTree', async () => {
+    if (tree instanceof Error) throw tree;
+    return tree;
+  });
   t.mock.method(github, 'getCloneUrl', async () => 'https://example.test/repo');
   t.mock.method(github, 'getFileContent', async () => JSON.stringify({ scripts: { test: 'node --test', 'test:shard': 'node --test --test-shard=$TEST_SHARD' } }));
   t.mock.method(checkHistory, 'loadGraduated', async () => new Set());
@@ -269,6 +280,18 @@ test('a pass is recorded with the run, the commit every shard checked out, the d
   assert.deepEqual(ins.params.slice(0, 7),
     [10, 'usernode-labs/social-vibecoding', SHA, DIGEST, unitSuite.jobHash(), 8401, 'run-a']);
   assert.equal(JSON.parse(ins.params[7]).tests, 6, 'the summary of the whole suite');
+  assert.match(ins.sql, /INSERT INTO unit_suite_passes \(app_id, repo, commit_sha, image, job_definition, session_id, run_id, summary, tree_sha\)/);
+  assert.equal(ins.params[8], TREE, 'and the commit\'s tree, as GitHub has it');
+});
+
+test('a pass whose tree cannot be read is still recorded, for its commit alone', async (t) => {
+  mockRun(t, { tree: new Error('GitHub 502') });
+  const pool = recordingPool();
+  await unitSuite.maybeRunUnitSuite(runArgs(pool));
+  const [ins] = inserts(pool);
+  assert.ok(ins, 'recorded');
+  assert.equal(ins.params[2], SHA);
+  assert.equal(ins.params[8], null, 'no tree: main-watch cannot copy it, a re-run of the commit still can');
 });
 
 test('nothing is recorded for a red suite, another checkout, no commit, Docker, or with reuse off', async (t) => {
@@ -1135,4 +1158,210 @@ test('postgres, real settlement: with the unit suite switched off, a manual requ
   await rowStore.setChecksPending(pool, session.id, SHA, 'testing', 'manual-recheck');
   await settle();
   assert.deepEqual(Object.values(await read()), ['error', SHA]);
+});
+
+// ── The same tree under another commit (main-watch) ──────────────────────
+//
+// A squash merge of a proposal that was level with main lands the
+// proposal's tree under a new commit, minutes after the proposal passed the
+// suite on it. Main-watch's first run of that merge copies the pass by tree
+// (services/unit-suite-reuse.js findTreePass); everything else in the key,
+// the age limit and the observation still hold.
+
+test('the tree is read from GitHub by commit, once per commit, and never trusted when it is not a tree id', async () => {
+  reuse._clearTreeCache();
+  const asked = [];
+  const gh = { getCommitTree: async (owner, repo, sha) => { asked.push([owner, repo, sha]); return TREE.toUpperCase(); } };
+  assert.equal(await reuse.treeOf({ github: gh, owner: 'Usernode-Labs', repo: 'social-vibecoding', commitSha: SHA }), TREE);
+  assert.equal(await reuse.treeOf({ github: gh, owner: 'usernode-labs', repo: 'Social-Vibecoding', commitSha: SHA.toUpperCase() }), TREE);
+  assert.deepEqual(asked, [['Usernode-Labs', 'social-vibecoding', SHA]], 'a commit names its tree for good: asked once');
+  assert.equal(await reuse.treeOf({ github: gh, owner: 'o', repo: 'r', commitSha: 'main' }), null, 'never a ref that moves');
+  assert.equal(asked.length, 1);
+  const broken = { getCommitTree: async () => { throw new Error('GitHub 502'); } };
+  assert.equal(await reuse.treeOf({ github: broken, owner: 'o', repo: 'r', commitSha: OTHER }), null, 'unreadable: no tree');
+  const odd = { getCommitTree: async () => 'not-a-tree' };
+  assert.equal(await reuse.treeOf({ github: odd, owner: 'o', repo: 'r', commitSha: MERGE }), null);
+  // Nothing unreadable is remembered: the next ask asks again.
+  assert.equal(await reuse.treeOf({ github: gh, owner: 'o', repo: 'r', commitSha: OTHER }), TREE);
+  reuse._clearTreeCache();
+});
+
+test('a tree lookup matches the tree in place of the commit, and every other part of the key, the age and the observation', async () => {
+  const key = reuse.keyFor(config, { ...keyArgs, commitSha: MERGE, treeSha: TREE });
+  const pool = recordingPool([{ id: 4, session_id: 8726, run_id: 'run-p', summary: { tests: 9, pass: 9 }, passed_at: new Date('2026-10-16T08:15:46Z'), commit_sha: SHA }]);
+  const found = await reuse.findTreePass(pool, key);
+  assert.deepEqual(found, {
+    id: 4, sessionId: 8726, runId: 'run-p', summary: { tests: 9, pass: 9 }, passedAt: '2026-10-16T08:15:46.000Z', commitSha: SHA, treeSha: TREE,
+  });
+  const { sql, params } = pool.calls[0];
+  assert.match(sql, /WHERE p\.app_id = \$1 AND p\.repo = \$2 AND p\.tree_sha = \$3 AND p\.image = \$4 AND p\.job_definition = \$5/);
+  assert.doesNotMatch(sql, /p\.commit_sha = /, 'any commit');
+  assert.match(sql, /p\.passed_at > NOW\(\) - make_interval\(secs => \$6::double precision\)/);
+  assert.match(sql, /AND p\.observed_at IS NOT NULL/);
+  assert.match(sql, /WHERE cs\.id = p\.session_id AND lower\(cs\.unit_suite_fresh_sha\) = p\.commit_sha\)/, 'not a pass its proposal was asked to re-run');
+  assert.deepEqual(params, [10, 'usernode-labs/social-vibecoding', TREE, DIGEST, keyArgs.jobHash, 3 * 3600]);
+
+  const none = recordingPool([]);
+  assert.equal(await reuse.findTreePass(none, reuse.keyFor(config, { ...keyArgs, commitSha: MERGE })), null);
+  assert.equal(none.calls.length, 0, 'no tree, nothing looked up');
+  const broken = { async query() { throw new Error('db down'); } };
+  assert.equal(await reuse.findTreePass(broken, key), null, 'a failed lookup runs the suite');
+  withEnv('UNIT_SUITE_REUSE', '0', () => assert.equal(reuse.keyFor(config, { ...keyArgs, treeSha: TREE }), null, 'the off switch covers it'));
+});
+
+test('a proposal\'s run still matches by its own commit only: its row says "this commit passed it"', async () => {
+  const key = reuse.keyFor(config, { ...keyArgs, treeSha: TREE });
+  const pool = recordingPool([]);
+  await reuse.findPass(pool, key, { trigger: 'boot-reconcile' });
+  assert.match(pool.calls[0].sql, /p\.commit_sha = \$3/);
+  assert.doesNotMatch(pool.calls[0].sql, /tree_sha/);
+  const src = read('src/services/visuals.js') + read('src/workflow/preview/services.ts');
+  assert.doesNotMatch(src, /reusableTreePass/, 'only main-watch copies by tree');
+});
+
+// reusableTreePass, as main-watch calls it, with the real reuse module.
+function treeRun(t, { tree = TREE, rows = null, fail = null } = {}) {
+  reuse._clearTreeCache();
+  t.mock.method(github, 'isEnabled', () => true);
+  const trees = [];
+  t.mock.method(github, 'getCommitTree', async (owner, repo, sha) => {
+    trees.push(sha);
+    if (tree instanceof Error) throw tree;
+    return tree;
+  });
+  const pool = fail ? { calls: [], async query() { throw fail; } }
+    : recordingPool(rows || [{ id: 5, session_id: 8726, run_id: 'run-p', summary: PASS.summary, passed_at: new Date(PASS.passedAt), commit_sha: SHA }]);
+  return { pool, trees };
+}
+const treeArgs = (pool) => ({ config, pool, appId: 10, repoOwner: 'Usernode-Labs', repoName: 'social-vibecoding', commitSha: MERGE });
+
+test('reusableTreePass: a merge copies the pass of its tree, and the row names the commit and tree it came from', async (t) => {
+  const { pool, trees } = treeRun(t);
+  const out = await unitSuite.reusableTreePass(treeArgs(pool));
+  assert.deepEqual(trees, [MERGE], 'the merge\'s own tree, read by its commit');
+  assert.equal(out.row.status, 'pass');
+  assert.deepEqual(out.row.reused, { runId: 'run-p', sessionId: 8726, passedAt: PASS.passedAt, commitSha: SHA, treeSha: TREE });
+  assert.deepEqual(out.reused, out.row.reused);
+  assert.equal(out.history, null, 'copying is not an observation');
+  assert.deepEqual(pool.calls[0].params.slice(0, 5), [10, 'usernode-labs/social-vibecoding', TREE, DIGEST, unitSuite.jobHash()]);
+});
+
+test('reusableTreePass: no tree, no pass, a failed lookup, Docker, or reuse off all run the suite', async (t) => {
+  await t.test('the tree cannot be read', async (st) => {
+    const { pool } = treeRun(st, { tree: new Error('GitHub 502') });
+    assert.equal(await unitSuite.reusableTreePass(treeArgs(pool)), null);
+    assert.equal(pool.calls.length, 0);
+  });
+  await t.test('no pass of that tree', async (st) => {
+    const { pool } = treeRun(st, { rows: [] });
+    assert.equal(await unitSuite.reusableTreePass(treeArgs(pool)), null);
+  });
+  await t.test('the database cannot be read', async (st) => {
+    const { pool } = treeRun(st, { fail: new Error('connection reset') });
+    assert.equal(await unitSuite.reusableTreePass(treeArgs(pool)), null);
+  });
+  await t.test('Docker runs a tag: no digest to match', async (st) => {
+    const { pool } = treeRun(st);
+    assert.equal(await unitSuite.reusableTreePass({ ...treeArgs(pool), config: { workerRuntime: 'docker' } }), null);
+  });
+  await t.test('reuse off', async (st) => {
+    const { pool, trees } = treeRun(st);
+    await withEnv('UNIT_SUITE_REUSE', '0', () => unitSuite.reusableTreePass(treeArgs(pool))).then((out) => assert.equal(out, null));
+    assert.deepEqual(trees, [], 'not even the tree is read');
+  });
+});
+
+test('postgres: a pass is found by its tree under another commit, and only under the same image, job, age and observation', async (t) => {
+  const conn = await connect();
+  if (!conn) return t.skip('the pg driver is not installed in this environment');
+  if (conn.error) return t.skip(`no postgres reachable at ${DSN}: ${conn.error}`);
+  const schema = `unit_suite_tree_test_${process.pid}`;
+  const { pool } = conn;
+  try {
+    await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await pool.query(`CREATE SCHEMA ${schema}`);
+    await pool.query(`SET search_path TO ${schema}`);
+    await pool.query(DDL);
+    await pool.query('CREATE TABLE chat_sessions (id INTEGER PRIMARY KEY, unit_suite_fresh_sha TEXT)');
+    await pool.query('INSERT INTO chat_sessions (id) VALUES (8726), (8727)');
+    // Proposal 8726 passed on its head SHA, whose tree is TREE.
+    const head = reuse.keyFor(config, { ...keyArgs, treeSha: TREE });
+    assert.equal(await reuse.recordPass(pool, head, { sessionId: 8726, runId: 'run-p', summary: { tests: 3, pass: 3 } }), true);
+    // The squash merge MERGE landed the same tree.
+    const merge = reuse.keyFor(config, { ...keyArgs, commitSha: MERGE, treeSha: TREE });
+    assert.equal(await reuse.findTreePass(pool, merge), null, 'not until its run stored its verdict and history');
+    await checkStore.markUnitPassObserved(pool, { appId: 10, sessionId: 8726, commitSha: SHA });
+    const found = await reuse.findTreePass(pool, merge);
+    assert.deepEqual([found.runId, found.sessionId, found.commitSha, found.treeSha], ['run-p', 8726, SHA, TREE], 'a tree hit across commits');
+    assert.equal(await reuse.findPass(pool, merge, { trigger: 'boot-reconcile' }), null, 'by commit, the merge has no pass of its own');
+
+    const differs = {
+      'another tree': { ...merge, treeSha: OTHER_TREE },
+      'another image digest': { ...merge, image: NEW_DIGEST },
+      'another job definition': { ...merge, jobHash: 'j'.repeat(64) },
+      'another repository': { ...merge, repo: 'someone/fork' },
+      'another app': { ...merge, appId: 11 },
+      'no tree known': { ...merge, treeSha: null },
+    };
+    for (const [why, other] of Object.entries(differs)) {
+      assert.equal(await reuse.findTreePass(pool, other), null, why);
+    }
+    // A person asked proposal 8726 to run its head again: that pass is
+    // doubted, and main runs the suite itself.
+    await reuse.markFreshOwed(pool, { sessionId: 8726, commitSha: SHA });
+    assert.equal(await reuse.findTreePass(pool, merge), null, 'its proposal owes a fresh run of it');
+    await pool.query('UPDATE chat_sessions SET unit_suite_fresh_sha = NULL');
+    // A request on another proposal is not about this pass.
+    await reuse.markFreshOwed(pool, { sessionId: 8727, commitSha: SHA });
+    assert.ok(await reuse.findTreePass(pool, merge));
+    // The age limit.
+    await pool.query(`UPDATE unit_suite_passes SET passed_at = NOW() - interval '2 hours 50 minutes'`);
+    assert.ok(await reuse.findTreePass(pool, merge), 'inside 3 hours');
+    await pool.query(`UPDATE unit_suite_passes SET passed_at = NOW() - interval '3 hours 10 minutes'`);
+    assert.equal(await reuse.findTreePass(pool, merge), null, 'too old');
+    // The newest of several passes of the tree.
+    await reuse.recordPass(pool, { ...head, commitSha: OTHER }, { sessionId: 8727, runId: 'run-q' });
+    await checkStore.markUnitPassObserved(pool, { appId: 10, sessionId: 8727, commitSha: OTHER });
+    assert.equal((await reuse.findTreePass(pool, merge)).runId, 'run-q');
+    // The lookup the index is for.
+    const { rows: [plan] } = await pool.query(
+      "SELECT indexdef FROM pg_indexes WHERE schemaname = $1 AND indexname = 'idx_unit_suite_passes_tree'", [schema]);
+    assert.match(plan.indexdef, /\(app_id, tree_sha, passed_at DESC\) WHERE \(tree_sha IS NOT NULL\)/);
+  } finally {
+    await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});
+    await pool.end().catch(() => {});
+  }
+});
+
+test('postgres: the tree column arrives on a table that already holds passes, as often as the schema runs', async (t) => {
+  const conn = await connect();
+  if (!conn) return t.skip('the pg driver is not installed in this environment');
+  if (conn.error) return t.skip(`no postgres reachable at ${DSN}: ${conn.error}`);
+  const schema = `unit_suite_tree_migrate_${process.pid}`;
+  const { pool } = conn;
+  try {
+    await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await pool.query(`CREATE SCHEMA ${schema}`);
+    await pool.query(`SET search_path TO ${schema}`);
+    // The table as it was before the column: CREATE TABLE and its first index.
+    const before = DDL.slice(0, DDL.indexOf('ALTER TABLE unit_suite_passes ADD COLUMN IF NOT EXISTS tree_sha'));
+    assert.doesNotMatch(before, /tree_sha/);
+    await pool.query(before);
+    await pool.query('CREATE TABLE chat_sessions (id INTEGER PRIMARY KEY, unit_suite_fresh_sha TEXT)');
+    await pool.query(`INSERT INTO unit_suite_passes (app_id, repo, commit_sha, image, job_definition, session_id, run_id, observed_at)
+      VALUES (10, 'usernode-labs/social-vibecoding', $1, $2, $3, 8401, 'run-old', NOW())`, [SHA, DIGEST, keyArgs.jobHash]);
+    // Boot runs the whole schema, every time.
+    await pool.query(DDL);
+    await pool.query(DDL);
+    const { rows: cols } = await pool.query(
+      "SELECT data_type, character_maximum_length FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'unit_suite_passes' AND column_name = 'tree_sha'", [schema]);
+    assert.deepEqual(cols, [{ data_type: 'character varying', character_maximum_length: 40 }]);
+    // The pass from before still answers by commit, and by tree nothing.
+    const key = reuse.keyFor(config, { ...keyArgs, treeSha: TREE });
+    assert.equal((await reuse.findPass(pool, key, { trigger: 'boot-reconcile' })).runId, 'run-old');
+    assert.equal(await reuse.findTreePass(pool, key), null, 'an old row has no tree');
+  } finally {
+    await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});
+    await pool.end().catch(() => {});
+  }
 });

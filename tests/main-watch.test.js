@@ -251,6 +251,62 @@ test('runMainSuite: the queue row\'s run id is told before the suite runs, and l
   } finally { suite.restore(); }
 });
 
+// A merge that lands a tree whose suite already passed (the proposal head it
+// squashed) copies that pass when the machine allows it (`reuse`): no queue
+// slot, no Jobs, a verdict at once that says where it came from. Anything
+// else runs the suite. The lookup itself: tests/unit-suite-reuse.test.js.
+function stubTreePass(fn) {
+  const real = unitSuite.reusableTreePass;
+  const calls = [];
+  unitSuite.reusableTreePass = async (args) => { calls.push(args); return fn(args); };
+  return { calls, restore: () => { unitSuite.reusableTreePass = real; } };
+}
+const FROM = { runId: 'run-p', sessionId: 8726, passedAt: '2026-10-16T08:15:46.000Z', commitSha: OLD, treeSha: 'e'.repeat(40) };
+const copiedPass = { row: { status: 'pass', failureReason: '', summary: { tests: 40, pass: 40, fail: 0 }, reused: FROM }, history: null, reused: FROM };
+
+test('runMainSuite: a first run whose tree already passed copies the pass, takes no slot and runs no Jobs', async (t) => {
+  const enqueued = grantingQueue(t);
+  const tree = stubTreePass(async () => copiedPass);
+  const suite = stubSuite(async () => assert.fail('the suite must not run'));
+  const told = [];
+  try {
+    const out = await mainWatch.runMainSuite(KUBE, fakePool(), { app: APP, sha: SHA, reuse: true, onRunId: (id) => told.push(id) });
+    assert.equal(out.state, 'passing');
+    assert.deepEqual(out.detail.reused, FROM, 'the verdict says it was copied, and from which commit and run');
+    assert.deepEqual(out.detail.summary, copiedPass.row.summary);
+    assert.equal(tree.calls.length, 1);
+    assert.deepEqual([tree.calls[0].appId, tree.calls[0].repoOwner, tree.calls[0].repoName, tree.calls[0].commitSha], [12, 'org', 'demo', SHA]);
+    assert.deepEqual([suite.calls.length, enqueued.length, told.length], [0, 0, 0]);
+  } finally { tree.restore(); suite.restore(); }
+});
+
+test('runMainSuite: without the machine\'s leave, or with no pass of the tree, the suite runs', async (t) => {
+  grantingQueue(t);
+  for (const [why, opts, answer] of [
+    ['no leave (a confirmation, a recheck, a paused main)', {}, copiedPass],
+    ['leave that is not exactly true', { reuse: 'yes' }, copiedPass],
+    ['no pass of that tree, or a lookup that failed', { reuse: true }, null],
+  ]) {
+    const tree = stubTreePass(async () => answer);
+    const suite = stubSuite(async () => pass);
+    try {
+      const out = await mainWatch.runMainSuite(KUBE, fakePool(), { app: APP, sha: SHA, ...opts });
+      assert.equal(out.state, 'passing', why);
+      assert.equal(out.detail.reused, undefined, `${why}: not a copy`);
+      assert.equal(suite.calls.length, 1, `${why}: the suite ran`);
+      assert.equal(tree.calls.length, opts.reuse === true ? 1 : 0, `${why}: asked only with leave`);
+    } finally { tree.restore(); suite.restore(); }
+  }
+  // A lookup that throws is a run of the suite, not an error verdict.
+  const tree = stubTreePass(async () => { throw new Error('boom'); });
+  const suite = stubSuite(async () => pass);
+  try {
+    const out = await mainWatch.runMainSuite(KUBE, fakePool(), { app: APP, sha: SHA, reuse: true });
+    assert.equal(out.state, 'passing');
+    assert.equal(suite.calls.length, 1, 'fails closed: the suite ran');
+  } finally { tree.restore(); suite.restore(); }
+});
+
 // 12 Oct 2026: a release restarted the platform while main was confirming a
 // red, and main stayed held until the run was 12 minutes stale and ran from
 // the start. The run's Jobs were still on the cluster. Now the next attempt
@@ -338,6 +394,17 @@ test('runMainSuite: a resumed run with no admitted row, or no Jobs left, runs th
 });
 
 // ── mergePause ───────────────────────────────────────────────────────────
+
+test('runMainSuite: a resumed run is adopted before any copy is looked for', async () => {
+  const pool = fakePool({ queueRow: { owner: DEAD.owner } });
+  const stubs = adoptStubs({ outcome: fail(TAP_RED) });
+  const tree = stubTreePass(async () => assert.fail('the dead run\'s own Jobs answer'));
+  try {
+    const out = await mainWatch.runMainSuite(KUBE, pool, { app: APP, sha: SHA, resumeRunId: DEAD.runId, reuse: true });
+    assert.equal(out.state, 'failing');
+    assert.equal(tree.calls.length, 0);
+  } finally { stubs.restore(); tree.restore(); }
+});
 
 test('mergePause: an unreadable row does not wedge every merge on the app', async () => {
   const pool = { query: async () => { throw new Error('connection reset'); } };

@@ -37,6 +37,26 @@
 // The pass is read from the database (unit_suite_passes), so it is found the
 // same after a restart. UNIT_SUITE_REUSE=0 turns all of this off: nothing is
 // reused and nothing is recorded.
+//
+// The same tree under another commit (main-watch). On 13 to 14 Oct 2026 a
+// re-run of the same commit was what reuse waited for; from 16 to 18 Oct it
+// never came: of 216 checks runs, 13 repeated a commit, and every one of them
+// followed a red suite or a pass more than 3 hours old. What repeats instead
+// is the TREE: a squash merge of a proposal that was level with main lands
+// the proposal's own tree under a new commit, and main-watch runs the suite
+// on it minutes after the proposal passed it (22 of 105 main runs). Main's
+// FIRST run of a merge therefore copies an observed pass of the same tree,
+// matched on the tree in place of the commit and on everything else above
+// (findTreePass). A commit's tree is everything the suite checks out: the
+// commit itself reaches the Job only as the `.git` of a depth-1 clone and
+// the GIT_REF/PR_NUMBER env. No test reads those env names, and run under a
+// logging `git` on 18 Oct 2026, the 434 suites that run git or load a module
+// that does asked the checkout's own repository one thing only, that HEAD is
+// a commit (tests/test-changed.test.js), true of every commit; the pretest
+// asked nothing. The tree is read from GitHub by commit (treeOf), never from
+// a ref that can move. A confirmation of a red, a recheck of a paused main
+// and a first run while main is paused always run the suite (the main-check
+// machine's `reuse`).
 
 const crypto = require('crypto');
 const log = require('./logger');
@@ -98,14 +118,41 @@ function isSha(value) {
 /**
  * Everything a pass is matched on, or null when this run cannot be matched
  * (reuse off, no digest, no full SHA). `jobHash` comes from the caller's
- * unit-suite module so tests can vary it.
+ * unit-suite module so tests can vary it. `treeSha`, the commit's tree when
+ * it is known (treeOf), is null otherwise: the key still matches by commit.
  */
-function keyFor(config, { appId, repoOwner, repoName, commitSha, jobHash }) {
+function keyFor(config, { appId, repoOwner, repoName, commitSha, treeSha = null, jobHash }) {
   if (!isEnabled()) return null;
   const image = imageOf(config);
   const repo = repoKey(repoOwner, repoName);
   if (!image || !repo || !isSha(commitSha) || !Number(appId) || !jobHash) return null;
-  return { appId: Number(appId), repo, commitSha: String(commitSha).toLowerCase(), image, jobHash };
+  return {
+    appId: Number(appId), repo, commitSha: String(commitSha).toLowerCase(),
+    treeSha: isSha(treeSha) ? String(treeSha).toLowerCase() : null, image, jobHash,
+  };
+}
+
+// A commit's tree, as GitHub has it. A commit names its tree in its own
+// content, so the answer for a full SHA never changes and is kept for the
+// life of the process (the newest TREE_CACHE_MAX). Never throws: null when
+// it cannot be read, and a key without a tree matches by commit alone.
+const TREE_CACHE_MAX = 512;
+const treeCache = new Map();
+async function treeOf({ github, owner, repo, commitSha }) {
+  if (!github || typeof github.getCommitTree !== 'function' || !owner || !repo || !isSha(commitSha)) return null;
+  const id = `${String(owner).toLowerCase()}/${String(repo).toLowerCase()}@${String(commitSha).toLowerCase()}`;
+  if (treeCache.has(id)) return treeCache.get(id);
+  try {
+    const tree = await github.getCommitTree(owner, repo, String(commitSha).toLowerCase());
+    if (!isSha(tree)) return null;
+    const value = String(tree).toLowerCase();
+    treeCache.set(id, value);
+    if (treeCache.size > TREE_CACHE_MAX) treeCache.delete(treeCache.keys().next().value);
+    return value;
+  } catch (err) {
+    log.warn('unit-suite-reuse', 'Could not read the commit\'s tree (non-fatal)', { commitSha, err: err.message });
+    return null;
+  }
 }
 
 /** Record a pass. Never throws; returns true when a row was written. */
@@ -113,10 +160,11 @@ async function recordPass(pool, key, { sessionId = null, runId = null, summary =
   if (!pool || !key) return false;
   try {
     await pool.query(
-      `INSERT INTO unit_suite_passes (app_id, repo, commit_sha, image, job_definition, session_id, run_id, summary)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
+      `INSERT INTO unit_suite_passes (app_id, repo, commit_sha, image, job_definition, session_id, run_id, summary, tree_sha)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)`,
       [key.appId, key.repo, key.commitSha, key.image, key.jobHash,
-        Number(sessionId) || null, runId ? String(runId) : null, summary ? JSON.stringify(summary) : null]
+        Number(sessionId) || null, runId ? String(runId) : null, summary ? JSON.stringify(summary) : null,
+        key.treeSha || null]
     );
     // What can no longer be reused goes with the next pass of the same app.
     await pool.query(
@@ -125,7 +173,7 @@ async function recordPass(pool, key, { sessionId = null, runId = null, summary =
       [key.appId, (MAX_AGE_MS / 1000) * 2]
     );
     log.info('unit-suite-reuse', 'Recorded a unit-suite pass', {
-      appId: key.appId, commitSha: key.commitSha, sessionId, runId,
+      appId: key.appId, commitSha: key.commitSha, treeSha: key.treeSha || null, sessionId, runId,
     });
     return true;
   } catch (err) {
@@ -179,6 +227,50 @@ async function findPass(pool, key, { trigger = null, sessionId = null } = {}) {
   } catch (err) {
     log.warn('unit-suite-reuse', 'Pass lookup failed — running the suite', {
       appId: key.appId, commitSha: key.commitSha, err: err.message,
+    });
+    return null;
+  }
+}
+
+/**
+ * The newest pass of the same TREE this run may copy, or null: the same app,
+ * repository, worker image and Job definition, within the age limit, and
+ * observed, as findPass; any commit. For main-watch's first run of a merge
+ * (the caller decides: never a confirmation, a recheck, or a run while main
+ * is paused). Not a pass whose proposal a person has since asked to run
+ * again on that commit (chat_sessions.unit_suite_fresh_sha): they doubted
+ * it. Never throws: a lookup that fails runs the suite.
+ */
+async function findTreePass(pool, key) {
+  if (!pool || !key || !isSha(key.treeSha)) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT p.id, p.session_id, p.run_id, p.summary, p.passed_at, p.commit_sha
+         FROM unit_suite_passes p
+        WHERE p.app_id = $1 AND p.repo = $2 AND p.tree_sha = $3 AND p.image = $4 AND p.job_definition = $5
+          AND p.passed_at > NOW() - make_interval(secs => $6::double precision)
+          AND p.observed_at IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM chat_sessions cs
+             WHERE cs.id = p.session_id AND lower(cs.unit_suite_fresh_sha) = p.commit_sha)
+        ORDER BY p.passed_at DESC
+        LIMIT 1`,
+      [key.appId, key.repo, key.treeSha, key.image, key.jobHash, MAX_AGE_MS / 1000]
+    );
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      id: Number(row.id),
+      sessionId: row.session_id == null ? null : Number(row.session_id),
+      runId: row.run_id || null,
+      summary: row.summary && typeof row.summary === 'object' ? row.summary : null,
+      passedAt: new Date(row.passed_at).toISOString(),
+      commitSha: row.commit_sha ? String(row.commit_sha).toLowerCase() : null,
+      treeSha: key.treeSha,
+    };
+  } catch (err) {
+    log.warn('unit-suite-reuse', 'Tree pass lookup failed — running the suite', {
+      appId: key.appId, commitSha: key.commitSha, treeSha: key.treeSha, err: err.message,
     });
     return null;
   }
@@ -360,8 +452,11 @@ module.exports = {
   isAutomaticTrigger,
   imageOf,
   keyFor,
+  treeOf,
+  _clearTreeCache: () => treeCache.clear(),
   recordPass,
   findPass,
+  findTreePass,
   markFreshOwed,
   owePendingRun,
   hasAnyPass,
