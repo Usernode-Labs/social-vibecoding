@@ -308,7 +308,7 @@ test('the live loop starts a card where it tells the request it is looking: neve
   const followUp = body.indexOf('return runFollowUp(pool, config, {');
   const looking = body.indexOf("kind: 'looking', text: live.lookingText(), sender: bot,");
   const start = body.indexOf('await activity().startCard(pool, {');
-  const reading = body.indexOf('const seedReadAt = new Date().toISOString();');
+  const reading = body.indexOf("const readAt = await look.once('readAt'");
   assert.ok(followUp > -1 && looking > -1 && start > -1 && reading > -1);
   assert.ok(followUp < looking && looking < start && start < reading,
     'after a follow-up has returned and the looking post is made, before the request is read');

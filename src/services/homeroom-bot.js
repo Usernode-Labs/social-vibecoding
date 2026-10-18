@@ -2955,39 +2955,51 @@ async function reuseHeldVerdict(pool, config, {
 }) {
   const { github, threadContext, sessions } = deps;
   const issueNumber = Number(item.issue_number);
-  const held = await heldReadyRun(pool, app.id, issueNumber).catch((err) => {
-    log.warn('homeroom-bot', 'Could not read a request\'s held verdict', { app: app.slug, issueNumber, err: err.message });
-    return null;
-  });
-  if (!held) return null;
-  const personAt = await personActivityAt(pool, app.id, issueNumber).catch(() => null);
-  const seedReadAt = new Date().toISOString();
+  const look = currentLook() || newLook({ steps: durableSteps.none() });
   const [{ comments = [] } = {}, thread, botLogin] = await Promise.all([
     github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
     threadContext.loadIssueThread(pool, app.id, issueNumber),
     live.botUsernameOf(github),
   ]);
-  const fingerprint = readFingerprintOf({
-    issue, comments, threadMessages: thread?.messages || [], botLogins: [botLogin, bot.username],
-  });
-  if (fingerprint.hash !== held.read_fingerprint.hash) {
-    log.info('homeroom-bot', 'Held request changed since its verdict; reading it again', {
-      app: app.slug, issueNumber, heldRunId: Number(held.id),
+  // Whether the held verdict is reused, and as what, decided once across
+  // the look's attempts: the run this records is the newest, and is not
+  // held, and a person writing during a restart changes the fingerprint, so
+  // a resumed attempt would read the request again and lose this run.
+  const decision = await look.once('held', async () => {
+    const held = await heldReadyRun(pool, app.id, issueNumber).catch((err) => {
+      log.warn('homeroom-bot', 'Could not read a request\'s held verdict', { app: app.slug, issueNumber, err: err.message });
+      return null;
     });
-    return null;
-  }
-  let parsed = {
-    verdict: 'ready', determined: held.determined, missingFact: held.missing_fact, buildNote: held.build_note,
-    reason: held.reason, plan: held.plan && typeof held.plan === 'object' ? held.plan : null,
-    complicated: held.complicated === true, platform: held.about_platform === true,
-  };
-  // As a fresh read: a change its requester was asked to plan is planned
-  // with them again.
-  if (!parsed.complicated && await plannedWithRequester(pool, { appId: app.id, issueNumber })) {
-    parsed = { ...parsed, complicated: true };
-  }
-  const capSuppressed = await simulateCaps(pool, bot, app.id, 'ready', settings)
-    || (parsed.complicated ? await planTripwire(pool, app.id) : null);
+    if (!held) return null;
+    const personAt = await personActivityAt(pool, app.id, issueNumber).catch(() => null);
+    const fingerprint = readFingerprintOf({
+      issue, comments, threadMessages: thread?.messages || [], botLogins: [botLogin, bot.username],
+    });
+    if (fingerprint.hash !== held.read_fingerprint.hash) {
+      log.info('homeroom-bot', 'Held request changed since its verdict; reading it again', {
+        app: app.slug, issueNumber, heldRunId: Number(held.id),
+      });
+      return null;
+    }
+    let v = {
+      verdict: 'ready', determined: held.determined, missingFact: held.missing_fact, buildNote: held.build_note,
+      reason: held.reason, plan: held.plan && typeof held.plan === 'object' ? held.plan : null,
+      complicated: held.complicated === true, platform: held.about_platform === true,
+    };
+    // As a fresh read: a change its requester was asked to plan is planned
+    // with them again.
+    if (!v.complicated && await plannedWithRequester(pool, { appId: app.id, issueNumber })) {
+      v = { ...v, complicated: true };
+    }
+    const caps = await simulateCaps(pool, bot, app.id, 'ready', settings)
+      || (v.complicated ? await planTripwire(pool, app.id) : null);
+    return JSON.parse(JSON.stringify({
+      held: { id: Number(held.id), model: held.model || null }, personAt, seedReadAt: new Date().toISOString(),
+      fingerprint, parsed: v, capSuppressed: caps ?? null,
+    }));
+  });
+  if (!decision) return null;
+  const { held, personAt, seedReadAt, fingerprint, parsed, capSuppressed } = decision;
   const runId = await insertRun(pool, {
     ...billingOf(item, runMode),
     readReason: readReasonOf(item),
@@ -3000,7 +3012,6 @@ async function reuseHeldVerdict(pool, config, {
     durationMs: Date.now() - startedMs,
     readFingerprint: fingerprint, reusedRunId: Number(held.id),
   });
-  const look = currentLook() || newLook({ steps: durableSteps.none() });
   look.consume();
   await supersedeEarlierBuilds(pool, { app, issueNumber, runId });
   log.info('homeroom-bot', 'Held verdict reused: the request is unchanged since it was read', {
@@ -3051,42 +3062,54 @@ async function planFromEarly(pool, config, {
   const fvPlan = require('./first-version-plan');
   const issueNumber = Number(item.issue_number);
   if (item.reason === 'plan_change' || item.reason === RESTART_REASON || item.reason === READ_AGAIN_REASON) return null;
-  let row;
-  try {
-    const { rows: planned } = await pool.query(
-      `SELECT 1 FROM homeroom_bot_runs
-        WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = 'ready' LIMIT 1`,
-      [app.id, issueNumber],
-    );
-    if (planned.length) return null;
-    row = await fvPlan.whenReady(pool, app.id);
-  } catch (err) {
-    log.warn('homeroom-bot', 'Could not read a first version\'s plan from Make it; reading the request', { app: app.slug, issueNumber, err: err.message });
-    return null;
-  }
-  if (!row || Number(row.issue_number) !== issueNumber || fvPlan.planStatus(row) !== 'ready') return null;
-  const plan = fvPlan.planOf(row);
-  if (!plan) return null;
-  const personAt = await personActivityAt(pool, app.id, issueNumber).catch(() => null);
-  const seedReadAt = new Date().toISOString();
+  const look = currentLook() || newLook({ steps: durableSteps.none() });
   const [{ comments = [] } = {}, thread, botLogin] = await Promise.all([
     github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
     threadContext.loadIssueThread(pool, app.id, issueNumber),
     live.botUsernameOf(github),
   ]);
-  const fingerprint = readFingerprintOf({
-    issue, comments, threadMessages: thread?.messages || [], botLogins: [botLogin, bot.username],
+  // Whether it is planned from Make it, and with what, decided once across
+  // the look's attempts: the ready run this records would read to a resumed
+  // attempt as "planned already", which would read the request with a
+  // paid turn and lose this run.
+  const decision = await look.once('early', async () => {
+    let row;
+    try {
+      const { rows: planned } = await pool.query(
+        `SELECT 1 FROM homeroom_bot_runs
+          WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = 'ready' LIMIT 1`,
+        [app.id, issueNumber],
+      );
+      if (planned.length) return null;
+      row = await fvPlan.whenReady(pool, app.id);
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not read a first version\'s plan from Make it; reading the request', { app: app.slug, issueNumber, err: err.message });
+      return null;
+    }
+    if (!row || Number(row.issue_number) !== issueNumber || fvPlan.planStatus(row) !== 'ready') return null;
+    const p = fvPlan.planOf(row);
+    if (!p) return null;
+    const personAt = await personActivityAt(pool, app.id, issueNumber).catch(() => null);
+    const fingerprint = readFingerprintOf({
+      issue, comments, threadMessages: thread?.messages || [], botLogins: [botLogin, bot.username],
+    });
+    const decidedNow = fvPlan.decided(row);
+    const v = {
+      verdict: 'ready', determined: true, missingFact: null, buildNote: p.buildNote, reason: null,
+      plan: { bullets: p.bullets, questions: p.questions }, complicated: false, platform: false,
+      // Decided already: the chat's plan card is news, not a question.
+      ...(decidedNow ? { quietPlan: true } : {}),
+      // Its timeline has the plan from Make it already (first-version-timeline.js).
+      fromMakeIt: true,
+    };
+    const caps = await simulateCaps(pool, bot, app.id, 'ready', settings);
+    return JSON.parse(JSON.stringify({
+      plan: { model: p.model || null, questions: p.questions }, personAt, seedReadAt: new Date().toISOString(),
+      fingerprint, decidedNow, parsed: v, capSuppressed: caps ?? null,
+    }));
   });
-  const decidedNow = fvPlan.decided(row);
-  const parsed = {
-    verdict: 'ready', determined: true, missingFact: null, buildNote: plan.buildNote, reason: null,
-    plan: { bullets: plan.bullets, questions: plan.questions }, complicated: false, platform: false,
-    // Decided already: the chat's plan card is news, not a question.
-    ...(decidedNow ? { quietPlan: true } : {}),
-    // Its timeline has the plan from Make it already (first-version-timeline.js).
-    fromMakeIt: true,
-  };
-  const capSuppressed = await simulateCaps(pool, bot, app.id, 'ready', settings);
+  if (!decision) return null;
+  const { plan, personAt, seedReadAt, fingerprint, decidedNow, parsed, capSuppressed } = decision;
   const runId = await insertRun(pool, {
     ...billingOf(item, runMode),
     readReason: readReasonOf(item),
@@ -3098,7 +3121,6 @@ async function planFromEarly(pool, config, {
     durationMs: Date.now() - startedMs,
     readFingerprint: fingerprint,
   });
-  const look = currentLook() || newLook({ steps: durableSteps.none() });
   look.consume();
   await supersedeEarlierBuilds(pool, { app, issueNumber, runId });
   log.info('homeroom-bot', 'A first version is planned from its plan at Make it, with no read', {
@@ -3118,7 +3140,7 @@ async function planFromEarly(pool, config, {
     acted = done?.acted ?? null;
     if (Number.isInteger(done?.build)) look.out.build = done.build;
     if (acted === PLAN_ACTED.waiting || acted === PLAN_ACTED.unsent) {
-      const went = await goAheadIfDecided(pool, { appId: app.id, issueNumber, runId, deps: { dm: deps.dm, ws: deps.ws } });
+      const went = await look.once('goAhead', () => goAheadIfDecided(pool, { appId: app.id, issueNumber, runId, deps: { dm: deps.dm, ws: deps.ws } }));
       if (went) acted = 'build_queued';
     }
   } catch (err) {
@@ -3264,7 +3286,12 @@ async function runTriage(pool, config, {
 
   if (!repo || !github.isEnabled()) return recordFailure('github_unavailable', {}, { infra: true });
 
-  const budget = await limits.checkBudget(pool, bot.id);
+  // The look's gates are decided once across its attempts: what the look
+  // itself spent (its turn's debit, its run's cost) or what changed during
+  // a restart must not hold back, close or divert a look whose turn already
+  // ran and whose effects are still to finish. A gate that refused ended the
+  // look, so only a gate that let it through is ever read back.
+  const budget = await look.once('gate:budget', () => limits.checkBudget(pool, bot.id));
   if (budget.error) {
     log.info('homeroom-bot', 'Pass paused on budget', { reason: budget.reason || null });
     // #4610: a person waiting on an answer on the bot's change hears why.
@@ -3274,8 +3301,7 @@ async function runTriage(pool, config, {
 
   // The look was granted its slot by the lane (bot-lane), which took this
   // request from its instance (bot-request): nothing here claims a row.
-  const fetched = await github.fetchPublicIssue(repo.owner, repo.repo, issueNumber);
-  const issue = fetched?.issue || null;
+  const issue = await look.once('gate:issue', async () => (await github.fetchPublicIssue(repo.owner, repo.repo, issueNumber))?.issue || null);
   if (!issue || (issue.state && issue.state !== 'open')) {
     look.consume();
     return { ran: false, reason: 'not_open' };
@@ -3297,7 +3323,7 @@ async function runTriage(pool, config, {
     // to start it, else the requester. A look the bot caused itself is free.
     const billing = billingOf(item, runMode);
     const payerId = billing.payerUserId || requester?.userId || null;
-    if (requester && billing.charged && await dm.overWeeklyAllowance(pool, settings, payerId)) {
+    if (requester && billing.charged && await look.once('gate:allowance', () => dm.overWeeklyAllowance(pool, settings, payerId))) {
       // Held, not dropped: the row keeps its place (enqueued_at) and waits
       // for the week to reset, so it goes first then, and the refresh does
       // not drop and queue it again every five minutes meanwhile.
@@ -3319,7 +3345,7 @@ async function runTriage(pool, config, {
     }
   }
   if (liveMode) {
-    const open = await live.openBotProposal(pool, bot.id, app.id, issueNumber);
+    const open = await look.once('gate:proposal', () => live.openBotProposal(pool, bot.id, app.id, issueNumber));
     if (!open && item.followUp) return { ran: false, reason: NOT_FOLLOW_UP };
     if (open) {
       // One proposal per issue: the group is already voting on the bot's
@@ -3364,6 +3390,11 @@ async function runTriage(pool, config, {
       });
       if (reused) return reused;
     }
+    // Said once across the look's attempts (its card, the chat's status,
+    // the waiting plans retired): a resumed attempt neither says it again
+    // over what the look went on to say, nor retires the plan the look
+    // itself sent.
+    const announcedAt = await look.once('announce', async () => {
     // An issue a restart sent back (#3471), or a read started over because
     // somebody changed the request mid-read, was already told the bot is
     // looking; it is not told twice. A backlog pass says nothing yet (#3509).
@@ -3379,7 +3410,6 @@ async function runTriage(pool, config, {
       log.warn('homeroom-bot', 'Looking post failed (continuing)', { app: app.slug, issueNumber, err: err.message });
       return null;
     });
-    if (looked?.githubCreatedAt) postedAt.push(looked.githubCreatedAt);
     // #3736: and the person it is for gets a card in their DM with the bot
     // that follows this piece of work to its end, told when the request is:
     // not twice for a restart or a read started over, and not for a backlog
@@ -3402,6 +3432,9 @@ async function runTriage(pool, config, {
     // it reads the request again. Its buttons go now, so a tap while this
     // look runs builds nothing; this look sends a plan of its own.
     await retireWaitingPlans(pool, { appId: app.id, issueNumber, why: 'the request was read again', deps: { dm: deps.dm } });
+    return looked?.githubCreatedAt || null;
+    });
+    if (announcedAt) postedAt.push(announcedAt);
     // 13 Oct 2026: a first version whose plan was written at Make it is
     // planned from that plan, with no read (planFromEarly); one without
     // such a plan is read below, as before.
@@ -3428,15 +3461,20 @@ async function runTriage(pool, config, {
   // nothing (#4022 sat in a loaded batch for about twenty minutes). A row
   // queued with none (an admin's run now, a restart) recorded none, which
   // the next refresh read as a change.
-  const personAt = await personActivityAt(pool, app.id, issueNumber).catch((err) => {
-    log.warn('homeroom-bot', 'Could not read a request\'s last discussion message', { app: app.slug, issueNumber, err: err.message });
-    return null;
+  // When it read, once across the look's attempts: a resumed attempt never
+  // counts what people wrote after the turn read the request as read.
+  const readAt = await look.once('readAt', async () => {
+    const personAt = await personActivityAt(pool, app.id, issueNumber).catch((err) => {
+      log.warn('homeroom-bot', 'Could not read a request\'s last discussion message', { app: app.slug, issueNumber, err: err.message });
+      return null;
+    });
+    return {
+      threadSeenAt: [issue.updatedAt, issue.createdAt, personAt].reduce(latestOf, item.thread_seen_at || null),
+      seedReadAt: new Date().toISOString(),
+    };
   });
-  item = {
-    ...item,
-    thread_seen_at: [issue.updatedAt, issue.createdAt, personAt].reduce(latestOf, item.thread_seen_at || null),
-  };
-  const seedReadAt = new Date().toISOString();
+  item = { ...item, thread_seen_at: readAt.threadSeenAt };
+  const seedReadAt = readAt.seedReadAt;
   const [{ comments = [] } = {}, thread, botUsername] = await Promise.all([
     github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
     threadContext.loadIssueThread(pool, app.id, issueNumber),
@@ -3764,8 +3802,11 @@ async function runTriage(pool, config, {
   // what was just said, rather than answered and then read again later. The
   // instance starts that read (`read_again`: not announced twice, and never
   // started over again), carrying what this one spent into its run.
+  // Read once across the look's attempts: a reply to what the look already
+  // said (after its run) is the next look's, never a reason to read this
+  // one again and charge its cost twice.
   if (!budgetHit && item.reason !== READ_AGAIN_REASON
-      && (stoppedBy?.by === 'activity' || await look.interrupted())) {
+      && await look.once('interrupted', async () => stoppedBy?.by === 'activity' || await look.interrupted())) {
     return { ran: false, reason: 'interrupted', carried: { costUsd, ...usage } };
   }
 
@@ -3889,17 +3930,26 @@ async function runTriage(pool, config, {
   // #4488: a first version is always planned with its creator, never
   // labelled; and a change whose plan its requester was asked about, and
   // asked to change, is planned with them again whatever this look says.
-  if (parsed.complicated && requester?.firstVersion) parsed = { ...parsed, complicated: false };
-  if (liveMode && parsed.verdict === 'ready' && !parsed.complicated && !requester?.firstVersion
-    && await plannedWithRequester(pool, { appId: app.id, issueNumber })) {
-    parsed = { ...parsed, complicated: true };
-  }
-  // #4488: a complicated change's plan asks its requester before it is
-  // built, so it counts against the daily questions and notes as well.
-  const capSuppressed = await simulateCaps(pool, bot, app.id, parsed.verdict, settings)
-    || (parsed.complicated ? await planTripwire(pool, app.id) : null);
-  // #4239: about Homeroom itself means nothing on Homeroom's own board.
-  if (parsed.platform && (await platformAppSlugs(pool)).includes(app.slug)) parsed = { ...parsed, platform: false };
+  // The verdict as it is recorded and acted on, decided once across the
+  // look's attempts: the caps read the bot's own rows, which this look's run
+  // and build add to, so a resumed attempt reads them back as decided.
+  const decided = await look.once('verdict', async () => {
+    let v = parsed;
+    if (v.complicated && requester?.firstVersion) v = { ...v, complicated: false };
+    if (liveMode && v.verdict === 'ready' && !v.complicated && !requester?.firstVersion
+      && await plannedWithRequester(pool, { appId: app.id, issueNumber })) {
+      v = { ...v, complicated: true };
+    }
+    // #4488: a complicated change's plan asks its requester before it is
+    // built, so it counts against the daily questions and notes as well.
+    const caps = await simulateCaps(pool, bot, app.id, v.verdict, settings)
+      || (v.complicated ? await planTripwire(pool, app.id) : null);
+    // #4239: about Homeroom itself means nothing on Homeroom's own board.
+    if (v.platform && (await platformAppSlugs(pool)).includes(app.slug)) v = { ...v, platform: false };
+    return JSON.parse(JSON.stringify({ parsed: v, capSuppressed: caps ?? null }));
+  });
+  parsed = decided.parsed;
+  const capSuppressed = decided.capSuppressed;
   const runId = await insertRun(pool, {
     ...billingOf(item, runMode),
     readReason: readReasonOf(item),
@@ -4698,14 +4748,17 @@ async function runFollowUp(pool, config, {
   }
 
   // The proposal as every revision path reads it (cs.* plus the app's
-  // identity), and only while it is still the bot's open proposal.
+  // identity). Whether it is still the bot's open proposal is decided once
+  // across the look's attempts: one that merged or closed during a restart
+  // after this look's turn still has that turn's answer said and recorded.
   const { rows: sessionRows } = await pool.query(
     `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted AS app_self_hosted
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-      WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status = 'promoted'`,
+      WHERE cs.id = $1 AND cs.user_id = $2`,
     [proposal.id, bot.id],
   );
-  const session = sessionRows[0];
+  const open = await look.once('open', () => !!(sessionRows[0] && sessionRows[0].status === 'promoted' && sessionRows[0].branch_name));
+  const session = open ? sessionRows[0] : null;
   if (!session || !session.branch_name) {
     look.consume();
     if (asks.length) {
@@ -4723,12 +4776,19 @@ async function runFollowUp(pool, config, {
     return { ran: false, reason: 'has_proposal' };
   }
   reportSession = session;
-  const { rows: revisionRows } = await pool.query(
-    `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs
-      WHERE proposal_session_id = $1 AND verdict = 'revise'`,
-    [session.id],
-  );
-  const canRevise = (revisionRows[0]?.n || 0) < followup.MAX_REVISIONS;
+  // What the turn starts from, once across the look's attempts, before
+  // anything of its own changes it: the revisions so far (its own revise run
+  // would count), the head it works on (its reconcile moves it) and the spec
+  // it reads (its revision may publish the next version).
+  const basis = await look.once('basis', async () => {
+    const { rows: revisionRows } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs
+        WHERE proposal_session_id = $1 AND verdict = 'revise'`,
+      [session.id],
+    );
+    return { revisions: revisionRows[0]?.n || 0, baseSha: session.reviewed_head_sha || null, spec: await proposalSpec(pool, session.id) };
+  });
+  const canRevise = basis.revisions < followup.MAX_REVISIONS;
   const mode = canRevise ? 'build' : 'scout';
 
   if (checks) {
@@ -4751,7 +4811,7 @@ async function runFollowUp(pool, config, {
   });
   // #3703: the spec whose card leads the proposal's discussion, which is
   // what a reply there is usually about.
-  const spec = await proposalSpec(pool, session.id);
+  const spec = basis.spec;
   // #3767: a revision gets the design guidance and the browser check its
   // build had (#3748), read for what the turn's model can see.
   const design = canRevise
@@ -4780,7 +4840,7 @@ async function runFollowUp(pool, config, {
   snapshot = {
     stage: 'followup', appId: app.id, issueNumber,
     // The follow-up works on the proposal's branch, at its reviewed head.
-    baseSha: session.reviewed_head_sha || null,
+    baseSha: basis.baseSha,
     texts: {
       seed, prompt, proposal_block: proposalBlock, spec,
       replies: JSON.stringify(replies),
@@ -4867,7 +4927,9 @@ async function runFollowUp(pool, config, {
         pool, github, app, repo, issueNumber, issue, botLogin, bot, proposalSessionId: session.id,
       }).catch(() => []);
     }
-    const posted = await live.post({
+    // Once across the look's attempts: a post a lost attempt made is not
+    // made again (live.post takes up only a pending one), and its stamp is kept.
+    const posted = await postOnce(look, kind, () => live.post({
       pool, github, ws: deps.ws, app, repo, issueNumber, kind, runId, text, sender: bot, senderId: bot.id,
       mentions: live.tagsPoster(kind) ? targets : [], notifications: deps.notifications || null,
       // Answered where it was asked: the proposal's thread too, when that
@@ -4883,7 +4945,7 @@ async function runFollowUp(pool, config, {
         skipGithub: kind !== 'followup_revise' && !others.some((r) => r.via === 'github'),
       } : {}),
       ...extra,
-    });
+    }));
     if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);
   };
 
@@ -5019,7 +5081,7 @@ async function runFollowUp(pool, config, {
   // in the change's discussion, then its copy on the GitHub issue. Its own
   // comment is pushed into postedAt so the turn does not read it back as
   // new activity.
-  if (planVersion && planRead) await look.once('specPosts', async () => {
+  const planStamp = planVersion && planRead ? await look.once('specPosts', async () => {
     await live.postSpecOnProposal({
       pool, ws: deps.ws, app, bot, sessionId: session.id, version: planVersion, spec: planRead.specMd, revised: true,
     }).catch((err) => log.warn('homeroom-bot', 'Could not post the revised plan card', {
@@ -5033,9 +5095,10 @@ async function runFollowUp(pool, config, {
       });
       return null;
     });
-    if (planComment?.created_at) postedAt.push(planComment.created_at);
-    return true;
-  });
+    // Its stamp kept with the step: a resumed attempt still reads past it.
+    return planComment?.created_at || true;
+  }) : null;
+  if (typeof planStamp === 'string') postedAt.push(planStamp);
   await live.advanceSeen({
     pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt, postedAt,
     proposalSessionId: session.id,
@@ -5395,7 +5458,7 @@ async function runChecksFix(pool, config, {
       pool, github, app, repo, issueNumber, issue, botLogin, bot, proposalSessionId: session.id,
     }).catch(() => []);
     const text = followup.checksPersonText({ why, prNumber, failingCount: failing.length, broken });
-    const posted = await live.post({
+    const posted = await postOnce(look, 'followup_person', () => live.post({
       pool, github, ws: deps.ws, app, repo, issueNumber, kind: 'followup_person', runId, text,
       sender: bot, senderId: bot.id, mentions: targets, notifications: deps.notifications || null,
       // Said where the group votes too: the checks are the proposal's.
@@ -5408,7 +5471,7 @@ async function runChecksFix(pool, config, {
     }).catch((err) => {
       log.warn('homeroom-bot', 'Checks hand-off post failed', { app: app.slug, issueNumber, err: err.message });
       return null;
-    });
+    }));
     await live.advanceSeen({
       pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt,
       postedAt: posted?.githubCreatedAt ? [posted.githubCreatedAt] : [], proposalSessionId: session.id,
@@ -5538,7 +5601,9 @@ async function runChecksFix(pool, config, {
   // 7490). Its own one retry per head (checksRetryError): the run keeps no
   // `checks_head_sha`, so the head is still due, and a failed run never
   // counts toward MAX_REVISIONS. The second time out hands over as before.
-  if (turn.stopped && !await checksRetried(pool, session.id, head)) {
+  // Once across the look's attempts: the retry run this writes would read
+  // as retried already to a resumed attempt.
+  if (turn.stopped && !await look.once('retried', () => checksRetried(pool, session.id, head))) {
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
       readReason: readReasonOf(item),
@@ -5630,10 +5695,11 @@ function liveSayer({
   };
   return async (kind, text, extra = {}) => {
     const mentions = live.tagsPoster(kind) ? await targetsOnce() : [];
-    const posted = await live.post({
+    // Inside a look, once across its attempts (postOnce).
+    const posted = await postOnce(currentLook(), kind, () => live.post({
       pool, github, ws, app, repo, issueNumber, kind, runId, text, mentions, senderId: bot.id, sender: bot,
       notifications, ...extra,
-    });
+    }));
     if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);
     return posted;
   };
@@ -8938,6 +9004,18 @@ const loopRules = require('../workflow/rules/bot-loop.ts');
 // came before it on the same path. Holds nothing between calls.
 const lookStore = new AsyncLocalStorage();
 function currentLook() { return lookStore.getStore() || null; }
+
+// A post of the bot's, once across its look's attempts (no look: as it
+// is). live.post takes up only a pending row for (run, kind), so a post that
+// went out before a restart would go out again; what the step keeps is what
+// its callers read back: whether it posted, and its GitHub stamp.
+async function postOnce(look, kind, post) {
+  if (!look?.steps?.active) return post();
+  return look.once(`post:${kind}`, async () => {
+    const p = await post();
+    return p ? { githubCreatedAt: p.githubCreatedAt || null, postId: p.postId ?? null, posted: true } : null;
+  });
+}
 
 function newLook({ steps, owner = null, n = 0, key = null, lastRead = null, readInterrupted = null, sessionId = null, onSession = null } = {}) {
   const counts = new Map();

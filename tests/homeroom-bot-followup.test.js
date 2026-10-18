@@ -276,7 +276,7 @@ const insertOf = (h) => h.calls.queries.find((q) => /INSERT INTO homeroom_bot_ru
 // saved, then the work is lost, as a release does to a running process)
 // right after `crashAfter` is kept, and the next attempt resumes from what
 // was saved, against the database as the first attempt left it.
-async function attempts(t, h, crashAfter, between = null) {
+async function attempts(t, h, crashAfter, between = null, { lastStep = false } = {}) {
   const durableSteps = require('../src/services/durable-steps');
   const { StepsStopped } = require('../src/workflow/kernel/steps.ts');
   const realPost = live.post;
@@ -293,7 +293,8 @@ async function attempts(t, h, crashAfter, between = null) {
       resumeFrom: from,
       checkpoint: async (v) => {
         saved = v;
-        if (!crashed && Object.prototype.hasOwnProperty.call(v, crashAfter)) {
+        const hit = typeof crashAfter === 'function' ? crashAfter(v) : Object.prototype.hasOwnProperty.call(v, crashAfter);
+        if (!crashed && hit) {
           crashed = true;
           throw new StepsStopped('the process was replaced');
         }
@@ -305,8 +306,12 @@ async function attempts(t, h, crashAfter, between = null) {
       bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings: SETTINGS, deps: h.deps,
     }));
   };
-  await assert.rejects(attempt(null), (err) => err.stopped === true, `the first attempt is lost after ${crashAfter}`);
-  assert.ok(crashed, `it got as far as ${crashAfter}`);
+  // A crash in the look's last step is swallowed by that step's own catch
+  // (a post that fails is logged): the process would be gone; the attempt
+  // here just ends, and the next resumes from what was saved.
+  if (lastStep) await attempt(null).catch((err) => { if (!err.stopped) throw err; });
+  else await assert.rejects(attempt(null), (err) => err.stopped === true, `the first attempt is lost after ${crashAfter}`);
+  assert.ok(crashed, `it got as far as ${String(crashAfter)}`);
   if (between) between();
   return attempt(saved);
 }
@@ -357,6 +362,43 @@ test('a follow-up resumed after its decision answers what it read; a question wr
   assert.ok(!insert.params.some((v) => typeof v === 'string' && /^2026-09-26T12:3/.test(v)), 'nothing marked read past the question it never saw');
   assert.ok(h.calls.posts.length >= 1);
   assert.ok(h.calls.posts.every((p) => !p.proposalSessionId), 'answered where the reply it answers was said, not on the change');
+});
+
+// What the look itself did, or what happened during the restart, decides
+// nothing again: the bot's week crossed by its own debit, a post it made, the
+// change merging meanwhile. The resumed attempt finishes what the first one
+// decided, and says each thing once.
+test('a follow-up resumed after its own debit crossed the bot\'s cap still posts its answer', async (t) => {
+  const h = harness({ proposalThread: [{ author: 'sam', body: 'Why zinc-950?', createdAt: '2026-09-26T11:20:00Z' }] });
+  const out = await attempts(t, h, 'spend:1', () => {
+    h.deps.limits.checkBudget = async () => ({ error: 'Weekly limit reached', reason: 'weekly_limit' });
+  });
+  assert.notEqual(out?.reason, 'budget');
+  assert.equal(h.calls.exec.length, 1);
+  assert.equal(h.calls.posts.length, 1, 'its answer is posted');
+});
+
+test('a follow-up resumed after it posted does not post again', async (t) => {
+  const h = harness({ proposalThread: [{ author: 'sam', body: 'Why zinc-950?', createdAt: '2026-09-26T11:20:00Z' }] });
+  await attempts(t, h, (v) => Object.keys(v).some((k) => k.startsWith('post:')), null, { lastStep: true });
+  assert.equal(h.calls.posts.length, 1, 'posted once, across both attempts');
+});
+
+test('a follow-up resumed after its change merged during the restart still says the answer its turn wrote', async (t) => {
+  const h = harness({ proposalThread: [{ author: 'sam', body: 'Why zinc-950?', createdAt: '2026-09-26T11:20:00Z' }] });
+  let merged = false;
+  const query = h.pool.query;
+  h.pool.query = async (sql, params) => {
+    const out = await query(sql, params);
+    if (merged && /SELECT cs\.\*, a\.slug AS app_slug/.test(String(sql))) {
+      // As the database answers: a query that asks for it promoted finds none.
+      return { rows: /cs\.status = 'promoted'/.test(String(sql)) ? [] : out.rows.map((r) => ({ ...r, status: 'merged' })) };
+    }
+    return out;
+  };
+  const out = await attempts(t, h, 'run:1', () => { merged = true; });
+  assert.notEqual(out?.reason, 'has_proposal', 'not dropped as gone');
+  assert.equal(h.calls.posts.length, 1, 'its answer is posted');
 });
 
 test('a revision resumed after its reconcile is still the revision it was: never "no change"', async (t) => {

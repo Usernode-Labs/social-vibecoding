@@ -72,7 +72,7 @@ test('#4239: parseVerdict reads `platform` on a person verdict only', () => {
   // Stored on the run, and carried to the requester's DM, which offers the move.
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
   assert.match(src, /plan: parsed\.plan, aboutPlatform: !!parsed\.platform,/);
-  assert.match(src, /if \(parsed\.platform && \(await platformAppSlugs\(pool\)\)\.includes\(app\.slug\)\) parsed = \{ \.\.\.parsed, platform: false \};/);
+  assert.match(src, /if \(v\.platform && \(await platformAppSlugs\(pool\)\)\.includes\(app\.slug\)\) v = \{ \.\.\.v, platform: false \};/);
   assert.match(src, /reason: parsed\.reason, \.\.\.\(parsed\.platform \? \{ platform: true \} : \{\}\), \.\.\.\(deciders\.length \? \{ deciders \} : \{\}\),\n\s+\.\.\.\(parsed\.done \? \{ done: true \} : \{\}\),/);
 });
 
@@ -1961,6 +1961,59 @@ test('runTriage on a live app: announces the first look, posts the question, rec
   assert.equal(insert.params[3], 'live', 'the ledger says which runs spoke');
   assert.ok(calls.queries.some((q) => /UPDATE homeroom_bot_runs\s+SET thread_seen_at = GREATEST/.test(q.s)),
     'and what it has seen moves past its own comments');
+});
+
+// A read resumed after a restart (its look's work carried on from its last
+// saved step) acts on what the first attempt decided: what changed since,
+// often because of the look itself (its run's cost, its debit, a reply to
+// its own question), does not close, hold or restart a read whose turn
+// already ran, nor say anything twice (PR #5424 review).
+test('a live read resumed after its run was recorded still says its verdict, once, whatever changed during the restart', async () => {
+  const { StepsStopped } = require('../src/workflow/kernel/steps.ts');
+  const { pool, deps, calls } = triageHarness({
+    sessionId: 921,
+    verdictText: 'Read the feed code.\n```json\n{"verdict":"question","determined":false,"missing_fact":"which feed","question":"Which feed?","default":"All of them"}\n```',
+  });
+  const posts = [];
+  const realQuery = pool.query;
+  pool.query = async (sql, params) => {
+    if (/INSERT INTO homeroom_bot_posts/.test(String(sql))) { posts.push(params[3]); return { rows: [{ id: posts.length }] }; }
+    return realQuery(sql, params);
+  };
+  deps.github.createIssueComment = async () => ({ id: 1, created_at: new Date(Date.now() + 1000).toISOString() });
+  deps.ws = { async sendSystemMessage() { return { id: 1 }; } };
+  deps.sessionLifecycle = {};
+  deps.domain = 'app.onhomeroom.com';
+  deps.worker.finishTurn = async () => true;
+  let saved = null;
+  let crashed = false;
+  let restarted = false;
+  const attempt = (from) => {
+    const steps = durableSteps.durable({
+      resumeFrom: from,
+      checkpoint: async (v) => {
+        saved = v;
+        if (!crashed && Object.prototype.hasOwnProperty.call(v, 'run:1')) { crashed = true; throw new StepsStopped('the process was replaced'); }
+      },
+    });
+    const look = newLook({ steps, n: 1, key: 'request:9:12', readInterrupted: async () => restarted });
+    return bot._runInLookForTests(look, () => bot.runTriage(pool, {}, {
+      bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps,
+      settings: { mode: 'shadow', turnSeconds: 1200, turnInputTokens: 10_000_000, voiceIssue: false },
+    }));
+  };
+  await assert.rejects(attempt(null), (err) => err.stopped === true);
+  assert.ok(crashed, 'the first attempt recorded its run');
+  // During the restart: the request closed, the bot's week spent (its own
+  // debit), a person answering on the request.
+  restarted = true;
+  deps.github.fetchPublicIssue = async () => ({ issue: { number: 12, title: 'Pins drift', body: 'They drift on zoom.', state: 'closed' } });
+  deps.limits.checkBudget = async () => ({ error: 'Weekly limit reached', reason: 'weekly_limit' });
+  const out = await attempt(saved);
+  assert.equal(out.verdict, 'question', 'the read it recorded, acted on');
+  assert.deepEqual(posts, ['looking', 'question'], 'its first look said once, then its verdict');
+  assert.equal(calls.exec.length, 1, 'one turn');
+  assert.equal(calls.queries.filter((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)).length, 1, 'one run');
 });
 
 test('with the bot\'s voice on in requests\' discussions, a first look is recorded but not announced', async () => {

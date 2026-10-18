@@ -276,6 +276,54 @@ const insertOf = (h) => h.calls.queries.find((q) => /INSERT INTO homeroom_bot_ru
 // old head's red verdict is no longer due) is the revision it was: its fix
 // target and its decision were kept, so it is finished, not dropped as
 // nothing to do, and never recorded as "no change".
+// A fix that is the change's last revision allowed: resumed after its own
+// revise run, it would count that run and hand the change to a person. The
+// revisions it started from are kept with the look.
+test('a fix round resumed after its run, as the last revision allowed, is still that revision, not a hand-off', async (t) => {
+  const durableSteps = require('../src/services/durable-steps');
+  const { StepsStopped } = require('../src/workflow/kernel/steps.ts');
+  const h = harness({ revisions: followup.MAX_REVISIONS - 1 });
+  h.deps.github.getBranchSha = async () => HEAD;
+  let recorded = false;
+  const query = h.pool.query;
+  h.pool.query = async (sql, params) => {
+    if (/INSERT INTO homeroom_bot_runs/.test(String(sql))) recorded = true;
+    if (recorded && /COUNT\(\*\)::int AS n FROM homeroom_bot_runs/.test(String(sql))) return { rows: [{ n: followup.MAX_REVISIONS }] };
+    return query(sql, params);
+  };
+  const realPost = live.post;
+  const realSeen = live.advanceSeen;
+  const realOnProposal = live.postOnProposal;
+  const realTargets = live.mentionTargets;
+  t.after(() => {
+    live.post = realPost; live.advanceSeen = realSeen; live.postOnProposal = realOnProposal; live.mentionTargets = realTargets;
+  });
+  live.post = async (args) => { h.calls.posts.push(args); return { githubCreatedAt: '2026-10-01T12:05:00Z' }; };
+  live.postOnProposal = async (args) => { h.calls.onProposal.push(args); return { postId: 1, thread: true }; };
+  live.advanceSeen = async () => ({ advanced: true });
+  live.mentionTargets = async () => ['ada'];
+  let saved = null;
+  let crashed = false;
+  const attempt = (from) => {
+    const steps = durableSteps.durable({
+      resumeFrom: from,
+      checkpoint: async (v) => {
+        saved = v;
+        if (!crashed && Object.prototype.hasOwnProperty.call(v, 'run:1')) { crashed = true; throw new StepsStopped('the process was replaced'); }
+      },
+    });
+    h.look = bot._newLookForTests({ steps, n: 1, key: `request:${APP.id}:${ITEM.issue_number}`,
+      owner: { machine: 'bot-request', key: `request:${APP.id}:${ITEM.issue_number}`, kind: 'bot.look' } });
+    return bot._runInLookForTests(h.look, () => bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings: SETTINGS, deps: h.deps }));
+  };
+  await assert.rejects(attempt(null), (err) => err.stopped === true);
+  assert.ok(crashed);
+  const out = await attempt(saved);
+  assert.equal(out.verdict, 'revise');
+  assert.ok(!h.calls.posts.some((p) => p.kind === 'followup_person'), 'no hand-off to a person');
+  assert.equal(h.calls.queries.filter((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)).length, 1);
+});
+
 test('a fix round resumed after its reconcile is still the revision it was', async (t) => {
   const durableSteps = require('../src/services/durable-steps');
   const { StepsStopped } = require('../src/workflow/kernel/steps.ts');

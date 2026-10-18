@@ -1184,7 +1184,7 @@ test('a ready verdict is held before it is built when the bot is at its ceiling 
   }), 'proposed');
   assert.deepEqual(built, [20]);
   assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON \|\| item\.reason === BACKLOG_REASON,\n\s+proposalCeiling: botProposalCeiling\(settings\),/);
-  assert.match(BOT_SRC, /simulateCaps\(pool, bot, app\.id, parsed\.verdict, settings\)/);
+  assert.match(BOT_SRC, /simulateCaps\(pool, bot, app\.id, v\.verdict, settings\)/);
   assert.match(LIVE_SRC, /router: deps\.votesRouter \|\| null, ceiling: proposalCeiling,/);
 });
 
@@ -1214,7 +1214,7 @@ test('runTriage acts only through the live module, and only when the app is live
     assert.ok(!BOT_SRC.includes(gone), `no ${gone}`);
   }
   assert.match(BOT_SRC, /const liveMode = live\.isLiveFor\(settings, app\);/);
-  assert.match(BOT_SRC, /if \(liveMode\) \{\n\s+const open = await live\.openBotProposal/);
+  assert.match(BOT_SRC, /if \(liveMode\) \{\n\s+const open = await look\.once\('gate:proposal', \(\) => live\.openBotProposal/);
   assert.match(BOT_SRC, /if \(liveMode\) \{\n\s+try \{\n(?:\s+\/\/.*\n)+\s+const done = await look\.once\('act', async \(\) => \(\{ acted: await actOnVerdict\(\{/);
 });
 
