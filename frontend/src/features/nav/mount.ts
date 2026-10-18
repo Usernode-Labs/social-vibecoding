@@ -14,7 +14,7 @@ import { flushSync } from 'react-dom';
 
 import { navStore, tabForScreen } from './nav-store.js';
 import { parkedStore, setParked } from './parked-store.js';
-import { pinApp, pinDropStore, pinStatus, pinnedAppsStore, readPinnedApps } from './pinned-apps-store.js';
+import { forgetPin, loadPins, pinApp, pinDropStore, pinStatus, pinnedAppsStore, readPinnedApps } from './pinned-apps-store.js';
 import { forgetRecentApp, readRecentApps, recentAppsStore, rememberRecentApp } from './recent-apps-store.js';
 import {
   collapseIntoResume, RESUME_MOTION_MS, resumeHandleFor, takeResumeOrigin,
@@ -35,6 +35,14 @@ pinDropStore.setFlush(flushSync);
 export { navStore, parkedStore };
 
 if (typeof window !== 'undefined') {
+  // A community left drops its pin on the account, so it goes from the
+  // sidebar too (Home.MEMBERSHIP_EVENT, dispatched once the leave landed).
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('sv:membership-changed', (event) => {
+      const detail = (event as CustomEvent<{ slug?: string; joined?: boolean }>).detail;
+      if (detail && detail.slug && !detail.joined) forgetPin(detail.slug, navStore.get().viewer);
+    });
+  }
   const host = window as unknown as { UsernodeReact?: Record<string, unknown> };
   const bridge = (host.UsernodeReact ||= {});
   bridge.nav = {
@@ -114,11 +122,14 @@ if (typeof window !== 'undefined') {
       if ((viewer || null) !== navStore.get().viewer) {
         recentAppsStore.set({ apps: readRecentApps(viewer || null) });
         // Same rule for the sidebar's pinned communities (#5323): the pins are the
-        // account's own choices, read fresh for whoever is signed in now —
-        // and any drag half-way to the "Pin here" slot belongs to the
-        // gesture nobody is making any more.
+        // account's own choices, drawn at once from this device's copy and
+        // then read from the account for whoever is signed in now (a
+        // device's own pins from before are sent up once on the way) — and
+        // any drag half-way to the "Pin here" slot belongs to the gesture
+        // nobody is making any more.
         pinnedAppsStore.set({ apps: readPinnedApps(viewer || null) });
         pinDropStore.set({ drop: null });
+        void loadPins(viewer || null);
       }
       navStore.set({ viewer: viewer || null });
     },

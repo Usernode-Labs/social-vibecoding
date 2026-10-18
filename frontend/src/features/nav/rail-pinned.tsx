@@ -18,11 +18,12 @@
  *
  * ── Pinning and unpinning (#5323) ────────────────────────────────────
  *
- * Pin by dragging a My apps tile onto the section while the "Pin here" slot
- * is up (Home's drag recognizer names the drop through the nav bridge, and
- * hit-tests this element). Unpin by Unpin in a pinned row's right-click menu,
- * the same small menu a My apps tile opens, or by dragging the row back out
- * of the sidebar.
+ * Pin from a community's own right-click menu, in the sidebar or All
+ * communities, or from its hub's ⋯ (./pin-actions.ts), or by dragging a My
+ * apps tile onto the section while the "Pin here" slot is up (Home's drag
+ * recognizer names the drop through the nav bridge, and hit-tests this
+ * element). Unpin from the same menus, or by dragging the row back out of
+ * the sidebar.
  *
  * ── The initial render is the prerender ──────────────────────────────
  *
@@ -33,7 +34,7 @@
  * from 768px only.
  */
 
-import { useEffect, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -112,20 +113,9 @@ export function RailPinned() {
     dragRef.current = null;
     setGhost(null);
   };
+  // Unpin is in the row's right-click menu, as Pin is on any community's
+  // row (./rail-communities.tsx, ./pin-actions.ts).
   const handlers = (app: PinnedApp): PinnedRowHandlers => ({
-    // Unpin is in the same small menu a My apps tile opens (#5323).
-    onContextMenu: (event: MouseEvent<HTMLAnchorElement>) => {
-      event.preventDefault();
-      const ui = (window as unknown as { PlatformUI?: { menu?: (opts: unknown) => unknown } }).PlatformUI;
-      ui?.menu?.({
-        anchorEl: event.currentTarget,
-        title: app.name,
-        items: [{
-          label: t('core:rail.pin.unpin'),
-          handler: () => { unpinApp(app.slug, navStore.get().viewer); },
-        }],
-      });
-    },
     onPointerDown: (event: PointerEvent<HTMLAnchorElement>) => {
       if (event.button !== 0 || event.pointerType !== 'mouse') return;
       dragRef.current = { app, startX: event.clientX, startY: event.clientY, active: false };

@@ -74,6 +74,9 @@ import { Improve } from '../../improve/improve-controller.js';
 import { improveStore } from '../../improve/improve-store.js';
 import { swatchFor } from '../../messages/format';
 import { openBot } from '../../messages/store';
+import { togglePin } from '../../nav/pin-actions';
+import { pinnedAppsStore } from '../../nav/pinned-apps-store.js';
+import { useSidebarRows } from '../../nav/sidebar-rows';
 import type { StagedObject } from '../../messages/types';
 import { devWorkshopStore } from '../card/cards-store';
 import { DevKanban, StageStrip, syncStrip } from '../card/dev-kanban';
@@ -4507,6 +4510,9 @@ export function DevWorkshop(): ReactNode {
   // The project's community record — the hero, the hub's cards and the hub
   // tab's own label all read it. Before the loading return: it is a hook.
   const community = useCommunity(v.slug || '');
+  // The ⋯'s Pin to sidebar, beside the sidebar that draws the pins.
+  const sidebarRows = useSidebarRows();
+  const { apps: pins } = useStoreState(pinnedAppsStore);
   // The improve store is the header's own record of the app, read only once
   // it is about this project, not the one the page was last pointed at.
   // THE COMMUNITY'S COLOUR is the header's (../../header/community-tint.ts):
@@ -4851,6 +4857,16 @@ export function DevWorkshop(): ReactNode {
                 : null}
               onLeave={canLeave(community) ? () => { void leaveCommunity(slug); } : null}
               appName={community?.name || app.name || slug}
+              // A member's, and only beside the sidebar (../../nav/pin-actions.ts).
+              pin={sidebarRows && community?.is_member ? {
+                pinned: pins.some((p: { slug: string }) => p.slug === slug),
+                onToggle: () => togglePin({
+                  slug,
+                  name: community?.name || app.name || slug,
+                  iconUrl: own ? app.iconUrl : null,
+                  iconEmoji: own ? app.iconEmoji : null,
+                }),
+              } : null}
             />
           )}
         />

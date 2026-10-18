@@ -100,6 +100,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { landKeepingPlace } from '../dev-board/workshop/place-store';
 import { channelUnread, useMessagesSnapshot } from '../messages/store';
+import { openPinMenu } from '../nav/pin-actions';
 import { useSidebarRows } from '../nav/sidebar-rows';
 import { communitiesSearchStore } from './communities-search';
 import { NeedsReel, type NeedsFeedItem } from './needs-reel';
@@ -299,7 +300,9 @@ export function StatusLine({ working, needs }: { working: number; needs: number 
  * AN ANCHOR, which is what `as="a"` on that primitive is for: cmd/ctrl-click,
  * middle-click, "open in new tab" and the context menu are the browser's to
  * give, and the shell takes that seriously enough that #back-btn and the app
- * chip's own menu rows are anchors. `/app/<slug>/workshop` is App._appUrl's
+ * chip's own menu rows are anchors. Beside the desktop sidebar the right-click
+ * menu is the shell's (18 Oct 2026): Pin to sidebar or Unpin, and Open in
+ * new tab, the browser's one the shell keeps (../nav/pin-actions.ts). `/app/<slug>/workshop` is App._appUrl's
  * spelling for that page (`boardView: 'workshop'`), so a copied address
  * restores the same screen cold.
  *
@@ -334,10 +337,16 @@ export function AppRow({ row, onOpen, current = false }: {
   // channels and #general on every signed-in page for the tab badges.
   useMessagesSnapshot();
   const unread = channelUnread(row.slug, !!row.self_hosted);
+  // Pins are drawn in the sidebar, so only beside it is there one to make.
+  const pinnable = useSidebarRows();
+  const href = `/app/${encodeURIComponent(row.slug)}/workshop`;
   return (
     <ListRow
       as="a"
-      href={`/app/${encodeURIComponent(row.slug)}/workshop`}
+      href={href}
+      onContextMenu={pinnable ? (event: MouseEvent<HTMLElement>) => {
+        openPinMenu(event, { slug: row.slug, name: row.name || row.slug, iconUrl: row.icon_url ?? null, iconEmoji: row.icon_emoji ?? null }, href);
+      } : undefined}
       data-workshop-app={row.slug}
       data-workshop-audience={row.audience || 'open'}
       aria-current={current ? 'true' : undefined}

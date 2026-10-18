@@ -93,6 +93,7 @@ import { openCommunitiesSearch } from '../workshop/communities-search';
 import { communityScopeStore, goToCommunity, type CommunityInfo } from '../workshop/community-scope';
 import { pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
+import { openPinMenu } from './pin-actions';
 import { pinnedAppsStore } from './pinned-apps-store.js';
 import { NestSlot } from './rail-nest';
 import { recentAppsStore } from './recent-apps-store.js';
@@ -286,9 +287,8 @@ export function useRailHere(): RailHere {
   };
 }
 
-/** What a pinned row adds: its Unpin menu and its drag back out (./rail-pinned.tsx). */
+/** What a pinned row adds: its drag back out (./rail-pinned.tsx). */
 export interface PinnedRowHandlers {
-  onContextMenu: (event: MouseEvent<HTMLAnchorElement>) => void;
   onPointerDown: (event: PointerEvent<HTMLAnchorElement>) => void;
   onPointerMove: (event: PointerEvent<HTMLAnchorElement>) => void;
   onPointerUp: (event: PointerEvent<HTMLAnchorElement>) => void;
@@ -342,11 +342,12 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
   // Open, its votes are Needs you's count under it.
   const votes = c && !c.unchosen && !open ? Number(c.needs) || 0 : 0;
   const appName = t('core:rail.appOf', { name });
+  const href = `#app/${encodeURIComponent(slug)}/workshop`;
   return (
     <Fragment>
       <a
         className="platform-rail-community"
-        href={`#app/${encodeURIComponent(slug)}/workshop`}
+        href={href}
         data-rail-community={slug}
         {...(open ? { 'data-rail-open': '' } : {})}
         {...(pin ? { 'data-rail-pinned': '' } : {})}
@@ -363,8 +364,14 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
           if (onPage === slug) pressLitTab(screen, { stopAtCommunity: true });
           else goToCommunity(slug);
         }}
+        // One of yours pins or unpins from its right-click menu, which
+        // keeps the link's Open in new tab (./pin-actions.ts).
+        {...(yours ? {
+          onContextMenu: (event: MouseEvent<HTMLAnchorElement>) => {
+            openPinMenu(event, { slug, name, iconUrl: icon.icon_url, iconEmoji: icon.icon_emoji }, href);
+          },
+        } : null)}
         {...(pin ? {
-          onContextMenu: pin.onContextMenu,
           onPointerDown: pin.onPointerDown,
           onPointerMove: pin.onPointerMove,
           onPointerUp: pin.onPointerUp,

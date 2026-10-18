@@ -3651,6 +3651,18 @@
     "text": "Leave",
     "description": "Row among a project's settings for a member who did not start it, when the project's name is not known: the person stops being a member of this community. A verb."
   },
+  "menu.pin.add": {
+    "text": "Pin to sidebar",
+    "description": "Row in a project's ⋯ menu on its hub, on a computer: keeps the project's community in the desktop sidebar's Pinned section."
+  },
+  "menu.pin.sub": {
+    "text": "Keep it at the top of your sidebar",
+    "description": "Second line under Pin to sidebar in the project's ⋯ menu, saying what pinning does."
+  },
+  "menu.pin.remove": {
+    "text": "Unpin from sidebar",
+    "description": "The same row once the community is pinned: takes it off the desktop sidebar's Pinned section. It stays one of the person's communities."
+  },
   "menu.appSettings.title": {
     "text": "App settings",
     "description": "Row among a project's settings, shown to those who manage it: opens the dialog for who can use and build the app, and for deleting it."

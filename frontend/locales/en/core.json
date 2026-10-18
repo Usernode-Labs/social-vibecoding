@@ -127,6 +127,18 @@
     "text": "Unpin one first",
     "description": "The same slot when four communities are already pinned, the most there is room for: the drop is refused until one is taken off."
   },
+  "rail.pin.add": {
+    "text": "Pin to sidebar",
+    "description": "Item in the right-click menu of a community's row in the desktop sidebar or in All communities: keeps the community in the sidebar's Pinned section, above the person's other communities."
+  },
+  "rail.pin.newTab": {
+    "text": "Open in new tab",
+    "description": "Item in the same right-click menu: opens the community's page in a new browser tab, as the browser's own menu for a link would."
+  },
+  "rail.pin.fullToast": {
+    "text": "Four communities are pinned already. Unpin one first.",
+    "description": "Short message shown when the person tries to pin a fifth community to the desktop sidebar: four is the most there is room for."
+  },
   "rail.pin.unpin": {
     "text": "Unpin",
     "description": "The one item in the right-click menu of a community pinned to the desktop sidebar, and the caption on its tile while it is dragged out of the sidebar: it takes the community off the pinned list."
