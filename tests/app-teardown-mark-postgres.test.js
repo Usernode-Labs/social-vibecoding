@@ -16,8 +16,24 @@ const { Pool } = require('pg');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 
+// pool.end() resolves once its idle connections are handed their end, not
+// once their sockets close, so the teardown's DROP DATABASE ... WITH (FORCE)
+// can reach one still closing. The server then terminates it (57P01) and the
+// pool re-emits that as 'error', which without a listener is an
+// uncaughtException that fails whatever test is running (the same race in
+// tests/username-invite-join-postgres.test.js and
+// tests/orphan-adoption-postgres.test.js). A drop DURING the checks is still
+// this file's failure: the test asserts none was recorded.
+let closing = false;
+const dropped = [];
+const onPoolError = (err) => {
+  if (closing) return; // the teardown's own DROP closes this test's connections
+  dropped.push(`${err.code || ''} ${err.message}`);
+};
+
 test('the teardown mark is on the row, read by a deploy in any process', async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  admin.on('error', onPoolError);
   try { await admin.query('SELECT 1'); } catch (err) {
     await admin.end();
     if (process.env.TEST_DATABASE_URL) throw err;
@@ -27,7 +43,9 @@ test('the teardown mark is on the row, read by a deploy in any process', async (
   await admin.query(`CREATE DATABASE ${name}`);
   const url = new URL(DSN); url.pathname = `/${name}`;
   const pool = new Pool({ connectionString: String(url), max: 3 });
+  pool.on('error', onPoolError);
   t.after(async () => {
+    closing = true; // from here a drop is this teardown's own doing
     await pool.end();
     await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
     await admin.end();
@@ -88,4 +106,5 @@ test('the teardown mark is on the row, read by a deploy in any process', async (
   // Gone altogether: removed too.
   await pool.query('DELETE FROM apps WHERE id = $1', [app.id]);
   assert.equal(await teardown.removeRuntimeIfDeleted({}, pool, deployed), true);
+  assert.deepEqual(dropped, [], 'no connection was dropped during the checks');
 });
