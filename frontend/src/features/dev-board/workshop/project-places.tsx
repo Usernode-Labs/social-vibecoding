@@ -36,9 +36,9 @@
  * Drawn nested under the community's row in the desktop's sidebar of rows
  * (../../nav/rail-communities.tsx, v3), and in the tray behind the place bar
  * (./places-tray.tsx) on a phone or with the sidebar folded, which adds
- * "Switch community" at its foot. (The section column beside the 76px strip,
- * ../../nav/section-column.tsx, drew it too; no width has the strip since
- * the sidebar starts at 768px.) The sidebar keeps its list short: topics
+ * "Switch community" at its foot, and on the phone's drawer. (The section
+ * column beside the 76px strip drew it too, until the sidebar started at
+ * 768px and no width had the strip.) The sidebar keeps its list short: topics
  * after the first `fold` wait behind "Show N more", less the one you are on,
  * which is always drawn.
  */

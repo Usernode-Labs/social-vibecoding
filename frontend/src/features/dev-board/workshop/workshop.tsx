@@ -105,7 +105,7 @@ import { PlaceBar } from './place-bar';
 import { PlacesTray, useEdgeSwipe } from './places-tray';
 import { drawerStore } from '../../nav-drawer/drawer-store';
 import { ProjectPlaces } from './project-places';
-import { clearPlace, publishPlace, publishSide, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
+import { clearPlace, publishPlace, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
 import { PlanPage } from './plan-page';
 import { PrivateRequests } from './private-requests';
 import { Diagram, decisionDiagram, readDiagram, type DecisionFacts, type DiagramRecord, type DiagramSource } from '../../../lib/diagram/diagram';
@@ -3787,9 +3787,9 @@ const WIDE_QUERY = '(min-width: 700px)';
  * #4457: where a Workshop row opens its page in a panel beside the list
  * rather than as the page: room for the list and a 560px panel beside it.
  * #4417: the chrome beside the page was the strip and the 264px places
- * column, which stepped aside while the panel is open (`placeStore.side`,
- * ../../nav/section-column.tsx) so the list kept its room. On every desktop
- * window now the sidebar of rows nests the places and has no column (v3).
+ * column, which stepped aside while the panel was open so the list kept its
+ * room. On every desktop window now the sidebar of rows nests the places and
+ * there is no column (v3).
  */
 const SIDE_QUERY = '(min-width: 1180px)';
 
@@ -3801,8 +3801,7 @@ const SIDE_QUERY = '(min-width: 1180px)';
  */
 export const HUB_REFRESH_MS = 30_000;
 /**
- * #4417: from here the project's places are the section column beside the
- * strip (../../nav/section-column.tsx), nested in the sidebar of rows now
+ * #4417: from here the project's places are nested in the sidebar of rows
  * (v3, ../../nav/rail-communities.tsx); under it, the tray behind the bar.
  */
 export const PLACES_COLUMN_QUERY = '(min-width: 768px)';
@@ -4567,7 +4566,7 @@ export function DevWorkshop(): ReactNode {
     setTrayOpen(true);
   });
   // THE PLACE ON SHOW, for what draws or moves it from outside this page
-  // (./place-store.ts): the section column's list, a merged topic's card.
+  // (./place-store.ts): the sidebar's nested list, a merged topic's card.
   const openTabRef = useRef(openTab);
   openTabRef.current = openTab;
   useEffect(() => {
@@ -4600,9 +4599,6 @@ export function DevWorkshop(): ReactNode {
   }, [v.slug]);
   // The bot's slots page (?ws=bot) opens its rows beside it too.
   const sideOpen = !!sideItem && (tab === 'workshop' || tab === 'all' || tab === 'bot');
-  useEffect(() => {
-    if (v.slug) publishSide(v.slug, sideOpen);
-  }, [v.slug, sideOpen]);
 
   // The hub is drawn once, with its community record (ONE DRAW, NOT TWO,
   // ./community-card.tsx communityPending).
@@ -4643,9 +4639,9 @@ export function DevWorkshop(): ReactNode {
      #4417: the four tabs are gone; the project's places are one list (Hub,
      Needs you, Workshop, then its channels: ./project-places.tsx). On a
      phone it is a tray behind the place bar's button, the bar naming where
-     you are (./place-bar.tsx); on a wide window it is the section column
-     beside the strip (../../nav/section-column.tsx) and the bar is the
-     page's title row. Under the bar, All items leads with its way back to
+     you are (./place-bar.tsx); on a wide window it is nested under the
+     community's row in the sidebar (../../nav/rail-communities.tsx) and the
+     bar is the page's title row. Under the bar, All items leads with its way back to
      the Workshop it is a page of.
 
      THE BAR IS THE BAND'S BOX, ON EVERY PAGE (#3651). It is what pins, and

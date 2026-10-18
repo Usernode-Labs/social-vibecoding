@@ -13,7 +13,6 @@ export { SkipToNavigation } from './skip-link';
 export { navStore, tabForScreen, TAB_FOR_SCREEN } from './nav-store.js';
 export { parkedStore, readParked, setParked, PARKED_KEY } from './parked-store.js';
 export { RailPinned } from './rail-pinned';
-export { SectionColumn } from './section-column';
 export {
   recentAppsStore, readRecentApps, rememberRecentApp, RECENT_APPS_KEY,
 } from './recent-apps-store.js';

@@ -2043,21 +2043,6 @@ form.agent-session-composer:focus-within {
   .messages-layout.messages-has-reply-thread > .messages-thread-pane { margin-left: 12px; }
 }
 
-/* ── Too narrow for the list beside a conversation (#4229) ──────────────
-   From 768px up the list and the sheet share the strip, but a strip under
-   860px (the list's 22rem and 8px, the sheet's margins, and a 480px sheet)
-   leaves the conversation too narrow to read. There an open discussion takes
-   the strip, as on a phone: the list steps aside, the full-width toggle
-   would do nothing so it is not drawn, and the bar's back arrow returns to
-   the list. The class is the strip's own width, measured by the screen
-   (store.ts measureLayout), so folding the platform rail counts. It is not a
-   container query: containing the strip would make it the box every
-   `position: fixed` overlay inside it is placed against. */
-@media (min-width: 768px) {
-  .messages-layout.messages-list-crowded > .messages-list-pane { display: none; }
-  .messages-layout.messages-list-crowded .messages-list-toggle { display: none; }
-  .messages-layout.messages-list-crowded > .messages-thread-pane { margin-left: 12px; }
-}
 .messages-reply-count {
   display: flex;
   align-items: center;
@@ -4516,11 +4501,6 @@ html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scro
     background-color: rgba(255, 255, 255, 0.50); /* :root's --dc-sheet-fill */
   }
   .dark[data-app-tone="light"] #platform-tabs.platform-tabs-peek {
-    background-color: #faf9f2; /* :root's --dc-sheet-solid */
-  }
-  /* The peeked column beside it (#5308): the same solid fill where the
-     viewer's dark mode draws the shell light. */
-  .dark[data-app-tone="light"] #platform-section-column.platform-section-column-peek {
     background-color: #faf9f2; /* :root's --dc-sheet-solid */
   }
 }
@@ -21376,14 +21356,10 @@ body {
      full width while the content under it reserves nothing; a rail that had
      one number for both was 17px of padding and a border, because the
      reserved figure was 0. A constant, never overridden.
-     #4417: 76px, THE STRIP. It was a 224px rail of rows and Recents; the
-     sections are an icon over a label now, with the five recent apps under
-     them, and the column beside it belongs to the section on screen
-     (`--platform-column-w`, features/nav/section-column.tsx). */
+     #4417: 76px, THE STRIP. It was a 224px rail of rows and Recents. From
+     768px the sidebar of rows sets it again (212px, its own block below),
+     and what the strip's column beside it held is nested in the sidebar. */
   --platform-rail-full: 76px;
-  /* #4417: the section column's width, while one is drawn beside the strip
-     (a project's places in Communities, the conversation list in Messages). */
-  --platform-column-full: 264px;
   /* HOW MUCH ROOM THE RAIL'S FOOT TAKES — the Me row, plus the rail's own
      8px of bottom padding. Read by the parked strip, which is fixed to the
      same corner and has to rest ON that row rather than over it. One number,
@@ -21393,9 +21369,6 @@ body {
      and cost width nothing; 0 again on a desktop while the rail is folded or
      peeking, where the content takes the width back. */
   --platform-rail-w: 0px;
-  /* #4417: what the section column beside the strip reserves: its width
-     while it is drawn there (features/nav/section-column.tsx), else 0. */
-  --platform-column-w: 0px;
   --platform-gutter: 0px;
 }
 /* `:not(.platform-tabs-peek)` because a PEEKING bar reserves nothing: the
@@ -22016,13 +21989,6 @@ html.un-ios {
 }
 
 
-/* THE SECTION COLUMN IS THE DESKTOP'S (#4417). The phone's bar is five tabs
-   across the foot of the screen with no room for it, and a project's places
-   are the tray behind its place bar there, so the element is in the markup
-   at every width and drawn only from 768px up, below. */
-.platform-section-column {
-  display: none;
-}
 
 
 /* ── #platform-parked — the app you left ─────────────────────────────
@@ -22510,11 +22476,11 @@ html.un-kb #platform-parked {
      under the rail: the rail's room is the padding above. So with the rail
      beside the app it vanished for the length of the zoom and snapped back
      when the card was lifted. While the card is pinned (PlatformUI.markZoom
-     puts `data-zooming` on it for exactly that long) the docked rail, its
-     foot and the section column beside it sit over the card instead; the
-     part of the card under them is only the padding. Still under the kit's
+     puts `data-zooming` on it for exactly that long) the docked rail and its
+     foot sit over the card instead; the part of the card under them is only
+     the padding. Still under the kit's
      sheets (9990 and up). A route whose rail is hidden is untouched. */
-  body:has(#app-view[data-zooming]) :is(#platform-tabs, #platform-parked, #platform-section-column):not(.hidden) {
+  body:has(#app-view[data-zooming]) :is(#platform-tabs, #platform-parked):not(.hidden) {
     z-index: 9961;
   }
 
@@ -22590,19 +22556,18 @@ html.un-kb #platform-parked {
     margin: auto 4px 6px;
     background: var(--app-sheet-line);
   }
-  /* SETTINGS, THEN YOU, AT THE FOOT (#3120, #4417). In a 76px strip there
-     is no row for the cog to end, so it stands above you, after the rule:
-     your settings next to you, as before, and you last. The markup does not
-     move (the cog follows Me there); `order` places them. */
+  /* SETTINGS, THEN YOU, AT THE FOOT (#3120, #4417): after the rule, your
+     settings next to you, and you last. The markup does not move (the cog
+     follows Me there); `order` places them after the rule's spacer. The
+     sidebar of rows puts the cog at the end of your row (its block below). */
   .platform-rail-settings {
     order: 2;
   }
   #platform-tab-me {
     order: 3;
   }
-  /* The cog is a square the size of a strip's glyph target, centred: the
-     ink, radius, lit fill and hover are a tab's, so it reads as one more
-     place on the strip rather than a toolbar button. */
+  /* The cog: the ink, radius, lit fill and hover are a tab's, so it reads as
+     one more place in the rail rather than a toolbar button. */
   .platform-rail-settings {
     position: relative;
     z-index: 1;
@@ -22634,44 +22599,14 @@ html.un-kb #platform-parked {
       color: var(--lit-ink);
     }
   }
-  .platform-parked {
-    bottom: calc(var(--platform-rail-foot-h) + var(--platform-safe-bottom, 0px));
-  }
-
-  /* #4417: AN ICON OVER A LABEL, as on the phone's bar, in a 76px strip.
-     It was a row (the glyph, then the label at 15px) in a 224px rail; the
-     strip gives the width back to the section's column and the page, and a
-     section is still named in words under its glyph. */
-  .platform-tab {
-    flex: none;
-    flex-direction: column;
-    justify-content: center;
-    gap: 3px;
-    height: 58px;
-    padding: 0;
-    border-radius: 12px;
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: -.01em;
-  }
-  .platform-tab[aria-current="page"] {
-    background: var(--lit-tint);
-  }
-  /* The strip keeps its own fill on the lit tab; the phone's sliding
-     marker is not drawn here (#2824). */
+  /* The rail keeps its own fill on the lit row; the phone's sliding marker
+     is not drawn here (#2824). */
   .platform-tabs-marker {
     display: none;
   }
-  /* `min-width: 0` so the label can SHRINK and the ellipsis the base rule
-     asks for appears (#2760): the fifth tab carries the reader's username. */
-  .platform-tab-label {
-    max-width: 100%;
-    min-width: 0;
-    text-align: center;
-  }
-  /* The counts sit on the glyph's corner, as on the phone's bar: the
-     wrapper is the badge's anchor (the base rules), and the quiet unread
-     count gives way to the votes. */
+  /* The counts sit on the glyph's corner where a tab draws one (the base
+     rules anchor them to the glyph's wrapper); the sidebar of rows moves the
+     quiet unread count to the row's far end (its block below). */
   .platform-tab-badge {
     top: -4px;
     left: calc(100% - 9px);
@@ -22693,102 +22628,14 @@ html.un-kb #platform-parked {
     }
   }
 
-  /* ── THE SECTION COLUMN (#4417, features/nav/section-column.tsx) ──────
-     264px beside the strip, from under the header to the floor, on the
-     strip's own glass — `--dc-sheet-fill`, the rail's see-through fill over
-     the fixed wallpaper — with its hairline: a project's places while its
-     page is up under Communities. The page moves over by it as it moves
-     over by the strip (`--platform-column-w`, added to #app-view's padding
-     below). Folded with the strip, and never while the strip only peeks. */
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) .platform-section-column:not(.hidden) {
-    position: fixed;
-    z-index: 30;
-    top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px));
-    bottom: 0;
-    left: var(--platform-rail-full);
-    display: flex;
-    flex-direction: column;
-    width: var(--platform-column-full);
-    padding: 12px 12px calc(12px + var(--platform-safe-bottom, 0px));
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    background: var(--dc-sheet-fill);
-    box-shadow: inset -1px 0 0 var(--app-sheet-line);
-  }
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)):has(#platform-section-column:not(.hidden)) {
-    --platform-column-w: var(--platform-column-full);
-  }
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)):has(#platform-section-column:not(.hidden)) #app-view {
-    padding-left: calc(var(--platform-rail-w, 0px) + var(--platform-column-w, 0px) + var(--platform-gutter));
-  }
-  /* Beside the column the list is there, so the page's place bar is the
-     page's title and its tray's button has nothing to open. With the strip
-     folded the column folds too, and the button is the way to the list. */
-  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)):has(#platform-section-column:not(.hidden)) .dev-ws-places-btn {
-    display: none;
-  }
-
-  /* THE RESUME STRIP GIVES WAY TO THE STRIP'S APPS ON THE DESKTOP (#2802,
-     #4417). The apps on the strip are the same offer, several at once, the
-     ones still open with their dot, so a second copy at its foot would say
-     it twice. The phone has no strip and keeps it. By id so no later
+  /* THE RESUME STRIP GIVES WAY TO THE SIDEBAR ON THE DESKTOP (#2802,
+     #4417). A running app keeps its App row, with its dot, under its
+     community there (features/nav/rail-communities.tsx), the same offer for
+     every app still open, so a second copy at its foot would say it twice.
+     The phone has no sidebar and keeps it. By id so no later
      `.platform-parked` rule can bring it back. */
   #platform-parked {
     display: none;
-  }
-
-  /* THE PARKED STRIP IS THE RAIL'S FOOTER. It is the app you left, and the
-     rail is the list of places you can go — so it belongs at the bottom of
-     that list rather than across a window whose content has nothing to do
-     with it. Same element, same store, same ✕. */
-  .platform-parked {
-    right: auto;
-    width: var(--platform-rail-full);
-    /* NO FILL OF ITS OWN (#2801). On the phone the strip floats over the
-       page and needs the sheet's frost; in the rail it would be a second,
-       different surface under the Resume row. The rail behind it is the
-       surface, as it is for every other row. */
-    background: transparent;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-    padding-bottom: var(--platform-safe-bottom, 0px);
-    height: auto;
-    min-height: 52px;
-    border-top: 1px solid var(--app-sheet-line);
-    border-right: 1px solid var(--app-sheet-line);
-  }
-  /* ABOVE the rail, so its hairline reads as the footer's edge rather than
-     as a line the rail draws through it. */
-  .platform-parked { z-index: 31; }
-
-  /* TWO LINES IN A 224px RAIL. On a phone the strip runs the width of the
-     screen and "Resume" fits beside the name as a pill; here the same four
-     things — tile, name, pill, ✕ — leave the name about 60px, which is two
-     characters and an ellipsis. So the pill goes ABOVE as a caption, which
-     is what a rail's own section labels look like, and the name gets the
-     whole row.
-
-     `order: -1` rather than moving the element: the pill is inside the
-     anchor because the whole strip is one target (a button inside an anchor
-     is invalid markup), and that has to stay true in both layouts. */
-  .platform-parked-open {
-    flex-wrap: wrap;
-    height: auto;
-    padding: 6px 8px;
-    row-gap: 1px;
-  }
-  .platform-parked-pill {
-    order: -1;
-    width: 100%;
-    height: auto;
-    padding: 0;
-    border: 0;
-    background: none;
-    color: var(--text-muted);
-    font-size: 10.5px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: .04em;
   }
 }
 
@@ -23821,45 +23668,6 @@ html.dark .messages-inbox-change-tile {
     animation: platform-rail-peek-in 140ms ease-out;
   }
 
-  /* THE PEEKED COLUMN (#5308, features/nav/section-column.tsx). On a project
-     page the folded rail's peek brings the places list back beside it: the
-     docked column's geometry with the peeked rail's surface and fade. One
-     peek state drives both, so this rule keys off the same
-     `#platform-tabs.platform-tabs-peek` the strip's does and the element
-     only carries its class while a peek is up with a column to show. It
-     FLOATS: nothing here reserves width (`--platform-column-w` still keys
-     off the docked selector only), so the page does not reflow under the
-     pointer, and `.dev-ws-places-btn` stays because its hiding rule still
-     requires the docked strip. The base `display: none` stands aside for
-     the same reason the docked rule's does. */
-  html:not(.un-kb) body:has(#platform-tabs.platform-tabs-peek) .platform-section-column.platform-section-column-peek:not(.hidden) {
-    position: fixed;
-    z-index: 40;
-    top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px));
-    bottom: 0;
-    left: var(--platform-rail-full);
-    display: flex;
-    flex-direction: column;
-    width: var(--platform-column-full);
-    padding: 12px 12px calc(12px + var(--platform-safe-bottom, 0px));
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    /* The peeked rail's solid surface, frost and shadow, not the docked
-       column's see-through glass: it floats over the page. */
-    background-color: var(--dc-sheet-solid);
-    backdrop-filter: var(--dc-frost);
-    -webkit-backdrop-filter: var(--dc-frost);
-    border-right: 1px solid var(--app-sheet-line);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
-    animation: platform-rail-peek-in 140ms ease-out;
-    transition: opacity 200ms ease-in;
-  }
-  /* The fade out (#2795), the rail's own: the grace timer sets `peekOut`
-     (rail-peek.ts, PEEK_FADE_MS) and pointing back at either element during
-     the fade takes it off both together. */
-  html:not(.un-kb) body:has(#platform-tabs.platform-tabs-peek) .platform-section-column.platform-section-column-peek.platform-section-column-peek-out {
-    opacity: 0;
-  }
 }
 
 @keyframes platform-rail-peek-in {
@@ -23869,10 +23677,8 @@ html.dark .messages-inbox-change-tile {
 
 @media (prefers-reduced-motion: reduce) {
   .platform-tabs.platform-tabs-peek,
-  body:has(#platform-tabs.platform-tabs-peek) .platform-parked,
-  body:has(#platform-tabs.platform-tabs-peek) .platform-section-column.platform-section-column-peek { animation: none; }
-  .platform-tabs.platform-tabs-peek,
-  body:has(#platform-tabs.platform-tabs-peek) .platform-section-column.platform-section-column-peek { transition: none; }
+  body:has(#platform-tabs.platform-tabs-peek) .platform-parked { animation: none; }
+  .platform-tabs.platform-tabs-peek { transition: none; }
 }
 
 /* ── #platform-side-panel — THE PANEL BESIDE A RUNNING APP ───────────────
