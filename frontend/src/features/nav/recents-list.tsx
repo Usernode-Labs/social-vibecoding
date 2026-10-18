@@ -173,13 +173,18 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
   const unread = item.unread ? ', unread' : '';
   const loaded = live ? `, ${LIVE_APP_LABEL}` : '';
   const doing = item.activity ? `, ${ACTIVITY_LABEL[item.activity].toLowerCase()}` : '';
+  // #3618: an app still running but not on screen gets a visible way back.
+  // The row is already the target; the pill is a label inside it, not a
+  // second control (a button inside an anchor is not valid markup).
+  const resumable = live && !item.current;
+  const resume = resumable ? ', resume' : '';
   return (
     <a
       className="platform-recent"
       href={item.href}
       data-recent-kind={item.kind}
       data-recent-key={item.key}
-      aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${doing}${unread}`}
+      aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${doing}${unread}${resume}`}
       {...(live ? { 'data-live': 'true' } : null)}
       {...(item.current ? { 'aria-current': 'true' as const, 'data-current': 'true' } : null)}
       onClick={item.app
@@ -196,6 +201,7 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
       <span className="platform-recent-label">{item.label}</span>
       {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
       {live ? <LiveAppDot className="platform-recent-live" /> : null}
+      {resumable ? <span className="platform-recent-resume" aria-hidden="true">Resume</span> : null}
       {item.unread ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
     </a>
   );

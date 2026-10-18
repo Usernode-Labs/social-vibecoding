@@ -580,6 +580,67 @@ test('#3074: the Active rows are Recents\' rows, the current one lit, and nothin
   assert.match(live, /export function useCurrentAppSlug\(\): string \| null \{\s*return useStoreState\(appFrameStore\)\.slug \|\| null;/);
 });
 
+// ── #3618: a running app that is not on screen says Resume ────────────
+//
+// The rail's Active rows were already the way back into a running app, but
+// nothing on the row said so. The pill is a LABEL inside the row's one
+// anchor, never a button (invalid inside an anchor), and only the app on
+// screen goes without it.
+
+test('#3618: a running app that is not on screen carries a Resume pill', () => {
+  const { ActiveApps, RecentsByDay } = loadTsx('frontend/src/features/nav/recents-list.tsx');
+  const apps = [
+    recentApp('notes', '2026-09-20T10:00:00Z', { iconEmoji: '📝' }),
+    recentApp('chess', '2026-09-20T09:00:00Z'),
+  ];
+  const html = renderToHtml(createElement(ActiveApps, {
+    items: buildActive({ live: ['notes', 'chess'], current: 'notes', apps }),
+  }));
+  const rows = html.match(/<a class="platform-recent"[\s\S]*?<\/a>/g);
+  assert.equal(rows.length, 2);
+
+  // Chess is running but not on screen: the pill is inside its row.
+  assert.match(rows[1], /href="\/app\/chess"/, 'still one anchor with a real address');
+  assert.match(rows[1], /<span class="platform-recent-resume" aria-hidden="true">Resume<\/span>/);
+  assert.match(rows[1], /aria-label="App: Chess, still open, resume"/);
+  // Notes is the app on screen: listed and lit, but no Resume.
+  assert.doesNotMatch(rows[0], /platform-recent-resume/);
+  assert.match(rows[0], /aria-label="App: Notes, still open"/);
+
+  // One pill, one anchor per row, and no button split into the row.
+  assert.equal((html.match(/class="platform-recent-resume"/g) || []).length, 1);
+  assert.doesNotMatch(html, /<button/);
+
+  // On Home nothing is current, so every running app gets one.
+  const home = renderToHtml(createElement(ActiveApps, {
+    items: buildActive({ live: ['notes', 'chess'], current: null, apps }),
+  }));
+  assert.equal((home.match(/class="platform-recent-resume"/g) || []).length, 2);
+
+  // A row that is not live (Recents, conversations) has no Resume.
+  const recents = buildRecents({
+    apps: [recentApp('todo', '2026-09-20T08:00:00Z')],
+    conversations: [], discussions: [], agents: [],
+  });
+  const recentsHtml = renderToHtml(createElement(RecentsByDay, {
+    items: recents, live: [], showOlder: false, onToggleOlder: () => {},
+    now: Date.parse('2026-09-20T12:00:00Z'),
+  }));
+  assert.doesNotMatch(recentsHtml, /platform-recent-resume/);
+
+  // Drawn in the desktop rail block, with the phone's parked-pill recipe.
+  const css = read('public/css/app.css');
+  const desktop = css.indexOf('THE SAME FIVE TABS, STANDING UP');
+  const at = css.indexOf('.platform-recent-resume {');
+  assert.ok(desktop > 0 && at > desktop, 'inside the desktop block');
+  const rule = css.slice(at, css.indexOf('}', at));
+  assert.match(rule, /flex: none;/);
+  assert.match(rule, /height: 20px;/);
+  assert.match(rule, /border: 1px solid var\(--brand-line\);/);
+  assert.match(rule, /background: var\(--brand-tint\);/);
+  assert.match(rule, /color: var\(--brand-ink\);/);
+});
+
 // ── #3096: only the app ON SCREEN is lit ──────────────────────────────
 //
 // The frame store's slug is the MOUNTED frame, and it survives every way of

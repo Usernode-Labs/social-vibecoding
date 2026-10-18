@@ -20012,6 +20012,24 @@ html.un-kb #platform-parked {
     /* The unread count's own fill in Messages (`.messages-unread`). */
     background: var(--accent);
   }
+  /* RESUME (#3618): an app still running but not on screen. The row already
+     goes back into it; this is the visible label, drawn with the phone's
+     parked pill recipe (`.platform-parked-pill`) at the rail's 34px row. */
+  .platform-recent-resume {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 8px;
+    border: 1px solid var(--brand-line);
+    border-radius: 999px;
+    background: var(--brand-tint);
+    color: var(--brand-ink);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+  }
 
   /* ── ACTIVE (#3074) ──────────────────────────────────────────────────
      frontend/src/features/nav/recents.ts (buildActive) carries the argument:
