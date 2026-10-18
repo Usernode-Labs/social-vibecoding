@@ -220,8 +220,8 @@ test('the worker runs a shots turn on its pinned model, and every other turn on 
     assert.equal(worker.claudeTurnModel('shots', odd), 'claude-opus-5-5', String(odd));
   }
   for (const mode of ['build', 'scout', 'sync']) {
-    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5-5'), 'claude-opus-5-5', mode);
-    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5'), 'claude-sonnet-5', mode);
+    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5-5'), 'claude-sonnet-5-5', mode);
+    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5'), 'claude-sonnet-5-5', mode);
   }
 });
 
