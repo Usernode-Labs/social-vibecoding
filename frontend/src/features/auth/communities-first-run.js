@@ -314,10 +314,14 @@
       scroller.setAttribute('data-join-communities-scroll', '');
       panel.appendChild(scroller);
       // A welcome first: this is a new account's first screen after its
-      // name and the terms, so it says what the place is before it asks.
+      // name and the terms, so it says what the place is before it asks
+      // (#3567): Homeroom is made up of communities, each can make its own
+      // apps, and its members build them together.
       scroller.appendChild(el('div', 'text-xl font-bold pt-3', 'Welcome to Homeroom!'));
       scroller.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-300 mt-1',
-        'Homeroom is a place where communities build the apps they use together.'));
+        'Homeroom is made up of communities. Each one can make its own apps, and its members build them together.'));
+      scroller.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-300 mt-1',
+        'Anyone can suggest a change to an app, and the community votes on which ones to make.'));
       scroller.appendChild(el('div',
         'text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100 mt-5 mb-2',
         'What communities do you want to join?'));
