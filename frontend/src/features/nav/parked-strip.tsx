@@ -95,6 +95,7 @@ import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { navStore } from './nav-store.js';
 import { parkedStore, readParked, setParked } from './parked-store.js';
 import { enterPeek, leavePeek } from './rail-peek';
+import { noteResumeOrigin } from './resume-motion';
 
 type ParkedApp = { slug: string; name: string; iconUrl: string | null; iconEmoji: string | null };
 
@@ -221,6 +222,10 @@ export function ParkedStrip() {
               event.preventDefault();
               // A leaving strip is inert; there is no app to resume.
               if (!app) return;
+              // The strip is the control the app shrinks into, so it is also
+              // where the app grows back out of (./resume-motion.ts). The
+              // root, not a child: the children slide while it arrives.
+              noteResumeOrigin(app.slug, ref.current);
               window.App?.openAppTab?.(app.slug, 'app');
             }}
           >

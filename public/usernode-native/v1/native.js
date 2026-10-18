@@ -3047,6 +3047,19 @@
     return zoomRectUsable(rect, window.innerHeight) ? rect : null;
   }
 
+  // The zoom's length. Defaults to the kit's own (380ms in, 340ms out); a
+  // caller may pass `duration` in milliseconds, or a function given the
+  // resolved source rect — which is how navigateHome asks for the short
+  // Resume motion only once the parked control it lands on has been drawn.
+  function zoomDuration(opts, sourceRect, fallback) {
+    var value = opts.duration;
+    if (typeof value === 'function') {
+      try { value = value(sourceRect); } catch (e) { value = null; }
+    }
+    if (typeof value !== 'number' || !isFinite(value) || value <= 0) return fallback;
+    return value;
+  }
+
   function zoomTransition(fn, type, opts) {
     var el = opts.el;
     var after = typeof opts.after === 'function' ? opts.after : null;
@@ -3127,14 +3140,16 @@
       el.style.opacity = '0.3';
       el.style.borderRadius = ZOOM_RADIUS;
       void el.offsetHeight; // flush the start pose before enabling the transition
-      el.style.transition = 'transform 380ms ' + ZOOM_EASE
-        + ', opacity 220ms ease, border-radius 380ms ease';
+      var inMs = zoomDuration(opts, fromRect, 380);
+      var inFade = Math.round(inMs * 220 / 380);
+      el.style.transition = 'transform ' + inMs + 'ms ' + ZOOM_EASE
+        + ', opacity ' + inFade + 'ms ease, border-radius ' + inMs + 'ms ease';
       el.style.transform = 'none';
       el.style.opacity = '1';
       el.style.borderRadius = '0px';
       zoomCleanup = finish;
       el.addEventListener('transitionend', onEnd);
-      setTimeout(finish, 500); // safety if transitionend never fires
+      setTimeout(finish, inMs + 120); // safety if transitionend never fires
       return promise;
     }
 
@@ -3145,22 +3160,25 @@
     unpin = zoomPin(el, from);
     fn();
     // Tile resolved AFTER fn (it lives on the just-revealed screen).
-    var outPose = zoomPose(resolveZoomSource(opts), from);
+    var source = resolveZoomSource(opts);
+    var outPose = zoomPose(source, from);
     if (!outPose) {
       // No tile on screen to land on — settle instantly.
       finish();
       return promise;
     }
     void el.offsetHeight;
-    el.style.transition = 'transform 340ms ' + ZOOM_EASE
-      + ', opacity 200ms ease 60ms, border-radius 340ms ease';
+    var outMs = zoomDuration(opts, source, 340);
+    var outFade = Math.round(outMs * 200 / 340);
+    el.style.transition = 'transform ' + outMs + 'ms ' + ZOOM_EASE
+      + ', opacity ' + outFade + 'ms ease 60ms, border-radius ' + outMs + 'ms ease';
     el.style.transform = 'translate(' + outPose.tx + 'px, ' + outPose.ty + 'px) '
       + 'scale(' + outPose.sx + ', ' + outPose.sy + ')';
     el.style.opacity = '0';
     el.style.borderRadius = ZOOM_RADIUS;
     zoomCleanup = finish;
     el.addEventListener('transitionend', onEnd);
-    setTimeout(finish, 480); // safety if transitionend never fires
+    setTimeout(finish, outMs + 140); // safety if transitionend never fires
     return promise;
   }
 

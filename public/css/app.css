@@ -19359,9 +19359,11 @@ html.un-ios {
   height: 28px;
   padding: 0 12px;
   border-radius: 999px;
-  border: 1px solid var(--brand-line);
-  background: var(--brand-tint);
-  color: var(--brand-ink);
+  border: 0;
+  /* The accent, the platform's one action colour: Resume is what the strip is
+     for, and a pale periwinkle label read as a caption beside the name. */
+  background: var(--accent);
+  color: var(--accent-ink);
   font-size: 13px;
   font-weight: 600;
 }
@@ -19389,6 +19391,50 @@ html.un-ios {
    `hidden` class, which the island owns — this is presentation. */
 html.un-kb #platform-parked {
   display: none;
+}
+
+/* CLOSING AN APP INTO ITS RESUME CONTROL (#3618). When #app-view has already
+   left the screen (every way out but Home) there is no live view to shrink,
+   so features/nav/resume-motion.ts draws this stand-in: the app's page colour
+   with its icon, fixed over where the app was, animated into the control.
+   Position and size are inline (they are the measured rect); the motion is
+   the Web Animations API, which is why there is no transition here. Above app
+   content and below every kit overlay, exactly where the kit's zoom card
+   sits. */
+.resume-ghost {
+  position: fixed;
+  z-index: 9960;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 18px;
+  border: 1px solid var(--app-sheet-line, #e4e4e7);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .18);
+  background: var(--bg-primary);
+  transform-origin: 0 0;
+}
+.resume-ghost-tile {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  font-weight: 700;
+}
+.resume-ghost-tile > img {
+  width: 100%;
+  height: 100%;
+  border-radius: 16px;
+  object-fit: cover;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Nothing is drawn: resume-motion.ts already declines, and this makes the
+     card inert if a stylesheet is ever the only gate. */
+  .resume-ghost { display: none; }
 }
 
 /* IN AND OUT BY THE BAR (#3376), on the phone. Parked, the strip rises out
@@ -20001,6 +20047,28 @@ html.un-kb #platform-parked {
     text-overflow: ellipsis;
     white-space: nowrap;
     line-height: 1.35;
+  }
+  /* A RUNNING APP OFFERS RESUME IN ITS OWN ROW (#3618). The desktop's way
+     back into an app you stepped out of, in the place the green still-open
+     dot used to sit: the dot and the pill said the same thing, so the dot
+     goes when the pill is drawn (the general-sibling rule below). The pill is
+     a LABEL inside the row's anchor, not a second target — the whole row
+     already opens the app, as the phone's strip does. */
+  .platform-recent-resume {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 9px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .platform-recent-resume ~ .platform-recent-live {
+    display: none;
   }
   /* UNREAD IS A DOT, not a count: the count lives on the Messages tab and
      on the row in Messages, and a 224px rail has room for one mark. */

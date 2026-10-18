@@ -15,6 +15,9 @@ import { flushSync } from 'react-dom';
 import { navStore, tabForScreen } from './nav-store.js';
 import { parkedStore, setParked } from './parked-store.js';
 import { forgetRecentApp, readRecentApps, recentAppsStore, rememberRecentApp } from './recent-apps-store.js';
+import {
+  RESUME_MOTION_MS, collapseIntoResume, resumeHandleFor, takeResumeOrigin,
+} from './resume-motion';
 
 navStore.setFlush(flushSync);
 // Same reason as the tab's: App.navigateToApp clears the strip inside
@@ -140,6 +143,28 @@ if (typeof window !== 'undefined') {
     forget(slug: string) {
       if (parkedStore.get().app?.slug === slug) setParked(null);
       forgetRecentApp(slug, navStore.get().viewer);
+    },
+    /**
+     * Shrink a closed app into its Resume control (./resume-motion.ts).
+     * Called by the router only after #app-view has left the screen, with the
+     * rect it occupied on the way out. Answers false when nothing is drawn.
+     */
+    collapse(app: {
+      slug: string; name?: string | null; iconUrl?: string | null; iconEmoji?: string | null;
+    }, from?: { left: number; top: number; width: number; height: number } | null) {
+      return collapseIntoResume(app, from);
+    },
+    /** The visible Resume control for `slug`, if the screen has one. */
+    resumeHandle(slug: string) {
+      return resumeHandleFor(slug);
+    },
+    /** The recorded Resume press for `slug`, once, if it is still fresh. */
+    takeResumeOrigin(slug: string) {
+      return takeResumeOrigin(slug);
+    },
+    /** How long the shrink and grow take, so the router can match them. */
+    resumeMotionMs() {
+      return RESUME_MOTION_MS;
     },
   };
 }
