@@ -20031,6 +20031,26 @@ html.un-kb #platform-parked {
     background: var(--lit-tint);
     color: var(--lit-ink);
   }
+  /* THE ROW'S RESUME LABEL (#3618). The Active section's one job is the way
+     back into each running app, so every row but the one on screen names it
+     with the phone's parked strip pill at row size — 20px to its 28, an
+     11px label to its 13. It is a label INSIDE the one target, never a
+     second: the whole row opens the app. Defined here in the desktop block
+     only — the phone's bar never draws the rail's rows. */
+  .platform-recent-resume {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 8px;
+    border-radius: 999px;
+    border: 1px solid var(--brand-line);
+    background: var(--brand-tint);
+    color: var(--brand-ink);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+  }
   /* Only apps are running and none has been left yet: no RECENTS heading
      over nothing. The heading is the list's last child only then. */
   .platform-recents-head:last-child {

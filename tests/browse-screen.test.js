@@ -1833,6 +1833,29 @@ test('_tileFor resolves tiles in the two grids that still HAVE tiles', () => {
   assert.doesNotMatch(body, /#landing-apps/);
 });
 
+// #3618: a closed app's view shrinks into its Active rail row, the row the
+// Resume pill names, rather than into its Home tile.
+test('_resumeRowFor resolves the Active rail row, and navigateHome zooms into it', () => {
+  const fn = APP_SRC.slice(APP_SRC.indexOf('_resumeRowFor(slug) {'));
+  const body = fn.slice(0, fn.indexOf('\n  },'));
+  // Only ACTIVE rows: the row is committed the whole time an app is open,
+  // and buildRecents leaves Active slugs out of Recents so a live app is
+  // never listed twice.
+  assert.match(body, /#platform-active a\[data-recent-key="app:/);
+  // Neither grid the tile helper reads: the row replaces the tile as the
+  // close's target, it does not fall through to the launchers' rects.
+  assert.doesNotMatch(body, /#browse-list/);
+  assert.doesNotMatch(body, /#landing-apps/);
+  assert.doesNotMatch(body, /#app-list/);
+  assert.doesNotMatch(body, /#home-featured-list/);
+
+  const home = APP_SRC.slice(APP_SRC.indexOf('navigateHome(opts) {'));
+  const zoom = home.slice(0, home.indexOf('App.updateHash();'));
+  assert.match(zoom,
+    /fromEl: \(\) => \(leavingSlug\s*\n\s*\? \(App\._resumeRowFor\(leavingSlug\) \|\| App\._tileFor\(leavingSlug\)\)\s*\n\s*: null\)/,
+    'the close shrinks into the row when there is one, and into the tile when there is not');
+});
+
 test('the browse scroller gets its own pull-to-refresh', () => {
   const fn = APP_SRC.slice(
     APP_SRC.indexOf('_wirePullToRefresh() {'),

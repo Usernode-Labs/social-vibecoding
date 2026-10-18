@@ -122,8 +122,10 @@ function onAppClick(event: MouseEvent<HTMLAnchorElement>, slug: string): void {
   event.preventDefault();
   // The router's "this app, this tab" entry point, which is what the Resume
   // strip used (./parked-strip.tsx): it switches tabs for an app that is
-  // still open and navigates for any other.
-  window.App?.openAppTab?.(slug, 'app');
+  // still open and navigates for any other. The clicked row goes with it
+  // (#3618), so the app view expands out of the row that was pressed — the
+  // rail row is the one target, pill included, as the strip's is.
+  window.App?.openAppTab?.(slug, 'app', { sourceEl: event.currentTarget });
 }
 
 /**
@@ -173,13 +175,18 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
   const unread = item.unread ? ', unread' : '';
   const loaded = live ? `, ${LIVE_APP_LABEL}` : '';
   const doing = item.activity ? `, ${ACTIVITY_LABEL[item.activity].toLowerCase()}` : '';
+  // #3618: a live app row names the way back in, except for the app already
+  // on screen — resuming that one would do nothing, and its lit state says
+  // where you are. The pill is a SPAN inside the anchor, never a button: the
+  // whole row stays the one target (see ./parked-strip.tsx on why).
+  const resume = item.kind === 'app' && live && !item.current;
   return (
     <a
       className="platform-recent"
       href={item.href}
       data-recent-kind={item.kind}
       data-recent-key={item.key}
-      aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${doing}${unread}`}
+      aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${doing}${unread}${resume ? ', Resume' : ''}`}
       {...(live ? { 'data-live': 'true' } : null)}
       {...(item.current ? { 'aria-current': 'true' as const, 'data-current': 'true' } : null)}
       onClick={item.app
@@ -197,6 +204,7 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
       {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
       {live ? <LiveAppDot className="platform-recent-live" /> : null}
       {item.unread ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
+      {resume ? <span className="platform-recent-resume">Resume</span> : null}
     </a>
   );
 }

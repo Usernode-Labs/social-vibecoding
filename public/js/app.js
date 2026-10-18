@@ -6623,6 +6623,21 @@ const App = {
     } catch { return null; }
   },
 
+  // The ACTIVE RAIL ROW for `slug` (#3618), or null when there is none. The
+  // row a closed app's view shrinks back into, and the one a Resume press
+  // grows it out of — the desktop's answer to the phone's parked strip,
+  // which parks the same offer in its own row. Selects only Active rows:
+  // buildRecents leaves Active slugs out of Recents, so a live app is never
+  // listed twice, and a live app that has never been a row (or whose rail
+  // is folded or off-screen) measures 0×0, which the kit rejects — the tile
+  // or the kit's own fallback covers that, exactly as it always has.
+  _resumeRowFor(slug) {
+    try {
+      const sel = CSS.escape(slug);
+      return document.querySelector(`#platform-active a[data-recent-key="app:${sel}"]`);
+    } catch { return null; }
+  },
+
   // The screen the app view is expanding OUT of — home normally, the
   // browse screen when the tap came from there. The kit needs it twice:
   // as `outEl` (hidden for the synchronous pre-paint measurement so the
@@ -6695,7 +6710,7 @@ const App = {
   _appNavigationGeneration: 0,
   _appLoad: null,
 
-  async navigateToApp(slug, tab, ref, subTab) {
+  async navigateToApp(slug, tab, ref, subTab, sourceEl) {
     // The side panel never runs an app — not even to warm its frame. An App
     // tab asked for in there is the running app's job, beside it.
     if (App.embeddedPanel && App._forwardAppTab(slug, tab, ref, subTab)) return false;
@@ -6817,7 +6832,14 @@ const App = {
     }, {
       type: App._entryTransition('zoom-in', appViewEl, viaTab),
       el: document.getElementById('app-view'),
-      fromEl: () => App._tileFor(slug),
+      // #3618: a Resume press on the app's Active rail row grows the view
+      // out of THAT row — the row was the target, as the phone's parked
+      // strip is — while every other opening (a Home tile, a browse grid)
+      // still expands out of the tile it was pressed on. The kit resolves
+      // a zoom-in source BEFORE fn, which fits: the row lives on the
+      // outgoing screen's rail, still visible there. With no source
+      // element this is byte for byte the tile behaviour it always was.
+      fromEl: () => sourceEl || App._tileFor(slug),
       // The outgoing screen: the kit hides it while measuring the
       // destination so the flex-sibling split doesn't skew the target
       // rect (see the comment block above).
@@ -6997,7 +7019,17 @@ const App = {
     }, {
       type: App._entryTransition('zoom-out', av, viaTab),
       el: av,
-      fromEl: () => (leavingSlug ? App._tileFor(leavingSlug) : null),
+      // #3618: a close on the desktop shrinks the running view into the
+      // app's Active rail row — the way back the row now names — and falls
+      // back to its Home tile when there is no row to serve (rail folded
+      // or hidden, no row yet). The kit resolves a zoom-out source AFTER
+      // fn reveals the destination, so the rail is on screen and the row
+      // has a measurable rect at that moment, even though it was hidden
+      // while the app ran; the row is committed the whole time an app is
+      // open, because buildActive includes the mounted frame's slug.
+      fromEl: () => (leavingSlug
+        ? (App._resumeRowFor(leavingSlug) || App._tileFor(leavingSlug))
+        : null),
       fallback: fallbackType,
       after: () => {
         av.classList.add('hidden');
@@ -7533,7 +7565,9 @@ const App = {
       : (opts && opts.ref != null ? opts.ref : null);
     const subTab = (opts && opts.subTab) || null;
     if (App.currentApp !== slug) {
-      return App.navigateToApp(slug, tab, ref, subTab);
+      // #3618: a rail row click hands its own element over, so the app view
+      // expands out of the row that was pressed rather than a Home tile.
+      return App.navigateToApp(slug, tab, ref, subTab, opts && opts.sourceEl);
     } else {
       // Same app: switchTab normalizes legacy names, re-renders, and
       // syncs the clean route — idempotent when nothing changed, a forced

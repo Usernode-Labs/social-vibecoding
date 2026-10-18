@@ -40,6 +40,7 @@ function harness() {
   let frameMounted = false;
   let closes = 0;
   let tabRenders = 0;
+  const transitions = [];
   const AppView = {
     appData: null,
     beginLaunch() { frameMounted = true; },
@@ -54,7 +55,7 @@ function harness() {
     location, history, URL, URLSearchParams, console,
     document: { title: '', getElementById: element, querySelector: () => null, addEventListener() {} },
     addEventListener() {}, localStorage: { getItem: () => null },
-    PlatformUI: { transition(fn, opts) { fn(); opts?.after?.(); } },
+    PlatformUI: { transition(fn, opts) { transitions.push(opts); fn(); opts?.after?.(); } },
     Home: { load() {}, publishImproveTarget() {}, _apps: [] },
     AppView,
   });
@@ -76,7 +77,7 @@ function harness() {
   Browse._load = () => {};
   App.bindEvents();
   return {
-    App, Browse, location, context,
+    App, Browse, location, context, transitions,
     visible: id => !element(id).classList.contains('hidden'),
     get frameMounted() { return frameMounted; },
     get closes() { return closes; },
@@ -189,4 +190,75 @@ test('app navigation retires the previous report target before loading, includin
   await retry;
   assert.equal(ui.improveStore.get().slug, 'coffee');
   assert.match(menu(), /improve-row-report/, 'an available app gets its own report action');
+});
+
+// ── #3618: the app view zooms out of, and back into, the rail's row ────
+//
+// The Active rail row carries a Resume pill (#3618) and is the one target,
+// so a press there grows the app out of the ROW — not out of a Home tile
+// the press never touched — and a close shrinks the running view back into
+// it. With no row the old targets stand, byte for byte.
+
+test('a resume pressed on the rail row grows the app out of that row', async () => {
+  const h = harness();
+  const row = {};
+  const tile = {};
+  h.App._tileFor = () => tile;
+  const opening = h.App.navigateToApp('coffee', 'app', null, null, row);
+  h.finishOpen();
+  await opening;
+  const zoom = h.transitions.find((t) => t && t.fromEl);
+  assert.ok(zoom, 'the app view reveals through the kit');
+  assert.equal(zoom.fromEl(), row, 'out of the row that was pressed, not the Home tile');
+});
+
+test('an opening with no row still grows out of the Home tile', async () => {
+  const h = harness();
+  const tile = {};
+  h.App._tileFor = () => tile;
+  const opening = h.App.navigateToApp('coffee');
+  h.finishOpen();
+  await opening;
+  const zoom = h.transitions.find((t) => t && t.fromEl);
+  assert.equal(zoom.fromEl(), tile, 'byte for byte today\'s tile zoom');
+});
+
+test('openAppTab forwards the pressed row to navigateToApp', () => {
+  const h = harness();
+  const seen = [];
+  h.App.navigateToApp = (...args) => { seen.push(args); return Promise.resolve(true); };
+  const row = {};
+  h.App.openAppTab('coffee', 'app', { sourceEl: row });
+  assert.deepEqual(seen, [['coffee', 'app', null, null, row]],
+    'slug, tab, ref and subTab as before, plus the source element');
+  h.App.openAppTab('coffee', 'app');
+  assert.equal(seen[1][4], undefined, 'no source element, none forwarded');
+});
+
+test('closing on the desktop shrinks the app into its Active rail row when there is one', async () => {
+  const h = harness();
+  const opening = h.App.navigateToApp('coffee');
+  h.finishOpen();
+  await opening;
+  const row = {};
+  const tile = {};
+  h.App._resumeRowFor = (slug) => (slug === 'coffee' ? row : null);
+  h.App._tileFor = (slug) => (slug === 'coffee' ? tile : null);
+  h.clickBack();
+  const zoom = h.transitions.findLast((t) => t && t.fromEl);
+  assert.ok(zoom, 'the close runs the zoom-out');
+  assert.equal(zoom.fromEl(), row, 'into the row, not the tile');
+});
+
+test('a close with no Active row keeps the Home tile as its zoom target', async () => {
+  const h = harness();
+  const opening = h.App.navigateToApp('coffee');
+  h.finishOpen();
+  await opening;
+  const tile = {};
+  h.App._resumeRowFor = () => null;
+  h.App._tileFor = (slug) => (slug === 'coffee' ? tile : null);
+  h.clickBack();
+  const zoom = h.transitions.findLast((t) => t && t.fromEl);
+  assert.equal(zoom.fromEl(), tile, 'the tile when there is no row to serve');
 });
