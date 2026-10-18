@@ -3317,6 +3317,50 @@ html[data-browser-scroller] body {
     overscroll-behavior-y: contain;
   }
 }
+
+/* ── EVERY PAGE BOUNCES AT THE BOTTOM, HOWEVER SHORT (#3566) ────────────
+   "Should be able to over scroll on home page down, doesn't feel as native
+   because can't."
+
+   The installed shell holds its document still (`html, body { height:
+   100dvh; overflow: hidden; overscroll-behavior-y: none }` above), so each
+   page scrolls in its own element scroller, and iOS rubber-bands such a
+   scroller only when it can scroll (#3520's measured finding). A page whose
+   content is shorter than the screen has no range and hands the drag to the
+   still document: no bounce at either end, and the kit's pull-to-refresh
+   does not stretch either.
+
+   One invisible pixel hung 1px below the scroller's bottom edge gives every
+   marked page one pixel of range, the technique #3544 shipped for the
+   project Hub. It must not be in flow (a flex chain absorbs it), not a
+   percentage floor (Firefox drops those in these chains), and not the
+   scroller's padding (the tab-bar clearance, #3053). Absolute positioning
+   against the scroller itself — every screen root already carries
+   `position: relative` inline; the declaration below is what gives
+   `.messages-list-scroll` its containing block.
+
+   A phone browser pages the document instead (`data-browser-scroller`),
+   where the pixel would only lengthen the page: no sentinel there, and its
+   bottom edge already bounces (#3565). `pointer: coarse` keeps a mouse out,
+   where the pixel would put a scrollbar on a desktop window. The
+   Communities screen's Needs you reel owns the vertical swipe (#3534) and
+   is fitted to the window on purpose (#3516): no outer page bounce while
+   it is up, or a downward swipe back a card could start scrolling the page
+   under it. */
+@media (pointer: coarse) {
+  html:not([data-browser-scroller]) [data-page-bounce] {
+    position: relative;
+  }
+  html:not([data-browser-scroller]) [data-page-bounce]::after {
+    content: '';
+    position: absolute; left: 0; bottom: -1px;
+    width: 1px; height: 1px;
+    pointer-events: none;
+  }
+  html:not([data-browser-scroller]) #workshop-screen:has([data-workshop-pane="needs"])::after {
+    content: none;
+  }
+}
 /* Body padding reserves these fixed strips at the start of a page. Sticky
    headers must keep reserving them after that padding scrolls away. */
 html[data-browser-scroller] body.has-install-strip {
