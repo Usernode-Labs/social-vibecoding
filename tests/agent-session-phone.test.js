@@ -1,14 +1,20 @@
 'use strict';
 
-// Agent sessions on a phone (#3016), and what the green dot on the Homeroom
-// mark means (#3015).
+// Agent sessions on a phone (#3016, #3577), and what the green dot on the
+// Homeroom mark means (#3015).
 //
 // #3016: at 390px the session bar's five controls (focus, change, Build,
 // Changes, ⋯) came to 537px, and a bar that could not wrap made the whole
 // conversation that wide. The screen clips its overflow, so the right edge of
-// every message and the Send button were simply gone. The bar wraps now, the
-// panel may shrink below its content, and an empty message box is as tall as
-// its hint, which wraps on a phone and was cut off mid-line.
+// every message and the Send button were simply gone. The panel may shrink
+// below its content, and an empty message box is as tall as its hint, which
+// wraps on a phone and was cut off mid-line.
+//
+// #3577: that wrapping fix left the bar itself able to break, so focus and the
+// state took the first row and Changes and the ⋯ fell to a second. The pills
+// and controls are one non-wrapping row now. Only the focus pill shrinks, so a
+// long project name ellipsizes instead of widening the bar; the state pill
+// drops its PR number below 28rem of bar and keeps it above that.
 //
 // #3559: the same failure from inside the transcript. A row holding one
 // unbroken run of text (a pasted link, a path) made the conversation wider
@@ -29,18 +35,31 @@ const { loadTsx, createElement, renderToHtml } = require('./lib/render-tsx');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const panel = read('frontend/src/features/agent-session/index.tsx');
 
-test('#3016: the session bar wraps on every surface, and the panel cannot outgrow the screen', () => {
+test('#3577: the session bar keeps its pills and controls on one line, and only the name gives way', () => {
   const bar = panel.slice(panel.indexOf('function SessionBar('), panel.indexOf('function SessionMenu('));
-  assert.match(bar, /<div className="flex flex-wrap items-center gap-x-2 gap-y-2 [^"]*" data-agent-session-bar>/,
-    'wrapping is not the embedded variant\'s alone any more');
-  assert.doesNotMatch(bar, /embedded \? 'flex-wrap' : ''/);
-  assert.match(bar, /data-agent-session-change-pill\s+className=\{`inline-flex shrink-0 items-center whitespace-nowrap /,
-    'the change pill stays one line');
-  // Changes and the ⋯ end whichever row they land on. Build left the bar
-  // for the composer's "Build with" (#3078).
+  assert.match(bar, /<div className="flex flex-wrap items-center gap-x-2 gap-y-2 [^"]*\[container-type:inline-size\][^"]*" data-agent-session-bar>/,
+    'the bar is the query container, so the Messages pane measures the room it has');
+  // The outer bar may still wrap for the embedded title's own row below `sm`;
+  // the pills themselves never do.
+  assert.match(bar, /className="flex min-w-0 flex-auto flex-nowrap [^"]*" data-agent-session-pills>/,
+    'one non-wrapping row that may shrink below its content');
+  assert.match(bar, /data-agent-session-focus\s+className="inline-flex min-w-0 max-w-\[10rem\] shrink [^"]*"/,
+    'the focus pill is the only one allowed to shrink');
+  assert.match(bar, /<span className="truncate">\{about\?\.focusApp\?\.name \|\| 'Any app'\}<\/span>/,
+    'a long project name ellipsizes');
+  assert.match(bar, /data-agent-session-change-pill\s+className=\{`inline-flex shrink-0 items-center whitespace-nowrap [^`]*`\}/,
+    'the state pill keeps its words on one line');
+  assert.match(bar, /className="hidden \[@container\(min-width:28rem\)\]:inline">\{` · PR #\$\{active\.prNumber\}`\}<\/span>/,
+    'the PR number leaves a narrow bar and returns when it has room');
+  // Changes and the ⋯ end the row. Build left the bar for the composer's
+  // "Build with" (#3078).
   assert.doesNotMatch(bar, /VenuePicker/);
-  assert.match(bar, /data-agent-session-changes-button\s+className="ml-auto [^"]*whitespace-nowrap[^"]*"/);
+  assert.match(bar, /data-agent-session-changes-button\s+className="ml-auto [^"]*shrink-0[^"]*whitespace-nowrap[^"]*"/);
   assert.doesNotMatch(bar, /data-agent-session-changes-button\s+className="[^"]*sm:ml-0/, 'nothing before it to push it right any more');
+  // The phone's tighter gaps and padding make the row fit at 320px.
+  assert.match(bar, /max-sm:gap-x-1\.5/);
+  assert.match(bar, /max-sm:px-2[\s"$]/);
+  assert.match(bar, /max-sm:px-2\.5/);
 
   assert.match(panel, /<div ref=\{root\} className=\{`relative flex min-h-0 min-w-0 flex-1 /,
     'the panel shrinks below its content, so nothing inside can widen the screen');
