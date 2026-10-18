@@ -52,6 +52,14 @@ function evalCss(src, { vars = {}, env = {}, percent = 0, vh = 0 } = {}) {
   function factor() {
     ws();
     if (peek('calc(')) { i += 5; const v = sum(); expect(')'); return v; }
+    if (peek('max(') || peek('min(')) {
+      const pick = peek('max(') ? Math.max : Math.min;
+      i += 4;
+      const args = [sum()];
+      while (peek(',')) { i += 1; args.push(sum()); }
+      expect(')');
+      return pick(...args);
+    }
     if (peek('(')) { i += 1; const v = sum(); expect(')'); return v; }
     if (peek('var(') || peek('env(')) {
       const table = peek('var(') ? vars : env;
@@ -98,6 +106,9 @@ test('the evaluator reads the grammar the modal rules are written in', () => {
     { vars: { '--a': 10, '--b': 40 }, percent: 800 }), 390);
   assert.equal(evalCss('var(--missing, env(safe-area-inset-top, 7px))'), 7);
   assert.equal(evalCss('var(--x, calc(100dvh - 32px))', { vh: 812 }), 780);
+  assert.equal(evalCss('max(0px, var(--a, 0px) - var(--b, 0px))', { vars: { '--a': 337, '--b': 337 } }), 0);
+  assert.equal(evalCss('max(0px, var(--a, 0px) - var(--b, 0px))', { vars: { '--a': 200, '--b': 300 } }), 0);
+  assert.equal(evalCss('max(0px, var(--a, 0px) - var(--b, 0px))', { vars: { '--a': 312 } }), 312);
   assert.throws(() => evalCss('var(--x)'), /no value and no fallback/);
 });
 
@@ -129,6 +140,12 @@ const SHELL_SHIFTS = rules(APP_CSS, 'html.un-kb .un-modal').filter((body) => /(^
 const SHELL_SHIFT = SHELL_SHIFTS.length === 1 ? declared(SHELL_SHIFTS[0], 'translate') : null;
 /** The vertical half of `translate: 0 <y>`. */
 const SHELL_PAN = SHELL_SHIFT && SHELL_SHIFT.replace(/^0\s+/, '');
+
+// The composer column (#1937, #3571): a flex pane whose footer reserves the
+// keyboard. Its `padding-bottom` is evaluated below against measured frames.
+const KB_COLUMNS = rules(APP_CSS, 'html.un-kb .platform-kb-column');
+assert.equal(KB_COLUMNS.length, 1, 'app.css has one composer column rule');
+const KB_COLUMN_RESERVE = declared(KB_COLUMNS[0], 'padding-bottom');
 
 test('the shell moves the kit modal by the pan in exactly one rule, and leaves `top` to the kit', () => {
   assert.equal(SHELL_TOPS.length, 0, 'app.css does not restate the kit\'s top');
@@ -243,6 +260,53 @@ test('pinch zoom is not a keyboard: the offset is ignored and the kit decides', 
   const frame = { layout: 844, vvHeight: 422, offsetTop: 300, scale: 2, content: FEEDBACK };
   assert.equal(visualViewportTop(frame), 0);
   assert.deepEqual(place(frame), place(frame, { pan: false }));
+});
+
+// ── The composer against the screen (#3571) ──────────────────────────────
+//
+// The composer column reserves the keyboard as `padding-bottom`. The keys
+// cover the bottom `inset` of the layout viewport, but on iOS Safari the page
+// has ALREADY been moved up by the pan to reveal the focused field: reserving
+// the full inset there lifts the composer a second time, past the top edge.
+// The shipped declaration reserves `max(0, inset - pan)`, so its foot must sit
+// on the bottom edge of the band that is on screen.
+
+/** The shipped composer reserve for one measured frame. */
+function composerReserve(frame) {
+  const scale = frame.scale == null ? 1 : frame.scale;
+  const kb = physics.keyboardInset({
+    layoutHeight: frame.layout,
+    vvHeight: frame.vvHeight,
+    vvScale: scale,
+  });
+  const vars = {
+    '--un-kb-inset': kb,
+    '--platform-vv-top': visualViewportTop({ offsetTop: frame.offsetTop, scale }),
+  };
+  return evalCss(KB_COLUMN_RESERVE, { vars, percent: frame.layout, vh: frame.layout });
+}
+
+test('the composer reserves only the keyboard the page has not already panned past', () => {
+  const frames = [
+    ['iPhone Safari', IOS_SAFARI, 0],
+    ['iPhone installed', IOS_STANDALONE, 0],
+    ['Android', ANDROID, 312],
+    ['Safari, pan not landed yet', { layout: 714, vvHeight: 377, offsetTop: 0 }, 337],
+  ];
+  for (const [name, frame, expected] of frames) {
+    const reserve = composerReserve(frame);
+    assert.equal(reserve, expected, `${name}: reserves ${reserve}px`);
+    // The composer's foot lands on the band's bottom edge — just above the
+    // keys — in every frame.
+    assert.equal(frame.layout - reserve, frame.offsetTop + frame.vvHeight,
+      `${name}: the composer's foot is the band's bottom edge`);
+  }
+});
+
+test('a pan larger than the inset reserves zero, never a negative padding', () => {
+  // An overscroll/rounding frame where the reported pan overruns the inset.
+  const frame = { layout: 714, vvHeight: 400, offsetTop: 350 };
+  assert.equal(composerReserve(frame), 0);
 });
 
 // ── The offset ───────────────────────────────────────────────────────────

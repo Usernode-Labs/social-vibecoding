@@ -378,9 +378,20 @@ html.un-kb .platform-safe-sheet {
    stays visible, the composer sits above the keys, and nothing needs to pan,
    which leaves the settled pin inert rather than destructive.
 
+   The pan is subtracted, not ignored (#3571). iOS Safari has already moved
+   the page up to reveal the focused field, and `lib/visual-viewport.ts`
+   publishes that pan as `--platform-vv-top` — the same value app.css adds to
+   a kit modal. Reserving the whole inset ON TOP of the pan lifted the
+   composer twice, out of the visible band, and the transcript went with it.
+   Reserving only what the pan has not covered leaves the composer on the
+   band's bottom edge on iOS; Android does not pan, so there the full inset
+   is still reserved, and a desktop never sets `un-kb` at all.
+
    Transition shape copied from the kit's own `.un-kb-avoid`: none while the
    keyboard is up so the bar tracks it exactly, eased on the way out so the
-   browser's scrollTop clamp rides the ease instead of snapping.
+   browser's scrollTop clamp rides the ease instead of snapping. That `none`
+   matters here too: the pan lands in the same frame as the inset, so the
+   composer tracks it instead of easing away from it.
 
    A column that takes this must NOT also carry `.un-kb-avoid` on its
    scroller — that would reserve the inset twice and leave dead space under
@@ -390,7 +401,7 @@ html.un-kb .platform-safe-sheet {
 }
 
 html.un-kb .platform-kb-column {
-  padding-bottom: var(--un-kb-inset, 0px);
+  padding-bottom: max(0px, var(--un-kb-inset, 0px) - var(--platform-vv-top, 0px));
   transition: none;
 }
 
