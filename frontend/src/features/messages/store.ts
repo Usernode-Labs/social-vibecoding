@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 
 import { t } from '../../lib/i18n/runtime';
 import { navStore } from '../nav/nav-store.js';
+import { SIDEBAR_ROWS_QUERY } from '../nav/sidebar-rows';
 import { messagesDrawerApplies } from '../nav-drawer/messages-drawer';
 import * as api from './api';
 import { WORK_CHANGED_EVENT, inMainStream, openAppTarget, threadsAllowed } from './bot-shared';
@@ -1113,10 +1114,17 @@ export const LIST_BESIDE_MIN_WIDTH = 860;
  */
 export function measureLayout(width: number): void {
   if (!(width > 0)) return;
-  const crowded = !isMobile() && width < LIST_BESIDE_MIN_WIDTH;
+  // v3: from 1024px the list is in the sidebar, never beside the
+  // conversation (./index.tsx `messages-list-in-rail`), so nothing crowds it.
+  const crowded = !isMobile() && !sidebarRowsUp() && width < LIST_BESIDE_MIN_WIDTH;
   if (crowded === state.listCrowded) return;
   publish({ listCrowded: crowded });
   if (state.route.open) syncChrome();
+}
+
+function sidebarRowsUp(): boolean {
+  try { return typeof window !== 'undefined' && window.matchMedia(SIDEBAR_ROWS_QUERY).matches; }
+  catch { return false; }
 }
 
 /** One pane at a time: a phone, or a strip too narrow for both (#4229). */

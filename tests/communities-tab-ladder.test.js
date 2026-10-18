@@ -198,8 +198,12 @@ test('the tab bar: the lit Communities tab is the ladder at every width, and hol
   const src = read('frontend/src/features/nav/tab-bar.tsx');
   const click = src.slice(src.indexOf('const onTabClick = '), src.indexOf('return (', src.indexOf('const onTabClick = ')));
   assert.match(click, /if \(key === 'workshop' && lit === 'workshop' && tab === 'workshop'\) \{\s*event\.preventDefault\(\);\s*pressLitTab\(screen\);\s*return;\s*\}/);
-  assert.doesNotMatch(click, /toggleSwitcher|openSwitcher|matchMedia|goToCommunity/,
-    'no width decides it, and a press never opens the switcher');
+  // v3: in the sidebar of rows the tab is "All 13 communities" and goes
+  // there (a community's own row is the way up its page); on the list it
+  // only scrolls. The strip and the phone's bar keep the ladder.
+  assert.match(click, /if \(key === 'workshop' && sidebarRows\) \{\s*event\.preventDefault\(\);\s*if \(screen === 'workshop-screen'\) pressLitTab\(screen\);\s*else goToCommunity\(null\);\s*return;\s*\}/);
+  assert.doesNotMatch(click, /toggleSwitcher|openSwitcher|matchMedia/,
+    'no media query decides it, and a press never opens the switcher');
   assert.doesNotMatch(src, /toggleSwitcher/);
   // No hold: the old switcher would open over the phone's drawer (18 Oct 2026).
   assert.doesNotMatch(src, /createSwitcherHold|holdProps|onContextMenu/);

@@ -489,11 +489,13 @@ export function WorkshopScreen() {
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
   useNeedsSeen();
-  // D (18 Oct 2026): FROM 1024px THE LIST IS A COLUMN AND NEEDS YOU IS THE
-  // PAGE BESIDE IT (../nav/sidebar-rows.ts; app.css lays them out). Both
-  // panes are drawn there, under a search that filters the list by name into
-  // one list, as the phone's drawer does. False on the first render, so the
-  // prerender is the one page it always was.
+  // D (18 Oct 2026): FROM 1024px THE LIST HAS A SEARCH at its head, which
+  // filters it by name into one list, as the phone's drawer does, and which
+  // the sidebar's Communities heading opens (../nav/sidebar-rows.ts). It was
+  // a column there with Needs you beside it; with v3's nested sidebar there
+  // are no second columns, so it is the one page it is on a phone, Needs
+  // you a row at its top. False on the first render, so the prerender is
+  // the page it always was.
   const wide = useSidebarRows();
   const [query, setQuery] = useState('');
   const [lit, setLit] = useState(false);
@@ -507,6 +509,8 @@ export function WorkshopScreen() {
   useEffect(() => {
     if (!state.open || !wide || asked <= answered.current) return undefined;
     answered.current = asked;
+    // The search is at the list's head, so from Needs you it goes back to the list.
+    if (state.tab !== 'status') workshopController.setTab('status');
     let frames = 0;
     let raf = 0;
     const tryFocus = () => {
@@ -522,6 +526,8 @@ export function WorkshopScreen() {
     };
     tryFocus();
     return () => window.cancelAnimationFrame(raf);
+    // `state.tab` is read once, not followed: a change of it re-running this
+    // would cancel the focus it is waiting to give.
   }, [asked, state.open, wide]);
   // Leaving the screen ends a search.
   useEffect(() => {
@@ -606,8 +612,8 @@ export function WorkshopScreen() {
             feed must not throw the list's rows away to redraw them. The feed
             is all client data, so it renders only while it is showing, which
             keeps the cold document as small as it was. */}
-        <div data-workshop-pane="status" className={state.tab === 'status' || wide ? '' : 'hidden'}>
-          {/* D: THE SEARCH, at the head of the column from 1024px (app.css
+        <div data-workshop-pane="status" className={state.tab === 'status' ? '' : 'hidden'}>
+          {/* D: THE SEARCH, at the head of the list from 1024px (app.css
               draws it there only): your communities by name, as one list,
               in the drawer's words. Lit while the sidebar's search put the
               caret in it. */}
@@ -641,9 +647,9 @@ export function WorkshopScreen() {
           ) : null}
           {/* NEEDS YOU, when something waits: how many votes are owed across
               your projects, which projects, and the way to them. A zero says
-              nothing, so the row is not drawn over a quiet day. Beside the
-              feed (from 1024px, where alone a search runs) app.css leaves it
-              out: the feed is the page. */}
+              nothing, so the row is not drawn over a quiet day. While a
+              search is up (from 1024px) app.css puts it away with the
+              sections: the answer is the whole list. */}
           {totals && totals.owed > 0 ? (
             <section data-workshop-needs-door="" aria-labelledby="workshop-needs-heading">
               <SectionHeader id="workshop-needs-heading">{t('communities:needsYou.heading')}</SectionHeader>
@@ -756,7 +762,7 @@ export function WorkshopScreen() {
             </GroupedList>
           ) : null}
         </div>
-        {state.tab === 'needs' || wide ? (
+        {state.tab === 'needs' ? (
           <div data-workshop-pane="needs">
             {/* The way back to the list, and the page's name: the project
                 page's own page head (app.css .dev-ws-pagehead). */}

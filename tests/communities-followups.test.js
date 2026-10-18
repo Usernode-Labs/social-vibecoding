@@ -131,8 +131,10 @@ test('#3516: on a phone the Communities feed ends where the screen\'s clearance 
     'the screen scrolls itself and carries the clearance');
   assert.match(screen, /style=\{\{ position: 'relative' \}\}\s*>\s*\{\/\*[\s\S]*?\*\/\}\s*<div className="max-w-2xl mx-auto pb-8" data-workshop-panes="">/,
     'its first element is the column');
-  // D: from 1024px the feed is drawn beside the list as well (sidebar-rows.ts).
-  assert.match(screen, /\{state\.tab === 'needs' \|\| wide \? \(\n\s*<div data-workshop-pane="needs">/);
+  // v3: the feed is its own page at every width again, as on a phone; from
+  // 1024px it was drawn beside the list (D) until the sidebar nested its
+  // second columns.
+  assert.match(screen, /\{state\.tab === 'needs' \? \(\n\s*<div data-workshop-pane="needs">/);
   const reel = read('frontend/src/features/workshop/needs-reel.tsx');
   assert.match(reel, /<>\n\s*<div className="workshop-needs-feed" data-needs-reel="">/, 'the feed is a child of the pane');
   // And the clearance counts the strip: one token for the bar and the strip,

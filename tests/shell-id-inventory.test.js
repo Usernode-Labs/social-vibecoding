@@ -1083,6 +1083,7 @@ const ADDED_IDS = {
   // rows arrive with the community list, so they carry no ids.
   'platform-rail-communities': 'D: the sidebar\'s Communities section (role=group), between #platform-tab-messages and #platform-tab-workshop. dapp.json pins the bar order through it.',
   'platform-rail-communities-label': 'D: the section\'s "Communities" heading, which names the group.',
+  'platform-rail-conversations': 'v3: the conversations nested under Messages in the sidebar of rows, right after #platform-tab-messages; an empty element while shut, so the bar\'s order is one order. dapp.json pins it there.',
   'platform-rail-search': 'D: the search beside that heading, shown on hover or focus: All communities with its search box focused and lit (features/workshop/communities-search.ts). dapp.json selects on it.',
   'workshop-search': 'D: the search at the head of All communities\' column (features/workshop/index.tsx), drawn by app.css from 1024px only: your communities by name, as one list. Prerendered empty.',
 };

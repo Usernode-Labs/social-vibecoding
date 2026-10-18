@@ -174,7 +174,7 @@ test('the Communities, Messages and Discover steps point at the bar\'s own tabs,
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /\{ key: 'workshop' as const, label: 'core:tabs\.communities', href: '#communities', Icon: UserGroupIcon \}/);
   assert.match(bar, /\{ key: 'messages' as const, label: 'core:tabs\.messages', href: '#messages', Icon: ChatIcon \}/);
-  assert.match(bar, /\{ key: 'discover' as const, label: 'core:tabs\.discover', href: '#apps', Icon: SearchIcon \}/);
+  assert.match(bar, /\{ key: 'discover' as const, label: 'core:tabs\.discover', href: '#apps', Icon: CompassIcon \}/);
   assert.deepEqual(['communities', 'messages', 'discover'].map((tab) => message(`core:tabs.${tab}`)),
     ['Communities', 'Messages', 'Discover']);
   assert.match(bar, /id=\{`platform-tab-\$\{key\}`\}/);

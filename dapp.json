@@ -2971,9 +2971,9 @@
       "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn) #notifications-btn"
     },
     {
-      "name": "The bar's destination order: Home, Discover, Messages in the middle, Communities, then you (#1443); on a wide window your communities sit just above the Communities tab (D)",
+      "name": "The bar's destination order: Home, Discover, Messages in the middle, Communities, then you (#1443); on a wide window Messages' nested conversations follow it and your communities sit just above the Communities tab (D, v3)",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-rail-communities + #platform-tab-workshop[href=\"#communities\"] + #platform-strip-apps + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-discover + #platform-tab-messages + #platform-rail-conversations + #platform-rail-communities + #platform-tab-workshop[href=\"#communities\"] + #platform-strip-apps + #platform-tab-me"
     },
     {
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
@@ -3002,9 +3002,9 @@
       "expectText": "[Mock] Did the notifications change land yet?"
     },
     {
-      "name": "The Messages strip leads with a search box, not a second copy of the screen's name (#2718 review)",
+      "name": "The Messages strip leads with a search box, not a second copy of the screen's name (#2718 review); on a desktop the list is the page, All messages, lit under Messages in the sidebar (v3)",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.dc-lift.dc-lift-strip .messages-list-pane:not(:has(.messages-list-toolbar)) .messages-search input"
+      "expectSelector": "body:has(#platform-rail-conversations a[data-rail-all-messages][aria-current=\"page\"]) #messages-screen:not(.hidden) .messages-layout.dc-lift-strip.messages-list-page .messages-list-pane:not(:has(.messages-list-toolbar)) .messages-search input"
     },
     {
       "name": "...and a styled empty pane where the conversation goes",
@@ -3224,10 +3224,10 @@
       "expectText": "Public communities"
     },
     {
-      "name": "The Communities screen draws no empty-state line while it has rows; beside the sidebar, whose Communities heading holds its search, it is a column of your communities under a search with Needs you beside it; no chip on the page, and the page bounces (#3051, #852, #3566, D)",
+      "name": "The Communities screen draws no empty-state line while it has rows; beside the sidebar, whose Communities heading holds its search, it is one page of your communities under a search, nothing beside it; no chip on the page, and the page bounces (#3051, #852, #3566, D, v3)",
       "path": "/?demo=1#workshop",
-      "expectSelector": "body:has(#platform-rail-search) #workshop-screen[data-page-bounce]:not(.hidden):has(#workshop-search):has([data-workshop-pane=\"needs\"]):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden",
-      "expectText": "Needs you"
+      "expectSelector": "body:has(#platform-rail-search) #workshop-screen[data-page-bounce]:not(.hidden):has(#workshop-search):not(:has([data-workshop-pane=\"needs\"])):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden",
+      "expectText": "Join a community"
     },
     {
       "name": "Communities: Needs you is a project’s own feed, every project mixed, each item naming its project, with the rail from Vote to More (#3270, #3488); a Just-you change's vote sheet asks for your approval (#4313)",
@@ -4768,9 +4768,9 @@
       "expectSelector": "#platform-tabs > #platform-strip-apps + a#platform-tab-me + a#platform-rail-settings:last-child"
     },
     {
-      "name": "#4417: on a wide window a project's places are the column beside the strip, and the place on show is lit there (Needs you)",
+      "name": "#4417, v3: on a desktop a project's places are nested under its row in the sidebar, the place on show lit there (Needs you), and the column beside the strip steps aside",
       "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
-      "expectSelector": "#platform-section-column:not(.hidden) > [data-places=\"usernode-2d5619\"] [data-place=\"needs\"][aria-current=\"page\"]",
+      "expectSelector": "body:has(#platform-section-column.hidden) #platform-rail-communities > a[data-rail-community=\"usernode-2d5619\"][aria-current=\"page\"][data-rail-open] + .platform-rail-nest [data-places=\"usernode-2d5619\"] [data-place=\"needs\"][aria-current=\"page\"]",
       "expectText": "Needs you"
     },
     {

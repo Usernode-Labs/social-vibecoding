@@ -27,13 +27,16 @@
  * labelled by its heading. A count says what it counts to a screen reader
  * (an `sr-only` phrase, "29 to vote", "3 unread"), and a zero says nothing.
  *
- * Drawn in two places, never both at once: the section column beside the
- * strip on a wide window (../../nav/section-column.tsx), and the tray behind
- * the place bar on a phone (./places-tray.tsx), which adds "Switch
- * community" at its foot.
+ * Drawn in three places, never two at once: nested under the community's
+ * row in the desktop's sidebar of rows from 1024px (../../nav/rail-communities.tsx,
+ * v3), the section column beside the strip below that
+ * (../../nav/section-column.tsx), and the tray behind the place bar on a
+ * phone (./places-tray.tsx), which adds "Switch community" at its foot. The
+ * sidebar keeps its list short: topics after the first `fold` wait behind
+ * "Show N more", less the one you are on, which is always drawn.
  */
 
-import { useId, type MouseEvent, type ReactNode } from 'react';
+import { useId, useState, type MouseEvent, type ReactNode } from 'react';
 
 import { BallotIcon, BoardIcon, HashIcon, Squares2X2Icon, UserGroupIcon } from '@/components/ui/icons';
 
@@ -124,25 +127,33 @@ function PlaceLink({ slug, k, label, count, lit, title, extra, onPlace }: {
   );
 }
 
-export function ProjectPlaces({ slug, name, place, owed, places, filtered = false, onPlace, onSwitch }: {
+export function ProjectPlaces({ slug, name, place, owed, places, filtered = false, fold, onPlace, onSwitch }: {
   slug: string;
   /** The project's name, which names the list for a screen reader. */
   name: string;
-  /** The place on show; a page under one (All items, the plan) lights it. */
-  place: PlaceKey;
+  /** The place on show; a page under one (All items, the plan) lights it. Null lights none (not known yet). */
+  place: PlaceKey | null;
   /** Votes waiting on the viewer here (the page's own count). */
   owed: number;
   places: PlacesPayload | null | undefined;
   /** All items' search or filters are on: a dot on the Workshop (#2915). */
   filtered?: boolean;
+  /** v3's sidebar: how many topics to draw before "Show N more". All of them when absent. */
+  fold?: number;
   onPlace: (key: PlaceKey) => void;
   /** The tray's foot: "Switch community". */
   onSwitch?: (el: HTMLElement | null) => void;
 }): ReactNode {
   const t = useMessages('project');
   const id = useId();
-  const lit = litPlace(place);
+  const lit = place ? litPlace(place) : null;
   const rows = placeRows(places, owed);
+  // Shown in full once asked, for as long as the list is up for this project.
+  const [unfolded, setUnfolded] = useState<string | null>(null);
+  const topics = fold != null && unfolded !== slug
+    ? rows.topics.filter((topic, i) => i < fold || topic.key === lit)
+    : rows.topics;
+  const more = rows.topics.length - topics.length;
   const channelsId = `${id}-channels`;
   const topicsId = `${id}-topics`;
   return (
@@ -180,7 +191,7 @@ export function ProjectPlaces({ slug, name, place, owed, places, filtered = fals
         {rows.topics.length ? (
           <div className="dev-ws-places-group" role="group" aria-labelledby={topicsId} data-places-group="topics">
             <div id={topicsId} className="dev-ws-places-head">{t('project:places.list.topics')}</div>
-            {rows.topics.map((t) => (
+            {topics.map((t) => (
               <PlaceLink
                 key={t.key}
                 slug={slug}
@@ -192,6 +203,11 @@ export function ProjectPlaces({ slug, name, place, owed, places, filtered = fals
                 onPlace={onPlace}
               />
             ))}
+            {more > 0 ? (
+              <button type="button" className="dev-ws-place dev-ws-places-more" data-places-more="" onClick={() => setUnfolded(slug)}>
+                <span className="dev-ws-place-label">{t('project:places.list.showMore', { count: more })}</span>
+              </button>
+            ) : null}
           </div>
         ) : null}
       </nav>

@@ -415,6 +415,12 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M6 7a4 4 0 108 0 4 4 0 10-8 0z',
     'M21.38 16.63a2.12 2.12 0 00-3-3l-4.01 4a2 2 0 00-.51.86l-.84 2.87a.5.5 0 00.62.62l2.87-.84a2 2 0 00.86-.51z',
     'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z',
+    // ── v3 (18 Oct 2026): All messages, under Messages in the sidebar ──
+    //
+    // ChatsIcon (two paths) draws only while the inbox is open in the
+    // sidebar of rows, which the prerender never is.
+    'M4 5.5h10.5a1.5 1.5 0 011.5 1.5v5.5a1.5 1.5 0 01-1.5 1.5H9l-3.5 3v-3H4a1.5 1.5 0 01-1.5-1.5V7A1.5 1.5 0 014 5.5z',
+    'M19 9h.5a1.5 1.5 0 011.5 1.5v5a1.5 1.5 0 01-1.5 1.5H19v3l-3.5-3h-3',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });

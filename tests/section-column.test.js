@@ -58,18 +58,19 @@ test('which column: a project\'s places under Communities, none anywhere else', 
   assert.equal(columnFor({ screen: 'browse-screen', tab: 'discover', placeSlug: 'notes' }), null, 'Discover');
   // Messages' column is its own list (below), not this element.
   assert.equal(columnFor({ screen: 'messages-screen', tab: 'messages', placeSlug: 'notes' }), null);
-  // An item's page open beside the list: the column steps aside for it
-  // where the window has no room for both, and stays where it has.
+  // An item's page open beside the list: the column steps aside for it,
+  // the strip, the column, the list and the panel not fitting under 1024px.
   const page = { screen: 'app-view', tab: 'workshop', placeSlug: 'notes' };
-  assert.equal(columnFor({ ...page, side: true, roomBesideSide: false }), null, 'under 1404px');
-  assert.equal(columnFor({ ...page, side: true, roomBesideSide: true }), 'places', 'from 1404px');
-  assert.equal(columnFor({ ...page, side: false, roomBesideSide: false }), 'places', 'no panel open');
+  assert.equal(columnFor({ ...page, side: true }), null, 'a panel open');
+  assert.equal(columnFor({ ...page, side: false }), 'places', 'no panel open');
+  // v3: from 1024px the sidebar of rows nests the places, and there is no column.
+  assert.equal(columnFor({ ...page, sidebarRows: true }), null, 'the sidebar of rows');
 });
 
-test('the column steps aside for the side panel under 1404px, told by the page', () => {
+test('the column steps aside for the side panel, told by the page, and for the sidebar of rows', () => {
   const src = read(COLUMN);
-  assert.match(src, /export const COLUMN_BESIDE_SIDE_QUERY = '\(min-width: 1404px\)';/);
-  assert.match(src, /const roomBesideSide = useMatches\(COLUMN_BESIDE_SIDE_QUERY\);\s*const column = columnFor\(\{ screen, tab, placeSlug: place\.slug, side: place\.side, roomBesideSide \}\);/);
+  assert.doesNotMatch(src, /COLUMN_BESIDE_SIDE_QUERY|roomBesideSide/, 'from 1024px there is no column to keep beside the panel');
+  assert.match(src, /const sidebarRows = useSidebarRows\(\);\s*const column = columnFor\(\{ screen, tab, placeSlug: place\.slug, side: place\.side, sidebarRows \}\);/);
   const { placeStore, publishPlace, publishSide, clearPlace } = loadTsx('frontend/src/features/dev-board/workshop/place-store.ts');
   publishPlace('notes', 'all', 0);
   assert.equal(placeStore.get().side, false);

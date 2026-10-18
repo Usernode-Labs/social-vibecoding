@@ -1,11 +1,12 @@
 'use strict';
 
-// D (18 Oct 2026) — from 1024px the desktop's rail is one 184px sidebar of
+// D (18 Oct 2026) — from 1024px the desktop's rail is one sidebar of
 // rows: Home, Discover and Messages, then your communities under a
 // Communities heading (five, then the Communities tab as their "All 13
 // communities" row), then Pinned and Recent apps, and you at the foot. The
-// header's name is a name there, not the switcher, and All communities is a
-// column beside Needs you, under a search the heading's hover search opens.
+// header's name is a name there, not the switcher, and All communities has a
+// search at its head the heading's hover search opens. v3 (212px, its nested
+// rows, All communities as one page) is ./desktop-sidebar-nested.test.js.
 //
 // What is pinned, each a way it could quietly go back:
 //
@@ -114,19 +115,20 @@ test('the search: All communities, with its box focused and lit once it shows', 
   assert.match(screen, /input\.focus\(\{ preventScroll: true \}\);/);
   assert.match(screen, /onBlur=\{\(\) => setLit\(false\)\}/, 'lit until focus leaves');
   assert.match(screen, /placeholder=\{t\('communities:drawer\.search\.placeholder'\)\}/, 'the drawer\'s words');
-  assert.match(screen, /\{state\.tab === 'needs' \|\| wide \? \(/, 'Needs you beside the list');
+  assert.match(screen, /\{state\.tab === 'needs' \? \(/, 'v3: Needs you is its own page, not beside the list');
+  assert.match(screen, /if \(state\.tab !== 'status'\) workshopController\.setTab\('status'\);/, 'the search is at the list\'s head');
 });
 
 test('the width: one block from 1024px; the strip, the phone\'s bar and the header\'s switcher below it', () => {
   const { SIDEBAR_ROWS_QUERY } = loadTsx('frontend/src/features/nav/sidebar-rows.ts');
   assert.equal(SIDEBAR_ROWS_QUERY, '(min-width: 1024px)');
   const css = read('public/css/app.css');
-  assert.match(css, /\.platform-rail-communities,\n\.platform-tab-all-glyph,\n\.platform-tab-all-label,\n\.platform-tab-all-votes,\n\.platform-strip-head,\n\.workshop-search \{\n  display: none;\n\}/,
+  assert.match(css, /\.platform-rail-communities,\n\.platform-rail-conversations,\n\.platform-tab-all-glyph,\n\.platform-tab-all-label,\n\.platform-tab-all-votes,\n\.platform-strip-head,\n\.workshop-search \{\n  display: none;\n\}/,
     'nothing of it is drawn outside the block');
   const at = css.indexOf('@media (min-width: 1024px) {\n  /* THE ONE NUMBER THE REST FOLLOWS.');
   assert.ok(at > 0, 'the block');
   const block = css.slice(at, css.indexOf('\n}\n', at));
-  assert.match(block, /body \{\n    --platform-rail-full: 184px;\n  \}/, 'the token everything placed by the strip reads');
+  assert.match(block, /body \{\n    --platform-rail-full: 212px;\n  \}/, 'the token everything placed by the strip reads');
   assert.match(block, /\.platform-rail-communities:hover \.platform-rail-search,\n  \.platform-rail-communities:has\(\+ #platform-tab-workshop:hover\) \.platform-rail-search,\n  \.platform-rail-search:focus-visible \{\n    opacity: 1;/,
     'the search shows over the section and All');
   assert.match(block, /@media \(hover: none\) \{\n    \.platform-rail-search \{ opacity: 1; \}/, 'and stays where there is no hover');
@@ -139,8 +141,8 @@ test('the width: one block from 1024px; the strip, the phone\'s bar and the head
   // The tab's own name follows what it shows.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /\? \(sidebarRows \? undefined : communitiesAriaLabel\(scoped\)\)/);
-  // The column beside an item's panel makes room for the wider sidebar.
-  assert.match(read('frontend/src/features/nav/section-column.tsx'), /COLUMN_BESIDE_SIDE_QUERY = '\(min-width: 1404px\)'/);
+  // v3: there is no section column beside the sidebar, which nests the places.
+  assert.match(read('frontend/src/features/nav/section-column.tsx'), /if \(input\.sidebarRows \|\| input\.side\) return null;/);
 });
 
 test('the apps: Pinned while something is pinned, then Recent apps, as headings the strip never draws', () => {
