@@ -4698,6 +4698,8 @@ export function DevWorkshop(): ReactNode {
         places={community?.places}
         // #2915: not while All items is up, where the search box says so.
         filtered={!!v.meta.filtered && tab !== 'all'}
+        // Its app first, as in the sidebar; Homeroom's own has none.
+        app={!actions.selfHosted}
         onPlace={choosePlace}
         onSwitch={(el) => {
           trayNav.current = true;

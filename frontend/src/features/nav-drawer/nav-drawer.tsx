@@ -172,7 +172,7 @@ export function NavDrawer(): ReactNode {
 
   if (!on || !slug || typeof document === 'undefined') return null;
   return createPortal(
-    <DrawerSurface slug={slug} name={name} place={place} owed={pageUp ? placed.owed : 0} />,
+    <DrawerSurface slug={slug} name={name} place={place} owed={pageUp ? placed.owed : 0} selfHosted={selfHosted} />,
     document.body,
   );
 }
@@ -195,7 +195,7 @@ function screenWidth(): number {
   return Math.max(1, document.documentElement.clientWidth || window.innerWidth || 1);
 }
 
-function DrawerSurface({ slug, name, place, owed }: { slug: string; name: string; place: string; owed: number }): ReactNode {
+function DrawerSurface({ slug, name, place, owed, selfHosted = false }: { slug: string; name: string; place: string; owed: number; selfHosted?: boolean }): ReactNode {
   const t = useMessages('communities');
   const { level, searching, moving } = useStoreState(drawerStore);
   const community = useCachedCommunity(slug);
@@ -503,6 +503,8 @@ function DrawerSurface({ slug, name, place, owed }: { slug: string; name: string
               place={place as PlaceKey}
               owed={owed}
               places={community?.places}
+              // Its app first, as in the desktop sidebar; Homeroom's own has none.
+              app={!selfHosted}
               onPlace={choosePlace}
             />
           </div>

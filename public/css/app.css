@@ -19108,6 +19108,9 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
 .dev-ws-place-hash { width: 18px; height: 18px; margin: 0 1px; }
 .dev-ws-place[aria-current="page"] .dev-ws-place-glyph { color: inherit; }
 .dev-ws-place-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The App row's "still open" dot (features/app-frame/live-apps.tsx), at the
+   row's end where a count sits, without the ring a launcher tile needs. */
+.dev-ws-place-live { width: 8px; height: 8px; margin-right: 4px; box-shadow: none; }
 .dev-ws-place-count {
   flex-shrink: 0; min-width: 20px; height: 20px; padding: 0 6px; box-sizing: border-box;
   border-radius: 999px; background: var(--accent); color: #fff;

@@ -16,7 +16,13 @@
  *   # homeroom-bot
  *
  * A project with no topics has no Topics heading: Hub, Needs you, Workshop
- * and #general. Retired topics are not listed; their channels stay readable
+ * and #general.
+ *
+ * ITS APP LEADS (18 Oct 2026, `app`): App, above Hub, with the green "still
+ * open" dot while it runs in a kept frame, in the tray and the phone's
+ * drawer, as in the desktop sidebar (which draws its own, outside this list,
+ * so a running app's row can stay when the places fold away). Not for
+ * Homeroom's own project, whose app is the platform you are in. Retired topics are not listed; their channels stay readable
  * by their links (a merge's card, a `#name` in a message).
  *
  * A `<nav>` of links, because each entry is somewhere to go: an anchor with
@@ -39,10 +45,12 @@
 
 import { useId, useState, type MouseEvent, type ReactNode } from 'react';
 
-import { BallotIcon, BoardIcon, HashIcon, Squares2X2Icon, UserGroupIcon } from '@/components/ui/icons';
+import { AppWindowIcon, BallotIcon, BoardIcon, HashIcon, Squares2X2Icon, UserGroupIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
-import { t as translate } from '../../../lib/i18n/runtime';
+import { listText, t as translate } from '../../../lib/i18n/runtime';
+import { liveAppLabel, LiveAppDot, useLiveAppSlugs } from '../../app-frame/live-apps';
+import { noteResumeOrigin } from '../../nav/resume-motion';
 import type { PlacesPayload } from './community-card';
 import { channelPlace, litPlace, liveTopics, PAGE_PLACES, placeHref, type PlaceKey } from './places';
 
@@ -128,7 +136,37 @@ function PlaceLink({ slug, k, label, count, lit, title, extra, onPlace }: {
   );
 }
 
-export function ProjectPlaces({ slug, name, place, owed, places, filtered = false, fold, onPlace, onSwitch }: {
+/** The project's app, the list's first row: it opens the app, and a running one resumes. */
+function AppPlace({ slug, name }: { slug: string; name: string }) {
+  const t = useMessages('project');
+  const running = useLiveAppSlugs().includes(slug);
+  const label = t('project:places.list.appOf', { project: name });
+  return (
+    <a
+      className="dev-ws-place"
+      href={`/app/${encodeURIComponent(slug)}`}
+      data-place-app=""
+      {...(running ? { 'data-live': 'true' } : null)}
+      // "Chess app", and that it is still open: the row's words are only "App".
+      aria-label={running ? listText([label, liveAppLabel()]) : label}
+      onClick={(event: MouseEvent<HTMLAnchorElement>) => {
+        const nav = (window as unknown as { NavLink?: { isNativeClick?: (e: unknown) => boolean } }).NavLink;
+        if (nav?.isNativeClick?.(event)) return;
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+        event.preventDefault();
+        // #3618: a running app grows back out of the row that was pressed.
+        if (running) noteResumeOrigin(slug, event.currentTarget.querySelector('.dev-ws-place-glyph') || event.currentTarget);
+        (window as unknown as { App?: { openAppTab?: (slug: string, tab: string) => void } }).App?.openAppTab?.(slug, 'app');
+      }}
+    >
+      <AppWindowIcon className="dev-ws-place-glyph" aria-hidden="true" />
+      <span className="dev-ws-place-label">{t('project:places.list.app')}</span>
+      {running ? <LiveAppDot className="dev-ws-place-live" /> : null}
+    </a>
+  );
+}
+
+export function ProjectPlaces({ slug, name, place, owed, places, filtered = false, fold, app = false, onPlace, onSwitch }: {
   slug: string;
   /** The project's name, which names the list for a screen reader. */
   name: string;
@@ -141,6 +179,8 @@ export function ProjectPlaces({ slug, name, place, owed, places, filtered = fals
   filtered?: boolean;
   /** v3's sidebar: how many topics to draw before "Show N more". All of them when absent. */
   fold?: number;
+  /** Lead with the project's App row (the tray, the phone's drawer; never Homeroom's own). */
+  app?: boolean;
   onPlace: (key: PlaceKey) => void;
   /** The tray's foot: "Switch community". */
   onSwitch?: (el: HTMLElement | null) => void;
@@ -160,6 +200,7 @@ export function ProjectPlaces({ slug, name, place, owed, places, filtered = fals
   return (
     <div className="dev-ws-places" data-places={slug}>
       <nav className="dev-ws-places-nav" aria-label={name ? t('project:places.list.name', { project: name }) : t('project:places.list.nameUnnamed')}>
+        {app ? <AppPlace slug={slug} name={name || slug} /> : null}
         {rows.pages.map((p) => (
           <PlaceLink
             key={p.key}
