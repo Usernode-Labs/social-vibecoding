@@ -12,7 +12,8 @@
 //   #2764 — with the rail folded, pointing at #sidebar-toggle fades the rail
 //   in over the page, as pointing at the window's left edge already did.
 //   frontend/src/features/nav/rail-peek.ts is the one enter/leave pair both
-//   use, with ONE grace timer between them.
+//   use, with ONE grace timer between them. A running app has no hot zone and
+//   never peeks (#3138): it keeps the whole window until Close app.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');

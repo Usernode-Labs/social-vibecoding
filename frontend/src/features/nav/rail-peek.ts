@@ -1,6 +1,10 @@
 /**
  * The rail's peek, shared by every element that can summon it.
  *
+ * It brings back a rail THE VIEWER FOLDED (#2718, #2764), never one over a
+ * running app: an app takes the whole window and its way out is Close app in
+ * the header (#3138).
+ *
  * Moved out of ./tab-bar.tsx when #sidebar-toggle became a second way in
  * (#2764): with the rail folded, pointing at the toggle fades the rail in over
  * the page exactly as pointing at the window's left edge does. The toggle sits

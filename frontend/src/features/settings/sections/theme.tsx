@@ -177,7 +177,9 @@ export function writeRailPinned(on: boolean): void {
 
 /**
  * "Keep sidebar open in apps" (#3319) — the desktop rail stays docked beside
- * a running app instead of giving the app the whole window. Off by default.
+ * a running app instead of giving the app the whole window. Off by default,
+ * and off means the app takes the whole window until it is closed: the rail
+ * does not peek over a running app (#3138).
  *
  * DESKTOP ONLY, and the class string says so (`hidden md:block`): below
  * 768px the bar is the phone's bottom bar, which an app always covers.
@@ -210,7 +212,7 @@ function RailPinnedRow() {
         </span>
       </label>
       <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-        Off, an app you open takes the whole window and the sidebar comes back when you point at the left edge. On, the sidebar stays beside it.
+        Off, an app you open takes the whole window and the sidebar comes back when you close the app. On, the sidebar stays beside it.
       </p>
     </div>
   );
