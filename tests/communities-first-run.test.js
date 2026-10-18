@@ -100,7 +100,10 @@ test('one filled button that says what it will do, and a quiet Skip for now', ()
   assert.match(GATE, /`Join \$\{n\} \$\{n === 1 \? 'community' : 'communities'\}`/);
   // A welcome and what the place is, then the question.
   assert.ok(GATE.indexOf("'Welcome to Homeroom!'") > 0);
-  assert.match(GATE, /'Homeroom is a place where communities build the apps they use together\.'/);
+  // What the place is, in two halves: communities, and what everyone in one
+  // can do with the apps it builds.
+  assert.match(GATE, /'Homeroom is made up of communities\. Each one makes its own apps together, ' \+/);
+  assert.match(GATE, /'and everyone in it can suggest changes, vote on what gets built and work on them\.'/);
   assert.ok(GATE.indexOf("'Welcome to Homeroom!'") < GATE.indexOf("'What communities do you want to join?'"));
   assert.match(GATE, /'You can join or leave any time from Discover, and start your own private or public community once you are in\.'/);
   // A row with no description of its own is just its name: no empty line.
