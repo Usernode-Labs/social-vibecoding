@@ -19,6 +19,11 @@
 // only) means an agent is mid-turn. It said so nowhere. The mark says it on hover,
 // and the menu the mark opens says it in words, which is what a touch screen
 // gets.
+//
+// #3577: at 390px the bar still wrapped, because the change pill said
+// "In progress · PR #1". The PR number now gives way on a narrow bar (the
+// staging card and the Changes drawer still show it, and the pill's tooltip
+// keeps it), and the phone gap is smaller, so the four controls stay on one row.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -31,7 +36,7 @@ const panel = read('frontend/src/features/agent-session/index.tsx');
 
 test('#3016: the session bar wraps on every surface, and the panel cannot outgrow the screen', () => {
   const bar = panel.slice(panel.indexOf('function SessionBar('), panel.indexOf('function SessionMenu('));
-  assert.match(bar, /<div className="flex flex-wrap items-center gap-x-2 gap-y-2 [^"]*" data-agent-session-bar>/,
+  assert.match(bar, /<div className="flex flex-wrap items-center gap-x-1\.5 gap-y-2 [^"]*sm:gap-x-2[^"]*" data-agent-session-bar>/,
     'wrapping is not the embedded variant\'s alone any more');
   assert.doesNotMatch(bar, /embedded \? 'flex-wrap' : ''/);
   assert.match(bar, /data-agent-session-change-pill\s+className=\{`inline-flex shrink-0 items-center whitespace-nowrap /,
@@ -45,6 +50,21 @@ test('#3016: the session bar wraps on every surface, and the panel cannot outgro
   assert.match(panel, /<div ref=\{root\} className=\{`relative flex min-h-0 min-w-0 flex-1 /,
     'the panel shrinks below its content, so nothing inside can widen the screen');
   assert.match(panel, /className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat/);
+});
+
+test('#3577: the change pill leaves out its PR number on a narrow bar, and keeps it in the tooltip', () => {
+  const bar = panel.slice(panel.indexOf('function SessionBar('), panel.indexOf('function SessionMenu('));
+  assert.match(bar, /\[container-type:inline-size\]/,
+    'the bar is its own container, so a narrow Messages pane follows its width');
+  assert.match(bar, /const changeLabel = active\?\.prNumber \? `\$\{statusLabel\} · PR #\$\{active\.prNumber\}` : statusLabel;/,
+    'the full label is kept for the tooltip');
+  assert.match(bar, /title=\{changeLabel\}/, 'hovering the pill still gives the PR number');
+  assert.match(bar, /\{statusLabel\}\s*\{active\?\.prNumber \? <span className="hidden \[@container\(min-width:30rem\)\]:inline">\{` · PR #\$\{active\.prNumber\}`\}<\/span> : null\}/,
+    'the status word stays outside the hidden suffix and is never shortened');
+  assert.match(bar, /data-agent-session-changes-button\s+className="ml-auto [^"]*whitespace-nowrap[^"]*"/,
+    'the Changes button still pushes right and stays on one line');
+  assert.match(bar, /data-agent-session-changes-button\s+className="[^"]*px-2\.5 py-1[^"]*sm:px-3[^"]*"/,
+    'the phone padding is tighter, and wider screens keep the old one');
 });
 
 test('#3016: an empty message box is sized to its hint, measured without an input event', () => {
