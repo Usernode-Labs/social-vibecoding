@@ -40,8 +40,10 @@ import {
 export interface CreateProgressProps {
   /** The name the user typed. Rendered as a text child — never markup. */
   appName: string;
-  /** Which verb to use while the asynchronous provisioning is pending. */
-  mode: 'new' | 'import' | 'fork';
+  /** Which verb to use while the asynchronous provisioning is pending. A
+   * template start (#3521) provisions like a new project and reads as
+   * "Creating". */
+  mode: 'new' | 'template' | 'import' | 'fork';
   /**
    * Which ground the view is drawn on. `card` (the default) is the fork
    * dialog's white card, where the steps sit bare and the next-steps block
@@ -93,7 +95,7 @@ const STEP_LABEL_CLASS: Record<StepState, string> = {
 
 function headline(
   outcome: CreationOutcome,
-  mode: 'new' | 'import' | 'fork',
+  mode: 'new' | 'template' | 'import' | 'fork',
   appName: string,
 ): string {
   if (outcome === 'live') return `${appName} is live`;

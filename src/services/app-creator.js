@@ -59,6 +59,14 @@ function descriptionOf(row) {
   return typeof d === 'string' && d.trim() ? d.trim() : null;
 }
 
+// The starter the app was created from (the create dialog's template
+// picker, #3521, stored on the row at create time). NULL reads as 'empty',
+// the starter every project got before the picker existed — so a Retry and
+// the repo heal re-seed the same starter the row asked for.
+function templateOf(row) {
+  return row?.create_template || 'empty';
+}
+
 async function createApp(config, appRow) {
   const pool = getPool(config);
   const { id: appId, name, slug } = appRow;
@@ -130,7 +138,7 @@ async function createApp(config, appRow) {
 
         // repoUrl makes the template name this repo as the app's canonical
         // one (.claude/homeroom-canonical-repo, read by the freshness check).
-        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow) });
+        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow), template: templateOf(appRow) });
         await github.pushFiles(botUsername, slug, files, {
           message: `Initialize ${name} from Homeroom template`,
         });
@@ -252,7 +260,7 @@ async function createApp(config, appRow) {
       fs.mkdirSync(tempDir, { recursive: true });
       fs.mkdirSync(path.join(tempDir, 'public'), { recursive: true });
 
-      const files = getTemplateFiles(name, slug, dbUrl, null, { governance: governanceOf(appRow), description: descriptionOf(appRow) });
+      const files = getTemplateFiles(name, slug, dbUrl, null, { governance: governanceOf(appRow), description: descriptionOf(appRow), template: templateOf(appRow) });
       for (const f of files) {
         const filePath = path.join(tempDir, f.path);
         fs.mkdirSync(path.dirname(filePath), { recursive: true });

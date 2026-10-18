@@ -97,8 +97,25 @@ test('the new repository\'s dapp.json carries a non-default rule, and only then'
   assert.deepEqual(readGovernance(dapp({ approverPolicy: 'invited', approvalsRequired: 3 })),
     { approvers: 'invited', approvals: 3 });
   const creator = fs.readFileSync(path.join(__dirname, '../src/services/app-creator.js'), 'utf8');
-  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\) \}/g) || []).length, 2,
-    'both template paths (GitHub and local) pass the row\'s rule and its line');
+  assert.equal((creator.match(/\{ governance: governanceOf\(appRow\), description: descriptionOf\(appRow\), template: templateOf\(appRow\) \}/g) || []).length, 2,
+    'both template paths (GitHub and local) pass the row\'s rule, its line and its starter (#3521)');
+});
+
+test('a template is one of the five starters, new projects only (#3521)', () => {
+  const parse = (template, extra = {}) => options.parseCreateOptions({ audience: 'open', template, ...extra });
+  assert.equal(parse(undefined).template, 'empty', 'no answer is today\'s starter');
+  assert.equal(parse('empty').template, 'empty');
+  for (const id of ['social-productivity', 'multimedia-social', 'game-2d', 'game-3d']) {
+    assert.equal(parse(id).template, id, `${id} round-trips`);
+  }
+  assert.equal(parse('game-99').error, 'Unknown template');
+  assert.equal(parse(42).error, 'Unknown template');
+  assert.equal(parse('social-productivity', { repoUrl: 'github.com/owner/repo' }).error,
+    'A template applies to a new project, not an import');
+  // The set is exactly the five starters; a typo there would silently build
+  // the empty starter for a real pick.
+  assert.deepEqual([...options.TEMPLATES].sort(),
+    ['empty', 'game-2d', 'game-3d', 'multimedia-social', 'social-productivity']);
 });
 
 test('"What is it?" is one optional line, tidied and bounded', () => {

@@ -299,6 +299,642 @@ connector registered under some other name.
   ];
 }
 
+// ── The five starters (#3521) ───────────────────────────────────────────
+//
+// Every template scaffolds the same working plumbing — sign-in through
+// Homeroom, its own database, a live API, the precompiled styling — and
+// differs only in the example: the demo routes and table bootstrap in
+// server.js, the example card and its script on the starter screen, and the
+// sentences in README.md and CLAUDE.md that name the demo. `empty` is the
+// starter every project got before the picker existed, so its strings are
+// the shared text verbatim.
+//
+// Nothing here adds a dependency or a cross-origin asset: the 3D scene is
+// raw WebGL in the same inline-script style the scaffold already ships, and
+// the demos store only titles and scores against the signed-in username,
+// exactly as the Press demo stores presses.
+const DEMOS = {
+  empty: {
+    claudeDemo: `the Press! example (the demo markup in
+\`public/index.html\`, the \`/api/press\` and \`/api/leaderboard\` routes, and
+the \`presses\` table bootstrap in \`server.js\`)`,
+    claudeRemove: '  the `presses` table as appropriate,',
+    readmeDb: '  demo stores button presses in a `presses` table.',
+    readmeApi: `- **Live API** — two example routes (\`/api/press\`,
+  \`/api/leaderboard\`) read and write through a real Express server.`,
+    serverRoutes: `// Button press
+app.post('/api/press', async (req, res) => {
+  try {
+    await pool.query(\`
+      INSERT INTO presses (user_id, username) VALUES ($1, $2)
+    \`, [req.user.id, req.user.username]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Leaderboard
+app.get('/api/leaderboard', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(\`
+      SELECT username, COUNT(*) as presses
+      FROM presses
+      GROUP BY username
+      ORDER BY presses DESC
+      LIMIT 50
+    \`);
+    res.json({ leaderboard: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});`,
+    tables: `
+    CREATE TABLE IF NOT EXISTS presses (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `,
+    exampleBody: `
+      <button id="press-btn" class="w-32 h-32 rounded-full bg-violet-600 hover:bg-violet-500 active:scale-95 transition-all text-white text-xl font-bold shadow-lg shadow-violet-600/30">
+        Press!
+      </button>
+
+      <div id="count" class="text-lg text-zinc-400">0 total presses</div>
+
+      <div class="w-full max-w-sm">
+        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">Leaderboard</h3>
+        <div id="leaderboard" class="space-y-1"></div>
+      </div>
+`,
+    demoScript: `
+    async function loadLeaderboard() {
+      const res = await fetch('/api/leaderboard', { headers });
+      if (!res.ok) return;
+      const { leaderboard } = await res.json();
+      const el = document.getElementById('leaderboard');
+      if (!leaderboard.length) {
+        el.innerHTML = '<p class="text-center text-zinc-600 text-sm">No presses yet</p>';
+        return;
+      }
+      el.innerHTML = leaderboard.map((r, i) =>
+        '<div class="flex justify-between px-3 py-1 rounded ' + (i === 0 ? 'bg-violet-600/20 text-violet-300' : 'text-zinc-400') + '">' +
+        '<span>' + (i + 1) + '. ' + r.username + '</span>' +
+        '<span class="font-mono">' + r.presses + '</span></div>'
+      ).join('');
+      const total = leaderboard.reduce((s, r) => s + parseInt(r.presses), 0);
+      document.getElementById('count').textContent = total + ' total presses';
+    }
+
+    document.getElementById('press-btn').addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/press', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...headers },
+        });
+        if (res.ok) loadLeaderboard();
+        else if (res.status === 401) document.getElementById('count').textContent = 'Sign in to press!';
+      } catch {}
+    });
+
+    loadLeaderboard();
+`,
+  },
+
+  'social-productivity': {
+    claudeDemo: `the shared to-do list example (the demo markup in
+\`public/index.html\`, the \`/api/tasks\` and \`/api/tasks/:id/toggle\` routes,
+and the \`tasks\` table bootstrap in \`server.js\`)`,
+    claudeRemove: '  the `tasks` table as appropriate,',
+    readmeDb: '  demo stores tasks in a `tasks` table.',
+    readmeApi: `- **Live API** — the example routes (\`/api/tasks\`,
+  \`/api/tasks/:id/toggle\`) read and write through a real Express server.`,
+    serverRoutes: `// The group's shared to-do list
+app.get('/api/tasks', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, username, title, done FROM tasks ORDER BY created_at ASC LIMIT 200'
+    );
+    res.json({ tasks: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/tasks', async (req, res) => {
+  try {
+    const title = String((req.body && req.body.title) || '').trim().slice(0, 200);
+    if (!title) return res.status(400).json({ error: 'Give the task a title' });
+    const { rows } = await pool.query(
+      'INSERT INTO tasks (user_id, username, title) VALUES ($1, $2, $3) RETURNING id, username, title, done',
+      [req.user.id, req.user.username, title]
+    );
+    res.json({ task: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/tasks/:id/toggle', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'UPDATE tasks SET done = NOT done WHERE id = $1 RETURNING id, username, title, done',
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'No such task' });
+    res.json({ task: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});`,
+    tables: `
+    CREATE TABLE IF NOT EXISTS tasks (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      title TEXT NOT NULL,
+      done BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `,
+    exampleBody: `
+      <form id="task-form" class="w-full flex gap-2">
+        <input id="task-input" type="text" maxlength="200" placeholder="Add a task…"
+               class="flex-1 min-w-0 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-violet-500">
+        <button type="submit" class="rounded-xl bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-semibold text-white">Add</button>
+      </form>
+
+      <div class="w-full max-w-sm">
+        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">The list</h3>
+        <div id="tasks" class="space-y-1"></div>
+      </div>
+`,
+    demoScript: `
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    async function loadTasks() {
+      const res = await fetch('/api/tasks', { headers });
+      if (!res.ok) return;
+      const { tasks } = await res.json();
+      const el = document.getElementById('tasks');
+      if (!tasks.length) {
+        el.innerHTML = '<p class="text-center text-zinc-600 text-sm">Nothing on the list yet</p>';
+        return;
+      }
+      el.innerHTML = tasks.map((t) =>
+        '<div class="flex items-center gap-3 px-3 py-2 rounded border border-zinc-800 bg-zinc-900/60">' +
+        '<input type="checkbox" data-id="' + t.id + '"' + (t.done ? ' checked' : '') + ' class="h-4 w-4 accent-violet-600">' +
+        '<span class="flex-1 min-w-0 text-sm ' + (t.done ? 'text-zinc-600 line-through' : 'text-zinc-200') + '">' + esc(t.title) + '</span>' +
+        '<span class="shrink-0 text-xs text-zinc-600">' + esc(t.username) + '</span></div>'
+      ).join('');
+      el.querySelectorAll('input[type="checkbox"]').forEach((box) => {
+        box.addEventListener('change', async () => {
+          try {
+            const res = await fetch('/api/tasks/' + box.dataset.id + '/toggle', { method: 'POST', headers });
+            if (res.ok) loadTasks();
+          } catch {}
+        });
+      });
+    }
+
+    document.getElementById('task-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const input = document.getElementById('task-input');
+      const title = input.value.trim();
+      if (!title) return;
+      try {
+        const res = await fetch('/api/tasks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...headers },
+          body: JSON.stringify({ title }),
+        });
+        if (res.ok) { input.value = ''; loadTasks(); }
+        else if (res.status === 401) input.placeholder = 'Sign in to add tasks';
+      } catch {}
+    });
+
+    loadTasks();
+`,
+  },
+
+  'multimedia-social': {
+    claudeDemo: `the shared picks list example (the demo markup in
+\`public/index.html\`, the \`/api/picks\` routes, and
+the \`picks\` table bootstrap in \`server.js\`)`,
+    claudeRemove: '  the `picks` table as appropriate,',
+    readmeDb: '  demo stores picks in a `picks` table.',
+    readmeApi: '- **Live API** — the example route (`/api/picks`) reads and writes\n  through a real Express server.',
+    serverRoutes: `// The group's shared picks: things to watch, hear or look at together
+app.get('/api/picks', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, username, title, kind FROM picks ORDER BY created_at ASC LIMIT 200'
+    );
+    res.json({ picks: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/picks', async (req, res) => {
+  try {
+    const title = String((req.body && req.body.title) || '').trim().slice(0, 200);
+    const kind = String((req.body && req.body.kind) || 'watch');
+    if (!title) return res.status(400).json({ error: 'Give the pick a title' });
+    if (['watch', 'listen', 'look'].indexOf(kind) === -1) {
+      return res.status(400).json({ error: 'Kind must be "watch", "listen" or "look"' });
+    }
+    const { rows } = await pool.query(
+      'INSERT INTO picks (user_id, username, title, kind) VALUES ($1, $2, $3, $4) RETURNING id, username, title, kind',
+      [req.user.id, req.user.username, title, kind]
+    );
+    res.json({ pick: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});`,
+    tables: `
+    CREATE TABLE IF NOT EXISTS picks (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      title TEXT NOT NULL,
+      kind VARCHAR(10) NOT NULL DEFAULT 'watch',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `,
+    exampleBody: `
+      <form id="pick-form" class="w-full flex flex-col gap-2">
+        <div class="flex gap-2">
+          <input id="pick-input" type="text" maxlength="200" placeholder="Add something the group should see…"
+                 class="flex-1 min-w-0 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-violet-500">
+          <button type="submit" class="rounded-xl bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-semibold text-white">Add</button>
+        </div>
+        <div class="flex gap-4 text-xs text-zinc-400">
+          <label class="flex items-center gap-1"><input type="radio" name="pick-kind" value="watch" checked class="accent-violet-600"> Watch</label>
+          <label class="flex items-center gap-1"><input type="radio" name="pick-kind" value="listen" class="accent-violet-600"> Listen</label>
+          <label class="flex items-center gap-1"><input type="radio" name="pick-kind" value="look" class="accent-violet-600"> Look</label>
+        </div>
+      </form>
+
+      <div class="w-full max-w-sm">
+        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">The group's picks</h3>
+        <div id="picks" class="space-y-1"></div>
+      </div>
+`,
+    demoScript: `
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    async function loadPicks() {
+      const res = await fetch('/api/picks', { headers });
+      if (!res.ok) return;
+      const { picks } = await res.json();
+      const el = document.getElementById('picks');
+      if (!picks.length) {
+        el.innerHTML = '<p class="text-center text-zinc-600 text-sm">No picks yet</p>';
+        return;
+      }
+      el.innerHTML = picks.map((p) =>
+        '<div class="flex items-center gap-3 px-3 py-2 rounded border border-zinc-800 bg-zinc-900/60">' +
+        '<span class="shrink-0 rounded-full bg-violet-600/20 text-violet-300 text-xs font-semibold px-2 py-0.5">' + esc(p.kind) + '</span>' +
+        '<span class="flex-1 min-w-0 text-sm text-zinc-200">' + esc(p.title) + '</span>' +
+        '<span class="shrink-0 text-xs text-zinc-600">' + esc(p.username) + '</span></div>'
+      ).join('');
+    }
+
+    document.getElementById('pick-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const input = document.getElementById('pick-input');
+      const title = input.value.trim();
+      if (!title) return;
+      const kind = document.querySelector('input[name="pick-kind"]:checked').value;
+      try {
+        const res = await fetch('/api/picks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...headers },
+          body: JSON.stringify({ title, kind }),
+        });
+        if (res.ok) { input.value = ''; loadPicks(); }
+        else if (res.status === 401) input.placeholder = 'Sign in to add picks';
+      } catch {}
+    });
+
+    loadPicks();
+`,
+  },
+
+  'game-2d': {
+    claudeDemo: `the tap game example (the demo markup in
+\`public/index.html\`, the \`/api/scores\` and \`/api/leaderboard\` routes, and
+the \`scores\` table bootstrap in \`server.js\`)`,
+    claudeRemove: '  the `scores` table as appropriate,',
+    readmeDb: '  demo stores round scores in a `scores` table.',
+    readmeApi: `- **Live API** — two example routes (\`/api/scores\`,
+  \`/api/leaderboard\`) read and write through a real Express server.`,
+    serverRoutes: `// Round scores
+app.post('/api/scores', async (req, res) => {
+  try {
+    const score = parseInt(req.body && req.body.score, 10);
+    if (!Number.isFinite(score) || score < 0 || score > 100000) {
+      return res.status(400).json({ error: 'Score must be a number' });
+    }
+    await pool.query(
+      'INSERT INTO scores (user_id, username, score) VALUES ($1, $2, $3)',
+      [req.user.id, req.user.username, score]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Leaderboard: each player's best round
+app.get('/api/leaderboard', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(\`
+      SELECT username, MAX(score) AS best
+      FROM scores
+      GROUP BY username
+      ORDER BY best DESC
+      LIMIT 50
+    \`);
+    res.json({ leaderboard: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});`,
+    tables: `
+    CREATE TABLE IF NOT EXISTS scores (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      score INTEGER NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `,
+    exampleBody: `
+      <div class="w-full flex flex-col items-center gap-2">
+        <canvas id="game" width="320" height="240" class="w-full max-w-sm rounded-xl border border-zinc-800 bg-zinc-900 touch-none"></canvas>
+        <div id="game-hint" class="text-sm text-zinc-400">Tap the violet square as it moves. A round lasts 30 seconds.</div>
+      </div>
+
+      <div class="w-full max-w-sm">
+        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">Leaderboard</h3>
+        <div id="leaderboard" class="space-y-1"></div>
+      </div>
+`,
+    demoScript: `
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const hint = document.getElementById('game-hint');
+    const size = 36;
+    let x = 142, y = 102, score = 0, secondsLeft = 30, playing = false, moveTimer = null;
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#0a6ee0';
+      ctx.fillRect(x, y, size, size);
+    }
+
+    function move() {
+      x = Math.floor(Math.random() * (canvas.width - size));
+      y = Math.floor(Math.random() * (canvas.height - size));
+      draw();
+    }
+
+    function startRound() {
+      score = 0;
+      secondsLeft = 30;
+      playing = true;
+      move();
+      hint.textContent = 'Tap the violet square! ' + secondsLeft + 's left.';
+      moveTimer = setInterval(move, 900);
+      const clock = setInterval(() => {
+        secondsLeft -= 1;
+        if (secondsLeft > 0) {
+          hint.textContent = 'Tap the violet square! ' + secondsLeft + 's left.';
+          return;
+        }
+        clearInterval(clock);
+        clearInterval(moveTimer);
+        playing = false;
+        hint.textContent = 'Round over — you scored ' + score + '. Tap to play again.';
+        if (score > 0) {
+          fetch('/api/scores', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...headers },
+            body: JSON.stringify({ score }),
+          }).then(loadLeaderboard).catch(() => {});
+        } else {
+          loadLeaderboard();
+        }
+      }, 1000);
+    }
+
+    canvas.addEventListener('click', (e) => {
+      if (!playing) { startRound(); return; }
+      const rect = canvas.getBoundingClientRect();
+      const scale = canvas.width / rect.width;
+      const px = (e.clientX - rect.left) * scale;
+      const py = (e.clientY - rect.top) * scale;
+      if (px >= x && px <= x + size && py >= y && py <= y + size) score += 1;
+      move();
+    });
+
+    async function loadLeaderboard() {
+      const res = await fetch('/api/leaderboard', { headers });
+      if (!res.ok) return;
+      const { leaderboard } = await res.json();
+      const el = document.getElementById('leaderboard');
+      if (!leaderboard.length) {
+        el.innerHTML = '<p class="text-center text-zinc-600 text-sm">No rounds yet</p>';
+        return;
+      }
+      el.innerHTML = leaderboard.map((r, i) =>
+        '<div class="flex justify-between px-3 py-1 rounded ' + (i === 0 ? 'bg-violet-600/20 text-violet-300' : 'text-zinc-400') + '">' +
+        '<span>' + (i + 1) + '. ' + esc(r.username) + '</span>' +
+        '<span class="font-mono">' + r.best + '</span></div>'
+      ).join('');
+    }
+
+    draw();
+    loadLeaderboard();
+`,
+  },
+
+  'game-3d': {
+    claudeDemo: `the 3D scene example (the demo markup in
+\`public/index.html\`, the \`/api/scores\` and \`/api/leaderboard\` routes, and
+the \`scores\` table bootstrap in \`server.js\`)`,
+    claudeRemove: '  the `scores` table as appropriate,',
+    readmeDb: '  demo stores round scores in a `scores` table.',
+    readmeApi: `- **Live API** — two example routes (\`/api/scores\`,
+  \`/api/leaderboard\`) read and write through a real Express server.`,
+    serverRoutes: null, // set below: the same scores routes and table as the 2D game
+    tables: null,
+    exampleBody: `
+      <div class="w-full flex flex-col items-center gap-2">
+        <canvas id="game" width="320" height="240" class="w-full max-w-sm rounded-xl border border-zinc-800 bg-zinc-900 touch-none"></canvas>
+        <div id="game-hint" class="text-sm text-zinc-400">Drag to turn the shape, tap it to score. A round lasts 30 seconds.</div>
+      </div>
+
+      <div class="w-full max-w-sm">
+        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">Leaderboard</h3>
+        <div id="leaderboard" class="space-y-1"></div>
+      </div>
+`,
+    demoScript: `
+    const canvas = document.getElementById('game');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    const hint = document.getElementById('game-hint');
+    let score = 0, secondsLeft = 30, playing = false, roundClock = null;
+    let rx = 0.65, ry = 0.8, dragging = false, moved = 0, lastX = 0, lastY = 0;
+
+    const VS = 'attribute vec3 p;uniform float rx;uniform float ry;varying float shade;' +
+      'void main(){float cx=cos(rx),sx=sin(rx),cy=cos(ry),sy=sin(ry);' +
+      'vec3 q=vec3(p.x*cy+p.z*sy,p.y,-p.x*sy+p.z*cy);' +
+      'vec3 r=vec3(q.x,q.y*cx-q.z*sx,q.y*sx+q.z*cx);' +
+      'shade=0.45+0.3*(r.z+1.0);' +
+      'gl_Position=vec4(r*0.45,0.0);gl_Position.z-=0.5;}';
+    const FS = 'precision mediump float;varying float shade;' +
+      'void main(){gl_FragColor=vec4(0.039*shade,0.431*shade,0.878*shade,1.0);}';
+
+    function shader(type, src) {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      return s;
+    }
+
+    const prog = gl.createProgram();
+    gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
+    gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+    gl.enable(gl.DEPTH_TEST);
+
+    // A cube's 12 triangles, centred on the origin.
+    const verts = new Float32Array([
+      -1,-1,-1, 1,-1,-1, 1,1,-1,  -1,-1,-1, 1,1,-1, -1,1,-1,
+      -1,-1, 1, 1,-1, 1, 1,1, 1,  -1,-1, 1, 1,1, 1, -1,1, 1,
+      -1,-1,-1, -1,1,-1, -1,1, 1, -1,-1,-1, -1,1, 1, -1,-1,1,
+       1,-1,-1, 1,1,-1, 1,1, 1,   1,-1,-1, 1,1, 1, 1,-1,1,
+      -1,-1,-1, 1,-1,-1, 1,-1,1,  -1,-1,-1, 1,-1,1, -1,-1,1,
+      -1, 1,-1, 1,1,-1, 1,1, 1,   -1, 1,-1, 1,1, 1, -1,1,1,
+    ]);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+    const locP = gl.getAttribLocation(prog, 'p');
+    gl.enableVertexAttribArray(locP);
+    gl.vertexAttribPointer(locP, 3, gl.FLOAT, false, 0, 0);
+    const uRx = gl.getUniformLocation(prog, 'rx');
+    const uRy = gl.getUniformLocation(prog, 'ry');
+
+    function frame() {
+      if (!dragging) ry += 0.01;
+      gl.uniform1f(uRx, rx);
+      gl.uniform1f(uRy, ry);
+      gl.clearColor(0.055, 0.055, 0.065, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.drawArrays(gl.TRIANGLES, 0, 36);
+      requestAnimationFrame(frame);
+    }
+
+    canvas.addEventListener('pointerdown', (e) => {
+      dragging = true;
+      moved = 0;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+      moved += Math.abs(dx) + Math.abs(dy);
+      ry += dx * 0.01;
+      rx += dy * 0.01;
+      lastX = e.clientX;
+      lastY = e.clientY;
+    });
+    canvas.addEventListener('pointerup', () => {
+      dragging = false;
+      if (!playing) { startRound(); return; }
+      if (moved < 6) score += 1;
+    });
+
+    function startRound() {
+      score = 0;
+      secondsLeft = 30;
+      playing = true;
+      hint.textContent = 'Tap the shape to score! ' + secondsLeft + 's left.';
+      roundClock = setInterval(() => {
+        secondsLeft -= 1;
+        if (secondsLeft > 0) {
+          hint.textContent = 'Tap the shape to score! ' + secondsLeft + 's left.';
+          return;
+        }
+        clearInterval(roundClock);
+        playing = false;
+        hint.textContent = 'Round over — you scored ' + score + '. Tap to play again.';
+        if (score > 0) {
+          fetch('/api/scores', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...headers },
+            body: JSON.stringify({ score }),
+          }).then(loadLeaderboard).catch(() => {});
+        } else {
+          loadLeaderboard();
+        }
+      }, 1000);
+    }
+
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    async function loadLeaderboard() {
+      const res = await fetch('/api/leaderboard', { headers });
+      if (!res.ok) return;
+      const { leaderboard } = await res.json();
+      const el = document.getElementById('leaderboard');
+      if (!leaderboard.length) {
+        el.innerHTML = '<p class="text-center text-zinc-600 text-sm">No rounds yet</p>';
+        return;
+      }
+      el.innerHTML = leaderboard.map((r, i) =>
+        '<div class="flex justify-between px-3 py-1 rounded ' + (i === 0 ? 'bg-violet-600/20 text-violet-300' : 'text-zinc-400') + '">' +
+        '<span>' + (i + 1) + '. ' + esc(r.username) + '</span>' +
+        '<span class="font-mono">' + r.best + '</span></div>'
+      ).join('');
+    }
+
+    if (gl) {
+      frame();
+      loadLeaderboard();
+    } else {
+      hint.textContent = 'This browser cannot show the 3D scene.';
+    }
+`,
+  },
+};
+
+// The 3D game serves and stores exactly what the 2D game does; only its
+// starter screen differs.
+DEMOS['game-3d'].serverRoutes = DEMOS['game-2d'].serverRoutes;
+DEMOS['game-3d'].tables = DEMOS['game-2d'].tables;
+
+
 // repoUrl is the app's canonical GitHub repository; with it the scaffold
 // includes the pointer file the freshness check reads. A local build with no
 // GitHub has none, and gets no pointer.
@@ -315,10 +951,17 @@ connector registered under some other name.
 // Discover and the project's page show) and the first sentence of
 // CLAUDE.md's About section, so the coding agent starts from the same
 // intent. Absent, both stay as they were.
-function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null } = {}) {
+//
+// `template` is the starter the create dialog's picker chose (#3521), one of
+// DEMOS's keys. It decides only the example — the demo routes and table in
+// server.js, the example card and its script on the starter screen, and the
+// sentences here that name the demo; everything shared is byte-identical
+// across the five. Unknown or absent reads as 'empty'.
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = 'empty' } = {}) {
   const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
   const governanceBlock = require('./create-options').governanceBlock(governance);
   const about = typeof description === 'string' && description.trim() ? description.trim() : null;
+  const demo = DEMOS[template] || DEMOS.empty;
   return [
     {
       path: 'CLAUDE.md',
@@ -385,9 +1028,7 @@ the platform fixes the base commit, and none of this applies.
 ## Starter template
 
 The screen this app currently ships — the hero, the "What's already
-working" card, and the Press! example (the demo markup in
-\`public/index.html\`, the \`/api/press\` and \`/api/leaderboard\` routes, and
-the \`presses\` table bootstrap in \`server.js\`) — is placeholder content
+working" card, and ${demo.claudeDemo} — is placeholder content
 from the Homeroom starter template, not product intent.
 
 When the user asks for their first real feature, REPLACE the template
@@ -396,7 +1037,7 @@ screen rather than building alongside it:
 - remove the \`usernode-starter-notice@1\` block in \`public/index.html\`
   (both sentinel comments and everything between them),
 - remove or repurpose the "Try the example" card, its demo endpoints and
-  the \`presses\` table as appropriate,
+${demo.claudeRemove}
 - rewrite \`README.md\` to describe the actual app.
 
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` when rewriting the
@@ -446,9 +1087,8 @@ The scaffold is a small working demo that proves the plumbing works:
   (an RS256 JWT) on every request, so the app already knows who is
   using it. No accounts to build.
 - **Database** — the app has its own private Postgres database; the
-  demo stores button presses in a \`presses\` table.
-- **Live API** — two example routes (\`/api/press\`,
-  \`/api/leaderboard\`) read and write through a real Express server.
+${demo.readmeDb}
+${demo.readmeApi}
 - **Styling** — Tailwind CSS, precompiled by \`npm run build\` during
   image creation with either Kubernetes/Paketo or standalone Docker.
 
@@ -767,33 +1407,7 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 // fresh load.
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
-// Button press
-app.post('/api/press', async (req, res) => {
-  try {
-    await pool.query(\`
-      INSERT INTO presses (user_id, username) VALUES ($1, $2)
-    \`, [req.user.id, req.user.username]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Leaderboard
-app.get('/api/leaderboard', async (_req, res) => {
-  try {
-    const { rows } = await pool.query(\`
-      SELECT username, COUNT(*) as presses
-      FROM presses
-      GROUP BY username
-      ORDER BY presses DESC
-      LIMIT 50
-    \`);
-    res.json({ leaderboard: rows });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+${demo.serverRoutes}
 
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -833,14 +1447,7 @@ app.get('*', (req, res) => {
 });
 
 async function start() {
-  await pool.query(\`
-    CREATE TABLE IF NOT EXISTS presses (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL,
-      username VARCHAR(255) NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  \`);
+  await pool.query(\`${demo.tables}\`);
   const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;
@@ -932,18 +1539,7 @@ start().catch(err => { console.error(err); process.exit(1); });
         <h2 class="text-sm font-medium text-zinc-500">Try the example</h2>
         <span class="text-xs text-zinc-600">This example will be replaced</span>
       </div>
-
-      <button id="press-btn" class="w-32 h-32 rounded-full bg-violet-600 hover:bg-violet-500 active:scale-95 transition-all text-white text-xl font-bold shadow-lg shadow-violet-600/30">
-        Press!
-      </button>
-
-      <div id="count" class="text-lg text-zinc-400">0 total presses</div>
-
-      <div class="w-full max-w-sm">
-        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">Leaderboard</h3>
-        <div id="leaderboard" class="space-y-1"></div>
-      </div>
-    </section>
+${demo.exampleBody}    </section>
 
     <p class="text-center text-xs text-zinc-600">Built on Homeroom — this template screen disappears once you build your real app.</p>
   </main>
@@ -952,38 +1548,7 @@ start().catch(err => { console.error(err); process.exit(1); });
     const params = new URLSearchParams(window.location.search);
     const token = params.get('token') || '';
     const headers = token ? { 'x-usernode-token': token } : {};
-
-    async function loadLeaderboard() {
-      const res = await fetch('/api/leaderboard', { headers });
-      if (!res.ok) return;
-      const { leaderboard } = await res.json();
-      const el = document.getElementById('leaderboard');
-      if (!leaderboard.length) {
-        el.innerHTML = '<p class="text-center text-zinc-600 text-sm">No presses yet</p>';
-        return;
-      }
-      el.innerHTML = leaderboard.map((r, i) =>
-        '<div class="flex justify-between px-3 py-1 rounded ' + (i === 0 ? 'bg-violet-600/20 text-violet-300' : 'text-zinc-400') + '">' +
-        '<span>' + (i + 1) + '. ' + r.username + '</span>' +
-        '<span class="font-mono">' + r.presses + '</span></div>'
-      ).join('');
-      const total = leaderboard.reduce((s, r) => s + parseInt(r.presses), 0);
-      document.getElementById('count').textContent = total + ' total presses';
-    }
-
-    document.getElementById('press-btn').addEventListener('click', async () => {
-      try {
-        const res = await fetch('/api/press', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...headers },
-        });
-        if (res.ok) loadLeaderboard();
-        else if (res.status === 401) document.getElementById('count').textContent = 'Sign in to press!';
-      } catch {}
-    });
-
-    loadLeaderboard();
-  </script>
+${demo.demoScript}  </script>
 </body>
 </html>
 `,

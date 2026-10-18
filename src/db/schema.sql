@@ -2865,6 +2865,14 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS anon_shell_checked_at TIMESTAMPTZ;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS approver_policy VARCHAR(10) NOT NULL DEFAULT 'anyone';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS approvals_required SMALLINT;
 
+-- Which starter template the app was created from (#3521, the create
+-- dialog's "Pick a template" picker). One of services/create-options.js's
+-- TEMPLATES ids. NULL reads as 'empty' — the starter every project got
+-- before the picker existed, so there is no backfill. Stored because a
+-- Retry and the repo heal re-run createApp from the row, not from the
+-- request, and a retried game must not come back as the Press demo.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS create_template VARCHAR(32);
+
 -- Per-app admins (#788), display side. The last reconciled *declared*
 -- username list from dapp.json's top-level `admins` block — INCLUDING
 -- names that resolved to no registered user, which is exactly why this

@@ -76,10 +76,26 @@
  * it shows (two lines in the hub hero, on Discover and on the join screen,
  * three beside the icon in the About pane), and the line in dapp.json stays
  * as it was written.
+ *
+ * ── How it starts ──────────────────────────────────────────────────────
+ *
+ * `template` is the last step's starter (#3521): one of TEMPLATES, or
+ * nothing. It is a starting point only — the placeholder screen and demo
+ * API the new repository scaffolds with (services/template.js) — and
+ * nothing else about the project follows from it. It is stored on the apps
+ * row (`create_template`) because a Retry and the repo heal re-run
+ * createApp from the stored row, not from the request, and a retried game
+ * must not come back as the Press demo.
  */
 
 const AUDIENCES = new Set(['solo', 'invited', 'open']);
 const VISIBILITIES = new Set(['public', 'private']);
+/**
+ * The starters the create dialog's template picker offers (#3521), by the
+ * ids services/template.js scaffolds from. `empty` is the starter every
+ * project got before the picker existed.
+ */
+const TEMPLATES = new Set(['empty', 'social-productivity', 'multimedia-social', 'game-2d', 'game-3d']);
 const MAX_INVITEES = 20;
 const MAX_APPROVALS_REQUIRED = 50;
 const USERNAME_MAX = 64;
@@ -177,10 +193,25 @@ function parseDescription(raw) {
 }
 
 /**
+ * The starter a new project begins from (the create dialog's "Pick a
+ * template" picker, #3521). Absent or `empty` resolves to `'empty'`, so an
+ * older client or a script that sends no template keeps today's starter. A
+ * template is a starting point for a NEW project only: together with a
+ * `repoUrl` it is a confusion of the two start answers, and the request is
+ * refused rather than silently seeded.
+ */
+function parseTemplate(raw, repoUrl) {
+  if (raw == null || raw === 'empty') return { template: 'empty' };
+  if (typeof raw !== 'string' || !TEMPLATES.has(raw)) return { error: 'Unknown template' };
+  if (repoUrl) return { error: 'A template applies to a new project, not an import' };
+  return { template: raw };
+}
+
+/**
  * Everything POST /api/apps needs to know about who a new project is for.
  * Returns `{ error }` for a 400, otherwise
  * `{ audience, collabVisibility, viewVisibility, invitees, inviteEmails,
- * governance, description }`.
+ * governance, description, template }`.
  */
 function parseCreateOptions(body = {}) {
   let audience = null;
@@ -214,6 +245,9 @@ function parseCreateOptions(body = {}) {
   const desc = parseDescription(body.description);
   if (desc.error) return { error: desc.error };
 
+  const tpl = parseTemplate(body.template, body.repoUrl);
+  if (tpl.error) return { error: tpl.error };
+
   return {
     audience,
     collabVisibility,
@@ -222,6 +256,7 @@ function parseCreateOptions(body = {}) {
     inviteEmails: mail.emails,
     governance: gov.governance,
     description: desc.description,
+    template: tpl.template,
   };
 }
 
@@ -243,9 +278,11 @@ function governanceBlock(governance) {
 
 module.exports = {
   AUDIENCES,
+  TEMPLATES,
   MAX_INVITEES,
   DESCRIPTION_MAX,
   parseCreateOptions,
+  parseTemplate,
   governanceBlock,
   visibilityForAudience,
   visibilityComboError,
