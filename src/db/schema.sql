@@ -9463,6 +9463,13 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_build_queue
   ON homeroom_bot_runs(app_id, build_queued_at)
   WHERE build_queued_at IS NOT NULL AND build_ok IS NULL;
 
+-- #3652: the head a checks turn looked at, lower-case. Every run that spent
+-- a turn on a failing head (a revise, a hand-off, a turn that failed) records
+-- it, so each failing head gets exactly one look. Null on every other run.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha TEXT;
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_proposal
+  ON homeroom_bot_runs(proposal_session_id) WHERE proposal_session_id IS NOT NULL;
+
 -- Everything the bot posted on an issue: one row per post, both surfaces
 -- (the GitHub comment and the Homeroom thread message) on the same row.
 -- The partial unique index is what makes "looking at this" a once-per-issue

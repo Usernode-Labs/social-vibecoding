@@ -928,6 +928,37 @@ async function post({
 }
 
 /**
+ * One message in the proposal's own discussion, recorded as a post (#3652).
+ * The row is written even when the send fails, so what the bot said (or
+ * tried to say) is on record. Never throws.
+ */
+async function postOnProposal({ pool, ws, app, issueNumber, sessionId, kind, text, bot }) {
+  let postId = null;
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO homeroom_bot_posts (app_id, issue_number, kind)
+       VALUES ($1, $2, $3) RETURNING id`,
+      [app.id, issueNumber, kind],
+    );
+    postId = rows[0]?.id || null;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not record a proposal post', { app: app.slug, issueNumber, kind, err: err.message });
+  }
+  try {
+    const sent = await ws.sendBotMessage(pool, app.id, {
+      user: bot, content: text, thread: { type: 'session', ref: Number(sessionId) },
+    });
+    if (postId && sent?.id) {
+      await pool.query('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', [postId, sent.id])
+        .catch(() => {});
+    }
+  } catch (err) {
+    log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+  }
+  return postId;
+}
+
+/**
  * The GitHub account the bot comments as, or null when it cannot be read.
  * `github.getBotUsername()` is async. Used unawaited, the Promise reached
  * the triage seed, where tagging a GitHub comment called .toLowerCase() on
@@ -1079,7 +1110,19 @@ const BUILD_DESCRIPTION_LINES = Object.freeze([
   'test results: those belong in the summary above it. Skip the block only if you changed nothing.',
 ]);
 
-function buildPrompt({ seed, buildNote, spec = null }) {
+// #3652: the platform's own repository runs its whole suite on the proposal
+// by itself, and a full run there is what pushed earlier builds past their
+// clock. Told only for that repository: an app's own instructions decide
+// its tests.
+const PLATFORM_TEST_NOTE = [
+  'The platform runs its whole test suite on the proposal by itself. Do not run `npm test` or the whole suite.',
+  'Run only the tests for the files you changed: `npm run test:changed -- --files <the files you changed,',
+  'comma-separated>`, or `node --test` for the test files that name them. If that maps to more than a few',
+  'hundred tests because you changed shared code, run only the test files that name the changed files. A',
+  'failure in a suite that reads nothing you changed is not yours.',
+].join(' ');
+
+function buildPrompt({ seed, buildNote, spec = null, platformRepo = false }) {
   const specBlock = spec
     ? [
       '',
@@ -1109,6 +1152,7 @@ function buildPrompt({ seed, buildNote, spec = null }) {
       heading: 'Make exactly that change, and nothing else:',
       commits: 'harness',
     }),
+    ...(platformRepo ? ['', PLATFORM_TEST_NOTE] : []),
     ...BUILD_DESCRIPTION_LINES,
   ].join('\n');
 }
@@ -1216,7 +1260,7 @@ async function draftSpec({
 async function buildAndPropose({
   pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
   turnBudgetMs, model, deps, propose = true, onSpec = null, specBudgetMs = SPEC_TURN_MAX_MS,
-  onSession = null, presetSpec = null, proposalCeiling = null,
+  onSession = null, presetSpec = null, proposalCeiling = null, platformRepo = false,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
@@ -1365,7 +1409,7 @@ async function buildAndPropose({
   }, turnBudgetMs);
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
-  const prompt = buildPrompt({ seed, buildNote, spec: spec.ok ? spec.specMd : null });
+  const prompt = buildPrompt({ seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
   // time-outs, most of them cheap, with nothing recorded about why.
@@ -1485,6 +1529,8 @@ module.exports = {
   parseStopMentioning,
   MAX_MENTIONS,
   post,
+  postOnProposal,
+  PLATFORM_TEST_NOTE,
   advanceSeen,
   botUsernameOf,
   openBotProposal,

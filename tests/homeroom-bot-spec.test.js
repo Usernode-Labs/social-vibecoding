@@ -485,8 +485,8 @@ test('a shadow build records a failed spec on its run, and the platform gets dou
   }), 'shadow_failed');
   assert.equal(record().params[5], `the build produced no change to propose; ${note}`, 'the failure first, then why there was no spec');
   assert.deepEqual(seen.pop(), {
-    slug: 'homeroom', turnBudgetMs: 2 * 1200 * 1000, specBudgetMs: 2 * live.SPEC_TURN_MAX_MS,
-  }, 'the platform gets double both clocks');
+    slug: 'homeroom', turnBudgetMs: 3 * 1200 * 1000, specBudgetMs: 3 * live.SPEC_TURN_MAX_MS,
+  }, 'the platform gets triple both clocks');
 
   outcome = { ok: true, sessionId: 6003, branchName: 'dev/c', sha: 'd'.repeat(40), commits: 1, costUsd: 0.02, specMd: SPEC };
   await bot.runQueuedBuild(pool, {}, { bot: BOT, claim: { id: 902, app_id: 9, issue_number: 14, build_note: 'x' }, settings, deps });
@@ -502,8 +502,26 @@ test('a shadow build records a failed spec on its run, and the platform gets dou
   const link = queries.find((q) => /SET build_session_id = \$2 WHERE id = \$1/.test(q.sql));
   assert.deepEqual(link.params, [903, 6100], 'the session is linked to the run as soon as it exists');
 
-  assert.deepEqual(bot.buildBudgets(apps[10], {}, 60_000), { turnBudgetMs: 120_000, specBudgetMs: 2 * live.SPEC_TURN_MAX_MS });
+  assert.deepEqual(bot.buildBudgets(apps[10], {}, 60_000), { turnBudgetMs: 180_000, specBudgetMs: 3 * live.SPEC_TURN_MAX_MS },
+    'the platform gets three times both clocks (#3652)');
   assert.deepEqual(bot.buildBudgets(APP, {}, 60_000), { turnBudgetMs: 60_000, specBudgetMs: live.SPEC_TURN_MAX_MS });
+});
+
+test('a build of the platform is told to run only the changed tests; an app\'s build is not (#3652)', () => {
+  const appPrompt = live.buildPrompt({ seed: 'S', buildNote: 'n' });
+  const platformPrompt = live.buildPrompt({ seed: 'S', buildNote: 'n', platformRepo: true });
+  assert.equal(appPrompt.includes(live.PLATFORM_TEST_NOTE), false, 'an app\'s own instructions decide its tests');
+  assert.equal(platformPrompt.includes(live.PLATFORM_TEST_NOTE), true);
+  assert.match(live.PLATFORM_TEST_NOTE, /Do not run `npm test` or the whole suite/);
+  assert.match(live.PLATFORM_TEST_NOTE, /npm run test:changed -- --files/);
+  assert.ok(!/—/.test(live.PLATFORM_TEST_NOTE));
+  // With the rules, before the description block.
+  assert.ok(platformPrompt.indexOf('Make exactly that change') < platformPrompt.indexOf(live.PLATFORM_TEST_NOTE));
+  assert.ok(platformPrompt.indexOf(live.PLATFORM_TEST_NOTE) < platformPrompt.indexOf('==== DESCRIPTION ===='));
+  assert.equal(platformPrompt.replace(`\n\n${live.PLATFORM_TEST_NOTE}`, ''), appPrompt, 'the note is the only difference');
+  // The live path and the shadow lane both say when the app is the platform's own.
+  const src = read('src/services/homeroom-bot.js');
+  assert.equal((src.match(/platformRepo: isPlatformRepo\(app, config\)/g) || []).length, 2);
 });
 
 test('the spec turn is its own telemetry component, the run keeps the spec, and the dashboard shows it', () => {
