@@ -6623,6 +6623,24 @@ const App = {
     } catch { return null; }
   },
 
+  // The rect an app's zoom starts from or lands on (#3618). The rail's row
+  // for the app is the resume handle: a close collapses into it and a resume
+  // expands out of it, the motion a Home tile has always had. Off the
+  // desktop layout the rail does not exist, so the Home tile answers as
+  // before; the kit rejects a null or zero-size rect and takes its usual
+  // fallback (a push on open, settling at once on close), which covers a
+  // folded rail and reduced motion too.
+  _appZoomTargetFor(slug) {
+    try {
+      if (window.matchMedia && window.matchMedia('(min-width: 768px)').matches) {
+        const sel = CSS.escape(`app:${slug}`);
+        return document.querySelector(
+          `#platform-recents .platform-recent[data-recent-key="${sel}"]`);
+      }
+    } catch (_) { /* fall through to the tile */ }
+    return App._tileFor(slug);
+  },
+
   // The screen the app view is expanding OUT of — home normally, the
   // browse screen when the tap came from there. The kit needs it twice:
   // as `outEl` (hidden for the synchronous pre-paint measurement so the
@@ -6817,7 +6835,7 @@ const App = {
     }, {
       type: App._entryTransition('zoom-in', appViewEl, viaTab),
       el: document.getElementById('app-view'),
-      fromEl: () => App._tileFor(slug),
+      fromEl: () => App._appZoomTargetFor(slug),
       // The outgoing screen: the kit hides it while measuring the
       // destination so the flex-sibling split doesn't skew the target
       // rect (see the comment block above).
@@ -6997,7 +7015,7 @@ const App = {
     }, {
       type: App._entryTransition('zoom-out', av, viaTab),
       el: av,
-      fromEl: () => (leavingSlug ? App._tileFor(leavingSlug) : null),
+      fromEl: () => (leavingSlug ? App._appZoomTargetFor(leavingSlug) : null),
       fallback: fallbackType,
       after: () => {
         av.classList.add('hidden');

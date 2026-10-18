@@ -196,6 +196,15 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
       <span className="platform-recent-label">{item.label}</span>
       {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
       {live ? <LiveAppDot className="platform-recent-live" /> : null}
+      {/* #3618: the way back, visible at a glance. The pill is the phone
+          resume bar's Resume label sitting in the row, rendered after the
+          green dot as a span INSIDE the anchor — the same single-target
+          pattern the parked strip records (a button inside an anchor is not
+          valid markup). The row you are in keeps none: it is lit as where
+          you are, and Resume there would say nothing. */}
+      {live && item.app && !item.current
+        ? <span className="platform-recent-resume">Resume</span>
+        : null}
       {item.unread ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
     </a>
   );

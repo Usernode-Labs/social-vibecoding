@@ -570,6 +570,26 @@ test('#3074: the Active rows are Recents\' rows, the current one lit, and nothin
   assert.match(html, /class="app-live-dot platform-recent-live"/, 'the green dot it carries everywhere');
   assert.match(html, /platform-recent-tile/, 'the app\'s own icon');
 
+  // #3618: a visible Resume pill rides the live rows you are not in, after
+  // the green dot; the row you are in and every conversation row keep none,
+  // and the pill changes no row's accessible name.
+  const fullRows = html.match(/<a class="platform-recent".*?<\/a>/g);
+  assert.equal((html.match(/platform-recent-resume/g) || []).length, 1, 'one pill across the Active rows');
+  assert.match(fullRows[1], /<span class="platform-recent-resume">Resume<\/span>/, 'the not-current live row offers Resume');
+  assert.match(fullRows[1], /class="app-live-dot platform-recent-live"[^<]*<\/span><span class="platform-recent-resume"/, 'after the green dot');
+  assert.doesNotMatch(fullRows[0], /platform-recent-resume/, 'the row you are in keeps none');
+  assert.match(rows[1], /aria-label="App: Chess, still open"/, 'the accessible name is unchanged by the pill');
+  const { RecentsByDay } = loadTsx('frontend/src/features/nav/recents-list.tsx');
+  const convRows = buildRecents({
+    apps: [],
+    conversations: [conversation(7, 'direct', '2026-09-20T12:00:00Z', { peer: { id: 9, username: 'ana' } })],
+    discussions: [], agents: [],
+  });
+  const convHtml = renderToHtml(createElement(RecentsByDay, {
+    items: convRows, live: [], showOlder: false, onToggleOlder: () => {},
+  }));
+  assert.doesNotMatch(convHtml, /platform-recent-resume/, 'no pill on a conversation row');
+
   const list = read('frontend/src/features/nav/recents-list.tsx');
   // Hydration: rows only after mount, the section inside the root and first.
   assert.match(list, /const active = mounted && viewer\s*\n\s*\? buildActive\(/);

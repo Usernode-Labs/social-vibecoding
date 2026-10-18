@@ -20013,6 +20013,26 @@ html.un-kb #platform-parked {
     background: var(--accent);
   }
 
+  /* ── RESUME ON A RUNNING ROW (#3618) ────────────────────────────────
+     The Active section is the running part of the rail, so the way back is
+     visible on its rows rather than nowhere: the phone resume bar's Resume
+     label (.platform-parked-pill) sitting in a 34px row — the same brand
+     tokens, at the row's own scale. A label INSIDE the row anchor, the
+     single-target pattern the parked strip records. */
+  .platform-recent-resume {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 8px;
+    border-radius: 999px;
+    border: 1px solid var(--brand-line);
+    background: var(--brand-tint);
+    color: var(--brand-ink);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
   /* ── ACTIVE (#3074) ──────────────────────────────────────────────────
      frontend/src/features/nav/recents.ts (buildActive) carries the argument:
      the running apps, in a section of their own at the top of the list, above

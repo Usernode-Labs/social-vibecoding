@@ -24,7 +24,7 @@ const vm = require('node:vm');
 
 const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 
-function harness({ wide = true, railHidden = false } = {}) {
+function harness({ wide = true, railHidden = false, querySelector } = {}) {
   const nodes = new Map();
   function element(id) {
     if (nodes.has(id)) return nodes.get(id);
@@ -48,9 +48,14 @@ function harness({ wide = true, railHidden = false } = {}) {
   }
   const AppView = { appData: null, launchRecordFor: () => null };
   const context = vm.createContext({
+    // #3618: the zoom helper reads the rail row by an escaped data-recent-key.
+    // Node has no CSS global of its own, so the vm context needs one that
+    // escapes like the browser's: an identifier-safe character run with a
+    // backslash before each character that is not one.
+    CSS: { escape: (v) => String(v).replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`) },
     location: new URL('https://homeroom.test/'), URL, URLSearchParams, console,
     history: { pushState() {}, replaceState() {} },
-    document: { title: '', getElementById: element, querySelector: () => null, addEventListener() {} },
+    document: { title: '', getElementById: element, querySelector: querySelector || (() => null), addEventListener() {} },
     addEventListener() {},
     localStorage: { getItem: () => null },
     matchMedia: (q) => ({ matches: q === '(min-width: 768px)' ? wide : false }),
@@ -276,4 +281,40 @@ test('the Workshop\'s loading state fills its column, and hands off to the Works
   const frameRows = Number(/skeletonListHtml\((\d+)\)/.exec(frame.slice(frame.indexOf('const DEV_BODY_WORKSHOP_INITIAL')))[1]);
   const ownRows = Number(/<CardSkeleton n=\{(\d+)\} label="Loading the workshop"/.exec(workshop)[1]);
   assert.equal(frameRows, ownRows, 'the frame\'s placeholder and the Workshop\'s loading state draw the same rows');
+});
+
+// ── #3618: the rail row is the zoom handle ───────────────────────────────
+//
+// A close collapses the app into its row in the rail and a resume expands it
+// back out of that row — the motion a Home tile has always had, with only
+// the rect changed. Both zoom call sites read one helper, which answers the
+// row on the desktop layout and the Home tile below it.
+
+test('#3618: the resume zoom reads the rail\'s row on desktop and the Home tile off it', () => {
+  const seen = [];
+  const pick = (sel) => (seen.push(sel), { from: sel });
+  const wide = harness({ querySelector: pick });
+  seen.length = 0; // app.js's boot may query; the helper's own calls are what this pins
+  assert.deepEqual(wide.App._appZoomTargetFor('chess'),
+    { from: '#platform-recents .platform-recent[data-recent-key="app\\:chess"]' },
+    'the rail\'s row for the app, found by its data-recent-key');
+  assert.equal(seen.length, 1, 'one query: no tile lookup on the desktop layout');
+
+  seen.length = 0;
+  const phone = harness({ wide: false, querySelector: pick });
+  assert.deepEqual(phone.App._appZoomTargetFor('chess'),
+    { from: '#app-list .app-card[data-slug="chess"], #home-featured-list .app-card[data-slug="chess"]' },
+    'below the breakpoint the Home tile answers, as before');
+});
+
+test('#3618: both zoom call sites read the helper, which gates on the desktop layout', () => {
+  const src = read('public/js/app.js');
+  const nav = src.slice(src.indexOf('  async navigateToApp('), src.indexOf('\n  navigateHome(opts) {'));
+  const home = src.slice(src.indexOf('  navigateHome(opts) {'), src.indexOf('\n  },', src.indexOf('  navigateHome(opts) {')));
+  assert.match(nav, /fromEl: \(\) => App\._appZoomTargetFor\(slug\),/, 'a resume grows out of the pressed row');
+  assert.match(home, /fromEl: \(\) => \(leavingSlug \? App\._appZoomTargetFor\(leavingSlug\) : null\),/, 'a close collapses into the rail row');
+  const helper = src.slice(src.indexOf('  _appZoomTargetFor(slug) {'), src.indexOf('  _departingScreen() {'));
+  assert.match(helper, /matchMedia\('\(min-width: 768px\)'\)/, 'gated on the desktop layout');
+  assert.match(helper, /#platform-recents \.platform-recent\[data-recent-key="\$\{sel\}"\]/, 'selects the row by its key');
+  assert.match(helper, /return App\._tileFor\(slug\);/, 'the Home tile is the fallback');
 });
