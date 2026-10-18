@@ -67,8 +67,9 @@ function loadWorker({
     ...realDocker,
     execFileAsync: async (cmd, args, opts) => {
       calls.push({ cmd, args, opts });
-      if (onExec) await onExec({ cmd, args, opts });
-      return { stdout: '', stderr: '' };
+      // A test's onExec may answer for the container (a stop's confirmation).
+      const answer = onExec ? await onExec({ cmd, args, opts }) : null;
+      return answer || { stdout: '', stderr: '' };
     },
     // execInWorker writes the turn prompt through this one.
     execShellStdin: async (runtimeName, script, opts) => {
@@ -918,4 +919,89 @@ test('concurrent turns on one session write their prompts to different files', (
   }
   // An id that is not path-safe falls back to the fixed paths.
   assert.equal(worker.turnPromptPaths('../x').prompt, worker.TURN_PROMPT_PATH);
+});
+
+// ── Stopping a turn workflow work started (src/workflow/turn-stop.ts) ───
+// A machine's turn.stop kills the turn by its journal, so it can run in any
+// process (the registry entry is only the web process's). The fence is what
+// makes that safe: a kill that arrives after the turn ended, and another
+// turn began on the same worker, finds a newer journal and stops nothing.
+
+const JOURNAL = '/home/node/.claude/turn-owned-1.log';
+const ownedTurn = (o = {}) => ({
+  turnId: 'owned-1', phase: 'executing', mode: 'build', journal: JOURNAL,
+  owner: { machine: 'proposal', key: 'session:8400', kind: 'branch.sync', workKey: 'sync:1', workId: 7 }, ...o,
+});
+
+test('a stop by journal is fenced on the newest journal in the worker, and says what it found', async () => {
+  let stdout = '__USERNODE_STOP_CONFIRMED__';
+  const { worker, calls, restore } = loadWorker({ onExec: async () => ({ stdout, stderr: '' }) });
+  try {
+    await assert.rejects(worker.stopTurnByJournal(8400, null), /journal path is required/);
+    await assert.rejects(worker.stopTurnByJournal(8400, "/home/node/.claude/turn-x.log'; rm -rf /"), /journal path is required/);
+    assert.equal(calls.length, 0, 'nothing is run without a journal path it can quote');
+
+    assert.equal(await worker.stopTurnByJournal(8400, JOURNAL), 'stopped');
+    const script = calls[0].args[4];
+    assert.match(script, /ls -t \/home\/node\/\.claude\/turn-\*\.log/);
+    assert.ok(script.indexOf(`[ "$N" = '${JOURNAL}' ]`) < script.indexOf('kill -KILL'), 'the fence comes before any kill');
+
+    stdout = '__USERNODE_STOP_NOT_CURRENT__';
+    assert.equal(await worker.stopTurnByJournal(8400, JOURNAL), 'not_current');
+    stdout = '';
+    await assert.rejects(worker.stopTurnByJournal(8400, JOURNAL), (err) => err.code === 'stop_unconfirmed');
+  } finally { restore(); }
+});
+
+test('a stop by journal on a session with no worker stops nothing, and does not fail', async () => {
+  const { worker, restore } = loadWorker({ onExec: async () => { throw new Error('Error: No such container: usernode-worker-8401'); } });
+  try {
+    assert.equal(await worker.stopTurnByJournal(8401, JOURNAL), 'not_current');
+  } finally { restore(); }
+});
+
+test('a machine stops only its own turn: another machine\'s, a person\'s or another kind is left alone', async () => {
+  const { worker, calls, dbCalls, activeTurns, restore } = loadWorker();
+  try {
+    const stop = (o = {}) => worker.stopOwnedTurn(require('../src/db/pool').getPool(),
+      { sessionId: 8402, machine: 'proposal', key: 'session:8400', kinds: ['branch.sync'], by: 'ana', ...o });
+    assert.deepEqual(await stop(), { stopped: false, reason: 'no_turn' });
+    activeTurns.set(8402, ownedTurn({ owner: undefined }));
+    assert.deepEqual(await stop(), { stopped: false, reason: 'not_this_turn' }, 'a person\'s own turn');
+    activeTurns.set(8402, ownedTurn({ owner: { ...ownedTurn().owner, machine: 'shots' } }));
+    assert.deepEqual(await stop(), { stopped: false, reason: 'not_this_turn' }, 'another machine\'s');
+    activeTurns.set(8402, ownedTurn({ owner: { ...ownedTurn().owner, key: 'session:1' } }));
+    assert.deepEqual(await stop(), { stopped: false, reason: 'not_this_turn' }, 'another instance\'s');
+    activeTurns.set(8402, ownedTurn());
+    assert.deepEqual(await stop({ kinds: ['shots.agent'] }), { stopped: false, reason: 'not_this_turn' }, 'another kind of work');
+    assert.equal(calls.length, 0, 'nothing killed');
+    assert.ok(!dbCalls.some((c) => /stopRequestedAt/.test(c.sql)), 'nothing stamped');
+    assert.equal(activeTurns.get(8402).stopRequestedAt, undefined);
+  } finally { restore(); }
+});
+
+test('a machine\'s own turn is stamped stopped by the person, then killed by its journal', async () => {
+  const { worker, calls, activeTurns, restore } = loadWorker({ onExec: async () => ({ stdout: '__USERNODE_STOP_CONFIRMED__', stderr: '' }) });
+  try {
+    activeTurns.set(8403, ownedTurn());
+    const out = await worker.stopOwnedTurn(require('../src/db/pool').getPool(),
+      { sessionId: 8403, machine: 'proposal', key: 'session:8400', kinds: ['branch.sync'], by: 'ana', release: false });
+    assert.deepEqual(out, { stopped: true, reason: 'stopped', turnId: 'owned-1', released: false });
+    assert.equal(activeTurns.get(8403).stopRequestedBy, 'ana', 'durable-turn reads it back as stopped by them');
+    assert.ok(activeTurns.get(8403).stopRequestedAt);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].args[4], new RegExp(`"\\$N" = '${JOURNAL.replace(/[.]/g, '\\.')}'`));
+  } finally { restore(); }
+});
+
+test('a turn\'s own clock kills it without recording that anybody stopped it', async () => {
+  const { worker, calls, activeTurns, restore } = loadWorker({ onExec: async () => ({ stdout: '__USERNODE_STOP_CONFIRMED__', stderr: '' }) });
+  try {
+    activeTurns.set(8404, ownedTurn());
+    const out = await worker.stopOwnedTurn(require('../src/db/pool').getPool(),
+      { sessionId: 8404, machine: 'proposal', key: 'session:8400', stamp: false, release: false });
+    assert.equal(out.stopped, true);
+    assert.equal(activeTurns.get(8404).stopRequestedAt, undefined);
+    assert.equal(calls.length, 1);
+  } finally { restore(); }
 });
