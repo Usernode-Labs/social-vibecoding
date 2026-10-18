@@ -11,10 +11,13 @@
  *
  * The header's back arrow goes up a level, the lit Communities tab goes up
  * one at a time, and a press on whatever peeks in from the right goes to it.
- * The strip follows a finger: a sideways drag anywhere on levels 0 and 1, and
- * on the page one that starts at the left edge (EDGE_PX, as the tray had),
- * except in Safari on an iPhone, where that edge is the browser's own Back.
- * Let go past a quarter of the way into a level and it lands there. It
+ * The strip follows a finger: a sideways drag anywhere on levels 0 and 1
+ * (their lists hand sideways on with `touch-action: pan-y`, or the browser
+ * would take it), and on the page a swipe right from anywhere that is not
+ * sideways UI, or from its left edge (EDGE_PX, as the tray had) except in
+ * Safari on an iPhone, where that edge is the browser's own Back
+ * (./sideways.ts). Let go past a quarter of the way into a level and it
+ * lands there. It
  * replaced the places tray on the phone; a wide window keeps the section
  * column beside the strip, and nothing here draws there.
  *
@@ -62,6 +65,7 @@ import {
 } from './drawer-store';
 import { pageLabel } from './header-drawer';
 import { OuterLevel } from './outer-level';
+import { startsOnSideways, swipeBackMayStart } from './sideways';
 
 const PHONE_QUERY = '(max-width: 767.98px)';
 
@@ -327,9 +331,11 @@ function DrawerSurface({ slug, name, place, owed }: { slug: string; name: string
     go(landing(p.from, offset, p.dx));
   };
 
-  // ── A finger at the page's left edge ──
+  // ── A finger on the page ──
+  // A swipe right, from anywhere on it but sideways UI or from the left edge
+  // where that is the page's (./sideways.ts).
   useEffect(() => {
-    if (!pageTakesEdge()) return undefined;
+    const takesEdge = pageTakesEdge();
     let p: null | { x0: number; y0: number; w: number; on: boolean; dx: number } = null;
     const move = (e: TouchEvent) => {
       const touch = e.touches[0];
@@ -338,6 +344,11 @@ function DrawerSurface({ slug, name, place, owed }: { slug: string; name: string
       const dy = touch.clientY - p.y0;
       if (!p.on) {
         if (isPan(dx, dy) && dx > 0) {
+          // A scroll the browser has already begun keeps the touch.
+          if (!e.cancelable) {
+            stop();
+            return;
+          }
           p.on = true;
           setMoving(true);
         } else if (Math.abs(dy) > PAN_SLOP_PX || dx < -PAN_SLOP_PX) {
@@ -359,9 +370,12 @@ function DrawerSurface({ slug, name, place, owed }: { slug: string; name: string
       const touch = e.touches[0];
       const s = drawerStore.get();
       stop();
-      if (!s.on || s.level !== 2 || s.moving || e.touches.length !== 1 || !touch || touch.clientX > EDGE_PX) return;
+      if (!s.on || s.level !== 2 || s.moving || e.touches.length !== 1 || !touch) return;
       const target = e.target as Element | null;
-      if (!target || !target.closest?.('#app-view')) return;
+      const page = target?.closest?.('#app-view') || null;
+      if (!target || !page) return;
+      const sideways = touch.clientX > EDGE_PX && startsOnSideways(target, page, window);
+      if (!swipeBackMayStart({ x: touch.clientX, takesEdge, sideways })) return;
       p = { x0: touch.clientX, y0: touch.clientY, w: screenWidth(), on: false, dx: 0 };
       document.addEventListener('touchmove', move, { passive: false });
     };

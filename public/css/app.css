@@ -19265,6 +19265,13 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   touch-action: pan-y;
 }
 .nav-drawer.is-resting { visibility: hidden; pointer-events: none; }
+/* touch-action stops at a scroller: a list inside says pan-y itself, or the
+   browser takes a sideways drag that starts on it (a pointercancel, and the
+   strip never moves). The page says it too while the drawer holds it, so a
+   swipe right on it is the drawer's; its own sideways scrollers and
+   swipe-to-vote cards say their own, and keep theirs
+   (features/nav-drawer/sideways.ts). */
+html[data-nav-drawer] #app-view { touch-action: pan-y; }
 .nav-drawer-strip { position: absolute; inset: 0; will-change: transform; }
 .nav-drawer-outer {
   position: absolute; top: 0; bottom: 0; left: 0; width: 85%;
@@ -19282,7 +19289,7 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
 .nav-drawer.is-searching .nav-drawer-places { transform: translate3d(15vw, 0, 0); }
 .nav-drawer-places-scroll {
   position: absolute; inset: 0;
-  overflow-y: auto; overscroll-behavior: contain;
+  overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
   padding: 16px 12px 24px;
 }
 .nav-drawer-places.is-peek { cursor: pointer; }
@@ -19337,7 +19344,7 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
 }
 .nav-drawer-outer-list {
   flex: 1 1 auto; min-height: 0;
-  overflow-y: auto; overscroll-behavior: contain;
+  overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
   padding-bottom: 24px;
 }
 .nav-drawer-outer-list:focus { outline: none; }
@@ -19406,6 +19413,10 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
    rules are untouched; `messages-drawer` is only ever set under 768px. */
 @media (max-width: 767.98px) {
   .messages-layout.messages-drawer { position: relative; overflow: hidden; touch-action: pan-y; }
+  /* touch-action stops at a scroller: the list and the conversation say
+     pan-y themselves, so a sideways drag on them is the drawer's. */
+  .messages-layout.messages-drawer .messages-list-scroll,
+  .messages-layout.messages-drawer .messages-thread-scroll { touch-action: pan-y; }
   .messages-layout.messages-drawer > .messages-list-pane {
     position: absolute; top: 0; bottom: 0; left: 0; width: 85%;
     will-change: transform;
