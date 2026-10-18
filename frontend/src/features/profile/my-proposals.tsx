@@ -178,6 +178,7 @@ export function ProfileProposalsScreen(): ReactNode {
       ref={screenRef}
       id="profile-proposals-screen"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll"
+      data-page-bounce=""
       style={{ position: 'relative' }}
       data-profile-work={kind}
     >
