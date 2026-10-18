@@ -67,8 +67,26 @@ test('list() exposes exactly the three model ids', () => {
   assert.deepEqual(ids, [
     'claude-fable-5-1',
     'claude-opus-5-5',
-    'claude-sonnet-5',
+    'claude-sonnet-5-5',
   ]);
+});
+
+// #3579: Sonnet 5.5 replaced Sonnet 5. A stored pick of the retired id is no
+// longer allowed, and resolves to its successor BY NAME, so the mapping
+// does not depend on which model happens to be the default.
+test('the retired Sonnet 5 id resolves to Sonnet 5.5 (#3579)', () => {
+  assert.equal(models.isAllowed('claude-sonnet-5'), false);
+  assert.equal(models.resolve('claude-sonnet-5'), 'claude-sonnet-5-5');
+  assert.equal(models.RETIRED_MODELS['claude-sonnet-5'], 'claude-sonnet-5-5');
+  for (const successor of Object.values(models.RETIRED_MODELS)) {
+    assert.equal(models.isAllowed(successor), true, `${successor} must be offered`);
+  }
+});
+
+test('Sonnet 5.5 carries the Sonnet tier and its $10/MTok output rate', () => {
+  assert.equal(models.MODELS['claude-sonnet-5-5'].label, 'Sonnet 5.5');
+  assert.equal(models.MODELS['claude-sonnet-5-5'].tier, 'sonnet');
+  assert.equal(models.MODELS['claude-sonnet-5-5'].outputCostPerMTok, 10);
 });
 
 test('every model carries recommended change-size guidance (#800)', () => {
