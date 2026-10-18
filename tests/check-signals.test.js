@@ -128,8 +128,9 @@ test('a primary frame carries when its group started and which pod ran it; a ret
     assert.equal(f.pod, undefined);
   }
   const timing = visuals.parseDiagnostics(text).find((d) => d.kind === 'checks-timing').data;
-  assert.deepEqual(Object.keys(timing).sort(), ['fallbacks', 'groups', 'lanes', 'loads', 'retries', 'shard', 'wallMs'],
-    'the per-pod timing line is unchanged: no check, no URL');
+  assert.deepEqual(Object.keys(timing).sort(),
+    ['fallbacks', 'groups', 'lanes', 'loads', 'networkSettle', 'retries', 'shard', 'wallMs'],
+    'the per-pod timing line names no check and no URL (networkSettle is the pod\'s IPv6 wait)');
 });
 
 // ── The rule ───────────────────────────────────────────────────────────

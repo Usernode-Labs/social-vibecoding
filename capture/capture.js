@@ -1707,10 +1707,12 @@ async function readRenderHealth(page, stylesheets, { recheckMs = RENDER_BLANK_RE
 // failures, and a run that overlapped a rollout went round again and again.
 //
 // It is never the app's doing, so a group whose cold load meets it starts
-// over once, on a fresh context, before it has reported anything. What
-// changed in the pod is not known yet, so the run also writes down what the
-// pod's network looked like at that moment (emitDiag), which the platform
-// logs.
+// over once, on a fresh context, before it has reported anything. The run
+// also writes down what the pod's network looked like at that moment
+// (emitDiag), which the platform logs. Those lines found the cause, the pod's
+// IPv6 address settling after the browser started; the run now waits for it
+// before its first load (waitForNetworkSettled, below), and the start-over
+// stays for anything else that changes the network.
 const NETWORK_CHANGED_RE = /net::ERR_NETWORK_CHANGED/;
 const NETWORK_CHANGED_RETRY_DELAY_MS = 1000;
 // One run whose every group meets it must not write a frame per group.
@@ -1747,6 +1749,90 @@ function networkSnapshot() {
     resolvConfChangedAt: fileMtime('/etc/resolv.conf'),
     hostsChangedAt: fileMtime('/etc/hosts'),
   };
+}
+
+// ── Waiting for the pod's IPv6 address to settle ────────────────────────
+//
+// What changed. From 16 to 18 Oct 2026, 56 of 90 Homeroom runs started a
+// group over (142 times), and the diag lines above say when: 0.8 to 1.3 s
+// into the pod for a cancelled navigation, 2.5 to 3.5 s for a cancelled
+// subresource (found at the end of its load), every group of a pod within
+// a few hundred milliseconds of each other. The pod's DNS files were written
+// 0.1 to 0.3 s BEFORE this process started, so they did not change under
+// the browser. What does is eth0's IPv6 link-local address: the kernel adds
+// it as tentative (flag 0x40 in /proc/net/if_inet6) when the pod's link
+// comes up, runs duplicate address detection, and 1.2 to 2.1 s later clears
+// the flag. Chromium's address tracker compares an address's whole netlink
+// record, flags included, so the cleared flag is an IP address change to it:
+// it aborts the lookups and connections in flight with ERR_NETWORK_CHANGED.
+// A pod is a few hundred milliseconds old when this process starts, so its
+// first loads ran straight into that. Reproduced in a fresh network
+// namespace: Chromium reports the change within milliseconds of the flag
+// clearing, and a load waiting on DNS at that moment fails; launched once no
+// address is tentative, the same load succeeds every time.
+//
+// So the run reads the addresses while Chromium launches, and when one is
+// still tentative it waits, at most NETWORK_SETTLE_MAX_MS, for detection to
+// finish before the first load. A pod whose addresses are already settled
+// waits for nothing. The start-over above stays as the safety net.
+const IFA_F_TENTATIVE = 0x40;
+// A failed detection leaves the address tentative for good: never waited on.
+const IFA_F_DADFAILED = 0x08;
+const NETWORK_SETTLE_MAX_MS = 3000;
+const NETWORK_SETTLE_POLL_MS = 50;
+// Chromium hears the change on its own thread and then tells its socket
+// pools; a load started in that gap could still meet it.
+const NETWORK_SETTLE_GRACE_MS = 150;
+
+// The interfaces with an address still being checked, from the text of
+// /proc/net/if_inet6 (address, index, prefix length, scope, flags, name).
+function tentativeInterfaces(text) {
+  const names = [];
+  for (const line of String(text || '').split('\n')) {
+    const f = line.trim().split(/\s+/);
+    if (f.length < 6) continue;
+    const flags = parseInt(f[4], 16);
+    if (!Number.isFinite(flags)) continue;
+    if ((flags & IFA_F_TENTATIVE) && !(flags & IFA_F_DADFAILED) && !names.includes(f[5])) names.push(f[5]);
+  }
+  return names;
+}
+
+// Resolves, never rejects, with what it saw: { waitedMs, tentative (the
+// interfaces it waited on), timedOut }. `read`, `sleep` and `now` are for
+// the tests.
+async function waitForNetworkSettled(opts = {}) {
+  const read = typeof opts.read === 'function' ? opts.read : () => readSmallFile('/proc/net/if_inet6');
+  const pause = typeof opts.sleep === 'function' ? opts.sleep : sleep;
+  const now = typeof opts.now === 'function' ? opts.now : () => Date.now();
+  const maxMs = Number.isFinite(opts.maxMs) ? opts.maxMs : NETWORK_SETTLE_MAX_MS;
+  const pollMs = Number.isFinite(opts.pollMs) ? opts.pollMs : NETWORK_SETTLE_POLL_MS;
+  const graceMs = Number.isFinite(opts.graceMs) ? opts.graceMs : NETWORK_SETTLE_GRACE_MS;
+  const startedAt = now();
+  const readTentative = () => {
+    try { return tentativeInterfaces(read()); } catch { return []; }
+  };
+  let pending = readTentative();
+  if (!pending.length) return { waitedMs: 0, tentative: [], timedOut: false };
+  const tentative = pending.slice();
+  while (pending.length) {
+    if (now() - startedAt >= maxMs) {
+      return { waitedMs: Math.round(now() - startedAt), tentative, timedOut: true };
+    }
+    await pause(pollMs);
+    pending = readTentative();
+  }
+  await pause(graceMs);
+  return { waitedMs: Math.round(now() - startedAt), tentative, timedOut: false };
+}
+
+// Starts the wait alongside the browser's launch, not before it: a pod whose
+// address has settled pays nothing, and one still in detection overlaps the
+// wait with the launch. Returns once both are done, so no page loads first.
+async function launchWhenSettled(launch, settle = waitForNetworkSettled) {
+  const settling = settle();
+  const browser = await launch();
+  return { browser, networkSettle: await settling };
 }
 
 // The document a check loaded, without its query: the checks' URLs carry a
@@ -2455,6 +2541,9 @@ async function runTests(browser, tests, opts) {
     loads: timingSummary(loadTimes),
     retries: timingSummary(retryTimes),
     fallbacks,
+    // What waiting for the pod's IPv6 address cost this pod (see
+    // waitForNetworkSettled), or null when the caller did not wait.
+    networkSettle: o.networkSettle || null,
   }, { uncapped: true });
 
   // `ran` and `expected` still count DECLARED checks only. A retry is a
@@ -2476,11 +2565,11 @@ async function main() {
   // outside the capture image) can require this file for parseCookie /
   // resolveTargets.
   const puppeteer = require('puppeteer-core');
-  const browser = await puppeteer.launch({
+  const { browser, networkSettle } = await launchWhenSettled(() => puppeteer.launch({
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
     headless: true,
     args: CHROMIUM_LAUNCH_ARGS,
-  });
+  }));
 
   const media = mediaEnabled(process.env);
   const haveTests = tests.length > 0;
@@ -2535,6 +2624,7 @@ async function main() {
         testTimeoutMs: testTimeoutMs(process.env),
         deadlineMs: testsDeadlineMs(process.env),
         env: process.env,
+        networkSettle,
       })
       : Promise.resolve();
     // Settle both before closing the browser: a media-pass failure must not
@@ -2562,4 +2652,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, tentativeInterfaces, waitForNetworkSettled, launchWhenSettled, NETWORK_SETTLE_MAX_MS, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
