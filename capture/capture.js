@@ -1756,8 +1756,9 @@ function networkSnapshot() {
 // What changed. From 16 to 18 Oct 2026, 56 of 90 Homeroom runs started a
 // group over (142 times), and the diag lines above say when: 0.8 to 1.3 s
 // into the pod for a cancelled navigation, 2.5 to 3.5 s for a cancelled
-// subresource (found at the end of its load), every group of a pod within
-// a few hundred milliseconds of each other. The pod's DNS files were written
+// subresource (found at the end of its load). Of the pods with more than
+// one such line, most had them all within 0.05 s of each other: one change
+// across the pod, not a page's doing. The pod's DNS files were written
 // 0.1 to 0.3 s BEFORE this process started, so they did not change under
 // the browser. What does is eth0's IPv6 link-local address: the kernel adds
 // it as tentative (flag 0x40 in /proc/net/if_inet6) when the pod's link
@@ -1772,16 +1773,18 @@ function networkSnapshot() {
 // address is tentative, the same load succeeds every time.
 //
 // So the run reads the addresses while Chromium launches, and when one is
-// still tentative it waits, at most NETWORK_SETTLE_MAX_MS, for detection to
-// finish before the first load. A pod whose addresses are already settled
-// waits for nothing. The start-over above stays as the safety net.
+// still tentative it waits, at most NETWORK_SETTLE_MAX_MS in all, for
+// detection to finish before the first load. A pod whose addresses are
+// already settled waits for nothing. The wait is advisory: if it fails, the
+// run goes on without it. The start-over above stays as the safety net.
 const IFA_F_TENTATIVE = 0x40;
 // A failed detection leaves the address tentative for good: never waited on.
 const IFA_F_DADFAILED = 0x08;
 const NETWORK_SETTLE_MAX_MS = 3000;
 const NETWORK_SETTLE_POLL_MS = 50;
 // Chromium hears the change on its own thread and then tells its socket
-// pools; a load started in that gap could still meet it.
+// pools; a load started in that gap could still meet it. Counted within the
+// cap.
 const NETWORK_SETTLE_GRACE_MS = 150;
 
 // The interfaces with an address still being checked, from the text of
@@ -1791,46 +1794,61 @@ function tentativeInterfaces(text) {
   for (const line of String(text || '').split('\n')) {
     const f = line.trim().split(/\s+/);
     if (f.length < 6) continue;
+    if (!/^[0-9a-f]{1,8}$/i.test(f[4])) continue;
     const flags = parseInt(f[4], 16);
-    if (!Number.isFinite(flags)) continue;
     if ((flags & IFA_F_TENTATIVE) && !(flags & IFA_F_DADFAILED) && !names.includes(f[5])) names.push(f[5]);
   }
   return names;
 }
 
 // Resolves, never rejects, with what it saw: { waitedMs, tentative (the
-// interfaces it waited on), timedOut }. `read`, `sleep` and `now` are for
-// the tests.
+// interfaces it waited on), timedOut }, or null when the wait itself failed;
+// a run whose wait fails goes on as before it existed. The whole wait, grace
+// included, stays within `maxMs`. `read`, `sleep` and `now` are for the
+// tests.
 async function waitForNetworkSettled(opts = {}) {
-  const read = typeof opts.read === 'function' ? opts.read : () => readSmallFile('/proc/net/if_inet6');
-  const pause = typeof opts.sleep === 'function' ? opts.sleep : sleep;
-  const now = typeof opts.now === 'function' ? opts.now : () => Date.now();
-  const maxMs = Number.isFinite(opts.maxMs) ? opts.maxMs : NETWORK_SETTLE_MAX_MS;
-  const pollMs = Number.isFinite(opts.pollMs) ? opts.pollMs : NETWORK_SETTLE_POLL_MS;
-  const graceMs = Number.isFinite(opts.graceMs) ? opts.graceMs : NETWORK_SETTLE_GRACE_MS;
-  const startedAt = now();
-  const readTentative = () => {
-    try { return tentativeInterfaces(read()); } catch { return []; }
-  };
-  let pending = readTentative();
-  if (!pending.length) return { waitedMs: 0, tentative: [], timedOut: false };
-  const tentative = pending.slice();
-  while (pending.length) {
-    if (now() - startedAt >= maxMs) {
-      return { waitedMs: Math.round(now() - startedAt), tentative, timedOut: true };
+  try {
+    const read = typeof opts.read === 'function' ? opts.read : () => readSmallFile('/proc/net/if_inet6');
+    const pause = typeof opts.sleep === 'function' ? opts.sleep : sleep;
+    const now = typeof opts.now === 'function' ? opts.now : () => Date.now();
+    const maxMs = Number.isFinite(opts.maxMs) ? opts.maxMs : NETWORK_SETTLE_MAX_MS;
+    const pollMs = Number.isFinite(opts.pollMs) ? opts.pollMs : NETWORK_SETTLE_POLL_MS;
+    const graceMs = Number.isFinite(opts.graceMs) ? opts.graceMs : NETWORK_SETTLE_GRACE_MS;
+    const startedAt = now();
+    const left = () => Math.max(0, maxMs - (now() - startedAt));
+    const readTentative = () => {
+      try { return tentativeInterfaces(read()); } catch { return []; }
+    };
+    let pending = readTentative();
+    if (!pending.length) return { waitedMs: 0, tentative: [], timedOut: false };
+    const tentative = pending.slice();
+    while (pending.length) {
+      if (left() <= 0) {
+        return { waitedMs: Math.round(now() - startedAt), tentative, timedOut: true };
+      }
+      await pause(Math.min(pollMs, left()));
+      pending = readTentative();
     }
-    await pause(pollMs);
-    pending = readTentative();
+    const grace = Math.min(graceMs, left());
+    if (grace > 0) await pause(grace);
+    return { waitedMs: Math.round(now() - startedAt), tentative, timedOut: false };
+  } catch {
+    return null;
   }
-  await pause(graceMs);
-  return { waitedMs: Math.round(now() - startedAt), tentative, timedOut: false };
 }
 
 // Starts the wait alongside the browser's launch, not before it: a pod whose
 // address has settled pays nothing, and one still in detection overlaps the
 // wait with the launch. Returns once both are done, so no page loads first.
+// The wait is advisory: if it throws or rejects, the run goes on with the
+// browser it launched (networkSettle: null). A failed launch still fails.
 async function launchWhenSettled(launch, settle = waitForNetworkSettled) {
-  const settling = settle();
+  let settling;
+  try {
+    settling = Promise.resolve(settle()).catch(() => null);
+  } catch {
+    settling = Promise.resolve(null);
+  }
   const browser = await launch();
   return { browser, networkSettle: await settling };
 }

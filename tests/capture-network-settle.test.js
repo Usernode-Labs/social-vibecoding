@@ -86,9 +86,72 @@ test('the wait is bounded: an address that never settles gives up at the cap', a
     read: () => procText(ETH0_TENTATIVE), sleep: time.sleep, now: time.now,
   });
   assert.equal(out.timedOut, true);
-  assert.equal(out.waitedMs, NETWORK_SETTLE_MAX_MS);
-  assert.ok(NETWORK_SETTLE_MAX_MS <= 3000, 'a few seconds at most');
+  // The intended default, pinned on its own rather than read back from the
+  // exported constant: a cap of zero would never wait at all.
+  assert.equal(out.waitedMs, 3000);
+  assert.equal(NETWORK_SETTLE_MAX_MS, 3000);
   assert.ok(!time.sleeps.includes(150), 'no grace after giving up');
+});
+
+test('the cap holds with the grace included: an address clearing at the deadline adds nothing past it', async () => {
+  const time = fakeTime();
+  const startedAt = time.now();
+  const out = await waitForNetworkSettled({
+    read: () => procText(time.now() - startedAt >= 3000 ? ETH0_PERMANENT : ETH0_TENTATIVE),
+    sleep: time.sleep, now: time.now, pollMs: 50, graceMs: 150, maxMs: 3000,
+  });
+  assert.equal(out.timedOut, false);
+  assert.equal(out.waitedMs, 3000, 'no grace left to pay at the deadline');
+  const out2 = await waitForNetworkSettled({
+    read: () => procText(ETH0_TENTATIVE), sleep: time.sleep, now: time.now, pollMs: 70, maxMs: 100,
+  });
+  assert.deepEqual([out2.waitedMs, out2.timedOut], [100, true], 'the last poll is cut to the time left');
+});
+
+test('a garbled flags field is not read as a flag', () => {
+  assert.deepEqual(tentativeInterfaces(procText(ETH0_TENTATIVE.replace(' c0 ', ' c0junk '))), []);
+  assert.deepEqual(tentativeInterfaces(procText(ETH0_TENTATIVE.replace(' c0 ', ' 0x40 '))), []);
+});
+
+test('a wait that fails resolves null instead of rejecting', async () => {
+  assert.equal(await waitForNetworkSettled({
+    read: () => procText(ETH0_TENTATIVE), sleep: async () => { throw new Error('sleep broke'); }, now: () => 0,
+  }), null);
+  let calls = 0;
+  assert.equal(await waitForNetworkSettled({
+    read: () => procText(ETH0_TENTATIVE), sleep: async () => {},
+    now: () => { calls += 1; if (calls > 2) throw new Error('clock broke'); return 0; },
+  }), null);
+});
+
+// A launch that takes a while, so a failing wait finishes first, the way an
+// unhandled rejection would have ended the process.
+const slowLaunch = (browser, ms = 30) => () => new Promise((r) => setTimeout(() => r(browser), ms));
+
+test('a wait that throws does not stop the run: the browser comes back with networkSettle null', async () => {
+  const out = await launchWhenSettled(slowLaunch({ fake: 'browser' }), () => { throw new Error('boom'); });
+  assert.deepEqual(out, { browser: { fake: 'browser' }, networkSettle: null });
+});
+
+test('a wait that rejects before the launch finishes does not stop the run either', async () => {
+  const unhandled = [];
+  const onUnhandled = (err) => unhandled.push(err);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const out = await launchWhenSettled(slowLaunch({ fake: 'browser' }), () => Promise.reject(new Error('boom')));
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(out, { browser: { fake: 'browser' }, networkSettle: null });
+    assert.deepEqual(unhandled, [], 'no unhandled rejection while the launch was pending');
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+});
+
+test('a launch that fails still fails, whatever the wait does', async () => {
+  await assert.rejects(launchWhenSettled(async () => { throw new Error('no chromium'); },
+    async () => ({ waitedMs: 0 })), /no chromium/);
+  await assert.rejects(launchWhenSettled(async () => { throw new Error('no chromium'); },
+    () => Promise.reject(new Error('boom'))), /no chromium/);
 });
 
 test('an unreadable /proc never holds the run up or throws', async () => {
