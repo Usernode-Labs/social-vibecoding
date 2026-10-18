@@ -86,7 +86,7 @@ import {
   type CommunityInfo,
 } from '../workshop/community-scope';
 import { CommunitySwitcher } from '../workshop/community-switcher';
-import { createSwitcherHold, pressLitTab } from '../workshop/tab-ladder';
+import { pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
 import { clearPeekTimer, clearPeekTimerByMouse, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
 import { StripApps } from './strip-apps';
@@ -232,10 +232,11 @@ function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
  * On the phone's bar, a square ring, the shape of an app's own tile, around
  * either that community's tile, in its colour (features/workshop/
  * community-scope.ts says which; lib/community-color.ts what colour), or, on
- * All communities, the tab's own people glyph. The ring is what says the tab
- * can be switched: hold it and "Your communities" opens (#3701,
- * ../workshop/tab-ladder.ts). The desktop rail draws no ring (app.css): the
- * header's name is the switcher there, as it is on a phone.
+ * All communities, the tab's own people glyph. The ring says which community
+ * the tab is on; switching is the drawer's list. Holding the tab no longer
+ * opens "Your communities" (18 Oct 2026): that was the old switcher, which
+ * the drawer replaced on a phone. The desktop rail draws no ring (app.css):
+ * the header's name is the switcher there.
  *
  * All communities is THE PRERENDER: the scope arrives from localStorage and
  * app.js after the first paint, so the shipped markup and the first client
@@ -802,19 +803,6 @@ export function PlatformTabs() {
   // beside a running app on the desktop.
   const runningApp = screen === 'app-view' && !tab;
   const { box: marker, lit, markerRef, press } = useTabMarker(barRef, tab);
-  // THE COMMUNITIES TAB, HELD on the phone's bar, opens "Your communities"
-  // (#3701, ../workshop/tab-ladder.ts createHold); a short press is the
-  // ladder below. One per bar, its timer and click guard let go on unmount.
-  // Only handlers ride on the tab, so the markup is the prerender's.
-  const [hold] = useState(createSwitcherHold);
-  useEffect(() => () => hold.dispose(), [hold]);
-  const holdProps = {
-    onPointerDown: hold.onPointerDown,
-    onPointerMove: hold.onPointerMove,
-    onPointerUp: hold.onPointerUp,
-    onPointerCancel: hold.onPointerCancel,
-    onContextMenu: hold.onContextMenu,
-  };
   // A plain press on another tab lights it and slides the pill first, and
   // navigates a frame later (useTabMarker's `press`, #3259). A modified click
   // stays the browser's, a second press on a tab still waiting for its route
@@ -832,7 +820,8 @@ export function PlatformTabs() {
     // back to the community, then to the top, then to All communities, whose
     // own press only scrolls (../workshop/tab-ladder.ts). It used to open
     // "Your communities" on a phone and go to All communities on the rail.
-    // The switcher is the header's name, and the phone's tab held (`hold`).
+    // On a wide window the switcher is the header's name; a phone has the
+    // drawer's list, and holding the tab opens nothing (18 Oct 2026).
     if (key === 'workshop' && lit === 'workshop' && tab === 'workshop') {
       event.preventDefault();
       pressLitTab(screen);
@@ -940,7 +929,6 @@ export function PlatformTabs() {
           aria-current={lit === key ? 'page' : undefined}
           aria-label={key === 'workshop' ? communitiesAriaLabel(scoped) : tabLabel(key, t(label), viewer).ariaLabel}
           onClick={(event) => onTabClick(event, key, href)}
-          {...(key === 'workshop' ? holdProps : {})}
         >
           <span className="platform-tab-mark">
             {key === 'workshop'

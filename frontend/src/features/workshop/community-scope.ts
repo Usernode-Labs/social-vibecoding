@@ -37,9 +37,9 @@
  *
  * "Your communities": All communities first, then each community you are in,
  * then "Join a community" and "Start a community". It opens from the community's name and ⌄
- * in the coloured header, from the header's "Communities ⌄" on the
- * Communities list, and from the phone's tab held down (#3701; pressed while
- * it is lit, the tab goes up a level instead, ./tab-ladder.ts).
+ * in the coloured header and from the header's "Communities ⌄" on the
+ * Communities list (the tab pressed while it is lit goes up a level instead,
+ * ./tab-ladder.ts; held, it opens nothing since 18 Oct 2026).
  * `openSwitcher(from)` says where, so a wide window can hang the menu off
  * whatever opened it.
  *
@@ -85,8 +85,8 @@ export interface CommunityInfo {
   lastActiveAt?: string | null;
 }
 
-/** Where the switcher was opened from: the phone's tab (held), or the header. */
-export type SwitcherFrom = 'tab' | 'header';
+/** Where the switcher was opened from: the header (the phone's held tab no longer opens it). */
+export type SwitcherFrom = 'header';
 
 export interface CommunityScopeState {
   /** The community the tab is on, or null for All communities. */

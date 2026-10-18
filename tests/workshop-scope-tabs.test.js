@@ -98,7 +98,7 @@ test('the switcher says which community you are on, who each is for, and what it
       stubs: {
         './community-scope': {
           ...real,
-          communityScopeStore: fixedStore({ slug, info, list: ['garden', 'club', 'notes'], totalNeeds: 2, switcher: 'tab', anchor: null }),
+          communityScopeStore: fixedStore({ slug, info, list: ['garden', 'club', 'notes'], totalNeeds: 2, switcher: 'header', anchor: null }),
         },
       },
     });
@@ -144,7 +144,7 @@ test('#3519: a long section shows three, then "Show N more"; the community you a
       stubs: {
         './community-scope': {
           ...real,
-          communityScopeStore: fixedStore({ slug, info, list: slugs, totalNeeds: 0, switcher: 'tab', anchor: null }),
+          communityScopeStore: fixedStore({ slug, info, list: slugs, totalNeeds: 0, switcher: 'header', anchor: null }),
         },
       },
     });
