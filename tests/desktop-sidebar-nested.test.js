@@ -97,7 +97,7 @@ test('the places: the column\'s own list, topics after two behind "Show N more",
   // The sidebar's part is that list, under the community's own row.
   const rail = read('frontend/src/features/nav/rail-communities.tsx');
   assert.match(rail, /<ProjectPlaces[\s\S]*?fold=\{RAIL_TOPICS\}\s*onPlace=\{\(key\) => \{ openPlace\(slug, key\); \}\}/);
-  assert.match(rail, /const inside = onPage === slug \|\| onApp === slug;\n\s*const open = sidebarRows && inside;/, 'it opens with the page, or the app');
+  assert.match(rail, /const open = sidebarRows && \(onPage === slug \|\| \(onApp === slug && yours\)\);/, 'it opens with the page, or the app of one of yours');
   assert.match(rail, /<NestSlot open=\{open\} className="platform-rail-nest platform-rail-places" rows="\.dev-ws-place, \.dev-ws-places-head">\s*<RailPlaces slug=\{slug\} onPage=\{onPage === slug\} \/>/);
   assert.match(rail, /const votes = c && !c\.unchosen && !open \? Number\(c\.needs\) \|\| 0 : 0;/, 'open, its votes are Needs you\'s count');
 });

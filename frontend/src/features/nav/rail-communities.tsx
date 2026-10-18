@@ -30,7 +30,9 @@
  *
  * Above Hub, App: the community's app, which the sidebar's Recent apps
  * section used to list apart from its community. Being in the app is being
- * in the community, so its row opens there too, with App lit. App carries
+ * in the community, so its row opens there too, with App lit (one of yours:
+ * an app you have not joined shows its App row alone, and nothing reads a
+ * community record for it). App carries
  * the green "still open" dot while the app runs in a kept frame
  * (../app-frame/live-apps.tsx), and THAT ROW STAYS: in another community,
  * one whose app is still running keeps its App row alone under its own row,
@@ -319,19 +321,24 @@ export function RailCommunityRow({ slug, here, record = null, pin }: {
   const { apps: recents } = useStoreState(recentAppsStore);
   const c = info[slug];
   const recent = c || record ? null : (recents as Array<{ slug: string } & RailRecord>).find((a) => a.slug === slug) || null;
-  // Only a community nothing here can name is read for its name.
-  const visit = useCommunity(c || record || recent ? '' : slug);
+  const { sidebarRows, screen, onPage, onApp, live } = here;
+  // Only a page you are visiting is read for its name. A row a running app
+  // brought is named from what is known: an app need not have a community
+  // record to read (the shots' made-up apps have none, and a read that
+  // 404s is a console error).
+  const visit = useCommunity(c || record || recent || onPage !== slug ? '' : slug);
   const name = c?.name || record?.name || recent?.name || visit?.name || slug;
   const face = c || record || recent;
   const icon = { icon_url: face?.iconUrl || null, icon_emoji: face?.iconEmoji || null, name };
-  const { sidebarRows, screen, onPage, onApp, live } = here;
-  // Its places open while you are on its page or in its app.
+  const yours = !!record || (!!list && list.includes(slug));
+  // Its places open while you are on its page, or in its app when it is one
+  // of yours: an app you have not joined shows its App row alone.
   const inside = onPage === slug || onApp === slug;
-  const open = sidebarRows && inside;
+  const open = sidebarRows && (onPage === slug || (onApp === slug && yours));
   const app = hasAppRow(slug, info, list);
   const running = live.includes(slug);
   // The part: everything while you are in it, its App row alone while its app runs.
-  const part = open || (sidebarRows && app && running);
+  const part = open || (sidebarRows && app && (running || onApp === slug));
   // Open, its votes are Needs you's count under it.
   const votes = c && !c.unchosen && !open ? Number(c.needs) || 0 : 0;
   const appName = t('core:rail.appOf', { name });

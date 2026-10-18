@@ -88,6 +88,15 @@ test('in another community: a running app keeps its App row alone; a stopped one
   assert.doesNotMatch(home, /data-rail-app/);
 });
 
+test('in the app of a community you have not joined: its App row alone, lit, and no record read', () => {
+  const html = drawRow({ onApp: 'stranger', live: ['stranger'] }, { slug: 'stranger', info: {}, list: ['chess'] });
+  assert.match(html, /data-rail-community="stranger" title="stranger" aria-current="page"/, 'lit, named by what is known');
+  assert.match(html, /data-rail-app="stranger" data-live="true"[^>]*aria-current="page"/);
+  assert.doesNotMatch(html, /data-places=|data-rail-open/, 'no places, so nothing reads its community record');
+  // Only a page you are visiting is read for its name.
+  assert.match(read(RAIL), /const visit = useCommunity\(c \|\| record \|\| recent \|\| onPage !== slug \? '' : slug\);/);
+});
+
 test('a pin is drawn as any community is, named by its own record when the list does not have it', () => {
   const html = drawRow({ onPage: 'x' }, { slug: 'gym', info: {}, list: ['chess'], record: { name: 'Gym', iconUrl: null, iconEmoji: '🏋️' } });
   assert.match(html, /data-rail-community="gym" title="Gym"/);
@@ -96,7 +105,7 @@ test('a pin is drawn as any community is, named by its own record when the list 
 
 test('the source: the part holds App, then the places; the five leave the pins out and keep a running app', () => {
   const src = read(RAIL);
-  assert.match(src, /const part = open \|\| \(sidebarRows && app && running\);/);
+  assert.match(src, /const part = open \|\| \(sidebarRows && app && \(running \|\| onApp === slug\)\);/);
   assert.match(src, /<NestSlot open=\{part\} className="platform-rail-nest" rows="\.platform-rail-app, \.dev-ws-place, \.dev-ws-places-head">\s*\{app \? \(/);
   assert.match(src, /\(window as unknown as \{ App\?: \{ openAppTab\?: \(slug: string, tab: string\) => void \} \}\)\.App\?\.openAppTab\?\.\(slug, 'app'\);/,
     'App opens through the router, which switches to a kept app');
