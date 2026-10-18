@@ -4,10 +4,12 @@
  *
  * ── What it is ─────────────────────────────────────────────────────────
  *
- * While an app runs on its App tab, the pages ABOUT it — its Workshop, its
- * discussion, a proposal, an issue, a change — and the conversations a
- * notification points at open in a panel beside it instead of replacing it.
- * The app keeps running next to the panel and is never reloaded.
+ * While an app runs on its App tab, the pieces of its work — a proposal, an
+ * issue, a change — and the conversations a notification points at open in a
+ * panel beside it instead of replacing it. The app keeps running next to the
+ * panel and is never reloaded. A community's page is never one of them: it is
+ * a place of its own, and a link to it replaces the app, full screen
+ * (./routes.ts).
  *
  * ── Why the panel is the platform, framed ─────────────────────────────
  *
@@ -376,8 +378,9 @@ export function drop(): void {
 
 /**
  * Back: the page opened before this one, and once those are spent, the list
- * this page belongs to — a thread to Messages, a proposal, an issue or a
- * change to its app's Workshop. The control is hidden when there is neither.
+ * this page belongs to — a thread to Messages (a piece of work has none here:
+ * its community is never the panel's). The control is hidden when there is
+ * neither.
  */
 export function back(): void {
   const s = sidePanelStore.get();
@@ -431,22 +434,6 @@ export function expand(): void {
     navigateTop(expandRoute(route));
   }
   if (sidePanelStore.get().open || sidePanelStore.get().frameSrc) drop();
-}
-
-/**
- * Open `route` full width, leaving the app, where following a link to it would
- * have opened it in the panel. The app menu's "Go to community" goes here: on
- * a desktop the hub is a page of its own, not a column beside the app. It is
- * the same one real navigation Expand makes, so the app is parked and the
- * router's leave drops a panel that was open. False when the panel would not
- * have taken the route (a narrow window, no app on screen), where the
- * caller's ordinary navigation is already full width.
- */
-export function openFullWidth(route: string): boolean {
-  if (!isPanelRoute(route) || !canTake()) return false;
-  navigateTop(route);
-  if (sidePanelStore.get().open || sidePanelStore.get().frameSrc) drop();
-  return true;
 }
 
 interface CarriesPane {
@@ -597,8 +584,9 @@ export function onClickCapture(e: MouseEvent): void {
   // for a modified click — a thread or a Workshop card as often as not, which
   // is a panel page. Taken here, closing the app would open that page BESIDE
   // it instead. The rail's tabs and the ✕ are the two ways out (#2854).
-  // The app menu's "Go to community" is a third: its own handler opens the
-  // hub full width (openFullWidth), so it is not caught for the panel here.
+  // The app menu's "Go to community" is a third, and needs nothing here: a
+  // community's page is never the panel's (./routes.ts), so its link is
+  // followed full width like any other.
   if (a.id === 'back-btn' || a.id === 'app-menu-row-workshop') return;
   if (a.target && a.target !== '_self') return;
   if (a.hasAttribute('download')) return;
@@ -658,7 +646,6 @@ export const SidePanel = {
   drop,
   back,
   expand,
-  openFullWidth,
   appPresence,
   isOpen,
   pend,
