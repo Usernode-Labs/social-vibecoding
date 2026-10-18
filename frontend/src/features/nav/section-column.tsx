@@ -22,11 +22,19 @@
  * place bar there. Folding the rail from the header's sidebar button folds
  * the column with it.
  *
- * Under 1404px it also steps aside while an item's page is open in the panel
- * beside the Workshop's list (`placeStore.side`): the strip, the column, the
- * list and the 560px panel do not all fit, and the panel is what was asked
- * for. The place bar's button is the way to the places meanwhile, as it is
- * with the strip folded, and the column is back when the panel closes.
+ * FROM 1024px THERE IS NO COLUMN (v3, 18 Oct 2026). The sidebar of rows
+ * (./sidebar-rows.ts) nests the places under the community's own row
+ * (./rail-communities.tsx), and the conversations under Messages
+ * (./rail-conversations.tsx), so the page has the 264px back. The column is
+ * the strip's, from 768px to 1024px.
+ *
+ * It also steps aside while an item's page is open in the panel beside the
+ * Workshop's list (`placeStore.side`): the strip, the column, the list and
+ * the 560px panel do not all fit under 1024px, and the panel is what was
+ * asked for. The place bar's button is the way to the places meanwhile, as
+ * it is with the strip folded, and the column is back when the panel closes.
+ * (It stayed beside the panel from 1404px while the sidebar of rows had a
+ * column too; from 1024px it has none now.)
  *
  * ── The peeked column (#5308) ─────────────────────────────────────────
  *
@@ -57,7 +65,7 @@
  * page publishes after it has loaded. `hidden` goes through useHiddenClass.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useRef } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
 import { useClassToggle, useHiddenClass } from '../../lib/legacy-dom';
@@ -68,18 +76,10 @@ import { openPlace, placeStore } from '../dev-board/workshop/place-store';
 import { ProjectPlaces } from '../dev-board/workshop/project-places';
 import { navStore } from './nav-store.js';
 import { enterPeekByMouse, leavePeekByMouse } from './rail-peek';
+import { useSidebarRows } from './sidebar-rows';
 
 /** The column's width, which app.css reserves beside the strip. */
 export const SECTION_COLUMN_W = 264;
-
-/**
- * From here the column stays beside an item's page open in the Workshop's
- * side panel: the side panel's own 1180px (../dev-board/workshop/workshop.tsx
- * SIDE_QUERY) plus the 224px the sidebar and the column take over the old
- * rail. It was 1296px beside the 76px strip (#4417); the sidebar of rows is
- * 184px from 1024px (D, ./sidebar-rows.ts), so 1404px.
- */
-export const COLUMN_BESIDE_SIDE_QUERY = '(min-width: 1404px)';
 
 /** Which section's column is up: the places of a project page in Communities, or none. Pure. */
 export function columnFor(input: {
@@ -88,28 +88,12 @@ export function columnFor(input: {
   placeSlug: string | null;
   /** An item's page is open in the panel beside the list. */
   side?: boolean;
-  /** The window has room for the column beside that panel. */
-  roomBesideSide?: boolean;
+  /** The sidebar of rows is up (from 1024px), which nests the places itself. */
+  sidebarRows?: boolean;
 }): 'places' | null {
-  if (input.side && !input.roomBesideSide) return null;
+  if (input.sidebarRows || input.side) return null;
   if (input.screen === 'app-view' && input.tab === 'workshop' && input.placeSlug) return 'places';
   return null;
-}
-
-/** `matchMedia(query).matches`, kept current; false where there is no matchMedia. */
-function useMatches(query: string): boolean {
-  const read = () => typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-    && window.matchMedia(query).matches;
-  const [on, setOn] = useState(read);
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
-    const mq = window.matchMedia(query);
-    const apply = () => setOn(mq.matches);
-    apply();
-    mq.addEventListener('change', apply);
-    return () => mq.removeEventListener('change', apply);
-  }, [query]);
-  return on;
 }
 
 function PlacesColumn({ slug }: { slug: string }) {
@@ -135,8 +119,8 @@ export function SectionColumn() {
   const ref = useRef<HTMLElement | null>(null);
   const { screen, tab, peek, peekOut, railOpen } = useStoreState(navStore);
   const place = useStoreState(placeStore);
-  const roomBesideSide = useMatches(COLUMN_BESIDE_SIDE_QUERY);
-  const column = columnFor({ screen, tab, placeSlug: place.slug, side: place.side, roomBesideSide });
+  const sidebarRows = useSidebarRows();
+  const column = columnFor({ screen, tab, placeSlug: place.slug, side: place.side, sidebarRows });
   useHiddenClass(ref, column === null);
   // THE PEEKED COLUMN: only while a peek is up with a column to show and the
   // strip is folded. `peek` alone is not enough — the peek over a running app

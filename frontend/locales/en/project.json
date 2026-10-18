@@ -4607,6 +4607,14 @@
     "text": "({{phrase}})",
     "description": "Read only by screen readers after an entry in a project's list of places that shows a number: says what the number counts. {{phrase}} is that, already worded, for example \"29 to vote\" or \"3 unread\". Keep the parentheses."
   },
+  "places.list.showMore_one": {
+    "text": "Show {{count}} more",
+    "description": "Last row under Topics in a project's places, nested under the community in the desktop sidebar (a window 1024px or wider), when the sidebar shows only the first topics: shows the rest. {{count}} is how many more topics there are (here 1)."
+  },
+  "places.list.showMore_other": {
+    "text": "Show {{count}} more",
+    "description": "Last row under Topics in a project's places, nested under the community in the desktop sidebar (a window 1024px or wider), when the sidebar shows only the first topics: shows the rest. {{count}} is how many more topics there are."
+  },
   "places.count.toVote_one": {
     "text": "{{count}} to vote",
     "description": "What the number beside Needs you in a project's list of places counts, read by screen readers: changes waiting for this person's vote. {{count}} is that number."

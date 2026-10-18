@@ -83,6 +83,14 @@
     "text": "All communities",
     "description": "Row under the person's communities in the desktop sidebar, before their communities have loaded: opens the list of every community they are in."
   },
+  "rail.conversations": {
+    "text": "Conversations",
+    "description": "Accessible name of the conversations nested under Messages in the desktop sidebar (a window 1024px or wider) while Messages is open: the five most recent, then All messages."
+  },
+  "rail.allMessages": {
+    "text": "All messages",
+    "description": "Last row under Messages in the desktop sidebar (a window 1024px or wider), under the five most recent conversations: opens the full list of conversations, with its search."
+  },
   "rail.hideSidebar": {
     "text": "Hide sidebar",
     "description": "Accessible name of the header button that folds the desktop navigation rail away, while the rail is showing."

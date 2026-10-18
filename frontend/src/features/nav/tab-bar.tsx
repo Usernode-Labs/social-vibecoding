@@ -68,8 +68,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ChatIcon,
   CogIcon,
+  CompassIcon,
   HomeIcon,
-  SearchIcon,
   Squares2X2Icon,
   UserGroupIcon,
   UserIcon,
@@ -83,13 +83,14 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import {
-  communityScopeStore, hydrateCommunityScope, tabVotes, warmCommunities,
+  communityScopeStore, goToCommunity, hydrateCommunityScope, tabVotes, warmCommunities,
   type CommunityInfo,
 } from '../workshop/community-scope';
 import { CommunitySwitcher } from '../workshop/community-switcher';
 import { pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
 import { RailCommunities, useRailCommunities, votesElsewhere } from './rail-communities';
+import { RailConversations } from './rail-conversations';
 import { useSidebarRows } from './sidebar-rows';
 import { clearPeekTimer, clearPeekTimerByMouse, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
 import { StripApps } from './strip-apps';
@@ -115,9 +116,11 @@ import { schedulePress, type PendingPress } from './tab-press';
  * own projects"). Inside a project, "Workshop" is the build tab beside its
  * hub — the one place that word is shown now.
  *
- * Discover keeps the magnifier rather than taking a grid glyph: it is the
- * same row the app menu spelled `#switcher-row-discover` with a
- * <SearchIcon/>, and moving a destination should not also rename its glyph.
+ * Discover is a compass (v3, 18 Oct 2026), on every bar alike, where it
+ * kept the magnifier the app menu's `#switcher-row-discover` drew: it is
+ * where you go to find something new, and a magnifier says "search", which
+ * the sidebar's Communities heading and the inbox already offer. One glyph
+ * a destination, whatever bar it is on.
  */
 // `label` is a message id (frontend/locales/en/core.json), read when the bar
 // renders so the words follow the language on screen.
@@ -133,7 +136,7 @@ const TABS = [
     href: '/',
     Icon: HomeIcon,
   },
-  { key: 'discover' as const, label: 'core:tabs.discover', href: '#apps', Icon: SearchIcon },
+  { key: 'discover' as const, label: 'core:tabs.discover', href: '#apps', Icon: CompassIcon },
   { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
   { key: 'workshop' as const, label: 'core:tabs.communities', href: '#communities', Icon: UserGroupIcon },
   // "Me" is the label only until somebody is signed in: from then on this tab
@@ -834,6 +837,17 @@ export function PlatformTabs() {
     // "Your communities" on a phone and go to All communities on the rail.
     // On a wide window the switcher is the header's name; a phone has the
     // drawer's list, and holding the tab opens nothing (18 Oct 2026).
+    // v3: IN THE SIDEBAR OF ROWS THE TAB IS "All 13 communities", and goes
+    // there, from a community's page too: a community's own row is the way
+    // up its page, and resuming the last one (App.resumeWorkshopView) is the
+    // strip's tab, whose face is that community. On the list itself it only
+    // scrolls, as before.
+    if (key === 'workshop' && sidebarRows) {
+      event.preventDefault();
+      if (screen === 'workshop-screen') pressLitTab(screen);
+      else goToCommunity(null);
+      return;
+    }
     if (key === 'workshop' && lit === 'workshop' && tab === 'workshop') {
       event.preventDefault();
       pressLitTab(screen);
@@ -1019,6 +1033,11 @@ export function PlatformTabs() {
             </span>
           ) : null}
         </a>,
+        // v3 (18 Oct 2026): THE CONVERSATIONS, nested under Messages while
+        // its screen is up in the sidebar of rows (./rail-conversations.tsx).
+        // The element is there at every width and on every screen, empty
+        // when shut, so the bar's sibling order is one order.
+        key === 'messages' ? <RailConversations key="conversations" /> : null,
       ])}
       {/*
           SETTINGS, ONE CLICK FROM THE RAIL'S FOOT (#3120). A cog beside the

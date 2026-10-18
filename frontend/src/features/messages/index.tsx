@@ -126,6 +126,8 @@ import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
 import { INBOX_SECTIONS, buildInbox, shownInSection, type AgentChat, type AppDiscussion, type InboxSection } from './inbox';
+import { publishRailInbox, railConversations, type RailConversation } from './rail-inbox';
+import { useSidebarRows } from '../nav/sidebar-rows';
 import type { ConversationDetail, ConversationMessage, ConversationSummary, DiscussionMessage, MessagesAgentThread } from './types';
 
 /*
@@ -975,6 +977,15 @@ function ConversationList({ drawer = false, litId = null }: {
     return open?.kind === 'chat' && open.id === entry.key.slice('agent:'.length);
   };
   const openKey = found.find(isOpen)?.key || null;
+  // v3 (18 Oct 2026): what the desktop's sidebar nests under Messages
+  // (./rail-inbox.ts), from the whole inbox, whatever the search box holds.
+  const railOpenKey = inbox.find(isOpen)?.key || null;
+  useEffect(() => {
+    const rows = railConversations(inbox, railOpenKey)
+      .map(railRow)
+      .filter((row): row is RailConversation => !!row);
+    publishRailInbox({ rows, openKey: railOpenKey, page: !(snap.route.conversationId || snap.route.appSlug || snap.route.agent) });
+  });
   // An agent row that asks for you is never behind "Show N more": a change
   // waiting on you ("Needs you") or an agent at work.
   const asksForYou = (entry: { kind: string; key: string }) => {
@@ -1179,6 +1190,63 @@ function ConversationList({ drawer = false, litId = null }: {
       </div>
     </section>
   );
+
+  /** A row of the sidebar's nested conversations: the list row's address, name, count and face, small. */
+  function railRow(entry: { kind: string; key: string; section: InboxSection }): RailConversation | null {
+    const base = { key: entry.key, section: entry.section, unread: 0 };
+    if (entry.kind === 'person') {
+      const conversation = byConversation.get(entry.key.slice('person:'.length));
+      if (!conversation) return null;
+      const peer = directPerson(conversation);
+      const viewerId = Number(window.App?.user?.id);
+      const face = conversation.kind === 'group' && conversation.membershipStatus !== 'invited'
+        ? conversation.members.find((member) => member.status === 'member' && Number(member.id) !== viewerId) || null
+        : null;
+      return {
+        ...base,
+        href: `#messages/${conversation.id}`,
+        name: conversation.kind === 'direct' && peer ? senderName(peer, { bare: true }) : conversation.title,
+        unread: Math.max(0, Number(conversation.unreadCount) || 0),
+        lead: face
+          ? <UserAvatar user={face} size="sm" shape="square" />
+          : <UserAvatar user={conversation.kind === 'direct' ? peer : null} title={peer?.username || conversation.title} size="sm" shape="square" />,
+        reselect: () => selectConversation(conversation.id),
+      };
+    }
+    if (entry.kind === 'session') {
+      const session = bySession.get(entry.key.slice('session:'.length));
+      return session
+        ? { ...base, href: session.href, name: session.title || session.appName || '', lead: <ChangeTile session={session} /> }
+        : null;
+    }
+    const agentTile = (
+      <span className="messages-inbox-tile messages-inbox-agent-tile" aria-hidden="true">
+        <SparklesIcon className="w-5 h-5" />
+      </span>
+    );
+    if (entry.kind === 'mayor') {
+      const session = byMayor.get(entry.key.slice('mayor:'.length));
+      if (!session) return null;
+      const thread: MessagesAgentThread = { kind: 'agent', id: session.id };
+      return {
+        ...base,
+        href: agentThreadAddress(thread),
+        name: session.title || t('messages:agent.row.newSession'),
+        lead: agentTile,
+        reselect: () => openAgentThread(thread),
+      };
+    }
+    const chat = byAgent.get(entry.key.slice('agent:'.length));
+    if (!chat) return null;
+    const thread: MessagesAgentThread = { kind: 'chat', id: chat.id };
+    return {
+      ...base,
+      href: agentThreadAddress(thread),
+      name: chat.title || t('messages:inbox.agentChat.untitled'),
+      lead: agentTile,
+      reselect: () => openAgentThread(thread),
+    };
+  }
 
   function inboxRow(entry: { kind: string; key: string }) {
     if (entry.kind === 'person') {
@@ -2910,7 +2978,14 @@ export function MessagesScreen() {
   const agentWords = useAgentThreadWords(snap.route.agent);
   const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, snap.messages, threadWords, agentWords);
   const drawerClass = drawer.on ? ` messages-drawer${drawer.level === 0 && !drawer.peek ? ' messages-drawer-alone' : ''}` : '';
-  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}${discussionOpen && snap.listCrowded ? ' messages-list-crowded' : ''}${drawerClass}`;
+  // v3 (18 Oct 2026): FROM 1024px THE LIST IS IN THE SIDEBAR, nested under
+  // Messages (./rail-inbox.ts), so one pane is drawn at a time: the open
+  // conversation alone, or with nothing open the whole list as the page
+  // (All messages), with its search and previews. No back arrow between
+  // them: the sidebar's rows are the way.
+  const sidebarRows = useSidebarRows();
+  const railClass = sidebarRows && !drawer.on ? (discussionOpen ? ' messages-list-in-rail' : ' messages-list-page') : '';
+  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}${discussionOpen && snap.listCrowded ? ' messages-list-crowded' : ''}${railClass}${drawerClass}`;
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes
   // need a transparent ancestor chain to have anything to blur.

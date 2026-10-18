@@ -146,8 +146,8 @@ test('a narrow strip: the list steps aside, the toggle is not drawn, and the bar
   // The strip's own width (so a folded rail counts), measured by the screen.
   assert.match(STORE, /export const LIST_BESIDE_MIN_WIDTH = 860;/,
     'the list column (22rem + 8px), the sheet\'s margins (8px + 12px) and a 480px sheet');
-  assert.match(STORE, /export function measureLayout\(width: number\): void \{\s*if \(!\(width > 0\)\) return;\s*const crowded = !isMobile\(\) && width < LIST_BESIDE_MIN_WIDTH;/,
-    'a hidden screen measures 0 and changes nothing');
+  assert.match(STORE, /export function measureLayout\(width: number\): void \{\s*if \(!\(width > 0\)\) return;\s*(?:\/\/[^\n]*\s*)*const crowded = !isMobile\(\) && !sidebarRowsUp\(\) && width < LIST_BESIDE_MIN_WIDTH;/,
+    'a hidden screen measures 0 and changes nothing; beside the sidebar of rows (v3) the list is never beside the conversation, so never crowded');
   assert.match(SCREEN, /new ResizeObserver\(\(\) => measureLayout\(el\.clientWidth\)\)/);
   // The phone's drawer adds its level and its pan's handlers after them.
   assert.match(SCREEN, /<div ref=\{layoutRef\} className=\{layout\}[ >]/);
