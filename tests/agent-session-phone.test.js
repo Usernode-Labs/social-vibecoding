@@ -1,7 +1,7 @@
 'use strict';
 
-// Agent sessions on a phone (#3016), and what the green dot on the Homeroom
-// mark means (#3015).
+// Agent sessions on a phone (#3016), what the green dot on the Homeroom
+// mark means (#3015), and the bar's pills on one line (#3577).
 //
 // #3016: at 390px the session bar's five controls (focus, change, Build,
 // Changes, ⋯) came to 537px, and a bar that could not wrap made the whole
@@ -9,6 +9,12 @@
 // every message and the Send button were simply gone. The bar wraps now, the
 // panel may shrink below its content, and an empty message box is as tall as
 // its hint, which wraps on a phone and was cut off mid-line.
+//
+// #3577: the bar wrapping also let the pills themselves spread over two rows
+// on a phone (Changes and the ⋯ landed on a second one). The pills now hold
+// one row that cannot wrap: the focus pill takes the squeeze with its own
+// truncate, and the bar around the row still wraps for the embedded title's
+// own line below `sm`, so nothing is pushed wider than the screen again.
 //
 // #3559: the same failure from inside the transcript. A row holding one
 // unbroken run of text (a pasted link, a path) made the conversation wider
@@ -34,9 +40,18 @@ test('#3016: the session bar wraps on every surface, and the panel cannot outgro
   assert.match(bar, /<div className="flex flex-wrap items-center gap-x-2 gap-y-2 [^"]*" data-agent-session-bar>/,
     'wrapping is not the embedded variant\'s alone any more');
   assert.doesNotMatch(bar, /embedded \? 'flex-wrap' : ''/);
+  // #3577: the pills themselves hold one row that cannot wrap, and it may
+  // shrink below its content, so nothing inside it can widen the screen the
+  // way #3016's unwrappable bar did.
+  assert.match(bar, /<div className="flex min-w-0 flex-1 flex-nowrap items-center gap-x-2" data-agent-session-pills>/,
+    'the pill row never wraps and shrinks below its content');
+  assert.match(bar, /data-agent-session-focus\s+className="inline-flex min-w-0 max-w-\[10rem\] /,
+    'the focus pill takes the squeeze');
+  assert.match(bar, /<span className="truncate">\{about\?\.focusApp\?\.name \|\| 'Any app'\}<\/span>/,
+    'the focus pill truncates rather than pushing the row wide');
   assert.match(bar, /data-agent-session-change-pill\s+className=\{`inline-flex shrink-0 items-center whitespace-nowrap /,
     'the change pill stays one line');
-  // Changes and the ⋯ end whichever row they land on. Build left the bar
+  // Changes and the ⋯ end the pill row. Build left the bar
   // for the composer's "Build with" (#3078).
   assert.doesNotMatch(bar, /VenuePicker/);
   assert.match(bar, /data-agent-session-changes-button\s+className="ml-auto [^"]*whitespace-nowrap[^"]*"/);
