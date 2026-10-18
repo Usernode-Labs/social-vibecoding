@@ -16,9 +16,13 @@
  * through `open()` like a row or the arrow does: the levels are addresses,
  * and the panes slide on from wherever the finger left them.
  *
- * Nothing changes at 768px and up, nor on a phone for an agent, a channel or
- * a reply thread: the drawer does not hold those routes, and the panes keep
- * the classes and the layout they had.
+ * An agent chat and an agent session are the second level too, named in the
+ * header by the screen (`agentWords`); the list shows nothing peeking after
+ * one, since it has no picture of an agent's pane to show.
+ *
+ * Nothing changes at 768px and up, nor on a phone for a dev session, a
+ * channel or a reply thread: the drawer does not hold those routes, and the
+ * panes keep the classes and the layout they had.
  */
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
@@ -90,6 +94,8 @@ export function useMessagesDrawer(
   active: ConversationDetail | null,
   messages: ConversationMessage[],
   names: (conversation: ConversationDetail) => { title: string; sub: string },
+  /** The header's words for the open agent chat or agent session, if one is open. */
+  agentWords: { title: string; sub: string } | null = null,
 ): MessagesDrawer {
   const phone = usePhone();
   const on = messagesDrawerApplies({
@@ -102,7 +108,8 @@ export function useMessagesDrawer(
     embedded: route.embedded,
     activeKind: active && active.id === route.conversationId ? active.kind : null,
   });
-  const level: 0 | 1 = route.conversationId ? 1 : 0;
+  const level: 0 | 1 = route.conversationId || route.agent ? 1 : 0;
+  const agentOpen = on && level === 1 && !!route.agent;
   // The conversation on show, kept for the list to show peeking once you go
   // back to it: a conversation with people, as the server last drew it.
   const [peek, setPeek] = useState<Peek | null>(null);
@@ -117,12 +124,16 @@ export function useMessagesDrawer(
       return { conversation: showing, messages: kept };
     });
   }, [showing, messages]);
+  // After an agent, nothing peeks: the last thing open is not one it can draw.
+  useEffect(() => {
+    if (agentOpen) setPeek(null);
+  }, [agentOpen]);
   const peekShown = on && level === 0 ? peek : null;
 
   // The header's words: the conversation on show, or the one peeking, which
   // a pan brings in.
   const named = showing || peek?.conversation || null;
-  const words = named ? names(named) : { title: '', sub: '' };
+  const words = agentOpen ? (agentWords || { title: '', sub: '' }) : named ? names(named) : { title: '', sub: '' };
   useIsomorphicLayoutEffect(() => {
     publishMessagesDrawer({ on, level, title: words.title, sub: words.sub });
   }, [on, level, words.title, words.sub]);
@@ -196,11 +207,27 @@ export function useMessagesDrawer(
     else messagesDepth.slide(level);
     placed.current = level;
   }, [on, level, peekId]);
+  // Again whenever the layout's width changes. Not only a window's resize:
+  // a route that lands straight on a conversation or an agent (a link, a
+  // reload, `#agent/new`) is placed before the screen is shown, at no width,
+  // and the list stayed in view behind the pane.
   useEffect(() => {
     if (!on) return undefined;
-    const again = () => put(MESSAGES_AT[placed.current ?? level], false);
+    let width = layoutRef.current?.clientWidth || 0;
+    const again = () => {
+      const now = layoutRef.current?.clientWidth || 0;
+      if (now === width) return;
+      width = now;
+      if (!pan.current?.on) put(MESSAGES_AT[placed.current ?? level], false);
+    };
     window.addEventListener('resize', again);
-    return () => window.removeEventListener('resize', again);
+    const layout = layoutRef.current;
+    const watch = layout && typeof ResizeObserver === 'function' ? new ResizeObserver(again) : null;
+    if (layout) watch?.observe(layout);
+    return () => {
+      window.removeEventListener('resize', again);
+      watch?.disconnect();
+    };
   }, [on, level]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Letting go: the level a pan lands on, and its address ──
@@ -268,8 +295,10 @@ export function useMessagesDrawer(
       const dy = touch.clientY - p.y0;
       if (!p.on) {
         if (isPan(dx, dy) && dx > 0) {
-          // A scroll the browser has already begun keeps the touch.
-          if (!e.cancelable) { stop(); return; }
+          // Its moves may not be cancelable, and the pan follows them all the
+          // same, as the Communities drawer's does (../nav-drawer/nav-drawer.tsx
+          // says why): in the iPhone app they were uncancelable over plain
+          // messages, and standing down on them left the swipe dead there.
           p.on = true;
         } else if (Math.abs(dy) > PAN_SLOP_PX || dx < -PAN_SLOP_PX) { stop(); return; } else return;
       }

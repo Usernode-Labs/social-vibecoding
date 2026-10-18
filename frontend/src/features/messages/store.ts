@@ -1185,10 +1185,11 @@ export function syncChrome(): void {
   // #4229: and on a strip too narrow for the list beside it, where the list
   // has stepped aside just as it does on a phone.
   // THE PHONE'S DRAWER (../nav-drawer/messages-drawer.ts): a conversation
-  // with people is its second level, and the header draws the drawer's own
-  // arrow (a button, not this href'd one, so WebKit's history swipe stays
-  // off while a finger pans the drawer) and names the conversation.
-  if (state.route.conversationId && messagesDrawerApplies({
+  // with people, an agent chat or an agent session is its second level, and
+  // the header draws the drawer's own arrow (a button, not this href'd one,
+  // so WebKit's history swipe stays off while a finger pans the drawer) and
+  // names it.
+  if ((state.route.conversationId || state.route.agent) && messagesDrawerApplies({
     phone: isMobile(),
     open: state.route.open,
     conversationId: state.route.conversationId,

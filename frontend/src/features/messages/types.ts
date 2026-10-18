@@ -723,10 +723,10 @@ export interface MessagesRoute {
    * #2813: an AGENT thread open beside the list on a desktop — a global
    * agent chat (`#messages/agent/<id>`) or an app's dev session
    * (`#messages/session/<slug>/<id>`). Both used to navigate away to a
-   * screen of their own (`#chat/<id>`, `#app/<slug>/dev/sessions/<id>`),
-   * which is still where a PHONE goes: the router swaps these addresses for
-   * those there, so the full-screen behaviour on a narrow viewport is the
-   * one it always was.
+   * screen of their own (`#chat/<id>`, `#app/<slug>/dev/sessions/<id>`).
+   * On a PHONE a dev session still goes to its own: the router swaps that
+   * address there. An agent chat and an agent session open here on a phone
+   * too, as the second level of the inbox's drawer (Evan, 18 Oct 2026).
    *
    * Mutually exclusive with the other two, for the same reason they are
    * with each other: one thread is open.

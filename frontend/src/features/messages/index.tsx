@@ -485,8 +485,8 @@ const AgentChatRow = memo(function AgentChatRow({ chat, active }: { chat: AgentC
     );
   }
   // #2813: the inbox's own address, so on a desktop the chat opens in the
-  // pane beside this list. On a phone the router swaps it for `#chat/<id>`,
-  // the full-screen chat this row always led to there.
+  // pane beside this list, and on a phone as the second level of its drawer
+  // (../nav-drawer/messages-drawer.ts), where it used to be a screen of its own.
   const thread: MessagesAgentThread = { kind: 'chat', id: chat.id };
   const href = agentThreadAddress(thread);
   return (
@@ -1344,6 +1344,42 @@ export function threadWords(active: ConversationDetail): { title: string; sub: s
     title: active.kind === 'direct' && person ? senderName(person, { bare: true }) : channel ? `#${active.channelKey || active.title}` : active.title,
     sub: botDm ? translate('messages:header.subtitle.homeroomBot') : subtitle,
   };
+}
+
+/**
+ * What an open agent thread is called and what it is, for the phone's header
+ * to say (./phone-drawer.tsx; Evan, 18 Oct 2026), in the words its own pane
+ * uses: an agent session's title and kind line, as its bar names it in the
+ * pane (agent-session/index.tsx SessionBar, whose copy app.css leaves out on
+ * the drawer), and an agent chat's title, as its row in the list names it,
+ * with what it is. Read in the language on show by whoever renders it.
+ */
+export function agentThreadWords(agent: MessagesAgentThread, seen: { title: string; app: string }): { title: string; sub: string } {
+  if (agent.kind === 'chat') {
+    return { title: seen.title || translate('messages:inbox.agentChat.untitled'), sub: translate('messages:drawer.chat.line') };
+  }
+  return {
+    title: seen.title || translate('agent:session.bar.newSession'),
+    sub: seen.app ? translate('agent:session.bar.kindStartedFrom', { app: seen.app }) : translate('agent:session.bar.kind'),
+  };
+}
+
+/** `agentThreadWords` for the open agent chat or agent session, from the stores their panes draw from; null for anything else. */
+function useAgentThreadWords(agent: MessagesAgentThread | null): { title: string; sub: string } | null {
+  // Subscribed, so the words re-read in the language on show.
+  useMessages('messages');
+  useMessages('agent');
+  const chatId = agent?.kind === 'chat' ? agent.id : null;
+  const chatTitle = useGlobalChatSelector((current) => (chatId
+    ? (current.threads.find((thread) => thread.id === chatId)
+      || (current.bootstrap?.thread?.id === chatId ? current.bootstrap.thread : null))?.title || ''
+    : ''));
+  const sessionId = agent?.kind === 'agent' ? agent.id : null;
+  const mine = (current: { id: number | null }) => sessionId != null && (sessionId === 'new' ? current.id === null : current.id === sessionId);
+  const sessionTitle = useAgentSessionSelector((current) => (mine(current) ? current.session?.title || '' : ''));
+  const sessionApp = useAgentSessionSelector((current) => (mine(current) ? (current.session || current.draft)?.focusApp?.name || '' : ''));
+  if (!agent || agent.kind === 'session') return null;
+  return agentThreadWords(agent, agent.kind === 'chat' ? { title: chatTitle, app: '' } : { title: sessionTitle, app: sessionApp });
 }
 
 function ThreadHeader() {
@@ -2869,8 +2905,10 @@ export function MessagesScreen() {
   // list, an open discussion takes the strip and the bar's back arrow returns
   // to the list, as on a phone (store.ts measureLayout).
   // THE PHONE'S DRAWER (./phone-drawer.tsx): the list and a conversation
-  // with people side by side, panned between, the last conversation peeking.
-  const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, snap.messages, threadWords);
+  // with people side by side, panned between, the last conversation peeking;
+  // an agent chat or an agent session takes the conversation's place.
+  const agentWords = useAgentThreadWords(snap.route.agent);
+  const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, snap.messages, threadWords, agentWords);
   const drawerClass = drawer.on ? ` messages-drawer${drawer.level === 0 && !drawer.peek ? ' messages-drawer-alone' : ''}` : '';
   const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}${discussionOpen && snap.listCrowded ? ' messages-list-crowded' : ''}${drawerClass}`;
   // No background of its own: the route paints the wallpaper (the

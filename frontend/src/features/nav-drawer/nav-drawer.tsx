@@ -344,11 +344,14 @@ function DrawerSurface({ slug, name, place, owed }: { slug: string; name: string
       const dy = touch.clientY - p.y0;
       if (!p.on) {
         if (isPan(dx, dy) && dx > 0) {
-          // A scroll the browser has already begun keeps the touch.
-          if (!e.cancelable) {
-            stop();
-            return;
-          }
+          // Its moves may not be cancelable, and the pan follows them all the
+          // same. WebKit and Chromium decide at touchstart, from the listeners
+          // there then, whether a touch's moves wait for the page; this one
+          // comes with the touchstart, so in the iPhone app the moves were
+          // uncancelable everywhere but over an element with a non-passive
+          // listener of its own, and standing down on them left the swipe
+          // dead on most of a page. `pan-y` keeps the browser from taking the
+          // sideways part; a cancelable move is still held below.
           p.on = true;
           setMoving(true);
         } else if (Math.abs(dy) > PAN_SLOP_PX || dx < -PAN_SLOP_PX) {

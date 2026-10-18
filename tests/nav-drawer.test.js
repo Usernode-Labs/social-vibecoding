@@ -304,7 +304,7 @@ test('Messages\' header: no colour, and the conversation arrives with its line u
   assert.equal(math.headerFrame(2, 44, false, true).inner.opacity, 1, 'a depth past 1 is the conversation');
 });
 
-test('Messages\' drawer holds the list and conversations with people, on a phone only', () => {
+test('Messages\' drawer holds the list, conversations, agent chats and agent sessions, on a phone only', () => {
   const { messagesDrawerApplies } = loadTsx(`${DIR}/messages-drawer.ts`);
   const list = { phone: true, open: true, conversationId: null, appSlug: null, agent: null, threadRootId: null };
   assert.equal(messagesDrawerApplies(list), true);
@@ -314,20 +314,26 @@ test('Messages\' drawer holds the list and conversations with people, on a phone
   assert.equal(messagesDrawerApplies({ ...list, open: false }), false, 'another screen');
   assert.equal(messagesDrawerApplies({ ...list, conversationId: 1, activeKind: 'channel' }), false, 'a channel is its community\'s');
   assert.equal(messagesDrawerApplies({ ...list, appSlug: 'notes' }), false);
-  assert.equal(messagesDrawerApplies({ ...list, agent: { kind: 'agent', id: 3 } }), false, 'an agent opens on its own screen');
+  // Evan, 18 Oct 2026: an agent chat and an agent session are the drawer's
+  // second level on a phone too, so a swipe goes back to the list; a dev
+  // session still opens on its project's page.
+  assert.equal(messagesDrawerApplies({ ...list, agent: { kind: 'agent', id: 3 } }), true, 'an agent session');
+  assert.equal(messagesDrawerApplies({ ...list, agent: { kind: 'agent', id: 'new' } }), true, 'one not sent yet');
+  assert.equal(messagesDrawerApplies({ ...list, agent: { kind: 'chat', id: 'c-1' } }), true, 'an agent chat');
+  assert.equal(messagesDrawerApplies({ ...list, agent: { kind: 'session', slug: 'notes', id: 4 } }), false, 'a dev session opens on its project\'s page');
   assert.equal(messagesDrawerApplies({ ...list, conversationId: 8, threadRootId: 40 }), false, 'a reply thread is a level over its conversation');
   assert.equal(messagesDrawerApplies({ ...list, embedded: true }), false);
 });
 
 test('the Messages screen: the panes are the levels, the page drops its name, the arrow is the drawer\'s', () => {
   const index = read('frontend/src/features/messages/index.tsx');
-  assert.match(index, /const drawer = useMessagesDrawer\(layoutRef, snap\.route, snap\.active, snap\.messages, threadWords\);/);
+  assert.match(index, /const agentWords = useAgentThreadWords\(snap\.route\.agent\);\s*const drawer = useMessagesDrawer\(layoutRef, snap\.route, snap\.active, snap\.messages, threadWords, agentWords\);/);
   assert.match(index, /\{drawer\.peek \? <ConversationPeek peek=\{drawer\.peek\} \/> : <ConversationThread \/>\}/);
   assert.match(index, /className=\{`messages-list-pane \$\{specBeside \? 'hidden' : drawer \? 'flex' : /, 'the list stays drawn beside a conversation');
   assert.match(index, /\{inDrawer \? null : channel/, 'no avatar in the sheet\'s title row');
   assert.match(index, /<div className="messages-peek-body" inert aria-hidden="true">/, 'the peek is a picture');
   const store = read('frontend/src/features/messages/store.ts');
-  assert.match(store, /if \(state\.route\.conversationId && messagesDrawerApplies\(\{[\s\S]*?\}\)\) \{\s*app\.setBackIcon\?\.\('none'\);/,
+  assert.match(store, /if \(\(state\.route\.conversationId \|\| state\.route\.agent\) && messagesDrawerApplies\(\{[\s\S]*?\}\)\) \{\s*app\.setBackIcon\?\.\('none'\);/,
     'no href\'d arrow, so WebKit\'s history swipe stays off');
   const drawer = read('frontend/src/features/messages/phone-drawer.tsx');
   assert.match(drawer, /openConversation\(to === 1 \? peekId : null\);/, 'a pan lands by opening the address');
