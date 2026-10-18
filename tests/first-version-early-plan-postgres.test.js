@@ -210,6 +210,18 @@ test('a first version planned at Make it: answered on the made screen, built wit
        JOIN conversation_messages m ON m.id = d.message_id WHERE d.run_id = $1 AND d.kind = 'plan'`,
     [runId],
   )).rows[0];
+  // The same bounded wait the other Postgres tests use on background work:
+  // a check until it is true, 25 ms apart, then a failure that says what
+  // (what may be a function, read when the deadline passes).
+  const until = async (check, what, ms = 5000) => {
+    const end = Date.now() + ms;
+    for (;;) {
+      const last = await check();
+      if (last) return last;
+      if (Date.now() > end) assert.fail(`timed out waiting: ${typeof what === 'function' ? what() : what}`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  };
 
   await t.test('answered on the made screen before the bot reads it: built at once, with no triage turn and no question in the chat', async () => {
     const app = await project('club-votes', 1);
@@ -275,7 +287,14 @@ test('a first version planned at Make it: answered on the made screen, built wit
     const fv = (await pool.query('SELECT answered_at FROM homeroom_bot_first_versions WHERE app_id = $1', [app.id])).rows[0];
     assert.ok(fv.answered_at);
     // The queue row is used up, and the next read of its state is the build.
-    assert.equal((await pool.query('SELECT count(*)::int AS n FROM homeroom_bot_queue WHERE app_id = $1', [app.id])).rows[0].n, 0);
+    // The request machine's projection deletes it when a pipeline slot applies
+    // BuildOwed, which can be a moment after runTriage returns: wait for it.
+    let left = null;
+    await until(async () => {
+      const { rows: [q] } = await pool.query('SELECT count(*)::int AS n FROM homeroom_bot_queue WHERE app_id = $1', [app.id]);
+      left = q.n;
+      return q.n === 0;
+    }, () => `the queue row was never used up: ${left} left`);
     const building = await read(app.slug);
     assert.deepEqual([building.step, building.line], [4, 'building']);
     assert.deepEqual(building.phase && building.phase.key, 'starting', 'N4: its build waits its turn: no spec turn yet, so nothing is drawn (run five)');
