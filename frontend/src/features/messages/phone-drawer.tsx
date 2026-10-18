@@ -8,9 +8,10 @@
  * the last conversation you had open peeks in at the right, drawn from what
  * it showed when you left it (`ConversationPeek`, ./index.tsx), and a press
  * on it opens it; with none yet the list takes the whole screen. The pan
- * follows a finger: a sideways drag on the list, and in a conversation one
- * that starts at the left edge (EDGE_PX, as the Communities drawer's), except
- * in Safari on an iPhone, where that edge is the browser's own Back. Let go
+ * follows a finger: a sideways drag on the list, and in a conversation a
+ * swipe right from anywhere that is not sideways UI, or from the left edge
+ * (EDGE_PX) except in Safari on an iPhone, where that edge is the browser's
+ * own Back: the Communities drawer's rule (../nav-drawer/sideways.ts). Let go
  * past a quarter of the way and it opens the conversation or the list,
  * through `open()` like a row or the arrow does: the levels are addresses,
  * and the panes slide on from wherever the finger left them.
@@ -31,6 +32,7 @@ import { reducedMotion } from '../nav-drawer/drawer-store';
 import {
   messagesDepth, messagesDrawerApplies, publishMessagesDrawer, registerMessagesBack,
 } from '../nav-drawer/messages-drawer';
+import { startsOnSideways, swipeBackMayStart } from '../nav-drawer/sideways';
 import { open as openConversation } from './store';
 import type { ConversationDetail, ConversationMessage } from './types';
 
@@ -250,13 +252,14 @@ export function useMessagesDrawer(
     landAt(0, Math.max(0, Math.min(MESSAGES_AT[1], -p.dx / p.w)), p.dx);
   };
 
-  // ── A finger at a conversation's left edge ──
+  // ── A finger on a conversation ──
   const landRef = useRef(landAt);
   landRef.current = landAt;
   const putRef = useRef(put);
   putRef.current = put;
   useEffect(() => {
-    if (!on || level !== 1 || !pageTakesEdge()) return undefined;
+    if (!on || level !== 1) return undefined;
+    const takesEdge = pageTakesEdge();
     let p: null | { x0: number; y0: number; w: number; on: boolean; dx: number } = null;
     const move = (e: TouchEvent) => {
       const touch = e.touches[0];
@@ -264,9 +267,11 @@ export function useMessagesDrawer(
       const dx = touch.clientX - p.x0;
       const dy = touch.clientY - p.y0;
       if (!p.on) {
-        if (isPan(dx, dy) && dx > 0) p.on = true;
-        else if (Math.abs(dy) > PAN_SLOP_PX || dx < -PAN_SLOP_PX) { stop(); return; }
-        else return;
+        if (isPan(dx, dy) && dx > 0) {
+          // A scroll the browser has already begun keeps the touch.
+          if (!e.cancelable) { stop(); return; }
+          p.on = true;
+        } else if (Math.abs(dy) > PAN_SLOP_PX || dx < -PAN_SLOP_PX) { stop(); return; } else return;
       }
       if (e.cancelable) e.preventDefault();
       p.dx = dx;
@@ -281,10 +286,12 @@ export function useMessagesDrawer(
     const down = (e: TouchEvent) => {
       stop();
       const touch = e.touches[0];
-      if (e.touches.length !== 1 || !touch || touch.clientX > EDGE_PX) return;
+      if (e.touches.length !== 1 || !touch) return;
       const target = e.target as Element | null;
       const layout = layoutRef.current;
       if (!target || !layout || !layout.contains(target)) return;
+      const sideways = touch.clientX > EDGE_PX && startsOnSideways(target, layout, window);
+      if (!swipeBackMayStart({ x: touch.clientX, takesEdge, sideways })) return;
       p = { x0: touch.clientX, y0: touch.clientY, w: Math.max(1, layout.clientWidth || 1), on: false, dx: 0 };
       document.addEventListener('touchmove', move, { passive: false });
     };
