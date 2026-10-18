@@ -168,8 +168,12 @@ test('every composer column reserves the keyboard inset, exactly once', () => {
   // or pan it), and it leaves the pin inert.
   const col = /html\.un-kb \.platform-kb-column\s*\{([^}]*)\}/.exec(APP_CSS);
   assert.ok(col, 'html.un-kb .platform-kb-column rule is missing');
-  assert.match(col[1], /padding-bottom:\s*var\(--un-kb-inset, 0px\)/,
-    'the column must reserve the kit-published keyboard inset');
+  // #3571: iOS pans the visual viewport down by the keyboard's height as
+  // well, so the part of the inset the page has already moved for must not
+  // be reserved a second time, or the composer lands on the top edge.
+  assert.match(col[1],
+    /padding-bottom:\s*max\(\s*0px\s*,\s*calc\(\s*var\(--un-kb-inset, 0px\)\s*-\s*var\(--platform-vv-top, 0px\)\s*\)\s*\)/,
+    'the column must reserve the inset MINUS the visual viewport pan, floored at 0');
   assert.match(col[1], /transition:\s*none/,
     'no transition while the keyboard is up — the bar tracks it exactly');
 
@@ -182,6 +186,11 @@ test('every composer column reserves the keyboard inset, exactly once', () => {
   for (const [file, re] of COLUMNS) {
     assert.match(read(file), re, `${file} must reserve the keyboard inset on its column`);
   }
+  // A message's reply thread is a second pane with its own footer, so it
+  // wears the same class (#3571).
+  assert.match(read('frontend/src/features/messages/index.tsx'),
+    /messages-reply-pane platform-kb-column/,
+    'the Messages reply pane must reserve the keyboard inset on its column too');
 
   // EXACTLY once: a column that reserves the inset must not also hang
   // `un-kb-avoid` on its scroller, which would pad the inside of it on top.

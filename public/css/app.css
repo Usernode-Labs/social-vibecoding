@@ -389,8 +389,25 @@ html.un-kb .platform-safe-sheet {
   transition: padding-bottom 150ms ease-out;
 }
 
+/* …but only the part of the keyboard the page has NOT already moved for.
+
+   iOS Safari does more than cover the page: to reveal the focused field it
+   PANS the visual viewport down, and the kit's measurements (#1938) show that
+   pan equals the inset — iPhone Safari at a 714px layout, 377px visual
+   viewport and 337px offset, the installed app at 812, 409 and 403. Reserving
+   the full inset as well lifts the composer by the keyboard's height inside a
+   page that has already been moved by the same height: in an 812px shell with
+   a 403px keyboard a box at the layout's foot lands at y=409 while the
+   visible strip begins at y=403, so it sits on the top edge, mostly clipped
+   (#3571). Subtracting the pan (`--platform-vv-top`, published by
+   frontend/src/lib/visual-viewport.ts in the same viewport event) leaves 0
+   reserved on iOS: the box stays at the layout's foot, which is the visible
+   strip's foot, directly above the keys. Android reports no pan, so the
+   reserved space there is the inset exactly as before, and desktop never has
+   `un-kb`. `max(0px, …)` keeps the padding at 0 if a pan ever exceeds the
+   inset. */
 html.un-kb .platform-kb-column {
-  padding-bottom: var(--un-kb-inset, 0px);
+  padding-bottom: max(0px, calc(var(--un-kb-inset, 0px) - var(--platform-vv-top, 0px)));
   transition: none;
 }
 
