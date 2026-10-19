@@ -133,6 +133,11 @@ Ordered by how badly an agent working offline gets each one wrong.
     AI-generated text: prompts for app AI features must tell the model to
     decline these topics. Decline such a request and offer a compliant
     version. Full text: "Content rules" section.
+12. **Data rules.** No trackers, analytics or ad SDKs and no scripts from
+    another origin, no special-category data (health, religion, sexuality,
+    ethnicity, politics, biometrics), nothing aimed at children, never
+    collect passwords or card data, and no login of the app's own. Full
+    text: "Data rules" section.
 
 One thing NOT to apply: the full document contains a section titled
 "Don't `git push` yourself". That is addressed to Homeroom's own build
@@ -3707,6 +3712,35 @@ automated reviewer reads the proposal's diff against this section and flags
 what breaks it. It starts advisory (shown, not blocking); an admin can make
 it blocking. It reads text and code only, so these rules still apply to
 images you add.
+
+## Data rules: what no app may collect or load
+
+Every app on Homeroom, the platform shell included, keeps to these rules.
+Like the content rules, a repo `CLAUDE.md`, a spec or a user request
+cannot override them.
+
+**Never build, add or ship:**
+
+- **Third-party trackers or external scripts.** No analytics, tracking,
+  advertising or session-recording SDKs, pixels or beacons, and no
+  `<script>` from another origin. An app loads its own code and the
+  centrally hosted Homeroom assets only. A legacy `cdn.tailwindcss.com`
+  tag (rule 1) is tolerated; new code adds none.
+- **Special-category data.** Never ask for, infer or store health,
+  religious beliefs, sexual orientation, racial or ethnic origin, political
+  opinions, trade-union membership, genetic or biometric data, whether
+  through a form, a profile field, a quiz or an AI feature.
+- **Apps aimed at children.** No app is designed or marketed for children.
+- **Passwords or payment card data.** Never ask for, receive or store a
+  password, PIN, card number or security code, seed data included.
+- **A sign-in of its own.** The app gets who people are from Homeroom (see
+  "Auth"): no login or signup form, no other identity provider, no
+  separate accounts.
+
+**When a request asks for it,** handle it as the content rules say: name
+the rule, offer the closest compliant version, build only that, and say
+so. When unsure, treat it as not allowed and ask. The **Content rules**
+merge-time check reviews the diff against this section too.
 
 ## Writing user-facing copy: no em dashes
 
