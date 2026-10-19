@@ -56,10 +56,17 @@ export const browseStore = createStore({
    */
   sort: 'recommended',
   /**
-   * Which of Browse.FILTERS chips is on: 'all' | 'featured' | 'yours' | 'new'.
+   * Which chip is on: a key of Browse.FILTERS ('all' | 'featured' |
+   * 'notjoined' | 'yours' | 'new') or, for an admin, of Browse.ADMIN_FILTERS.
    * 'all' is the PRERENDER value, for the same reason as `sort`: ?filter= and
    * the session's own choice are applied on screen entry
    * (Browse._applyInitialFilter), never during render.
    */
   filter: 'all',
+  /**
+   * Whether the admin-only chips (Browse.ADMIN_FILTERS) are drawn (#5267).
+   * False is the PRERENDER value: who is viewing is known only after boot,
+   * so the chip appears on screen entry, never in the first render.
+   */
+  adminFilters: false,
 });

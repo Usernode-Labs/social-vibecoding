@@ -22745,9 +22745,33 @@ html.un-kb #platform-parked {
 .platform-tab-all-glyph,
 .platform-tab-all-label,
 .platform-tab-all-votes,
-.platform-rail-pinned,
-.workshop-search {
+.platform-rail-pinned {
   display: none;
+}
+
+/* ── ALL COMMUNITIES: ONE LIST, UNDER A SEARCH AND ITS CHIPS (#5296) ──
+   features/workshop/index.tsx. The search heads the list at every width
+   (D drew it from 768px only); the sidebar's Communities heading opens it
+   lit. A search's answer is the list itself, so nothing here hides
+   anything while it is up: the screen leaves Join and Start out itself. */
+.workshop-search {
+  margin: 0 16px 10px;
+}
+.workshop-search .messages-search {
+  margin: 0;
+}
+/* LIT, from the sidebar's search (features/workshop/communities-search.ts),
+   until focus leaves it: the place's own tint, so the eye lands on it. */
+.workshop-search[data-lit] .messages-search-input {
+  border-color: var(--lit-ink);
+  background: var(--lit-tint);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lit-ink) 22%, transparent);
+}
+.workshop-search-none {
+  margin: 0;
+  padding: 12px 22px;
+  color: var(--text-muted);
+  font-size: 14px;
 }
 
 @media (min-width: 768px) {
@@ -23102,39 +23126,6 @@ html.un-kb #platform-parked {
   .platform-rail-settings-glyph {
     width: 20px;
     height: 20px;
-  }
-
-  /* ── ALL COMMUNITIES: ONE PAGE, UNDER A SEARCH (v3) ──────────────────
-     features/workshop/index.tsx. The list in the phone's order (Needs you
-     when something waits, then Public, Private and Just you, three of each
-     with Show more, then Join and Start) is the page, as it is on a phone:
-     the sidebar holds no second column now, so neither does this screen.
-     What the sidebar adds is the search at its head, which the
-     Communities heading's hover search opens, lit. */
-  .workshop-search {
-    display: block;
-    margin: 0 16px 10px;
-  }
-  .workshop-search .messages-search {
-    margin: 0;
-  }
-  /* LIT, from the sidebar's search (features/workshop/communities-search.ts),
-     until focus leaves it: the place's own tint, so the eye lands on it. */
-  .workshop-search[data-lit] .messages-search-input {
-    border-color: var(--lit-ink);
-    background: var(--lit-tint);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--lit-ink) 22%, transparent);
-  }
-  /* A search's answer is the whole list: Needs you, the sections, and Join
-     and Start step aside while it is up, as the phone's drawer does. */
-  #workshop-screen [data-workshop-pane="status"]:has(> :is([data-workshop-results], [data-workshop-none])) > :is(#workshop-list, [data-workshop-needs-door], div:has(> [data-workshop-start])) {
-    display: none;
-  }
-  .workshop-search-none {
-    margin: 0;
-    padding: 12px 22px;
-    color: var(--text-muted);
-    font-size: 14px;
   }
 
   /* ── v3: WHAT THE SECOND COLUMN HELD, NESTED UNDER ITS ROW ────────────

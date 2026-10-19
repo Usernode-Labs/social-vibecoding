@@ -134,11 +134,22 @@ function sums(list: string[], info: Record<string, CommunityInfo>): { totalNeeds
   let totalNeeds = 0;
   let badgeNeeds = 0;
   for (const s of list) {
-    const n = Number(info[s]?.needs) || 0;
-    totalNeeds += n;
-    if (!info[s]?.unchosen) badgeNeeds += n;
+    totalNeeds += Number(info[s]?.needs) || 0;
+    badgeNeeds += votesWaiting(info[s]);
   }
   return { totalNeeds, badgeNeeds };
+}
+
+/**
+ * THE ONE COUNT OF VOTES WAITING ON YOU (#5296), for one community: the
+ * votes it owes you that you have not passed over or already cast (`needs`),
+ * and none at all while it is UNCHOSEN (see `tabVotes`). The tab's badge, its
+ * sum on All communities, and All communities' own "N votes waiting on you"
+ * and each row's "N to vote" (./index.tsx `unseenRow`) all read it, so the
+ * tab and the page can no longer say 13 and 14 for the same votes.
+ */
+export function votesWaiting(entry: { needs?: number; unchosen?: boolean } | null | undefined): number {
+  return entry && !entry.unchosen ? Number(entry.needs) || 0 : 0;
 }
 
 /**
@@ -151,11 +162,35 @@ function sums(list: string[], info: Record<string, CommunityInfo>): { totalNeeds
  * switcher: they just do not summon anybody until the community is theirs.
  */
 export function tabVotes(st: Pick<CommunityScopeState, 'slug' | 'info' | 'badgeNeeds'>): number {
-  if (st.slug) {
-    const info = st.info[st.slug];
-    return info && !info.unchosen ? Number(info.needs) || 0 : 0;
-  }
+  if (st.slug) return votesWaiting(st.info[st.slug]);
   return Number(st.badgeNeeds) || 0;
+}
+
+/**
+ * GET /api/workshop/counts, read by All communities (./index.tsx), handed in
+ * here too (#5296): the page and the tab then count from the same answer, so
+ * a vote that lands while the page is open moves both at once rather than
+ * the tab trailing by up to thirty seconds. Only the communities already
+ * listed are touched; until the list is read there is nothing to sum.
+ */
+export function takeCounts(counts: Record<string, { needs?: number; owed?: unknown; unchosen?: boolean } | undefined>): void {
+  const cur = communityScopeStore.get();
+  if (!cur.list || !counts || typeof counts !== 'object') return;
+  const info = { ...cur.info };
+  for (const slug of cur.list) {
+    const prev = info[slug];
+    if (!prev) continue;
+    const c = counts[slug];
+    const owed = c?.owed;
+    info[slug] = derive({
+      ...prev,
+      owedCount: Number(c?.needs) || 0,
+      owed: Array.isArray(owed) ? owed.map(String) : undefined,
+      unchosen: c?.unchosen === true,
+    });
+  }
+  communityScopeStore.set({ info, ...sums(cur.list, info) });
+  if (cur.slug && info[cur.slug]) saveInfo(info[cur.slug]);
 }
 
 /** app.js's own key for the project page the tab reopens. */
