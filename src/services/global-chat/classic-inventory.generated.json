@@ -8463,45 +8463,24 @@
       "method": "GET",
       "path": "/api/leaderboard/prs",
       "expression": null,
-      "status": "mapped",
-      "capabilityId": "leaderboards.get.leaderboard.prs.3640f6ce",
-      "domain": "leaderboards",
-      "risk": "read",
-      "confirmation": "never",
-      "renderer": "leaderboard",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#leaderboard/challenges"
+      "status": "exempt",
+      "reason": "kudos is parked (#5249): the kudos boards are not shown to members, so no assistant offers them; Global Chat's leaderboard is the Standings ranking"
     },
     {
       "source": "src/routes/kudos.js",
       "method": "GET",
       "path": "/api/leaderboard/users",
       "expression": null,
-      "status": "mapped",
-      "capabilityId": "leaderboards.get.leaderboard.users.a3132bef",
-      "domain": "leaderboards",
-      "risk": "read",
-      "confirmation": "never",
-      "renderer": "leaderboard",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#leaderboard/challenges"
+      "status": "exempt",
+      "reason": "kudos is parked (#5249): the kudos boards are not shown to members, so no assistant offers them; Global Chat's leaderboard is the Standings ranking"
     },
     {
       "source": "src/routes/kudos.js",
       "method": "GET",
       "path": "/api/leaderboard/users/:username/prs",
       "expression": null,
-      "status": "mapped",
-      "capabilityId": "leaderboards.get.leaderboard.users.item.prs.b4ee06d6",
-      "domain": "leaderboards",
-      "risk": "read",
-      "confirmation": "never",
-      "renderer": "leaderboard",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#leaderboard/challenges"
+      "status": "exempt",
+      "reason": "kudos is parked (#5249): the kudos boards are not shown to members, so no assistant offers them; Global Chat's leaderboard is the Standings ranking"
     },
     {
       "source": "src/routes/languages.js",

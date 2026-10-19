@@ -593,13 +593,14 @@ function demoChallengesPanel(opts) {
     {
       id: 900513,
       label: 'COMMUNITY',
-      goal: 'Staging demo challenge — give kudos to five builders',
-      icon: '👏',
+      // #5249: it was "give kudos to five builders"; kudos is parked.
+      goal: 'Staging demo challenge — welcome five new builders',
+      icon: '👋',
       illustration: 'proposal-accepted',
-      task: 'Send kudos on five merged proposals from other builders.',
+      task: 'Reply to the first request of five builders who just joined.',
       reward: '1500',
       cta: null,
-      metric: { kind: 'count', label: 'Kudos', target: 5 },
+      metric: { kind: 'count', label: 'Replies', target: 5 },
       progress: { done: false, current: 0, target: 5 },
       earned_points: 0,
     },

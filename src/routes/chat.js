@@ -11,6 +11,7 @@ const communities = require('../services/communities');
 const attachmentsSvc = require('../services/attachments');
 const messageBookmarks = require('../services/message-bookmarks');
 const appChat = require('../services/app-chat');
+const { parkedSystemLineSql } = require('../services/kudos-parked');
 const groupChannelNotify = require('../services/group-channel-notify');
 const conversationsSvc = require('../services/conversations');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -624,6 +625,13 @@ function chatRoutes(config) {
     } else if (thread) {
       params.push(thread.type, thread.ref);
       where += ' AND m.thread_type = $2 AND m.thread_ref = $3';
+      // #5249: a request's or a proposal's thread does not draw the system
+      // lines a kudos bounty wrote there ("… placed a bounty (kudos) on
+      // issue #n", "Bounty on issue #n (k kudos) awarded to …") while kudos
+      // is parked. The rows stay; services/kudos-parked.js holds the shapes.
+      if (thread.type === 'issue' || thread.type === 'session') {
+        where += ` AND ${parkedSystemLineSql('m')}`;
+      }
     }
     if (op) {
       params.push(pivot);

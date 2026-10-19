@@ -4087,7 +4087,7 @@
     {
       "name": "With kudos parked, the notifications sheet shows no kudos row (#3227, #5249)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-sheet[data-open]:has([data-notif-id=\"990210\"]):not(:has([data-notif-id=\"990213\"]))"
+      "expectSelector": "#notifications-sheet[data-open]:has([data-notif-id=\"990210\"]):not(:has([data-notif-action=\"kudos_board\"]))"
     },
     {
       "name": "With kudos parked, the bounty note says nothing, even with the allowance spent (#964, #5249)",

@@ -16,12 +16,15 @@
 //                        the original. Closed at once ONLY when the person
 //                        tapping filed it and nobody else has taken part in
 //                        it (no comments, votes, claims, kudos or
-//                        proposals); otherwise the original's group votes on
-//                        closing it (a close_issue proposal), so nothing
+//                        proposals; an open bounty from before kudos was
+//                        parked still counts, unnamed); otherwise the
+//                        original's group votes on closing it (a
+//                        close_issue proposal), so nothing
 //                        somebody else is involved in closes without a vote.
 //   Keep it here         leaves everything as it is.
 
 const log = require('./logger');
+const { KUDOS_PARKED } = require('./kudos-parked');
 
 const MAX_TITLE_CHARS = 200;
 // GitHub's own limit on an issue's body, less room for the footer.
@@ -164,7 +167,11 @@ async function othersInvolved(pool, { app, repo, issueNumber, authorId, authorLo
   if (counts.comments) reasons.push('others wrote in its discussion');
   if (counts.votes) reasons.push('others voted on it');
   if (counts.claims) reasons.push('somebody else claimed it');
-  if (counts.kudos) reasons.push('somebody put kudos on it');
+  // #5249: a bounty somebody pledged before kudos was parked still keeps the
+  // original open for a vote (it is still paid when a merged change closes
+  // the request), but members no longer see kudos, so the reply names it the
+  // way it names any other involvement it does not spell out.
+  if (counts.kudos) reasons.push(KUDOS_PARKED ? 'others are involved in it' : 'somebody put kudos on it');
   if (counts.proposals) reasons.push('a proposal is linked to it');
   if (counts.closing) reasons.push('somebody already proposed closing it');
   // Its comments on GitHub, less the bot's own posts and the platform's

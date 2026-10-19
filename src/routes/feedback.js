@@ -9,6 +9,7 @@ const { announceIssueCreated, findAppByRepo } = require('../services/issue-annou
 const appAccess = require('../services/app-access');
 const communities = require('../services/communities');
 const { placeBounty } = require('../services/bounties');
+const { kudosParked } = require('../services/kudos-parked');
 const { getPool } = require('../db/pool');
 const { sniffImageType, sniffVideoType } = require('../services/attachments');
 const { feedbackTitleLimiter, feedbackSubmitLimiter, issueScreenshotLimiter, feedbackVideoLimiter } = require('../middleware/rate-limits');
@@ -584,6 +585,9 @@ function feedbackRoutes(config) {
   const router = Router();
   const pool = getPool(config);
   const { owner: feedbackOwner, repo: feedbackRepo } = parseGitHubRepo(config.platformRepoUrl);
+  // #5249: a submit asking for a kudos bounty files without one while kudos
+  // is parked (services/kudos-parked.js).
+  const bountiesParked = kudosParked(config);
 
   // Feedback titles are small calls, but they are still billable. Resolve
   // the payer before every generation so neither the preview endpoint nor
@@ -809,7 +813,10 @@ function feedbackRoutes(config) {
     if (req.body.bounty !== undefined && typeof req.body.bounty !== 'boolean') {
       return res.status(400).json({ error: 'bounty must be a boolean' });
     }
-    const wantsBounty = req.body.bounty === true;
+    // #5249: while kudos is parked the flag is accepted and ignored: the
+    // feedback is filed as usual, with no bounty and no `bounty` field in the
+    // answer. A request saved offline before parking still carries it.
+    const wantsBounty = req.body.bounty === true && !bountiesParked;
 
     // Normalise the feedback target. Anything other than the explicit
     // 'app' opt-in falls back to platform feedback (today's behaviour).

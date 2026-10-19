@@ -143,10 +143,9 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
   {
     // #5249: kudos is parked. Members can no longer give, retract or pledge
     // kudos, see who gave them or read their allowance anywhere in the
-    // shell, so no assistant offers that either. The leaderboard reads stay
-    // (Global Chat's "View leaderboard" action is built on one), as do a
-    // person's page and Your votes. The routes themselves are unchanged, and
-    // so is everything they wrote. Remove this entry when
+    // shell, so no assistant offers that either. A person's page and Your
+    // votes stay. The routes themselves are unchanged, and so is everything
+    // they wrote. Remove this entry when
     // frontend/src/features/leaderboard/kudos-parked.ts goes back to false.
     matches: (route) => (route.source === 'src/routes/kudos.js'
         && (route.path === '/api/sessions/:id/kudos'
@@ -154,6 +153,17 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
       || (route.source === 'src/routes/issues.js'
         && route.method === 'POST' && route.path === '/api/apps/:slug/issues/:number/bounty'),
     reason: 'kudos is parked (#5249): giving, retracting and pledging kudos, its givers and its allowance are off for members, so no assistant offers them',
+  },
+  {
+    // #5249: the kudos boards (who received kudos, which changes were
+    // thanked, and a person's thanked changes), read through these three.
+    // The shell's person page (#leaderboard/users/<name>) still reads the
+    // last one directly; no assistant offers them. Global Chat's "View
+    // leaderboard" reads the Standings ranking (GET /api/v4/leaderboard)
+    // instead. Remove this entry with the one above.
+    matches: (route) => route.source === 'src/routes/kudos.js' && route.method === 'GET'
+      && ['/api/leaderboard/prs', '/api/leaderboard/users', '/api/leaderboard/users/:username/prs'].includes(route.path),
+    reason: 'kudos is parked (#5249): the kudos boards are not shown to members, so no assistant offers them; Global Chat\'s leaderboard is the Standings ranking',
   },
   {
     matches: (route) => route.path === '/api/iframe-token',

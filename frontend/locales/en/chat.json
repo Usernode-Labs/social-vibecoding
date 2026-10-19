@@ -1911,10 +1911,6 @@
     "text": "Profile",
     "description": "Button under an expanded row of a result card in Global Chat, on a leaderboard entry: shows that person's profile."
   },
-  "global.action.mergedWork": {
-    "text": "Merged work",
-    "description": "Button under an expanded row of a result card in Global Chat, on a leaderboard entry: lists that person's changes that were accepted and merged."
-  },
   "global.action.view": {
     "text": "View",
     "description": "Button under an expanded row of a result card in Global Chat, on a group of settings: shows the current values of those settings. A verb."
@@ -1954,10 +1950,6 @@
   "global.request.profileFor": {
     "text": "Profile for {{target}}",
     "description": "Shown as the person's own message in Global Chat's transcript after they press a button on a result card to see a person's profile from the leaderboard. {{target}} is their username."
-  },
-  "global.request.mergedWorkBy": {
-    "text": "Merged work by {{target}}",
-    "description": "Shown as the person's own message in Global Chat's transcript after they press a button on a result card to list a person's merged changes from the leaderboard. {{target}} is their username."
   },
   "global.target.proposal": {
     "text": "{{title}} (proposal #{{id}})",
@@ -2039,17 +2031,13 @@
     "text": "PR",
     "description": "Label of a field in the details of a notification on a result card in Global Chat: the number of the pull request it is about. PR is the usual abbreviation of pull request."
   },
-  "global.field.kudos": {
-    "text": "Kudos",
-    "description": "Label of a field in the details of a leaderboard entry on a result card in Global Chat: how many kudos (thanks from other members) the person received."
+  "global.field.rank": {
+    "text": "Rank",
+    "description": "Label of a field in the details of a leaderboard entry on a result card in Global Chat: the person's place in the Standings ranking (1 is first)."
   },
-  "global.field.prsRecognized": {
-    "text": "PRs recognized",
-    "description": "Label of a field in the details of a leaderboard entry on a result card in Global Chat: how many of the person's pull requests received kudos. PR abbreviates pull request."
-  },
-  "global.field.merged": {
-    "text": "Merged",
-    "description": "Label of a field in the details of a leaderboard entry on a result card in Global Chat: how many of the person's recognised pull requests were merged (accepted)."
+  "global.field.points": {
+    "text": "Points",
+    "description": "Label of a field in the details of a leaderboard entry on a result card in Global Chat: how many points the person has in the Standings."
   },
   "global.field.spentThisMonth": {
     "text": "Spent this month",

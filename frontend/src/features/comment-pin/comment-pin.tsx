@@ -1138,7 +1138,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           ? t('devchat:commentPin.toast.postedBuilding', { place: name })
           : t('devchat:commentPin.toast.posted', { place: name }));
       let kudosLine = '';
-      if (outcome.bounty) {
+      // #5249: parked, no kudos sentence, whatever the answer held.
+      if (outcome.bounty && !KUDOS_PARKED) {
         kudosLine = outcome.bounty.placed
           ? t('devchat:commentPin.toast.kudosPlaced')
           : outcome.bounty.error
