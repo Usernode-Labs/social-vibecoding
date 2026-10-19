@@ -234,8 +234,9 @@ test('the pages say what is below their tabs: All items on the project page, a r
   assert.match(store, /export function embeddedThreadOpen\(conversationId: number\): boolean \{\s*return !!state\.route\.embedded && state\.route\.conversationId === conversationId && !!state\.route\.threadRootId;/);
   // The switcher's notes say where it opens from now.
   const switcher = read('frontend/src/features/workshop/community-switcher.tsx');
-  assert.match(switcher, /opens from two places, both through the same store/);
-  assert.match(switcher, /The phone's tab held opened it too \(#3701\) until the\s*\* drawer's list replaced it there/);
+  // #5290: and from ⌘K, the third place.
+  assert.match(switcher, /opens from three places, all through the same store/);
+  assert.match(switcher, /The phone's tab held\s*\* opened it too \(#3701\) until the drawer's list replaced it there/);
   assert.doesNotMatch(switcher, /lit sidebar row goes back/);
   assert.match(switcher, /t\.closest\('\[data-community-switch\]'\)/, 'a press on the rail row closes the menu like any other');
 });

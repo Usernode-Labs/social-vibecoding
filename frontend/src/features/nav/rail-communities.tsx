@@ -178,7 +178,7 @@ export function hasAppRow(slug: string, info: Record<string, CommunityInfo>, lis
   return !!list && !list.includes(slug);
 }
 
-function readKept(viewer: string | null): string[] {
+export function readKept(viewer: string | null): string[] {
   if (!viewer) return [];
   try {
     const raw = JSON.parse(window.localStorage.getItem(KEY) || 'null');
