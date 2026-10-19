@@ -163,7 +163,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
   'every follow-up settled');
 
   // GitHub merged it: merge-followups is created by Merged, here as the
-  // boot's merged-by-hand lookup reports it (the proposal machine's attempt
+  // leader's merged-by-hand lookup reports it (the proposal machine's attempt
   // reports it by message: tests/workflow-merge-postgres.test.js M1).
   const confirmed = (m) => platform.mergeObserved({ ...m, mergedAt: null });
 

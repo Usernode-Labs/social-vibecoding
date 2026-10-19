@@ -616,8 +616,9 @@ has no flag: the old merge tail (`finalizeMerge` and its follow-ups), the
 - **A merge is only reported.** The proposal machine's merge attempt (`merge.attempt`)
   tells merge-followups `Merged` in the transition that records GitHub's answer. An
   answer that never came leaves the proposal `merging` (`unconfirmed`), and it asks
-  GitHub again until GitHub says; each boot also looks on GitHub for merges of promoted
-  rows (`observeMergedOnGithub`).
+  GitHub again until GitHub says; the leader also looks on GitHub for merges of promoted
+  rows every six hours (`observeMergedOnGithub`, the durable `merged-by-hand-lookup`
+  timer), so a pull request merged by hand is recorded within six hours.
 - **Ownership is enforced.** Only the machine moves a proposal into `merged`, and a write
   to a merged row's `merged_at`, `merge_commit_sha`, `included_in_session_id` or `live_at`
   from outside it is refused (`WF_OWNERSHIP_VIOLATION`).

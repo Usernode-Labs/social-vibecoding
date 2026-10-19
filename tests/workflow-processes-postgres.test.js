@@ -109,7 +109,7 @@ test('workflow machines in a process of their own, and through its crash', { tim
     [machine, key, kind])).rows[0]?.status === 'settled';
 
   // GitHub merged it: merge-followups is created by Merged, here as the
-  // boot's merged-by-hand lookup reports it (the merge itself, below).
+  // leader's merged-by-hand lookup reports it (the merge itself, below).
   const reportMerge = async (m) => { await platform.mergeObserved({ ...m, mergedAt: null }); return { status: 'accepted' }; };
 
   await platform.startWorkflow({ ...flags, databaseUrl, wfSlots: 0 }, { loops: false });

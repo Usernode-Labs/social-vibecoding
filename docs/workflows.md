@@ -792,9 +792,10 @@ What a merged pull request still has to do once GitHub has merged it
 
 - **Created by `Merged`.** The proposal machine sends it by message in the transition
   that records GitHub's merge (its `merge.attempt`, or its `merge.observe` once GitHub
-  answers a merge nobody heard), and each boot's `observeMergedOnGithub` appends it for a
-  promoted row GitHub has merged (`platform.mergeObserved`). Either way the merge gets
-  every follow-up, and the app's merge queue is told to go on (`MergeWanted`).
+  answers a merge nobody heard), and the leader's six-hourly `observeMergedOnGithub`
+  appends it for a promoted row GitHub has merged (`platform.mergeObserved`). Either way
+  the merge gets every follow-up, and the app's merge queue is told to go on
+  (`MergeWanted`).
 - **One transaction with the merge:**
   - the move into `merged` (with `merge_commit_sha` and the vote snapshot);
   - the secret values the proposal declared;
