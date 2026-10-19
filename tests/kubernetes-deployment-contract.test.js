@@ -31,10 +31,22 @@ test('Kubernetes hosted-app evidence image declares a numeric non-root user', ()
 // it copies from another stage, what it mounts, and its instructions.
 const DEPENDENCY_MOUNT = '--mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules,rw';
 
+// The Dockerfile as logical instructions, one per line, in one spelling:
+// continuations joined (a backslash at the end of a line, with or without
+// trailing blanks), every run of spaces and tabs one space, comment and blank
+// lines dropped. The guards below read this, so a formatting-only edit to the
+// Dockerfile changes nothing they see.
+function dockerInstructions(dockerfile) {
+  return dockerfile
+    .replace(/\\[ \t]*\r?\n/g, ' ')
+    .split(/\r?\n/)
+    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+    .filter((line) => line && !line.startsWith('#'));
+}
+
 function dockerStages(dockerfile) {
   const stages = [];
-  const instructions = dockerfile.replace(/\\\n/g, ' ').split('\n').filter((line) => line && !line.startsWith('#'));
-  for (const line of instructions) {
+  for (const line of dockerInstructions(dockerfile)) {
     const from = /^FROM (\S+)(?: AS (\S+))?$/.exec(line);
     if (from) { stages.push({ base: from[1], name: from[2] || null, lines: [] }); continue; }
     assert.ok(stages.length, `an instruction before the first FROM: ${line}`);
@@ -66,7 +78,7 @@ function assertSiblingStages(dockerfile) {
     assert.equal(runs.length, 1, `${s.name} runs one step`);
     // The whole instruction, from RUN to the end: the one dependency mount,
     // then the command. Anything added in between is a change to this rule.
-    assert.equal(runs[0].replace(/ +/g, ' '), `RUN ${DEPENDENCY_MOUNT} ${command}`,
+    assert.equal(runs[0], `RUN ${DEPENDENCY_MOUNT} ${command}`,
       `${s.name} must run exactly \`${command}\` with the dependency mount and nothing else`);
   };
   const siblings = [
@@ -169,26 +181,52 @@ test('Kubernetes platform image builds and contains the generated shell assets',
   assert.doesNotMatch(runtimeText, /^COPY .*docs/m);
 });
 
+// The sibling guard's own cases are built from the parsed instructions, not
+// from the Dockerfile's exact text, so they hold however the file is laid out.
+function siblingFixture() {
+  const instructions = dockerInstructions(read('Dockerfile.kubernetes'));
+  const command = 'node frontend/scripts/build-shell.mjs --prerender-only';
+  const at = instructions.indexOf(`RUN ${DEPENDENCY_MOUNT} ${command}`);
+  assert.ok(at > -1, 'the prerender stage runs its command with the dependency mount');
+  const withRun = (run) => instructions.map((line, i) => (i === at ? run : line)).join('\n');
+  return { instructions, command, withRun };
+}
+
+test('the sibling-stage guard reads the instruction, not its layout', () => {
+  const { command, withRun } = siblingFixture();
+  assertSiblingStages(read('Dockerfile.kubernetes'));
+  for (const [name, run] of [
+    ['one line', `RUN ${DEPENDENCY_MOUNT} ${command}`],
+    ['extra spaces', `RUN   ${DEPENDENCY_MOUNT}    ${command.replace(/ /g, '   ')}`],
+    ['tabs', `RUN\t${DEPENDENCY_MOUNT}\t\t${command.replace(/ /g, '\t')}`],
+    ['continuation before the mount', `RUN \\\n    ${DEPENDENCY_MOUNT} \\\n    ${command}`],
+    ['continuation inside the command, trailing blanks', `RUN ${DEPENDENCY_MOUNT} node \\  \n\tfrontend/scripts/build-shell.mjs \\\n --prerender-only`],
+  ]) {
+    assert.doesNotThrow(() => assertSiblingStages(withRun(run)), name);
+  }
+});
+
 test('the sibling-stage guard refuses a mount that would make one asset step wait for another', () => {
   // Review of #5518: a guard that only read the end of the RUN, and only bind
   // mounts, let both of these through. In a real build the first made the
   // prerender wait for the whole browser bundle; a shared cache with
-  // sharing=locked serializes every RUN that mounts it.
-  const dockerfile = read('Dockerfile.kubernetes');
-  assertSiblingStages(dockerfile);
-  const dependency = `RUN ${DEPENDENCY_MOUNT} \\\n    node frontend/scripts/build-shell.mjs --prerender-only`;
-  assert.ok(dockerfile.includes(dependency), 'the prerender stage is written as the cases below expect');
+  // sharing=locked serializes every RUN that mounts it. Any other flag or
+  // option on the RUN or the command is refused the same way.
+  const { command, withRun } = siblingFixture();
+  const cases = [];
   for (const extra of [
     '--mount=type=cache,from=shell-bundle,source=/build/public,target=/review-copy',
     '--mount=type=cache,id=shell,target=/root/.cache,sharing=locked',
+    '--network=none',
   ]) {
-    for (const mutated of [
-      dockerfile.replace(dependency, dependency.replace('RUN ', `RUN ${extra} `)),
-      dockerfile.replace(dependency, dependency.replace(' \\\n', ` ${extra} \\\n`)),
-    ]) {
-      assert.notEqual(mutated, dockerfile);
-      assert.throws(() => assertSiblingStages(mutated), /shell-prerender must run exactly/, extra);
-    }
+    cases.push(`RUN ${extra} ${DEPENDENCY_MOUNT} ${command}`);
+    cases.push(`RUN ${DEPENDENCY_MOUNT} ${extra} ${command}`);
+    cases.push(`RUN ${DEPENDENCY_MOUNT} \\\n\t${extra} \\\n    ${command}`);
+  }
+  cases.push(`RUN ${DEPENDENCY_MOUNT} ${command} --bundle-only`);
+  cases.push(`RUN ${DEPENDENCY_MOUNT.replace(',rw', '')} ${command}`);
+  for (const run of cases) {
+    assert.throws(() => assertSiblingStages(withRun(run)), /shell-prerender must run exactly/, run);
   }
 });
 
