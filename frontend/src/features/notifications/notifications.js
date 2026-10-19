@@ -445,9 +445,13 @@ const Notifications = {
   // so far. The comparison is the same one the badge makes: a settled
   // decided-ask row serializes read (the server stamps read_at live off the
   // change's status), and a parked kind never reaches either side.
+  //
+  // #18: plain messages on both sides. The bell leaves them to the Messages
+  // tab (_badgeTotal), and `?unread=1` no longer pages them.
   _unreadShort() {
-    const loaded = Notifications.items.filter((n) => n && !n.readAt).length;
-    return loaded < Notifications.unread;
+    const loaded = Notifications.items
+      .filter((n) => n && !n.readAt && !/^(conversation|channel)_message$/.test(n.kind)).length;
+    return loaded < Notifications.unread - (Notifications.messageUnread || 0);
   },
 
   /**
@@ -2738,6 +2742,10 @@ function rowView(n) {
   const base = {
     id: n.id,
     unread: !n.readAt,
+    // #18 (19 Oct 2026 polish board): a plain message in a conversation or a
+    // channel, which the bell leaves to the Messages tab: the sheet's Unread
+    // tab neither lists nor counts it, so it says what the badge says.
+    plainMessage: n.kind === 'conversation_message' || n.kind === 'channel_message',
     // #4769: whether the user has bookmarked this row — the feed row's
     // bookmark button and the pinned section both read it. A save is not a
     // read state; the two flags never derive from each other.

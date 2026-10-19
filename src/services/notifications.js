@@ -1554,9 +1554,13 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
   // untouched. read_at IS NULL is a cheap filter on the rows
   // idx_notifications_user_recent already produces, the same reasoning as
   // the kind filter above.
+  // #18 (19 Oct 2026 polish board): and not a plain message, which the bell
+  // leaves to the Messages tab (countUnreadSplit): what the bell counts is
+  // `unread - messageUnread`, so that is what this pages.
   let unreadClause = '';
   if (unreadOnly) {
-    unreadClause = `AND n.read_at IS NULL AND NOT ${DECIDED_ASK_SETTLED_SQL}`;
+    unreadClause = `AND n.read_at IS NULL AND NOT ${DECIDED_ASK_SETTLED_SQL}
+      AND n.kind NOT IN ('conversation_message', 'channel_message')`;
   }
   // #4795: a merged change is decided, so the rows that asked you to vote on
   // it or try it leave the list instead of staying as read entries somebody
@@ -1747,6 +1751,7 @@ async function countUnread(pool, userId) {
 // the bell's sheet), and `unread` still counts them: it is the home-screen
 // icon's number too, which a push stamps from countUnread above. So the
 // bell's figure is `unread - messageUnread`, both read in one query.
+// listForUser's `unreadOnly` clause spells the same two kinds as literals.
 const MESSAGE_KINDS = ['conversation_message', 'channel_message'];
 
 async function countUnreadSplit(pool, userId) {

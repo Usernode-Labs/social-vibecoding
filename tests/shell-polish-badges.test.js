@@ -4,11 +4,10 @@
 // per badge (#18). The other suites pin each piece where it lives; this one
 // holds the parts that had no suite of their own:
 //
-//   - #15: Settings' email part reads the account once and keeps the answer
-//     when another page is shown (two clocks, not one).
 //   - N21: the sidebar slides when the toggle shows or hides it.
 //   - #18: the vocabulary itself. Grey is new to read, the accent is waiting
-//     on you, and the Communities list's fresh counts reach the sidebar.
+//     on you. (The list's fresh counts reach the sidebar through
+//     community-scope.ts `takeCounts`, #5296, which has its own tests.)
 //   - N14, N17, #20: the readable measure, the quiet dot, the centred bar.
 //
 // Run with: node --test tests/shell-polish-badges.test.js
@@ -31,29 +30,6 @@ function rule(selector, from = 0) {
   return CSS.slice(at, CSS.indexOf('}', at) + 1);
 }
 
-// ── #15: the account's read outlives another page being shown ──────────
-
-test('Settings email: another page clears the form, never the account read', () => {
-  const src = read('frontend/src/features/settings/sections/email.tsx');
-  assert.doesNotMatch(src, /generation/, 'one counter for both was the bug');
-  assert.match(src, /const read = useRef\(0\);\s*const form = useRef\(0\);/);
-  // The read is dropped only by a newer read (or the part going away).
-  assert.match(src, /if \(seq !== read\.current\) return;\s*setAccount\(value\); setEmail\(value\.email \|\| ''\);/);
-  // The event names the PAGE ('account'); the part is shown with it.
-  assert.match(src, /if \(section === 'email' \|\| section === 'account'\) refresh\(\);\s*else clearForm\(\);/);
-  const clear = src.slice(src.indexOf('const clearForm = () => {'), src.indexOf('};', src.indexOf('const clearForm = () => {')));
-  assert.match(clear, /\+\+form\.current;/);
-  assert.doesNotMatch(clear, /read\.current|setAccount/, 'clearing the form leaves the account alone');
-  // A re-read keeps what is on screen: the loading line is only for the first.
-  const refresh = src.slice(src.indexOf('const refresh = () => {'), src.indexOf('const onSection'));
-  assert.doesNotMatch(refresh, /setAccount\(null\)/);
-  // A send or a verify answers to the form's clock.
-  assert.match(src, /const submit = async \(verify: boolean\) => \{\s*const seq = form\.current;/);
-  // The no-email answer draws its own line, not the loading one.
-  assert.match(src, /\{account\.email \|\| t\('settings:email\.none'\)\}/);
-  assert.equal(message('settings:email.none'), 'No email linked');
-});
-
 // ── N21: the sidebar slides ────────────────────────────────────────────
 
 test('the sidebar slides in and out on the compositor, and not at all for reduced motion', () => {
@@ -74,52 +50,6 @@ test('the sidebar slides in and out on the compositor, and not at all for reduce
   assert.match(src, /bar\.classList\.add\('platform-tabs-leaving'\)/);
   assert.match(src, /if \(!open\) slide\.finished\.then\(leaving, leaving\);/);
   assert.match(CSS, /\.platform-tabs\.platform-tabs-folded:not\(\.platform-tabs-peek\):not\(\.platform-tabs-leaving\) \{\s*display: none;/);
-});
-
-// ── #18: the list's fresh counts reach the sidebar and the tab ─────────
-
-test('applyCounts: the sidebar counts from the same answer as the Communities list', () => {
-  const store = new Map();
-  globalThis.window = {
-    App: { user: { id: 7 } },
-    localStorage: {
-      getItem: (k) => (store.has(k) ? store.get(k) : null),
-      setItem: (k, v) => { store.set(k, String(v)); },
-      removeItem: (k) => { store.delete(k); },
-    },
-    location: { search: '' },
-  };
-  try {
-    const cards = loadTsx('frontend/src/features/dev-board/card/cards-store.ts');
-    const scope = loadTsx('frontend/src/features/workshop/community-scope.ts', {
-      stubs: { '../dev-board/card/cards-store': cards },
-    });
-    const st = () => scope.communityScopeStore.get();
-    scope.communityScopeStore.set({ list: ['homeroom', 'maps', 'fresh'], totalNeeds: 0, badgeNeeds: 0 });
-    scope.describe('homeroom', { owedCount: 8 });
-    scope.describe('maps', { owedCount: 2 });
-    scope.describe('fresh', { owedCount: 0, unchosen: true });
-    assert.equal(st().info.homeroom.needs, 8, 'what sign-in read');
-
-    // The list reads again: one more vote in Homeroom, Maps answered.
-    scope.applyCounts({ homeroom: { needs: 9 }, fresh: { needs: 3, unchosen: true } });
-    assert.equal(st().info.homeroom.needs, 9, 'the sidebar says what the list says');
-    assert.equal(st().info.maps.needs, 0, 'a community the answer leaves out owes nothing, as loadCommunities reads it');
-    assert.equal(st().totalNeeds, 12);
-    assert.equal(st().badgeNeeds, 9, 'the tab and the All row leave an unchosen community out');
-
-    // The same answer again publishes nothing.
-    let sets = 0;
-    const off = scope.communityScopeStore.subscribe(() => { sets += 1; });
-    scope.applyCounts({ homeroom: { needs: 9 }, fresh: { needs: 3, unchosen: true } });
-    scope.applyCounts(null);
-    off();
-    assert.equal(sets, 0);
-  } finally {
-    delete globalThis.window;
-  }
-  const list = read('frontend/src/features/workshop/index.tsx');
-  assert.equal((list.match(/applyCounts\(/g) || []).length, 2, 'the list hands over both of its reads: the open and the quiet refresh');
 });
 
 // ── #18: grey is new to read; the accent is waiting on you ─────────────
@@ -145,13 +75,13 @@ test('an unread count is grey wherever it is, and said in words on a full row', 
   assert.doesNotMatch(rule('\n.dev-ws-places-dot'), /#ff5a4f/);
 });
 
-test('a community\'s row says "1 to vote · 5 new messages", one line, no bubble', () => {
+test('a community\'s row: its votes in the blue pill, its unread said in grey words, never a second number', () => {
   const src = read('frontend/src/features/workshop/index.tsx');
-  const row = src.slice(src.indexOf('export function AppRow') > -1 ? src.indexOf('export function AppRow') : src.indexOf('function AppRow'),
-    src.indexOf('Four rows of the real geometry'));
-  assert.doesNotMatch(row, /trailing=/, 'no count at the row\'s end');
-  assert.doesNotMatch(row, /messages-unread/);
-  assert.match(row, /<StatusLine working=\{row\.working\} needs=\{row\.needs\} \/>\s*\{unread > 0 \? \(\s*<span data-workshop-unread=\{String\(unread\)\} className="text-zinc-500 dark:text-zinc-400">/);
+  const row = src.slice(src.indexOf('export function AppRow'), src.indexOf('Four rows of the real geometry'));
+  // #5296's one pill is the votes, and only the votes.
+  assert.match(row, /trailing=\{row\.needs > 0 \? <VotePill count=\{row\.needs\} \/> : null\}/);
+  assert.doesNotMatch(row, /messages-unread/, 'no unread bubble at the row\'s end');
+  assert.match(row, /<StatusLine working=\{row\.working\} needs=\{row\.needs\} needsInPill \/>\s*\{unread > 0 \? \(\s*<span data-workshop-unread=\{String\(unread\)\} className="text-zinc-500 dark:text-zinc-400">/);
   assert.match(row, /t\('communities:row\.newMessages', \{ count: unread \}\)/);
   assert.equal(message('communities:row.newMessages', { count: 5 }), '5 new messages');
   assert.equal(message('communities:row.newMessages', { count: 1 }), '1 new message');

@@ -59,41 +59,29 @@ function EmailForm() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  // TWO CLOCKS (#15). `read` is the account's own read; `form` is a send or
-  // a verify in flight. Leaving for another page drops what was typed and
-  // the send, never the read: one counter for both left the line saying
-  // "Loading account email…" for good, because the read it threw away only
-  // ran again on an 'email' event, and the event names the PAGE this part
-  // is on ('account'), so that never came.
-  const read = useRef(0);
-  const form = useRef(0);
+  const generation = useRef(0);
   const root = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let controller: AbortController | null = null;
-    const clearForm = () => {
-      ++form.current;
-      setOpen(false); setPassword(''); setPending(''); setCode(''); setBusy(false);
-    };
     const refresh = () => {
-      const seq = ++read.current;
+      const seq = ++generation.current;
       if (timer) clearTimeout(timer);
       controller?.abort();
       controller = typeof AbortController === 'function' ? new AbortController() : null;
       const ours = controller;
-      clearForm();
-      setAccount(null);
-      setMessage(''); setError('');
+      setAccount(null); setOpen(false); setPassword(''); setPending(''); setCode('');
+      setMessage(''); setError(''); setBusy(false);
       timer = setTimeout(() => ours?.abort(), LOAD_TIMEOUT_MS);
       void api('', undefined, ours?.signal).then((value: AccountEmail) => {
-        if (seq !== read.current) return;
+        if (seq !== generation.current) return;
         setAccount(value); setEmail(value.email || '');
       }).catch((err: Error) => {
-        if (seq !== read.current) return;
+        if (seq !== generation.current) return;
         setError(err?.name === 'AbortError' || !err?.message ? t('settings:email.requestFailed') : err.message);
       }).finally(() => {
-        if (seq === read.current && timer) clearTimeout(timer);
+        if (seq === generation.current && timer) clearTimeout(timer);
       });
     };
     // #5281: the page key is 'account' since the settings restructure put
@@ -105,10 +93,9 @@ function EmailForm() {
     const onSection = (event: Event) => {
       const wrapper = root.current?.closest('[data-settings-section]');
       const shown = (event as CustomEvent).detail?.section === 'email'
-        || (event as CustomEvent).detail?.section === 'account'
         || (!!wrapper && !wrapper.classList.contains('hidden'));
       if (shown) refresh();
-      else clearForm();
+      else { ++generation.current; setOpen(false); setPassword(''); setPending(''); setCode(''); }
     };
     const onEditor = (event: Event) => {
       setOpen((event as CustomEvent).detail?.part === 'email');
@@ -117,8 +104,7 @@ function EmailForm() {
     window.addEventListener(EDITOR_EVENT, onEditor);
     refresh();
     return () => {
-      ++read.current;
-      ++form.current;
+      ++generation.current;
       if (timer) clearTimeout(timer);
       controller?.abort();
       window.removeEventListener('usernode:settings-section', onSection);
@@ -141,12 +127,12 @@ function EmailForm() {
   };
 
   const submit = async (verify: boolean) => {
-    const seq = form.current;
+    const seq = generation.current;
     setBusy(true); setError(''); setMessage('');
     try {
       const result = await api(verify ? '/verify' : '/request', verify
         ? { code } : { email, currentPassword: password });
-      if (seq !== form.current) return;
+      if (seq !== generation.current) return;
       setPassword(''); setCode('');
       if (verify) {
         setAccount(result); setPending(''); setEmail(result.email);
@@ -157,9 +143,9 @@ function EmailForm() {
         setMessage(t('settings:email.codeSentNotice'));
       }
     } catch (err) {
-      if (seq === form.current) setError((err as Error).message);
+      if (seq === generation.current) setError((err as Error).message);
     } finally {
-      if (seq === form.current) setBusy(false);
+      if (seq === generation.current) setBusy(false);
     }
   };
 

@@ -1293,16 +1293,16 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "c7f6a44be60767ec3f89",
+      "fingerprint": "bbb2de2fcd61f3c35304",
       "count": 1,
-      "preview": "`SELECT (COUNT(*) FILTER (WHERE n.kind = ANY($3::text[])))::int AS m, COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND "
+      "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
     },
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "bbb2de2fcd61f3c35304",
+      "fingerprint": "c7f6a44be60767ec3f89",
       "count": 1,
-      "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
+      "preview": "`SELECT (COUNT(*) FILTER (WHERE n.kind = ANY($3::text[])))::int AS m, COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND "
     },
     {
       "source": "src/services/notifications.js",

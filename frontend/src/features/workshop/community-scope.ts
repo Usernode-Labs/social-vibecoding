@@ -385,39 +385,6 @@ export function describe(slug: string, patch: Partial<CommunityInfo>): void {
   if (cur.slug === slug) saveInfo(next);
 }
 
-/**
- * THE COMMUNITIES LIST'S FRESH COUNTS, FOR EVERYTHING ELSE THAT COUNTS
- * (#18 of the 19 Oct 2026 polish board: same source, same number). The
- * list reads GET /api/workshop/counts afresh on every open and every
- * thirty seconds while it is up; this store read it at sign-in and kept
- * that, so the sidebar said Homeroom 8 beside the list's "9 to vote".
- * The list hands each answer here, and every community's `needs` is derived
- * again from it exactly as loadCommunities derives it, so the sidebar's
- * rows, its All row and the tab's badge move with the list.
- */
-export function applyCounts(counts: Record<string, { needs?: unknown; owed?: unknown; unchosen?: unknown } | undefined> | null): void {
-  if (!counts || typeof counts !== 'object') return;
-  const cur = communityScopeStore.get();
-  let info: Record<string, CommunityInfo> | null = null;
-  for (const slug of cur.list || Object.keys(counts)) {
-    const prev = cur.info[slug];
-    if (!prev) continue;
-    const c = counts[slug];
-    const next = derive({
-      ...prev,
-      owedCount: Number(c?.needs) || 0,
-      owed: Array.isArray(c?.owed) ? (c!.owed as unknown[]).map(String) : undefined,
-      unchosen: c?.unchosen === true,
-    });
-    if (next.needs === prev.needs && next.owedCount === prev.owedCount
-      && same(next.owed, prev.owed) && next.unchosen === prev.unchosen) continue;
-    (info ||= { ...cur.info })[slug] = next;
-  }
-  if (!info) return;
-  communityScopeStore.set({ info, ...(cur.list ? sums(cur.list, info) : {}) });
-  if (cur.slug && info[cur.slug]) saveInfo(info[cur.slug]);
-}
-
 export function openSwitcher(from: SwitcherFrom, anchorEl?: Element | null): void {
   let anchor: CommunityScopeState['anchor'] = null;
   try {

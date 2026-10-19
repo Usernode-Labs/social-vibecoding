@@ -117,7 +117,7 @@ import { channelUnread, useMessagesSnapshot } from '../messages/store';
 import { openPinMenu } from '../nav/pin-actions';
 import { useSidebarRows } from '../nav/sidebar-rows';
 import { communitiesSearchStore } from './communities-search';
-import { applyCounts, takeCounts, votesWaiting } from './community-scope';
+import { takeCounts, votesWaiting } from './community-scope';
 import { NeedsReel, type NeedsFeedItem } from './needs-reel';
 import { unseenNeeds, useNeedsSeen } from './needs-seen';
 import {
@@ -464,16 +464,14 @@ export function AppRow({ row, onOpen, current = false }: {
       )}
       title={row.name || row.slug}
       // ONE PILL A ROW (#5296): the votes, when any wait on you. The
-      // channel's unread is said in grey on the second line (#18), never as
-      // a second blue number.
+      // channel's unread is not a second number at the row's end: it is
+      // said on the second line, in grey (#18 of the 19 Oct polish board:
+      // the accent is waiting on you, grey is new to read).
       trailing={row.needs > 0 ? <VotePill count={row.needs} /> : null}
       // THE STATUS LEADS THE SECOND LINE, then the quiet fact after it, so a
       // narrow screen truncates the fact and never the part that changes.
       // The status spans are always here (see StatusLine) so the checks'
       // adjacency holds on every row, busy or not.
-      // #18 (19 Oct polish board): the channel's unread is said there too,
-      // "1 to vote · 5 new messages", in grey: a blue bubble at the row's
-      // end beside a blue "1 to vote" read as two votes counts.
       subtitle={(
         <>
           <StatusLine working={row.working} needs={row.needs} needsInPill />
@@ -1136,8 +1134,6 @@ export const workshopController = {
             state.rows.map(({ owed, ...rest }) => rest),
             data.counts,
           ));
-          // #18: the sidebar and the tab count from the same answer.
-          applyCounts(data.counts);
         }
       }
       if (feedRes && feedRes.ok) {
@@ -1201,8 +1197,6 @@ export const workshopController = {
           // #5296: the tab counts from this same answer.
           takeCounts(counts);
         }
-        // #18: the sidebar and the tab count from the same answer.
-        applyCounts(data && data.counts);
       }
       // The Needs you feed is optional like the counts: losing it costs the
       // feed its cards (it says so), never the screen. A read issued before a
