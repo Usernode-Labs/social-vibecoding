@@ -17,6 +17,10 @@
 //     follows the shadow builds' rule for the platform's own repository; and
 //     after a restart it goes on from the last step it saved: a kept spec is
 //     built from, a build that landed is its result;
+//   - a side whose recipe PLANS ALIKE (the live recipe's spec model, pack and
+//     tweaks) waits for the live build's spec and builds from it, with no
+//     spec of its own; one whose live build stopped at its plan builds
+//     nothing; any other writes its own spec, as every side did before;
 //   - its side builds take only the build slots live builds leave free;
 //   - a later pair is left out only when a side did not build (or is known
 //     not to boot) or both are one commit; the live proposals' outcomes.
@@ -383,6 +387,152 @@ test('a later side build goes on after a restart from the last step it saved: a 
   assert.equal(h2.calls.captured, 0, 'a later change has no screenshot step');
   assert.deepEqual(fromBuild.parsed.side, { botRunId: 901 });
   assert.deepEqual(fromBuild.session_ids, [7001], 'the session the first attempt opened');
+});
+
+// 19 Oct 2026: each side build wrote an Opus spec of its own, about 93% of
+// what it cost, and its pair compared two plans as well as two builds. A
+// side whose recipe plans as the live one does builds from the live build's.
+
+const DS = 'deepseek/deepseek-v4.1-flash-1017';
+const LIVE_SPEC = '# Dark mode\n\n## User-facing changes\nThe live build\'s own plan.';
+// Its polls, without the clock.
+const NO_WAIT = { pollMs: 1, sleep: async () => {} };
+
+test('a later side plans alike when its spec model, pack and tweaks are the live recipe\'s: its triage and build may differ', () => {
+  const current = LATER.recipe;
+  assert.equal(configs.plansAlike(current, { ...current, models: { ...current.models, build: DS } }), true);
+  assert.equal(configs.plansAlike(current, { ...current, models: { triage: DS, spec: OPUS, build: DS } }), true, 'its triage is the live run\'s, replayed');
+  assert.equal(configs.plansAlike(current, { ...current, models: { ...current.models, spec: GLM } }), false, 'All GLM writes its own');
+  assert.equal(configs.plansAlike(current, { ...current, pack: 3 }), false, 'a pack guides the spec');
+  assert.equal(configs.plansAlike(current, { ...current, tweaks: ['lean_plan'] }), false);
+  assert.equal(configs.plansAlike(current, { models: {} }), false, 'a recipe that does not validate');
+});
+
+/**
+ * A side build's harness whose pool answers the live run's plan
+ * (bot-configs.js liveSpecState) from `states`, one row per look (the last
+ * one repeated), and the live spec's text.
+ */
+function livePlanHarness(states) {
+  const h = sideHarness();
+  const looks = [];
+  const base = h.pool.query.bind(h.pool);
+  h.pool.query = async (sql, params) => {
+    const text = String(sql);
+    if (/FROM homeroom_bot_runs r\s+JOIN bot_config_versions cv/.test(text)) {
+      looks.push(params);
+      const row = states[Math.min(looks.length, states.length) - 1];
+      return { rows: row ? [row] : [] };
+    }
+    if (/SELECT content, content_html FROM chat_session_specs/.test(text)) {
+      return { rows: Number(params[0]) === 8100 && Number(params[1]) === 1 ? [{ content: LIVE_SPEC, content_html: null }] : [] };
+    }
+    return base(sql, params);
+  };
+  return { ...h, looks };
+}
+
+function liveRow(over = {}) {
+  return {
+    current_recipe: LATER.recipe, side_recipe: { ...LATER.recipe, models: { ...LATER.recipe.models, build: DS } },
+    build_ok: null, build_error: null, session_id: null, version: null, ...over,
+  };
+}
+
+function laterSide(h, over = {}) {
+  return runner.runStage({
+    pool: h.pool, config: {}, stage: 'build', task: { id: 5, stage: 'build', reference: {} },
+    snapshot: {
+      id: 654, stage: 'build', issueNumber: 12, baseSha: BASE,
+      texts: { seed: 'Issue #12: Dark mode', build_note: 'Add a dark look.' }, extra: { firstVersion: false },
+    },
+    model: DS, user: { id: 501, username: 'homeroom_bench' }, app: { id: 9, slug: 'todo', name: 'Todo', repo_url: APP.repo_url },
+    repo: { owner: 'usernode-bot', repo: 'todo' }, trial: { id: 47, run_id: 3, attempt: 1 },
+    deps: { ...h.deps, livePlanWait: NO_WAIT },
+    budgets: { turnMs: 60_000, buildMs: 60_000, specMs: 30_000 },
+    title: 't', stageModels: { triage: GLM, spec: OPUS, build: DS }, sideBuild: { botRunId: 901, versionId: 23 },
+    harnessOf: live.recipeHarness,
+    ...over,
+  });
+}
+
+test('a later side that plans alike waits for the live build\'s spec and builds from it: no spec of its own', async (t) => {
+  let args = null;
+  live.buildAndPropose = async (a) => { args = a; return REAL_LIVE.buildAndPropose(a); };
+  t.after(() => Object.assign(live, REAL_LIVE));
+  const h = livePlanHarness([liveRow(), liveRow(), liveRow({ session_id: 8100, version: 1 })]);
+  const out = await laterSide(h);
+  assert.equal(out.status, 'ok', out.error);
+  assert.equal(h.looks.length, 3, 'it looked until the live spec was written');
+  assert.deepEqual(h.looks[0], [901, 23], 'the live run and its own version');
+  assert.deepEqual(h.calls.prompts.map((p) => [p.mode, p.model]), [['build', DS]], 'no spec turn: only its build');
+  assert.equal(args.presetSpec, LIVE_SPEC, 'built from the live build\'s spec as it is');
+  assert.equal(out.parsed.spec, LIVE_SPEC, 'which its pair shows on both sides');
+  assert.deepEqual(out.parsed.livePlan, { sessionId: 8100, version: 1 }, 'named for its result\'s cost');
+  assert.deepEqual(out.parsed.side, { botRunId: 901 });
+  assert.equal(args.propose, false, 'never proposed');
+  assert.deepEqual(h.calls.pushed, []);
+});
+
+test('a later side whose live plan stopped at its plan builds nothing; any other side writes its own spec as before', async () => {
+  // The live plan found the request already done: nothing to compare.
+  const blocked = livePlanHarness([liveRow({ build_ok: false, build_error: 'blocked: The fix is already on main (#5457).' })]);
+  const stopped = await laterSide(blocked);
+  assert.equal(stopped.status, 'not_applicable', 'recorded skipped, never as a build that failed');
+  assert.match(stopped.error, /^the live build stopped at its plan: blocked: The fix is already on main \(#5457\)\.$/);
+  assert.deepEqual(blocked.calls.prompts, [], 'no turn, no spend');
+  assert.equal(stopped.parsed.built, false);
+
+  const ownSpec = async (h, over) => {
+    const out = await laterSide(h, over);
+    assert.equal(out.status, 'ok', out.error);
+    assert.deepEqual(h.calls.prompts.map((p) => [p.mode, p.model]), [['scout', OPUS], ['build', DS]], 'its own spec, then its build');
+    assert.equal(out.parsed.livePlan, undefined);
+    return out;
+  };
+  // A recipe that plans differently, looked at once.
+  const differs = livePlanHarness([liveRow({ side_recipe: { ...LATER.recipe, models: { triage: GLM, spec: GLM, build: GLM } } })]);
+  await ownSpec(differs, { stageModels: { triage: GLM, spec: OPUS, build: DS } });
+  assert.equal(differs.looks.length, 1);
+  // A run that names no configuration (or is gone): no row.
+  await ownSpec(livePlanHarness([]));
+  // The live build ended without a spec for another reason.
+  await ownSpec(livePlanHarness([liveRow({ build_ok: false, build_error: 'the spec turn failed (timeout)' })]));
+  // None came in time.
+  const late = livePlanHarness([liveRow()]);
+  await ownSpec(late, { deps: { ...late.deps, livePlanWait: { ...NO_WAIT, waitMs: 0 } } });
+  // Its text is gone.
+  await ownSpec(livePlanHarness([liveRow({ session_id: 8100, version: 2 })]));
+  // A database error while it looks.
+  const broken = livePlanHarness([liveRow()]);
+  const query = broken.pool.query;
+  broken.pool.query = async (sql, params) => {
+    if (/FROM homeroom_bot_runs r\s+JOIN bot_config_versions cv/.test(String(sql))) throw new Error('connection reset');
+    return query(sql, params);
+  };
+  await ownSpec(broken);
+
+  // An admin's cancel while it waits.
+  const waiting = livePlanHarness([liveRow()]);
+  const cancelled = await laterSide(waiting, { skipCheck: async () => 'cancelled by an admin' });
+  assert.deepEqual([cancelled.status, cancelled.error], ['cancelled', 'cancelled by an admin']);
+  assert.deepEqual(waiting.calls.prompts, []);
+});
+
+test('a later side that plans alike goes on after a restart from the live spec it found, without looking again', async () => {
+  const saves = [];
+  const durable = durableSteps.durable({ resumeFrom: null, lostAttempts: 0, checkpoint: async (state) => { saves.push(state); } });
+  const h = livePlanHarness([liveRow({ session_id: 8100, version: 1 })]);
+  assert.equal((await laterSide(h, { deps: { ...h.deps, durable, livePlanWait: NO_WAIT } })).status, 'ok');
+  const kept = saves.find((s) => 'live_plan' in s && !('build/spec' in s));
+  assert.deepEqual(kept.live_plan, { spec: { sessionId: 8100, version: 1 } }, 'the spec it found, not its text');
+  const again = livePlanHarness([liveRow()]);
+  const resumed = durableSteps.durable({ resumeFrom: kept, lostAttempts: 1, checkpoint: async () => {} });
+  const out = await laterSide(again, { deps: { ...again.deps, durable: resumed, livePlanWait: NO_WAIT } });
+  assert.equal(out.status, 'ok', out.error);
+  assert.equal(again.looks.length, 0, 'not looked for again');
+  assert.equal(out.parsed.spec, LIVE_SPEC);
+  assert.deepEqual(again.calls.prompts.map((p) => p.mode), ['build']);
 });
 
 test('a later change\'s side builds take only the live slots live work leaves free', async () => {
