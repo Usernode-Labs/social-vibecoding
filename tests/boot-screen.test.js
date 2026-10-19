@@ -117,7 +117,10 @@ test('signed out, the anonymous shell outranks the route', () => {
   assert.equal(f('#login', '/', false), 'auth-login-screen');
   assert.equal(f('#signup', '/', false), 'auth-login-screen');
   assert.equal(f('#register/CODE', '/', false), 'auth-register-screen');
-  assert.equal(f('#waitlist', '/', false), 'auth-waitlist-screen');
+  // A bare #waitlist opens Continue on the landing (#5261); check your
+  // status is the waitlist screen.
+  assert.equal(f('#waitlist', '/', false), 'auth-landing-screen');
+  assert.equal(f('#waitlist?confirm=1', '/', false), 'auth-waitlist-screen');
 });
 
 test('a public profile is the one address that answers the same either way', () => {

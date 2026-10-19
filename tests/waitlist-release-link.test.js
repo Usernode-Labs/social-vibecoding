@@ -137,7 +137,11 @@ test('a new account\'s link is spent as the page opens, after a check that spend
   // new account, and nothing is spent in the router's hook itself: it only
   // puts "Signing you in…" up for a link that may be spent on load.
   assert.match(body, /if \(link\) \{\s+noteSignInBegun\(\);\s+flushSync\(\(\) => \{\s+setRelease\(link\);\s+setResume\(null\);\s+setHolding\(straightLink\(link\)\);\s+if \(link\.route !== 'signup'\) setSheet\('signin'\);\s+\}\);\s+\}/);
-  assert.doesNotMatch(body, /setSheet\('start'\)|spendReleaseLink|release-link/);
+  assert.doesNotMatch(body, /spendReleaseLink|release-link/);
+  // Its one Continue is an old #waitlist link's (#5261), never over a release
+  // link: the guard says so.
+  assert.equal((body.match(/setSheet\('start'\)/g) || []).length, 1);
+  assert.match(body, /if \(takeStartSheet\(\) && !link\) \{/);
   // The one spend on load: after the GET that names the address says the
   // account is new, and with the flag that has the server refuse anything
   // else (tests/release-link-postgres.test.js).

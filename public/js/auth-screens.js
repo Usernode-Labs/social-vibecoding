@@ -13,7 +13,8 @@
 //
 // Hash routes: #landing, #login, #signup (login screen with the
 // email-code sub-view open — otp/verify is the account-creation path),
-// #register[/<code>], #waiting, #waitlist (stage-1 survey). app.js's
+// #register[/<code>], #waiting, #waitlist?confirm=1 (check your waitlist
+// status; a bare #waitlist opens Continue instead, #5261). app.js's
 // restoreFromHash owns the routing and calls AuthScreens.show(); this
 // module owns the screens.
 //
@@ -30,9 +31,12 @@
     signup: 'auth-login-screen',
     register: 'auth-register-screen',
     waiting: 'auth-waiting-screen',
-    // Stage-1 waitlist survey, #waitlist — its own screen rather than a
-    // block on the landing page (the four-question form flat on the
-    // homepage buried the app directory under it).
+    // Check your waitlist status, #waitlist?confirm=1: an address that
+    // joined (on the marketing site, or before #5261 here) asks for a code
+    // and reads back where it stands. The join form this screen also held
+    // is retired (#5261): a bare #waitlist opens Continue
+    // (retireWaitlistLink below), which makes the account and puts it in
+    // line.
     waitlist: 'auth-waitlist-screen',
     // Stage-2 waitlist survey ("Want in sooner?"), #more/<token> — the
     // token is the signup's capability from the join response / email.
@@ -151,6 +155,9 @@
     // The token of an invite link an account still waiting opened, kept by
     // showWaiting for the waiting room (features/auth/waiting.tsx).
     _waitingInvite: '',
+    // An old #waitlist link (#5261): the landing opens its Continue sheet
+    // on show (takeStartSheet in features/auth/shared.ts).
+    _startSheet: false,
     // What a waitlist "you're in" mail's link asked for, `{ route, token }`,
     // kept by enter() for the landing to take on show (takeReleaseLink in
     // features/auth/shared.ts), which opens the sign-in sheet over the story.
@@ -292,6 +299,33 @@
         }
       } catch (_) {}
       if (window.App) App.restoreFromHash();
+    },
+
+    // An old `#waitlist?ref=<code>` link's referral code (#5261). The join
+    // form that sent it with a join is retired, so it is kept for this tab
+    // until the waiting room, right after the account is made, sends it on
+    // (features/auth/waiting-about.tsx). The fragment's own query, so it
+    // never reached a server log, and it does not now.
+    keepWaitlistRef(query) {
+      try {
+        const ref = new URLSearchParams(String(query || '')).get('ref');
+        if (ref && /^[a-z0-9]{10}$/.test(ref)) sessionStorage.setItem('usernode:waitlist-ref', ref);
+      } catch (_) { /* the link still opens Continue, without the code */ }
+    },
+
+    // A bare #waitlist, from a bookmark or a link minted before #5261, for a
+    // visitor with no session: the join form it named is retired, so it
+    // opens the landing with Continue up, which makes the account and puts
+    // it in line. The address becomes the landing's own, so Back and a
+    // reload do not come round to it again.
+    retireWaitlistLink(query) {
+      AuthScreens.keepWaitlistRef(query);
+      AuthScreens._startSheet = true;
+      try {
+        const root = window.App?._rootUrl?.('') || '/';
+        history.replaceState(null, '', root);
+      } catch (_) { /* ignore */ }
+      AuthScreens.show('landing');
     },
 
     // Waiting-room entry (App.enterAuthed with hasPlatformAccess=false).
@@ -578,9 +612,9 @@
     _swapViewerFrame() { return null; },
 
 
-    // ── Waitlist survey (two-stage, ported from topochain) ───────────
+    // ── Waitlist status check and survey ─────────────────────────────
     //
-    // #1080 chunk C: both stages are React now — stage 1 is
+    // #1080 chunk C: both screens are React now. Check your status is
     // frontend/src/features/auth/waitlist.tsx and stage 2 ("Want in sooner?",
     // #more/<token>) is frontend/src/features/auth/more.tsx. They share the
     // memoised GET /api/public/waitlist/options fetch and the chip / select

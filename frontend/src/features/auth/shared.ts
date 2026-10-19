@@ -618,6 +618,18 @@ export function keepReleaseLink(link: ReleaseLink): void {
 }
 
 /**
+ * Did an old `#waitlist` link bring this visitor (#5261)? Its join form is
+ * retired, and AuthScreens.retireWaitlistLink sends it to the landing with
+ * Continue asked for. Read once, like the release link above.
+ */
+export function takeStartSheet(): boolean {
+  const host = legacy().AuthScreens;
+  if (!host || host._startSheet !== true) return false;
+  host._startSheet = false;
+  return true;
+}
+
+/**
  * Does signing in with the session that now exists lead straight to its
  * first session, "What do you want to make?" (../first-session)? Asked of
  * /api/auth/me the way AuthScreens.finishLogin will ask it, and answered by
