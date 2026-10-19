@@ -463,6 +463,10 @@
     "text": "Your place comes from the points you earn in challenges.",
     "description": "On the \"Your standing\" card, under the viewer's rank: what the rank is based on."
   },
+  "standing.updateNote": {
+    "text": "Your place updates within about 10 minutes whenever anyone earns points, so it can move even when you did nothing.",
+    "description": "On the \"Your standing\" card at the top of the Challenges tab, under the note on points: why the viewer's place can change without them doing anything, and how soon the standings catch up."
+  },
   "standing.pending_one": {
     "text": "{{points}} pts earned, not in the standings yet",
     "description": "On the \"Your standing\" card when the viewer has earned points that the ranking does not show yet. {{points}} is a number, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
