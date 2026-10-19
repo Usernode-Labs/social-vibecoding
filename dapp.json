@@ -709,6 +709,12 @@
       "allowConsoleErrors": false
     },
     {
+      "name": "Accessibility settings ship text size and contrast controls (#3969)",
+      "path": "/?demo=1#settings/accessibility",
+      "expectText": "High contrast",
+      "expectSelector": "#settings-accessibility-section #settings-text-size-track[role=\"radiogroup\"] [data-text-size-option=\"larger\"]"
+    },
+    {
       "name": "Guest back arrow returns to the app directory (#1028)",
       "path": "/?shot=anon-back#landing",
       "expectSelector": "#auth-landing-screen:not(.hidden) #app-viewer.hidden[data-anon-back=\"done\"]",

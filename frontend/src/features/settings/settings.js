@@ -340,6 +340,12 @@
       { key: 'theme', label: 'settings:nav.part.theme', group: 'settings:nav.group.preferences', page: 'theme' },
       { key: 'dev-console', label: 'settings:nav.part.devConsole', group: 'settings:nav.group.preferences', page: 'theme' },
       { key: 'admin-preview', label: 'settings:nav.part.adminPreview', group: 'settings:nav.group.preferences', page: 'theme', gate: 'settings-admin-section' },
+      // #3969: text size and high contrast — the other controls about how
+      // the shell reads on this device. Their own page of one part, right
+      // after Appearance, so they are visible without opening Appearance
+      // first. A stateful pane; settings.js binds nothing inside it (see
+      // sections/accessibility.tsx).
+      { key: 'accessibility', label: 'settings:nav.part.accessibility', group: 'settings:nav.group.preferences' },
       // Offered to everyone: Auto and the languages Homeroom ships
       // (sections/language.tsx). #1556 had gated it on an already-saved
       // locale while the row could not say what it did.
@@ -395,6 +401,7 @@
       experimental: 'settings:nav.keywords.experimental',
       theme: 'settings:nav.keywords.theme',
       'dev-console': 'settings:nav.keywords.devConsole',
+      accessibility: 'settings:nav.keywords.accessibility',
       language: 'settings:nav.keywords.language',
       alerts: 'settings:nav.keywords.alerts',
       'app-permissions': 'settings:nav.keywords.appPermissions',
