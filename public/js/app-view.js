@@ -1458,8 +1458,9 @@ const AppView = {
           const page = document.querySelector('#dev-workshop .dev-ws[data-ws-tab]');
           return page ? page.getAttribute('data-ws-tab') : null;
         };
-        // #4417: the place's row in the list (the section column), else the
-        // page's own way to a place, which a press on a row takes.
+        // #4417: the place's row in the list (the sidebar's, or the phone's
+        // drawer), else the page's own way to a place, which a press on a
+        // row takes.
         const press = (tab) => {
           const row = document.querySelector(`[data-places="${slug}"] [data-place="${tab}"]`);
           if (row) row.click();

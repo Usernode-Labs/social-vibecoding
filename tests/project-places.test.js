@@ -4,9 +4,11 @@
 //
 // The four tabs (Hub · Discussion · Needs you · Workshop) became one list:
 // Hub, Needs you and Workshop, a line, then Channels (#general) and Topics,
-// each a group under its heading. On a phone it is a tray behind the place
-// bar's button; on a wide window it is the section column beside the strip
-// (tests/section-column.test.js). These pin the list, the bar and the tray,
+// each a group under its heading. On a phone it is the drawer's middle
+// level, or a tray behind the place bar's button; from 768px it is nested
+// under the community's row in the sidebar (tests/desktop-sidebar-nested.test.js),
+// with the project's App row first (tests/desktop-sidebar-apps.test.js).
+// These pin the list, the bar and the tray,
 // the ladder that walks places, and the addresses that open one.
 
 const test = require('node:test');

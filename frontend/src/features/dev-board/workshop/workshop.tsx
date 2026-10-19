@@ -74,6 +74,9 @@ import { Improve } from '../../improve/improve-controller.js';
 import { improveStore } from '../../improve/improve-store.js';
 import { swatchFor } from '../../messages/format';
 import { openBot } from '../../messages/store';
+import { togglePin } from '../../nav/pin-actions';
+import { pinnedAppsStore } from '../../nav/pinned-apps-store.js';
+import { useSidebarRows } from '../../nav/sidebar-rows';
 import type { StagedObject } from '../../messages/types';
 import { devWorkshopStore, voteSavedStore } from '../card/cards-store';
 import { DevKanban, StageStrip, syncStrip } from '../card/dev-kanban';
@@ -102,7 +105,7 @@ import { PlaceBar } from './place-bar';
 import { PlacesTray, useEdgeSwipe } from './places-tray';
 import { drawerStore } from '../../nav-drawer/drawer-store';
 import { ProjectPlaces } from './project-places';
-import { clearPlace, publishPlace, publishSide, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
+import { clearPlace, publishPlace, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
 import { PlanPage } from './plan-page';
 import { PrivateRequests } from './private-requests';
 import { Diagram, decisionDiagram, readDiagram, type DecisionFacts, type DiagramRecord, type DiagramSource } from '../../../lib/diagram/diagram';
@@ -3864,9 +3867,9 @@ const WIDE_QUERY = '(min-width: 700px)';
  * #4457: where a Workshop row opens its page in a panel beside the list
  * rather than as the page: room for the list and a 560px panel beside it.
  * #4417: the chrome beside the page was the strip and the 264px places
- * column, which stepped aside while the panel is open (`placeStore.side`,
- * ../../nav/section-column.tsx) so the list kept its room. On every desktop
- * window now the sidebar of rows nests the places and has no column (v3).
+ * column, which stepped aside while the panel was open so the list kept its
+ * room. On every desktop window now the sidebar of rows nests the places and
+ * there is no column (v3).
  */
 const SIDE_QUERY = '(min-width: 1180px)';
 
@@ -3878,8 +3881,7 @@ const SIDE_QUERY = '(min-width: 1180px)';
  */
 export const HUB_REFRESH_MS = 30_000;
 /**
- * #4417: from here the project's places are the section column beside the
- * strip (../../nav/section-column.tsx), nested in the sidebar of rows now
+ * #4417: from here the project's places are nested in the sidebar of rows
  * (v3, ../../nav/rail-communities.tsx); under it, the tray behind the bar.
  */
 export const PLACES_COLUMN_QUERY = '(min-width: 768px)';
@@ -4587,6 +4589,9 @@ export function DevWorkshop(): ReactNode {
   // The project's community record — the hero, the hub's cards and the hub
   // tab's own label all read it. Before the loading return: it is a hook.
   const community = useCommunity(v.slug || '');
+  // The ⋯'s Pin to sidebar, beside the sidebar that draws the pins.
+  const sidebarRows = useSidebarRows();
+  const { apps: pins } = useStoreState(pinnedAppsStore);
   // The improve store is the header's own record of the app, read only once
   // it is about this project, not the one the page was last pointed at.
   // THE COMMUNITY'S COLOUR is the header's (../../header/community-tint.ts):
@@ -4641,7 +4646,7 @@ export function DevWorkshop(): ReactNode {
     setTrayOpen(true);
   });
   // THE PLACE ON SHOW, for what draws or moves it from outside this page
-  // (./place-store.ts): the section column's list, a merged topic's card.
+  // (./place-store.ts): the sidebar's nested list, a merged topic's card.
   const openTabRef = useRef(openTab);
   openTabRef.current = openTab;
   useEffect(() => {
@@ -4674,9 +4679,6 @@ export function DevWorkshop(): ReactNode {
   }, [v.slug]);
   // The bot's slots page (?ws=bot) opens its rows beside it too.
   const sideOpen = !!sideItem && (tab === 'workshop' || tab === 'all' || tab === 'bot');
-  useEffect(() => {
-    if (v.slug) publishSide(v.slug, sideOpen);
-  }, [v.slug, sideOpen]);
 
   // The hub is drawn once, with its community record (ONE DRAW, NOT TWO,
   // ./community-card.tsx communityPending).
@@ -4717,9 +4719,9 @@ export function DevWorkshop(): ReactNode {
      #4417: the four tabs are gone; the project's places are one list (Hub,
      Needs you, Workshop, then its channels: ./project-places.tsx). On a
      phone it is a tray behind the place bar's button, the bar naming where
-     you are (./place-bar.tsx); on a wide window it is the section column
-     beside the strip (../../nav/section-column.tsx) and the bar is the
-     page's title row. Under the bar, All items leads with its way back to
+     you are (./place-bar.tsx); on a wide window it is nested under the
+     community's row in the sidebar (../../nav/rail-communities.tsx) and the
+     bar is the page's title row. Under the bar, All items leads with its way back to
      the Workshop it is a page of.
 
      THE BAR IS THE BAND'S BOX, ON EVERY PAGE (#3651). It is what pins, and
@@ -4772,6 +4774,8 @@ export function DevWorkshop(): ReactNode {
         places={community?.places}
         // #2915: not while All items is up, where the search box says so.
         filtered={!!v.meta.filtered && tab !== 'all'}
+        // Its app first, as in the sidebar; Homeroom's own has none.
+        app={!actions.selfHosted}
         onPlace={choosePlace}
         onSwitch={(el) => {
           trayNav.current = true;
@@ -4931,6 +4935,16 @@ export function DevWorkshop(): ReactNode {
                 : null}
               onLeave={canLeave(community) ? () => { void leaveCommunity(slug); } : null}
               appName={community?.name || app.name || slug}
+              // A member's, and only beside the sidebar (../../nav/pin-actions.ts).
+              pin={sidebarRows && community?.is_member ? {
+                pinned: pins.some((p: { slug: string }) => p.slug === slug),
+                onToggle: () => togglePin({
+                  slug,
+                  name: community?.name || app.name || slug,
+                  iconUrl: own ? app.iconUrl : null,
+                  iconEmoji: own ? app.iconEmoji : null,
+                }),
+              } : null}
             />
           )}
         />

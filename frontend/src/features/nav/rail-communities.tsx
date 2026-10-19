@@ -18,13 +18,33 @@
  * The community whose page is up opens under its row: Hub, Needs you and
  * Workshop, then #general under Channels and the topics under Topics, the
  * first two and "Show N more" (../dev-board/workshop/project-places.tsx, the
- * list the section column drew beside the strip). A press moves the page in
- * place, as a press in that column did.
+ * list the phone's drawer and tray draw too). A press moves the page in
+ * place.
  * The row itself keeps `aria-current` but gives its fill to the place lit
  * under it, and its count to Needs you, which says the same votes. A
  * community you are only visiting, which is not one of the five, has a row
  * at the top for as long as you are on its page, so its places are always
  * here. The part opens and shuts on the one clock ./rail-nest.tsx keeps.
+ *
+ * ── Its app, the first row (18 Oct 2026) ─────────────────────────────
+ *
+ * Above Hub, App: the community's app, which the sidebar's Recent apps
+ * section used to list apart from its community. Being in the app is being
+ * in the community, so its row opens there too, with App lit (one of yours:
+ * an app you have not joined shows its App row alone, and nothing reads a
+ * community record for it). App carries
+ * the green "still open" dot while the app runs in a kept frame
+ * (../app-frame/live-apps.tsx), and THAT ROW STAYS: in another community,
+ * one whose app is still running keeps its App row alone under its own row,
+ * the rest folded away, until the frame goes. So App sits in an outer part
+ * and the places in one inside it, and leaving shuts only the inner one.
+ * Homeroom's own community has no App row: the platform is its app
+ * (`selfHosted`), and you are in it already.
+ *
+ * A community whose app is running is always listed: it never drops out of
+ * the five (`noteOpened` drops the last one whose app is not running), and
+ * one that is not among them, an app you use without having joined, has a
+ * row at the top while it runs, as a page you visit does.
  *
  * THE HEADING HOLDS A SEARCH, shown while the pointer is over the section or
  * the search has focus (app.css). It is All communities with its search box
@@ -38,6 +58,9 @@
  * last one out. A community already listed keeps its row, so a row never
  * moves under the pointer that pressed it. Only communities you are in are
  * listed: a page you are visiting is not one of yours until you join it.
+ * The ones you pinned are not among the five either: they have their own
+ * section above this one (./rail-pinned.tsx), so a pin never pushes one of
+ * the five out.
  *
  * ── Where it is, and when ─────────────────────────────────────────────
  *
@@ -53,12 +76,14 @@
  * document and the first client render agree on a heading and no rows.
  */
 
-import { Fragment, useEffect, useState, type MouseEvent } from 'react';
+import { Fragment, useEffect, useState, type MouseEvent, type PointerEvent } from 'react';
 
-import { SearchIcon } from '@/components/ui/icons';
+import { AppWindowIcon, SearchIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
+import { listText } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
+import { currentAppOnScreen, liveAppLabel, LiveAppDot, useCurrentAppSlug, useLiveAppSlugs } from '../app-frame/live-apps';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { devWorkshopStore } from '../dev-board/card/cards-store';
 import { useCommunity } from '../dev-board/workshop/community-card';
@@ -68,7 +93,11 @@ import { openCommunitiesSearch } from '../workshop/communities-search';
 import { communityScopeStore, goToCommunity, type CommunityInfo } from '../workshop/community-scope';
 import { pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
+import { openPinMenu } from './pin-actions';
+import { pinnedAppsStore } from './pinned-apps-store.js';
 import { NestSlot } from './rail-nest';
+import { recentAppsStore } from './recent-apps-store.js';
+import { noteResumeOrigin } from './resume-motion';
 import { useSidebarRows } from './sidebar-rows';
 
 /** How many communities the sidebar lists. */
@@ -78,11 +107,17 @@ export const RAIL_COMMUNITIES = 5;
 export const RAIL_TOPICS = 2;
 
 /**
- * The rows the section draws: the five, and first, while its page is up, a
- * community you are visiting that is not among them. Pure.
+ * The rows the section draws: the five, and first, while you are in it (on
+ * its page or in its app), a community you are visiting that is not among
+ * them, then any other whose app is still running (`live`, the frame store's
+ * order) and is not among them. Pure.
  */
-export function railRows(shown: readonly string[], onPage: string | null): string[] {
-  return onPage && !shown.includes(onPage) ? [onPage, ...shown] : [...shown];
+export function railRows(shown: readonly string[], here: string | null, live: readonly string[] = []): string[] {
+  const extra: string[] = [];
+  for (const slug of [here, ...live]) {
+    if (slug && !shown.includes(slug) && !extra.includes(slug)) extra.push(slug);
+  }
+  return [...extra, ...shown];
 }
 
 /** This device's order, per viewer. */
@@ -106,11 +141,37 @@ export function railCommunities(kept: readonly string[], list: readonly string[]
 
 /**
  * The order after `slug` was opened: unchanged when it is already listed (or
- * is not one of yours), else `slug` first and the last one out. Pure.
+ * is not one of yours), else `slug` first and the last one out: the last one
+ * whose app is not still running (`keep`), so a running app's row stays.
+ * Pure.
  */
-export function noteOpened(shown: readonly string[], slug: string | null, list: readonly string[] | null, limit = RAIL_COMMUNITIES): string[] | null {
+export function noteOpened(
+  shown: readonly string[],
+  slug: string | null,
+  list: readonly string[] | null,
+  limit = RAIL_COMMUNITIES,
+  keep: readonly string[] = [],
+): string[] | null {
   if (!slug || !list || !list.includes(slug) || shown.includes(slug)) return null;
-  return [slug, ...shown].slice(0, limit);
+  const next = [slug, ...shown];
+  while (next.length > limit) {
+    let out = next.length - 1;
+    while (out > 0 && keep.includes(next[out])) out -= 1;
+    next.splice(out > 0 ? out : next.length - 1, 1);
+  }
+  return next;
+}
+
+/**
+ * Whether a community's part leads with an App row: not Homeroom's own
+ * (`selfHosted`, known once the list of yours is read), and not before it is
+ * known. One that is not yours is never Homeroom, which every account is in.
+ * Pure.
+ */
+export function hasAppRow(slug: string, info: Record<string, CommunityInfo>, list: readonly string[] | null): boolean {
+  const known = info[slug]?.selfHosted;
+  if (known != null) return !known;
+  return !!list && !list.includes(slug);
 }
 
 function readKept(viewer: string | null): string[] {
@@ -137,7 +198,14 @@ function saveKept(viewer: string | null, slugs: string[]): void {
  */
 export function useRailCommunities(): string[] {
   const { viewer } = useStoreState(navStore);
-  const { slug, list } = useStoreState(communityScopeStore);
+  const { slug, list: yours } = useStoreState(communityScopeStore);
+  const { apps: pins } = useStoreState(pinnedAppsStore);
+  const live = useLiveAppSlugs();
+  // The five are the most recent of yours that are not pinned.
+  const pinned = pins.map((app: { slug: string }) => app.slug);
+  const listKey = yours ? yours.filter((s) => !pinned.includes(s)).join() : null;
+  const list = listKey == null ? null : listKey ? listKey.split(',') : [];
+  const liveKey = live.join();
   // Whose order `slugs` is: a community opened before this viewer's order
   // has been read must not write over it.
   const [kept, setKept] = useState<{ viewer: string | null; slugs: string[] }>({ viewer: null, slugs: [] });
@@ -147,12 +215,13 @@ export function useRailCommunities(): string[] {
   const shownKey = shown.join();
   useEffect(() => {
     if (!ready) return;
-    const next = noteOpened(shown, slug, list);
+    const next = noteOpened(shown, slug, list, RAIL_COMMUNITIES, live);
     if (!next) return;
     setKept({ viewer, slugs: next });
     saveKept(viewer, next);
-    // `shown` is read through its key: the same five are the same answer.
-  }, [ready, slug, list, viewer, shownKey]);
+    // `shown`, the list and the running apps are read through their keys:
+    // the same five are the same answer.
+  }, [ready, slug, listKey, viewer, shownKey, liveKey]);
   return shown;
 }
 
@@ -162,12 +231,13 @@ export function votesElsewhere(shown: readonly string[], list: readonly string[]
   return list.reduce((n, s) => (shown.includes(s) || info[s]?.unchosen ? n : n + (Number(info[s]?.needs) || 0)), 0);
 }
 
-/** A community's places, nested under its row: the section column's list, kept short. */
-function RailPlaces({ slug }: { slug: string }) {
+/** A community's places, nested under its row: the project's own list, kept short. */
+function RailPlaces({ slug, onPage }: { slug: string; onPage: boolean }) {
   const place = useStoreState(placeStore);
   const v = useStoreState(devWorkshopStore);
   const community = useCommunity(slug);
-  const here = place.slug === slug;
+  // In its app, no place is lit: App is.
+  const here = onPage && place.slug === slug;
   return (
     <ProjectPlaces
       slug={slug}
@@ -189,19 +259,181 @@ function isNativeClick(event: MouseEvent): boolean {
   return !!nav?.isNativeClick?.(event);
 }
 
-export function RailCommunities({ shown }: { shown: string[] }) {
-  const t = useMessages('core');
-  const { slug: scoped, info } = useStoreState(communityScopeStore);
+/** Where you are, as every row of the sidebar's communities reads it. */
+export interface RailHere {
+  sidebarRows: boolean;
+  screen: string | null;
+  /** The community whose page is up. */
+  onPage: string | null;
+  /** The community whose app is on screen. */
+  onApp: string | null;
+  /** The apps still running, the one on screen first. */
+  live: string[];
+}
+
+export function useRailHere(): RailHere {
+  const { slug: scoped } = useStoreState(communityScopeStore);
   const { screen, tab } = useStoreState(navStore);
   const sidebarRows = useSidebarRows();
-  // The community whose page is on screen: the Communities tab is lit there
-  // (#app-view on its `dev` tab), and the scope names which.
-  const onPage = screen === 'app-view' && tab === 'workshop' ? scoped : null;
-  // Its places open under it with the page, as the inbox's part shuts.
-  const nested = sidebarRows && onPage ? onPage : null;
-  const rows = sidebarRows ? railRows(shown, onPage) : shown;
-  const visiting = rows.find((slug) => !shown.includes(slug)) || null;
-  const visit = useCommunity(visiting || '');
+  const live = useLiveAppSlugs();
+  const frameSlug = useCurrentAppSlug();
+  return {
+    sidebarRows,
+    screen,
+    // The Communities tab is lit there (#app-view on its `dev` tab), and the scope names which.
+    onPage: screen === 'app-view' && tab === 'workshop' ? scoped : null,
+    onApp: currentAppOnScreen({ frameSlug, screen, tab }),
+    live,
+  };
+}
+
+/** What a pinned row adds: its drag back out (./rail-pinned.tsx). */
+export interface PinnedRowHandlers {
+  onPointerDown: (event: PointerEvent<HTMLAnchorElement>) => void;
+  onPointerMove: (event: PointerEvent<HTMLAnchorElement>) => void;
+  onPointerUp: (event: PointerEvent<HTMLAnchorElement>) => void;
+  onPointerCancel: () => void;
+  /** The click a drag-out's release leaves behind, which must not open the community. */
+  swallowClick: () => boolean;
+}
+
+/** A name and a face for a community the list of yours does not hold. */
+export interface RailRecord {
+  name: string;
+  iconUrl: string | null;
+  iconEmoji: string | null;
+}
+
+/**
+ * One community's row and its nested part: App (with its dot while the app
+ * runs), then its places while you are in it. The sections draw every
+ * community with it: the five, a visit, a running app's, a pin.
+ */
+export function RailCommunityRow({ slug, here, record = null, pin }: {
+  slug: string;
+  here: RailHere;
+  /** Its name and face when the list of yours does not have them (a pin's own record). */
+  record?: RailRecord | null;
+  pin?: PinnedRowHandlers;
+}) {
+  const t = useMessages('core');
+  const { info, list } = useStoreState(communityScopeStore);
+  const { apps: recents } = useStoreState(recentAppsStore);
+  const c = info[slug];
+  const recent = c || record ? null : (recents as Array<{ slug: string } & RailRecord>).find((a) => a.slug === slug) || null;
+  const { sidebarRows, screen, onPage, onApp, live } = here;
+  // Only a page you are visiting is read for its name. A row a running app
+  // brought is named from what is known: an app need not have a community
+  // record to read (the shots' made-up apps have none, and a read that
+  // 404s is a console error).
+  const visit = useCommunity(c || record || recent || onPage !== slug ? '' : slug);
+  const name = c?.name || record?.name || recent?.name || visit?.name || slug;
+  const face = c || record || recent;
+  const icon = { icon_url: face?.iconUrl || null, icon_emoji: face?.iconEmoji || null, name };
+  const yours = !!record || (!!list && list.includes(slug));
+  // Its places open while you are on its page, or in its app when it is one
+  // of yours: an app you have not joined shows its App row alone.
+  const inside = onPage === slug || onApp === slug;
+  const open = sidebarRows && (onPage === slug || (onApp === slug && yours));
+  const app = hasAppRow(slug, info, list);
+  const running = live.includes(slug);
+  // The part: everything while you are in it, its App row alone while its app runs.
+  const part = open || (sidebarRows && app && (running || onApp === slug));
+  // Open, its votes are Needs you's count under it.
+  const votes = c && !c.unchosen && !open ? Number(c.needs) || 0 : 0;
+  const appName = t('core:rail.appOf', { name });
+  const href = `#app/${encodeURIComponent(slug)}/workshop`;
+  return (
+    <Fragment>
+      <a
+        className="platform-rail-community"
+        href={href}
+        data-rail-community={slug}
+        {...(open ? { 'data-rail-open': '' } : {})}
+        {...(pin ? { 'data-rail-pinned': '' } : {})}
+        title={name}
+        aria-current={inside ? 'page' : undefined}
+        onClick={(event) => {
+          if (pin?.swallowClick()) {
+            event.preventDefault();
+            return;
+          }
+          if (isNativeClick(event)) return;
+          event.preventDefault();
+          // On its page, a press goes up the page; from its app, to its page.
+          if (onPage === slug) pressLitTab(screen, { stopAtCommunity: true });
+          else goToCommunity(slug);
+        }}
+        // One of yours pins or unpins from its right-click menu, which
+        // keeps the link's Open in new tab (./pin-actions.ts).
+        {...(yours ? {
+          onContextMenu: (event: MouseEvent<HTMLAnchorElement>) => {
+            openPinMenu(event, { slug, name, iconUrl: icon.icon_url, iconEmoji: icon.icon_emoji }, href);
+          },
+        } : null)}
+        {...(pin ? {
+          onPointerDown: pin.onPointerDown,
+          onPointerMove: pin.onPointerMove,
+          onPointerUp: pin.onPointerUp,
+          onPointerCancel: pin.onPointerCancel,
+        } : null)}
+      >
+        <span className="app-icon-tile platform-rail-tile" data-icon={appIconKind(icon)} aria-hidden="true">
+          <AppIconContent app={icon} />
+        </span>
+        <span className="platform-rail-name">{name}</span>
+        {votes > 0 ? (
+          <span className="platform-rail-votes" aria-label={t('core:tabs.votesWaiting', { count: votes })}>
+            {votes > 99 ? '99+' : String(votes)}
+          </span>
+        ) : null}
+      </a>
+      <NestSlot open={part} className="platform-rail-nest" rows=".platform-rail-app, .dev-ws-place, .dev-ws-places-head">
+        {app ? (
+          <a
+            className="platform-rail-sub platform-rail-app"
+            href={`/app/${encodeURIComponent(slug)}`}
+            data-rail-app={slug}
+            {...(running ? { 'data-live': 'true' } : null)}
+            title={appName}
+            // "Game Corner app", and that it is still open: the row's words
+            // are only "App", under the community's name.
+            aria-label={running ? listText([appName, liveAppLabel()]) : appName}
+            aria-current={onApp === slug ? 'page' : undefined}
+            onClick={(event) => {
+              if (isNativeClick(event)) return;
+              event.preventDefault();
+              // #3618: a running app grows back out of the row that was pressed.
+              if (running && onApp !== slug) {
+                noteResumeOrigin(slug, event.currentTarget.querySelector('.platform-rail-sub-glyph') || event.currentTarget);
+              }
+              // The router's "this app, this tab" entry point: it switches to
+              // an app that is still open and navigates to any other.
+              (window as unknown as { App?: { openAppTab?: (slug: string, tab: string) => void } }).App?.openAppTab?.(slug, 'app');
+            }}
+          >
+            <AppWindowIcon className="platform-rail-sub-glyph" aria-hidden="true" />
+            <span className="platform-rail-sub-name">{t('core:rail.app')}</span>
+            {running ? <LiveAppDot className="platform-rail-live" /> : null}
+          </a>
+        ) : null}
+        <NestSlot open={open} className="platform-rail-nest platform-rail-places" rows=".dev-ws-place, .dev-ws-places-head">
+          <RailPlaces slug={slug} onPage={onPage === slug} />
+        </NestSlot>
+      </NestSlot>
+    </Fragment>
+  );
+}
+
+export function RailCommunities({ shown }: { shown: string[] }) {
+  const t = useMessages('core');
+  const here = useRailHere();
+  const { apps: pins } = useStoreState(pinnedAppsStore);
+  const pinned = pins.map((app: { slug: string }) => app.slug);
+  // A visit, then a running app that is not among the five, then the five;
+  // a pinned one is in its own section.
+  const rows = (here.sidebarRows ? railRows(shown, here.onPage || here.onApp, here.live) : shown)
+    .filter((slug) => !pinned.includes(slug));
   return (
     <div
       id="platform-rail-communities"
@@ -226,46 +458,7 @@ export function RailCommunities({ shown }: { shown: string[] }) {
           <SearchIcon className="platform-rail-search-glyph" aria-hidden="true" />
         </a>
       </div>
-      {rows.map((slug) => {
-        const c = info[slug];
-        const name = c?.name || (slug === visiting ? visit?.name : null) || slug;
-        const record = { icon_url: c?.iconUrl || null, icon_emoji: c?.iconEmoji || null, name };
-        const open = nested === slug;
-        // Open, its votes are Needs you's count under it.
-        const votes = c && !c.unchosen && !open ? Number(c.needs) || 0 : 0;
-        const lit = onPage === slug;
-        return (
-          <Fragment key={slug}>
-            <a
-              className="platform-rail-community"
-              href={`#app/${encodeURIComponent(slug)}/workshop`}
-              data-rail-community={slug}
-              {...(open ? { 'data-rail-open': '' } : {})}
-              title={name}
-              aria-current={lit ? 'page' : undefined}
-              onClick={(event) => {
-                if (isNativeClick(event)) return;
-                event.preventDefault();
-                if (lit) pressLitTab(screen, { stopAtCommunity: true });
-                else goToCommunity(slug);
-              }}
-            >
-              <span className="app-icon-tile platform-rail-tile" data-icon={appIconKind(record)} aria-hidden="true">
-                <AppIconContent app={record} />
-              </span>
-              <span className="platform-rail-name">{name}</span>
-              {votes > 0 ? (
-                <span className="platform-rail-votes" aria-label={t('core:tabs.votesWaiting', { count: votes })}>
-                  {votes > 99 ? '99+' : String(votes)}
-                </span>
-              ) : null}
-            </a>
-            <NestSlot open={open} className="platform-rail-nest" rows=".dev-ws-place, .dev-ws-places-head">
-              <RailPlaces slug={slug} />
-            </NestSlot>
-          </Fragment>
-        );
-      })}
+      {rows.map((slug) => <RailCommunityRow key={slug} slug={slug} here={here} />)}
     </div>
   );
 }

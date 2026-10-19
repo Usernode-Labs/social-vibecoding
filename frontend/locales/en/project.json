@@ -3655,6 +3655,18 @@
     "text": "Leave",
     "description": "Row among a project's settings for a member who did not start it, when the project's name is not known: the person stops being a member of this community. A verb."
   },
+  "menu.pin.add": {
+    "text": "Pin to sidebar",
+    "description": "Row in a project's ⋯ menu on its hub, on a computer: keeps the project's community in the desktop sidebar's Pinned section."
+  },
+  "menu.pin.sub": {
+    "text": "Keep it at the top of your sidebar",
+    "description": "Second line under Pin to sidebar in the project's ⋯ menu, saying what pinning does."
+  },
+  "menu.pin.remove": {
+    "text": "Unpin from sidebar",
+    "description": "The same row once the community is pinned: takes it off the desktop sidebar's Pinned section. It stays one of the person's communities."
+  },
   "menu.appSettings.title": {
     "text": "App settings",
     "description": "Row among a project's settings, shown to those who manage it: opens the dialog for who can use and build the app, and for deleting it."
@@ -4610,6 +4622,14 @@
   "places.list.countAloud": {
     "text": "({{phrase}})",
     "description": "Read only by screen readers after an entry in a project's list of places that shows a number: says what the number counts. {{phrase}} is that, already worded, for example \"29 to vote\" or \"3 unread\". Keep the parentheses."
+  },
+  "places.list.app": {
+    "text": "App",
+    "description": "First row of a project's places list (the tray behind the place bar, the phone's drawer): opens the project's app, the thing its members build and use. Shown under the project's name, so it says only App."
+  },
+  "places.list.appOf": {
+    "text": "{{project}} app",
+    "description": "Accessible name of that App row, which opens the project's app. {{project}} is the project's name."
   },
   "places.list.showMore_one": {
     "text": "Show {{count}} more",

@@ -231,15 +231,20 @@ is no replay plan to write and nothing to verify locally.
   ring, its short name, the votes it waits on you for) or All communities,
   whose page lists every community you are in (Public communities, Private
   communities, Just you) at `#communities` (`#workshop` still routes there;
-  the tab's key and ids keep `workshop`). Up to 1024px the header's name
+  the tab's key and ids keep `workshop`). Under 768px the header's name
   and ⌄ open **Your communities**
   (`features/workshop/community-switcher.tsx`, scope in
-  `community-scope.ts`); pressing the lit tab goes up a level. From 1024px
-  the rail is a 184px sidebar of rows (`features/nav/sidebar-rows.ts`):
-  your five most recent communities sit under a Communities heading with a
-  hover search (`rail-communities.tsx`), the tab is their "All 13
-  communities" row, the header's name is only a name, and All communities
-  is a column beside Needs you. A project's page wears its community's colour
+  `community-scope.ts`); pressing the lit tab goes up a level. From 768px
+  the rail is a 212px sidebar of rows (`features/nav/sidebar-rows.ts`):
+  the communities you pinned under Pinned (`rail-pinned.tsx`), then your
+  five most recent under a Communities heading with a hover search
+  (`rail-communities.tsx`), the tab is their "All 13 communities" row, and
+  the header's name is only a name. **A pin is the account's**
+  (`community_pins`, `services/community-pins.js`,
+  `/api/me/community-pins`): a member's only, four at most, gone when they
+  leave, made from a community's row (right-click), the hub's ⋯ or a My
+  apps tile dropped on the sidebar (`features/nav/pin-actions.ts`), and
+  never one of the five. A project's page wears its community's colour
   (`lib/community-color.ts`: dapp.json's `icon.color`, else read off the
   icon) and is navigated by one list of **places**
   (`features/dev-board/workshop/project-places.tsx`): **Hub** (who it is
@@ -249,10 +254,17 @@ is no replay plan to write and nothing to verify locally.
   (each topic's channel), each group under its heading. Place keys are
   `status`, `needs`, `workshop`, `discussion` (#general) and `c:<handle>`
   (`places.ts`); a channel has its own address, `#app/<slug>/dev/c/<handle>`.
-  On a phone the list is a tray behind the place bar that names where you
-  are (`place-bar.tsx`, `places-tray.tsx`); on a wide window it is the
-  section column beside the rail (`features/nav/section-column.tsx`),
-  and the page publishes where it is for it (`place-store.ts`). **All
+  Above Hub, the list's first row is **App**, the project's own app
+  (Homeroom's community has none: the platform is its app). On a phone the
+  list is the drawer's middle level (`features/nav-drawer/`), or, where the
+  drawer is off, a tray behind the place bar that names where you are
+  (`place-bar.tsx`, `places-tray.tsx`); from 768px it nests under the
+  community's row in the sidebar (`rail-communities.tsx`,
+  `rail-nest.tsx`), and the page publishes where it is for it
+  (`place-store.ts`). While an app runs in a
+  kept frame its App row carries the green still-open dot, and that
+  community keeps its row and its App row in the sidebar until the frame
+  goes (`features/app-frame/live-apps.tsx`). **All
   items** is a page under the Workshop (its "See all"), with a way back, and
   the Workshop stays lit in the list while it is up. A **topic** is a
   channel and a category at once: an entry of dapp.json's `topics`,

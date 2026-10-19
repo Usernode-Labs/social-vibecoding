@@ -2,7 +2,6 @@ import { useSyncExternalStore } from 'react';
 
 import { t } from '../../lib/i18n/runtime';
 import { navStore } from '../nav/nav-store.js';
-import { SIDEBAR_ROWS_QUERY } from '../nav/sidebar-rows';
 import { messagesDrawerApplies } from '../nav-drawer/messages-drawer';
 import * as api from './api';
 import { WORK_CHANGED_EVENT, inMainStream, openAppTarget, threadsAllowed } from './bot-shared';
@@ -77,7 +76,6 @@ let state: InternalState = {
   thread: null,
   nextAfter: null,
   listCollapsed: false,
-  listCrowded: false,
   showMoreChannels: false,
   unreadMark: null,
   threadFocusId: null,
@@ -1101,35 +1099,12 @@ export function isMobile(): boolean {
 }
 
 /**
- * #4229: the narrowest strip an open conversation still reads well beside the
- * list in: the list column (22rem and its 8px) plus the sheet's margins
- * (8px and 12px) plus a 480px sheet, the width its cards are drawn at.
+ * One pane at a time: a phone. (#4229's strip too narrow for both is gone:
+ * on a desktop the list is in the sidebar, never beside the conversation,
+ * ./index.tsx `messages-list-in-rail`.)
  */
-export const LIST_BESIDE_MIN_WIDTH = 860;
-
-/**
- * The strip's width, from the screen's ResizeObserver (#4229). It is the
- * strip's own width rather than the window's, so folding the platform rail
- * counts. A hidden screen measures 0 and changes nothing.
- */
-export function measureLayout(width: number): void {
-  if (!(width > 0)) return;
-  // v3: on a desktop the list is in the sidebar, never beside the
-  // conversation (./index.tsx `messages-list-in-rail`), so nothing crowds it.
-  const crowded = !isMobile() && !sidebarRowsUp() && width < LIST_BESIDE_MIN_WIDTH;
-  if (crowded === state.listCrowded) return;
-  publish({ listCrowded: crowded });
-  if (state.route.open) syncChrome();
-}
-
-function sidebarRowsUp(): boolean {
-  try { return typeof window !== 'undefined' && window.matchMedia(SIDEBAR_ROWS_QUERY).matches; }
-  catch { return false; }
-}
-
-/** One pane at a time: a phone, or a strip too narrow for both (#4229). */
 function listAside(): boolean {
-  return isMobile() || state.listCrowded;
+  return isMobile();
 }
 
 /**
@@ -2573,7 +2548,6 @@ export const messagesController = {
   isOpen,
   handleBack,
   syncChrome,
-  measureLayout,
   handleEvent,
   refreshBlockedView: (userId: number, blocked: boolean) => { void refreshBlockedView(userId, blocked); },
   share,

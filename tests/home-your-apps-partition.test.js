@@ -453,17 +453,18 @@ function makeDraggingHome() {
   const made = makePublishingHome();
   const { Home, sandbox } = made;
   let handlers = null;
-  // The strip, as the rail shows it while a drag is up: visible, over the
-  // probe point, with the "Pin here" slot row drawn at a known rect.
+  // The sidebar's Pinned section, as the rail shows it while a drag is up:
+  // visible, over the probe point, with the "Pin here" slot row drawn at a
+  // known rect.
   const stripRect = { left: 0, top: 100, right: 76, bottom: 600, width: 76, height: 500 };
   const dropRect = { left: 10, top: 110, right: 66, bottom: 168, width: 56, height: 58 };
   const fakeStrip = {
     classList: { contains: (name) => name === 'hidden' && made.stripHidden === true },
     getBoundingClientRect: () => stripRect,
-    querySelector: (sel) => (sel === '[data-strip-drop]' && !made.noDropRow
+    querySelector: (sel) => (sel === '[data-rail-pin-drop]' && !made.noDropRow
       ? { getBoundingClientRect: () => dropRect } : null),
   };
-  sandbox.document.getElementById = (id) => (id === 'platform-strip-apps' ? fakeStrip : null);
+  sandbox.document.getElementById = (id) => (id === 'platform-rail-pinned' ? fakeStrip : null);
   sandbox.unNative = {
     attachGridPlacement: (el, h) => { handlers = h; return { detach() {} }; },
   };

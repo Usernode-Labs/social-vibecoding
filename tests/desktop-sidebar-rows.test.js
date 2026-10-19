@@ -41,6 +41,10 @@ test('which five: this device\'s order, then the most recently active of yours',
     'the kept order first, less a community you left (x), then the rest');
   // Opening one from outside the five brings it in at the top; the last goes.
   assert.deepEqual(noteOpened(['a', 'b', 'c', 'd', 'e'], 'g', list), ['g', 'a', 'b', 'c', 'd']);
+  // Unless its app is still running: then the last one whose app is not.
+  assert.deepEqual(noteOpened(['a', 'b', 'c', 'd', 'e'], 'g', list, 5, ['e']), ['g', 'a', 'b', 'c', 'e']);
+  assert.deepEqual(noteOpened(['a', 'b', 'c', 'd', 'e'], 'g', list, 5, ['d', 'e', 'c']), ['g', 'a', 'c', 'd', 'e']);
+  assert.deepEqual(noteOpened(['a', 'b'], 'g', list, 5, ['a', 'b']), ['g', 'a', 'b'], 'room for it, nothing goes');
   // A listed one keeps its row, so nothing moves under the pointer.
   assert.equal(noteOpened(['a', 'b', 'c', 'd', 'e'], 'c', list), null);
   // A page you are only visiting is not one of yours.
@@ -55,7 +59,8 @@ test('which five: this device\'s order, then the most recently active of yours',
 test('the markup: the section sits between Messages and the Communities tab, its heading and search prerendered', () => {
   const html = renderComponent('frontend/src/features/nav/tab-bar.tsx', 'PlatformTabs', {});
   const at = (id) => html.indexOf(`id="${id}"`);
-  assert.ok(at('platform-tab-messages') < at('platform-rail-communities'));
+  assert.ok(at('platform-tab-messages') < at('platform-rail-pinned'), 'the pinned ones first');
+  assert.ok(at('platform-rail-pinned') < at('platform-rail-communities'));
   assert.ok(at('platform-rail-communities') < at('platform-tab-workshop'));
   assert.match(html, /<div id="platform-rail-communities" class="platform-rail-communities" role="group" aria-labelledby="platform-rail-communities-label">/);
   assert.match(html, new RegExp(`<span id="platform-rail-communities-label" class="platform-rail-head-label">${message('core:rail.communities')}</span>`));
@@ -72,9 +77,10 @@ test('the markup: the section sits between Messages and the Communities tab, its
 
 test('the presses: a row switches in place, the lit one climbs to its Hub and stops', () => {
   const src = read(RAIL);
-  assert.match(src, /if \(lit\) pressLitTab\(screen, \{ stopAtCommunity: true \}\);\s*else goToCommunity\(slug\);/);
-  assert.match(src, /href=\{`#app\/\$\{encodeURIComponent\(slug\)\}\/workshop`\}/, 'a modified click opens its page');
-  assert.match(src, /const onPage = screen === 'app-view' && tab === 'workshop' \? scoped : null;/);
+  // From its app, the row goes to its page; on its page, up the page.
+  assert.match(src, /if \(onPage === slug\) pressLitTab\(screen, \{ stopAtCommunity: true \}\);\s*else goToCommunity\(slug\);/);
+  assert.match(src, /const href = `#app\/\$\{encodeURIComponent\(slug\)\}\/workshop`;[\s\S]*?href=\{href\}/, 'a modified click opens its page');
+  assert.match(src, /onPage: screen === 'app-view' && tab === 'workshop' \? scoped : null,/);
   // The ladder's root step is All communities; the row stops short of it.
   const calls = [];
   const mod = loadTsx('frontend/src/features/workshop/tab-ladder.ts', {
@@ -125,7 +131,7 @@ test('the width: one block on every desktop window, from 768px; the phone\'s bar
   // where the sidebar holding the same things is 212px.
   assert.equal(SIDEBAR_ROWS_QUERY, '(min-width: 768px)');
   const css = read('public/css/app.css');
-  assert.match(css, /\.platform-rail-communities,\n\.platform-rail-conversations,\n\.platform-tab-all-glyph,\n\.platform-tab-all-label,\n\.platform-tab-all-votes,\n\.platform-strip-head,\n\.workshop-search \{\n  display: none;\n\}/,
+  assert.match(css, /\.platform-rail-communities,\n\.platform-rail-conversations,\n\.platform-tab-all-glyph,\n\.platform-tab-all-label,\n\.platform-tab-all-votes,\n\.platform-rail-pinned,\n\.workshop-search \{\n  display: none;\n\}/,
     'nothing of it is drawn outside the block');
   const at = css.indexOf('@media (min-width: 768px) {\n  /* THE ONE NUMBER THE REST FOLLOWS.');
   assert.ok(at > 0, 'the block');
@@ -145,18 +151,19 @@ test('the width: one block on every desktop window, from 768px; the phone\'s bar
   // The tab's own name follows what it shows.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /\? \(sidebarRows \? undefined : communitiesAriaLabel\(scoped\)\)/);
-  // v3: there is no section column beside the sidebar, which nests the places.
-  assert.match(read('frontend/src/features/nav/section-column.tsx'), /if \(input\.sidebarRows \|\| input\.side\) return null;/);
+  // v3: there is no section column beside the sidebar, which nests the
+  // places; since the strip went, there is none at all.
+  assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/nav/section-column.tsx')), 'the column is gone');
+  assert.doesNotMatch(read('frontend/src/Shell.tsx'), /SectionColumn|platform-section-column/);
 });
 
-test('the apps: Pinned while something is pinned, then Recent apps, as headings the strip never draws', () => {
-  const src = read('frontend/src/features/nav/strip-apps.tsx');
-  assert.match(src, /if \(dropRow \|\| items\.some\(\(app\) => app\.pinned\)\) \{/);
-  assert.match(src, /data-strip-head="pinned">\{t\('core:stripApps\.head\.pinned'\)\}/);
-  assert.match(src, /data-strip-head="recent">\{t\('core:stripApps\.head\.recent'\)\}/);
-  // The strip keeps its hairline between the two parts across the heading.
+test('the apps: none apart from their communities; Pinned, above them, only while something is pinned', () => {
+  const bar = read('frontend/src/features/nav/tab-bar.tsx');
+  assert.doesNotMatch(bar, /StripApps/, 'no Pinned and Recent apps sections');
+  const src = read('frontend/src/features/nav/rail-pinned.tsx');
+  assert.match(src, /<span id="platform-rail-pinned-label" className="platform-rail-head-label">\{t\('core:rail\.pinned'\)\}<\/span>/);
+  assert.match(src, /useHiddenClass\(ref, items\.length === 0 && !drop\);/);
   const css = read('public/css/app.css');
-  assert.match(css, /\.platform-strip-app\[data-strip-pinned\] \+ \.platform-strip-head \+ \.platform-strip-app:not\(\[data-strip-pinned\]\)::before,/);
-  assert.equal(message('core:stripApps.head.pinned'), 'Pinned');
-  assert.equal(message('core:stripApps.head.recent'), 'Recent apps');
+  assert.match(css, /\.platform-rail-pinned:not\(\.hidden\) \{\n    display: flex;/, 'drawn in the block once shown');
+  assert.equal(message('core:rail.pinned'), 'Pinned');
 });

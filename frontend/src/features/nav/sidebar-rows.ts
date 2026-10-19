@@ -3,12 +3,12 @@
  * starts at.
  *
  * On every desktop window, from 768px, the rail is one 212px sidebar for the
- * whole platform: Home, Discover and Messages, then your communities under a
- * Communities heading (./rail-communities.tsx), then your pinned and recent
- * apps under theirs (./strip-apps.tsx), and you at its foot. The community
- * whose page is up nests its places under its row, and the inbox its latest
- * conversations under Messages (v3, ./rail-nest.tsx), so there is no second
- * column beside it. It takes the place of the 76px strip (#4417) and of the
+ * whole platform: Home, Discover and Messages, then the communities you
+ * pinned (./rail-pinned.tsx) and your communities under a Communities heading
+ * (./rail-communities.tsx), each with its app as the first row under it, and
+ * you at its foot. The community you are in nests its places under its row,
+ * and the inbox its latest conversations under Messages (v3,
+ * ./rail-nest.tsx), so there is no second column beside it. It takes the place of the 76px strip (#4417) and of the
  * switcher the header's name opened: the sidebar lists the communities
  * itself, so the header's name is a name again (../header/header-title.tsx).
  * Under 768px the phone's bar and drawer are untouched.
