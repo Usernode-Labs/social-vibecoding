@@ -23259,10 +23259,48 @@ html.un-kb #platform-parked {
     margin-right: 3px;
     box-shadow: none;
   }
+  /* The dot's close control (#5525): an X in a small round disc, sitting
+     exactly over the dot (the anchor's 8px right padding, the dot 3px in
+     from that, its centre 15px from the row's edge) and shown only on the
+     disc's hover or keyboard focus. The dot is hidden while the X shows, so
+     the two are never drawn together. */
+  .platform-rail-nest .platform-rail-app-row {
+    position: relative;
+  }
+  .platform-rail-nest .platform-rail-live-stop {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--lit-tint) 55%, transparent);
+    color: var(--text-primary);
+    opacity: 0;
+    cursor: pointer;
+    transform: translateY(-50%);
+  }
+  .platform-rail-nest .platform-rail-live-stop:hover,
+  .platform-rail-nest .platform-rail-live-stop:focus-visible {
+    opacity: 1;
+  }
+  .platform-rail-nest .platform-rail-live-stop-glyph {
+    width: 11px;
+    height: 11px;
+  }
+  .platform-rail-nest .platform-rail-app-row:has(.platform-rail-live-stop:is(:hover, :focus-visible)) .platform-rail-live {
+    visibility: hidden;
+  }
   .platform-rail-nest .platform-rail-places > .platform-rail-nest-in {
     padding: 0;
   }
-  .platform-rail-nest .platform-rail-app + .platform-rail-places > .platform-rail-nest-in {
+  .platform-rail-nest .platform-rail-app-row + .platform-rail-places > .platform-rail-nest-in {
     padding-top: 1px;
   }
   .platform-rail-nest .platform-rail-places > .platform-rail-nest-in::before {
