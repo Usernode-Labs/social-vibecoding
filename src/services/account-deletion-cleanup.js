@@ -2,7 +2,7 @@
 
 const log = require('./logger');
 
-async function perform(task, config) {
+async function perform(task, config, pool) {
   switch (task.kind) {
     case 'openrouter_key':
       return require('./openrouter-management-client').deleteKey({
@@ -17,6 +17,9 @@ async function perform(task, config) {
       const [appId, fileId] = task.target.split('/');
       return store.removeFile(Number(appId), fileId);
     }
+    // #5118: ask the app to erase the person's rows in its own database.
+    case 'app_data':
+      return require('./app-user-data').requestDeletion(pool, config, task);
     default: throw new Error('manual_review_required');
   }
 }
@@ -35,15 +38,32 @@ async function sweep(pool, config, { run = perform, limit = 20 } = {}) {
     const task = rows[0];
     if (!task) break;
     try {
-      await run(task, config);
+      await run(task, config, pool);
       await pool.query(`UPDATE account_deletion_tasks SET state = 'completed', completed_at = NOW(),
         error_code = NULL, locked_at = NULL,
         target = CASE WHEN kind = 'worker' THEN target ELSE 'erased:' || id END
         WHERE id = $1 AND attempts = $2`, [task.id, task.attempts]);
-    } catch {
+    } catch (err) {
+      // An app's answer no retry changes (it has no erasure endpoint, or
+      // refuses the request), or an app unreachable for about a week, is
+      // recorded for an operator: the receipt stays open, never retried
+      // blindly. Only our own fixed codes are stored.
+      const appData = task.kind === 'app_data';
+      const reviewCode = appData ? (err?.reviewCode ||
+        (task.attempts >= require('./app-user-data').MAX_ATTEMPTS ? 'app_unreachable' : null)) : null;
+      if (reviewCode) {
+        await pool.query(`UPDATE account_deletion_tasks SET state = 'review', locked_at = NULL, error_code = $3
+          WHERE id = $1 AND attempts = $2`, [task.id, task.attempts, reviewCode]);
+        log.warn('account-deletion', 'App data cleanup needs review', { taskId: task.id, code: reviewCode });
+        continue;
+      }
       // Provider errors can contain credentials or content; never store them.
+      // An app is retried at a doubling interval (capped at a day), every
+      // other kind every five minutes as before.
       await pool.query(`UPDATE account_deletion_tasks SET state = 'pending', locked_at = NULL,
-        error_code = 'cleanup_failed', next_attempt_at = NOW() + INTERVAL '5 minutes'
+        error_code = 'cleanup_failed', next_attempt_at = NOW() + CASE WHEN kind = 'app_data'
+          THEN LEAST(INTERVAL '5 minutes' * POWER(2, LEAST(GREATEST(attempts - 1, 0), 10)), INTERVAL '1 day')
+          ELSE INTERVAL '5 minutes' END
         WHERE id = $1 AND attempts = $2`, [task.id, task.attempts]);
       log.warn('account-deletion', 'Cleanup will retry', { taskId: task.id, kind: task.kind });
     }

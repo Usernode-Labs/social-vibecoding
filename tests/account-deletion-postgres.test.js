@@ -394,6 +394,63 @@ test('account deletion against the full PostgreSQL schema', { timeout: 120000 },
     assert.equal(await count('homeroom_bot_requesters', 'user_id', peer.id), 1);
   });
 
+  // #5118: every app the person touched is asked to erase their rows in its
+  // own database, through the receipt's durable tasks.
+  await t.test('each app the person touched gets a durable app_data task; the platform app does not', async () => {
+    const target = await user();
+    await pool.query("UPDATE users SET usernode_pubkey = 'ut1fixturewallet' WHERE id = $1", [target.id]);
+    const mk = async (slug, extra = '') => (await pool.query(
+      `INSERT INTO apps (name, slug, created_by${extra ? ', self_hosted' : ''}) VALUES ($1, $1, $2${extra ? ', TRUE' : ''}) RETURNING id`,
+      [slug, owner.id])).rows[0].id;
+    const opened = await mk('deletion-opened'), built = await mk('deletion-built'), member = await mk('deletion-member');
+    const untouched = await mk('deletion-untouched'), platform = await mk('deletion-platform', 'self');
+    await pool.query('INSERT INTO app_activity (app_id, user_id, seconds_spent) VALUES ($1, $2, 30)', [opened, target.id]);
+    await pool.query('INSERT INTO app_collaborators (app_id, user_id) VALUES ($1, $2), ($3, $2)', [built, target.id, platform]);
+    const community = (await pool.query("INSERT INTO communities DEFAULT VALUES RETURNING id")).rows[0].id;
+    await pool.query('UPDATE apps SET community_id = $1 WHERE id = $2', [community, member]);
+    await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [community, target.id]);
+    const { deletionId } = await erase(target);
+    const tasks = (await pool.query(
+      "SELECT * FROM account_deletion_tasks WHERE deletion_id = $1 AND kind = 'app_data' ORDER BY target", [deletionId])).rows;
+    assert.deepEqual(tasks.map(r => r.target).sort(),
+      [opened, built, member].map(id => `${id}:ut1fixturewallet`).sort());
+    assert.ok(!tasks.some(r => r.target.startsWith(`${untouched}:`) || r.target.startsWith(`${platform}:`)));
+    assert.equal((await cleanup.list(pool)).find(r => r.id === deletionId).completed_at, null, 'open until the apps confirm');
+
+    // An app with no handler is recorded for review, never retried blindly.
+    const appUserData = require('../src/services/app-user-data');
+    const byApp = id => tasks.find(r => r.target.startsWith(`${id}:`)).id;
+    await pool.query(`UPDATE account_deletion_tasks SET next_attempt_at = NOW() + INTERVAL '1 day'
+      WHERE state = 'pending' AND NOT (id = ANY($1::bigint[]))`, [tasks.map(r => r.id)]);
+    await cleanup.sweep(pool, {}, { run: async task => {
+      if (task.id === byApp(opened)) throw new appUserData.SettleForReview('app_unsupported');
+      if (task.id === byApp(built)) throw new Error('ECONNREFUSED: detail that must not be kept');
+    } });
+    const state = async id => (await pool.query('SELECT state, error_code, target, attempts, next_attempt_at - NOW() AS wait FROM account_deletion_tasks WHERE id = $1', [id])).rows[0];
+    const unsupported = await state(byApp(opened));
+    assert.equal(unsupported.state, 'review'); assert.equal(unsupported.error_code, 'app_unsupported');
+    const retried = await state(byApp(built));
+    assert.equal(retried.state, 'pending'); assert.equal(retried.error_code, 'cleanup_failed');
+    assert.ok(retried.wait.minutes >= 4 || retried.wait.hours >= 1, 'retried later, not at once');
+    const done = await state(byApp(member));
+    assert.equal(done.state, 'completed');
+    assert.equal(done.target, `erased:${byApp(member)}`, 'the wallet address goes once the app confirms');
+
+    // A doubling interval: the third failure waits about twenty minutes.
+    await pool.query("UPDATE account_deletion_tasks SET attempts = 2, next_attempt_at = NOW() WHERE id = $1", [byApp(built)]);
+    await cleanup.sweep(pool, {}, { run: async () => { throw new Error('still down'); } });
+    const third = await state(byApp(built));
+    assert.equal(third.attempts, 3);
+    assert.ok(third.wait.minutes >= 19 && third.wait.minutes <= 20, JSON.stringify(third.wait));
+    // After about a week of failures the app goes to review.
+    await pool.query('UPDATE account_deletion_tasks SET attempts = $2, next_attempt_at = NOW() WHERE id = $1',
+      [byApp(built), appUserData.MAX_ATTEMPTS - 1]);
+    await cleanup.sweep(pool, {}, { run: async () => { throw new Error('still down'); } });
+    const given = await state(byApp(built));
+    assert.equal(given.state, 'review'); assert.equal(given.error_code, 'app_unreachable');
+    assert.equal((await cleanup.list(pool)).find(r => r.id === deletionId).completed_at, null);
+  });
+
   await t.test('concurrent deletions cannot remove the last full administrator', async () => {
     await pool.query('DELETE FROM app_admins');
     await pool.query('UPDATE users SET is_admin=FALSE,admin_readonly=FALSE');
