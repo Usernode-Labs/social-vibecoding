@@ -4,7 +4,7 @@
 // review): "Your work" (Your changes, Your requests, Your votes), "Rewards"
 // (Challenges & standings, Kudos) and "Account" (Friends, App slots), each
 // row with a line under it that says what is behind it (`scrMe` in the
-// prototype), and a Settings card at the foot that only a phone shows.
+// prototype), and a Settings card at the foot shown at every width (#5557).
 //
 // #2718 made Challenges, Settings and the Admin console rows of the Profile
 // screen, with the native node / wallet / staking readouts and Log out under
@@ -19,8 +19,7 @@
 //      middle-click, the context menu and drag-to-bookmark;
 //   3. a row whose line claims something the data did not say;
 //   4. Settings' line naming the admin console to an account without it;
-//   5. the old "More" list, or a Settings row repeating the sidebar's gear
-//      on a window wide enough to show that gear.
+//   5. the old "More" list.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -57,7 +56,11 @@ const ROWS = [
   // more" (#3250); `#create` is the same dialog's deep link.
   ['profile-row-friends', '#profile?friends'],
   ['profile-row-app-slots', '#create'],
-  // Settings: the phone's entrance, hidden where the sidebar's gear shows.
+  // Settings (#5557): Profile opens the Edit profile sheet in place; the
+  // card shows at every width, so the Settings row is no longer a phone's
+  // entrance only.
+  ['profile-row-profile', '#profile?edit'],
+  ['profile-row-notifications', '#settings/alerts'],
   ['profile-row-settings', '#settings'],
 ];
 
@@ -74,7 +77,7 @@ test('the rows are anchors to their destinations', () => {
   }
 });
 
-test('in order: Your changes, requests, votes; then Challenges & standings, Kudos; Friends, App slots; Settings', () => {
+test('in order: Your changes, requests, votes; then Challenges & standings, Kudos; Friends, App slots; Profile, Notifications, Settings', () => {
   const order = ROWS.map(([id]) => CODE.indexOf(`id="${id}"`));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
   // The regrouped panels: Your work, then Rewards, then Account, then the
@@ -94,16 +97,25 @@ test('in order: Your changes, requests, votes; then Challenges & standings, Kudo
   }
 });
 
-test('the Settings card is the phone\'s entrance, hidden where the sidebar\'s gear shows', () => {
-  // md:hidden matches the rail's own 768px breakpoint (features/nav/
-  // tab-bar.tsx with app.css's media query): where the gear shows, no row.
+test('the Settings card shows at every width, with its three rows (#5557)', () => {
+  // md:hidden once hid it from 768px, where the sidebar's gear is a second
+  // entrance — which left a desktop Me page with no settings at all, the
+  // report. The card now ends the screen on both sides of the breakpoint.
   const section = CODE.slice(CODE.indexOf('id="profile-settings"'));
-  assert.match(section, /className="mt-6 md:hidden"/);
-  // It is its own one-row card: GroupedList's separators are
+  assert.doesNotMatch(section, /md:hidden/);
+  assert.match(section, /<SectionHeader>/, 'a labelled card, like the groups above it');
+  // It is its own card at the foot: GroupedList's separators are
   // :not(:last-child), so a row hidden inside Account would leave a hairline.
   const at = CODE.indexOf('id="profile-settings"');
   const group = CODE.slice(at, CODE.indexOf('</GroupedList>', at));
-  assert.equal((group.match(/<ListRow/g) || []).length, 1, 'one row, its own card');
+  assert.equal((group.match(/<ListRow/g) || []).length, 3, 'Profile, Notifications, Settings');
+});
+
+test('Profile opens the Edit profile sheet in place on a plain click', () => {
+  // The same pattern as Friends: a modified click keeps #profile?edit, and
+  // Profile.open() takes that ask off the address once data has loaded.
+  assert.match(rowSource(CODE, 'profile-row-profile'),
+    /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*Profile\.showEditSheet\(\);/);
 });
 
 test('App slots says the allowance in words, and opens the create dialog in place', () => {
@@ -179,6 +191,7 @@ test('Settings\' line names the console only for the capability', () => {
   const mod = loadTsx('frontend/src/features/profile/account-panel.tsx');
   const html = renderToHtml(createElement(mod.SettingsPanel, {}));
   assert.match(html, /id="profile-settings"/);
+  assert.match(html, /Name, photo and bio/, 'the Profile row says what it opens');
   assert.match(html, /Account, alerts, keys</, 'nothing published: no admin, no wallet');
   assert.doesNotMatch(html, /alerts, keys, (wallet, )?admin/);
 });

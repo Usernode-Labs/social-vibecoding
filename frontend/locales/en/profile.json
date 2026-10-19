@@ -251,6 +251,26 @@
     "text": "Account, alerts, keys, wallet, admin",
     "description": "Small line under \"Settings\" on the viewer's profile, for an administrator who has a wallet: what is in there. \"Keys\" are API keys; \"admin\" is the admin console."
   },
+  "settings.heading": {
+    "text": "Settings",
+    "description": "Heading over the Settings card at the foot of the viewer's own profile: the rows that lead to their profile, notification and account settings."
+  },
+  "settings.profile.title": {
+    "text": "Profile",
+    "description": "Row in the Settings card on the viewer's own profile: opens the Edit profile sheet. The same name the Settings page uses for its Profile part."
+  },
+  "settings.profile.hint": {
+    "text": "Name, photo and bio",
+    "description": "Small line under \"Profile\" in the Settings card on the viewer's own profile."
+  },
+  "settings.notifications.title": {
+    "text": "Notifications",
+    "description": "Row in the Settings card on the viewer's own profile: opens Settings' Notifications page. The same name that page uses."
+  },
+  "settings.notifications.hint": {
+    "text": "What you are told about, here and in each app",
+    "description": "Small line under \"Notifications\" in the Settings card on the viewer's own profile: the account-wide defaults and the per-app choices live on the page it opens."
+  },
   "date.today": {
     "text": "today",
     "description": "A date said relative to now, placed inside a longer line such as \"sent today\" or after an app's name. Lower case."
