@@ -364,7 +364,10 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
   const work: WorkRequest[] = app.selfHosted ? [{ kind: WORK.nudge, key: 'nudge', input: { sha: d.mergeSha, prNumber: d.prNumber } }] : [];
   // The app's merge queue: the next merge (a message, not a kick: it cannot
   // be lost).
-  const messages = [toProposal(d), ...(d.delivery ? [deliveryRequest(d, reuseOf(f))] : []), toQueue(d, 'merged')];
+  // What the deploy is offered of the preview, which also decides whether
+  // the preview waits for its answer (andTeardown, below).
+  const reuse = reuseOf(f);
+  const messages = [toProposal(d), ...(d.delivery ? [deliveryRequest(d, reuse)] : []), toQueue(d, 'merged')];
   work.push(...settleWork(d, s.linkedIssues, false));
   if (d.repo && d.prNumber) {
     work.push({ kind: WORK.find, key: 'included', input: { sessionId: d.sessionId, appId: d.appId, prNumber: d.prNumber, ...d.repo } });
@@ -402,7 +405,7 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
   // that builds its own image does not need the preview: either way it goes
   // at once.
   const out = outcome('delivering', d, x);
-  return app.selfHosted || !reuseOf(f) ? andTeardown(out) : out;
+  return app.selfHosted || !reuse ? andTeardown(out) : out;
 }
 
 // Why a carried change can no longer be included: INCLUDED_CANDIDATES_SQL's
