@@ -368,12 +368,19 @@ function savedHarness({ prompt = async () => 'Too long', fetch } = {}) {
   AppView._renderTopicHead = () => {};
   AppView.refreshDevData = async () => {};
   const saved = [];
+  const notificationCalls = [];
   AppView.__sandbox.UsernodeReact = {
     devBoard: { publishVoteSaved: (...args) => saved.push(args) },
   };
+  // #5483: the inbox clears the answered vote-ask rows and re-reads past the
+  // service worker's pre-vote copy.
+  AppView.__sandbox.Notifications = {
+    voteSaved: (id) => notificationCalls.push(`voteSaved:${id}`),
+    refresh: () => notificationCalls.push('refresh'),
+  };
   AppView.__sandbox.PlatformUI = { toast: () => {}, prompt };
   AppView.__sandbox.fetch = fetch || (async () => ({ ok: true, json: async () => ({ ok: true }) }));
-  return { AppView, pr, saved };
+  return { AppView, pr, saved, notificationCalls };
 }
 
 test('a vote the server takes publishes voteSaved once, with the epoch it sent', async () => {
@@ -383,6 +390,9 @@ test('a vote the server takes publishes voteSaved once, with the epoch it sent',
   assert.deepEqual(h.saved, [[7, 'yes', 3]], 'the epoch that went in the POST body');
   assert.equal(h.AppView._ownVotes.get(7).epoch, 3, 'the page keeps the epoch it voted at');
   assert.equal(h.AppView._ownVotes.get(7).vote, 'yes');
+  // #5483: the inbox clears the answered rows at once and re-reads past its
+  // saved pre-vote copy.
+  assert.deepEqual(h.notificationCalls, ['voteSaved:7']);
 });
 
 test('a refusal, a network failure and a cancelled No publish nothing', async () => {
@@ -391,14 +401,17 @@ test('a refusal, a network failure and a cancelled No publish nothing', async ()
   });
   await refused.AppView.castVote(7, 'yes', 3, { reason: null });
   assert.deepEqual(refused.saved, [], 'a refusal is not a saved vote');
+  assert.deepEqual(refused.notificationCalls, [], 'and clears nothing in the inbox');
 
   const failed = savedHarness({ fetch: async () => { throw new TypeError('Failed to fetch'); } });
   await failed.AppView.castVote(7, 'yes', 3, { reason: null });
   assert.deepEqual(failed.saved, [], 'a vote that never reached the server is not saved');
+  assert.deepEqual(failed.notificationCalls, [], 'nor clears anything in the inbox');
 
   const cancelled = savedHarness({ prompt: async () => null });
   await cancelled.AppView.castVote(7, 'no', 3, {});
   assert.deepEqual(cancelled.saved, [], 'a cancelled No casts nothing');
+  assert.deepEqual(cancelled.notificationCalls, [], 'nor clears anything in the inbox');
 });
 
 test('a vote this page saved fills a later row the read drew without it', async () => {

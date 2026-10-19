@@ -180,15 +180,19 @@ test('"Still yes" re-casts the Yes with no line of its own, and marks the row re
   const calls = [];
   const marked = [];
   let refreshed = 0;
+  const refreshOptions = [];
   globalThis.window.AppView = { castVote: async (...args) => { calls.push(args); } };
   Notifications.items = [{ id: 1, kind: 'revision_recheck', sessionId: 41 }];
   Notifications._markOneRead = (id) => { marked.push(id); };
-  Notifications.refresh = () => { refreshed += 1; };
+  Notifications.refresh = (options) => { refreshed += 1; refreshOptions.push(options); };
   assert.equal(await Notifications._onRowAction(1, 'still_yes'), true);
   assert.deepEqual(calls, [[41, 'yes', null, { reason: null }]],
     'no epoch (the server names the current one) and null for the line: nothing is asked');
   assert.deepEqual(marked, [1]);
   assert.equal(refreshed, 1);
+  // #5483: the later of the two post-vote reads must not be answered from
+  // the copy saved before the vote.
+  assert.deepEqual(refreshOptions, [{ fresh: true }]);
   assert.equal(await Notifications._onRowAction(99, 'still_yes'), false, 'an unknown row does nothing');
   assert.equal(calls.length, 1);
 

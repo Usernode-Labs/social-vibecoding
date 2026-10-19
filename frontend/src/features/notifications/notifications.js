@@ -183,6 +183,11 @@ const Notifications = {
       // pinned section is reviewable (routes/notifications.js
       // stagingMockNotifications). No-op in production.
       const demo = new URLSearchParams(location.search).get('demo') === '1' ? '&demo=1' : '';
+      // #5483: a read after something this page just did (a vote it saved)
+      // must not be answered by the service worker's copy from before it. It
+      // is not network-only — networkOnly aborts on a slow link — but it asks
+      // past the saved copy, and the worker falls back to it only on failure.
+      const fresh = options && options.fresh === true;
       const explicitlyNetworkOnly = options && options.networkOnly === true;
       if (explicitlyNetworkOnly) Notifications._networkFreshnessFloor = true;
       const networkOnly = explicitlyNetworkOnly ||
@@ -219,6 +224,9 @@ const Notifications = {
             credentials: 'same-origin',
             cache: 'no-store',
             ...(controller ? { signal: controller.signal } : {}),
+          } : fresh ? {
+            credentials: 'same-origin',
+            cache: 'no-cache',
           } : undefined
         );
         if (!res.ok) return false;
@@ -264,6 +272,30 @@ const Notifications = {
       console.warn('[notifications] refresh failed', err);
       return false;
     }
+  },
+
+  // #5483: the reader's Yes on a change is saved (app-view.js castVote, its
+  // success path). The server has cleared their vote-ask rows for it
+  // (services/notifications.js, the `vote_cast` action), but this device can
+  // still hold the copy it saved before the vote, which shows them asking.
+  // Clear those rows here at once, then re-read past that copy, so a slow
+  // connection cannot bring the answered row back looking unanswered.
+  voteSaved(sessionId) {
+    const id = Number(sessionId);
+    if (!Number.isSafeInteger(id) || id <= 0) return Promise.resolve(false);
+    const stamp = new Date().toISOString();
+    let cleared = 0;
+    for (const n of Notifications.items) {
+      if (!n || n.readAt || !VOTE_SAVED_KINDS.has(n.kind)) continue;
+      if (Number(n.sessionId) !== id) continue;
+      n.readAt = stamp;
+      cleared += 1;
+    }
+    Notifications.unread = Math.max(0, Notifications.unread - cleared);
+    Notifications._reconcileCompletionTitle();
+    Notifications._renderBadge();
+    Notifications._renderList();
+    return Notifications.refresh({ fresh: true });
   },
 
   // Native foreground push is only an invalidation signal. Re-read the
@@ -881,7 +913,9 @@ const Notifications = {
       const ok = await AppView.castVote(sessionId, 'yes', null, { reason: null });
       if (ok === false) return false;
       Notifications._markOneRead(id);
-      if (typeof Notifications.refresh === 'function') Notifications.refresh();
+      // #5483: the later of the two post-vote reads must not be answered
+      // from the copy saved before the vote.
+      if (typeof Notifications.refresh === 'function') Notifications.refresh({ fresh: true });
       return true;
     }
     return Notifications._onItemClick(id);
@@ -1998,6 +2032,10 @@ const PRIORITY_KINDS = new Set(['session_done', 'session_stalled', 'auto_solve_d
 // clears (services/notifications.js, `vote_cast`), and the daily digest
 // when it names one change. Each opens the change at its Votes card.
 const VOTE_ASK_KINDS = new Set(['pr_proposed', 'stale_pr', 'revision_recheck', 'change_ready', 'vote_digest']);
+// The rows the server clears when the reader votes (services/notifications.js,
+// `vote_cast`): the asks a saved Yes answers. The digest is not one — only the
+// server knows whether anything is still waiting, so its fresh copy decides.
+const VOTE_SAVED_KINDS = new Set(['pr_proposed', 'stale_pr', 'revision_recheck', 'change_ready']);
 function isPriorityNotif(n) {
   return !!n && PRIORITY_KINDS.has(n.kind) && !n.readAt;
 }

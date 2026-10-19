@@ -26229,7 +26229,14 @@ const AppView = {
       // Only refresh notifications once the backend confirms the vote — the
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.
-      window.Notifications?.refresh?.();
+      // #5483: voteSaved clears the answered rows here and now, then re-reads
+      // past the service worker's copy from before the vote, which on a slow
+      // connection used to put them back as still waiting (refresh alone).
+      if (typeof window.Notifications?.voteSaved === 'function') {
+        window.Notifications.voteSaved(sessionId);
+      } else {
+        window.Notifications?.refresh?.();
+      }
       // The vote now belongs in Your votes and the Kudos My history tab
       // (#5452): tell both, the same way the kudos give path does. Never
       // optimistic — only on the server's yes.

@@ -2625,10 +2625,11 @@ async function seedStagingNotifications(pool, config) {
   const source = userRows.find((u) => u.id !== target.id) || target;
 
   const { rows: appRows } = await pool.query(
-    'SELECT id FROM apps WHERE slug = $1',
+    'SELECT id, community_id FROM apps WHERE slug = $1',
     [config.selfAppSlug]
   );
   const appId = appRows[0]?.id;
+  const appCommunityId = appRows[0]?.community_id;
   if (!appId) {
     log.warn('db', 'Staging notification fixtures skipped: self-app row missing', {
       slug: config.selfAppSlug,
@@ -2767,6 +2768,36 @@ async function seedStagingNotifications(pool, config) {
       ]
     );
     inserted++;
+  }
+
+  // #5483's before/after shots: a "Still good?" row for the shots' member
+  // (usernode-capture), on the fixture change above, so the row and its
+  // "Still yes" button are on screen without a model or a fresh push. The
+  // change is 'promoted', so the button's vote goes through the ordinary
+  // route; the member joins the self app's community first, because voting
+  // is for members (communities.requireAppMembership).
+  const { rows: captureRows } = await pool.query(
+    `SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1`
+  );
+  const capture = captureRows[0];
+  if (capture) {
+    if (appCommunityId) {
+      await pool.query(
+        `INSERT INTO community_members (community_id, user_id) VALUES ($1, $2)
+         ON CONFLICT DO NOTHING`,
+        [appCommunityId, capture.id]
+      );
+    }
+    await pool.query(
+      `INSERT INTO notifications
+         (user_id, app_id, session_id, source_user_id, kind, created_at)
+       SELECT $1, $2, $3, $4, 'revision_recheck', NOW() - INTERVAL '2 minutes'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM notifications
+           WHERE user_id = $1 AND app_id = $2 AND session_id = $3
+             AND kind = 'revision_recheck')`,
+      [capture.id, appId, sessionId, source.id]
+    );
   }
 
   // Multi-app fixtures (#84 grouping): the self-app block above gives ONE
