@@ -143,15 +143,18 @@ export function useApprovedHere(sessionId: number, epoch: number | null): { epoc
 /**
  * A Yes just cast here (bot-ready.tsx's card, bot-strip.tsx's row), once the
  * server has said yes: keep it for the page's lifetime, redraw every card
- * subscriber, and read the change's state again fresh. The rest of the page
- * hears it the way castVote announces a vote, through the window bridge,
- * never an import, each call in its own try — none of them is needed for the
- * vote itself, which is already saved.
+ * subscriber, read the change's state again fresh, and fire the tray's event
+ * so the tray readers (the Activity bar, the inbox's Homeroom bot row) read
+ * again too, socket or not (#5484). The rest of the page hears it the way
+ * castVote announces a vote, through the window bridge, never an import, each
+ * call in its own try — none of them is needed for the vote itself, which is
+ * already saved.
  */
 export function noteApprovedHere(sessionId: number, epoch: number | null, goesLive: HomeroomBotGoesLive | null): void {
   approvalsCastHere.set(Number(sessionId), { epoch: epoch == null ? null : Number(epoch), goesLive: goesLive || null });
   publish({ ...snapshot });
   void loadBotActivity();
+  try { window.dispatchEvent(new CustomEvent(WORK_CHANGED_EVENT)); } catch { /* paint only */ }
   try { (window as any).AppView?._noteOwnVote?.(sessionId, 'yes'); } catch { /* paint only */ }
   try { (window as any).AppView?._publishVoteSaved?.(sessionId, 'yes', epoch); } catch { /* paint only */ }
   try { (window as any).Notifications?.refresh?.(); } catch { /* paint only */ }
