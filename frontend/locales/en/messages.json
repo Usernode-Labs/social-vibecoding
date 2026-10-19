@@ -1789,7 +1789,7 @@
   },
   "composer.placeholderThread": {
     "text": "Reply in thread…",
-    "description": "Placeholder in the message box of a thread."
+    "description": "Greyed hint inside the empty message box of a reply thread in Messages or a channel. \"Reply\" is a verb; keep the ellipsis."
   },
   "composer.placeholderBotThread": {
     "text": "Reply about {{request}}…",

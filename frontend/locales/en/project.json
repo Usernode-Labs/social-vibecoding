@@ -3788,40 +3788,40 @@
     "description": "Button on the amber 'merges are paused' banner of a project, shown to an admin: lets approved proposals merge again although the main branch's tests are failing."
   },
   "pause.resumeHint": {
-    "text": "Resume merges on this app while main’s unit suite is red. The pause returns if a later merge fails the suite again.",
-    "description": "Tooltip of the 'Resume merges' button on a project's 'merges are paused' banner. 'main' is the name of the main code branch and stays as it is; its unit suite is the automated tests; 'red' means failing."
+    "text": "Merge again while main’s tests fail. The pause returns if a later merge fails them too.",
+    "description": "Tooltip of the Resume merges button on a project's amber \"merges are paused\" banner, for an admin. \"main\" is the name of the main code branch and stays as it is; \"tests\" are its automated tests. \"Merge\" is a verb."
   },
   "pause.confirming.plain": {
-    "text": "Main’s unit suite failed once. Re-running to confirm. Merges are paused meanwhile, except for proposals already level with main whose own checks passed.",
-    "description": "Amber banner on a project's page after the automated tests of the main code branch failed for the first time and are being run again. 'main' is the branch's name and stays as it is. A proposal 'level with main' already contains everything on that branch."
+    "text": "Main’s tests failed once. Re-running to confirm. Merges are paused meanwhile.",
+    "description": "Amber banner at the top of a project's page after the automated tests of the main code branch failed once and are being run again. \"main\" is the branch's name and stays as it is. Keep it short: it is read on a phone."
   },
   "pause.confirming.since": {
-    "text": "Main’s unit suite failed once since {{commit}}. Re-running to confirm. Merges are paused meanwhile, except for proposals already level with main whose own checks passed.",
-    "description": "Amber banner on a project's page after the automated tests of the main code branch failed for the first time and are being run again. {{commit}} is the short code of the commit that broke them. 'main' is the branch's name and stays as it is."
+    "text": "Main’s tests failed once since {{commit}}. Re-running to confirm. Merges are paused meanwhile.",
+    "description": "Amber banner at the top of a project's page after the automated tests of the main code branch failed once and are being run again. {{commit}} is the short code of the commit since which they fail. \"main\" stays as it is. Keep it short: it is read on a phone."
   },
   "pause.confirming.test": {
-    "text": "Main’s unit suite failed once: {{test}}. Re-running to confirm. Merges are paused meanwhile, except for proposals already level with main whose own checks passed.",
-    "description": "Amber banner on a project's page after the automated tests of the main code branch failed for the first time and are being run again. {{test}} is the name of the first failing test, as the test run printed it. 'main' is the branch's name and stays as it is."
+    "text": "Main’s tests failed once: {{test}}. Re-running to confirm. Merges are paused meanwhile.",
+    "description": "Amber banner at the top of a project's page after the automated tests of the main code branch failed once and are being run again. {{test}} is the name of the first failing test, as the test run printed it. \"main\" stays as it is. Keep it short."
   },
   "pause.confirming.sinceTest": {
-    "text": "Main’s unit suite failed once since {{commit}}: {{test}}. Re-running to confirm. Merges are paused meanwhile, except for proposals already level with main whose own checks passed.",
-    "description": "Amber banner on a project's page after the automated tests of the main code branch failed for the first time and are being run again. {{commit}} is the short code of the commit that broke them and {{test}} the name of the first failing test. 'main' is the branch's name and stays as it is."
+    "text": "Main’s tests failed once since {{commit}}: {{test}}. Re-running to confirm. Merges are paused meanwhile.",
+    "description": "Amber banner at the top of a project's page after the automated tests of the main code branch failed once and are being run again. {{commit}} is the short code of the commit since which they fail; {{test}} the first failing test. \"main\" stays as it is. Keep it short."
   },
   "pause.paused.plain": {
-    "text": "Merges are paused: main’s unit suite is failing. They resume when a fix lands or an admin resumes them; a proposal already level with main whose own checks passed still merges.",
-    "description": "Amber banner on a project's page while the automated tests of the main code branch are failing, so approved proposals are not merged. 'main' is the branch's name and stays as it is. A proposal 'level with main' already contains everything on that branch."
+    "text": "Merges are paused: main’s tests are failing. They resume once a fix lands or an admin resumes them.",
+    "description": "Amber banner at the top of a project's page while the automated tests of the main code branch fail, so approved proposals are not merged. \"main\" is the branch's name and stays as it is; \"resumes\" (verb) is what an admin does with the banner's button. Keep it short."
   },
   "pause.paused.since": {
-    "text": "Merges are paused: main’s unit suite is failing since {{commit}}. They resume when a fix lands or an admin resumes them; a proposal already level with main whose own checks passed still merges.",
-    "description": "Amber banner on a project's page while the automated tests of the main code branch are failing, so approved proposals are not merged. {{commit}} is the short code of the commit that broke them. 'main' is the branch's name and stays as it is."
+    "text": "Merges are paused: main’s tests have failed since {{commit}}. They resume once a fix lands or an admin resumes them.",
+    "description": "Amber banner at the top of a project's page while the automated tests of the main code branch fail, so approved proposals are not merged. {{commit}} is the short code of the commit since which they fail. \"main\" stays as it is. Keep it short."
   },
   "pause.paused.test": {
-    "text": "Merges are paused: main’s unit suite is failing: {{test}}. They resume when a fix lands or an admin resumes them; a proposal already level with main whose own checks passed still merges.",
-    "description": "Amber banner on a project's page while the automated tests of the main code branch are failing, so approved proposals are not merged. {{test}} is the name of the first failing test, as the test run printed it. 'main' is the branch's name and stays as it is."
+    "text": "Merges are paused: main’s tests are failing: {{test}}. They resume once a fix lands or an admin resumes them.",
+    "description": "Amber banner at the top of a project's page while the automated tests of the main code branch fail, so approved proposals are not merged. {{test}} is the name of the first failing test, as the test run printed it. \"main\" stays as it is. Keep it short."
   },
   "pause.paused.sinceTest": {
-    "text": "Merges are paused: main’s unit suite is failing since {{commit}}: {{test}}. They resume when a fix lands or an admin resumes them; a proposal already level with main whose own checks passed still merges.",
-    "description": "Amber banner on a project's page while the automated tests of the main code branch are failing, so approved proposals are not merged. {{commit}} is the short code of the commit that broke them and {{test}} the name of the first failing test. 'main' is the branch's name and stays as it is."
+    "text": "Merges are paused: main’s tests have failed since {{commit}}: {{test}}. They resume once a fix lands or an admin resumes them.",
+    "description": "Amber banner at the top of a project's page while the automated tests of the main code branch fail, so approved proposals are not merged. {{commit}} is the short code of the commit since which they fail; {{test}} the first failing test. \"main\" stays as it is. Keep it short."
   },
   "releaseStall.openRun": {
     "text": "Open the workflow run",

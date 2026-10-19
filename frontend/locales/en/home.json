@@ -449,7 +449,7 @@
   },
   "waitlist.title": {
     "text": "Make your own apps",
-    "description": "Title of the waitlist card on Home."
+    "description": "Heading of the waitlist card on the Home screen, shown to someone not yet let in: an invitation to build apps of their own. \"Make\" is a verb; keep it short, it is one line on a phone."
   },
   "waitlist.join.button": {
     "text": "Join the waitlist",
