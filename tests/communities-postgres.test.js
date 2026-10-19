@@ -612,6 +612,35 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     assert.equal((await read()).find((f) => f.title === 'Sunday reminder').approve, undefined);
   });
 
+  await t.test('#5365: the feed marks a non-approver’s vote advisory and puts it after a deciding row that is older', async () => {
+    const overview = require('../src/routes/workshop-overview');
+    const me = await user();
+    const author = await user();
+    const plain = await app({ createdBy: author.id });
+    const approvers = await app({ createdBy: author.id });
+    await communities.join(pool, plain, me.id);
+    await communities.join(pool, approvers, me.id);
+    // Only the author decides the governed project's changes: the invited
+    // approver roster, under approver_policy='invited'.
+    await pool.query('UPDATE apps SET approver_policy = \'invited\' WHERE id = $1', [approvers.id]);
+    await pool.query('INSERT INTO app_approvers (app_id, user_id) VALUES ($1, $2)', [approvers.id, author.id]);
+    const promote = async (a, title, ago) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, last_activity_at)
+       VALUES ($1, $2, 'promoted', $3, NOW() - $4::interval) RETURNING id`,
+      [a.id, author.id, title, ago])).rows[0].id;
+    const older = await promote(plain, 'Older deciding change', '2 days');
+    const newer = await promote(approvers, 'Newer advisory change', '1 hour');
+    const rows = (await pool.query(overview.NEEDS_FEED_SQL, [me.id, false, false, overview.NEEDS_FEED_MAX])).rows;
+    assert.equal(rows.find((r) => r.id === newer).counts, true, 'the viewer is a member, so their vote is counted');
+    await overview.withViewerDecides(pool, rows, me.id);
+    const feed = overview.decidingFirst(overview.shapeNeedsFeed(rows));
+    assert.deepEqual(feed.map((f) => [f.title, f.advisory === true]), [
+      ['Older deciding change', false], ['Newer advisory change', true],
+    ], 'newest-first would put the advisory one on top; decidingFirst keeps the deciding one first');
+    const second = feed[1];
+    assert.ok(!('uncounted' in second), 'advisory, not uncounted: the viewer is not a test account');
+  });
+
   await t.test('an app suspended by moderation leaves the Messages and Workshop lists, admins included', async () => {
     const overview = require('../src/routes/workshop-overview');
     const { DISCUSSIONS_SQL } = require('../src/routes/messages-overview');

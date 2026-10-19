@@ -61,6 +61,15 @@ export type NeedsFeedItem = {
    */
   approve?: boolean;
   /**
+   * #5365: the viewer's vote does not decide this change — `advisory`: they
+   * are outside the project's deciders (#4747, the server's
+   * `my_vote_advisory`); `uncounted`: a test account's vote, recorded but
+   * not counted. The item is labelled as advisory and the feed puts the
+   * rows whose vote decides first.
+   */
+  advisory?: boolean;
+  uncounted?: boolean;
+  /**
    * #4490: the card's picture, as a project's Needs you draws it: the
    * change's before & after shots run and legacy capture pair (shaped by
    * `AppView._workshopVisuals`, as there), its author's diagram, "What it
@@ -152,7 +161,18 @@ export function reelRows(
       },
       kind: 'vote',
       ask: change ? translate('communities:reel.ask.change') : translate('communities:reel.ask.decision'),
-      yes: change ? { label: translate('communities:reel.yes'), act: { fn: 'castVote', args: [item.id, 'yes', ...rev] }, ...(item.approve ? { approve: true } : {}) } : null,
+      yes: change
+        ? {
+          label: translate('communities:reel.yes'),
+          act: { fn: 'castVote', args: [item.id, 'yes', ...rev] },
+          ...(item.approve ? { approve: true } : {}),
+          // #5365: the flags the sheet's picker reads its line from, next to
+          // `approve` — only ever set together on a real server, and the
+          // test-account line wins in the picker.
+          ...(item.uncounted ? { uncounted: true } : {}),
+          ...(item.advisory ? { advisory: true } : {}),
+        }
+        : null,
       no: change ? { label: translate('communities:reel.no'), act: { fn: 'castVote', args: [item.id, 'no', ...rev] } } : null,
       who: item.author || null,
       ago: item.at ? agoStamp(item.at).text : '',
