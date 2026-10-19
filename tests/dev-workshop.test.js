@@ -3602,6 +3602,26 @@ test('#5236: the Communities feed\'s answered card adds your vote to its counts'
   } finally { global.window = prev; }
 });
 
+// #5466: the project page's kept queue learns about a saved vote the way the
+// Communities feed does. Its own store copy had no listener, so a vote cast
+// off the project page (Communities, a notification's "Still yes", a card in
+// Messages) left its Hub, its count and its deck asking for it until a read.
+// The rule itself is executed in tests/dev-workshop-saved-vote.test.js; these
+// pin the three wires: the deck's own hook, the store listener and the
+// publish that cannot put an answered row back.
+test('#5466: a saved vote strips the project page\'s own Needs you copy', () => {
+  const MOUNT_SRC = read('frontend/src/features/dev-board/mount.ts');
+  assert.match(MOUNT_SRC,
+    /publishWorkshop\(view\) \{[\s\S]*?queue: withoutSavedVotes\(view\.queue, voteSavedStore\.get\(\)\)/,
+    'a publish from a pre-vote list cannot bring the row back');
+  assert.match(WORKSHOP,
+    /voteSavedStore\.subscribe\(\(\) => \{[\s\S]*?withoutSavedVotes\(queue, voteSavedStore\.get\(\)\)[\s\S]*?devWorkshopStore\.set\(\{ queue: next \}\)/,
+    'a vote saved off the dev tab still republishes the kept queue');
+  const deck = WORKSHOP.slice(WORKSHOP.indexOf('<NeedsFeed'));
+  assert.match(deck, /onAnswered=\{\(row\) => \{/, 'the project deck tells its store the row is answered');
+  assert.match(deck, /filter\(\(r\) => r\.key !== row\.key\)/, 'and it drops that row');
+});
+
 test('the footnote says what is actually happening to the grouping', () => {
   // The first cut said "once an AI model is available" while the model was
   // mid-draft — on exactly the first visit after a deploy. Four states now.

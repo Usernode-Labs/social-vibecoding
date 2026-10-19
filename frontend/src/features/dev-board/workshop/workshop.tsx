@@ -2526,6 +2526,36 @@ export function savedVoteFor(
 }
 
 /**
+ * #5466: the queue with every row a saved vote has already answered taken
+ * out — the project page's own copy of the rule the Communities feed applies
+ * (features/workshop/index.tsx `stripAnswered`). `savedVoteFor` decides, so a
+ * row at a NEWER epoch than the vote stays and asks again, and a governance
+ * row always stays. The SAME array comes back when nothing matches, so a
+ * store with no saved vote republishes nothing (plain-store `set` compares
+ * by key and would otherwise redraw every surface for nothing).
+ */
+export function withoutSavedVotes(
+  queue: DevWorkshopView['queue'],
+  saved: Record<string, { vote: 'yes' | 'no'; epoch: number | null }> | null | undefined,
+): DevWorkshopView['queue'] {
+  if (!queue || !queue.length || !saved) return queue;
+  const kept = queue.filter((row) => !savedVoteFor(row, saved));
+  return kept.length === queue.length ? queue : kept;
+}
+
+// #5466: a vote saved ANYWHERE reaches the project page's kept queue even
+// when the dev board is not on screen — the vote may be cast in Communities,
+// from a notification's "Still yes" or from a card in Messages, and
+// `refreshDevData` no-ops off the dev tab, so nothing else would strip it.
+// A patch, because `devWorkshopStore.set` merges: every other key of the
+// published view stays as it was.
+voteSavedStore.subscribe(() => {
+  const queue = devWorkshopStore.get().queue;
+  const next = withoutSavedVotes(queue, voteSavedStore.get());
+  if (next !== queue) devWorkshopStore.set({ queue: next });
+});
+
+/**
  * A project's Needs you, and the Communities screen's (#3488): ONE feed, so
  * the two cannot drift apart again. There the rows mix every project's, each
  * carrying its own (`row.app`), and every address the feed builds (the card's
@@ -5379,6 +5409,16 @@ export function DevWorkshop(): ReactNode {
           // form, the same open the hub's ⋯ row makes. No `intent: 'issue'`,
           // so the heading reads "Suggest an improvement".
           onSuggest={() => { (window as any).App?.openFeedbackModal?.({ fromDev: true }); }}
+          // #5466: the deck's own saved vote drops the row from the kept
+          // queue here too, so going back to the Hub and returning to Needs
+          // you does not offer the same proposal again. On the deck's
+          // `ok === true` path only, and harmless when the store listener
+          // already stripped it.
+          onAnswered={(row) => {
+            const queue = devWorkshopStore.get().queue;
+            const next = (queue || []).filter((r) => r.key !== row.key);
+            if (queue && next.length !== queue.length) devWorkshopStore.set({ queue: next });
+          }}
         />
       ) : null}
       {/* WHENEVER THE TAB IS UP, not only while there is a theme to draw. This

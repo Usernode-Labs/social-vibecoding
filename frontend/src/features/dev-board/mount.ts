@@ -56,12 +56,13 @@ import {
   cardNowStore,
   publishVoteSaved,
   publishVoteSending,
+  voteSavedStore,
   devKanbanStore,
   devWorkshopStore,
 } from './card/cards-store';
 import { DevKanban } from './card/dev-kanban';
 import type { DevKanbanView, DevWorkshopView } from './card/model';
-import { DevWorkshop } from './workshop/workshop';
+import { DevWorkshop, withoutSavedVotes } from './workshop/workshop';
 import { TopicHead } from './topic/topic-head';
 import { topicHeadStore, type TopicHeadState } from './topic/topic-store';
 import { publishRequestThread } from './topic/request-model';
@@ -310,7 +311,10 @@ export const devBoardBridge: DevBoardBridge = {
   },
 
   publishWorkshop(view) {
-    devWorkshopStore.set(view);
+    // #5466: a publish built from a list read BEFORE the vote cannot put the
+    // answered row back. `_overlayPendingVote` already fills the reads; this
+    // keeps the store honest whatever list a publish came from.
+    devWorkshopStore.set({ ...view, queue: withoutSavedVotes(view.queue, voteSavedStore.get()) });
   },
 
   mountKanban(host) {

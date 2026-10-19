@@ -93,7 +93,12 @@ test('#4794: onAnswered fires only where the vote is saved, and the reel keeps t
   assert.match(okBranch, /try \{ onAnswered\(row, which\); \} catch/, 'then the screen that owns the feed copy is told');
   assert.equal((answer.match(/onAnswered/g) || []).length, 2,
     'the hook appears twice in answer() — the guard and the call, both inside the ok branch');
-  assert.ok(!WORKSHOP.includes('onAnswered={'), 'a project page passes nothing; its refresh already drops the row');
+  // #5466: a project page now passes its own hook, dropping the answered row
+  // from the kept queue it owns, so returning to Needs you does not redraw it
+  // as still owed. It is handed to `NeedsFeed` and lands on the same `ok`
+  // branch, so a cancel or a refusal still drops nothing.
+  assert.match(WORKSHOP, /onAnswered=\{\(row\) => \{[\s\S]*?filter\(\(r\) => r\.key !== row\.key\)/,
+    'a project page drops the answered row from its own store copy');
 
   // The reel acts only on a proposal's answer, with the epoch of the source
   // item; a group decision has no Yes or No in the feed and never reaches it.
