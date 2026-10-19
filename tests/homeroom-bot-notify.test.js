@@ -364,6 +364,60 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
     const { rows: quiet } = await pool.query('SELECT 1 FROM notifications WHERE conversation_message_id = $1', [stuck.messageId]);
     assert.equal(quiet.length, 0, 'a retry is quiet: only a give-up rings');
   });
+
+  await t.test('#5582: a plan names its request, from the requester row or Homeroom\'s copy', async () => {
+    const { rows: [app] } = await pool.query('SELECT id, slug, name FROM apps WHERE slug = $1', [plantPal.slug]);
+    // A requester row that kept no title, and Homeroom's own copy of the
+    // request it falls back to.
+    await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, 11, $2)', [app.id, maya.id]);
+    await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, created_by) VALUES ($1, 11, 'Show who was active this week on the hub', $2)`,
+      [app.id, maya.id],
+    );
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 11, 'live', 'ready') RETURNING id`,
+      [app.id],
+    );
+    const N = loadBell();
+    const rowView = (detail) => N._rowView({
+      id: 1, createdAt: AT, readAt: null, kind: 'build_needs_you', detail,
+      conversationId: 7, conversationKind: 'direct', sourceUsername: 'homeroom_bot',
+    });
+    const sent = await dm.sendPlanCard(pool, {
+      app: { id: app.id, slug: app.slug, name: app.name }, issueNumber: 11, runId: run.id, bot,
+      plan: { bullets: ['Add a who-was-active panel to the hub', 'Keep it to members'], complicated: true },
+    });
+    assert.ok(sent?.messageId, 'the plan went out');
+    const { rows: [msg] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [sent.messageId]);
+    assert.equal(msg.metadata.homeroomBot.requestTitle, 'Show who was active this week on the hub',
+      'the title Homeroom stores reached the message through sendDm\'s lookup');
+    const { rows: [ring] } = await pool.query(
+      'SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id DESC LIMIT 1', [maya.id],
+    );
+    const detail = notifyCopy.parseBotDetail(ring.detail);
+    assert.deepEqual([detail.moment, detail.said, detail.requestTitle],
+      ['needs_you', 'plan', 'Show who was active this week on the hub']);
+    const view = rowView(ring.detail);
+    assert.deepEqual([view.label, view.segments[0].v, view.appLine],
+      ['Plan to approve', 'Show who was active this week on the hub', 'Plant Pal · #11 · Homeroom bot'],
+      'the bell names the request, with the number beside the project under it');
+
+    // No title anywhere, not even on GitHub (no repo): the row still reads
+    // "Request #N", and the send is not blocked.
+    await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, 12, $2)', [app.id, maya.id]);
+    const bare = await dm.sendDm(pool, {
+      bot, userId: maya.id, content: 'My plan is ready. Tap Build it if it looks right.', idempotencyKey: '#5582-bare',
+      metadata: { kind: 'plan', appSlug: app.slug, appName: app.name, issueNumber: 12, firstVersion: false },
+    });
+    assert.ok(bare?.messageId);
+    const { rows: [bareRing] } = await pool.query(
+      'SELECT detail FROM notifications WHERE user_id = $1 ORDER BY id DESC LIMIT 1', [maya.id],
+    );
+    assert.equal(notifyCopy.parseBotDetail(bareRing.detail).requestTitle, '');
+    const bareView = rowView(bareRing.detail);
+    assert.deepEqual([bareView.segments[0].v, bareView.appLine], ['Request #12', 'Plant Pal · Homeroom bot'],
+      'untitled, as the number said');
+  });
 });
 
 test('WP-F: a merged change is "live" when the machine says it is, and a stop says which one', async () => {
