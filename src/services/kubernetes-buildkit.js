@@ -471,10 +471,10 @@ function securityContexts(cfg) {
 // that cannot start, and the default placement is the better failure. The
 // preference is not part of the recipe: where a build ran does not change
 // the image, so a finished build is still reused.
-// The checks are Kubernetes' own for a label key and value: a name and a
-// value are at most 63 characters, alphanumeric at both ends; a key's
-// optional prefix is a DNS subdomain (dot-separated DNS labels, each
-// alphanumeric at both ends) of at most 253 characters.
+// The checks are Kubernetes' own for a label key and value: a key's name is
+// 1 to 63 characters, alphanumeric at both ends; its optional prefix is a
+// DNS subdomain (dot-separated DNS labels, each alphanumeric at both ends) of
+// at most 253 characters; a value is empty or follows the name's rule.
 const LABEL_PART = /^[A-Za-z0-9](?:[-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$/;
 const DNS_SUBDOMAIN = /^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$/;
 const warnedPreferences = new Set();
@@ -491,7 +491,7 @@ function parseNodePreference(raw) {
   if (eq === -1) return null;
   const key = raw.slice(0, eq);
   const values = raw.slice(eq + 1).split(',');
-  if (!labelKeyValid(key) || !values.every((value) => LABEL_PART.test(value))) return null;
+  if (!labelKeyValid(key) || !values.every((value) => value === '' || LABEL_PART.test(value))) return null;
   return { key, values };
 }
 

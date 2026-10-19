@@ -224,8 +224,8 @@ test('BUILDKIT_NODE_PREFERENCE: one label value, a prefix-less key, spaces and r
 });
 
 test('BUILDKIT_NODE_PREFERENCE: empty or malformed leaves the default placement', () => {
-  for (const value of [undefined, '', '   ', 'talos-2cc-re6', 'kubernetes.io/hostname=', '=fast',
-    'kubernetes.io/hostname=a,,b', 'kubernetes.io/hostname=a,', 'a=b=c', 'Bad_Prefix/pool=x',
+  for (const value of [undefined, '', '   ', 'talos-2cc-re6', '=fast', '=', 'a=b=c', 'Bad_Prefix/pool=x',
+    'cpu=-a', 'cpu=a,-b', 'cpu=a b,c!',
     `pool=${'x'.repeat(64)}`, 'kubernetes.io/hostname=-a',
     // A prefix is a DNS subdomain: Kubernetes refuses these keys, and a Job
     // it refuses is a build that cannot start.
@@ -235,6 +235,17 @@ test('BUILDKIT_NODE_PREFERENCE: empty or malformed leaves the default placement'
     assert.deepEqual(buildkit._forTest.buildPlacement(config({ buildkitNodePreference: value }).kubernetes), {},
       JSON.stringify(value));
   }
+});
+
+test('BUILDKIT_NODE_PREFERENCE: an empty label value is a value Kubernetes accepts, alone or in a list', () => {
+  const expressions = (value) => buildkit._forTest.buildPlacement(config({ buildkitNodePreference: value }).kubernetes)
+    .affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].preference.matchExpressions;
+  assert.deepEqual(expressions('cpu='), [{ key: 'cpu', operator: 'In', values: [''] }]);
+  assert.deepEqual(expressions('usernodelabs.org/fast= '), [{ key: 'usernodelabs.org/fast', operator: 'In', values: [''] }]);
+  assert.deepEqual(expressions('kubernetes.io/hostname=a,,b'),
+    [{ key: 'kubernetes.io/hostname', operator: 'In', values: ['a', '', 'b'] }]);
+  assert.deepEqual(expressions('kubernetes.io/hostname=a,'),
+    [{ key: 'kubernetes.io/hostname', operator: 'In', values: ['a', ''] }]);
 });
 
 test('BUILDKIT_NODE_PREFERENCE: keys and values at Kubernetes\' length limits are accepted', () => {
@@ -264,6 +275,24 @@ test('BUILDKIT_NODE_PREFERENCE: a malformed value is logged once, however many b
   assert.equal(calls.length, 1);
   assert.match(calls[0][1], /BUILDKIT_NODE_PREFERENCE/);
   assert.deepEqual(calls[0][2], { value: 'warn-once.example..com/x=y' });
+  // An unset or blank setting is the default, not a mistake: nothing to say.
+  calls.length = 0;
+  logger.warn = (...args) => calls.push(args);
+  try {
+    // A fresh copy of the module: earlier tests have already been warned
+    // about whatever they passed, and the warning is once per value.
+    const modulePath = require.resolve('../src/services/kubernetes-buildkit');
+    const cached = require.cache[modulePath];
+    delete require.cache[modulePath];
+    const fresh = require('../src/services/kubernetes-buildkit');
+    require.cache[modulePath] = cached;
+    for (const blank of [undefined, '', '  ']) {
+      assert.deepEqual(fresh._forTest.buildPlacement(config({ buildkitNodePreference: blank }).kubernetes), {});
+    }
+  } finally {
+    logger.warn = saved;
+  }
+  assert.equal(calls.length, 0);
 });
 
 test('BUILDKIT_NODE_PREFERENCE: production images and other apps\' builds get the same preference as previews', async () => {
