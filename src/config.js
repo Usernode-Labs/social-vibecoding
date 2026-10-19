@@ -708,6 +708,15 @@ function load() {
       // repositories. Empty means the registry accepts anonymous pushes
       // (an in-cluster registry).
       buildkitRegistrySecret: process.env.BUILDKIT_REGISTRY_SECRET || '',
+      // Docker Hub's images (every FROM without a registry, node:22-alpine
+      // among them) are pulled through this mirror first, and from Docker
+      // Hub only when it does not have one. Every build is a fresh daemon
+      // with no image store, so without it each build is one more
+      // anonymous Docker Hub pull: on 19 Oct 2026, 65 deploys at once met
+      // Docker Hub's 429, and 44 of them, with every preview build after
+      // them, failed until its allowance came back. A host[:port]; empty
+      // switches it off.
+      buildkitDockerHubMirror: process.env.BUILDKIT_DOCKERHUB_MIRROR ?? 'mirror.gcr.io',
       // The image and cache registries speak plain HTTP (in-cluster, no TLS).
       buildkitInsecureRegistry: process.env.BUILDKIT_INSECURE_REGISTRY === '1',
       // Dockerfile candidates, in order of preference, relative to the source

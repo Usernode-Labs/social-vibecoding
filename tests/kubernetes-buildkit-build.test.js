@@ -202,6 +202,28 @@ test('the Job manifest: privileged mode, registry credentials and a plain-HTTP r
   assert.deepEqual(volume.secret, { secretName: 'push-creds', items: [{ key: '.dockerconfigjson', path: 'config.json' }] });
 });
 
+test('Docker Hub\'s images come through a mirror by default, and only a host[:port] is ever written', () => {
+  const envOf = (over) => {
+    const cfg = config(over).kubernetes;
+    const body = buildkit._forTest.jobManifest(cfg, runtimeWith({}), {
+      app, revision, environment: 'staging', sessionId: 42, dockerfile: 'Dockerfile',
+      name: 'bk', tag: 't', cacheRef: 'c', recipe: 'r', inputSecretName: 'bk-input',
+    });
+    return Object.fromEntries(body.spec.template.spec.containers[0].env.map((e) => [e.name, e.value ?? e.valueFrom]));
+  };
+  // The deploy's default (config.js): every build pulled Docker Hub
+  // anonymously, and on 19 Oct 2026 65 at once met its 429.
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/config.js'), 'utf8');
+  assert.match(src, /buildkitDockerHubMirror: process\.env\.BUILDKIT_DOCKERHUB_MIRROR \?\? 'mirror\.gcr\.io',/);
+  assert.equal(envOf({ buildkitDockerHubMirror: 'mirror.gcr.io' }).DOCKERHUB_MIRROR, 'mirror.gcr.io');
+  assert.equal(envOf({ buildkitDockerHubMirror: 'registry.internal:5000' }).DOCKERHUB_MIRROR, 'registry.internal:5000');
+  assert.equal(envOf({ buildkitDockerHubMirror: '' }).DOCKERHUB_MIRROR, '', 'empty switches it off');
+  assert.equal(envOf({}).DOCKERHUB_MIRROR, '', 'a config without the key builds as before');
+  for (const bad of ['mirror.gcr.io"]\n[x', 'https://mirror.gcr.io', 'a b', 'mirror.gcr.io/path']) {
+    assert.equal(envOf({ buildkitDockerHubMirror: bad }).DOCKERHUB_MIRROR, '', JSON.stringify(bad));
+  }
+});
+
 test('the build script: fetches by SHA, exports the tree without .git, never prints the clone URL, ends its termination message with the digest', () => {
   const script = buildkit._forTest.BUILD_SCRIPT;
   assert.match(script, /^set -eu/m);
