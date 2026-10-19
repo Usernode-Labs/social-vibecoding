@@ -213,6 +213,10 @@ async function classifyImportedHeadMove({ session, oldHead, newHead }) {
 // the verdict green, and nobody has tested it, so it is tested.
 const CARRIABLE_CHECK_STATES = new Set(['passing', 'skipped']);
 
+// How many times a head move is asked of the proposal machine while it
+// answers `pending` (the deciding process slow or restarting).
+const MOVE_ATTEMPTS = 4;
+
 // Apply a head change: advance the stored SHA, decide what the move costs the
 // approvals and the checks, refresh drift, and re-run SHA-pinned checks where
 // the verdict cannot carry. An active import has no votes to protect and
@@ -271,14 +275,27 @@ async function applyHeadChange({
   //    code nor the new. It is refused if the pin is no longer the one this
   //    decision was made about (another pass got there first), or the
   //    proposal has closed or merged meanwhile.
-  const moved = await require('../workflow/platform.ts').moveReviewHead({
-    sessionId: session.id, appId: session.app_id, column: 'imported', from: oldHead || null, to: newHead,
-    keepVotes: !bumpEpoch, reason: `imported_head_${kind}`,
-  });
-  if (moved.status !== 'accepted' && moved.status !== 'replayed') {
-    log.info('pr-import-sync', 'Head change already applied by another pass; nothing to do', {
-      sessionId: session.id, prNumber: session.pr_number, oldHead, newHead, refused: moved.reason || moved.status,
+  //    An answer the machine has not given in time is asked again: the
+  //    event carries a deadline, so it will be refused as expired, and a
+  //    fresh event (a fresh request key) is the only way it lands.
+  let moved = null;
+  for (let attempt = 0; attempt < MOVE_ATTEMPTS; attempt++) {
+    moved = await require('../workflow/platform.ts').moveReviewHead({
+      sessionId: session.id, appId: session.app_id, column: 'imported', from: oldHead || null, to: newHead,
+      keepVotes: !bumpEpoch, reason: `imported_head_${kind}`,
     });
+    if (moved.status !== 'pending') break;
+  }
+  if (moved.status !== 'accepted' && moved.status !== 'replayed') {
+    if (moved.status === 'pending') {
+      log.error('pr-import-sync', 'The proposal machine never answered the head move; the next pass tries again', {
+        sessionId: session.id, prNumber: session.pr_number, oldHead, newHead, attempts: MOVE_ATTEMPTS,
+      });
+    } else {
+      log.info('pr-import-sync', 'Head change already applied by another pass; nothing to do', {
+        sessionId: session.id, prNumber: session.pr_number, oldHead, newHead, refused: moved.reason || moved.status,
+      });
+    }
     // Let the caller carry on with the row as it now is, not as it was read:
     // a merge attempt that kept the stale pin would offer GitHub the old
     // commit and buy exactly the 409 this path exists to avoid.

@@ -260,9 +260,10 @@ const SESSION_HEAD = 'a'.repeat(40);
 // machine answers it the way the machine would: accepted iff the pin matched
 // (the epoch moved on iff the votes are not kept), else refused
 // 'head_moved'. `summaryStale` is the description freshness the machine's
-// statement reports back (undefined: none reported). Every query records and
-// returns no rows.
-function recordingPool({ pinnedHead = SESSION_HEAD, epoch = 0, summaryStale } = {}) {
+// statement reports back (undefined: none reported). `pending` is how many
+// asks the machine leaves unanswered first (the deciding process slow or
+// restarting). Every query records and returns no rows.
+function recordingPool({ pinnedHead = SESSION_HEAD, epoch = 0, summaryStale, pending = 0 } = {}) {
   const calls = [];
   const moves = [];
   const pool = {
@@ -270,6 +271,7 @@ function recordingPool({ pinnedHead = SESSION_HEAD, epoch = 0, summaryStale } = 
     moves,
     move(p) {
       moves.push(p);
+      if (moves.length <= pending) return { status: 'pending', requestKey: `k${moves.length}` };
       if (p.from !== pinnedHead) return { status: 'rejected', reason: 'head_moved' };
       const reply = { state: 'in_review', status: 'promoted', epoch: epoch + (p.keepVotes ? 0 : 1) };
       if (summaryStale !== undefined) reply.prSummaryStale = summaryStale;
@@ -657,6 +659,45 @@ test('applyHeadChange: a second applier of the same move writes and posts nothin
       'and the row is re-read so the caller carries on with the pin as it now stands');
     assert.deepEqual(sysMessages, []);
     assert.deepEqual(handOffs, [], 'and nothing is handed to the machine');
+  });
+});
+
+test('applyHeadChange: a move the machine has not answered yet is asked again, not taken as applied', async () => {
+  // The machine decides in another process. An unanswered move will be
+  // refused as expired, so taking it for "another pass got there first"
+  // would leave the old pin and the old approvals standing.
+  const NEW = 'b'.repeat(40);
+  scriptedMove = { kind: 'authored' };
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+    [fakeWs, 'sendSystemMessage', async () => {}],
+  ], async () => {
+    const pool = recordingPool({ epoch: 2, pending: 2 });
+    const session = { ...SESSION, approval_epoch: 2 };
+    const res = await prImportSync.applyHeadChange({
+      config: {}, pool, session, newHead: NEW, oldHead: SESSION_HEAD, notify: false,
+    });
+    assert.equal(res.applied, true, 'the third ask landed');
+    assert.equal(res.epoch, 3);
+    assert.equal(pool.moves.length, 3);
+    assert.ok(pool.moves.every((m) => m.from === SESSION_HEAD && m.to === NEW), 'each ask is the same move');
+    assert.equal(session.imported_pr_head_sha, NEW);
+  });
+});
+
+test('applyHeadChange: a move the machine never answers is asked a bounded number of times', async () => {
+  const NEW = 'b'.repeat(40);
+  scriptedMove = { kind: 'authored' };
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+    [fakeWs, 'sendSystemMessage', async () => {}],
+  ], async () => {
+    const pool = recordingPool({ pending: 100 });
+    const res = await prImportSync.applyHeadChange({
+      config: {}, pool, session: { ...SESSION }, newHead: NEW, oldHead: SESSION_HEAD, notify: false,
+    });
+    assert.equal(res.applied, false);
+    assert.equal(pool.moves.length, 4, 'once and three more times, then left for the next pass');
   });
 });
 

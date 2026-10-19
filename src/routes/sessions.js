@@ -1923,7 +1923,9 @@ async function switchSessionAgent(pool, { sessionId, userId, pref }) {
 // bookkeeping the user never has to manage). Ownership is checked first, then
 // the global cap (another user's idle session may be paused), then the user's
 // own cap (their least recently used session is paused). Returns { ok: true }
-// or { ok: false, status, error }.
+// or { ok: false, status, error, code? }: code 'not_decided' (a 503) when the
+// machine did not decide in time, which sendResumeRefusal answers with
+// Retry-After.
 async function resumePausedSession({ pool, config, user, sessionId }) {
   // Ownership FIRST: everything below is platform-wide bookkeeping (the
   // global cap can pause a third party's idle session, the per-user one one
@@ -1955,13 +1957,14 @@ async function resumePausedSession({ pool, config, user, sessionId }) {
     if (out.status === 'accepted' || out.status === 'replayed') break;
     // Not applied in time: past its deadline the machine refuses it, so the
     // session is still paused.
-    if (out.status === 'pending') return { ok: false, status: 503, error: 'Could not resume the session just now. Try again shortly.' };
+    if (out.status === 'pending' || out.reason === 'expired') return RESUME_NOT_DECIDED;
     const reason = out.reason;
     if (reason === 'already_active') break;
     if (reason === 'global_cap' && !tried.has(reason)) {
       tried.add(reason);
-      const { freed } = await sessionLifecycle.freeGlobalSlot({ pool, graceMs: config && config.sessionPressureGraceMs, excludeSessionId: sessionId });
+      const { freed, notDecided } = await sessionLifecycle.freeGlobalSlot({ pool, graceMs: config && config.sessionPressureGraceMs, excludeSessionId: sessionId });
       if (freed) continue;
+      if (notDecided) return RESUME_NOT_DECIDED;
       await sessionLifecycle.recordCapacityRefusal(pool, { cap: 'global', path: 'resume', userId: user.id });
       return { ok: false, status: 429, error: sessionLifecycle.PLATFORM_AT_CAPACITY };
     }
@@ -1973,10 +1976,11 @@ async function resumePausedSession({ pool, config, user, sessionId }) {
       }
       // LRU: their least recently active session nobody works on is paused
       // to free a slot (never one up for a vote).
-      const { freed } = await sessionLifecycle.freeUserSlot({
+      const { freed, notDecided } = await sessionLifecycle.freeUserSlot({
         pool, userId: user.id, excludeSessionId: sessionId, includeHeadless: true,
       });
       if (freed) continue;
+      if (notDecided) return RESUME_NOT_DECIDED;
       sessionLifecycle.recordCapacityRefusal(pool, { cap: 'user', path: 'resume', userId: user.id });
       return { ok: false, status: 429, error: sessionLifecycle.USER_SLOTS_BUSY };
     }
@@ -2014,6 +2018,20 @@ async function resumePausedSession({ pool, config, user, sessionId }) {
     });
   }
   return { ok: true };
+}
+
+// A resume Homeroom has not decided yet (the machine slow or restarting):
+// the session is still paused, and asking again may resume it.
+const RESUME_NOT_DECIDED = Object.freeze({
+  ok: false, status: 503, code: 'not_decided',
+  error: 'Homeroom has not decided on resuming this session yet. Try again in a few seconds.',
+});
+
+// Answers a resumePausedSession refusal: its status and error, and for one
+// not decided yet its code and Retry-After.
+function sendResumeRefusal(res, resumed) {
+  if (resumed.code === 'not_decided') return sessionLifecycle.answerNotDecided(res, resumed.error);
+  return res.status(resumed.status).json({ error: resumed.error });
 }
 
 // What a stop forwarded from another platform process runs with here
@@ -3003,7 +3021,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // paused for them (session-lifecycle.freeUserSlot): pausing keeps
       // everything and opening it resumes it, so nobody is asked to manage it.
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
-        const { freed } = await sessionLifecycle.freeUserSlot({ pool, userId: req.user.id });
+        const { freed, notDecided } = await sessionLifecycle.freeUserSlot({ pool, userId: req.user.id });
+        if (notDecided) return sessionLifecycle.answerNotDecided(res, sessionLifecycle.SLOT_NOT_DECIDED);
         if (!freed) {
           sessionLifecycle.recordCapacityRefusal(pool, { cap: 'user', path: 'start', userId: req.user.id });
           return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
@@ -3048,7 +3067,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // The platform-wide cap (session-lifecycle.claimGlobalSlot): an idle
       // session elsewhere is paused to make room, or this is refused and
       // the refusal recorded.
-      if (!(await sessionLifecycle.claimGlobalSlot({ pool, config, path: 'start', userId: req.user.id })).ok) {
+      const globalSlot = await sessionLifecycle.claimGlobalSlot({ pool, config, path: 'start', userId: req.user.id });
+      if (globalSlot.notDecided) return sessionLifecycle.answerNotDecided(res, sessionLifecycle.SLOT_NOT_DECIDED);
+      if (!globalSlot.ok) {
         return res.status(429).json({ error: sessionLifecycle.PLATFORM_AT_CAPACITY });
       }
 
@@ -3263,7 +3284,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // The platform-wide cap (session-lifecycle.claimGlobalSlot): an idle
       // session elsewhere is paused to make room, or this is refused and
       // the refusal recorded.
-      if (!(await sessionLifecycle.claimGlobalSlot({ pool, config, path: 'issue_headless', userId: req.user.id })).ok) {
+      const globalSlot = await sessionLifecycle.claimGlobalSlot({ pool, config, path: 'issue_headless', userId: req.user.id });
+      if (globalSlot.notDecided) return sessionLifecycle.answerNotDecided(res, sessionLifecycle.SLOT_NOT_DECIDED);
+      if (!globalSlot.ok) {
         return res.status(429).json({ error: sessionLifecycle.PLATFORM_AT_CAPACITY });
       }
 
@@ -3422,7 +3445,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         [req.user.id]
       );
       if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
-        const { freed } = await sessionLifecycle.freeUserSlot({ pool, userId: req.user.id });
+        const { freed, notDecided } = await sessionLifecycle.freeUserSlot({ pool, userId: req.user.id });
+        if (notDecided) return sessionLifecycle.answerNotDecided(res, sessionLifecycle.SLOT_NOT_DECIDED);
         if (!freed) {
           sessionLifecycle.recordCapacityRefusal(pool, { cap: 'user', path: 'clone_headless', userId: req.user.id });
           return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
@@ -3445,7 +3469,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // The platform-wide cap (session-lifecycle.claimGlobalSlot): an idle
       // session elsewhere is paused to make room, or this is refused and
       // the refusal recorded.
-      if (!(await sessionLifecycle.claimGlobalSlot({ pool, config, path: 'clone_headless', userId: req.user.id })).ok) {
+      const globalSlot = await sessionLifecycle.claimGlobalSlot({ pool, config, path: 'clone_headless', userId: req.user.id });
+      if (globalSlot.notDecided) return sessionLifecycle.answerNotDecided(res, sessionLifecycle.SLOT_NOT_DECIDED);
+      if (!globalSlot.ok) {
         return res.status(429).json({ error: sessionLifecycle.PLATFORM_AT_CAPACITY });
       }
 
@@ -4365,6 +4391,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           return res.status(409).json({ error: 'A build is running on this change. Wait for it to finish, then move it back to Underway.' });
         case 'pending_secret':
           return res.status(409).json({ error: 'This proposal holds a secret value that is discarded when it leaves review. Withdraw it instead if you want to stop it.' });
+        case 'not_decided':
+          return sessionLifecycle.answerNotDecided(res,
+            'Homeroom has not decided on moving this proposal back to Underway yet, so it is still in review. Try again in a few seconds.');
         default:
           return res.status(409).json({ error: 'This proposal is no longer in review.' });
       }
@@ -4567,9 +4596,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           return res.status(403).json({ error: CLI_CREDENTIAL_MANAGEMENT_ERROR });
         }
       }
-      const { unarchived, ccPurged, busy } = await sessionLifecycle.unarchiveSession({
+      const { unarchived, ccPurged, busy, notDecided } = await sessionLifecycle.unarchiveSession({
         pool, sessionId, userId: req.user.id,
       });
+      if (notDecided) {
+        return sessionLifecycle.answerNotDecided(res,
+          'Homeroom has not decided on reopening this session yet, so it is still closed. Try again in a few seconds.');
+      }
       if (busy) return res.status(503).json({ error: 'The session is still being closed. Try again shortly.' });
       if (!unarchived) return res.status(404).json({ error: 'Session not found or not archived' });
       // Its pull request is reopened by the proposal machine's own work,
@@ -4874,6 +4907,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       });
       if (!paused) {
         if (reason === 'already_paused') return res.json({ ok: true, alreadyPaused: true });
+        if (reason === 'not_decided') {
+          return sessionLifecycle.answerNotDecided(res,
+            'Homeroom has not decided on pausing this session yet, so it is still running. Try again in a few seconds.');
+        }
         return res.status(404).json({ error: 'Session not found or cannot be paused' });
       }
       res.json({ ok: true });
@@ -4906,7 +4943,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const resumed = await resumePausedSession({ pool, config, user: req.user, sessionId });
-      if (!resumed.ok) return res.status(resumed.status).json({ error: resumed.error });
+      if (!resumed.ok) return sendResumeRefusal(res, resumed);
       res.json({ ok: true });
     } catch (err) {
       log.error('sessions', 'Resume failed', { message: err.message });
@@ -4943,7 +4980,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // paused is bookkeeping, never a step anybody is asked to take first.
       if (session.status === 'paused') {
         const resumed = await resumePausedSession({ pool, config, user: req.user, sessionId });
-        if (!resumed.ok) return res.status(resumed.status).json({ error: resumed.error });
+        if (!resumed.ok) return sendResumeRefusal(res, resumed);
         session = { ...session, status: 'active' };
       }
       if (!['active', 'promoted'].includes(session.status)) {

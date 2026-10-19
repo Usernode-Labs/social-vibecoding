@@ -31,6 +31,19 @@ function platform() {
 
 const accepted = (out) => !!out && (out.status === 'accepted' || out.status === 'replayed');
 
+// Not decided in time: the machine, deciding in its own process, did not
+// answer within the wait, or reached the move past its deadline. A move with
+// a deadline is then never applied, so nothing changed and asking again may.
+const notDecided = (out) => !!out && (out.status === 'pending' || out.reason === 'expired');
+
+// What a person is told then: 503, `code: 'not_decided'`, Retry-After.
+const NOT_DECIDED = 'Homeroom has not decided this yet, so nothing changed. Try again in a few seconds.';
+const NOT_DECIDED_RETRY_AFTER_S = 5;
+function answerNotDecided(res, error = NOT_DECIDED) {
+  res.set('Retry-After', String(NOT_DECIDED_RETRY_AFTER_S));
+  return res.status(503).json({ error, code: 'not_decided' });
+}
+
 async function appSlugOf(pool, sessionId) {
   const { rows } = await pool.query(
     'SELECT a.slug FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1', [sessionId]);
@@ -43,9 +56,12 @@ async function appSlugOf(pool, sessionId) {
 // 'manual' (the owner's /pause), 'park', 'lru' and 'pressure' (a slot freed
 // for other work), 'rest', 'account-deletion', 'build-ended'. The platform's
 // own reasons never pause a session somebody works on, nor one a durable
-// build holds (the machine's guard). Returns { paused, appSlug? }.
+// build holds (the machine's guard). Returns { paused, appSlug? }, or
+// { paused: false, reason } with reason 'not_decided' when the machine did
+// not decide in time.
 async function pauseSession({ pool, sessionId, userId = null, reason = 'manual', from }) {
   const out = await platform().pauseProposal({ sessionId: Number(sessionId), reason, from, userId });
+  if (notDecided(out)) return { paused: false, reason: 'not_decided' };
   if (!accepted(out)) return { paused: false, reason: out?.reason || out?.status || null };
   const appSlug = await appSlugOf(pool, sessionId);
   log.info('session-lifecycle', 'Session paused', { sessionId, reason });
@@ -62,7 +78,7 @@ async function pauseSession({ pool, sessionId, userId = null, reason = 'manual',
 // Returns { ok: true, status, appSlug } on success, { ok: true, already: true,
 // status } when the proposal is already Underway, or { ok: false, code } with
 // code in 'not_found' | 'forbidden' | 'merging' | 'closed' | 'busy' |
-// 'pending_secret'.
+// 'pending_secret' | 'not_decided' (the machine did not decide in time).
 async function unpromoteSession({ pool, sessionId, userId, actorUsername = null }) {
   const { rows: [row] } = await pool.query(
     'SELECT status, user_id, app_id FROM chat_sessions WHERE id = $1 AND is_headless = FALSE', [sessionId]);
@@ -80,6 +96,7 @@ async function unpromoteSession({ pool, sessionId, userId, actorUsername = null 
   const out = await platform().unpromoteProposal({
     sessionId: Number(sessionId), appId: row.app_id, userId: Number(userId), username: actorUsername, from: row.status,
   });
+  if (notDecided(out)) return { ok: false, code: 'not_decided' };
   if (!accepted(out)) {
     const code = out?.reason;
     if (code === 'already_underway') return { ok: true, already: true, status: 'paused' };
@@ -108,16 +125,20 @@ const USER_VICTIMS_SQL = `SELECT id FROM chat_sessions
   ORDER BY last_activity_at ASC
   LIMIT 20`;
 
-// The first of `ids` the machine pauses for `reason`.
+// The first of `ids` the machine pauses for `reason`: { id }, or { id: null }
+// when it paused none. A pause it did not decide in time stops the search
+// ({ id: null, notDecided: true }): the machine is slow or restarting, and
+// every other victim would wait as long for nothing.
 async function pauseFirst(ids, reason) {
   for (const id of ids) {
     const out = await platform().pauseProposal({ sessionId: Number(id), reason, from: 'active' }).catch((err) => {
       log.warn('session-lifecycle', 'Could not ask to pause a session for a slot', { sessionId: id, reason, err: err.message });
       return null;
     });
-    if (accepted(out)) return Number(id);
+    if (accepted(out)) return { id: Number(id) };
+    if (notDecided(out)) return { id: null, notDecided: true };
   }
-  return null;
+  return { id: null };
 }
 
 // Demand-driven global-cap eviction. Called when a new session is needed
@@ -126,12 +147,14 @@ async function pauseFirst(ids, reason) {
 // nobody working on it, is paused, freeing a slot at once rather than
 // making the requester wait for its idle check. Cross-user by design: its
 // worker is long gone, and opening it resumes it. <= 0 disables.
-// Returns { freed: boolean, sessionId?: number }.
+// Returns { freed: boolean, sessionId?: number, notDecided?: true }: with
+// notDecided the caller answers a retryable 503 (answerNotDecided), not
+// "at capacity".
 async function freeGlobalSlot({ pool, graceMs, excludeSessionId = null }) {
   if (!graceMs || graceMs <= 0) return { freed: false };
   const { rows } = await pool.query(GLOBAL_VICTIMS_SQL, [graceMs, excludeSessionId == null ? 0 : excludeSessionId]);
-  const id = await pauseFirst(rows.map((r) => r.id), 'pressure');
-  if (id == null) return { freed: false };
+  const { id, notDecided: undecided } = await pauseFirst(rows.map((r) => r.id), 'pressure');
+  if (id == null) return { freed: false, ...(undecided ? { notDecided: true } : {}) };
   log.info('session-lifecycle', 'Freed global slot under pressure', { sessionId: id });
   return { freed: true, sessionId: id };
 }
@@ -143,11 +166,12 @@ async function freeGlobalSlot({ pool, graceMs, excludeSessionId = null }) {
 // or messaging the session resumes it: "paused" is not a state anybody is
 // asked to manage (#2779 follow-up). `includeHeadless`: the resume route's
 // count includes headless rows, so its victims may be headless too.
-// Returns { freed: boolean, sessionId?: number }.
+// Returns { freed: boolean, sessionId?: number, notDecided?: true }, as
+// freeGlobalSlot.
 async function freeUserSlot({ pool, userId, excludeSessionId = null, includeHeadless = false }) {
   const { rows } = await pool.query(USER_VICTIMS_SQL, [userId, excludeSessionId == null ? 0 : excludeSessionId, !!includeHeadless]);
-  const id = await pauseFirst(rows.map((r) => r.id), 'lru');
-  if (id == null) return { freed: false };
+  const { id, notDecided: undecided } = await pauseFirst(rows.map((r) => r.id), 'lru');
+  if (id == null) return { freed: false, ...(undecided ? { notDecided: true } : {}) };
   log.info('session-lifecycle', 'Freed a user slot', { userId, sessionId: id });
   return { freed: true, sessionId: id };
 }
@@ -155,6 +179,10 @@ async function freeUserSlot({ pool, userId, excludeSessionId = null, includeHead
 // The one thing a user is told when their slots cannot be freed: every other
 // session of theirs is in the middle of a turn.
 const USER_SLOTS_BUSY = 'Your other sessions are all busy finishing turns. Try again in a moment.';
+
+// What anybody is told when a session was asked to pause for their slot and
+// Homeroom did not decide it in time (answerNotDecided).
+const SLOT_NOT_DECIDED = 'Homeroom has not freed a session slot for this yet. Try again in a few seconds.';
 
 // What anybody is told when the platform-wide cap is full and nothing idle
 // could be paused to make room.
@@ -182,6 +210,8 @@ function recordCapacityRefusal(pool, { cap, path, userId = null, appId = null } 
  * an idle session paused to make room (freeGlobalSlot). `discount` is a slot
  * the request gives back (a replaced session). Answers { ok } and, when not,
  * records the refusal; the caller answers 429 with PLATFORM_AT_CAPACITY.
+ * A pause the machine did not decide in time is no refusal: { ok: false,
+ * notDecided: true }, and the caller answers answerNotDecided.
  */
 async function claimGlobalSlot({
   pool, config, path, userId = null, appId = null, excludeSessionId = null, discount = 0,
@@ -191,10 +221,11 @@ async function claimGlobalSlot({
   if ((await countGlobalSessions(pool)) - discount < cap) return { ok: true };
   // Through the exports, as the routes called it before this gate existed,
   // so a test's stand-in applies here too.
-  const { freed } = await module.exports.freeGlobalSlot({
+  const { freed, notDecided: undecided } = await module.exports.freeGlobalSlot({
     pool, graceMs: config && config.sessionPressureGraceMs, excludeSessionId,
   });
   if (freed) return { ok: true };
+  if (undecided) return { ok: false, notDecided: true };
   await recordCapacityRefusal(pool, { cap: 'global', path, userId, appId });
   return { ok: false };
 }
@@ -270,7 +301,9 @@ async function archiveSession({ pool, sessionId, userId = null, reason = 'manual
 // again, its slot given back ('paused'), so opening it resumes it through the
 // usual caps. Its pull request is reopened (after a close still under way
 // reports); one GitHub says is closed for good is forgotten, so the next
-// promote opens a fresh one. Returns { unarchived, ccPurged? }.
+// promote opens a fresh one. Returns { unarchived, ccPurged? }, with busy
+// (its teardown still running) or notDecided (the machine did not decide in
+// time) when asking again later may reopen it.
 async function unarchiveSession({ pool, sessionId, userId = null }) {
   const { rows: [row] } = await pool.query(
     `SELECT status, user_id, app_id, cc_purged FROM chat_sessions WHERE id = $1`, [sessionId]);
@@ -278,11 +311,10 @@ async function unarchiveSession({ pool, sessionId, userId = null }) {
   const out = await platform().reopenProposal({
     sessionId: Number(sessionId), appId: row.app_id, userId: Number(userId ?? row.user_id), from: row.status,
   });
+  if (notDecided(out)) return { unarchived: false, notDecided: true };
   if (!accepted(out)) {
-    // Its teardown still running, or not applied in time: not reopened, and
-    // asking again later may.
-    const busy = out?.reason === 'tearing_down' || out?.reason === 'expired' || out?.status === 'pending';
-    return { unarchived: false, ...(busy ? { busy: true } : {}) };
+    // Its teardown still running: not reopened, and asking again later may.
+    return { unarchived: false, ...(out?.reason === 'tearing_down' ? { busy: true } : {}) };
   }
   // Read after the reopen: a purge it waited for has recorded its end.
   const { rows: [after] } = await pool.query('SELECT cc_purged FROM chat_sessions WHERE id = $1', [sessionId]);
@@ -465,6 +497,10 @@ module.exports = {
   freeUserSlot,
   USER_SLOTS_BUSY,
   PLATFORM_AT_CAPACITY,
+  NOT_DECIDED,
+  SLOT_NOT_DECIDED,
+  NOT_DECIDED_RETRY_AFTER_S,
+  answerNotDecided,
   recordCapacityRefusal,
   claimGlobalSlot,
   teardownStagingForSession,

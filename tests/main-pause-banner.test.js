@@ -110,6 +110,20 @@ test('the button resolves to the one resume path the per-card ledger uses', () =
   assert.match(APP_VIEW_SRC, /\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/main-check\/resume/);
 });
 
+test('a resume Homeroom has recorded but not applied yet is a 202, and the toast says it is resuming', () => {
+  // The main-check machine decides in its own process. A resume it has not
+  // applied within the wait is applied once it is: the route answers 202
+  // without the pause read now (still the old one), and the client says it
+  // is resuming, not done, and refreshes.
+  const apps = read('src', 'routes', 'apps.js');
+  const route = apps.slice(apps.indexOf("router.post('/api/apps/:slug/main-check/resume'"));
+  assert.match(route, /if \(resumed === 'pending'\) return res\.status\(202\)\.json\(\{ ok: true, pending: true \}\);\n\s*const mainWatch = require/);
+  assert.match(route, /res\.json\(\{ ok: true, mainCheck: \(await mainWatch\.mergePause\(pool, rows\[0\]\.id\)\) \}\);/);
+  assert.match(APP_VIEW_SRC, /PlatformUI\.toast\(PlatformI18n\.t\(data\.pending \? 'changes:step\.resume\.pending' : 'changes:step\.resume\.done'\)\);\n\s*AppView\.refreshDevData\('main-check-resume'\);/);
+  const { message } = require('./lib/platform-i18n');
+  assert.match(message('changes:step.resume.pending'), /^Resuming merges\./);
+});
+
 test('the store is published from the promoted list on the server\'s admin rule', () => {
   // mount.ts exposes the setter; AppView publishes from `mainCheck` on the
   // same load, at the same moment.

@@ -329,6 +329,10 @@ test('level with main, conflicting, a moved head, or refused by the proposal mac
     [{ measured: { error: 'mirror down' } }, {}, 'unmeasured'],
     [{ answer: { status: 'rejected', reason: 'already_tried' } }, {}, 'already_tried'],
     [{ answer: { status: 'rejected', reason: 'busy' } }, {}, 'busy'],
+    // Recorded, not decided yet (the machine in another process, slow or
+    // restarting): said as such, not as a fault.
+    [{ answer: { status: 'pending', requestKey: 'k' } }, {}, 'pending'],
+    [{ answer: { status: 'faulted', reason: 'boom' } }, {}, 'threw'],
     [{}, { current: fullRow({ checks_commit_sha: NEW_HEAD }) }, 'head_moved'],
     [{}, { current: fullRow({ status: 'merged' }) }, 'gone'],
   ]) {

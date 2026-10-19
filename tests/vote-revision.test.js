@@ -38,9 +38,11 @@ stubModule('../src/services/notifications', {
 // appends it and reads the epoch off the reply. `moves` records each ask;
 // `moveReply` is what the machine answers.
 const moves = [];
+// `moveQueue`, when not empty, answers the asks in order before `moveReply`.
 let moveReply = { status: 'accepted', reply: { epoch: 4 } };
+let moveQueue = [];
 stubModule('../src/workflow/platform.ts', {
-  moveReviewHead: async (p) => { moves.push(p); return moveReply; },
+  moveReviewHead: async (p) => { moves.push(p); return moveQueue.length ? moveQueue.shift() : moveReply; },
 });
 
 const { retireVotesAfterAuthoredPush, retireAndRecheck } = require('../src/services/vote-revision');
@@ -50,6 +52,7 @@ const OLD_HEAD = '1111111111111111111111111111111111111111';
 function makePool({ counted = [], headNew = true, epoch = 4 } = {}) {
   const queries = [];
   moves.length = 0;
+  moveQueue = [];
   moveReply = { status: 'accepted', reply: { epoch } };
   return {
     queries,
@@ -108,6 +111,28 @@ test('a move the machine refuses (another pass got there first) bumps nothing', 
   const r = await retireVotesAfterAuthoredPush(pool, session, HEAD);
   assert.deepEqual(r, { bumped: false, epoch: null, retired: 0, priorYes: [] });
   assert.equal(moves.length, 1);
+});
+
+// The machine runs in another process: an answer it has not given within
+// the wait is `pending`, and the event's deadline means it will be refused
+// as expired. That is not "nothing moved": the move is asked again.
+test('a move the machine has not answered yet is asked again until it lands', async () => {
+  const pool = makePool({ counted: [{ user_id: 8, vote: 'yes' }], epoch: 6 });
+  moveQueue = [{ status: 'pending', requestKey: 'k1' }, { status: 'pending', requestKey: 'k2' }];
+  const r = await retireVotesAfterAuthoredPush(pool, session, HEAD);
+  assert.equal(r.bumped, true, 'the third ask landed');
+  assert.equal(r.epoch, 6);
+  assert.deepEqual(r.priorYes, [8]);
+  assert.equal(moves.length, 3, 'asked until the machine answered');
+  assert.ok(moves.every((m) => m.from === OLD_HEAD && m.to === HEAD), 'each ask is the same move');
+});
+
+test('a move the machine never answers is asked a bounded number of times', async () => {
+  const pool = makePool({ counted: [{ user_id: 8, vote: 'yes' }] });
+  moveReply = { status: 'pending', requestKey: 'k' };
+  const r = await retireVotesAfterAuthoredPush(pool, session, HEAD);
+  assert.deepEqual(r, { bumped: false, epoch: null, retired: 0, priorYes: [] });
+  assert.equal(moves.length, 4, 'once and three more times, then given up (loudly)');
 });
 
 test('retireAndRecheck announces once and asks the prior Yes voters back', async () => {

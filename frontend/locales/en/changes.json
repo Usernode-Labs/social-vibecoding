@@ -2087,6 +2087,10 @@
     "text": "Merges resumed. Anything ready merges on the next pass.",
     "description": "Toast shown after an administrator resumed merges on a project. \"The next pass\" is the next time Homeroom looks for approved changes to merge, usually within a minute."
   },
+  "step.resume.pending": {
+    "text": "Resuming merges. Homeroom has the request and lifts the pause shortly.",
+    "description": "Toast shown after an administrator asked to resume merges on a project and Homeroom accepted the request but has not applied it yet; the pause shows until it does."
+  },
   "step.headline.live": {
     "text": "Live",
     "description": "Headline of a proposal's list of steps when every step is done: the change is merged and running."
