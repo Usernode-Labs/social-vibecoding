@@ -34,7 +34,7 @@ const TX_CONTROL = /^\s*(begin|commit|rollback|end|abort|start|savepoint|release
 // faulted between the pick and the lock) before it reports nothing ready.
 const MAX_PASSES = 16;
 
-const millis = (v: number) => {
+export const millis = (v: number) => {
   const n = Math.floor(Number(v));
   if (!Number.isFinite(n) || n < 0) throw new Error(`workflow: invalid timeout ${v}`);
   return `'${n}ms'`;

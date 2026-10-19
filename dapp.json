@@ -296,12 +296,17 @@
     {
       "key": "WF_SLOTS",
       "group": "Proposals & retention",
-      "description": "How many workflow events each platform process applies at once (pipeline slots). Unset: 4, or 1 on a staging preview."
+      "description": "How many workflow events each platform process applies at once (pipeline slots). Unset: 4 in a process that runs the workflow (a conductor, or one that does everything), 0 in a web process, 1 on a staging preview."
     },
     {
       "key": "WF_POOL_MAX",
       "group": "Proposals & retention",
-      "description": "Connections in the workflow runtime's own database pool, kept apart from request traffic. Unset: 6, or 2 on a staging preview. Keep it above WF_SLOTS."
+      "description": "Connections in the workflow runtime's own database pool, kept apart from request traffic. Unset: 10 in a process that runs the workflow, 2 in a web process or on a staging preview. Keep it above WF_SLOTS."
+    },
+    {
+      "key": "WF_METRICS_PORT",
+      "group": "Proposals & retention",
+      "description": "The port a process that runs the workflow serves its metrics on (GET /metrics, for Prometheus). Unset: no metrics are served."
     },
     {
       "key": "CERT_WARM_TIMEOUT_MS",

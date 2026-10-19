@@ -175,7 +175,7 @@ export interface WorkHandler {
   run(ctx: WorkContext): Promise<Json | void>;
   maxAttempts?: number;                   // default 5; an error with `permanent: true` is not retried
   backoffMs?: (attempt: number) => number;
-  concurrency?: number;                   // per kind, in this process
+  concurrency?: number;                   // per kind, across every process (default 4)
   leaseMs?: number;
   // Carries its work on from its checkpoint: attempts lost with their process
   // do not count against maxAttempts, only against maxLostAttempts (default 100).

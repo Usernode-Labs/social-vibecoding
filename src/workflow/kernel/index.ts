@@ -1,16 +1,16 @@
 // The workflow kernel's entry point. A process creates one runtime with the
 // machines and services it knows. Every process can append and wait; the
-// pipeline slots, timer loop and services run where `start` enables them
-// (slots on every process, the rest on the leader). Correctness never
-// depends on which process runs what: it comes from row locks and SKIP
-// LOCKED claims.
+// pipeline slots, timer loop and services run where `start` enables them,
+// in any number of processes at once. Correctness never depends on which
+// process runs what: it comes from row locks, SKIP LOCKED claims and
+// leases, and a kind's work limit is counted across every process.
 // docs/workflows.md explains the model and how to write a machine.
 
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { processNext } from './pipeline.ts';
 import { fireDueTimers, nextDeadlineMs, purge } from './timers.ts';
-import { claim, execute, nextDueMs } from './services.ts';
+import { claim, concurrencyOf, dueKinds, execute, nextDueMs } from './services.ts';
 import { Signals, append, waitForInstance, waitForOutcome } from './stream.ts';
 import type { AppendOptions } from './stream.ts';
 import { release } from './inspect.ts';
@@ -47,6 +47,9 @@ export interface RuntimeOptions {
 }
 
 const quiet: Logger = { info() {}, warn() {}, error() {} };
+// How long a full kind is left be at most without a notify: the fallback
+// for a notify that never came.
+const FULL_RECHECK_MS = 30000;
 
 export function createRuntime(opts: RuntimeOptions) {
   const log = opts.log || quiet;
@@ -60,7 +63,7 @@ export function createRuntime(opts: RuntimeOptions) {
   const timeouts = { lockTimeoutMs: opts.lockTimeoutMs ?? 2000, statementTimeoutMs: opts.statementTimeoutMs ?? 5000 };
   const pipeline = { pool: opts.pool, machines, log, ...timeouts, stallAfter: opts.stallAfter ?? 5, publish: opts.publish };
   const service = { pool: opts.pool, handlers, log, serviceId: opts.serviceId || `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`,
-    versions: new Map([...machines].map(([name, m]) => [name, m.version])) };
+    versions: new Map([...machines].map(([name, m]) => [name, m.version])), ...timeouts };
   const signals = new Signals(opts.pool, log);
   const stopping = new AbortController();
   // Set by quiesce(): the loops end, the work they started does not.
@@ -69,7 +72,7 @@ export function createRuntime(opts: RuntimeOptions) {
   const running = new Map<string, Set<Promise<void>>>();
   let listening = false;
   let slotsRunning = false;
-  let leaderLoops = false;
+  let loopsRunning = false;
 
   const machineFor = (m: Machine<any, any> | string) =>
     typeof m === 'string' ? (machines.get(m) || m) : m;
@@ -101,21 +104,52 @@ export function createRuntime(opts: RuntimeOptions) {
     })());
   }
 
-  // Kinds this process has room to run.
-  const kindsWithRoom = () => [...handlers].filter(([kind, h]) => (running.get(kind)?.size ?? 0) < (h.concurrency ?? 4)).map(([k]) => k);
+  // A kind's room in this process; its limit holds across every process
+  // (services.ts claim), so one process may take all of it.
+  const localRoom = (kind: string, h: WorkHandler) => concurrencyOf(h) - (running.get(kind)?.size ?? 0);
+  // Kinds at their limit across every process, and until when to leave them
+  // be: an item of the kind ending (a `wf_work` notify) clears it sooner.
+  // Without this a backlog behind a full kind would look due all the time.
+  const full = new Map<string, number>();
+  const isFull = (kind: string) => {
+    const until = full.get(kind);
+    if (until === undefined) return false;
+    if (Date.now() < until) return true;
+    full.delete(kind);
+    return false;
+  };
+  // Kinds this process may claim now.
+  const kindsWithRoom = () => [...handlers].filter(([kind, h]) => localRoom(kind, h) > 0 && !isFull(kind)).map(([k]) => k);
+  // A `wf_work` notify names a kind: new work of it, or an item of it that
+  // ended somewhere. It wakes the services loop when this process could
+  // claim that kind; a wake with no kind (this process's own) always does.
+  const wakesForWork = (payload: string) => {
+    if (!payload) return true;
+    full.delete(payload);
+    const h = handlers.get(payload);
+    return !!h && localRoom(payload, h) > 0;
+  };
+  const nextFreeMs = () => {
+    let min: number | null = null;
+    for (const until of full.values()) min = Math.min(min ?? Infinity, until - Date.now());
+    return min;
+  };
 
   // Claim and start what this process has room for; returns the started runs.
   async function startServices(): Promise<Promise<void>[]> {
     const started: Promise<void>[] = [];
-    for (const [kind, handler] of handlers) {
+    for (const kind of await dueKinds(service, kindsWithRoom())) {
+      const handler = handlers.get(kind)!;
       const set = running.get(kind) || new Set();
       running.set(kind, set);
-      const room = (handler.concurrency ?? 4) - set.size;
-      if (room <= 0) continue;
-      for (const w of await claim(service, kind, room)) {
+      const room = localRoom(kind, handler);
+      if (room <= 0 || stopping.signal.aborted || quiesced) continue;
+      const claimed = await claim(service, kind, room);
+      if (claimed.full) full.set(kind, Date.now() + Math.min(Math.max(claimed.freeInMs ?? FULL_RECHECK_MS, 1000), FULL_RECHECK_MS));
+      for (const w of claimed.items) {
         const run = execute(service, w, stopping.signal)
           .catch((err) => log.error('workflow', 'work execution failed', { kind, workId: w.id, message: err?.message }))
-          .finally(() => { set.delete(run); signals.wake('wf_work'); });
+          .finally(() => { set.delete(run); full.delete(kind); signals.wake('wf_work', kind); });
         set.add(run);
         started.push(run);
       }
@@ -161,6 +195,12 @@ export function createRuntime(opts: RuntimeOptions) {
       return waitForInstance(opts.pool, listening ? signals : null, name, key, done, waitMs);
     },
 
+    // Each kind's limit across every process, and the machine versions this
+    // process runs: what the problems and the health read work against.
+    workLimits(): { limits: Map<string, number>; versions: Map<string, number> } {
+      return { limits: new Map([...handlers].map(([kind, h]) => [kind, concurrencyOf(h)])), versions: new Map(service.versions) };
+    },
+
     // Single steps, for tests and admin tooling.
     processNext: () => processNext(pipeline),
     async drain(max = 1000): Promise<number> {
@@ -181,10 +221,11 @@ export function createRuntime(opts: RuntimeOptions) {
       release(opts.pool, machine, key, { ...o, ...timeouts }),
 
     // Every process starts signals (so appendAndWait wakes on outcomes).
-    // With `slots`, it also runs pipeline slots: every process may, since
-    // an instance's row lock decides who applies its events. With `loops`,
-    // it runs the slots, timers and services: the leader for now. Callable
-    // again later: a follower starts its loops when it is elected.
+    // With `slots`, it also runs pipeline slots: any process may, since an
+    // instance's row lock decides who applies its events. With `loops`, it
+    // runs the slots, timers and services: any number of processes may,
+    // since timers fire under SKIP LOCKED and work is claimed under its
+    // kind's limit across them all. Callable again later, to add the loops.
     async start(o: { loops?: boolean; slots?: boolean } = {}) {
       if (!listening) {
         listening = true;
@@ -198,8 +239,8 @@ export function createRuntime(opts: RuntimeOptions) {
             async () => idle.retryInMs);
         }
       }
-      if (!o.loops || leaderLoops) return;
-      leaderLoops = true;
+      if (!o.loops || loopsRunning) return;
+      loopsRunning = true;
       let lastPurge = 0;
       loop('timer', async () => {
         if (Date.now() - lastPurge > 3600000) {
@@ -212,7 +253,11 @@ export function createRuntime(opts: RuntimeOptions) {
       // the loop's wake-up wakes it (every vote re-arms a later backstop).
       (payload, until) => Number(payload) < until);
       if (handlers.size) {
-        loop('services', async () => (await startServices()).length > 0, 'wf_work', () => nextDueMs(opts.pool, kindsWithRoom()));
+        loop('services', async () => (await startServices()).length > 0, 'wf_work', async () => {
+          const due = await nextDueMs(opts.pool, kindsWithRoom());
+          const free = nextFreeMs();
+          return due === null ? free : free === null ? due : Math.min(due, free);
+        }, wakesForWork);
       }
     },
 

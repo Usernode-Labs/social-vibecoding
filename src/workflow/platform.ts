@@ -1,15 +1,15 @@
 // The workflow runtime inside the platform process: created at boot in
 // every process (a failed start ends it: server.js), with its own small pool
 // so pipeline slots and the outcome listener never take request
-// connections. Every process appends, waits and runs pipeline slots (so a
-// Pod that is not the leader, during a rollout, still decides its own votes
-// at once); timers, services and the boot backfill run on the leader, and
-// on a staging preview (which never stands for election) so a preview still
-// decides.
+// connections. Every process appends and waits for outcomes. A process that
+// runs the workflow (a conductor, in as many replicas as run, or an 'all':
+// services/process-role.js runsWorkflow) also runs the pipeline slots, the
+// timers and the services, none of which needs the leader lock; a web
+// process runs no slot (config.js wfSlots), so it decides nothing.
 
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
-import { appendEvent, createRuntime } from './kernel/index.ts';
+import { appendEvent, createRuntime, inspect } from './kernel/index.ts';
 import type { EventOutcome, Json, Logger, Pool, Push, Queryable, Runtime } from './kernel/index.ts';
 import { legacy } from './legacy.ts';
 import { GOVERNANCE_KINDS } from './governance-proposal/facts.ts';
@@ -43,6 +43,9 @@ import { MACHINE as BOT_REQUEST, botRequest } from './bot-request/machine.ts';
 import { botRequestServices } from './bot-request/services.ts';
 import { MACHINE as BOT_LANE, KEY as LANE_KEY, botLane } from './bot-lane/machine.ts';
 import { botLaneServices } from './bot-lane/services.ts';
+import { MACHINE as RELEASE, releaseKey, releaseMachine } from './release/machine.ts';
+import { releaseServices } from './release/services.ts';
+import type { Adoption } from './release/services.ts';
 import { requestKey as botRequestKey } from './rules/bot-loop.ts';
 import { DM as BOT_DM, VOICE as BOT_VOICE, dmKey, placeOf, voiceKey } from './rules/bot-replies.ts';
 import type { Place } from './rules/bot-replies.ts';
@@ -122,6 +125,25 @@ export async function publishPushes(q: Queryable, pushes: Push[], { badges = fal
     [BUS_CHANNEL, pushes.map((p) => workflowBody(p.kind, (p.routing ?? null) as Json, p.data)), owed]);
 }
 
+// A process that dies with its node sends the server nothing, and its
+// sessions, with the row locks a slot holds and a claim's advisory lock,
+// would live on until the server's OS keepalive gave up on them: two hours
+// and more, while every other process's slots time out on that instance. So
+// the runtime's sessions reap a dead peer as the leader lock's session does
+// (services/leadership.js): the server probes a silent client and drops it
+// within about 40 s, and a transaction left open by a client that stopped
+// talking ends after 30 s (a transition never waits outside the database
+// inside one: docs/workflows.md).
+function deadPeerOptions() {
+  const { KEEPALIVE_INITIAL_DELAY_MS, SERVER_KEEPALIVE } = legacy('services/leadership');
+  const settings = { ...SERVER_KEEPALIVE, idle_in_transaction_session_timeout: 30000 };
+  return {
+    keepAlive: true,
+    keepAliveInitialDelayMillis: KEEPALIVE_INITIAL_DELAY_MS,
+    options: Object.entries(settings).map(([name, value]) => `-c ${name}=${value}`).join(' '),
+  };
+}
+
 export async function startWorkflow(config: any, opts: { loops: boolean }): Promise<void> {
   log = legacy('services/logger');
   const appPool = legacy('db/pool').getPool(config);
@@ -129,6 +151,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   if (runtime) return;
   const workflowPool = new pg.Pool({
     connectionString: config.databaseUrl, max: config.wfPoolMax, idleTimeoutMillis: 30000, application_name: 'homeroom-workflow',
+    ...deadPeerOptions(),
   });
   // An idle connection the server drops (a restart, a failover, an admin's
   // pg_terminate_backend) is reported here; without a listener it would be
@@ -162,12 +185,15 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   const staging = process.env.USERNODE_ENV === 'staging';
   const requests = botRequest({ staging });
   const lane = botLane({ staging });
-  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane];
+  // What a release runs once, whichever process claims it (release/).
+  const releases = releaseMachine();
+  const machines = [machine, merges, builds, deliveries, previews, shotRuns, proposals, queues, campaigns, botChanges, voices, dms, checks, requests, lane, releases];
   const services = {
     ...governanceServices(deps), ...mergeFollowupsServices(deps), ...botBuildServices(deps),
     ...appDeliveryServices(deps), ...previewServices(deps), ...shotsServices(deps), ...proposalServices(deps),
     ...campaignServices(deps), ...botChangeServices(deps), ...botVoiceServices(deps), ...botDmServices(deps),
     ...mainCheckServices(deps), ...botRequestServices(deps), ...botLaneServices(deps),
+    ...releaseServices({ adoptions: ADOPTIONS }),
   };
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!,
@@ -202,12 +228,50 @@ export async function releaseServing(pool: Pool): Promise<void> {
   if (runtime) await releaseBooted(pool).catch(warn('Could not report the running release'));
 }
 
-// The leader's part: timers and services, then enrolling every open
-// governance row and every proposal that needs a timer the machines do not
-// hold yet.
+// The build this process runs, as the release machine names it: GIT_SHA, or,
+// on a build without one (local work, tests), this boot, so each such boot
+// still runs the adoptions once.
+const BOOT = randomUUID();
+function bootRelease(): string {
+  const sha = String(process.env.GIT_SHA || '').trim().slice(0, 40);
+  return sha && sha !== 'dev' ? sha : `dev:${BOOT}`;
+}
+
+// The loops: pipeline slots (already running), the timer loop and the
+// services, in a process that runs the workflow (a conductor, or 'all':
+// services/process-role.js runsWorkflow), once its listener and its bus are
+// up (server.js), and in as many processes as run it: nothing here needs to
+// be the only one. Then the release's adoptions are owed once (`Booted`, keyed
+// by the build): whichever process claims release.adopt runs them, and
+// booting waits for none of it.
 export async function startWorkflowLoops(): Promise<void> {
   if (!runtime) return;
   await runtime.start({ loops: true });
+  const release = bootRelease();
+  await runtime.append(RELEASE, releaseKey(release), { type: 'Booted', payload: { release } },
+    { requestKey: `booted:${release}`, source: { kind: 'system', name: 'boot' } });
+}
+
+// What a new build owes what an older one left, in order (release/services.ts):
+// open governance rows no instance holds, the sessions the proposal machine
+// does not hold, waits with no clock, the merge queues, deferred DM answers,
+// main checks mid-run, the bot's queue rows, the platform's own faults, and
+// the bot lane's clock.
+const ADOPTIONS: readonly Adoption[] = Object.freeze([
+  ['governance', () => enrollGovernance()],
+  ['proposals', () => adoptProposals()],
+  ['waitingProposals', () => rearmWaitingProposals()],
+  ['mergeQueues', () => adoptMergeQueues()],
+  ['deferredDms', () => adoptDeferredDms()],
+  ['mainChecks', () => adoptMainChecks()],
+  ['botQueue', () => adoptBotQueue()],
+  ['platformFaults', () => retryPlatformFaults()],
+  ['botLane', (release: string) => startLaneClock(release)],
+] as Adoption[]);
+
+// Every open governance row the machine does not hold yet is filed with it.
+async function enrollGovernance(): Promise<number> {
+  if (!runtime) return 0;
   const { rows } = await kernelPool!.query(
     `SELECT i.id, i.app_id FROM issues i
       WHERE i.status = 'open' AND i.kind = ANY($1::text[])
@@ -215,17 +279,15 @@ export async function startWorkflowLoops(): Promise<void> {
     [[...GOVERNANCE_KINDS], MACHINE]);
   for (const r of rows) await file(r.id, r.app_id, { kind: 'system', name: 'backfill' });
   if (rows.length) log!.info('workflow', 'Enrolled open governance proposals', { count: rows.length });
-  await adoptProposals();
-  await rearmWaitingProposals();
-  await adoptMergeQueues();
-  await adoptDeferredDms();
-  await adoptMainChecks();
-  await adoptBotQueue();
-  await retryPlatformFaults();
-  // The bot's lane starts its clock (its refresh, its grants): idempotent,
-  // the same tick at every boot.
+  return rows.length;
+}
+
+// The bot's lane starts its clock (its refresh, its grants): the same tick,
+// once per release.
+async function startLaneClock(release: string): Promise<void> {
+  if (!runtime) return;
   await runtime.append(BOT_LANE, LANE_KEY, { type: 'Tick', payload: {} },
-    { requestKey: `boot:${randomUUID()}`, source: { kind: 'system', name: 'boot' } });
+    { requestKey: `boot:${release}`, source: { kind: 'system', name: 'boot' } });
 }
 
 // ── The Homeroom bot's loop (bot-request, bot-lane) ────────────────────
@@ -703,6 +765,18 @@ function running(): Runtime {
 // Whether the runtime runs in this process (the admin console's reads say so).
 export function workflowRunning(): boolean {
   return runtime !== null;
+}
+
+// Each kind's limit across every process, and the machine versions this
+// release runs: what Admin → Workflows' "nobody can take it" reads against.
+export function workLimits(): { limits: Map<string, number>; versions: Map<string, number> } | Record<string, never> {
+  return runtime ? runtime.workLimits() : {};
+}
+
+// The workflow's health in numbers, for its metrics (metrics.ts).
+export async function workflowHealth() {
+  const r = running();
+  return inspect.health(kernelPool!, r.workLimits());
 }
 
 type Source = { kind: 'route' | 'system' | 'admin'; name?: string };

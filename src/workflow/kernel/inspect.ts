@@ -30,7 +30,44 @@ function eventRow(r: any) {
 
 // A state a machine names as waiting on something outside (`attention`).
 export interface AttentionState { machine: string; state: string; says: string }
-export interface ProblemOptions { overdueMs?: number; longRunningMs?: number; limit?: number; attention?: AttentionState[] }
+export interface ProblemOptions extends Partial<WorkLimits> {
+  overdueMs?: number; longRunningMs?: number; limit?: number; attention?: AttentionState[];
+}
+// What the work this release runs may take (each kind's limit across every
+// process) and the machine versions it runs (the mixed-version rule): what
+// tells work nobody can take from work waiting its turn.
+export interface WorkLimits { limits: ReadonlyMap<string, number>; versions: ReadonlyMap<string, number>; unclaimedMs?: number }
+
+// Work due for more than `unclaimedMs` (5 min) that a process running this
+// release could take now (its kind is below its limit, and its instance is
+// not a newer version's) and none has: no process runs the workflow, or
+// none can claim. Work waiting behind a kind at its limit is not in it.
+const UNCLAIMED_SQL = `
+  WITH running AS (
+    SELECT kind, count(*)::int AS n FROM wf_work
+     WHERE status = 'running' AND lease_until > now() GROUP BY kind)
+  SELECT w.id, w.machine, w.key, w.kind, w.work_key, w.status, w.attempt_count, w.last_error, w.result,
+         w.created_at, w.due_at,
+         EXTRACT(EPOCH FROM now() - CASE WHEN w.status = 'queued' THEN w.due_at ELSE w.lease_until END)::float8 AS waited
+    FROM wf_work w
+    JOIN unnest($1::text[], $2::int[]) AS l(kind, lim) ON l.kind = w.kind
+    LEFT JOIN running r ON r.kind = w.kind
+    LEFT JOIN wf_instances i ON i.machine = w.machine AND i.key = w.key
+    LEFT JOIN unnest($3::text[], $4::int[]) AS m(machine, version) ON m.machine = w.machine
+   WHERE ((w.status = 'queued' AND w.due_at < now() - make_interval(secs => $5::float8 / 1000))
+          OR (w.status = 'running' AND w.lease_until < now() - make_interval(secs => $5::float8 / 1000)))
+     AND COALESCE(r.n, 0) < l.lim
+     AND (i.machine_version IS NULL OR m.version IS NULL OR i.machine_version <= m.version)
+   ORDER BY waited DESC LIMIT $6`;
+
+const unclaimedArgs = (o: WorkLimits, limit: number) =>
+  [[...o.limits.keys()], [...o.limits.values()], [...o.versions.keys()], [...o.versions.values()], o.unclaimedMs ?? 300000, limit];
+
+// The oldest event waiting to be decided (pending and due, not held behind a
+// fault), in seconds: what says no process decides.
+const PENDING_OLDEST_SQL = `
+  SELECT COALESCE(EXTRACT(EPOCH FROM now() - min(COALESCE(retry_at, created_at))), 0)::float8 AS s
+    FROM wf_events WHERE status = 'pending' AND (retry_at IS NULL OR retry_at <= now())`;
 
 // Everything that needs a person: faulted or stalled instances, held events,
 // deadlines that did not fire, exhausted or long-running work, and instances
@@ -39,7 +76,7 @@ export async function problems(db: Queryable, opts: ProblemOptions = {}) {
   const limit = opts.limit ?? 100;
   const attention = opts.attention || [];
   const says = new Map(attention.map((a) => [`${a.machine}\u0000${a.state}`, a.says]));
-  const [flagged, overdue, work, waiting] = await Promise.all([
+  const [flagged, overdue, work, waiting, unclaimed, pending] = await Promise.all([
     db.query(
       `SELECT i.*, (SELECT count(*) FROM wf_events e
                      WHERE e.machine = i.machine AND e.key = i.key AND e.status = 'held') AS held
@@ -63,8 +100,17 @@ export async function problems(db: Queryable, opts: ProblemOptions = {}) {
            JOIN unnest($1::text[], $2::text[]) AS a(machine, state) ON a.machine = i.machine AND a.state = i.state
           ORDER BY i.updated_at LIMIT $3`, [attention.map((a) => a.machine), attention.map((a) => a.state), limit])
       : Promise.resolve({ rows: [] as any[] }),
+    opts.limits && opts.versions
+      ? db.query(UNCLAIMED_SQL, unclaimedArgs(opts as WorkLimits, limit))
+      : Promise.resolve({ rows: [] as any[] }),
+    db.query(PENDING_OLDEST_SQL),
   ]);
   return {
+    unclaimed: unclaimed.rows.map((r) => ({
+      id: r.id, machine: r.machine, key: r.key, kind: r.kind, workKey: r.work_key, status: r.status,
+      attempts: r.attempt_count, lastError: r.last_error, createdAt: r.created_at, dueAt: r.due_at, waitedSeconds: Number(r.waited),
+    })),
+    pendingOldestSeconds: Number(pending.rows[0]?.s ?? 0),
     flagged: flagged.rows.map((r) => ({ ...instanceRow(r), heldEvents: Number(r.held) })),
     overdueDeadlines: overdue.rows.map(instanceRow),
     work: work.rows.map((r) => ({
@@ -73,6 +119,52 @@ export async function problems(db: Queryable, opts: ProblemOptions = {}) {
       createdAt: r.created_at, startedAt: r.started_at, serviceId: r.service_id,
     })),
     waiting: waiting.rows.map((r) => ({ ...instanceRow(r), says: says.get(`${r.machine}\u0000${r.state}`) || null })),
+  };
+}
+
+// The workflow's health in numbers, for the metrics a Prometheus scrapes
+// (src/workflow/metrics.ts): the same signs as the problems above, as counts
+// and ages, each one query on an index.
+export interface Health {
+  unclaimedOldestSeconds: number;
+  pendingOldestSeconds: number;
+  flagged: Map<string, number>;
+  deadlinesOverdue: number;
+  exhaustedLastHour: number;
+  quarantinedLastHour: number;
+  running: Map<string, number>;
+  decisionP95Seconds: Map<string, number>;
+}
+
+export async function health(db: Queryable, o: WorkLimits & { overdueMs?: number }): Promise<Health> {
+  const [unclaimed, pending, flagged, overdue, settled, running, decisions] = await Promise.all([
+    db.query(`SELECT COALESCE(max(waited), 0)::float8 AS s FROM (${UNCLAIMED_SQL}) u`, unclaimedArgs(o, 1)),
+    db.query(PENDING_OLDEST_SQL),
+    db.query(`SELECT flag, count(*)::int AS n FROM wf_instances WHERE flag IS NOT NULL GROUP BY flag`),
+    db.query(`SELECT count(*)::int AS n FROM wf_instances
+               WHERE deadline_at < now() - make_interval(secs => $1::float8 / 1000)`, [o.overdueMs ?? 60000]),
+    db.query(`SELECT count(*) FILTER (WHERE result->>'outcome' = 'exhausted')::int AS exhausted,
+                     count(*) FILTER (WHERE last_error->>'code' = 'lost_repeatedly')::int AS quarantined
+                FROM wf_work WHERE status = 'settled' AND settled_at > now() - interval '1 hour'`),
+    db.query(`SELECT kind, count(*)::int AS n FROM wf_work
+               WHERE status = 'running' AND lease_until > now() GROUP BY kind`),
+    // How long people's events waited for their decision (a route's, an
+    // admin's), per machine, over the last quarter hour.
+    db.query(`SELECT machine, percentile_cont(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM processed_at - created_at))::float8 AS p95
+                FROM wf_events
+               WHERE status = 'processed' AND processed_at > now() - interval '15 minutes'
+                 AND source->>'kind' IN ('route', 'admin')
+               GROUP BY machine`),
+  ]);
+  return {
+    unclaimedOldestSeconds: Number(unclaimed.rows[0]?.s ?? 0),
+    pendingOldestSeconds: Number(pending.rows[0]?.s ?? 0),
+    flagged: new Map(flagged.rows.map((r) => [String(r.flag), Number(r.n)])),
+    deadlinesOverdue: Number(overdue.rows[0]?.n ?? 0),
+    exhaustedLastHour: Number(settled.rows[0]?.exhausted ?? 0),
+    quarantinedLastHour: Number(settled.rows[0]?.quarantined ?? 0),
+    running: new Map(running.rows.map((r) => [String(r.kind), Number(r.n)])),
+    decisionP95Seconds: new Map(decisions.rows.map((r) => [String(r.machine), Number(r.p95)])),
   };
 }
 
