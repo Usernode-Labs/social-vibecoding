@@ -26155,6 +26155,11 @@ const AppView = {
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.
       window.Notifications?.refresh?.();
+      // The vote now belongs in Your votes and the Kudos My history tab
+      // (#5452): tell both, the same way the kudos give path does. Never
+      // optimistic — only on the server's yes.
+      window.UsernodeReact?.profileProposals?.voted?.();
+      window.Leaderboard?.invalidateHistory?.();
       return true;
     } catch {
       rollback();
@@ -26297,6 +26302,10 @@ const AppView = {
       // Voting clears this proposal's nudge server-side; re-pull so the
       // unread badge drops it. Never optimistic — only on an ok response.
       window.Notifications?.refresh?.();
+      // As castVote (#5452): the vote reaches Your votes and the Kudos
+      // history as soon as the server saved it.
+      window.UsernodeReact?.profileProposals?.voted?.();
+      window.Leaderboard?.invalidateHistory?.();
     } catch (err) {
       // Network/abort: the server-side apply may well have completed, so
       // park on the failure copy rather than pretending nothing happened.

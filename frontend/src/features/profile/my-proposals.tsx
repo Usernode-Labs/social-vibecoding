@@ -252,7 +252,16 @@ export function ProfileProposalsScreen(): ReactNode {
  * publishes, so an answer that lands after the viewer left cannot paint into
  * a screen they are no longer on; `kind` is checked the same way, so a
  * changes read cannot paint into the votes view.
+ *
+ * `voted` is #5452: a vote cast on a change or a group decision belongs in
+ * Your votes the moment the server saved it, but the view reads once per
+ * open, and a vote button answers ahead of the row being written (a deciding
+ * vote can hold its POST for seconds). If the votes view is up, read again;
+ * if not, drop the cached list so the next open loads, and never paints the
+ * list from before the vote.
  */
+let readSeq = 0;
+
 export const profileProposalsController = {
   open(kind?: unknown) {
     profileProposalsStore.set({ open: true, kind: workKind(kind), error: false });
@@ -265,8 +274,23 @@ export const profileProposalsController = {
     const state = profileProposalsStore.get() as WorkState;
     return state.open && (kind === undefined || state.kind === workKind(kind));
   },
+  voted() {
+    if (profileProposalsController.isOpen('votes')) {
+      return profileProposalsController.reload();
+    }
+    const now = profileProposalsStore.get() as WorkState;
+    if (now.data.votes !== undefined) {
+      const data = { ...now.data };
+      delete data.votes;
+      profileProposalsStore.set({ data });
+    }
+  },
   async reload() {
     const kind = (profileProposalsStore.get() as WorkState).kind;
+    // Only the newest read publishes: the one an open() started before a
+    // vote was saved could otherwise land after the post-vote read and put
+    // the stale list back (#5452).
+    const seq = ++readSeq;
     profileProposalsStore.set({ error: false });
     let data: unknown = null;
     try {
@@ -275,6 +299,7 @@ export const profileProposalsController = {
     } catch {
       data = null;
     }
+    if (seq !== readSeq) return;
     const now = profileProposalsStore.get() as WorkState;
     if (!now.open || now.kind !== kind) return;
     if (!data) {

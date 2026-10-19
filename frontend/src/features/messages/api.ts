@@ -866,7 +866,15 @@ export async function approveChange(sessionId: number, epoch: number | null): Pr
     return { ok: false, stale: false, epoch: null, error: t('messages:api.approve.unreachable') };
   }
   const data = record(await response.json().catch(() => ({})));
-  if (response.ok) return { ok: true, stale: false, epoch, error: null, goesLive: normalizeGoesLive(pick(data, 'goesLive')) };
+  if (response.ok) {
+    // The Yes now belongs in Your votes and the Kudos My history tab (#5452):
+    // tell both through the window bridge, the way the kudos give path does,
+    // so this chunk does not pull in the profile screen. Never optimistic —
+    // only on the server's yes.
+    (window as any).UsernodeReact?.profileProposals?.voted?.();
+    (window as any).Leaderboard?.invalidateHistory?.();
+    return { ok: true, stale: false, epoch, error: null, goesLive: normalizeGoesLive(pick(data, 'goesLive')) };
+  }
   const stale = response.status === 409 && pick(data, 'headChanged') === true;
   const next = Number.isInteger(pick(data, 'approvalEpoch')) ? Number(pick(data, 'approvalEpoch')) : null;
   return { ok: false, stale, epoch: next, error: stale ? null : (text(pick(data, 'message')) || text(pick(data, 'error')) || t('messages:api.approve.failed')) };
