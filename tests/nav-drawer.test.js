@@ -158,6 +158,29 @@ test('the store: one level at a time, the search first, nothing while it does no
   assert.equal(store.liveDepth(), 2);
 });
 
+test('#5581: asked for the list, the drawer opens on your communities, not the page', () => {
+  const store = loadTsx(`${DIR}/drawer-store.ts`);
+  let recorded = 0;
+  store.setBackRecords((close) => { recorded += 1; return () => {}; });
+  store.requestOuter();
+  store.setOn(true);
+  assert.equal(store.drawerStore.get().level, 0, 'the list, as a sidebar');
+  assert.equal(store.liveDepth(), 0, 'and the header is drawn for it at once');
+  assert.equal(recorded, 1, 'and Back returns to the page it was opened over');
+  store.setOn(false);
+  store.setOn(true);
+  assert.equal(store.drawerStore.get().level, 2, 'the request was spent: the next open is the page');
+  // A request whose page never came does not outlive its moment.
+  store.setOn(false);
+  const now = Date.now;
+  Date.now = () => 5_000;
+  store.requestOuter();
+  Date.now = () => 5_000 + 10_001;
+  store.setOn(true);
+  Date.now = now;
+  assert.equal(store.drawerStore.get().level, 2, 'stale: ignored');
+});
+
 test('while it is off the page it holds a Back record, and a navigating press leaves it', () => {
   const src = read(`${DIR}/drawer-store.ts`);
   assert.match(src, /if \(level < 2\) holdBack\(\);\s*else if \(!opts\.viaBack\) letGoBack\(!!opts\.navigating\);/);
