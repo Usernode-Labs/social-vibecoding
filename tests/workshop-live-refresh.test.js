@@ -47,15 +47,26 @@ test('#5164: the late-arrival correction re-runs the workshop screen\'s quiet re
     'through its own quiet reload, the same loader the screen runs');
 });
 
-test('#5164: the controller\'s quiet reads ask for the current answer, not the saved copy', () => {
+test('#5164, #5462: the quiet reads and re-entry ask for the current answer, not the saved copy', () => {
   assert.match(workshopTsx, /fetch\(`\/api\/workshop\/counts\$\{demo\}`, \{ cache: 'no-cache' \}\)/,
     'counts, in the wantsFreshAnswer spelling the worker reads (#4177)');
   assert.match(workshopTsx, /fetch\(`\/api\/workshop\/needs-feed\$\{demo\}`, \{ cache: 'no-cache' \}\)/,
     'and the Needs you feed with it');
-  // The FIRST paint stays a boot read: only the quiet reads go fresh.
-  assert.match(workshopTsx, /fetch\(`\/api\/workshop\/counts\$\{demo\}`\)\.catch/,
-    'reload()\'s boot reads keep the worker\'s fast lane');
-  assert.match(workshopTsx, /fetch\(`\/api\/workshop\/needs-feed\$\{demo\}`\)\.catch/);
+  // #5462: reload()'s re-entry read goes fresh the same way. The store
+  // already holding rows or a feed is what says this is a return — open()
+  // has painted that kept copy, so waiting for the network costs no visible
+  // time, and the saved copy the boot lane would answer with is exactly the
+  // one a vote cast while the screen was away leaves behind.
+  assert.match(workshopTsx, /const fresh = state\.rows != null \|\| state\.feed != null;/,
+    're-entry is read off the store, which rows: null marks until the first answer');
+  assert.match(workshopTsx, /const freshOpts = fresh \? \{ cache: 'no-cache' as const \} : undefined;/,
+    'the conditional is the one spelling, shared by both reads');
+  // The FIRST paint stays a boot read: freshOpts is undefined there, so the
+  // fast lane #5164 kept for the cold start is untouched.
+  assert.match(workshopTsx, /fetch\(`\/api\/workshop\/counts\$\{demo\}`, freshOpts\)\.catch/,
+    'reload() passes the conditional mode to the counts read');
+  assert.match(workshopTsx, /fetch\(`\/api\/workshop\/needs-feed\$\{demo\}`, freshOpts\)\.catch/,
+    'and to the Needs you feed with it');
 });
 
 // ── 2. The controller's watch is the interval and the return, nothing else ─

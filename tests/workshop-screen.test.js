@@ -1444,3 +1444,75 @@ test('#5463: a vote saved elsewhere takes the card and its counts down at once',
     global.fetch = priorFetch;
   }
 });
+
+// ── 5. #5462: the return to Communities reads fresh ────────────────────
+
+test('#5462: re-entry asks no-cache, so a voted card stays gone after coming back', async () => {
+  // The worker's boot lane answers a read whose network leg misses its
+  // deadline with the saved copy; `close()` has cleared the answered set, so
+  // without a fresh read the card voted while away is drawn as owed again.
+  // This mock IS the worker: a boot read (no cache mode) answers the
+  // PRE-VOTE copy, a `no-cache` read answers what the server holds now.
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const { workshopController, workshopStore } = mod;
+  const apps = [{ slug: 'a', name: 'A', is_member: true }];
+  const item = (id, epoch) => ({
+    kind: 'proposal', id, epoch, title: `Change ${id}`, summary: null, author: null,
+    number: null, at: null, yes: 0, no: 0,
+    app: { slug: 'a', name: 'A', icon_url: null, icon_emoji: null },
+  });
+  const countsFor = (ids) => ({ a: { working: 0, needs: ids.length, owed: ids.map((id) => `proposal:${id}@2`) } });
+  const priorWindow = global.window;
+  const priorFetch = global.fetch;
+  global.window = { Home: { isJoined: (app) => !!(app && app.is_member) } };
+  try {
+    const reads = [];
+    const stale = { items: [item(7, 2), item(8, 2)], max: 0 };
+    const current = { items: [item(8, 2)], max: 0 };
+    const staleCounts = countsFor([7, 8]);
+    const currentCounts = countsFor([8]);
+    global.fetch = async (url, opts) => {
+      const cache = opts && opts.cache;
+      reads.push([url, cache]);
+      const freshNow = cache === 'no-cache';
+      if (url === '/api/workshop/counts') {
+        return { ok: true, json: async () => ({ counts: freshNow ? currentCounts : staleCounts }) };
+      }
+      if (url === '/api/workshop/needs-feed') {
+        return { ok: true, json: async () => (freshNow ? current : stale) };
+      }
+      return { ok: true, json: async () => ({ apps }) };
+    };
+
+    // THE FIRST ENTRY KEEPS THE BOOT LANE (#5164): no cache mode on any of
+    // the three reads, and it answers the pre-vote copy — which is right,
+    // because the vote has not happened yet.
+    await workshopController.open();
+    assert.deepEqual(reads, [
+      ['/api/apps?scope=joined', undefined],
+      ['/api/workshop/counts', undefined],
+      ['/api/workshop/needs-feed', undefined],
+    ], 'the cold first paint keeps the worker\'s fast lane');
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [7, 8]);
+
+    // THE VOTE, then the trip back: close() drops the answered set, so the
+    // re-entry cannot lean on it and has to ask the server.
+    workshopController.answered(7, 2);
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [8]);
+    workshopController.close();
+    reads.length = 0;
+    await workshopController.open();
+    assert.deepEqual(reads, [
+      ['/api/apps?scope=joined', undefined],
+      ['/api/workshop/counts', 'no-cache'],
+      ['/api/workshop/needs-feed', 'no-cache'],
+    ], 'the re-entry reads carry no-cache, and the apps read does not');
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [8],
+      'the voted card stays gone after the trip back');
+    assert.equal(workshopStore.get().rows[0].needs, 1, 'and the Needs you row counts one');
+    assert.equal(workshopStore.get().error, false);
+  } finally {
+    if (priorWindow === undefined) delete global.window; else global.window = priorWindow;
+    global.fetch = priorFetch;
+  }
+});
