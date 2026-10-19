@@ -56,6 +56,15 @@ test('the value sent is the reason key the drop-down sent', () => {
     'impersonation is offered only for a person');
 });
 
+test('#5102: child safety is the first reason, worded plainly', () => {
+  const list = REPORT.slice(REPORT.indexOf('export const REPORT_REASONS = ['));
+  const first = list.match(/\['([a-z_]+)',/);
+  assert.equal(first && first[1], 'child_safety', 'child safety is the first row of the list');
+  assert.ok(REPORT.includes("['child_safety', 'dialogs:report.reason.childSafety']"));
+  assert.equal(message('dialogs:report.reason.childSafety'),
+    'Child safety: a minor at risk, or sexual content involving a minor');
+});
+
 test('Send report is the one strong button; Cancel is quiet text', () => {
   assert.equal(message('dialogs:report.submit'), 'Send report');
   assert.match(REPORT, /<Button type="button" variant="unstyled" size="default" ink="muted" className="rounded-lg" disabled=\{busy\} onClick=\{dialog\.close\}>\{t\('core:common\.cancel'\)\}<\/Button>/);

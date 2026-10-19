@@ -67,6 +67,10 @@
     "text": "Threats",
     "description": "Reason for a report, a row in the report dialog's list of reasons: threats of violence or harm."
   },
+  "report.reason.childSafety": {
+    "text": "Child safety: a minor at risk, or sexual content involving a minor",
+    "description": "First reason for a report, a row at the top of the report dialog's list of reasons: a child or teenager is in danger, or the content sexualises a minor. These reports are reviewed first and their evidence is kept."
+  },
   "report.reason.sexualContent": {
     "text": "Sexual or unsafe content",
     "description": "Reason for a report, a row in the report dialog's list of reasons: sexual material or content that is dangerous to people."
