@@ -58,8 +58,18 @@
  * "Sign in with a password" is a step of its own here too:
  *
  *   password POST /api/auth/login with a username or an email, the sign-in
- *            screen's own exchange (passwordSignIn in ./shared.ts). "Forgot
- *            password?" still goes to that screen's reset (#login/forgot).
+ *            screen's own exchange (passwordSignIn in ./shared.ts).
+ *   forgot   "Forgot password?", inside the sheet (#5258): POST
+ *            /api/auth/password-reset/request emails a link for choosing a
+ *            new password, the sign-in screen's own reset (#login/forgot),
+ *            without leaving for that screen and its own Back.
+ *
+ * Where the sheet may be for an account somebody has (`firstStepLine`
+ * 'password'), the email and password steps carry a switch at the top,
+ * Email code | Password (#5258), in place of the small links that used to
+ * lead from one to the other. The password and reset steps say nothing of
+ * the terms: neither can make an account, and the account agreed to them
+ * when it was made. Every step that can make one still says it.
  *
  * A waitlist "you're in" link opens the sheet already at work
  * (`releaseToken`): the address its token names filled in and the code
@@ -171,7 +181,7 @@ import {
 } from './shared';
 import { RecaptchaLine, TermsNotice } from './waitlist-shared';
 
-type Step = 'choose' | 'email' | 'code' | 'account' | 'username' | 'password' | 'phone' | 'phone-code' | 'link';
+type Step = 'choose' | 'email' | 'code' | 'account' | 'username' | 'password' | 'forgot' | 'phone' | 'phone-code' | 'link';
 
 export type SignInProvider = 'apple' | 'google';
 
@@ -386,6 +396,47 @@ export function firstStepLine(from: 'invite' | 'story' | 'signin', phone = false
   return from === 'invite' && !phone ? 'terms' : 'password';
 }
 
+/**
+ * Whether a step carries the Email code | Password switch (#5258): the email
+ * and password steps, wherever the sheet may be for an account somebody has.
+ * An invite's Join only makes an account, so it has no switch; a right code
+ * for a password account still takes it to the password step, with the old
+ * link back.
+ */
+export function hasMethodSwitch(step: string, from: 'invite' | 'story' | 'signin', phone = false): boolean {
+  return (step === 'email' || step === 'password') && firstStepLine(from, phone) === 'password';
+}
+
+/** Whether a step's foot says the terms: not the password or reset steps, which make no account (#5258). */
+export function stepSaysTerms(step: string): boolean {
+  return step !== 'password' && step !== 'forgot';
+}
+
+/**
+ * The reset link, as the sign-in screen asks for it (./login.tsx
+ * onEmailReset). The server answers the same whether or not the address
+ * matched (anti-enumeration), and so does the sheet: 'sent', or what went
+ * wrong in words.
+ */
+export async function requestPasswordReset(address: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const email = address.trim();
+  if (!email || !email.includes('@')) return { ok: false, error: translate('auth:signInSheet.forgot.emailMissing') };
+  try {
+    const res = await fetch('/api/auth/password-reset/request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return { ok: false, error: data.error || translate('auth:signInSheet.forgot.sendFailed') };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: translate('auth:signInSheet.networkError') };
+  }
+}
+
 /** The line Google asks for where its reCAPTCHA badge is not shown (./recaptcha.ts). */
 export function RecaptchaNotice() {
   return <RecaptchaLine notice={RECAPTCHA_LINE} data={{ 'data-sign-in-sheet-recaptcha': '' }} />;
@@ -530,6 +581,11 @@ const FIELD = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]
 const LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
 const INPUT = 'w-full border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none';
 const QUIET = 'py-1 text-[15px] font-medium text-violet-700 dark:text-violet-400 hover:underline';
+// The Email code | Password switch (#5258): a grey track, the chosen one a
+// white segment on it, as Settings' Light / Dark / System.
+const SWITCH_TRACK = 'mt-4 grid grid-cols-2 gap-1 rounded-full bg-zinc-200 p-1 dark:bg-zinc-800';
+const SWITCH_ON = 'h-9 rounded-full bg-white text-[15px] font-semibold text-zinc-900 shadow-sm dark:bg-zinc-600 dark:text-zinc-100';
+const SWITCH_OFF = 'h-9 rounded-full text-[15px] font-medium text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100';
 
 export type SignInSheetProps = {
   open: boolean;
@@ -691,6 +747,11 @@ export function SignInSheet({
   const releaseSeen = useRef<string | null>(null);
   // The address an email code carried to the password step, for its first field.
   const identifierPrefill = useRef('');
+  // The reset step's field, and whether its link went (#5258). What was typed
+  // as the username goes to the reset with it and comes back on Back.
+  const resetField = useRef<HTMLInputElement>(null);
+  const typedIdentifier = useRef('');
+  const [resetSent, setResetSent] = useState(false);
 
   useEffect(() => {
     // Closed, the link is not "seen" any more: opened again (Get started
@@ -743,7 +804,12 @@ export function SignInSheet({
       if (focus) currentPasswordField.current?.focus({ preventScroll: true });
       return;
     }
+    // The address typed as the username, when it is one.
+    if (step === 'forgot' && resetField.current && typedIdentifier.current.includes('@')) {
+      resetField.current.value = typedIdentifier.current;
+    }
     const field = step === 'email' ? firstField : step === 'code' ? codeField
+      : step === 'forgot' ? resetField
       : step === 'username' ? providerUsernameField
         : step === 'password' ? identifierField
           : step === 'phone' ? (askName ? nameField : phoneField)
@@ -1135,6 +1201,22 @@ export function SignInSheet({
     }
   }, [followInvite, finish]);
 
+  // The reset step: the link that chooses a new password, emailed (#5258).
+  const sendResetLink = useCallback(async () => {
+    setError(null);
+    setDetails(null);
+    setResetSent(false);
+    if (blockedOffline(setError)) return;
+    setBusy(true);
+    try {
+      const result = await requestPasswordReset(resetField.current?.value || '');
+      if (!result.ok) { setError(result.error); return; }
+      setResetSent(true);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
   // Off to the provider. The page leaves, so busy stays on until it does.
   // Inside the app it stays: the app's own sheet answers in place.
   const continueWith = useCallback(async (provider: SignInProvider) => {
@@ -1201,7 +1283,10 @@ export function SignInSheet({
 
   if (!open) return null;
 
-  const oneLine = firstStepLine(from, phone) === 'password' ? (
+  const methodSwitch = hasMethodSwitch(step, from, phone);
+  const toStep = (next: Step) => { setError(null); setDetails(null); setResetSent(false); setStep(next); };
+
+  const oneLine = firstStepLine(from, phone) === 'password' && !methodSwitch ? (
     <>
       <p className="text-center text-[13px] text-zinc-500 dark:text-zinc-400">
         <a
@@ -1240,7 +1325,8 @@ export function SignInSheet({
     : step === 'link' ? t('auth:signInSheet.link.title')
     : step === 'code' ? t('auth:signInSheet.code.title')
       : step === 'phone-code' ? t('auth:signInSheet.phoneCode.title')
-        : step === 'password' ? t('auth:signInSheet.password.title')
+        : step === 'password' ? (methodSwitch ? title : t('auth:signInSheet.password.title'))
+          : step === 'forgot' ? t('auth:signInSheet.forgot.title')
           : step === 'username' ? t('auth:signInSheet.username.title')
             : welcome ? t('auth:signInSheet.account.welcome', { email: welcome }) : t('auth:signInSheet.account.title');
   // The first step says nothing under its title unless it is given a line:
@@ -1260,7 +1346,9 @@ export function SignInSheet({
       : step === 'code'
         ? (linkRefused ? t('auth:signInSheet.code.leadLinkUsed', { email }) : t('auth:signInSheet.code.lead', { email }))
         : step === 'password'
-          ? t('auth:signInSheet.password.lead')
+          ? (methodSwitch ? '' : t('auth:signInSheet.password.lead'))
+          : step === 'forgot'
+          ? (resetSent ? '' : t('auth:signInSheet.forgot.lead'))
           : step === 'username'
             ? t('auth:signInSheet.username.lead')
             : (needsUsername ? t('auth:signInSheet.account.leadWithUsername') : '');
@@ -1317,6 +1405,16 @@ export function SignInSheet({
           </button>
         </div>
         {sub ? <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{sub}</p> : null}
+        {methodSwitch ? (
+          <div role="radiogroup" aria-label={t('auth:signInSheet.method.label')} data-sign-in-sheet-method="" className={SWITCH_TRACK}>
+            <button type="button" role="radio" aria-checked={step === 'email'} data-sign-in-sheet-method-email="" className={step === 'email' ? SWITCH_ON : SWITCH_OFF} onClick={() => { if (step !== 'email') toStep('email'); }}>
+              {t('auth:signInSheet.method.emailCode')}
+            </button>
+            <button type="button" role="radio" aria-checked={step === 'password'} data-sign-in-sheet-method-password="" className={step === 'password' ? SWITCH_ON : SWITCH_OFF} onClick={() => { if (step !== 'password') toStep('password'); }}>
+              {t('auth:signInSheet.method.password')}
+            </button>
+          </div>
+        ) : null}
 
         {step === 'choose' ? (
           <div className="mt-5 flex flex-col gap-2.5">
@@ -1431,12 +1529,32 @@ export function SignInSheet({
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.password.signingIn') : t('auth:signInSheet.password.submit')}</button>
             <div className="flex items-center justify-between">
-              <button type="button" className={QUIET} onClick={() => { setError(null); setDetails(null); setStep(otherWays); }}>
-                {providers.length ? t('auth:signInSheet.password.otherWays') : t('auth:signInSheet.password.useEmailCode')}
-              </button>
-              {/* The reset is the sign-in screen's (./login.tsx), reached by its own address. */}
-              <a href="#login/forgot" onClick={() => { if (followInvite) rememberInviteJoin(); onClose(); }} className={QUIET}>{t('auth:signInSheet.password.forgot')}</a>
+              {/* With the switch, the email code is its other half; Apple and Google are still a step away. */}
+              {providers.length || !methodSwitch ? (
+                <button type="button" className={QUIET} onClick={() => toStep(otherWays)}>
+                  {providers.length ? t('auth:signInSheet.password.otherWays') : t('auth:signInSheet.password.useEmailCode')}
+                </button>
+              ) : <span aria-hidden="true" />}
+              {/* The reset opens here, in the sheet (#5258), not on the sign-in screen's own page. */}
+              <button type="button" data-sign-in-sheet-forgot="" className={QUIET} onClick={() => { typedIdentifier.current = (identifierField.current?.value || '').trim(); toStep('forgot'); }}>{t('auth:signInSheet.password.forgot')}</button>
             </div>
+          </form>
+        ) : null}
+
+        {step === 'forgot' ? (
+          <form className="mt-5 flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void sendResetLink(); }}>
+            <div className={FIELD_GROUP}>
+              <div className={FIELD}>
+                <label htmlFor="sign-in-sheet-reset-email" className={LABEL}>{t('auth:signInSheet.forgot.label')}</label>
+                <input ref={resetField} id="sign-in-sheet-reset-email" type="email" autoComplete="email" inputMode="email" enterKeyHint="send" className={INPUT} {...HANDLE_FIELD} />
+              </div>
+            </div>
+            {resetSent ? (
+              <p role="status" data-sign-in-sheet-reset-sent="" className="text-[14px] font-medium text-green-700 dark:text-green-400">{t('auth:signInSheet.forgot.sent')}</p>
+            ) : null}
+            <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.forgot.sending') : t('auth:signInSheet.forgot.submit')}</button>
+            <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.forgot.support')}</p>
+            <button type="button" data-sign-in-sheet-forgot-back="" className={`${QUIET} self-start`} onClick={() => { identifierPrefill.current = typedIdentifier.current; toStep('password'); }}>{t('auth:signInSheet.forgot.back')}</button>
           </form>
         ) : null}
 
@@ -1486,8 +1604,8 @@ export function SignInSheet({
               ]} />
           </p>
         ) : null}
-        {/* The first step's terms sit in its group (above); every later step keeps them here. */}
-        {step === 'choose' || step === 'email' ? null : (
+        {/* The first step's terms sit in its group (above); every later step that can make an account keeps them here. */}
+        {step === 'choose' || step === 'email' || !stepSaysTerms(step) ? null : (
           <TermsNotice className="mt-3" recaptcha={step === 'phone' || step === 'phone-code' ? RECAPTCHA_LINE : null} />
         )}
       </div>
