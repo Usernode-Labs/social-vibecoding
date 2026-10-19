@@ -32,9 +32,8 @@
 //
 // The decisions are pure (digestToken, hourAlerts, digestDue) so
 // tests/platform-incident-alerts.test.js pins them without a database. The
-// leader's sweep (server.js, startPlatformIncidentAlertSweeper) runs them
-// every SWEEP_INTERVAL_MS, the same timer pattern the platform limit sweep
-// uses.
+// incident-alerts clock (src/workflow/clock/services.ts) runs them every
+// five minutes, wherever the workflow runs.
 //
 // STAGING: a preview's users table is a clone of production's, so nothing
 // is sent there (same stance as platform-limit-alerts.js).

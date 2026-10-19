@@ -6908,8 +6908,9 @@ test('#5385: a request of yours Homeroom bot has in hand is a Your work row, in 
   // The step at the line's end, in the drawer's own words: running work in
   // the run tone, a wait in the warn one. Who made it goes first.
   assert.match(work, /<span class="dev-ws-hrow-tag" data-tone="plain"><svg[^]*?<\/svg>Homeroom bot<\/span>/);
-  assert.match(work, /<span class="dev-ws-hrow-tag" data-ws-bot-step="" data-tone="run">Writing the plan<\/span>/);
-  assert.match(wait, /<span class="dev-ws-hrow-tag" data-ws-bot-step="" data-tone="warn">It can&#x27;t build this as written: add detail<\/span>/);
+  // Polish board #24: its words in full on hover, where a narrow card cuts them short.
+  assert.match(work, /<span class="dev-ws-hrow-tag" data-ws-bot-step="" data-tone="run" title="Writing the plan">Writing the plan<\/span>/);
+  assert.match(wait, /<span class="dev-ws-hrow-tag" data-ws-bot-step="" data-tone="warn" title="It can&#x27;t build this as written: add detail">It can&#x27;t build this as written: add detail<\/span>/);
   // The row opens the chat with the bot at the request's thread, where the
   // drawer's row goes; a modified click keeps the request page's href.
   assert.match(work, /href="#app\/demo-app\/dev\/issues\/12"/);

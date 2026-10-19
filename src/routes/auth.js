@@ -22,9 +22,11 @@ const {
   passwordResetConfirmLimiter,
   walletAuthLimiter,
   walletCheckLimiter,
+  waitlistAnswersLimiter,
 } = require('../middleware/rate-limits');
 const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
+const waitlistQuestions = require('../services/waitlist-questions');
 const firstSession = require('../services/first-session');
 const communityInvites = require('../services/community-invites');
 const phoneAuth = require('../services/firebase-phone-auth');
@@ -62,6 +64,7 @@ const { getPlatformApp } = require('../services/platform-app');
 // swap sendPasswordResetMail on the module object.
 const mail = require('../services/mail');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const { requireAdultAttestation } = require('../services/adult-attestation');
 
 // The idle lease a freshly-minted browser session starts with. This matches
 // SESSION_IDLE_DAYS in middleware/auth.js, which renews active sessions and
@@ -778,6 +781,43 @@ function authRoutes(config) {
     }
   });
 
+  // The waiting room's two optional questions (#5261), which the retired
+  // in-app join form (#waitlist) asked: where you are and how you found us.
+  // Asked of the account now, after it is made, and saved on its own
+  // waitlist row in the keys the form wrote (services/waitlist.js
+  // saveAccountAnswers). Under /api/auth/ for the same reason as the line
+  // above: a waiting account may call it. Only the caller's own row, and
+  // only the values the public join validates (validateStage1).
+  router.get('/api/auth/waiting/about', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const about = await waitlist.accountAnswers(pool, req.user.id);
+      res.set('Cache-Control', 'no-store');
+      return res.json({ listed: !!about, country: about?.country || null, discovery: about?.discovery || null });
+    } catch (err) {
+      log.warn('auth', 'Waiting room answers lookup failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/auth/waiting/about', waitlistAnswersLimiter, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const checked = waitlistQuestions.validateStage1(req.body || {});
+    if (!checked.ok) return res.status(422).json({ error: checked.error });
+    try {
+      const about = await waitlist.saveAccountAnswers(pool, {
+        userId: req.user.id,
+        answers: checked.value,
+        inviteCode: typeof req.body?.invite_code === 'string' ? req.body.invite_code : null,
+      });
+      if (!about) return res.status(404).json({ error: 'This account has no spot on the waitlist.', code: 'not_listed' });
+      return res.json({ ok: true, listed: true, country: about.country, discovery: about.discovery });
+    } catch (err) {
+      log.error('auth', 'Saving the waiting room answers failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/api/auth/me', async (req, res) => {
     if (!req.user) {
       return res.status(401).json({ error: 'Not authenticated' });
@@ -859,6 +899,10 @@ function authRoutes(config) {
     // credits) and Home's "Verify your account" card follow up on it.
     // Unreadable means not held to it.
     let identityNeeded = false;
+    // "Are you 18 or older?" answered yes (#5095,
+    // services/adult-attestation.js). The shell asks before a wallet,
+    // staking, node or passport feature opens while this is false.
+    let adultAttested = false;
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
@@ -869,6 +913,7 @@ function authRoutes(config) {
                 (u.username_provisional_since IS NOT NULL) AS username_provisional,
                 (u.tour_done_at IS NOT NULL) AS tour_done,
                 identity_needed(u.id) AS identity_needed,
+                (u.adult_attested_at IS NOT NULL) AS adult_attested,
                 EXISTS (
                   SELECT 1 FROM credentials.user_ai_credentials credential
                    WHERE credential.user_id = u.id
@@ -896,6 +941,7 @@ function authRoutes(config) {
       usernameProvisional = rows[0]?.username_provisional === true;
       needsCommunitiesChoice = rows[0]?.needs_communities_choice === true;
       tourDone = rows[0]?.tour_done === true;
+      adultAttested = rows[0]?.adult_attested === true;
       // A member let in (not a private member, who waits for that).
       identityNeeded = rows[0]?.identity_needed === true && !!req.user.hasPlatformAccess;
       if (needsCommunitiesChoice) storyFirstSession = await firstSession.asksWhatToMake(pool, req.user.id);
@@ -1012,6 +1058,8 @@ function authRoutes(config) {
         waitlistIdea,
         // The verified-identity rule holds this member to it (see above).
         identityNeeded,
+        // Said yes to "Are you 18 or older?" (see above).
+        adultAttested,
         // The welcome tour was finished or skipped on this account, on any
         // device (POST /api/me/tour-done; cleared by Reset first run). The
         // tour counts it done when this OR the browser's own flag says so
@@ -1366,7 +1414,9 @@ function authRoutes(config) {
   // ── Wallet linking ───────────────────────────────────────────────
   const LINK_TOKEN_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-  router.post('/api/me/wallet-link', sameOriginBrowserOnly, async (req, res) => {
+  // Linking a wallet is for adults (#5095): refused until the account said
+  // it is 18 or older. Unlinking (DELETE below) is never refused.
+  router.post('/api/me/wallet-link', sameOriginBrowserOnly, requireAdultAttestation(pool), async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     if (!config.usernodeAppPubkey) {
       return res.status(503).json({ error: 'Wallet linking not configured' });

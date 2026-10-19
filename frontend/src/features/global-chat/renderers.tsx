@@ -880,7 +880,7 @@ function ConfirmationResult({ result, payload }: { result: GlobalChatResult; pay
             ))}
           </dl>
         ) : null}
-        {expiresAt ? <p>{t('chat:global.confirm.before', { time: new Date(expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) })}</p> : null}
+        {expiresAt ? <p>{t('chat:global.confirm.before', { time: new Date(expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) })}</p> : null}
       </div>
       <div className="global-chat-inline-actions">
         <button

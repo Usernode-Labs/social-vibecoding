@@ -3445,6 +3445,23 @@ async function setAppDatabaseWritable(dbName, writable, { execute = execInDb } =
   return { dbName, role, writable: !!writable };
 }
 
+// Whether an app database's owner role already carries the read-only
+// default setAppDatabaseWritable(…, false) gives it: the storage sweep holds
+// a freeze by checking this first, since setting it again also ends every
+// connection the app has open.
+async function isAppDatabaseReadOnly(dbName, { execute = execInDb } = {}) {
+  if (!SAFE_IDENT.test(dbName) || dbName !== dbName.toLowerCase()) {
+    throw new Error(`isAppDatabaseReadOnly: unsafe dbName ${JSON.stringify(dbName)}`);
+  }
+  const role = ownerRoleName(dbName);
+  const out = await execute(
+    'SELECT 1 FROM pg_db_role_setting s JOIN pg_roles r ON r.oid = s.setrole '
+    + `WHERE r.rolname = '${role}' AND s.setdatabase = 0 `
+    + "AND 'default_transaction_read_only=on' = ANY (s.setconfig)",
+    { tuplesOnly: true });
+  return String(out || '').trim() === '1';
+}
+
 // ─── Looking at the preview server from the sweeps ──────────────────────
 //
 // The reap, pressure and heal passes read `pg_database` and
@@ -3713,6 +3730,7 @@ module.exports = {
   parseDatabaseSizes,
   listAppDatabaseSizes,
   setAppDatabaseWritable,
+  isAppDatabaseReadOnly,
   isStagingTemplateDb,
   // A second server for preview databases (STAGING_DB_ADMIN_URL).
   PRIMARY_SERVER,

@@ -633,7 +633,7 @@ test('the totals query asks for the open rewards, and the row query asks for up 
     'the outer WHERE is the expanded scope; open-only lives in the FILTERs');
   const rowQuery = calls.find((c) => c.sql.includes('LIMIT $3'));
   // The client picks what Home draws (HomePanels.challengesView: the First
-  // challenges, or three Next ones furthest along) after the query, so the
+  // challenges, or three Next ones in the tab's order) after the query, so the
   // collapsed query asks for the expanded list's ceiling, and the four-row
   // CHALLENGE_ROW_LIMIT is gone.
   assert.equal(rowQuery.params[2], 40);
@@ -707,7 +707,7 @@ function loadHomePanels() {
 // compare have to be among the cards the client draws, not merely exist in
 // the fixture. The pick is the client's, so the payload goes through
 // HomePanels to see what it draws.
-test('GET ?demo=1 in staging draws three Next challenges, furthest along first', async () => {
+test('GET ?demo=1 in staging draws three Next challenges, in the Challenges tab\'s order', async () => {
   const prev = process.env.USERNODE_ENV;
   process.env.USERNODE_ENV = 'staging';
   let body;
@@ -1114,14 +1114,15 @@ test('dapp.json checks the new state, and the reader keeps it', () => {
   // at most three. The in-place "See all N" toggle is gone (See all is a link
   // to the Challenges tab now), so the two checks assert the pick itself: the
   // `few` route's two open challenges both show, and the default route stops
-  // at three with the furthest along first.
+  // at three, in the tab's order (the check's name still says "furthest
+  // along first", which the demo's part-filled This week row also is).
   const allShown = kept.find((t) => t.path === '/?demo=1&challenges=few');
   assert.ok(allShown, 'the all-shown check must survive the manifest reader');
   assert.match(allShown.expectSelector, /home-challenge-card/);
   assert.match(allShown.expectSelector, /data-rows="2"/);
   assert.ok(kept.some((t) => t.path === '/?demo=1'
     && /data-rows="3"/.test(t.expectSelector) && /:first-child/.test(t.expectSelector)),
-    'and the default route declares the cap of three, furthest along first');
+    'and the default route declares the cap of three');
 });
 
 // QA 2026-09-24 Q17: Home's season progress counts every challenge in the

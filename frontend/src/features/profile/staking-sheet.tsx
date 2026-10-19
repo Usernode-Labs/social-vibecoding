@@ -8,6 +8,7 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { walletSheetStore, WALLET_EMPTY, type WalletSheetState } from '../header/wallet-sheet-store';
 import { createStakingHistory } from './staking-history.js';
+import { requireAdult } from '../auth/adult-gate';
 
 const controller = () => (window as any).WalletSheet;
 
@@ -40,7 +41,12 @@ export function StakingRow() {
   return <>
     <button type="button" data-staking-row
       className="flex items-center gap-3 px-4 min-h-[44px] w-full text-left text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-      onClick={() => setOpen(true)}>
+      onClick={() => {
+        // Staking is for adults (#5095): asked once before it opens. The
+        // `?demo=staking-*` preview opens from its effect, without asking.
+        if (preview) { setOpen(true); return; }
+        void requireAdult().then((ok) => { if (ok) setOpen(true); });
+      }}>
       <StakingIcon aria-hidden="true" className="w-5 h-5 shrink-0" />
       <span className="text-sm font-medium">{t('profile:staking.title')}</span>
       <span className={delegated ? 'ml-auto text-xs font-semibold text-violet-700 dark:text-violet-400'

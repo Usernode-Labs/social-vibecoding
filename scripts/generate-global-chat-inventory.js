@@ -58,6 +58,7 @@ const COUNTS = Symbol('counts');
 const REVIEWED_REFERENCES = Symbol('reviewed client references');
 
 const FILE_EXEMPTIONS = new Map([
+  ['src/routes/adult-attestation.js', 'the person\'s own answer to "Are you 18 or older?" (#5095), given in its sheet; an assistant never gives it for them'],
   ['src/routes/anthropic-proxy.js', 'provider proxy used by development agents, not a Classic control'],
   ['src/routes/app-llm-proxy.js', 'child-app provider proxy, not a Classic control'],
   ['src/routes/app-platform-api.js', 'child-app platform API authenticated by app grants'],

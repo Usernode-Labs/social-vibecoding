@@ -53,9 +53,9 @@ const STAGING_BUILD_LOCK = 991005;
 const PRODUCTION_BUILD_LOCK = 991006;
 const STAGING_TEMPLATE_LOCK = 991007;
 // 991008 was the preview lifecycle's (retired with it); not reused.
-// #1374: the once-a-day "what needs your vote" digest. Exclusive across
-// platform Pods, because every instance runs the same interval and a digest
-// sent twice is worse than one sent late.
+// #1374: the once-a-day "what needs your vote" digest, as a transaction
+// lock per person (the second key is the user id): its INSERT checks again
+// that none went out lately, so two passes at once send one digest.
 const VOTE_DIGEST_LOCK = 991009;
 // The automatic challenge scorer's tick. Exclusive across platform Pods for
 // the same reason the digest is: every instance runs the same interval, and
@@ -64,10 +64,8 @@ const VOTE_DIGEST_LOCK = 991009;
 // still refuse the duplicate row, so this lock is about not doing the work
 // (and not spending the grading calls) twice, rather than about correctness.
 const CHALLENGE_SCORER_LOCK = 991010;
-// #1688: the Friday "this week on <app>" card. Exclusive across platform
-// Pods for the digest's reason: every instance runs the interval, and a card
-// posted twice into one chat is worse than one posted an hour late.
-const WEEKLY_DIGEST_LOCK = 991011;
+// 991011 was the Friday card's (#1688), whose conditional stamp of
+// apps.weekly_digest_at is the fence; not reused.
 // #2684: the Homeroom bot's work loop. Session-scoped, held by the leader
 // for the length of one pass over the queue, because a pass runs container
 // turns that cost money: two Pods draining the same queue would triage the
@@ -116,5 +114,5 @@ const APP_NAME_PURGE_LOCK = 991019;
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK,
-  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, WEEKLY_DIGEST_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK,
+  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK,
   CHECKS_QUEUE_LOCK, PREVIEW_DOCKER_DEPLOY_LOCK, PROCESS_PRESENCE_LOCK, APP_NAME_PURGE_LOCK };

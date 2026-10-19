@@ -21,6 +21,7 @@
 import { walletSheetStore, WALLET_EMPTY } from './wallet-sheet-store';
 import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
 import { t } from '../../lib/i18n/runtime';
+import { requireAdult } from '../auth/adult-gate';
 
 (function () {
   'use strict';
@@ -70,8 +71,13 @@ import { t } from '../../lib/i18n/runtime';
     // group now — a screen does not need dismissing — so the sheet presents
     // directly. This was an addEventListener on the row; it is the
     // component's onClick, dispatching here by name.
+    //
+    // Wallets and tokens are for adults (#5095): "Are you 18 or older?"
+    // first, once. The challenge page's "Manage delegation" comes through
+    // here too. The `?shot=wallet-sheet` preview opens without asking.
     openFromRow() {
-      WalletSheet._openSheet();
+      if (WalletSheet._demo) { WalletSheet._openSheet(); return; }
+      requireAdult().then((ok) => { if (ok) WalletSheet._openSheet(); });
     },
 
     /** The address copy. Clipboard + toast are the module's, as before. */
