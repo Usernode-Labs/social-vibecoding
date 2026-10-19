@@ -3461,12 +3461,13 @@ async function seedStagingMergedPrs(pool, config) {
 
 // #5482's before/after shots follow a bell row that names a change which has
 // already merged: before, its "Voted yes" row is in the list; after, it is
-// gone and only the news that the change went live is left. A fresh clone
-// has no such pair for the shots' member fixture (usernode-capture), so one
-// is seeded: a fake merged change with an unread "Voted yes" row from one of
-// the fake speakers, and the unread merge news beside it. Idempotent through
-// the branch name and the (user, kind, session) lookup; strictly a no-op
-// outside staging.
+// gone (and since #5487 so is the news that the change went live). A fresh
+// clone has no such pair for the shots' member fixture (usernode-capture),
+// so one is seeded: a fake merged change with an unread "Voted yes" row from
+// one of the fake speakers, and the unread merge news beside it. The before
+// side still shows both; a build with either fix leaves them out of the
+// list. Idempotent through the branch name and the (user, kind, session)
+// lookup; strictly a no-op outside staging.
 async function seedStagingMergedVoteRow(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
@@ -3517,7 +3518,8 @@ async function seedStagingMergedVoteRow(pool, config) {
 
     const fixtures = [
       { kind: 'proposal_vote', sourceUserId: voter.id, detail: 'yes', minutesAgo: 200 },
-      // The news that it went live: still listed after the vote row has left.
+      // The news that it went live: a before-side row like the vote one
+      // (#5487 has it leave the list with the asks).
       { kind: 'voted_change_merged', sourceUserId: null, detail: null, minutesAgo: 170 },
     ];
     let inserted = 0;

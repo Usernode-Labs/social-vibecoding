@@ -86,7 +86,7 @@ const READY_STATES = Object.freeze([
     ['member']],
   ['shots-demo-room-to-make-v1', 'free app slots to make a project, which never finishes setting up on the copies',
     ['member', 'read_only_admin']],
-  ['shots-demo-member-voted-change-live-v1', 'a change you voted on that went live, with its row in your bell',
+  ['shots-demo-member-voted-change-live-v1', 'a change you voted on that went live',
     ['member']],
   ['shots-demo-member-bot-built-proposal-v1', 'a change Homeroom bot built from your request, up for a vote',
     ['member', 'read_only_admin', 'full_admin']],

@@ -491,9 +491,9 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   const chat = chats.find((conversation) => conversation.id === demoStates.IDS.botConversation);
   assert.equal(chat.homeroomBot, true);
   assert.equal(chat.unreadCount, 0);
-  // The rows in the bell are the voted-live state's and the bot's three
-  // rings. The voted-live row is unread (#5461: seeded unread so the All tab
-  // shows it); the bot's three rings are read.
+  // The stored rows are the voted-live state's and the bot's three rings.
+  // The voted-live row is seeded unread (the before side of #5487); the
+  // bot's three rings are read.
   const { rows: bellRows } = await pool.query('SELECT kind, read_at FROM notifications ORDER BY id');
   assert.deepEqual(bellRows.map((row) => [row.kind, !!row.read_at]),
     [['voted_change_merged', false], ['build_needs_you', true], ['build_needs_you', true], ['build_needs_you', true]]);
@@ -709,20 +709,23 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
       WHERE metadata->>'fixture' = $1 AND metadata ? 'grade'`, ['shots-demo']);
   assert.equal(graded.n, 1, 'exactly one graded fixture row, still');
 
-  // A change the member voted on that went live, and its row in their
-  // bell, read through the bell's own reader (#4787): the voted-live kind
-  // on that change, live rather than going live, with its title, and
-  // unread (#5461: seeded unread so the list shows it), so the bell counts
-  // it.
+  // A change the member voted on that went live (#4787): its row is still
+  // stored unread, but since #5487 every row about a merged change leaves
+  // the bell's list and count, so the live read is the exact lookup a push
+  // opens.
   const bell = await notificationsSvc.listForUser(pool, member);
-  const votedLive = bell.filter((row) => row.kind === 'voted_change_merged');
-  assert.equal(votedLive.length, 1);
-  assert.equal(Number(votedLive[0].session_id), demoStates.IDS.votedLiveProposal);
-  assert.equal(votedLive[0].session_status, 'merged', 'live, not going live');
-  assert.equal(votedLive[0].pr_title, '[shots fixture] Bigger buttons on the request list');
-  assert.equal(votedLive[0].app_slug, SLUG);
-  assert.equal(votedLive[0].read_at, null);
-  assert.equal(await notificationsSvc.countUnread(pool, member), 1);
+  assert.equal(bell.filter((row) => row.kind === 'voted_change_merged').length, 0,
+    'the went-live row is off the list');
+  const { rows: [storedLive] } = await pool.query(
+    `SELECT id FROM notifications WHERE user_id = $1 AND kind = 'voted_change_merged'`, [member]);
+  const votedLive = notificationsSvc.serialize(
+    await notificationsSvc.getForUser(pool, member, storedLive.id));
+  assert.equal(Number(votedLive.sessionId), demoStates.IDS.votedLiveProposal);
+  assert.equal(votedLive.sessionStatus, 'merged', 'live, not going live');
+  assert.equal(votedLive.prTitle, '[shots fixture] Bigger buttons on the request list');
+  assert.equal(votedLive.appSlug, SLUG);
+  assert.equal(votedLive.readAt, null, 'still unread');
+  assert.equal(await notificationsSvc.countUnread(pool, member), 0);
   // Homeroom bot's three rings, through the same reader: in the member's
   // chat with the bot, so the bell lists them, newest first, worded from
   // their detail as the push and the bell word it (16 Oct 2026).
