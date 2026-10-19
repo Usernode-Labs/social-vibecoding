@@ -15020,24 +15020,45 @@ BEGIN
   END IF;
 END $$;
 
--- Two people are CONNECTED when they are in a project's community together
--- or are friends. Homeroom's own community does not count: every account
--- with platform access is in it ('auto', join_platform_community), so
--- counting it would connect everybody to everybody.
+-- Two people are CONNECTED only by a tie neither of them can make alone:
+--
+--   - an accepted friendship (both said yes);
+--   - a role on the same project: both are its collaborators (members, not
+--     pending invites; the creator is one) or its admins. Those come by
+--     invitation or by a merged change, never by a button a stranger presses;
+--   - membership of the same community while it is NOT public. A public
+--     ('open') community is one anyone can join (communities.audienceSql:
+--     view_visibility 'public'), so sharing one says nothing: a stranger
+--     could join it to reach somebody in it. A private one is joined only
+--     through a member's invitation or invite link.
+--
+-- Homeroom's own project counts for none of these: every account with
+-- platform access is in its community ('auto', join_platform_community).
 CREATE OR REPLACE FUNCTION users_connected(a INTEGER, b INTEGER)
 RETURNS BOOLEAN
 LANGUAGE sql STABLE AS $$
   SELECT EXISTS (
-           SELECT 1
-             FROM community_members ma
-             JOIN community_members mb ON mb.community_id = ma.community_id
-            WHERE ma.user_id = a AND mb.user_id = b
-              AND NOT EXISTS (SELECT 1 FROM apps pa
-                               WHERE pa.community_id = ma.community_id AND pa.self_hosted))
-      OR EXISTS (
            SELECT 1 FROM friendships f
             WHERE f.status = 'accepted'
               AND f.user_low_id = LEAST(a, b) AND f.user_high_id = GREATEST(a, b))
+      OR EXISTS (
+           SELECT 1
+             FROM (SELECT ca.app_id FROM app_collaborators ca WHERE ca.user_id = a AND ca.status = 'member'
+                   UNION
+                   SELECT da.app_id FROM app_admins da WHERE da.user_id = a) ra
+             JOIN (SELECT cb.app_id FROM app_collaborators cb WHERE cb.user_id = b AND cb.status = 'member'
+                   UNION
+                   SELECT db.app_id FROM app_admins db WHERE db.user_id = b) rb ON rb.app_id = ra.app_id
+             JOIN apps pa ON pa.id = ra.app_id
+            WHERE NOT pa.self_hosted)
+      OR EXISTS (
+           SELECT 1
+             FROM community_members ma
+             JOIN community_members mb ON mb.community_id = ma.community_id
+             JOIN apps pa ON pa.community_id = ma.community_id
+            WHERE ma.user_id = a AND mb.user_id = b
+              AND NOT pa.self_hosted
+              AND pa.view_visibility IS DISTINCT FROM 'public')
 $$;
 
 -- Whether `sender_id` may start something new with `target_id` (see

@@ -1461,8 +1461,9 @@ function chatRoutes(config) {
       // instead of listing everybody here.
       // #5104: a member who has not spoken, is not active and keeps their
       // profile out of searches (users.profile_discoverable) is offered only
-      // to people connected to them: a viewer of a public project who is not
-      // in its community does not get its quiet members listed.
+      // to people connected to them (schema.sql users_connected). Sharing a
+      // public community does not connect two people, so a public project's
+      // quiet members are not listed to anybody who merely joined it too.
       const { rows } = await pool.query(
         `WITH engaged AS (
            SELECT unnest($2::int[]) AS user_id

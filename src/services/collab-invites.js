@@ -67,13 +67,11 @@ async function hydrateAndPush(pool, notifRows) {
  *
  * #5104: `{ ok: false, status: 'contact_restricted' }` when `target` takes
  * invitations only from people connected to them (users.contact_policy) and
- * the inviter is not. `checkContact: false` skips that for the one caller
- * the person asked for themselves: an invite sent to their email address,
- * claimed when they confirm it (services/email-invites.js claimEmailInvites),
- * which is an invite link by another road.
+ * the inviter is not. Every caller is held to it, an invite by email claimed
+ * when its address is confirmed included (services/email-invites.js).
  */
-async function sendInvite(pool, { app, target, inviterId, note = null, checkContact = true }) {
-  if (checkContact && !(await contactPrivacy.mayContact(pool, inviterId, target.id))) {
+async function sendInvite(pool, { app, target, inviterId, note = null }) {
+  if (!(await contactPrivacy.mayContact(pool, inviterId, target.id))) {
     return { ok: false, status: contactPrivacy.CONTACT_RESTRICTED_CODE };
   }
   const { rows: inserted } = await pool.query(

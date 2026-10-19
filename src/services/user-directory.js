@@ -181,8 +181,9 @@ async function lookupExact(pool, username) {
 //
 // `viewerId` is who is searching (#5104). A person who keeps their profile
 // out of searches (users.profile_discoverable, off by default) is found
-// only by people connected to them: in a project's community together, or
-// friends (schema.sql user_discoverable_by). Without a viewer, only the
+// only by people connected to them: friends, people with a role on the same
+// project, or members of the same private community, never just a shared
+// public one (schema.sql users_connected, user_discoverable_by). Without a viewer, only the
 // people who opted in are found. lookupExact above is not filtered: it
 // answers a handle the caller already knows, as a profile link does.
 async function searchPrefix(pool, q, limit, opts = {}) {

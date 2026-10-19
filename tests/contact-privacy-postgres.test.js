@@ -56,6 +56,7 @@ const friends = require('../src/services/friends');
 const contactPrivacy = require('../src/services/contact-privacy');
 const userDirectory = require('../src/services/user-directory');
 const collabInvites = require('../src/services/collab-invites');
+const emailInvites = require('../src/services/email-invites');
 const approverInvites = require('../src/services/approver-invites');
 const { conversationRoutes } = require('../src/routes/conversations');
 
@@ -177,6 +178,49 @@ test('who can reach you and who can find you (#5104)', { timeout: 120000 }, asyn
     assert.deepEqual(await contactPrivacy.restrictedAmong(pool, alice.id, [bob.id, carol.id, dana.id, frank.id]), [carol.id]);
   });
 
+  await t.test('a public community anyone can join connects nobody; a role on a project does', async () => {
+    const henry = await user('henry');
+    const ivy = await user('ivy');
+    const jack = await user('jack');
+    // A public project: ivy joined it, and so does henry, a stranger to her.
+    await pool.query(
+      `INSERT INTO apps (name, slug, created_by, view_visibility, collab_visibility)
+       VALUES ('square', 'square', $1, 'public', 'private')`, [jack.id]
+    );
+    const square = (await pool.query(`SELECT id, community_id FROM apps WHERE slug = 'square'`)).rows[0];
+    for (const person of [ivy, henry]) {
+      await pool.query(
+        `INSERT INTO community_members (community_id, user_id, source) VALUES ($1, $2, 'joined')
+         ON CONFLICT DO NOTHING`, [square.community_id, person.id]
+      );
+    }
+    const connected = async (a, b) => (await pool.query('SELECT users_connected($1, $2) AS v', [a.id, b.id])).rows[0].v;
+    assert.equal(await connected(henry, ivy), false, 'joining a public community she is in does not connect him');
+    await assert.rejects(conversations.createDirect(pool, henry, ivy.id), contactPrivacy.ContactRestrictedError);
+    await assert.rejects(
+      friends.sendRequest(pool, henry, ivy.id),
+      (err) => err instanceof friends.FriendsError && err.code === 'contact_restricted'
+    );
+    assert.deepEqual((await userDirectory.searchPrefix(pool, 'iv', 10, { viewerId: henry.id })).users, []);
+
+    // Collaborators on that same public project are connected: that role
+    // comes by invitation, not by a button.
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+       VALUES ($1, $2, 'member', NOW()), ($1, $3, 'member', NOW())
+       ON CONFLICT (app_id, user_id) DO UPDATE SET status = 'member'`,
+      [square.id, jack.id, ivy.id]
+    );
+    assert.equal(await connected(jack, ivy), true, 'two collaborators');
+    assert.equal(await connected(henry, ivy), false, 'still not the member who only joined');
+    // An app admin of the project is connected to its collaborators too.
+    await pool.query('INSERT INTO app_admins (app_id, user_id) VALUES ($1, $2)', [square.id, henry.id]);
+    assert.equal(await connected(henry, ivy), true, 'an admin of the project');
+    // Members of the same PRIVATE community are connected (alice and bob,
+    // book-club), whatever their role there.
+    assert.equal(await connected(alice, bob), true);
+  });
+
   await t.test('a new direct message, group or invitation waits on contact_policy', async () => {
     await assert.rejects(conversations.createDirect(pool, alice, carol.id), contactPrivacy.ContactRestrictedError);
     assert.ok((await conversations.createDirect(pool, alice, bob.id)).conversationId, 'a project member');
@@ -195,9 +239,31 @@ test('who can reach you and who can find you (#5104)', { timeout: 120000 }, asyn
     assert.equal((await pool.query(
       'SELECT COUNT(*)::int AS n FROM app_collaborators WHERE app_id = $1 AND user_id = $2', [club.id, carol.id]
     )).rows[0].n, 0, 'no pending row');
-    assert.equal((await collabInvites.sendInvite(pool, {
-      app: club, target: carol, inviterId: alice.id, checkContact: false,
-    })).ok, true, 'an invite claimed through their own confirmed address');
+
+    // An invite sent to an address before it had an account is held to the
+    // account's setting when the address is confirmed: a stranger's is
+    // dropped without an error, a connected person's is applied.
+    const kim = await user('kim');
+    await pool.query(
+      `INSERT INTO app_email_invites (app_id, email, invited_by) VALUES ($1, 'kim@example.test', $2)`,
+      [club.id, carol.id]
+    );
+    const garden = await project('garden', bob, []);
+    await pool.query(
+      `INSERT INTO friendships (user_low_id, user_high_id, requester_id, status, responded_at)
+       VALUES (LEAST($1::int, $2::int), GREATEST($1::int, $2::int), $1, 'accepted', NOW())`,
+      [bob.id, kim.id]
+    );
+    await pool.query(
+      `INSERT INTO app_email_invites (app_id, email, invited_by) VALUES ($1, 'kim@example.test', $2)`,
+      [garden.id, bob.id]
+    );
+    assert.equal(await emailInvites.claimEmailInvites(pool, { userId: kim.id, email: 'kim@example.test' }), 1);
+    const kimRows = (await pool.query(
+      'SELECT app_id, status FROM app_collaborators WHERE user_id = $1 ORDER BY app_id', [kim.id]
+    )).rows;
+    assert.ok(!kimRows.some((row) => row.app_id === club.id), 'the stranger\'s invite was dropped');
+    assert.ok(kimRows.some((row) => row.app_id === garden.id && row.status === 'invited'), 'the connected person\'s applied');
 
     const town = (await pool.query(
       `INSERT INTO apps (name, slug, created_by, view_visibility, collab_visibility)
