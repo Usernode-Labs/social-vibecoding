@@ -594,11 +594,9 @@ Pass 0b, the apply functions in `routes/issues.js`) are deleted.
   keys from outside the machine is refused (`WF_OWNERSHIP_VIOLATION`). A row is enrolled
   when it is filed, or
   by the leader's boot backfill if filing failed.
-- **Rolling back past this release.** Code from before it still reads
-  `WF_GOVERNANCE_ENABLED`, and without it its old paths would try to decide proposals the
-  guard now refuses to let them write, so every enrolled proposal would stall. Keep
-  `platform.workflowGovernanceEnabled: true` in the infra values (this chart no longer
-  reads it) until no rollback target predates this release.
+- **Rolling back past this release** is no longer possible: every release a rollback
+  could reach postdates it, and the infra values no longer carry
+  `platform.workflowGovernanceEnabled` (Usernode-Labs/infra 352b03d).
 - **Verify after a release.** The Pod's log shows `Workflow runtime started` and, on
   the conductor that ran the release's adoptions, `Enrolled open governance proposals`
   when there were any; Admin → Workflows lists the enrolled proposals and its problems
@@ -621,12 +619,9 @@ has no flag: the old merge tail (`finalizeMerge` and its follow-ups), the
 - **Ownership is enforced.** Only the machine moves a proposal into `merged`, and a write
   to a merged row's `merged_at`, `merge_commit_sha`, `included_in_session_id` or `live_at`
   from outside it is refused (`WF_OWNERSHIP_VIOLATION`).
-- **Rolling back past this release.** Code from before it still reads
-  `WF_MERGE_FOLLOWUPS_ENABLED`; with it off, its old merge tail would move rows into
-  `merged` itself. Keep `platform.workflowMergeFollowupsEnabled: true` in the infra values
-  (this chart no longer reads it) until no rollback target predates this release. The
-  instances this release writes are version 5, which older code leaves alone: such a
-  merge finishes once the release comes back.
+- **Rolling back past this release** is no longer possible: every release a rollback
+  could reach postdates it, and the infra values no longer carry
+  `platform.workflowMergeFollowupsEnabled` (Usernode-Labs/infra#43).
 - **Verify after a release.** The Pod's log shows `Workflow runtime started` with
   `merge-followups`; the next merge appears in Admin → Workflows as
   `merge-followups / session:<id>` and reaches `live`, and the proposal's thread says "is
@@ -656,8 +651,7 @@ request and the machine deploys. `docs/workflows.md` explains the machine.
   runs a deploy app delivery had under way (it registers the machine while one is), but a
   request left open after a failed deploy waits: the merge or secret change that asked is
   version 5, which older code leaves alone, so it is answered once the release comes back.
-  Nothing in the infra values needs keeping for it (`workflowAppDeliveryEnabled` stays as
-  it is until the values are cleaned up).
+  Nothing in the infra values needs keeping for it.
 - **Verify after a release.** The Pod's log shows `Workflow runtime started` with
   `app-delivery`; the next deploy appears in Admin → Workflows as
   `app-delivery / app:<id>`, `deploying`, then `idle`, and the version pill spins during
@@ -693,11 +687,9 @@ explains the machine.
 - **Ownership is enforced.** A write to a held session's preview or checks columns from
   outside the machine is refused (`WF_OWNERSHIP_VIOLATION`). The staging seeds in
   `migrate.js` leave a row it holds alone.
-- **Rolling back past this release.** Code from before it still reads
-  `WF_PREVIEWS_ENABLED` and `PREVIEW_LIFECYCLE_ENABLED`; with the first off it would hand
-  every session back to paths the guard now refuses. Keep
-  `platform.workflowPreviewsEnabled: true` in the infra values (this chart no longer reads
-  it) until no rollback target predates this release.
+- **Rolling back past this release** is no longer possible: every release a rollback
+  could reach postdates it, and the infra values no longer carry
+  `platform.workflowPreviewsEnabled` (Usernode-Labs/infra 352b03d).
 - **Verify after a release.** The Pod's log shows `Workflow runtime started` listing
   `preview`; Admin → Workflows shows each new revision as `preview / session:<id>` going
   through `preparing` and `checking` to `settled`, with an empty problems panel; and
