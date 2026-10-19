@@ -45,43 +45,39 @@
   },
   "report.reason.label": {
     "text": "Reason",
-    "description": "Label of the drop-down in the report dialog where the person picks why they are reporting."
-  },
-  "report.reason.choose": {
-    "text": "Choose a reason",
-    "description": "Empty first option of the reason drop-down in the report dialog, shown until a reason is picked."
+    "description": "Small heading over the list of reasons in the report dialog, where the person taps why they are reporting."
   },
   "report.reason.spam": {
     "text": "Spam",
-    "description": "Reason for a report, in the report dialog's drop-down: unwanted advertising or repeated junk."
+    "description": "Reason for a report, a row in the report dialog's list of reasons: unwanted advertising or repeated junk."
   },
   "report.reason.scam": {
     "text": "Scam or fraud",
-    "description": "Reason for a report, in the report dialog's drop-down: an attempt to trick people out of money or accounts."
+    "description": "Reason for a report, a row in the report dialog's list of reasons: an attempt to trick people out of money or accounts."
   },
   "report.reason.harassment": {
     "text": "Harassment",
-    "description": "Reason for a report, in the report dialog's drop-down: someone is being targeted or bullied."
+    "description": "Reason for a report, a row in the report dialog's list of reasons: someone is being targeted or bullied."
   },
   "report.reason.hate": {
     "text": "Hate",
-    "description": "Reason for a report, in the report dialog's drop-down: hateful content aimed at a group of people."
+    "description": "Reason for a report, a row in the report dialog's list of reasons: hateful content aimed at a group of people."
   },
   "report.reason.threats": {
     "text": "Threats",
-    "description": "Reason for a report, in the report dialog's drop-down: threats of violence or harm."
+    "description": "Reason for a report, a row in the report dialog's list of reasons: threats of violence or harm."
   },
   "report.reason.sexualContent": {
     "text": "Sexual or unsafe content",
-    "description": "Reason for a report, in the report dialog's drop-down: sexual material or content that is dangerous to people."
+    "description": "Reason for a report, a row in the report dialog's list of reasons: sexual material or content that is dangerous to people."
   },
   "report.reason.impersonation": {
     "text": "Impersonation",
-    "description": "Reason for a report, in the report dialog's drop-down: an account pretending to be someone else. Offered only when a person is reported."
+    "description": "Reason for a report, a row in the report dialog's list of reasons: an account pretending to be someone else. Offered only when a person is reported."
   },
   "report.reason.other": {
     "text": "Other",
-    "description": "Last reason for a report, in the report dialog's drop-down: none of the listed reasons. Picking it makes the details box required."
+    "description": "Last reason for a report, a row in the report dialog's list of reasons: none of the listed reasons. Picking it makes the details box required."
   },
   "report.details.optional": {
     "text": "Details (optional)",
@@ -96,12 +92,12 @@
     "description": "Small note at the bottom of the report form: who will know who sent the report."
   },
   "report.submit": {
-    "text": "Submit report",
+    "text": "Send report",
     "description": "Button at the bottom of the report form: sends the report to the moderators."
   },
   "report.sending": {
     "text": "Sending…",
-    "description": "Text of the \"Submit report\" button while the report is being sent."
+    "description": "Text of the \"Send report\" button while the report is being sent."
   },
   "report.error.send": {
     "text": "Could not send your report. Try again.",
