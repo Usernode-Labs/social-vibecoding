@@ -87,6 +87,7 @@ const { platformAboutRoutes } = require('./src/routes/platform-about');
 const { reportSnapshotRoutes, reportShareRoutes } = require('./src/routes/report-snapshots');
 const { homePanelRoutes } = require('./src/routes/home-panels');
 const { onboardingRoutes } = require('./src/routes/onboarding');
+const { adultAttestationRoutes } = require('./src/routes/adult-attestation');
 const { homeLayoutRoutes } = require('./src/routes/home-layout');
 const { chatDraftsRoutes } = require('./src/routes/chat-drafts');
 const { agentSessionDraftsRoutes } = require('./src/routes/agent-session-drafts');
@@ -810,6 +811,9 @@ app.use(homePanelRoutes(config));
 // follows the username and terms steps, and the Getting started card on
 // Home. Me-scoped, so behind authMiddleware with the panels above.
 app.use(onboardingRoutes(config));
+// "Are you 18 or older?" (#5095): the yes the wallet, staking, node and
+// passport writes wait for. Me-scoped, behind authMiddleware.
+app.use(adultAttestationRoutes(config));
 // Free-form home-grid placement: where each app tile and widget sits, per
 // breakpoint. Me-scoped like the panels route above.
 app.use(homeLayoutRoutes(config));
