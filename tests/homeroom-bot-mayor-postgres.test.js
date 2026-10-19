@@ -1832,16 +1832,21 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
        ($1, 1, 'live', 'ready', $2), ($1, 1, 'live', 'ready', $3), ($1, 3, 'live', 'ready', $4)`,
     [plant.id, firstMerged, duplicate, photos],
   );
-  // The system's archive, as session-lifecycle.js does it, recorded.
+  // The system's archive, as session-lifecycle.js does it, recorded. A
+  // proposal is the proposal machine's from its insert (its Adopted), so the
+  // move is written as the kernel writes it.
   const archives = [];
   const sessionLifecycle = {
     async archiveSession(args) {
       archives.push({ sessionId: args.sessionId, reason: args.reason, userId: args.userId ?? null });
-      const { rowCount } = await pool.query(
-        `UPDATE chat_sessions SET status = 'archived', archived_at = NOW()
-          WHERE id = $1 AND status IN ('active', 'promoted', 'paused')`,
-        [args.sessionId],
-      );
+      let rowCount = 0;
+      await asKernel(async (c) => {
+        ({ rowCount } = await c.query(
+          `UPDATE chat_sessions SET status = 'archived', archived_at = NOW()
+            WHERE id = $1 AND status IN ('active', 'promoted', 'paused')`,
+          [args.sessionId],
+        ));
+      });
       return { archived: rowCount > 0 };
     },
   };

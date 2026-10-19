@@ -298,8 +298,10 @@ async function measure({ pool, session }, options = {}) {
     return { ...answer, measuredAt: new Date().toISOString(), error: next.error };
   }
 
-  const blockReasons = options.blockReasons === undefined
-    ? (Array.isArray(s.integration_block_reasons) ? s.integration_block_reasons : [])
+  // Without `blockReasons` the stored ones stay as their writer (the merge
+  // gate) left them: a measurement that copied the caller's row back wrote
+  // a stale copy over the gate's newer answer.
+  const blockReasons = options.blockReasons === undefined ? null
     : (Array.isArray(options.blockReasons) ? options.blockReasons
       : [options.blockReasons].filter(Boolean));
 
@@ -308,6 +310,7 @@ async function measure({ pool, session }, options = {}) {
   // the session, which may be minutes and several measurements old.
   let wasClean = null;
   let wasHead = null;
+  let storedReasons = null;
   try {
     const { rows } = await pool.query(
       `WITH prev AS (
@@ -325,20 +328,22 @@ async function measure({ pool, session }, options = {}) {
               integration_conflict_paths = $8::jsonb,
               integration_merged_tree = $9,
               integration_checks_base_current = $10,
-              integration_block_reasons = $11::jsonb,
+              integration_block_reasons = COALESCE($11::jsonb, integration_block_reasons),
               integration_error = NULL
         WHERE id = $1
     RETURNING (SELECT was_clean FROM prev) AS was_clean,
-              (SELECT was_head FROM prev) AS was_head`,
+              (SELECT was_head FROM prev) AS was_head,
+              integration_block_reasons AS block_reasons`,
       [
         s.id, next.headSha, next.mainSha, next.baseSha,
         next.behindBy, next.aheadBy, next.mergesClean,
         JSON.stringify(next.conflictPaths), next.mergedTree,
-        next.checksBaseCurrent, JSON.stringify(blockReasons),
+        next.checksBaseCurrent, blockReasons == null ? null : JSON.stringify(blockReasons),
       ]
     );
     wasClean = rows[0] ? rows[0].was_clean : null;
     wasHead = rows[0] ? rows[0].was_head : null;
+    storedReasons = rows[0] && Array.isArray(rows[0].block_reasons) ? rows[0].block_reasons : null;
   } catch (err) {
     log.warn('integration', 'write failed', { sessionId: s.id, err: err.message });
     return { ...answer, error: err.message };
@@ -376,7 +381,7 @@ async function measure({ pool, session }, options = {}) {
     integration_conflict_paths: next.conflictPaths,
     integration_merged_tree: next.mergedTree,
     integration_checks_base_current: next.checksBaseCurrent,
-    integration_block_reasons: blockReasons,
+    integration_block_reasons: blockReasons ?? storedReasons ?? [],
     integration_error: null,
   });
 

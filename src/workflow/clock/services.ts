@@ -5,7 +5,7 @@
 
 import type { Json, WorkContext, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import { itemKind, runKind } from './machine.ts';
+import { itemKind, runKind, MAX_ITEMS } from './machine.ts';
 
 // What a job's I/O reads: the platform's configuration and its pool.
 export interface JobDeps { config: any; pool: any }
@@ -80,6 +80,10 @@ const HOUR = 60 * MIN;
 
 // Whether the run has been asked to stop (its lease is lost, or the process
 // is shutting down): a sweep over many rows stops at the next one.
+// (A run hands back at most MAX_ITEMS targets. A list that can be longer is
+// paged: each run takes the next page after the last one it reached, kept
+// as `after` in its result, and starts over once a page comes back short.)
+const page = (ctx: WorkContext) => ({ after: (ctx.input.previous as any)?.after ?? null, limit: MAX_ITEMS });
 const stopped = (ctx: WorkContext) => () => ctx.signal.aborted;
 
 // WORKSHOP_THEMES_SWEEP_INTERVAL_MS (config.js workshopSweepIntervalMs): 0
@@ -275,6 +279,144 @@ export const JOBS: readonly Job[] = Object.freeze([
       return { runId: r?.runId ?? null, credits: r?.credits ?? 0, graded: r?.graded ?? 0, idle: !!r?.idle, busy: !!r?.busy,
         aggregateCheckedAt: r?.aggregateCheckedAt ?? (ctx.input.previous as any)?.aggregateCheckedAt ?? 0 };
     },
+  },
+
+  // ── Previews: outside facts about the runtimes and the servers ───────
+  // (What the preview machine decides about a preview it holds, its idle
+  // give-back and the checks it owes, is its own deadline: preview/.)
+  {
+    // A vote-backed preview whose runtime or database is gone is reported
+    // lost; the preview machine builds it again.
+    name: 'preview-runtimes', everyMs: 2 * MIN, leaseMs: 10 * MIN,
+    run: (ctx: WorkContext, { config }: JobDeps) => legacy('services/staging-recovery').lookForLostPreviews(config, { signal: ctx.signal }),
+  },
+  {
+    // Previews that serve nobody (their session merged, was archived or is
+    // gone, or their row no longer names them and no instance holds them),
+    // each taken as a target of its own: retired through the machine, or
+    // removed by name. STAGING_STALE_SWEEP_INTERVAL_MS=0 switches it off.
+    name: 'preview-gc',
+    get everyMs() { return legacy('services/staging-reap').staleSweepIntervalMs() || 24 * HOUR; },
+    run: (ctx: WorkContext, { config }: JobDeps) => {
+      const reap = legacy('services/staging-reap');
+      return reap.staleSweepIntervalMs() ? reap.leftovers(config, page(ctx)) : { off: true };
+    },
+    item: {
+      concurrency: 3,
+      // A teardown that left the preview running fails the item: it is
+      // tried again, and its error is the item's.
+      run: async (ctx: WorkContext, { config }: JobDeps) => {
+        const r = await legacy('services/staging-reap').reapLeftover(ctx.input.input, config);
+        if (r?.outcome === 'failed') throw new Error(r.error || 'the preview survived its teardown');
+        return r;
+      },
+    },
+  },
+  {
+    // Previews built with another platform environment than the newest
+    // build's, handed to the preview machine. Only the newest build acts: an
+    // older Pod still running during a rollout would judge the new build's
+    // previews by its own environment, so its run looks at nothing.
+    name: 'preview-env', everyMs: 15 * MIN, leaseMs: 10 * MIN,
+    run: async (_ctx: WorkContext, { pool, config }: JobDeps) => {
+      const own = String(process.env.GIT_SHA || '').trim().slice(0, 40);
+      if (own && own !== 'dev') {
+        const { rows: [newest] } = await pool.query(
+          `SELECT key FROM wf_instances WHERE machine = 'release' ORDER BY created_at DESC LIMIT 1`);
+        if (newest && newest.key !== `release:${own}`) return { skipped: 'older_build' };
+      }
+      return legacy('services/staging-reap').tellStaleEnv(config);
+    },
+  },
+  {
+    // Staging databases nothing can reach any more (no session, build or
+    // connection). STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS=0 switches it off.
+    name: 'preview-orphan-dbs',
+    get everyMs() { return legacy('services/staging-reap').orphanDbSweepIntervalMs() || 24 * HOUR; },
+    leaseMs: 30 * MIN,
+    run: (_ctx: WorkContext, { config }: JobDeps) => {
+      const reap = legacy('services/staging-reap');
+      return reap.orphanDbSweepIntervalMs() ? reap.sweepOrphanDbs(config) : { off: true };
+    },
+  },
+  {
+    // The shared Postgres (and the preview database server) near its
+    // connection limit: one preview given back at a time, none while the
+    // last one asked for is still being retired, looked at again a minute
+    // later while saturated. And, while a preview server is drained, what
+    // still depends on it, every ten minutes.
+    // STAGING_PRESSURE_SWEEP_INTERVAL_MS=0 switches the reclaim off.
+    name: 'preview-pressure', everyMs: 0,
+    run: async (ctx: WorkContext, { config }: JobDeps) => {
+      const reap = legacy('services/staging-reap');
+      const every = reap.pressureSweepIntervalMs();
+      const previous = (ctx.input.previous ?? {}) as any;
+      const drain = await reap.previewServerDrainStatus(config, { lastAt: previous.drainAt ?? 0 });
+      const drainAt = drain?.at ?? previous.drainAt ?? 0;
+      if (!every) return { off: true, drainAt, restMs: 5 * MIN };
+      const main = await reap.sweepConnectionPressure(config, { asked: previous.main?.asked ?? [] });
+      const preview = await reap.sweepConnectionPressure(config, { server: 'preview', asked: previous.preview?.asked ?? [] });
+      const pressed = main.saturated || preview.saturated || main.waiting || preview.waiting;
+      return { main, preview, drainAt, restMs: pressed ? MIN : Math.min(every, 5 * MIN) };
+    },
+  },
+  {
+    // A merged change's Kubernetes worker volume that outlived its merge.
+    name: 'worker-volumes', everyMs: HOUR, leaderSweep: 'stale-pr-sweep',
+    run: async (_ctx: WorkContext, { pool, config }: JobDeps) => (config.archivedRetentionMs > 0
+      ? { reclaimed: (await legacy('services/worker-volume-reclaim').reclaimWorkerVolumes({ pool, mode: 'closed', limit: 50 })).length }
+      : { off: true }),
+  },
+
+  // ── Proposals: what GitHub and the mirrors say about them ────────────
+  // (What follows from it is the proposal machine's: proposal/, and
+  // services/proposal-scans.js says which event each look sends.)
+  {
+    // Each imported pull request: its head, its description, and whether
+    // GitHub merged or closed it. IMPORTED_HEAD_SYNC_COOLDOWN_MS sets how
+    // often (at least 30 seconds).
+    name: 'imported-prs',
+    get everyMs() { return Math.max(parseInt(process.env.IMPORTED_HEAD_SYNC_COOLDOWN_MS || '', 10) || 3 * MIN, 30 * 1000); },
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').importedTargets(pool, page(ctx)),
+    item: {
+      concurrency: 2,
+      leaseMs: 10 * MIN,
+      run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/proposal-scans').lookImported(config, pool, Number(ctx.input.input?.sessionId)),
+    },
+  },
+  {
+    // Each native proposal up for a vote: one merged by hand on GitHub is
+    // recorded.
+    name: 'merged-by-hand', everyMs: 6 * HOUR, leaderSweep: 'merged-by-hand-lookup',
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').mergedByHandTargets(pool, page(ctx)),
+    item: {
+      concurrency: 4,
+      run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').lookMergedByHand(pool, Number(ctx.input.input?.sessionId)),
+    },
+  },
+  {
+    // Each native proposal in review: its reviewed head read again (a push
+    // made outside Homeroom), and its explicit-approval flag.
+    name: 'proposal-revisions', everyMs: HOUR, leaderSweep: 'stale-pr-sweep',
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').revisionTargets(pool, page(ctx)),
+    item: {
+      concurrency: 2,
+      leaseMs: 5 * MIN,
+      run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/proposal-scans').refreshRevision(config, pool, Number(ctx.input.input?.sessionId)),
+    },
+  },
+  {
+    // Every proposal in review measured against its app's main.
+    name: 'proposal-measure', everyMs: MIN, leaseMs: 15 * MIN,
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').measurePromoted(pool, { shouldStop: stopped(ctx) }),
+  },
+  {
+    // A proposal failing only checks main has since fixed is brought up to
+    // date with main (services/fixed-check-sync.js).
+    name: 'fixed-check-sync', everyMs: 5 * MIN, leaseMs: 10 * MIN,
+    run: (ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/proposal-scans').fixedCheckSync(config, pool, {
+      previous: ctx.input.previous ?? null, shouldStop: stopped(ctx),
+    }),
   },
 
   // ── Paid per target: each target an item of its own ─────────────────
