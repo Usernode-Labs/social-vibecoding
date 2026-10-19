@@ -41,7 +41,6 @@
  */
 
 const log = require('./logger');
-const leaderTimers = require('./leader-timers');
 const conversations = require('./conversations');
 const userDirectory = require('./user-directory');
 
@@ -74,9 +73,6 @@ const RECENT_LIMIT = 20;
 const SEARCH_LIMIT = 8;
 
 const INTERVAL_MS = 30_000;
-const FIRST_SWEEP_DELAY_MS = 20_000;
-
-let running = false;
 
 function parseMemberIds(raw) {
   try {
@@ -417,7 +413,12 @@ async function processOne(pool, userId, settings) {
   return 'sent';
 }
 
-/** One pass over the queue. Does nothing while the switch is off. */
+/**
+ * One pass over the queue: the `welcome-dm` clock (src/workflow/clock/services.ts).
+ * Does nothing while the switch is off. Each row is claimed under its lock
+ * with the group it made, and the message carries an idempotency key, so two
+ * passes at once welcome nobody twice.
+ */
 async function sweep(pool) {
   const result = { sent: 0, skipped: 0, failed: 0, retry: 0 };
   const settings = await readSettings(pool);
@@ -449,33 +450,7 @@ async function sweep(pool) {
   return result;
 }
 
-function start(config) {
-  if (leaderTimers.has('welcome-dm')) return;
-  const { getPool } = require('../db/pool');
-  const run = async () => {
-    if (running) return;
-    running = true;
-    try {
-      const result = await sweep(getPool(config));
-      if (result.sent || result.failed) log.info('welcome-dm', 'Welcome messages sent', result);
-    } catch (err) {
-      log.error('welcome-dm', 'Sweep failed', { err: err.message });
-    } finally {
-      running = false;
-    }
-  };
-  // A leader timer (services/leader-timers.js): no sweep starts once
-  // shutdown has begun, and one under way is given the drain to finish.
-  leaderTimers.every('welcome-dm', run, INTERVAL_MS, { firstDelayMs: FIRST_SWEEP_DELAY_MS });
-}
-
-function stop() {
-  leaderTimers.clear('welcome-dm');
-}
-
 module.exports = {
-  start,
-  stop,
   sweep,
   processOne,
   readSettings,

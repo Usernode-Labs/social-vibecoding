@@ -200,22 +200,38 @@ async function sweepOrphanRuntimes(config, pool, {
   return result;
 }
 
+// One pass of the `shots-gc` clock (src/workflow/clock/services.ts), on any
+// process: what the cluster and the database hold. The checkouts a run left
+// in a process's own temporary directory are that process's to remove
+// (sweepOwnCheckouts, every process: server.js startProcessDuties), since a
+// run's work is claimed wherever the workflow runs.
 async function sweep(config, pool) {
   const runtimes = await sweepOrphanRuntimes(config, pool);
-  const checkouts = await sweepOrphanCheckouts(pool, {
-    maxAgeMs: config.shots?.maxRunMs || 1_440_000,
-  });
   const pruned = await prune(pool, config);
   const evalArtifacts = await pruneEvalArtifacts(pool);
   return {
     orphanRuntimesExamined: runtimes.examined,
     orphanRuntimesRemoved: runtimes.removed,
     orphanRuntimeFailures: runtimes.failed,
-    orphanCheckoutsExamined: checkouts.examined,
-    orphanCheckoutsRemoved: checkouts.removed,
     ...pruned,
     evalArtifacts,
   };
+}
+
+// This process's own leftover checkouts, every few hours.
+const OWN_CHECKOUTS_EVERY_MS = 3 * 60 * 60 * 1000;
+let ownCheckoutsTimer = null;
+function sweepOwnCheckouts(config, pool) {
+  if (ownCheckoutsTimer) return;
+  const run = () => sweepOrphanCheckouts(pool, { maxAgeMs: config.shots?.maxRunMs || 1_440_000 })
+    .then((r) => { if (r.removed) log.info('shots', 'Removed orphan shots checkouts', r); })
+    .catch((err) => log.warn('shots', 'Orphan shots checkout sweep failed', { error: err.message }));
+  ownCheckoutsTimer = setInterval(run, OWN_CHECKOUTS_EVERY_MS);
+  ownCheckoutsTimer.unref?.();
+}
+function stopOwnCheckouts() {
+  if (ownCheckoutsTimer) clearInterval(ownCheckoutsTimer);
+  ownCheckoutsTimer = null;
 }
 
 module.exports = {
@@ -228,6 +244,8 @@ module.exports = {
   prune,
   pruneEvalArtifacts,
   sweepOrphanCheckouts,
+  sweepOwnCheckouts,
+  stopOwnCheckouts,
   sweepOrphanRuntimes,
   sweep,
 };

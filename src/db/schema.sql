@@ -5902,6 +5902,13 @@ BEGIN
 END $$;
 ALTER TABLE mobile_push_deliveries
   VALIDATE CONSTRAINT mobile_push_deliveries_platform_check;
+-- The sender's claim: the work item and attempt of the push-drain clock's run
+-- that is sending the row (src/workflow/clock/services.ts). A row left 'sending'
+-- by an attempt that is no longer live is sent again; one a live attempt
+-- holds is not, so a run beside another (a release's overlap, a process
+-- that stalled past its lease) never sends a push twice.
+ALTER TABLE mobile_push_deliveries ADD COLUMN IF NOT EXISTS claimed_work UUID;
+ALTER TABLE mobile_push_deliveries ADD COLUMN IF NOT EXISTS claimed_attempt INTEGER;
 CREATE INDEX IF NOT EXISTS idx_mobile_push_deliveries_claim
   ON mobile_push_deliveries (environment, available_at, id) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_mobile_push_deliveries_registration

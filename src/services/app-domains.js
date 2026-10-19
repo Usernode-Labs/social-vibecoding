@@ -39,7 +39,6 @@ const log = require('./logger');
 const { getPool } = require('../db/pool');
 const caddy = require('./caddy');
 const events = require('./events');
-const leaderTimers = require('./leader-timers');
 
 const TXT_PREFIX = '_homeroom';
 const TXT_VALUE_PREFIX = 'homeroom-verify=';
@@ -281,15 +280,23 @@ async function remove(pool, config, app, row, user, { action = 'removed' } = {})
   await recordEvent(pool, { appId: app.id, userId: user?.id ?? null, hostname: row.hostname, action });
 }
 
-async function setStatus(pool, id, status, fields = {}) {
+// `from`: the status the caller read, so a check that ran beside an admin's
+// remove, disable or enable (or beside another check) writes nothing over
+// what they did; it answers null then.
+async function setStatus(pool, id, status, fields = {}, { from = null } = {}) {
   const sets = ['status = $2', 'updated_at = NOW()'];
   const params = [id, status];
   for (const [key, value] of Object.entries(fields)) {
     params.push(value);
     sets.push(`${key} = $${params.length}`);
   }
+  let where = 'id = $1';
+  if (from) {
+    params.push(from);
+    where += ` AND status = $${params.length}`;
+  }
   const { rows } = await pool.query(
-    `UPDATE app_domains SET ${sets.join(', ')} WHERE id = $1 RETURNING ${ROW_COLUMNS}`, params
+    `UPDATE app_domains SET ${sets.join(', ')} WHERE ${where} RETURNING ${ROW_COLUMNS}`, params
   );
   return rows[0] || null;
 }
@@ -331,6 +338,18 @@ async function probeLive(hostname) {
 
 // ── The check ───────────────────────────────────────────────────────────
 
+// A claim removed or disabled while this check routed it at the edge: the
+// route it just made is taken down again (their own teardown ran before it).
+// True when it was.
+async function unrouteIfGone(pool, config, row) {
+  const { rows } = await pool.query('SELECT status FROM app_domains WHERE id = $1', [row.id]);
+  if (rows[0] && rows[0].status !== 'disabled') return false;
+  await teardownEdge(config, row).catch((err) => {
+    log.warn('app-domains', 'Edge teardown failed after a removal', { hostname: row.hostname, err: err.message });
+  });
+  return true;
+}
+
 async function appOf(pool, row) {
   const { rows } = await pool.query('SELECT id, slug, name, runtime_name FROM apps WHERE id = $1', [row.app_id]);
   return rows[0] || null;
@@ -345,19 +364,24 @@ async function checkRow(pool, config, row, { now = Date.now(), resolver, probe =
   const app = await appOf(pool, row);
   if (!app) return row;
   const since = (at) => (at ? now - new Date(at).getTime() : 0);
+  // Every write is conditional on the status this check read: a row an
+  // admin removed or disabled meanwhile is left as they left it.
+  const from = { from: row.status };
 
   if (row.status === 'pending' || row.status === 'failed') {
     const dnsResult = await checkDns(app, row, resolver);
     if (dnsResult.ok) {
       let next = await setStatus(pool, row.id, 'verified', {
         dns_checked_at: new Date(now), verified_at: new Date(now), last_error: null, failure_count: 0,
-      });
+      }, from);
+      if (!next) return null;
       try {
         await provisionEdge(config, app, next);
       } catch (err) {
         log.warn('app-domains', 'Edge provisioning failed', { hostname: row.hostname, err: err.message });
-        next = await setStatus(pool, row.id, 'verified', { last_error: 'Getting a certificate failed; trying again.' });
+        next = await setStatus(pool, row.id, 'verified', { last_error: 'Getting a certificate failed; trying again.' }, { from: 'verified' });
       }
+      await unrouteIfGone(pool, config, row);
       invalidateHost(row.hostname);
       return next;
     }
@@ -365,8 +389,8 @@ async function checkRow(pool, config, row, { now = Date.now(), resolver, probe =
     const giveUp = !dnsResult.transient && row.status === 'pending' && since(row.created_at) > GIVE_UP_AFTER_MS;
     const next = await setStatus(pool, row.id, giveUp ? 'failed' : row.status, {
       dns_checked_at: new Date(now), last_error: dnsResult.error, failure_count: failures,
-    });
-    if (giveUp) await recordEvent(pool, { appId: app.id, hostname: row.hostname, action: 'failed' });
+    }, from);
+    if (giveUp && next) await recordEvent(pool, { appId: app.id, hostname: row.hostname, action: 'failed' });
     return next;
   }
 
@@ -376,7 +400,8 @@ async function checkRow(pool, config, row, { now = Date.now(), resolver, probe =
       const next = await setStatus(pool, row.id, 'live', {
         live_at: new Date(now), cert_expires_at: live.expiresAt, last_error: null, failure_count: 0,
         dns_checked_at: new Date(now),
-      });
+      }, from);
+      if (!next) return null;
       invalidateHost(row.hostname);
       await recordEvent(pool, { appId: app.id, hostname: row.hostname, action: 'live' });
       return next;
@@ -384,19 +409,20 @@ async function checkRow(pool, config, row, { now = Date.now(), resolver, probe =
     // Keep asking the edge to route it: an Ingress lost to a failed upsert
     // is re-created here rather than waiting on a person.
     await provisionEdge(config, app, row).catch(() => {});
+    if (await unrouteIfGone(pool, config, row)) return null;
     const waited = since(row.verified_at);
     if (waited > CERT_GIVE_UP_AFTER_MS) {
       const next = await setStatus(pool, row.id, 'failed', {
         last_error: 'Still getting a certificate. Check that the CNAME record is still in place.',
         failure_count: row.failure_count + 1, dns_checked_at: new Date(now),
-      });
-      await recordEvent(pool, { appId: app.id, hostname: row.hostname, action: 'failed' });
+      }, from);
+      if (next) await recordEvent(pool, { appId: app.id, hostname: row.hostname, action: 'failed' });
       return next;
     }
     return setStatus(pool, row.id, 'verified', {
       last_error: waited > CERT_SLOW_AFTER_MS ? 'Still getting a certificate.' : null,
       dns_checked_at: new Date(now),
-    });
+    }, from);
   }
 
   if (row.status === 'live') {
@@ -405,15 +431,15 @@ async function checkRow(pool, config, row, { now = Date.now(), resolver, probe =
     if (live.ok) {
       return setStatus(pool, row.id, 'live', {
         cert_expires_at: live.expiresAt, last_error: null, failure_count: 0, dns_checked_at: new Date(now),
-      });
+      }, from);
     }
-    if (dnsResult.transient) return setStatus(pool, row.id, 'live', { dns_checked_at: new Date(now) });
+    if (dnsResult.transient) return setStatus(pool, row.id, 'live', { dns_checked_at: new Date(now) }, from);
     const failures = row.failure_count + 1;
     const failed = failures >= LIVE_FAILURES_BEFORE_FAILED;
     const next = await setStatus(pool, row.id, failed ? 'failed' : 'live', {
       last_error: live.error, failure_count: failures, dns_checked_at: new Date(now),
-    });
-    if (failed) {
+    }, from);
+    if (failed && next) {
       invalidateHost(row.hostname);
       await recordEvent(pool, { appId: app.id, hostname: row.hostname, action: 'failed' });
     }
@@ -426,9 +452,11 @@ async function checkRow(pool, config, row, { now = Date.now(), resolver, probe =
 async function checkNow(pool, config, row, deps = {}) {
   let current = row;
   if (row.status === 'failed') {
-    current = await setStatus(pool, row.id, 'pending', { failure_count: 0, last_error: null, verified_at: null, live_at: null });
+    current = await setStatus(pool, row.id, 'pending', { failure_count: 0, last_error: null, verified_at: null, live_at: null }, { from: 'failed' });
+    if (!current) return byId(pool, row.id);
   }
-  return checkRow(pool, config, current, deps);
+  const checked = await checkRow(pool, config, current, deps);
+  return checked || byId(pool, row.id);
 }
 
 /** Which rows a sweep at `now` should look at. Pure. */
@@ -519,47 +547,27 @@ async function resolveAppHost(pool, rawHost) {
 
 // ── The sweep ───────────────────────────────────────────────────────────
 
-let sweepInFlight = false;
-let lastSweepAt = null;
-let lastError = null;
-
-async function sweep(config, { now = Date.now() } = {}) {
-  if (sweepInFlight) return;
-  sweepInFlight = true;
-  try {
-    const pool = getPool(config);
-    const { rows } = await pool.query(
-      `SELECT ${ROW_COLUMNS} FROM app_domains WHERE status IN ('pending', 'verified', 'live')`
-    );
-    for (const row of selectDue(rows, now)) {
-      try {
-        await checkRow(pool, config, row, { now });
-      } catch (err) {
-        log.warn('app-domains', 'Domain check failed', { hostname: row.hostname, err: err.message });
-      }
+// One pass of the `app-domains` clock (src/workflow/clock/services.ts), on
+// whichever process runs the workflow. Its result is the sweep's status the
+// admin page shows (routes/admin.js, through the clock's instance). A row
+// that fails is logged and counted; the others go on.
+async function sweep(config, { now = Date.now(), shouldStop = () => false } = {}) {
+  const pool = getPool(config);
+  const { rows } = await pool.query(
+    `SELECT ${ROW_COLUMNS} FROM app_domains WHERE status IN ('pending', 'verified', 'live')`
+  );
+  const result = { checked: 0, failed: 0 };
+  for (const row of selectDue(rows, now)) {
+    if (shouldStop()) break;
+    try {
+      await checkRow(pool, config, row, { now });
+      result.checked += 1;
+    } catch (err) {
+      result.failed += 1;
+      log.warn('app-domains', 'Domain check failed', { hostname: row.hostname, err: err.message });
     }
-    lastSweepAt = new Date();
-    lastError = null;
-  } catch (err) {
-    lastError = err.message;
-    log.warn('app-domains', 'Sweep failed', { err: err.message });
-  } finally {
-    sweepInFlight = false;
   }
-}
-
-function start(config) {
-  // A leader timer (services/leader-timers.js): no sweep starts once
-  // shutdown has begun, and one under way is given the drain to finish.
-  leaderTimers.every('app-domains', () => sweep(config), SWEEP_INTERVAL_MS, { firstDelayMs: 20 * 1000 });
-}
-
-function stop() {
-  leaderTimers.clear('app-domains');
-}
-
-function getStatus() {
-  return { lastSweepAt, lastError, sweepInFlight };
+  return result;
 }
 
 /** The row as the API answers it: nothing a client does not need. */
@@ -607,8 +615,5 @@ module.exports = {
   teardownEdge,
   publicRow,
   sweep,
-  start,
-  stop,
-  getStatus,
   _setResolverFactoryForTest(fn) { resolverFactory = fn; },
 };

@@ -232,14 +232,10 @@ async function listApps(pool, { now } = {}) {
 
 // ── The sweep ─────────────────────────────────────────────────────────
 
+// Only which log line a staging preview has already written.
 const state = {
-  lastSweep: null,
   stagingMeasureWarned: false,
 };
-
-function lastSweep() {
-  return state.lastSweep;
-}
 
 // The notification creator, resolved at call time so a test can swap the
 // module's export (the same seam staging.js's deploy-failure path uses).
@@ -252,18 +248,30 @@ async function applyTransition(pool, app, dbName, decision, ctx) {
   const meta = { slug: app.slug, dbName, bytes, capBytes, staging };
   switch (decision.transition) {
     case 'freeze': {
-      // Role first, then the row, then the people: if the role change
-      // fails nothing is recorded and the next sweep tries again; if the
-      // notification fails the freeze still stands, which is the part
-      // that protects the volume.
-      if (!staging) await dbManager.setAppDatabaseWritable(dbName, false, { execute });
-      await pool.query(
+      // The row first, as a compare-and-set on what this sweep read (not
+      // frozen, the same grace): a sweep beside another one, or beside an
+      // admin's grace or new cap, freezes nothing they changed. Then the
+      // role; if that fails the row is put back and the next sweep tries
+      // again. Then the people: if the notification fails the freeze still
+      // stands, which is the part that protects the volume.
+      const { rowCount } = await pool.query(
         `UPDATE apps
             SET db_storage_frozen_at = $1,
                 db_storage_warned_at = COALESCE(db_storage_warned_at, $1)
-          WHERE id = $2`,
-        [now, app.id]
+          WHERE id = $2 AND db_storage_frozen_at IS NULL
+            AND db_storage_grace_until IS NOT DISTINCT FROM $3
+            AND db_storage_cap_bytes IS NOT DISTINCT FROM $4`,
+        [now, app.id, app.db_storage_grace_until ?? null, app.db_storage_cap_bytes ?? null]
       );
+      if (!rowCount) return;
+      if (!staging) {
+        try {
+          await dbManager.setAppDatabaseWritable(dbName, false, { execute });
+        } catch (err) {
+          await pool.query('UPDATE apps SET db_storage_frozen_at = NULL WHERE id = $1 AND db_storage_frozen_at = $2', [app.id, now]);
+          throw err;
+        }
+      }
       summary.frozen += 1;
       log.warn('app-storage-cap', 'App database frozen read-only: over its storage cap', meta);
       if (!staging) {
@@ -278,13 +286,18 @@ async function applyTransition(pool, app, dbName, decision, ctx) {
     }
     case 'unfreeze': {
       if (!staging) await dbManager.setAppDatabaseWritable(dbName, true, { execute });
-      await pool.query('UPDATE apps SET db_storage_frozen_at = NULL WHERE id = $1', [app.id]);
+      const { rowCount } = await pool.query(
+        'UPDATE apps SET db_storage_frozen_at = NULL WHERE id = $1 AND db_storage_frozen_at IS NOT NULL', [app.id]);
+      if (!rowCount) return;
       summary.unfrozen += 1;
       log.info('app-storage-cap', 'App database writable again', { ...meta, grace: decision.graceOpen });
       return;
     }
     case 'warn': {
-      await pool.query('UPDATE apps SET db_storage_warned_at = $1 WHERE id = $2', [now, app.id]);
+      // Told once: a sweep beside this one finds it already warned.
+      const { rowCount } = await pool.query(
+        'UPDATE apps SET db_storage_warned_at = $1 WHERE id = $2 AND db_storage_warned_at IS NULL', [now, app.id]);
+      if (!rowCount) return;
       summary.warned += 1;
       log.info('app-storage-cap', 'App database past its storage warning line', meta);
       if (!staging) {
@@ -298,7 +311,9 @@ async function applyTransition(pool, app, dbName, decision, ctx) {
       return;
     }
     case 'clear_warning': {
-      await pool.query('UPDATE apps SET db_storage_warned_at = NULL WHERE id = $1', [app.id]);
+      const { rowCount } = await pool.query(
+        'UPDATE apps SET db_storage_warned_at = NULL WHERE id = $1 AND db_storage_warned_at IS NOT NULL', [app.id]);
+      if (!rowCount) return;
       summary.cleared += 1;
       return;
     }
@@ -307,9 +322,12 @@ async function applyTransition(pool, app, dbName, decision, ctx) {
 }
 
 /**
- * Measure every app database and apply the transitions. Never throws: a
- * failed measurement or a failed app is recorded in the summary (and in
- * `lastSweep()`, which the admin API reads) and the rest carries on.
+ * Measure every app database and apply the transitions: a pass of the
+ * `app-storage-cap` clock (src/workflow/clock/services.ts), whose last run is
+ * what the admin API shows. Never throws: a failed measurement or a failed
+ * app is recorded in the summary and the rest carries on. Every transition
+ * is a compare-and-set on the row this sweep read, so two sweeps at once
+ * notify once and undo nothing an admin changed meanwhile.
  *
  * deps.execute  the psql runner db-manager uses (tests inject a fake)
  * deps.now      the sweep's clock (tests pin it)
@@ -341,7 +359,6 @@ async function sweep(pool, deps = {}) {
   const finish = () => {
     summary.finishedAt = new Date().toISOString();
     summary.durationMs = Date.now() - startedMs;
-    state.lastSweep = summary;
     return summary;
   };
 
@@ -484,22 +501,12 @@ async function setCapOverride(pool, slug, capBytesOrNull, deps = {}) {
 
 // ── Admin API payloads ────────────────────────────────────────────────
 
-// The leader's sweep runs on its timer; an admin's sweep runs where the
-// request landed. The newer of this process's and the leader's published
-// one (services/leader-status.js, docs/plans/web-and-conductor.md).
-async function newestSweep(pool) {
-  const published = await require('./leader-status').read(LAST_SWEEP_STATUS_KEY, pool);
-  const finished = (s) => String((s && s.finishedAt) || '');
-  return [state.lastSweep, published].filter(Boolean)
-    .sort((a, b) => finished(b).localeCompare(finished(a)))[0] || null;
-}
-const LAST_SWEEP_STATUS_KEY = 'app-storage-cap.sweep';
-
-async function adminPayload(pool, { now } = {}) {
+// `lastSweep`: the clock's last run (routes/admin.js reads it).
+async function adminPayload(pool, { now, lastSweep = null } = {}) {
   return {
     apps: await listApps(pool, { now }),
     defaults: config(),
-    lastSweep: await newestSweep(pool),
+    lastSweep,
   };
 }
 
@@ -553,7 +560,6 @@ function demoAdminPayload({ now } = {}) {
 }
 
 function _resetForTest() {
-  state.lastSweep = null;
   state.stagingMeasureWarned = false;
 }
 
@@ -568,8 +574,6 @@ module.exports = {
   readApp,
   adminPayload,
   demoAdminPayload,
-  lastSweep,
-  LAST_SWEEP_STATUS_KEY,
   isStaging,
   DEFAULT_CAP_BYTES,
   DEFAULT_WARN_PERCENT,

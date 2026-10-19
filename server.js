@@ -1142,6 +1142,9 @@ function startProcessDuties() {
   // if memory headroom shrinks; raise it if we're seeing frequent
   // re-warms in production logs.
   startIdleEvictionSweeper();
+  // The shots checkouts a run left in this process's own temporary
+  // directory (a run's work is claimed wherever the workflow runs).
+  require('./src/services/shots-gc').sweepOwnCheckouts(config, getPool(config));
 }
 
 // Leader-only singleton work. Runs exactly once per cluster — at boot for
@@ -1155,13 +1158,16 @@ function startProcessDuties() {
 // in memory and a route reads (the read-only database roles, the admin
 // statuses) is recorded for them (platform_db_roles, services/leader-status.js).
 async function becomeLeader() {
-  log.info('server', 'Running leader duties (role bootstraps, recovery, sweepers)', {
+  log.info('server', 'Running leader duties (recovery, sweepers)', {
     identity: leadership && leadership.identity,
   });
 
   // (The workflow's timers, services and the release's adoptions are no
   // leader work: every process that runs the workflow starts them, in
-  // start().)
+  // start(). Nor are the platform's scheduled jobs, retention to digests to
+  // the push sender: each is a clock of the workflow, src/workflow/clock/;
+  // nor the read-only database roles, set up with the schema,
+  // services/db-roles.js.)
 
   // What leader work keeps in memory and an admin screen reads, written for
   // the processes that do not lead (services/leader-status.js): a web process
@@ -1170,9 +1176,6 @@ async function becomeLeader() {
   const leaderStatus = require('./src/services/leader-status');
   leaderStatus.provide('bench-lane', () => require('./src/services/bench/lane').laneStatus());
   leaderStatus.provide('staging-reap.automatic', () => stagingReap.readAutomatic());
-  leaderStatus.provide('app-domains.sweep', () => require('./src/services/app-domains').getStatus());
-  leaderStatus.provide(require('./src/services/app-storage-cap').LAST_SWEEP_STATUS_KEY,
-    () => require('./src/services/app-storage-cap').lastSweep());
   leaderStatus.start({ pool: getPool(config) });
 
   // #2045: reconcile the shared hosted-asset backend once per rollout.
@@ -1202,85 +1205,6 @@ async function becomeLeader() {
       .catch((err) => log.warn('server', 'App-host gate routing reconcile deferred', { err: err.message }));
   }
 
-  // Credential rows deliberately outlive their active period for settings
-  // and audit correlation, then age out on the documented schedule.
-  const { cleanupCliAuth } = require('./src/services/cli-auth');
-  const runCliAuthCleanup = () => cleanupCliAuth(getPool(config))
-    .then((counts) => {
-      if (Object.values(counts).some((count) => count > 0)) {
-        log.info('cli-auth', 'Retention cleanup completed', counts);
-      }
-    })
-    .catch((err) => {
-      log.warn('cli-auth', 'Retention cleanup failed', { message: err.message });
-    });
-  // Six-hourly on the clock leader_sweeps keeps (services/leader-timers.js),
-  // rather than once at every election and then on an interval that the
-  // next release reset: due at once if it never ran.
-  leaderTimers.every('cli-auth-cleanup', runCliAuthCleanup, 6 * 60 * 60 * 1000, { durable: getPool(config) });
-
-  // Before & after shots is private, revision-scoped data: enforce the
-  // shorter failed-media and bounded audit-retention windows, and remove
-  // copies and checkouts nothing owns any more. Runs themselves are the
-  // shots machine's (src/workflow/shots/), which settles and cleans up every
-  // run it starts.
-  const shotsGc = require('./src/services/shots-gc');
-  let shotsGcRunning = false;
-  const runShotsGc = () => {
-    if (shotsGcRunning) return leaderTimers.SKIPPED;
-    shotsGcRunning = true;
-    return shotsGc.sweep(config, getPool(config))
-      .then((counts) => {
-        if (Object.values(counts).some((count) => count > 0)) {
-          log.info('shots', 'Retention sweep completed', counts);
-        }
-      })
-      .catch((err) => log.warn('shots', 'Retention sweep failed', { err: err.message }))
-      .finally(() => { shotsGcRunning = false; });
-  };
-  // Six-hourly on the durable clock, like the cleanup above.
-  leaderTimers.every('shots-gc', runShotsGc, 6 * 60 * 60 * 1000, { durable: getPool(config) });
-
-  // #616: ensure the read-only prod-debug Postgres role (fresh in-memory
-  // password every boot) and refresh its deny-listed grants so tables
-  // added by this deploy's migrations are covered. On failure the
-  // prod-debug endpoints return 503 and dev sessions run without the
-  // capability — boot proceeds normally.
-  //
-  // #891: these two role bootstraps MUST run in sequence, not concurrently.
-  // Both sweep `REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public` plus a
-  // per-table GRANT loop over the SAME catalog rows, so firing them together
-  // (as they were, both un-awaited) made Postgres raise `tuple concurrently
-  // updated` on whichever lost. In production prod-debug lost every time —
-  // observed 42ms apart across consecutive deploys — and because nothing
-  // re-invokes ensureRole, `usernode-debug sql` stayed dead for the entire
-  // process lifetime, then the next deploy re-ran the same race. Awaiting
-  // them costs a few hundred ms of boot; each still swallows its own
-  // failures, so neither can block startup.
-  const debugAccess = require('./src/services/debug-access');
-  await debugAccess.ensureRole(config).catch((err) => {
-    log.warn('server', 'prod-debug role bootstrap failed (capability disabled)', {
-      err: err.message,
-    });
-  });
-
-  // Task 13 fix round: same pattern as debugAccess.ensureRole just above,
-  // for the topochain admin SQL console's dedicated read-only, column-
-  // scoped Postgres role (src/services/topochain/db-console-role.js) —
-  // it, not the regex validation in sql-console.js, is the actual
-  // security boundary for POST /api/v4/admin/sql-query/execute. Self-
-  // contained (ensureConsoleRole never rejects; it catches its own
-  // failures and leaves the capability unavailable), so this `.catch()`
-  // is defense-in-depth, matching the debugAccess call above line for
-  // line. On failure, execute degrades to a 503 rather than ever running
-  // a console query unscoped — boot proceeds normally.
-  const topochainConsoleRole = require('./src/services/topochain/db-console-role');
-  await topochainConsoleRole.ensureConsoleRole(config).catch((err) => {
-    log.warn('server', 'topochain SQL console role bootstrap failed (capability disabled)', {
-      err: err.message,
-    });
-  });
-
   // A project being set up when its process died is resumed, not failed
   // (services/app-creation-owner.js): each attempt keeps a heartbeat on its
   // row, and the leader takes over one that went quiet, at boot and every
@@ -1291,22 +1215,6 @@ async function becomeLeader() {
   // (services/app-sketch.js sweepUncommitted): every quarter hour.
   require('./src/services/app-sketch').startCommitSweep(config);
 
-  // A normal failed build deletes itself in services/kubernetes.js. This
-  // leader-only boot pass catches terminal Builds left behind if the platform
-  // was restarted between kpack reporting failure and that cleanup.
-  const applicationRuntime = require('./src/services/application-runtime');
-  applicationRuntime.cleanupFailedBuilds(config)
-    .then((result) => {
-      if (result.deleted) log.info('server', 'Removed failed kpack Builds', result);
-    })
-    .catch((err) => {
-      log.warn('server', 'Failed kpack Build sweep failed', { err: err.message });
-    });
-  require('./src/services/build-retention').start(config);
-  // Ownerless check input Secrets and finished check Pods whose Job is gone:
-  // nothing else collects either, and the Secrets count against the worker
-  // namespace's quota. Bounded, every quarter hour. See services/check-retention.js.
-  require('./src/services/check-retention').start(config);
   // A promoted proposal failing only checks that main failed too, and has
   // since fixed, is brought up to date with main: its preview builds its own
   // copy of the broken fixture until it is. Every five minutes, at most
@@ -1318,49 +1226,10 @@ async function becomeLeader() {
   // services/language-sync-runner.js.
   require('./src/services/language-sync-runner').start(config, getPool(config));
 
-  // Backfill `main_sha` for apps created before #21 added the column.
-  // Non-blocking: we log and continue so a single slow/unauthorized
-  // repo doesn't delay the server coming up.
-  const { backfillMainShas } = require('./src/services/app-version');
-  backfillMainShas(getPool(config)).catch((err) => {
-    log.warn('server', 'main_sha backfill failed', { err: err.message });
-  });
-
-  // Public-only audit: scan existing `apps` rows and log a warning for
-  // any repo that's currently private. The worker bootstrap guard
-  // refuses to spawn against private repos, so these apps will fail
-  // to start a dev session until the user makes the repo public —
-  // the log lets operators see the impact ahead of first user contact.
-  // Daily on the durable clock, not at every election: on 19 Oct 2026 the
-  // leader changed some twenty times (eight in one hour), and each one
-  // spent a GitHub read per app (~150) on a result that is only logged.
-  // Every worker start checks the repo itself (services/worker.js,
-  // routes/internal.js), so nothing waits on this.
-  const runRepoPrivacyAudit = () => auditExistingRepoPrivacy(getPool(config))
-    .catch((err) => log.warn('server', 'private-repo audit failed', { err: err.message }))
-    // An audit the drain cut short is not recorded: the next leader runs it.
-    .then(() => (lifecycle.isShuttingDown() ? leaderTimers.SKIPPED : undefined));
-  leaderTimers.every('repo-privacy-audit', runRepoPrivacyAudit, 24 * 60 * 60 * 1000, { durable: getPool(config) });
-
-  // The push SENDER claims queued jobs — a singleton. Enqueueing (HTTP
-  // side) works on every color; only the leader drains the queue.
-  mobilePush.start();
   // Periodically check imported / bot-owned repos for new commits on
   // `main` we didn't make ourselves and redeploy via the same path
   // that the dev-chat merge flow uses. See main-drift-poller.js.
   require('./src/services/main-drift-poller').start(config);
-  // Anonymous-shell probe: classifies each running app's shell as
-  // public/gated for the landing page's app directory. Re-probes after
-  // deploys and hourly. See services/shell-probe.js.
-  require('./src/services/shell-probe').start(config);
-  // Custom domains (#4405): verify pending claims against public DNS, route
-  // verified ones at the edge, and confirm the certificate came. Leader-only,
-  // like the probe above; see services/app-domains.js.
-  require('./src/services/app-domains').start(config);
-  // #1405 path B: fires the "your agent is waiting on you" nudges whose delay
-  // has elapsed without the agent standing them down. One query a minute
-  // against a partial index; see services/connector-input-waits.js.
-  require('./src/services/connector-input-waits').start(config);
   // Production app-container watchdog (#426): restart/rebuild
   // status='running' apps whose `usernode-app-<slug>` container is
   // stopped or missing — the drift poller above only acts on new
@@ -1372,10 +1241,6 @@ async function becomeLeader() {
   // historically stayed unscored forever — which the v1-vs-v2 accuracy
   // comparison can't afford. See services/estimate-backfill.js.
   require('./src/services/estimate-backfill').start(config);
-  // #1374: the once-a-day "what needs your vote" digest. Hourly sweep,
-  // advisory-locked so only one instance sends, and the counterweight to
-  // new-proposal notifications now defaulting off.
-  require('./src/services/vote-digest').start(config);
   // (The Homeroom bot's loop is no leader work: it is the bot-request and
   // bot-lane machines, src/workflow/, whose work runs wherever workflow work
   // runs.)
@@ -1393,20 +1258,6 @@ async function becomeLeader() {
   // #3737: and the taste eval's suite, from its checked-in briefs (rows
   // only: no GitHub, model or worker; nothing runs until an admin launches).
   require('./src/services/bench/taste').startOnBoot(config);
-  // #1688: the Friday "this week on <app>" card. Same shape as the digest
-  // above — hourly sweep, advisory-locked — posting one card per app into
-  // its chat on Fridays, and nothing at all on a quiet week.
-  require('./src/services/weekly-digest').start(config);
-  // Welcome messages: somebody let in gets a group with the people an admin
-  // chose. Leader-only so one Pod sends; the queue row's lock and the
-  // message's idempotency key keep a retry from sending twice anyway.
-  require('./src/services/welcome-dm').start(config);
-  // Season challenges are read from the points ledger, and until this ran
-  // only two of them ever wrote to it without an admin typing the rows in.
-  // Leader-only and advisory-locked on top of that, because a tick costs
-  // model calls for the two graded challenges.
-  require('./src/services/topochain/challenge-scorer').start(config);
-
   // Adopt any worker containers left over from a previous server run —
   // either still executing or already exited but un-finalized. These
   // orphans are a feature, not a bug: workers are intentionally detached
@@ -1452,9 +1303,6 @@ async function becomeLeader() {
   leaderTimers.every('orphan-turn-sweep', () => sweepOrphanTurns(config)
     .catch((err) => log.warn('server', 'Orphan turn sweep failed', { err: err.message })),
   ORPHAN_SWEEP_MS, { firstDelayMs: ORPHAN_SWEEP_MS });
-  leaderTimers.every('process-reap', () => processes.reap()
-    .catch((err) => log.warn('server', 'Reaping gone processes failed', { err: err.message })),
-  5 * 60 * 1000);
   leaderTimers.every('orphan-headless-sweep', () => require('./src/routes/sessions')
     .resumeHeadlessRuns(config, { minIdleMs: ORPHAN_MIN_AGE_MS })
     .catch((err) => log.warn('server', 'Orphan headless sweep failed', { err: err.message })),
@@ -1465,12 +1313,6 @@ async function becomeLeader() {
   leaderTimers.every('left-warm-worker-sweep', () => sweepLeftWarmWorkers(config)
     .catch((err) => log.warn('server', 'Left-behind warm worker sweep failed', { err: err.message })),
   LEFT_WARM_SWEEP_MS, { firstDelayMs: LEFT_WARM_SWEEP_MS });
-
-  // Durable deletion tasks survive provider outages and platform restarts.
-  const runAccountDeletionCleanup = () => require('./src/services/account-deletion-cleanup')
-    .sweep(getPool(config), config).catch(err => log.warn('account-deletion', 'Cleanup sweep failed', { code: err.code }));
-  void runAccountDeletionCleanup();
-  leaderTimers.every('account-deletion-cleanup', runAccountDeletionCleanup, 60_000);
 
   // A project created with a description files it as its first request once
   // its repository holds the starter (services/homeroom-bot-dm.js
@@ -1484,22 +1326,10 @@ async function becomeLeader() {
     .catch((err) => log.warn('apps', 'First-request sweep failed', { err: err.message }));
   leaderTimers.every('first-request-sweep', runFirstRequestSweep, 5 * 60 * 1000);
 
-  // #2779: delegated connector grants — the agent-session Mayor's, one or two
-  // a turn — are dead the moment their turn ends. Keep a week for the audit
-  // trail's sake, then remove them and their tokens. Hourly on the durable
-  // clock: as a bare setInterval it restarted at every election and, with a
-  // release every twenty minutes, hardly ever ran.
-  const runDelegationPrune = () => require('./src/services/mcp-oauth')
-    .pruneDelegations(getPool(config))
-    .then((n) => { if (n) log.info('mcp', 'Pruned ended delegated grants', { count: n }); })
-    .catch((err) => log.warn('mcp', 'Delegated-grant prune failed', { code: err.code, message: err.message }));
-  leaderTimers.every('delegation-prune', runDelegationPrune, 60 * 60 * 1000, { durable: getPool(config) });
-
   // Session auto-pause sweeper (separate, longer timer than worker
   // eviction above). Flips long-idle 'active' sessions to 'paused' so
   // they stop counting against the per-user / global session caps. The
   // CC volume + branch + PR are preserved; reopening auto-resumes.
-  startConversationAttachmentSweeper(config);
   startSessionAutoPauseSweeper(config);
 
   // Stale-promoted-PR policy + reversible-archive GC. Warns authors of
@@ -1507,23 +1337,6 @@ async function becomeLeader() {
   // period, and hard-purges archived CC volumes once their retention
   // window elapses. Day-scale, so it polls on its own slow interval.
   startStalePrSweeper(config);
-
-  // The Workshop's theme sweep: every app opened in the last week gets its
-  // board re-checked hourly, and its themes re-drafted once a day when
-  // anything changed, or sooner when a tenth of the board did.
-  startWorkshopThemeSweeper(config);
-
-  // #2253: measure every app's database against the per-app storage cap,
-  // warn its admins on the way up and freeze it read-only at the top.
-  startAppStorageCapSweeper(config);
-
-  // Tell the full admins when a server-wide cap (MAX_APPS,
-  // MAX_GLOBAL_SESSIONS) nears or reaches its ceiling.
-  startPlatformLimitSweeper(config);
-
-  // #4296: a daily digest of errors that should not happen, and an alert
-  // when one kind piles up within an hour, for the full admins.
-  startPlatformIncidentAlertSweeper(config);
 
   // #907: release local coding-agent leases whose machine stopped
   // heartbeating, and fail the turn they were holding.
@@ -1591,26 +1404,11 @@ async function becomeLeader() {
       .catch((err) => log.warn('server', 'Boot stale-preview sweep failed', { err: err.message }));
   }
 
-  // Merge-debug retention: prune /debug runs (and their cascaded steps)
-  // older than the window every six hours, on the durable clock (once at
-  // every election, before), so the staging:private merge_debug_* tables
-  // can't grow without bound. Off the critical path; swallows its own errors.
-  const mergeDebug = require('./src/services/merge-debug');
-  const MERGE_DEBUG_RETENTION_DAYS = parseInt(process.env.MERGE_DEBUG_RETENTION_DAYS || '30', 10);
-  leaderTimers.every('merge-debug-prune',
-    () => mergeDebug.pruneOldRuns(getPool(config), MERGE_DEBUG_RETENTION_DAYS).catch(() => {}),
-    6 * 60 * 60 * 1000, { durable: getPool(config) });
-
   // #451: stuck checks handed to the preview machine again on a slow
   // interval (a merge needs no sweep: every ask is a message to the app's
   // merge queue, and the review check asks hourly).
   startStuckChecksSweeper(config);
 
-  // Title auto-heal: retry LLM title generation for PRs/feedback issues
-  // that were filed with the fallback template while the Anthropic API was
-  // unavailable (services/title-heal.js). Bounded, non-overlapping, no-op
-  // while the LLM stays disabled.
-  startTitleHealSweeper(config);
 }
 
 async function start() {
@@ -1629,7 +1427,14 @@ async function start() {
   // Kubernetes runs the same migration through a bounded pre-deploy Job;
   // Docker/single-server mode keeps the advisory-lock boot migration.
   if (migrationsOnStartup) {
-    migration = await withMigrationLock(getPool(config), () => migrate(config));
+    // The read-only database roles go with the schema, under the same lock:
+    // the new build's deny lists over the new tables, by one process
+    // (services/db-roles.js; on Kubernetes the migration Job does both).
+    migration = await withMigrationLock(getPool(config), async () => {
+      const result = await migrate(config);
+      await require('./src/services/db-roles').ensureRoles(config);
+      return result;
+    });
   }
   const servicesStartedAt = Date.now();
   // This process, and what it holds, for every other one to see
@@ -1822,83 +1627,6 @@ module.exports = {
   },
 };
 
-// Scan existing imported apps for privacy violations. Homeroom workers
-// run with zero GitHub credentials and rely on unauthenticated public
-// HTTPS clones; a private repo can't be cloned by the worker, so dev
-// sessions against it will fail at bootstrap. Surface those rows once
-// a day (the leader's `repo-privacy-audit` timer) so the operator can
-// decide whether to ask the user to make the repo public or delete the
-// import.
-//
-// Bounded concurrency (a small pool) keeps the scan from spending
-// minutes on a large `apps` table. The check is purely read-only — we
-// log and move on — and stops at its next row once shutdown begins, so
-// it never holds a drain.
-async function auditExistingRepoPrivacy(pool) {
-  const github = require('./src/services/github');
-  let rows;
-  try {
-    ({ rows } = await pool.query(
-      `SELECT id, slug, repo_url FROM apps
-       WHERE repo_url IS NOT NULL AND status != 'archived'`
-    ));
-  } catch (err) {
-    log.warn('server', 'private-repo audit: query failed', { err: err.message });
-    return;
-  }
-  if (!rows.length) return;
-
-  log.info('server', 'Starting private-repo audit', { count: rows.length });
-
-  // Cap concurrency so a 100-row deployment doesn't fire 100 GitHub
-  // API calls in parallel and trip secondary rate limits.
-  const CONCURRENCY = 4;
-  const queue = rows.slice();
-  let privateCount = 0;
-  let errorCount = 0;
-
-  // One read per app, and only a log line comes of it, so it is the first
-  // thing to give way when GitHub's hourly budget is nearly used up
-  // (services/github-budget.js): a run right after the budget ran out must
-  // not spend what is left on an audit.
-  const githubBudget = require('./src/services/github-budget');
-  let held = false;
-  async function worker() {
-    while (queue.length && !lifecycle.isShuttingDown()) {
-      if (!githubBudget.budgetAllows('background')) { held = true; return; }
-      const row = queue.shift();
-      const m = (row.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-      if (!m) continue;
-      const [, owner, repo] = m;
-      try {
-        const result = await github.checkRepoPublic(owner, repo);
-        if (!result.ok) {
-          errorCount++;
-          log.warn('server', 'private-repo audit: lookup failed', {
-            appId: row.id, slug: row.slug, repo: `${owner}/${repo}`, err: result.message,
-          });
-        } else if (result.private) {
-          privateCount++;
-          log.warn('server', 'private-repo audit: app references a PRIVATE repo (dev sessions will fail)', {
-            appId: row.id, slug: row.slug, repo: `${owner}/${repo}`,
-          });
-        }
-      } catch (err) {
-        errorCount++;
-        log.warn('server', 'private-repo audit: unexpected error', {
-          appId: row.id, slug: row.slug, err: err.message,
-        });
-      }
-    }
-  }
-
-  await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
-  log.info('server', 'Private-repo audit complete', {
-    total: rows.length, private: privateCount, errors: errorCount,
-    ...(held ? { heldForGithubBudget: queue.length } : {}),
-  });
-}
-
 // A pull request merged on GitHub by hand while it was up for a vote: every
 // six hours (its `merged-by-hand-lookup` timer) the leader asks GitHub about
 // every proposal in review and reports a merge it finds (merge-followups
@@ -2062,37 +1790,6 @@ function startStuckChecksSweeper(config) {
       })
       .finally(() => { running = false; });
   }, ELIGIBLE_MERGE_SWEEP_MS);
-}
-
-// How often the title auto-heal sweep runs (services/title-heal.js). Ten
-// minutes keeps the placeholder window short once credits/API come back
-// without hammering a still-dead API (each pass is a handful of Haiku
-// calls at most, and issue rows carry their own per-row backoff on top).
-// Tunable via TITLE_HEAL_SWEEP_MS; floored so a mis-set value can't spin.
-const TITLE_HEAL_SWEEP_MS = Math.max(
-  parseInt(process.env.TITLE_HEAL_SWEEP_MS || String(10 * 60 * 1000), 10) || (10 * 60 * 1000),
-  60 * 1000
-);
-
-// Periodic re-drive of title generation for fallback-titled PRs and
-// feedback issues. Same guard shape as startStuckChecksSweeper: never
-// overlap a still-running pass, swallow all errors, unref'd timer. An
-// early first pass (~90s after boot) covers the common "credits restored,
-// platform redeployed" sequence so placeholders heal right away instead
-// of waiting out the first full interval.
-function startTitleHealSweeper(config) {
-  const titleHeal = require('./src/services/title-heal');
-  let running = false;
-  const tick = () => {
-    if (running) return undefined;
-    running = true;
-    return titleHeal.sweep(config)
-      .catch((err) => {
-        log.warn('server', 'Title-heal sweep tick failed', { err: err.message });
-      })
-      .finally(() => { running = false; });
-  };
-  leaderTimers.every('title-heal', tick, TITLE_HEAL_SWEEP_MS, { firstDelayMs: 90 * 1000 });
 }
 
 // #907: how often expired local-agent leases are swept. A lease is a 120s
@@ -4837,32 +4534,6 @@ let sessionSweeperHandle = null;
 // The proposal measurement's own timer (measurePromotedProposals).
 let proposalMeasureHandle = null;
 
-// Messages attachment retention is independent of session auto-pause. In
-// deployments that disable SESSION_AUTOPAUSE_IDLE_MS, abandoned private
-// composer uploads must still be reclaimed. Hourly on the durable clock
-// leader_sweeps keeps (services/leader-timers.js) — due at once when it never
-// ran, and otherwise when the last pass says, whichever Pod leads by then —
-// rather than at every election; linked rows remain retained with messages.
-function startConversationAttachmentSweeper(config) {
-  if (leaderTimers.has('conversation-attachment-gc')) return;
-  const pool = getPool(config);
-  const sweep = async () => {
-    if (lifecycle.isShuttingDown()) return;
-    try {
-      const { rowCount } = await pool.query(
-        `DELETE FROM conversation_message_attachments
-          WHERE message_id IS NULL
-            AND created_at < NOW() - INTERVAL '24 hours'`
-      );
-      if (rowCount) log.info('server', 'GC\'d orphaned conversation attachments', { count: rowCount });
-      await require('./src/services/moderation').purgeExpired(pool);
-    } catch (err) {
-      log.warn('server', 'Orphaned conversation attachment sweep failed', { err: err.message });
-    }
-  };
-  leaderTimers.every('conversation-attachment-gc', sweep, 60 * 60 * 1000, { durable: pool });
-}
-
 // Per-session throttle for the sweeper's staging-heal pass (Pass 3). Maps
 // sessionId -> last rebuild-attempt epoch ms so a promoted PR whose build
 // keeps failing (missing secret, broken manifest) isn't rebuilt on every
@@ -5338,75 +5009,7 @@ function startSessionAutoPauseSweeper(config) {
       log.warn('server', 'Stuck-check reconcile sweep failed', { err: err.message });
     }
 
-    // Pass 5: orphaned dev-chat attachments GC (#450). An upload that was
-    // never sent (message_id still NULL — the user removed it from the
-    // composer, or navigated away) has no owner message to cascade from,
-    // so reclaim its bytea after 24h. Linked rows live with their session.
-    try {
-      const { rowCount } = await pool.query(
-        `DELETE FROM chat_session_attachments
-          WHERE message_id IS NULL
-            AND created_at < NOW() - INTERVAL '24 hours'`
-      );
-      if (rowCount) log.info('server', 'GC\'d orphaned chat attachments', { count: rowCount });
-    } catch (err) {
-      log.warn('server', 'Orphaned-attachment sweep failed', { err: err.message });
-    }
-
-    // Pass 6: orphaned issue screenshots GC (#683). An upload whose
-    // feedback modal was cancelled (issue_number still NULL — never
-    // linked to a filed issue) has nothing referencing it, so reclaim
-    // its bytea after 24h. Linked rows live forever with their issue.
-    try {
-      const { rowCount } = await pool.query(
-        `DELETE FROM issue_screenshots
-          WHERE issue_number IS NULL
-            AND created_at < NOW() - INTERVAL '24 hours'`
-      );
-      if (rowCount) log.info('server', 'GC\'d orphaned issue screenshots', { count: rowCount });
-    } catch (err) {
-      log.warn('server', 'Orphaned-screenshot sweep failed', { err: err.message });
-    }
-
-    // Same sweep for feedback video clips (#3940): a 50 MB bytea is worth
-    // reclaiming even more urgently than a screenshot. Linked rows live
-    // forever with their issue.
-    try {
-      const { rowCount } = await pool.query(
-        `DELETE FROM issue_videos
-          WHERE issue_number IS NULL
-            AND created_at < NOW() - INTERVAL '24 hours'`
-      );
-      if (rowCount) log.info('server', 'GC\'d orphaned issue videos', { count: rowCount });
-    } catch (err) {
-      log.warn('server', 'Orphaned-video sweep failed', { err: err.message });
-    }
-
-    // Same sweep for group-chat attachments (#694): uploads never linked
-    // to a message (removed from the composer, or the tab was abandoned)
-    // reclaim their bytea after 24h. Linked rows live with their message.
-    try {
-      const { rowCount } = await pool.query(
-        `DELETE FROM chat_message_attachments
-          WHERE message_id IS NULL
-            AND created_at < NOW() - INTERVAL '24 hours'`
-      );
-      if (rowCount) log.info('server', 'GC\'d orphaned group-chat attachments', { count: rowCount });
-    } catch (err) {
-      log.warn('server', 'Orphaned group-chat attachment sweep failed', { err: err.message });
-    }
-
-    // Staging app-file GC (#752): uploads made from staging previews
-    // (bridge relay path, app_files.staging = TRUE) are test data and
-    // reclaim their object-store bytes after 7 days. Object first, row
-    // second — a row whose object delete failed is retried next sweep.
-    try {
-      const appFilesSvc = require('./src/services/app-files');
-      const removed = await appFilesSvc.sweepStagingFiles(pool, appFilesSvc.getStore(config));
-      if (removed) log.info('server', 'GC\'d expired staging app files', { count: removed });
-    } catch (err) {
-      log.warn('server', 'Staging app-file sweep failed', { err: err.message });
-    }
+    // (Uploads nothing took are the upload-gc clock's: src/workflow/clock/services.ts.)
 
     // Pass 6: imported-PR head sync (#687, Slice 3). For each live imported
     // row, fetch the PR's current head.sha and no-op on an unchanged head;
@@ -5636,159 +5239,6 @@ function startStalePrSweeper(config) {
   }, config.staleSweepIntervalMs, { durable: pool });
 }
 
-// The Workshop's theme sweep (services/workshop-themes.js sweep): the daily
-// re-draft's clock, and the backstop for cards that arrived without a
-// broadcast (an issue filed directly on GitHub). Leader-only, like the
-// other sweepers: two instances re-drafting the same app is two model
-// calls for one grouping. WORKSHOP_THEMES_SWEEP_INTERVAL_MS=0 disables it;
-// the change hook and the GET backstop still place cards. Hourly on the
-// durable clock (services/leader-timers.js), so the daily re-draft is not
-// postponed by every release that changes the leader.
-function startWorkshopThemeSweeper(config) {
-  if (leaderTimers.has('workshop-theme-sweep')) return;
-  if (!(config.workshopSweepIntervalMs > 0)) {
-    log.info('server', 'Workshop theme sweeper disabled');
-    return;
-  }
-  const pool = getPool(config);
-  const workshopThemes = require('./src/services/workshop-themes');
-  log.info('server', 'Workshop theme sweeper started', { intervalMs: config.workshopSweepIntervalMs });
-  let running = false;
-  leaderTimers.every('workshop-theme-sweep', async () => {
-    if (lifecycle.isShuttingDown()) return undefined;
-    if (running) return leaderTimers.SKIPPED;
-    running = true;
-    try {
-      const out = await workshopThemes.sweep({ pool, isShuttingDown: () => lifecycle.isShuttingDown() });
-      if (out && out.apps) log.info('workshop-themes', 'sweep done', out);
-    } catch (err) {
-      log.warn('server', 'Workshop theme sweep failed', { err: err.message });
-    } finally {
-      running = false;
-    }
-    return undefined;
-  }, config.workshopSweepIntervalMs, { durable: pool });
-}
-
-// #2253: the per-app database storage cap. Every APP_DB_STORAGE_SWEEP_INTERVAL_MS
-// the leader measures each app's Postgres database
-// (services/app-storage-cap.js), records the figure on the app row, warns the
-// app's admins past the warning line and flips its owner role read-only at
-// the cap. Leader-only because a freeze mutates shared Postgres roles and
-// sends notifications: two colors doing it would race the same transitions.
-// The first run waits half a minute so it lands after the boot-time
-// migrations that add its columns and after the role bootstraps above, not
-// in the middle of them. Errors are logged and never thrown; the sweep
-// records its own outcome for the admin console.
-let appStorageCapSweeperHandle = null;
-let appStorageCapFirstRunHandle = null;
-
-function startAppStorageCapSweeper(config) {
-  if (appStorageCapSweeperHandle) return;
-  const pool = getPool(config);
-  const appStorageCap = require('./src/services/app-storage-cap');
-  const { capBytes, warnPercent, sweepIntervalMs } = appStorageCap.config();
-  log.info('server', 'App storage cap sweeper started', { capBytes, warnPercent, sweepIntervalMs });
-  let running = false;
-  const run = async () => {
-    if (lifecycle.isShuttingDown() || running) return;
-    running = true;
-    try {
-      const out = await appStorageCap.sweep(pool);
-      if (out.frozen || out.unfrozen || out.warned || out.errors.length) {
-        log.info('app-storage-cap', 'sweep done', {
-          measured: out.measured, frozen: out.frozen, unfrozen: out.unfrozen,
-          warned: out.warned, cleared: out.cleared, errors: out.errors.length,
-        });
-      }
-    } catch (err) {
-      log.warn('server', 'App storage sweep failed', { err: err.message });
-    } finally {
-      running = false;
-    }
-  };
-  appStorageCapFirstRunHandle = setTimeout(run, 30 * 1000);
-  appStorageCapFirstRunHandle.unref?.();
-  appStorageCapSweeperHandle = setInterval(run, sweepIntervalMs);
-  appStorageCapSweeperHandle.unref?.();
-}
-
-// Early warning for the server-wide caps (services/platform-limit-alerts.js):
-// every few minutes the leader counts live apps against MAX_APPS and active
-// sessions against MAX_GLOBAL_SESSIONS, and tells the full admins once when
-// either crosses PLATFORM_LIMIT_WARN_PERCENT and once when it is full. It
-// reads GitHub's hourly budget the same way (the bot token's, and the App's),
-// warning at a fifth left and again when it is used up.
-// Leader-only so two colors don't each measure the same crossing (the row
-// lock would stop a double notification anyway, but not the double work).
-// The app-create routes nudge the apps check between sweeps. The first run
-// waits half a minute to land after the boot-time migration that adds its
-// table.
-let platformLimitSweeperHandle = null;
-let platformLimitFirstRunHandle = null;
-
-function startPlatformLimitSweeper(config) {
-  if (platformLimitSweeperHandle) return;
-  const pool = getPool(config);
-  const platformLimits = require('./src/services/platform-limit-alerts');
-  log.info('server', 'Platform limit sweeper started', {
-    maxApps: config.maxApps,
-    maxGlobalSessions: config.maxGlobalSessions,
-    warnPercent: platformLimits.warnPercent(),
-    intervalMs: platformLimits.SWEEP_INTERVAL_MS,
-  });
-  let running = false;
-  const run = async () => {
-    if (lifecycle.isShuttingDown() || running) return;
-    running = true;
-    try {
-      await platformLimits.sweep(pool, config);
-    } catch (err) {
-      log.warn('server', 'Platform limit sweep failed', { err: err.message });
-    } finally {
-      running = false;
-    }
-  };
-  platformLimitFirstRunHandle = setTimeout(run, 30 * 1000);
-  platformLimitFirstRunHandle.unref?.();
-  platformLimitSweeperHandle = setInterval(run, platformLimits.SWEEP_INTERVAL_MS);
-  platformLimitSweeperHandle.unref?.();
-}
-
-// #4296: the unexpected events digest and hourly alert
-// (services/platform-incident-alerts.js). Leader-only, beside the platform
-// limit sweep and on the same pattern; the sweep's own advisory lock and
-// per-admin "already sent" check keep two processes from sending twice.
-let platformIncidentAlertSweeperHandle = null;
-let platformIncidentAlertFirstRunHandle = null;
-
-function startPlatformIncidentAlertSweeper(config) {
-  if (platformIncidentAlertSweeperHandle) return;
-  const pool = getPool(config);
-  const incidentAlerts = require('./src/services/platform-incident-alerts');
-  log.info('server', 'Unexpected events alert sweeper started', {
-    hourlyThreshold: incidentAlerts.HOURLY_THRESHOLD,
-    digestHourUtc: incidentAlerts.DIGEST_HOUR_UTC,
-    intervalMs: incidentAlerts.SWEEP_INTERVAL_MS,
-  });
-  let running = false;
-  const run = async () => {
-    if (lifecycle.isShuttingDown() || running) return;
-    running = true;
-    try {
-      await incidentAlerts.sweep(pool);
-    } catch (err) {
-      log.warn('server', 'Unexpected events alert sweep failed', { err: err.message });
-    } finally {
-      running = false;
-    }
-  };
-  platformIncidentAlertFirstRunHandle = setTimeout(run, 45 * 1000);
-  platformIncidentAlertFirstRunHandle.unref?.();
-  platformIncidentAlertSweeperHandle = setInterval(run, incidentAlerts.SWEEP_INTERVAL_MS);
-  platformIncidentAlertSweeperHandle.unref?.();
-}
-
 // Graceful shutdown: mark drain state so new chats/app-creates/builds get
 // 503'd, stop every leader timer, wait up to the drain deadline
 // (shutdownDrainMs below) for in-flight HTTP handlers and registered
@@ -5984,13 +5434,8 @@ async function cleanup() {
   // once without a drain or at the drain's deadline, stops each at its next
   // step, its turn left running in its worker, and gives its work item up, so
   // the next leader carries it on from the step it saved.
-  const retentionStop = require('./src/services/build-retention').stop();
-  const checkRetentionStop = require('./src/services/check-retention').stop();
   const fixedCheckSyncStop = require('./src/services/fixed-check-sync').stop();
   const languageSyncStop = require('./src/services/language-sync-runner').stop();
-  const scorerStop = require('./src/services/topochain/challenge-scorer').stop();
-  // Stop claiming push jobs immediately. The bounded drain runs in
-  // parallel with HTTP/session draining and is awaited before pool close.
   // The workflow runtime has its own pool; its running work reports nothing,
   // and gives its lease up so the next leader claims it at once.
   // A process finishing its work only quiesces it here (no slot, timer or
@@ -6001,6 +5446,9 @@ async function cleanup() {
     ? require('./src/workflow/platform.ts').quiesceWorkflow()
       .catch((err) => log.warn('server', 'Quiescing the workflow runtime failed', { err: err.message }))
     : stopWorkflowNow();
+  // The push sender's drain, if this process runs it (the push-drain clock),
+  // stops at its next pass; the sends under way are given the drain's time
+  // and awaited before the pool closes.
   const pushStop = mobilePush.stop({ timeoutMs: DRAIN_TIMEOUT_MS }).catch((err) => {
     log.warn('server', 'Mobile push shutdown failed', {
       code: typeof err?.code === 'string' ? err.code : 'unknown',
@@ -6030,6 +5478,7 @@ async function cleanup() {
   // in-flight registry the drain below waits for. The handles kept here
   // predate it; they are guarded and cleared the same way by hand.
   const stoppedTimers = leaderTimers.stopAll();
+  require('./src/services/shots-gc').stopOwnCheckouts();
   if (sweeperHandle) {
     clearInterval(sweeperHandle);
     sweeperHandle = null;
@@ -6041,30 +5490,6 @@ async function cleanup() {
   if (proposalMeasureHandle) {
     clearInterval(proposalMeasureHandle);
     proposalMeasureHandle = null;
-  }
-  if (appStorageCapFirstRunHandle) {
-    clearTimeout(appStorageCapFirstRunHandle);
-    appStorageCapFirstRunHandle = null;
-  }
-  if (appStorageCapSweeperHandle) {
-    clearInterval(appStorageCapSweeperHandle);
-    appStorageCapSweeperHandle = null;
-  }
-  if (platformLimitFirstRunHandle) {
-    clearTimeout(platformLimitFirstRunHandle);
-    platformLimitFirstRunHandle = null;
-  }
-  if (platformLimitSweeperHandle) {
-    clearInterval(platformLimitSweeperHandle);
-    platformLimitSweeperHandle = null;
-  }
-  if (platformIncidentAlertFirstRunHandle) {
-    clearTimeout(platformIncidentAlertFirstRunHandle);
-    platformIncidentAlertFirstRunHandle = null;
-  }
-  if (platformIncidentAlertSweeperHandle) {
-    clearInterval(platformIncidentAlertSweeperHandle);
-    platformIncidentAlertSweeperHandle = null;
   }
 
   // Stop leading, then finish what this process started, up to its drain
@@ -6169,7 +5594,7 @@ async function cleanup() {
     let poolTimer = null;
     try {
       await Promise.race([
-        Promise.all([retentionStop, checkRetentionStop, fixedCheckSyncStop, languageSyncStop, scorerStop, workflowStop]).then(() => shutdownPool.end()),
+        Promise.all([fixedCheckSyncStop, languageSyncStop, workflowStop]).then(() => shutdownPool.end()),
         new Promise((resolve) => { poolTimer = setTimeout(resolve, POOL_CLOSE_TIMEOUT_MS); }),
       ]);
       log.info('server', 'Pool closed', { durationMs: Date.now() - poolStartedAt });

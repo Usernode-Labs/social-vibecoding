@@ -44,11 +44,8 @@
  */
 
 const log = require('./logger');
-const leaderTimers = require('./leader-timers');
-const { WEEKLY_DIGEST_LOCK } = require('./advisory-locks');
 
-const INTERVAL_MS = 60 * 60 * 1000;      // sweep hourly
-const FIRST_SWEEP_DELAY_MS = 7 * 60_000; // let boot settle first
+const INTERVAL_MS = 60 * 60 * 1000;      // swept hourly (the weekly-digest clock)
 const POST_DAY_UTC = 5;                  // Friday
 const POST_HOUR_UTC = 15;                // from 15:00 UTC
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -195,85 +192,48 @@ async function post(pool, app, digest, now) {
 /**
  * One sweep. `now` is injectable so a test can make it Friday.
  */
+// One pass of the `weekly-digest` clock (src/workflow/clock/services.ts), on
+// whichever process runs the workflow. post()'s conditional stamp of
+// apps.weekly_digest_at is what keeps two passes at once from posting one
+// app's card twice.
 async function sweep(pool, now = new Date()) {
-  const result = { due: 0, posted: 0, quiet: 0, notified: 0, busy: false, skipped: false };
+  const result = { due: 0, posted: 0, quiet: 0, notified: 0, skipped: false };
   if (!isPostingTime(now)) {
     result.skipped = true;
     return result;
   }
-  const client = await pool.connect();
-  let locked = false;
-  try {
-    const lock = await client.query(
-      'SELECT pg_try_advisory_lock($1, $2) AS acquired',
-      [WEEKLY_DIGEST_LOCK, 0]
-    );
-    if (lock.rows[0]?.acquired !== true) {
-      result.busy = true;
-      return result;
-    }
-    locked = true;
-
-    const { rows: apps } = await client.query(
-      `SELECT id, slug, name
-         FROM apps
-        WHERE weekly_digest_at IS NULL
-           OR weekly_digest_at < $1::timestamptz - ($2 || ' days')::interval
-        ORDER BY id ASC`,
-      [now.toISOString(), String(MIN_GAP_DAYS)]
-    );
-    result.due = apps.length;
-    for (const app of apps) {
-      try {
-        const digest = await gather(pool, app, now);
-        if (!digest.mergedTotal && !digest.openTotal) {
-          result.quiet += 1;
-          continue;
-        }
-        const outcome = await post(pool, app, digest, now);
-        if (outcome.posted) {
-          result.posted += 1;
-          result.notified += outcome.notified;
-        }
-      } catch (err) {
-        // One app's card failing must not end the sweep for the apps
-        // behind it in the list.
-        log.warn('weekly-digest', 'Card failed', { appId: app.id, err: err.message });
-      }
-    }
-    return result;
-  } finally {
-    if (locked) {
-      await client.query('SELECT pg_advisory_unlock($1, $2)', [WEEKLY_DIGEST_LOCK, 0])
-        .catch(() => {});
-    }
-    client.release();
-  }
-}
-
-function start(config) {
-  if (leaderTimers.has('weekly-digest')) return;
-  const { getPool } = require('../db/pool');
-  const run = async () => {
+  const { rows: apps } = await pool.query(
+    `SELECT id, slug, name
+       FROM apps
+      WHERE weekly_digest_at IS NULL
+         OR weekly_digest_at < $1::timestamptz - ($2 || ' days')::interval
+      ORDER BY id ASC`,
+    [now.toISOString(), String(MIN_GAP_DAYS)]
+  );
+  result.due = apps.length;
+  for (const app of apps) {
     try {
-      const result = await sweep(getPool(config));
-      if (result.posted) log.info('weekly-digest', 'Cards posted', result);
+      const digest = await gather(pool, app, now);
+      if (!digest.mergedTotal && !digest.openTotal) {
+        result.quiet += 1;
+        continue;
+      }
+      const outcome = await post(pool, app, digest, now);
+      if (outcome.posted) {
+        result.posted += 1;
+        result.notified += outcome.notified;
+      }
     } catch (err) {
-      log.error('weekly-digest', 'Sweep failed', { err: err.message });
+      // One app's card failing must not end the sweep for the apps
+      // behind it in the list.
+      log.warn('weekly-digest', 'Card failed', { appId: app.id, err: err.message });
     }
-  };
-  // A leader timer (services/leader-timers.js): no sweep starts once
-  // shutdown has begun, and one under way is given the drain to finish.
-  leaderTimers.every('weekly-digest', run, INTERVAL_MS, { firstDelayMs: FIRST_SWEEP_DELAY_MS });
-}
-
-function stop() {
-  leaderTimers.clear('weekly-digest');
+  }
+  if (result.posted) log.info('weekly-digest', 'Cards posted', result);
+  return result;
 }
 
 module.exports = {
-  start,
-  stop,
   sweep,
   gather,
   post,

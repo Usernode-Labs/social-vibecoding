@@ -110,6 +110,9 @@ const LIMITS = Object.freeze([
   }),
   Object.freeze({
     key: 'github',
+    // Read off GitHub's answers to this process: unknown (no cap) until it
+    // has made a call, which says nothing about the level.
+    fromAnswers: true,
     envKey: 'GITHUB_BOT_TOKEN',
     enabled: () => !!process.env.GITHUB_BOT_TOKEN,
     percent: () => GITHUB_WARN_PERCENT,
@@ -118,6 +121,9 @@ const LIMITS = Object.freeze([
   }),
   Object.freeze({
     key: 'github_app',
+    // Read off GitHub's answers to this process: unknown (no cap) until it
+    // has made a call, which says nothing about the level.
+    fromAnswers: true,
     envKey: 'GITHUB_APP_ID',
     enabled: () => githubBudget.alertFigures('installation').cap > 0,
     percent: () => GITHUB_WARN_PERCENT,
@@ -222,6 +228,9 @@ async function evaluate(pool, config, key, deps = {}) {
   const limit = LIMIT_BY_KEY.get(key);
   if (!limit) throw new Error(`unknown platform limit: ${key}`);
   const cap = await limit.cap(config, pool);
+  // A process that has not heard from GitHub yet knows no figures: recording
+  // "ok" would re-arm a crossing already told (each new process used to).
+  if (limit.fromAnswers && !(Number(cap) > 0)) return { key, used: null, cap: null, level: null, notified: null, recipients: 0, unknown: true };
   const percent = limit.percent ? limit.percent() : warnPercent();
   const used = await limit.count(pool);
   if (!Number.isFinite(used) || used < 0) throw new Error(`bad ${key} count`);

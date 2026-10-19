@@ -19,6 +19,8 @@ const stagingReap = require('../services/staging-reap');
 // What the leader keeps in memory, for a process that does not lead
 // (services/leader-status.js, docs/plans/web-and-conductor.md).
 const leaderStatus = require('../services/leader-status');
+// A scheduled job's last run (src/workflow/clock/), wherever it ran.
+const workflowPlatform = () => require('../workflow/platform.ts');
 const { isSessionBusy } = require('../services/active-workers');
 const stagingEnv = require('../services/staging-env');
 const mail = require('../services/mail');
@@ -1678,7 +1680,8 @@ function adminRoutes(config) {
       return res.json(appStorageCap.demoAdminPayload());
     }
     try {
-      res.json(await appStorageCap.adminPayload(pool));
+      const sweep = await workflowPlatform().clockStatus(pool, 'app-storage-cap');
+      res.json(await appStorageCap.adminPayload(pool, { lastSweep: sweep.result }));
     } catch (err) {
       log.error('admin', 'Read app storage failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -1727,15 +1730,22 @@ function adminRoutes(config) {
     }
   });
 
+  // The storage clock's run, now (src/workflow/clock/): one sweep at a time
+  // wherever the workflow runs, and its result is the page's last sweep.
   router.post('/api/admin/storage/sweep', requireAdminWrite, async (req, res) => {
     try {
-      const sweep = await appStorageCap.sweep(pool);
+      const ran = await workflowPlatform().runClockNow('app-storage-cap', req.user);
+      const sweep = ran && ran.result;
+      if (!sweep) {
+        return res.status(503).json({ error: 'Still measuring: the figures will show here when it ends.' });
+      }
       log.info('admin', 'App storage sweep run from the console', {
         by: req.user.username, measured: sweep.measured, frozen: sweep.frozen,
-        unfrozen: sweep.unfrozen, warned: sweep.warned, errors: sweep.errors.length,
+        unfrozen: sweep.unfrozen, warned: sweep.warned, errors: (sweep.errors || []).length,
       });
       res.json({ sweep });
     } catch (err) {
+      if (err && err.status) return res.status(err.status).json({ error: err.message });
       log.error('admin', 'App storage sweep failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
@@ -1766,7 +1776,7 @@ function adminRoutes(config) {
   router.get('/api/admin/domains', async (req, res) => {
     try {
       const rows = await appDomains.adminList(pool);
-      res.json({ domains: rows.map(adminDomainRow), sweep: await leaderStatus.readOr('app-domains.sweep', pool, appDomains.getStatus) });
+      res.json({ domains: rows.map(adminDomainRow), sweep: await workflowPlatform().clockStatus(pool, 'app-domains') });
     } catch (err) {
       log.error('admin', 'Read custom domains failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
