@@ -215,11 +215,12 @@ test('Q19: chip and Save slops never cover a neighbour\'s own box', () => {
 // ── Q20: ARIA structure ─────────────────────────────────────────────────
 
 test('Q20: form controls the audit found unnamed have names', () => {
-  const waitlist = read('frontend/src/features/auth/waitlist.tsx');
-  assert.match(waitlist, /<label className=\{SURVEY_LABEL\} htmlFor="waitlist-country">\s*\{t\('auth:waitlist\.country\.label'\)\}/,
+  // The country select moved to the waiting room with #5261.
+  const about = read('frontend/src/features/auth/waiting-about.tsx');
+  assert.match(about, /<label htmlFor="waiting-about-country"[^>]*>\s*\{t\('auth:waiting\.about\.country'\)\}/,
     'the Country label points at its select');
-  assert.equal(message('auth:waitlist.country.label'), 'Country');
-  assert.match(waitlist, /id="waitlist-country"/);
+  assert.equal(message('auth:waiting.about.country'), 'Country');
+  assert.match(about, /id="waiting-about-country"/);
   // Four text boxes that took focus announcing only "edit text".
   assert.match(read('frontend/src/features/messages/message-row.tsx'),
     /<textarea ref=\{editRef\} aria-label=\{t\('messages:row\.editLabel'\)\}/, 'the message edit box');

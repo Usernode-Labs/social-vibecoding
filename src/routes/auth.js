@@ -22,9 +22,11 @@ const {
   passwordResetConfirmLimiter,
   walletAuthLimiter,
   walletCheckLimiter,
+  waitlistAnswersLimiter,
 } = require('../middleware/rate-limits');
 const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
+const waitlistQuestions = require('../services/waitlist-questions');
 const firstSession = require('../services/first-session');
 const communityInvites = require('../services/community-invites');
 const phoneAuth = require('../services/firebase-phone-auth');
@@ -774,6 +776,43 @@ function authRoutes(config) {
       return res.json({ username: req.user.username || null, email: rows[0]?.email || null });
     } catch (err) {
       log.warn('auth', 'Waiting room account lookup failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The waiting room's two optional questions (#5261), which the retired
+  // in-app join form (#waitlist) asked: where you are and how you found us.
+  // Asked of the account now, after it is made, and saved on its own
+  // waitlist row in the keys the form wrote (services/waitlist.js
+  // saveAccountAnswers). Under /api/auth/ for the same reason as the line
+  // above: a waiting account may call it. Only the caller's own row, and
+  // only the values the public join validates (validateStage1).
+  router.get('/api/auth/waiting/about', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const about = await waitlist.accountAnswers(pool, req.user.id);
+      res.set('Cache-Control', 'no-store');
+      return res.json({ listed: !!about, country: about?.country || null, discovery: about?.discovery || null });
+    } catch (err) {
+      log.warn('auth', 'Waiting room answers lookup failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/auth/waiting/about', waitlistAnswersLimiter, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const checked = waitlistQuestions.validateStage1(req.body || {});
+    if (!checked.ok) return res.status(422).json({ error: checked.error });
+    try {
+      const about = await waitlist.saveAccountAnswers(pool, {
+        userId: req.user.id,
+        answers: checked.value,
+        inviteCode: typeof req.body?.invite_code === 'string' ? req.body.invite_code : null,
+      });
+      if (!about) return res.status(404).json({ error: 'This account has no spot on the waitlist.', code: 'not_listed' });
+      return res.json({ ok: true, listed: true, country: about.country, discovery: about.discovery });
+    } catch (err) {
+      log.error('auth', 'Saving the waiting room answers failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

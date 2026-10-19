@@ -1,115 +1,62 @@
 /**
- * `#auth-waitlist-screen` — the stage-1 waitlist survey (#1080, step 2 chunk C,
- * screen 5 of 6).
+ * `#auth-waitlist-screen`: check your waitlist status (#1538), at
+ * `#waitlist?confirm=1`.
  *
- * Two questions on their own screen (`#waitlist`), reached from the landing
- * CTA link and the persistent header's "Join waitlist" button. The chips and
- * the country list come from `GET /api/public/waitlist/options` so the form and
- * the server's validation share one definition — see waitlist-shared.tsx, which
- * stage 2 reads too.
+ * An address that joined the waitlist (on the marketing site's /waitlist
+ * page, or on this screen before #5261) types itself in, gets a six-digit
+ * code, and reads back where it stands. The check-my-status mail's button
+ * (`/?status=1`, AuthScreens.enter) and the waitlist landing's "Already
+ * joined? Check your status" both open it.
  *
- * It asked four until 27 Aug 2026. The free-text city beside the country
- * select, the "which one?" follow-up under the discovery chips and the
- * "did someone refer you?" handle are gone: none was read back, and the
- * referral one asked for a claim the invite link already records as a row
- * reference (`invite_code` / `invited_by`).
+ * ── No join form here any more (#5261) ───────────────────────────────
  *
- * ── What the initial render must be ───────────────────────────────────
- *
- * Everything options-driven renders empty and everything conditional renders
- * hidden, because that is what the hand-written document shipped and the
- * prerender pass has to reproduce it byte for byte. So: the chip row is an
- * empty `<div>`, the country select holds only its placeholder `<option>`, and
- * the joined / offer / queued blocks keep the `hidden` in the exact position
- * their class attribute had it. The options fetch runs in an effect.
- *
- * ── One step at a time ───────────────────────────────────────────────
- *
- * The screen carries three states in one column, and until the two-step
- * waitlist only the
- * middle one ended visibly. The title and the two intro paragraphs stayed up
- * after a join — still selling the thing you had just said yes to, with the
- * one instruction that now mattered four blocks down — and confirming the code
- * merely HID `#waitlist-confirm`, so the control you were typing into vanished
- * with nothing in its place. A control that disappears without a word reads as
- * a failure.
- *
- * So: the pitch hides on `joined`, `#waitlist-confirmed` takes the confirm
- * block's place on `confirmed`, and `#waitlist-step` names which of the two
- * steps you are on. Two steps, not three — the stage-2 survey is offered after
- * both and counting it would make an optional thing look required.
- *
- * ── Joining first, confirmation second (#1528) ───────────────────────
- *
- * A successful POST saves the signup, so acknowledge that before asking for
- * the code. Email confirmation is an explicit second step: it proves we can
- * reach the address before releasing access. The optional survey offer stays
- * behind `confirmed`. Returning code entry has no join response to acknowledge
- * and keeps its own heading. None of this changes the write or release model.
- *
- * ── Check my status (#1538) ──────────────────────────────────────────
- *
- * The confirm step is also the check-my-status step. Somebody who joined on
- * another device types their address, asks for a code, and reads back where
- * they stand — no new screen, no new route, and no magic link in the mail.
- * That works because a code now gets minted for an ALREADY-CONFIRMED row
- * too (it used to mail a link instead, which was backwards: the person
- * checking their status is by definition already confirmed), and because the
- * confirm response carries the same `status` block `/more/:token` returns.
- *
- * So `#waitlist-confirmed` is status-driven rather than one fixed sentence.
- * A released signup is told it is in and pointed at sign-up or sign-in,
- * instead of being told to keep waiting for a mail that already came. What it
- * deliberately does NOT show is a queue position: nothing on the platform
- * ranks the waitlist (services/waitlist-signals.js computes no score, on the
- * stated grounds that weighting the signals is an unmade product decision),
- * so a number here would be invented — and as snait put it on the issue, a
- * position is a promise and it can go backwards.
+ * This screen also held the in-app join form (email, country, how you found
+ * us) and its pitch, a second way onto the waitlist beside Get started,
+ * which makes an account that waits in line too: two ways in, two records.
+ * The form is retired. Continue (the landing's sign-in sheet) makes the
+ * account and puts it in line, and the two optional questions are asked
+ * after it, in the waiting room (./waiting-about.tsx), saved to the same
+ * keys on the account's own row. A bare `#waitlist`, and an old
+ * `#waitlist?ref=<code>` link, open Continue instead
+ * (AuthScreens.retireWaitlistLink), keeping the code for the waiting room
+ * to send on. A signed-in visitor is sent to the waiting room, which shows
+ * their spot. What stays is the status check, because the rows the
+ * marketing site and the old form made have no account to sign in to.
  *
  * ── Two steps, not one form (#1876) ──────────────────────────────────
  *
- * That check-my-status errand asked for the address and the six-digit code in
- * one breath, and the control that actually SENDS the code was a tertiary
- * "Didn't get it?" link underneath the field somebody was being told to fill
- * in. So the hint claimed there was a code in your email before any mail had
- * been sent, and the one action that would have made the claim true read as a
- * footnote.
+ * `#waitlist-confirm-address` collects the address and sends the code,
+ * `#waitlist-confirm-code` takes the six digits and carries a way back.
  *
- * Split, for the `codeOnly` path only: `#waitlist-confirm-address` collects
- * the address and sends the code, `#waitlist-confirm-code` takes the six
- * digits and carries a way back. The post-join path is untouched, because
- * there the join WAS step 1 and the mail is already out.
- *
- * Two things it is careful about. "I already have a code" skips the send
- * rather than decorating it: `issueVerificationCode` deletes every unconsumed
- * code for an address before minting the next one, so a forced send would
- * invalidate the code sitting in the inbox of the very person who followed
- * that mail's `?status=1` button here. And the step lives in the fragment
+ * "I already have a code" skips the send rather than decorating it:
+ * `issueVerificationCode` deletes every unconsumed code for an address
+ * before minting the next one, so a forced send would invalidate the code
+ * sitting in the inbox of the very person who followed that mail's
+ * `?status=1` button here. And the step lives in the fragment
  * (`#waitlist?confirm=1&step=code`), derived in both directions on every
  * show, so Back walks the flow backwards and either step survives a reload.
- * A request the server accepted always advances, whatever the address was:
- * the response is one frozen body for everybody, and a step that advanced
- * only for addresses we hold would answer the question that body exists to
- * refuse.
+ *
+ * Before anything is sent, the address is looked up (#2201,
+ * POST /api/public/waitlist/status): not on the list says so and offers
+ * Continue; on it and confirmed reads the state straight back; on it and
+ * unconfirmed sends the code. A status panel never shows a queue position:
+ * nothing ranks the waitlist (services/waitlist-signals.js computes no
+ * score), so a number here would be invented.
  *
  * ── Screenshot state ─────────────────────────────────────────────────
  *
- * One per settled state, because a shot can only navigate.
- * `?shot=waitlist-joined` stops at the confirm step, where a real join now
- * stops; `?shot=waitlist-confirmed` carries the list place and the stage-2
- * offer; `?shot=waitlist-code-entry` is that same errand reached WITHOUT a
- * join, which since #1876 is its address step, and `?shot=waitlist-code-step`
- * is the code step that follows it; `?shot=waitlist-admitted` is the released
- * panel, which is the one state a screenshot cannot otherwise reach because
- * it needs a released row behind it. All of them are pure UI state: none
- * POSTs, none writes, and the stage-2 link keeps its inert prerendered href.
+ * One per settled state, because a shot can only navigate:
+ * `?shot=waitlist-code-entry` is the address step, `?shot=waitlist-code-step`
+ * the code step after it, `?shot=waitlist-not-found` the address step after
+ * a lookup that found nothing, `?shot=waitlist-status` the panel for a
+ * confirmed signup still waiting, and `?shot=waitlist-admitted` the released
+ * panel. All of them are pure UI state: none POSTs, none writes.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select } from '@/components/ui/select';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
@@ -118,25 +65,19 @@ import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { AuthBackButton } from './back-button';
 import {
   AUTH_SCREEN_IDS,
-  hasSession as sessionExists,
   hiddenFirst,
   hiddenLast,
+  legacy,
   useAuthScreensPatch,
 } from './shared';
 import {
-  ChipRow,
   MsgTone,
   msgClass,
-  // Aliased: `options` is already the name of this screen's fetched
-  // options object, and the helper renders a map of them.
-  options as opts,
   StatusPill,
   SURVEY_FIELD,
   SURVEY_HINT,
   SURVEY_LABEL,
-  SURVEY_SELECT,
   useSurveyAnswered,
-  useWaitlistOptions,
   WaitlistStatus,
 } from './waitlist-shared';
 
@@ -219,115 +160,40 @@ export function WaitlistScreen() {
   // interior's nodes exist by the time the on-show hook runs.
   const mounted = useMountedOnReveal(AUTH_SCREEN_IDS.waitlist);
 
-  const options = useWaitlistOptions();
-
-  const [hasSession, setHasSession] = useState(false);
-  const [joined, setJoined] = useState(false);
-  // The stage-2 offer and its token are separate: `?shot=waitlist-confirmed`
-  // shows the offer with no token at all, and its link keeps the inert
-  // prerendered href.
+  // The stage-2 offer and its token are separate: `?shot=waitlist-status`
+  // shows the offer with no token at all, and its link keeps the inert href.
   const [offer, setOffer] = useState(false);
   const [moreToken, setMoreToken] = useState<string | null>(null);
-  // #1535: this card outlives a trip to the survey and back. Once those
-  // questions have been answered it stops asking for answers and offers to
-  // edit them instead. False until the survey says otherwise, which is also
-  // what the prerendered document renders.
+  // #1535: once those questions have been answered the card stops asking for
+  // answers and offers to edit them instead.
   const surveyAnswered = useSurveyAnswered(moreToken);
   const [msg, setMsg] = useState<{ text: string; tone: MsgTone } | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [discovery, setDiscovery] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   /**
-   * The address the code went to, echoed back in the confirm step AND in the
-   * settled `#waitlist-confirmed` panel — "which address did I use?" is the
-   * question that panel used to leave open (#1537). Empty at first render, and
-   * both readers resolve to their address-less form when it is: the prerendered
-   * document has no address to name.
-   *
-   * Stored lower-cased, matching what the server normalizes and stores, so the
-   * two surfaces that name the address agree with each other and with the
-   * stage-2 screen at `#more/<token>`.
+   * The address the code went to, echoed back in the code step and in the
+   * settled `#waitlist-confirmed` panel (#1537). Stored lower-cased, matching
+   * what the server normalizes and stores.
    */
   const [sentTo, setSentTo] = useState('');
   /**
-   * Did this visit reach the confirm step WITHOUT joining here?
-   *
-   * That is the whole returning-user case: the code expired fifteen minutes
-   * after a join that may have been last week, and until now the only way
-   * back to this control was to submit the join form again. So "Already
-   * joined? Enter your code" jumps straight to it — and because nothing was
-   * typed on this device, the step has to ask which address, which is what
-   * #waitlist-confirm-email is for. A join sets `sentTo` instead and never
-   * shows the field.
-   */
-  const [codeOnly, setCodeOnly] = useState(false);
-  /**
-   * Which half of that errand is on screen (#1876): `'address'` collects the
-   * address and sends the code, `'code'` takes the six digits.
-   *
-   * Only ever read together with `codeOnly`, because the post-join path has
-   * no split to be on. Initialised from a literal and derived from the
-   * fragment in `waitlistOnShow` rather than here: the interior's first
-   * render has to be the markup the hand-written shell shipped, and a step
-   * read off `location` is not that.
+   * Which half of the errand is on screen (#1876): `'address'` collects the
+   * address and sends the code, `'code'` takes the six digits. Derived from
+   * the fragment in `waitlistOnShow`.
    */
   const [flowStep, setFlowStep] = useState<'address' | 'code'>('address');
   /**
-   * The join form was submitted with an address that was ALREADY on the
-   * waitlist and ALREADY confirmed (#2201) — case 3 of the three the server
-   * now answers separately.
-   *
-   * It is the returning-reader case the screen used to get wrong: the
-   * response was one frozen 200, so this path advanced to the code step and
-   * claimed a code had been sent, for a row with nothing left to confirm and
-   * nothing mailed. Now the response carries `status.confirmed` and this flag
-   * lands the reader on the settled panel instead.
-   *
-   * Read only through `statusRead` below. False in the prerender, which is
-   * the document's own shape.
-   */
-  const [alreadyConfirmed, setAlreadyConfirmed] = useState(false);
-  /**
-   * Case 2: on the waitlist already, but NOT confirmed (#2201). Same
-   * destination as a fresh join — the code step — with a headline and lede
-   * that say the signup was already saved rather than welcoming them twice.
-   */
-  const [rejoined, setRejoined] = useState(false);
-  /**
-   * Where this signup actually stands, from the confirm response (#1538).
-   * Null until a code lands, which is what keeps `#waitlist-confirmed`
-   * rendering its prerendered shape: the pill and the joined-on date are
-   * empty and `hidden` in the initial render, because contents rendered
-   * before the fetch are a hydration mismatch, and a mismatch console.errors,
-   * which fails proposal checks.
+   * Where this signup actually stands, from the confirm or status response
+   * (#1538). Null until one lands.
    */
   const [status, setStatus] = useState<WaitlistStatus | null>(null);
   /**
-   * Released, and the day they joined (#1538). Both read off the status
-   * block, so both are false/empty until a code lands and the panel keeps
-   * its prerendered shape until then.
-   *
-   * The date is formatted in the visitor's own locale rather than pinned to
-   * one: it is a plain fact being read back, and a fact is more readable in
-   * the format its reader already uses. A malformed value collapses to '',
-   * which hides the line rather than printing "Invalid Date".
+   * Released, and the day they joined (#1538). The date is formatted in the
+   * visitor's own locale; a malformed value collapses to '', which hides the
+   * line rather than printing "Invalid Date".
    */
   const admitted = !!status?.admitted;
   const joinedOn = formatJoinedOn(status?.joined_at);
-  /**
-   * Is this panel READING a state back, rather than celebrating one reached
-   * just now? Two routes arrive at the same place: typing an address to
-   * check a status (`codeOnly`), and typing one into the join form that
-   * turns out to be confirmed already (`alreadyConfirmed`, #2201).
-   *
-   * Neither is a moment to congratulate — both belong to somebody who
-   * joined weeks ago — so the headline is the confirm path's and the pill
-   * is this one's. Derived rather than stored, and false in the prerender
-   * exactly as `codeOnly` is, because a headline whose visibility differs
-   * from the prerendered document is a hydration mismatch, and a mismatch
-   * console.errors, which fails proposal checks.
-   */
-  const statusRead = codeOnly || alreadyConfirmed;
   /** The resend button's own status line. Kept apart from #waitlist-msg so a
    *  resend result and a wrong-code error cannot overwrite each other. */
   const [resendNote, setResendNote] = useState<{ text: string; tone: MsgTone } | null>(null);
@@ -338,12 +204,8 @@ export function WaitlistScreen() {
    */
   const [requestNote, setRequestNote] = useState<{ text: string; tone: MsgTone } | null>(null);
   /**
-   * The address step asked, and the answer was "that address is not on the
-   * waitlist" (#2201's disclosure, read through POST
-   * /api/public/waitlist/status). It reveals the way out of the dead end:
-   * telling somebody we cannot find them is only half an answer if the only
-   * control on screen still says "email me a code".
-   *
+   * The lookup answered "that address is not on the waitlist" (#2201). It
+   * reveals the way out of the dead end, Continue, which joins now (#5261).
    * Its own flag rather than a tone on `requestNote`, because the note is
    * also where a connection failure and a 429 land, and neither of those
    * should offer to start a join.
@@ -361,92 +223,55 @@ export function WaitlistScreen() {
    */
   const busy = useRef(false);
 
-  const email = useRef<HTMLInputElement>(null);
   const code = useRef<HTMLInputElement>(null);
-  /** The address, when the confirm step was reached without a join. */
+  /** The address the code is for. */
   const confirmEmail = useRef<HTMLInputElement>(null);
-  const country = useRef<HTMLSelectElement>(null);
-  /**
-   * The inviter's code, from `/#waitlist?ref=<code>`. It rides in the hash's
-   * own query segment — after the `?` INSIDE the fragment — the same place
-   * the OAuth connect round trip puts its status, so it never reaches a
-   * server log, ours or a proxy's. Read on show rather than at mount: this
-   * screen stays mounted across navigations.
-   *
-   * A link SHARED today lands on the marketing site's /waitlist page
-   * instead (src/services/marketing-links.js), which carries the same code
-   * through to the join endpoint. This keeps working because links minted
-   * before that move point here, and their code must still attribute.
-   */
-  const inviteRef = useRef<string | null>(null);
 
-  /**
-   * Form vs "you're already on the list", plus the screen title. A
-   * waiting-room session already HAS an account in the queue, so the join form
-   * is wrong for them — the same predicate the landing header uses.
-   */
   const waitlistOnShow = useCallback(() => {
+    // Which half of the split (#1876), from the fragment. Derived in BOTH
+    // directions on every show, so the browser's own Back button walks the
+    // flow backwards and a reload lands on the step it left.
+    try {
+      const hashQuery = new URLSearchParams(location.hash.split('?')[1] || '');
+      setFlowStep(hashQuery.get('step') === 'code' ? 'code' : 'address');
+    } catch {
+      setFlowStep('address');
+    }
+
     let shot: string | null = null;
     try {
       shot = new URLSearchParams(location.search).get('shot');
     } catch {
       shot = null;
     }
-    // The two settled states, painted without a submit. `waitlist-joined`
-    // stops at the confirm step, because that is now where a real join
-    // stops; `waitlist-confirmed` is the one that carries the offer.
-    const shotJoined = shot === 'waitlist-joined';
-    const shotConfirmed = shot === 'waitlist-confirmed';
-    // The third settled state: the confirm step reached WITHOUT a join, which
-    // is what `#waitlist?confirm=1` and the "Already joined?" link paint. It
-    // is the one that shows the address field, so it is the one worth a
-    // screenshot of its own — a shot of `waitlist-joined` cannot show it.
-    const shotCodeEntry = shot === 'waitlist-code-entry';
-    // And its other half since #1876: the code step, with a request behind
-    // it. A shot of its own because the two halves cannot be photographed at
-    // once, and this is the one that carries the way back.
-    const shotCodeStep = shot === 'waitlist-code-step';
-    // The fourth: released (#1538). It is the one settled state a shot cannot
-    // reach by any other route, because it needs a row with a released_at
-    // behind it. Painted from a literal, same as the others.
-    const shotAdmitted = shot === 'waitlist-admitted';
-    // The fifth: confirmed, read back through check-my-status rather than
-    // reached by confirming just now. Same panel as `waitlist-confirmed`
-    // with the celebration swapped for the state pill, which is the
-    // difference `codeOnly` makes and the state most status readers are in.
-    const shotStatus = shot === 'waitlist-status';
-    // The sixth: the address step after a lookup that found nothing (#2201).
-    // A shot of its own because it is the state this change exists to add,
-    // and it cannot be photographed from any of the others: the note and the
-    // join control only appear once the status read has come back. Painted
-    // from literals, same as the rest, so the capture makes no request.
-    const shotNotFound = shot === 'waitlist-not-found';
-    // The seventh (#2201): joined with an address that was already confirmed,
-    // so the settled panel reads the state back and the code step never
-    // appears. It needs a shot of its own because no other one paints it —
-    // `waitlist-status` reaches the same panel through `codeOnly`, which
-    // also swaps the header and reveals the address field, so it cannot
-    // show what the join form now does. Case 2 differs from
-    // `waitlist-joined` by one sentence and is covered by a unit
-    // assertion on the lede instead.
-    const shotRejoined = shot === 'waitlist-rejoined';
-    if (shotJoined || shotConfirmed || shotAdmitted || shotStatus || shotRejoined) {
+    // The settled states, painted from literals for the shots. None of them
+    // POSTs or writes.
+    if (shot === 'waitlist-code-entry') {
       setMsg(null);
-      setJoined(true);
-      // A stand-in address, so both settled states paint the line that names
-      // it. Deliberately a literal and not a fetch: these branches only ever
-      // set state, because a shot has no join behind it to read an address
-      // from.
+      setFlowStep('address');
+      // No `sentTo`: nothing was sent on this device.
+      setSentTo('');
+    }
+    if (shot === 'waitlist-code-step') {
+      setMsg(null);
+      setFlowStep('code');
+      // A stand-in address, so the step names where the code went.
       setSentTo('you@example.com');
     }
-    if (shotConfirmed) {
-      setConfirmed(true);
-      setOffer(true);
-      setStatus({ state: 'confirmed', admitted: false, confirmed: true, has_account: false });
+    if (shot === 'waitlist-not-found') {
+      setMsg(null);
+      setFlowStep('address');
+      setSentTo('');
+      setRequestNote({
+        text: translate('auth:waitlist.request.notFound'),
+        tone: 'error',
+      });
+      setNotFound(true);
     }
-    if (shotStatus) {
+    if (shot === 'waitlist-status') {
+      setMsg(null);
+      setSentTo('you@example.com');
       setConfirmed(true);
-      setCodeOnly(true);
       // The offer stands: a confirmed signup can still move up, and this is
       // the panel that says so.
       setOffer(true);
@@ -458,9 +283,10 @@ export function WaitlistScreen() {
         joined_at: '2026-03-14T10:00:00.000Z',
       });
     }
-    if (shotAdmitted) {
+    if (shot === 'waitlist-admitted') {
+      setMsg(null);
+      setSentTo('you@example.com');
       setConfirmed(true);
-      setCodeOnly(true);
       // No stage-2 offer: it is an offer to improve a position this signup
       // no longer has.
       setOffer(false);
@@ -472,90 +298,7 @@ export function WaitlistScreen() {
         joined_at: '2026-03-14T10:00:00.000Z',
       });
     }
-    if (shotRejoined) {
-      // Exactly what onSubmit's case-3 branch sets, from a literal: a shot
-      // has no join behind it to read a status block from.
-      setConfirmed(true);
-      setAlreadyConfirmed(true);
-      // No stage-2 offer, same as the live path: a re-join carries no token
-      // to answer the survey with.
-      setOffer(false);
-      setStatus({
-        state: 'confirmed',
-        admitted: false,
-        confirmed: true,
-        has_account: false,
-        joined_at: '2026-03-14T10:00:00.000Z',
-      });
-    }
-    if (shotCodeEntry) {
-      setMsg(null);
-      setJoined(true);
-      setCodeOnly(true);
-      // The address step (#1876), which is where the errand starts.
-      setFlowStep('address');
-      // No `sentTo`: nothing was sent on this device, and claiming otherwise
-      // is exactly the bug this branch exists to fix.
-      setSentTo('');
-    }
-    if (shotCodeStep) {
-      setMsg(null);
-      setJoined(true);
-      setCodeOnly(true);
-      setFlowStep('code');
-      // A stand-in address, so the step names where the code went. A literal
-      // and not a fetch: this branch only ever sets state.
-      setSentTo('you@example.com');
-    }
-    if (shotNotFound) {
-      setMsg(null);
-      setJoined(true);
-      setCodeOnly(true);
-      // The address step, which is the only place this state exists: the
-      // lookup happens before anything advances.
-      setFlowStep('address');
-      // No `sentTo`: nothing was sent, which is the whole point of the
-      // branch being reachable at all.
-      setSentTo('');
-      setRequestNote({
-        text: translate('auth:waitlist.request.notFound'),
-        tone: 'error',
-      });
-      setNotFound(true);
-    }
-
-    // Who invited them, if they arrived on somebody's share link. A code
-    // that doesn't resolve is dropped server-side rather than refused, so a
-    // stale link never blocks a join.
-    try {
-      const hashQuery = new URLSearchParams(location.hash.split('?')[1] || '');
-      const ref = hashQuery.get('ref');
-      inviteRef.current = ref && /^[a-z0-9]{10}$/.test(ref) ? ref : null;
-      // `#waitlist?confirm=1` — the link the platform can put in front of
-      // somebody whose code expired, and what the "Already joined?" button
-      // writes into the hash so the state survives a reload. The fragment's
-      // own query, same as `ref`, so it never reaches a server log.
-      if (hashQuery.get('confirm') === '1') {
-        setJoined(true);
-        setCodeOnly(true);
-        // Which half of the split (#1876). Derived in BOTH directions on
-        // every show, so the browser's own Back button walks the flow
-        // backwards and a reload lands on the step it left.
-        setFlowStep(hashQuery.get('step') === 'code' ? 'code' : 'address');
-      }
-    } catch {
-      inviteRef.current = null;
-    }
-
-    const session = sessionExists();
-    setHasSession(session);
-    // Never resurrect the form over the success state (a re-show after a join,
-    // e.g. back-then-forward).
-    if (shotCodeEntry || shotCodeStep || shotAdmitted || shotNotFound || shotRejoined) {
-      // A shot has to paint a settled state, and a focus ring is not one.
-    } else if (!session && !joined && !shotJoined && !shotConfirmed) {
-      email.current?.focus({ preventScroll: true });
-    }
+    if (!shot) window.setTimeout(() => confirmEmail.current?.focus({ preventScroll: true }), 0);
     // Mirror into the tab title so the Flutter WebView's AppBar follows the
     // screen, same as the landing header does for the landing page.
     try {
@@ -563,7 +306,7 @@ export function WaitlistScreen() {
     } catch {
       /* ignore */
     }
-  }, [joined]);
+  }, []);
 
   /** Arm the cooldown, in state and in storage, from now. */
   const startCooldown = useCallback(() => {
@@ -596,106 +339,8 @@ export function WaitlistScreen() {
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
   }, [cooldownUntil]);
-
-  const onSubmit = useCallback(
-    async (e: React.FormEvent<HTMLFormElement>) => {
-      e.preventDefault();
-      const emailVal = email.current?.value.trim() || '';
-      // Client preflight mirroring the server's stage-1 rules. Only the
-      // address is required now, so this is the only miss worth catching
-      // without a round trip.
-      if (!emailVal) return setMsg({ text: translate('auth:waitlist.join.emailMissing'), tone: 'error' });
-
-      setSubmitting(true);
-      try {
-        const res = await fetch('/api/public/waitlist', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: emailVal,
-            country: country.current?.value || undefined,
-            discovery_source: discovery || undefined,
-            invite_code: inviteRef.current || undefined,
-          }),
-        });
-        const data = await res.json().catch(() => null);
-        if (res.ok) {
-          setMsg(null);
-          setJoined(true);
-          // Lower-cased to match the stored form: the server normalizes before
-          // it writes, so echoing back what was typed would disagree with the
-          // address the stage-2 screen names.
-          setSentTo(emailVal.toLowerCase());
-          /*
-              WHICH of the three cases (#2201) — read off the status block, not
-              off `message`. The server's wording is the server's; branching on
-              a sentence is how a copy edit silently changes a flow.
-
-              An integrator-keyed request deliberately gets no status block at
-              all, and so does any older deployment, so a missing one has to
-              mean "carry on to the code step" — which is the pre-#2201
-              behaviour, unchanged.
-          */
-          const joinStatus = (data && data.status) || null;
-          // Case 1 vs case 2, and `more_token` is the discriminator rather
-          // than a timestamp comparison: the stage-2 capability is issued on
-          // the FIRST join and never on a re-join, which makes its presence
-          // exactly "this row was created by this request".
-          const token = (data && data.more_token) || null;
-          if (joinStatus && joinStatus.confirmed) {
-            // CASE 3 — already on the list and already confirmed. Nothing was
-            // minted and nothing was mailed, so there is no code to ask for
-            // and no cooldown to arm: `confirmed` hides the whole code
-            // apparatus and the settled panel reads the state back.
-            setAlreadyConfirmed(true);
-            setConfirmed(true);
-            setStatus(joinStatus);
-            // No stage-2 offer. This row has answered or declined that
-            // question already, and a re-join carries no token to answer it
-            // with — the link would go to `#landing`.
-            setOffer(false);
-          } else {
-            // CASE 1 or CASE 2, same destination: the code step. The
-            // headline and lede say which it was, and only case 2 sets the
-            // flag — a status block with no token behind it.
-            if (joinStatus && !token) setRejoined(true);
-            // Six digits is the whole of what is left to do, so put the caret
-            // there. On a REAL join only: the `?shot=` states have to paint a
-            // settled state for the declared checks, and a focus ring is not one.
-            window.setTimeout(() => code.current?.focus({ preventScroll: true }), 0);
-            // Keep the token for the optional survey, offered after
-            // confirmation. Present on a first join only.
-            if (token) setMoreToken(token);
-            // A code went out on both of these paths. Start the same gap, so
-            // the button they see next is honest about it rather than
-            // promising an instant resend the mail throttle would swallow.
-            startCooldown();
-          }
-        } else {
-          setMsg({
-            text: (data && data.error) || translate('auth:waitlist.join.failed'),
-            tone: 'error',
-          });
-        }
-      } catch {
-        setMsg({ text: translate('auth:waitlist.join.network'), tone: 'error' });
-      }
-      setSubmitting(false);
-    },
-    [discovery, startCooldown],
-  );
-
-  /**
-   * Which address the confirm step is working on.
-   *
-   * After a join it is the join form's own field: hidden, not cleared, so it
-   * still holds what was typed. Reached any other way there is nothing in it,
-   * and #waitlist-confirm-email is where the address comes from instead.
-   */
-  const confirmAddress = useCallback(
-    () => (codeOnly ? confirmEmail.current?.value.trim() : email.current?.value.trim()) || '',
-    [codeOnly],
-  );
+  /** The address the errand is about. */
+  const confirmAddress = useCallback(() => confirmEmail.current?.value.trim() || '', []);
 
   /**
    * Move to the code step, in state and in the fragment (#1876).
@@ -734,9 +379,7 @@ export function WaitlistScreen() {
    * The endpoint answers the same body to everybody, so there is nothing here
    * to branch on and nothing to report beyond "it is on its way if it applies
    * to you". That vagueness is the feature: a message that said "no such
-   * address" would turn this button into a membership oracle. Whether the
-   * address is already confirmed is said in the mail instead, which only its
-   * owner reads.
+   * address" would turn this button into a membership oracle.
    */
   const onResend = useCallback(async () => {
     if (resending || cooldownLeft > 0) return;
@@ -759,7 +402,6 @@ export function WaitlistScreen() {
             || translate('auth:waitlist.resend.sent'),
           tone: 'ok',
         });
-        // Name the address the confirm copy is about, now that we have one.
         setSentTo(emailVal.toLowerCase());
         startCooldown();
       } else {
@@ -775,27 +417,16 @@ export function WaitlistScreen() {
   }, [confirmAddress, cooldownLeft, resending, startCooldown]);
 
   /**
-   * Check the address, then do the right one of three things (#2201).
+   * Check the address, then do the right one of three things (#2201):
    *
-   * This step used to POST /resend and advance unconditionally, because the
-   * resend body says the same words to everybody and there was nothing to
-   * branch on. That vagueness has one bad ending: an address that is NOT on
-   * the list gets told a code is on its way, lands on a box wanting six
-   * digits, and waits for a mail that was never sent, because there was
-   * nothing to send it about.
-   *
-   * So the read comes first. POST /api/public/waitlist/status writes nothing
-   * and mails nothing, and it answers honestly, which is what lets this step
-   * separate the three cases:
-   *
-   *   1. not on the list  - say so, offer the join, send nothing;
-   *   2. on it, unconfirmed - exactly as before: send, then advance;
+   *   1. not on the list  - say so, offer Continue, send nothing;
+   *   2. on it, unconfirmed - send, then advance;
    *   3. on it, confirmed - straight to the status panel, no code at all.
    *
-   * The check is never the only way this works. A non-200, a body without
-   * `on_list`, an older deployment that has no such route, a 429 on its
-   * bucket: every one of those falls through to the send-and-advance path
-   * below rather than stranding somebody on a step that cannot continue.
+   * POST /api/public/waitlist/status writes nothing and mails nothing. A
+   * non-200, a body without `on_list`, a 429 on its bucket: every one of
+   * those falls through to the send-and-advance path rather than stranding
+   * somebody on a step that cannot continue.
    */
   const onRequestCode = useCallback(async () => {
     if (resending || cooldownLeft > 0) return;
@@ -837,17 +468,13 @@ export function WaitlistScreen() {
 
     if (known && known.status?.confirmed) {
       // Already confirmed, so there is nothing a code would prove. Read the
-      // state back instead of mailing six digits to make somebody type them
-      // in to be told what we already know.
+      // state back instead.
       setMsg(null);
       setSentTo(emailVal.toLowerCase());
       setStatus(known.status);
       setConfirmed(true);
       // No stage-2 offer on this path: its link needs a `more_token`, and the
-      // status endpoint deliberately never returns one (it is the first-join
-      // capability). An "Answer them now" button pointing nowhere is worse
-      // than no button. The mailed-code path still raises the offer, because
-      // /confirm carries the token.
+      // status endpoint deliberately never returns one.
       setOffer(false);
       setResending(false);
       return;
@@ -866,7 +493,6 @@ export function WaitlistScreen() {
             || translate('auth:waitlist.request.sent'),
           tone: 'ok',
         });
-        // Name the address the next step's copy is about, now that we have one.
         setSentTo(emailVal.toLowerCase());
         startCooldown();
         setResending(false);
@@ -884,14 +510,9 @@ export function WaitlistScreen() {
   }, [confirmAddress, cooldownLeft, goToCodeStep, resending, startCooldown]);
 
   /**
-   * Carry on with a code already in hand (#1876).
-   *
-   * Not decoration: `issueVerificationCode` deletes every unconsumed code for
-   * an address before minting the next one, so making this button send would
-   * invalidate the code in the inbox of the person who just followed that
-   * mail's own status button here. It sends nothing, and it leaves `sentTo`
-   * alone so the next step says "the code from your email" rather than
-   * claiming we mailed one just now.
+   * Carry on with a code already in hand (#1876). Sends nothing on purpose:
+   * issuing a new code deletes the unconsumed one, so a send here would
+   * invalidate the code the reader came to type.
    */
   const onHaveCode = useCallback(() => {
     const emailVal = confirmAddress();
@@ -905,72 +526,32 @@ export function WaitlistScreen() {
 
   /**
    * Out of the dead end (#2201): the address is not on the waitlist, so the
-   * useful next move is to put it there.
-   *
-   * Back to the join form rather than a second join control here, because
-   * joining also asks for a country and how they found us, and a duplicate
-   * form is a second place for those questions to drift. The address they
-   * just typed travels with them, so nobody retypes what they have already
-   * typed once, and the fragment goes back to the plain screen so a reload
-   * lands on the form instead of on the check-my-status step they left.
+   * useful next move is to join. Joining is Continue now (#5261), which
+   * makes the account and puts it in line, so this opens the landing with
+   * that sheet up (AuthScreens._startSheet, taken on show by landing.tsx).
    */
   const onJoinInstead = useCallback(() => {
-    const emailVal = confirmAddress();
     setNotFound(false);
     setRequestNote(null);
-    setMsg(null);
-    setJoined(false);
-    setCodeOnly(false);
-    setFlowStep('address');
-    if (emailVal && email.current) email.current.value = emailVal;
+    const host = legacy().AuthScreens as { _startSheet?: boolean } | undefined;
+    if (host) host._startSheet = true;
     try {
-      if (location.hash !== '#waitlist') location.hash = '#waitlist';
+      location.hash = '#landing';
     } catch {
       /* ignore */
     }
-    window.setTimeout(() => email.current?.focus({ preventScroll: true }), 0);
-  }, [confirmAddress]);
-
-  /**
-   * Jump straight to the confirm step, for somebody who joined on another
-   * device or whose code expired. It writes the state into the hash as well,
-   * so a reload lands back here instead of on the join form.
-   *
-   * Also the check-my-status entry (#1538) — one control, because entering a
-   * code to confirm and entering a code to read your status are the same six
-   * digits typed into the same field. Two links for it would be two doors
-   * into one room.
-   */
-  const onEnterCode = useCallback(() => {
-    setMsg(null);
-    setJoined(true);
-    setCodeOnly(true);
-    // At the address step (#1876): nothing has been sent from this device, so
-    // there is nothing to type six digits of yet.
-    setFlowStep('address');
-    try {
-      if (location.hash !== '#waitlist?confirm=1') location.hash = '#waitlist?confirm=1';
-    } catch {
-      /* ignore */
-    }
-    window.setTimeout(() => confirmEmail.current?.focus({ preventScroll: true }), 0);
   }, []);
 
   /**
-   * Confirm the address with the six-digit code from the join mail. The link
-   * in that same mail does the same thing; whichever is used first wins.
-   *
-   * The email input keeps its value after a join — the form is hidden, not
-   * cleared — so `email.current` is still the address the code went to.
+   * Confirm the address with the six-digit code from the mail. The link in
+   * that same mail does the same thing; whichever is used first wins.
    */
   const onConfirmCode = useCallback(async () => {
     if (busy.current) return;
     const codeVal = code.current?.value.trim() || '';
     // A link straight to the code step has no address behind it (#1876): an
-    // address never travels in a URL. Back to the step that collects one,
-    // rather than a POST the server can only refuse in the one shape that
-    // deliberately says nothing.
-    if (codeOnly && !confirmAddress()) {
+    // address never travels in a URL. Back to the step that collects one.
+    if (!confirmAddress()) {
       backToAddress();
       return setMsg({ text: translate('auth:waitlist.confirm.emailMissing'), tone: 'error' });
     }
@@ -990,14 +571,11 @@ export function WaitlistScreen() {
         setMsg(null);
         setConfirmed(true);
         // Confirming is what puts somebody on the list, so it is also what
-        // unlocks the questions that move them up it. The token may have
-        // arrived on the join response instead of this one, so raise the
-        // offer either way.
+        // unlocks the questions that move them up it.
         const token = (data && data.more_token) || null;
         if (token) setMoreToken(token);
-        // Where they actually stand (#1538). Both surfaces that describe a
-        // signup derive this from the same server-side helper, so this panel
-        // and `#more/<token>` cannot disagree about one row.
+        // Where they actually stand (#1538), from the same server-side
+        // helper `#more/<token>` reads.
         const next: WaitlistStatus | null = (data && data.status) || null;
         setStatus(next);
         // The stage-2 questions move you UP the list, so they are not an
@@ -1011,20 +589,13 @@ export function WaitlistScreen() {
     }
     busy.current = false;
     setSubmitting(false);
-  }, [backToAddress, codeOnly, confirmAddress]);
+  }, [backToAddress, confirmAddress]);
 
   /**
-   * Keep the field to six digits, and confirm as soon as it has them.
-   *
-   * The address bar is not where this code comes from: people paste it out of
-   * a mail app, which brings "123 456" or "Code: 123456" with it. Strip rather
-   * than reject — and because the strip is what enforces the length, the
-   * field's own `maxLength` is loose enough that a pasted string reaches it
-   * intact instead of being truncated mid-number.
-   *
-   * The Confirm button stays. Auto-submit is the fast path, not the only one:
-   * a wrong code has to be correctable, and correcting one digit of six is an
-   * edit, not a sixth keystroke.
+   * Keep the field to six digits, and confirm as soon as it has them. People
+   * paste the code out of a mail app, which brings "123 456" or "Code:
+   * 123456" with it, so strip rather than reject. The Confirm button stays:
+   * a wrong code has to be correctable.
    */
   const onCodeInput = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1054,275 +625,44 @@ export function WaitlistScreen() {
         <>
       {/*
           The sign-in and register screens' 44px round chevron, from the one
-          implementation the three share (./back-button, #2444) — a real tap
-          target rather than the transparent "← Back" text link this screen
-          used to carry.
-
-          #1875: it SCROLLS WITH THE PAGE. As `fixed` the step label, the
-          heading and the form all slid underneath it on a phone and the two
-          texts painted over each other. `absolute` inside the screen's own
-          scroller keeps it at the top-left corner above the content and lets
-          it leave with the rest of the page — nothing can pass under it.
-          Sign-in and register do the same since QA 2026-09-24 Q8.
+          implementation the three share (./back-button, #2444). It scrolls
+          with the page (#1875), so nothing can pass under it.
       */}
       <AuthBackButton href="#landing" />
       <div className="max-w-2xl mx-auto px-6 py-16">
-        {/*
-            Where you are. Hidden for a waiting-room session, which is shown
-            `#waitlist-queued` rather than a flow it is already past.
-        */}
+        {/* Where you are in the errand. */}
         <p
           id="waitlist-step"
-          className={hiddenLast(
-            hasSession,
-            'text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400',
-          )}
+          className="text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400"
         >
           {confirmed
-            ? (codeOnly ? t('auth:waitlist.step.status') : t('auth:waitlist.step.done'))
-            : joined
-              ? codeOnly
-                ? flowStep === 'code'
-                  ? t('auth:waitlist.step.enterCode')
-                  : t('auth:waitlist.step.emailAddress')
-                : t('auth:waitlist.step.joined')
-              : t('auth:waitlist.step.email')}
+            ? t('auth:waitlist.step.status')
+            : flowStep === 'code'
+              ? t('auth:waitlist.step.enterCode')
+              : t('auth:waitlist.step.emailAddress')}
         </p>
-        {/*
-            The pitch. It answers "why would I join", so it belongs to step 1
-            only — after the join it is four blocks of answered question sitting
-            on top of the one instruction that still matters.
-        */}
-        <h1 className={hiddenLast(joined, 'mt-1 text-2xl font-bold')}>
-          {t('auth:waitlist.title')}
-        </h1>
-        {/*
-            #1541: the same four facts, as a lead and a list.
-
-            This was two paragraphs of roughly seventy-five words, and the
-            report was simply that the screen is too much reading. Nothing has
-            been dropped: what the place is, who built the apps, what the chain
-            and the share mean, and how access opens are all still here. They
-            are four separate claims, and a reader scanning for "what is this
-            and what does joining cost me" was having to take them as prose.
-        */}
-        <p className={hiddenLast(joined, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
-          {t('auth:waitlist.intro')}
-        </p>
-        <ul
-          className={hiddenLast(
-            joined,
-            'mt-3 space-y-1.5 text-sm text-zinc-500 dark:text-zinc-400 list-disc pl-5',
-          )}
-        >
-          <li>
-            {t('auth:waitlist.points.builtHere')}
-          </li>
-          <li>
-            {t('auth:waitlist.points.chain')}
-          </li>
-          <li>
-            {t('auth:waitlist.points.gradual')}
-          </li>
-        </ul>
-        <p className={hiddenLast(joined, 'mt-3 text-sm font-medium text-zinc-700 dark:text-zinc-200')}>
-          {t('auth:waitlist.justEmail')}
-        </p>
-        {/*
-            Stage-1 waitlist survey (two-stage waitlist, ported from the
-            original topochain waitlist): email, something you've made,
-            where you are, how you found us. Option chips and the country
-            list render from GET /api/public/waitlist/options so the form
-            and server validation share one definition.
-        */}
-        <form
-          id="waitlist-form"
-          className={hiddenLast(hasSession || joined, 'mt-8 space-y-5')}
-          onSubmit={onSubmit}
-        >
-          <div>
-            <label htmlFor="waitlist-email" className={SURVEY_LABEL}>
-              {/* #1877: the marker sits a hair off the word rather than
-                  touching it, and is hidden from screen readers — the input's
-                  own `required` is what announces the field as required. */}
-              {t('auth:waitlist.email.label')}
-              <span className="ml-0.5 text-red-700 dark:text-red-400" aria-hidden="true">
-                *
-              </span>
-            </label>
-            <p className={SURVEY_HINT}>
-              {t('auth:waitlist.email.hint')}
-            </p>
-            {/*
-                Every field on this screen and on `#more` spreads SURVEY_FIELD
-                — the `authWhite` box, the dialogs' placeholder colour and the
-                `bordered` focus treatment — rather than writing the box out
-                (#2437). The note on that constant says why these screens take
-                that box and not sign-in's box-less `card` one.
-            */}
-            <Input
-              ref={email}
-              id="waitlist-email"
-              type="email"
-              required={true}
-              maxLength={255}
-              placeholder={t('auth:waitlist.email.placeholder')}
-              autoComplete="email"
-              {...SURVEY_FIELD}
-            />
-          </div>
-          <div>
-            {/* #1877: JSX drops the line break between a label's text and the
-                span after it, so without its own margin "Optional" rendered
-                glued to the word ("CountryOptional"). */}
-            <label className={SURVEY_LABEL} htmlFor="waitlist-country">
-              {t('auth:waitlist.country.label')}
-              <span className="ml-1.5 text-xs text-zinc-500 font-normal dark:text-zinc-400">
-                {t('auth:waitlist.optional')}
-              </span>
-            </label>
-            <p className={SURVEY_HINT}>
-              {t('auth:waitlist.country.hint')}
-            </p>
-            {/*
-                #1529: the focused state COLOURS the border rather than making
-                it transparent.
-
-                Every field on both waitlist screens used
-                `focus:ring-2 focus:border-transparent`, which draws the
-                indicator entirely with a box-shadow ring and removes the
-                resting border to make room for it. iOS Safari does not paint
-                box-shadow on a natively-styled control, so on a phone the
-                border vanished on tap and nothing replaced it — the outline
-                "disappearing when clicked" that was reported. The ring still
-                draws everywhere it is supported; the border colour is what
-                guarantees a visible focus on the surfaces that ignore it.
-            */}
-            <Select
-              ref={country}
-              id="waitlist-country"
-              {...SURVEY_SELECT}
-            >
-              <option value="">
-                {t('auth:waitlist.country.placeholder')}
-              </option>
-              {/* One flat alphabetical list of all 249 ISO 3166-1 countries
-                  and territories. It was six <optgroup> region buckets until
-                  #1527: they left ~200 places unselectable and hid the ones
-                  they did carry from an alphabetical scan. The server sends
-                  the map already sorted by English name, so insertion order
-                  IS display order and nothing sorts here. */}
-              {opts(options?.countries)}
-            </Select>
-          </div>
-          <div>
-            <label className={SURVEY_LABEL}>
-              {t('auth:waitlist.discovery.label')}
-              <span className="ml-1.5 text-xs text-zinc-500 font-normal dark:text-zinc-400">
-                {t('auth:waitlist.optional')}
-              </span>
-            </label>
-            <p className={SURVEY_HINT}>
-              {t('auth:waitlist.discovery.hint')}
-            </p>
-            <ChipRow
-              id="waitlist-discovery-chips"
-              options={options?.discovery_sources || {}}
-              value={discovery}
-              onChange={setDiscovery}
-            />
-          </div>
-          <Button
-            type="submit"
-            id="waitlist-submit"
-            disabled={submitting}
-            disabledStyle="dim"
-            size="lg"
-          >
-            {t('auth:waitlist.submit')}
-          </Button>
-        </form>
-        <p id="waitlist-msg" className={msgClass(msg ? msg.tone : null)}>
-          {msg ? msg.text : null}
-        </p>
-        {/*
-            The way back in. A code expires fifteen minutes after a join that
-            may have been weeks ago, and before this the only route to the
-            control that accepts one was to submit the join form again — which
-            said "we sent a code" while the idempotent join sent nothing. Step
-            1 only: past it, the control is already on screen.
-
-            It is also the check-my-status entry (#1538): the same six digits
-            typed into the same field, whether the errand is confirming an
-            address or reading back where you stand. So the label names the
-            errand people arrive with rather than the mechanism.
-        */}
-        <p className={hiddenLast(hasSession || joined, 'mt-4 text-sm text-zinc-500 dark:text-zinc-400')}>
-          <RichMessage id="auth:waitlist.alreadyJoined" components={[
-          <button
-            id="waitlist-enter-code"
-            type="button"
-            onClick={onEnterCode}
-            className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
-          />,
-            ]} />
-        </p>
-        {/*
-            Acknowledge the saved signup first, then present confirmation.
-            Returning code entry has no new join to acknowledge.
-        */}
-        <div id="waitlist-joined" className={hiddenFirst(!joined, 'mt-8')}>
-          <h2 className={hiddenLast(confirmed, 'text-2xl font-bold')}>
-            {/*
-                Case 2 of the join (#2201): the address was on the list
-                already, so welcoming them onto it is a machine that has lost
-                track. Case 3 needs no branch here — it sets `confirmed`,
-                which hides this line and the whole code block with it.
-            */}
-            {codeOnly
-              ? t('auth:waitlist.joined.titleStatus')
-              : rejoined
-                ? t('auth:waitlist.joined.titleAgain')
-                : t('auth:waitlist.joined.title')}
-          </h2>
+        <div id="waitlist-joined" className="mt-1">
+          <h1 className={hiddenLast(confirmed, 'text-2xl font-bold')}>
+            {t('auth:waitlist.joined.titleStatus')}
+          </h1>
           <p className={hiddenLast(confirmed, 'mt-1 text-sm text-zinc-500 dark:text-zinc-400')}>
             {/*
-                The lede follows the step (#1876). On step 2 the address field
-                is not on screen, so the original sentence was instructing the
-                reader to do something they could no longer see. It keeps the
-                claim and drops the instruction, and says nothing about a mail
-                having been sent: "I already have a code" arrives here with no
-                send behind it.
+                The lede follows the step (#1876): on step 2 the address field
+                is not on screen, so it keeps the claim and drops the
+                instruction.
             */}
-            {codeOnly
-              ? flowStep === 'code'
-                ? t('auth:waitlist.joined.leadStatusCode')
-                : t('auth:waitlist.joined.leadStatusAddress')
-              : rejoined
-                ? t('auth:waitlist.joined.leadAgain')
-                : t('auth:waitlist.joined.lead')}
+            {flowStep === 'code'
+              ? t('auth:waitlist.joined.leadStatusCode')
+              : t('auth:waitlist.joined.leadStatusAddress')}
           </p>
-          {/*
-              Confirming by code, for the phone: leaving for the mail app and
-              coming back loses the WebView's place, so typing six digits
-              beats following a link. The same mail carries both, and the
-              first one used stamps confirmed_at.
-          */}
           <div id="waitlist-confirm" className={hiddenLast(confirmed, 'mt-4')}>
             {/*
-                Step 1 of the check-my-status errand (#1876): which address,
-                and the send. Only ever on screen on that path, so the group
-                carries `codeOnly` as well as the step — after a join the mail
-                is already out and there is nothing here to ask for.
-
-                Plain `hidden` rather than `hiddenFirst`, because this one
-                ships hidden AND stays hidden for a whole path; and a wrapper
-                rather than `display: contents`, which `.hidden` cannot
-                override.
+                Step 1 (#1876): which address, and the send. Plain `hidden`
+                on a wrapper, because the whole half comes and goes together.
             */}
             <div
               id="waitlist-confirm-address"
-              className={codeOnly && flowStep === 'address' ? '' : 'hidden'}
+              className={flowStep === 'address' ? '' : 'hidden'}
             >
               <label
                 htmlFor="waitlist-confirm-email"
@@ -1333,14 +673,6 @@ export function WaitlistScreen() {
               <p className={SURVEY_HINT}>
                 {t('auth:waitlist.request.hint')}
               </p>
-              {/*
-                  Which address, when this step was reached without a join.
-                  Always in the markup and hidden until it is needed: the id is
-                  part of the shell's inventory, so rendering it conditionally
-                  would take it out of the document. After a join the join
-                  form's own field still holds the address, so asking again
-                  would be asking somebody to retype what they just typed.
-              */}
               <Input
                 ref={confirmEmail}
                 id="waitlist-confirm-email"
@@ -1349,11 +681,7 @@ export function WaitlistScreen() {
                 placeholder={t('auth:waitlist.request.placeholder')}
                 autoComplete="email"
                 {...SURVEY_FIELD}
-                // `hidden` and the bottom margin are this call site's own, so
-                // they ride in through className, which cva emits last. There
-                // is no `spacing` value for `mb-2`: that group leads the
-                // string, and this one is written after `w-full`.
-                className={hiddenFirst(!codeOnly, 'mb-2')}
+                className="mb-2"
               />
               <Button
                 id="waitlist-request-code"
@@ -1374,9 +702,7 @@ export function WaitlistScreen() {
               </p>
               {/*
                   For the reader who arrived from the status mail, which
-                  carries a code already. Sends nothing on purpose: issuing a
-                  new code deletes the unconsumed one, so a send here would
-                  invalidate the code they came to type.
+                  carries a code already. Sends nothing on purpose.
               */}
               <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">
                 <button
@@ -1388,11 +714,6 @@ export function WaitlistScreen() {
                   {t('auth:waitlist.request.haveCode')}
                 </button>
               </p>
-              {/*
-                  This step's own answer. A request that failed says why here
-                  and stays put; one that succeeded advances, and says so on
-                  the next step beside the field it is about.
-              */}
               <p
                 id="waitlist-request-note"
                 className={msgClass(requestNote ? requestNote.tone : null)}
@@ -1400,25 +721,15 @@ export function WaitlistScreen() {
                 {requestNote ? requestNote.text : null}
               </p>
               {/*
-                  The way out of the one dead end this step used to have
-                  (#2201). Before the status check, an address that was not on
-                  the list was told a code was coming and left waiting for a
-                  mail nobody sent; now it is told the truth, and the truth is
-                  only half an answer unless the next move is on screen beside
-                  it.
-
-                  Always in the markup and hidden until the lookup says so:
-                  the id is part of the shell's inventory, so rendering it
-                  conditionally would take it out of the document. The class
-                  rides on the BUTTON rather than on a wrapper, because the
-                  declared checks assert presence — `#waitlist-join-instead`
-                  matching a `:not(.hidden)` selector is the only way a check
-                  can tell the offered state from the withheld one.
+                  The way out of the one dead end this step has (#2201): an
+                  address that is not on the list is told so, and offered
+                  Continue, which joins now (#5261). Always in the markup and
+                  hidden until the lookup says so, with the class on the
+                  button itself: the declared checks tell the offered state
+                  from the withheld one by `:not(.hidden)` on this id.
 
                   Filled neutral rather than the accent: the send above it is
-                  still the primary action on this step, and two solid violet
-                  pills stacked read as two competing primaries with no answer
-                  to which one the note meant.
+                  still the primary action on this step.
               */}
               <Button
                 id="waitlist-join-instead"
@@ -1432,21 +743,12 @@ export function WaitlistScreen() {
                 {t('auth:waitlist.request.joinInstead')}
               </Button>
             </div>
-            {/*
-                Step 2 (#1876): the six digits. Visible by default, because
-                that is what the post-join path shows and what the shell
-                shipped; the split only hides it while the address step is up.
-            */}
+            {/* Step 2 (#1876): the six digits, the resend and the way back. */}
             <div
               id="waitlist-confirm-code"
-              className={codeOnly && flowStep === 'address' ? 'hidden' : ''}
+              className={flowStep === 'address' ? 'hidden' : ''}
             >
-              {/*
-                  The way back, for the address that was a typo. Assigning the
-                  fragment is what makes the browser's own Back do the same
-                  thing, so the two cannot disagree.
-              */}
-              <p className={hiddenFirst(!codeOnly, 'mb-1.5')}>
+              <p className="mb-1.5">
                 <button
                   id="waitlist-change-email"
                   type="button"
@@ -1460,24 +762,18 @@ export function WaitlistScreen() {
                 htmlFor="waitlist-code"
                 className={SURVEY_LABEL}
               >
-                {codeOnly ? t('auth:waitlist.confirm.labelStatus') : t('auth:waitlist.confirm.label')}
+                {t('auth:waitlist.confirm.labelStatus')}
               </label>
               <p className={SURVEY_HINT}>
                 {/*
-                    It no longer claims a send happened (#2201). "We sent a
-                    six-digit code to you@\u2026" was false three ways: the mail
-                    throttle can suppress the send, a code minted seconds ago
-                    is deliberately left alone rather than replaced, and both
-                    leave a reader staring at a promise the inbox did not
-                    keep. Pointing at the inbox is true in all three cases,
-                    and "the newest email" is the one instruction that
-                    matters once more than one code has been asked for.
+                    It never claims a send happened (#2201): the mail throttle
+                    can suppress one, and "I already have a code" arrives here
+                    with none behind it. Pointing at the inbox is true either
+                    way.
                 */}
-                {codeOnly && !sentTo
-                  ? t('auth:waitlist.confirm.hintStatus')
-                  : sentTo
-                    ? t('auth:waitlist.confirm.hintSentTo', { email: sentTo })
-                    : t('auth:waitlist.confirm.hint')}
+                {sentTo
+                  ? t('auth:waitlist.confirm.hintSentTo', { email: sentTo })
+                  : t('auth:waitlist.confirm.hintStatus')}
               </p>
               <div className="flex gap-2">
                 <Input
@@ -1508,9 +804,7 @@ export function WaitlistScreen() {
               </div>
               {/*
                   A new code, for the expired one. The gap is a courtesy that
-                  collapses a double-tap, not a security boundary: the real
-                  per-address ceiling lives in the mail throttle, where a
-                  countdown cannot be read off the page as a membership test.
+                  collapses a double-tap, not a security boundary.
               */}
               <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
                 <RichMessage
@@ -1527,12 +821,6 @@ export function WaitlistScreen() {
                 ]}
                 />
               </p>
-              {/*
-                  The resend's own answer. Separate from #waitlist-msg so a
-                  wrong code and a resend result cannot overwrite each other:
-                  they are the two things somebody does here, often in that
-                  order, and one line for both loses whichever came first.
-              */}
               <p
                 id="waitlist-resend-note"
                 className={msgClass(resendNote ? resendNote.tone : null)}
@@ -1541,10 +829,13 @@ export function WaitlistScreen() {
               </p>
             </div>
           </div>
+          {/* A wrong or missing code says so here, under the field. */}
+          <p id="waitlist-msg" className={msgClass(msg ? msg.tone : null)}>
+            {msg ? msg.text : null}
+          </p>
           {/*
-              What replaces the block above. `confirmed` used to only hide it,
-              so a correct code deleted the control and said nothing — the
-              reading of which is that something went wrong.
+              What replaces the block above once the state is known: where
+              this signup stands, read back.
           */}
           <div
             id="waitlist-confirmed"
@@ -1553,31 +844,7 @@ export function WaitlistScreen() {
               'mt-4 rounded-lg border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10 p-4',
             )}
           >
-            {/*
-                The celebration belongs to the moment somebody joins and
-                confirms, which is what this panel used to be for. A visitor
-                who typed their address to READ their state joined weeks ago,
-                so congratulating them reads as a machine that has lost track
-                — and it says the same thing the pill below says. So the
-                headline is the confirm path's and the pill is the status
-                path's. `statusRead` is false in the prerender, which is the
-                document's own shape: it always shipped this line visible.
-
-                Joining with an address that turns out to be confirmed
-                already (#2201) is the same kind of read-back, reached from
-                the join form rather than from "check your status", which is
-                why the gate is the derived flag and not `codeOnly`.
-            */}
-            <p
-              id="waitlist-confirmed-headline"
-              className={hiddenFirst(
-                statusRead,
-                'text-sm font-medium text-emerald-700 dark:text-emerald-400',
-              )}
-            >
-              {admitted ? t('auth:waitlist.status.titleIn') : t('auth:waitlist.status.titleListed')}
-            </p>
-            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+            <p className="text-sm text-zinc-600 dark:text-zinc-300">
               {admitted
                 ? (status?.has_account
                   ? t('auth:waitlist.status.leadHasAccount')
@@ -1586,24 +853,18 @@ export function WaitlistScreen() {
             </p>
             {/*
                 The same three-state vocabulary the stage-2 screen shows, from
-                the same table in waitlist-shared.tsx (#1538) — two copies of
-                it is how one row starts being described two ways. Empty and
-                `hidden` until a code lands, because the prerender has no
-                status to render and contents rendered before the fetch are a
-                hydration mismatch.
+                the same table in waitlist-shared.tsx (#1538).
             */}
             <div className="mt-2">
               <StatusPill
                 id="waitlist-status-pill"
-                status={statusRead ? status : null}
+                status={status}
                 note={false}
               />
             </div>
             {/*
-                When they joined. A fact the row actually knows, offered in
-                place of the queue position this panel deliberately does not
-                show: nothing ranks the waitlist, so a number would be made up.
-                Same always-in-the-markup contract as the address line below.
+                When they joined: a fact the row holds, in place of a queue
+                position nothing on the platform computes.
             */}
             <p
               id="waitlist-status-since"
@@ -1614,15 +875,7 @@ export function WaitlistScreen() {
             >
               {joinedOn ? t('auth:waitlist.status.since', { date: joinedOn }) : null}
             </p>
-            {/*
-                Which address that mail goes to (#1537). Always in the markup and
-                hidden until there is an address to name: the prerendered
-                document has none, and the id is part of the shell's inventory,
-                so rendering the node conditionally would take it out of the
-                document entirely. An empty "Registered with" reads as a bug,
-                hence `hidden` rather than an empty line. `break-words` so a long
-                address wraps instead of widening the card on a phone.
-            */}
+            {/* Which address that mail goes to (#1537). */}
             <p
               id="waitlist-confirmed-email"
               className={hiddenFirst(
@@ -1633,22 +886,8 @@ export function WaitlistScreen() {
               <RichMessage id="auth:waitlist.status.registeredWith" values={{ email: sentTo }} components={[<span className="font-medium text-zinc-700 dark:text-zinc-200" />]} />
             </p>
             {/*
-                The one thing a released signup can act on (#1538). Before
-                this, somebody who lost the "your access is ready" mail was
-                told to keep waiting for it. Hash routes rather than the
-                mail's `/?signup=1` spelling: same destination, and
-                AuthScreens.enter() rewrites the query form to exactly this
-                one on arrival, so taking it directly skips a document reload.
-                Which of the two depends on whether the invite has already
-                been redeemed into an account, which is a different question
-                from having been admitted.
-
-                No `data-offline-disabled`: that attribute greys a control out
-                AND swallows its clicks, and it is confined to the landing and
-                login screens on purpose (tests/pwa-shell-wiring.test.js). This
-                is a hash navigation to a screen that carries its own offline
-                affordances, so blocking it here would only strand the reader
-                on this panel.
+                The one thing a released signup can act on (#1538): create
+                the account with this address, or sign in when it exists.
             */}
             <a
               id="waitlist-status-action"
@@ -1695,17 +934,6 @@ export function WaitlistScreen() {
             </div>
           </div>
         </div>
-        {/*
-            Swapped in for the form when a (waiting-room) session exists —
-            they already have an account in the queue, so asking them to
-            join again is wrong. Mirrors #landing-cta-queued.
-        */}
-        <p
-          id="waitlist-queued"
-          className={hiddenFirst(!hasSession, 'mt-8 text-sm text-zinc-500 dark:text-zinc-400')}
-        >
-          {t('auth:waitlist.queued')}
-        </p>
       </div>
         </>
       ) : null}

@@ -60,6 +60,7 @@ import {
   type PublicApp,
   type ReleaseLink,
   takeReleaseLink,
+  takeStartSheet,
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
@@ -1284,13 +1285,20 @@ export function LandingScreen() {
         if (link.route !== 'signup') setSheet('signin');
       });
     }
+    // An old #waitlist link (#5261): its join form is retired, and Continue
+    // is what joins now, so the story opens with it up. With the story
+    // switched off there is no sheet, and the landing's own waitlist pill
+    // is the way to join.
+    if (takeStartSheet() && !link) {
+      flushSync(() => { setResume(null); setSheet('start'); });
+    }
     if (!st.appsLoaded) {
       st.appsLoaded = true;
       st.appsReady = loadLandingApps();
     }
-    // Warm the survey options (memoised) while the visitor is reading the
-    // pitch, so the #waitlist chips and country list are already filled by the
-    // time they tap through.
+    // Warm the options (memoised) while the visitor is reading the story,
+    // so the sheet's providers and terms are there by the time they tap
+    // through.
     void waitlistOptions();
     // Screenshot-state deep link `?shot=anon-back` (#1028) — see above.
     let shot: string | null = null;
