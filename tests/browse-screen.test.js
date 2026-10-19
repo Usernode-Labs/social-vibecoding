@@ -778,7 +778,7 @@ test('the site row renders first and Enter opens it', () => {
     'the site row carries no data-slug');
   assert.match(listSrc, /const siteRow = site \? <SiteRow site=\{site\} \/> : null;/);
   assert.match(listSrc, /<>\{siteRow\}\{renderRows\(rows\)\}<\/>/);
-  assert.match(listSrc, /\{siteRow\}\n\s+\{grouped && anyReviewed \?/);
+  assert.match(listSrc, /\{siteRow\}\n\s+\{grouped \?/);
   assert.match(listSrc, /t\('discover:site\.subtitle'\)/);
   const screenSrc = read('frontend/src/features/apps/browse-screen.tsx');
   assert.match(screenSrc, /site=\{state\.site\}/);

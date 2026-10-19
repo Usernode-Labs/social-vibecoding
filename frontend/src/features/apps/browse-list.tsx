@@ -325,7 +325,7 @@ export function BrowseRows({ rows, site = null, curated = false, grouped = true,
   return (
     <>
       {siteRow}
-      {grouped && anyReviewed ? (
+      {grouped ? (
         <>
           {picked.length ? <SectionHeader className={headingClass}>{t('discover:list.heading.recommended')}</SectionHeader> : null}
           {renderRows(picked)}
