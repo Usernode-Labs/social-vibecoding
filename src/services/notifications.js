@@ -1838,7 +1838,20 @@ const { settleVoteDigests } = changeNotifications;
 // list, where "ready to try" reads Closed.
 // "One story": the requester's own "ready to try" from Homeroom bot
 // (build_ready) too, once settleDecidedChange has linked it to its change.
-const MERGED_HIDDEN_KINDS = Object.freeze([...DECIDED_ASK_KINDS, 'change_ready', 'build_ready']);
+// #5482: the remaining kinds that name a change are not asks, but tapping
+// one hours later only opens the merged page too — a vote somebody cast
+// (proposal_vote), testing that could not run (check_failed), the session's
+// finish or stall (session_done, session_stalled), a headless run finished
+// (auto_solve_done), work a connector put up (connector_submitted) and a
+// spec shared privately (spec_shared). They join the list: once the change
+// has merged, the bell keeps only the news that it went live. Rows with no
+// session behind them and messages people wrote (mention, reply, reaction,
+// thread_reply) are not in this list and are never hidden.
+const MERGED_HIDDEN_KINDS = Object.freeze([
+  ...DECIDED_ASK_KINDS, 'change_ready', 'build_ready',
+  'proposal_vote', 'check_failed', 'session_done', 'session_stalled',
+  'auto_solve_done', 'connector_submitted', 'spec_shared',
+]);
 
 // #5461: the news that a change went live is listed until it is read, then
 // leaves the bell's list like the asks above did — a read note somebody

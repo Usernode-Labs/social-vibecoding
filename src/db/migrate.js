@@ -179,6 +179,12 @@ async function migrate(config) {
   await seedStagingCloneSpecPills(pool, config);
   await seedStagingRestartRecoveredPills(pool, config);
   await seedStagingGeneralChannel(pool);
+  // After it: the fake speaker who cast the vote below is that seed's person.
+  // #5482's before/after shots follow a proposal_vote row about a change
+  // that has merged, and its leaving the bell's list: a fresh clone has no
+  // such row for the shots' member fixture, so one is seeded, with the news
+  // that the same change went live beside it (that row stays after).
+  await seedStagingMergedVoteRow(pool, config);
   // After it: this thread's second speaker is that seed's fake person.
   await seedStagingScrollTestThread(pool);
   // Must run AFTER seedStagingScrollTestThread — it invites the same member fixture.
@@ -3416,6 +3422,90 @@ async function seedStagingMergedPrs(pool, config) {
     total: fixtures.length,
     inserted,
   });
+}
+
+// #5482's before/after shots follow a bell row that names a change which has
+// already merged: before, its "Voted yes" row is in the list; after, it is
+// gone and only the news that the change went live is left. A fresh clone
+// has no such pair for the shots' member fixture (usernode-capture), so one
+// is seeded: a fake merged change with an unread "Voted yes" row from one of
+// the fake speakers, and the unread merge news beside it. Idempotent through
+// the branch name and the (user, kind, session) lookup; strictly a no-op
+// outside staging.
+async function seedStagingMergedVoteRow(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query(
+      `SELECT id, username FROM users
+        WHERE username IN ('usernode-capture', 'staging-demo-general-ada')`
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const voter = people.rows.find((row) => row.username === 'staging-demo-general-ada');
+    if (!member || !voter || member.id === voter.id) {
+      log.warn('db', 'Staging merged-vote row skipped: fixture users missing');
+      return;
+    }
+    const { rows: appRows } = await pool.query(
+      'SELECT id FROM apps WHERE slug = $1', [config.selfAppSlug]
+    );
+    const appId = appRows[0]?.id;
+    if (!appId) {
+      log.warn('db', 'Staging merged-vote row skipped: self-app row missing', {
+        slug: config.selfAppSlug,
+      });
+      return;
+    }
+
+    const branch = 'staging-fixture/merged-vote-row';
+    let sessionId;
+    const { rows: sessionRows } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch]
+    );
+    if (sessionRows.length) {
+      sessionId = sessionRows[0].id;
+    } else {
+      const { rows } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_title, session_title, status,
+            merged_at, live_at, created_at)
+         VALUES
+           ($1, $2, $3, 9042, '[staging fixture] Books read list',
+            '[staging fixture] Books read list', 'merged',
+            NOW() - INTERVAL '3 hours', NOW() - INTERVAL '3 hours',
+            NOW() - INTERVAL '1 day')
+         RETURNING id`,
+        [appId, voter.id, branch]
+      );
+      sessionId = rows[0].id;
+    }
+
+    const fixtures = [
+      { kind: 'proposal_vote', sourceUserId: voter.id, detail: 'yes', minutesAgo: 200 },
+      // The news that it went live: still listed after the vote row has left.
+      { kind: 'voted_change_merged', sourceUserId: null, detail: null, minutesAgo: 170 },
+    ];
+    let inserted = 0;
+    for (const f of fixtures) {
+      const { rowCount } = await pool.query(
+        `INSERT INTO notifications
+           (user_id, app_id, session_id, source_user_id, kind, detail, read_at, created_at)
+         SELECT $1::int, $2::int, $3::int, $4::int, $5::varchar, $6::varchar,
+                NULL, NOW() - ($7::int * INTERVAL '1 minute')
+          WHERE NOT EXISTS (
+            SELECT 1 FROM notifications n
+             WHERE n.user_id = $1 AND n.session_id = $3 AND n.kind = $5)
+           RETURNING id`,
+        [member.id, appId, sessionId, f.sourceUserId, f.kind, f.detail, f.minutesAgo]
+      );
+      inserted += rowCount;
+    }
+    if (inserted > 0) {
+      log.info('db', 'Staging merged-vote row seeded', { sessionId, inserted });
+    }
+  } catch (err) {
+    log.warn('db', 'Staging merged-vote row seeding failed', { message: err.message });
+  }
 }
 
 // Small changes (#admin/small-changes): the watch-only small-change tag only

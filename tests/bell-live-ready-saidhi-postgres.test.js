@@ -14,6 +14,12 @@
 //     pr_merged to the author, voted_change_merged to the voters — stay
 //     until read (#5461): a read one leaves the list too.
 //     Nothing is re-opened unread: the news rides its own rows.
+//     #5482: the remaining kinds that name a change are not asks, but
+//     tapping one hours later only opens the merged page, so they leave the
+//     list on a merge too (proposal_vote, check_failed, session_done,
+//     session_stalled, auto_solve_done, connector_submitted, spec_shared),
+//     while a row with no change behind it, a message people wrote and the
+//     news that it went live stay. A closed change keeps every row.
 //   - The bell reads the change's status, a digest's live count and the
 //     request a first message became, with the row (listForUser, getForUser).
 //   - #4778: a decided change's asks (the vote nudge, the re-confirm ask, a
@@ -353,17 +359,74 @@ test('the bell after a change is decided, against the full PostgreSQL schema', {
     assert.equal(shown.sessionStatus, 'archived');
   });
 
-  await t.test('only the asks about a merged change leave: a row with no change and a vote on one stay listed', async () => {
+  // The kinds whose rows name a change but are not asks (#5482). Once the
+  // change has merged, tapping any of them only opens the merged page, so
+  // they leave the list with the asks do.
+  const CHANGE_ROW_KINDS = ['proposal_vote', 'check_failed', 'session_done', 'session_stalled', 'auto_solve_done', 'connector_submitted', 'spec_shared'];
+  const detailFor = (kind) => (kind === 'proposal_vote' ? 'yes' : kind === 'auto_solve_done' ? 'code' : null);
+
+  await t.test('every row about a merged change leaves: a row with no change stays listed', async () => {
     const merged = await change('Sticky reading position');
-    // A mention has no session behind it; a vote on your own proposal is
-    // news, not an ask. Neither is in the hidden kinds, and the first guards
-    // the NULL-safe comparison in the list's filter.
+    // A mention has no session behind it; a vote on a proposal names the
+    // change but is not an ask. The first guards the NULL-safe comparison in
+    // the list's filter.
     const mention = await notify(mo.id, 'mention', { sessionId: null });
     const vote = await notify(mo.id, 'proposal_vote', { sessionId: merged, detail: 'yes' });
     await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [merged]);
     await notifications.settleDecidedChange(pool, merged);
     assert.ok(await listed(mo.id, mention), 'a row with no session is never hidden');
-    assert.ok(await listed(mo.id, vote), 'a proposal_vote is not an ask about the change');
+    assert.equal(await listed(mo.id, vote), null, 'a proposal_vote about a merged change leaves the list');
+    // Opening it from a push still resolves it.
+    const exact = notifications.serialize(await notifications.getForUser(pool, mo.id, vote));
+    assert.equal(exact.kind, 'proposal_vote', 'the exact lookup (a push opened) still resolves it');
+  });
+
+  await t.test('every row about a merged change leaves the list but the news that it went live', async () => {
+    const base = await notifications.countUnread(pool, mo.id);
+    const waiting = await change('Books read list');
+    const ids = [];
+    for (const kind of CHANGE_ROW_KINDS) {
+      ids.push(await notify(mo.id, kind, { sessionId: waiting, detail: detailFor(kind), source: alex.id }));
+    }
+    // A message somebody wrote about the change: never hidden, whatever the
+    // change does.
+    const reply = await notify(mo.id, 'reply', { sessionId: waiting });
+    assert.equal(await notifications.countUnread(pool, mo.id), base + ids.length + 1,
+      'all of them count while the change still waits');
+
+    await pool.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [waiting]);
+
+    for (const id of ids) {
+      assert.equal(await listed(mo.id, id), null, `${(await row(id)).kind} is off the list once it has merged`);
+    }
+    assert.ok(await listed(mo.id, reply), 'a message people wrote stays');
+    assert.equal(await notifications.countUnread(pool, mo.id), base + 1, 'only the message counts now');
+
+    // The news that it went live stays while it is unread, and counts (#5461).
+    const live = await notify(mo.id, 'pr_merged', { sessionId: waiting, source: null });
+    assert.ok(await listed(mo.id, live), 'the author is told it went live');
+    assert.equal(await notifications.countUnread(pool, mo.id), base + 2);
+
+    // Opening one of the hidden rows from a push still resolves it.
+    const exact = notifications.serialize(await notifications.getForUser(pool, mo.id, ids[0]));
+    assert.equal(exact.kind, CHANGE_ROW_KINDS[0], 'the exact lookup (a push opened) still resolves it');
+
+    // A saved row of a kind that left the list stays in the Saved section.
+    await pool.query(`INSERT INTO notification_bookmarks (user_id, notification_id) VALUES ($1, $2)`, [mo.id, ids[0]]);
+    const saved = await notifications.listSavedForUser(pool, mo.id);
+    assert.ok(saved.some((r) => r.id === ids[0]), 'a saved row stays in Saved');
+  });
+
+  await t.test('a closed change keeps every row about it (control)', async () => {
+    const closed = await change('Star ratings');
+    const ids = [];
+    for (const kind of CHANGE_ROW_KINDS) {
+      ids.push(await notify(mo.id, kind, { sessionId: closed, detail: detailFor(kind), source: alex.id }));
+    }
+    await pool.query(`UPDATE chat_sessions SET status = 'archived', archived_at = NOW() WHERE id = $1`, [closed]);
+    for (const id of ids) {
+      assert.ok(await listed(mo.id, id), `${(await row(id)).kind} stays listed on a closed change`);
+    }
   });
 
   await t.test('a digest of several counts only what still waits, and is read when nothing does', async () => {
