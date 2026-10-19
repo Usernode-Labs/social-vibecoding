@@ -805,8 +805,8 @@ What a merged pull request still has to do once GitHub has merged it
   decides. The platform's own release is heard from the processes serving it; on a Docker
   host, its host deployer is told by durable work (`host.nudgeDeployer`).
 - **Messages, in the merge's transaction:** the preview's retirement
-  (`RetireRequested`, to the preview machine: at once for the platform's own app, otherwise
-  once app-delivery has answered, since demo mode deploys the preview's build), and the unit
+  (`RetireRequested`, to the preview machine: at once, unless demo mode deploys the
+  preview's own build, which waits for app-delivery's answer), and the unit
   suite on the merge commit (`CheckRequested`, to the app's `main-check` instance).
 - **Durable work for the rest:**
   - `worker.retire`: the worker and its Claude Code volume, through the proposal machine's

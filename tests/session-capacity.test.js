@@ -51,7 +51,7 @@ test('every start, resume and reopen passes the same gate, and says where it ask
   // (R5) and refuses 'global_cap' over this one, and the route frees an idle
   // slot the same way, then records the refusal with its path, as the gate does.
   const resume = sessions.slice(sessions.indexOf('async function resumePausedSession'));
-  assert.match(resume, /global: config && config\.maxGlobalSessions != null \? Number\(config\.maxGlobalSessions\) : 100,/);
+  assert.match(resume, /global: await require\('\.\.\/services\/session-limit'\)\.effective\(pool, config\),/);
   assert.match(resume, /reason === 'global_cap'[\s\S]*?sessionLifecycle\.freeGlobalSlot\(\{ pool, graceMs: config && config\.sessionPressureGraceMs, excludeSessionId: sessionId \}\)/);
   assert.match(resume, /recordCapacityRefusal\(pool, \{ cap: 'global', path: 'resume', userId: user\.id \}\);\n\s+return \{ ok: false, status: 429, error: sessionLifecycle\.PLATFORM_AT_CAPACITY \};/);
   const handoff = read('src/routes/proposal-handoff.js');
@@ -80,7 +80,11 @@ test('under the cap a start goes ahead; at it, a refusal is recorded with its ca
   const config = { maxGlobalSessions: 100, sessionPressureGraceMs: 15 * 60 * 1000 };
   const under = capPool({ count: 99 });
   assert.deepEqual(await lifecycle.claimGlobalSlot({ pool: under, config, path: 'start', userId: 7 }), { ok: true });
-  assert.equal(under.calls.length, 1, 'one count, nothing paused, nothing recorded');
+  // The cap is the session limit (services/session-limit.js): its setting
+  // is read, then the one count; nothing paused, nothing recorded.
+  assert.equal(under.calls.length, 2);
+  assert.match(under.calls[0].sql, /FROM platform_settings s/);
+  assert.equal(under.calls[1].sql, sessionCaps.GLOBAL_SESSIONS_SQL);
 
   const full = capPool({ count: 100 });
   assert.deepEqual(await lifecycle.claimGlobalSlot({ pool: full, config, path: 'proposal_start', userId: 7, appId: 10 }), { ok: false });

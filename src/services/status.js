@@ -16,11 +16,12 @@ const WORKER_PREFIX = 'usernode-worker-';
 const APP_PREFIX = 'usernode-app-';
 const STAGING_PREFIX = 'usernode-staging-';
 
-// Fallbacks only — the live caps come from config (MAX_GLOBAL_SESSIONS /
-// MAX_USER_SESSIONS). Native coding sessions are 1:1 with workers. Imported
-// PRs are produced externally and are excluded from this worker budget even
-// though Homeroom may build them a staging preview. These constants are kept
-// so the dashboard still renders if config is absent.
+// Fallbacks only — the live caps come from the session limit
+// (services/session-limit.js: Admin → Limits, else MAX_GLOBAL_SESSIONS) and
+// config (MAX_USER_SESSIONS). Native coding sessions are 1:1 with workers.
+// Imported PRs are produced externally and are excluded from this worker
+// budget even though Homeroom may build them a staging preview. These
+// constants are kept so the dashboard still renders if config is absent.
 const MAX_STAGING_GLOBAL = 25;
 const MAX_STAGING_PER_USER = 3;
 const WORKER_ORPHAN_THRESHOLD_MS = 20 * 60 * 1000;
@@ -386,7 +387,8 @@ async function gatherFull(config) {
   //                           right up to the server refusing the fourth.
   const sc = sessionCountsQ.rows[0] || {};
   const num = (v) => parseInt(v, 10) || 0;
-  const globalCap = config.maxGlobalSessions || MAX_STAGING_GLOBAL;
+  // The session limit as every refusal reads it (services/session-limit.js).
+  const globalCap = (await require('./session-limit').effective(pool, config)) || MAX_STAGING_GLOBAL;
   const capacity = {
     globalUsed: num(sc.global_used),
     globalCap,

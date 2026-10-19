@@ -1941,10 +1941,11 @@ async function resumePausedSession({ pool, config, user, sessionId }) {
   // session to pause for it is asked to, once per cap, before it asks again.
   // The per-user cap counts only 'active' sessions (#193); its ceiling is
   // per-requester (full admins get a raised cap: services/session-caps.js).
+  // The global one is the session limit (services/session-limit.js).
   const caps = effectiveSessionCaps(config, user);
   const cap = {
     user: caps.activeSessions,
-    global: config && config.maxGlobalSessions != null ? Number(config.maxGlobalSessions) : 100,
+    global: await require('../services/session-limit').effective(pool, config),
   };
   const platform = require('../workflow/platform.ts');
   const tried = new Set();

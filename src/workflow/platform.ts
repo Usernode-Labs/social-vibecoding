@@ -150,7 +150,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   });
   const proposals = proposal(proposalDeps(config));
   const queues = mergeQueue();
-  const campaigns = campaign();
+  const campaigns = campaign(campaignDeps(config));
   const botChanges = botChange();
   const voices = botVoice();
   const dms = botDm();
@@ -587,7 +587,7 @@ export async function adoptDeferredDms(): Promise<number> {
 
 // An admin's moves on a campaign (routes/campaigns.js): retry one app, force
 // its green proposals, stop it. Each answers with the machine's outcome.
-export async function campaignEvent(campaignId: number, type: 'RetryApp' | 'MergeGreen' | 'Stop',
+export async function campaignEvent(campaignId: number, type: 'RetryApp' | 'MergeGreen' | 'Stop' | 'Resume',
   payload: Record<string, unknown>, user: { id?: number | null; username?: string | null }): Promise<EventOutcome> {
   if (!runtime) throw new Error('The workflow runtime is not running in this process');
   return runtime.appendAndWait(CAMPAIGN, campaignKey(campaignId),
@@ -1123,6 +1123,22 @@ function proposalDeps(config: any) {
     staleNotifyMs: ms(config.prStaleNotifyMs, 0),
     staleGraceMs: ms(config.prStaleGraceMs, 0),
     shotsEnforced: !!config.shots?.enforce,
+  };
+}
+
+// What bounds a campaign's fan-out (campaign/machine.ts CampaignDeps): the
+// deploy's session limit (an admin's setting is read with the facts), the
+// admins' warning line (services/platform-limit-alerts.js warnPercent) and
+// how many of its proposals may be up for a vote at once.
+export function campaignDeps(config: any, env: Record<string, string | undefined> = process.env) {
+  const whole = (v: unknown, fallback: number, lo: number, hi: number) => {
+    const n = parseInt(String(v ?? ''), 10);
+    return Number.isInteger(n) && n >= lo && n <= hi ? n : fallback;
+  };
+  return {
+    sessionLimit: config && config.maxGlobalSessions != null ? Number(config.maxGlobalSessions) : 100,
+    roomPercent: whole(env.PLATFORM_LIMIT_WARN_PERCENT, 80, 1, 100),
+    maxOpen: whole(config?.campaignMaxOpen, 10, 1, 1000),
   };
 }
 

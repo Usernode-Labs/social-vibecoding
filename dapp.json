@@ -171,7 +171,13 @@
       "key": "MAX_GLOBAL_SESSIONS",
       "group": "Scaling",
       "default": "75",
-      "description": "Ceiling on concurrent worker containers across the whole platform. The committed default targets ~50 concurrent users on a 20-core/62GB box; raise it only alongside WORKER_MEMORY headroom."
+      "description": "Default ceiling on coding sessions across the whole platform, active and in review. The committed default targets ~50 concurrent users on a 20-core/62GB box; raise it only alongside WORKER_MEMORY headroom. Full admins can override it without a deploy in Admin → Limits."
+    },
+    {
+      "key": "CAMPAIGN_MAX_OPEN",
+      "group": "Scaling",
+      "default": "10",
+      "description": "How many of one maintenance campaign's proposals may be up for a vote at once. A campaign also changes its next app only while the platform's sessions are under PLATFORM_LIMIT_WARN_PERCENT of the session limit."
     },
     {
       "key": "MAX_USER_SESSIONS",
