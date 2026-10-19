@@ -240,7 +240,7 @@ test('a loaded board draws its counts and its empty notes again', () => {
   const html = kanbanHtml(AppView);
   assert.ok(!html.includes('animate-pulse'), 'no placeholders once the data is real');
   assert.ok(html.includes('Nothing here yet'), 'the genuinely empty columns say so');
-  assert.match(html, /<span class="dev-kanban-step-name">Requests<\/span><span class="dev-kanban-step-n">1<\/span>/,
+  assert.match(html, /<span class="dev-kanban-step-name">Requests<\/span><span class="dev-kanban-step-short">Asked<\/span><span class="dev-kanban-step-n">1<\/span>/,
     'the Requests count is the real one (#4486: on its step)');
 });
 

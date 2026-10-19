@@ -297,7 +297,7 @@ test('tab counts mirror the column header counts', () => {
   assert.equal(tabCount(html, 'inreview'), '1');
   assert.equal(tabCount(html, 'done'), '3');
   // The steps ARE the column headings now (#4486): one count per column.
-  assert.match(html, /<span class="dev-kanban-step-name">Requests<\/span><span class="dev-kanban-step-n">2<\/span>/, 'the Issues column is "Requests" (UI overhaul)');
+  assert.match(html, /<span class="dev-kanban-step-name">Requests<\/span><span class="dev-kanban-step-short">Asked<\/span><span class="dev-kanban-step-n">2<\/span>/, 'the Issues column is "Requests" (UI overhaul), "Asked" on a phone (#5300)');
   assert.ok(!/dev-kanban-col-head/.test(html), 'and no second heading over the column');
 });
 
@@ -549,7 +549,8 @@ test('the 640px breakpoint agrees across the JS default and app.css', () => {
   );
   // Single column (the strip is the tabs) strictly below 640px …
   assert.match(css, /@media \(max-width: 639px\) \{\s*#dev-kanban \{ display: block; overflow-x: hidden; \}/);
-  assert.match(css, /@media \(max-width: 639px\) \{[\s\S]*?\.dev-kanban-stages \{\s*display: flex;/);
+  // #5300: there the strip is one segmented control, four across.
+  assert.match(css, /@media \(max-width: 639px\) \{[\s\S]*?\.dev-kanban-stages \{\s*display: grid; grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
   // … and from 640px up the four columns sit on ONE grid, 220px at the
   // least, and the board scrolls sideways rather than squeezing them
   // further (#4486). The strip is laid on the same grid.
@@ -649,7 +650,7 @@ test('wide is untouched, which is the contract the checks runner asserts under',
 
 // ── By stage counts in the interface's language, not always en-US ─────
 //
-// The strip's counts and the column foot's "Show all 2,748" grouped digits
+// The strip's counts and the column foot's "Show 2,748 more" grouped digits
 // with a fixed 'en-US', so a French interface read "Montrer les 2,748"
 // instead of "2 748". Both format with getLanguage() now, as weekDate does
 // (#4818).
@@ -676,9 +677,8 @@ test('By stage counts and the column foot group digits in the interface language
   assert.deepEqual(strip.seen, ['en'], 'the strip count uses the interface language (getLanguage)');
 
   const { FooterView } = loadTsx('frontend/src/features/dev-board/card/footer.tsx');
-  const showAll = captureNumberLocales(() => renderToHtml(createElement(FooterView, { f: { kind: 'showAll', n: 2748 } })));
-  assert.match(showAll.out, /Show all 2,748/);
-  assert.ok(showAll.seen.length > 0 && showAll.seen.every((l) => l === 'en'), 'Show all N in the interface language');
+  // #5300: Done's foot is "Show earlier" now, with no figure to group.
+  assert.match(renderToHtml(createElement(FooterView, { f: { kind: 'showAll', n: 2748 } })), />Show earlier</);
   const more = captureNumberLocales(() => renderToHtml(createElement(FooterView, { f: { kind: 'loadMerged', n: 1200, loading: false } })));
   assert.match(more.out, /Show 1,200 more/);
   assert.ok(more.seen.length > 0 && more.seen.every((l) => l === 'en'), 'Show N more in the interface language');

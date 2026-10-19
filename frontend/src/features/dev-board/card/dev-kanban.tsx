@@ -36,7 +36,7 @@
  *
  * Each column draws the Workshop's row (../workshop/work-row.tsx, variant
  * `board`): the line in words, the coloured category, the 💬 count, the
- * tags, the card's own bar with Vote and its ☰ menu. A tap on a row opens
+ * tags, the card's own bar with Vote and its ⋯ menu. A tap on a row opens
  * the item's page, beside the board on a wide window (the Workshop's
  * `onOpen`) and as the page on a phone; nothing unfolds in place any more.
  * Waiting for approval keeps its Newest / Vote priority order, at the top of
@@ -79,6 +79,19 @@ const STEP_ICON: Record<string, typeof CheckIcon> = {
 };
 
 /**
+ * #5300: each step's short name, the phone's segmented control: Asked ·
+ * Building · Voting · Done. The column titles (Requests, Underway, Waiting
+ * for approval, Done) did not fit four across 390px and the strip ran off
+ * the edge. Message ids, read when the strip renders.
+ */
+const STEP_SHORT: Record<string, string> = {
+  issues: 'project:kanban.stage.asked',
+  inprogress: 'project:kanban.stage.building',
+  inreview: 'project:kanban.stage.voting',
+  done: 'project:kanban.stage.done',
+};
+
+/**
  * "2,760": a count as the strip says it, grouped the way the interface's
  * language groups digits ("2 760" in French), never a fixed en-US.
  */
@@ -108,7 +121,14 @@ export function syncStrip(board: HTMLElement | null): void {
  * [data-kanban-tab="…"]` checks and the suites here read these attributes.
  */
 function Step({ col, active, loading, last }: { col: KanbanColView; active: boolean; loading: boolean; last: boolean }): ReactNode {
+  const t = useMessages('project');
   const Icon = STEP_ICON[col.key] || PencilSquareIcon;
+  const short = STEP_SHORT[col.key];
+  // #5300: a wide window names the step in full; a phone, where the steps
+  // are one segmented control four across, by its short name. Both are in
+  // the markup and app.css shows one, so nothing here asks the width. The
+  // count is visually hidden on a phone, where it did not fit, and still
+  // read with the name.
   return (
     <button
       type="button"
@@ -123,6 +143,7 @@ function Step({ col, active, loading, last }: { col: KanbanColView; active: bool
     >
       <span className="dev-kanban-step-tile" data-kind={col.key} aria-hidden="true"><Icon aria-hidden="true" /></span>
       <span className="dev-kanban-step-name">{col.title}</span>
+      {short ? <span className="dev-kanban-step-short">{t(short)}</span> : null}
       <span className="dev-kanban-step-n">{loading ? <CountSkeleton /> : countWords(col.count)}</span>
       {last ? null : <ChevronRightIcon className="dev-kanban-step-arrow" aria-hidden="true" />}
     </button>

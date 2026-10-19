@@ -421,11 +421,19 @@
   },
   "allItems.group.category": {
     "text": "By category",
-    "description": "Name of an icon tab at the top of a project's All items page: groups the items by what part of the project they are about. Read as the tab's tooltip and by screen readers."
+    "description": "Tooltip of the List half of the switch at the top of a project's All items page, which groups the items by what part of the project they are about."
   },
   "allItems.group.stage": {
     "text": "By stage",
-    "description": "Name of an icon tab at the top of a project's All items page: groups the items into columns by how far along they are (open, in progress, voting, done). Read as the tab's tooltip and by screen readers."
+    "description": "Tooltip of the Board half of the switch at the top of a project's All items page, which groups the items into columns by how far along they are (open, in progress, voting, done)."
+  },
+  "allItems.view.list": {
+    "text": "List",
+    "description": "Label of the first half of the switch at the top of a project's All items page: shows the items as a list grouped by category. A noun."
+  },
+  "allItems.view.board": {
+    "text": "Board",
+    "description": "Label of the second half of the switch at the top of a project's All items page: shows the items as a board with a column per stage (asked, building, voting, done). A noun."
   },
   "boardEmpty.filtered": {
     "text": "Nothing here matches the current search and filters.",
@@ -3479,6 +3487,22 @@
     "text": "Board columns",
     "description": "Accessible name of the row of steps over a project's board (Requests, Underway, Waiting for approval, Done, each with its count): the heads of the board's columns, and on a phone the tabs that switch between them. The board is a project's kanban of requests and proposals."
   },
+  "kanban.stage.asked": {
+    "text": "Asked",
+    "description": "Short name of the first stage in the segmented control over a project's board on a phone: requests people have asked for that nobody has started. The column's full title is \"Requests\". Keep it to one short word."
+  },
+  "kanban.stage.building": {
+    "text": "Building",
+    "description": "Short name of the second stage in the segmented control over a project's board on a phone: requests and changes somebody is working on now. The column's full title is \"Underway\". Keep it to one short word."
+  },
+  "kanban.stage.voting": {
+    "text": "Voting",
+    "description": "Short name of the third stage in the segmented control over a project's board on a phone: changes put up for a vote and not approved yet. The column's full title is \"Waiting for approval\". Keep it to one short word."
+  },
+  "kanban.stage.done": {
+    "text": "Done",
+    "description": "Short name of the last stage in the segmented control over a project's board on a phone: changes that were merged and requests that were closed. Keep it to one short word."
+  },
   "kanban.skeleton.requests": {
     "text": "Requests",
     "description": "Name of the board's first column in its loading placeholder: filed requests (issues) nobody has started on. A plural noun."
@@ -3503,13 +3527,9 @@
     "text": "Loading",
     "description": "Read by a screen reader while a list of cards on a project's page is loading."
   },
-  "kanban.footer.showAll_one": {
-    "text": "Show all {{number}}",
-    "description": "Last line at the foot of the board's Done column, which hides older merged changes: pressing it shows every one. {{number}} is how many merged changes there are in all, already formatted with digit separators."
-  },
-  "kanban.footer.showAll_other": {
-    "text": "Show all {{number}}",
-    "description": "Last line at the foot of the board's Done column, which hides older merged changes: pressing it shows every one. {{number}} is how many merged changes there are in all, already formatted with digit separators."
+  "kanban.footer.showEarlier": {
+    "text": "Show earlier",
+    "description": "Last line at the foot of the board's Done column, which lists only what was done this week: pressing it also shows the older merged changes."
   },
   "kanban.footer.loading": {
     "text": "Loading…",
@@ -3965,11 +3985,11 @@
   },
   "filters.quick.assignedToYou": {
     "text": "Assigned to you",
-    "description": "Name of an icon toggle chip in the filter strip, read as its tooltip and by screen readers, above a project's list of requests and proposals: shows only the items assigned to the viewer."
+    "description": "Label of a toggle chip in the filter strip above a project's list of requests and proposals: shows only the items assigned to the viewer."
   },
   "filters.quick.createdByYou": {
     "text": "Created by you",
-    "description": "Name of an icon toggle chip in the filter strip, read as its tooltip and by screen readers, above a project's list of requests and proposals: shows only the items the viewer started."
+    "description": "Label of a toggle chip in the filter strip above a project's list of requests and proposals: shows only the items the viewer started."
   },
   "filters.search.placeholder": {
     "text": "Search requests, changes, comments or #",
@@ -3981,15 +4001,15 @@
   },
   "filters.button.none": {
     "text": "Filters",
-    "description": "Name of the sliders icon chip beside the search box, read as its tooltip and by screen readers, above a project's list of requests and proposals, while no filter is on: opens the filters dialog. A plural noun."
+    "description": "Label of the chip beside the search box, above a project's list of requests and proposals, while no filter is on: opens the filters dialog. A plural noun."
   },
   "filters.button.active_one": {
     "text": "Filters ({{count}})",
-    "description": "Name of the sliders icon chip beside the search box, read as its tooltip and by screen readers, above a project's list of requests and proposals while filters are on: opens the filters dialog. {{count}} is how many filters are on."
+    "description": "Label of the chip beside the search box, above a project's list of requests and proposals while filters are on: opens the filters dialog. {{count}} is how many filters are on."
   },
   "filters.button.active_other": {
     "text": "Filters ({{count}})",
-    "description": "Name of the sliders icon chip beside the search box, read as its tooltip and by screen readers, above a project's list of requests and proposals while filters are on: opens the filters dialog. {{count}} is how many filters are on."
+    "description": "Label of the chip beside the search box, above a project's list of requests and proposals while filters are on: opens the filters dialog. {{count}} is how many filters are on."
   },
   "filters.chip.remove": {
     "text": "Remove filter: {{filter}}",

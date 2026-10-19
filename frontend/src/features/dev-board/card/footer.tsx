@@ -25,7 +25,7 @@ export function FooterView({ f }: { f: FooterSpec }): ReactNode {
   if (f.kind === 'showAll') {
     return (
       <button type="button" className="dev-ws-reveal dev-kanban-more" onClick={() => callAppView('showAllDone')}>
-        {t('project:kanban.footer.showAll', { count: f.n, number: f.n.toLocaleString(getLanguage()) })}
+        {t('project:kanban.footer.showEarlier')}
       </button>
     );
   }

@@ -916,7 +916,7 @@ test('the second column reads "Underway" but keeps its inprogress key and id', (
   AppView._kanbanFilters = { q: '', priority: null, category: null, assignee: null, needsVote: false };
   const html = kanbanHtml(AppView);
 
-  assert.match(html, /<span class="dev-kanban-step-name">Underway<\/span><span class="dev-kanban-step-n">1<\/span>/, 'its step retitled (#4486: the steps are the column heads)');
+  assert.match(html, /<span class="dev-kanban-step-name">Underway<\/span><span class="dev-kanban-step-short">Building<\/span><span class="dev-kanban-step-n">1<\/span>/, 'its step retitled (#4486: the steps are the column heads)');
   assert.ok(!/In progress</.test(html), 'the old title is gone');
   // Load-bearing and unchanged: the key, the id and the tab wiring.
   assert.match(html, /id="dev-kanban-col-inprogress"/);

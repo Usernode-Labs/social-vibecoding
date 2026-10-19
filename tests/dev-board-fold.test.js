@@ -1790,12 +1790,13 @@ test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds 
   assert.match(CSS, /\.dev-vote-btn-yes[^{]*\{ background: var\(--accent-tint\); color: var\(--accent\); \}/, 'the pair the Yes state uses');
   // The ⋯ was a well in the card's top-right rail. The menu is where the
   // pills that do not fit the band go, so its trigger is the band's own
-  // "more": a hamburger at its far right, and Preview, when there is one,
+  // "more": a ⋯ at its far right (#5300: it was a hamburger, which read as
+  // a drag handle), and Preview, when there is one,
   // just before it. Whichever of the two comes first carries the auto
   // margin that pushes the pair to the edge; the second keeps the gap.
   const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
-  assert.match(CARD, /<Bars3Icon aria-hidden="true" \/>/);
-  assert.ok(!CARD.includes('EllipsisHorizontalIcon'));
+  assert.match(CARD, /data-card-menu=\{menuKey\}[\s\S]*?<EllipsisHorizontalIcon aria-hidden="true" \/>/);
+  assert.ok(!CARD.includes('Bars3Icon'));
   assert.ok(!CARD.includes('className="dev-card-rail"'), 'the rail column is gone from the card');
   const tr = CSS.indexOf('\n:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn {');
   assert.ok(tr > 0);

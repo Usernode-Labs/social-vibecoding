@@ -19226,6 +19226,15 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   .dev-ws-places-dot { box-shadow: 0 0 0 2px var(--bg-primary); }
   .dev-ws-place-title { font-size: 20px; font-weight: 700; color: var(--text-primary); }
 }
+/* #5300: ON ALL ITEMS THE PAGE HAS ONE TITLE. From 768px the bar named the
+   place, "Workshop", over All items' own head, "‹ All items", and the page
+   read as two titles. On All items the bar keeps its box (what the pinned
+   head is measured against) at no height, as a phone's does, and the head's
+   way back and name are the page's title. */
+@media (min-width: 768px) {
+  .dev-ws-tabs.dev-ws-band[data-place-bar="all"] { margin: 0; box-shadow: none; }
+  .dev-ws-placebar[data-place-bar="all"] .dev-ws-tabtrack { height: 0; overflow: hidden; }
+}
 
 /* THE MERGED HEADER (#4703): on a phone the place bar's contents live in the
    platform header, and the second coloured row is gone. The band keeps its
@@ -24421,6 +24430,8 @@ html.in-side-panel body {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .dev-kanban-step-n { flex: none; font-size: 15px; font-weight: 600; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+/* #5300: the short name is the phone's (below); a wide window names the step in full. */
+.dev-kanban-step-short { display: none; }
 .dev-kanban-step-arrow {
   position: absolute; right: -19px; top: 50%; width: 18px; height: 18px; margin-top: -9px;
   color: var(--text-muted); opacity: .6;
@@ -24469,25 +24480,37 @@ html.in-side-panel body {
 @media (max-width: 639px) {
   /* #4486: on a phone the steps are the tabs, one column at a time, and
      they scroll sideways on their own. */
+  /* #5300: one segmented control, four across, that fits the screen: the
+     steps' short names (Asked, Building, Voting, Done), no glyphs, and the
+     counts kept for screen readers only. It ran off the edge as a row of
+     scrolling pills with the full names and counts. */
   .dev-kanban-stages {
-    display: flex; gap: 6px; padding: 0 0 2px; margin-top: 2px;
-    overflow-x: auto; scrollbar-width: none;
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px;
+    padding: 2px; margin-top: 2px; border-radius: 999px; background: var(--state-neutral-bg);
+    overflow: hidden;
   }
-  .dev-kanban-stages::-webkit-scrollbar { display: none; }
   .dev-kanban-step {
-    flex: none; min-height: 40px; padding: 6px 13px 6px 7px; gap: 7px; cursor: pointer;
-    border-radius: 999px; background: var(--state-neutral-bg);
+    justify-content: center; min-width: 0; min-height: 36px; padding: 4px 6px; gap: 0; cursor: pointer;
+    border-radius: 999px; background: transparent;
   }
   .dev-kanban-step[aria-selected="true"] { background: var(--lit-tint); box-shadow: inset 0 0 0 1px var(--lit-line); }
-  .dev-kanban-step[aria-selected="true"] :is(.dev-kanban-step-name, .dev-kanban-step-tile) { color: var(--lit-ink); }
-  .dev-kanban-step-tile, .dev-kanban-step-tile[data-kind="done"] { width: 22px; height: 22px; border-radius: 999px; background: transparent; }
-  .dev-kanban-step-name, .dev-kanban-step-n { font-size: 14px; }
-  .dev-kanban-step-arrow { display: none; }
+  .dev-kanban-step-tile, .dev-kanban-step-name, .dev-kanban-step-arrow { display: none; }
+  .dev-kanban-step-short {
+    display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 14px; font-weight: 650; color: var(--text-secondary);
+  }
+  .dev-kanban-step[aria-selected="true"] .dev-kanban-step-short { color: var(--lit-ink); }
+  .dev-kanban-step-n {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
   .dev-kanban-card { padding: 2px 12px 6px; }
   /* The head: the way back and the name, then the search on its own line,
      and the switch and the filters sharing the line under it (#5029). */
+  /* #5300: the labelled filters wrap, beside the switch, rather than
+     scrolling off the edge. */
   .dev-ws-allbar #dev-kanban-search { flex-basis: 100%; max-width: none; min-width: 0; }
-  .dev-ws-allbar #dev-filter-chips { flex: 1 1 0; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .dev-ws-allbar #dev-filter-chips { flex: 1 1 0; min-width: 0; flex-wrap: wrap; }
   .dev-ws-allbar .dev-ws-pagehead-title { font-size: 20px; line-height: 26px; }
 }
 @media (max-width: 640px) {

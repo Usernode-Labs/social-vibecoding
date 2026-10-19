@@ -14683,11 +14683,17 @@ const AppView = {
         footer: null,
       },
       {
-        key: 'done', title: PlatformI18n.t('changes:board.column.done'), count: filtering ? kDone.length : doneTotal,
+        // #5300: while the age cut hides older ones, the step counts what
+        // the column shows (this week's), not the all-time total: "Done
+        // 3,211" over a week of rows read as a column of 3,211. The total
+        // is one press away, under Show earlier.
+        key: 'done', title: PlatformI18n.t('changes:board.column.done'),
+        count: filtering || doneHidden > 0 ? kDone.length : doneTotal,
         rows: cardRows(kDone, (m) => AppView._mergedRowModel(m), null, (m) => ({ kind: 'merged', item: m })),
         empty: kDone.length ? null : emptyNote,
         footer: doneFooter,
         status: doneDeployment,
+        ...(doneHidden > 0 ? { hint: PlatformI18n.t('changes:board.column.doneRecentHint') } : {}),
       },
     ];
     // #4486: a private session of yours on a request in Requests or Underway

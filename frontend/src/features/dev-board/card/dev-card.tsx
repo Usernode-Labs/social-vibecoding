@@ -51,7 +51,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
-import { Bars3Icon, CheckIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, Glyph, PencilSquareIcon, XIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, EllipsisHorizontalIcon, EyeIcon, EyeOffIcon, Glyph, PencilSquareIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
@@ -1083,8 +1083,8 @@ export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number
 }
 
 /**
- * The card's menu trigger: a hamburger at the far right of the action band,
- * after Preview when there is one.
+ * The card's menu trigger: a ⋯ at the far right of the action band, after
+ * Preview when there is one.
  *
  * It was a ⋯ in the card's top-right rail. The band is where the card's
  * other controls are, and the menu is where the pills that do not fit the
@@ -1092,6 +1092,11 @@ export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number
  * pushed to its right edge, as the row's own "more". Same `data-card-menu`
  * hook, same `dev-card-menu-btn` class: `_openCardMenu`, `_reanchorCardMenu`
  * and the declared checks find it where they always did.
+ *
+ * #5300: a ⋯, "More actions", not the ≡ it was for a while. A hamburger on
+ * a row of a board reads as a drag handle as readily as a menu, and the
+ * board's drag was retired (#613): this opens a menu, so it wears the
+ * glyph every other "more" in the shell does.
  */
 export function MenuTrigger({ menuKey }: { menuKey: string }): ReactNode {
   const t = useMessages('project');
@@ -1104,7 +1109,7 @@ export function MenuTrigger({ menuKey }: { menuKey: string }): ReactNode {
       aria-label={t('project:card.menu.more')}
       title={t('project:card.menu.more')}
     >
-      <Bars3Icon aria-hidden="true" />
+      <EllipsisHorizontalIcon aria-hidden="true" />
     </button>
   );
 }

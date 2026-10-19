@@ -37,9 +37,9 @@
  * payload (vocabularies included), and the repaint every control triggers.
  */
 
-import { useLayoutEffect, useRef, useState, type ComponentType } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 
-import { AdjustmentsIcon, UserCheckIcon, UserPenIcon, type IconProps } from '@/components/ui/icons';
+import { AdjustmentsIcon, ChevronDownIcon } from '@/components/ui/icons';
 
 import {
   kanbanFiltersStore,
@@ -71,19 +71,16 @@ const CHIP_ON = 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900';
 const chipCls = (active: boolean) => `${CHIP_BASE} px-3 ${active ? CHIP_ON : CHIP_IDLE}`;
 
 /**
- * #4916: Filters and the two quick toggles are ICON chips: a 16px glyph at
- * the shell's 2px stroke, a 32px circle on the board (All items' head sizes
- * every chip in its row as a 28px pill, app.css `.dev-ws-allbar`). Their
- * words stay on each one three ways: `title` for the pointer's tooltip,
- * `aria-label` for a screen reader, and an `sr-only` copy, which keeps the
- * text in the page's innerText where the declared checks' `expectText`
- * reads it (`relative` keeps that copy inside the chip, and so inside the
- * strip's scroller on a phone). Filters with filters on adds its count
- * after the glyph, so it grows to a pill.
+ * #5300: Filters and the two quick toggles say what they are in words.
+ * #4916 had made them icon chips (sliders, two people), and a row of five
+ * unlabelled glyphs was the first thing the All items review could not
+ * read. Each is a 32px pill with its label as its text, which is also its
+ * accessible name and what the declared checks' `expectText` finds in the
+ * page's innerText. Filters ends in a ▾ (it opens the Filters dialog) and,
+ * with filters on, its label carries the count ("Filters (2)").
  */
-const ICON_CHIP_PAD = 'relative justify-center min-w-8 px-2';
-const iconChipCls = (active: boolean) => `${CHIP_BASE} ${ICON_CHIP_PAD} ${active ? CHIP_ON : CHIP_IDLE}`;
 const CHIP_ICON = 'w-4 h-4 shrink-0';
+const CHIP_CARET = 'w-3.5 h-3.5 shrink-0 opacity-70';
 
 const SEARCH_CLS = 'h-8 rounded-full border border-zinc-300 dark:border-zinc-700 '
   + 'bg-white dark:bg-zinc-800 px-3 text-xs text-zinc-900 dark:text-zinc-100 '
@@ -99,10 +96,9 @@ const SEARCH_CLS = 'h-8 rounded-full border border-zinc-300 dark:border-zinc-700
 const QUICK_FILTERS: Array<{
   key: 'assignedToMe' | 'createdByMe';
   label: string;
-  Icon: ComponentType<IconProps>;
 }> = [
-  { key: 'assignedToMe', label: 'project:filters.quick.assignedToYou', Icon: UserCheckIcon },
-  { key: 'createdByMe', label: 'project:filters.quick.createdByYou', Icon: UserPenIcon },
+  { key: 'assignedToMe', label: 'project:filters.quick.assignedToYou' },
+  { key: 'createdByMe', label: 'project:filters.quick.createdByYou' },
 ];
 
 /**
@@ -258,28 +254,23 @@ export function KanbanFiltersView({
           id="dev-kanban-filters-btn"
           type="button"
           aria-haspopup="dialog"
-          aria-label={filtersLabel}
-          className={iconChipCls(count > 0)}
-          title={filtersLabel}
+          className={chipCls(count > 0)}
           onClick={() => controller()?._openKanbanFiltersDialog?.()}
         >
           <AdjustmentsIcon className={CHIP_ICON} aria-hidden="true" />
-          {count > 0 ? <span aria-hidden="true">{count}</span> : null}
-          <span className="sr-only">{filtersLabel}</span>
+          {filtersLabel}
+          <ChevronDownIcon className={CHIP_CARET} aria-hidden="true" />
         </button>
-        {quick ? QUICK_FILTERS.map(({ key, label, Icon }) => (
+        {quick ? QUICK_FILTERS.map(({ key, label }) => (
           <button
             key={key}
             type="button"
             data-quick-filter={key}
             aria-pressed={quick[key] ? 'true' : 'false'}
-            aria-label={t(label)}
-            className={iconChipCls(quick[key])}
-            title={t(label)}
+            className={chipCls(quick[key])}
             onClick={() => controller()?._toggleKanbanQuickFilter?.(key)}
           >
-            <Icon className={CHIP_ICON} aria-hidden="true" />
-            <span className="sr-only">{t(label)}</span>
+            {t(label)}
           </button>
         )) : null}
         <span id="dev-kanban-active-chips" className="contents">

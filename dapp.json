@@ -1066,7 +1066,7 @@
       ]
     },
     {
-      "name": "Dev board (#4486): a column is one card of rows, the Workshop’s, each with the card’s ☰ and no fold mark",
+      "name": "Dev board (#4486): a column is one card of rows, the Workshop’s, each with the card’s ⋯ and no fold mark",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban .dev-kanban-col > .dev-kanban-card > .dev-ws-wlist > .dev-ws-wrow.dev-ws-brow:not(:has(.dev-fold-mark)) > .dev-ws-wrow-menu > button.dev-card-menu-btn[data-card-menu]"
     },
@@ -2464,7 +2464,7 @@
       "name": "All items' head is one row: the way back and its name, the grouping, then the tools, on category by default (#4486)",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > .dev-ws-allbar > [data-ws-pagehead]:first-child + .dev-ws-group[role=\"tablist\"] > [data-ws-group=\"category\"][aria-selected=\"true\"]",
-      "expectText": "By category",
+      "expectText": "List",
       "visual": true,
       "impact": [
         "frontend/src/features/dev-board/workshop/**",
@@ -2485,10 +2485,10 @@
       "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head:has(> #dev-kanban-tabs[role=\"tablist\"] > [data-kanban-tab=\"done\"]) > .dev-ws-allbar > .dev-ws-group [data-ws-group=\"stage\"][aria-selected=\"true\"]"
     },
     {
-      "name": "The Workshop offers the two groupings as tabs at the head of All items, on category by default",
+      "name": "The Workshop offers the two groupings as a labelled List / Board switch at the head of All items, on List by default (#5300)",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop .dev-ws-group[role=\"tablist\"] > .dev-ws-group-tab[data-ws-group=\"category\"][aria-selected=\"true\"] + .dev-ws-group-tab[data-ws-group=\"stage\"][aria-selected=\"false\"]",
-      "expectText": "By stage"
+      "expectText": "Board"
     },
     {
       "name": "?group=stage swaps All items' pane for the board's own columns",

@@ -49,7 +49,6 @@ import { SectionHeader } from '@/components/ui/grouped-list';
 import {
   ArrowUpIcon,
   BallotIcon,
-  BoardIcon,
   ChatBubbleTailIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -60,7 +59,6 @@ import {
   SparklesIcon,
   SpeechCheckIcon,
   Squares2X2Icon,
-  TagIcon,
   UserIcon,
   XIcon,
 } from '@/components/ui/icons';
@@ -3866,12 +3864,10 @@ function MineSection({ section, title, count, ask = false, rows, slug, openKey, 
  */
 function GroupStrip({ group }: { group: string }): ReactNode {
   const t = useMessages('project');
-  // #4916: each tab is its glyph, a tag for category and the board's own
-  // columns for stage (BoardIcon, the Workshop's mark in the places list).
-  // Its words ride along as the tooltip, the aria-label and an sr-only copy
-  // (the declared checks read the page's innerText for "By category").
-  const category = t('project:allItems.group.category');
-  const stage = t('project:allItems.group.stage');
+  // #5300: the switch says its two states in words, List (by category) and
+  // Board (by stage). #4916 had made them glyphs, a tag and the board's
+  // columns, and the review could not tell what either did. The longer
+  // phrase stays as the tooltip.
   return (
     <div className="dev-ws-group" role="tablist" aria-label={t('project:allItems.group.label')}>
       <button
@@ -3880,12 +3876,10 @@ function GroupStrip({ group }: { group: string }): ReactNode {
         className="dev-ws-group-tab"
         data-ws-group="category"
         aria-selected={group === 'category'}
-        aria-label={category}
-        title={category}
+        title={t('project:allItems.group.category')}
         onClick={() => callAppView('_setWorkshopGroup', 'category')}
       >
-        <TagIcon className="dev-ws-group-icon" aria-hidden="true" />
-        <span className="sr-only">{category}</span>
+        {t('project:allItems.view.list')}
       </button>
       <button
         type="button"
@@ -3893,12 +3887,10 @@ function GroupStrip({ group }: { group: string }): ReactNode {
         className="dev-ws-group-tab"
         data-ws-group="stage"
         aria-selected={group === 'stage'}
-        aria-label={stage}
-        title={stage}
+        title={t('project:allItems.group.stage')}
         onClick={() => callAppView('_setWorkshopGroup', 'stage')}
       >
-        <BoardIcon className="dev-ws-group-icon" aria-hidden="true" />
-        <span className="sr-only">{stage}</span>
+        {t('project:allItems.view.board')}
       </button>
     </div>
   );

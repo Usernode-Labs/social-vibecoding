@@ -547,6 +547,10 @@
     "text": "Done",
     "description": "Title of the last column of the Workshop board: changes that were merged and requests that were closed."
   },
+  "board.column.doneRecentHint": {
+    "text": "What was done in the last 7 days, or the newest 3 after a quiet week. Show earlier, at the foot of the column, lists the rest.",
+    "description": "Tooltip of the \"Done\" stage over the Workshop board while the column lists only recent merged changes and closed requests. \"Show earlier\" is the button at the foot of that column."
+  },
   "board.deploy.childFailed": {
     "text": "Latest merged change · deploy failed",
     "description": "Status line at the top of the Workshop board's \"Done\" column when putting the newest merged change into production failed."
