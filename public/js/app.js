@@ -2630,6 +2630,18 @@ const App = {
       const workshop = window.UsernodeReact?.workshop;
       if (workshop?.isOpen?.()) { workshop.refreshNeeds?.(); return; }
 
+      // Your work (#5456): Your changes, Your requests and Your votes read
+      // once per open, on the ordinary deadline. When the worker corrected
+      // that read after serving its saved copy (a vote cast a moment before,
+      // still missing), re-run the controller's own reload, the same loader
+      // Try again uses. `return`: the screen holds no app view to fall
+      // through to.
+      const profileProposals = window.UsernodeReact?.profileProposals;
+      if (visible('profile-proposals-screen') && profileProposals?.isOpen?.()) {
+        profileProposals.reload?.();
+        return;
+      }
+
       // The app record itself is in the service worker's zero-deadline boot
       // lane. If its cached `creating` snapshot is corrected after first
       // paint, revalidate the open App tab just as the branches below refresh

@@ -84,3 +84,28 @@ test('approveChange tells Your votes under response.ok, through the window bridg
   assert.match(helperBody, /\(window as any\)\.Leaderboard\?\.invalidateHistory\?\.\(\);/);
   assert.doesNotMatch(src, /my-proposals/, 'the messages chunk does not pull in the profile screen');
 });
+
+// #5456: a vote cast just before Your votes opens is missing from the list
+// the worker served on its 1s deadline, and the correction that arrives a
+// moment later never reached the screen — every branch of
+// App.refreshActiveScreen fell through on it, because no app is open there.
+// The same slice workshop-live-refresh.test.js pins the workshop branch by:
+// the body of refreshActiveScreen, from its head to the `},` that closes it.
+test('#5456: the late-arrival correction re-reads the Your work screen', () => {
+  const appJs = read('public/js/app.js');
+  const start = appJs.indexOf('  refreshActiveScreen() {');
+  assert.ok(start >= 0, 'App.refreshActiveScreen is defined');
+  const body = appJs.slice(start, appJs.indexOf('\n  },', start));
+  assert.match(body, /window\.UsernodeReact\?\.profileProposals/,
+    'the correction names the profile screen\'s controller');
+  assert.match(body, /visible\('profile-proposals-screen'\)/,
+    'only while the Your work screen is the one showing');
+  assert.match(body, /profileProposals\?\.isOpen\?\.\(\)/,
+    'and the controller holds one of its three views open');
+  assert.match(body, /profileProposals\.reload\?\.\(\)/,
+    'through its own reload, the same loader Try again uses');
+  const branch = body.indexOf("visible('profile-proposals-screen')");
+  const appTab = body.indexOf("App.currentApp && App.currentTab === 'app'");
+  assert.ok(branch > -1 && appTab > -1 && branch < appTab,
+    'before the App.currentApp branches: this screen holds no app view to fall through to');
+});
