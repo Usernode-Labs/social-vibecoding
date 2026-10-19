@@ -153,15 +153,17 @@ const API_TIMEOUT_MS = 1000;
 // message pages, a proposal's detail, anything paginated. Those keep the 1s
 // deadline above.
 //
-// The board does cross a line this list used to draw at the launcher: a
-// cached /promoted carries VOTE COUNTS and CHECK STATES, and for the first
-// moments of a warm load those are last-visit's numbers. That is accepted
-// deliberately and is bounded by three things — the correction below fires
-// on exactly the bytes that changed, every vote and every promotion is
-// re-validated server-side (a tap on a stale row cannot double-count), and
-// the alternative on a weak link is not "the right number", it is a
-// skeleton. Being one load behind on a board you are looking at is the same
-// trade the navigate and shell tiers already take.
+// NOT /promoted AND /merged (polish board #3, 19 Oct 2026). The board used to
+// cross a line this list draws at the launcher: a cached /promoted carries
+// VOTE COUNTS and CHECK STATES, /merged what went live, and for the first
+// moments of a warm load those were last visit's. The project's hub states
+// them as facts, in its own words and on the Communities tab's badge ("6 to
+// vote", the Needs you line, Recently live), and every warm open drew last
+// visit's and then swapped them half a second later. The hub already waits
+// for its community record, which is not in this lane, so those two reads
+// now take the ordinary deadline beside it: on a healthy link the hub draws
+// once, with today's numbers; on a slow one the saved copy still answers at
+// API_TIMEOUT_MS and is corrected in place below.
 //
 // The correction is not optional: it is what makes this safe. networkFirstApi
 // posts `api-updated` when the copy it served disagrees with the answer that
@@ -189,7 +191,7 @@ const BOOT_READ_PATHS = [
 
 // Per-app reads with a slug in the path, so an exact match cannot express
 // them. Anchored at both ends and one segment wide on purpose: this must
-// admit `/api/apps/:slug/promoted` and refuse `/api/apps/:slug/messages`,
+// admit `/api/apps/:slug/issues` and refuse `/api/apps/:slug/messages`,
 // which is paginated and stays on the ordinary deadline.
 //
 // The first is the app record itself — it is not board content, it is the
@@ -197,7 +199,7 @@ const BOOT_READ_PATHS = [
 // have left the chain one round trip long and bought nothing.
 const BOOT_READ_PATTERNS = [
   /^\/api\/apps\/[^/]+$/,
-  /^\/api\/apps\/[^/]+\/(?:github-issues|issues|promoted|merged|board-order|sessions|shared-sessions|topic-categories)$/,
+  /^\/api\/apps\/[^/]+\/(?:github-issues|issues|board-order|sessions|shared-sessions|topic-categories)$/,
 ];
 
 const BOOT_API_TIMEOUT_MS = 0;

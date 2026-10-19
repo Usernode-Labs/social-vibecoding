@@ -77,7 +77,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { XIcon } from '@/components/ui/icons';
 import { type CommunityPayload, type PlaceChannel } from './community-card';
-import { AppReplyThreadPane, EmbeddedConversation } from '../../messages';
+import { AppReplyThreadPane, ChannelLoading, EmbeddedConversation } from '../../messages';
 import { closeThread, embeddedThreadOpen } from '../../messages/store';
 import { navStore } from '../../nav/nav-store.js';
 import { registerLevel } from '../../workshop/tab-ladder';
@@ -269,7 +269,9 @@ function GeneralChannel({ slug, name, data }: {
     };
   }, [slug, known, room, mountable]);
 
-  if (!data) return null;
+  // Until the record says which room it is, the room's own loading row: the
+  // channel opens in the one state it then keeps until its messages are in.
+  if (!data) return <ChannelLoading />;
   if (room) {
     return (
       <section
@@ -336,7 +338,7 @@ function TopicChannelPlace({ slug, name, data, handle, onPlace }: {
   onPlace?: (key: PlaceKey) => void;
 }): ReactNode {
   const t = useMessages('project');
-  if (!data) return null;
+  if (!data) return <ChannelLoading />;
   const topic = findChannel(data.places, handle);
   if (!topic || topic.kind !== 'topic' || topic.id == null) {
     return (

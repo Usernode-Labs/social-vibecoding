@@ -871,6 +871,33 @@ async function changePlanFor(pool, sessionId, ownerId, viewerId) {
   return rows[0] ? { version: Number(rows[0].version), at: rows[0].built_at } : null;
 }
 
+// The same plan for every change on a board list (/promoted, /merged), by
+// changePlanFor's rule, in one read. The change page draws from the board's
+// row first, and its plan card used to be inserted when the page's own read
+// answered, pushing its votes and shots down (polish board #14). Best-effort:
+// a failed read leaves the rows as they were, and the page's own read still
+// brings the card.
+async function attachChangePlans(pool, rows, viewerId) {
+  const list = (rows || []).filter((r) => r && (r.row_type || 'pr') === 'pr'
+    && Number.isSafeInteger(Number(r.id)) && Number(r.id) > 0);
+  if (!list.length) return;
+  try {
+    const { rows: found } = await pool.query(
+      `SELECT DISTINCT ON (s.session_id) s.session_id, s.version, s.built_at
+         FROM chat_session_specs s
+         JOIN chat_sessions owner_session ON owner_session.id = s.session_id
+        WHERE s.session_id = ANY($1::int[])
+          AND (owner_session.user_id = $2::int OR ${specVersionSharedVisibilitySql('s', '$2')})
+        ORDER BY s.session_id, s.version DESC`,
+      [list.map((r) => Number(r.id)), viewerId ?? null]
+    );
+    const byId = new Map(found.map((p) => [Number(p.session_id), { version: Number(p.version), at: p.built_at }]));
+    for (const r of list) r.plan = byId.get(Number(r.id)) || null;
+  } catch (err) {
+    log.warn('sessions', 'Could not read the plans for a board list', { message: err.message });
+  }
+}
+
 function stagingMockTranscript(sessionId) {
   if (!STAGING_MOCK_TRANSCRIPT_IDS.has(sessionId)) return null;
   const t = (minsAgo) => new Date(Date.now() - minsAgo * 60 * 1000).toISOString();
@@ -13404,7 +13431,7 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, receiveSessionStop, changePlanFor, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, receiveSessionStop, changePlanFor, attachChangePlans, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, publishStagingOutcome, retireVotesForNewCommit, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
 // #4524: the topic page's fast open asks GET /api/apps/:slug/proposals/:id
 // for its item beside the board load, and production serves an active or
 // paused session there when it is the viewer's own or shared. The demo rows

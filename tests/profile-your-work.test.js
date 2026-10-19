@@ -155,7 +155,8 @@ test('Your changes: one list across projects, each row led by its project\'s ico
   const out = renderToHtml(createElement(mod.ProfileProposalsScreen, {}));
   assert.equal((out.match(/data-profile-work-group=/g) || []).length, 1);
   assert.match(out, /data-icon="emoji" data-profile-work-app="run-club" title="Run Club" aria-hidden="true">[\s\S]*?🏃/);
-  assert.match(out, /data-icon="image" data-profile-work-app="whiteboard" title="Whiteboard" aria-hidden="true"><img src="\/app-icons\/abc"/);
+  // Polish board #11: the app's initial waits under the picture until it has drawn.
+  assert.match(out, /data-icon="image" data-profile-work-app="whiteboard" title="Whiteboard" aria-hidden="true"><span class="app-icon-wait" aria-hidden="true">W<\/span><img src="\/app-icons\/abc"/);
   assert.match(out, /data-icon="letter" data-profile-work-app="notes" title="Notes" aria-hidden="true">N</);
   mod.profileProposalsStore.set({ open: false, kind: 'changes', data: {}, error: false });
 });

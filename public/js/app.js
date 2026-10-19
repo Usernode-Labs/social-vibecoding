@@ -2635,8 +2635,14 @@ const App = {
       // loader, so a correction can never diverge from what the screen
       // shows on its own. `return`: the workshop screen holds no app view
       // to fall through to.
+      //
+      // ON the Communities screen, which is the controller open AND no app
+      // on screen (see navigateToWorkshop): the controller stays open under a
+      // project page opened from it, and this branch used to swallow that
+      // page's correction, so a hub reached from Communities kept the numbers
+      // it was first drawn with (polish board #3).
       const workshop = window.UsernodeReact?.workshop;
-      if (workshop?.isOpen?.()) { workshop.refreshNeeds?.(); return; }
+      if (workshop?.isOpen?.() && !App.currentApp) { workshop.refreshNeeds?.(); return; }
 
       // Your work (#5456): Your changes, Your requests and Your votes read
       // once per open, on the ordinary deadline. When the worker corrected

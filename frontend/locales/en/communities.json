@@ -60,7 +60,7 @@
     "description": "Last row of a section in the list of the person's communities: reveals the next communities in that section. {{count}} is how many this press reveals."
   },
   "list.loading": {
-    "text": "Loading your apps",
+    "text": "Loading your communities",
     "description": "Accessible name of the placeholder rows on the Communities screen while the person's list of communities is loading."
   },
   "list.loadError": {

@@ -4185,6 +4185,9 @@ function voteRoutes(config) {
         }
       }
 
+      // #4479 / polish board #14: the plan each change was built from, so its
+      // page draws the plan card with everything else (sessions.js).
+      await require('./sessions').attachChangePlans(pool, rows, userId);
       res.json({
         // `?results=failing`: the shell's list form (services/list-test-results.js).
         promoted: listTestResults.forListing(req, rows),
@@ -4585,6 +4588,8 @@ function voteRoutes(config) {
         };
       }
 
+      // The plan each change was built from (see /promoted above).
+      await require('./sessions').attachChangePlans(pool, rows, userId);
       res.json({
         // `?results=failing`: the shell's list form (services/list-test-results.js).
         merged: listTestResults.forListing(req, rows),
