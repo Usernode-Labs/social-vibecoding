@@ -3,12 +3,20 @@
  *
  * The Communities screen's own list (../workshop/index.tsx), drawn at 85% of
  * the screen with the places peeking beside it: Needs you when a vote waits,
- * then Public communities, Private communities and Just you, three at a time
- * with Show more, then Join and Start. The rows and sections are that
- * screen's components, so the two lists cannot drift; what is the drawer's
- * own is the search at the top and what a row does when pressed. A row
- * switches community IN PLACE (`onPick`), keeping the place you were on when
- * the new community has it, rather than opening its hub as a door.
+ * then the screen's ONE LIST of every community you are in, most recent
+ * first, under its chips — All, Public, Private and Just you, a chip with
+ * nothing in it hidden — then Join and Start. The chips and the rows are
+ * that screen's components (`AudienceChips`, `AppRow`), so the two lists
+ * cannot drift; what is the drawer's own is the search at the top and what a
+ * row does when pressed. A row switches community IN PLACE (`onPick`),
+ * keeping the place you were on when the new community has it, rather than
+ * opening its hub as a door.
+ *
+ * THE CHIP starts at All every time the level comes into view (`wanted`),
+ * as the page does on every entry, and a pressed chip that ends up with
+ * nothing in it falls back to All, as the page's does. A search hides the
+ * chips (the query branch below matches every community); clearing it brings
+ * the pressed chip back.
  *
  * THE SEARCH. Focus widens the level to the whole screen (the places slide
  * out of the way) with a Cancel beside the field; Cancel, a pick, the lit
@@ -30,7 +38,8 @@ import { PlusIcon, SearchIcon, SpeechCheckIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { AppsLoadError } from '../apps/load-error';
 import {
-  AppRow, groupRows, joinCounts, needsApps, orderRows, RowSkeletons, Section, unseenRow, type WorkshopRow,
+  AppRow, AudienceChips, audienceTallies, filterRows, joinCounts, needsApps, orderRows, RowSkeletons,
+  unseenRow, type AudienceFilter, type WorkshopRow,
 } from '../workshop/index';
 import { useNeedsSeen } from '../workshop/needs-seen';
 import { matchRows } from '../workshop/sections';
@@ -138,6 +147,18 @@ export function OuterLevel({ current, searching, wanted, onPick, listRef }: {
   }, [searching]);
 
   const rows = raw ? orderRows(raw.map(unseenRow)) : null;
+  // #5581: THE PAGE'S CHIPS, All, Public, Private and Just you, over the ONE
+  // list. All pressed on every arrival of the level (below), and a pressed
+  // chip whose audience has nothing left in it falls back to All rather than
+  // showing an empty list under a chip that is no longer drawn — the page's
+  // own rule, in WorkshopScreen.
+  const [audience, setAudience] = useState<AudienceFilter>('all');
+  useEffect(() => {
+    if (wanted) setAudience('all');
+  }, [wanted]);
+  const tallies = rows ? audienceTallies(rows) : null;
+  const pressed: AudienceFilter = audience !== 'all' && tallies && tallies[audience] > 0 ? audience : 'all';
+  const shown = rows ? filterRows(rows, pressed, '') : null;
   const q = query.trim();
   const totals = rows && rows.length > 0
     ? rows.reduce((acc, row) => ({ needs: acc.needs + (row.needs || 0), owed: acc.owed + (row.owedCount || 0) }), { needs: 0, owed: 0 })
@@ -198,18 +219,14 @@ export function OuterLevel({ current, searching, wanted, onPick, listRef }: {
               subtitleClassName="whitespace-normal"
             />
           </GroupedList>
-        ) : groupRows(rows).map((section) => (
-          <Section
-            key={section.key}
-            audience={section.key}
-            label={section.label}
-            count={section.count}
-            rows={section.rows}
-            idPrefix="nav-drawer-section"
-            onOpen={onPick}
-            current={current}
-          />
-        ))}
+        ) : (
+          <>
+            <AudienceChips scope="nav-drawer" tallies={tallies} pressed={pressed} onPress={setAudience} />
+            <GroupedList tone="plane" data-nav-drawer-rows={pressed}>
+              {shown?.map((row) => <AppRow key={row.slug} row={row} onOpen={onPick} current={row.slug === current} />)}
+            </GroupedList>
+          </>
+        )}
         <GroupedList tone="plane" className="mt-6">
           {empty ? null : (
             <ListRow
