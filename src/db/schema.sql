@@ -1292,6 +1292,12 @@ CREATE TABLE IF NOT EXISTS unit_suite_passes (
 );
 CREATE INDEX IF NOT EXISTS idx_unit_suite_passes_commit
   ON unit_suite_passes (app_id, commit_sha, passed_at DESC);
+-- The commit's tree, when GitHub said it (NULL otherwise): main-watch copies
+-- a pass of the same tree for a merge that lands it under a new commit
+-- (services/unit-suite-reuse.js findTreePass).
+ALTER TABLE unit_suite_passes ADD COLUMN IF NOT EXISTS tree_sha VARCHAR(40);
+CREATE INDEX IF NOT EXISTS idx_unit_suite_passes_tree
+  ON unit_suite_passes (app_id, tree_sha, passed_at DESC) WHERE tree_sha IS NOT NULL;
 COMMENT ON TABLE unit_suite_passes IS 'staging:private';
 -- #11: vote-to-undo a merged PR. When the undo majority is reached we
 -- open a `git revert <merge_commit_sha>` PR and insert a new

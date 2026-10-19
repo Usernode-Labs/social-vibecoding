@@ -214,8 +214,14 @@ const verdictWrite = (d: Data, sha: string, state: string, o: { superseded?: boo
 const kick = (d: Data, why: string): MessageRequest =>
   ({ to: { machine: 'merge-queue', key: appKey(d.appId) }, event: { type: 'MergeWanted', payload: { appId: d.appId, reason: `main-${why}` } }, appId: d.appId });
 
+// `reuse`: the run may copy a pass of the merge's tree instead of running the
+// suite (services/unit-suite-reuse.js findTreePass). Only a first run, and
+// only while main is not paused: a confirmation asks whether a red is real,
+// a recheck whether a paused red still stands, and a merge on a paused main
+// is the one that re-tests it. Each of those runs the suite.
 const suiteWork = (d: Data, run: Run, resumeRunId: string | null = null): WorkRequest =>
-  ({ kind: WORK.suite, key: run.key, input: { appId: d.appId, sha: run.sha, phase: run.phase, ...(resumeRunId ? { resumeRunId } : {}) } });
+  ({ kind: WORK.suite, key: run.key, input: { appId: d.appId, sha: run.sha, phase: run.phase,
+    reuse: run.phase === 'first' && !run.wasPaused, ...(resumeRunId ? { resumeRunId } : {}) } });
 
 // When a paused red is asked again, or null when it is not.
 // A paused red with rechecks left.
