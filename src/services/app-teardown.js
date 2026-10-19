@@ -171,10 +171,10 @@ async function retirePreviews(pool, app) {
     const out = await previewWorkflow.retire({ session: { id: r.id, app_id: app.id }, reason: 'app_deleted', terminal: true,
       waitMs: RETIRE_WAIT_MS });
     if (!out.retired) {
-      // Not decided in time: asking again in a minute may. Anything else (a
-      // faulted instance, a refusal) answers the same again: an error for an
-      // admin, not a minute's wait.
-      if (out.status !== 'pending') throw new Error(`preview of session ${r.id} not retired: ${out.reason || out.status}`);
+      // Not decided in time, or refused for now (a turn still running on
+      // it): asking again in a minute may. A faulted instance answers the
+      // same until an admin releases it: an error, not a minute's wait.
+      if (out.status === 'faulted') throw new Error(`preview of session ${r.id} not retired: ${out.reason || out.status}`);
       throw new PreviewNotRetiredError(r.id, out.reason || out.status);
     }
   }

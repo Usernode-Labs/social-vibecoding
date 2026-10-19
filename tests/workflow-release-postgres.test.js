@@ -26,6 +26,8 @@ test('a release\'s adoptions run once, between all its processes, and a failed s
   await admin.query(`CREATE DATABASE ${dbName}`);
   const url = new URL(DSN); url.pathname = '/' + dbName;
   const pool = new Pool({ connectionString: String(url), max: 8 });
+  // The DROP below forces the runtimes' connections closed: reported here.
+  pool.on('error', () => {});
   const runtimes = [];
   t.after(async () => {
     for (const r of runtimes) await r.stop();
