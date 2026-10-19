@@ -128,12 +128,13 @@ export function createRuntime(opts: RuntimeOptions) {
   // A `wf_work` notify names a kind: new work of it, or an item of it that
   // ended somewhere. Whether the loop sleeps or not, the kind is no longer
   // taken as full; it wakes the services loop when this process could claim
-  // that kind, and a wake with no kind (this process's own) always does.
+  // that kind, and a wake that names no kind this process handles (its own,
+  // or a nudge carrying anything else) always does: it may mean work came
+  // due.
   signals.observe('wf_work', (kind) => { if (kind) full.delete(kind); });
   const wakesForWork = (payload: string) => {
-    if (!payload) return true;
-    const h = handlers.get(payload);
-    return !!h && localRoom(payload, h) > 0;
+    const h = payload ? handlers.get(payload) : undefined;
+    return !h || localRoom(payload, h) > 0;
   };
   const nextFreeMs = () => {
     let min: number | null = null;
