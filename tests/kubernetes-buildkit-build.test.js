@@ -241,11 +241,15 @@ test('the build script: fetches by SHA, exports the tree without .git, never pri
     assert.ok(build.includes(flag) && upload.includes(flag), `both runs solve the same build (${flag})`);
   }
   assert.ok(script.indexOf('test -n "$digest"') < script.indexOf('set +e'), 'only what follows the pushed image is allowed to fail');
-  // The daemon preflight runs before any source is fetched and exits with
-  // the code the platform reads as "the lane cannot run here".
+  // The daemon preflight starts before any source is fetched, runs beside
+  // the fetch, and its verdict is read first, with the code the platform
+  // reads as "the lane cannot run here" (run for real in
+  // tests/kubernetes-buildkit-waits.test.js).
   const preflight = script.indexOf('buildctl-daemonless.sh debug workers');
-  assert.ok(preflight >= 0 && preflight < script.indexOf('git -c protocol.version=2 fetch'), 'preflight precedes the fetch');
-  assert.match(script, /debug workers[^\n]*\n[^\n]*\n[^\n]*\n[^\n]*exit 75/, 'a daemon that cannot start exits 75');
+  assert.ok(preflight >= 0 && preflight < script.indexOf('git -c protocol.version=2 fetch'), 'preflight starts before the fetch');
+  assert.match(script, /if ! wait "\$preflight"; then\n[^\n]*\n[^\n]*\n {2}exit 75/, 'a daemon that cannot start exits 75');
+  assert.ok(script.indexOf('wait "$preflight"') < script.indexOf('if [ "$fetched" -ne 0 ]'), 'the preflight verdict is read before the fetch\'s');
+  assert.ok(script.indexOf('if [ "$fetched" -ne 0 ]') < script.indexOf('buildctl-daemonless.sh build'), 'nothing is built before both are in');
   assert.equal(buildkit._forTest.PREFLIGHT_EXIT, 75);
 });
 

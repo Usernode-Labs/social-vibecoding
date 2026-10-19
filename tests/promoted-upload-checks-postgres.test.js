@@ -86,6 +86,7 @@ test('a promoted CLI upload reaches its checks', { timeout: 120000 }, async (t) 
         runtimeName: `sv-preview-${app.id}-s${row.id}`, containerId: null, imageRef: `img@sha256:${attempt.n}`, buildRef: null };
     },
     async verifyStagingEdge() { return { ok: true }; },
+    verifyStagingEdgeAfterDeploy() {},
   });
   const realVisuals = require('../src/services/visuals');
   stub('../src/services/visuals', {

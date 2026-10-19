@@ -109,7 +109,7 @@
       "services | uses src/services/platform-env-check.js:refreshPlatformEnvCheck": "the platform-variables check of the platform's own proposals, from the branch's dapp.json diff (GitHub), after a run settles",
       "services | uses src/services/pr-metadata.js:buildVisualsBlock": "the PR body's visuals block from the published media (pure)",
       "services | uses src/services/staging.js:prepareAttempt": "the build of one attempt: buildAndDeployStagingInner in its attempt mode, cut out of buildAndDeployStaging's per-process queue (_stagingBuilds) and the preview coordinator; its own checkout, database and env Secret, no row writes",
-      "services | uses src/services/staging.js:verifyStagingEdge": "an HTTP probe of the preview's public address after a deploy (no state, no row writes)",
+      "services | uses src/services/staging.js:verifyStagingEdgeAfterDeploy": "an HTTP probe of the preview's public address after a deploy, started and not waited for, a 5xx asked again for up to 3 s; it only logs (no state, no row writes)",
       "services | uses src/services/unit-suite.js:isEnabled": "whether the unit suite runs at all, from the configuration (pure)",
       "services | uses src/services/unit-suite.js:maybeRunUnitSuite": "launches an attempt's early unit suite under its run id and follows it to its end (checks.unitEarly); the checks run reads its Jobs (unit-suite.collectUnitSuite)",
       "services | uses src/services/unit-suite.js:reusablePass": "reads whether the head already passed its unit suite under the same conditions and nobody asked for a fresh run (unit_suite_passes, services/unit-suite-reuse.js), so checks.unitEarly starts no Jobs the checks run would not read",

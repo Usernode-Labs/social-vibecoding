@@ -302,17 +302,28 @@ const BUILD_SCRIPT = [
   // which is a property of the node, not of the Dockerfile. A distinct
   // exit code lets the platform tell the two apart and build with kpack
   // instead of failing the app's preview; see PREFLIGHT_EXIT.
-  'if ! buildctl-daemonless.sh debug workers >/workspace/preflight.log 2>&1; then',
+  //
+  // The check and the source fetch run side by side (0.8 s of daemon start
+  // beside 2.7 s of fetch, measured in October 2026), and the verdict is
+  // read before the fetch's: a node that cannot run the daemon exits 75
+  // whether or not the fetch worked, and nothing is built before both are
+  // in. The fetch runs in a subshell joined by `&&`, since `set -e` does
+  // not apply to a command whose status `||` reads.
+  '( buildctl-daemonless.sh debug workers >/workspace/preflight.log 2>&1 ) &',
+  'preflight=$!',
+  'say "fetching source $GIT_SHA"',
+  'fetched=0',
+  '( cd /workspace/repo \\',
+  '  && git init -q \\',
+  '  && git -c protocol.version=2 fetch -q --depth 1 "$REPO_URL" "$GIT_SHA" \\',
+  '  && git read-tree FETCH_HEAD \\',
+  '  && git checkout-index -a -f --prefix=/workspace/src/ ) || fetched=$?',
+  'if ! wait "$preflight"; then',
   '  say "buildkitd cannot run here"',
   '  tail -n 40 /workspace/preflight.log',
   '  exit 75',
   'fi',
-  'say "fetching source $GIT_SHA"',
-  'cd /workspace/repo',
-  'git init -q',
-  'git -c protocol.version=2 fetch -q --depth 1 "$REPO_URL" "$GIT_SHA"',
-  'git read-tree FETCH_HEAD',
-  'git checkout-index -a -f --prefix=/workspace/src/',
+  'if [ "$fetched" -ne 0 ]; then say "fetching source failed"; exit "$fetched"; fi',
   'cd /workspace',
   'rm -rf /workspace/repo',
   // The starter's shared cache (see the header): read by both runs below
@@ -705,8 +716,20 @@ async function reusableJob(cfg, clients, { appId, revision, recipe }) {
 // `starterTree` says the revision is that starter as the platform has just
 // generated it, which makes this the build that writes the starter's shared
 // cache (see the header). Only the caller that made the commit can say so.
-async function createBuild(config, {
-  app, revision, environment, sessionId, sourceDir, starterTree = false, onProgress = null,
+async function createBuild(config, params, runtime) {
+  const started = await startBuild(config, { ...params, dockerfile: selectDockerfile(config, params.sourceDir) }, runtime);
+  return finishBuild(started, { onProgress: params.onProgress || null }, runtime);
+}
+
+// The first half of createBuild: the Secret and the Job, or an earlier
+// build of the same revision to reuse. Returns the handle finishBuild waits
+// on, and cancelBuild removes. `dockerfile` is the one the tree carries
+// (selectDockerfile), or the one a caller expects it to carry when it
+// starts the build before it has the tree (services/kubernetes.js
+// startEarlyBuild); that caller checks the guess against the tree before it
+// waits, and cancels when it was wrong.
+async function startBuild(config, {
+  app, revision, environment, sessionId, dockerfile, starterTree = false,
 }, runtime) {
   if (!/^[a-f0-9]{40}$/i.test(revision || '')) {
     throw new Error('Kubernetes builds require a full 40-character Git commit SHA');
@@ -714,7 +737,6 @@ async function createBuild(config, {
   const repo = repoOwnerAndName(app.repo_url);
   if (!repo) throw new Error('Kubernetes builds require an HTTPS GitHub repository URL');
   const cfg = requireConfig(config);
-  const dockerfile = selectDockerfile(config, sourceDir);
   if (!dockerfile) {
     const err = new Error(`No Dockerfile (${(cfg.buildkitDockerfiles || []).join(', ')}) at the source root`);
     err.buildFailed = true;
@@ -733,8 +755,11 @@ async function createBuild(config, {
   const previous = await reusableJob(cfg, clients, { appId: app.id, revision, recipe });
   if (previous) {
     return {
-      buildRef: `${cfg.buildkitNamespace}/${previous.job.metadata.name}`,
-      imageRef: `${repository}@${previous.digest}`, requestedTag: tag, phases: [], reused: true, engine: ENGINE,
+      revision, dockerfile, cfg, name: previous.job.metadata.name, createdHere: false,
+      result: {
+        buildRef: `${cfg.buildkitNamespace}/${previous.job.metadata.name}`,
+        imageRef: `${repository}@${previous.digest}`, requestedTag: tag, phases: [], reused: true, engine: ENGINE,
+      },
     };
   }
 
@@ -781,9 +806,13 @@ async function createBuild(config, {
   const deleteInputSecret = () => runtime.deleteIfPresent(core, 'deleteNamespacedSecret', inputSecretName, namespace)
     .catch((err) => log.warn('kubernetes', 'BuildKit input Secret cleanup failed', { name: inputSecretName, err: err.message }));
   const createDeadline = Date.now() + 60000;
+  // Whether this call made the Job, rather than finding one an earlier
+  // attempt of the same name made: only a Job it made is its to cancel.
+  let createdHere = false;
   while (true) {
     try {
       created = await batch.createNamespacedJob({ namespace, body });
+      createdHere = true;
       break;
     } catch (err) {
       if (!isConflict(err)) {
@@ -825,6 +854,19 @@ async function createBuild(config, {
       log.warn('kubernetes', 'BuildKit input Secret owner reference not set', { name, err: err.message });
     }
   }
+  return {
+    revision, dockerfile, cfg, name, createdHere, inputSecretName, repository, tag, appId: app.id,
+    starter: starter ? { starter: starter.id, export: starterExport } : null,
+  };
+}
+
+// The second half: wait for the Job, then record its result on it.
+async function finishBuild(handle, { onProgress = null } = {}, runtime) {
+  if (handle.result) return handle.result;
+  const { cfg, name, repository, tag, appId } = handle;
+  const namespace = cfg.buildkitNamespace;
+  const clients = runtime.getClients();
+  const { batch } = clients;
   try {
     const clock = stepClock();
     const { digest, cache } = await waitForJob(cfg, runtime, clients, name, { onProgress, clock });
@@ -834,14 +876,18 @@ async function createBuild(config, {
     // (an older script) leaves nothing to read.
     if (cache) annotations[CACHE_STEPS_ANNOTATION] = cacheReportText(cache);
     if (cache?.upload === 'failed') {
-      log.warn('kubernetes', 'BuildKit layer cache upload failed; the image is pushed and the next build tries again', { name, appId: app.id });
+      log.warn('kubernetes', 'BuildKit layer cache upload failed; the image is pushed and the next build tries again', { name, appId });
     }
+    // Not waited for: the deploy needs the digest, which is in hand. The
+    // annotations serve later builds (image reuse, the cache history), and
+    // both readers fall back to the Pod's termination message while the Job
+    // keeps it, so a patch that lands late, or never, loses nothing.
     try {
       const k8s = kubernetesClient();
-      await batch.patchNamespacedJob(
+      batch.patchNamespacedJob(
         { name, namespace, body: { metadata: { annotations } } },
         k8s.setHeaderOptions('Content-Type', k8s.PatchStrategy.MergePatch)
-      );
+      ).catch((err) => log.warn('kubernetes', 'BuildKit Job digest annotation not written', { name, err: err.message }));
     } catch (err) {
       log.warn('kubernetes', 'BuildKit Job digest annotation not written', { name, err: err.message });
     }
@@ -853,13 +899,50 @@ async function createBuild(config, {
       buildRef: `${namespace}/${name}`, imageRef, requestedTag: tag, phases: null, engine: ENGINE,
       steps: clock.slowest(SLOWEST_STEPS_KEPT), cachedSteps: clock.cached,
       cacheUpload: cache ? cache.upload : null,
-      starterCache: starter ? { starter: starter.id, export: starterExport } : null,
+      starterCache: handle.starter,
     };
   } catch (err) {
     await runtime.deleteIfPresent(batch, 'deleteNamespacedJob', name, namespace, { propagationPolicy: 'Background' })
       .catch((cleanupErr) => log.warn('kubernetes', 'Failed BuildKit Job cleanup failed', { name, err: cleanupErr.message }));
     throw err;
   }
+}
+
+// A started build nobody will wait for: its Job, and with it the Pod and
+// the input Secret it owns, go now, and the Secret by name in case its owner
+// reference was never set. Only a Job this start made is removed; one it
+// found (an earlier attempt of the same name, which may still be waiting on
+// it) and a reused build are left alone. Never throws.
+async function cancelBuild(handle, runtime) {
+  if (!handle || handle.result || !handle.createdHere) return false;
+  const namespace = handle.cfg.buildkitNamespace;
+  const { batch, core } = runtime.getClients();
+  await runtime.deleteIfPresent(batch, 'deleteNamespacedJob', handle.name, namespace, { propagationPolicy: 'Background' })
+    .catch((err) => log.warn('kubernetes', 'Cancelled BuildKit Job cleanup failed', { name: handle.name, err: err.message }));
+  await runtime.deleteIfPresent(core, 'deleteNamespacedSecret', handle.inputSecretName, namespace)
+    .catch((err) => log.warn('kubernetes', 'Cancelled BuildKit input Secret cleanup failed', { name: handle.inputSecretName, err: err.message }));
+  return true;
+}
+
+// Which Dockerfile the app's newest BuildKit build used, as its Job's
+// DOCKERFILE says; null when it has none, or names a file this platform
+// would not pick. What an early start (services/kubernetes.js
+// startEarlyBuild) expects the next tree to carry.
+async function previousDockerfile(config, appId, runtime) {
+  const cfg = config.kubernetes;
+  const { batch } = runtime.getClients();
+  const list = await batch.listNamespacedJob({
+    namespace: cfg.buildkitNamespace,
+    labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/app-id=${appId},${ENGINE_LABEL}=${ENGINE}`,
+  });
+  const jobs = (list?.items || []).slice()
+    .sort((a, b) => Date.parse(b.metadata?.creationTimestamp || 0) - Date.parse(a.metadata?.creationTimestamp || 0));
+  for (const job of jobs) {
+    const env = job.spec?.template?.spec?.containers?.find((c) => c.name === CONTAINER)?.env || [];
+    const value = env.find((e) => e.name === 'DOCKERFILE')?.value;
+    if (value) return (cfg.buildkitDockerfiles || []).includes(value) ? value : null;
+  }
+  return null;
 }
 
 function isConflict(err) {
@@ -911,10 +994,47 @@ function stepClock() {
   };
 }
 
+// What a Pod's own container status says of the build: its digest and
+// cache report once the container has exited 0, null while it runs or when
+// it failed (the Job's failure, read as before, reports that).
+//
+// This is the termination message the Job's Pod has always been read for,
+// only without waiting for the Job controller to agree. A container that
+// exited 0 ran the script to its end, which writes the message after the
+// image is pushed and exits non-zero when it cannot. It is the channel
+// the platform has always trusted for the digest; reading it from the Pod
+// rather than after the Job agrees neither widens nor narrows that.
+// The Job's verdict lagged the container by about three seconds (October
+// 2026: the kubelet moving the Pod to Succeeded, then the Job controller,
+// then this loop's poll).
+function finishedPod(pod, name) {
+  const code = exitCodeFromPod(pod);
+  if (code !== 0) return null;
+  const digest = digestFromPod(pod);
+  if (!digest) throw new Error(`BuildKit Job ${name} finished without an image digest`);
+  return { digest, cache: cacheReportFromPod(pod) };
+}
+
+// The script's last line. Seen in the log, it only says when to look: a
+// build's own output shares the stream and can print it too, so the result
+// is still read from the Pod's status (finishedPod), and a look that finds
+// the container running costs one read and nothing else.
+const PUSHED_LINE_RE = /^\[buildkit\] pushed /;
+// How often the Pod is read once the log says the build has ended, and for
+// how long after the last such sign.
+const SETTLE_POLL_MS = 200;
+const SETTLE_WINDOW_MS = 10000;
+
 async function waitForJob(cfg, runtime, clients, name, { onProgress = null, clock = null } = {}) {
   const namespace = cfg.buildkitNamespace;
   const { batch, core } = clients;
   const deadline = Date.now() + (cfg.activeDeadlineSeconds + 60) * 1000;
+  // Set when the log says the build has ended (its last line, or the log
+  // stream closing): the loop then reads the Pod every SETTLE_POLL_MS.
+  let endedAt = 0;
+  let streamEnded = false;
+  let wake = null;
+  const signalEnd = () => { endedAt = Date.now(); if (wake) wake(); };
   const report = typeof onProgress === 'function';
   const tail = [];
   let tailBytes = 0;
@@ -945,11 +1065,15 @@ async function waitForJob(cfg, runtime, clients, name, { onProgress = null, cloc
       runtime.attachLineObserver(sink, (line) => {
         const clean = log.redactString(String(line || '').replace(/\x1b\[[0-9;]*m/g, ''));
         remember(clean);
+        if (PUSHED_LINE_RE.test(clean.trim())) signalEnd();
         if (clock) { try { clock.line(clean); } catch { /* observer only */ } }
         if (!report) return;
         const image = progressFromLine(clean);
         if (image) { try { onProgress(image); } catch { /* observer only */ } }
       });
+      // A followed log ends when the container does (or when the API
+      // server drops it, which costs one look at the Pod).
+      sink.on('end', () => { streamEnded = true; signalEnd(); });
       // Refused until the container has started; the next tick retries.
       followAbort = await logApi.log(namespace, podName, CONTAINER, sink, { follow: true });
       following = true;
@@ -963,10 +1087,7 @@ async function waitForJob(cfg, runtime, clients, name, { onProgress = null, cloc
       if (jobSucceeded(job)) {
         const pod = await findPod(core, namespace, name);
         const digest = pod ? digestFromPod(pod) : null;
-        if (!digest) {
-          const err = new Error(`BuildKit Job ${name} finished without an image digest`);
-          throw err;
-        }
+        if (!digest) throw new Error(`BuildKit Job ${name} finished without an image digest`);
         return { digest, cache: cacheReportFromPod(pod) };
       }
       if (jobFailed(job)) {
@@ -985,7 +1106,22 @@ async function waitForJob(cfg, runtime, clients, name, { onProgress = null, cloc
         throw err;
       }
       if (!following) await startFollow();
-      await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+      // The container's own status, ahead of the Job's. Read on every tick
+      // while no log is followed or the followed one has closed (nothing
+      // would say when to look), and after the log has said the build
+      // ended; otherwise the follow says when.
+      const settling = endedAt && Date.now() - endedAt < SETTLE_WINDOW_MS;
+      if (podName && (settling || !following || streamEnded)) {
+        const pod = await core.readNamespacedPod({ name: podName, namespace }).catch(() => null);
+        const done = pod ? finishedPod(pod, name) : null;
+        if (done) return done;
+      }
+      const pause = endedAt && Date.now() - endedAt < SETTLE_WINDOW_MS ? SETTLE_POLL_MS : POLL_MS;
+      await new Promise((resolve) => {
+        const timer = setTimeout(finish, pause);
+        function finish() { clearTimeout(timer); wake = null; resolve(); }
+        wake = finish;
+      });
     }
     const err = new Error(`Timed out waiting for BuildKit Job ${name}`);
     err.killed = true;
@@ -1068,6 +1204,10 @@ async function deleteFailedBuilds(config, runtime) {
 module.exports = {
   ENGINE,
   createBuild,
+  startBuild,
+  finishBuild,
+  cancelBuild,
+  previousDockerfile,
   deleteBuilds,
   deleteFailedBuilds,
   selectEngine,
@@ -1077,7 +1217,7 @@ module.exports = {
   noteUnavailable,
   _forTest: {
     BUILD_SCRIPT, PREFLIGHT_EXIT, UNAVAILABLE_MEMO_MS, jobManifest, recipeOf, progressFromLine, stepClock, digestFromPod, exitCodeFromPod,
-    repoOwnerAndName, requireConfig,
+    repoOwnerAndName, requireConfig, finishedPod, POLL_MS, SETTLE_POLL_MS, SETTLE_WINDOW_MS,
     STEPS_AWK, CACHE_STEPS_ANNOTATION, CACHE_CHANCES, CACHE_CHANCE_WINDOW_MS, CACHE_MAX_STEPS,
     cacheReport, cacheReportText, settledCacheSteps, starterCache,
     resetUnavailable() { _unavailable = null; },

@@ -20,14 +20,31 @@ function productionRef(config, app) {
 // `starterTree`: the revision is the app's starter exactly as the platform
 // just generated it (services/app-creator.js), so a BuildKit build may
 // write that starter's shared layer cache (services/kubernetes-buildkit.js).
+// `early`: what startEarlyBuild returned for this build, if anything; the
+// build takes it over (waits on it, or cancels it when the tree is not what
+// it was started for).
 async function build(config, {
-  app, revision, environment, sessionId, sourceDir, dockerImage, starterTree = false, onProgress = null,
+  app, revision, environment, sessionId, sourceDir, dockerImage, starterTree = false, onProgress = null, early = null,
 }) {
   if (mode(config) === 'docker') {
     await docker.buildImage(sourceDir, dockerImage, { GIT_SHA: revision }, { onProgress });
     return { runtimeKind: 'docker', imageRef: dockerImage, buildRef: null };
   }
-  return kubernetes.createBuild(config, { app, revision, environment, sessionId, sourceDir, starterTree, onProgress });
+  return kubernetes.createBuild(config, { app, revision, environment, sessionId, sourceDir, starterTree, onProgress, early });
+}
+
+// A build of a known commit started before the caller has checked it out
+// (services/kubernetes.js startEarlyBuild): a handle to pass to `build` as
+// `early`, or to cancelEarlyBuild when the caller will not build after all.
+// Null when this runtime does not build that way.
+async function startEarlyBuild(config, { app, revision, environment, sessionId }) {
+  if (mode(config) === 'docker') return null;
+  return kubernetes.startEarlyBuild(config, { app, revision, environment, sessionId });
+}
+
+async function cancelEarlyBuild(config, handle) {
+  if (!handle || mode(config) === 'docker') return false;
+  return kubernetes.cancelEarlyBuild(config, handle);
 }
 
 // Whether `build` needs every file of `sourceDir`. Docker builds FROM that
@@ -250,5 +267,5 @@ async function remove(config, ref, options = {}) {
 }
 
 module.exports = {
-  mode, productionRef, appOrigin, build, buildReadsWholeSource, cleanupFailedBuilds, deploy, dnsAlias, status, inspect, probeHealth, logs, restart, remove,
+  mode, productionRef, appOrigin, build, startEarlyBuild, cancelEarlyBuild, buildReadsWholeSource, cleanupFailedBuilds, deploy, dnsAlias, status, inspect, probeHealth, logs, restart, remove,
 };

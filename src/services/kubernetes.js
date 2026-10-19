@@ -315,7 +315,30 @@ function buildkitRuntime() {
 // while so a cluster without the lane does not pay for a doomed Job per
 // build. Under `buildkit` the failure surfaces, because that setting is the
 // way to find out the lane is not actually being used.
-async function createBuild(config, params) {
+//
+// `early`: a BuildKit build startEarlyBuild started before the caller had
+// the tree. It is waited on only when the tree turned out to be what it was
+// started for (the same revision, and the Dockerfile the lane picks from
+// this tree); otherwise it is cancelled and the tree built as if there had
+// been none. Either way this call owns it from here on.
+async function createBuild(config, { early = null, ...params }) {
+  if (early) {
+    let selected = null;
+    try { selected = buildkit.selectEngine(config, params.sourceDir); } catch { /* thrown again below */ }
+    const fits = selected?.engine === buildkit.ENGINE && selected.dockerfile === early.dockerfile
+      && String(params.revision || '').toLowerCase() === String(early.revision || '').toLowerCase()
+      && !params.starterTree;
+    if (fits) {
+      return withKpackFallback(config, params, async () => ({
+        ...await buildkit.finishBuild(early, { onProgress: params.onProgress || null }, buildkitRuntime()),
+        earlyStart: true,
+      }));
+    }
+    log.info('kubernetes', 'Early BuildKit build discarded: the tree is not what it was started for', {
+      appId: params.app?.id, revision: params.revision, started: early.dockerfile, selected: selected?.dockerfile || selected?.engine || null,
+    });
+    await buildkit.cancelBuild(early, buildkitRuntime());
+  }
   const { engine } = buildkit.selectEngine(config, params.sourceDir);
   if (engine !== buildkit.ENGINE) return createKpackBuild(config, params);
   const strict = config.kubernetes.buildEngine === buildkit.ENGINE;
@@ -324,8 +347,13 @@ async function createBuild(config, params) {
     log.debug('kubernetes', 'BuildKit lane recently unavailable; building with kpack', { appId: params.app?.id, reason: remembered });
     return createKpackBuild(config, params);
   }
+  return withKpackFallback(config, params, () => buildkit.createBuild(config, params, buildkitRuntime()));
+}
+
+async function withKpackFallback(config, params, run) {
+  const strict = config.kubernetes.buildEngine === buildkit.ENGINE;
   try {
-    return await buildkit.createBuild(config, params, buildkitRuntime());
+    return await run();
   } catch (err) {
     if (strict || !err?.engineUnavailable) throw err;
     buildkit.noteUnavailable(err);
@@ -334,6 +362,40 @@ async function createBuild(config, params) {
     });
     return createKpackBuild(config, params);
   }
+}
+
+// Start a BuildKit build of `revision` before the caller has its tree, so
+// the Job's own fetch and the daemon's start overlap the caller's checkout
+// and the checks it makes on it (services/staging.js; about 2.5-3 s of a
+// preview build, October 2026). The Job fetches the commit itself, so the
+// only thing the tree would have told it is which Dockerfile to use: the
+// one the app's newest BuildKit build used is the guess, and createBuild
+// (`early`) checks it against the tree before it waits. Null, and nothing
+// started, whenever the lane would not be the builder or there is nothing
+// to guess from. Whoever gets a handle passes it to createBuild or to
+// cancelEarlyBuild. Errors reach the caller, which builds as before.
+async function startEarlyBuild(config, { app, revision, environment, sessionId }) {
+  const engine = config.kubernetes?.buildEngine || 'kpack';
+  if (engine !== 'auto' && engine !== buildkit.ENGINE) return null;
+  if (engine === 'auto' && buildkit.unavailableReason()) return null;
+  if (!/^[a-f0-9]{40}$/i.test(revision || '')) return null;
+  const runtime = buildkitRuntime();
+  const dockerfile = await buildkit.previousDockerfile(config, app.id, runtime);
+  if (!dockerfile) return null;
+  try {
+    const handle = await buildkit.startBuild(config, {
+      app, revision: revision.toLowerCase(), environment, sessionId, dockerfile,
+    }, runtime);
+    return { ...handle, startedAt: Date.now() };
+  } catch (err) {
+    if (engine === 'auto' && err?.engineUnavailable) buildkit.noteUnavailable(err);
+    throw err;
+  }
+}
+
+async function cancelEarlyBuild(config, handle) {
+  if (!handle) return false;
+  return buildkit.cancelBuild(handle, buildkitRuntime());
 }
 
 // `onProgress(image)` is called as the kpack Build advances: `{ phase,
@@ -3541,7 +3603,7 @@ async function execInWorker(config, runtimeName, command, stdinText = null, { ti
 module.exports = {
   previewServesAttempt,
   restorePreviewAttempt,
-  dnsName, withSuffix, labels, appResourceName, createBuild, buildReadsBelowSourceRoot,
+  dnsName, withSuffix, labels, appResourceName, createBuild, startEarlyBuild, cancelEarlyBuild, buildReadsBelowSourceRoot,
   deployApplication, getApplicationStatus, inspectApplication,
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
   attemptSecretName, previewResourcesPresent, deleteSecret, PREVIEW_ATTEMPT_ANNOTATION, attemptFence, fenceValue, fenceNewer,

@@ -57,7 +57,7 @@ const GIT_ENV = {
 // set, git and rm run for real against that repository instead.
 // `onBuild(sourceDir, revision, config)` runs where the image build would,
 // while the directory still exists.
-function loadStaging({ git = () => '', cloneUrl = null, stored = {}, onBuild = () => {} } = {}) {
+function loadStaging({ git = () => '', cloneUrl = null, stored = {}, onBuild = () => {}, manifest = null, kube = {} } = {}) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     buildRetentionGuard: require.resolve('../src/services/build-retention-guard'),
@@ -85,7 +85,7 @@ function loadStaging({ git = () => '', cloneUrl = null, stored = {}, onBuild = (
   stub(ids.buildRetentionGuard, { withResourceUse: (config, lock, key, fn) => fn(), withBuildUse: (config, fn) => fn() });
   stub(ids.github, { getCloneUrl: async () => cloneUrl || 'https://x/clone.git', isEnabled: () => true });
   // The real manifest reader when there is a real checkout to read.
-  if (!cloneUrl) stub(ids.appManifest, { read: () => ({ secrets: [] }) });
+  if (!cloneUrl) stub(ids.appManifest, { read: () => manifest || ({ secrets: [] }) });
   else delete require.cache[ids.appManifest];
   stub(ids.appSecrets, {
     ...realAppSecrets,
@@ -125,16 +125,19 @@ function loadStaging({ git = () => '', cloneUrl = null, stored = {}, onBuild = (
     stopAndRemove: async () => {},
     getHostPort: async () => null,
   });
+  const deploys = [];
   stub(ids.kubernetes, {
     ...realKubernetes,
     createBuild: async (config, params) => {
       await built(params.sourceDir, params.revision, config);
-      return { imageRef: 'registry.example.test/widget@sha256:1', buildRef: 'builds/bk-5' };
+      builds.at(-1).early = params.early ?? null;
+      return { imageRef: 'registry.example.test/widget@sha256:1', buildRef: 'builds/bk-5', ...(params.early ? { earlyStart: true } : {}) };
     },
-    deployApplication: async (config, { sessionId }) => ({
+    deployApplication: async (config, { sessionId }) => (deploys.push(sessionId), {
       runtimeKind: 'kubernetes', runtimeName: `sv-widget-s${sessionId}`, imageRef: 'registry.example.test/widget@sha256:1',
       hostname: `widget--s${sessionId}.example.test`, url: `https://widget--s${sessionId}.example.test`,
     }),
+    ...kube,
   });
   stub(ids.dbManager, {
     appDbName: (slug) => `app_${slug}`,
@@ -155,7 +158,7 @@ function loadStaging({ git = () => '', cloneUrl = null, stored = {}, onBuild = (
     }
   };
   const find = (verb) => calls.filter((a) => a.includes(verb));
-  return { subject, applicationRuntime, calls, find, builds, manifests, restore };
+  return { subject, applicationRuntime, calls, find, builds, manifests, deploys, restore };
 }
 
 // The preview machine's build of one attempt (staging.prepareAttempt, as
@@ -613,4 +616,114 @@ test('real git: the failures are still failures, on the root-only clone', async 
   // A session with no branch yet (#1350): refused before any git runs.
   const none = await run(session(ids[3], { branch_name: null }), 'latest');
   assert.match(String(none.err && none.err.message), /no branch yet/);
+});
+
+// ── the build starts beside the checkout (services/staging.js, kubernetes.startEarlyBuild) ──
+
+// A runtime whose early start records what it was asked for and hands back
+// `handle` (or fails with `fails`), and whose cancel records what it got.
+function earlyKube({ handle = { dockerfile: 'Dockerfile.kubernetes', revision: SHA, startedAt: 1 }, fails = null } = {}) {
+  const seen = { started: [], cancelled: [] };
+  return {
+    seen,
+    kube: {
+      startEarlyBuild: async (config, params) => {
+        seen.started.push(params);
+        if (fails) throw fails;
+        return handle;
+      },
+      cancelEarlyBuild: async (config, h) => { seen.cancelled.push(h); return true; },
+    },
+  };
+}
+
+test('Kubernetes, a pinned commit: its build starts before the checkout, and the build takes it over once the checks on the checkout pass', async () => {
+  const early = earlyKube();
+  const { subject, builds, deploys, restore } = loadStaging({ git: refs({ HEAD: SHA }), kube: early.kube });
+  try {
+    await prepare(subject, KUBERNETES, { id: 7078201, branch_name: 'dev/pinned', pr_number: null, staging_container_id: null }, APP, SHA.toUpperCase());
+    assert.equal(early.seen.started.length, 1);
+    assert.equal(early.seen.started[0].revision, SHA, 'the pinned commit, as git spells it');
+    assert.equal(early.seen.started[0].sessionId, 7078201);
+    assert.equal(early.seen.started[0].environment, 'staging');
+    assert.equal(builds.length, 1);
+    assert.deepEqual(builds[0].early, { dockerfile: 'Dockerfile.kubernetes', revision: SHA, startedAt: 1 }, 'the build is handed what was started');
+    assert.equal(early.seen.cancelled.length, 0, 'nothing to cancel: the build owns it now');
+    assert.equal(deploys.length, 1);
+  } finally { restore(); }
+});
+
+test('Kubernetes, a pinned commit: the early start is made before the first git command', async () => {
+  let gitCalls = 0;
+  const order = [];
+  const early = earlyKube();
+  early.kube.startEarlyBuild = async () => { order.push(`early after ${gitCalls} git calls`); return null; };
+  const { subject, restore } = loadStaging({ git: (argv) => { gitCalls += 1; return refs({ HEAD: SHA })(argv); }, kube: early.kube });
+  try {
+    await prepare(subject, KUBERNETES, { id: 7078202, branch_name: 'dev/pinned', pr_number: null, staging_container_id: null }, APP, SHA);
+    assert.deepEqual(order, ['early after 0 git calls']);
+  } finally { restore(); }
+});
+
+test('Kubernetes, a pinned commit whose required secret is missing: the early build is cancelled, nothing is built or deployed', async () => {
+  const early = earlyKube();
+  const { subject, builds, deploys, restore } = loadStaging({
+    git: refs({ HEAD: SHA }), kube: early.kube,
+    manifest: { secrets: [{ key: 'API_KEY', required: true }] },
+  });
+  try {
+    await assert.rejects(
+      prepare(subject, KUBERNETES, { id: 7078203, branch_name: 'dev/pinned', pr_number: null, staging_container_id: null }, APP, SHA),
+      (err) => err.name === 'MissingSecretsError' || /API_KEY/.test(err.message));
+    assert.equal(early.seen.started.length, 1);
+    assert.deepEqual(early.seen.cancelled, [{ dockerfile: 'Dockerfile.kubernetes', revision: SHA, startedAt: 1 }],
+      'the Job started for a build that will not deploy goes');
+    assert.equal(builds.length, 0, 'the image build is never waited on');
+    assert.equal(deploys.length, 0, 'the failed check still stops the deploy');
+  } finally { restore(); }
+});
+
+test('Kubernetes, a pinned commit whose checkout fails: the early build is cancelled', async () => {
+  const early = earlyKube();
+  const { subject, deploys, restore } = loadStaging({
+    git: (argv) => { if (argv.includes('clone')) throw new Error('remote hung up'); return ''; }, kube: early.kube,
+  });
+  try {
+    await assert.rejects(prepare(subject, KUBERNETES, { id: 7078204, branch_name: 'dev/pinned', pr_number: null, staging_container_id: null }, APP, SHA),
+      /remote hung up/);
+    assert.equal(early.seen.cancelled.length, 1);
+    assert.equal(deploys.length, 0);
+  } finally { restore(); }
+});
+
+test('an early start that fails, or that the runtime declines, leaves the build to start after the checkout, as before', async () => {
+  const failing = earlyKube({ fails: new Error('etcdserver: request timed out') });
+  let loaded = loadStaging({ git: refs({ HEAD: SHA }), kube: failing.kube });
+  try {
+    await prepare(loaded.subject, KUBERNETES, { id: 7078205, branch_name: 'dev/pinned', pr_number: null, staging_container_id: null }, APP, SHA);
+    assert.equal(loaded.builds.length, 1);
+    assert.equal(loaded.builds[0].early, null);
+    assert.equal(loaded.deploys.length, 1);
+  } finally { loaded.restore(); }
+  const declined = earlyKube({ handle: null });
+  loaded = loadStaging({ git: refs({ HEAD: SHA }), kube: declined.kube });
+  try {
+    await prepare(loaded.subject, KUBERNETES, { id: 7078206, branch_name: 'dev/pinned', pr_number: null, staging_container_id: null }, APP, SHA);
+    assert.equal(loaded.builds[0].early, null);
+    assert.equal(declined.seen.cancelled.length, 0);
+  } finally { loaded.restore(); }
+});
+
+test('nothing starts early for the branch tip (no commit to start from) or on Docker', async () => {
+  const early = earlyKube();
+  let loaded = loadStaging({ git: refs({ HEAD: SHA }), kube: early.kube });
+  try {
+    await prepare(loaded.subject, KUBERNETES, { id: 7078207, branch_name: 'dev/native-work', staging_container_id: null }, APP, 'latest');
+    assert.equal(early.seen.started.length, 0);
+  } finally { loaded.restore(); }
+  loaded = loadStaging({ git: refs({ HEAD: SHA }), kube: early.kube });
+  try {
+    await prepare(loaded.subject, DOCKER, { id: 7078208, branch_name: 'dev/pinned', pr_number: null, staging_container_id: null }, APP, SHA);
+    assert.equal(early.seen.started.length, 0, 'the Docker lane builds from the checkout');
+  } finally { loaded.restore(); }
 });

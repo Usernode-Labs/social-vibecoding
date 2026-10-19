@@ -151,7 +151,10 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           // Deployed: still this machine's attempt? A cancel that came during
           // the rollout is seen here, and the deploy undone.
           await ctx.checkpoint({ step: 'deployed', db });
-          await staging().verifyStagingEdge(row, built.hostname, built.stagingUrl).catch(() => null);
+          // A look at the public address, for the log only: nothing reads its
+          // answer, so the checks do not wait for it (or for its retries of a
+          // 503 from an edge that has not learnt the new pod yet).
+          staging().verifyStagingEdgeAfterDeploy(row, built.hostname, built.stagingUrl);
           return {
             ok: true, db, url: built.stagingUrl, runtimeKind: built.runtimeKind, runtimeName: built.runtimeName,
             containerId: built.containerId ?? null, imageRef: built.imageRef ?? null, buildRef: built.buildRef ?? null,

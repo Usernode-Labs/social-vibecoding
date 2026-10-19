@@ -252,3 +252,113 @@ test('#2328 verifyStagingEdge rejects a completed HTTP 5xx response', async () =
     assert.ok(logs.some((entry) => entry.level === 'warn' && entry.data.code === 502));
   } finally { restore(); }
 });
+
+// ── the deploy's probe asks a 5xx again, and nobody waits for it ──────────
+//
+// Right after a session's first deploy the edge answered 503 in 25 of 40
+// probes (October 2026): Cilium's Envoy learns the new pod's endpoint about
+// 0.2 s after the EndpointSlice turns ready, and the probe landed between.
+// The deploy's own probe asks again for up to EDGE_SETTLE_MS; the one behind
+// GET /api/sessions/:id/preview-status and ensure-staging (inspectPreview)
+// still asks once.
+
+function answers(codes) {
+  const calls = [];
+  return {
+    calls,
+    probeEdge: async (hostname, opts) => {
+      calls.push({ at: Date.now(), opts });
+      const code = codes[Math.min(calls.length - 1, codes.length - 1)];
+      return code === 'error'
+        ? { ok: false, code: null, error: new Error('connect ECONNREFUSED'), timings: {}, cert: null }
+        : { ok: true, code, error: null, timings: { ttfbMs: 3 }, cert: null };
+    },
+  };
+}
+
+test('verifyStagingEdge asks once unless told to wait out a 5xx (inspectPreview keeps its single probe)', async () => {
+  const edge = answers([503, 403]);
+  const { staging, restore } = loadStaging({ probeEdge: edge.probeEdge });
+  try {
+    const result = await staging.verifyStagingEdge({ id: 42 }, 'my-app--s42.example.test', 'https://my-app--s42.example.test');
+    assert.equal(result.ok, false);
+    assert.equal(edge.calls.length, 1);
+  } finally { restore(); }
+});
+
+test('the deploy\'s probe asks a 5xx again until the edge has the new pod', async () => {
+  const edge = answers([503, 503, 403]);
+  const { staging, logs, restore } = loadStaging({ probeEdge: edge.probeEdge });
+  try {
+    const result = await staging.verifyStagingEdge({ id: 42 }, 'my-app--s42.example.test', 'https://my-app--s42.example.test',
+      { serverErrorRetryMs: staging.EDGE_SETTLE_MS });
+    assert.equal(result.ok, true);
+    assert.equal(result.code, 403, 'the app\'s own answer: routed to the runtime');
+    assert.equal(edge.calls.length, 3);
+    const gaps = edge.calls.slice(1).map((c, i) => c.at - edge.calls[i].at);
+    assert.ok(gaps.every((ms) => ms >= staging.EDGE_RETRY_EVERY_MS - 20), `spaced by the retry interval (${gaps})`);
+    assert.ok(!logs.some((l) => l.level === 'warn'), 'a 503 that clears is not a warning');
+    assert.ok(logs.some((l) => l.msg === 'Edge verified' && l.data.tries === 3));
+  } finally { restore(); }
+});
+
+test('the deploy\'s probe gives up on a 5xx after EDGE_SETTLE_MS, and does not retry what is not a 5xx', { timeout: 15000 }, async () => {
+  const always = answers([502]);
+  const { staging, logs, restore } = loadStaging({ probeEdge: always.probeEdge });
+  try {
+    const started = Date.now();
+    const result = await staging.verifyStagingEdge({ id: 42 }, 'my-app--s42.example.test', 'https://my-app--s42.example.test',
+      { serverErrorRetryMs: staging.EDGE_SETTLE_MS });
+    const took = Date.now() - started;
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 502);
+    assert.ok(took <= staging.EDGE_SETTLE_MS + 200, `bounded (took ${took} ms)`);
+    assert.ok(always.calls.length <= Math.floor(staging.EDGE_SETTLE_MS / staging.EDGE_RETRY_EVERY_MS) + 1, `${always.calls.length} probes`);
+    assert.ok(always.calls.length >= 5);
+    assert.equal(logs.filter((l) => l.level === 'warn').length, 1, 'one verdict, one warning');
+  } finally { restore(); }
+  const refused = answers(['error']);
+  const second = loadStaging({ probeEdge: refused.probeEdge });
+  try {
+    await second.staging.verifyStagingEdge({ id: 42 }, 'my-app--s42.example.test', 'https://my-app--s42.example.test',
+      { serverErrorRetryMs: second.staging.EDGE_SETTLE_MS });
+    assert.equal(refused.calls.length, 1, 'only a 5xx is the edge catching up');
+  } finally { second.restore(); }
+});
+
+test('verifyStagingEdgeAfterDeploy returns at once, and a probe that throws is a warning', async () => {
+  let release;
+  const { staging, logs, restore } = loadStaging({
+    probeEdge: () => new Promise((resolve) => { release = () => resolve({ ok: true, code: 200, timings: {} }); }),
+  });
+  try {
+    const out = staging.verifyStagingEdgeAfterDeploy({ id: 42 }, 'my-app--s42.example.test', 'https://my-app--s42.example.test');
+    assert.equal(out, undefined, 'nothing to wait for');
+    assert.equal(typeof release, 'function', 'the probe is under way');
+    release();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(logs.some((l) => l.msg === 'Edge verified'));
+  } finally { restore(); }
+  const broken = loadStaging({ probeEdge: async () => { throw new Error('boom'); } });
+  try {
+    broken.staging.verifyStagingEdgeAfterDeploy({ id: 42 }, 'my-app--s42.example.test', 'https://my-app--s42.example.test');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(broken.logs.some((l) => l.level === 'warn' && l.msg === 'Edge verification failed'));
+  } finally { broken.restore(); }
+});
+
+test('verifyStagingEdgeAfterDeploy waits out the first deploy\'s 503 in the background', { timeout: 10000 }, async () => {
+  const edge = answers([503, 403]);
+  const { staging, logs, restore } = loadStaging({ probeEdge: edge.probeEdge });
+  try {
+    staging.verifyStagingEdgeAfterDeploy({ id: 42 }, 'my-app--s42.example.test', 'https://my-app--s42.example.test');
+    const until = Date.now() + staging.EDGE_SETTLE_MS;
+    while (!logs.some((l) => l.msg === 'Edge verified' || l.level === 'warn') && Date.now() < until) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(edge.calls.length, 2, 'asked again after the 503');
+    assert.ok(logs.some((l) => l.msg === 'Edge verified' && l.data.tries === 2));
+    assert.ok(!logs.some((l) => l.level === 'warn'), 'no misleading warning');
+  } finally { restore(); }
+});

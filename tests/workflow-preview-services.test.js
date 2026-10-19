@@ -28,6 +28,8 @@ stub('../src/services/staging', {
     return state.build;
   },
   async verifyStagingEdge() { calls.push(['edge']); return { ok: true }; },
+  // A probe that never ends: the prepare handler must not be waiting on it.
+  verifyStagingEdgeAfterDeploy(row, hostname) { calls.push(['edge', hostname]); return new Promise(() => {}); },
 });
 stub('../src/services/db-manager', {
   async dropDatabase(name) { calls.push(['drop', name]); state.exists.delete(name); },
@@ -102,7 +104,7 @@ const ctx = (input, extra = {}) => ({
 });
 const head = 'b'.repeat(40);
 
-test('a built attempt returns its receipt; a failed one returns why, for the machine to record', async () => {
+test('a built attempt returns its receipt; a failed one returns why, for the machine to record', { timeout: 15000 }, async () => {
   calls.length = 0;
   state.build = { stagingUrl: 'https://shop--s5.apps', hostname: 'shop--s5.apps', runtimeKind: 'kubernetes',
     runtimeName: 'sv-preview-2-s5', containerId: null, imageRef: 'img@sha256:1', buildRef: 'b1' };
@@ -112,12 +114,16 @@ test('a built attempt returns its receipt; a failed one returns why, for the mac
     containerId: null, imageRef: 'img@sha256:1', buildRef: 'b1',
   });
   assert.deepEqual(calls[0], ['prepare', head, 3, 'app_shop_staging_s5_abcdef']);
+  assert.deepEqual(calls.filter((c) => c[0] === 'edge'), [['edge', 'shop--s5.apps']],
+    'the public address is probed after the deploy, and the receipt does not wait for it');
 
+  calls.length = 0;
   state.build = Object.assign(new Error('Deployment cannot start: CrashLoopBackOff'), { healthcheckFailed: true, servingRemoved: false });
   const failed = await handlers[WORK.prepare].run(ctx(input));
   assert.equal(failed.ok, false);
   assert.equal(typeof failed.detail, 'string');
   assert.equal(failed.aboutMain, 'Main changed the schema.');
+  assert.equal(calls.filter((c) => c[0] === 'edge').length, 0, 'nothing deployed, nothing probed');
 });
 
 test('a build failure seen by a claim that is no longer live sets nothing off (no sync with main, no report)', async () => {
