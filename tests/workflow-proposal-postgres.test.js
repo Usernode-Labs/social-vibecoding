@@ -39,7 +39,19 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
   const pool = new Pool({ connectionString: String(url), max: 12 });
   pool.on('error', () => {});
   const runtimes = [];
+  // A gate a subtest may leave shut (it failed midway): `hold` parks the
+  // handler and remembers the key, so every subtest ends with its gates open
+  // and a parked fake cannot hold `stop()` open.
+  const held = [];
+  const hold = (kind) => {
+    let release;
+    work.gate.set(kind, new Promise((r) => { release = r; }));
+    held.push(release);
+    return release;
+  };
+  const openAll = () => { for (const r of held.splice(0)) r(); };
   t.after(async () => {
+    openAll();
     for (const r of runtimes) await r.stop();
     await pool.end();
     await admin.query(`DROP DATABASE ${dbName}`);
@@ -120,6 +132,7 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     work.answer.set(WORK.reopen, { reopened: true });
   };
   defaults();
+  t.afterEach(openAll);
   const pushed = [];
   const machine = proposal(DEPS);
   const rt = createRuntime({
@@ -142,10 +155,38 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
   };
   const outcome = async (id) => (await pool.query('SELECT result, reason, state_after, reply FROM wf_events WHERE id = $1', [id])).rows[0];
   const calls = (kind) => work.calls.filter((c) => c.kind === kind);
+  // Waits until the runtime has claimed `n` items of `kind` — the fake
+  // records the call before it parks on its gate — and fails clearly after
+  // 10s, rather than sleeping a fixed while and hoping the claim happened.
+  const untilCalled = async (kind, n = 1) => {
+    for (let waited = 0; waited < 10000 && calls(kind).length < n; waited += 10) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    if (calls(kind).length < n) assert.fail(`${kind} was never claimed`);
+  };
+  // Waits until a work item that ran ungated has reported and its report has
+  // been applied (the report and its event are written in one transaction;
+  // the drain settles the row and clears it from `doomed`). A move read
+  // after this does not see the item as teardown still under way.
+  const untilSettled = async (s, kind) => {
+    for (let waited = 0; waited < 10000; waited += 10) {
+      await rt.drain();
+      const items = await workOf(s, kind);
+      if (items.length && items[0].status === 'settled') return;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.fail(`${kind} was never settled`);
+  };
   const promote = (s, extra = {}) => send(s, 'Promote', {
     from: s.status, userId: s.owner.id, username: s.owner.username, cap: 5, pr: null, ...extra,
   }, route);
   const fire = async (s) => { await due(s); await rt.fireTimers(); await settle(); };
+  // Lapses a running item's lease in the database, the way a stalled process
+  // would, instead of waiting real time out (a claimed item's heartbeat
+  // renews its lease, so no sleep could lapse it anyway).
+  const lapse = (s, kind) => pool.query(
+    `UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE machine = $1 AND key = $2 AND kind = $3 AND status = 'running'`,
+    [MACHINE, sessionKey(s.id), kind]);
 
   // ── Adoption ────────────────────────────────────────────────────────
 
@@ -181,7 +222,7 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     await pool.query(`INSERT INTO notification_preferences (user_id, app_id, category, enabled) VALUES ($1, NULL, 'new_proposals', TRUE)`, [voter.id]);
     // A vote of an earlier review on another head goes.
     await vote(s, voter, 'yes');
-    work.gate.set(WORK.open, new Promise(() => {}));   // GitHub has not answered yet
+    hold(WORK.open);   // GitHub has not answered yet
     const id = await promote(s, { viaAgent: true });
     await rt.drain();
     assert.equal((await outcome(id)).result, 'accepted');
@@ -189,8 +230,9 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     assert.equal((await row(s)).status, 'paused', 'it never reads promoted while GitHub has not readied its pull request (bug 9)');
     assert.equal((await outcome(id)).reply.promoting, 1);
     work.gate.delete(WORK.open);
-    // The item that hung is claimed again once its lease lapses.
-    await new Promise((r) => setTimeout(r, 700));
+    // The item that hung is claimed again once its lease lapses: the lease
+    // is lapsed in the database rather than by waiting real time out.
+    await lapse(s, WORK.open);
     await settle();
     const i = await instance(s);
     assert.equal(i.state, 'in_review');
@@ -244,14 +286,15 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     await session({ owner, appRow: a, status: 'promoted' });
     const one = await session({ owner, appRow: a });
     const two = await session({ owner, appRow: a });
-    work.gate.set(WORK.open, new Promise(() => {}));
+    hold(WORK.open);
     const ids = await Promise.all([promote(one, { cap: 2 }), promote(two, { cap: 2 })]);
     await Promise.all([rt.drain(), rt.drain()]);
     const results = await Promise.all(ids.map(outcome));
     assert.deepEqual(results.map((r) => r.result).sort(), ['accepted', 'rejected']);
     assert.equal(results.find((r) => r.result === 'rejected').reason, 'promoted_cap', 'one going up for a vote counts against the cap');
     work.gate.delete(WORK.open);
-    await new Promise((r) => setTimeout(r, 700));
+    await lapse(one, WORK.open);
+    await lapse(two, WORK.open);
     await settle();
   });
 
@@ -271,13 +314,12 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
 
   await t.test('P6 a close while it goes up for a vote: the pull request is closed after GitHub has opened it, never left open (bug 8)', async () => {
     defaults();
-    let release;
-    work.gate.set(WORK.open, new Promise((r) => { release = r; }));
+    const release = hold(WORK.open);
     const s = await session();
     await promote(s);
     await rt.drain();
     const running = rt.runServices();
-    await new Promise((r) => setTimeout(r, 50));
+    await untilCalled(WORK.open);
     const closeId = await send(s, 'Close', { from: 'active', reason: 'manual', userId: s.owner.id, username: s.owner.username }, route);
     await rt.drain();
     assert.equal((await outcome(closeId)).result, 'accepted');
@@ -504,13 +546,15 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
 
   await t.test('P15 a reopen during the close: the PR is reopened after the close reports, and stays open (bug 17)', async () => {
     defaults();
-    let release;
-    work.gate.set(WORK.close, new Promise((r) => { release = r; }));
+    const release = hold(WORK.close);
     const s = await session({ status: 'paused' });
     await send(s, 'Close', { from: 'paused', reason: 'manual', userId: s.owner.id }, route);
     await rt.drain();
     const running = rt.runServices();
-    await new Promise((r) => setTimeout(r, 50));
+    await untilCalled(WORK.close);
+    // The close's worker destroy runs ungated: it must have reported and been
+    // settled before the reopen is read, or the reopen would hear teardown.
+    await untilSettled(s, WORK.destroy);
     const reopen = await send(s, 'Reopen', { from: 'archived', userId: s.owner.id }, route);
     await rt.drain();
     assert.equal((await outcome(reopen)).result, 'accepted');
@@ -626,13 +670,12 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
 
   await t.test('P24 a close while a proposal with no pull request yet goes up: the PR GitHub then opens is closed, by the number it has by then (review 1)', async () => {
     defaults();
-    let release;
-    work.gate.set(WORK.open, new Promise((r) => { release = r; }));
+    const release = hold(WORK.open);
     const s = await session({ pr: false });
     await promote(s);
     await rt.drain();
     const running = rt.runServices();
-    await new Promise((r) => setTimeout(r, 50));
+    await untilCalled(WORK.open);
     const closeId = await send(s, 'Close', { from: 'active', reason: 'manual', userId: s.owner.id }, route);
     await rt.drain();
     assert.equal((await outcome(closeId)).result, 'accepted');
@@ -711,14 +754,14 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
 
   await t.test('P28 a PR closed for good is forgotten even when a promote follows the reopen at once (review 6)', async () => {
     defaults();
-    let release;
-    work.gate.set(WORK.close, new Promise((r) => { release = r; }));
+    const release = hold(WORK.close);
     const s = await session({ status: 'paused' });
     const dead = s.pr_number;
     await send(s, 'Close', { from: 'paused', reason: 'manual', userId: s.owner.id }, route);
     await rt.drain();
     const running = rt.runServices();
-    await new Promise((r) => setTimeout(r, 50));
+    await untilCalled(WORK.close);
+    await untilSettled(s, WORK.destroy);
     await send(s, 'Reopen', { from: 'archived', userId: s.owner.id }, route);
     await rt.drain();
     work.answer.set(WORK.reopen, (input) => ({ cleared: true, prNumber: input.number }));
@@ -739,13 +782,12 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
 
   await t.test('P29 a head a reconcile installed while it went up stands over the one GitHub read before (review 7)', async () => {
     defaults();
-    let release;
-    work.gate.set(WORK.open, new Promise((r) => { release = r; }));
+    const release = hold(WORK.open);
     const s = await session({ status: 'paused' });
     await promote(s);
     await rt.drain();
     const running = rt.runServices();
-    await new Promise((r) => setTimeout(r, 50));
+    await untilCalled(WORK.open);
     const moved = await send(s, 'ReviewHeadMoved', { column: 'reviewed', from: SHA('a'), to: SHA('b'), keepVotes: false });
     await rt.drain();
     assert.equal((await outcome(moved)).result, 'accepted');
@@ -851,17 +893,13 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
 
   await t.test('P33 a lapsed lease or an attempt that failed does not end teardown: a resume or a reopen still waits (second review)', async () => {
     defaults();
-    const lapse = (s, kind) => pool.query(
-      `UPDATE wf_work SET lease_until = now() - interval '1 second' WHERE machine = $1 AND key = $2 AND kind = $3 AND status = 'running'`,
-      [MACHINE, sessionKey(s.id), kind]);
     // The worker's destroy claimed by a process that stalled in its call.
-    let release;
-    work.gate.set(WORK.destroy, new Promise((r) => { release = r; }));
+    const release = hold(WORK.destroy);
     const s = await session();
     await send(s, 'Pause', { from: 'active', reason: 'manual', userId: s.owner.id }, route);
     await rt.drain();
     const running = rt.runServices();
-    await new Promise((r) => setTimeout(r, 50));
+    await untilCalled(WORK.destroy);
     await lapse(s, WORK.destroy);
     const resume = await send(s, 'Resume', { from: 'paused', userId: s.owner.id, caps: { user: 100, global: 100 } }, route);
     await rt.drain();
@@ -882,13 +920,12 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     // and the memory is never reported kept while it goes.
     defaults();
     work.answer.set(WORK.purge, { purged: true });
-    let purged;
-    work.gate.set(WORK.purge, new Promise((r) => { purged = r; }));
+    const purged = hold(WORK.purge);
     const c = await session({ status: 'paused', pr: false });
     await send(c, 'Close', { from: 'paused', reason: 'manual', userId: c.owner.id, purgeCc: true }, route);
     await rt.drain();
     const purging = rt.runServices();
-    await new Promise((r) => setTimeout(r, 50));
+    await untilCalled(WORK.purge);
     await lapse(c, WORK.purge);
     const reopen = await send(c, 'Reopen', { from: 'archived', userId: c.owner.id }, route);
     await rt.drain();
@@ -901,13 +938,12 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
   await t.test('P32 a resume or a reopen waits for teardown already under way, never races it (review 2.1)', async () => {
     defaults();
     // The worker of the pause is being destroyed when its owner comes back.
-    let release;
-    work.gate.set(WORK.destroy, new Promise((r) => { release = r; }));
+    const release = hold(WORK.destroy);
     const s = await session();
     await send(s, 'Pause', { from: 'active', reason: 'manual', userId: s.owner.id }, route);
     await rt.drain();
     const running = rt.runServices();
-    await new Promise((r) => setTimeout(r, 50));
+    await untilCalled(WORK.destroy);
     assert.equal(ofKey(s, WORK.destroy).length, 1, 'the destroy is under way');
     const early = await send(s, 'Resume', { from: 'paused', userId: s.owner.id, caps: { user: 100, global: 100 } }, route);
     await rt.drain();
@@ -925,13 +961,12 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
     // records itself, then the reopen goes ahead.
     defaults();
     work.answer.set(WORK.purge, { purged: true });
-    let purged;
-    work.gate.set(WORK.purge, new Promise((r) => { purged = r; }));
+    const purged = hold(WORK.purge);
     const c = await session({ status: 'paused', pr: false });
     await send(c, 'Close', { from: 'paused', reason: 'manual', userId: c.owner.id, purgeCc: true }, route);
     await rt.drain();
     const purging = rt.runServices();
-    await new Promise((r) => setTimeout(r, 50));
+    await untilCalled(WORK.purge);
     const reopenEarly = await send(c, 'Reopen', { from: 'archived', userId: c.owner.id }, route);
     await rt.drain();
     assert.equal((await outcome(reopenEarly)).reason, 'tearing_down');

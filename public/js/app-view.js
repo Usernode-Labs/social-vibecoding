@@ -491,7 +491,14 @@ const AppView = {
   // stored assignee values are trimmed server-side (topic-attributes
   // normalizeValue), so no assignee.top can ever begin with whitespace.
   KANBAN_ASSIGNEE_UNASSIGNED: ' __unassigned__',
-  _kanbanFilters: { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false },
+  // `stage` is #5369: the Workshop's Overview figures — open items, nobody on
+  // them, live this week — tap through to All items, and this is the key they
+  // set. It holds 'open' | 'unclaimed' | 'shipped' or null; any other value
+  // (an older tab's storage) reads as null wherever it is used. It is reached
+  // only from a figure and cleared with its chip's ×, so the Filters dialog
+  // does not own it and it never counts on `Filters (n)` — the same way a
+  // search does not.
+  _kanbanFilters: { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false, stage: null },
   // Which app's filters `_kanbanFilters` currently holds. The persisted set
   // is per slug, so this is what tells a repaint whether it is looking at a
   // stale app's narrowing (restore) or at the viewer's own unsaved edit
@@ -503,7 +510,7 @@ const AppView = {
   _defaultKanbanFilters() {
     // #1935: `assignedToMe` / `createdByMe` are the strip's two quick
     // toggles — one tap, no dialog — for the viewer's own board.
-    return { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false };
+    return { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false, stage: null };
   },
   // `?q=<text>` — a deep link to a surface already narrowed to a search, the
   // way `?col=` reaches a column and `?ws=` a tab. Free text, matched by
@@ -1451,8 +1458,9 @@ const AppView = {
           const page = document.querySelector('#dev-workshop .dev-ws[data-ws-tab]');
           return page ? page.getAttribute('data-ws-tab') : null;
         };
-        // #4417: the place's row in the list (the section column), else the
-        // page's own way to a place, which a press on a row takes.
+        // #4417: the place's row in the list (the sidebar's, or the phone's
+        // drawer), else the page's own way to a place, which a press on a
+        // row takes.
         const press = (tab) => {
           const row = document.querySelector(`[data-places="${slug}"] [data-place="${tab}"]`);
           if (row) row.click();
@@ -3310,7 +3318,9 @@ const AppView = {
   _noteOwnVote(sessionId, vote) {
     const id = Number(sessionId);
     if (!Number.isInteger(id) || id <= 0) return;
-    AppView._ownVotes.set(id, { vote, at: Date.now() });
+    // The epoch the vote was cast at is stamped in by _publishVoteSaved,
+    // which runs beside this call and is the only path that knows it.
+    AppView._ownVotes.set(id, { vote, at: Date.now(), epoch: null });
     const current = AppView.appData;
     const approval = current && current.first_version && current.first_version.approval;
     if (approval && Number(approval.sessionId) === id) AppView._distrustFirstVersion(current);
@@ -12254,8 +12264,11 @@ const AppView = {
         itemKey: AppView._workshopItemKey(kind, item),
         kind, item, lane, row, people, created,
         t: activityOf(kind, item),
-        // Whether All items' search and filters keep it (#2915).
-        matched: match(kind, item),
+        // Whether All items' search and filters keep it (#2915), plus the
+        // Overview figures' stage filter (#5369): it narrows the same lists
+        // `matched` feeds. The dashboard's figures below keep counting every
+        // entry, whatever the narrowing — the same rule as the search's.
+        matched: match(kind, item) && (!f.stage || AppView._devCardInStage(f.stage, lane, kind, item)),
       });
     };
     for (const x of buckets.inReview) {
@@ -12822,14 +12835,33 @@ const AppView = {
         descriptionHtml: x.kind === 'proposal' ? AppView._proposalSummaryHtml(x.item) : '',
         ask: PlatformI18n.t('changes:workshop.queue.voteAsk'),
         // #3977: a Just-you change's Yes is its approval (B7), and the
-        // item says Approve / Don't approve, as its card does.
-        yes: yes ? { label: yes.label, tally: yes.tally, act: yes.act, ...(yes.approve ? { approve: true } : {}) } : null,
+        // item says Approve / Don't approve, as its card does. #5365: the
+        // queue keeps the advisory/uncounted flags the card's Yes spec
+        // already carries (#4747), so the item can label a vote that does
+        // not decide the change and put it at the back.
+        yes: yes ? {
+          label: yes.label,
+          tally: yes.tally,
+          act: yes.act,
+          ...(yes.approve ? { approve: true } : {}),
+          ...(yes.uncounted ? { uncounted: true } : {}),
+          ...(yes.advisory ? { advisory: true } : {}),
+        } : null,
         no: no ? { label: no.label, tally: no.tally, act: no.act } : null,
         // The facts line's "your yes puts it live", and the end card's "Your
         // yes put it over the line": exactly one more Yes meets the rule.
         ...(x.kind === 'proposal' && AppView._yesPutsItLive(x.item) ? { lastYes: true } : {}),
       });
     }
+
+    // #5365: the rows whose vote decides first, the marked ones after — the
+    // same stable partition the Communities screen's feed keeps (decidingFirst
+    // in src/routes/workshop-overview.js). Within each group the rows keep
+    // their newest-first order, so nothing jumps but the marked cards, and a
+    // viewer who only wants to vote where it matters can stop when they begin.
+    const decidingRows = queue.filter((r) => !(r.yes && (r.yes.advisory || r.yes.uncounted)));
+    const advisoryRows = queue.filter((r) => r.yes && (r.yes.advisory || r.yes.uncounted));
+    queue.splice(0, queue.length, ...decidingRows, ...advisoryRows);
 
     // "Try taking this one next" — the most recently active open issue with
     // nobody on it. Recency rather than age on purpose: an issue the group is
@@ -13855,7 +13887,47 @@ const AppView = {
   _kanbanFiltersActive() {
     const f = AppView._kanbanFilters || {};
     return !!((f.q && f.q.trim()) || f.priority || f.category || f.assignee || f.needsVote || f.theme
-      || f.assignedToMe || f.createdByMe);
+      || f.assignedToMe || f.createdByMe || AppView._kanbanStageValue(f.stage));
+  },
+
+  // The stored `stage` filter, or null for anything that is not one of the
+  // three values a figure sets (#5369) — an older tab's storage included.
+  _kanbanStageValue(stage) {
+    return stage === 'open' || stage === 'unclaimed' || stage === 'shipped' ? stage : null;
+  },
+
+  // The Overview figures' own predicates, shared with the narrowing they
+  // open (#5369). Each of the three figures counts one of these over the
+  // same entries (`_workshopView`'s dashboard), and the All items filter a
+  // tap sets answers the same test per card, so the list a figure opens
+  // holds what the figure counts. With no stage — or an unknown one — a
+  // card matches whatever else the filters say.
+  //
+  //   'open'      everything not already gone live: the requests, the work
+  //               underway and the changes up for a vote. This is the lane
+  //               test the dashboard's `open` figure uses.
+  //   'unclaimed' the OPEN lane's requests nobody has taken — `idle` in the
+  //               dashboard, `_issueUnclaimed` for the quieter signals.
+  //   'shipped'   a merged row that is live (`live_at !== null` — a row
+  //               still going live is left out, the same as the figure) and
+  //               merged since Monday 00:00 UTC, the week `shippedWeek`
+  //               counts.
+  _devCardInStage(stage, lane, kind, item) {
+    const wanted = AppView._kanbanStageValue(stage);
+    if (!wanted) return true;
+    if (wanted === 'open') return lane !== 'done' && lane !== 'shipped';
+    if (wanted === 'unclaimed') return lane === 'open' && kind === 'issue' && AppView._issueUnclaimed(item);
+    // 'shipped': decided by date, not by the lane — the Workshop's shipped
+    // lane is a trailing seven days (#1787) where the figure is the calendar
+    // week, and on the board's Done column a card's lane never says it.
+    if (wanted === 'shipped') {
+      if (kind !== 'merged') return false;
+      const it = item || {};
+      if (it.live_at === null) return false;
+      const t = Date.parse(it.merged_at || it.closed_at || it.created_at || '');
+      return Number.isFinite(t) ? t >= AppView._weekStart(Date.now()) : false;
+    }
+    return true;
   },
 
   // #1935: the signed-in viewer's handle, as the board's person fields spell
@@ -14147,7 +14219,7 @@ const AppView = {
     if (!AppView._kanbanFiltersActive()) return false;
     const f = AppView._kanbanFilters || {};
     const nonQ = !!(f.priority || f.category || f.assignee || f.needsVote || f.theme
-      || f.assignedToMe || f.createdByMe);
+      || f.assignedToMe || f.createdByMe || AppView._kanbanStageValue(f.stage));
     if (nonQ) return true;
     return String(f.q || '').trim().length >= AppView.KANBAN_COMMENT_SEARCH_MIN;
   },
@@ -14279,6 +14351,10 @@ const AppView = {
     const f = AppView._kanbanFilters || {};
     const chips = [];
     if (f.q && f.q.trim()) chips.push({ key: 'q', label: PlatformI18n.t('changes:board.filterChip.search', { query: f.q.trim() }) });
+    // #5369: the Overview figures' stage filter, named by the figure's own
+    // label. An unknown stored value reads as null (`_kanbanStageValue`), so
+    // it never draws a chip with an empty label.
+    if (AppView._kanbanStageValue(f.stage)) chips.push({ key: 'stage', label: PlatformI18n.t(AppView.KANBAN_STAGE_CHIP_IDS[f.stage]) });
     if (f.priority) {
       const id = AppView.KANBAN_PRIORITY_CHIP_IDS[f.priority];
       chips.push({ key: 'priority', label: id ? PlatformI18n.t(id) : String(f.priority) });
@@ -14312,6 +14388,27 @@ const AppView = {
     low: 'changes:board.filterChip.priorityLow',
     medium: 'changes:board.filterChip.priorityMedium',
     high: 'changes:board.filterChip.priorityHigh',
+  },
+  // The stage filter's chip labels (#5369) — the Overview figures' own words
+  // with a capital first letter. The keys double as the allowed values.
+  KANBAN_STAGE_CHIP_IDS: {
+    open: 'changes:board.filterChip.stageOpen',
+    unclaimed: 'changes:board.filterChip.stageUnclaimed',
+    shipped: 'changes:board.filterChip.stageShipped',
+  },
+  // #5369: an Overview figure's tap — open items, nobody on them, live this
+  // week. All items is narrowed to exactly what the figure counts: the
+  // filters are replaced, so an old search cannot hide some of the counted
+  // items, and a new `seq` is a new key on the search field, which empties
+  // the box the way clearing the Search chip does. The chip's × dismisses it
+  // like any other filter; `applyKanbanFilters` spreads the current set, so
+  // the dialog's Done keeps it.
+  openWorkshopStage(stage) {
+    if (!AppView._kanbanStageValue(stage)) return;
+    AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), stage };
+    AppView._kanbanFiltersSlug = App.currentApp;
+    AppView._kanbanFilterSeq += 1;
+    AppView._repaintBoardSurface();
   },
   // The category vocabulary as DATA — built-ins then this app's customs,
   // mirroring the retired select's order (#780), with the active selection
@@ -14452,8 +14549,15 @@ const AppView = {
     // which column its issue lands in.
     const f = AppView._kanbanMatchFilters();
     const filtering = AppView._kanbanFiltersActive();
+    // #5369: the Overview figures' stage filter ANDs into every column, with
+    // the lane each bucket's cards actually sit in on the board — so a stage
+    // set from the Workshop reads the same set here, whichever view is
+    // showing. Done's lane never says 'shipped' (that is the Workshop's
+    // seven-day grouping); whether a merged row is live this week is decided
+    // by date inside `_devCardInStage` itself.
+    const inStage = (lane, kind, item) => AppView._devCardInStage(f.stage, lane, kind, item);
     const kIssues = filtering
-      ? buckets.issues.filter((i) => AppView._devCardMatches('issue', i, f))
+      ? buckets.issues.filter((i) => AppView._devCardMatches('issue', i, f) && inStage('open', 'issue', i))
       : buckets.issues;
     // Session entries used to be EXEMPT from the filter bar entirely — type
     // a search term and they just sat there unexplained. They now go
@@ -14461,13 +14565,13 @@ const AppView = {
     // number), which returns true unconditionally for the three filters a
     // session cannot carry; _sessionFilterNoteRow says so visibly.
     const kInProgress = filtering
-      ? buckets.inProgress.filter((e) => (e.kind === 'issue'
+      ? buckets.inProgress.filter((e) => ((e.kind === 'issue'
         ? AppView._devCardMatches('issue', e.item, f)
-        : AppView._devCardMatches('session', e.item, f)))
+        : AppView._devCardMatches('session', e.item, f)) && inStage('underway', e.kind, e.item)))
       : buckets.inProgress;
     const reviewSort = AppView._reviewSort();
     const reviewMatches = filtering
-      ? buckets.inReview.filter((x) => AppView._devCardMatches(x.kind, x.item, f))
+      ? buckets.inReview.filter((x) => AppView._devCardMatches(x.kind, x.item, f) && inStage('review', x.kind, x.item))
       : buckets.inReview;
     // Copy so the shared bucketer/feed/category order stays independent.
     const kInReview = reviewMatches.slice().sort((a, b) => AppView._compareReviewProposals(a, b, reviewSort));
@@ -14478,7 +14582,7 @@ const AppView = {
     // them was the busiest thing on the board. Filtering and "Show all"
     // both lift the cut; the header count keeps the true total either way.
     const doneAll = filtering
-      ? buckets.done.filter((m) => AppView._devCardMatches('merged', m, f))
+      ? buckets.done.filter((m) => AppView._devCardMatches('merged', m, f) && inStage('done', 'merged', m))
       : buckets.done;
     const doneCut = !filtering && !AppView._doneShowAll
       ? AppView._recentDone(doneAll)
@@ -25885,7 +25989,23 @@ const AppView = {
   _overlayPendingVote(row) {
     if (!row || row.status === 'merged') return;
     const held = AppView._pendingVotes.get(Number(row.id));
-    if (held) AppView._applyVoteToRow(row, held.vote);
+    if (held) {
+      AppView._applyVoteToRow(row, held.vote);
+      return;
+    }
+    // #5463: a vote this page saved earlier fills a row a later read drew
+    // without it — the board reads sit in the service worker's boot lane, so
+    // opening another project can paint the saved pre-vote copy first. Only a
+    // row that is promoted and has no my_vote of its own is filled: the
+    // server's word is never overridden, a newer epoch asks again, and
+    // _applyVoteToRow returns early on an equal vote so it never counts twice.
+    if (row.my_vote || row.status !== 'promoted') return;
+    const own = AppView._ownVotes.get(Number(row.id));
+    if (!own || (own.vote !== 'yes' && own.vote !== 'no')) return;
+    const rowEpoch = row.approval_epoch == null ? null : Number(row.approval_epoch);
+    const ownEpoch = own.epoch == null ? null : Number(own.epoch);
+    if (rowEpoch != null && ownEpoch != null && rowEpoch !== ownEpoch) return;
+    AppView._applyVoteToRow(row, own.vote);
   },
   // The board paints from `#dev-body`; an open proposal page is a sheet
   // over it with its own header, which that repaint never reached — so on the
@@ -26057,8 +26177,12 @@ const AppView = {
       }
       AppView._seenEpoch.delete(sessionId);
       // A first version's App tab must not ask this voter for the Yes they
-      // just gave (_noteOwnVote).
+      // just gave (_noteOwnVote), and every Needs you surface this page did
+      // not cast the vote on hears that it is saved (#5463) — the epoch that
+      // went in the POST body rides on the saved-vote publication, so a card
+      // at a newer epoch asks again.
       AppView._noteOwnVote(sessionId, vote);
+      AppView._publishVoteSaved(sessionId, vote, epoch);
       // The overlay stays until the post-vote read has landed: a load queued
       // ahead of it still publishes the pre-vote row first. The read joins
       // the burst the vote's own broadcast (vote_update) opens, so a vote
@@ -26073,6 +26197,11 @@ const AppView = {
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.
       window.Notifications?.refresh?.();
+      // The vote now belongs in Your votes and the Kudos My history tab
+      // (#5452): tell both, the same way the kudos give path does. Never
+      // optimistic — only on the server's yes.
+      window.UsernodeReact?.profileProposals?.voted?.();
+      window.Leaderboard?.invalidateHistory?.();
       return true;
     } catch {
       rollback();
@@ -26092,6 +26221,23 @@ const AppView = {
   // voteSendingStore). `key` is `<fn>:<id>`; a null side clears it.
   _publishVoteSending(key, side) {
     try { AppView._reactDevBoard()?.publishVoteSending?.(key, side); } catch { /* paint only */ }
+  },
+
+  // #5463: a vote the server SAVED, published once for every Needs you
+  // surface that did not cast it — the Communities feed's kept copy and its
+  // counts, and a board read from before the vote (cards-store.ts
+  // voteSavedStore). `epoch` is the one sent in the POST body, so a card a
+  // newer epoch leaves at asks again. Paint only, as _publishVoteSending.
+  _publishVoteSaved(sessionId, vote, epoch) {
+    // The epoch the POST carried is recorded beside the vote itself: the
+    // overlay fills a later pre-vote row only while the row has not moved
+    // past the epoch this page voted at.
+    const id = Number(sessionId);
+    const own = AppView._ownVotes.get(id);
+    if (own && own.epoch == null && epoch != null) own.epoch = Number(epoch);
+    try {
+      AppView._reactDevBoard()?.publishVoteSaved?.(id, vote, epoch == null ? null : Number(epoch));
+    } catch { /* paint only */ }
   },
 
   // Vote on a governance proposal (env-var change, close-issue, rename,
@@ -26215,6 +26361,10 @@ const AppView = {
       // Voting clears this proposal's nudge server-side; re-pull so the
       // unread badge drops it. Never optimistic — only on an ok response.
       window.Notifications?.refresh?.();
+      // As castVote (#5452): the vote reaches Your votes and the Kudos
+      // history as soon as the server saved it.
+      window.UsernodeReact?.profileProposals?.voted?.();
+      window.Leaderboard?.invalidateHistory?.();
     } catch (err) {
       // Network/abort: the server-side apply may well have completed, so
       // park on the failure copy rather than pretending nothing happened.

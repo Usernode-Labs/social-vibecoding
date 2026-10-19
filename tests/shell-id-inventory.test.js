@@ -360,6 +360,13 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #5405: search over the loaded notifications ───────────────────
+  'notifications-search': '#5405: the search field\'s block between the notifications sheet\'s title and the Unread | Messages | All tabs.',
+  'notifications-search-input': '#5405: the field itself (type="search"). Filters the tab that is open, over the rows already loaded, by project, kind and subject; Escape with text empties it.',
+  // #notifications-search-empty (the "No notifications match “…”" line) is
+  // NOT here: it renders only while a query is active and nothing matches,
+  // so it is not in the prerendered document — the same treatment the maps
+  // give ids behind an open dialog.
   // ── #5048: private requests ──────────────────────────────────────────────
   'feedback-private-row': '#5048: the Suggest an improvement dialog\'s "Private request" box, which files the request in Homeroom only (POST /api/private-requests) where only platform admins can see it, never as a GitHub issue. Ships hidden; feedback-controller.js shows it to full admins on each open.',
   'feedback-private-checkbox': '#5048: the box itself, unticked on every open.',
@@ -452,9 +459,12 @@ const ADDED_IDS = {
   // #4417: the rail's Recents (#platform-recents, #platform-recents-head,
   // both ADDED here by #2802 and never in the frozen baseline) is retired:
   // the desktop strip's five recent apps and the section column beside it
-  // take its place, and the conversations it listed are Messages' own list.
-  'platform-strip-apps': '#4417: the desktop strip\'s five recent apps, between the last section (Communities) and you: each app\'s tile over its name, the still-open dot on the apps kept alive (features/nav/strip-apps.tsx). Ships `hidden` and EMPTY; the apps arrive from localStorage one commit after mount, so the prerender and the first client render agree. Never drawn on the phone\'s bar. Its rows carry no ids, only data-strip-app.',
-  'platform-section-column': '#4417: the column beside the desktop strip that belongs to the section on screen: a project\'s places (Hub, Needs you, Workshop, #general and its topics) while its page is up under Communities (features/nav/section-column.tsx). Ships `hidden` and EMPTY; never drawn on a phone, where the places are the tray behind the page\'s place bar.',
+  // took its place, and the conversations it listed are Messages' own list.
+  // The strip's apps (#platform-strip-apps) went in turn on 18 Oct 2026, for
+  // an App row under each community: see #platform-rail-pinned below. So did
+  // #platform-section-column (also ADDED here, by #4417): the sidebar of rows
+  // nests a project's places under its row from 768px, the drawer holds
+  // them on a phone, and with the strip gone no width drew the column.
   // #app-menu-row-discussion ("Go to app discussion", #2718) left the menu in
   // the UI overhaul: the project's channel is on its hub, one row above it.
   // ── Three ids from #2718's second pass that are NOT in this map ──
@@ -1068,6 +1078,24 @@ const ADDED_IDS = {
   'cp-title-add': '#4891: its "Add a password" title, shown instead to an account that has none and signs in with an emailed code.',
   'cp-save-change': '#4891: #cp-save\'s "Change password" label, beside its "Add password" one.',
   'cp-save-add': '#4891: #cp-save\'s "Add password" label, for an account with no password yet.',
+  // ── D (18 Oct 2026): the desktop's sidebar of rows ──────────────────
+  // From 1024px the rail lists your communities itself (features/nav/
+  // rail-communities.tsx), between Messages and the Communities tab, which is
+  // their All row there; app.css draws none of it on the strip or the
+  // phone's bar. The heading and its search ship in the document; the five
+  // rows arrive with the community list, so they carry no ids.
+  'platform-rail-communities': 'D: the sidebar\'s Communities section (role=group), between #platform-tab-messages and #platform-tab-workshop. dapp.json pins the bar order through it.',
+  'platform-rail-communities-label': 'D: the section\'s "Communities" heading, which names the group.',
+  'platform-rail-conversations': 'v3: the conversations nested under Messages in the sidebar of rows, right after #platform-tab-messages; an empty element while shut, so the bar\'s order is one order. dapp.json pins it there.',
+  // 18 Oct 2026: the communities you pinned, under their own heading above
+  // yours (features/nav/rail-pinned.tsx). Each community's app is a row
+  // under it now, so #platform-strip-apps, the strip's Pinned and Recent
+  // apps (#4417), went: a pin is a community's. It ships hidden with its
+  // heading and no rows; the pins arrive from localStorage after mount.
+  'platform-rail-pinned': 'The sidebar\'s Pinned section (role=group), between #platform-rail-conversations and #platform-rail-communities, hidden while nothing is pinned. Home\'s drag recognizer drops a My apps tile on it; dapp.json pins the bar order through it.',
+  'platform-rail-pinned-label': 'The section\'s "Pinned" heading, which names the group.',
+  'platform-rail-search': 'D: the search beside that heading, shown on hover or focus: All communities with its search box focused and lit (features/workshop/communities-search.ts). dapp.json selects on it.',
+  'workshop-search': 'D: the search at the head of All communities\' column (features/workshop/index.tsx), drawn by app.css from 1024px only: your communities by name, as one list. Prerendered empty.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

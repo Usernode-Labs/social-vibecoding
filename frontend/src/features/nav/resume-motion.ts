@@ -5,8 +5,9 @@
  * ── What it is for ───────────────────────────────────────────────────
  *
  * Closing an app keeps it: its frame stays loaded (../app-frame/app-frame-store.js,
- * `kept`) and the desktop strip's recent apps show it with the "still open"
- * dot (./strip-apps.tsx, #4417; it was the rail's Active section with
+ * `kept`) and the desktop sidebar keeps its App row, with the "still open"
+ * dot, under its community (./rail-communities.tsx; it was the strip's
+ * recent apps, #4417, and before that the rail's Active section with
  * Resume), or the strip above the tab bar offers it (#platform-parked, the
  * phone). Before
  * this, the app simply vanished when you closed it, and nothing on screen
@@ -17,8 +18,8 @@
  * ── Two motions, one target ──────────────────────────────────────────
  *
  * The TARGET is the same in both directions and is decided here
- * (resumeHandleFor): the app's tile on the desktop strip, or the phone's
- * whole resume strip, whichever is actually on screen. A handle
+ * (resumeHandleFor): the app's App row in the desktop sidebar, or the
+ * phone's whole resume strip, whichever is actually on screen. A handle
  * that is hidden (the rail folded, the keyboard up, chromeless, signed out)
  * has no rect and answers null, and then nothing moves: the close or resume
  * is the plain cut it always was. That is the whole of "robust if the button
@@ -104,18 +105,19 @@ function usableElement(el: Element | null | undefined, doc: Document): HTMLEleme
 /**
  * The Resume control for `slug` that is on screen now, or null.
  *
- * The desktop strip's tile for the app first (#4417: the strip's five recent
- * apps, ./strip-apps.tsx), then the phone's strip.
+ * The app's App row in the desktop sidebar first, its glyph (under its
+ * community, ./rail-communities.tsx; the strip's recent apps were this, #4417),
+ * then the phone's strip.
  * The strip is the target as a whole, not its pill: the whole strip resumes
  * the app (./parked-strip.tsx), and its children slide while it arrives, so
  * only the root's rect is where it will rest.
  */
 export function resumeHandleFor(slug: string, doc: Document = document): HTMLElement | null {
   if (!slug || !doc) return null;
-  const rows = doc.querySelectorAll('#platform-strip-apps a.platform-strip-app[data-strip-app]');
+  const rows = doc.querySelectorAll('#platform-tabs a.platform-rail-app[data-rail-app]');
   for (const row of Array.from(rows)) {
-    if (row.getAttribute('data-strip-app') !== slug) continue;
-    const hit = usableElement(row.querySelector('.platform-strip-tile'), doc)
+    if (row.getAttribute('data-rail-app') !== slug) continue;
+    const hit = usableElement(row.querySelector('.platform-rail-sub-glyph'), doc)
       || usableElement(row, doc);
     if (hit) return hit;
   }

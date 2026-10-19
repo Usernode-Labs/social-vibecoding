@@ -1636,9 +1636,10 @@ const STATES = [
     // when a merge carries it, which no copy does, so the shots of the change
     // that added it found none (PR 4825, 2026-10-12). By the read-only admin,
     // merged and live two hours ago, with the member's Yes; the row as
-    // notifications.js createVotedChangeMergedNotifications writes it. Read,
-    // so the bell's count on every screen the member is shot on stays as it
-    // was: the All tab shows it. Left out on a revision that does not know
+    // notifications.js createVotedChangeMergedNotifications writes it. Unread
+    // (#5461: a read went-live row leaves the bell's list), so the All tab
+    // shows it and the bell counts it on every screen the member is shot on.
+    // Left out on a revision that does not know
     // the row's kind (its push category is that revision's own list).
     id: 'shots-demo-member-voted-change-live-v1',
     persona: 'member',
@@ -1676,12 +1677,12 @@ const STATES = [
       );
       await client.query(
         `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail, read_at, created_at)
-         VALUES ($1, $2, $3, NULL, 'voted_change_merged', NULL, NOW() - INTERVAL '1 hour', NOW() - INTERVAL '2 hours')`,
+         VALUES ($1, $2, $3, NULL, 'voted_change_merged', NULL, NULL, NOW() - INTERVAL '2 hours')`,
         [ctx.member.id, ctx.appId, IDS.votedLiveProposal]
       );
       return {
         shows: [
-          { state: `Your bell's All tab: a row for a change you voted on that went live two hours ago, "A change you voted on is live" over its title, ${title}, with the project and the time beside them. It is read, so the bell's count is as it was (on the Unread tab it is under "See older notifications"). Tapping it opens the change.`,
+          { state: `Your bell's All tab: a row for a change you voted on that went live two hours ago, "A change you voted on is live" over its title, ${title}, with the project and the time beside them. It is unread, so the bell counts it (on the Unread tab it is first). Tapping it opens the change.`,
             path: '/' },
           { state: 'The change itself, live, with your Yes on it.',
             path: `/#app/${ctx.selfAppSlug}/dev/proposals/${IDS.votedLiveProposal}` },

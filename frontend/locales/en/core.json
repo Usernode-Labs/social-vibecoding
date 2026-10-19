@@ -63,6 +63,34 @@
     "text": "Settings",
     "description": "Accessible name and tooltip of the cog at the foot of the desktop rail: opens Settings."
   },
+  "rail.communities": {
+    "text": "Communities",
+    "description": "Heading over the person's communities in the desktop sidebar (a window 1024px or wider), above the five they opened last. A community is a group that owns projects."
+  },
+  "rail.search": {
+    "text": "Search your communities",
+    "description": "Accessible name and tooltip of the small search button beside the Communities heading in the desktop sidebar: opens the list of all the person's communities with its search box ready to type in."
+  },
+  "rail.all_one": {
+    "text": "All {{count}} community",
+    "description": "Row under the person's communities in the desktop sidebar, opening the list of every community they are in. {{count}} is how many there are (here 1)."
+  },
+  "rail.all_other": {
+    "text": "All {{count}} communities",
+    "description": "Row under the person's communities in the desktop sidebar, opening the list of every community they are in. {{count}} is how many there are."
+  },
+  "rail.allPlain": {
+    "text": "All communities",
+    "description": "Row under the person's communities in the desktop sidebar, before their communities have loaded: opens the list of every community they are in."
+  },
+  "rail.conversations": {
+    "text": "Conversations",
+    "description": "Accessible name of the conversations nested under Messages in the desktop sidebar (a window 1024px or wider) while Messages is open: the five most recent, then All messages."
+  },
+  "rail.allMessages": {
+    "text": "All messages",
+    "description": "Last row under Messages in the desktop sidebar (a window 1024px or wider), under the five most recent conversations: opens the full list of conversations, with its search."
+  },
   "rail.hideSidebar": {
     "text": "Hide sidebar",
     "description": "Accessible name of the header button that folds the desktop navigation rail away, while the rail is showing."
@@ -74,6 +102,46 @@
   "rail.skipToNavigation": {
     "text": "Skip to navigation",
     "description": "Link shown only to keyboard users at the top of the page: moves focus to the main navigation."
+  },
+  "rail.pinned": {
+    "text": "Pinned",
+    "description": "Heading in the desktop sidebar (a window 768px or wider) over the communities the person pinned there, above their other communities."
+  },
+  "rail.app": {
+    "text": "App",
+    "description": "First row under a community in the desktop sidebar: opens the community's app, the thing its members build and use. Shown under the community's name, so it says only App."
+  },
+  "rail.appOf": {
+    "text": "{{name}} app",
+    "description": "Accessible name and tooltip of the App row under a community in the desktop sidebar, which opens that community's app. {{name}} is the community's name."
+  },
+  "rail.pin.here": {
+    "text": "Pin here",
+    "description": "The dashed slot the desktop sidebar draws under Pinned while an app's tile is dragged over from My apps: dropping the tile there pins the app's community to the sidebar."
+  },
+  "rail.pin.already": {
+    "text": "Already pinned",
+    "description": "The same slot when the dragged app's community is pinned to the sidebar already: dropping it would change nothing, so the drop is refused."
+  },
+  "rail.pin.full": {
+    "text": "Unpin one first",
+    "description": "The same slot when four communities are already pinned, the most there is room for: the drop is refused until one is taken off."
+  },
+  "rail.pin.add": {
+    "text": "Pin to sidebar",
+    "description": "Item in the right-click menu of a community's row in the desktop sidebar or in All communities: keeps the community in the sidebar's Pinned section, above the person's other communities."
+  },
+  "rail.pin.newTab": {
+    "text": "Open in new tab",
+    "description": "Item in the same right-click menu: opens the community's page in a new browser tab, as the browser's own menu for a link would."
+  },
+  "rail.pin.fullToast": {
+    "text": "Four communities are pinned already. Unpin one first.",
+    "description": "Short message shown when the person tries to pin a fifth community to the desktop sidebar: four is the most there is room for."
+  },
+  "rail.pin.unpin": {
+    "text": "Unpin",
+    "description": "The one item in the right-click menu of a community pinned to the desktop sidebar, and the caption on its tile while it is dragged out of the sidebar: it takes the community off the pinned list."
   },
   "parked.resume": {
     "text": "Resume",
@@ -130,14 +198,6 @@
   "header.changeBuilding": {
     "text": "One of your changes is building",
     "description": "Tooltip on the Homeroom logo button while a spinner shows on it: a change this person asked for is being built."
-  },
-  "header.inApp.toVote_one": {
-    "text": "{{count}} to vote",
-    "description": "Small pill in the header while an app is running, also its tooltip and accessible name: how many proposals this app's community is waiting for this person to vote on. {{count}} is that number."
-  },
-  "header.inApp.toVote_other": {
-    "text": "{{count}} to vote",
-    "description": "Small pill in the header while an app is running, also its tooltip and accessible name: how many proposals this app's community is waiting for this person to vote on. {{count}} is that number."
   },
   "header.inApp.suggest": {
     "text": "Suggest",
@@ -354,30 +414,6 @@
   "illustration.error.tooLarge": {
     "text": "Choose a smaller image.",
     "description": "Error under the picture chooser of an illustration editor when the chosen picture is still over the upload limit after it was shrunk. Smaller means fewer pixels or a smaller file."
-  },
-  "stripApps.label": {
-    "text": "Pinned apps and recent apps",
-    "description": "Accessible name of the desktop side strip: the apps the viewer pinned there first, then the recently used apps."
-  },
-  "stripApps.drop.pin": {
-    "text": "Pin here",
-    "description": "The dashed slot the desktop side strip draws while an app tile is dragged over from My apps: dropping the tile there pins the app to the strip."
-  },
-  "stripApps.drop.already": {
-    "text": "Already pinned",
-    "description": "The same slot when the dragged app is pinned to the strip already: dropping it would change nothing, so the drop is refused."
-  },
-  "stripApps.drop.full": {
-    "text": "Unpin one first",
-    "description": "The same slot when four apps are already pinned, the most there is room for: the drop is refused until one is taken off."
-  },
-  "stripApps.menu.unpin": {
-    "text": "Unpin",
-    "description": "The one item in the right-click menu of an app pinned to the desktop side strip: it takes the app off the pinned list."
-  },
-  "stripApps.ghost.unpin": {
-    "text": "Unpin",
-    "description": "The caption riding on the dragged pinned app's tile while it is held outside the rail: letting go there takes the app off the pinned list."
   },
   "release.sentence.waiting": {
     "text": "Merged; waiting for a release",

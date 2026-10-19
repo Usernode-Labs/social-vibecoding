@@ -214,6 +214,43 @@ test('benchmark grading against the full PostgreSQL schema and its routes', { ti
     assert.ok(item.rubric.criteria.length >= 3);
   });
 
+  await t.test('a large diff comes in parts, each as blind as the item, and what the stored diff left out is named', async (st) => {
+    const file = (name) => `diff --git a/${name} b/${name}\n@@ -0,0 +1,900 @@\n${'+// written by glm-5.3-flash for the pins\n'.repeat(600)}`;
+    const big = file('public/a.js') + file('public/b.js') + file('public/c.js');
+    const { rows: [was] } = await pool.query('SELECT diff, changed_files FROM bench_trials WHERE id = $1', [built.id]);
+    await pool.query('UPDATE bench_trials SET diff = $2, changed_files = $3::jsonb WHERE id = $1', [built.id, big, JSON.stringify({
+      files: ['public/a.js', 'public/b.js', 'public/c.js', 'public/d.js'].map((filename) => ({ filename, status: 'added' })),
+    })]);
+    st.after(() => pool.query('UPDATE bench_trials SET diff = $2, changed_files = $3::jsonb WHERE id = $1', [built.id, was.diff, JSON.stringify(was.changed_files)]));
+
+    const item = (await call('GET', `/api/bot-bench/items/${built.item_token}`, { connector: true })).body.item;
+    assert.equal(item.candidate.diffParts, 3, 'one file a part');
+    assert.deepEqual(item.candidate.diffLeftOut, ['public/d.js']);
+    assert.match(item.candidate.diff, /^diff --git a\/public\/a\.js b\/public\/a\.js\n/);
+    assert.doesNotMatch(item.candidate.diff, /public\/b\.js|\[truncated\]/);
+    assert.match(item.instructions, /read every other part \(get_bench_item with this itemId and diffPart 2, 3 and on\)/);
+    assert.match(item.instructions, /CANDIDATE\.diffLeftOut names changed files the stored diff does not hold/);
+
+    const part = await call('GET', `/api/bot-bench/items/${built.item_token}?diffPart=2`, { connector: true });
+    assert.equal(part.status, 200);
+    assert.deepEqual(Object.keys(part.body.item).sort(), ['candidate', 'diffPart', 'diffParts', 'itemId', 'kind', 'stage']);
+    assert.deepEqual([part.body.item.diffPart, part.body.item.diffParts, part.body.item.stage], [2, 3, 'build']);
+    assert.match(part.body.item.candidate.diff, /^diff --git a\/public\/b\.js b\/public\/b\.js\n/);
+    assert.doesNotMatch(JSON.stringify(part.body.item).toLowerCase(), /glm/, 'scrubbed as the item is');
+    assert.match(part.body.item.candidate.diff, /written by \[model\] for the pins/);
+
+    for (const [query, pattern] of [['diffPart=4', /has 3 parts/], ['diffPart=0', /from 1/], ['diffPart=two', /from 1/]]) {
+      // eslint-disable-next-line no-await-in-loop
+      const r = await call('GET', `/api/bot-bench/items/${built.item_token}?${query}`, { connector: true });
+      assert.equal(r.status, 400, query);
+      assert.match(r.body.error, pattern);
+    }
+    const label = await call('GET', `/api/bot-bench/items/${(await pool.query('SELECT label_token FROM bench_tasks WHERE id = $1', [unlabelled])).rows[0].label_token}?diffPart=2`, { connector: true });
+    assert.equal(label.status, 400);
+    assert.equal((await call('GET', '/api/bot-bench/items/zzzzzzzzzzzzzzzz?diffPart=2', { connector: true })).status, 404);
+    assert.equal((await call('GET', `/api/bot-bench/items/${built.item_token}?diffPart=2`, { who: 'viewer' })).status, 403);
+  });
+
   await t.test('a grade needs its critique; a person overrides the judge, and agreement is measured', async () => {
     const short = await call('POST', `/api/bot-bench/items/${right.item_token}/grade`, { connector: true, body: { verdict: 'pass', critique: 'ok' } });
     assert.equal(short.status, 400);

@@ -4380,14 +4380,15 @@ const Home = {
     return ok;
   },
 
-  // ── Dragging a tile ONTO the strip's pinned part (#5323) ───────────
+  // ── Dragging a tile ONTO the sidebar's Pinned section (#5323) ──────
   //
   // No second recognizer: the widget strip above already showed the way, and
-  // the desktop rail's pinned list is one more sentinel cell. Dropping a My
-  // apps tile on the strip pins it there (features/nav/pinned-apps-store.js
-  // keeps the list, through the nav bridge); dropping it on the canvas still
-  // rearranges My apps, and a refused drop (already pinned, or four already
-  // there) springs the tile back and writes nothing.
+  // the desktop sidebar's pinned list is one more sentinel cell. Dropping a
+  // My apps tile on it pins its community there (features/nav/rail-pinned.tsx;
+  // features/nav/pinned-apps-store.js keeps the list, through the nav
+  // bridge); dropping it on the canvas still rearranges My apps, and a
+  // refused drop (already pinned, or four already there) springs the tile
+  // back and writes nothing.
   //
   // `col`/`row` are what the kit's sameCell compares, so they must be stable
   // and must never collide with a real cell.
@@ -4404,14 +4405,15 @@ const Home = {
     return !!(cell && cell.strip === true);
   },
 
-  // A rect test on the strip's app list, not elementFromPoint: the rail is a
-  // plain box and the kit's ghost is pointer-events:none anyway. Only while
-  // the strip is actually showing — hidden (nothing pinned yet AND no drag
-  // up), folded (`platform-tabs-folded`), or on a phone (display:none) all
-  // give a zero rect and the drag behaves exactly as before.
+  // A rect test on the sidebar's Pinned section, not elementFromPoint: the
+  // rail is a plain box and the kit's ghost is pointer-events:none anyway.
+  // Only while the section is actually showing — hidden (nothing pinned yet
+  // AND no drag up), folded (`platform-tabs-folded`), or on a phone
+  // (display:none) all give a zero rect and the drag behaves exactly as
+  // before.
   _stripPinAt(x, y) {
     if (typeof document === 'undefined') return false;
-    const strip = document.getElementById('platform-strip-apps');
+    const strip = document.getElementById('platform-rail-pinned');
     if (!strip || typeof strip.getBoundingClientRect !== 'function') return false;
     if (strip.classList.contains('hidden')) return false;
     const r = strip.getBoundingClientRect();
@@ -4432,14 +4434,14 @@ const Home = {
     }
   },
 
-  // Where the dropped tile lands: the "Pin here" slot row the strip draws
-  // while the drag is up, else the strip's top-left corner (a slot that has
-  // just been refused still drew its words the instant before).
+  // Where the dropped tile lands: the "Pin here" slot row the section draws
+  // while the drag is up, else its top-left corner (a slot that has just
+  // been refused still drew its words the instant before).
   _stripPinRect() {
     if (typeof document === 'undefined') return null;
-    const strip = document.getElementById('platform-strip-apps');
+    const strip = document.getElementById('platform-rail-pinned');
     if (!strip || typeof strip.getBoundingClientRect !== 'function') return null;
-    const drop = strip.querySelector('[data-strip-drop]');
+    const drop = strip.querySelector('[data-rail-pin-drop]');
     if (drop && typeof drop.getBoundingClientRect === 'function') {
       const r = drop.getBoundingClientRect();
       if (r.width || r.height) return { left: r.left, top: r.top };

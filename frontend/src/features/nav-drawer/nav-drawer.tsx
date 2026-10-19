@@ -18,8 +18,9 @@
  * Safari on an iPhone, where that edge is the browser's own Back
  * (./sideways.ts). Let go past a quarter of the way into a level and it
  * lands there. It
- * replaced the places tray on the phone; a wide window keeps the section
- * column beside the strip, and nothing here draws there.
+ * replaced the places tray on the phone; a wide window nests the places
+ * under the community's row in the sidebar (../nav/rail-communities.tsx),
+ * and nothing here draws there.
  *
  * A GESTURE SURFACE, NOT A PAGE SLIDE. The phone swaps pages in place
  * (tests/phone-no-page-slides.test.js, PlatformUI.transition); this moves
@@ -172,7 +173,7 @@ export function NavDrawer(): ReactNode {
 
   if (!on || !slug || typeof document === 'undefined') return null;
   return createPortal(
-    <DrawerSurface slug={slug} name={name} place={place} owed={pageUp ? placed.owed : 0} />,
+    <DrawerSurface slug={slug} name={name} place={place} owed={pageUp ? placed.owed : 0} selfHosted={selfHosted} />,
     document.body,
   );
 }
@@ -195,7 +196,7 @@ function screenWidth(): number {
   return Math.max(1, document.documentElement.clientWidth || window.innerWidth || 1);
 }
 
-function DrawerSurface({ slug, name, place, owed }: { slug: string; name: string; place: string; owed: number }): ReactNode {
+function DrawerSurface({ slug, name, place, owed, selfHosted = false }: { slug: string; name: string; place: string; owed: number; selfHosted?: boolean }): ReactNode {
   const t = useMessages('communities');
   const { level, searching, moving } = useStoreState(drawerStore);
   const community = useCachedCommunity(slug);
@@ -503,6 +504,8 @@ function DrawerSurface({ slug, name, place, owed }: { slug: string; name: string
               place={place as PlaceKey}
               owed={owed}
               places={community?.places}
+              // Its app first, as in the desktop sidebar; Homeroom's own has none.
+              app={!selfHosted}
               onPlace={choosePlace}
             />
           </div>

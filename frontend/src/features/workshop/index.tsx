@@ -82,7 +82,7 @@
  * class has exactly one owner.
  */
 
-import { useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
@@ -98,8 +98,15 @@ import { listText, t as translate } from '../../lib/i18n/runtime';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import {
+  publishVoteSaved,
+  voteSavedStore,
+} from '../dev-board/card/cards-store';
 import { landKeepingPlace } from '../dev-board/workshop/place-store';
 import { channelUnread, useMessagesSnapshot } from '../messages/store';
+import { openPinMenu } from '../nav/pin-actions';
+import { useSidebarRows } from '../nav/sidebar-rows';
+import { communitiesSearchStore } from './communities-search';
 import { NeedsReel, type NeedsFeedItem } from './needs-reel';
 import { unseenNeeds, useNeedsSeen } from './needs-seen';
 import {
@@ -297,7 +304,9 @@ export function StatusLine({ working, needs }: { working: number; needs: number 
  * AN ANCHOR, which is what `as="a"` on that primitive is for: cmd/ctrl-click,
  * middle-click, "open in new tab" and the context menu are the browser's to
  * give, and the shell takes that seriously enough that #back-btn and the app
- * chip's own menu rows are anchors. `/app/<slug>/workshop` is App._appUrl's
+ * chip's own menu rows are anchors. Beside the desktop sidebar the right-click
+ * menu is the shell's (18 Oct 2026): Pin to sidebar or Unpin, and Open in
+ * new tab, the browser's one the shell keeps (../nav/pin-actions.ts). `/app/<slug>/workshop` is App._appUrl's
  * spelling for that page (`boardView: 'workshop'`), so a copied address
  * restores the same screen cold.
  *
@@ -332,10 +341,16 @@ export function AppRow({ row, onOpen, current = false }: {
   // channels and #general on every signed-in page for the tab badges.
   useMessagesSnapshot();
   const unread = channelUnread(row.slug, !!row.self_hosted);
+  // Pins are drawn in the sidebar, so only beside it is there one to make.
+  const pinnable = useSidebarRows();
+  const href = `/app/${encodeURIComponent(row.slug)}/workshop`;
   return (
     <ListRow
       as="a"
-      href={`/app/${encodeURIComponent(row.slug)}/workshop`}
+      href={href}
+      onContextMenu={pinnable ? (event: MouseEvent<HTMLElement>) => {
+        openPinMenu(event, { slug: row.slug, name: row.name || row.slug, iconUrl: row.icon_url ?? null, iconEmoji: row.icon_emoji ?? null }, href);
+      } : undefined}
       data-workshop-app={row.slug}
       data-workshop-audience={row.audience || 'open'}
       aria-current={current ? 'true' : undefined}
@@ -487,10 +502,59 @@ export function WorkshopScreen() {
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
   useNeedsSeen();
+  // D (18 Oct 2026): ON A DESKTOP THE LIST HAS A SEARCH at its head, which
+  // filters it by name into one list, as the phone's drawer does, and which
+  // the sidebar's Communities heading opens (../nav/sidebar-rows.ts). It was
+  // a column there with Needs you beside it; with v3's nested sidebar there
+  // are no second columns, so it is the one page it is on a phone, Needs
+  // you a row at its top. False on the first render, so the prerender is
+  // the page it always was.
+  const wide = useSidebarRows();
+  const [query, setQuery] = useState('');
+  const [lit, setLit] = useState(false);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const q = wide ? query.trim() : '';
+  // The sidebar's search (./communities-search.ts): each new request is
+  // answered once, after the screen is showing, by focusing the box and
+  // lighting it until focus leaves.
+  const { asked } = useStoreState(communitiesSearchStore) as { asked: number };
+  const answered = useRef(0);
+  useEffect(() => {
+    if (!state.open || !wide || asked <= answered.current) return undefined;
+    answered.current = asked;
+    // The search is at the list's head, so from Needs you it goes back to the list.
+    if (state.tab !== 'status') workshopController.setTab('status');
+    let frames = 0;
+    let raf = 0;
+    const tryFocus = () => {
+      const input = searchRef.current;
+      // The router reveals the screen after `open()`: wait for it to show.
+      if (input && input.offsetParent !== null) {
+        setLit(true);
+        input.focus({ preventScroll: true });
+        input.select();
+        return;
+      }
+      if (frames++ < 30) raf = window.requestAnimationFrame(tryFocus);
+    };
+    tryFocus();
+    return () => window.cancelAnimationFrame(raf);
+    // `state.tab` is read once, not followed: a change of it re-running this
+    // would cancel the focus it is waiting to give.
+  }, [asked, state.open, wide]);
+  // Leaving the screen ends a search.
+  useEffect(() => {
+    if (state.open) return;
+    setQuery('');
+    setLit(false);
+  }, [state.open]);
   // ONE PAGE: the list of your projects, with Needs you as a row at its top
   // that opens the feed of votes owed across all of them (`tab: 'needs'`,
   // also reached by `?ws=needs`), and a way back. See the markup below.
   const rows = state.rows ? orderRows(state.rows.map(unseenRow)) : null;
+  const found = rows && q
+    ? rows.filter((row) => String(row.name || row.slug).toLocaleLowerCase().includes(q.toLocaleLowerCase()))
+    : null;
   const sections = rows ? groupRows(rows) : null;
   const all = rows;
   // `#workshop-empty` keeps its ONE meaning — you have no apps at all — and
@@ -529,7 +593,7 @@ export function WorkshopScreen() {
           ground (see the `:is(...)` list in app.css) that the white card
           floats on. `max-w-2xl mx-auto` is the only thing here that is this
           screen's own — GroupedList owns its own `mx-4` gutter and radius. */}
-      <div className="max-w-2xl mx-auto pb-8">
+      <div className="max-w-2xl mx-auto pb-8" data-workshop-panes="">
         {/* NO TITLE HERE (#2718 review). This screen and Messages both drew
             their own name under a bar that was already saying it — the same
             word twice, an inch apart, on the two screens that had been made
@@ -562,9 +626,43 @@ export function WorkshopScreen() {
             is all client data, so it renders only while it is showing, which
             keeps the cold document as small as it was. */}
         <div data-workshop-pane="status" className={state.tab === 'status' ? '' : 'hidden'}>
+          {/* D: THE SEARCH, at the head of the list from 768px (app.css
+              draws it there only): your communities by name, as one list,
+              in the drawer's words. Lit while the sidebar's search put the
+              caret in it. */}
+          <div className="workshop-search" {...(lit ? { 'data-lit': '' } : {})}>
+            <div className="messages-search">
+              <SearchIcon className="messages-search-glyph w-5 h-5" aria-hidden="true" />
+              <input
+                ref={searchRef}
+                id="workshop-search"
+                type="search"
+                className="messages-search-input"
+                placeholder={t('communities:drawer.search.placeholder')}
+                aria-label={t('communities:drawer.search.label')}
+                autoComplete="off"
+                value={query}
+                onChange={(e) => setQuery(e.currentTarget.value)}
+                onBlur={() => setLit(false)}
+              />
+            </div>
+          </div>
+          {/* The search's answer, in the list's place: app.css puts the
+              sections and Join and Start away while it is up. */}
+          {found ? (
+            found.length ? (
+              <GroupedList tone="plane" data-workshop-results="">
+                {found.map((row) => <AppRow key={row.slug} row={row} />)}
+              </GroupedList>
+            ) : (
+              <p className="workshop-search-none" data-workshop-none="">{t('communities:drawer.search.none', { query: q })}</p>
+            )
+          ) : null}
           {/* NEEDS YOU, when something waits: how many votes are owed across
               your projects, which projects, and the way to them. A zero says
-              nothing, so the row is not drawn over a quiet day. */}
+              nothing, so the row is not drawn over a quiet day. While a
+              search is up (from 768px) app.css puts it away with the
+              sections: the answer is the whole list. */}
           {totals && totals.owed > 0 ? (
             <section data-workshop-needs-door="" aria-labelledby="workshop-needs-heading">
               <SectionHeader id="workshop-needs-heading">{t('communities:needsYou.heading')}</SectionHeader>
@@ -753,6 +851,38 @@ function stripAnswered(items: NeedsFeedItem[]): NeedsFeedItem[] {
   return answeredVotes.size ? items.filter((item) => !voteAnswered(item)) : items;
 }
 
+/**
+ * Whether a counts row's `owed` key names a vote in the answered set (#5463),
+ * matched the way `voteAnswered` matches its feed items — either epoch null
+ * decides by id alone, and a different epoch is a different vote.
+ */
+function countKeyAnswered(key: string): boolean {
+  if (!key.startsWith('proposal:')) return false;
+  const at = key.indexOf('@');
+  const id = Number(key.slice('proposal:'.length, at < 0 ? key.length : at));
+  if (!Number.isFinite(id)) return false;
+  const raw = at < 0 ? '' : key.slice(at + 1);
+  const epoch = raw === '' ? null : Number(raw);
+  return voteAnswered({ kind: 'proposal', id, epoch } as unknown as NeedsFeedItem);
+}
+
+/**
+ * The rows, with every counts fact a saved vote has already answered taken
+ * off (#5463): the `owed` key goes and `needs` drops one, so the "1 to vote"
+ * line and the Needs you row leave the vote out the moment it lands instead
+ * of waiting for the next quiet read. A row without `owed` keeps its number:
+ * a count this cannot check is never lowered on a guess, as in `unseenNeeds`.
+ */
+function stripAnsweredCounts(rows: WorkshopRow[]): WorkshopRow[] {
+  if (!answeredVotes.size) return rows;
+  return rows.map((row) => {
+    if (!row.owed || !row.owed.length) return row;
+    const owed = row.owed.filter((key) => !countKeyAnswered(String(key)));
+    if (owed.length === row.owed.length) return row;
+    return { ...row, owed, needs: Math.max(0, row.needs - (row.owed.length - owed.length)) };
+  });
+}
+
 /** How often the open screen quietly re-reads what waits on you (#5164). */
 export const WORKSHOP_REFRESH_MS = 30_000;
 
@@ -842,11 +972,17 @@ export const workshopController = {
    * A vote cast in the Needs you feed, taken down at once (#4794): the item
    * leaves the store's feed, so leaving the feed and coming back cannot draw
    * it as still owed, and every read until the screen closes skips it too.
+   * #5463: the counts leave it out the same breath — the row's `owed` loses
+   * the key and `needs` drops one, so the "1 to vote" line goes with the card
+   * instead of waiting for the next read to correct it.
    */
   answered(id: number, epoch: number | null) {
     answeredVotes.add(answeredVoteKey(id, epoch));
-    const feed = workshopStore.get().feed;
-    if (feed) workshopStore.set({ feed: stripAnswered(feed) });
+    const state = workshopStore.get();
+    const patch: { feed?: NeedsFeedItem[]; rows?: WorkshopRow[] } = {};
+    if (state.feed) patch.feed = stripAnswered(state.feed);
+    if (state.rows) patch.rows = stripAnsweredCounts(state.rows);
+    if (patch.feed || patch.rows) workshopStore.set(patch);
   },
   /**
    * The quiet reload behind a tab switch: the counts and the Needs you feed
@@ -878,11 +1014,13 @@ export const workshopController = {
         const data = await countsRes.json().catch(() => null);
         if (data && data.counts && typeof data.counts === 'object') {
           // The rows' app halves stand; the counts answer them again, so the
-          // owed lists of the read they came from go with them.
-          patch.rows = joinCounts(
+          // owed lists of the read they came from go with them. A read issued
+          // before a saved vote and landing after it keeps the vote out
+          // (#5463), as the feed's read does through stripAnswered.
+          patch.rows = stripAnsweredCounts(joinCounts(
             state.rows.map(({ owed, ...rest }) => rest),
             data.counts,
-          );
+          ));
         }
       }
       if (feedRes && feedRes.ok) {
@@ -906,13 +1044,27 @@ export const workshopController = {
     let counts: Counts = {};
     let feed: NeedsFeedItem[] | null = null;
     let feedCapped = false;
+    // #5462: RE-ENTRY asks for the current answer, the same spelling
+    // refreshNeeds() sends — the store already holding rows or a feed is what
+    // says this is not the first read. Without it the worker's boot lane
+    // (sw.js networkFirstApi) answers a read whose network leg misses its
+    // deadline with the saved copy from BEFORE the vote, `close()` having
+    // cleared the answered set leaves nothing to strip the card out with, and
+    // the proposal just voted on is drawn as still owed. The FIRST entry keeps
+    // the boot lane (#5164): it is the cold start's fast paint, and with
+    // nothing answered yet there is no copy of it to be stale against. The
+    // apps read is unchanged: the list of your communities is not what the
+    // vote moved.
+    const state = workshopStore.get();
+    const fresh = state.rows != null || state.feed != null;
+    const freshOpts = fresh ? { cache: 'no-cache' as const } : undefined;
     try {
       const [appsRes, countsRes, feedRes] = await Promise.all([
         // Only the communities you are in (#5023): the list below keeps
         // nothing else, so the rest of the catalog was payload for nothing.
         fetch(`/api/apps?scope=joined${demo.replace('?', '&')}`),
-        fetch(`/api/workshop/counts${demo}`).catch(() => null),
-        fetch(`/api/workshop/needs-feed${demo}`).catch(() => null),
+        fetch(`/api/workshop/counts${demo}`, freshOpts).catch(() => null),
+        fetch(`/api/workshop/needs-feed${demo}`, freshOpts).catch(() => null),
       ]);
       if (appsRes.ok) {
         const data = await appsRes.json();
@@ -954,7 +1106,9 @@ export const workshopController = {
       return;
     }
     workshopStore.set({
-      rows: joinCounts(apps, counts),
+      // #5463: a vote saved this visit leaves the counts out of the fresh
+      // rows too, the way the feed's own read is stripped below.
+      rows: stripAnsweredCounts(joinCounts(apps, counts)),
       error: false,
       feed: feed || [],
       feedError: !feed,
@@ -969,4 +1123,29 @@ if (typeof window !== 'undefined') {
   bridge.workshop = workshopController;
 }
 
-export { workshopStore };
+/**
+ * #5463: a vote the server saved ANYWHERE — in a feed, on the change's own
+ * page, from a notification's "Still yes" — reaches the screen through the
+ * dev board's voteSavedStore, shown or not: `open()` paints the kept store
+ * copy, so it has to be right before that paint, not corrected by the read
+ * that lands after it. Each new entry takes the card out of the feed and out
+ * of the counts, exactly as `answered()` does for a vote cast in the feed.
+ * `close()` still clears the answered set, as today: a fresh visit starts
+ * from what the server says. The seq (cards-store.ts) marks what is new, so a
+ * re-vote of the same side is seen too; re-running `answered()` is harmless.
+ */
+let savedVoteSeqSeen = 0;
+voteSavedStore.subscribe(() => {
+  const saved = voteSavedStore.get();
+  let seen = savedVoteSeqSeen;
+  for (const [id, entry] of Object.entries(saved)) {
+    if (!entry || entry.seq <= seen) continue;
+    seen = entry.seq;
+    workshopController.answered(Number(id), entry.epoch);
+  }
+  savedVoteSeqSeen = seen;
+});
+
+// `publishVoteSaved` and `voteSavedStore` are re-exported so the saved-vote
+// tests can drive the real publish path against this screen's own store.
+export { workshopStore, publishVoteSaved, voteSavedStore };

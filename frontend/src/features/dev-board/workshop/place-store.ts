@@ -5,9 +5,10 @@
  * up — Hub, Needs you, Workshop, #general or a topic's channel — as its own
  * state, because a press there also pushes a history entry, scrolls the page
  * and remembers where it was. Several things outside that component draw the
- * place or move it: the places list in the section column beside the strip
- * on desktop (../../nav/section-column.tsx), the card a merged topic leaves
- * in a channel's history (./merged-topic-card.tsx), and a topic's head line.
+ * place or move it: the places list nested under the community's row in
+ * the desktop sidebar (../../nav/rail-communities.tsx), the card a merged
+ * topic leaves in a channel's history (./merged-topic-card.tsx), and a
+ * topic's head line.
  *
  * So the page publishes the place it shows here, and registers the one way
  * to move it (`openTab`), and they read and call those. When the page is not
@@ -28,12 +29,6 @@ export interface PlaceState {
   /** The votes waiting on the viewer there, less the ones seen (the page's own count). */
   owed: number;
   /**
-   * An item's page is open in the panel beside the list (./side-panel.tsx).
-   * Under 1296px the places column steps aside for it
-   * (../../nav/section-column.tsx).
-   */
-  side: boolean;
-  /**
    * #4703: unread across the project's channels less the one on screen, and
    * whether the places tray is open — what the header's places button draws
    * on a phone, where the merged header carries the button (place-bar.tsx
@@ -44,7 +39,7 @@ export interface PlaceState {
 }
 
 export const placeStore = createStore<PlaceState>({
-  slug: null, place: 'status', owed: 0, side: false, unread: 0, tray: false,
+  slug: null, place: 'status', owed: 0, unread: 0, tray: false,
 });
 
 let opener: { slug: string; open: (key: PlaceKey) => void } | null = null;
@@ -87,24 +82,16 @@ export function trayButton(): HTMLElement | null {
 export function publishPlace(
   slug: string | null, place: PlaceKey, owed: number, unread = 0, tray = false,
 ): void {
-  const was = placeStore.get();
   placeStore.set({
     slug, place, owed: Math.max(0, Number(owed) || 0),
     unread: Math.max(0, Number(unread) || 0), tray,
-    side: was.slug === slug && was.side,
   });
-}
-
-/** The page says whether an item's page is open beside its list. */
-export function publishSide(slug: string, side: boolean): void {
-  const was = placeStore.get();
-  if (was.slug === slug && was.side !== side) placeStore.set({ ...was, side });
 }
 
 /** The page is gone (unmounted, or another project is on it). */
 export function clearPlace(slug: string): void {
   if (placeStore.get().slug === slug) {
-    placeStore.set({ slug: null, place: 'status', owed: 0, side: false, unread: 0, tray: false });
+    placeStore.set({ slug: null, place: 'status', owed: 0, unread: 0, tray: false });
   }
 }
 

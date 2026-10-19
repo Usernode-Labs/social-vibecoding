@@ -45,7 +45,7 @@ test('a run ends with one checks-timing line: its groups and their cold loads', 
   const timing = parseDiagnostics(text).filter((d) => d.kind === 'checks-timing');
   assert.equal(timing.length, 1);
   const d = timing[0].data;
-  assert.deepEqual(Object.keys(d).sort(), ['fallbacks', 'groups', 'lanes', 'loads', 'retries', 'shard', 'wallMs']);
+  assert.deepEqual(Object.keys(d).sort(), ['fallbacks', 'groups', 'lanes', 'loads', 'networkSettle', 'retries', 'shard', 'wallMs']);
   assert.equal(d.groups.n, 7);
   assert.equal(d.loads.n, 7, 'every cold load timed');
   assert.equal(d.retries.n, 0);

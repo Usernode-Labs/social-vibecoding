@@ -542,15 +542,16 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   };
   assert.ok(!cell('unclaimed').includes('dev-ws-dash-dot'), 'the unclaimed figure carries no mark');
 
-  // #4745: WITH SOMETHING WAITING, THE VOTES FIGURE IS A BUTTON. One waiting
-  // change is on the seeded board, so the tap has somewhere to go: the cell
-  // renders as a button carrying `data-ws-dash-open`, with the same class,
-  // the same figure and the same "on you" line the span had. The other three
-  // stay spans — only the votes figure routes a tap.
+  // #4745, #5369, revised in the change's discussion: WITH SOMETHING TO
+  // SHOW, A FIGURE OPENS IT — votes as the button it always was, the other
+  // three as the spans they always were, carrying `data-ws-dash-open` and
+  // made clickable as unstyled wrappers (`role="button"`, focusable, Enter
+  // and Space), NOT as buttons or link text. Same classes, same figures and
+  // sub-lines as the resting spans.
   assert.match(html, /<button type="button" class="dev-ws-dash-cell dev-ws-dash-cell-warn" data-ws-dash-cell="votes" data-ws-dash-open="">/);
-  assert.match(html, /<span class="dev-ws-dash-cell" data-ws-dash-cell="open"/);
-  assert.match(html, /<span class="dev-ws-dash-cell" data-ws-dash-cell="unclaimed"/);
-  assert.match(html, /<span class="dev-ws-dash-cell dev-ws-dash-cell-good" data-ws-dash-cell="shipped"/);
+  assert.match(html, /<span class="dev-ws-dash-cell" data-ws-dash-cell="open" data-ws-dash-open="" role="button" tabindex="0"/);
+  assert.match(html, /<span class="dev-ws-dash-cell" data-ws-dash-cell="unclaimed" data-ws-dash-open="" role="button" tabindex="0"/);
+  assert.match(html, /<span class="dev-ws-dash-cell dev-ws-dash-cell-good" data-ws-dash-cell="shipped" data-ws-dash-open="" role="button" tabindex="0"/);
 
   // UNDER WAITING ON VOTES, HOW MANY WAIT ON YOU (After-Workshop-B): the
   // place bar's own count, in the accent, because it asks for the viewer.
@@ -562,10 +563,21 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   assert.match(WORKSHOP, /refs\.length === 1\) callAppView\('openTopic', refs\[0\]\.kind, refs\[0\]\.id\)/,
     'one waiting opens that item\'s page');
   assert.match(WORKSHOP, /else openTab\('all'\)/, 'several waiting open All items');
-  assert.match(CSS, /button\.dev-ws-dash-cell:focus-visible \{ outline: 2px solid var\(--accent\); outline-offset: 2px; \}/,
+  // #5369: the other three figures set the stage filter, then open All items
+  // — where the filter chip names the figure and the lists hold only what it
+  // counted.
+  assert.match(WORKSHOP, /onStage=\{\(s\) => \{ callAppView\('openWorkshopStage', s\); openTab\('all'\); \}\}/,
+    'the open, unclaimed and shipped figures open All items on their stage');
+  assert.match(CSS, /span\.dev-ws-dash-cell\[data-ws-dash-open\] \{ cursor: pointer; \}/,
+    'the wrapper\'s whole affordance is the pointer, nothing restyles');
+  assert.match(CSS, /span\.dev-ws-dash-cell\[data-ws-dash-open\]:focus-visible \{ outline: 2px solid var\(--accent\); outline-offset: 2px; \}/,
     'a keyboard focus ring, the chips\' own');
+  assert.ok(!/span\.dev-ws-dash-cell\[data-ws-dash-open\]:hover/.test(CSS),
+    'and no hover repaint: the figures keep the look they always had');
+  assert.match(CSS, /button\.dev-ws-dash-cell:focus-visible \{ outline: 2px solid var\(--accent\); outline-offset: 2px; \}/,
+    'votes keeps its own keyboard focus ring');
   assert.match(CSS, /button\.dev-ws-dash-cell:hover \.dev-ws-dash-label \{ color: var\(--accent\); \}/,
-    'and the hover affordance beside it');
+    'and its hover affordance beside it');
   // Open and unclaimed have no line: nothing stores what they were last week.
   assert.ok(!cell('open').includes('dev-ws-dash-sub') && !cell('unclaimed').includes('dev-ws-dash-sub'),
     'no trend nobody can stand behind');
@@ -576,6 +588,11 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   // achievement.
   const quiet = makeAppView();
   seed(quiet);
+  // #5369: everything a figure counts is zeroed, not just votes and shipped —
+  // the open and unclaimed figures are clickable now too, so the resting
+  // board has to be empty of their counts as well for the "nothing is
+  // tappable" reading to be the resting one.
+  quiet._ghIssues = [];
   quiet._proposals = [];
   quiet._merged = [];
   quiet._mergedTotal = 0;
@@ -588,6 +605,7 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   // #4745: nothing waiting, nothing to open — the figure is the span it
   // always was, with no tap affordance anywhere on the strip.
   assert.ok(!calm.includes('data-ws-dash-open'), 'a resting figure does nothing when tapped');
+  assert.ok(!calm.includes('role="button"'), 'and no resting figure is clickable');
   assert.ok(!/<button type="button" class="dev-ws-dash-cell/.test(calm), 'and no figure is a button');
 
   // Nothing under the figures says where the open work is: the chips that
@@ -597,6 +615,55 @@ test('the numbers are tiles, two of them with a line under, and where the open w
   assert.ok(!html.includes('dev-ws-open-line') && !html.includes('open items across'), 'no sentence repeats the figures');
   assert.ok(!html.includes('dev-ws-lead-title'), 'nor a heading over one');
   assert.ok(!read('frontend/locales/en/project.json').includes('"workshop.overview.mostOpenIn"'), 'and its words are gone');
+});
+
+test('#5369: a stage filter narrows the theme lists, and the dashboard figures stay whole', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12', 'issue:13'] }]);
+  const whole = AppView._workshopView();
+  assert.equal(whole.dashboard.open, 3, 'two requests and the waiting proposal');
+  assert.equal(whole.dashboard.unclaimed, 2, 'both requests untouched');
+  assert.equal(whole.dashboard.shippedWeek, 1, 'the merge, live this week');
+  // (A theme with nothing matched in it is not drawn at all, so the lookup
+  // can come back empty — that reads as zero rows.)
+  const themeRows = (v) => {
+    const t = v.themes.find((x) => x.id === 't');
+    return t ? t.lanes.reduce((n, l) => n + l.rows.length, 0) : 0;
+  };
+  assert.equal(themeRows(whole), 2, 'the theme holds both requests');
+
+  // stage 'open': the shipped merge leaves the lists; the figures do not
+  // move — they count the whole board, whatever All items is narrowed to
+  // (#2915's rule, one filter further).
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), stage: 'open' };
+  let v = AppView._workshopView();
+  assert.equal(v.meta.filtered, true, 'the tab strip is told a filter is waiting');
+  assert.equal(v.dashboard.open, 3);
+  assert.equal(v.dashboard.unclaimed, 2);
+  assert.equal(v.dashboard.shippedWeek, 1);
+  assert.equal(themeRows(v), 2, 'requests and the proposal are open; the theme holds the requests');
+
+  // stage 'unclaimed': still the two untouched requests — a claimed or
+  // assigned one would drop out here, and on this board none is taken.
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), stage: 'unclaimed' };
+  v = AppView._workshopView();
+  assert.equal(v.dashboard.open, 3, 'the figures stay whole under any stage');
+  assert.equal(themeRows(v), 2);
+
+  // stage 'shipped': the theme (open work) empties; the week figure is the
+  // same one the tile showed.
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), stage: 'shipped' };
+  v = AppView._workshopView();
+  assert.equal(v.dashboard.shippedWeek, 1);
+  assert.equal(themeRows(v), 0, 'nothing in the theme went live');
+
+  // An unknown stored value reads as no filter at all — an older tab's
+  // storage must not half-narrow the board.
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), stage: 'bogus' };
+  v = AppView._workshopView();
+  assert.equal(v.meta.filtered, false, 'an unknown stage is not a filter');
+  assert.equal(themeRows(v), 2, 'and it narrows nothing');
 });
 
 test('live this week says what last week came to, the whole rate on hover, and nothing off a paged history', () => {
@@ -1390,6 +1457,26 @@ test('the vote deck is its own tab; the unclaimed suggestion stays with the stat
   // now, which `?ws=needs` reaches.
   const needs = workshopHtml(AppView, 'needs');
   assert.match(needs, /data-ws-needs=""[\s\S]*?data-ws-rail-btn="vote"/);
+});
+
+// #5365: a change whose outcome the viewer's vote does not decide (its
+// /promoted row carries my_vote_advisory) keeps the flag on the queue row's
+// Yes — the item labels it and its vote sheet's picker shows the line — and
+// the deck puts the marked rows last, so the rows whose vote decides come
+// first and a viewer can stop when the marked cards begin.
+test('the queue keeps the advisory flag on its Yes and puts the marked rows last', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._proposals = [...AppView._proposals, {
+    id: 35, pr_number: 42, pr_title: 'Advisory change', status: 'promoted', username: 'dan',
+    created_at: at(1), promoted_at: at(1), last_message_at: at(1), linked_issues: [], my_vote: null,
+    votes_for: 0, votes_against: 0, yes_count: 0, no_count: 0, my_vote_advisory: true,
+  }];
+  const q = plain(AppView._workshopView().queue);
+  assert.deepEqual(q.map((r) => r.card.key), ['proposal:34', 'proposal:35'],
+    'the advisory change is last, after the change the viewer decides');
+  assert.equal(q[1].yes.advisory, true, 'the queue keeps the flag the card’s Yes spec carries');
+  assert.ok(!q[0].yes.advisory, 'the deciding row’s Yes is bare');
 });
 
 test('a quiet theme is not told it has never been built in', () => {
@@ -2941,11 +3028,11 @@ test('#4457: a row opens its page beside the list on a wide window, and that pag
   assert.match(APP_VIEW_SRC, /if \(subTab !== 'topic'\) \{ AppView\._devTopic = null; AppView\._devTopicInPanel = false; \}/,
     'a move to another sub-view lets it go');
   // A plain click on a wide window; anything else is the row's own link.
-  // #4417: still 1180px, so a 1280px window keeps it. The places column
-  // steps aside for it under 1296px (section-column.test.js), told by the
-  // page through the place store.
+  // #4417: still 1180px, so a 1280px window keeps it. The places are nested
+  // in the sidebar, so nothing beside the page steps aside for it now.
   assert.match(WORKSHOP, /const SIDE_QUERY = '\(min-width: 1180px\)';/);
-  assert.match(WORKSHOP, /const sideOpen = !!sideItem && \(tab === 'workshop' \|\| tab === 'all' \|\| tab === 'bot'\);\s*useEffect\(\(\) => \{\s*if \(v\.slug\) publishSide\(v\.slug, sideOpen\);/);
+  assert.match(WORKSHOP, /const sideOpen = !!sideItem && \(tab === 'workshop' \|\| tab === 'all' \|\| tab === 'bot'\);/);
+  assert.doesNotMatch(WORKSHOP, /publishSide/);
   assert.match(WORKSHOP, /if \(!sideWide\) return;\s*event\.preventDefault\(\);/);
   assert.match(WORKSHOP, /\{sideOpen && sideItem \? <TopicSidePanel item=\{sideItem\} onClose=\{closeSide\} \/> : null\}/,
     'from the Workshop tab\u2019s lists, from All items (#4486) and from the bot\u2019s slots page (16 Oct 2026)');
@@ -6129,7 +6216,10 @@ test('#2176: "shipped this week" is the calendar week from Monday 00:00 UTC, not
   assert.equal(d.shippedWeek, 1, 'only what landed since Monday');
   assert.equal(d.shippedPrevWeek, 2, 'the whole seven days before that Monday');
   const html = workshopHtml(AppView, 'workshop');
-  assert.match(html, /data-ws-dash-cell="shipped" title="This calendar week, counted from Monday 00:00 UTC\."/,
+  // #5369: with a count on it the shipped figure is clickable — the title
+  // sits behind the tap affordance attributes the wrapper carries (the
+  // button on votes, the unstyled span wrapper here).
+  assert.match(html, /data-ws-dash-cell="shipped"( data-ws-dash-open="" role="button" tabindex="0")? title="This calendar week, counted from Monday 00:00 UTC\."/,
     'the tile says which week it means');
 });
 

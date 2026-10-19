@@ -49,7 +49,13 @@ const MAX_CRITIQUE_CHARS = 8000;
 // How much of the request and a candidate's output an item carries.
 const MAX_REQUEST_CHARS = 24000;
 const MAX_CANDIDATE_CHARS = 16000;
-const MAX_DIFF_CHARS = 40000;
+// How much of a diff an item carries, and each later part of it
+// (get_bench_item's diffPart): a judge reads the whole diff a part at a time,
+// where it used to read the first 40,000 characters and no more. In run 208
+// about 10 of 33 judged builds were graded from a diff cut inside a file.
+// Below 40,000 so a part, JSON-escaped beside the spec, stays inside the
+// connector's 60,000-character section (mcp-tools.js MAX_BENCH_SECTION_CHARS).
+const DIFF_PART_CHARS = 36000;
 // The hunks of the pre-existing tests and checks a diff touched (testEditsOf),
 // apart from the diff so its clip cannot hide them.
 const MAX_TEST_EDIT_CHARS = 16000;
@@ -73,6 +79,11 @@ const INSTRUCTIONS = [
   'Then decide PASS or FAIL against the rubric. PASS means a careful senior engineer on the team would accept this output as it is; anything less is FAIL.',
   'Grade the output, not its author: the model that wrote it is hidden on purpose, and you should not guess it.',
 ].join(' ');
+
+// Added to an item's instructions when its diff is in parts, or the stored
+// diff could not hold every changed file.
+const DIFF_PARTS_INSTRUCTIONS = 'CANDIDATE.diff is the first of CANDIDATE.diffParts parts of the diff: read every other part (get_bench_item with this itemId and diffPart 2, 3 and on) before you write the critique, and judge the whole diff.';
+const DIFF_LEFT_OUT_INSTRUCTIONS = 'CANDIDATE.diffLeftOut names changed files the stored diff does not hold: say in the critique that you could not see them, and judge what you could.';
 
 // #3737: a taste item (services/bench/taste.js) is judged from screenshots
 // of an app's first version against its brief. The judge is never told
@@ -183,6 +194,56 @@ function clipText(value, max) {
   return s.length > max ? `${s.slice(0, max)}\n[truncated]` : s;
 }
 
+/**
+ * A stored diff in parts of about `size` characters: each ends where a file
+ * ends when it can, and a file too long for one part is cut at its lines,
+ * each later piece headed by the file's own `diff --git` line and
+ * "(continued)". Never cut inside a line but one longer than a part, so the
+ * blinding scrub sees each line whole. Pure.
+ */
+function diffParts(diff, size = DIFF_PART_CHARS) {
+  const parts = [];
+  let current = '';
+  for (const block of String(diff || '').split(/^(?=diff --git a\/)/m)) {
+    if (!block) continue;
+    if (current.length + block.length <= size) { current += block; continue; }
+    if (current) parts.push(current);
+    current = block;
+    if (block.length <= size) continue;
+    const header = block.slice(0, block.indexOf('\n') + 1 || block.length);
+    let rest = block;
+    let first = true;
+    while (rest.length > size) {
+      let cut = rest.lastIndexOf('\n', size - 1) + 1;
+      if (cut <= 0) cut = size;
+      parts.push(`${first ? '' : `${header.trimEnd()} (continued)\n`}${rest.slice(0, cut)}`);
+      rest = rest.slice(cut);
+      first = false;
+    }
+    current = rest ? `${header.trimEnd()} (continued)\n${rest}` : '';
+  }
+  if (current) parts.push(current);
+  return parts;
+}
+
+/** The changed files a stored diff holds no part of (the runner's budget left them out). Pure. */
+function filesLeftOut(diff, changedFiles) {
+  const held = new Set();
+  for (const m of String(diff || '').matchAll(/^diff --git a\/(.+) b\/\1$/gm)) held.add(m[1]);
+  return (changedFiles?.files || []).map((f) => f.filename).filter((name) => name && !held.has(name));
+}
+
+/** What a candidate carries of its diff: the first part, how many parts, and what the stored diff left out. Pure. */
+function diffView(trial) {
+  const parts = diffParts(trial.diff);
+  const leftOut = filesLeftOut(trial.diff, trial.changed_files);
+  return {
+    diff: parts[0] || null,
+    ...(parts.length > 1 ? { diffParts: parts.length } : {}),
+    ...(leftOut.length ? { diffLeftOut: leftOut } : {}),
+  };
+}
+
 /** The model ids a scrub must cover: the catalog's and every run's. */
 async function modelVocabulary(pool) {
   const { rows } = await pool.query('SELECT DISTINCT UNNEST(models) AS id FROM bench_runs');
@@ -228,14 +289,14 @@ function candidateView(stage, trial) {
     return {
       spec: clipText(p.spec || '', 8000) || null,
       blocked: p.blocked || null,
-      diff: clipText(trial.diff || '', MAX_DIFF_CHARS) || null,
+      ...diffView(trial),
       filesChanged: (trial.changed_files?.files || []).map((f) => `${f.status} ${f.filename}`),
     };
   }
   if (stage === 'followup' || stage === 'checks_fix') {
     return {
       action: p.action || null, reply: p.reply || null, answers: p.answers || null, summary: p.summary || null,
-      diff: clipText(trial.diff || '', MAX_DIFF_CHARS) || null,
+      ...diffView(trial),
     };
   }
   if (stage === 'dm') {
@@ -380,15 +441,17 @@ async function gradeItem(pool, trial, vocab, { images = false } = {}) {
   if (require('./taste').isTasteStage(trial.stage)) return tasteItem(pool, trial, vocab, { images });
   const snapshot = await snapshots.readSnapshot(pool, trial.snapshot_id);
   const det = trial.deterministic || {};
+  const candidate = candidateView(trial.stage, trial);
   return {
     itemId: trial.item_token,
     kind: 'grade',
     stage: trial.stage,
-    instructions: INSTRUCTIONS,
+    instructions: [INSTRUCTIONS, ...(candidate.diffParts ? [DIFF_PARTS_INSTRUCTIONS] : []),
+      ...(candidate.diffLeftOut ? [DIFF_LEFT_OUT_INSTRUCTIONS] : [])].join(' '),
     rubric: RUBRICS[trial.stage] || null,
     task: taskView(trial.stage, snapshot),
     reference: referenceView(trial.reference),
-    candidate: blinding.blindValue(candidateView(trial.stage, trial), vocab),
+    candidate: blinding.blindValue(candidate, vocab),
     signals: {
       producedCommits: trial.build_commits == null ? null : Number(trial.build_commits) > 0,
       diffScope: det.scope ? { ok: det.scope.ok, violations: det.scope.violations || [] } : null,
@@ -465,15 +528,38 @@ async function queue(pool, { kind = 'grade', limit = 20, runId = null } = {}) {
 /**
  * One item by its opaque id, whichever kind it is. `images` puts a taste
  * item's screenshots in it as base64 PNGs (the connector's grading tool).
+ * `diffPart` reads one part of a grade item's diff instead (diffParts),
+ * scrubbed as the item is.
  */
-async function getItem(pool, itemId, { images = false } = {}) {
+async function getItem(pool, itemId, { images = false, diffPart = null } = {}) {
   const id = String(itemId || '');
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) return httpError(400, 'Invalid item id');
+  if (diffPart != null) return diffPartItem(pool, id, diffPart);
   const trial = await trialByToken(pool, id);
   if (trial) return { ok: true, item: await gradeItem(pool, trial, await modelVocabulary(pool), { images }) };
   const task = await suites.taskRow(pool, { labelToken: id });
   if (task) return { ok: true, item: await labelItem(pool, task) };
   return httpError(404, 'No such item');
+}
+
+async function diffPartItem(pool, id, diffPart) {
+  const n = Number(diffPart);
+  if (!Number.isInteger(n) || n < 1) return httpError(400, 'diffPart is the number of a part of the diff, from 1');
+  const trial = await trialByToken(pool, id);
+  if (!trial) {
+    if (await suites.taskRow(pool, { labelToken: id })) return httpError(400, 'A label item has no diff');
+    return httpError(404, 'No such item');
+  }
+  const parts = diffParts(trial.diff);
+  if (!parts.length) return httpError(400, 'This item has no diff');
+  if (n > parts.length) return httpError(400, `This item's diff has ${parts.length} part${parts.length === 1 ? '' : 's'}`);
+  return {
+    ok: true,
+    item: {
+      itemId: trial.item_token, kind: 'grade', stage: gradeStageOf(trial.stage), diffPart: n, diffParts: parts.length,
+      candidate: blinding.blindValue({ diff: parts[n - 1] }, await modelVocabulary(pool)),
+    },
+  };
 }
 
 function cleanCriteria(stage, criteria) {
@@ -690,6 +776,9 @@ module.exports = {
   agreement,
   spotCheck,
   candidateView,
+  DIFF_PART_CHARS,
+  diffParts,
+  filesLeftOut,
   testEditsOf,
   taskView,
   modelVocabulary,

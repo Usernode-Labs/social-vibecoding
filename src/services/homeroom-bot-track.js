@@ -893,7 +893,7 @@ function demoSlots(app, now = Date.now(), mocks = []) {
       }),
       slot('proposal', 900006, 'Staging demo: a name for the bot', 'staging-demo-ana', { stage: 'vote', since: ago(300) }),
       slot('proposal', 900002, 'Staging demo: smaller app names', 'staging-demo-cy', { stage: 'checks', since: ago(20) }),
-      slot('proposal', 900015, 'Staging demo: keep kudos history', 'staging-demo-ben', { stage: 'question', since: ago(10) }),
+      slot('proposal', 900015, 'Staging demo: keep the vote history', 'staging-demo-ben', { stage: 'question', since: ago(10) }),
     ],
     waiting: [
       wait(900009, 'Staging demo: rethink challenges', 'staging-demo-cy', 1, 200),

@@ -154,6 +154,27 @@ export const AGENTS_RECENT_DAYS = 7;
 export const AGENTS_SHOWN = 5;
 const RECENT_MS = AGENTS_RECENT_DAYS * 24 * 60 * 60 * 1000;
 
+// ── The search above the list is remembered (#5459, 19 Oct 2026) ──────
+//
+// A daily voter narrows the list to the changes waiting on them, leaves to
+// vote, and comes back: until now the search was gone and every row was
+// back. The query is remembered per device in localStorage
+// (`usernode:messages-query`), the way the folded sections are, and read
+// after mount through this helper. It is presentation, so it stays out of
+// the route and the store — nothing else reads it, and the field itself is
+// where the reason rows are missing shows. The helper rejects anything
+// unusable, so a value storage holds that a person or an older version
+// cannot have typed narrows nothing: not a string, empty, or past the cap,
+// which keeps a pasted paragraph out of a device's storage rather than
+// saving a cut-down copy. Clearing the search is remembered as cleared, by
+// removing the key instead of storing ''.
+export const INBOX_QUERY_MAX = 100;
+
+/** Pure: the search to restore from a saved value, or '' when it is unusable. */
+export function savedInboxQuery(raw: string | null | undefined): string {
+  return typeof raw === 'string' && raw.length >= 1 && raw.length <= INBOX_QUERY_MAX ? raw : '';
+}
+
 /**
  * The shown entries as consecutive runs of one section, in the order given.
  * Exported and pure so the grouping is tested without a render.

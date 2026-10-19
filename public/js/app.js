@@ -2630,6 +2630,18 @@ const App = {
       const workshop = window.UsernodeReact?.workshop;
       if (workshop?.isOpen?.()) { workshop.refreshNeeds?.(); return; }
 
+      // Your work (#5456): Your changes, Your requests and Your votes read
+      // once per open, on the ordinary deadline. When the worker corrected
+      // that read after serving its saved copy (a vote cast a moment before,
+      // still missing), re-run the controller's own reload, the same loader
+      // Try again uses. `return`: the screen holds no app view to fall
+      // through to.
+      const profileProposals = window.UsernodeReact?.profileProposals;
+      if (visible('profile-proposals-screen') && profileProposals?.isOpen?.()) {
+        profileProposals.reload?.();
+        return;
+      }
+
       // The app record itself is in the service worker's zero-deadline boot
       // lane. If its cached `creating` snapshot is corrected after first
       // paint, revalidate the open App tab just as the branches below refresh
@@ -4947,13 +4959,13 @@ const App = {
         }
       }
 
-      // THE SIDE PANEL'S DOCUMENT shows only the panel's own pages — an app's
-      // Workshop, a proposal, an issue, a change, a discussion, a
-      // conversation, an agent chat, and the inbox a thread climbs back to.
-      // Anything else a link inside it names belongs to the TOP window: an
-      // app's App tab goes to the running app beside the panel, and a tab, a
-      // profile or Settings is somewhere the top window goes, leaving the app
-      // exactly as the same link would from the app's own menu. The runtime
+      // THE SIDE PANEL'S DOCUMENT shows only the panel's own pages — a
+      // proposal, an issue, a change, a conversation, an agent chat, and the
+      // inbox a thread climbs back to. Anything else a link inside it names
+      // belongs to the TOP window: an app's App tab goes to the running app
+      // beside the panel, and a tab, a profile, Settings or a community's
+      // page is somewhere the top window goes, leaving the app exactly as the
+      // same link would from the app's own menu. The runtime
       // (frontend/src/features/side-panel/embedded.ts) puts this document's
       // address back on the page it is still showing.
       if (App.embeddedPanel
@@ -5459,6 +5471,7 @@ const App = {
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
+        if (App._inProfileProposals) App._exitProfileProposals();
             App.setChromeless(chromeless);
         // Stash the validated inner path where renderAppTab / the token
         // refresh read it. Set on EVERY pass (null when absent) so
@@ -7118,7 +7131,12 @@ const App = {
 
   navigateToProfileProposals(kind = 'changes') {
     const view = App.PROFILE_WORK_TITLES[kind] ? kind : 'changes';
-    if (App._inProfileProposals && window.UsernodeReact?.profileProposals?.isOpen?.(view)) {
+    // The guard stops only the duplicate dispatch (popstate + hashchange in
+    // one tick, #979): the same view re-entered while it is on screen with
+    // no app open. Opening an app from a row leaves both flags set, so a
+    // return trip must take the full entry below and read the list again
+    // (#5454) — navigateToWorkshop documents the same trap.
+    if (App._inProfileProposals && !App.currentApp && window.UsernodeReact?.profileProposals?.isOpen?.(view)) {
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
@@ -9095,20 +9113,26 @@ const App = {
   // THE SIDE PANEL, asked by openAppTab before it navigates
   // (frontend/src/features/side-panel/). Undefined lets openAppTab go on
   // exactly as before; anything else is what openAppTab returns.
-  //   - In the TOP document, while an app runs on its App tab, a Workshop
-  //     page — a proposal, an issue, a change, the discussion — that a
+  //   - In the TOP document, while an app runs on its App tab, a piece of
+  //     an app's work — a proposal, an issue, a change — that a
   //     notification, a desktop alert or any other caller opens goes to a
   //     panel BESIDE the app instead of replacing it (true). `take` says no
   //     whenever that is not the moment: a phone-width window, no app on
-  //     screen, chromeless.
-  //   - In the panel's OWN document a Workshop page opens right here, and an
-  //     App tab is the running app's, beside the panel (false).
+  //     screen, chromeless — and to a community's page at any moment
+  //     (side-panel/routes.ts): it replaces the app, full screen.
+  //   - In the panel's OWN document a piece of work opens right here, a
+  //     community's page goes to the top window (full screen, leaving the
+  //     app), and an App tab is the running app's, beside the panel (false).
   _openAppTabInPanel(slug, tab, opts) {
     const ref = opts && opts.sessionId != null ? opts.sessionId
       : (opts && opts.ref != null ? opts.ref : null);
     const subTab = (opts && opts.subTab) || null;
     if (App.embeddedPanel) {
-      if (App._normalizeTab(tab, ref, subTab).tab !== 'app') return undefined;
+      if (App._normalizeTab(tab, ref, subTab).tab !== 'app') {
+        const route = App._panelRouteFor(slug, tab, ref, subTab);
+        if (route && window.UsernodeReact?.sidePanelEmbed?.forward?.(route)) return false;
+        return undefined;
+      }
       App._forwardAppTab(slug, 'app');
       return false;
     }

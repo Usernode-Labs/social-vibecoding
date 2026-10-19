@@ -216,6 +216,8 @@ export const HomeIcon = strokedPath(
 );
 
 export const SearchIcon = stroked('SearchIcon', 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z');
+/** Discover's tab (v3, 18 Oct 2026): a compass, the place you go to find something new, where the magnifier said "search". */
+export const CompassIcon = stroked('CompassIcon', ['M12 3.5a8.5 8.5 0 110 17 8.5 8.5 0 010-17z', 'M15.5 8.5l-2 5-5 2 2-5z']);
 
 // ── Status and account ───────────────────────────────────────────────────
 
@@ -380,6 +382,12 @@ export const ChatIcon = stroked(
   'ChatIcon',
   'M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',
 );
+
+/** All messages, under Messages in the desktop's sidebar (v3): two bubbles, every conversation at once. */
+export const ChatsIcon = stroked('ChatsIcon', [
+  'M4 5.5h10.5a1.5 1.5 0 011.5 1.5v5.5a1.5 1.5 0 01-1.5 1.5H9l-3.5 3v-3H4a1.5 1.5 0 01-1.5-1.5V7A1.5 1.5 0 014 5.5z',
+  'M19 9h.5a1.5 1.5 0 011.5 1.5v5a1.5 1.5 0 01-1.5 1.5H19v3l-3.5-3h-3',
+]);
 
 /** The Messages drawer glyph, whose tail sits outside the bubble. */
 export const ChatBubbleTailIcon = stroked(

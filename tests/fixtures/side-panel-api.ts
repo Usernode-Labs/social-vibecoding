@@ -16,7 +16,6 @@ export {
   drop,
   back,
   expand,
-  openFullWidth,
   pend,
   clearPending,
   appPresence,

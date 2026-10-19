@@ -70,7 +70,11 @@ const BENCH_USERNAME = 'homeroom_bench';
 // through a run (14 Oct 2026); src/db/schema.sql raised the existing account.
 const DEFAULT_BENCH_WEEKLY_CENTS = 50000;
 const RAW_OUTPUT_CHARS = 20000;
-const DIFF_CHARS = 60000;
+// A trial's diff as stored, which a judge reads a part at a time (grading.js
+// diffParts): ten parts. At 60,000 compareFiles dropped every file after the
+// one that would not fit, and run 208's largest builds lost the very tests
+// they had edited (testEdits found no hunk for them).
+const DIFF_CHARS = 400000;
 const TELEMETRY = 'homeroom_bench';
 // Said on every build trial with hidden checks, until they can run (see
 // hiddenChecksUnavailable).

@@ -14,6 +14,7 @@ const events = require('../services/events');
 const { weekStartUtc, countWeeklyBountiesUsed, WEEKLY_BOUNTY_LIMIT } = require('./kudos');
 const { parseScreenshotIds, buildScreenshotsEmbed } = require('./feedback');
 const { placeBounty } = require('../services/bounties');
+const { kudosParked, refuseParked } = require('../services/kudos-parked');
 const { claimIssueForUser } = require('../services/issue-claims');
 const appAccess = require('../services/app-access');
 const communities = require('../services/communities');
@@ -901,6 +902,9 @@ function listedKinds(raw) {
 function issueRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+  // #5249: while kudos is parked a new bounty answers 410 Gone. Bounties
+  // pledged before are kept and still paid on merge.
+  const bountiesParked = kudosParked(config);
 
   // Per-app visibility gate for issue-id-addressed routes (/vote,
   // /close): collab-level access via the issue's app, 404 on deny.
@@ -3019,8 +3023,10 @@ function issueRoutes(config) {
   //   404 not_found — app doesn't exist
   //   409 conflict  — viewer already has an open bounty on this issue
   //   429 too_many  — shared weekly kudos allowance exhausted
+  //   410 gone      — kudos is parked (#5249)
   // ----------------------------------------------------------------
   router.post('/api/apps/:slug/issues/:number/bounty', sameOriginBrowserOnly, async (req, res) => {
+    if (bountiesParked) return refuseParked(res);
     const issueNumber = parseInt(req.params.number, 10);
     if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
       return res.status(400).json({ error: 'Invalid issue number' });

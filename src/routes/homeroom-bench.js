@@ -355,10 +355,15 @@ function homeroomBenchRoutes(config) {
   }));
 
   // `images=1` (the connector's get_bench_item) puts a taste item's
-  // screenshots in it, as base64 PNGs (#3737).
-  router.get('/api/bot-bench/items/:token', requireAdminWrite, handler('Bench item', async (req) => (
-    grading.getItem(pool, req.params.token, { images: req.query?.images === '1' })
-  )));
+  // screenshots in it, as base64 PNGs (#3737). `diffPart=N` reads the Nth
+  // part of a grade item's diff instead (grading.diffParts).
+  router.get('/api/bot-bench/items/:token', requireAdminWrite, handler('Bench item', async (req) => {
+    const part = req.query?.diffPart;
+    return grading.getItem(pool, req.params.token, {
+      images: req.query?.images === '1',
+      diffPart: part != null && part !== '' ? String(part) : null,
+    });
+  }));
 
   router.post('/api/bot-bench/items/:token/grade', requireAdminWrite, benchGradingLimiter, sameOriginBrowserOnly, handler('Bench grade', async (req) => {
     const { verdict, critique, criteria } = req.body || {};

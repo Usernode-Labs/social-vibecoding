@@ -412,7 +412,7 @@ test('a zooming screen carries data-zooming until its after runs, exactly once',
 
 test('app.css lifts the docked rail over a zooming app, on the desktop only', () => {
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
-  const rule = 'body:has(#app-view[data-zooming]) :is(#platform-tabs, #platform-parked, #platform-section-column):not(.hidden) {';
+  const rule = 'body:has(#app-view[data-zooming]) :is(#platform-tabs, #platform-parked):not(.hidden) {';
   const at = css.indexOf(rule);
   assert.ok(at > 0, 'the rule is there');
   assert.match(css.slice(at, css.indexOf('}', at)), /z-index: 9961;/,

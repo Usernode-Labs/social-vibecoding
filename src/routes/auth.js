@@ -739,6 +739,23 @@ function authRoutes(config) {
     res.json({ ok: true });
   });
 
+  // The waiting room's account line (#5256): which account was just made
+  // and where the "you're in" mail goes. Under /api/auth/ so an account
+  // without platform access can read it (middleware/auth.js
+  // GATE_OPEN_PATHS); /api/me/email stays behind the gate, since its
+  // prefix also covers changing the address. Only the caller's own row.
+  router.get('/api/auth/waiting', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const { rows } = await pool.query('SELECT email FROM users WHERE id = $1', [req.user.id]);
+      res.set('Cache-Control', 'no-store');
+      return res.json({ username: req.user.username || null, email: rows[0]?.email || null });
+    } catch (err) {
+      log.warn('auth', 'Waiting room account lookup failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/api/auth/me', async (req, res) => {
     if (!req.user) {
       return res.status(401).json({ error: 'Not authenticated' });

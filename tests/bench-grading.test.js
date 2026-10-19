@@ -101,6 +101,44 @@ test('the judge sees the hunks of the pre-existing tests and checks a build touc
   assert.match(keeps.text, /Updating or extending one the requested change makes out of date is fine/);
 });
 
+// Run 208: about 10 of 33 judged builds were graded from a diff cut inside a
+// file, at the item's 40,000 characters or the runner's 60,000.
+test('a judge reads a large diff in parts: whole files where they fit, a long file at its lines, every line once', () => {
+  const file = (name, lines) => `diff --git a/${name} b/${name}\n@@ -1 +1,${lines} @@\n${Array.from({ length: lines }, (_, i) => `+${name} line ${i}\n`).join('')}`;
+  const diff = file('a.js', 3) + file('b.js', 2) + file('long.js', 40) + file('c.js', 1);
+  const size = 200;
+  const parts = grading.diffParts(diff, size);
+  assert.ok(parts.length > 3, 'more than one part');
+  assert.equal(parts[0], file('a.js', 3) + file('b.js', 2), 'files that fit together share a part, whole');
+  for (const part of parts) {
+    assert.match(part, /^diff --git a\/\S+ b\/\S+( \(continued\))?\n/, 'every part opens on a file\'s own line');
+    assert.ok(part.endsWith('\n'), 'and ends at a line\'s end');
+    assert.ok(part.length <= size + 'diff --git a/long.js b/long.js (continued)\n'.length);
+  }
+  const continued = parts.filter((p) => p.startsWith('diff --git a/long.js b/long.js (continued)\n'));
+  assert.ok(continued.length >= 2, 'the long file is cut at its lines, each piece named');
+  const rejoined = parts.map((p) => p.replace(/^diff --git a\/(\S+) b\/\1 \(continued\)\n/, '')).join('');
+  assert.equal(rejoined, diff, 'nothing lost, nothing twice');
+  assert.deepEqual(grading.diffParts(''), []);
+  assert.deepEqual(grading.diffParts(file('a.js', 1)), [file('a.js', 1)], 'a small diff is one part');
+
+  // The candidate carries the first part, how many there are, and the
+  // changed files the stored diff never held, and no clip marker.
+  const big = file('x.js', 3000) + file('y.js', 10);
+  assert.ok(big.length > grading.DIFF_PART_CHARS);
+  const candidate = grading.candidateView('build', {
+    parsed: { built: true }, diff: big,
+    changed_files: { files: [{ filename: 'x.js', status: 'modified' }, { filename: 'y.js', status: 'added' }, { filename: 'z.js', status: 'added' }] },
+  });
+  assert.equal(candidate.diff, grading.diffParts(big)[0]);
+  assert.equal(candidate.diffParts, grading.diffParts(big).length);
+  assert.deepEqual(candidate.diffLeftOut, ['z.js']);
+  assert.doesNotMatch(candidate.diff, /\[truncated\]/);
+  const small = grading.candidateView('build', { parsed: {}, diff: file('y.js', 1), changed_files: { files: [{ filename: 'y.js', status: 'added' }] } });
+  assert.ok(!('diffParts' in small) && !('diffLeftOut' in small), 'nothing said when the whole diff is there');
+  assert.deepEqual(grading.filesLeftOut(file('a b.js', 1), { files: [{ filename: 'a b.js' }] }), [], 'a name with a space is still found');
+});
+
 test('a run graded again: every finished trial under the rules as they stand, and what now waits for the judge', async () => {
   // Trial 1 failed on the old diff-scope rule; trial 2 a judge already had.
   const old = { pass: false, needsJudge: false, criteria: { produced_commits: true, diff_scope: false, hidden_checks: null } };

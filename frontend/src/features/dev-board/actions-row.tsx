@@ -56,7 +56,7 @@ import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 
 import {
-  AppWindowIcon, ArrowRightIcon, ArrowUpTrayIcon, ChevronLeftIcon, ChevronRightIcon, CogIcon, EllipsisHorizontalIcon, GitHubIcon, GlobeIcon, HashIcon, KeyIcon, LightBulbIcon, LockIcon,
+  AppWindowIcon, ArrowRightIcon, BookmarkIcon, BookmarkSolidIcon, ArrowUpTrayIcon, ChevronLeftIcon, ChevronRightIcon, CogIcon, EllipsisHorizontalIcon, GitHubIcon, GlobeIcon, HashIcon, KeyIcon, LightBulbIcon, LockIcon,
   PencilSparklesIcon, PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
@@ -104,6 +104,12 @@ export interface DevActionsRowProps {
   onLeave?: (() => void) | null;
   /** The project's name, for "Leave <name>". */
   appName?: string | null;
+  /**
+   * Pin the community to the desktop sidebar, or unpin it (18 Oct 2026,
+   * ../nav/pin-actions.ts): for a member, beside the sidebar only, where
+   * the pins are drawn. Null leaves the row out.
+   */
+  pin?: { pinned: boolean; onToggle: () => void } | null;
 }
 
 /**
@@ -241,6 +247,7 @@ export function DevPlusMenu({
   onWhoDecides = null,
   onLeave = null,
   appName = null,
+  pin = null,
 }: DevActionsRowProps): ReactNode {
   const t = useMessages('project');
   const [editingIllustration, setEditingIllustration] = useState(false);
@@ -248,6 +255,8 @@ export function DevPlusMenu({
   useEffect(() => {
     callAppView('_rewirePlusMenu');
   }, []);
+  // The pin row's glyph: filled while it is pinned.
+  const PinIcon = pin?.pinned ? BookmarkSolidIcon : BookmarkIcon;
   // "Suggest this back": on a remix, for its owner, the copy's changes sent
   // to the app it came from as a proposal (./suggest-back-dialog.tsx). The
   // open app's payload is `illustrationApp` (AppView.appData), which carries
@@ -361,6 +370,19 @@ export function DevPlusMenu({
                 title={t('project:menu.importPr.title')}
                 sub={t('project:menu.importPr.sub')}
                 dividerCls={PLUS_ROW_DIVIDER_CLS}
+              />
+            ) : null}
+            {/* PIN TO SIDEBAR (18 Oct 2026): a pin is a community's, so the
+                community's own menu makes and takes it, as its row's
+                right-click menu does in the sidebar. */}
+            {pin ? (
+              <PlusRow
+                data-plus="pin"
+                icon={<PinIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title={pin.pinned ? t('project:menu.pin.remove') : t('project:menu.pin.add')}
+                sub={pin.pinned ? undefined : t('project:menu.pin.sub')}
+                dividerCls={PLUS_ROW_DIVIDER_CLS}
+                onClick={() => { callAppView('_closePlusMenu'); pin.onToggle(); }}
               />
             ) : null}
             {/*
