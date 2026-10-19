@@ -22,34 +22,34 @@ export interface PendingPress {
   cancel: () => void;
 }
 
-/** How long a press waits for its slide to be running before it navigates anyway. */
-export const SLIDE_START_WAIT_MS = 120;
-
 /**
  * The timing half of a press, apart from the DOM so it can be driven with
  * fake frames and timers. Records the press in `holder` (replacing, and
- * calling off, any press still waiting), runs `go` once the slide is RUNNING
- * and a frame has been produced after that, and, if nothing has answered the
+ * calling off, any press still waiting), runs `go` as soon as the frame that
+ * lights the pressed tab has been produced, and, if nothing has answered the
  * press by PRESS_SETTLE_MS after that, clears it and calls `settle`. Whoever
  * sees the router answer (useTabMarker's tab-change run) answers it by
  * cancelling and clearing it.
  *
- * WHY IT WAITS FOR THE SLIDE, NOT FOR A FRAME COUNT (#3259). Measured in the
- * app in the iOS simulator: the slide is written in the press's task, but
- * WebKit had not started it until the SECOND frame after, the very frame
- * two rAFs out, where the navigation then began the screen swap. The slide's
- * first composited frame sat behind the swap's long frame and showed 50 to
- * 95% of the way across. `started` answers the slide's `ready`: the
- * moment its start time is fixed, which is when the compositor has it. The
- * swap goes a frame after that, capped at SLIDE_START_WAIT_MS so a slide that
- * never starts cannot hold the navigation up.
+ * ONE FRAME, THEN THE SCREEN (polish board #2, 19 Oct 2026). #3259 made the
+ * press wait for the pill's slide to be RUNNING (its `Animation.ready`,
+ * capped at 120ms) and a frame more, so the slide was on the compositor
+ * before the swap's long frames began. Recorded in the iPhone app, that wait
+ * was the lag people saw: the tab lit at once and the old screen stayed up
+ * for 120 to 205ms, longer than the slide it protected was worth. Now the
+ * press waits only for its own frame (the lit tab, the pill's first pose) to
+ * be painted, and the swap runs in the task after it. What #3259 saw came
+ * from a navigation run INSIDE a frame, after the slide's start time was
+ * fixed and before it was composited; run between frames, the swap comes
+ * before WebKit starts the slide, so the slide starts after it, from its
+ * beginning: a little late, never from its middle, and never holding the
+ * screen.
  */
 export function schedulePress(
   holder: { current: PendingPress | null },
   key: string,
   go: () => void,
   settle: () => void,
-  started: () => PromiseLike<unknown> | null | undefined = () => null,
   raf: ((cb: () => void) => number) | undefined
     = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : undefined,
   caf: ((id: number) => void) | undefined
@@ -90,25 +90,16 @@ export function schedulePress(
       settle();
     }, PRESS_SETTLE_MS);
   };
-  // A frame after the slide is running (or after the cap).
-  const soon = () => {
+  // The press's frame (the lit tab) is produced in the rAF's rendering
+  // update; a task posted from it runs once that frame is out.
+  const afterPaint = () => {
     if (went || holder.current !== entry) return;
-    cancelFrame();
-    if (!raf) { navigate(); return; }
-    const id = raf(navigate);
-    cancelFrame = () => { if (caf) caf(id); };
+    cancelFrame = () => {};
+    wait = timers.set(() => { wait = null; navigate(); }, 0);
   };
-  // The first frame, so the press's own commit (where the slide is made)
-  // has happened before anyone asks whether it has started.
-  const first = () => {
-    const ready = started();
-    if (!ready) { soon(); return; }
-    wait = timers.set(() => { wait = null; soon(); }, SLIDE_START_WAIT_MS);
-    ready.then(soon, soon);
-  };
-  if (!raf) first();
+  if (!raf) navigate();
   else {
-    const id = raf(first);
+    const id = raf(afterPaint);
     cancelFrame = () => { if (caf) caf(id); };
   }
   return entry;

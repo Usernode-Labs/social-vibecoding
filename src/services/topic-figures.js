@@ -51,8 +51,10 @@ const COVERS = Object.freeze(['all', 'split', 'others']);
 const PEOPLE_MIN = 10;
 const PEOPLE_FIVE = 20;
 const PEOPLE_EXACT = 50;
-// How many figures one topic may show.
-const MAX_TOPIC_FIGURES = 9;
+// How many figures one topic may show. 12 since the platform signals'
+// figures (services/platform-signals.js): the bot's strip is a grid of
+// three groups by Quality, Cost and Speed.
+const MAX_TOPIC_FIGURES = 12;
 
 const NOTE_PEOPLE = 'Totals only. Smaller groups are rounded more; under 10 people shows “Not enough data”.';
 const FEW_PEOPLE = 'Fewer than 10 people so far';
@@ -507,6 +509,71 @@ const HOMEROOM_CRASHES_SQL = `
           AND p.created_at < b.created_at
           AND p.created_at >= b.created_at - interval '7 days')`;
 
+// Platform signals (services/platform-signals.js): the problems the
+// platform found in itself, one row per episode. An episode counts in a
+// window it overlaps; one still going counts up to now. A blip (it stopped
+// before its kind's delay, so it never became a problem) does not count.
+const SIGNAL_EPISODES_SQL = `
+  SELECT COUNT(*)::int AS n,
+         COALESCE(SUM(EXTRACT(EPOCH FROM (
+           LEAST(COALESCE(s.cleared_at, s.closed_at, NOW()), $2::timestamptz)
+           - GREATEST(s.first_seen_at, $1::timestamptz)))), 0)::bigint AS secs
+    FROM platform_signals s
+   WHERE s.kind = $3
+     AND s.close_reason IS DISTINCT FROM 'blip'
+     AND ($4::text IS NULL OR s.subject->>'severity' = $4)
+     AND s.first_seen_at < $2::timestamptz
+     AND COALESCE(s.closed_at, NOW()) >= $1::timestamptz`;
+
+// A red check the bot's fix turn found was not the change's doing
+// (platform_incident checks_not_change), over the fix turns it ran on red
+// checks (homeroom-bot.js CHECKS_REASON).
+const NOT_THE_CHANGE_SQL = `
+  SELECT
+    (SELECT COUNT(*)::int FROM events e
+      WHERE e.event_type = 'platform_incident' AND e.metadata->>'kind' = 'checks_not_change'
+        AND e.created_at >= $1::timestamptz AND e.created_at < $2::timestamptz) AS hits,
+    (SELECT COUNT(*)::int FROM homeroom_bot_runs r
+      WHERE r.read_reason = 'checks_failing'
+        AND r.created_at >= $1::timestamptz AND r.created_at < $2::timestamptz) AS total`;
+
+// Wave 2 of the platform signals. Every response a process answered and
+// each 5xx among them, per minute (services/server-error-counts.js).
+const SERVER_ERRORS_SQL = `
+  SELECT COALESCE(SUM(errors), 0)::bigint AS hits, COALESCE(SUM(requests), 0)::bigint AS total
+    FROM server_request_minutes
+   WHERE minute >= $1::timestamptz AND minute < $2::timestamptz`;
+
+// Page visits that hit a script error after the page had loaded (ui_experience
+// `client_error`, public/js/ui-telemetry.js), over the visits that loaded.
+const PAGE_ERRORS_SQL = `
+  SELECT COUNT(DISTINCT e.metadata->>'visitId') FILTER (WHERE e.metadata->>'kind' = 'client_error')::int AS hits,
+         COUNT(DISTINCT e.metadata->>'visitId') FILTER (WHERE e.metadata->>'kind' = 'page_load')::int AS total
+    FROM events e
+   WHERE e.event_type = 'ui_experience'
+     AND e.created_at >= $1::timestamptz AND e.created_at < $2::timestamptz`;
+
+// The same, on the screens of a first session: the sheets a newcomer meets
+// (username, terms, join) and the tour.
+const SIGN_IN_SCREENS = Object.freeze(['username_sheet', 'terms_sheet', 'join_sheet', 'tour', 'ping_ask']);
+const SIGN_IN_ERRORS_SQL = `
+  SELECT COUNT(DISTINCT e.metadata->>'visitId') FILTER (WHERE e.metadata->>'kind' = 'client_error')::int AS hits,
+         COUNT(DISTINCT e.metadata->>'visitId') FILTER (WHERE e.metadata->>'kind' IN ('screen_visit', 'page_load'))::int AS total
+    FROM events e
+   WHERE e.event_type = 'ui_experience'
+     AND e.metadata->>'screen' = ANY($3::text[])
+     AND e.created_at >= $1::timestamptz AND e.created_at < $2::timestamptz`;
+
+// The Homeroom bot's turns, and those whose worker died under them (out of
+// memory, container gone: agent_turns.error_code 'worker_lost').
+const TURNS_LOST_SQL = `
+  SELECT COUNT(*) FILTER (WHERE t.error_code = 'worker_lost')::int AS hits, COUNT(*)::int AS total
+    FROM agent_turns t
+    JOIN chat_sessions cs ON cs.id = t.session_id
+    JOIN users u ON u.id = cs.user_id
+   WHERE u.username = 'homeroom_bot'
+     AND t.started_at >= $1::timestamptz AND t.started_at < $2::timestamptz`;
+
 const PLATFORM_APPS_SQL = 'SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id';
 
 // ── Sources: one query each, shared by the figures that read it ─────────
@@ -545,6 +612,14 @@ const SOURCES = Object.freeze({
   redsRerun: { days: 7, scoped: true, read: (pool, w, s) => pool.query(REDS_RERUN_SQL, [w.from, w.until, ...scoped(s), SAME_CODE_TRIGGERS]) },
   releaseStalls: { days: 7, read: (pool, w) => pool.query(RELEASE_STALLS_SQL, [w.from, w.until]) },
   homeroomCrashes: { days: 7, read: (pool, w) => pool.query(HOMEROOM_CRASHES_SQL, [w.from, w.until]) },
+  notTheChange: { days: 7, read: (pool, w) => pool.query(NOT_THE_CHANGE_SQL, [w.from, w.until]) },
+  stuckWork: { days: 7, read: (pool, w) => pool.query(SIGNAL_EPISODES_SQL, [w.from, w.until, 'workflow', null]) },
+  botPaused: { days: 7, read: (pool, w) => pool.query(SIGNAL_EPISODES_SQL, [w.from, w.until, 'bot_paused', null]) },
+  infraAlerts: { days: 7, read: (pool, w) => pool.query(SIGNAL_EPISODES_SQL, [w.from, w.until, 'alert', 'critical']) },
+  serverErrors: { days: 7, read: (pool, w) => pool.query(SERVER_ERRORS_SQL, [w.from, w.until]) },
+  pageErrors: { days: 7, read: (pool, w) => pool.query(PAGE_ERRORS_SQL, [w.from, w.until]) },
+  signInErrors: { days: 30, daily: true, read: (pool, w) => pool.query(SIGN_IN_ERRORS_SQL, [w.from, w.until, SIGN_IN_SCREENS]) },
+  botTurnsLost: { days: 7, read: (pool, w) => pool.query(TURNS_LOST_SQL, [w.from, w.until]) },
 });
 
 // ── Formatting ───────────────────────────────────────────────────────────
@@ -580,6 +655,9 @@ function formatPercent(rate) {
   const r = num(rate);
   if (r == null) return null;
   const pct = r * 100;
+  // Near the bottom, a share that is not none never reads as none: 12 server
+  // errors in 48,210 requests is 0.02%, not 0%.
+  if (pct > 0 && pct < 0.05) return `${Number(pct.toPrecision(1)).toString()}%`;
   if (pct > 0 && pct < 10) return `${(Math.round(pct * 10) / 10).toString()}%`;
   // Near the top a whole percent hides what matters: 99.4% is not 100%.
   if (pct >= 99 && pct < 100) return `${(Math.floor(pct * 10) / 10).toString()}%`;
@@ -740,6 +818,18 @@ const FIGURES = Object.freeze({
     target: { atMost: 0.1 },
     measure: (r) => ({ hits: r.failed_spent, total: r.spent }),
   },
+  'bot.turns-lost': {
+    source: 'botTurnsLost', kind: 'rate', group: 'running', column: 'quality', label: 'Build turns lost', noun: 'turns',
+    tip: 'Of the bot’s turns, the share whose worker died under them: it ran out of memory or its container went away. A lost turn costs a build its progress, and until 17 Oct they were labelled “no change”.',
+    target: { atMost: 0.02 },
+    measure: (r) => ({ hits: Number(r.hits), total: Number(r.total) }),
+  },
+  'bot.paused': {
+    source: 'botPaused', kind: 'count', group: 'running', column: 'speed', label: 'Time the bot was paused',
+    tip: 'How many times the bot stopped starting work for long enough to be a problem (the platform failing under it, its weekly budget, or GitHub’s hourly budget), and for how long in all. While it is paused, nobody’s request moves.',
+    target: { atMost: 0 },
+    measure: (r) => ({ n: r.n, secs: r.secs }),
+  },
   'pipeline.checks-time': {
     source: 'checks', kind: 'duration', covers: 'split', label: 'Time to a checks verdict',
     tip: 'How long from a check run starting to its checks passing or failing, including the build and any wait in the queue. Half are faster.',
@@ -788,6 +878,42 @@ const FIGURES = Object.freeze({
     target: { atMost: 0.05 },
     measure: (r) => ({ hits: r.failed, total: r.total }),
   },
+  'pipeline.not-the-change': {
+    source: 'notTheChange', kind: 'rate', label: 'Reds that weren’t the change', noun: 'fix turns',
+    tip: 'Of the times the bot set out to fix a proposal’s red checks, the share where it found the check fails without the change too: the check’s own problem, not the proposal’s. Each one holds up every proposal that runs that check.',
+    target: { atMost: 0.05 },
+    measure: (r) => ({ hits: r.hits, total: r.total }),
+  },
+  'pipeline.stuck-work': {
+    source: 'stuckWork', kind: 'count', label: 'Stuck work',
+    tip: 'How many times work in Homeroom’s workflows got stuck: an instance that faulted or stalled, a deadline that did not fire, or work that ran out of attempts. Each one is filed as a request for the bot to fix.',
+    target: { atMost: 0 },
+    measure: (r) => ({ n: r.n }),
+  },
+  'infra.server-errors': {
+    source: 'serverErrors', kind: 'rate', label: 'Server errors', noun: 'requests',
+    tip: 'Of the requests Homeroom answered, the share it answered with a server error (5xx). Each route that keeps failing is filed as a request for the bot to fix.',
+    target: { atMost: 0.001 },
+    measure: (r) => ({ hits: Number(r.hits), total: Number(r.total) }),
+  },
+  'infra.page-errors': {
+    source: 'pageErrors', kind: 'rate', label: 'Page errors', noun: 'visits',
+    tip: 'Of the visits to Homeroom that loaded, the share where a script error happened afterwards. Each error that keeps happening is filed as a request for the bot to fix.',
+    target: { atMost: 0.01 },
+    measure: (r) => ({ hits: Number(r.hits), total: Number(r.total) }),
+  },
+  'onboarding.sign-in-errors': {
+    source: 'signInErrors', kind: 'rate', label: 'Errors in a first session', noun: 'visits',
+    tip: 'Of the visits to the screens a newcomer meets first (choosing a username, the terms, joining, the tour), the share where a script error happened. A newcomer who hits one often does not come back.',
+    target: { atMost: 0.01 },
+    measure: (r) => ({ hits: Number(r.hits), total: Number(r.total) }),
+  },
+  'infra.alerts': {
+    source: 'infraAlerts', kind: 'count', label: 'Critical infra alerts',
+    tip: 'How many critical alerts the cluster’s monitoring raised about the servers Homeroom runs on, counted once per alert and resource. Each one is filed as a request on Homeroom’s board.',
+    target: { atMost: 0 },
+    measure: (r) => ({ n: r.n }),
+  },
   'infra.apps-up': {
     source: 'appOpens', kind: 'rate', covers: 'others', label: 'App opens that worked', noun: 'opens',
     tip: 'Of the times someone opened a project’s app in Homeroom, the share that loaded instead of showing the page that says the app is restarting. Homeroom itself is not counted.',
@@ -830,6 +956,7 @@ const FIGURE_IDS = Object.freeze(Object.keys(FIGURES));
 const GROUPS = Object.freeze({
   answers: { name: 'Answers', about: 'Threads, chats and DMs' },
   builds: { name: 'Builds', about: 'Specs, builds and fixes' },
+  running: { name: 'Running', about: 'Whether the bot can work at all' },
 });
 const COLUMNS = Object.freeze(['quality', 'cost', 'speed']);
 const COLUMN_NAMES = Object.freeze({ quality: 'Quality', cost: 'Cost', speed: 'Speed' });
@@ -1216,6 +1343,14 @@ const DEMO_MEASURES = Object.freeze({
   'infra.turned-away': { n: 3 },
   'infra.homeroom-stalls': { n: 1 },
   'infra.homeroom-crashes': { n: 0 },
+  'pipeline.not-the-change': { hits: 2, total: 31 },
+  'pipeline.stuck-work': { n: 1 },
+  'bot.paused': { n: 1, secs: 2400 },
+  'infra.alerts': { n: 0 },
+  'bot.turns-lost': { hits: 1, total: 140 },
+  'infra.server-errors': { hits: 12, total: 48210 },
+  'infra.page-errors': { hits: 9, total: 1630 },
+  'onboarding.sign-in-errors': { hits: 1, total: 212 },
 });
 
 /** The demo strip for `ids`. Pure. */

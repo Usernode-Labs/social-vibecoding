@@ -48,8 +48,10 @@ const LEAVING_KIND = 'held_by_person';
 const GOING_KIND = 'going_ahead';
 const MENTION_WINDOW_HOURS = 24;
 
-// The holds a mention can see past. A proposal up for a vote is not one.
-const PASSABLE = new Set(['claim', 'session']);
+// The holds a mention can see past. A proposal up for a vote is not one. A
+// `signal` is a problem the platform filed for a person to fix
+// (services/platform-signals.js heldIssues).
+const PASSABLE = new Set(['claim', 'session', 'signal']);
 
 function toMs(value) {
   if (!value) return 0;
@@ -79,6 +81,7 @@ function holdClause(hold, now) {
   // B10a: plain words, as every shared screen says it.
   if (hold.kind === 'proposal') return `${who}'s change for it is waiting for approval`;
   if (hold.kind === 'session') return `${who} has a change in progress for it (last worked on ${ageText(hold.since, now)})`;
+  if (hold.kind === 'signal') return `Homeroom filed this problem for a person to fix (${ageText(hold.since, now)})`;
   return `${who} claimed this request ${ageText(hold.since, now)}`;
 }
 

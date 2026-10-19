@@ -96,6 +96,9 @@ export interface ApprovalPayload {
   rules?: Array<Rule & { size?: number; need?: number | null; empty?: boolean }> | null;
   groups?: Array<{ name: string; key?: string; people: string[] }>;
   creator?: { id: number; username: string; display_name?: string | null } | null;
+  /** Invited approvers' usernames, for a viewer who may read the roster;
+      null otherwise, and absent from an older server. */
+  approvers?: string[] | null;
 }
 
 /**

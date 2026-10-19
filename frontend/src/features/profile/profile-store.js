@@ -303,6 +303,10 @@ export function moreRowsView(data) {
     kudos: kudos == null ? null : t('profile:more.kudos.received', { count: kudos, number: kudos.toLocaleString() }),
     changes: changesLine(summary),
     requests: requestsLine(d.requests),
+    // The page draws before the requests' counts land (profile.js _load);
+    // until then their row holds its line's place rather than saying what is
+    // behind it.
+    requestsPending: !!d.requestsPending,
     votes: votesLine(d.votes),
     friends: friendsLine(d.friends),
     feedback: feedbackLine(d.feedback),
@@ -327,9 +331,9 @@ function changesLine(summary) {
   return factLine(parts);
 }
 
-/** "2 open · 1 done", from GET /api/me/requests. */
+/** "2 open · 1 done", from GET /api/me/requests?counts=1 ({ open, done }). */
 function requestsLine(requests) {
-  if (!requests || typeof requests !== 'object' || !Array.isArray(requests.requests)) return null;
+  if (!requests || typeof requests !== 'object') return null;
   const parts = [];
   const open = Number(requests.open) || 0;
   const done = Number(requests.done) || 0;

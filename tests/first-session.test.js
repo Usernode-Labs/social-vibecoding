@@ -1158,7 +1158,12 @@ test('onboarding run two: the hub draws once, holding its skeleton while its com
   // A refused read lets the skeleton go too.
   assert.match(card, /\} else if \(!communities\.has\(slug\)\) \{\s+\/\/ [^\n]*\n\s+for \(const listener of \[\.\.\.listeners\]\) listener\(\);/);
   const workshop = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(workshop, /if \(v\.loading \|\| communityPending\(v\.slug \|\| ''\)\) return <div ref=\{hostRef\}><CardSkeleton n=\{4\} label=\{t\('project:page\.loading'\)\} \/><\/div>;/);
+  assert.match(workshop, /const pending = v\.loading \|\| communityPending\(v\.slug \|\| ''\);/);
+  assert.match(workshop, /return <div ref=\{hostRef\}><CardSkeleton n=\{4\} label=\{t\('project:page\.loading'\)\} \/><\/div>;/);
+  // Polish board #3: the hub holds its OWN shape, under the page's bar, and
+  // draws its cards only once the record and the board are in.
+  assert.match(workshop, /\{tab === 'status' && pending \? <HubSkeleton others=\{hubSkeletonOthers\(slug\)\} \/> : null\}/);
+  assert.match(workshop, /\{tab === 'status' \? \(pending \? null : \(/);
 });
 
 test('#4900: what a waiting step waits for: a tile a tap opens, and an app past its loading screens', () => {

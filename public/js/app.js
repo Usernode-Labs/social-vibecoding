@@ -1325,6 +1325,11 @@ const App = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'app-updating' && shot !== 'app-update-ready') return;
     const ready = shot === 'app-update-ready';
+    // The frame this shot opens loads the build that is live, which is what
+    // withdraws a real offer (AppView.renderAppTab). Pinned while the shot
+    // is on screen, as _platformUpdateShot pins the platform's row; nothing
+    // else reads this flag.
+    App._appUpdateShot = true;
     App._openImproveShot(() => {
       // `update()` no-ops without a slug, and the menu opens before the app
       // fetch lands — see Improve.hasTarget()'s note. Keep waiting.
@@ -2617,8 +2622,14 @@ const App = {
       // loader, so a correction can never diverge from what the screen
       // shows on its own. `return`: the workshop screen holds no app view
       // to fall through to.
+      //
+      // ON the Communities screen, which is the controller open AND no app
+      // on screen (see navigateToWorkshop): the controller stays open under a
+      // project page opened from it, and this branch used to swallow that
+      // page's correction, so a hub reached from Communities kept the numbers
+      // it was first drawn with (polish board #3).
       const workshop = window.UsernodeReact?.workshop;
-      if (workshop?.isOpen?.()) { workshop.refreshNeeds?.(); return; }
+      if (workshop?.isOpen?.() && !App.currentApp) { workshop.refreshNeeds?.(); return; }
 
       // Your work (#5456): Your changes, Your requests and Your votes read
       // once per open, on the ordinary deadline. When the worker corrected
@@ -2883,8 +2894,15 @@ const App = {
       } else {
         // A failed build leaves nothing new to load onto, and a frame let go
         // above loads the new build when the app is next opened, so offering
-        // a reload too would load it twice more.
-        window.Improve.update({ deploying: false, appUpdateReady: !data.failed && !evicted });
+        // a reload too would load it twice more. Nor is there anything to
+        // reload unless the build before this one is on screen
+        // (AppView.frameShowing): Homeroom bot's first version going live,
+        // with no frame ever shown, is the version they are about to see, and
+        // the menu said "This app has a new version" about it (sign-up test,
+        // 19 Oct 2026).
+        const showing = !data.failed && !evicted
+          && typeof AppView !== 'undefined' && !!AppView.frameShowing?.(slug);
+        window.Improve.update({ deploying: false, appUpdateReady: showing });
       }
     }
   },
@@ -4144,6 +4162,7 @@ const App = {
 
   ImproveStatus: {
     setAppOpen(open) { window.ImproveStatus?.setAppOpen(open); },
+    setPendingApp(record) { window.ImproveStatus?.setPendingApp?.(record); },
     refreshDeployDot() { window.ImproveStatus?.refreshDeployDot(); },
   },
 
@@ -8357,6 +8376,21 @@ const App = {
       // own Workshop (`App.currentTab` is committed above) the bar stays up
       // and so does the handle — that is a platform screen, not the app.
       App._syncPlatformTabs('app-view');
+      // THE APP YOU TAPPED, NAMED FROM THE FIRST FRAME (polish board #9). The
+      // header kept the screen you left ("Homeroom", a blank tile) for the
+      // whole zoom, until the app's own record answered. The launcher's
+      // cached record already has its name and icon, the ones the tile
+      // showed, so the header says them as the view is revealed (here, not
+      // before the transition: #979); the read below confirms them, or says
+      // the app is not available. The App tab only: a Dev view names itself.
+      if (initialRoute.tab === 'app') {
+        let named = null;
+        try { named = AppView.launchRecordFor?.(slug) || null; } catch (_) { named = null; }
+        if (named && named.name && !named.self_hosted) {
+          App.setHeaderTitle(named.name);
+          App.ImproveStatus.setPendingApp(named);
+        }
+      }
       // Best-effort: returns false (and changes nothing) for anything whose
       // App tab wouldn't be a plain production iframe — self-hosted apps,
       // demo cards, non-running apps, an explicit non-app tab, offline.
@@ -8381,7 +8415,8 @@ const App = {
       enter();
     };
     if (!viaTab) reveal();
-    // Intentionally NOT setting the header to `slug` here. Slugs are
+    // Intentionally NOT setting the header to `slug` here (the launcher's
+    // record names it above when it has the app; polish board #9). Slugs are
     // generated as `${name}-${randomHex}` (see routes/apps.js), so a
     // slug-as-placeholder shows up to users as something like
     // "whiteboard-abc123" — which the Flutter WebView's AppBar then

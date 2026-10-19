@@ -541,6 +541,9 @@ export interface RequestView {
    * ../../messages/api.ts normalizeBotTrack. Null when the bot has none.
    */
   track?: unknown;
+  /** The page is drawn from the board's older row: the track card keeps its
+      place, hidden, until the board's reload lands (polish board #12). */
+  trackPending?: boolean;
 }
 
 /** The card under the request: where it stands, and the one next step. */

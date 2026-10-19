@@ -1135,7 +1135,12 @@ function ConversationList({ drawer = false, litId = null }: {
       >
         {snap.loadingList && !snap.listLoaded ? <ConversationRowSkeleton /> : null}
         {snap.error ? <div className="messages-state messages-state-error"><p>{snap.error}</p><button type="button" onClick={() => void loadConversations(true)}>{t('core:common.tryAgain')}</button></div> : null}
-        {!snap.loadingList && !snap.error && snap.listLoaded && !snap.conversations.length && !inbox.length
+        {/* Nothing in the list: what the list draws, not what was read.
+            #general is always read (every account is in it) and is drawn on
+            Homeroom's hub, never here (./inbox.ts), so a new account's
+            Messages was a search box over nothing (sign-up test, 19 Oct
+            2026). */}
+        {!snap.loadingList && !snap.error && snap.listLoaded && !inbox.length
           ? <div className="messages-empty"><h3>{t('messages:inbox.empty.title')}</h3><p>{t('messages:inbox.empty.body')}</p><button type="button" onClick={() => openDialog('messagesCreate')}>{t('messages:inbox.empty.action')}</button></div>
           : null}
         {/* A QUERY THAT MATCHED NOTHING is not an empty inbox, and must not
@@ -2928,6 +2933,22 @@ export function AppReplyThreadPane({ slug, rootId, ready, readOnly, where, close
  * `messages-layout` carries the thread's surface tokens; it is not this
  * screen's strip, so none of the strip's own classes come with it.
  */
+/**
+ * A room on its way, as the room says it itself (ConversationThread's own
+ * loading row, in its scroller). A project's channel shows it from its first
+ * frame until its messages are in, so the channel loads in one state rather
+ * than a card skeleton, then "#general" over "Loading messages…", then its
+ * messages (polish board #19).
+ */
+export function ChannelLoading(): ReactNode {
+  const t = useMessages('messages');
+  return (
+    <div className="messages-thread-scroll" data-channel-loading="">
+      <div className="messages-state"><span className="messages-spinner" />{t('messages:thread.loading')}</div>
+    </div>
+  );
+}
+
 export function EmbeddedConversation({ conversationId, active, at = null }: {
   conversationId: number;
   active: boolean;
@@ -2962,7 +2983,7 @@ export function EmbeddedConversation({ conversationId, active, at = null }: {
   }, [at]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className={`messages-layout messages-layout-embedded${here && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`}>
-      {here ? <ConversationThread embedded /> : null}
+      {here ? <ConversationThread embedded /> : <ChannelLoading />}
       {here && snap.route.threadRootId ? <ReplyThreadPanel /> : null}
     </div>
   );

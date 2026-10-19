@@ -88,7 +88,7 @@
     "description": "Accessible name of the All filter chip above the list of the person's communities, with how many communities they are in. {{count}} is that number."
   },
   "list.loading": {
-    "text": "Loading your apps",
+    "text": "Loading your communities",
     "description": "Accessible name of the placeholder rows on the Communities screen while the person's list of communities is loading."
   },
   "list.loadError": {

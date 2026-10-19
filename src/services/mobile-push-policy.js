@@ -151,7 +151,17 @@ function incidentKindLabel(kind) {
   return String(kind).replace(/_/g, ' ');
 }
 
+// services/platform-signals.js: a problem the platform filed for a person.
+const INCIDENT_SIGNAL_RE = /^signal:(\d{1,9})$/;
+
 function platformIncidentCopy(detail) {
+  const signal = INCIDENT_SIGNAL_RE.exec(detail);
+  if (signal) {
+    return {
+      title: 'A platform problem needs a person',
+      body: `Homeroom filed request #${signal[1]} on its own board from its own records`,
+    };
+  }
   const hour = INCIDENT_HOUR_RE.exec(detail);
   if (hour) {
     const [, kind, n] = hour;

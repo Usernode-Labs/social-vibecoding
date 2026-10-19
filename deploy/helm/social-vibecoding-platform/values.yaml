@@ -196,6 +196,16 @@ config:
   # A worker on the platform's own repository (its agent boots the whole
   # platform and a browser): 2g OOM-killed most of its bot builds that died.
   workerMemoryPlatformRepo: 4g
+  # Platform signals (src/services/platform-signals.js): every problem the
+  # platform detects in itself becomes one request on Homeroom's board.
+  # `mode`: shadow keeps the rows the topic pages and figures read and files
+  # nothing; file files the requests; off does nothing. `kinds`: a comma list
+  # of the kinds allowed to file (empty: every kind), so a noisy one can go
+  # back to shadow alone. `bot`: "off" leaves every request to people.
+  platformSignals:
+    mode: shadow
+    kinds: ""
+    bot: "on"
   workerCpus: "2"
   captureMemory: 6g
   captureCpus: "8"
@@ -234,6 +244,9 @@ secrets:
   iframeJwtPrivateKey: ""
   iframeJwtPublicKey: ""
   workerJwtSecret: ""
+  # Alertmanager's bearer token for /api/internal/alerts. Empty turns the
+  # route off (503). The same value goes in the infra repo's receiver.
+  alertmanagerWebhookToken: ""
   edgeJwtSecret: ""
   topochainPartnerApiKey: ""
   githubAppId: ""
@@ -302,6 +315,10 @@ networkPolicy:
   internalCallerNamespaces:
     - social-apps
     - social-workers
+    # Alertmanager's `homeroom` receiver posts infra alerts to
+    # /api/internal/alerts (src/routes/alerts-webhook.js), which checks its
+    # token.
+    - monitoring
   # Generated applications connect directly to their dedicated PostgreSQL
   # databases using per-database roles. Workers do not require database access.
   databaseCallerNamespaces:

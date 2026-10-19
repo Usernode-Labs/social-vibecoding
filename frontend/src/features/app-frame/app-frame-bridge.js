@@ -309,6 +309,17 @@ export const appFrameBridge = {
   },
 
   /**
+   * Is `slug`'s document on screen: the mounted frame this app's, shown, and
+   * loaded? Only then is there a build the viewer is looking at, for a new
+   * one to be offered over (AppView.frameShowing). A frame mounted for a
+   * launch that has not navigated yet is not one.
+   */
+  showing(slug) {
+    const current = appFrameStore.get();
+    return !!slug && current.slug === slug && !!current.active && current.navigatedAt > 0 && !!appFrameRefs.iframe;
+  },
+
+  /**
    * #2902: let one app's frame go — a kept one, or the mounted one. For an app
    * whose build just changed underneath it: the next open loads the new one.
    */

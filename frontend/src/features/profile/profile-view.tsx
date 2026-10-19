@@ -336,8 +336,8 @@ export function ProfileRoot(): ReactNode {
           Challenges & standings and Kudos. "Account": Friends and App
           slots. Admin & moderation, the native node / wallet / staking rows
           and Log out are in Settings (features/settings/account-rows.tsx);
-          its row stays only on a phone, whose sidebar has no gear. Your
-          contributions, which closed the screen, is gone: Your changes
+          the Settings card under this ends the screen at every width (#5557).
+          Your contributions, which closed the screen, is gone: Your changes
           lists every merged one.
       */}
       <div className="lg:grid lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:gap-x-6 lg:items-start">

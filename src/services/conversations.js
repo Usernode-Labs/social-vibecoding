@@ -409,7 +409,7 @@ async function threadSummaries(db, user, rootIds) {
  */
 const BOT_CONVERSATION_KINDS = new Set([
   'chat', 'ack', 'reply', 'confirm', 'hello', 'welcome', 'tour', 'joiner', 'maker', 'member', 'general',
-  'hello_welcome', 'hello_tour', 'hello_joiner', 'filed', 'withdraw_proposal', 'close_request', 'move_request', 'unknown',
+  'hello_welcome', 'hello_tour', 'hello_joiner', 'hello_maker', 'filed', 'withdraw_proposal', 'close_request', 'move_request', 'unknown',
 ]);
 function isBotNewsRow(row) {
   if (!row.sender_is_synthetic || row.msg_type === 'system' || row.deleted_at || row.moderation_hidden_at) return false;

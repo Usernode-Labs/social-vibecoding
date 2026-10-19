@@ -189,3 +189,24 @@ export function keepPlace(place: string | null | undefined, topics: readonly str
   if (typeof place === 'string' && place.startsWith('c:') && topics && topics.includes(place.slice(2))) return place;
   return 'status';
 }
+
+/**
+ * Two frames, so the slide is on the compositor before heavy work runs;
+ * never later than `capMs`. A switch of community (./nav-drawer.tsx) and a
+ * conversation let go of in Messages (../messages/phone-drawer.tsx) start
+ * their slide first and route through this.
+ */
+export function afterSlideStarts(run: () => void, capMs = 120): void {
+  if (typeof requestAnimationFrame !== 'function') {
+    run();
+    return;
+  }
+  let done = false;
+  const once = () => {
+    if (done) return;
+    done = true;
+    run();
+  };
+  requestAnimationFrame(() => requestAnimationFrame(once));
+  setTimeout(once, capMs);
+}
