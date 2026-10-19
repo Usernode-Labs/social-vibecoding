@@ -49,10 +49,13 @@ test('the list: add, replace, object (erasing and stopping telemetry), remove, a
     });
     await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
+    // The three whose recording is asked about switched "Share usage
+    // analytics" on (#5097): this list decides who is left out or erased,
+    // never who agreed to be recorded in the first place.
     const { rows: people } = await pool.query(
-      `INSERT INTO users (username, password, is_admin, admin_readonly) VALUES
-         ('lead', 'x', TRUE, FALSE), ('viewer', 'x', TRUE, TRUE), ('tester', 'x', FALSE, FALSE),
-         ('objector', 'x', FALSE, FALSE), ('member', 'x', FALSE, FALSE)
+      `INSERT INTO users (username, password, is_admin, admin_readonly, usage_analytics) VALUES
+         ('lead', 'x', TRUE, FALSE, FALSE), ('viewer', 'x', TRUE, TRUE, FALSE), ('tester', 'x', FALSE, FALSE, TRUE),
+         ('objector', 'x', FALSE, FALSE, TRUE), ('member', 'x', FALSE, FALSE, TRUE)
        RETURNING id, username`
     );
     const [lead, viewer, tester, objector, member] = people;
@@ -81,6 +84,10 @@ test('the list: add, replace, object (erasing and stopping telemetry), remove, a
     assert.equal(await telemetry.isRecordable(pool, { id: objector.id, username: 'objector' }), false,
       'an objector is no longer recorded');
     assert.equal(await telemetry.isRecordable(pool, { id: member.id, username: 'member' }), true);
+    await pool.query('UPDATE users SET usage_analytics = FALSE WHERE id = $1', [member.id]);
+    assert.equal(await telemetry.isRecordable(pool, { id: member.id, username: 'member' }), false,
+      'and nobody is recorded without switching usage analytics on (#5097)');
+    await pool.query('UPDATE users SET usage_analytics = TRUE WHERE id = $1', [member.id]);
 
     await leftOut.add(pool, { userId: tester.id, reason: 'test', note: 'renamed' }, { actorId: lead.id });
     const listed = await leftOut.list(pool);
