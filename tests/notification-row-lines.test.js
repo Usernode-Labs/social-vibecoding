@@ -334,7 +334,7 @@ test('platform limit rows say which cap, how full, and what happens next', async
   const sessionsFull = await lines({ kind: 'platform_limit', detail: 'sessions_full:75:75',
     appName: null, sourceUsername: null });
   assert.equal(sessionsFull.label, 'Session limit reached');
-  assert.match(sessionsFull.subject, /MAX_GLOBAL_SESSIONS/);
+  assert.match(sessionsFull.subject, /until the session limit is raised in Admin → Limits/);
 
   // GitHub's hourly budget, the bot token's and the App's.
   const github = await lines({ kind: 'platform_limit', detail: 'github_warn:4000:5000',

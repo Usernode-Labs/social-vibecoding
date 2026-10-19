@@ -489,18 +489,18 @@ test('each way into the sheet says only what is true for it', () => {
   const join = render('invite', 'Join Sunday Run Club');
   const BUTTON = /<button type="submit"[^>]*>Send code<\/button>/;
   // Sign in and Continue: the Email code | Password switch over the field
-  // (#5258, where the link under the button was), then the button, the
-  // terms, and nothing after the form.
+  // (#5258, where the link under the button was), then the button, and
+  // nothing after the form: sending a code makes no account, so no terms
+  // (#5257; the code step says them).
   for (const html of [signin, start]) {
     assert.match(html, /<div role="radiogroup" aria-label="How to sign in" data-sign-in-sheet-method=""[^>]*><button type="button" role="radio" aria-checked="true" data-sign-in-sheet-method-email=""[^>]*>Email code<\/button><button type="button" role="radio" aria-checked="false" data-sign-in-sheet-method-password=""[^>]*>Password<\/button><\/div><form/);
-    assert.match(html, new RegExp(`${BUTTON.source}<p[^>]*>By continuing, you agree to Homeroom&#x27;s terms\\.</p></form></div></div>`),
-      'the terms right under the button');
-    assert.doesNotMatch(html, /data-sign-in-sheet-password=|Sign in with a password/);
+    assert.match(html, new RegExp(`${BUTTON.source}</form></div></div>`), 'nothing under the button');
+    assert.doesNotMatch(html, /By continuing|data-sign-in-sheet-password=|Use a password/);
     assert.doesNotMatch(html, /New to Homeroom|This makes your account|Already have an account|Welcome back/);
   }
   // Join: the button, then the terms, and nothing after.
   assert.match(join, new RegExp(`${BUTTON.source}<p[^>]*>By continuing, you agree to Homeroom&#x27;s terms\\.</p></form></div></div>`));
-  assert.doesNotMatch(join, /Sign in with a password|data-sign-in-sheet-method|New to Homeroom|This makes your account|Already have an account|Welcome back/);
+  assert.doesNotMatch(join, /Use a password|data-sign-in-sheet-method|New to Homeroom|This makes your account|Already have an account|Welcome back/);
   // Nothing the story's two sheets say is a dash.
   for (const html of [signin, start, join]) assert.doesNotMatch(html, /—/);
   // #4037: no sheet has a line under its title, the title says it, and no
@@ -510,12 +510,42 @@ test('each way into the sheet says only what is true for it', () => {
     assert.doesNotMatch(html, /<p class="mt-1 text-\[15px\] leading-snug/);
   }
   assert.equal(join.match(/<p[\s>]/g).length, 1, 'the terms alone under the button');
-  for (const html of [signin, start]) assert.equal(html.match(/<p[\s>]/g).length, 1, 'the terms alone under the button, the switch above');
+  for (const html of [signin, start]) assert.equal((html.match(/<p[\s>]/g) || []).length, 0, 'no line under the button, the switch above');
   const landing = read(LANDING);
   assert.doesNotMatch(landing, /It takes a minute|Welcome back|Sign in or make an account/);
   // No line under any title, the phone's join included (#4326 trimmed its copy).
   assert.doesNotMatch(landing, /\bintro=/);
   assert.doesNotMatch(landing, /No app, no password/);
+});
+
+test('the first step with Apple and Google: the terms under them, then the email, then the password (#5257)', () => {
+  const { SignInSheet } = loadTsx(SHEET);
+  const render = (from) => renderToHtml(createElement(SignInSheet, {
+    open: true, title: 'Continue to Homeroom', from, providers: ['google', 'apple'], onClose() {}, primaryClass: 'pill',
+  }));
+  for (const from of ['story', 'signin']) {
+    const html = render(from);
+    assert.match(html, /data-sign-in-sheet="choose"/);
+    const at = (re) => html.search(re);
+    const order = [
+      at(/data-sign-in-provider="google"/), at(/data-sign-in-provider="apple"/),
+      at(/By continuing, you agree to Homeroom&#x27;s terms\./), at(/data-sign-in-sheet-or=""/),
+      at(/id="sign-in-sheet-email"/), at(/data-sign-in-provider="email"/), at(/data-sign-in-sheet-password=""/),
+    ];
+    for (const i of order) assert.ok(i > 0, `${from}: every part is there`);
+    assert.deepEqual([...order].sort((a, b) => a - b), order, `${from}: in that order`);
+    // The email is sent from here: a form, its button the submit.
+    assert.match(html, /<button type="submit" data-sign-in-provider="email"[^>]*>Continue with email<\/button><\/form>/);
+    assert.equal((html.match(/By continuing/g) || []).length, 1, `${from}: the terms once`);
+    assert.match(html, />Use a password<\/a>/);
+  }
+  // An invite's Join only makes an account: its terms, and no password.
+  const join = render('invite');
+  assert.match(join, /By continuing, you agree/);
+  assert.doesNotMatch(join, /Use a password|data-sign-in-sheet-password=/);
+  assert.equal(message('auth:signInSheet.withPassword'), 'Use a password');
+  assert.match(message('auth:signInSheet.resume.passwordRequired'), /"Use a password"/);
+  assert.match(message('auth:signInSheet.resume.adminPasswordRequired'), /"Use a password"/);
 });
 
 test('Email code | Password is one switch, and the password and reset steps say no terms (#5258)', () => {

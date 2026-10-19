@@ -453,7 +453,7 @@ test('Admin, Limits draws the figures from the AdminUI registry, read-only', () 
   assert.match(card, /id="admin-github-budget" className=\{`\$\{AdminUI\.card\} p-4 mt-4`\}/);
   assert.match(card, /AdminUI\.cardTitle/);
   assert.doesNotMatch(card, /<button|<input|method: 'PUT'/, 'nothing on it writes');
-  assert.match(src, /<AppLimitCard canWrite=\{canWrite\} \/>\s*<GithubBudgetCard \/>/);
+  assert.match(src, /<AppLimitCard canWrite=\{canWrite\} \/>\s*<SessionLimitCard canWrite=\{canWrite\} \/>\s*<GithubBudgetCard \/>/);
 });
 
 test('a 503 github_unavailable carries the reason, and the CLI prints it', () => {

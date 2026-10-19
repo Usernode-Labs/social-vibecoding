@@ -96,7 +96,7 @@ test('the invite\'s Join sheet starts with a phone number when the server offers
   // under the terms (#4379).
   assert.match(phone, /data-terms-notice="recaptcha"[^>]*>By continuing, you agree to Homeroom&#x27;s (<!-- -->)?terms(<!-- -->)?\.<\/p><p data-recaptcha-line=""[^>]*class="[^"]*text-\[12px\][^"]*text-zinc-400[^"]*">Protected by reCAPTCHA · Google (<!-- -->)?<a href="https:\/\/policies\.google\.com\/privacy"[^>]*>Privacy<\/a>(<!-- -->)? · (<!-- -->)?<a href="https:\/\/policies\.google\.com\/terms"[^>]*>Terms<\/a><\/p>/);
   assert.doesNotMatch(phone, /Privacy Policy|Terms of Service|\(reCAPTCHA\)/);
-  assert.doesNotMatch(phone, /Sign in with a password|This makes your account/, 'the password is a step on from the email way');
+  assert.doesNotMatch(phone, /Use a password|This makes your account/, 'the password is a step on from the email way');
   assert.ok(phone.indexOf('sign-in-sheet-phone"') < phone.indexOf('Continue with Apple'), 'the phone stays first');
   assert.doesNotMatch(phone, /—/);
   // Without the offer it is the sheet it was.
@@ -164,8 +164,9 @@ test('one tap on a step\'s main button submits with the keyboard up (#4214)', ()
   // (the code step's "Send a new code" asks again), and on no other.
   assert.match(src, /<TermsNotice className="mt-3" recaptcha=\{step === 'phone' \|\| step === 'phone-code' \? RECAPTCHA_LINE : null\} \/>/);
   const email = renderToHtml(createElement(SignInSheet, {
-    open: true, title: 'Sign in', intro: 'x', from: 'signin', onClose() {}, primaryClass: 'pill',
+    open: true, title: 'Join Best brunch spots', intro: 'x', from: 'invite', onClose() {}, primaryClass: 'pill',
   }));
+  // An invite's email step only makes an account, so it says the terms (#5257).
   assert.match(email, /By continuing, you agree to Homeroom/);
   assert.doesNotMatch(email, /reCAPTCHA|policies\.google\.com/);
 });

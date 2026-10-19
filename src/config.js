@@ -420,10 +420,12 @@ function load() {
     // one emergency switch. The deploy workflow still writes the verified-
     // identity variable; nothing reads it, exactly as with
     // OPENROUTER_MANAGED_DAILY_LIMIT_USD.
-    // #2819 reviewed MiMo-V2.6-Pro as a replacement on 2026-09-23 and kept
-    // GLM 5.3 Flash; docs/coding-agent-defaults.md has the evidence and
-    // what would change the answer.
-    openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
+    // DeepSeek V4.1 Flash 1017 replaced GLM 5.3 Flash on 2026-10-19 (Homeroom
+    // bot bench runs 210-217 and App bench run 216);
+    // docs/coding-agent-defaults.md has the evidence. Production takes its
+    // value from the deploy (the Platform variables panel, else the
+    // workflow's repository variable), not from this fallback.
+    openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'deepseek/deepseek-v4.1-flash-1017',
     // #3296: which CLI runs each OpenRouter model — `claude` (Claude Code
     // against OpenRouter's Anthropic-compatible endpoint) or `codex`. GLM 5.3
     // Flash does better in Claude Code and DeepSeek v4.1 Flash in Codex;
@@ -456,13 +458,14 @@ function load() {
     // #2569 cut this from five to two. The picker is one flat list of five
     // starting models now, and the other three are Anthropic's, so five
     // curated OpenRouter ids made a list of eight that nobody asked for.
-    // GLM leads because openrouterDefaultCodexModel above is GLM; the list
-    // order is what the picker shows after it.
+    // DeepSeek V4.1 Flash 1017 leads because openrouterDefaultCodexModel
+    // above is 1017, and GLM 5.3 Flash, the default before it, follows; the
+    // list order is what the picker shows after it.
     openrouterRecommendedModels: (() => {
       const configured = process.env.OPENROUTER_RECOMMENDED_MODELS === undefined
         ? [
+          'deepseek/deepseek-v4.1-flash-1017',
           'z-ai/glm-5.3-flash',
-          'deepseek/deepseek-v4.1-flash',
         ].join(',')
         : String(process.env.OPENROUTER_RECOMMENDED_MODELS);
       if (configured.trim().toLowerCase() === 'none') return [];
@@ -566,7 +569,9 @@ function load() {
     // without a code deploy. See the scaling notes in README / SPEC.
     //   - maxGlobalSessions: platform-wide active+promoted coding-worker
     //     ceiling. Externally produced imported PRs own no worker and are
-    //     excluded from it.
+    //     excluded from it. The DEFAULT only: a full admin can override it
+    //     in Admin → Limits, so every reader resolves the cap through
+    //     services/session-limit.js, never this value directly.
     //   - maxUserSessions:   per-user ceiling on 'active'-status sessions
     //     only (#193). Promoted sessions are exempt: they're un-pausable
     //     while their PR is up for a merge vote, so counting them would
@@ -585,6 +590,9 @@ function load() {
     //     per-requester by services/session-caps.js — never read these
     //     directly at a call site.
     maxGlobalSessions: parseInt(process.env.MAX_GLOBAL_SESSIONS || '25', 10),
+    // How many of one maintenance campaign's proposals may be up for a vote
+    // at once (src/workflow/campaign/machine.ts CampaignDeps.maxOpen).
+    campaignMaxOpen: parseInt(process.env.CAMPAIGN_MAX_OPEN || '10', 10),
     maxUserSessions: parseInt(process.env.MAX_USER_SESSIONS || '3', 10),
     maxUserPromotedSessions: parseInt(process.env.MAX_USER_PROMOTED_SESSIONS || '5', 10),
     maxAdminUserSessions: parseInt(process.env.MAX_ADMIN_USER_SESSIONS || '5', 10),
@@ -708,6 +716,15 @@ function load() {
       // repositories. Empty means the registry accepts anonymous pushes
       // (an in-cluster registry).
       buildkitRegistrySecret: process.env.BUILDKIT_REGISTRY_SECRET || '',
+      // Docker Hub's images (every FROM without a registry, node:22-alpine
+      // among them) are pulled through this mirror first, and from Docker
+      // Hub only when it does not have one. Every build is a fresh daemon
+      // with no image store, so without it each build is one more
+      // anonymous Docker Hub pull: on 19 Oct 2026, 65 deploys at once met
+      // Docker Hub's 429, and 44 of them, with every preview build after
+      // them, failed until its allowance came back. A host[:port]; empty
+      // switches it off.
+      buildkitDockerHubMirror: process.env.BUILDKIT_DOCKERHUB_MIRROR ?? 'mirror.gcr.io',
       // The image and cache registries speak plain HTTP (in-cluster, no TLS).
       buildkitInsecureRegistry: process.env.BUILDKIT_INSECURE_REGISTRY === '1',
       // Dockerfile candidates, in order of preference, relative to the source

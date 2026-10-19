@@ -7,6 +7,9 @@
  * tile on Home and on its App row in the desktop sidebar
  * (../nav/rail-communities.tsx), and it goes the moment the frame does —
  * evicted as least recently used, dropped for a new build, or at sign-out.
+ * On the desktop that dot is also where the close control sits (#5525):
+ * hovering it or reaching it with the Tab key shows an X in its place, and
+ * `closeLiveApp` below evicts the frame it names.
  *
  * Read straight off the frame store, so it can never disagree with what is
  * actually loaded. The store's initial state has no frames, which is also what
@@ -17,6 +20,7 @@
 import { useMessages } from '../../lib/i18n/react';
 import { t } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
+import { appFrameBridge } from './app-frame-bridge.js';
 import { appFrameStore, liveAppSlugs } from './app-frame-store.js';
 
 /** Slugs with a live frame right now. */
@@ -62,6 +66,16 @@ export function currentAppOnScreen(input: {
  *  among others there, joined by listText (lib/i18n). Read when rendering. */
 export function liveAppLabel(): string {
   return t('core:liveApp.stillOpen');
+}
+
+/**
+ * #5525: close a still-open app from its App row's close button in the
+ * desktop sidebar — a kept frame is dropped, a mounted one is unmounted,
+ * exactly as `evict` does. The bridge stays here, behind the dot and the
+ * close control, so the rail never imports it.
+ */
+export function closeLiveApp(slug: string): boolean {
+  return appFrameBridge.evict(slug);
 }
 
 /**

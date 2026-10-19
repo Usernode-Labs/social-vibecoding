@@ -43,6 +43,18 @@ export interface Asked {
   gone: boolean;
 }
 
+// Whether there is room for the campaign to change its next app: the
+// sessions spending the platform-wide budget (session-caps.js
+// GLOBAL_SESSIONS_SQL) against the session limit, and how many of its own
+// proposals are still being put up or up for a vote.
+export interface Room {
+  used: number;
+  // The session limit: the admin's setting (services/session-limit.js,
+  // platform_settings max_global_sessions), else the deploy's.
+  limit: number;
+  open: number;
+}
+
 export interface Facts {
   campaign: CampaignRow | null;
   // Start: the rows it already has, else its targets.
@@ -54,9 +66,12 @@ export interface Facts {
   // A change's result: whether its app still exists (locked, so it is not
   // deleted under the proposal row the result writes).
   appAlive: boolean | null;
+  // The room it has to change its next app (see Room); null for a drain or
+  // a stop.
+  room: Room | null;
 }
 
-export const NO_FACTS: Facts = { campaign: null, apps: [], green: [], asked: [], appAlive: null };
+export const NO_FACTS: Facts = { campaign: null, apps: [], green: [], asked: [], appAlive: null, room: null };
 
 async function readCampaign(tx: Tx, id: number): Promise<CampaignRow | null> {
   const { rows: [r] } = await tx.query(
@@ -130,10 +145,30 @@ async function readAsked(tx: Tx, campaignId: number, appIds: number[]): Promise<
   }));
 }
 
-export async function readFacts(tx: Tx, campaignId: number, event: Event<any>, proposing: number[]): Promise<Facts> {
+// The session limit as services/session-limit.js resolves it (its setting,
+// read here without that module's cache, else the deploy's value), and the
+// counts it is held against.
+const SETTING_MAX = 2000;
+async function readRoom(tx: Tx, campaignId: number, deployLimit: number): Promise<Room> {
+  const { rows: [r] } = await tx.query(
+    `SELECT (SELECT value FROM platform_settings WHERE key = 'max_global_sessions') AS setting,
+            (SELECT COUNT(*)::int FROM chat_sessions
+              WHERE status IN ('active', 'promoted') AND source IS DISTINCT FROM 'imported') AS used,
+            (SELECT COUNT(*)::int FROM maintenance_campaign_apps mca JOIN chat_sessions cs ON cs.id = mca.session_id
+              WHERE mca.campaign_id = $1 AND cs.status IN ('active', 'promoted', 'merging')) AS open`, [campaignId]);
+  const n = parseInt(r?.setting == null ? '' : String(r.setting), 10);
+  const limit = Number.isInteger(n) && n >= 1 && n <= SETTING_MAX ? n : deployLimit;
+  return { used: Number(r?.used) || 0, limit, open: Number(r?.open) || 0 };
+}
+
+export async function readFacts(tx: Tx, campaignId: number, event: Event<any>, proposing: number[],
+  o: { deployLimit: number } = { deployLimit: 100 }): Promise<Facts> {
   const campaign = await readCampaign(tx, campaignId);
   if (!campaign) return NO_FACTS;
   const out: Facts = { ...NO_FACTS, campaign };
+  // Every event that may change the next app (a retry of a finished
+  // campaign's app included) reads it; an admin's drain and stop do not.
+  if (event.type !== 'MergeGreen' && event.type !== 'Stop') out.room = await readRoom(tx, campaignId, o.deployLimit);
   if (event.type === 'Start') out.apps = await readApps(tx, campaign);
   if (event.type === 'MergeGreen') out.green = await readGreen(tx, campaignId);
   if (event.type === 'Check') out.asked = await readAsked(tx, campaignId, proposing);

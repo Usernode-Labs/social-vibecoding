@@ -187,18 +187,18 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
       'app-delivery deploys, offered the merge commit');
     await until(async () => calls.some((c) => c[0] === 'dm' && c[1] === s.id), 'the DM, from the bot\'s change machine');
     assert.equal((await pool.query(`SELECT state FROM wf_instances WHERE machine = 'bot-change' AND key = $1`, [`session:${s.id}`])).rows[0]?.state, 'live');
-    // The preview goes once the deploy is answered (demo mode deploys its
-    // build): the preview machine retires it, asked by this merge's answer.
+    // The preview goes at the merge (only a demo-mode deploy reuses its
+    // build and waits): the preview machine retires it, asked by the merge.
     const key = `session:${s.id}`;
     await until(async () => (await pool.query(
       `SELECT state FROM wf_instances WHERE machine = 'preview' AND key = $1`, [key])).rows[0]?.state === 'retired', 'the preview retired');
     const { rows: [ask] } = await pool.query(
       `SELECT payload, source FROM wf_events WHERE machine = 'preview' AND key = $1 AND type = 'RetireRequested'`, [key]);
     assert.deepEqual(ask.payload, { sessionId: s.id, reason: 'merged', terminal: true });
-    const { rows: [answer] } = await pool.query(
-      `SELECT id FROM wf_events WHERE machine = 'merge-followups' AND key = $1 AND type = 'Delivered'`, [key]);
-    assert.deepEqual(ask.source.from, { machine: 'merge-followups', key, eventId: Number(answer.id) },
-      'asked by the transition that applied the deploy\'s answer');
+    const { rows: [mergedEvent] } = await pool.query(
+      `SELECT id FROM wf_events WHERE machine = 'merge-followups' AND key = $1 AND type = 'Merged' ORDER BY id LIMIT 1`, [key]);
+    assert.deepEqual(ask.source.from, { machine: 'merge-followups', key, eventId: Number(mergedEvent.id) },
+      'asked by the transition that applied the merge');
     assert.ok(!calls.some((c) => c[0] === 'teardown' && c[1] === s.id), 'nothing else tears it down');
     await until(async () => calls.some((c) => c[0] === 'retire' && c[1] === s.id), 'the worker removed, fenced');
     const { rows: [d] } = await pool.query(`SELECT state FROM wf_instances WHERE machine = 'app-delivery' AND key = $1`, [`app:${app.id}`]);

@@ -8,10 +8,11 @@
 //             wall: past it, POST /api/apps and /fork answer 429 "This
 //             server is at its app limit" to everyone but full admins. Set
 //             in Admin → Limits, else MAX_APPS (services/app-limit.js).
-//   sessions  MAX_GLOBAL_SESSIONS — active + promoted coding workers. A soft
+//   sessions  the session limit — active + promoted coding workers. A soft
 //             wall: at it, starting or reopening a session pauses somebody
 //             else's idle one, and 429s "Platform is at capacity" when
-//             nothing is idle.
+//             nothing is idle. Set in Admin → Limits, else
+//             MAX_GLOBAL_SESSIONS (services/session-limit.js).
 //
 // and two that are GitHub's rather than ours, its hourly REST budget as the
 // last response reported it (services/github-budget.js):
@@ -65,6 +66,7 @@
 const log = require('./logger');
 const { withTransaction } = require('./cli-auth');
 const appLimit = require('./app-limit');
+const sessionLimit = require('./session-limit');
 const githubBudget = require('./github-budget');
 
 const DEFAULT_WARN_PERCENT = 80;
@@ -98,8 +100,10 @@ const LIMITS = Object.freeze([
   Object.freeze({
     key: 'sessions',
     envKey: 'MAX_GLOBAL_SESSIONS',
-    enabled: (config) => Number(config && config.maxGlobalSessions) > 0,
-    cap: async (config) => Number(config && config.maxGlobalSessions),
+    // Always on: there is no off switch for the session limit, and an
+    // admin's setting applies whatever the deploy's value.
+    enabled: () => true,
+    cap: (config, pool) => sessionLimit.effective(pool, config),
     // The count every start, resume and reopen asks
     // (session-caps.countGlobalSessions), so the alert and the refusal agree.
     count: (pool) => require('./session-caps').countGlobalSessions(pool),

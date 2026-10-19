@@ -82,7 +82,7 @@ test('the trace reader names the steps that ran and the steps the cache served',
 // as told. `argv` is each buildctl build call's arguments, one by one.
 function runScript({
   settled = [], cacheUpload, trace = TRACE, buildFails = false, uploadFails = false,
-  starterRef, starterExport, registryAttrs = '',
+  starterRef, starterExport, registryAttrs = '', mirror,
 } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bk-script-'));
   const bin = path.join(dir, 'bin');
@@ -91,6 +91,7 @@ function runScript({
   fs.writeFileSync(path.join(bin, 'buildctl-daemonless.sh'), [
     '#!/bin/sh',
     'printf \'%s\\n\' "$*" >> "$STUB_DIR/calls.log"',
+    'printf \'%s\\n\' "${BUILDKITD_FLAGS:-}" >> "$STUB_DIR/flags.log"',
     'if [ "$1" = build ]; then for arg in "$@"; do printf \'%s\\037\' "$arg"; done >> "$STUB_DIR/argv.log"; echo >> "$STUB_DIR/argv.log"; fi',
     '[ "$1" = build ] || exit 0',
     'output=no; export=no; trace=; metadata=',
@@ -121,14 +122,20 @@ function runScript({
   if (cacheUpload) env.CACHE_UPLOAD = cacheUpload;
   if (starterRef !== undefined) env.STARTER_CACHE_REF = starterRef;
   if (starterExport !== undefined) env.STARTER_CACHE_EXPORT = starterExport;
+  if (mirror !== undefined) env.DOCKERHUB_MIRROR = mirror;
+  env.BUILDKITD_FLAGS = '--oci-worker-no-process-sandbox';
   const run = spawnSync('sh', ['-c', script], { encoding: 'utf8', env });
   const calls = fs.existsSync(path.join(dir, 'calls.log'))
     ? fs.readFileSync(path.join(dir, 'calls.log'), 'utf8').trimEnd().split('\n') : [];
   const message = fs.existsSync(termination) ? fs.readFileSync(termination, 'utf8') : null;
   const argv = fs.existsSync(path.join(dir, 'argv.log'))
     ? fs.readFileSync(path.join(dir, 'argv.log'), 'utf8').trimEnd().split('\n').map((line) => line.split('\x1f').slice(0, -1)) : [];
+  const flags = fs.existsSync(path.join(dir, 'flags.log'))
+    ? fs.readFileSync(path.join(dir, 'flags.log'), 'utf8').trimEnd().split('\n') : [];
+  const toml = path.join(dir, 'workspace', 'buildkitd.toml');
   return {
     status: run.status, log: run.stdout + run.stderr, message, argv, workspace: path.join(dir, 'workspace'),
+    flags, toml: fs.existsSync(toml) ? fs.readFileSync(toml, 'utf8') : null,
     builds: calls.filter((call) => call.startsWith('build ')),
     uploads: calls.filter((call) => call.startsWith('build ') && !call.includes('--output')),
   };
@@ -376,4 +383,19 @@ test('settledCacheSteps: a step nobody has reported is not in the list, and the 
   const settled = settledCacheSteps(history, NOW);
   assert.deepEqual(settled, [VITE, 'ffffffffffff']);
   assert.ok(!settled.includes(NEW));
+});
+
+test('the script: with a Docker Hub mirror the daemon reads it from its own config, at the preflight and every build', { skip }, () => {
+  const run = runScript({ mirror: 'mirror.gcr.io' });
+  assert.equal(run.status, 0, run.log);
+  assert.equal(run.toml, '[registry."docker.io"]\n  mirrors = ["mirror.gcr.io"]\n');
+  assert.ok(run.flags.length >= 3, 'the preflight and both builds start the daemon');
+  for (const f of run.flags) {
+    assert.equal(f.replace(run.workspace, '/workspace'), '--oci-worker-no-process-sandbox --config /workspace/buildkitd.toml');
+  }
+  // Without one, nothing is written and the flags are the deploy's own.
+  const plain = runScript({ mirror: '' });
+  assert.equal(plain.status, 0, plain.log);
+  assert.equal(plain.toml, null);
+  assert.ok(plain.flags.every((f) => f === '--oci-worker-no-process-sandbox'));
 });
