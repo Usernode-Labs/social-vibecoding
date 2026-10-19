@@ -1293,6 +1293,13 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
+      "fingerprint": "bbb2de2fcd61f3c35304",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
       "fingerprint": "cf837b937e37a4415dce",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind) SELECT v.user_id, v.app_id, v.chat_message_id, v.source_user_id, v.kind FROM"
@@ -1303,13 +1310,6 @@
       "fingerprint": "d3e346e15c3848d401ba",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail) SELECT v.user_id, v.app_id, v.session_id, v.source_user_id, v.kind, v.det"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
-      "fingerprint": "dce1cbc23acf18fab531",
-      "count": 1,
-      "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
     },
     {
       "source": "src/services/notifications.js",

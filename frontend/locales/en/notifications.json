@@ -71,6 +71,10 @@
     "text": "See older message notifications",
     "description": "Button at the foot of the notifications sheet's Messages filter: fetches older notifications about conversations."
   },
+  "sheet.older.unread": {
+    "text": "See more unread notifications",
+    "description": "Button at the foot of the notifications sheet's Unread filter: fetches the next batch of unread notifications the bell counts but the sheet has not loaded yet."
+  },
   "sheet.older.reveal": {
     "text": "See older notifications",
     "description": "Button at the foot of the notifications sheet's Unread filter: shows the older, mostly read notifications under the unread ones, on the same tab, and loads the next batch if the server has one."

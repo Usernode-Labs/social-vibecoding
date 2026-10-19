@@ -92,6 +92,26 @@ export const notificationsStore = createStore({
    */
   messagesCanLoadMore: true,
   loadingOlderMessages: false,
+  /**
+   * #5527: the same pair for the Unread tab, which pages unread rows only on
+   * a cursor of its own (Notifications.loadMoreUnread over `?unread=1`) —
+   * under the exact filters the badge's countUnread applies, so paging here
+   * can fill the list up to the number the bell paints. Starts false:
+   * refresh() seeds it from the first page's own hasMore, so unlike
+   * `messagesCanLoadMore` there is nothing to discover before the first ask.
+   */
+  unreadCanLoadMore: false,
+  loadingUnread: false,
+  /**
+   * #5527: bumped by every refresh() whose first page landed, published with
+   * each _renderList. The Unread tab's auto-fill arms itself when the sheet
+   * opens and walks loadMoreUnread when this CHANGES while it is open — the
+   * sheet's own open is not the trigger, because opening always refreshes,
+   * and a fill that starts before that refresh lands is thrown away by it
+   * (refresh replaces the feed). Filling after the refresh lands is the one
+   * order that cannot race.
+   */
+  refreshTick: 0,
   /** PlatformUI.isTouch() at render time — gates the swipe-action wiring. */
   touch: false,
   /**
