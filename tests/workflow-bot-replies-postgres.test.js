@@ -83,6 +83,13 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
   };
   const calls = (kind) => work.calls.filter((c) => c.kind === kind);
   const reset = () => { work.calls.length = 0; work.answer.clear(); };
+  const until = async (check, what, ms = 20000) => {
+    const deadline = Date.now() + ms;
+    while (!(await check())) {
+      if (Date.now() >= deadline) assert.fail(`never: ${what}`);
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  };
   const inst = async (machine, key) => (await pool.query('SELECT * FROM wf_instances WHERE machine = $1 AND key = $2', [machine, key])).rows[0];
   const fire = async (machine, key) => {
     await asTransition((cl) => cl.query('UPDATE wf_instances SET deadline_at = now() WHERE machine = $1 AND key = $2', [machine, key]));
@@ -167,12 +174,16 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
     lastId = await chat(ada, '@Homeroom bot is it done?', place);
     await fireOnly('bot-voice', key);
     const turn = rt.runServices();
-    await new Promise((r) => setTimeout(r, 50));
-    const during = await chat(ben, 'and the other part?', place);
-    await rt.drain();
-    assert.equal((await inst('bot-voice', key)).data.again, true);
-    gate();
-    await turn;
+    let during;
+    try {
+      await until(() => calls(voice.WORK.turn).length === 1, 'the turn started');
+      during = await chat(ben, 'and the other part?', place);
+      await rt.drain();
+      assert.equal((await inst('bot-voice', key)).data.again, true);
+    } finally {
+      gate();
+      await turn;
+    }
     await settle();
     const after = await inst('bot-voice', key);
     assert.equal(after.state, 'settling', 'a turn of its own for what came during');
@@ -288,18 +299,21 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
       { requestKey: `t-${++rk}`, source: { kind: 'route' } });
     await rt.drain();
     const first = rt.runServices();
-    await new Promise((r) => setTimeout(r, 30));
-    // Written while it answers (appended and applied, no work run).
-    for (const id of [102, 103]) {
-      await rt.append('bot-dm', dmKey(ada), { type: 'Wrote', payload: { userId: ada.id, conversationId: 1, messageId: id, attempt: 0 } },
-        { requestKey: `t-${++rk}`, source: { kind: 'route' } });
+    try {
+      await until(() => calls(dm.WORK.answer).length === 1, 'the answer to 101 started');
+      // Written while it answers (appended and applied, no work run).
+      for (const id of [102, 103]) {
+        await rt.append('bot-dm', dmKey(ada), { type: 'Wrote', payload: { userId: ada.id, conversationId: 1, messageId: id, attempt: 0 } },
+          { requestKey: `t-${++rk}`, source: { kind: 'route' } });
+      }
+      await rt.drain();
+      assert.deepEqual(calls(dm.WORK.answer).map((c) => c.input.messageId), [101], 'the next waits for the one before');
+      const i = await inst('bot-dm', dmKey(ada));
+      assert.deepEqual([i.state, i.data.queue.map((q) => q.messageId)], ['answering', [102, 103]]);
+    } finally {
+      gate();
+      await first;
     }
-    await rt.drain();
-    assert.deepEqual(calls(dm.WORK.answer).map((c) => c.input.messageId), [101], 'the next waits for the one before');
-    const i = await inst('bot-dm', dmKey(ada));
-    assert.deepEqual([i.state, i.data.queue.map((q) => q.messageId)], ['answering', [102, 103]]);
-    gate();
-    await first;
     await settle();
     assert.deepEqual(calls(dm.WORK.answer).map((c) => c.input.messageId), [101, 102, 103]);
     assert.equal((await inst('bot-dm', dmKey(ada))).state, 'idle');
