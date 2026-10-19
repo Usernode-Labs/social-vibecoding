@@ -151,9 +151,31 @@ function truthyQuery(raw) {
 // of this file, and that module's header for why they moved. Their behaviour
 // is unchanged; the SQL text is byte-identical.
 
-function shownUsername(username) {
-  const name = publicUsername(username);
-  return name && !name.includes('@') ? name : null;
+// Letters and digits only, lowercased, trailing digits dropped: the shape a
+// handle suggested from an address takes (usernames.usernameFromEmail, then
+// `alex2`, `alex3` for a taken one).
+function handleStem(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '').replace(/\d+$/, '');
+}
+
+// The username a row may show beside its masked identifier, or null. Not a
+// generated handle, nothing shaped like an address, and nothing that gives
+// away what the mask hides: an email sign-up's handle is suggested from the
+// address's local part (#4596) and is often kept, and a Telegram or Discord
+// handle is an identifier in its own right, so a username that matches one
+// of them (either containing the other, once reduced to its stem) is left
+// out and the pane says "Member #<rank>" instead.
+function shownUsername(r) {
+  const name = publicUsername(r.username);
+  if (!name || name.includes('@')) return null;
+  const stem = handleStem(name);
+  if (stem.length < 3) return null;
+  const local = String(r.email || '').split('@')[0].split('+')[0];
+  for (const secret of [local, r.telegram, r.discord]) {
+    const other = handleStem(secret);
+    if (other.length >= 3 && (other.includes(stem) || stem.includes(other))) return null;
+  }
+  return name;
 }
 
 function formatLeaderboardRow(r) {
@@ -167,9 +189,9 @@ function formatLeaderboardRow(r) {
     // display-name chain above puts a MASKED email before it (SPEC 1246),
     // so a row like "sed***@***.com" may well have a public name the
     // standings pane would rather show. Usernames are public already (the
-    // Kudos board, chat); one that looks like an email address is not
-    // offered, since that is exactly what the mask hides.
-    username: shownUsername(r.username),
+    // Kudos board, chat); one that looks like an email address, or that
+    // was made from the address or handle the mask hides, is not offered.
+    username: shownUsername(r),
     discord: r.discord || null,
     wallet_address: r.wallet_address || null,
     bech32m: r.bech32m || null,
@@ -1242,4 +1264,4 @@ function topochainPublicRoutes(config) {
   return router;
 }
 
-module.exports = { topochainPublicRoutes };
+module.exports = { topochainPublicRoutes, shownUsername };

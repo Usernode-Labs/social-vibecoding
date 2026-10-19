@@ -808,7 +808,8 @@ test('GET /leaderboard: the viewer\'s own row rides along, and a masked row carr
   assert.equal(own.rank, 1);
   assert.equal(own.is_viewer, true);
   assert.equal(own.display_name, 'dav***@***.com', 'the display-name chain is unchanged');
-  assert.equal(own.username, 'dave', 'and the username the pane can show instead rides beside it');
+  assert.equal(own.username, null,
+    "dave's handle is his address's local part, so it would unmask what the identifier hides");
   const rows = body.data.leaderboard;
   assert.deepEqual(rows.filter((r) => r.is_viewer).map((r) => r.rank), [1],
     'exactly one row on the page is marked as the viewer');
@@ -1529,4 +1530,24 @@ test('resolveDisplayName: discord, display_name and the masked identifier all st
   assert.equal(resolveDisplayName({ ...bare, discord: 'davediscord', username: 'dave' }), 'davediscord');
   assert.equal(resolveDisplayName({ ...bare, discord: 'davediscord', username: 'dave' }, { includeDiscord: false }),
     'dav***', 'the redacted global chain still masks discord before reaching the username');
+});
+
+test('shownUsername: a chosen handle shows; one made from the masked address or a messenger handle does not (#5275)', () => {
+  const { shownUsername } = require('../src/routes/topochain/public');
+  const row = (username, extra = {}) => ({ username, email: null, telegram: null, discord: null, ...extra });
+  assert.equal(shownUsername(row('stargazer', { email: 'sed.lopez@example.com' })), 'stargazer');
+  // Suggested from the address at sign-up (#4596), numbered when taken, or any case of it.
+  assert.equal(shownUsername(row('sedlopez', { email: 'sed.lopez+hr@example.com' })), null);
+  assert.equal(shownUsername(row('sedlopez2', { email: 'sed.lopez@example.com' })), null);
+  assert.equal(shownUsername(row('SED_Lopez', { email: 'sed.lopez@example.com' })), null);
+  assert.equal(shownUsername(row('sed', { email: 'sed.lopez@example.com' })), null, 'a prefix of the local part');
+  assert.equal(shownUsername(row('sedlopezfan', { email: 'sedlopez@example.com' })), null, 'the local part inside it');
+  // A Telegram or Discord handle is an identifier too.
+  assert.equal(shownUsername(row('nightowl', { telegram: 'NightOwl' })), null);
+  assert.equal(shownUsername(row('nightowl', { discord: 'night_owl99' })), null);
+  // Generated, address-shaped or too short to judge: never.
+  assert.equal(shownUsername(row('topochain_ab12')), null);
+  assert.equal(shownUsername(row('a@b')), null);
+  assert.equal(shownUsername(row('ab')), null);
+  assert.equal(shownUsername(row(null)), null);
 });
