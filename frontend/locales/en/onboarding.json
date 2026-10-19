@@ -1752,8 +1752,8 @@
     "description": "Title of the last card of the welcome tour on the Home screen, started from Settings: points at the profile tab. \"this\" is the tour."
   },
   "tour.step.settings.body": {
-    "text": "You can replay this tour any time from Settings, on your profile.",
-    "description": "Text of the last card of the welcome tour on the Home screen, started from Settings. Settings is the name of a screen reached from the person's profile."
+    "text": "You can replay this tour any time from Settings, on your profile. Finish takes you to your communities.",
+    "description": "Text of the last card of the welcome tour on the Home screen, started from Settings. Settings is the name of a screen reached from the person's profile. \"Finish\" is the name of the card's button, and pressing it opens the Communities screen."
   },
   "tour.step.meetBot.title": {
     "text": "Meet Homeroom bot",
