@@ -66,8 +66,10 @@ test('the list: the pages, a line, then Channels over #general and Topics over t
   for (const g of groups) assert.equal(g[1], g[3], `${g[4]} is labelled by its own heading`);
   // #general by its handle, a channel's glyph the #.
   assert.match(html, /data-place="discussion"[^>]*><svg[^>]*dev-ws-place-hash[\s\S]*?<span class="dev-ws-place-label">general<\/span>/);
-  // Every entry is a link with an address of its own.
-  assert.match(html, /<a class="dev-ws-place" href="\/app\/homeroom\/workshop" data-place="status"/);
+  // Every entry is a link with an address of its own (#5297: the pages too).
+  assert.match(html, /<a class="dev-ws-place" href="\/app\/homeroom\/dev\/hub" data-place="status"/);
+  assert.match(html, /<a class="dev-ws-place" href="\/app\/homeroom\/dev\/needs" data-place="needs"/);
+  assert.match(html, /<a class="dev-ws-place" href="\/app\/homeroom\/dev\/workshop" data-place="workshop"/);
   assert.match(html, /<a class="dev-ws-place" href="\/app\/homeroom\/dev\/discussion" data-place="discussion"/);
   assert.match(html, /<a class="dev-ws-place" href="\/app\/homeroom\/dev\/c\/onboarding" data-place="c:onboarding" title="Onboarding"/);
 });
@@ -246,7 +248,7 @@ test('places: keys, handles, aliases and addresses', () => {
   assert.deepEqual({ ...p.topicHandleMap(PLACES_PAYLOAD) },
     { bot: 'homeroom-bot', onboarding: 'onboarding', 'homeroom-bot': 'homeroom-bot', signup: 'signup', infra: 'infra' });
   assert.equal(p.placeHref('notes', 'c:infra'), '/app/notes/dev/c/infra');
-  assert.equal(p.placeHref('notes', 'needs'), '/app/notes/workshop?ws=needs');
+  assert.equal(p.placeHref('notes', 'needs'), '/app/notes/dev/needs', '#5297: a page has its own address too');
 });
 
 test('the ladder walks places: a channel, Needs you or the Workshop goes up to the Hub, then to All communities', () => {
@@ -270,9 +272,12 @@ test('a channel\'s own address opens the page on it, and every old address keeps
   assert.ok(at > 0);
   const body = app.slice(at, app.indexOf('\n  },\n', at) + 4).replace(/^ {2}_placeAddress/, 'function _placeAddress');
   const landed = [];
+  const AppView = require('../public/js/app-view.js');
   const ctx = {
     AppView: {
-      _isWorkshopPlace: (k) => k === 'discussion' || /^c:[a-z][a-z0-9-]{0,39}$/.test(k),
+      // #5297: the one reading of a place's address, the router's and the page's.
+      _placeFromSegs: AppView._placeFromSegs,
+      _historyWorkshopTab: () => null,
       _landOnTab: (slug, k) => landed.push([slug, k]),
     },
   };

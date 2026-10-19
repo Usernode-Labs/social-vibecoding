@@ -11042,6 +11042,110 @@ const AppView = {
     return AppView.WORKSHOP_TABS.indexOf(key) !== -1
       || (typeof key === 'string' && AppView.WORKSHOP_CHANNEL_RE.test(key));
   },
+  /**
+   * #5297: EVERY PLACE HAS AN ADDRESS OF ITS OWN, so a link copied from the
+   * Hub opens the Hub and one copied from Needs you opens Needs you:
+   *
+   *   /app/<slug>/dev/hub         the Hub (`status`; the plan, which is never
+   *                               reopened on, is the Hub's too)
+   *   /app/<slug>/dev/needs       Needs you
+   *   /app/<slug>/dev/workshop    the Workshop
+   *   /app/<slug>/dev/all · /bot  the pages under the Workshop
+   *   /app/<slug>/dev/discussion  #general (`dev/general` is read as it too)
+   *   /app/<slug>/dev/c/<handle>  a topic's channel
+   *
+   * `/app/<slug>/workshop` (and bare `/app/<slug>/dev`) stays the page's
+   * own address: it opens the place last shown, as it always did, and the
+   * router writes that place's address over it (App._appUrl `place`).
+   * frontend/src/features/dev-board/workshop/places.ts placePath says the
+   * same for the React side; tests/place-addresses.test.js holds the two
+   * together.
+   */
+  WORKSHOP_PLACE_SEGMENTS: {
+    status: 'hub', plan: 'hub', needs: 'needs', workshop: 'workshop',
+    all: 'all', bot: 'bot', discussion: 'discussion',
+  },
+  // The path after `/app/<slug>/` that names `key`, or null for no place.
+  _placeSegment(key) {
+    if (typeof key !== 'string') return null;
+    if (Object.prototype.hasOwnProperty.call(AppView.WORKSHOP_PLACE_SEGMENTS, key)) {
+      return `dev/${AppView.WORKSHOP_PLACE_SEGMENTS[key]}`;
+    }
+    return AppView.WORKSHOP_CHANNEL_RE.test(key) ? `dev/c/${key.slice(2)}` : null;
+  },
+  // The place a route's segments name (`['app', slug, 'dev', 'needs']`), or
+  // null when they are not a place's address. Older forms are left alone.
+  _placeFromSegs(segs) {
+    if (!Array.isArray(segs) || segs[0] !== 'app' || !segs[1] || segs[2] !== 'dev') return null;
+    let a = '';
+    let b = '';
+    try {
+      a = decodeURIComponent(String(segs[3] || '')).toLowerCase();
+      b = decodeURIComponent(String(segs[4] || '')).toLowerCase();
+    } catch { return null; }
+    const rest = segs.slice(5).filter((x) => x != null && x !== '');
+    if (rest.length) return null;
+    if (a === 'c') {
+      if (!b) return null;
+      if (b === 'general') return 'discussion';
+      return AppView.WORKSHOP_CHANNEL_RE.test(`c:${b}`) ? `c:${b}` : null;
+    }
+    if (b) return null;
+    if (a === 'general' || a === 'discussion') return 'discussion';
+    const pages = { hub: 'status', needs: 'needs', workshop: 'workshop', all: 'all', bot: 'bot' };
+    return Object.prototype.hasOwnProperty.call(pages, a) ? pages[a] : null;
+  },
+  // The address of `key` on `slug`'s page, keeping the address's query less
+  // `ws` (the path names the place now), or null for no place.
+  _placeUrl(slug, key) {
+    const seg = AppView._placeSegment(key);
+    if (!slug || !seg) return null;
+    let search = '';
+    try {
+      const params = new URLSearchParams(window.location.search || '');
+      params.delete('ws');
+      const q = params.toString();
+      search = q ? `?${q}` : '';
+    } catch { search = ''; }
+    return `/app/${encodeURIComponent(slug)}/${seg}${search}`;
+  },
+  // The route segments the address bar holds: its fragment when it has one
+  // (as restoreFromHash reads it), else its path.
+  _addressSegs() {
+    if (typeof window === 'undefined' || !window.location) return [];
+    const loc = window.location;
+    const hash = String(loc.hash || '').replace(/^#/, '').split('?')[0];
+    return (hash || String(loc.pathname || '').replace(/^\/+/, '').replace(/\/+$/, '')).split('/');
+  },
+  /**
+   * The page shows `tab` and the address names another place: a door that
+   * turned the page in place (the logo menu's "Go to community hub" pressed
+   * on it), or an old entry Back or Forward showed by its stamp. The address
+   * is made the place's, in the same entry. Only over a place's own address:
+   * the page's address (`/workshop`), mid-way through a route, is the
+   * router's to write. True when it wrote one.
+   */
+  _syncPlaceAddress(slug, tab) {
+    if (!slug || !AppView._isWorkshopPlace(tab)) return false;
+    const segs = AppView._addressSegs();
+    const at = AppView._placeFromSegs(segs);
+    if (!at) return false;
+    let addressed;
+    try { addressed = decodeURIComponent(segs[1]); } catch { return false; }
+    if (addressed !== slug) return false;
+    if (AppView._placeSegment(at) === AppView._placeSegment(tab)) return false;
+    const url = AppView._placeUrl(slug, tab);
+    if (!url) return false;
+    try {
+      const prev = window.history.state && typeof window.history.state === 'object' ? window.history.state : {};
+      const had = AppView._workshopTabStamp(prev);
+      window.history.replaceState({
+        ...prev,
+        [AppView.WORKSHOP_TAB_STATE_KEY]: { slug, tab, from: had && had.slug === slug ? had.from : null },
+      }, '', url);
+      return true;
+    } catch { return false; }
+  },
   _workshopModels() {
     const src = (typeof DevChat !== 'undefined' && DevChat && DevChat.MODELS) || null;
     if (!src || typeof src !== 'object') return { list: [], selected: null };
@@ -11162,7 +11266,7 @@ const AppView = {
   // a decision, not a change, so it is left out). Each carries its after
   // still from its before & after shots (`_workshopVisuals`, the Needs-you
   // feed's own reading of them; a merged row carries no "What it touches",
-  // so without one the card draws a plain tile), and who made it and when
+  // so without one the card draws its title on a tinted tile, #5297), and who made it and when
   // it went live — or that it is going live now: merged,
   // and production has not run it yet (its rollout pending, or `live_at`
   // null; a row without the field reads live, as the dashboard's count reads
@@ -11325,7 +11429,17 @@ const AppView = {
     // An explicit tap retires the URL override, exactly as `_setWorkshopGroup`
     // does — otherwise `?ws=` would keep winning over every later press.
     AppView._workshopTabUrlOverride = null;
+    AppView._workshopTabSet = next;
     try { window.localStorage.setItem(AppView.WORKSHOP_TAB_KEY, next); } catch {}
+  },
+  // #5297: the place this window's page was last set to, for its address
+  // (App._pagePlace). The remembered tab is per browser, shared by every
+  // window, so a press in one would otherwise rename the other's address.
+  _workshopTabSet: null,
+  _placeOnShow() {
+    const url = AppView._workshopTabParam();
+    if (url) return url;
+    return AppView._workshopTabSet || AppView._workshopTab();
   },
   /**
    * A DOOR TO A PROJECT'S HUB OPENS THE HUB. The page reopens on the tab you
@@ -11356,9 +11470,9 @@ const AppView = {
    * A press now pushes an entry at the SAME address that names the tab it
    * shows, after writing the tab being left onto the entry it leaves. Back and
    * Forward walk those entries, and the router (App._routeFromHash) shows the
-   * tab an entry names without pushing anything. The address is unchanged, so
-   * a link copied from any tab is the same link it always was, and `?ws=`
-   * stays the way to link to one.
+   * tab an entry names without pushing anything. #5297: the entry pushed is
+   * at the place's own address (_placeUrl), so a link copied from any place
+   * opens that place; `?ws=` still links to one too.
    *
    * Only on the project page itself: a door pressed from another screen
    * (_landOnHub before a navigation) changes no history here, because the
@@ -11367,15 +11481,16 @@ const AppView = {
   WORKSHOP_TAB_STATE_KEY: '__unProjectTab',
   // Is the address the project page of `slug`? The clean path, or the hash
   // spellings restoreFromHash canonicalises to it.
+  // #5297: and a place's own address (`/app/<slug>/dev/needs`).
   _onProjectPage(slug) {
     if (!slug || typeof window === 'undefined' || !window.location) return false;
-    const loc = window.location;
-    const hash = String(loc.hash || '').replace(/^#/, '').split('?')[0];
-    const segs = (hash || String(loc.pathname || '').replace(/^\/+/, '').replace(/\/+$/, '')).split('/');
-    if (segs.length !== 3 || segs[0] !== 'app') return false;
+    const segs = AppView._addressSegs();
+    if (segs[0] !== 'app') return false;
     let at;
     try { at = decodeURIComponent(segs[1]); } catch { return false; }
-    return at === slug && (segs[2] === 'workshop' || segs[2] === 'board' || segs[2] === 'dev');
+    if (at !== slug) return false;
+    if (AppView._placeFromSegs(segs)) return true;
+    return segs.length === 3 && (segs[2] === 'workshop' || segs[2] === 'board' || segs[2] === 'dev');
   },
   // The tab an entry's state names, or null: `{ slug, tab, from }`.
   _workshopTabStamp(state) {
@@ -11408,9 +11523,10 @@ const AppView = {
     const left = AppView._isWorkshopPlace(from) ? from : null;
     try {
       if (left) AppView._stampWorkshopTab(slug, left);
+      // #5297: at the address of the place it shows (_placeUrl).
       window.history.pushState({
         [AppView.WORKSHOP_TAB_STATE_KEY]: { slug, tab: to, from: left },
-      }, '');
+      }, '', AppView._placeUrl(slug, to) || undefined);
       return true;
     } catch { return false; }
   },

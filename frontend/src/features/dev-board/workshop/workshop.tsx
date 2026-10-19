@@ -4439,6 +4439,15 @@ export function DevWorkshop(): ReactNode {
     window.addEventListener('usernode:workshop-tab', onDoor);
     return () => window.removeEventListener('usernode:workshop-tab', onDoor);
   }, [v.slug]);
+  // #5297: THE ADDRESS NAMES THE PLACE ON SHOW. A press pushes its place's
+  // address already (AppView._pushWorkshopTab); a door that turns the page
+  // in place, or an old entry shown by its stamp, leaves the address of the
+  // place before, which this writes over in the same entry. After the
+  // render, so a door that goes on to route has routed by then, and the
+  // router's address is left alone (AppView._syncPlaceAddress).
+  useEffect(() => {
+    if (v.slug) callAppView('_syncPlaceAddress', v.slug, tab);
+  }, [v.slug, tab]);
   // ANOTHER PROJECT IN THE SAME PAGE (#3555). Going straight from one
   // project's page to another's keeps the host (#app-view keeps
   // #dev-workshop and republishes into it), so this is not mounted again,

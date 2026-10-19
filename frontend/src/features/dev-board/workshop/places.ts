@@ -130,17 +130,32 @@ export function unreadTotal(places: PlacesPayload | null | undefined): number {
 }
 
 /**
- * The address of a place a new tab can open. A channel has one of its own,
- * `/app/<slug>/dev/c/<handle>` (#general's is `/app/<slug>/dev/discussion`),
- * which the router turns into the page on that place; a page is the
- * project's own address with its `?ws=`.
+ * The path that names a place on a project's page, after `/app/<slug>/`
+ * (#5297): every place has an address of its own, so a link copied from one
+ * opens it. The plan is never reopened on, so its address is the Hub's.
+ * public/js/app-view.js (AppView._placeSegment / _placeFromSegs) writes and
+ * reads the same addresses for the router; tests/place-addresses.test.js
+ * holds the two together.
+ *
+ *   status, plan → dev/hub      needs → dev/needs      workshop → dev/workshop
+ *   all → dev/all   bot → dev/bot   discussion → dev/discussion   c:<h> → dev/c/<h>
+ */
+const PLACE_SEGMENTS: Readonly<Record<string, string>> = Object.freeze({
+  status: 'hub', plan: 'hub', needs: 'needs', workshop: 'workshop', all: 'all', bot: 'bot', discussion: 'discussion',
+});
+
+export function placePath(key: PlaceKey): string {
+  const handle = key === 'discussion' ? null : placeHandle(key);
+  if (handle) return `dev/c/${handle}`;
+  return `dev/${PLACE_SEGMENTS[key] || 'hub'}`;
+}
+
+/**
+ * The address of a place a new tab can open: `/app/<slug>/` and its path
+ * (placePath), which the router turns into the page on that place.
  */
 export function placeHref(slug: string, key: PlaceKey): string {
-  const app = `/app/${encodeURIComponent(slug)}`;
-  if (key === 'discussion') return `${app}/dev/discussion`;
-  const handle = placeHandle(key);
-  if (handle) return `${app}/dev/c/${handle}`;
-  return key === 'status' ? `${app}/workshop` : `${app}/workshop?ws=${encodeURIComponent(key)}`;
+  return `/app/${encodeURIComponent(slug)}/${placePath(key)}`;
 }
 
 /**

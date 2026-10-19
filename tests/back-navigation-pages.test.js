@@ -117,12 +117,14 @@ function liftAppMethod(signature) {
 
 // ── 1. The project page's tabs ─────────────────────────────────────────
 
-test('a tab press pushes an entry at the same address naming its tab, and stamps the one it leaves', () => {
-  const win = fakeWindow('/app/garden/workshop?demo=1');
+test('a tab press pushes an entry at its place\'s address naming its tab, and stamps the one it leaves', () => {
+  const win = fakeWindow('/app/garden/workshop?demo=1&ws=status');
   withWindow(win, () => {
     assert.equal(AppView._pushWorkshopTab('garden', 'status', 'workshop'), true);
     assert.equal(win.entries.length, 2, 'one new entry');
-    assert.equal(win.entries[1].url.href, `${ORIGIN}/app/garden/workshop?demo=1`, 'at the same address');
+    // #5297: at the Workshop's own address, so a link copied from it opens it;
+    // `?ws=` goes, since the path names the place now.
+    assert.equal(win.entries[1].url.href, `${ORIGIN}/app/garden/dev/workshop?demo=1`, 'at the place\'s own address');
     assert.deepEqual(win.entries[0].state[KEY], { slug: 'garden', tab: 'status', from: null },
       'the entry left behind now says it was the hub');
     assert.deepEqual(win.entries[1].state[KEY], { slug: 'garden', tab: 'workshop', from: 'status' });

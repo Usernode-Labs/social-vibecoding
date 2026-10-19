@@ -272,7 +272,15 @@ test('Recently live: the last three changes that went live, as pictures that ope
   ], 'the newest three, each its change\'s page');
   assert.match(html, /<span class="dev-ws-recent-pic" data-ws-recent-pic="shot" aria-hidden="true"><img src="\/api\/apps\/garden\/proposals\/1\/shots\/0123456789abcdef0123456789abcdef" alt="" loading="lazy" draggable="false"\/><\/span><span class="dev-ws-recent-title">Change 1<\/span><span class="dev-ws-recent-meta" title="[^"]+">Homeroom bot · 1h ago<\/span>/,
     'its after shot, its title, and who and when');
-  assert.match(html, /data-ws-recent-pic="plain" aria-hidden="true"><svg[^>]*class="dev-ws-recent-glyph"/, 'without a shot, a plain tile');
+  // #5297: without a shot, the change's title on a tile in the community's
+  // colour, not a grey tile with a check; the line under it is for a screen
+  // reader then, since the tile is hidden from one.
+  assert.match(html, /<span class="dev-ws-recent-pic" data-ws-recent-pic="title" aria-hidden="true"><span class="dev-ws-recent-words">Change 2<\/span><\/span><span class="dev-ws-recent-title sr-only">Change 2<\/span>/,
+    'without a shot, its title on a tinted tile');
+  assert.doesNotMatch(html, /dev-ws-recent-glyph|data-ws-recent-pic="plain"/, 'no check-mark tile left');
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-ws-recent-pic\[data-ws-recent-pic="title"\] \{[^}]*background: color-mix\(in srgb, var\(--community-tint, #2a2e34\) 16%, var\(--bg-primary\)\);/,
+    'the tile is tinted with the community colour the header puts on <html>');
   assert.match(html, /data-ws-recent-item="live:3" data-ws-recent-going="">[\s\S]*?<span class="dev-ws-recent-meta dev-ws-recent-going">Homeroom bot · going live now<\/span>/);
   assert.equal(renderToHtml(createElement(RecentlyLive, { slug: 'garden', rows: [], onAll: () => {} })), '', 'nothing merged, no section');
 

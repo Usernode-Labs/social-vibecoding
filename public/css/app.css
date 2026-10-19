@@ -18091,7 +18091,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-foryou-count { flex: none; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
 .dev-ws-foryou-handle { font-weight: 500; color: var(--text-muted); }
 /* RECENTLY LIVE (RecentlyLive): three picture cards, each a door to its
-   change: its after shot (or a plain tile), its title, who and when. A row
+   change: its after shot (or its title on a tinted tile), who and when. A row
    that scrolls sideways on a phone, three across on a wide window. */
 .dev-ws-strip.dev-ws-recent { padding: 14px 0; }
 .dev-ws-recent-list {
@@ -18131,7 +18131,19 @@ button.dev-ws-recent-card {
   position: absolute; inset: 0; width: 100%; height: 100%;
   object-fit: cover; object-position: top center;
 }
-.dev-ws-recent-glyph { width: 26px; height: 26px; color: var(--text-muted); opacity: .6; }
+/* #5297: a change with no after shot is its title, in words, on a tile in
+   the community's colour (`--community-tint`, which the header puts on
+   <html> on a project's pages; graphite where it has not yet). */
+.dev-ws-recent-pic[data-ws-recent-pic="title"] {
+  place-items: start; padding: 12px 14px;
+  background: color-mix(in srgb, var(--community-tint, #2a2e34) 16%, var(--bg-primary));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--community-tint, #2a2e34) 22%, transparent);
+}
+.dev-ws-recent-words {
+  font-size: 15px; font-weight: 650; line-height: 1.3; color: var(--text-primary);
+  display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+  overflow-wrap: anywhere;
+}
 .dev-ws-recent-title {
   font-size: 14px; font-weight: 650; line-height: 1.3; color: var(--text-primary);
   display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;

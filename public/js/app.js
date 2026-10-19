@@ -4414,6 +4414,10 @@ const App = {
           : norm.ref.kind === 'proposal' ? 'proposals'
           : norm.ref.kind === 'session' ? 'shared' : 'governance';
         suffix = `/dev/${seg}/${norm.ref.id}`;
+      } else if (opts.place && typeof AppView !== 'undefined' && AppView._placeSegment
+          && AppView._placeSegment(opts.place)) {
+        // #5297: the project page on a place is that place's own address.
+        suffix = `/${AppView._placeSegment(opts.place)}`;
       } else if (opts.boardView === 'workshop') {
         suffix = '/workshop';
       } else if (opts.boardView === 'kanban') {
@@ -5503,7 +5507,7 @@ const App = {
         // permanent outputs. Replace before dispatch so reload/copy exposes
         // the clean canonical path without manufacturing a Back entry.
         const canonicalAppUrl = App._appUrl(slug, tab, ref, subTab, {
-          chromeless, innerPath, boardView,
+          chromeless, innerPath, boardView, place: App._pagePlace(tab, subTab, chromeless),
         });
         const currentAppUrl = `${location.pathname}${location.search}${location.hash}`;
         if (currentAppUrl !== canonicalAppUrl) {
@@ -6016,6 +6020,12 @@ const App = {
     try { path = new URL(String(url || ''), location.origin).pathname; } catch (_) { return null; }
     const m = /^\/app\/[a-z0-9][a-z0-9-]{0,254}\/(workshop|board|dev(?:\/.*)?)$/.exec(path);
     if (!m || /^dev\/(chat|sessions)(\/|$)/.test(m[1])) return null;
+    // #5297: a place's own address is remembered as the page's, which
+    // reopens on the place last shown there, as it did before places had one.
+    const segs = path.replace(/^\/+/, '').split('/');
+    if (typeof AppView !== 'undefined' && AppView._placeFromSegs && AppView._placeFromSegs(segs)) {
+      return `/app/${segs[1]}/workshop`;
+    }
     return path;
   },
 
@@ -6463,18 +6473,35 @@ const App = {
    * page's own address (`workshop`), which the route then takes as it takes
    * any other. Every older address is left as it is.
    */
+  //
+  // #5297: and so is every other place's: `dev/hub`, `dev/needs`,
+  // `dev/workshop`, `dev/all`, `dev/bot`, `dev/general`
+  // (AppView._placeFromSegs). An address the page's own press pushed
+  // carries the place on its entry too (AppView._pushWorkshopTab): Back and
+  // Forward onto one are not doors, so the entry's place is remembered
+  // without the door's turn and scroll (App._routeFromHash shows it).
   _placeAddress(parts) {
     if (!parts || parts[0] !== 'app' || !parts[1] || parts[2] !== 'dev') return false;
-    if (parts[3] !== 'discussion' && !(parts[3] === 'c' && parts[4])) return false;
-    let handle = '';
-    try { handle = decodeURIComponent(parts[4] || '').toLowerCase(); } catch (_) { handle = ''; }
-    const place = parts[3] === 'discussion' || handle === 'general' ? 'discussion' : `c:${handle}`;
-    if (typeof AppView !== 'undefined' && AppView._isWorkshopPlace && AppView._isWorkshopPlace(place)) {
-      AppView._landOnTab(parts[1], place);
-    }
+    if (typeof AppView === 'undefined' || !AppView._placeFromSegs) return false;
+    const place = AppView._placeFromSegs(parts);
+    if (!place) return false;
+    let slug = parts[1];
+    try { slug = decodeURIComponent(parts[1]); } catch (_) { /* as written */ }
+    const stamp = AppView._historyWorkshopTab ? AppView._historyWorkshopTab() : null;
+    if (stamp && stamp.slug === slug) AppView._setWorkshopTab(stamp.tab);
+    else AppView._landOnTab(slug, place);
     parts.length = 3;
     parts[2] = 'workshop';
     return true;
+  },
+
+  // #5297: the place the project page opens on, for its address: the one it
+  // was told or last showed (AppView._placeOnShow), on the page itself (the
+  // card list) and nowhere else. Null when there is no page to name.
+  _pagePlace(tab, subTab, chromeless) {
+    if (tab !== 'dev' || chromeless || (subTab && subTab !== 'forum')) return null;
+    if (typeof AppView === 'undefined' || !AppView._placeOnShow) return null;
+    try { return AppView._placeOnShow() || null; } catch (_) { return null; }
   },
 
   _hubHref(slug) {
@@ -8024,7 +8051,10 @@ const App = {
         && AppView.pendingInnerPath) || null;
       newUrl = App._appUrl(
         App.currentApp, App.currentTab, ref, App.currentSubTab,
-        { chromeless: App.chromeless, innerPath, boardView }
+        {
+          chromeless: App.chromeless, innerPath, boardView,
+          place: App._pagePlace(App.currentTab, App.currentSubTab, App.chromeless),
+        }
       );
     } else {
       // Home: drop the fragment entirely — but keep the query string. In

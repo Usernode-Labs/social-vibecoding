@@ -58,7 +58,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { SectionHeader, ListRow } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
-import { BallotIcon, BoardIcon, ChatIcon, CheckIcon, ChevronRightIcon, ClockIcon } from '@/components/ui/icons';
+import { BallotIcon, BoardIcon, ChatIcon, ChevronRightIcon } from '@/components/ui/icons';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
@@ -710,7 +710,9 @@ function openApp(slug: string): void {
 /**
  * RECENTLY LIVE: the last three changes that went live, newest first
  * (AppView._workshopRecentLive), each a door to its page: its after shot
- * when the checks took one (else a plain tile), its title, and who made it
+ * when the checks took one, else its title in words on a tile in the
+ * community's colour (#5297: a grey tile with a check said nothing about
+ * what changed), its title, and who made it
  * and when it went live — "Homeroom bot · 1h ago" — or that it is going
  * live now. The label's door, "All in Workshop", opens the Workshop, where
  * what landed is listed week by week. Three across on a wide window; on a
@@ -778,16 +780,15 @@ export function RecentlyLive({ slug, rows, onAll, own = null }: {
                   data-ws-recent-item={r.key}
                   data-ws-recent-going={r.going ? '' : undefined}
                 >
-                  <span className="dev-ws-recent-pic" data-ws-recent-pic={r.picture ? 'shot' : 'plain'} aria-hidden="true">
+                  <span className="dev-ws-recent-pic" data-ws-recent-pic={r.picture ? 'shot' : 'title'} aria-hidden="true">
                     {r.picture ? (
                       <img src={r.picture} alt="" loading="lazy" draggable={false} />
-                    ) : r.going ? (
-                      <ClockIcon className="dev-ws-recent-glyph" aria-hidden="true" />
                     ) : (
-                      <CheckIcon className="dev-ws-recent-glyph" aria-hidden="true" />
+                      <span className="dev-ws-recent-words">{r.title}</span>
                     )}
                   </span>
-                  <span className="dev-ws-recent-title">{r.title}</span>
+                  {/* #5297: on a titled tile the words are the tile's; the line stays for a screen reader. */}
+                  <span className={r.picture ? 'dev-ws-recent-title' : 'dev-ws-recent-title sr-only'}>{r.title}</span>
                   {meta ? (
                     <span className={r.going ? 'dev-ws-recent-meta dev-ws-recent-going' : 'dev-ws-recent-meta'} title={ago ? ago.title : undefined}>
                       {meta}
