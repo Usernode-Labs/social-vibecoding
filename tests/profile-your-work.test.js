@@ -425,6 +425,27 @@ test('#5454: entering an app exits the screen, like Leaderboard, Profile, Admin 
     'the #app/<slug> branch exits the screen before App.setChromeless(chromeless)');
 });
 
+// ── #5453: a late correction re-reads the screen in place ─────────────
+
+test('#5453: the late-arrival correction re-reads the Your work screen', () => {
+  const app = read('public/js/app.js');
+  const start = app.indexOf('  refreshActiveScreen() {');
+  assert.ok(start >= 0, 'App.refreshActiveScreen is defined');
+  const body = app.slice(start, app.indexOf('\n  },', start));
+  assert.match(body, /UsernodeReact\?\.profileProposals/,
+    'the correction names the Your work controller');
+  assert.match(body, /visible\('profile-proposals-screen'\)/,
+    'only while the screen is the one showing');
+  assert.match(body, /work\?\.isOpen\?\.\(\)/,
+    'and while the controller is open, the flag reload() itself checks');
+  assert.match(body, /work\.reload\?\.\(\); return; \}/,
+    'through its own reload, with no app view to fall through to');
+  const workAt = body.indexOf('UsernodeReact?.profileProposals');
+  const workshopAt = body.indexOf('UsernodeReact?.workshop');
+  assert.ok(workAt >= 0 && workshopAt > workAt,
+    'the branch sits before the Workshop branch, so a Workshop store still marked open cannot take the correction while Your work is the visible screen');
+});
+
 // ── The layout (#3498) ─────────────────────────────────────────────────
 //
 // "Your requests + your votes sections are misformatted (gray, behind

@@ -2621,6 +2621,14 @@ const App = {
       const messages = window.UsernodeReact?.messages;
       if (messages?.showing?.()) messages.resync?.();
 
+      // Your work (#5453): a vote cast on a slow link is missing from the
+      // saved copy of Your votes the screen opened with. Re-read whichever
+      // view is up through its own loader, the same way the Communities
+      // screen corrects itself. `return`: this screen holds no app view to
+      // fall through to, like the Workshop branch below.
+      const work = window.UsernodeReact?.profileProposals;
+      if (visible('profile-proposals-screen') && work?.isOpen?.()) { work.reload?.(); return; }
+
       // The Communities screen (#5164): its counts and Needs you feed are
       // the workshop controller's own quiet reads. When the worker corrected
       // one of them after a slow first answer, re-run it here — the same
