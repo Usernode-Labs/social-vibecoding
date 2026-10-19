@@ -1541,8 +1541,10 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
   }
   // #4795: a merged change is decided, so the rows that asked you to vote on
   // it or try it leave the list instead of staying as read entries somebody
-  // taps and finds a merged page behind. `IS NOT DISTINCT FROM` so a row
-  // with no session behind it (NULL cs.status) evaluates to false and is
+  // taps and finds a merged page behind. #5482: every other row that only
+  // leads back to the merged change (a vote on it, a failed check, a
+  // finished build turn, ...) leaves with them. `IS NOT DISTINCT FROM` so a
+  // row with no session behind it (NULL cs.status) evaluates to false and is
   // kept, rather than to NULL and dropped by the NOT. The saved section
   // leaves the clause off (see the #4769 note above this function).
   // #5461: the news that the change went live is listed until it is read,
@@ -1831,14 +1833,22 @@ const { settleVoteDigests } = changeNotifications;
 // it, so once that change has MERGED the rows leave the bell's list instead
 // of lingering as read entries somebody taps and finds a merged page behind.
 // It is every ask the decision settles plus "ready to try" itself: a merged
-// change is decided, so the vote it asked for is already in. The rows that
-// say the change went live (pr_merged to its author, voted_change_merged to
-// its voters) are not asks; they stay until read (MERGED_READ_HIDDEN_KINDS
-// below). A closed change keeps its rows in the
-// list, where "ready to try" reads Closed.
+// change is decided, so the vote it asked for is already in.
+// #5482: every other row that only leads back to the change is hidden on a
+// merge too: a vote on it, a check that could not run, a finished or
+// stalled build turn, an auto-solve, a shared spec, a connector submission.
+// settleDecidedChange still marks only DECIDED_ASK_KINDS read, so these
+// ride the hidden list alone. The rows that say the change went live
+// (pr_merged to its author, voted_change_merged to its voters) are not
+// asks; they stay until read (MERGED_READ_HIDDEN_KINDS below). A closed
+// change keeps its rows in the list, where "ready to try" reads Closed.
 // "One story": the requester's own "ready to try" from Homeroom bot
 // (build_ready) too, once settleDecidedChange has linked it to its change.
-const MERGED_HIDDEN_KINDS = Object.freeze([...DECIDED_ASK_KINDS, 'change_ready', 'build_ready']);
+const MERGED_HIDDEN_KINDS = Object.freeze([
+  ...DECIDED_ASK_KINDS, 'change_ready', 'build_ready',
+  'proposal_vote', 'check_failed', 'connector_submitted',
+  'session_done', 'session_stalled', 'auto_solve_done', 'spec_shared',
+]);
 
 // #5461: the news that a change went live is listed until it is read, then
 // leaves the bell's list like the asks above did — a read note somebody
