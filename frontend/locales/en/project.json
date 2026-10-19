@@ -4648,12 +4648,12 @@
     "description": "What the number beside Needs you in a project's list of places counts, read by screen readers: changes waiting for this person's vote. {{count}} is that number."
   },
   "places.count.unread_one": {
-    "text": "{{count}} unread",
-    "description": "What the number beside a channel in a project's list of places counts, read by screen readers: messages there this person has not read. {{count}} is that number."
+    "text": "{{shown}} unread",
+    "description": "The count beside a channel in a project's list of places, shown in its pill, its hover text and to screen readers: messages there this person has not read. {{shown}} is that number as displayed (capped as 99+ on screen); the plural form follows the real count."
   },
   "places.count.unread_other": {
-    "text": "{{count}} unread",
-    "description": "What the number beside a channel in a project's list of places counts, read by screen readers: messages there this person has not read. {{count}} is that number."
+    "text": "{{shown}} unread",
+    "description": "The count beside a channel in a project's list of places, shown in its pill, its hover text and to screen readers: messages there this person has not read. {{shown}} is that number as displayed (capped as 99+ on screen); the plural form follows the real count."
   },
   "places.bar.hub": {
     "text": "Hub",

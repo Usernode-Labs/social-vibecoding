@@ -30,8 +30,10 @@
  * too, and a plain press moves the page in place (`onPlace`). The open place
  * carries `aria-current="page"` and the left rail's lit-row treatment
  * (`--lit-tint`, `--lit-ink`). Channels and Topics are each a `role="group"`
- * labelled by its heading. A count says what it counts to a screen reader
- * (an `sr-only` phrase, "29 to vote", "3 unread"), and a zero says nothing.
+ * labelled by its heading. A count says what it counts: on screen a
+ * channel's pill reads "3 unread", its hover text the same (the channel
+ * you are reading draws none), and to a screen reader an `sr-only`
+ * phrase, "29 to vote", "3 unread". A zero says nothing.
  *
  * Drawn nested under the community's row in the desktop's sidebar of rows
  * (../../nav/rail-communities.tsx, v3), and in the tray behind the place bar
@@ -52,18 +54,20 @@ import { listText, t as translate } from '../../../lib/i18n/runtime';
 import { liveAppLabel, LiveAppDot, useLiveAppSlugs } from '../../app-frame/live-apps';
 import { noteResumeOrigin } from '../../nav/resume-motion';
 import type { PlacesPayload } from './community-card';
-import { channelPlace, litPlace, liveTopics, PAGE_PLACES, placeHref, type PlaceKey } from './places';
+import { channelPlace, isChannelPlace, litPlace, liveTopics, PAGE_PLACES, placeHref, type PlaceKey } from './places';
 
 /** "99+" past 99, as every count on the page caps. */
 export function countText(n: number): string {
   return n > 99 ? '99+' : String(n);
 }
 
-/** What a place's count says aloud, or null for none (a zero says nothing). */
-export function countPhrase(key: PlaceKey, n: number): string | null {
+/** What a place's count says aloud, or null for none (a zero says nothing).
+ *  `shown` is the number as displayed (capped as 99+); the plural form
+ *  follows the real count. */
+export function countPhrase(key: PlaceKey, n: number, shown = String(n)): string | null {
   if (!(n > 0)) return null;
   if (key === 'needs') return translate('project:places.count.toVote', { count: n });
-  return translate('project:places.count.unread', { count: n });
+  return translate('project:places.count.unread', { count: n, shown });
 }
 
 /** The entries the list draws, in order: what the tests read. Pure. */
@@ -106,7 +110,14 @@ function PlaceLink({ slug, k, label, count, lit, title, extra, onPlace }: {
   onPlace: (key: PlaceKey) => void;
 }) {
   const t = useMessages('project');
-  const phrase = countPhrase(k, count);
+  // The channel you are reading draws no count of its own, as the place bar
+  // leaves it out of its unread; the count of Needs you stays while you are
+  // there (#5447).
+  const channel = isChannelPlace(k);
+  const phrase = channel && lit ? null : countPhrase(k, count);
+  // A channel's pill says what it counts ("9 unread", capped as "99+ unread"),
+  // its hover text the same; Needs you keeps the bare number.
+  const shown = channel ? countPhrase(k, count, countText(count)) : null;
   const press = (event: MouseEvent<HTMLAnchorElement>) => {
     const nav = (window as unknown as { NavLink?: { isNativeClick?: (e: unknown) => boolean } }).NavLink;
     if (nav?.isNativeClick?.(event)) return;
@@ -127,7 +138,7 @@ function PlaceLink({ slug, k, label, count, lit, title, extra, onPlace }: {
       <span className="dev-ws-place-label">{label}</span>
       {phrase ? (
         <>
-          <span className="dev-ws-place-count" data-place-count="" aria-hidden="true">{countText(count)}</span>
+          <span className="dev-ws-place-count" data-place-count="" aria-hidden="true" title={shown ?? undefined}>{shown ?? countText(count)}</span>
           <span className="sr-only">{` ${t('project:places.list.countAloud', { phrase })}`}</span>
         </>
       ) : null}
