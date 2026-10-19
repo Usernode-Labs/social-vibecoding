@@ -4905,8 +4905,9 @@ const App = {
               AuthScreens.show('landing');
               return;
             }
-            AuthScreens.rememberDeepLink(App._deepLinkTarget());
-            AuthScreens.show('login');
+            // Remembered for after the sign-in, and answered with the
+            // landing's sign-in sheet titled for where it leads (#5264).
+            AuthScreens.showSignInFor(App._deepLinkTarget());
             return;
           }
         }
@@ -9316,19 +9317,18 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
 
   // The anonymous shell owns the whole document when there is no session, so
   // it outranks the route — and the four cases below are restoreFromHash's
-  // own, in its order. The last one is the easy one to get wrong: a signed-out
-  // DEEP LINK does not land on the marketing page, it lands on LOGIN, with the
-  // address remembered for after ("'/' → landing, deeper paths → login", which
-  // is the parity with the old static documents the router notes).
+  // own, in its order. A signed-out DEEP LINK lands on the landing screen,
+  // which opens its sign-in sheet over it, titled for the place the link
+  // names, with the address remembered for after (AuthScreens.showSignInFor,
+  // #5264). It used to land on the full-page sign-in form.
   if (!signedIn) {
-    if (head === 'login' || head === 'signup') return 'auth-login-screen';
+    if (head === 'login' || head === 'signup' || head === 'reset-password') return 'auth-login-screen';
     if (head === 'register') return 'auth-register-screen';
     if (head === 'waitlist') return 'auth-waitlist-screen';
-    // No route at all, and 'waiting' — which the router redirects to landing
-    // for a viewer with no session to be waiting on. `appPath` is why this
-    // asks about the ROUTE and not the fragment.
-    if ((head === '' && !appPath) || head === 'waiting') return 'auth-landing-screen';
-    return 'auth-login-screen';
+    // Everything else is the landing: no route at all, 'waiting' (which the
+    // router redirects to landing for a viewer with no session to be waiting
+    // on), and a deep link, an app path included, under its sign-in sheet.
+    return 'auth-landing-screen';
   }
 
   if (head === 'app' || appPath) return 'app-view';

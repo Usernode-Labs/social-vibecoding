@@ -101,14 +101,13 @@ test('a clean /app/<slug> path counts, not just the fragment', () => {
 
 test('signed out, the anonymous shell outranks the route', () => {
   const f = bootScreenFor();
-  // THE ONE THAT IS EASY TO GET WRONG, and did get written wrong first: a
-  // signed-out DEEP LINK does not land on the marketing page. restoreFromHash
-  // remembers the address and shows LOGIN — "'/' → landing, deeper paths →
-  // login", the parity with the static documents it replaced. Caught in a
-  // browser, where the board deep link showed no screen at all.
-  assert.equal(f('#app/demo-app/board', '/', false), 'auth-login-screen');
-  assert.equal(f('#settings', '/', false), 'auth-login-screen');
-  assert.equal(f('', '/app/demo-app', false), 'auth-login-screen');
+  // A signed-out DEEP LINK lands on the landing screen, which opens its
+  // sign-in sheet titled for the link (AuthScreens.showSignInFor, #5264).
+  // It used to land on the full-page sign-in form. An app PATH counts too:
+  // the board deep link once showed no screen at all.
+  assert.equal(f('#app/demo-app/board', '/', false), 'auth-landing-screen');
+  assert.equal(f('#settings', '/', false), 'auth-landing-screen');
+  assert.equal(f('', '/app/demo-app', false), 'auth-landing-screen');
   // …and the bare root does land on the marketing page.
   assert.equal(f('', '/', false), 'auth-landing-screen');
   // 'waiting' with no session is nobody's queue: the router sends it to
@@ -129,7 +128,7 @@ test('a public profile is the one address that answers the same either way', () 
   // The viewer's OWN profile is a signed-in screen, and signed out it is a
   // deep link like any other.
   assert.equal(f('#profile', '/', true), 'profile-screen');
-  assert.equal(f('#profile', '/', false), 'auth-login-screen');
+  assert.equal(f('#profile', '/', false), 'auth-landing-screen');
 });
 
 // ── How it is applied ──────────────────────────────────────────────────
