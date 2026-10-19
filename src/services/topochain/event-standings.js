@@ -282,6 +282,7 @@ module.exports = {
   maskGeneric,
   maskIdentifier,
   resolveDisplayName,
+  publicUsername,
   EVENT_LEADERBOARD_SQL,
   fetchEventLeaderboardRows,
   DEFAULT_PUBLIC_EVENT_SQL,

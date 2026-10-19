@@ -56,7 +56,7 @@ const { computeStandings } = require('../../services/topochain/standings');
 // widget started previewing the same standings. One definition of a rank and
 // one of a display name, shared by the routes and the widget.
 const {
-  resolveIdentifier, maskIdentifier, resolveDisplayName, fetchEventLeaderboardRows,
+  resolveIdentifier, maskIdentifier, resolveDisplayName, publicUsername, fetchEventLeaderboardRows,
   resolveDefaultPublicEvent,
 } = require('../../services/topochain/event-standings');
 const {
@@ -151,6 +151,33 @@ function truthyQuery(raw) {
 // of this file, and that module's header for why they moved. Their behaviour
 // is unchanged; the SQL text is byte-identical.
 
+// Letters and digits only, lowercased, trailing digits dropped: the shape a
+// handle suggested from an address takes (usernames.usernameFromEmail, then
+// `alex2`, `alex3` for a taken one).
+function handleStem(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '').replace(/\d+$/, '');
+}
+
+// The username a row may show beside its masked identifier, or null. Not a
+// generated handle, nothing shaped like an address, and nothing that gives
+// away what the mask hides: an email sign-up's handle is suggested from the
+// address's local part (#4596) and is often kept, and a Telegram or Discord
+// handle is an identifier in its own right, so a username that matches one
+// of them (either containing the other, once reduced to its stem) is left
+// out and the pane says "Member #<rank>" instead.
+function shownUsername(r) {
+  const name = publicUsername(r.username);
+  if (!name || name.includes('@')) return null;
+  const stem = handleStem(name);
+  if (stem.length < 3) return null;
+  const local = String(r.email || '').split('@')[0].split('+')[0];
+  for (const secret of [local, r.telegram, r.discord]) {
+    const other = handleStem(secret);
+    if (other.length >= 3 && (other.includes(stem) || stem.includes(other))) return null;
+  }
+  return name;
+}
+
 function formatLeaderboardRow(r) {
   const identifier = resolveIdentifier(r);
   return {
@@ -158,6 +185,13 @@ function formatLeaderboardRow(r) {
     is_non_podium: !!r.exclude_podium,
     identifier: maskIdentifier(identifier),
     display_name: resolveDisplayName(r),
+    // #5275: the platform username, when it is one somebody chose. The
+    // display-name chain above puts a MASKED email before it (SPEC 1246),
+    // so a row like "sed***@***.com" may well have a public name the
+    // standings pane would rather show. Usernames are public already (the
+    // Kudos board, chat); one that looks like an email address, or that
+    // was made from the address or handle the mask hides, is not offered.
+    username: shownUsername(r),
     discord: r.discord || null,
     wallet_address: r.wallet_address || null,
     bech32m: r.bech32m || null,
@@ -310,7 +344,7 @@ function topochainPublicRoutes(config) {
       // list, meta.total 0.
       if (!event.display_leaderboard) {
         return ok(res, {
-          data: { event: eventPayload, leaderboard: [], non_podium_count: 0 },
+          data: { event: eventPayload, leaderboard: [], non_podium_count: 0, viewer_row: null },
         }, { meta: meta(page, perPage, 0) });
       }
 
@@ -331,10 +365,26 @@ function topochainPublicRoutes(config) {
 
       const total = visible.length;
       const start = (page - 1) * perPage;
-      const leaderboard = visible.slice(start, start + perPage).map(formatLeaderboardRow);
+      // #5275: the signed-in viewer's own row, whichever page it is on, so
+      // the pane can pin "You · #22" above the table instead of making them
+      // page through to find themselves. Read from the SAME visible list
+      // the page is cut from, so its rank is the one the table shows, and
+      // null for a guest or a viewer with no row here. `is_viewer` marks
+      // that row on the page itself, which is how the pane opens it in
+      // place rather than below the table.
+      const viewerId = req.user && req.user.id != null ? Number(req.user.id) : null;
+      const isViewer = (r) => viewerId != null && Number(r.user_id) === viewerId;
+      const own = viewerId != null ? visible.find(isViewer) : null;
+      const leaderboard = visible.slice(start, start + perPage)
+        .map((r) => ({ ...formatLeaderboardRow(r), is_viewer: isViewer(r) }));
 
       return ok(res, {
-        data: { event: eventPayload, leaderboard, non_podium_count: nonPodiumCount },
+        data: {
+          event: eventPayload,
+          leaderboard,
+          non_podium_count: nonPodiumCount,
+          viewer_row: own ? { ...formatLeaderboardRow(own), is_viewer: true } : null,
+        },
       }, { meta: meta(page, perPage, total) });
     } catch (err) {
       if (err instanceof ValidationError) {
@@ -1214,4 +1264,4 @@ function topochainPublicRoutes(config) {
   return router;
 }
 
-module.exports = { topochainPublicRoutes };
+module.exports = { topochainPublicRoutes, shownUsername };
