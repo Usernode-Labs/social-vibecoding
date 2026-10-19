@@ -5,7 +5,7 @@
 
 import type { Json, WorkContext, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import { itemKind, runKind } from './machine.ts';
+import { itemKind, runKind, MAX_ITEMS } from './machine.ts';
 
 // What a job's I/O reads: the platform's configuration and its pool.
 export interface JobDeps { config: any; pool: any }
@@ -80,6 +80,10 @@ const HOUR = 60 * MIN;
 
 // Whether the run has been asked to stop (its lease is lost, or the process
 // is shutting down): a sweep over many rows stops at the next one.
+// (A run hands back at most MAX_ITEMS targets. A list that can be longer is
+// paged: each run takes the next page after the last one it reached, kept
+// as `after` in its result, and starts over once a page comes back short.)
+const page = (ctx: WorkContext) => ({ after: (ctx.input.previous as any)?.after ?? null, limit: MAX_ITEMS });
 const stopped = (ctx: WorkContext) => () => ctx.signal.aborted;
 
 // WORKSHOP_THEMES_SWEEP_INTERVAL_MS (config.js workshopSweepIntervalMs): 0
@@ -293,9 +297,9 @@ export const JOBS: readonly Job[] = Object.freeze([
     // removed by name. STAGING_STALE_SWEEP_INTERVAL_MS=0 switches it off.
     name: 'preview-gc',
     get everyMs() { return legacy('services/staging-reap').staleSweepIntervalMs() || 24 * HOUR; },
-    run: (_ctx: WorkContext, { config }: JobDeps) => {
+    run: (ctx: WorkContext, { config }: JobDeps) => {
       const reap = legacy('services/staging-reap');
-      return reap.staleSweepIntervalMs() ? reap.leftovers(config) : { off: true };
+      return reap.staleSweepIntervalMs() ? reap.leftovers(config, page(ctx)) : { off: true };
     },
     item: {
       concurrency: 3,
@@ -373,7 +377,7 @@ export const JOBS: readonly Job[] = Object.freeze([
     // often (at least 30 seconds).
     name: 'imported-prs',
     get everyMs() { return Math.max(parseInt(process.env.IMPORTED_HEAD_SYNC_COOLDOWN_MS || '', 10) || 3 * MIN, 30 * 1000); },
-    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').importedTargets(pool),
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').importedTargets(pool, page(ctx)),
     item: {
       concurrency: 2,
       leaseMs: 10 * MIN,
@@ -384,7 +388,7 @@ export const JOBS: readonly Job[] = Object.freeze([
     // Each native proposal up for a vote: one merged by hand on GitHub is
     // recorded.
     name: 'merged-by-hand', everyMs: 6 * HOUR, leaderSweep: 'merged-by-hand-lookup',
-    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').mergedByHandTargets(pool),
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').mergedByHandTargets(pool, page(ctx)),
     item: {
       concurrency: 4,
       run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').lookMergedByHand(pool, Number(ctx.input.input?.sessionId)),
@@ -394,7 +398,7 @@ export const JOBS: readonly Job[] = Object.freeze([
     // Each native proposal in review: its reviewed head read again (a push
     // made outside Homeroom), and its explicit-approval flag.
     name: 'proposal-revisions', everyMs: HOUR, leaderSweep: 'stale-pr-sweep',
-    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').revisionTargets(pool),
+    run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/proposal-scans').revisionTargets(pool, page(ctx)),
     item: {
       concurrency: 2,
       leaseMs: 5 * MIN,

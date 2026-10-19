@@ -823,6 +823,22 @@ test('reapLeftover: a session whose row names its preview again is left; a finis
   assert.deepEqual(fx.teardownCalls.map((c) => c.sessionId), [6001]);
 });
 
+test('leftovers: a page at a time, by name, so a list longer than a run takes is gone through', async () => {
+  const reap = setup();
+  fx.psLines = [
+    ['usernode-staging-c-ccc333--7003', 'running', 'usernode-staging-c-ccc333-7003:ccc333'],
+    ['usernode-staging-a-aaa111--7001', 'running', 'usernode-staging-a-aaa111-7001:aaa111'],
+    ['usernode-staging-b-bbb222--7002', 'running', 'usernode-staging-b-bbb222-7002:bbb222'],
+  ];
+  fx.sessions = [7001, 7002, 7003].map((id) => ({ id, status: 'merged', staging_container_id: `cid-${id}`, app_slug: 'x' }));
+  const first = await reap.leftovers({}, { after: null, limit: 2 });
+  assert.deepEqual(first.items.map((i) => i.input.sessionId), [7001, 7002]);
+  assert.equal(first.after, 'usernode-staging-b-bbb222--7002');
+  const second = await reap.leftovers({}, { after: first.after, limit: 2 });
+  assert.deepEqual(second.items.map((i) => i.input.sessionId), [7003]);
+  assert.equal(second.after, null, 'gone through: the next run starts over');
+});
+
 test('reapLeftover: an unlinked preview the machine took up since is the machine\'s', async () => {
   const reap = setup();
   fx.psLines = [['usernode-staging-moved-ddd444--6004', 'running', 'usernode-staging-moved-ddd444-6004:ddd444']];
@@ -860,7 +876,7 @@ test('leftovers: never throws when docker ps fails, and lists nothing', async ()
 
   const found = await reap.leftovers({});
 
-  assert.deepEqual(found, { examined: 0, abandoned: 0, unlinked: 0, items: [] });
+  assert.deepEqual(found, { examined: 0, abandoned: 0, unlinked: 0, items: [], after: null });
   assert.deepEqual(fx.stopCalls, [], 'an unreadable host is a no-op sweep, not a blind one');
   assert.deepEqual(fx.teardownCalls, []);
 });
@@ -877,9 +893,10 @@ test('the preview-gc clock takes the leftovers, each a target of its own, and 0 
   const found = await job.run({ input: {} }, { config: {}, pool: fakePool });
   assert.deepEqual(found.items.map((i) => i.target), [
     'usernode-staging-oldmerged-bbb222--3002',
-    'usernode-staging-prelabel-ccc333--3003',
     'usernode-staging-orphan-eee555--3005',
-  ]);
+    'usernode-staging-prelabel-ccc333--3003',
+  ], 'by name: the order the clock pages them in');
+  assert.equal(found.after, null, 'one page holds them all');
   // The clock hands each item its target's input as `ctx.input.input`.
   const outcomes = [];
   for (const item of found.items) {
@@ -968,7 +985,7 @@ test('Kubernetes: the preview-gc clock takes abandoned previews, whatever their 
   // is a target here like any other leftover.
   assert.deepEqual({ examined: found.examined, abandoned: found.abandoned, unlinked: found.unlinked },
     { examined: 7, abandoned: 4, unlinked: 0 });
-  assert.deepEqual(Object.values(outcomes), ['torn_down', 'torn_down_no_db', 'torn_down_no_db', 'torn_down']);
+  assert.deepEqual(Object.values(outcomes).sort(), ['torn_down', 'torn_down', 'torn_down_no_db', 'torn_down_no_db']);
   // Rows that still name their Deployment go through the shared chokepoint,
   // which also drops the staging database and nulls the row.
   assert.deepEqual(fx.teardownCalls.map((c) => c.sessionId).sort((a, b) => a - b), [3711, 5080]);
@@ -1025,7 +1042,7 @@ test('Kubernetes: an unreadable API is a no-op sweep, not a blind one', async ()
   const reap = setup();
   fx.kubeListError = new Error('connect ECONNREFUSED');
 
-  assert.deepEqual(await reap.leftovers(KUBE), { examined: 0, abandoned: 0, unlinked: 0, items: [] });
+  assert.deepEqual(await reap.leftovers(KUBE), { examined: 0, abandoned: 0, unlinked: 0, items: [], after: null });
   assert.deepEqual(await reap.staleEnvTargets(KUBE), { examined: 0, stale: [] });
   assert.deepEqual(fx.kubeRemoveCalls, []);
   assert.deepEqual(fx.teardownCalls, []);
@@ -1102,7 +1119,7 @@ test('the automatic passes refuse to run inside a staging preview', async () => 
   const saved = process.env.USERNODE_ENV;
   try {
     process.env.USERNODE_ENV = 'staging';
-    assert.deepEqual(await reap.leftovers({}), { examined: 0, abandoned: 0, unlinked: 0, items: [] },
+    assert.deepEqual(await reap.leftovers({}), { examined: 0, abandoned: 0, unlinked: 0, items: [], after: null },
       'a preview has no docker socket to sweep with');
     assert.deepEqual(await reap.staleEnvTargets({}), { examined: 0, stale: [] });
     assert.equal(fx.dockerExecCalls, 0);

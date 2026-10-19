@@ -58,15 +58,30 @@ function pool(script) {
   };
 }
 
-test('the targets are every open proposal of the kind, with no limit', async () => {
-  const ids = Array.from({ length: 260 }, (_, i) => ({ id: i + 1 }));
-  const p = pool([[/source = 'imported'/, ids], [/source IS DISTINCT FROM 'imported'/, ids], [/is_headless = FALSE/, ids]]);
-  const imported = await scans.importedTargets(p);
-  assert.equal(imported.items.length, 260, 'the leader looked at 50');
-  assert.deepEqual(imported.items[0], { target: 'session:1', input: { sessionId: 1 } });
-  assert.equal((await scans.mergedByHandTargets(p)).items.length, 260);
-  assert.equal((await scans.revisionTargets(p)).items.length, 260);
-  assert.ok(p.seen.every((q) => !/LIMIT/.test(q.sql)));
+test('the targets are paged, so a list longer than a run takes is gone through and starts over', async () => {
+  // 260 proposals, a run takes 200: the second run takes the 60 after them,
+  // the third starts again from the first.
+  const ids = Array.from({ length: 260 }, (_, i) => i + 1);
+  const p = pool([[/FROM chat_sessions\s+WHERE/, (params) => ids.filter((id) => id > params[0]).slice(0, params[1]).map((id) => ({ id }))]]);
+  for (const scan of [scans.importedTargets, scans.mergedByHandTargets, scans.revisionTargets]) {
+    const one = await scan(p, { after: null, limit: 200 });
+    assert.deepEqual([one.items.length, one.after, one.items[0]], [200, 200, { target: 'session:1', input: { sessionId: 1 } }]);
+    const two = await scan(p, { after: one.after, limit: 200 });
+    assert.deepEqual([two.items.length, two.after, two.items[0].input.sessionId], [60, null, 201]);
+    const three = await scan(p, { after: two.after, limit: 200 });
+    assert.equal(three.items[0].input.sessionId, 1);
+  }
+  assert.ok(p.seen.every((q) => /id > \$1 ORDER BY id LIMIT \$2/.test(q.sql)));
+  assert.ok(!/\$\{where\}/.test(require('node:fs').readFileSync(require.resolve('../src/services/proposal-scans.js'), 'utf8')),
+    'every query a complete literal, so the SQL check validates it');
+});
+
+test('a clock that lists proposals hands its last page on to its next run', () => {
+  const clocks = require('node:fs').readFileSync(require.resolve('../src/workflow/clock/services.ts'), 'utf8');
+  assert.match(clocks, /const page = \(ctx: WorkContext\) => \(\{ after: \(ctx\.input\.previous as any\)\?\.after \?\? null, limit: MAX_ITEMS \}\);/);
+  for (const call of ['importedTargets(pool, page(ctx))', 'mergedByHandTargets(pool, page(ctx))', 'revisionTargets(pool, page(ctx))', 'leftovers(config, page(ctx))']) {
+    assert.ok(clocks.includes(call), call);
+  }
 });
 
 test('an imported look skips a session worked on or a spent budget, and otherwise syncs it', async () => {

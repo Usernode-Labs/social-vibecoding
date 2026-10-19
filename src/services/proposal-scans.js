@@ -15,6 +15,19 @@ const log = require('./logger');
 
 const platform = () => require('../workflow/platform.ts');
 
+// A page's bounds: the id after which it starts, and how many it takes.
+const bounds = ({ after = null, limit = 200 } = {}) => [Number.isInteger(after) && after > 0 ? after : 0, limit];
+
+// A page of sessions (selected after the first bound, by id, as many as the
+// second) as clock targets, with where the next page starts.
+function paged(rows, limit) {
+  return {
+    listed: rows.length,
+    after: rows.length >= limit ? Number(rows[rows.length - 1].id) : null,
+    items: rows.map((r) => ({ target: `session:${r.id}`, input: { sessionId: Number(r.id) } })),
+  };
+}
+
 const ROW_SQL = `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted AS app_self_hosted
                    FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id`;
 
@@ -37,15 +50,17 @@ function budgetAllows() {
 
 // ── Imported pull requests ──────────────────────────────────────────────
 
-// Every imported proposal that is open on Homeroom, each a target of its own
-// (lookImported): its pull request's head, description, and whether GitHub
-// merged or closed it.
-async function importedTargets(pool) {
+// Every open imported proposal that is open on Homeroom, each a target of its
+// own (lookImported): its pull request's head, description, and whether
+// GitHub merged or closed it. A page at a time (the clock takes at most
+// `limit` targets a run): the ones after `after`, by id, and `after` for the
+// next run, null once the list has been gone through.
+async function importedTargets(pool, { after = null, limit = 200 } = {}) {
   const { rows } = await pool.query(
     `SELECT id FROM chat_sessions
       WHERE source = 'imported' AND status IN ('active', 'promoted', 'merging') AND pr_number IS NOT NULL
-      ORDER BY id`);
-  return { open: rows.length, items: rows.map((r) => ({ target: `session:${r.id}`, input: { sessionId: Number(r.id) } })) };
+        AND id > $1 ORDER BY id LIMIT $2`, bounds({ after, limit }));
+  return paged(rows, limit);
 }
 
 // One imported proposal looked at (services/pr-import-sync.js
@@ -64,15 +79,16 @@ async function lookImported(config, pool, sessionId) {
 
 // ── Native pull requests merged by hand ─────────────────────────────────
 
-// Every native proposal up for a vote, each a target (lookMergedByHand):
+// Every native proposal up for a vote, a page at a time (as
+// importedTargets), each a target (lookMergedByHand):
 // one merged by hand on GitHub is recorded. Nothing else notices such a
 // merge (a merge the platform attempted is the proposal machine's own).
-async function mergedByHandTargets(pool) {
+async function mergedByHandTargets(pool, page = {}) {
   const { rows } = await pool.query(
     `SELECT id FROM chat_sessions
       WHERE status = 'promoted' AND pr_number IS NOT NULL AND source IS DISTINCT FROM 'imported'
-      ORDER BY id`);
-  return { promoted: rows.length, items: rows.map((r) => ({ target: `session:${r.id}`, input: { sessionId: Number(r.id) } })) };
+        AND id > $1 ORDER BY id LIMIT $2`, bounds(page));
+  return paged(rows, bounds(page)[1]);
 }
 
 async function lookMergedByHand(pool, sessionId) {
@@ -103,13 +119,15 @@ async function lookMergedByHand(pool, sessionId) {
 
 // ── Revisions of proposals in review ────────────────────────────────────
 
-// Every native proposal in review, each a target (refreshRevision): its
+// Every native proposal in review, a page at a time (as importedTargets),
+// each a target (refreshRevision): its
 // branch can be pushed outside Homeroom, and a protected-settings flag can
 // go stale once main moves.
-async function revisionTargets(pool) {
+async function revisionTargets(pool, page = {}) {
   const { rows } = await pool.query(
-    `SELECT id FROM chat_sessions WHERE status = 'promoted' AND is_headless = FALSE ORDER BY id`);
-  return { promoted: rows.length, items: rows.map((r) => ({ target: `session:${r.id}`, input: { sessionId: Number(r.id) } })) };
+    `SELECT id FROM chat_sessions WHERE status = 'promoted' AND is_headless = FALSE
+        AND id > $1 ORDER BY id LIMIT $2`, bounds(page));
+  return paged(rows, bounds(page)[1]);
 }
 
 // The reviewed head read again (a move is the proposal machine's

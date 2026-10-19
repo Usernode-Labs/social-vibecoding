@@ -346,7 +346,7 @@ test('the automatic pass never writes session rows itself', () => {
   // the sweeper cannot null a column behind the chokepoint's back — which is
   // the whole cause of the leak this release fixes.
   assert.ok(!/INSERT|UPDATE/i.test(reapJs));
-  assert.match(reapJs, /async function leftovers\(config\)/);
+  assert.match(reapJs, /async function leftovers\(config, \{ after = null, limit = Infinity \} = \{\}\)/);
   assert.match(reapJs, /async function reapLeftover\(item, config = \{\}\)/);
   assert.match(reapJs, /async function staleEnvTargets\(config\)/);
 });
@@ -373,7 +373,7 @@ test('the automatic pass is the preview-gc clock, each leftover a target of its 
   assert.ok(start > 0, 'the preview-gc clock exists');
   const job = clocks.slice(start, clocks.indexOf('\n  },\n', start));
   assert.match(job, /get everyMs\(\) \{ return legacy\('services\/staging-reap'\)\.staleSweepIntervalMs\(\) \|\| 24 \* HOUR; \}/);
-  assert.match(job, /return reap\.staleSweepIntervalMs\(\) \? reap\.leftovers\(config\) : \{ off: true \};/);
+  assert.match(job, /return reap\.staleSweepIntervalMs\(\) \? reap\.leftovers\(config, page\(ctx\)\) : \{ off: true \};/);
   assert.match(job, /concurrency: 3,[\s\S]*?const r = await legacy\('services\/staging-reap'\)\.reapLeftover\(ctx\.input\.input, config\);/);
   // A teardown that left the preview running fails its item, which is tried
   // again and keeps the error, rather than counting as done.

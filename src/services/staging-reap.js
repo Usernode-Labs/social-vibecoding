@@ -506,14 +506,14 @@ async function inventory(config) {
 
 /**
  * What the preview-gc clock takes, each preview a target of its own
- * (reapLeftover): every preview whose session merged, was archived or is
+ * (reapLeftover), a page at a time: every preview whose session merged, was archived or is
  * gone (selectAbandoned), and every one its row no longer names that the
  * preview machine does not hold. Neither serves anybody. The env does not
  * matter, so an older build running this during a rollout decides nothing
  * differently. Never throws: an unreadable runtime is an empty inventory.
  */
-async function leftovers(config) {
-  const out = { examined: 0, abandoned: 0, unlinked: 0, items: [] };
+async function leftovers(config, { after = null, limit = Infinity } = {}) {
+  const out = { examined: 0, abandoned: 0, unlinked: 0, items: [], after: null };
   if (isStagingEnv()) return out;      // a preview manages no other previews
   try {
     const items = await inventory(config);
@@ -527,7 +527,13 @@ async function leftovers(config) {
       && !namesPreview(i, i.session) && !held.has(Number(i.sessionId)));
     out.abandoned = abandoned.length;
     out.unlinked = unlinked.length;
-    out.items = [...abandoned, ...unlinked].map((i) => ({
+    // A page at a time, by name (the clock takes at most `limit` targets a
+    // run): the ones after `after`, and where the next page starts.
+    const all = [...abandoned, ...unlinked].sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
+    const rest = typeof after === 'string' && after ? all.filter((i) => i.name > after) : all;
+    const taken = rest.slice(0, limit);
+    out.after = rest.length > taken.length ? taken[taken.length - 1].name : null;
+    out.items = taken.map((i) => ({
       target: i.name,
       input: { name: i.name, sessionId: i.sessionId, slug: i.slug || null, image: i.image || null, runtimeKind: i.runtimeKind },
     }));
