@@ -3317,7 +3317,9 @@ const AppView = {
   _noteOwnVote(sessionId, vote) {
     const id = Number(sessionId);
     if (!Number.isInteger(id) || id <= 0) return;
-    AppView._ownVotes.set(id, { vote, at: Date.now() });
+    // The epoch the vote was cast at is stamped in by _publishVoteSaved,
+    // which runs beside this call and is the only path that knows it.
+    AppView._ownVotes.set(id, { vote, at: Date.now(), epoch: null });
     const current = AppView.appData;
     const approval = current && current.first_version && current.first_version.approval;
     if (approval && Number(approval.sessionId) === id) AppView._distrustFirstVersion(current);
@@ -25967,7 +25969,23 @@ const AppView = {
   _overlayPendingVote(row) {
     if (!row || row.status === 'merged') return;
     const held = AppView._pendingVotes.get(Number(row.id));
-    if (held) AppView._applyVoteToRow(row, held.vote);
+    if (held) {
+      AppView._applyVoteToRow(row, held.vote);
+      return;
+    }
+    // #5463: a vote this page saved earlier fills a row a later read drew
+    // without it — the board reads sit in the service worker's boot lane, so
+    // opening another project can paint the saved pre-vote copy first. Only a
+    // row that is promoted and has no my_vote of its own is filled: the
+    // server's word is never overridden, a newer epoch asks again, and
+    // _applyVoteToRow returns early on an equal vote so it never counts twice.
+    if (row.my_vote || row.status !== 'promoted') return;
+    const own = AppView._ownVotes.get(Number(row.id));
+    if (!own || (own.vote !== 'yes' && own.vote !== 'no')) return;
+    const rowEpoch = row.approval_epoch == null ? null : Number(row.approval_epoch);
+    const ownEpoch = own.epoch == null ? null : Number(own.epoch);
+    if (rowEpoch != null && ownEpoch != null && rowEpoch !== ownEpoch) return;
+    AppView._applyVoteToRow(row, own.vote);
   },
   // The board paints from `#dev-body`; an open proposal page is a sheet
   // over it with its own header, which that repaint never reached — so on the
@@ -26139,8 +26157,12 @@ const AppView = {
       }
       AppView._seenEpoch.delete(sessionId);
       // A first version's App tab must not ask this voter for the Yes they
-      // just gave (_noteOwnVote).
+      // just gave (_noteOwnVote), and every Needs you surface this page did
+      // not cast the vote on hears that it is saved (#5463) — the epoch that
+      // went in the POST body rides on the saved-vote publication, so a card
+      // at a newer epoch asks again.
       AppView._noteOwnVote(sessionId, vote);
+      AppView._publishVoteSaved(sessionId, vote, epoch);
       // The overlay stays until the post-vote read has landed: a load queued
       // ahead of it still publishes the pre-vote row first. The read joins
       // the burst the vote's own broadcast (vote_update) opens, so a vote
@@ -26174,6 +26196,23 @@ const AppView = {
   // voteSendingStore). `key` is `<fn>:<id>`; a null side clears it.
   _publishVoteSending(key, side) {
     try { AppView._reactDevBoard()?.publishVoteSending?.(key, side); } catch { /* paint only */ }
+  },
+
+  // #5463: a vote the server SAVED, published once for every Needs you
+  // surface that did not cast it — the Communities feed's kept copy and its
+  // counts, and a board read from before the vote (cards-store.ts
+  // voteSavedStore). `epoch` is the one sent in the POST body, so a card a
+  // newer epoch leaves at asks again. Paint only, as _publishVoteSending.
+  _publishVoteSaved(sessionId, vote, epoch) {
+    // The epoch the POST carried is recorded beside the vote itself: the
+    // overlay fills a later pre-vote row only while the row has not moved
+    // past the epoch this page voted at.
+    const id = Number(sessionId);
+    const own = AppView._ownVotes.get(id);
+    if (own && own.epoch == null && epoch != null) own.epoch = Number(epoch);
+    try {
+      AppView._reactDevBoard()?.publishVoteSaved?.(id, vote, epoch == null ? null : Number(epoch));
+    } catch { /* paint only */ }
   },
 
   // Vote on a governance proposal (env-var change, close-issue, rename,

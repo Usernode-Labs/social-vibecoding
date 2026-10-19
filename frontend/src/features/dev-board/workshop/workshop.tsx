@@ -75,7 +75,7 @@ import { improveStore } from '../../improve/improve-store.js';
 import { swatchFor } from '../../messages/format';
 import { openBot } from '../../messages/store';
 import type { StagedObject } from '../../messages/types';
-import { devWorkshopStore } from '../card/cards-store';
+import { devWorkshopStore, voteSavedStore } from '../card/cards-store';
 import { DevKanban, StageStrip, syncStrip } from '../card/dev-kanban';
 import { DevActionsRow, DevPlusMenu } from '../actions-row';
 import { useDevActions } from '../actions-store';
@@ -2482,6 +2482,35 @@ function useSwipeVote(
 /* ── The feed ────────────────────────────────────────────────────────── */
 
 /**
+ * The side a saved vote (#5463, cards-store.ts voteSavedStore) gives this
+ * row, or null when none of them is the same vote. It matches the way
+ * `needsRowKey` names a row: a vote addressed to a change (`askAbout.kind`
+ * `'proposal'`, the session id in `ref`) at the epoch its Yes act carries
+ * (castVote's third argument). A governance row — a group decision — never
+ * matches, and neither does a change at a NEWER epoch than the vote: the
+ * card moved under the vote and asks again. Where either side has no epoch
+ * the id alone decides, as the seen record does (needs-seen.ts).
+ */
+export function savedVoteFor(
+  row: {
+    kind?: string;
+    askAbout?: { kind: string; ref: number | string } | null;
+    yes?: { act?: { args?: unknown[] } | null } | null;
+  } | null | undefined,
+  saved: Record<string, { vote: 'yes' | 'no'; epoch: number | null }> | null | undefined,
+): 'yes' | 'no' | null {
+  if (!row || row.kind !== 'vote' || !row.askAbout || row.askAbout.kind !== 'proposal') return null;
+  if (row.askAbout.ref == null || !saved) return null;
+  const entry = saved[String(row.askAbout.ref)];
+  if (!entry || (entry.vote !== 'yes' && entry.vote !== 'no')) return null;
+  const args = row.yes && row.yes.act && Array.isArray(row.yes.act.args) ? row.yes.act.args : [];
+  const rowEpoch = typeof args[2] === 'number' ? args[2] : null;
+  const savedEpoch = entry.epoch == null ? null : Number(entry.epoch);
+  if (rowEpoch != null && savedEpoch != null && rowEpoch !== savedEpoch) return null;
+  return entry.vote;
+}
+
+/**
  * A project's Needs you, and the Communities screen's (#3488): ONE feed, so
  * the two cannot drift apart again. There the rows mix every project's, each
  * carrying its own (`row.app`), and every address the feed builds (the card's
@@ -2613,6 +2642,14 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
   // see `_workshopModels`.
   const [model, setModel] = useState<string>(() => models.selected || '');
 
+  // #5463: a vote the server saved, read straight off the store — a vote cast
+  // anywhere (the change's page, a notification's "Still yes", another feed)
+  // marks this feed's row the same way its own vote does, without waiting for
+  // a fresh read to repaint it.
+  const savedAll = useStoreState(voteSavedStore);
+  // The rows the previous render drew, for the pin below: a row voted
+  // elsewhere holds the slot it had, the way a row answered here does.
+  const drawnRef = useRef<QueueRow[]>([]);
   const items = useMemo<QueueRow[]>(() => {
     const live = rows.filter((r): r is QueueRow => r.t === 'card');
     const have = new Set(live.map((r) => r.key));
@@ -2620,8 +2657,23 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
     for (const [key, pin] of pinsRef.current) {
       if (!have.has(key)) out.splice(Math.min(pin.index, out.length), 0, pin.row);
     }
+    // A row voted elsewhere holds its slot the same way: it left `rows` with
+    // the publish that noticed the saved vote, and the pin keeps the
+    // confirmation in front of the viewer instead of the list jumping under
+    // them. A row no saved vote explains — answered on the server by someone
+    // else's read, no longer owed — just leaves. Walked from the end, so each
+    // splice at an old index leaves the earlier ones where they were.
+    const prev = drawnRef.current;
+    for (let idx = prev.length - 1; idx >= 0; idx--) {
+      const prior = prev[idx];
+      if (have.has(prior.key) || pinsRef.current.has(prior.key)) continue;
+      if (out.some((r) => r.key === prior.key)) continue;
+      if (!savedVoteFor(prior, savedAll)) continue;
+      out.splice(Math.min(idx, out.length), 0, prior);
+    }
     return out;
-  }, [rows, pinsVersion]);
+  }, [rows, pinsVersion, savedAll]);
+  drawnRef.current = items;
   const n = items.length;
   // `n + 1` slots: the items, then the end card (#2172). `i === n` is the
   // end card, and `row` is null there.
@@ -2992,6 +3044,22 @@ export function NeedsFeed({ rows, models, slug, canPost, onDone, onHub, onSugges
     if (curKeyRef.current !== key || sheetRef.current !== null) return;
     goRef.current(1);
   }, [answered]);
+  // #5463: a saved vote that reaches this feed from the store reads here as
+  // answered — the same confirmation words its own vote draws ("Voted yes" /
+  // "Voted no"), with the row holding its slot. It sets neither the advance
+  // (the feed does not move on a vote it did not cast) nor the screen's
+  // answered hook (the store's own listener already stripped the copy, and a
+  // second telling would run the same strip twice). A row mid-send keeps its
+  // own answer's word.
+  useLayoutEffect(() => {
+    const add: Record<string, string> = {};
+    for (const r of items) {
+      if (answered[r.key] || sendingRef.current.has(r.key)) continue;
+      const side = savedVoteFor(r, savedAll);
+      if (side) add[r.key] = side;
+    }
+    if (Object.keys(add).length) setAnswered((cur) => ({ ...cur, ...add }));
+  });
   /**
    * The vote sheet's send (#3613): the switch's side with the line written
    * under it. A No needs its line, as on a card; a Yes may go without one,

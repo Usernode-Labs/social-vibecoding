@@ -1364,3 +1364,83 @@ test('#4486: the one-row head and the pipeline pin together under the project’
   // switch instead of taking a line of their own.
   assert.match(appCss, /@media \(max-width: 639px\) \{[\s\S]*?\.dev-ws-allbar #dev-kanban-search \{ flex-basis: 100%; max-width: none; min-width: 0; \}\s*\.dev-ws-allbar #dev-filter-chips \{ flex: 1 1 0; min-width: 0; /);
 });
+
+// ── 4. #5463: a vote saved elsewhere marks the kept feed and the counts ─
+
+test('#5463: a vote saved elsewhere takes the card and its counts down at once', async () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const { workshopController, workshopStore, publishVoteSaved } = mod;
+  const apps = [{ slug: 'a', name: 'A', is_member: true }];
+  const item = (id, epoch) => ({
+    kind: 'proposal', id, epoch, title: `Change ${id}`, summary: null, author: null,
+    number: null, at: null, yes: 0, no: 0,
+    app: { slug: 'a', name: 'A', icon_url: null, icon_emoji: null },
+  });
+  const countsFor = (ids) => ({ a: { working: 0, needs: ids.length, owed: ids.map((id) => `proposal:${id}@2`) } });
+  const priorWindow = global.window;
+  const priorFetch = global.fetch;
+  global.window = { Home: { isJoined: (app) => !!(app && app.is_member) } };
+  try {
+    const answers = new Map();
+    global.fetch = async (url) => answers.get(url) || { ok: false, json: async () => ({}) };
+    answers.set('/api/apps?scope=joined', { ok: true, json: async () => ({ apps }) });
+    // THE READS STILL ANSWER THE PRE-VOTE COPY: the whole point is that the
+    // saved vote is applied without waiting for a read that knows it.
+    answers.set('/api/workshop/needs-feed', { ok: true, json: async () => ({ items: [item(7, 2), item(8, 2)], max: 0 }) });
+    answers.set('/api/workshop/counts', { ok: true, json: async () => ({ counts: countsFor([7, 8]) }) });
+
+    await workshopController.open();
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [7, 8]);
+    assert.equal(workshopStore.get().rows[0].needs, 2);
+    assert.deepEqual(workshopStore.get().rows[0].owed, ['proposal:7@2', 'proposal:8@2']);
+
+    // THE VOTE IS SAVED ON THE CHANGE'S OWN PAGE. The screen is open, the
+    // feed is in front of the viewer, and neither the card nor the counts
+    // wait for a read.
+    publishVoteSaved(7, 'yes', 2);
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [8],
+      'the card leaves the feed at once');
+    assert.equal(workshopStore.get().rows[0].needs, 1, 'and the "1 to vote" line drops it');
+    assert.deepEqual(workshopStore.get().rows[0].owed, ['proposal:8@2']);
+
+    // A READ ISSUED BEFORE THE VOTE AND LANDING AFTER IT brings neither back.
+    await workshopController.refreshNeeds();
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [8]);
+    assert.equal(workshopStore.get().rows[0].needs, 1);
+    await workshopController.reload();
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [8]);
+    assert.equal(workshopStore.get().rows[0].needs, 1);
+
+    // A NEWER EPOCH PASSES: the card changed under the vote and asks again.
+    answers.set('/api/workshop/needs-feed', { ok: true, json: async () => ({ items: [item(7, 3), item(8, 2)], max: 0 }) });
+    answers.set('/api/workshop/counts', { ok: true, json: async () => ({ counts: { a: { working: 0, needs: 2, owed: ['proposal:7@3', 'proposal:8@2'] } } }) });
+    await workshopController.refreshNeeds();
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [7, 8]);
+    assert.equal(workshopStore.get().rows[0].needs, 2);
+
+    // A ROW WITHOUT `owed` KEEPS ITS NUMBER: a count this cannot check is
+    // never lowered on a guess.
+    workshopStore.set({ rows: [{ slug: 'a', name: 'A', working: 0, needs: 3 }] });
+    publishVoteSaved(8, 'no', 2);
+    assert.equal(workshopStore.get().rows[0].needs, 3, 'no owed list, no lowering');
+
+    // THE VOTE SAVED WHILE THE SCREEN IS CLOSED strips the kept copy too, so
+    // the first paint on return is already right — even when the reads it
+    // fires answer the pre-vote copy.
+    workshopController.close();
+    workshopStore.set({
+      feed: [item(7, 2), item(8, 2)],
+      rows: [{ slug: 'a', name: 'A', working: 0, needs: 2, owed: ['proposal:7@2', 'proposal:8@2'] }],
+    });
+    publishVoteSaved(8, 'yes', 2);
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [7], 'stripped while closed');
+    assert.equal(workshopStore.get().rows[0].needs, 1, 'the counts too');
+    await workshopController.open();
+    assert.deepEqual(workshopStore.get().feed.map((it) => it.id), [7],
+      'the first paint on return already knows the vote');
+    assert.equal(workshopStore.get().rows[0].needs, 1);
+  } finally {
+    if (priorWindow === undefined) delete global.window; else global.window = priorWindow;
+    global.fetch = priorFetch;
+  }
+});
